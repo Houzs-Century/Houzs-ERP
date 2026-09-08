@@ -83,7 +83,7 @@ import postgres from "postgres";
 
 import { decodeSnapshot } from "./lib/ac-scope.mjs";
 import { readMappingCsv, normCode } from "./lib/ac-mapping-csv.mjs";
-import { planLineKeys } from "./lib/ac-forced-line-pairing.mjs";
+import { foldErpUnits, planLineKeys } from "./lib/ac-forced-line-pairing.mjs";
 import { erpReconcileTypes } from "./lib/ac-reconcile-erp-sql.mjs";
 import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
@@ -358,38 +358,61 @@ async function main() {
   const wrongShape = shapeRows.filter(
     (r) => !r.present || !r.is_bigint || !/^\d+$/.test(String(r.key)) || wantById.get(r.id) !== String(r.key),
   );
-  /* And the guarantee composeEdit actually READS, which is not "the row has a
-     key" but "every compartment of this build agrees on it"
-     (src/scm/lib/autocount-line-keys.ts:155). A build is one model on one
-     document, so the model is everything before the LAST hyphen of the
-     compartment code — the same cut lib/sofa-compartment-suffixes.mjs makes.
-     Counted over the documents this run touched, so a build left half-keyed by
-     this write cannot hide behind the ones that were already whole. */
+  /* ── THE GUARANTEE composeEdit ACTUALLY READS ────────────────────────────
+     Not "the row has a key" but "every compartment of THIS BUILD agrees on it"
+     (src/scm/lib/autocount-line-keys.ts:155). So the verification has to know
+     what a build IS, and `foldErpUnits` is the only thing that does — the same
+     function the plan used, re-run over what the database now holds. Grouping
+     by the MODEL instead answered a different question and refused apply run
+     34210459226 after a correct write: since two sofas of one model on one
+     document are two builds with two keys, 36 correct documents read as "not
+     agreeing on one key". A verifier that cannot tell the intended outcome from
+     the damage is not a verifier. */
   const touchedDocs = [...new Set(shapeRows.map((r) => r.doc_no))];
-  const buildRows = touchedDocs.length
-    ? await verify`SELECT h.doc_no, regexp_replace(i.item_code, '-[^-]*$', '') AS model,
-          count(*)::int rows, count(DISTINCT i.linked_ac_dtlkey)::int keys,
-          count(*) FILTER (WHERE i.linked_ac_dtlkey IS NULL)::int keyless
+  const buildCheckRows = touchedDocs.length
+    ? await verify`SELECT h.doc_no, i.id::text AS id, i.item_code, i.description2,
+          i.line_suffix, i.qty::float8 AS qty, i.linked_ac_dtlkey::text AS key
         FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-        WHERE h.company_id = ${CO} AND h.doc_no = ANY(${touchedDocs}) AND i.item_group ILIKE 'sofa'
-        GROUP BY 1, 2`
+        WHERE h.company_id = ${CO} AND h.doc_no = ANY(${touchedDocs}) AND i.item_group ILIKE 'sofa'`
     : [];
-  const splitBuilds = buildRows.filter((b) => b.keys > 1 || (b.keys >= 1 && b.keyless > 0));
-  /* A build THIS RUN stamped that does not now agree on one key is the
-     docs/bugs/0704 shape and is fatal. One it did not touch may legitimately
-     still be split — that is the remainder this lane reports rather than the
-     damage it did — so the two are separated instead of summed. */
-  const ourBuilds = new Set(shapeRows.map((r) => `${r.doc_no}|${String(r.item_code).replace(/-[^-]*$/, "")}`));
-  const brokenOurs = splitBuilds.filter((b) => ourBuilds.has(`${b.doc_no}|${b.model}`));
+  const keyById = new Map(buildCheckRows.map((r) => [r.id, r.key ?? null]));
+  const stampedIds = new Set(sofaStamps.map((s) => String(s.id)));
+  const byDoc = new Map();
+  for (const r of buildCheckRows) {
+    if (!byDoc.has(r.doc_no)) byDoc.set(r.doc_no, []);
+    byDoc.get(r.doc_no).push({
+      id: r.id, code: r.item_code, qty: r.qty, suffixed: Boolean(r.line_suffix), desc2: r.description2,
+    });
+  }
+  let buildGroups = 0;
+  const splitBuilds = [];
+  for (const [docNo, rows] of byDoc) {
+    for (const u of foldErpUnits(rows)) {
+      buildGroups++;
+      /* null counts as a value: a build holding one key AND a keyless
+         compartment is exactly the docs/bugs/0704 shape, and it must not read
+         as "one key". A build that is keyless THROUGHOUT is a build this run
+         could not force — reported by the refusal list, not damage. */
+      const vals = new Set(u.ids.map((id) => keyById.get(id) ?? null));
+      if (vals.size > 1) {
+        splitBuilds.push({
+          docNo, codes: u.codes.join("+"), rows: u.ids.length,
+          keys: [...vals].map((v) => v ?? "(none)").join(", "),
+          ours: u.ids.some((id) => stampedIds.has(id)),
+        });
+      }
+    }
+  }
+  const brokenOurs = splitBuilds.filter((b) => b.ours);
   log(
     `VERIFIED ON A FRESH CONNECTION — ${shapeRows.length} of ${touched.length} stamped row(s) re-read; ` +
-      `${wrongShape.length} WRONG SHAPE; ${buildRows.length} sofa build group(s) on the ${touchedDocs.length} document(s) ` +
+      `${wrongShape.length} WRONG SHAPE; ${buildGroups} sofa build(s) on the ${touchedDocs.length} document(s) ` +
       `touched, ${splitBuilds.length} of them NOT agreeing on one key, ${brokenOurs.length} of those stamped by THIS run`,
   );
   for (const b of splitBuilds.slice(0, 20)) {
     plain(
-      `      ${brokenOurs.includes(b) ? "BROKEN BY THIS RUN" : "still split (untouched)"} ${b.doc_no} ${b.model}: ` +
-        `${b.rows} row(s), ${b.keys} distinct key(s), ${b.keyless} keyless`,
+      `      ${b.ours ? "BROKEN BY THIS RUN" : "split, untouched by this run"} ${b.docNo} ${b.codes}: ` +
+        `${b.rows} row(s) carrying ${b.keys}`,
     );
   }
   for (const r of wrongShape.slice(0, 20)) {
