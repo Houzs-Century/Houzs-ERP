@@ -1166,7 +1166,13 @@ function SalesOrderDetailV2ReadOnly() {
                 and NOTHING else: it does not set ?edit=1, so lines, header and
                 addresses stay read-only under their own `isLocked` gate, which
                 is the lock that genuinely belongs to them. */}
-            {!["cancelled", "draft"].includes(salesOrder.status?.toLowerCase() ?? "") && (
+            {/* CUTOVER: a migrated order takes no money here either. Its balance
+                is the ONE figure the ERP knows is wrong (AutoCount payments
+                since 2026-08-28 have not reached us), which is the whole reason
+                the document is shut — so this is the last door to leave open.
+                The API refuses the write regardless; hiding the button stops the
+                operator being offered a click that can only 409. */}
+            {!migratedLocked && !["cancelled", "draft"].includes(salesOrder.status?.toLowerCase() ?? "") && (
               <Button
                 variant="secondary"
                 icon={<Wallet size={14} />}
@@ -1176,11 +1182,18 @@ function SalesOrderDetailV2ReadOnly() {
                 Collect payment
               </Button>
             )}
+            {/* Cancel is a WRITE (PATCH /:docNo/status), and on a migrated order
+                it is refused. It is also the most destructive thing on this bar,
+                so it is disabled-with-a-reason rather than hidden: a salesperson
+                looking for it must find out WHY it cannot be used, not wonder
+                where it went. */}
             {salesOrder.status?.toLowerCase() !== "cancelled" && (
               <Button
                 variant="danger"
                 icon={<XCircle size={14} />}
                 onClick={doCancel}
+                disabled={migratedLocked}
+                title={migratedLocked ? lockedEditHint : undefined}
               >
                 Cancel SO
               </Button>
