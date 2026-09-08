@@ -32,6 +32,7 @@ const CALLER = { id: 'staff-uuid', email: 'x@houzs.test', app_metadata: {}, user
 
 const {
   cancelApprovalGuard, soCancelRequests, poCancelRequests, cancelRequestsInbox,
+  cancelApproverWriteBypass, CANCEL_REQUEST_OPEN_READ_PATH,
 } = await import('./document-cancel-routes');
 
 type Who = { id: number; name: string; perms: string[] };
@@ -211,6 +212,28 @@ describe('the two signatures', () => {
     await post(REQUESTER, '/mfg-sales-orders/SO-1/cancel-request/withdraw');
     expect((await body(await get(NOBODY, '/cancel-requests'))).requests).toHaveLength(1);
     expect((await body(await get(NOBODY, '/cancel-requests?scope=all'))).requests).toHaveLength(2);
+  });
+});
+
+describe('the area-guard bypass for approvers', () => {
+  const ctx = (method: string, path: string, perms: string[]) => ({
+    req: { method, path },
+    get: (_k: 'user') => ({ permissions_set: new Set(perms) }),
+  });
+  it('admits only the three approver verbs, only for a holder of that document\'s keys', () => {
+    const so = cancelApproverWriteBypass('SO');
+    expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request/approve', ['scm.so_cancel.approve_l2']))).toBe(true);
+    expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request/reject', ['scm.so_cancel.approve_l1']))).toBe(true);
+    expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request/withdraw', ['scm.so_cancel.approve_l1']))).toBe(true);
+    /* Raising a request is NOT admitted by the key — that still needs the area's edit. */
+    expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request', ['scm.so_cancel.approve_l1']))).toBe(false);
+    /* The other document's key does not open this prefix. */
+    expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request/approve', ['scm.po_cancel.approve_l1']))).toBe(false);
+    /* Any other write on the prefix stays behind the area. */
+    expect(so(ctx('PATCH', '/api/scm/mfg-sales-orders/SO-1/status', ['scm.so_cancel.approve_l2']))).toBe(false);
+    expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request/approve', ['scm.access']))).toBe(false);
+    expect(cancelApproverWriteBypass('PO')(ctx('POST', '/api/scm/mfg-purchase-orders/po-1/cancel-request/approve', ['scm.po_cancel.approve_l1']))).toBe(true);
+    expect(CANCEL_REQUEST_OPEN_READ_PATH).toBe('/cancel-request');
   });
 });
 
