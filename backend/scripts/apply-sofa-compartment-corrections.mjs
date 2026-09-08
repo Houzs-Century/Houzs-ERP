@@ -371,11 +371,31 @@ async function main() {
                  on the SO side as filled because the SO branch below has always
                  set `description`. Both are the SAME book line's values; the
                  lead already holds them; copying is a copy, not a guess. */
+              /* `linked_ac_dtlkey` IS THE BUILD'S IDENTITY, and it was omitted
+                 here for the same reason `warehouse_id` and `description` were:
+                 a column-by-column INSERT that does not name it. A sofa build is
+                 ONE AutoCount line and one ERP row per compartment, and
+                 src/scm/lib/autocount-line-keys.ts:155 states the invariant —
+                 "Every ERP row behind this AutoCount line gets the SAME key ...
+                 composeEdit later accepts the build only when all of them still
+                 agree on it". A compartment added keyless therefore does not
+                 just lack a key: it takes the WHOLE document's line identity
+                 away, and the operator's next edit is refused with "The ERP
+                 cannot tell which lines AutoCount already has"
+                 (autocount-relink-lines.ts:8). The reconcile compares
+                 compartments per DtlKey too, so a keyless one is invisible to
+                 it — HC-SO-013475 held 1A(LHF)+1NA+1A(RHF) and reconcile run
+                 34199937397 read it as "1A(LHF)+1A(RHF)". Copying the source
+                 row's key is a copy of what the sibling already states, never a
+                 guess; repair-sofa-added-compartment-line-key.mjs is the same
+                 write for the rows earlier rounds already added. */
               if (isPo) await tx`INSERT INTO scm.purchase_order_items
                   (purchase_order_id, material_kind, item_code, material_name, item_group, description, description2,
-                   qty, received_qty, unit_price_sen, line_total_sen, variants, warehouse_id, delivery_date, from_mrp, company_id)
+                   qty, received_qty, unit_price_sen, line_total_sen, variants, warehouse_id, delivery_date, from_mrp, company_id,
+                   linked_ac_dtlkey)
                   SELECT i.purchase_order_id, 'mfg_product', ${p.to}, ${name}, 'sofa', i.description, ${src.description2 ?? null},
-                         i.qty, 0, ${p.price}, ${p.tot}, ${tx.json(p.v)}, i.warehouse_id, i.delivery_date, false, ${CO}
+                         i.qty, 0, ${p.price}, ${p.tot}, ${tx.json(p.v)}, i.warehouse_id, i.delivery_date, false, ${CO},
+                         i.linked_ac_dtlkey
                     FROM scm.purchase_order_items i WHERE i.id = ${src.id}`;
               /* so_item_id is deliberately NOT copied onto an inserted PO line.
                  The dedication is one SO line to one PO line, and pointing a
@@ -390,15 +410,18 @@ async function main() {
                  PO branch above already copies `i.warehouse_id`; this branch
                  omitted the column entirely, and the 2026-08-11 run produced
                  seven such lines across six orders (repaired 2026-08-18). */
+              /* `linked_ac_dtlkey` — see the note on the PO branch above. Same
+                 omission, same consequence, same fix: the compartment belongs to
+                 the SAME AutoCount line its source row does. */
               else await tx`INSERT INTO scm.mfg_sales_order_items
                   (doc_no, line_no, item_group, item_code, description, description2, uom, location, qty,
                    unit_price_sen, total_sen, balance_sen, company_id, variants, remark, photo_urls,
-                   warehouse_id)
+                   warehouse_id, linked_ac_dtlkey)
                   SELECT i.doc_no, (SELECT COALESCE(MAX(line_no),0)+1 FROM scm.mfg_sales_order_items WHERE doc_no = i.doc_no),
                          'sofa', ${p.to}, ${name}, i.description2, i.uom, i.location, i.qty,
                          ${p.price}, ${p.tot}, ${p.tot}, ${CO}, ${tx.json(p.v)},
                          'compartment corrected 2026-09-04', i.photo_urls,
-                         i.warehouse_id
+                         i.warehouse_id, i.linked_ac_dtlkey
                     FROM scm.mfg_sales_order_items i WHERE i.id = ${src.id}`;
             }
           }

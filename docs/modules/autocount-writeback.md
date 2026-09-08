@@ -709,6 +709,45 @@ refusals. So the key is a NECESSARY condition that is now met; whether it is
 SUFFICIENT needs somebody to edit a migrated goods receipt in the ERP and read
 the resulting outbox row. Until that happens this stays UNTESTED.
 
+### A REPAIR can take the key away again — and it did
+
+The backfill above stamps keys forward. Nothing stops a later repair from
+INSERTing a row that never gets one, and one did: both INSERT statements in
+`backend/scripts/apply-sofa-compartment-corrections.mjs` named their columns one
+at a time and neither named `linked_ac_dtlkey`, so **every sofa compartment that
+script has ever ADDED landed keyless beside siblings that carry the key**.
+
+For a sofa that is not one row missing a key — it is the whole document losing
+its identity, because the invariant this module rests on is that all of a
+build's compartments carry the SAME key
+(`src/scm/lib/autocount-line-keys.ts:155`, and §7b's D9 fold below reads the key
+to decide which rows are one build). `composeEdit` then refuses the document
+whole and the operator reads *"The ERP cannot tell which lines AutoCount already
+has"*.
+
+It is invisible from the other direction too. `check-ac-erp-reconcile.mjs`
+compares a sofa's compartments per DtlKey, so a keyless compartment is not
+counted at all: `HC-SO-013475` held `1A(LHF)+1NA+1A(RHF)` and reconcile run
+`34199937397` read it as `1A(LHF)+1A(RHF)`.
+
+Fixed both ways on 2026-09-08 —
+`docs/bugs/0704-a-sofa-compartment-added-by-a-correction-lost-the-autocount.md`.
+The write path copies `i.linked_ac_dtlkey` from the row the compartment is built
+from; the rows earlier rounds already added are repaired by
+`backend/scripts/repair-sofa-added-compartment-line-key.mjs` (workflow **Repair
+sofa compartments added without their AutoCount line key**; `MODE=apply` needs
+`CONFIRM="I HAVE REVIEWED THE DRY-RUN"`, which the workflow passes). It copies
+only a key the row's OWN siblings already agree on, and only after the book
+confirms that key is a line of that document carrying that row's Desc2 — a wrong
+key is worse than a missing one, so all four gates refuse rather than fall back.
+
+**The lesson for the next repair, and it is now the third column lost this
+way** — `warehouse_id` (seven lines PENDING for ever, 2026-08-11),
+`description` / `delivery_date`, and now `linked_ac_dtlkey`: a column-by-column
+INSERT that clones a sibling row omits whatever nobody remembered, silently. If
+a repair adds a row beside an existing one, the columns that carry IDENTITY —
+`linked_ac_dtlkey`, `warehouse_id` — are not optional extras.
+
 ### The defect this section exists for
 
 `/edit` used to fall through to `doc.AddDetail()` for a line with no key —
@@ -2434,6 +2473,23 @@ also parsed **`Desc2`** to get the ERP's variants —
 `import-ac-outstanding-so.mjs` turns a bedframe's `Desc2` into
 `variants.fabricCode` / `gap` / `divanHeight` / `legHeight` / `totalHeight` /
 `specials` — so the specification has to go back.
+
+> **Where that block is built, since 2026-09-08.** The decode is
+> `parseBedframe(Desc2)` and the ten-key object above is
+> `bedframeVariants(bf, findColour)`, both exported from
+> `backend/scripts/lib/parse-bedframe.mjs`. The object used to be spelled out
+> inside `import-ac-outstanding-so.mjs`, `import-ac-outstanding-po.mjs` and
+> `topup-ac-po-lines.mjs` — byte-for-byte identical in all three — and a fourth
+> writer (`topup-ac-lines-from-truth.mjs`) would have made a fourth copy.
+> `parseBedframe` itself was in exactly that state once and drifted TWICE
+> (a808bf36, 60125216) before anyone noticed, so the copies were the risk. The
+> key names are a CONTRACT with the UI (the Fabrics picker reads `fabricCode`;
+> `totalHeight` is the form's "Total height (auto)") and are pinned by
+> `backend/tests/bedframeVariantsBlock.test.ts`, which transcribes the writers'
+> own expression rather than checking the module against itself.
+> Not to be confused with `blockFor` in `backend/scripts/lib/po-arm-own-text.mjs`:
+> that one carries `size` and NOT `specials` because it is a COMPARISON
+> projection for a diagnostic, never the block a writer persists.
 
 `Desc2` was already being sent, so this was missing CONTENT, not a missing field.
 `composeDescription2` emitted `Col / Fabric / Seat / Leg` and read colour off
