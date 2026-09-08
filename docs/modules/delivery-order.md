@@ -2149,7 +2149,7 @@ data error.
   ERP 1). **Adding a substituted line to a document that already exists is
   `topup-ac-lines-from-truth.mjs`'s DO lane, not this writer's**, and its targets
   carry `substituted: true` to write exactly the shape in the table above.
-  `docs/bugs/0712`.
+  `docs/bugs/0713`.
 - **The whole class is 30 delivery orders in the book and 4 in the ERP.**
   `backend/scripts/probe-do-code-changed-after-conversion.mjs` (read-only) is
   the measurement, because the reconcile's line-count axis cannot see a note

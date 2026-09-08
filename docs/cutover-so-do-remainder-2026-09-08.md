@@ -127,7 +127,7 @@ carries the money is a decision, not a copy. It belongs to the sofa tooling.
 > means is that **four lines of goods the customer received were missing from
 > our delivery note.** Repaired to the book, and the DO axis of the reconcile is
 > now **0 on every column**. Full trace:
-> `docs/bugs/0712-the-delivery-order-s-item-code-was-changed-after-the-convers.md`.
+> `docs/bugs/0713-the-delivery-order-s-item-code-was-changed-after-the-convers.md`.
 > `SO-011384` is unchanged and still stands.
 
 | document | what the book says | outcome |

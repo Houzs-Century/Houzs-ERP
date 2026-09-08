@@ -258,7 +258,7 @@ const DO_TARGETS = [
     substituted: true,
     description: "COOL SILK LATEX PILLOW COVER",
     expect: { hasCode: true, qty: 4, unitSen: 0, subTotalSen: 0 },
-    why: "docs/bugs/0712 — the book's delivery note carries this code and SO-003186 does not; the ERP note was created before the 2026-09-07 substitution ruling and dropped it",
+    why: "docs/bugs/0713 — the book's delivery note carries this code and SO-003186 does not; the ERP note was created before the 2026-09-07 substitution ruling and dropped it",
   },
   {
     acDoc: "DO-001953",
@@ -268,7 +268,7 @@ const DO_TARGETS = [
     substituted: true,
     description: "LATEX PILLOW",
     expect: { hasCode: true, qty: 4, unitSen: 0, subTotalSen: 0 },
-    why: "docs/bugs/0712 — same document, the other dropped line",
+    why: "docs/bugs/0713 — same document, the other dropped line",
   },
   {
     acDoc: "DO-004903",
@@ -278,7 +278,7 @@ const DO_TARGETS = [
     substituted: true,
     description: "LATEX PILLOW",
     expect: { hasCode: true, qty: 1, unitSen: 0, subTotalSen: 0 },
-    why: "docs/bugs/0712 — the book's delivery note carries this code and SO-006438 does not",
+    why: "docs/bugs/0713 — the book's delivery note carries this code and SO-006438 does not",
   },
   {
     acDoc: "DO-004903",
@@ -288,7 +288,7 @@ const DO_TARGETS = [
     substituted: true,
     description: "COOL SILK LATEX PILLOW COVER",
     expect: { hasCode: true, qty: 1, unitSen: 0, subTotalSen: 0 },
-    why: "docs/bugs/0712 — same document, the other dropped line",
+    why: "docs/bugs/0713 — same document, the other dropped line",
   },
 ];
 const DO_MARK = (dtlKey) => `topped up from AutoCount DtlKey ${dtlKey}`;
