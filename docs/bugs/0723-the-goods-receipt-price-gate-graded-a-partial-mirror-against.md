@@ -112,4 +112,48 @@ of which it exposed:**
   chain walked a line at a time, both sides' lines summed to their document
   total, and transpositions named BY KEY. Read-only.
 
+**APPLIED AND MEASURED ON PRODUCTION, 2026-09-08.** Not a claim about what
+running it would do:
+
+| run | what it showed |
+|---|---|
+| `34244430063` PLAN | STAMPING 47 lines / 45 documents / **24 invoices** (was 23 / 21 / **7**). LEFT ALONE **11** (was 28), each now with a real line-grain reason. |
+| `34244662639` APPLY | `STOCK: the 45 document(s) to be priced carry 0 inventory movements — measured just now`. 47 of 47 lines written, 45 of 45 headers, `VERIFIED ON A FRESH CONNECTION: 47 of 47 stamped line(s) re-read; invariant broken on 0, disagreeing with the book on 0`. |
+| `34245260844` tally | GOODS RECEIPTS **5 of 400 differ**, down from 10. The four money differences that remain are genuine at line grain. |
+| `34244926486` tally | `GR DATA — document total: 4` (was 9); `PO DATA — document total: 0`; `SO DATA — document total: 0, quantity: 0, unit price: 0`. **The control holds: no sales-order figure moved.** |
+
+The three the owner was asking about print their own arithmetic now:
+
+```
+PI-007287  whole invoice RM 11,247.00 = ours RM 3,200.00 + never carried RM 8,047.00
+PI-007765  whole invoice  RM 4,580.00 = ours RM 2,230.00 + never carried RM 2,350.00
+PI-007771  whole invoice  RM 9,284.00 = ours RM 4,850.00 + never carried RM 4,434.00
+```
+
+Across 25 invoices, **RM 67,048.00** is billed on (receipt x order) pairs the
+migration never carried — named and counted so it is never read as a shortfall
+again.
+
+**`HC-GR-005334` is NOT a transposition to repair — do not "fix" it.** It looks
+like one: the reconcile names `DtlKey 917594` holding AKEMI ULTIMATE where the
+book says IMMORTAL, and `917604` the other way round, both RM 1,550.00. But our
+rows on that document carry NO AutoCount line key, so the pairing that produced
+those two lines is the CHECKER's own guess, and the reconcile says so: the two
+sides' item-code multisets are EQUAL — same products, same quantities. The
+document holds what the book ordered.
+
+`backfill-ac-downstream-line-keys.mjs`, dry-run `34245527467`, refuses to key
+them and states the reason:
+
+> `GR-005334|PO-009887: 7 line(s) left unkeyed — AKEMI IMMORTAL MATT (K): the
+> book has 2 lines of this item at this quantity and they are NOT identical
+> (2 distinct price/location/Desc2 combinations), and the build texts do not
+> match one-to-one either, so which is which is unknowable`
+
+So swapping the two item codes would not repair anything — it would assert a
+pairing nothing evidences, on a document whose goods are already right. It is a
+JUDGEMENT for the owner (or a Desc2-aware matcher), not a provable defect, and
+`check-po-gr-pi-chain.mjs` independently reports 0 transpositions for the same
+reason: it refuses to pair unkeyed lines.
+
 **Ref.** `fix/gr-line-align`, 2026-09-08.
