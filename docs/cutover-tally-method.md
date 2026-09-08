@@ -202,6 +202,51 @@ receipt belongs to ONE purchase order while an AutoCount receipt can span
 several, and 51 of the 214 in-scope receipts do. Counting receipts instead
 reports every one of those as short by the part raised against another order.
 
+### Why 9 goods receipts still differ on money — and why it is a DECISION, not a defect
+
+**PROVEN, from the committed book snapshot** `backend/scripts/data/ac-reconcile-truth.json.gz`
+(exported 2026-09-08, re-run the arithmetic below rather than quoting it):
+
+> Of the **11,623** receipt x order pairs AutoCount itself states, **8,169**
+> carry a price on the RECEIPT while the purchase ORDER states none at all.
+> Only 3,333 have a price on both.
+
+That is not an anomaly — it is how this business books a purchase. The price is
+settled when the goods arrive, which is the same fact behind the 241 unpriced
+purchase lines the owner ruled 「这个没问题」.
+
+Our goods receipts take their money from the purchase-ORDER line by design
+(`priceDeclared` in `backend/scripts/lib/ac-reconcile-erp-sql.mjs`;
+`reshape-migrated-grns.mjs` copies the book's item, quantity and date and leaves
+price to the order). So wherever the order is blank, our receipt is short by
+exactly that line.
+
+**Worked, on the three the reconcile named** (raw ringgit, book side proven):
+
+| pair | book line 1 | book line 2 | book pair total | our total |
+|---|---|---|---|---|
+| `GR-004909\|PO-009017` | 1 x RM 3,080.00 | 4 x RM 30.00 = 120.00 | RM 3,200.00 | **RM 120.00** |
+| `GR-005171\|PO-009344` | 1 x RM 2,250.00 | 2 x RM 40.00 = 80.00 | RM 2,330.00 | **RM 80.00** |
+| `GR-005169\|PO-009475` | 1 x RM 2,170.00 | 2 x RM 30.00 = 60.00 | RM 2,230.00 | **RM 60.00** |
+
+In each one our total equals the SECOND line to the sen and the big qty-1 line
+contributes zero. The book's own `PODTL` for all three orders states
+`UnitPrice 0.00`, so the book agrees the ORDER had no price; only the RECEIPT
+states one.
+
+**LIKELY, not yet observed on the ERP side:** that our purchase-order line
+carries a price for the small line and none for the large one. Settling it needs
+a production read — dispatch the PO/GR verdict workflow and read the
+`document total` detail.
+
+**Do NOT repair this by copying the book's receipt price.** It would put money
+on a receipt that its own purchase order does not have, contradict
+`priceDeclared`, and change what a purchase invoice raised off that receipt
+would say. It is a question for the owner — the money model, not a data error —
+and it sits beside his existing 「GR 0 没关系」 ruling, which already accepts a
+migrated receipt carrying LESS than the book states (RM 0.00). Whether a
+PARTIAL amount falls under the same ruling is his to say.
+
 **Currency is its own axis and it LOCKS.** A foreign purchase order's total is
 compared in the document's own currency, so the money can be right to the sen
 while the ERP's `currency` column reads MYR — which is wrong. It is deliberately
