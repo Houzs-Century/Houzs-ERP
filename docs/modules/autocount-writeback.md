@@ -2400,6 +2400,23 @@ also parsed **`Desc2`** to get the ERP's variants —
 `variants.fabricCode` / `gap` / `divanHeight` / `legHeight` / `totalHeight` /
 `specials` — so the specification has to go back.
 
+> **Where that block is built, since 2026-09-08.** The decode is
+> `parseBedframe(Desc2)` and the ten-key object above is
+> `bedframeVariants(bf, findColour)`, both exported from
+> `backend/scripts/lib/parse-bedframe.mjs`. The object used to be spelled out
+> inside `import-ac-outstanding-so.mjs`, `import-ac-outstanding-po.mjs` and
+> `topup-ac-po-lines.mjs` — byte-for-byte identical in all three — and a fourth
+> writer (`topup-ac-lines-from-truth.mjs`) would have made a fourth copy.
+> `parseBedframe` itself was in exactly that state once and drifted TWICE
+> (a808bf36, 60125216) before anyone noticed, so the copies were the risk. The
+> key names are a CONTRACT with the UI (the Fabrics picker reads `fabricCode`;
+> `totalHeight` is the form's "Total height (auto)") and are pinned by
+> `backend/tests/bedframeVariantsBlock.test.ts`, which transcribes the writers'
+> own expression rather than checking the module against itself.
+> Not to be confused with `blockFor` in `backend/scripts/lib/po-arm-own-text.mjs`:
+> that one carries `size` and NOT `specials` because it is a COMPARISON
+> projection for a diagnostic, never the block a writer persists.
+
 `Desc2` was already being sent, so this was missing CONTENT, not a missing field.
 `composeDescription2` emitted `Col / Fabric / Seat / Leg` and read colour off
 `fabricColor`, which is the GRN-family editors' key. A bedframe keeps its colour
