@@ -2127,14 +2127,57 @@ cost.
 the read-only DSN, 2026-09-08 11:52 UTC, company 1, exit 0 — **re-run before
 quoting it**, the sofa lanes move these numbers daily:
 
-> 2,882 documents. **2,711 identical · 37 differ and are work · 109 cannot be
-> compared · 25 the book itself is the gap.** NOT TALLIED. The 37 are 35 sofa
-> compartments, 1 specials and 1 `a book line we do not have`; **5 of the 35 sit
-> on a PROCEEDED order** and the rest do not. All 109 unanswerable ones have the
-> same cause — keyed, but the book's build text does not decode into pieces, so
-> only the owner's drawing settles them, and **none** can be closed by stamping a
-> line key. The document, SKU, quantity, unit price, document total,
-> colour/fabric, seat size and bedframe-build axes are all at **zero**.
+> 2,882 documents. **2,775 identical · 6 differ and are work · 45 cannot be
+> compared · 56 the book itself is the gap.** NOT TALLIED. The 6 are 4 sofa
+> compartments, 1 specials and 1 `a book line we do not have`; **1 of the 6 sits
+> on a PROCEEDED order**. The document, SKU, quantity, unit price, document
+> total, colour/fabric, seat size and bedframe-build axes are all at **zero**,
+> and stayed there across the repair.
+
+**Where the earlier 37 / 109 went** (runs `34226234984` before, `34231033829`
+after, both company 1 against the same 2026-09-08 book snapshot):
+
+| | before | after |
+| --- | --- | --- |
+| identical | 2,714 | 2,775 |
+| differ, and it is work | 33 | **6** |
+| cannot be compared | 109 | **45** |
+| the book itself is the gap | 26 | 56 |
+
+The `37` quoted above it was measured before PR #3282 merged; on current `main`
+the same corpus read **33**, and that four-document difference is #3282's, not
+this round's.
+
+`the book itself is the gap` RISING by 30 is the expected shape of this work, not
+a regression: a build read off the owner's DRAWING is by definition a value the
+book never stated, which is the definition of that column. It is the class
+already accepted as 一模一样.
+
+Three rounds did the closing:
+
+- **the owner's own rulings, asked for on the branch that never asked** — 16 of
+  the 20 documents holding a written ruling now read `RULED` instead of "cannot
+  be compared". The other 4 (`HC-SO-011733`, `012025`, `012929`, `013384`) stay
+  unanswerable ON PURPOSE: `RULED` needs the ERP to hold his answer as an exact
+  multiset, and on those four it does not — the report now names the answer each
+  is failing to match.
+- **`sofa-compartment-corrections-book-aligned.json`** — 30 sofas on 29
+  documents, expanded from the book's own decoded Desc2 (apply `34230069328`,
+  `VERIFY OK — 30 document(s), piece multiset and both money columns`, money
+  unchanged on every one).
+- **`sofa-compartment-corrections-drawings.json`** — 50 sofas read off the order
+  slips (apply `34230384064`, `VERIFY OK — 50 document(s)`, 10 purchase-order
+  lines carried in the same transaction, nothing downstream of them moved).
+
+**What is still open, and why** — none of it is a document nobody looked at:
+
+| document | why |
+| --- | --- |
+| `HC-SO-011099` | his ruling is real and NOT written; the build collapses two rows into one and the dropped row is a dedication target (`docs/bugs/0719`) |
+| `HC-SO-005082`, `HC-SO-011221` | the ERP rows' `description2` does not carry the book's words, so `desc2Match` cannot target them by text. They need targeting by `linked_ac_dtlkey` instead |
+| `HC-SO-007293` | book says `2S`, the ERP holds `2A(LHF)+L(RHF)`. Collapsing a richer build down to the book is the one direction that can DESTROY a correct earlier reading, so it was left rather than swept |
+| `HC-SO-012128` | a book line the ERP does not have — `HOK-SQUARE PILLOW` x4 at RM 0.00, "FOR CONPESSANTION WRONG ITEM DELIVERY". It NAMES a product, so the owner's 「没写的也删掉」 does not cover it and it must be CREATED. No writer exists for that yet — `probe-dropped-book-lines.mjs` only reports |
+| `HC-SO-013496` | the book asks for `Change 8030 Backcushion` and the line carries `CHANGE8030BACKREST`. Whether that is a real gap or a catalogue-spelling artifact needs a read of live `scm.special_addons`, and the only writer to hand sets `custom_specials`, which is DERIVED and self-erasing |
 
 
 ### Deleting an SO — DRAFT only, and the test-order escape hatch
