@@ -672,6 +672,40 @@ describe('the batch detail and the watchlists', () => {
     expect(body.arrivedNotRecorded.map((r) => r.ref)).toEqual(['ZZ9']);
     expect(body.clean).toBe(false);
   });
+
+  /* docs/bugs/0688 — the owner, the morning per-bank clearing went live: the
+     same instalment under GHL, HLB, MBB and PBB, and the header counting it
+     four times. An untagged payment is every acquirer's CANDIDATE (that is how
+     a statement finds it) but ONE payment on a watch list. */
+  test('an untagged payment sits on each watch list once, under no acquirer', async () => {
+    const { app } = harness({
+      acc_acquirers: [MBB, GHL],
+      mfg_sales_order_payments: [
+        soPayment(),
+        soPayment({ id: 'u1', so_doc_no: 'SO-2608-013', method: 'installment', merchant_provider: null, amount_sen: 336500, approval_code: '009577' }),
+      ],
+    });
+    const byId = (rows: Array<{ id: string; acquirerCode: string | null }>) =>
+      Object.fromEntries(rows.map((r) => [r.id, r.acquirerCode]));
+
+    const w = await (await app.request('/settlement/watchlist?from=2026-07-20&to=2026-08-16')).json() as {
+      recordedNotArrived: Array<{ id: string; acquirerCode: string | null }>;
+    };
+    expect(byId(w.recordedNotArrived)).toEqual({ p1: 'MBB', u1: null });
+    /* Asked about the merchant that never tagged it, it is still his candidate — once. */
+    const g = await (await app.request('/settlement/watchlist?acquirer=GHL&from=2026-07-20&to=2026-08-16')).json() as {
+      recordedNotArrived: Array<{ id: string; acquirerCode: string | null }>;
+    };
+    expect(byId(g.recordedNotArrived)).toEqual({ u1: null });
+
+    const t = await (await app.request('/settlement/in-transit?from=2026-07-20&to=2026-08-16')).json() as {
+      totalSen: number; ageing: Record<string, unknown>; lines: Array<{ paymentId: string; acquirerCode: string | null }>;
+    };
+    expect(Object.fromEntries(t.lines.map((l) => [l.paymentId, l.acquirerCode]))).toEqual({ p1: 'MBB', u1: null });
+    expect(t.lines).toHaveLength(2);
+    expect(t.totalSen).toBe(436500);
+    expect(Object.keys(t.ageing).sort()).toEqual(['MBB', '未标']);
+  });
 });
 
 describe('GET /settlement/batches', () => {

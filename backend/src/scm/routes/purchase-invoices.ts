@@ -25,7 +25,7 @@ import {
   coveredGrnIds, findUnlinkedPiLines, unlinkedInvoiceResponse, unlinkedCheckFailedResponse,
 } from '../lib/return-unlinked-lines';
 import { assertSourceLinesInCompany } from '../lib/ref-in-company';
-import { checkInvoiceSourceItemIdentity } from '../lib/invoice-source-item-identity';
+import { piGrnSourceRefusal } from '../lib/pi-grn-source-guard';
 import { readStatusCounts } from '../lib/status-counts';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
@@ -769,38 +769,12 @@ purchaseInvoices.post('/', async (c) => {
       if (!mig.ok) return refuseWithoutWriting(c, loadFailed(mig.reason, 'check whether this receipt was carried over from the account book'), 500);
       if (mig.refusal) return refuseWithoutWriting(c, mig.refusal, 409);
     }
-    if (gids.length > 0) {
-      /* The parent GRN rides the embed for the guard below: these grn_item ids
-         come from the request body, and the downstream writes
-         (recomputeGrnInvoiced, recostForPi) land on whoever owns them while the
-         invoice is stamped activeCompanyId(c). */
-      const { data: giRows } = await sb.from('grn_items')
-        .select('id, qty_accepted, invoiced_qty, returned_qty, grn:grns!inner ( grn_number, company_id )').in('id', gids);
-      type GiRow = {
-        id: string; qty_accepted: number; invoiced_qty: number; returned_qty: number;
-        grn?: { grn_number?: string | null; company_id?: number | null } | Array<{ grn_number?: string | null; company_id?: number | null }> | null;
-      };
-      const giList = (giRows ?? []) as unknown as GiRow[];
-      const parentOf = (g: GiRow) => (Array.isArray(g.grn) ? g.grn[0] : g.grn) ?? null;
-      // isCrossCompanySource is false for a null company_id, so a hit is never null.
-      const foreign = giList.map(parentOf).find((p) => isCrossCompanySource(p?.company_id, c));
-      if (foreign) return refuseWithoutWriting(c, crossCompanyConversionBlocked(foreign.grn_number ?? null, foreign.company_id, c), 409);
-      const byId = new Map<string, { qty_accepted: number; invoiced_qty: number; returned_qty: number }>(
-        giList.map((g) => [g.id, g]),
-      );
-      const over: Array<{ grnItemId: string; requested: number; remaining: number }> = [];
-      for (const [gid, want] of wantByGrnItem.entries()) {
-        const g = byId.get(gid);
-        if (!g) return refuseWithoutWriting(c, { error: 'item_not_found', grnItemId: gid, message: 'A line on this invoice points at a receipt line that is no longer there. Reopen the Goods Receipt and raise the invoice from it again.' }, 400);
-        const remaining = (g.qty_accepted ?? 0) - (g.invoiced_qty ?? 0) - (g.returned_qty ?? 0);
-        if (want > remaining) over.push({ grnItemId: gid, requested: want, remaining });
-      }
-      if (over.length > 0) {
-        return refuseWithoutWriting(c, { error: 'qty_exceeds_remaining', lines: over }, 409);
-      }
-      /* IDENTITY, not just the key — invoice-source-item-identity.ts has the why. */
-      const identity = await checkInvoiceSourceItemIdentity(sb, 'GR', items.map((it) => ({ sourceItemId: (it.grnItemId as string | undefined) ?? null, itemCode: it.itemCode })), activeCompanyId(c) ?? null);
-      if (identity) return refuseWithoutWriting(c, identity.body, identity.status);
+    /* Company + IDENTITY + quantity, over ONE read of the source rows — moved
+       to lib/pi-grn-source-guard.ts beside its siblings checkSiOverRemaining
+       and qtyCapRefusal. The identity half is docs/bugs/0672 site 15. */
+    {
+      const bad = await piGrnSourceRefusal(sb, c, wantByGrnItem, items);
+      if (bad) return refuseWithoutWriting(c, bad.body, bad.status);
     }
   }
 
@@ -2023,7 +1997,12 @@ purchaseInvoices.post('/:id/items', async (c) => {
       grnItemIds: [(it.grnItemId as string | undefined) ?? null],
     });
     if (covered.error) return c.json(unlinkedCheckFailedResponse(covered.error), 500);
-    const unlinked = await findUnlinkedPiLines(sb, covered.ids, [{ lineRef: String(it.lineNumber ?? '0'), itemCode: String(it.itemCode ?? ''), qty: Number(it.qty ?? 1), soItemId: (it.grnItemId as string | undefined) ?? null }]);
+    const unlinked = await findUnlinkedPiLines(sb, covered.ids, [{
+      lineRef: String(it.lineNumber ?? '0'),
+      itemCode: String(it.itemCode ?? ''),
+      qty: Number(it.qty ?? 1),
+      soItemId: (it.grnItemId as string | undefined) ?? null,
+    }]);
     if (!unlinked.ok) return c.json(unlinkedCheckFailedResponse(unlinked.reason), 500);
     if (unlinked.offenders.length > 0) return c.json(unlinkedInvoiceResponse(unlinked.offenders), 409);
   }
@@ -2038,18 +2017,19 @@ purchaseInvoices.post('/:id/items', async (c) => {
   // (accepted - invoiced - returned).
   const grnItemId = (it.grnItemId as string) ?? null;
   if (grnItemId) {
-    const xl = await assertSourceLinesInCompany(sb, c, 'grn_items', [grnItemId]);
+    const xl = await assertSourceLinesInCompany(sb, c, 'grn_items', [grnItemId], { lines: [it], linkField: 'grnItemId', source: 'Goods Receipt line' });
     if (!xl.ok) return c.json(xl.body, xl.status);
     /* Same refusal as every other path that can attach a GRN line — a receipt
        carried over from AutoCount is invoiced by the converter, never by hand. */
     const mig = await migratedRefusalForGrnItems(sb, [grnItemId]);
     if (!mig.ok) return c.json({ error: 'load_failed', reason: mig.reason }, 500);
     if (mig.refusal) return c.json(mig.refusal, 409);
-    const capLock = await qtyCapRefusal(sb, { table: 'grn_items', id: grnItemId, capColumn: 'qty_accepted', drawnColumns: ['invoiced_qty', 'returned_qty'], requested: qty, what: 'GRN line' });
+    const capLock = await qtyCapRefusal(sb, {
+      table: 'grn_items', id: grnItemId,
+      capColumn: 'qty_accepted', drawnColumns: ['invoiced_qty', 'returned_qty'],
+      requested: qty, what: 'GRN line',
+    });
     if (capLock) return c.json(capLock, 409);
-    /* Same rule as POST / — this class is a rule applied at N-1 of its N sites. */
-    const identity = await checkInvoiceSourceItemIdentity(sb, 'GR', [{ sourceItemId: grnItemId, itemCode: it.itemCode }], activeCompanyId(c) ?? null);
-    if (identity) return c.json(identity.body, identity.status);
   }
 
   const row: Record<string, unknown> = {
@@ -2254,7 +2234,12 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
   if (!grnItemId && it.itemCode !== undefined) {
     const covered = await coveredGrnIds(sb, { headerGrnId: parentGrnId, piId });
     if (covered.error) return c.json(unlinkedCheckFailedResponse(covered.error), 500);
-    const unlinked = await findUnlinkedPiLines(sb, covered.ids, [{ lineRef: itemId, itemCode: String(it.itemCode ?? prev.item_code ?? ''), qty, soItemId: null }]);
+    const unlinked = await findUnlinkedPiLines(sb, covered.ids, [{
+      lineRef: itemId,
+      itemCode: String(it.itemCode ?? prev.item_code ?? ''),
+      qty,
+      soItemId: null,
+    }]);
     if (!unlinked.ok) return c.json(unlinkedCheckFailedResponse(unlinked.reason), 500);
     if (unlinked.offenders.length > 0) return c.json(unlinkedInvoiceResponse(unlinked.offenders), 409);
   }
@@ -2265,17 +2250,24 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
   const delta = qty - prevQty;
   if (grnItemId && delta !== 0) {
     // remaining headroom for THIS line = accepted - returned - (invoiced - prevQty).
-    const capLock = await qtyCapRefusal(sb, { table: 'grn_items', id: grnItemId, capColumn: 'qty_accepted', drawnColumns: ['invoiced_qty', 'returned_qty'], requested: qty, ownPriorDraw: prevQty, what: 'GRN line' });
+    const capLock = await qtyCapRefusal(sb, {
+      table: 'grn_items', id: grnItemId,
+      capColumn: 'qty_accepted', drawnColumns: ['invoiced_qty', 'returned_qty'],
+      requested: qty, ownPriorDraw: prevQty, what: 'GRN line',
+    });
     if (capLock) return c.json(capLock, 409);
   }
 
-  /* THE FOURTH DOOR: the unlinked guard above is scoped to a STORED link of
-     null, so a line that ALREADY carries a grn_item_id could have its product
-     rewritten under a live link — and recostForPi books this line's money onto
-     that lot. Checked on the EFFECTIVE post-patch code. */
-  {
-    const drift = await checkInvoiceSourceItemIdentity(sb, 'GR', [{ sourceItemId: grnItemId, itemCode: updates['item_code'] !== undefined ? updates['item_code'] : prev.item_code }], co.companyId);
-    if (drift) return c.json(drift.body, drift.status);
+  /* THE LINK CAN ALSO DRIFT AFTER THE FACT. docs/bugs/0672's second structural
+     observation: four EDIT paths let `item_code` be rewritten UNDER a live link,
+     so a line bound correctly at create time can be edited out of identity with
+     its source afterwards; only the GRN edit path freezes it
+     (grnInheritedFieldChanges). Re-asserted against the code that will actually
+     be STORED — the body's when it sends one, the previous value otherwise. */
+  if (grnItemId) {
+    const xl = await assertSourceLinesInCompany(sb, c, 'grn_items', [grnItemId],
+      { lines: [{ grnItemId, itemCode: it.itemCode ?? prev.item_code }], linkField: 'grnItemId', source: 'Goods Receipt line' });
+    if (!xl.ok) return c.json(xl.body, xl.status);
   }
 
   const { error } = await scopeToCompanyId(sb.from('purchase_invoice_items').update(updates).eq('id', itemId), co.companyId);

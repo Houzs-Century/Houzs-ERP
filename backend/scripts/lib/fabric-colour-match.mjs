@@ -371,7 +371,12 @@ export function buildFabricColourIndex(rows) {
     const hit = findColourRaw(text);
     if (!hit) return null;
     const row = live(hit.row);
-    return { row, via: hit.via, form: hit.form, padded: hit.padded === true, redirected: row !== hit.row };
+    return {
+      row, via: hit.via, form: hit.form, padded: hit.padded === true, redirected: row !== hit.row,
+      /* TRUE when the SERIES was supplied by the matcher rather than by the
+         document — a bare number read as a PC colour. docs/bugs/0672 site 16. */
+      assumedSeries: hit.assumedSeries === true,
+    };
   };
 
   const findColour = (text) => {
@@ -383,7 +388,7 @@ export function buildFabricColourIndex(rows) {
     if (!text) return null;
     const forms = colourForms(text);
     if (!forms.length) return null;
-    const found = (row, via, form, i) => ({ row, via, form, padded: i >= (forms.faithful ?? forms.length) });
+    const found = (row, via, form, i, assumedSeries = false) => ({ row, via, form, padded: i >= (forms.faithful ?? forms.length), assumedSeries });
     // pass 1: the exact index, over every spelling. Faithful spellings first.
     for (let i = 0; i < forms.length; i++) {
       const f = forms[i];
@@ -394,10 +399,26 @@ export function buildFabricColourIndex(rows) {
         const h = exact.get(cand);
         if (h) return found(h, "exact", f, i);
       }
-      if (/^\d/.test(f)) { // a bare number is a PC151 colour in the owner's data
+      /* A BARE NUMBER IS ASSUMED TO BE THE PC SERIES — and the assumption is now
+         REPORTED, docs/bugs/0672 site 16. The document says "03" and nothing
+         else; this pass prepends "PC" and matches PC03. In the owner's data that
+         is usually right, which is why it exists and why it stays — deleting it
+         would lose real matches on real documents. What was wrong is that the
+         answer came back indistinguishable from a colour the document actually
+         NAMED. The series is not stated anywhere; it is supplied by this line of
+         code, and a bare number under a different series resolves to a PC colour
+         that was never ordered.
+
+         `assumedSeries` rides the result, exactly as `padded` and `redirected`
+         already do and for the reason this file's own header gives: so a caller
+         can split "this resolves today" from "this resolves only because of a
+         widening" without keeping a second copy of the matcher. A caller that
+         DISPLAYS a colour may use it; a caller that WRITES it onto a line should
+         treat it as unresolved unless it can establish the series itself. */
+      if (/^\d/.test(f)) {
         for (const cand of [stripColour("PC" + f), padTail(stripColour("PC" + f))]) {
           const h = exact.get(cand);
-          if (h) return found(h, "exact", f, i);
+          if (h) return found(h, "exact", f, i, true);
         }
       }
     }

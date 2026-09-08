@@ -1,0 +1,69 @@
+name: Sales orders open for NEW — status (read-only)
+
+# Manual. The verification half of lifting scm.sales.orders out of the write
+# freeze: it reads BOTH switches and then the two facts they are supposed to
+# produce — did a new order actually save, and did anything touch a migrated
+# one. Strictly SELECTs; it can never change either switch.
+#
+# Run it a few minutes after a lift, and again the next morning. The verdict
+# appears as run annotations. Exits 0 for every legitimate answer, including
+# "nothing yet"; only an unreachable database exits non-zero.
+#
+# No `tee` (docs/bugs/0687): a pipeline whose left side dies still reports the
+# exit status of `tee` unless `pipefail` is set.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      hours:
+        description: "Look back this many hours"
+        required: false
+        default: "24"
+        type: string
+      company_id:
+        description: "Company id (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+
+# Its own group: a diagnostic must never queue behind, or displace, a release.
+concurrency:
+  group: check-so-open-for-new-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-so-open-for-new.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          HOURS: ${{ inputs.hours }}
+          COMPANY_ID: ${{ inputs.company_id }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-so-open-for-new.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          HOURS: ${{ inputs.hours }}
+          COMPANY_ID: ${{ inputs.company_id }}

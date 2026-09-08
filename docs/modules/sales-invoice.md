@@ -121,30 +121,6 @@ Three 409s, and the codes matter to API callers:
 | `do_not_confirmed` | still a DRAFT; #2485 keeps Confirm a prerequisite |
 | `do_not_transferable` | any other status, `INVOICED` included (nothing writes it, so the label means "somebody set it") |
 
-**The line must name the SAME PRODUCT as the delivery line it comes from — 409
-`source_link_material_mismatch`, since 2026-09-08.** `POST /`, `POST /:id/items`
-and `PATCH /:id/items/:itemId` all take `doItemId` from the client, and until
-this date checked company, delivery status, migrated source and the invoiced
-ceiling — never the item. `checkInvoiceSourceItemIdentity`
-(`scm/lib/invoice-source-item-identity.ts`) closes that: it takes its OWN
-company-scoped read (a guard whose inputs are assembled elsewhere can be
-starved — `checkSiReopenOverRemaining` paid for that lesson), compares the
-normalised `item_code`, and FAILS CLOSED with 503
-`source_identity_unavailable` when the read errors.
-
-The PATCH arm checks the EFFECTIVE POST-PATCH code, not the body's, because a
-patch that omits `itemCode` still leaves a code sitting next to the link. That
-is the door `unlinkedEditRefusal` beside it does not cover: that guard is scoped
-to a STORED link of `null`, so a line already carrying a `do_item_id` could have
-its product rewritten to anything.
-
-Why it matters here specifically: `do_item_id` is the `invoiced` term in
-`remaining = delivered - invoiced - returned`, the cap every DO to Sales Invoice
-write path is measured against (migration `0303_scm_si_items_do_item_id.sql`
-calls it "the column a MONEY CEILING rests on"). Bug class
-`docs/bugs/0672-bug-class-key-without-identity-a-link-written-on-the-key-alo.md`;
-the production rows that made it concrete are `docs/bugs/0676`.
-
 `LOADED` is deliberately NOT refused. #2485 widened the rule to every CONFIRMED
 delivery on 2026-08-19; #2557 took LOADED back out of the server's PICKER on
 2026-08-20 as a side effect of a stock fix, leaving the button offered and the
@@ -900,3 +876,53 @@ credit never lived in this ledger. The invoice side is unchanged: a refund
 is allowed only on a CANCELLED invoice (its revenue already reversed by
 `reverseSiRevenue`); a live invoice is refused with the reason, because the
 paper for that is the credit note.
+
+## The source line must be the SAME PRODUCT — 409 `link_material_mismatch`
+
+Added 2026-09-08, `docs/bugs/0682`; bug class `docs/bugs/0672` site 15.
+
+Every write path here that accepts a **Delivery Order line (`do_item_id`) or Sales Order line (`so_item_id`)** id from the request body proved
+three things about it — the source line's COMPANY, its parent document's STATUS,
+and that the QUANTITY fits. It never proved the two rows name the same product.
+A line for product B naming a source line for product A therefore passed
+everything: the foreign key is valid, nothing dangles, no constraint breaks, and
+no coverage count drops.
+
+That matters because the quantity ledgers are addressed BY THE LINK
+(`recomputePoReceived`, `recomputeGrnInvoiced`, `adjustGrnReturnedQty` and
+`doLineRemaining` all key on it), so a wrong link draws down the WRONG source
+line and leaves the right one open to be invoiced a second time.
+
+**The rule** is `backend/src/scm/lib/line-link-item-identity.ts` — one home,
+reached three ways depending on what the path already has in hand:
+`assertSourceLinesInCompany(..., { lines, linkField, source })` where the company
+read is already happening, `lineLinkItemMismatch(...)` where the source rows are
+already held, `assertLinkedLineItemsMatch(...)` otherwise. Codes are compared
+trimmed, upper-cased and with inner whitespace collapsed — the same
+normalisation as `soLinkTargetRefusal` and `normItemCode`.
+
+**Two refusals worth knowing before you debug one:**
+
+- A source row that **cannot be read back** is refused, not skipped. An id that
+  resolved to nothing cannot be asserted equal to anything.
+- A **failed read** answers 503 `link_identity_unavailable`, never a pass. "We
+  could not check" must not be spelled the same way as "we checked and it was
+  fine".
+
+Identity is asserted **before** the quantity cap wherever both run: a ceiling
+computed against the wrong line is a number about the wrong thing, and reporting
+it sends the operator to fix a quantity when the real fault is the source they
+picked.
+
+**The EDIT door on a line that is ALREADY linked (2026-09-08, second pass).**
+The paragraph above is about BINDING a link. A link bound correctly can still be
+edited out of identity afterwards, and `unlinkedEditRefusal` beside it does not
+see that: it is scoped to a STORED link of `null`. So a line already carrying a
+`do_item_id` could have its `item_code` rewritten to anything, and
+`doLineRemaining` would then spend that delivery line's allowance on a different
+product. `PATCH /:id/items/:itemId` now re-asserts identity through
+`assertLinkedLineItemsMatch` — the same rule, the same home — on the EFFECTIVE
+POST-PATCH code, because a patch that omits `itemCode` still leaves the stored
+code sitting next to the link. The purchase chain closes the identical door in
+`purchase-invoices.ts`; the enumeration of both is
+`backend/tests/keyWithoutIdentityGuards.test.mjs`.

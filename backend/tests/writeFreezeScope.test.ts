@@ -275,3 +275,77 @@ describe('isFrozen is total', () => {
     }
   });
 });
+
+/* ── The GO-LIVE lift, as a value, before anybody types it into production ───
+
+   The row does NOT hold '1' any more. Measured on prod 2026-09-08 10:31 MYT
+   (Actions -> "SCM write freeze — status (read-only)", run 34180338466):
+
+     scm.write_freeze = "1 - scm.procurement.products"   (updated 2026-09-02)
+
+   So sales orders are opened by ADDING to that clause, and the stage table in
+   docs/write-freeze-staged-lift.md §6 — which starts from a blank `areas` — is
+   the trap: `areas` is CUMULATIVE, and its stage-1 row would silently re-close
+   product setup. Both values are pinned below, the right one and the wrong one,
+   because the difference between them is invisible in the row and expensive on
+   the floor. */
+describe('the go-live lift for sales orders', () => {
+  const LIVE_TODAY = '1 - scm.procurement.products';
+  const LIFT = '1 - scm.procurement.products, scm.sales.orders';
+
+  it('today, sales orders are frozen and product setup is not', () => {
+    const v = parseFreezeValue(LIVE_TODAY);
+    expect(v.malformed).toBe(false);
+    expect(v.unknown).toEqual([]);
+    expect(isFrozen(v, HOUZS, 'scm.sales.orders')).toBe(true);
+    expect(isFrozen(v, HOUZS, 'scm.procurement.products')).toBe(false);
+  });
+
+  it('the lift opens sales orders and KEEPS product setup open', () => {
+    const v = parseFreezeValue(LIFT);
+    expect(v.malformed).toBe(false);
+    expect(v.unknown).toEqual([]);
+    expect(v.open).toEqual(['scm.procurement.products', 'scm.sales.orders']);
+    expect(isFrozen(v, HOUZS, 'scm.sales.orders')).toBe(false);
+    expect(isFrozen(v, HOUZS, 'scm.procurement.products')).toBe(false);
+  });
+
+  /* Everything else must stay shut. Named individually rather than looped over
+     SCM_AREAS, because the point is that a reader can SEE that purchase orders,
+     goods receipts, deliveries and invoices are still paused. */
+  it('opens NOTHING else — POs, GRNs, PIs, deliveries, invoices, stock all stay shut', () => {
+    const v = parseFreezeValue(LIFT);
+    for (const area of [
+      'scm.procurement.po', 'scm.procurement.grn', 'scm.procurement.pi', 'scm.procurement.pr',
+      'scm.procurement.mrp', 'scm.procurement.suppliers',
+      'scm.sales.delivery', 'scm.sales.invoices', 'scm.sales.returns',
+      'scm.warehouse.inventory', 'scm.warehouse.adjustments', 'scm.warehouse.transfers',
+      'scm.warehouse.stock_take', 'scm.finance.accounting', 'scm.finance.outstanding',
+      'scm.transportation.drivers',
+    ]) {
+      expect(isFrozen(v, HOUZS, area), area).toBe(true);
+    }
+  });
+
+  it('a router with no area key stays shut — nothing can name it', () => {
+    expect(isFrozen(parseFreezeValue(LIFT), HOUZS, null)).toBe(true);
+  });
+
+  it('2990 is untouched by the lift, as it is by the freeze', () => {
+    expect(isFrozen(parseFreezeValue(LIFT), TWENTY_NINE_NINETY, 'scm.sales.orders')).toBe(false);
+  });
+
+  /* THE MISTAKE, PINNED. The runbook's stage-1 row reads `areas =
+     scm.sales.orders`. Typed against the row as it stands, that CLOSES product
+     setup — a lift that takes something away. */
+  it('the runbook stage-1 value, typed today, silently RE-CLOSES product setup', () => {
+    const wrong = parseFreezeValue('1 - scm.sales.orders');
+    expect(isFrozen(wrong, HOUZS, 'scm.sales.orders')).toBe(false);
+    expect(isFrozen(wrong, HOUZS, 'scm.procurement.products')).toBe(true);
+  });
+
+  it('putting it back is the value that is live today', () => {
+    const back = parseFreezeValue(LIVE_TODAY);
+    expect(isFrozen(back, HOUZS, 'scm.sales.orders')).toBe(true);
+  });
+});

@@ -1815,6 +1815,36 @@ which is per-line by nature. `seedFollowerVariants` strips both.
 The rule itself, and which pages are on it, are documented in
 `docs/modules/sales-order.md`.
 
+## `migrated_no_stock` — a DELIVERED order with no OUT behind it (mig 0276)
+
+The delivery orders carried over from AutoCount are created **DELIVERED with no
+inventory movement**, deliberately: the balance snapshot already counts their
+units as gone, so an OUT here would deduct the same units twice.
+
+**The DO CANCEL path needed no change, and knowing WHY is the point.** It is
+MOVEMENT-derived: `fn_reverse_do_out` loops over
+`inventory_movements WHERE source_doc_type='DO' AND source_doc_id = …`, and
+`buildDoReversalRows` is handed the same rows. Zero movements, zero buckets,
+zero writes — safe by construction, not by a guard. The GRN cancel path is
+LINE-derived and was not (`docs/modules/grn.md` §5b).
+
+**Two DO paths were NOT movement-derived and are now guarded:**
+
+| Function | What it did to a migrated DO |
+|---|---|
+| `resyncInventoryForDo` | `delta = target_qty − current_net_out`, and `current_net_out` is 0 for every bucket — so ONE line edit wrote a full OUT for EVERY line. Reached from `POST /:id/items`, `PATCH /:id/items/:itemId`, `DELETE /:id/items/:itemId`. It returns before computing a delta now. |
+| `deductInventoryForDo` | Its idempotency guard asks *"did this DO already write an OUT?"*, and for migrated paperwork the answer is legitimately no and always will be — so the guard against double-deducting was the guard that let it in. Reachable by reverting a migrated DO to DRAFT (which reverses nothing, correctly) and re-shipping. It returns `[]` now. |
+
+`resyncInventoryForDo` is exported for this reason and pinned by
+`backend/tests/migratedNoStockDoResync.test.ts`, proved RED with the guard
+disabled: two OUT rows, the whole delivery, from one line edit. Both header
+reads carry a forward-compat retry for a database without mig 0276, the same
+shape `is_dropship` already had.
+
+Ledger:
+`docs/bugs/0675-a-migrated-goods-receipt-cancelled-reversing-879-units-it-ne.md`.
+Was it ever hit in production: Actions -> *Migrated cancel exposure (read-only)*.
+
 ## A migrated DO line's snapshot columns (2026-08-11)
 
 `scm.delivery_order_items` carries `item_group`, `variants` and `description2`
@@ -1938,15 +1968,20 @@ data error.
   order is reading the document.
 - **The column** is added by
   `backend/src/db/migrations-pg/20260907T2340_scm_do_item_ac_substituted.sql` and
-  written only by `backend/scripts/lib/migrated-do-writer.mjs`. That migration
-  takes the `ACCESS EXCLUSIVE` lock with a **3s `lock_timeout` and up to 20
-  retries**, because its first, bare form timed out waiting for the lock on a
-  live cutover table and blocked every migration behind it (deploy run
-  34141376280; `docs/bugs/0677-*`). The ALTER is metadata-only — a constant
-  default needs no rewrite — so the whole cost is the lock. **Any future
-  `ALTER TABLE` on `scm.delivery_order_items` or `scm.delivery_orders` must bound
-  its lock wait the same way**: these tables take continuous writes and an
-  unbounded wait in front of the deploy pipeline stops everyone.
+  written only by `backend/scripts/lib/migrated-do-writer.mjs`. That migration is a bare
+  `ALTER TABLE` and it **timed out on its first attempt** against the live
+  cutover table — `canceling statement due to statement timeout`, deploy run
+  34141376280 — blocking every migration behind it until a later deploy retried
+  and got the lock (`docs/bugs/0677-*`). The ALTER is metadata-only, since a
+  constant default needs no rewrite, so the whole cost was the `ACCESS EXCLUSIVE`
+  LOCK.
+
+  **Any future `ALTER TABLE` on `scm.delivery_order_items` or
+  `scm.delivery_orders` must bound its lock wait** — a short `lock_timeout` with
+  retries — because these tables take continuous writes and an unbounded wait
+  sitting in front of the deploy pipeline stops everyone. `backend-postgres` CI
+  cannot warn you: it applies migrations to a container with no concurrent
+  writers, so this class is invisible to every gate the repo has.
 - **The importer can no longer lose a note quietly.**
   `create-migrated-documents.mjs` asserts two conservation identities — every
   note in the cut is either created or NAMED, and every book line is either
@@ -2082,3 +2117,83 @@ and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
 answers. `coverage` is a required prop on the shared drill-down; the rule, the
 five surfaces that fetch separately, and how to add a sixth are in
 `docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).
+
+## The source line must be the SAME PRODUCT — 409 `link_material_mismatch`
+
+Added 2026-09-08, `docs/bugs/0682`; bug class `docs/bugs/0672` site 15.
+
+Every write path here that accepts a **Sales Order line (`so_item_id`)** id from the request body proved
+three things about it — the source line's COMPANY, its parent document's STATUS,
+and that the QUANTITY fits. It never proved the two rows name the same product.
+A line for product B naming a source line for product A therefore passed
+everything: the foreign key is valid, nothing dangles, no constraint breaks, and
+no coverage count drops.
+
+That matters because the quantity ledgers are addressed BY THE LINK
+(`recomputePoReceived`, `recomputeGrnInvoiced`, `adjustGrnReturnedQty` and
+`doLineRemaining` all key on it), so a wrong link draws down the WRONG source
+line and leaves the right one open to be shipped a second time.
+
+**The rule** is `backend/src/scm/lib/line-link-item-identity.ts` — one home,
+reached three ways depending on what the path already has in hand:
+`assertSourceLinesInCompany(..., { lines, linkField, source })` where the company
+read is already happening, `lineLinkItemMismatch(...)` where the source rows are
+already held, `assertLinkedLineItemsMatch(...)` otherwise. Codes are compared
+trimmed, upper-cased and with inner whitespace collapsed — the same
+normalisation as `soLinkTargetRefusal` and `normItemCode`.
+
+**Two refusals worth knowing before you debug one:**
+
+- A source row that **cannot be read back** is refused, not skipped. An id that
+  resolved to nothing cannot be asserted equal to anything.
+- A **failed read** answers 503 `link_identity_unavailable`, never a pass. "We
+  could not check" must not be spelled the same way as "we checked and it was
+  fine".
+
+Identity is asserted **before** the quantity cap wherever both run: a ceiling
+computed against the wrong line is a number about the wrong thing, and reporting
+it sends the operator to fix a quantity when the real fault is the source they
+picked.
+
+## A migrated DO line will NOT bind to a sales-order line colour cannot choose (2026-09-08)
+
+`backend/scripts/lib/migrated-do-writer.mjs` `buildMigratedDoPlan` buckets
+candidate sales-order lines on `(AutoCount SO number, ERP item code)` and then
+takes them **by position**. Two lines of one sofa model in two fabrics are an
+ordinary order, and the account book's delivery line carries neither a colour nor
+a line key: `fromSoDtlKey` is populated on 10,792 of 18,890 purchase-order lines
+and **0 of 48,772 delivery-order lines** in the 2026-09-08 re-cut. When the two
+orders list the pair in a different sequence the result is an exact swap — and
+the writer copies `variants` off whichever line it paired with, so the note
+inherits the other customer's colour.
+
+`DO-011505` and `DO-011478` are NOT this mechanism, though `docs/bugs/0672` says
+they are. Their swapped keys carry different AutoCount codes that map to
+different ERP codes, so those rows never share a bucket here. See
+`docs/bugs/0689`.
+
+**The rule now: pair on model + colour; where colour cannot resolve it, write NO
+link.** Positional consumption happens only while the candidate lines are
+indistinguishable by `variantIdentity` (`scripts/lib/do-so-item-pairing.mjs` —
+`pwpCode`, then `colourId`, then the summary, then `description2`). Otherwise the
+row is refused into that delivery note's own `dropped` list with a reason naming
+the document and the code, and `stats.ambiguousColour` counts it.
+
+**What this changes for a person.** An affected delivery note comes out SHORT and
+LISTED rather than complete-and-wrong. `sync-ac-delta.mjs`'s DO lane counts the
+refusal in its ALL-OR-NOTHING total, so the note is refused whole rather than
+written partial; `create-migrated-documents.mjs` prints a `colour-guard:` line
+beside its `duplicate-guard:` one. A missing link is visible and recoverable; a
+wrong one puts the wrong colour in front of a customer and reads as correct to
+every check we have. `docs/bugs/0688`.
+
+## A migrated invoice follows its parent's compartment correction (2026-09-08)
+
+`create-migrated-invoices.mjs` copies `item_code` and `variants` off the delivery
+or receipt line it is raised from, so a migrated invoice line is a SNAPSHOT with
+no opinion of its own. When `apply-sofa-compartment-corrections.mjs` moves a sofa
+line off its `-1S` placeholder it now carries the new code onto
+`sales_invoice_items` and `purchase_invoice_items` as well as the PO, GRN and DO
+lines — guarded by `migrated_no_stock`, with a typed invoice HELD and reported by
+number rather than overwritten. Four production invoice lines were left quoting a
+parent that had already changed; `docs/bugs/0687` has the trace and the repair.

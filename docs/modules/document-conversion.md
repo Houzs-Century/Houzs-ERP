@@ -1372,26 +1372,38 @@ sales-invoice lines and 3 of 198 linked purchase-invoice lines named a source
 line for a different product — every one FILLED, none DANGLING, so no
 constraint and no coverage count could see them.
 
-`checkInvoiceSourceItemIdentity` (`scm/lib/invoice-source-item-identity.ts`) now
-guards all six write paths — create, add-line and line-PATCH on each chain. It
-takes its OWN company-scoped read rather than trusting rows another guard
-assembled, and FAILS CLOSED with 503 `source_identity_unavailable`. The PATCH
-arms check the EFFECTIVE POST-PATCH code, which is the door `unlinkedEditRefusal`
-does not cover: that guard is scoped to a STORED link of `null`, so a line that
-ALREADY carries a `do_item_id` / `grn_item_id` could have its product rewritten
-under a live link. Bug class
+The rule has ONE home — `backend/src/scm/lib/line-link-item-identity.ts` — and
+guards all six write paths on these two chains: create, add-line and line-PATCH
+each side. It is reached three ways depending on what the path already holds
+(`piGrnSourceRefusal` and `siLinkedItemCodes` where the source rows are already
+read, `assertSourceLinesInCompany(..., { lines, linkField, source })` where the
+company read is already happening, `assertLinkedLineItemsMatch` otherwise), and
+it FAILS CLOSED with 503 `link_identity_unavailable`. The PATCH arms check the
+EFFECTIVE POST-PATCH code, which is the door `unlinkedEditRefusal` does not
+cover: that guard is scoped to a STORED link of `null`, so a line that ALREADY
+carries a `do_item_id` / `grn_item_id` could have its product rewritten under a
+live link. Which call site uses which way in is enumerated in
+`backend/tests/keyWithoutIdentityGuards.test.mjs`. Bug class
 `docs/bugs/0672-bug-class-key-without-identity-a-link-written-on-the-key-alo.md`.
 
-**What the five production rows actually were, and it was not a wrong link.**
-`probe-invoice-link-facts.mjs` (run 34143079454, 2026-09-08 00:26 local) named
-them: every one is the SAME sofa model and a DIFFERENT compartment, on a source
-document carrying exactly ONE line which the invoice header itself names. The
-invoice side is always `{model}-1S` — the cutover binding's placeholder
-(`scripts/lib/sofa-piece-fold.mjs`: "The binding CSV maps every AutoCount sofa
-item to the model's `-1S` compartment"). The link was right; the invoice line had
-simply never been decomposed while its source line had.
-`repair-invoice-source-item-code.mjs` copies the compartment across, touching no
-money and no link. `docs/bugs/0676` and `docs/bugs/0677`.
+**What those production rows actually were, and it was not a wrong link.**
+`probe-invoice-link-facts.mjs` named them: every one is the SAME sofa model and a
+DIFFERENT compartment, on a source document carrying exactly ONE line which the
+invoice header itself names. The invoice side is always `{model}-1S` — the
+cutover binding's placeholder (`scripts/lib/sofa-piece-fold.mjs`: "The binding
+CSV maps every AutoCount sofa item to the model's `-1S` compartment"). The link
+was right; the invoice line had simply never been decomposed while its source
+line had, because `apply-sofa-compartment-corrections.mjs` carried the corrected
+code to `purchase_order_items`, `grn_items` and `delivery_order_items` and not to
+the two invoice tables.
+
+The count moved while it was being measured, which is why no number is quoted
+here: `probe-link-identity` counted 5 at 2026-09-07 23:22 and
+`probe-invoice-link-facts` run 34178911176 (2026-09-08 10:08 local) counted 4 —
+`HC-PI-007917` had been moved by another lane in the window.
+`repair-invoice-item-from-parent.mjs` is the retro half and copies the compartment
+across, touching no money and no link; the decision is pure in
+`scripts/lib/invoice-snapshot-repair.mjs`. `docs/bugs/0676` and `docs/bugs/0687`.
 
 **Edit-side re-point guard (GAP-2), rows 9 & 11 — closed 2026-08-20.** The
 `Unlinked-line back door closed` column above is the CREATE / add-line half. A

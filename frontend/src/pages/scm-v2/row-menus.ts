@@ -53,6 +53,11 @@ import { rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip
  *  so the four columns are spelled once for the whole app. */
 type StatusRow = { status?: string | null } & HoldFields;
 
+/** Server-decided: carried across from AutoCount AND the cutover lock is on for
+ *  this company. Optional so a cached pre-deploy list row still type-checks; an
+ *  absent value reads as "not locked", which is the pre-2026-09 menu exactly. */
+type MigratedRow = { migrated_readonly?: boolean | null };
+
 /* ── THE HOLD, ON ALL FIVE DOCUMENTS (owner 2026-08-22) ──────────────────────
    「我们的hold是给我们知道一个 order hold这的」 — a hold is a MARKER telling
    people an order is paused. 「take off hold也要看」 — releasing had to be looked
@@ -195,7 +200,7 @@ const norm = (s: string | null | undefined) => String(s ?? "").toUpperCase();
    NetSuite computes Partially Fulfilled / Pending Billing and offers Close and
    Cancel. The list of buttons a human gets is short everywhere, and it is short
    for this reason. */
-export function salesOrderRowMenu<R extends StatusRow & SoChainRow>(h: {
+export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
   print: (t: PrintTarget) => void;
@@ -220,6 +225,23 @@ export function salesOrderRowMenu<R extends StatusRow & SoChainRow>(h: {
        since mig 0324 a hold is a MARKER, so it is offered on every row and says
        nothing about where the order is. */
     const live = !isDraft && !isCancelled && !isClosed;
+    /* CUTOVER (owner 2026-09-08) — an order carried across from AutoCount is
+       view-only until its payments are reconciled, so the menu offers Open and
+       Print and nothing else. Leaving Confirm / Cancel / Close / Hold on it
+       would offer a click the API is going to refuse: a toast the operator has
+       to read to find out the row was never actionable. Edit stays out for the
+       same reason; the detail page states why in a banner.
+       `migrated_readonly` is decided by the SERVER (the list stamps it per row)
+       — the browser cannot see the app_config switch or the caller's bypass. */
+    if (r.migrated_readonly === true) {
+      return buildRowMenu(
+        [
+          { label: "Open", onClick: () => h.open(r) },
+          ...printEntries(salesOrderPrintChain(r), { print: h.print, open: () => h.open(r) }),
+        ],
+        [], [], [],
+      );
+    }
     return buildRowMenu(
       [
         { label: "Open", onClick: () => h.open(r) },

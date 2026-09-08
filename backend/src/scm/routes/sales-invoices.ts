@@ -59,7 +59,7 @@ import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { doLineRemaining, doRemainingByItemId, checkSiOverRemaining, checkSiReopenOverRemaining, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, siTransferRefusal, type DoRemainingLine } from '../lib/do-line-remaining';
 import { siShadowRefusal, unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
-import { checkInvoiceSourceItemIdentity } from '../lib/invoice-source-item-identity';
+import { assertLinkedLineItemsMatch } from '../lib/line-link-item-identity';
 import { resolveSiHeaderSources, resolveDoLineSources } from '../lib/source-po-trace';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
@@ -907,7 +907,7 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
   }
 
   {
-    const over = await checkSiOverRemaining(sb, items) ?? await checkInvoiceSourceItemIdentity(sb, 'DO', items.map((it) => ({ sourceItemId: (it.doItemId as string | undefined) ?? null, itemCode: it.itemCode })), activeCompanyId(c) ?? null);
+    const over = await checkSiOverRemaining(sb, items);
     if (over) return c.json(over.body, over.status);
   }
 
@@ -1712,7 +1712,7 @@ export const appendSalesInvoiceItemHandler = async (c: any) => {
   }
 
   {
-    const over = await checkSiOverRemaining(sb, [it]) ?? await checkInvoiceSourceItemIdentity(sb, 'DO', [{ sourceItemId: (it.doItemId as string | undefined) ?? null, itemCode: it.itemCode }], co.companyId);
+    const over = await checkSiOverRemaining(sb, [it]);
     if (over) return c.json(over.body, over.status);
   }
 
@@ -1881,9 +1881,20 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
     const storedLink = (prev as { do_item_id?: string | null }).do_item_id ?? null;
     const repoint = await unlinkedEditRefusal(sb, 'sales-invoice', { parentId: siFromDoId, storedLink, storedCode: (prev as { item_code?: string | null }).item_code ?? null, patchCode: it.itemCode });
     if (repoint) return c.json(repoint, 409);
-    /* THE EDIT DOOR ON A LINKED LINE: unlinkedEditRefusal above is scoped to a STORED link of null. Checked on the EFFECTIVE post-patch code. */
-    const drift = await checkInvoiceSourceItemIdentity(sb, 'DO', [{ sourceItemId: storedLink, itemCode: updates['item_code'] !== undefined ? updates['item_code'] : prev.item_code }], co.companyId);
-    if (drift) return c.json(drift.body, drift.status);
+    /* THE EDIT DOOR ON A LINKED LINE, and it is the one arm docs/bugs/0672
+       site 15 left open on this chain. unlinkedEditRefusal above is scoped to
+       a STORED link of NULL, so a line that ALREADY carries a do_item_id could
+       have its item_code rewritten under a live link — and doLineRemaining then
+       spends THAT delivery line's allowance on a different product. The purchase
+       side closes the identical door beside its own qty cap; this is the same
+       rule from the same home (lib/line-link-item-identity.ts), reached by the
+       third way in because neither a company read nor the source rows are in
+       hand here. Asserted on the EFFECTIVE POST-PATCH code: a patch that omits
+       itemCode still leaves the stored code sitting next to the link. */
+    const drift = await assertLinkedLineItemsMatch(sb, 'delivery_order_items',
+      [{ linkId: storedLink, itemCode: updates['item_code'] !== undefined ? updates['item_code'] : prev.item_code }],
+      { source: 'Delivery Order line' });
+    if (!drift.ok) return c.json(drift.body, drift.status);
   }
 
   const { error } = await scopeToCompanyId(sb.from('sales_invoice_items').update(updates).eq('id', itemId), co.companyId);

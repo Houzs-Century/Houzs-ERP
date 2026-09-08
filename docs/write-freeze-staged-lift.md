@@ -4,31 +4,43 @@ The write freeze is the switch between "staff cannot save" and "staff can save".
 It is one row in one table, it takes effect within 30 seconds, and it needs no
 deploy.
 
-> **Rollback, if you read nothing else.** One statement puts everything back the
-> way it is today:
+> **Rollback, if you read nothing else.** One statement puts the row back to
+> what production holds TODAY — product setup open, everything else shut:
 >
 > ```sql
-> UPDATE scm.app_config SET value = '1', updated_at = now()
+> UPDATE scm.app_config SET value = '1 - scm.procurement.products', updated_at = now()
 >  WHERE key = 'scm.write_freeze';
 > ```
 >
 > Or, without a database: Actions -> **SCM write freeze (on/off)** -> Run
-> workflow -> `target=prod`, `state=on`, `companies=1`, **`areas` blank**.
-> Either way the whole of Houzs is frozen again inside 30 seconds. Section 7
-> has the rest.
+> workflow -> `target=prod`, `state=on`, `companies=1`,
+> `areas=scm.procurement.products`. Either way it is in force inside 30 seconds.
+>
+> **Do not type a bare `'1'` here unless you mean it.** That is the *original*
+> state, and it also shuts product setup — which has been open since
+> 2026-09-02. `areas` is CUMULATIVE, never a delta; §6a is the worked case.
+> Section 7 has the rest, including the bigger hammers.
 
 ---
 
 ## 1. What it does today
 
-`scm.app_config` key `scm.write_freeze` holds the text `1`.
+`scm.app_config` key `scm.write_freeze` holds the text
+**`1 - scm.procurement.products`**.
+
+Measured on production 2026-09-08 at 10:31 MYT — Actions -> *SCM write freeze —
+status (read-only)*, run `34180338466`. The row was last written 2026-09-02 at
+11:52 MYT. **Re-run that workflow rather than believing this paragraph**: it
+said the row held a bare `1` for six days after somebody opened product setup,
+which is exactly the stale-fact failure CLAUDE.md warns about.
 
 | | |
 |---|---|
-| Frozen | Company 1 (Houzs), every SCM module |
+| Frozen | Company 1 (Houzs) — **23 of the 24 areas** |
+| Already reopened | `scm.procurement.products` (product setup) — 1 area |
 | Not frozen | Company 2 (2990) — trades completely normally |
 | Still allowed for everyone | Every read. GET / HEAD / OPTIONS are never refused |
-| Bypass | Anyone holding `*` or `scm.admin` |
+| Bypass | Anyone holding `*` or `scm.admin`. Measured 2026-09-08: **6 of 78 active people hold `*`; no role grants `scm.admin` at all** (Actions -> *Role permissions diag (read-only)*, run `34180958897`) |
 
 Enforced by `backend/src/scm/lib/write-freeze.ts`, mounted at
 `scm.use('/*', scmWriteFreeze())` ahead of every SCM sub-router, so it covers
@@ -238,6 +250,121 @@ UPDATE scm.app_config SET value = 'off', updated_at = now()
 > Doing it in SQL skips the validation the workflow runs. If you type an area
 > name wrong here, nothing lifts — check section 5 immediately afterwards.
 
+## 6a. GO-LIVE: opening sales orders — the exact statement, PREPARED, NOT RUN
+
+Owner 2026-09-08: 「只开新单，旧单暂时不能改」. This is the step that actually
+opens the door. **Nothing below has been executed** — it is written so the
+decision costs seconds when he makes it.
+
+**Do the migrated lock FIRST.** Confirm `scm.migrated_so_lock` is in place
+(`docs/migrated-so-lock.md` §4) BEFORE running this. Lifting the freeze first,
+even for a minute, is the window that lock exists to close: the instant sales
+orders come out of the freeze, every migrated order is editable unless the other
+row is already on.
+
+### The statement
+
+```sql
+UPDATE scm.app_config
+   SET value = '1 - scm.procurement.products, scm.sales.orders', updated_at = now()
+ WHERE key = 'scm.write_freeze';
+```
+
+Or, without a database: Actions -> **SCM write freeze (on/off)** ->
+`target=prod`, `state=on`, `companies=1`,
+`areas=scm.procurement.products,scm.sales.orders`.
+
+**`scm.procurement.products` is in that value on purpose.** `areas` is the
+complete list of what is open, not a delta. The stage table above starts from a
+blank `areas` and its stage-1 row reads `scm.sales.orders` alone — typed against
+the row as it stands today, **that would silently close product setup again**,
+a lift that takes something away. Both values are pinned as tests in
+`backend/tests/writeFreezeScope.test.ts` ("the go-live lift for sales orders"),
+including the wrong one, because the difference is invisible in the row and
+expensive on the floor.
+
+### What it opens — the whole list, and nothing else
+
+`scm.sales.orders` is not only the Sales Order screen. It is every prefix mapped
+to that area key in `backend/src/scm/lib/scm-areas.ts`, and a test pins that
+table against the mounts in `scm/index.ts`:
+
+| Prefix | What staff would be able to save |
+|---|---|
+| `/mfg-sales-orders/*` | Sales Orders — create, edit, confirm, hold, cancel, payments |
+| `/so-amendments/*` | the amendment gates — supplier-confirm, approve-so, approve-po, send, reject, withdraw |
+| `/so-handover/*` | reassigning a Sales Order's salesperson |
+| `/quotes/*` | quotations |
+| `/pwp-codes/*` | purchase-with-purchase codes |
+| `/scan-so/*`, `/scan-payment/*`, `/slips/*` | the scan / slip intake that creates orders and books their receipts |
+
+**What it does NOT open.** Everything else stays exactly as frozen as it is
+today — purchase orders and PO amendments, goods receipts, purchase invoices,
+purchase returns, MRP, suppliers, **delivery orders**, sales invoices, delivery
+returns, all four consignment areas, inventory, stock adjustments, transfers,
+stock takes, accounting, outstanding balances and delivery planning. Twenty-two
+areas remain paused, plus every router with no area key at all (`/hr`, `/staff`,
+`/reports`, `/document-flow`, `/pos-cart`, … — see `SCM_UNGUARDED_PREFIXES`),
+which no exception can name and which stay shut until the company is unfrozen.
+
+And migrated orders stay read-only regardless: that is the OTHER row, and it
+does not move.
+
+### Putting it back
+
+```sql
+UPDATE scm.app_config SET value = '1 - scm.procurement.products', updated_at = now()
+ WHERE key = 'scm.write_freeze';
+```
+
+**Effective within 30 seconds** (the middleware's per-isolate cache TTL), no
+deploy, no restart, reads never affected. That is the whole cost of changing
+your mind. If something is wrong and it is not clear what, `'1'` freezes all of
+Houzs — the bigger hammer, at the price of closing product setup with it.
+
+### Did it actually work? — the read-only check
+
+A switch flipped is intention; an order that saved is observation.
+
+Actions -> **Sales orders open for NEW — status (read-only)** ->
+`target=prod`, `hours=2`. It prints both switches and then the two facts they
+are supposed to produce:
+
+- **NEW orders saved in the window.** Zero after a lift means staff still cannot
+  save and the lift did not work.
+- **Migrated orders touched by a PERSON in the window.** Non-zero is the alarm —
+  read WHO first, because an `*` account bypasses the lock by design. Rows the
+  SYSTEM wrote are counted separately and are not an alarm: the stock-allocation
+  recompute writes `UPDATE_LINE` / `UPDATE_STATUS` audit rows constantly.
+
+**The pre-lift baseline, so the "after" reading means something.** Measured
+2026-09-08 at 11:29 MYT (run `34183368917`):
+
+| | |
+|---|---|
+| `scm.migrated_so_lock` | `"1"`, written 09:42:14 MYT — the lock IS in place |
+| `scm.write_freeze` | `"1 - scm.procurement.products"`, written 2026-09-02 11:52 MYT |
+| NEW orders saved by company 1, last 24h | **0** — and **0 ERP-created orders in all** |
+| Migrated orders touched by a person, last 24h | **0** (50 rows, all `system (auto-allocate)`) |
+
+That third row is the useful one: **company 1 has never created a sales order in
+this ERP.** Every one of its orders came across from AutoCount. So after the
+lift, the count going 0 -> 1 is unambiguous — there is no background traffic to
+mistake it for.
+
+The fourth row is the closest thing there is to proof that the migrated lock is
+holding in production without borrowing somebody's login: nobody has touched a
+migrated order in 24 hours, and the only writer that has is the cron.
+
+It cannot save an order for you, and does not pretend to. The step it does not
+replace is the runbook's own: **one ordinary member of staff — not an
+`scm.admin` account — saves one real new order, and opens one `HC-…` order and
+confirms it is view-only.** Measured 2026-09-08, 33 of 78 active people are in
+the plain sales cohort and hold no bypass, so such an account exists in
+quantity; picking one is the owner's call.
+
+---
+
 ### Verifying a lift took effect
 
 1. **Wait 30 seconds.** The middleware caches the value for that long, per
@@ -300,9 +427,16 @@ against. Then read section 5 and work out what happened.
 - **The freeze only guards `/api/scm/*`.** Writes to other parts of the ERP
   (projects, PMS, HR outside SCM) were never in scope.
 - **Reads were never frozen** and never will be by this switch.
-- **`scm.write_freeze` and `scm.autocount_writeback` are neighbouring rows in
-  the same table with the same grammar.** Pasting one into the other is a real
-  mistake to make. The write-back flag now refuses any value carrying a `-`
+- **THERE IS A SECOND SWITCH ON SALES ORDERS, and lifting this one alone is not
+  what the owner asked for.** `scm.migrated_so_lock` (2026-09-08,
+  「只开新单，旧单暂时不能改」) keeps the documents carried over from
+  AutoCount read-only after `scm.sales.orders` is lifted here. **Confirm it is in
+  place BEFORE running stage 1** — lifting the freeze first, even for a minute,
+  opens every migrated order onto a balance the ERP knows is wrong. Runbook:
+  `docs/migrated-so-lock.md`.
+- **`scm.write_freeze`, `scm.autocount_writeback` and `scm.migrated_so_lock` are
+  neighbouring rows in the same table with similar grammars.** Pasting one into
+  the other is a real mistake to make. The write-back flag now refuses any value carrying a `-`
   clause rather than reading it as "on" — but do not rely on that; check the key
   you are editing.
 - **The 30s cache is per isolate.** Different staff can briefly see different

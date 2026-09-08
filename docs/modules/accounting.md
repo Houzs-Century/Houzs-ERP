@@ -31,6 +31,7 @@ books which entry":
 | Customer payment collected | Dr CASH/BANK/transit / Cr AR | `SOPAY` / `SIPAY` | `*_REVERSAL` |
 | Daily cash close | Dr/Cr OVER_SHORT / Cr/Dr CASH | `CASHUP` | (correct by JV) |
 | Acquirer settlement confirmed | Dr fee / Cr transit | `SETTLE` | `SETTLE_REVERSAL` |
+| Untagged card money named by a settlement | Dr the merchant's own clearing / Cr generic clearing | `SETTLEMOVE` | `SETTLEMOVE_REVERSAL` |
 | Statement charge with no transaction | Dr fee / Cr transit | `SETTLEADJ` | `SETTLEADJ_REVERSAL` |
 | Acquirer payout received | Dr bank / Cr transit | `SETTLEBANK` | `SETTLEBANK_REVERSAL` |
 
@@ -403,10 +404,20 @@ the same Insert/Enter manners the same day — payment-voucher.md.
 
 **Receipts (2026-09-03, later the same day: 未来如果我收到其他的钱不是
 under other debtor 的呢? 就我只想开 receipt 罢了)**: /scm/receipts is the
-unified money-in list — one month-windowed table holding GENERAL receipts
+unified money-in list — one table holding GENERAL receipts
 (raised here), the Other Debtor receipts (read-only mirrors, four-layered
 on their own page) and the customer sales payments (read-only mirrors —
-顾客的钱 keeps the sales flow it always had; nothing is re-entered).
+顾客的钱 keeps the sales flow it always had; nothing is re-entered). It opens
+on EVERY month and the month field is a filter (owner 2026-09-08: 月份只是筛选;
+until then it opened on this month alone): `GET /receipts` with no `month`
+reads the three tables whole and answers `month: null`, `?month=YYYY-MM`
+narrows to that month, and a malformed month is a 400 rather than "this
+month" (`listReceiptsHandler`, `backend/src/scm/routes/receipts.ts`;
+`useReceipts` in `frontend/src/vendor/scm/lib/accounting-queries.ts`; the
+page keeps an "All months" button beside the picker,
+`frontend/src/pages/scm-v2/Receipts.tsx`). Contracts:
+`backend/tests/receipts.test.ts` ("no month asked for lists every month"),
+`Receipts.test.tsx` ("opens on every month").
 Handlers in `receipts.ts` (mounted beside other-debtors in
 `backend/src/scm/index.ts`, mirrored in `scm-areas.ts`, nav entry in
 `Sidebar.tsx`, route in `frontend/src/routing/routeManifest.ts`; PV key
@@ -764,6 +775,25 @@ is no longer receivable. The customer side never changes: AR is knocked off by
 the full gross at the swipe (owner: 顾客还款确定到时是记录6000哦，不然knock off
 不到). A fee-free line confirms with no entry at all.
 
+**Confirming also moves untagged money onto the merchant's own clearing
+account (做 2, owner 2026-09-08: match 了就不见).** A card payment keyed in
+without a bank was booked to the GENERIC clearing account (role `TRANSIT_EDC`,
+326-0000, 未标银行 on Daily Bank) because nobody could say whose it was. The
+merchant's statement has now named it, so `confirmSettlementRow`
+(`backend/src/acc/settlement.ts`) reads the chosen payments' own live `SOPAY` /
+`SIPAY` entries, sums what they debited on the generic account, and posts ONE
+more entry per line: Dr the merchant's own clearing account / Cr generic
+(`clearingMoveLines`, `backend/src/acc/rules.ts`; source `SETTLEMOVE`, keyed
+`SETTLEMOVE-<row id>`, dated by the transaction like the fee). The payout then
+clears the merchant's account, and the generic account reads zero once every
+untagged payment has been matched. Nothing moves when the merchant sits on the
+generic account itself (CIMB, AEON, HOUZS), when the payment was booked on the
+merchant's account already (tagged at the till), or when the payment never
+reached the ledger. The move that fails after the fee posted says so and asks
+for a second press, which resumes through the gate's idempotency. Undo reverses
+the move alongside the fee. Contract: `backend/src/acc/settlement.test.ts`
+("money keyed in without a bank moves to the merchant's own clearing account").
+
 **And the way back out (2026-08-29, the owner's 上传了能cancel 掉? made the gap
 loud): POST /settlement/rows/:id/unconfirm** — the door the ignore refusal has
 always pointed at, now with a button behind it (an Undo beside every "done"
@@ -1075,4 +1105,25 @@ board as 未标银行 once no active acquirer points at it, so untagged card mon
 stays visible. Contracts: `backend/tests/settlementRoutes.test.ts` (the
 clearing list, the write and its refusals), `SettlementSetup.test.tsx` (the
 picker). Merchant reconciliation moving a matched untagged payment from the
-generic account to its bank's is the follow-up.
+generic account to its bank's followed on 2026-09-08 — see "Confirming also
+moves untagged money" above.
+
+**One line per untagged card payment (docs/bugs/0688, 2026-09-08).** The
+morning the per-bank accounts went live the owner opened Merchant
+reconciliation and saw 2990-SO-2606-013 four times — once under each active
+merchant, and the header counting it four times. That is `couldBeAcquirers`
+doing its job (a card payment recorded without a bank could be any of theirs,
+so every statement must be able to find it) walked acquirer by acquirer by the
+two watch screens: 2990's 43 untagged instalments read as 172 rows and
+RM 749,724 instead of 125 rows and RM 326,994. `listOnce`
+(`backend/src/acc/settlement-match.ts`) now puts an untagged payment on the
+watchlist and on the in-transit list ONCE, under no acquirer
+(`backend/src/scm/routes/accounting-settlement.ts`; the ageing table keys it
+未标), and the screens show the chip as 未标 with a line saying how many were
+keyed in without a bank (`frontend/src/pages/scm-v2/MerchantRecon.tsx`,
+`BankRecon.tsx`, the types in `settlement-queries.ts`). Matching is untouched:
+the payment is still offered to every merchant's report, and the confirm that
+stamps its bank is what moves it onto that merchant's list. Contracts:
+`settlement-match.test.ts` (listed once), `backend/tests/settlementRoutes.test.ts`
+(both lists, the acquirer filter, the ageing key), `MerchantRecon.test.tsx` and
+`BankRecon.test.tsx` (the chip and the counts).

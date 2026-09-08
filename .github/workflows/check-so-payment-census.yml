@@ -1,0 +1,80 @@
+name: SO payment census (read-only)
+
+# HOW MANY migrated sales orders disagree with the account book about money
+# already COLLECTED, and which way?
+#
+# docs/bugs/0675 proved it on one order: HC-SO-002309 is SETTLED in AutoCount
+# (UDF_BALANCE 0, edited 2026-09-04 14:03 local) and the ERP still shows
+# RM 4,279.00 outstanding, because the customer paid after the 2026-08-28 import
+# and nothing flowed back. Nobody had asked how many more are in that state.
+#
+# Four buckets, one denominator:
+#   (a) the book says settled, the ERP says owing  -> we chase money already paid
+#   (b) the ERP says settled, the book says owing  -> we miss a collection
+#   (c) both say owing, different amounts
+#   (d) the stored paid + balance no longer equals the stored total
+#
+# SELECT only. No writes, no DDL, no transaction. Manual trigger only - a
+# production DB read on a schedule turns a real query into CI noise nobody
+# reads. Its own concurrency group, so a diagnostic never queues behind or
+# displaces a release. Exit 0 for every legitimate answer.
+#
+# NOTHING HERE CORRECTS ANYTHING. Saying a customer paid when they did not is
+# worse than every other error on this cutover, so the repair is a separate,
+# plan-gated tool and the ruling is the owner's.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      list_limit:
+        description: "Rows to enumerate per bucket. 0 = all. Blank = 400."
+        required: false
+        default: ""
+      giveaway:
+        description: "0 to skip the dropped-book-line census. Anything else keeps it."
+        required: false
+        default: ""
+
+concurrency:
+  group: check-so-payment-census-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-so-payment-census.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          LIST_LIMIT: ${{ inputs.list_limit }}
+          GIVEAWAY: ${{ inputs.giveaway }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-so-payment-census.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          LIST_LIMIT: ${{ inputs.list_limit }}
+          GIVEAWAY: ${{ inputs.giveaway }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

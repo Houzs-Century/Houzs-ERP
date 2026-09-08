@@ -377,6 +377,23 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
 - Sofa is grouped as per-SO-line SETS (section 8) drawing from the same pooled
   supply; set-level atomicity lives in `so-stock-allocation.ts` 7b (one
   covering batch or PENDING) and `ship-commitment.ts`, NOT here.
+- **A DISPLAY / SHOWROOM / SERVICE warehouse can supply nothing, since
+  2026-09-08** (owner ruling 「分配时跳过这九个仓」,
+  `docs/bugs/0686-the-allocator-promised-display-showroom-and-service-stock-to.md`).
+  `lib/non-selling-warehouse.ts` is the ONE home for the three
+  `scm.warehouses.type` values, shared with the dead-stock exclusion in
+  `routes/inventory.ts`. The STORED allocator
+  (`so-stock-allocation.ts`) applies it on **all three** of its paths — the
+  pooled on-hand read, BOUND MODE and the sofa dye-lot matcher — because the
+  latter two never read `inventory_balances` and a filter on that read alone
+  would have covered one door of three.
+  **This engine (`mrp.ts`) is deliberately NOT changed.** MRP answers "what does
+  this warehouse hold", which is still 1,897 units in those nine, and that
+  answer is correct; "what may be promised to a customer" is a different number
+  and lives in the readiness layer (`so-line-effective-stock.ts`'s
+  `lineNonSellingWarehouse` veto, sales-order.md §0.4). Keeping the two apart is
+  the ATP split SAP / Odoo / NetSuite all model. If you add a NEW readiness
+  consumer, gate it there; do not filter MRP's supply.
 - **Company-1 bound groups are EXCLUSIVELY PO-bound in the stored allocator
   (2026-08-30,
   `docs/bugs/0572-a-company-1-bound-line-with-no-receipt-fell-through-to-the-p.md`).**
@@ -616,3 +633,23 @@ the page showing "as of &lt;time&gt;".
   + `POST /regenerate`), `src/index.ts` (cron branch), `wrangler.toml` (cron),
   `frontend/src/vendor/scm/lib/mrp-queries.ts` (`useRegenerateMrp` + `stored` /
   `computedAt`), `frontend/src/pages/scm-v2/Mrp.tsx` (Regenerate button + "as of").
+
+## The pairing audit no longer skips a fully received PO line (2026-09-08)
+
+`backend/scripts/audit-mrp-pairing.mjs` section (C2) compares each purchase-order
+line's `item_code` with its stored sales-order line's — the only item-code
+detector in the file. It iterated `poOpen`, and **`poOpen` drops a line the
+moment it is FULLY RECEIVED.**
+
+That is the state a wrong dedication does its damage in: the goods arrived, so
+the customer's order reads READY against a bed that is not theirs. All nine wrong
+dedications of `docs/bugs/0671` converge on it. So the detector answered *"which
+OUTSTANDING lines disagree"* and printed as though it had answered *"which lines
+disagree"* — `docs/bugs/0672` site 20, `docs/bugs/0684`.
+
+It now iterates a second list, `poAll`, holding every non-dead line. **The
+WAREHOUSE and VARIANT splits still count OPEN lines only** — a received line's
+warehouse is history — and every shortage, bucket and pairing figure in the file
+is unchanged, so the outstanding numbers stay comparable to earlier runs. The
+item-code line now also prints how many of its hits are already fully received;
+a zero there is a real zero for the first time.

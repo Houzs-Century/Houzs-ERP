@@ -31,6 +31,7 @@ import {
 } from '../shared/so-line-display';
 import { recomputePoReceived, resolvePoBatchByItem } from './grns';
 import { assertSourceLinesInCompany } from '../lib/ref-in-company';
+import { assertLinkedLineItemsMatch } from '../lib/line-link-item-identity';
 import { findUnlinkedPrLines, unlinkedReturnResponse } from '../lib/return-unlinked-lines';
 import { unlinkedEditRefusal, unlinkedScanRefusal } from '../lib/unlinked-line-edit-guard';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -823,6 +824,19 @@ purchaseReturns.post('/', async (c) => {
     }
   }
 
+  /* IDENTITY, not just the key — docs/bugs/0672 site 15. The checks around this
+     one prove the GRN line's company, that its parent receipt is POSTED and that
+     the returned quantity fits; none proves it is the SAME PRODUCT.
+     `adjustGrnReturnedQty` writes `grn_items.returned_qty` by `.eq('id', …)` and
+     `writePurchaseReturnMovements` books the stock OUT from this line, so a
+     wrong link returns stock against the wrong receipt line. */
+  {
+    const idc = await assertLinkedLineItemsMatch(sb, 'grn_items',
+      items.map((it) => ({ linkId: (it.grnItemId as string | undefined) ?? null, itemCode: it.itemCode })),
+      { source: 'Goods Receipt line' });
+    if (!idc.ok) { markIdempotencyNoWrite(c); return c.json(idc.body, idc.status); }
+  }
+
   let totalRefund = 0;
   const itemRows = items.map((it) => {
     const grnItemId = (it.grnItemId as string | undefined) ?? null;
@@ -1532,6 +1546,19 @@ export const addPurchaseReturnItemHandler = async (c: any) => {
       requested: qtyReturned, what: 'GRN line',
     });
     if (capLock) return c.json(capLock, 409);
+  }
+
+  /* IDENTITY, not just the key — docs/bugs/0672 site 15. The checks around this
+     one prove the GRN line's company, that its parent receipt is POSTED and that
+     the returned quantity fits; none proves it is the SAME PRODUCT.
+     `adjustGrnReturnedQty` writes `grn_items.returned_qty` by `.eq('id', …)` and
+     `writePurchaseReturnMovements` books the stock OUT from this line, so a
+     wrong link returns stock against the wrong receipt line. */
+  if (grnItemId) {
+    const idc = await assertLinkedLineItemsMatch(sb, 'grn_items',
+      [{ linkId: grnItemId, itemCode: it.itemCode }],
+      { source: 'Goods Receipt line' });
+    if (!idc.ok) return c.json(idc.body, idc.status);
   }
 
   const row: Record<string, unknown> = {

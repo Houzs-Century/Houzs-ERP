@@ -109,6 +109,7 @@ import { hr } from "./routes/hr";
 import { scmAreaGuard } from "./middleware/area-guard";
 import { hasPositionCapability } from "../services/positionCapabilities";
 import { scmWriteFreeze } from "./lib/write-freeze";
+import { migratedSoReadonly, migratedSoAmendmentReadonly } from "./lib/migrated-so-readonly";
 import { writeFreezeStatus } from "./routes/write-freeze-status";
 
 export const scm = new Hono<{ Bindings: Env }>();
@@ -310,6 +311,20 @@ scm.route("/purchase-invoices", purchaseInvoicesListEnrichment);
 scm.route("/purchase-invoices", purchaseInvoices);
 // ── Sales Orders (scm.sales.orders) ─────────────────────────────────────────
 scm.use("/mfg-sales-orders/*", scmAreaGuard("scm.sales.orders"));
+/* MIGRATED sales orders are READ-ONLY while the cutover finishes (owner
+   2026-09-08, 「只开新单，旧单暂时不能改」). A NEW order saves normally; one
+   carried across from AutoCount does not, because sync-ac-delta can still
+   overwrite an edit unannounced and AutoCount payments taken since 2026-08-28
+   have not reached the ERP, so its balance on screen is wrong.
+
+   Mounted HERE rather than inside the router because the router is a
+   12,000-line file on its size ceiling, and because this is the same position
+   the write freeze occupies: a document-level rule and a module-level one
+   belong next to each other, not one of them buried in a route file. It is
+   scoped to this prefix, so it is the SO surface only, and `POST /` carries no
+   doc number in its path and is never reached — 「只开新单」 in one line of
+   control flow. Switch + runbook: docs/migrated-so-lock.md. */
+scm.use("/mfg-sales-orders/*", migratedSoReadonly());
 // Deferred list enrichment — the MRP-derived SO-list fields the list no longer
 // computes on its critical path (READY source-PO chips + readiness/planning
 // verdicts). Mounted BEFORE the main router so its static `/list-mrp-enrichment`
@@ -320,6 +335,15 @@ scm.route("/mfg-sales-orders", mfgSalesOrders);
 // guard as Sales Orders (GET=view, PATCH=edit); the finer scm.amendment.* gates
 // layer on inside the handlers.
 scm.use("/so-amendments/*", scmAreaGuard("scm.sales.orders"));
+/* MIGRATED sales orders are READ-ONLY here too — the SECOND door onto the same
+   document. `POST /mfg-sales-orders/:docNo/amendments` (raise one) is already
+   behind the guard on that prefix, but every GATE lives here, and approve-so is
+   not a status flip: it runs applySoAmendment, which rewrites the bound SO's
+   header and lines in place. An amendment already OPEN when the lock shipped
+   could be driven forward through this prefix; docs/migrated-so-lock.md §7
+   recorded that hole and this closes it. Same 409, same bypass cohort, same
+   switch. */
+scm.use("/so-amendments/*", migratedSoAmendmentReadonly());
 scm.route("/so-amendments", soAmendments);
 // Salesperson handover (resignation / transfer). SO-centric, so it rides the
 // same L2 area guard; the finer scm.so.attribute_other gate is enforced inside

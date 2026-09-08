@@ -72,6 +72,31 @@
  * refusal exists precisely for the one-document-per-purchase-order shape this
  * replaces.
  *
+ * ── THE ITEM CODE IS TRANSLATED, ON BOTH ARMS ───────────────────────────────
+ * A receipt line that resolves to a purchase-order line COPIES that line's
+ * `item_code`, which the PO importer already translated. A line that does NOT
+ * resolve — the deliberate non-attribution above — used to fall back to
+ * `i.book.itemKey`, AutoCount's own code, untranslated. The ERP then carried
+ * `HOK-1007 (HF)(W) (SP)` where its catalogue spells that product
+ * `CODY 2.0 (F)-(SP)`, and `check-ac-erp-reconcile.mjs` reported 103 company-1
+ * item-code differences whose samples printed two identical-looking strings,
+ * because the checker COMPARES the mapped value and PRINTED the raw one. (That
+ * print was fixed on `main` by PR #3167 on 2026-09-08 — its message now carries
+ * `the sheet says "<erp code>"`. `check-ac-erp-reconcile.mjs` is untouched here.)
+ *
+ * So the fallback now resolves through `data/autocount-erp-mapping-1561.csv`,
+ * the same file every other AutoCount writer reads, with the same two rules
+ * those writers apply (docs/bugs/0577, docs/bugs/0686):
+ *   - the SOFA ALIAS FOLD at read time — only a mapped code the catalogue LACKS
+ *     is folded, and only onto one it HAS, so it can never move a code that
+ *     already resolves. `5535` is its own model and never folds.
+ *   - the CATALOGUE GUARD at write time — `item_code` has no foreign key to
+ *     `scm.mfg_products`, so a code nobody minted lands as an orphan line that
+ *     every joining screen renders blank. The run REFUSES and names the rows
+ *     rather than writing one.
+ * `material_name` follows the same resolution: the ERP product's own name where
+ * the code resolves, never the book's code standing in for a name.
+ *
  * ── NO STOCK, IN EITHER DIRECTION ───────────────────────────────────────────
  * Every document written here keeps `migrated_no_stock` (migration 0276) and no
  * inventory movement is written. On-hand came in once through the AutoCount
@@ -138,6 +163,13 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
 import { buildScope, decodeSnapshot } from "./lib/ac-scope.mjs";
+/* The receiving warehouse is the BOOK'S, not the purchase order's. One rule,
+   one location map — see the header of lib/ac-gr-location.mjs. */
+import { loadBookGrLocations, resolveAcReceiptLocation } from "./lib/ac-gr-location.mjs";
+/* The ERP's statement of sofa identity, and the write-time refusal that stops a
+   book code being written untranslated. See "THE ITEM CODE" in the header. */
+import { SOFA_MODEL_ALIAS } from "./lib/parse-sofa.mjs";
+import { aliasFoldsForCatalog, catalogPredicate, nonCatalogRefs, formatNonCatalogRefusal } from "./lib/catalog-code-guard.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -161,6 +193,9 @@ const say = (m = "") => console.log(m);
 const rule = (t) => say(`\n═══════════ ${t} ═══════════`);
 const pad = (s, n) => String(s ?? "").padEnd(n);
 const norm = (s) => String(s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+/* The catalogue's own key shape — catalogPredicate trims and upper-cases and
+   does NOT collapse inner whitespace, so a lookup that did would miss. */
+const up = (s) => String(s ?? "").trim().toUpperCase();
 const n0 = (x) => Number(x || 0);
 const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(DATA, f))).toString("utf8").replace(/^﻿/, ""));
 
@@ -170,6 +205,43 @@ const refuse = async (msg) => {
   await sql.end({ timeout: 5 }).catch(() => {});
   process.exit(2);
 };
+
+/* ── the book code -> ERP code map, read exactly as the importers read it ─── */
+function parseCsvLine(line) {
+  const out = []; let cur = ""; let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+    else if (c === '"') q = true;
+    else if (c === ",") { out.push(cur); cur = ""; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+
+/**
+ * `Map<norm(AutoCount ItemCode), ERP code>` from autocount-erp-mapping-1561.csv,
+ * with the sofa alias fold applied AT READ TIME — before anything asks the
+ * catalogue about a code, which is the ordering docs/bugs/0686 was bought with.
+ * The four HOK sofa rows deliberately still name the BOOK model in the file;
+ * src/services/autocount-item-map.ts is compiled from the same file and read in
+ * the other direction, so folding there moves the write-back instead.
+ */
+function loadAcToErp(inCatalog) {
+  const rows = fs.readFileSync(path.join(DATA, "autocount-erp-mapping-1561.csv"), "utf8")
+    .replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
+  rows.shift();
+  const byAc = new Map();
+  for (const ln of rows) {
+    const f = parseCsvLine(ln);
+    const erp = (f[1] || "").trim();
+    if (f[0] && erp) byAc.set(norm(f[0]), erp);
+  }
+  const moves = aliasFoldsForCatalog([...byAc.values()], inCatalog, SOFA_MODEL_ALIAS);
+  for (const [ac, erp] of byAc) if (moves.has(erp)) byAc.set(ac, moves.get(erp));
+  return { byAc, moves };
+}
 
 /* ── the book, at pair grain ─────────────────────────────────────────────── */
 /** `Map<"GR|PO", {gr, po, date, lines}>` from ac-convert-edges. */
@@ -292,6 +364,28 @@ async function main() {
   say(`  pair documents by receipt year: ${Object.entries(years).sort().map(([y, c]) => `${y} ${c}`).join("   ")}   (${edges.pairs.size} documents)`);
 
   /* ── the ERP side ───────────────────────────────────────────────────────── */
+  /* The receiving warehouse is COPIED from the book where the book can answer.
+   lib/ac-gr-location.mjs owns that read and the SHARED location map; its header
+   says why a surviving stock LAYER is not a receipt location. */
+  const warehouses = await sql`SELECT id::text AS id, code, name FROM scm.warehouses WHERE company_id = ${CO}`;
+  const bookLoc = loadBookGrLocations(path.join(here, "data"));
+  /* THE CATALOGUE, read before the mapping so the alias fold can consult it.
+     An empty catalogue would make the fold a no-op and the guard refuse
+     everything, which is the honest failure — but a verdict computed over
+     nothing must not read as a pass either, so say the size out loud. */
+  const products = await sql`SELECT code, name FROM scm.mfg_products WHERE company_id = ${CO}`;
+  if (!products.length) {
+    await refuse(`scm.mfg_products has no company-${CO} rows. The alias fold would move nothing and the catalogue ` +
+      "guard would refuse every line — a verdict computed over nothing, not an answer about the plan.");
+  }
+  const prodByCode = new Map(products.map((p) => [up(p.code), p]));
+  const inCatalog = catalogPredicate(products.map((p) => p.code));
+  const { byAc: acToErp, moves: aliasMoves } = loadAcToErp(inCatalog);
+  log(`CATALOGUE — ${products.length} company-${CO} product code(s); book->ERP map carries ${acToErp.size} AutoCount code(s)`);
+  if (aliasMoves.size) {
+    say(`  alias fold: ${aliasMoves.size} mapped code(s) the catalogue does not carry resolve through SOFA_MODEL_ALIAS`);
+    for (const [from, to] of aliasMoves) say(`     ${from} -> ${to}`);
+  }
   const pos = await sql`SELECT id::text AS id, po_number, linked_ac_docno AS ac, supplier_id::text AS supplier_id,
       purchase_location_id::text AS purchase_location_id, currency::text AS currency
     FROM scm.purchase_orders WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`;
@@ -316,7 +410,7 @@ async function main() {
   const grnLines = await sql`SELECT i.id::text AS id, i.grn_id::text AS grn_id, i.purchase_order_item_id::text AS poi_id,
       i.item_code, i.material_name, i.item_group, i.qty_received::float8 AS qty_received,
       i.qty_accepted::float8 AS qty_accepted, i.invoiced_qty::float8 AS invoiced_qty,
-      i.returned_qty::float8 AS returned_qty, i.unit_price_sen, i.line_total_sen, i.variants,
+      i.returned_qty::float8 AS returned_qty, i.unit_price_sen, i.discount_sen, i.line_total_sen, i.variants,
       i.line_suffix, i.description2, i.uom, i.notes
     FROM scm.grn_items i JOIN scm.grns g ON g.id = i.grn_id
     WHERE g.company_id = ${CO} AND g.migrated_no_stock = true ORDER BY i.grn_id, i.id`;
@@ -601,12 +695,30 @@ async function main() {
 
   const lineRows = (d) => d.items.map((i) => {
     const poi = i.poi;
-    const code = poi ? poi.item_code : i.book.itemKey;
+    /* THE TRANSLATION. An attributed line COPIES the purchase-order line's code
+       — already translated by the importer, and a copy is what a migration
+       writes. An unattributed line has no purchase-order line to copy, so it
+       resolves AutoCount's own code through the same mapping file; only where
+       the map is silent does the book code stand, and the catalogue guard below
+       refuses the run rather than letting that reach a document line. */
+    const translated = poi ? null : (acToErp.get(norm(i.book.itemKey)) ?? null);
+    const code = poi ? poi.item_code : (translated ?? i.book.itemKey);
+    const prod = poi ? null : prodByCode.get(up(code));
     const k = `${poi?.id ?? "-"}|${norm(code)}`;
     /* Exact line first, then any line of the same purchase order carrying the
        same code - which is what an unattributed line has, and the price does
-       not depend on WHICH of the identically-coded lines it was. */
-    const held = (poi ? carry.get(k) : null) ?? carryByPo.get(`${d.erpPo.id}|${norm(code)}`) ?? null;
+       not depend on WHICH of the identically-coded lines it was.
+
+       THE THIRD LOOKUP IS THE UNTRANSLATED CODE, and it is not redundancy: the
+       rows sitting in scm.grn_items today were written under the RAW book code,
+       so once the fallback is translated the first two keys miss the money this
+       document already holds and the line would silently be re-derived from the
+       book. Carrying is the rule; the key has to follow what is on disk. */
+    const kRaw = `${poi?.id ?? "-"}|${norm(i.book.itemKey)}`;
+    const held = (poi ? carry.get(k) : null)
+      ?? carryByPo.get(`${d.erpPo.id}|${norm(code)}`)
+      ?? (translated ? carryByPo.get(`${d.erpPo.id}|${norm(i.book.itemKey)}`) : null)
+      ?? null;
     let price;
     let discount = 0;
     if (held && held.unit > 0) {
@@ -620,15 +732,20 @@ async function main() {
          only statement of what it is worth. */
       price = Math.round(n0(priceByKey.get(i.book.dtlKey)));
     }
-    const avail = billed.get(k) ?? 0;
+    /* Same reason as the money key above: the invoiced quantity already booked
+       against this line is held under the code the row was WRITTEN with. */
+    const bk = billed.has(k) ? k : kRaw;
+    const avail = billed.get(bk) ?? 0;
     const take = Math.min(avail, i.qty);
-    if (take > 0) billed.set(k, avail - take);
+    if (take > 0) billed.set(bk, avail - take);
     return {
       discount,
+      bookCode: i.book.itemKey,
+      translated: translated != null,
       poi_id: poi?.id ?? null,
       material_kind: poi?.material_kind ?? "mfg_product",
       item_code: code,
-      material_name: poi?.material_name ?? code,
+      material_name: poi?.material_name ?? prod?.name ?? code,
       item_group: poi?.item_group ?? null,
       variants: poi?.variants ?? null,
       line_suffix: poi?.line_suffix ?? null,
@@ -650,15 +767,112 @@ async function main() {
   for (const d of plan) {
     d.rows = lineRows(d);
     d.total = d.rows.reduce((s, r) => s + r.lineTotal, 0);
-    d.warehouse = d.items.find((i) => i.poi?.warehouse_id)?.poi.warehouse_id ?? d.erpPo.purchase_location_id;
+    /* THE BOOK'S LOCATION FIRST. The old rule — the first purchase-order line's
+       warehouse, else the ORDER's location — is a DERIVATION, and a migration
+       copies rather than computes; a warehouse can receive into a location the
+       order did not name. Where the committed cuts carry AutoCount's own GRDTL
+       location we copy it; where they do not (the GR export only started
+       selecting the column on 2026-09-08) we fall back and COUNT it, because a
+       miss means the book was never asked, not that it agrees. */
+    const bl = resolveAcReceiptLocation([d.gr], d.items.map((i) => (i.poi ? i.poi.item_code : i.book.itemKey)), bookLoc, warehouses);
+    d.warehouseFrom = bl.warehouseId ? "book" : "purchase order";
+    d.warehouseWhy = bl.why;
+    d.bookLocation = bl.bookLocation;
+    d.warehouse = bl.warehouseId ?? d.items.find((i) => i.poi?.warehouse_id)?.poi.warehouse_id ?? d.erpPo.purchase_location_id;
     moneyAfter += d.total;
   }
-  rule("MONEY — carried, never recomputed");
-  log(`MONEY — the migrated receipts hold RM ${(moneyBefore / 100).toFixed(2)} today; this plan writes RM ${(moneyAfter / 100).toFixed(2)}.`);
+  rule("RECEIVING LOCATION — copied where the book can answer");
+  const locCopied = plan.filter((d) => d.warehouseFrom === "book").length;
+  log(`LOCATION — ${locCopied} of ${plan.length} documents take the warehouse from AutoCount's own receipt; ${plan.length - locCopied} fall back to the purchase order.`);
+  say(`  Book sources on this cut: ${bookLoc.sources.join("; ") || "NONE"}.`);
+  say("  A fallback means the book was NEVER ASKED, not that it agrees — export-ac-reimport.py's");
+  say("  grrefs section only started selecting GRDTL.Location on 2026-09-08, so an older cut answers");
+  say("  for part of the corpus. Re-cut it and re-run this to raise the copied count.");
+  for (const d of plan.filter((x) => x.warehouseFrom !== "book").slice(0, 5)) say(`    ${d.gr} / ${d.po}: ${d.warehouseWhy}`);
+
+  rule("MONEY — carried, never recomputed, and reconciled to the book");
+  /* THE BOOK IS THE CEILING. A money jump between two ERP states cannot tell a
+     correction from a double-count; only the book can. This sums AutoCount's
+     own GRDTL SubTotal for exactly the pairs this plan writes, so the run
+     STATES the ceiling instead of leaving the next reader to guess. The bare
+     before/after this replaced blocked the cutover three times (docs/bugs/0682). */
+  let bookSen = 0;
+  for (const d of plan) {
+    for (const bl of edges.pairs.get(d.key)?.lines ?? []) {
+      const s = book.GR.byDtlKey.get(bl.dtlKey) ?? book.GR.byDtlKey.get(Number(bl.dtlKey));
+      bookSen += s?.subTotalSen ?? Math.round(n0(bl.qty) * n0(priceByKey.get(bl.dtlKey)));
+    }
+  }
+  /* LIKE FOR LIKE. `moneyBefore` sums `line_total_sen` over ALL migrated
+     receipts; `moneyAfter` computes qty x price over the PLAN's documents only.
+     Two different populations measured two different ways — which is why it
+     read as a doubling. Split both apart so the comparison is honest. */
+  const qpOf = (g) => (linesByGrn.get(g.id) ?? []).reduce(
+    (t, l) => t + Math.round(n0(l.qty_accepted) * n0(l.unit_price_sen)), 0);
+  const ltOf = (g) => (linesByGrn.get(g.id) ?? []).reduce((t, l) => t + n0(l.line_total_sen), 0);
+  const sum = (a, f) => a.reduce((t, g) => t + f(g), 0);
+  const replaced = updates.map((d) => d.existing);
+  const rm = (sen) => `RM ${(sen / 100).toFixed(2)}`;
+  log(`MONEY — the ${plan.length} documents this plan writes are worth ${rm(moneyAfter)}; ` +
+    `the ${replaced.length} they REPLACE are worth ${rm(sum(replaced, qpOf))} today on the same formula; ` +
+    `the BOOK states those same pairs are worth ${rm(bookSen)}.`);
+  say(`  VERDICT: the plan lands ${rm(Math.abs(bookSen - moneyAfter))} ${moneyAfter > bookSen ? "ABOVE" : "BELOW"} the book.` +
+    (moneyAfter > bookSen
+      ? "  *** ABOVE THE BOOK IS A DOUBLE-COUNT SIGNATURE — DO NOT APPLY, partition the lines first. ***"
+      : "  Below the book is the expected shape: lines the ERP never priced stay unpriced until"));
+  if (moneyAfter <= bookSen) say("  `stamp-migrated-source-prices.mjs` runs. It CANNOT be a double-count: the book is the ceiling.");
+  say("");
+  say(`  the headline before/after, taken apart:`);
+  say(`    all ${grns.length} migrated receipts, sum(line_total_sen)      ${rm(moneyBefore)}   <- the old "before"`);
+  say(`    ... of which ${untouched.length} documents are UNTOUCHED and SURVIVE  ${rm(sum(untouched, ltOf))}  (NOT in the "after")`);
+  say(`    ... of which ${replaced.length} documents are actually replaced      ${rm(sum(replaced, ltOf))}`);
+  say(`    those same ${replaced.length}, valued as qty x unit_price            ${rm(sum(replaced, qpOf))}  <- like for like`);
+  say(`    lines holding a PRICE but a ZERO line_total_sen: ${grnLines.filter((l) => n0(l.line_total_sen) === 0 && n0(l.unit_price_sen) > 0).length} of ${grnLines.length}`);
+  say(`      -> that column, not the reshape, is why the old "before" read low. The reshape WRITES it.`);
+  say(`    TRUE after-state: ${rm(moneyAfter)} + ${rm(sum(untouched, ltOf))} untouched = ${rm(moneyAfter + sum(untouched, ltOf))} over ${plan.length + untouched.length} documents.`);
+  say("");
   say("  Nothing here decides a price. `stamp-migrated-source-prices.mjs` owns that — it applied 32 lines to");
   say("  production on 2026-09-07 16:02Z (run 34141318054) — and this carries what each line already holds,");
   say("  per unit, so a line split across two receipts keeps the same money per unit. Its selection is");
   say("  `unit_price_sen = 0`, so RE-DISPATCH IT AFTER THIS RUN to price anything still at zero.");
+
+  /* ── THE ITEM CODE, AND THE GUARD THAT WILL NOT WRITE AN ORPHAN ─────────── */
+  /* Placed BEFORE the dry-run return on purpose (docs/bugs/0686): an operator
+     has to learn the plan is unwritable while reading it, not after typing
+     CONFIRM. The whole plan above still prints first, because the refusal is
+     text the caller emits rather than a throw. */
+  rule("ITEM CODE — copied where there is a line to copy, translated where there is not");
+  const allRows = plan.flatMap((d) => d.rows.map((r) => ({ ...r, doc: d.number, gr: d.gr })));
+  const copied = allRows.filter((r) => r.poi_id);
+  const fallback = allRows.filter((r) => !r.poi_id);
+  const untranslated = fallback.filter((r) => !r.translated);
+  log(`ITEM CODE — ${allRows.length} line(s) to write: ${copied.length} copy the purchase-order line's code; ` +
+    `${fallback.length - untranslated.length} of the ${fallback.length} unattributed line(s) resolve AutoCount's own code ` +
+    `through autocount-erp-mapping-1561.csv; ${untranslated.length} have no mapping row`);
+  say("  An unattributed line used to be written with the RAW AutoCount code — that is why the reconcile");
+  say("  reported company-1 GR item-code differences whose two sides looked identical: it COMPARES the");
+  say("  mapped value and PRINTED the book's. Translating here removes the difference at its source.");
+  for (const r of fallback.filter((x) => x.translated).slice(0, SHOW)) {
+    say(`     ${pad(r.doc, 24)} ${pad(r.bookCode, 28)} -> ${pad(r.item_code, 24)} ${r.material_name}`);
+  }
+  if (untranslated.length) {
+    say(`  NO MAPPING ROW — the book code stands, and the guard below decides whether it may be written:`);
+    for (const r of untranslated.slice(0, SHOW)) say(`     ${pad(r.doc, 24)} ${r.bookCode}`);
+  }
+
+  const badCodes = nonCatalogRefs(
+    allRows.map((r) => ({ code: r.item_code, doc: r.doc, acDoc: r.gr, acCode: r.bookCode })),
+    inCatalog,
+  );
+  if (badCodes.length) {
+    say("");
+    for (const line of formatNonCatalogRefusal(badCodes, { script: "reshape-migrated-grns.mjs" })) log(line);
+    say(`  Of those, ${badCodes.filter((b) => allRows.find((r) => r.item_code === b.code && r.poi_id)).length} were COPIED from a`);
+    say("  purchase-order line that already carries the orphan; repair-orphan-sofa-codes.mjs owns those.");
+    await sql.end({ timeout: 5 }).catch(() => {});
+    process.exit(2);
+  }
+  log(`ITEM CODE — every one of the ${allRows.length} line(s) carries a code scm.mfg_products holds. Nothing orphaned.`);
 
   if (!APPLY) {
     log(`PLAN ONLY — nothing was written to the database. Re-run with MODE=apply CONFIRM="${CONFIRM_PHRASE}".`);

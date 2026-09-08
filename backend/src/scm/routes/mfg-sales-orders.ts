@@ -33,7 +33,7 @@ import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../li
 import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
 import { soStatusAfterProcessingDateChange } from '../lib/so-proceed-status-change';
-import { soIsMigrated } from '../lib/so-is-migrated';
+import { soIsMigrated, withSoMigratedReadonly, migratedSoListGate } from '../lib/migrated-so-readonly';
 import { soDocNosWithDownstream } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
 import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-order-nos';
 import { soDownstreamRefs, NO_SO_DOWNSTREAM_REFS } from '../lib/downstream-doc-refs';
@@ -254,11 +254,12 @@ import {
 } from '../lib/so-create-payment-slips';
 import { pickCrossCategoryMatch, type AutoMatchCandidate } from '../lib/cross-category-match';
 import { recomputeSoStockAllocation, isHardBoundLine } from '../lib/so-stock-allocation';
-import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink } from '../lib/so-line-relink';
+import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink, soLineVariantSig } from '../lib/so-line-relink';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer-credits';
 import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
-import { effectiveLineStockStatus, readinessLinesByDoc, type LiveStockState } from '../lib/so-line-effective-stock';
+import { readinessLinesByDoc, soLineStockVerdict, type LiveStockState, type SoLineStockVerdictRow } from '../lib/so-line-effective-stock';
+import { loadNonSellingWarehouses } from '../lib/non-selling-warehouse';
 import { attachLineCategories, resolveLineCategories } from '../lib/so-readiness-category';
 import { deriveDisplayBrandingRowByDoc } from '../lib/so-display-branding';
 import { mintMonthlyDocNo, insertWithDocNoRetry, companyCodeById } from '../lib/doc-no';
@@ -1453,7 +1454,7 @@ mfgSalesOrders.get('/', async (c) => {
       (await sb.from('warehouses').select('id, code, name')).data ?? [])();
     const baseRowsProm = (async () =>
       (await chunkIn(docNos, (batch, from, to) => sb.from('mfg_sales_orders')
-        .select('doc_no, delivery_state, amended_delivery_date').in('doc_no', batch).order('doc_no').range(from, to))).data)();
+        .select('doc_no, delivery_state, amended_delivery_date, linked_ac_docno').in('doc_no', batch).order('doc_no').range(from, to))).data)();
     /* PO No. column (owner 2026-07-24): the system Purchase Order numbers this
        SO was converted into. Its own SO-line→PO-item→PO chain, independent of
        every other enrichment above, so it rides the same concurrent wave.
@@ -1676,8 +1677,15 @@ mfgSalesOrders.get('/', async (c) => {
     const readinessByDoc = new Map<string, ReturnType<typeof summariseReadiness>>();
     /* Third argument null: the list first-paint reads the payment-totals VIEW
        (frozen column set, no processing_date) — and with null coverage the
-       promotion arm cannot fire anyway, so "cannot say" is exact. */
-    const linesByDoc = readinessLinesByDoc(itemRows, null, null);
+       promotion arm cannot fire anyway, so "cannot say" is exact.
+       FOURTH argument null, and typed rather than omitted (the parameter is
+       required): the first paint deliberately runs no extra reads, and it does
+       not need this one — the STORED status it rolls up was written by the
+       allocator, which applies the non-selling rule at source. The enrichment
+       fetch a beat later is where the live promotion can fire, and THAT call
+       passes the real set. What is given up here is only the cover for a stale
+       stored READY, for the few hundred ms until the enrichment lands. */
+    const linesByDoc = readinessLinesByDoc(itemRows, null, null, null);
     attachLineCategories(linesByDoc.values(), productCategory);
     for (const [docNo, ls] of linesByDoc) readinessByDoc.set(docNo, summariseReadiness(ls));
 
@@ -1742,7 +1750,7 @@ mfgSalesOrders.get('/', async (c) => {
     const planningToday = todayMyt();
 
     // PO No. — SO doc_no → system PO numbers it was converted into (see wave).
-    const convertedPoByDoc = await convertedPoProm;
+    const [convertedPoByDoc, migratedGate] = await Promise.all([convertedPoProm, migratedSoListGate(c, await baseRowsProm)]);
 
     /* Source-PO union per SO (defect 2026-08-02-A): SHIPPED arm only on this
        path — shipped trace from `shippedTraceProm` (cheap real-batch reads),
@@ -1797,7 +1805,7 @@ mfgSalesOrders.get('/', async (c) => {
       (r as Record<string, unknown>).lifecycle_state = lifecycleByDoc.get(docNo) ?? 'none';
       (r as Record<string, unknown>).current_doc_no = currentByDoc.get(docNo) ?? (docNo || null);
       (r as Record<string, unknown>).do_nos = doNosBySo.get(docNo) ?? [];
-      Object.assign(r as Record<string, unknown>, downRefsBySo.get(docNo) ?? NO_SO_DOWNSTREAM_REFS);
+      Object.assign(r as Record<string, unknown>, downRefsBySo.get(docNo) ?? NO_SO_DOWNSTREAM_REFS, migratedGate(docNo));
       (r as Record<string, unknown>).has_undelivered = hasUndelivered.has(docNo);
       const readiness = readinessByDoc.get(docNo);
       (r as Record<string, unknown>).stock_remark = readiness?.stockRemark ?? '';
@@ -2587,7 +2595,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        LIST route reads that view, so the base-table detail read is the only
        place they are valid. (`proceeded_at` was appended here until 2026-08-18,
        feeding a "Proceed Date" the desktop deleted on 2026-06-05.) */
-    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version`).eq('doc_no', docNo), c).maybeSingle(),
+    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno`).eq('doc_no', docNo), c).maybeSingle(),
     /* line_no = the persisted listing order (0165); NULLS LAST so pre-0165
        docs fall back to created_at + the rule re-derive below. */
     sb.from('mfg_sales_order_items').select(ITEM).eq('doc_no', docNo)
@@ -2840,7 +2848,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      stands as the verdict, and the client fetches the live coverage from
      `GET /:docNo/coverage` after the doc renders. The computation is UNCHANGED,
      just moved off the critical path — see that endpoint below. */
-  const [remainingMap, deliveriesMap, shippedTraceMap] = await Promise.all([
+  const [remainingMap, deliveriesMap, shippedTraceMap, nonSellingWh] = await Promise.all([
     soDeliverableRemaining(sb, [docNo]),
     soLineDeliveries(sb, itemRows.map((it) => it.id)),
     /* Traceability — the source PO(s) each line's SHIPPED goods came from,
@@ -2849,7 +2857,11 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        NOT MRP — stays inline so the detail keeps showing the source PO even
        after the line is delivered (MRP coverage drops off once satisfied). */
     soLineShippedSources(sb, itemRows.map((it) => it.id)),
+    // Owner ruling 2026-09-08: a 16-row read, alongside the three above so the
+    // detail's critical path costs no extra round trip.
+    loadNonSellingWarehouses(sb),
   ]);
+  const orderProcessed = !!(h.data as { processing_date?: string | null }).processing_date;
   const items = itemRows.map((it) => {
     const rem = remainingMap.get(it.id);
     const deliveries = deliveriesMap.get(it.id) ?? [];
@@ -2874,21 +2886,10 @@ mfgSalesOrders.get('/:docNo', async (c) => {
          service line and null (unknown) otherwise; GET /:docNo/coverage fills the
          real value in a beat later. */
       stock_state: stockState,
-      /* What the PILL renders, decided here so it and the board agree (§0.4).
-         Live state is passed as `null` so the STORED engine verdict stands
-         (so-line-effective-stock.ts: null live-state = stored verdict) — the
-         coverage endpoint recomputes it with the live state. */
-      stock_status_effective: effectiveLineStockStatus(
-        (it as { stock_status?: string | null }).stock_status ?? null,
-        null,
-        {
-          orderProcessed: !!(h.data as { processing_date?: string | null }).processing_date,
-          lineHardBound: isHardBoundLine(
-            (it as { item_group?: string | null }).item_group ?? null,
-            (it as { item_code?: string | null }).item_code ?? null,
-          ),
-        },
-      ),
+      /* What the PILL renders, and WHY when the reason is the warehouse — ONE
+         home (soLineStockVerdict, §0.4). Live state `null`: the STORED verdict
+         stands until GET /:docNo/coverage recomputes it. */
+      ...soLineStockVerdict(it as SoLineStockVerdictRow, null, orderProcessed, nonSellingWh),
       // coverage_po / coverage_eta are MRP-derived — unknown without the run.
       coverage_po: null,
       coverage_eta: null,
@@ -2939,7 +2940,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
   // Stamp each line's supplier fabric code so the on-screen line reads
   // "BF-01 (PC151-01)" (owner 2026-07-24). ONE batched query; fail-soft.
   await enrichLinesWithFabricSupplierCode(sb, c, items);
-  return c.json({ salesOrder, items, pwpCodes });
+  return c.json({ salesOrder: await withSoMigratedReadonly(c, salesOrder as Record<string, unknown>, (h.data as { linked_ac_docno?: string | null }).linked_ac_docno ?? null), items, pwpCodes });
 });
 
 /* GET /:docNo/coverage — the DEFERRED live Stock column — lives in
@@ -2991,14 +2992,18 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
   );
   // Coverage from the SAME MRP allocation engine the detail + MRP page use.
   // Best-effort: a failed allocation just drops lines to Pending.
-  const [remainingMap, deliveriesMap, shippedTraceMap, cov] = await Promise.all([
+  const [remainingMap, deliveriesMap, shippedTraceMap, cov, nonSellingWh] = await Promise.all([
     soDeliverableRemaining(sb, [docNo]),
     soLineDeliveries(sb, itemRows.map((it) => it.id)),
     soLineShippedSources(sb, itemRows.map((it) => it.id)),
     soCoverage(c, sb),
+    // Where the live-'stock' promotion fires, so it must know which
+    // warehouses may not promise (owner ruling 2026-09-08).
+    loadNonSellingWarehouses(sb),
   ]);
   const coverageMap = cov.coverage;
   const readyPosMap = await soLineReadySourcePos(sb, activeCompanyId(c) ?? null, cov.mrp, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>);
+  const orderProcessed = !!(h.data as { processing_date?: string | null }).processing_date;
   const items = itemRows.map((it) => {
     const rem = remainingMap.get(it.id);
     const deliveries = deliveriesMap.get(it.id) ?? [];
@@ -3031,20 +3036,9 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
       delivered_qty: rem?.delivered ?? deliveredQty,
       remaining_qty: rem?.remaining ?? Number(it.qty ?? 0),
       stock_state: stockState,
-      // What the PILL renders, decided here so it and the board agree (§0.4).
-      // Gated (2026-08-30): no processing date, or a hard-bound line, and the
-      // live-'stock' promotion is off — the stored engine verdict stands.
-      stock_status_effective: effectiveLineStockStatus(
-        (it as { stock_status?: string | null }).stock_status ?? null,
-        stockState as LiveStockState,
-        {
-          orderProcessed: !!(h.data as { processing_date?: string | null }).processing_date,
-          lineHardBound: isHardBoundLine(
-            (it as { item_group?: string | null }).item_group ?? null,
-            (it as { item_code?: string | null }).item_code ?? null,
-          ),
-        },
-      ),
+      // The pill's verdict + the warehouse refusal, through the same one home
+      // as GET /:docNo. Gated (2026-08-30) + vetoed (2026-09-08) inside it.
+      ...soLineStockVerdict(it as SoLineStockVerdictRow, stockState as LiveStockState, orderProcessed, nonSellingWh),
       coverage_po: covered ? cov?.po ?? null : null,
       coverage_eta: covered ? cov?.eta ?? null : null,
       shipped_source_pos: shippedPos,
@@ -10089,7 +10083,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   /* Insert the NEW set first, then remove the OLD — an insert failure leaves
      the order untouched; a delete failure rolls the inserts back. */
   const { data: inserted, error: insErr } = await sb.from('mfg_sales_order_items')
-    .insert(stampCompany(rows, c)).select('id, item_code, line_no');
+    .insert(stampCompany(rows, c)).select('id, item_code, line_no, variants');
   if (insErr) return c.json({ error: 'insert_failed', reason: insErr.message }, 500);
   const { error: delErr } = await sb.from('mfg_sales_order_items').delete().in('id', oldIds);
   if (delErr) {
@@ -10098,15 +10092,15 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     return c.json({ error: 'swap_failed', reason: delErr.message }, 500);
   }
 
-  /* Carry the frozen links onto the replacement lines, matched by SKU. A module
-     SKU with no counterpart in the new build is NOT re-pointed — that link is
-     genuinely gone and is reported instead of quietly invented. */
+  /* Carry the frozen links onto the replacement lines, matched by SKU AND COLOUR
+     (docs/bugs/0672 site 11: on SKU alone one model's two fabrics pair by
+     POSITION). No counterpart -> NOT re-pointed, reported rather than invented. */
   const soLinkResult = await (async () => {
     if (soLinkSnapshot.length === 0) return { restored: 0, dropped: 0 };
     const plan = planSoLineRelink(
-      oldLines.map((l) => ({ id: l.id, itemCode: l.item_code, lineNo: l.line_no ?? null })),
-      ((inserted ?? []) as Array<{ id: string; item_code: string | null; line_no: number | null }>)
-        .map((r) => ({ id: r.id, itemCode: r.item_code, lineNo: r.line_no })),
+      oldLines.map((l) => ({ id: l.id, itemCode: l.item_code, lineNo: l.line_no ?? null, variantSig: soLineVariantSig(l.variants) })),
+      ((inserted ?? []) as Array<{ id: string; item_code: string | null; line_no: number | null; variants: unknown }>)
+        .map((r) => ({ id: r.id, itemCode: r.item_code, lineNo: r.line_no, variantSig: soLineVariantSig(r.variants) })),
       soLinkSnapshot,
     );
     if (plan.dropped.length > 0) {

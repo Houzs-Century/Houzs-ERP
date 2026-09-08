@@ -1,0 +1,50 @@
+name: Repair migrated GRN item codes
+
+# Manual. The migrated goods receipts whose line was left UNATTRIBUTED (AutoCount
+# does not record which purchase-order line was received) were written with
+# AutoCount's own ItemCode instead of the ERP catalogue's — "HOK-1007 (HF)(W) (SP)"
+# where the ERP spells that product "CODY 2.0 (F)-(SP)". This puts the catalogue's
+# code and name on those lines, and ONLY on those: an attributed line copied its
+# purchase-order line's translated code and is not touched. Quantities, prices,
+# dates and the stock ledger are untouched — migrated receipts carry
+# migrated_no_stock and no inventory movements, which the run asserts before and
+# after. PLAN default; apply=1 + the confirm phrase writes. Convergent: a second
+# run finds nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, else PLAN"
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: 'For apply ONLY, type exactly: REPAIR GRN ITEM CODES'
+        required: false
+        default: ""
+        type: string
+      company_id:
+        description: "Company id (default 1)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: repair-migrated-grn-item-codes
+  cancel-in-progress: false
+
+jobs:
+  run-prod:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-migrated-grn-item-codes.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

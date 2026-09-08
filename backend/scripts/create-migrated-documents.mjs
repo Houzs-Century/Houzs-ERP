@@ -45,6 +45,11 @@ import postgres from "postgres";
 import {
   buildMigratedDoPlan, indexSoLines, insertMigratedDo, loadAcErpItemMap,
 } from "./lib/migrated-do-writer.mjs";
+/* The receiving warehouse is COPIED from the book where the book has been
+   asked, not derived from the purchase order. lib/ac-gr-location.mjs owns that
+   read and the SHARED location map; see the header there for why a surviving
+   stock LAYER is not a receipt location. */
+import { loadBookGrLocations, resolveAcReceiptLocation } from "./lib/ac-gr-location.mjs";
 /* The delivery location goes on the HEADER (owner 2026-09-07, "记在单头就好").
    The map is the SHARED one the PO importer's whId() uses — a second copy of a
    location map is how stock silently moves between branches — and the resolution
@@ -140,6 +145,31 @@ async function doGrns() {
 
   const grUse = new Map();
   for (const g of plan) for (const gr of (g.po.linked_ac_grn_docnos ?? [])) grUse.set(gr, (grUse.get(gr) ?? 0) + 1);
+
+  /* THE RECEIVING WAREHOUSE IS THE BOOK'S, NOT THE PURCHASE ORDER'S.
+     This line used to read `g.items[0].warehouse_id ?? g.po.purchase_location_id`
+     — the FIRST line's warehouse, else the ORDER's location — which is a
+     derivation, and a migration copies rather than computes. A warehouse can
+     receive into a location the order did not name, and when it does the derived
+     answer is wrong with nothing to say so; that is exactly how the delivery-order
+     line warehouse went wrong (3 of 366 lines).
+     Where the committed cuts carry the book's own GRDTL location we copy it.
+     Where they do not — the GR export only started selecting the column on
+     2026-09-08, so older cuts are partial — we fall back to the old derivation
+     and SAY SO in the log, because a miss means "the book was never asked", not
+     "the book agrees". Same reason the ambiguous case (one receipt, two
+     locations, one header column) falls back rather than picking the first. */
+  const book = loadBookGrLocations(path.join(here, "data"));
+  const warehouses = await sql`SELECT id::text AS id, code, name FROM scm.warehouses WHERE company_id = ${CO}`;
+  const whStat = { copied: 0, derived: 0 };
+  const bookWarehouseFor = (g) => {
+    const r = resolveAcReceiptLocation(g.po.linked_ac_grn_docnos ?? [], g.items.map((i) => i.item_code), book, warehouses);
+    if (!r.warehouseId) { whStat.derived += 1; return null; }
+    whStat.copied += 1;
+    return r.warehouseId;
+  };
+  log(`book receipt-location sources: ${book.sources.join("; ") || "none on this cut"}`);
+
   let seq = await nextSeq("grns", "grn_number", "HC-GRN-");
   let made = 0;
   for (const g of plan) {
@@ -162,7 +192,7 @@ async function doGrns() {
                    defaults to 1 and a rate this script invented would be a
                    fabricated one; a real receipt is gated by
                    assertForeignRatePostable instead. */
-                ${g.items[0].warehouse_id ?? g.po.purchase_location_id}, 'POSTED', NOW(), CURRENT_DATE, ${g.po.currency ?? "MYR"},
+                ${bookWarehouseFor(g) ?? g.items[0].warehouse_id ?? g.po.purchase_location_id}, 'POSTED', NOW(), CURRENT_DATE, ${g.po.currency ?? "MYR"},
                 ${CO}, ${SYS_USER},
                 ${grnNote(g)},
                 true, ${g.po.linked_ac_docno})
@@ -181,6 +211,9 @@ async function doGrns() {
     if (made % 50 === 0) log(`  ..${made}/${plan.length}`);
   }
   log(`DONE. GRNs created: ${made}. No inventory movement written — by design.`);
+  log(`receiving warehouse: ${whStat.copied} COPIED from AutoCount's own receipt; ` +
+      `${whStat.derived} fell back to the purchase order. A fallback means the book was NEVER ASKED ` +
+      `(or answered with two locations for one header), not that it agrees — re-cut ac-gr-refs and re-run to raise the copied count.`);
 }
 
 // ── delivery orders for the part AutoCount already delivered ─────────────────
@@ -228,6 +261,7 @@ async function doDos() {
 
   log(`AutoCount delivery lines against open orders: ${rows.length}; unmapped code ${stats.unmapped}; no ERP SO line ${stats.noSoLine}`);
   log(`duplicate-guard: ${stats.exhausted} row(s) skipped for having no unclaimed SO line left; ${stats.collapsed} duplicate line(s) refused`);
+  log(`colour-guard: ${stats.ambiguousColour} row(s) left UNPAIRED because two or more sales-order lines of that code carry different colours and the book names none`);
   for (const [code, n] of [...stats.missCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)) log(`   no ERP line for ${code} x${n}`);
   /* A count of misses is not a diagnosis. For the first few, print what the ERP
      order ACTUALLY has on it, so the mismatch is visible instead of inferred. */

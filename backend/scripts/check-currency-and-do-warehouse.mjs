@@ -17,12 +17,24 @@
  *   are two different repairs), and — the blocker question — whether anything
  *   downstream would RE-INTERPRET the stored amount if the label changed.
  *
- * RULING 2 — the delivery line's location. AutoCount records a location per
- * DODTL row (`HQ`, `PG`, `KL`, `SRW`, `SBH`); the owner ruled these ARE the
- * ERP's own stock warehouses, not a new concept. This job asks whether
- * scm.delivery_order_items already has a column that could hold it — a column
- * that exists and is never written is this repo's likelier failure — and
- * whether the AutoCount line key needed to backfill it is populated.
+ * RULING 2 — the delivery location. ANSWERED AND SETTLED, and this header says
+ * so because the section below still asks the question the way it was first
+ * put. AutoCount records a location per DODTL row (`HQ`, `PG`, `KL`, `SRW`,
+ * `SBH`); the question asked here was whether scm.delivery_order_items had a
+ * column that could hold it. The owner's ruling later the same day was
+ * 「记在单头就好」 — the delivery location lives on the DO **HEADER**, never on a
+ * per-line column (#3121, lib/ac-do-location.mjs). It was earned by a wider
+ * measurement than this job made: a line's Location equals its header's on
+ * 46,182 of 46,194 non-blank book lines, and only 2 of 11,134 documents span
+ * two locations.
+ *
+ * SO READ THE SECTION BELOW AS DESCRIPTIVE, NEVER AS A GAP. "NO column on the
+ * delivery line names a warehouse" is the DESIGN, not a finding, and a per-line
+ * column is not the remedy — the header columns
+ * (`delivery_orders.warehouse_id` + `sales_location`) are, they are filled, and
+ * `backfill-migrated-do-warehouse.mjs` stamped 82 of the 171 migrated documents
+ * on 2026-09-08 00:41+08. The warehouse-master and SALESLOC readout below is
+ * still useful on its own terms: it is what the shared map resolves against.
  *
  * STRICTLY READ-ONLY. SELECT only: no DDL, no writes, no transaction, no marker
  * rows. Every interpolated identifier is a schema/table/column name discovered
@@ -272,6 +284,10 @@ async function main() {
   // ══════════ RULING 2 — the delivery line's warehouse ══════════
   line("");
   notice("--- RULING 2: AutoCount records a location per delivery LINE; where does the ERP hold it? ---");
+  line("SETTLED 2026-09-07 — owner: 「记在单头就好」. The delivery location lives on the DO HEADER");
+  line("(delivery_orders.warehouse_id + sales_location), never on a per-line column. Everything below");
+  line("is DESCRIPTIVE: 'NO column on the delivery line' is the design, not a gap, and a per-line column");
+  line("is not the remedy. See docs/modules/delivery-order.md and lib/ac-do-location.mjs.");
 
   const diSchema = await schemaOf("delivery_order_items");
   const dhSchema = await schemaOf("delivery_orders");
@@ -285,7 +301,7 @@ async function main() {
     line(
       candidates.length
         ? `  columns that could already hold a warehouse: ${candidates.map((c) => `${c.column_name} (${c.data_type})`).join(", ")}`
-        : "  NO column on the delivery line names a warehouse, a location, or a branch.",
+        : "  NO column on the delivery line names a warehouse, a location, or a branch — WHICH IS THE DESIGN (owner 2026-09-07, header not per line), not a gap.",
     );
     for (const c of candidates) {
       const r = await pg.unsafe(

@@ -84,7 +84,10 @@ import { formatPhone } from "@2990s/shared/phone";
 import {
   isLocked as isSoLocked,
   amendmentEligible as soAmendmentEligible,
+  migratedReadonly as soMigratedReadonly,
+  migratedReadonlyReason as soMigratedReadonlyReason,
 } from "../../vendor/scm/lib/so-detail-gates";
+import { MigratedReadonlyBanner } from "../../vendor/scm/components/MigratedReadonlyBanner";
 
 // ─── Row types (subset — see MfgSalesOrdersList.tsx for the full SoRow) ────
 
@@ -629,10 +632,20 @@ function SalesOrderDetailV2ReadOnly() {
      order to a resigning rep's replacement meant Override — which unlocks the
      whole order, addresses and lines included. */
   const canAttributeOther = useHouzsAuth().can("scm.so.attribute_other");
-  const editDisabled = hardLocked && !canAttributeOther;
-  const lockedEditHint = hardLocked && canAttributeOther
-    ? "This order is locked by a downstream Delivery Order / Sales Invoice — only the Salesperson can still be changed."
-    : "This order is locked — it already has a downstream Delivery Order / Sales Invoice.";
+  /* CUTOVER: an order carried across from AutoCount is view-only (owner
+     2026-09-08). It out-ranks the salesperson door above — `canAttributeOther`
+     exists so a hard-locked order can still change hands, and re-attributing a
+     migrated order is still a write the API will refuse. Kept as its own term
+     rather than folded into `hardLocked` so the hint below can say WHICH lock
+     the operator is looking at; two locks with one sentence is how a refusal
+     stops being actionable. */
+  const migratedLocked = soMigratedReadonly(salesOrder);
+  const editDisabled = migratedLocked || (hardLocked && !canAttributeOther);
+  const lockedEditHint = migratedLocked
+    ? soMigratedReadonlyReason(salesOrder)
+    : hardLocked && canAttributeOther
+      ? "This order is locked by a downstream Delivery Order / Sales Invoice — only the Salesperson can still be changed."
+      : "This order is locked — it already has a downstream Delivery Order / Sales Invoice.";
   const editLabel = canAmend
     ? hasOpenAmend
       ? "View amendment"
@@ -1153,7 +1166,13 @@ function SalesOrderDetailV2ReadOnly() {
                 and NOTHING else: it does not set ?edit=1, so lines, header and
                 addresses stay read-only under their own `isLocked` gate, which
                 is the lock that genuinely belongs to them. */}
-            {!["cancelled", "draft"].includes(salesOrder.status?.toLowerCase() ?? "") && (
+            {/* CUTOVER: a migrated order takes no money here either. Its balance
+                is the ONE figure the ERP knows is wrong (AutoCount payments
+                since 2026-08-28 have not reached us), which is the whole reason
+                the document is shut — so this is the last door to leave open.
+                The API refuses the write regardless; hiding the button stops the
+                operator being offered a click that can only 409. */}
+            {!migratedLocked && !["cancelled", "draft"].includes(salesOrder.status?.toLowerCase() ?? "") && (
               <Button
                 variant="secondary"
                 icon={<Wallet size={14} />}
@@ -1163,11 +1182,18 @@ function SalesOrderDetailV2ReadOnly() {
                 Collect payment
               </Button>
             )}
+            {/* Cancel is a WRITE (PATCH /:docNo/status), and on a migrated order
+                it is refused. It is also the most destructive thing on this bar,
+                so it is disabled-with-a-reason rather than hidden: a salesperson
+                looking for it must find out WHY it cannot be used, not wonder
+                where it went. */}
             {salesOrder.status?.toLowerCase() !== "cancelled" && (
               <Button
                 variant="danger"
                 icon={<XCircle size={14} />}
                 onClick={doCancel}
+                disabled={migratedLocked}
+                title={migratedLocked ? lockedEditHint : undefined}
               >
                 Cancel SO
               </Button>
@@ -1178,7 +1204,7 @@ function SalesOrderDetailV2ReadOnly() {
               onClick={goEdit}
               disabled={editDisabled}
               title={
-                hardLocked
+                migratedLocked || hardLocked
                   ? lockedEditHint
                   : canAmend
                     ? "This order is processing-locked — changes go through the SO Amendment workflow."
@@ -1193,6 +1219,7 @@ function SalesOrderDetailV2ReadOnly() {
 
       {/* ─── Detail body ────────────────────────────────────────────── */}
       <div className="py-5">
+        <MigratedReadonlyBanner header={salesOrder} />
         {/* Mobile-only Order total hero — sits at the very top of the scroll
             body, above the Customer section. On md+ the dark Order total lives
             in the sticky aside instead (below). */}
@@ -1390,8 +1417,14 @@ function SalesOrderDetailV2ReadOnly() {
                 deep-links land with the toggle already open. */}
             {(() => {
               const soStatus = salesOrder.status?.toLowerCase() ?? "";
-              const canOfferPayEdit = !["cancelled", "draft"].includes(soStatus);
-              const canEditPayments = soStatus === "draft" || (soStatus !== "cancelled" && payEditing);
+              /* A migrated order's balance is the one number we KNOW is wrong
+                 (AutoCount payments since 2026-08-28 have not reached the ERP),
+                 so the payments card is the last place to offer an edit on one.
+                 The API refuses these writes too; this stops the operator being
+                 offered the click at all. */
+              const canOfferPayEdit = !migratedLocked && !["cancelled", "draft"].includes(soStatus);
+              const canEditPayments = !migratedLocked
+                && (soStatus === "draft" || (soStatus !== "cancelled" && payEditing));
               return (
                 <div ref={paymentsRef}>
                   <PaymentsTable
@@ -1560,7 +1593,7 @@ function SalesOrderDetailV2ReadOnly() {
             type="button"
             onClick={goEdit}
             disabled={editDisabled}
-            title={hardLocked ? lockedEditHint : undefined}
+            title={migratedLocked || hardLocked ? lockedEditHint : undefined}
             className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink disabled:opacity-40"
           >
             <Edit3 size={16} /> {editLabel}

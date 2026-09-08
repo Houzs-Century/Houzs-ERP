@@ -144,6 +144,25 @@ describe('the general receipt — record and post, one motion', () => {
     expect(body.receipts.find((r) => r.kind === 'DEBTOR')).toMatchObject({ payer: 'AHMAD' });
   });
 
+  /* 月份只是筛选 (owner 2026-09-08): the list opens on every month; a month
+     narrows it; a malformed month is refused rather than read as "this month". */
+  test('no month asked for lists every month; ?month= narrows; junk is a 400', async () => {
+    const tables = baseTables();
+    tables.mfg_sales_order_payments.push({ id: 'p0', company_id: CO, so_doc_no: 'HC-SO-2601-009', paid_at: '2026-01-15T10:00:00Z', method: 'cash', amount_sen: 12000, is_deposit: false });
+    const app = harness(tables);
+
+    const all = await (await app.request('/')).json() as { month: string | null; receipts: Array<Row> };
+    expect(all.month).toBeNull();
+    expect(all.receipts.map((r) => r.number).sort()).toEqual(['HC-ODR-2609-001', 'HC-SO-2601-009', 'HC-SO-2609-004']);
+
+    const jan = await (await app.request('/?month=2026-01')).json() as { month: string | null; receipts: Array<Row> };
+    expect(jan.month).toBe('2026-01');
+    expect(jan.receipts.map((r) => r.number)).toEqual(['HC-SO-2601-009']);
+
+    expect((await (await app.request('/?month=all')).json() as { receipts: Row[] }).receipts).toHaveLength(3);
+    expect((await app.request('/?month=2026-13')).status).toBe(400);
+  });
+
   test('a control-account line refuses; a non-money landing account refuses', async () => {
     const app = harness(baseTables());
     const control = await post(app, '/', {

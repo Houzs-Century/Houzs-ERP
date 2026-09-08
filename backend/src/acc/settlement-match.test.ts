@@ -8,7 +8,7 @@
 //   4. Money already cleared by another line is never offered again.
 
 import { describe, it, expect } from 'vitest';
-import { matchStatement, recordedNotArrived, type PaymentCandidate, type MatchConfig } from './settlement-match';
+import { matchStatement, recordedNotArrived, listOnce, UNTAGGED_LIST, type PaymentCandidate, type MatchConfig } from './settlement-match';
 import type { ParsedRow } from './settlement-parse';
 
 const row = (over: Partial<ParsedRow> = {}): ParsedRow => ({
@@ -137,6 +137,18 @@ describe('watchlist 1 — recorded, not arrived', () => {
     );
     expect(list.map((p) => p.id)).toEqual(['old', 'new']);
     expect(list[0].ageDays).toBe(27);
+  });
+
+  /* docs/bugs/0688 — the same untagged instalment, in every acquirer's pool,
+     was four rows and four times the money on the watch screens. */
+  it('an untagged payment is listed once, under no acquirer; a tagged one keeps its acquirer', () => {
+    const listed = new Set<string>();
+    const untagged = pay({ id: 'u1', merchantProvider: null });
+    const mbb = listOnce([pay({ merchantProvider: 'MBB' }), untagged], 'MBB', listed);
+    const ghl = listOnce([untagged], 'GHL', listed);
+    expect(mbb.map((p) => [p.id, p.acquirerCode])).toEqual([['p1', 'MBB'], ['u1', null]]);
+    expect(ghl).toEqual([]);
+    expect(UNTAGGED_LIST).toBe('未标');
   });
 });
 

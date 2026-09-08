@@ -165,6 +165,11 @@ async function main() {
     noKey: 0, noBookRow: 0, bookHasNoSource: 0,
     ambiguousPo: 0, ambiguousSo: 0, soNotImported: 0, itemMismatch: 0, recoverable: 0,
   };
+  /* SUBDIVIDES c.itemMismatch and is deliberately NOT part of `c`: the assertion
+     below requires c's values to PARTITION the population, and a subdivision
+     living in the same object would overshoot the total by exactly the number of
+     mismatches and refuse a correct run. */
+  const sub = { bookAgrees: 0, bookDiffers: 0 };
   const recoverableRows = [];
   const mismatchEx = [];
 
@@ -188,8 +193,30 @@ async function main() {
        product must leave the link NULL. */
     if (norm(cand[0].item_code) !== norm(r.item_code)) {
       c.itemMismatch++;
+      /* WHICH SIDE IS WRONG — the LINK or the ITEM CODE? Reporting only that the
+         two ERP rows disagree leaves that open, and the two answers belong to
+         different people. The book settles it: AutoCount carries its own item
+         key on BOTH ends of the conversion it recorded.
+
+           book ends AGREE, ERP ends DISAGREE  -> the LINK is right and one
+             side's item_code was rewritten on import. An ERP-side defect, and
+             the link would be safe to write once the code is fixed.
+           book ends DISAGREE too              -> AutoCount itself converted this
+             purchase-order line from a sales-order line for a different
+             product, which is a real substitution the book records. The ERP is
+             faithful, and the link is honest.
+
+         Either way this probe still refuses to WRITE the link — a repair must
+         not turn a question into a fact. But it stops the answer being UNKNOWN. */
+      /* Kept OUT of `c`: these two SUBDIVIDE c.itemMismatch, and the assertion
+         below requires `c`'s values to PARTITION the population. Adding a
+         subdivision to the same object would make the total overshoot by
+         exactly the number of mismatches and refuse a correct run. */
+      const bookAgrees = String(bookPo.itemKey ?? "") === String(bookSo.itemKey ?? "");
+      if (bookAgrees) sub.bookAgrees++; else sub.bookDiffers++;
       if (mismatchEx.length < 10) {
-        mismatchEx.push(`${r.po_number} ${norm(r.item_code)} -> ${cand[0].doc_no} ${norm(cand[0].item_code)}`);
+        mismatchEx.push(`${r.po_number} ${norm(r.item_code)} -> ${cand[0].doc_no} ${norm(cand[0].item_code)}`
+          + `   [book's own two ends ${bookAgrees ? "AGREE - the ERP item_code is the suspect" : "DIFFER TOO - a real substitution, the ERP is faithful"}]`);
       }
       continue;
     }
@@ -218,6 +245,15 @@ async function main() {
   }
   out(`  (the classes total ${accounted}, which is the whole population - no row falls through unreported)`);
 
+  if (c.itemMismatch) {
+    out("");
+    out(`  OF THE ${c.itemMismatch} ITEM DISAGREEMENTS, WHICH SIDE IS WRONG?`);
+    out(`    ${sub.bookAgrees} where the BOOK's own two ends AGREE - AutoCount converted a product into itself,`);
+    out("        so an item_code was rewritten on import. The LINK is right; the defect is ERP-side.");
+    out(`    ${sub.bookDiffers} where the BOOK's two ends DIFFER too - a substitution AutoCount itself recorded.`);
+    out("        The ERP is faithful and the link is honest; it is simply not a same-product pair.");
+    out("    NEITHER is written here. A repair must not turn a question into a fact.");
+  }
   if (mismatchEx.length) {
     out("");
     out("  the key pairs whose two ends name different products (would have been wrong links):");

@@ -508,12 +508,13 @@ liveState, gates)`, a UNION whose promotion arm is GATED (2026-08-30):
 |---|---|---|---|
 | `PENDING` | `stock` (gates open) | **READY** | the stale-projection case — the goods are physically there |
 | `PENDING` | `stock` (either gate closed) | `PENDING` | see the two gates below — the live verdict is answering a different question |
-| `READY` | anything | **READY** | the allocator knows BOUND MODE and dye-lot batches; MRP structurally cannot see either. The gates never veto a stored READY |
+| `READY` | anything | **READY** | the allocator knows BOUND MODE and dye-lot batches; MRP structurally cannot see either. The two PROMOTION gates never veto a stored READY |
 | `PENDING` | `po` / `shortage` | `PENDING` | an incoming PO is not stock |
 | `PARTIAL` | anything but gates-open `stock` | `PARTIAL` | |
 | anything | `null` | the stored value | MRP had no verdict, or `computeMrp` threw — fail-soft to the pre-2026-08-17 behaviour exactly |
+| anything | anything | `PENDING` | **`lineNonSellingWarehouse` — the one VETO** (2026-09-08). It outranks a stored READY, unlike the two rows above |
 
-**The two promotion gates** (`gates: { orderProcessed, lineHardBound } | null`,
+**The two promotion gates** (`gates: { orderProcessed, lineHardBound, lineNonSellingWarehouse } | null`,
 bug `docs/bugs/0569-the-display-union-promoted-pending-lines-to-ready-past-the-p.md`,
 owner report HC-SO-013367):
 
@@ -534,6 +535,32 @@ with no MRP result types `liveState: null` (the stored value stands), and a
 caller that cannot establish the gate context types `gates: null`, which fails
 in the STRICT direction: the promotion arm is off, the stored value still
 stands.
+
+**And the third field is not a gate, it is a VETO** —
+`lineNonSellingWarehouse`, added 2026-09-08 on the owner's ruling
+「分配时跳过这九个仓」,
+`docs/bugs/0686-the-allocator-promised-display-showroom-and-service-stock-to.md`. The two gates above arbitrate between two
+ENGINES about where the goods are, which is why they never veto a stored READY.
+This one is not an engine: `scm.warehouses.type` in
+{`showroom`, `display`, `service`} says the goods may not be PROMISED at all,
+however plainly both engines can see them — a showroom piece is doing its job on
+the floor, and a `SERVICE` unit is physically away at the supplier. So it
+outranks a stored READY, and it has to, or a stale projection keeps lighting the
+pill after the allocator has stopped promising the line.
+
+The allocator applies the same rule at SOURCE
+(`lib/non-selling-warehouse.ts` — the ONE home for the three type names, shared
+with the dead-stock exclusion in `routes/inventory.ts`), gating all three of its
+paths: the pooled on-hand walk, BOUND MODE and the sofa dye-lot matcher. This
+veto is the cover for the window in which the stored projection is stale.
+
+**Selling a display piece stays possible, through a stock transfer** into a
+selling warehouse (`/scm/stock-transfers/new`, and its mobile twin) — the SAP /
+Odoo / NetSuite model, where what a warehouse HOLDS and what may be PROMISED are
+two different numbers. The refusal says so on the line: the payload carries
+`non_selling_warehouse: { code, name, type, notice }`, the desktop pill prints
+the warehouse code plus "transfer to sell" with the sentence on hover, and the
+phone prints the whole sentence.
 
 Where it is used:
 
@@ -1711,6 +1738,73 @@ twin (0 emptied, 0 live picker codes lost); **26 more** carry a SEMANTIC pair
 (`NOSTICHINGINSITTINGAREA` beside `No notch on Seat Cushion`) that needs the
 owner's phrase ruling and is deliberately left alone — see BUG-HISTORY for why
 the phrase map was NOT vendored into the runtime bundles.
+
+### MIGRATED orders are READ-ONLY (cutover, owner 2026-09-08) — SURFACE CHANGE
+
+Owner ruling, asked whether Sales Orders could be opened to staff before the
+tally finished: **「只开新单，旧单暂时不能改」** — a NEW sales order saves
+normally; one carried across from AutoCount does not. This is a partial lift of
+the cutover write freeze, not a replacement for it: the freeze
+(`docs/write-freeze-staged-lift.md`) decides whether the MODULE may be saved at
+all, this decides whether THIS DOCUMENT may.
+
+**The predicate is `scm.mfg_sales_orders.linked_ac_docno`** (mig 0271): the
+origin AutoCount number on an imported order, NULL on one the ERP created.
+Nothing is stamped on a migrated row to mark it — the owner's rule is that
+adding a marker IS a change to the migrated data
+(「你换不一样就代表我们的数据从 autocount 搬过来的就不一样了啊」). The read has
+one home, `scm/lib/so-is-migrated.ts`, and it fails CLOSED.
+
+| | |
+|---|---|
+| Switch | `scm.app_config` key **`scm.migrated_so_lock`** — `off` / `all` / company ids. Seeded `'1'` by `20260908T0014_scm_migrated_so_lock.sql`. Effective in 30s, no deploy. |
+| Guard | `backend/src/scm/lib/migrated-so-readonly.ts`, mounted TWICE in `backend/src/scm/index.ts` — `scm.use("/mfg-sales-orders/*", migratedSoReadonly())` and `scm.use("/so-amendments/*", migratedSoAmendmentReadonly())`. Beside the write freeze it stacks with, and at the PREFIX rather than per handler: ~22 write routes reach their SO through the `:docNo` segment and a per-handler guard leaves the next one added unguarded. |
+| Why TWO mounts | **Two routers write one sales order.** Amendment approval is not a status flip: `PATCH /so-amendments/:id/approve-so` runs `applySoAmendment`, which deletes, inserts and updates the order's LINES and rewrites its HEADER (`scm/lib/so-revision.ts`). The lock shipped guarding the SO prefix only, so an amendment already OPEN on a migrated order could still be driven through — `docs/bugs/0688-an-amendment-already-open-on-a-migrated-sales-order-could-st.md`. Raising a NEW one was never possible: `POST /:docNo/amendments` is on the guarded prefix. |
+| Amendment id -> order | `amendmentSoDocNo` reads `so_amendments.so_doc_no`. THREE answers: an absent amendment returns `null` and the write proceeds (the handler 404s and writes nothing); a row whose `so_doc_no` cannot be read THROWS, and "could not tell" LOCKS. Folding those two together is how a gate ships looking applied. |
+| Decision | `backend/src/scm/lib/migrated-so-lock.ts` — pure, unit-tested. `isMigrated: boolean \| null` is REQUIRED, and `null` ("the read failed") LOCKS. |
+| Refusal | **`409 so_migrated_readonly`**, sentence on BOTH `reason` and `message`, curated in `authed-fetch.ts` `ERROR_CODE_MESSAGES`. NOT 503: a migrated order is not briefly away, and `api/client.ts` re-sends a 503 four times. |
+| Bypass | `*` / `scm.admin` — the SAME cohort as the write freeze, so there is one answer to "who can still save", not two. |
+| Never gated | Every GET. `POST /` (create) — it carries no doc number in its path, which is 「只开新单」 in one line of control flow. On the amendment prefix, a segment that is not a uuid (`so_amendments.id` is `uuid`, mig 0080) names no amendment and passes: a static non-GET route added there later must not arrive as an unexplainable 409. |
+| Doors deliberately left OPEN | Delivery scheduling, delivery orders / returns, the PO-driven `po_qty_picked` recount, the stock-allocation recompute, and salesperson handover all write a COLUMN on a migrated order and are NOT gated — a migrated order still has to be delivered. The full enumeration, with the reason for each, is `docs/migrated-so-lock.md` §9. |
+
+**What the two front ends read.** `GET /:docNo` stamps `migrated_readonly` +
+`migrated_readonly_reason` on `salesOrder` (`withSoMigratedReadonly`), and the
+LIST stamps `migrated_readonly` per row (`migratedSoListGate`) — both computed by
+the SAME `migratedSoReadonlyState` the middleware refuses with, so a button and
+its endpoint cannot disagree.
+`linked_ac_docno` rides the DETAIL select and the list's base-table enrichment
+read, never `HEADER`: `HEADER` also feeds the list, which reads the
+payment-totals VIEW, and a column that view does not enumerate 500s the page
+(VIEW-TRAP, above).
+
+**The shared frontend layer is `frontend/src/vendor/scm/lib/so-detail-gates.ts`**
+— `migratedReadonly()` / `migratedReadonlyReason()`. It is its OWN predicate,
+deliberately NOT folded into `isLocked`: `isLocked` takes `unlockOverride`, and
+the desktop Override button must not be able to reach this lock — the reasons are
+`sync-ac-delta` and unreconciled AutoCount payments, and no local certainty
+settles either. The five surfaces that read it, all of which change together:
+
+| Surface | What it gates |
+|---|---|
+| `frontend/src/pages/scm-v2/SalesOrderDetailV2.tsx` | banner (`MigratedReadonlyBanner`), Edit + its hint, the payments card, and the whole HEADER BAR — **Collect payment** hidden, **Cancel SO** disabled with the reason. The header bar was missed on the first cut and shipped live (`docs/bugs/0687-*`): "the file consults the gate" is not "every write on the file is behind it". |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | the existing lock banner names the migrated lock FIRST and its **Override is disabled**; `isLocked`, Save / Submit-amendment, Cancel, payments |
+| `frontend/src/mobile/MobileSODetail.tsx` | the same lock banner, `isLocked`, Edit / Edit Draft / Create, Cancel, payments |
+| `frontend/src/mobile/MobileNewSO.tsx` | banner, `lineEditingBlocked` / `addressIdentityLocked` / `scheduleDatesLocked`, amendment mode, the Save button (reads "View only") |
+| `frontend/src/pages/scm-v2/row-menus.ts` | a migrated row's right-click menu drops to **Open + Print** — no Edit, Confirm, Close, Reopen, Hold or Cancel |
+
+One banner component for all of them where a banner is new:
+`frontend/src/vendor/scm/components/MigratedReadonlyBanner.tsx`. The refusal
+sentence for a write that reaches the API anyway is curated in
+`frontend/src/vendor/scm/lib/authed-fetch.ts`.
+
+**Opening them again is ONE statement**, when collections are corrected:
+
+```sql
+UPDATE scm.app_config SET value = 'off', updated_at = now()
+ WHERE key = 'scm.migrated_so_lock';
+```
+
+Full runbook, including what a malformed value does: `docs/migrated-so-lock.md`.
 
 ### Deleting an SO — DRAFT only, and the test-order escape hatch
 
@@ -4267,3 +4361,52 @@ Both go through `bookSoPaymentBestEffort` in `lib/so-payment-row.ts`, the same
 hook the panel path uses. `backend/tests/soCreateDepositBooks.test.ts` pins the
 shape — every payment insert in the writers is followed by the booking hook —
 and was RED on the unfixed tree.
+
+## Carrying SO-line links across a delete-and-reinsert matches SKU **and colour** (2026-09-08)
+
+`src/scm/lib/so-line-relink.ts`, `docs/bugs/0672` site 11, trace in
+`docs/bugs/0683`.
+
+The TBC sofa exchange deletes a build's lines and reinserts a new set; three
+tables reference `mfg_sales_order_items.id` with `ON DELETE SET NULL`, so the
+links are frozen before the delete and re-pointed after the reinsert.
+
+`SoLineIdentity` was `{ id, itemCode, lineNo }` and the bucket was **the item
+code alone**, so two lines of the same model in different fabrics — the ordinary
+sofa case, and exactly what an exchange produces — shared a bucket and were
+paired by ORDINAL. A replacement set listing them in the other order hands the
+BLUE two-seater's purchase order to the GREY one. The SKU matches, the foreign
+key is valid, nothing dangles — and a PO line is HARD-BOUND (`isHardBoundLine`),
+so the floor is told the wrong sofa is covered.
+
+**The bucket is now `(code, variantSig)`.** `soLineVariantSig` reads
+`colourId ?? colourLabel ?? colourCode` — the same precedence
+`probe-link-identity.mjs` uses, for the reason `docs/bugs/0674` records:
+comparing `colourCode` alone found **0 comparable pairs on every edge**, an EMPTY
+answer that printed identically to a clean one.
+
+A line whose `(code, colour)` pair has no counterpart lands in `dropped`, which
+this module already reports out loud rather than inventing a link. **A missing
+link is recoverable; a wrong one lights the wrong stock.** Both callers in
+`mfg-sales-orders.ts` pass `variants`, which both sides already carried.
+
+## Which SO line a migrated delivery note binds to — colour decides, or nobody does (2026-09-08)
+
+`scripts/sync-ac-delta.mjs` lane `do` and `scripts/create-migrated-documents.mjs`
+both bind an AutoCount delivery line to one of THIS order's lines through
+`buildMigratedDoPlan`. That binding is what moves a sales-order line's delivered
+quantity, so getting it wrong under-delivers one line and over-delivers another.
+
+The bucket is `(AutoCount SO number, ERP item code)` and the tie-break used to be
+position alone. Two lines of one sofa model in different fabrics are the ordinary
+case, and the book's delivery row carries no colour and no line key — 0 of 48,772
+DO lines have `fromSoDtlKey` on the 2026-09-08 re-cut — so position was a coin
+flip that also copied the wrong `variants` onto the note.
+
+**Now: the candidates must be indistinguishable by `variantIdentity` before
+position may decide.** If two candidate SO lines of one code carry different
+colours, no link is written; the row is listed against the delivery note for a
+person, and the delta lane counts it in its ALL-OR-NOTHING refusal total so the
+whole note is refused rather than half-written. The refusal message names the
+count: `colour cannot say which line N`. `docs/bugs/0688`,
+`docs/modules/delivery-order.md`.

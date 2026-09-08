@@ -473,6 +473,45 @@ matches in this module's chain: `0082_scm_fx_landed_cost.sql`,
 `0154_scm_oversell_retrocost.sql`, `0057_scm_dropship_do.sql`. Do not trust a bare
 "migration NNNN" in a comment without checking the filename.
 
+### The migrated receipt's WAREHOUSE is copied from the book, not derived (2026-09-08)
+
+The owner reads the receiving location on every goods receipt. Until 2026-09-08
+the migrated ones did not carry AutoCount's: both writers COMPUTED it from the
+purchase order — `create-migrated-documents.mjs:151`
+(`g.items[0].warehouse_id ?? g.po.purchase_location_id`) and
+`reshape-migrated-grns.mjs:653` (the same rule in the pair-grain shape). A
+migration copies; it does not compute.
+
+`backend/scripts/lib/ac-gr-location.mjs` is now the one place that answers "where
+did AutoCount put these goods". Three rules live there and all three are load-bearing:
+
+1. **Only real `GRDTL` rows count.** `data/ac-stock-layers.json.gz` carries
+   `{ItemCode, Location, SrcDoc, Src:'GR'}` and looks like a receipt location; it
+   is where the units are NOW. Of 274 cells carried by both it and a real `GRDTL`
+   row, 16 disagree and **every one of the 16 moves KL/PG to a DISPLAY or SERVICE
+   location** — a showroom transfer after the receipt. The layers are excluded.
+2. **The location map is IMPORTED**, never re-typed — `SALESLOC` from
+   `lib/ac-stock-compare.mjs`. The book writes `PG`; the ERP calls it
+   `PG WAREHOUSE`. A second copy of a location map is how stock silently moves
+   between branches.
+3. **A miss is UNKNOWN, not agreement.** The GR export only started selecting
+   `GRDTL.Location` on 2026-09-08 (`export-ac-reimport.py`, `grrefs`), so older
+   cuts answer for part of the corpus. The writer falls back to the derivation
+   and says so in its log; it never reports a fallback as a copy. An ambiguous
+   receipt — two locations, and `scm.grn_items` has no warehouse column — falls
+   back rather than taking the first.
+
+Measured 2026-09-08 by the resolver itself: of 214 in-scope AutoCount receipts the
+book can answer for **82**, and **all 82 equal the derived value — 0 differ**
+(238 of 1,019 reference rows, 97 of 400 receipt x order pairs, same result). Of
+the rest, 129 have no GRDTL location on this cut and **3 used more than one
+location for one receipt** — `GR-003512` (KL + SRW), `GR-004812` (KL + PG),
+`GR-005062` (KL + PG + SRW) — which the header cannot represent and the resolver
+refuses by name. 0 of 318 in-scope purchase orders have received lines in more
+than one location. Read-only probe: `check-gr-receipt-location.mjs` + Actions ->
+**GR receiving location check (read-only)**. Rule pinned by
+`backend/tests/acGrLocation.test.mjs`. Ledger `0677`.
+
 ### `grn_items.variants` is a SNAPSHOT, and nothing sweeps it (2026-08-11)
 
 `grn_items.variants` is copied from the parent PO line at receipt
@@ -554,6 +593,43 @@ ruling on those lines: 「跟 autocount 一样」. Filling the first matching li
 would be inventing an attribution, and the total quantity per (purchase order,
 item) is identical either way, so stock and MRP are unaffected.
 
+**But an unattributed line still carries the ERP's OWN item code, not the
+book's** (2026-09-08). Leaving the purchase-order LINE unset is the ruling above;
+leaving the item CODE untranslated was a defect. An attributed line copies
+`purchase_order_items.item_code`, which the PO importer had already resolved
+through `backend/scripts/data/autocount-erp-mapping-1561.csv`. The unattributed
+arm had nothing to copy and fell back to AutoCount's raw `ItemCode`, so company-1
+receipt lines read `HOK-1007 (HF)(W) (SP)` where the ERP catalogue spells that
+product `CODY 2.0 (F)-(SP)`, and `material_name` inherited the same string. The
+fallback now reads the same mapping file with the same two rules every other CSV
+item-code writer applies — the **sofa alias fold at read time**
+(`aliasFoldsForCatalog`; only a mapped code the catalogue LACKS folds, and only
+onto one it HAS) and the **catalogue guard at write time** (`nonCatalogRefs` and
+a non-zero exit, printed BEFORE the dry-run return so the plan is known
+unwritable while it is being read). Where the map is silent the book code stands
+and the guard decides. `material_name` comes from the ERP product where the code
+resolves.
+
+Two lookups deliberately keep following the RAW code: the money carry
+(`carryByPo`) and the invoiced-quantity carry (`billed`) are keyed on what is ON
+DISK, and rows written before this change hold the untranslated code — a
+translated key would miss them and silently re-derive the price from the book.
+
+**The rows already written are repaired by
+`backend/scripts/repair-migrated-grn-item-codes.mjs`** + Actions -> **Repair
+migrated GRN item codes**. It touches `item_code` and `material_name` only, on
+company-scoped `migrated_no_stock` AutoCount-linked receipts, and ONLY where
+`purchase_order_item_id IS NULL` — an attributed line's code has a source and is
+not this script's to re-decide. A row is rewritten only when the mapping gives a
+translation AND the catalogue carries it; anything else is LEFT and counted,
+because replacing a wrong-but-traceable code with an orphan is a worse row
+(`docs/bugs/0577`). No stock moves: the FIFO trigger is `AFTER INSERT ON
+scm.inventory_movements`, migrated receipts have none, and no quantity, price,
+date or status column appears in the `UPDATE` — asserted before the write and
+re-asserted on a fresh connection after it. PLAN by default; `APPLY=1` +
+`CONFIRM="REPAIR GRN ITEM CODES"` writes. Full trace:
+`docs/bugs/0691-the-goods-receipt-reshape-wrote-autocount-s-own-item-code-on.md`.
+
 **`purchase_order_items.received_qty` is NOT written by the reshape.** The plan
 compares what the book's receipts add up to per purchase-order line against the
 number the column holds today, and prints every difference — so an unattributed
@@ -573,15 +649,52 @@ uses, and it is not an invention, because every candidate line shares the code
 and therefore the price. **Re-dispatch "Stamp migrated source prices" after the
 reshape**: its selection is `unit_price_sen = 0`, and the new grain makes MORE of
 it stampable, because its partial-mirror refusal exists precisely for the
-one-document-per-purchase-order shape the reshape replaces. The run prints the
-money before and after.
+one-document-per-purchase-order shape the reshape replaces.
 
-**What it unlocked.** `check-ac-erp-reconcile.mjs` printed *"GR DATA — line and
-money comparison NOT APPLICABLE"* and stopped, because the quantity was derived
-and the grains did not match. Both reasons are gone, so the GR section now
-compares line count, item code and QUANTITY at pair grain. The unit PRICE is
-still taken from the purchase-order line and is reported as DECLARED, not as a
-gap.
+**The run prints the BOOK's own total beside its own — and that is the only
+number that settles anything.** For a full day the run ended on a bare
+`RM 210,513.43 today; this plan writes RM 461,371.95`, and that unexplained 119%
+blocked the apply three times (`docs/bugs/0682`). The two figures were not
+comparable in two independent ways: `moneyBefore` sums `line_total_sen` over ALL
+320 migrated receipts, while `moneyAfter` computes `qty x price` over the 400
+PAIR documents — and 73 of the 320 are `untouched`, so they sit in the "before"
+and **survive**, carrying RM 124,729.00, 59% of the whole "before". On top of
+that, 276 of 591 lines hold a real `unit_price_sen` and a `line_total_sen` of
+**0**, so the "before" read a broken column while the "after" read a product.
+Like for like the 247 documents actually replaced are worth RM 249,691.95, not
+RM 85,784.43.
+
+So the MONEY section now states AutoCount's own `GRDTL.SubTotal` for exactly the
+pairs it is writing, splits the headline apart, and prints a verdict. **A delta
+between two states of our own system cannot tell a correction from a
+double-count; only the book can.** Two offline tests decide it, both in
+`backend/scripts/audit-gr-reshape-money.mjs` (no database, no network, no
+`node_modules`, so it re-derives on a bare checkout):
+
+| test | what it asks | measured 2026-09-08 |
+| --- | --- | --- |
+| **partition** | does any receipt line land on more than one pair? | **0 of 567** — each `GRDTL` row carries its own `FromDocNo`. Unlike `linked_ac_dtlkey`, where one book line owns several ERP rows (one per sofa compartment) and a repair nearly wrote RM 2,216,501 of invented revenue |
+| **ceiling** | what does the book say those pairs are worth? | **RM 574,763.43** (214 receipts, all MYR at rate 1). The plan writes RM 461,371.95 — **RM 113,391.48 BELOW**. A double-count cannot land under the book |
+
+If `moneyAfter` ever exceeds the ceiling the run says so in those words and the
+plan is not to be applied.
+
+**What it unlocked — measured, not predicted.** `check-ac-erp-reconcile.mjs`
+printed *"GR DATA — line and money comparison NOT APPLICABLE"* and stopped,
+because the quantity was derived and the grains did not match. Both reasons are
+gone, so the GR section now compares line count, item code and QUANTITY at pair
+grain. The unit PRICE is still taken from the purchase-order line and is reported
+as DECLARED, not as a gap.
+
+The reshape was **applied to production 2026-09-08 09:00 local** (run
+34175100153: created 153, updated 247, cancelled 0), and the reconcile then read
+**`GR DATA (400 documents on both sides, 506 lines paired)`** — absent 0, phantom
+0, line-count differs 0 of 400, quantity differs 0 of 400, unit price differs
+0 of 400; item code 103 of 400 and document total 109 of 400 remain, of which the
+run attributes 100 to documents carrying zero money in the ERP against a valued
+book line — `stamp-migrated-source-prices.mjs`'s to close. **44 of 400 could not
+be line-matched and are UNVERIFIED, not verified-clean.** Full evidence with
+denominators in `docs/bugs/0675`.
 
 ---
 
@@ -630,6 +743,11 @@ between READY and PENDING.
 The OUT counterpart for goods sent back to the supplier is the **Purchase
 Return** (`/purchase-returns`), a separate module.
 
+**Every one of those four OUT paths is LINE-derived, and that is the trap.** They
+read `grn_items` and write the opposite of what the lines say. That is correct
+for a receipt whose post wrote the matching IN, and wrong for one whose post
+wrote nothing — see 5b.
+
 ---
 
 ## 5a. `ON_HOLD` — a paperwork pause, never a stock event (mig 0319)
@@ -661,6 +779,48 @@ the warehouse either way — what stops is the paperwork.
 `GoodsReceivedDetailV2`'s `effectiveOf` names it explicitly. Its fall-through is
 `draft`, so a held receipt would otherwise have read as an un-posted DRAFT — the
 opposite of the truth, since a held GRN has already posted and its stock is in.
+
+---
+
+## 5b. `migrated_no_stock` — a POSTED receipt that posted no stock (mig 0276)
+
+The 320 goods receipts carried over from AutoCount at the cutover are **POSTED
+with no inventory movement behind them, deliberately**: on-hand entered the ERP
+once through the AutoCount balance snapshot, which already counts every past
+receipt as IN. Measured on production 2026-09-07 (Actions -> *GR shape check*):
+**0 movement rows, 0 units** behind all 320.
+
+So this module carries a second document class that commits no stock, alongside
+DRAFT — and unlike DRAFT it is POSTED, so every status gate lets it through.
+`migrated_no_stock` is now read at **five** sites in `grns.ts` and the stock
+effect is skipped exactly as it is for a draft:
+
+| Site | What is skipped |
+|---|---|
+| `PATCH /:id/cancel` | the reversing OUT per line, and the rack reversal |
+| `PATCH /:id` | the warehouse-relocate OUT + IN |
+| `POST /:id/items` | the IN for the added line |
+| `PATCH /:id/items/:itemId` | the delta IN / OUT (`inventoryChange` stays false) |
+| `DELETE /:id/items/:itemId` | the reversing OUT for the removed line |
+
+**Paperwork is NOT skipped** — the PO `received_qty` recount, the audit row, the
+AutoCount outbox enqueue and the header money recompute all still run. Only the
+stock moves are suppressed, and the cancel audit note says so instead of claiming
+a reversal that did not happen (`qtyReversed` is stamped 0, not the line total).
+
+**`grnReverseWouldGoNegative` is NOT a second line of defence here, and reading
+it as one is what let this ship.** It asks whether the units are on hand; for a
+migrated receipt they are, having arrived by the snapshot rather than by this
+document. It PASSES, so the phantom OUT is written and every guard in §6 reads as
+satisfied. It is now skipped for these documents for the same reason it already
+skips service lines: with no IN to reverse, *"the goods were already consumed
+downstream"* names a cause that does not exist.
+
+Was it ever hit in production? `backend/scripts/check-migrated-cancel-exposure.mjs`
++ Actions -> *Migrated cancel exposure (read-only)* answer it. Ledger:
+`docs/bugs/0675-a-migrated-goods-receipt-cancelled-reversing-879-units-it-ne.md`.
+
+---
 
 ## 6. What locks and when
 
@@ -1109,3 +1269,40 @@ and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
 answers. `coverage` is a required prop on the shared drill-down; the rule, the
 five surfaces that fetch separately, and how to add a sixth are in
 `docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).
+
+## The source line must be the SAME PRODUCT — 409 `link_material_mismatch`
+
+Added 2026-09-08, `docs/bugs/0682`; bug class `docs/bugs/0672` site 15.
+
+Every write path here that accepts a **Purchase Order line (`purchase_order_item_id`)** id from the request body proved
+three things about it — the source line's COMPANY, its parent document's STATUS,
+and that the QUANTITY fits. It never proved the two rows name the same product.
+A line for product B naming a source line for product A therefore passed
+everything: the foreign key is valid, nothing dangles, no constraint breaks, and
+no coverage count drops.
+
+That matters because the quantity ledgers are addressed BY THE LINK
+(`recomputePoReceived`, `recomputeGrnInvoiced`, `adjustGrnReturnedQty` and
+`doLineRemaining` all key on it), so a wrong link draws down the WRONG source
+line and leaves the right one open to be received a second time.
+
+**The rule** is `backend/src/scm/lib/line-link-item-identity.ts` — one home,
+reached three ways depending on what the path already has in hand:
+`assertSourceLinesInCompany(..., { lines, linkField, source })` where the company
+read is already happening, `lineLinkItemMismatch(...)` where the source rows are
+already held, `assertLinkedLineItemsMatch(...)` otherwise. Codes are compared
+trimmed, upper-cased and with inner whitespace collapsed — the same
+normalisation as `soLinkTargetRefusal` and `normItemCode`.
+
+**Two refusals worth knowing before you debug one:**
+
+- A source row that **cannot be read back** is refused, not skipped. An id that
+  resolved to nothing cannot be asserted equal to anything.
+- A **failed read** answers 503 `link_identity_unavailable`, never a pass. "We
+  could not check" must not be spelled the same way as "we checked and it was
+  fine".
+
+Identity is asserted **before** the quantity cap wherever both run: a ceiling
+computed against the wrong line is a number about the wrong thing, and reporting
+it sends the operator to fix a quantity when the real fault is the source they
+picked.

@@ -75,6 +75,7 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { buildScope, decodeSnapshot } from "./lib/ac-scope.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -344,6 +345,136 @@ async function main() {
     log(`  NOT IN THE LIVE EXPORT   ${pad(notInSnapshot.length, 6)}  (the purchase order is absent from ac-convert-edges — UNVERIFIABLE)`);
     for (const n of notInSnapshot.slice(0, TOP)) log(`     ${n.grn.padEnd(24)} ${n.po}`);
   }
+  log("");
+
+  /* ── TEST 2B — WHY each missing receipt is missing, and what already covers it ──
+   *
+   * TEST 2 counts the missing receipts. It does not say why, and "89 missing"
+   * with no cause reads as one problem when it is actually two, with two
+   * different remedies. This attributes every one of them.
+   *
+   * THE CAUSE, TRACED TO A LINE. `create-migrated-documents.mjs:79` selects the
+   * purchase-order lines it will mirror with
+   *
+   *     WHERE p.company_id = $1 AND p.linked_ac_docno IS NOT NULL
+   *       AND COALESCE(i.received_qty,0) > 0
+   *
+   * — the ERP's OWN received_qty, never AutoCount's receipts. A purchase order
+   * whose received_qty was 0 on the day the migration ran therefore produced no
+   * goods receipt at all, whatever the book held. `:81` then records every
+   * purchase order it mirrored in a `done` set and skips it on the next run, so
+   * a later top-up is impossible by construction.
+   *
+   * The other half of the chain is `sync-ac-delta.mjs`. Its `recv` lane (plan
+   * ~:856-874, write ~:1385-1399) copies AutoCount's PODTL.TransferedQty onto
+   * `purchase_order_items.received_qty` and writes NOTHING ELSE. The SO->DO side
+   * of that script has a document-creating lane (`do`, lib/migrated-do-writer);
+   * the PO->GR side has no counterpart. So a receipt AutoCount made after the
+   * migration arrives in the ERP as a raised number on a purchase-order line
+   * with no receipt document behind it — which is exactly this finding.
+   *
+   * AND THE DETECTOR IN THAT SCRIPT CANNOT SEE ITS OWN GAP. `sync-ac-delta`
+   * counts "AutoCount goods receipts behind them the ERP has no mirror for"
+   * (c2.grAbsent), but it fills that set only AFTER
+   * `if (Math.abs(bookTq - erpRecv) < 1e-6) { c2.agree++; continue; }`. Once the
+   * `recv` lane has raised received_qty to match the book, the quantities agree,
+   * the loop skips the line, and the missing DOCUMENT is never looked at. The
+   * lane's own success blinds its own detector, and `recv` is in the default
+   * lane string — so every run makes the count smaller without fixing anything.
+   * That is why this attribution lives here and not there.
+   *
+   * WHAT THIS SECTION MUST NOT BE READ AS. A purchase order landing in the
+   * COVERED bucket is a statement that `reshape-migrated-grns.mjs` PLANS a
+   * document for it, nothing more. The reshape can still leave a line
+   * unattributed (purchase_order_item_id NULL, the owner's 跟 autocount 一样
+   * ruling) and that is not a failure. Only its own run output proves what it
+   * wrote. */
+  const truthSnap = gz("ac-reconcile-truth.json.gz");
+  const scope = buildScope(decodeSnapshot(truthSnap));
+  const eFt = eIdx("fromDocType"), eFn = eIdx("fromDocNo");
+  const ceHead = edges.header_fields;
+  const hDoc = ceHead.indexOf("docNo"), hCanc = ceHead.indexOf("cancelled");
+  const grCancelled = new Map((edges.types?.GR?.headers ?? []).map((r) => [String(r[hDoc]).trim(), String(r[hCanc] ?? "").trim() !== "F"]));
+
+  /* The reshape's population, restated from the same snapshot it reads:
+     one (receipt x purchase order) pair per in-scope GR line naming an
+     in-scope PO, cancelled receipts dropped. If this number ever stops
+     matching the reshape's own PLAN line, one of the two has drifted. */
+  const reshapePo = new Set();
+  let reshapePairs = 0;
+  const grNamesPo = new Map();          // every GR naming this PO, in or out of scope
+  for (const r of edges.types?.GR?.lines ?? []) {
+    if (String(r[eFt] ?? "").trim() !== "PO") continue;
+    const po = String(r[eFn] ?? "").trim();
+    const gr = String(r[eDoc] ?? "").trim();
+    if (!po || !gr) continue;
+    if (!grNamesPo.has(po)) grNamesPo.set(po, new Set());
+    grNamesPo.get(po).add(gr);
+    if (!scope.GR.has(gr) || !scope.PO.has(po) || grCancelled.get(gr)) continue;
+    if (!reshapePo.has(po)) reshapePo.add(po);
+    reshapePairs += 1;
+  }
+
+  /* Did the ERP's own number move after the migration? received_qty > 0 with no
+     receipt document is the delta lane's fingerprint; received_qty 0 is the
+     purchase order the migration's WHERE clause excluded and never revisited. */
+  const erpRecvByPo = new Map();
+  for (const it of erpPoItems) erpRecvByPo.set(it.ac, (erpRecvByPo.get(it.ac) ?? 0) + n0(it.received_qty));
+
+  const covered = [], residual = [];
+  for (const m of missing) {
+    const row = { ...m, erpRecv: r0(erpRecvByPo.get(m.po)), grs: [...(grNamesPo.get(m.po) ?? [])] };
+    if (reshapePo.has(m.po)) covered.push(row);
+    else residual.push(row);
+  }
+  const raisedByDelta = covered.filter((r) => r.erpRecv > 0).length + residual.filter((r) => r.erpRecv > 0).length;
+
+  log("TEST 2B — WHY those receipts are missing, and which remedy already covers them");
+  log("-".repeat(96));
+  log("  CAUSE, traced: create-migrated-documents.mjs:79 builds the goods receipts from the ERP's own");
+  log("  purchase_order_items.received_qty (`COALESCE(i.received_qty,0) > 0`), never from AutoCount's");
+  log("  receipts; :81 then skips any purchase order it has already mirrored, so it cannot top up.");
+  log("  sync-ac-delta.mjs lane `recv` (:1385-1399) raises received_qty and creates NO document — the");
+  log("  SO->DO side of that script has a document-creating lane, the PO->GR side has none.");
+  log("");
+  log(`  missing goods receipts                                   ${pad(missing.length, 6)} of ${erpPo.length} migrated purchase orders`);
+  log(`  ... whose ERP received_qty is ALREADY above zero          ${pad(raisedByDelta, 6)}  (the delta lane raised the number and left no document)`);
+  log(`  ... whose ERP received_qty is still zero                  ${pad(missing.length - raisedByDelta, 6)}  (excluded by the migration's WHERE clause and never revisited)`);
+  log("");
+  log(`  the reshape's population, recomputed here                 ${pad(reshapePairs, 6)} (receipt x purchase order) pairs over ${reshapePo.size} purchase orders`);
+  log("  (this must equal reshape-migrated-grns.mjs's own PLAN line; if it does not, one has drifted)");
+  log("");
+  log(`  COVERED  ${pad(covered.length, 6)} of ${missing.length}  reshape-migrated-grns.mjs plans a document for this purchase order.`);
+  log("           It is on main (PR #3123) and has never been dispatched — `gh run list` for its");
+  log("           workflow is empty. Nothing more needs writing; it needs running.");
+  for (const c of covered.slice(0, TOP)) log(`     ${c.erpPo.padEnd(22)} ${c.po}  book received ${c.acUnits}, ERP received_qty ${c.erpRecv}, receipts ${c.grs.join("/") || "none"}`);
+  if (covered.length > TOP) log(`     ... and ${covered.length - TOP} more`);
+  log("");
+  log(`  RESIDUAL ${pad(residual.length, 6)} of ${missing.length}  the book received against this purchase order and the reshape does NOT`);
+  log("           plan a document for it. Sub-attributed below, because the two sub-causes have");
+  log("           different answers and averaging them would hide the one that matters.");
+  const rPoOut = residual.filter((r) => !scope.PO.has(r.po));
+  const rNoGr = residual.filter((r) => scope.PO.has(r.po) && !r.grs.length);
+  const rGrOut = residual.filter((r) => scope.PO.has(r.po) && r.grs.length);
+  log(`     the purchase order is OUT of the current book scope    ${pad(rPoOut.length, 6)}`);
+  log("        ac-scope PO rule: outstanding (a line with Qty > TransferedQty) OR raised for an in-scope");
+  log("        sales-order line. A purchase order FULLY received since the migration satisfies neither, so");
+  log("        it drops out of scope — and the reshape, which reads scope, then plans nothing for a");
+  log("        purchase order the ERP is still holding. This is the bucket to look at first.");
+  for (const r of rPoOut.slice(0, TOP)) log(`        ${r.erpPo.padEnd(22)} ${r.po}  book received ${r.acUnits}, ERP received_qty ${r.erpRecv}, receipts ${r.grs.join("/") || "none"}`);
+  if (rPoOut.length > TOP) log(`        ... and ${rPoOut.length - TOP} more`);
+  log(`     in scope, but NO receipt document names it              ${pad(rNoGr.length, 6)}`);
+  log("        PODTL.TransferedQty is above zero and no GRDTL row names the purchase order. The book");
+  log("        disagrees with itself; nothing here may invent a receipt from it.");
+  for (const r of rNoGr.slice(0, TOP)) log(`        ${r.erpPo.padEnd(22)} ${r.po}  book received ${r.acUnits}, ERP received_qty ${r.erpRecv}`);
+  log(`     in scope, receipts exist but all are out of scope       ${pad(rGrOut.length, 6)}`);
+  log("        every receipt naming it is cancelled, a test document, or names no in-scope purchase order.");
+  for (const r of rGrOut.slice(0, TOP)) log(`        ${r.erpPo.padEnd(22)} ${r.po}  receipts ${r.grs.join("/")}`);
+  log("");
+  log("  WHAT A ZERO IN ANY BUCKET ABOVE WOULD ALSO BE TRUE OF. Every count here is taken over the");
+  log("  purchase orders the ERP HOLDS (erpPo, linked_ac_docno IS NOT NULL). A purchase order AutoCount");
+  log("  received against that the ERP never imported at all is not missing a receipt in this section —");
+  log("  it is missing a PURCHASE ORDER, which is check-ac-gap-attribution's question, not this one's.");
   log("");
 
   // ── TEST 3 — quantity, at the purchase order document grain ──

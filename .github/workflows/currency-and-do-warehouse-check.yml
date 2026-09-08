@@ -13,6 +13,16 @@ name: Currency + delivery-line warehouse check (read-only)
 #      AutoCount's per-line Location, and is the AutoCount line key populated
 #      well enough to backfill it?
 #
+# QUESTION 2 IS SETTLED, AND NOT THE WAY IT IS PHRASED HERE. The owner ruled
+# later the same day — 「记在单头就好」 — that the delivery location lives on the DO
+# HEADER (`delivery_orders.warehouse_id` + `sales_location`), never on a per-line
+# column (#3121). So read that half of the output as DESCRIPTIVE: "NO column on
+# the delivery line names a warehouse" is the design, not a gap, and a per-line
+# column is not the remedy. The header columns are filled by
+# backfill-migrated-do-warehouse.mjs. Kept because its warehouse-master and
+# SALESLOC readout is what the shared location map resolves against, and because
+# question 1 is still live.
+#
 # The answer lives only in production, so this runs here rather than putting the
 # production DSN in front of a human for a SELECT (repo rule: build the check,
 # never ask the owner to run a query). Strictly read-only — SELECT only, no DDL,

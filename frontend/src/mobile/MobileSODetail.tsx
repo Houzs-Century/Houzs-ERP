@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { formatDate } from "../lib/utils";
-import { SourcePosRowMobile, soStockPillMobile } from "./source-chips";
+import { NonSellingWarehouseNoteMobile, SourcePosRowMobile, soStockPillMobile } from "./source-chips";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
 import type { FlowNav } from "./relationship-map-model";
 import { fmtAmt } from "../lib/scm";
@@ -30,7 +30,7 @@ import {
   CANCELLABLE_STATUSES,
   isLocked as isSoLocked,
   procLockActive as soProcLockActive,
-  amendmentEligible as soAmendmentEligible,
+  amendmentEligible as soAmendmentEligible, migratedReadonly as soMigratedReadonly, migratedReadonlyReason as soMigratedReason,
   deriveBalance,
 } from "../vendor/scm/lib/so-detail-gates";
 import {
@@ -204,6 +204,8 @@ type SoItem = {
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
   delivered_qty?: number | null;
   remaining_qty?: number | null;
+  /* Why the line can never read READY, when the reason is WHERE it stands (2026-09-08). */
+  non_selling_warehouse?: { code: string | null; name: string | null; type: string | null; notice: string } | null;
   /* A retired line — the SO's history, not part of the live order. Returned by
      GET /:docNo like every other row; filtered out at the use site. */
   cancelled?: boolean | null;
@@ -425,8 +427,8 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
        (has_children). Mirrors SalesOrderDetail.isLocked. */
   const rawStatus = (h?.status ?? "").toUpperCase();
   const hasChildren = Boolean(h?.has_children);
-  const canCancel = CANCELLABLE_STATUSES.includes(rawStatus);
-  const isLocked = isSoLocked(h?.status, hasChildren);
+  const migratedLocked = soMigratedReadonly(h), canCancel = !migratedLocked && CANCELLABLE_STATUSES.includes(rawStatus);
+  const isLocked = migratedLocked || isSoLocked(h?.status, hasChildren); // migrated sits OUTSIDE: there is no override or amendment route out of it
 
   /* Processing LOCK — the shared procLockActive: once the SO has a Processing
      Date AND that day has passed (compared against todayMyt() — the Malaysia
@@ -714,8 +716,8 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
      processing lock does NOT gate payments either (owner rule 2026-07-05). */
   const isDraftSo = ph === "draft";
   const [payEditing, setPayEditing] = useState(false);
-  const canOfferPayEdit = ph === "submitted" && !paymentLocked;
-  const canEditPayments = isDraftSo || (canOfferPayEdit && payEditing);
+  const canOfferPayEdit = !migratedLocked && ph === "submitted" && !paymentLocked;
+  const canEditPayments = !migratedLocked && (isDraftSo || (canOfferPayEdit && payEditing));
   const canAddPayment = canEditPayments;
   const [payOpen, setPayOpen] = useState(false);
 
@@ -808,10 +810,10 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                 the reason, mirroring the desktop SO Detail lock banner — and the
                 footer Edit button is disabled below. */}
             {editLocked ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(232,107,58,0.08)", border: "1px solid var(--c-orange, #e86b3a)", borderRadius: 10, padding: "9px 11px", marginBottom: 12, fontSize: 11, color: "#8a4a24" }}>
+              <div data-testid={migratedLocked ? "so-migrated-readonly-banner" : "so-locked-banner"} style={{ display: "flex", alignItems: "flex-start", gap: 8, background: "rgba(232,107,58,0.08)", border: "1px solid var(--c-orange, #e86b3a)", borderRadius: 10, padding: "9px 11px", marginBottom: 12, fontSize: 11, color: "#8a4a24", lineHeight: 1.45 }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c66a34" strokeWidth="2" strokeLinecap="round"><rect x="4" y="10" width="16" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
-                {processingLocked
-                  ? "Locked — the processing date has passed and this order was proceeded. Line items can't be edited."
+                {migratedLocked ? soMigratedReason(h)
+                  : processingLocked ? "Locked — the processing date has passed and this order was proceeded. Line items can't be edited."
                   : hasChildren
                   ? "Locked — a delivery order or invoice references this SO. Line items can't be edited."
                   : "Locked — this order has moved past editing. Line items can't be edited."}
@@ -1100,6 +1102,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                         </div>
                       );
                     })()}
+                    <NonSellingWarehouseNoteMobile note={it.non_selling_warehouse} />
                     <SourcePosRowMobile
                       pos={it.shipped_source_pos ?? []}
                       adj={it.shipped_source_adj}
@@ -1266,8 +1269,8 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
           {ph === "draft" && canWriteSo && (
             <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
               <div style={{ display: "flex", gap: 9 }}>
-                <button className="btn-ghost" style={{ flex: 1, opacity: busy ? 0.55 : 1 }} disabled={busy} onClick={() => onEdit?.(docNo)}>Edit Draft</button>
-                <button className="btn" style={{ flex: 1.3, opacity: busy ? 0.55 : 1 }} disabled={busy} onClick={() => setStatus("CONFIRMED")}>{busy ? "Working…" : "Create Sales Order"}</button>
+                <button className="btn-ghost" style={{ flex: 1, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => onEdit?.(docNo)}>Edit Draft</button>
+                <button className="btn" style={{ flex: 1.3, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => setStatus("CONFIRMED")}>{busy ? "Working…" : "Create Sales Order"}</button>
               </div>
               {/* Discard draft — the escape hatch for a junk draft (esp. a bad
                   scan/OCR draft). Secondary red-outline so it never competes with

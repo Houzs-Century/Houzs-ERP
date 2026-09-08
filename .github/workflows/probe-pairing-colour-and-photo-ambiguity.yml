@@ -1,0 +1,42 @@
+name: Pairing colour + photo ambiguity — two numbers nobody has measured (read-only)
+
+# Manual. Answers the two questions that decide a default and have never been
+# counted:
+#
+#   A  how many migrated delivery lines can be paired on model + colour, and how
+#      many the rule now leaves for a person, measured by running the REAL
+#      buildMigratedDoPlan over the book's whole DO population;
+#   B  how many line photos sit in a (document, book line key) group holding more
+#      than one row, where planRepoint sends the picture to the first row.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction. Manual trigger,
+# own concurrency group, exit 0 for every legitimate answer. Document numbers
+# and item codes are printed; no customer or supplier name and no money is.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: probe-pairing-colour-and-photo-ambiguity
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - name: probe (read-only)
+        env:
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+        run: node scripts/probe-pairing-colour-and-photo-ambiguity.mjs

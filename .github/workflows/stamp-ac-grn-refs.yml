@@ -4,6 +4,13 @@ name: Stamp AutoCount GR refs on imported POs
 # imported POs as a cross-reference. Reference ONLY: it creates no ERP goods
 # received document and no stock movement, because the units are already in from
 # the balance snapshot and a GRN would double-count them.
+#
+# The source is backend/scripts/data/ac-convert-edges.json.gz — the WHOLE book,
+# unfiltered. It used to be ac-gr-refs.json.gz, which is cut against the POs that
+# were outstanding on the day of the export, so a purchase order the book has
+# since closed loses its receipts from the cut and this job could never stamp
+# them. The script REFUSES on a snapshot older than max_snapshot_age_days rather
+# than stamping a stale book onto a live tree.
 on:
   workflow_dispatch:
     inputs:
@@ -17,6 +24,16 @@ on:
         description: "1 to write the references, else DRY-RUN"
         required: false
         default: "0"
+        type: string
+      company_id:
+        description: "ERP company to stamp (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+      max_snapshot_age_days:
+        description: "Refuse if ac-convert-edges.json.gz is older than this many days"
+        required: false
+        default: "3"
         type: string
 
 concurrency:
@@ -37,7 +54,10 @@ jobs:
       - run: node scripts/stamp-ac-grn-refs.mjs
         env:
           APPLY: ${{ inputs.apply }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
 
   run-prod:
     if: ${{ inputs.target == 'prod' }}
@@ -51,4 +71,7 @@ jobs:
       - run: node scripts/stamp-ac-grn-refs.mjs
         env:
           APPLY: ${{ inputs.apply }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
