@@ -37,6 +37,7 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
 import { sourceDocTokens } from "./lib/transfer-chain-verdict.mjs";
+import { UNMIGRATED_ONWARD, splitUnmigratedOnwardTransfer } from "./lib/ac-not-a-difference.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const CO = Number(process.env.COMPANY_ID || "1");
@@ -104,24 +105,42 @@ try {
       JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
      WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL AND i.linked_ac_dtlkey IS NOT NULL`;
   const bookPo = new Map(bookLines("PO").map((r) => [String(r[L.dtlKey]), r]));
-  let poOpen = 0;
+  /* GROUPED BY BOOK LINE, never per ERP row: a sofa is ONE book DtlKey and
+     several compartment rows here, so printing per row reports the
+     decomposition as several findings. The counter is compared as the FRACTION
+     transferred for exactly that reason. */
+  const poGroups = new Map();
   for (const r of poRows) {
-    const bl = bookPo.get(String(r.key).trim());
-    if (!bl) continue;
+    const k = String(r.key).trim();
+    if (!bookPo.has(k)) continue;
+    let g = poGroups.get(k);
+    if (!g) { g = { key: k, acNo: r.ac_no, erpNo: r.erp_no, eq: 0, got: 0, rows: 0 }; poGroups.set(k, g); }
+    g.eq += Q(r.qty); g.got += Q(r.got); g.rows += 1;
+  }
+  let poOpen = 0;
+  const splitRows = [];
+  for (const r of poGroups.values()) {
+    const bl = bookPo.get(r.key);
     const t = bl[L.transferedQty] === "" ? null : Q(bl[L.transferedQty]);
     if (t == null) continue;
     const bq = Q(bl[L.qty]);
-    const got = Q(r.got);
-    const eq = Q(r.qty);
+    const got = r.got;
+    const eq = r.eq;
     if (bq === 0 || eq === 0) continue;
     if (t * eq === got * bq) continue; /* the same fraction on both sides */
     poOpen += 1;
+    splitRows.push({
+      key: r.key, ac: bl[L.docNo], erpNo: r.erpNo, bookDocNo: bl[L.docNo],
+      verdict: t * eq > got * bq ? "erp_low" : "erp_high",
+      bookTransfered: t, erpCounter: got,
+      line: `${bl[L.docNo]} DtlKey ${r.key}`, proceeded: true,
+    });
     if (poOpen > SHOW) continue;
     const receipts = [...(grOfPo.get(up(bl[L.docNo])) || [])];
     const held = receipts.filter((g) => heldGr.has(g));
     p(
-      `    ${bl[L.docNo]} (ERP ${r.erp_no}) DtlKey ${r.key}: book received ${fmt(t)} of ${fmt(bq)}, ` +
-        `we record ${fmt(got)} of ${fmt(eq)}`,
+      `    ${bl[L.docNo]} (ERP ${r.erpNo}) DtlKey ${r.key}: book received ${fmt(t)} of ${fmt(bq)}, ` +
+        `we record ${fmt(got)} of ${fmt(eq)} over ${r.rows} ERP row(s)`,
     );
     p(
       `        the book's receipts: ${receipts.join(", ") || "(none)"} — ` +
@@ -132,8 +151,26 @@ try {
   }
   log(
     poOpen === 0
-      ? "PURCHASE ORDERS — 0 line(s) disagree with the book on how much has been received."
-      : `PURCHASE ORDERS — ${poOpen} line(s) disagree with the book on how much has been received.`,
+      ? "PURCHASE ORDERS — 0 book line(s) disagree with the book on how much has been received."
+      : `PURCHASE ORDERS — ${poOpen} book line(s) disagree with the book on how much has been received.`,
+  );
+
+  /* THE SAME CLASSIFIER THE RECONCILE CALLS, on the same rows, so this cannot
+     answer differently from the tally. If they ever disagree, one of them is
+     wrong and that disagreement is the finding — not something to reconcile by
+     hand. */
+  const poSplit = splitUnmigratedOnwardTransfer({
+    rows: splitRows,
+    decision: UNMIGRATED_ONWARD.PO,
+    coverage: heldGr,
+    onwardOf: (d) => [...(grOfPo.get(up(d)) || [])],
+  });
+  p("");
+  p(`    the migration decision covers ${poSplit.notMigrated} of these; ${poSplit.differ} remain, and here is why:`);
+  for (const im of poSplit.impostors.slice(0, SHOW)) p(`      ${im.why}`);
+  log(
+    `PURCHASE ORDERS — of the ${splitRows.length} book line(s) above, ${poSplit.notMigrated} are the cutover's own ` +
+      `decision and ${poSplit.differ} are not.`,
   );
 
   /* ── 2. GOODS RECEIPTS: we hold no link to the purchase-order LINE ──────── */
