@@ -42,11 +42,7 @@ import postgres from "postgres";
 import { buildScope, decodeSnapshot } from "./lib/ac-scope.mjs";
 import { grPairGrain } from "./lib/ac-gr-pair-grain.mjs";
 import { readMappingCsv, normCode } from "./lib/ac-mapping-csv.mjs";
-<<<<<<< HEAD
 import { bagOf, compareBags, comparisonKey, printableBag } from "./lib/keyless-multiset.mjs";
-=======
-import { comparisonKey } from "./lib/keyless-multiset.mjs";
->>>>>>> origin/main
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("REFUSED: DATABASE_URL not set."); process.exit(2); }
@@ -78,7 +74,6 @@ if (MAPPING.size < 100) {
 const sql = postgres(DSN, { ssl: "require", prepare: false, max: 1, connect_timeout: 30 });
 
 /* THE SOFA FOLD IS NOT OPTIONAL, and leaving it out INVENTS findings — this
-<<<<<<< HEAD
    probe's own first run proved it. A sofa is ONE book line (`DSL-8030 SOFA`,
    translated to `8030-1S`) and ONE ERP ROW PER COMPARTMENT, so an unfolded
    comparison can never be equal on a sofa document: run 34202080707 printed
@@ -99,34 +94,6 @@ const sql = postgres(DSN, { ssl: "require", prepare: false, max: 1, connect_time
    silently turns the fold off on exactly the rows it exists for. */
 const canon = ({ code, rawCode, side, suffixed = false }) =>
   comparisonKey({ code: normCode(code), rawCode: rawCode ?? code, side, suffixed }).key;
-=======
-   probe's own first run proved it. A sofa is ONE book line (`2379-1S`,
-   `9058-1S`) and ONE ERP ROW PER COMPARTMENT, so a raw bag can never be equal
-   on a sofa document: run 34202080707 printed four goods receipts as "BAGS
-   DIFFER" and two invoice rows as goods the book does not have, and every one
-   of the six was a decomposition. Same shape as docs/bugs/0694, where a sofa
-   exclusion that tested only `line_suffix` printed 40 decompositions as wrong
-   products. So both sides go through `lib/keyless-multiset.mjs`'s
-   `comparisonKey` — the SAME canonicalisation the reconcile's keyless verdict
-   uses, model-folded through SOFA_MODEL_ALIAS — rather than a second opinion
-   written here. */
-/* `rawCode` is the BOOK's own untranslated code and it is load-bearing: the book
-   names a sofa `AMN-SF2379 SOFA` and the sheet translates that to `2379-1S`,
-   which contains no "SOFA" at all. Handing the TRANSLATED string in as rawCode
-   silently turns the fold off on exactly the rows it exists for. */
-const canon = ({ code, rawCode, side, suffixed = false }) =>
-  comparisonKey({ code: normCode(code), rawCode: rawCode ?? code, side, suffixed }).key;
-
-const bagText = (rows) => {
-  const m = new Map();
-  for (const r of rows) {
-    const k = canon(r);
-    if (!k) continue;
-    m.set(k, (m.get(k) ?? 0) + Number(r.qty || 0));
-  }
-  return [...m.entries()].sort((a, b) => (a[0] > b[0] ? 1 : -1)).map(([c, q]) => `${c} x${q}`).join(" | ");
-};
->>>>>>> origin/main
 
 async function main() {
   say(`AutoCount cut exported_at=${snap.exported_at}  company=${CO}  READ-ONLY`);
@@ -191,7 +158,6 @@ async function main() {
        decompositions as differences before it called the module. */
     const unkeyed = erp.lines.filter((l) => l.ac_dtlkey == null);
     if (unkeyed.length) {
-<<<<<<< HEAD
       const kv = compareBags({
         book: bagOf(bookLines.map((l) => ({
           code: translate(l.itemKey), rawCode: l.itemKey, qty: l.qty ?? 0, sen: l.subTotalSen ?? 0,
@@ -216,11 +182,6 @@ async function main() {
           suffixed: l.line_suffix != null, desc2: l.description2,
         })), "erp")),
       });
-=======
-      const bBag = bagText(bookLines.map((l) => ({ code: translate(l.itemKey), rawCode: l.itemKey, qty: l.qty ?? 0, side: "book" })));
-      const eBag = bagText(erp.lines.map((l) => ({ code: l.item_code, qty: l.qty ?? 0, side: "erp", suffixed: l.line_suffix != null })));
-      codeGuessed.push({ pair, erpNo: erp.erp_no, unkeyed: unkeyed.length, of: erp.lines.length, same: bBag === eBag, bBag, eBag });
->>>>>>> origin/main
     }
   }
   log(`GR item code — ${codeDefects.length} line(s) where the ERP row and the book line carry the SAME AutoCount key and DIFFERENT products. Those are defects; the book decides them.`);
