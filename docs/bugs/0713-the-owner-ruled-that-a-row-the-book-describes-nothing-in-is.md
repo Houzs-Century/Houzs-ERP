@@ -1,7 +1,7 @@
 ## The owner ruled that a row the book describes nothing in is not a line, and that our extra line be deleted [high]
 
 <!-- area: AutoCount sync + write-back -->
-<!-- status: open -->
+<!-- status: fixed -->
 
 **This entry records a DECISION, not only a defect.** It is the one place a
 future session will find out that a hard `DELETE` on a live sales-order line was
@@ -224,8 +224,111 @@ there is no trigger on `scm.mfg_sales_order_items`, and the run counts that
 table's rows for both documents before and after rather than asserting it.
 Owner, same day: 「写回autocount的你不需要理了」.
 
-**STATUS.** `open` until the apply has run against production. This entry is
-flipped to `fixed` in the immediately following PR, with the run ids, the
-before/after reconcile, the control, and the captured row pasted in full.
+### Applied to production — 2026-09-08, and what it moved
 
-**Ref.** `fix/owner-delete-ruling`, 2026-09-08.
+| run | at (Malaysia) | what |
+| --- | --- | --- |
+| [`34216158876`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34216158876) | 18:34 | **PLAN.** 1 line to delete, 1 sofa compartment to re-price, **0 refused**. Nothing written. |
+| [`34216261677`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34216261677) | 18:36 | reconcile BEFORE — **20** |
+| [`34216413503`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34216413503) | 18:37 | **APPLY.** `APPLIED — 1 line(s) deleted, 1 sofa compartment(s) repriced, 2 header(s) re-summed.` |
+| [`34216507949`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34216507949) | 18:40 | reconcile AFTER — **17** |
+
+Verified on a fresh connection inside the apply run, zero `WRONG SHAPE`:
+
+```
+VERIFIED ON A FRESH CONNECTION — 2 of 2 target(s) read back with the SHAPE the ruling
+requires: the deleted line is claimed by nothing and named by no downstream row; the
+repriced compartment carries the book's unit price and the ERP's own line invariant with
+its siblings still at RM 0.00; and each header equals both the sum of its lines and the book.
+   HC-SO-013160  3 line(s), total RM 300.00 (book RM 300.00 = same)
+   HC-SO-012571  3 line(s), total RM 3450.00 (book RM 3450.00 = same)
+AutoCount outbox rows naming these documents, AFTER: 0 (before 0) — unchanged
+```
+
+**What moved on the reconcile.** The sales-order type's four data axes all went
+to zero: `SO DATA … line-count differs: 0; item code: 0; quantity: 0; unit price:
+0; document total: 0`, and `DtlKey on the wrong document` went 1 -> 0. The SO
+per-document verdict went **2731 -> 2733 would OPEN, 151 -> 149 LOCKED**.
+
+| axis | 18:36 | 18:40 |
+| --- | --- | --- |
+| SO line count | 1 (`SO-013160`) | **0** |
+| SO document total | 2 (`SO-012571`, `SO-013160`) | **0** |
+| SO orphan DtlKey (reported, never counted in the headline) | 1 | **0** |
+| whole reconcile | **20** | **17** |
+
+**CONTROL — PO, GR, DO, IV and PI did not move**, cell for cell across the two
+runs: PO `0 / 0 / 0 / 0 / 0` with decided 1, no-price 241, non-MYR 1; GR money 9
+with 100 ERP-RM0 and 2 same-goods; DO phantom 2; IV 4 absent, 4 same-goods, 9
+same-money, 1 no-key-open; PI 1 line-count, 11 same-money, 6 no-key-open. SO's
+own `phantom 1` is also identical — it is `HC-SO-2609-001`, a document the ERP
+claims and the book does not have, and it is **not** this lane's.
+
+**Stock did not move at all.**
+
+| check | before ([`34216287587`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34216287587)) | after ([`34216512525`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34216512525)) |
+| --- | --- | --- |
+| `check-stock-vs-autocount` | `cells compared: 996 \| AGREE: 933 \| DISAGREE: 29 \| AutoCount-only: 0 \| ERP-only: 3` | identical |
+| sofa cells | `41 \| AGREE: 19 \| DISAGREE: 22` | identical |
+| whole sofas | `AutoCount 107 vs ERP 104 (net -3)` | identical |
+| `check-migrated-cancel-exposure` ([`34216290534`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34216290534) / [`34216515488`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34216515488)) | `0 movement rows behind 646 migrated documents` | identical |
+
+**Readiness moved by exactly one line, and it is the line that no longer
+exists.** Go-live readiness
+[`34216294639`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34216294639)
+against
+[`34216518695`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34216518695):
+
+| | before | after |
+| --- | --- | --- |
+| live orders / with a processing date / header READY_TO_SHIP | 2782 / 572 / 208 | 2782 / 572 / 208 |
+| lines on PROCESSED orders | `READY=1673, PENDING=1371, PARTIAL=10` | `READY=1673, PENDING=1370, PARTIAL=10` |
+| PROCESSED lines whose PO is received but the line is not READY | 36 | 36 |
+
+**−1 PENDING, and nothing else.** The deleted row carried `stock_status: PENDING`
+(it is in the capture below), so removing it removes its own readiness row. No
+line gained or lost a status, and `recompute-so-allocation.mjs` is NOT required:
+no quantity moved, so sales-order demand is unchanged apart from the row that is
+gone.
+
+### THE DELETED ROW, EVERY COLUMN — the recovery path
+
+Captured by the apply run itself, before the `DELETE`. To reverse the ruling,
+`INSERT` one row into `scm.mfg_sales_order_items` with exactly these values (a
+fresh `id` is fine — that nothing referenced the old one is a precondition of the
+delete, and the run measured it: **0 downstream rows across all 5 referencing
+foreign keys**), then re-sum the header the way `applyHeader` does. Nothing else
+in the database has to change.
+
+```json
+{"id":"222041a0-b27b-4f59-b668-155b2af1a780","doc_no":"HC-SO-013160","line_date":"2026-08-28T00:00:00.000Z","debtor_code":null,"debtor_name":null,"agent":null,"item_group":"service","item_code":"STORAGE","description":"STORAGE CHARGES","description2":null,"uom":"UNIT","location":"KL","warehouse_id":"e309c399-697c-4174-967f-ae2c888ad999","qty":1,"unit_price_sen":30000,"discount_sen":0,"total_sen":30000,"tax_sen":0,"total_inc_sen":0,"balance_sen":30000,"payment_status":"Unchecked","venue":null,"branding":null,"remark":null,"cancelled":false,"variants":null,"unit_cost_sen":0,"line_cost_sen":0,"line_margin_sen":0,"gap_inches":null,"divan_height_inches":null,"divan_price_sen":0,"leg_height_inches":null,"leg_price_sen":0,"custom_specials":null,"line_suffix":null,"special_order_price_sen":0,"po_qty_picked":0,"line_delivery_date":"2026-09-10T00:00:00.000Z","line_delivery_date_overridden":false,"photo_urls":[],"stock_status":"PENDING","line_no":4,"created_at":"2026-08-28T08:11:26.205Z","stock_qty_ready":0,"allocated_batch_no":null,"company_id":"1","linked_ac_dtlkey":"892917"}
+```
+
+The five referencing foreign keys the run found in `pg_constraint`, which is two
+more than the module guide's list — the reason the sweep is taken from the
+catalogue at run time rather than typed into the script:
+
+```
+scm.delivery_order_items.so_item_id             ON DELETE SET NULL
+scm.mfg_so_price_overrides.item_id              ON DELETE CASCADE
+scm.purchase_order_item_allocations.so_item_id  ON DELETE SET NULL
+scm.purchase_order_items.so_item_id             ON DELETE SET NULL
+scm.sales_invoice_items.so_item_id              ON DELETE SET NULL
+```
+
+### TWO DOCUMENTS NOW OWE A DIFFERENT AMOUNT THAN THEY ARE RECORDED AS PAYING — the owner's call
+
+`paid_sen` and the header `balance_sen` were NOT touched, so both documents' own
+totals moved away from `paid + balance`. This is REPORTED, never re-derived:
+
+| document | total now (= the book) | paid + balance | reads as |
+| --- | --- | --- | --- |
+| `HC-SO-013160` | RM 300.00 | RM 600.00 + RM 0.00 = RM 600.00 | **RM 300.00 overpaid** |
+| `HC-SO-012571` | RM 3,450.00 | RM 990.00 + RM 2,548.00 = RM 3,538.00 | **RM 88.00 too much still shown as owing** |
+
+It is the same open question already standing on `HC-SO-000021`
+(`docs/cutover-so-do-remainder-2026-09-08.md`): whether a migrated document's
+payment columns are re-derived from a corrected total is a business decision,
+and a payment column is not an arithmetic consequence.
+
+**Ref.** `fix/owner-delete-ruling` (#3249) + `fix/owner-delete-ruling-evidence`, 2026-09-08.
