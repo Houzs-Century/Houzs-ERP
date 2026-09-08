@@ -72,7 +72,7 @@ that references it.
 **Ref.** `fix/apply-sofa-rulings`, 2026-09-08. Dry-run `34220106079`; evidence
 probe `34220446190`; held-and-printed `34221653216`.
 
-## 2026-09-08 — the machinery this asked for now exists (NOT yet run against production)
+### 2026-09-08 — the machinery this asked for now exists (NOT yet run against production)
 
 "What a fix must do" above asked for the dedication to be dealt with as part of
 the collapse. `apply-sofa-compartment-corrections.mjs` now does it, and it does
