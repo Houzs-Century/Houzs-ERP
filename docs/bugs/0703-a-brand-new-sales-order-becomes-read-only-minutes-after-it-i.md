@@ -98,7 +98,7 @@ BEEN to AutoCount. B is a stopgap and must be called one.
 
 ---
 
-## MEASURED, then decided (2026-09-08)
+### MEASURED, then decided (2026-09-08)
 
 The options below were written from reading. Neither signal had been measured,
 so a read-only census was built and dispatched FIRST:
@@ -135,7 +135,7 @@ outbox rows, three of which AutoCount answered for: **having BEEN to AutoCount
 is not the same as having come FROM it**, and the shape says so where the
 column cannot.
 
-## The three options, and why B shipped
+### The three options, and why B shipped
 
 | | What it is | Verdict |
 |---|---|---|
@@ -152,7 +152,7 @@ document nobody can classify is recoverable in a minute; opening one the owner
 ruled shut is not. That bucket is empty today, and *SO migrated shape
 (read-only)* is the check that will say when it stops being.
 
-## The fix
+### The fix
 
 `backend/src/scm/lib/so-is-migrated.ts` — the module that was already the one
 home for this question — decides from the two document numbers instead of from
