@@ -424,6 +424,39 @@ export function compareLine(deps, { book, erpLines, proceeded, erpNo = null }) {
       cell.verdict = UNREADABLE;
       cell.book = "(cannot be read from Desc2)";
       cell.detail = book.why.join("; ");
+      /* ── HIS DRAWING IS THE ONLY SOURCE HERE, SO ASK FOR IT ────────────────
+         The book's text does not state the build, which is EXACTLY the case
+         the owner's standing rule reserves for himself —
+         「一律跟账本。除了sofa compartment而已啊」 — and so exactly the case where
+         a ruling he has already given must be honoured. Until this branch
+         asked, it never did: the ruling was consulted only where the book
+         DECODED and the multiset differed, so every sofa he had personally
+         read and answered whose text does not decode kept reporting as
+         "CANNOT BE COMPARED — your drawing decides these", run after run.
+         That is the report handing him back work he had already done, which he
+         objected to three times on 2026-09-08:
+         「这个很多我刚刚都给过你答案了啊」/「你不是会解析照片了吗？为什么还需要我呢」.
+
+         THIS IS A NARROWING OF "WE COULD NOT TELL", NOT A WIDENING OF "IT
+         MATCHES". Same lookup, same strictness as the DIFFER branch below:
+         RULED requires the ERP to hold his answer as an EXACT multiset, a
+         ruling in the corrections files' `_held` list is excluded by
+         makeSofaRulingLookup, and a ruling the ERP has NOT been moved to
+         leaves the cell UNREADABLE — still locking — while naming the answer
+         it is failing to match, so nobody can act on it as if it were done.
+         The permissive answer stays unreachable for a build nothing decided. */
+      const ruling = erpNo && deps.sofaRuling ? deps.sofaRuling(erpNo, erpLines) : null;
+      if (ruling && Array.isArray(ruling.pieces) && ruling.pieces.length && have.length) {
+        if (!multisetDiff(have, ruling.pieces)) {
+          cell.verdict = RULED;
+          cell.detail = "the owner ruled this build " + ruling.pieces.join("+") +
+            " from the drawing" + (ruling.source ? " (" + ruling.source + ")" : "") +
+            " and the ERP holds it, so the book's silence is answered BY DECISION";
+        } else {
+          cell.detail += " | the owner ruled " + ruling.pieces.join("+") +
+            " and the ERP does NOT hold it";
+        }
+      }
     } else {
       cell.book = book.compartments.join("+");
       const d = multisetDiff(have, book.compartments);
