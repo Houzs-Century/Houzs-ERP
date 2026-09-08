@@ -136,8 +136,8 @@ import { mapSpecial as mapBedframeSpecial } from "./lib/bedframe-special-map.mjs
 import { K as SK, mapPhrase as mapSofaPhrase, skey } from "./lib/sofa-special-map.mjs";
 import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 import {
-  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, PENDING, RECORDED, UNREADABLE, VARIANT_GROUPS, VERDICTS,
-  compareLine, decodeBook, runSelfTest,
+  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, NO_LINE_KEY, PENDING, RECORDED, UNREADABLE, VARIANT_GROUPS,
+  VERDICTS, compareLine, decodeBook, foldGuessedPairing, runSelfTest,
 } from "./lib/variant-reconcile.mjs";
 
 import { buildScope, currencyVerdict, decodeSnapshot, isTestDoc, LOCAL_CURRENCY } from "./lib/ac-scope.mjs";
@@ -148,7 +148,7 @@ import {
 import { isBlankBookRow, splitBlankBookRows } from "./lib/ac-blank-book-row.mjs";
 import { grPairGrain } from "./lib/ac-gr-pair-grain.mjs";
 import { erpReconcileTypes } from "./lib/ac-reconcile-erp-sql.mjs";
-import { bagOf, compareBags } from "./lib/keyless-multiset.mjs";
+import { bagOf, compareBags, comparisonKey } from "./lib/keyless-multiset.mjs";
 import { FIELD_MAP } from "./lib/ac-field-identity.mjs";
 import {
   compareType, loadAcFieldSide, loadErpFieldSide, measurePoDiscount,
@@ -589,12 +589,20 @@ function reportVariants(t, label, rows, desc2) {
   for (const a of AXES) for (const half of ["yes", "no"]) for (const v of VERDICTS) tally[a.key][half][v] = 0;
   const offenders = {};
   const bookBlanks = {};
+  const noKeyRows = {};
   for (const a of AXES) {
     offenders[a.key] = [];
     bookBlanks[a.key] = [];
+    noKeyRows[a.key] = [];
   }
   const pop = { total: rows.length, modelled: 0, bedframe: 0, sofa: 0, other: 0, withDesc2: 0, proceeded: 0 };
   let unkeyedSofa = 0;
+  /* PASS 1 computes every line's verdicts; PASS 2 folds the ones only a GUESSED
+     pairing could have produced; PASS 3 tallies and lists. The fold has to sit
+     between them because it is a statement about a GROUP of lines — which of
+     our rows answers which of the book's — and a per-line loop cannot make it.
+     Nothing else moved: pass 3 is the body pass 1 used to have. */
+  const computed = [];
 
   for (const r of rows) {
     const lead = r.erpLines[0] || {};
@@ -628,6 +636,25 @@ function reportVariants(t, label, rows, desc2) {
         "the ERP lines of this document carry no AutoCount line key, so the pieces of one build cannot be regrouped";
       unkeyedSofa++;
     }
+    /* THE BUCKET a guessed pairing could have permuted this row within: the
+       document, plus the comparison key and quantity of OUR row. It is the
+       ERP side's key on purpose — the question is whether the checker could
+       tell OUR rows apart — and it is `comparisonKey`, the same canonicaliser
+       lib/ac-forced-line-pairing.mjs bucketed on when it decided whether the
+       line key could be stamped at all, so the two cannot disagree about which
+       rows are candidates for each other. */
+    computed.push({
+      r, lead, proceeded, axes,
+      bucket: `${r.ac}|${comparisonKey({ code: lead.item_code, side: "erp", suffixed: Boolean(lead.line_suffix) }).key}|${Number(Number(lead.qty ?? 0).toFixed(4))}`,
+      keyed: r.erpLines.every((l) => l.ac_dtlkey != null),
+    });
+  }
+
+  /* PASS 2 — the fold. Stated in lib/variant-reconcile.mjs, with the three
+     clauses that keep it from swallowing a real difference. */
+  const guessFold = foldGuessedPairing(computed);
+
+  for (const { r, lead, proceeded, axes } of computed) {
     const half = proceeded ? "yes" : "no";
     for (const [key, cell] of Object.entries(axes)) {
       tally[key][half][cell.verdict]++;
@@ -658,6 +685,11 @@ function reportVariants(t, label, rows, desc2) {
         VERDICT.record(t, r.ac, r.erpNo, "sofa build not verifiable", `${where}: ${cell.detail || "not comparable"}`);
       } else if (cell.verdict === BOOK_BLANK) {
         bookBlanks[key].push(`${where}: ${both}`);
+      } else if (cell.verdict === NO_LINE_KEY) {
+        /* NAMED, never a count on its own. A class the reader cannot enumerate
+           is a suppression, not a declaration — the rule docs/bugs/0668 was
+           written for, applied to the column that was added to answer it. */
+        noKeyRows[key].push(`${where}: ${both}`);
       }
     }
   }
@@ -678,15 +710,15 @@ function reportVariants(t, label, rows, desc2) {
     return { t, pop, tally, comparable: false };
   }
 
-  plain("axis                 |                 PROCEEDED (the backlog)                  |             not proceeded (blank is OK)");
-  plain("                     |  agree  ERPblank  bookblank  differ  pend  unread  recorded |  agree  ERPblank  bookblank  differ  pend  unread  recorded");
+  plain("axis                 |                      PROCEEDED (the backlog)                       |             not proceeded (blank is OK)");
+  plain("                     |  agree  ERPblank  bookblank  differ  pend  unread  recorded  no-key |  agree  ERPblank  bookblank  differ  pend  unread  recorded  no-key");
   for (const a of AXES) {
     const y = tally[a.key].yes;
     const n = tally[a.key].no;
     const seen = VERDICTS.reduce((s2, v) => s2 + y[v] + n[v], 0);
     if (!seen) continue;
-    const cells = (h) => [h[AGREE], h[ERP_BLANK], h[BOOK_BLANK], h[DIFFER], h[PENDING], h[UNREADABLE], h[RECORDED]]
-      .map((x, i) => String(x).padStart([6, 9, 10, 7, 5, 7, 10][i]));
+    const cells = (h) => [h[AGREE], h[ERP_BLANK], h[BOOK_BLANK], h[DIFFER], h[PENDING], h[UNREADABLE], h[RECORDED], h[NO_LINE_KEY]]
+      .map((x, i) => String(x).padStart([6, 9, 10, 7, 5, 7, 10, 7][i]));
     plain(`${a.label.padEnd(20)} | ${cells(y).join(" ")} | ${cells(n).join(" ")}`);
   }
   plain(
@@ -703,6 +735,18 @@ function reportVariants(t, label, rows, desc2) {
       `   of the ${pop.sofa} sofa lines, ${unkeyedSofa} sit on a document whose ERP lines carry no AutoCount ` +
         "line key, so their COMPARTMENTS are unanswerable rather than agreeing. Their colour, seat size and " +
         "specials are still compared - those are per-line values and do not need the build regrouped.",
+    );
+  }
+  plain(
+    "no-key = two or more of OUR rows of one item at one quantity on one document carry NO AutoCount line number, so " +
+      "which of ours answers which of the book's was the checker's own GUESS - and both sides state the SAME set of " +
+      "values, which no ordering can fake. The document ships what the book ordered; only the row labelling is unknown. " +
+      "A bucket whose two sets DIFFER keeps every one of its differences.",
+  );
+  if (guessFold.folded) {
+    log(
+      `${t} — ${guessFold.folded} axis value(s) across ${guessFold.buckets} bucket(s) moved out of DIFFER into no-key: ` +
+        "the pairing was the checker's guess and both sides state the same set. See docs/bugs/0709.",
     );
   }
 
@@ -733,6 +777,16 @@ function reportVariants(t, label, rows, desc2) {
       plain(`   ${a.label} — AutoCount blank, ERP carries one: ${bb.length} (first ${Math.min(SHOW_BOOK_BLANK, bb.length)}, NOT work)`);
       for (const row of bb.slice(0, SHOW_BOOK_BLANK)) plain(`      ${row}`);
     }
+  }
+  /* Printed for EVERY axis, including the ones with no offender at all — a
+     no-key row is not an offender, so it would otherwise vanish with the
+     `continue` above. */
+  for (const a of AXES) {
+    const nk = noKeyRows[a.key];
+    if (!nk.length) continue;
+    plain(`   ${a.label} — no AutoCount line number on our rows, both sides state the same set: ${nk.length} (NOT work)`);
+    for (const row of nk.slice(0, SHOW)) plain(`      ${row}`);
+    if (nk.length > SHOW) plain(`      ... ${nk.length - SHOW} more`);
   }
   return { t, pop, tally, comparable: true };
 }
@@ -1661,6 +1715,7 @@ plain("═══════════ VARIANTS INSIDE THE LINE — ALL TYPES 
     let differ = 0;
     let orderWork = 0;
     let orderDiffer = 0;
+    let noKey = 0;
     for (const a of AXES) {
       const y = add[a.key];
       const b = build[a.key];
@@ -1668,6 +1723,7 @@ plain("═══════════ VARIANTS INSIDE THE LINE — ALL TYPES 
       if (!seen) continue;
       work += y.yes[ERP_BLANK];
       differ += y.yes[DIFFER] + y.no[DIFFER];
+      noKey += y.yes[NO_LINE_KEY] + y.no[NO_LINE_KEY];
       orderWork += b.yes[ERP_BLANK];
       orderDiffer += b.yes[DIFFER] + b.no[DIFFER];
       plain(
@@ -1684,6 +1740,14 @@ plain("═══════════ VARIANTS INSIDE THE LINE — ALL TYPES 
         "is not work anyone asked for. An unconfirmed order's blank is not counted either: " +
         "还没proceed还没确认的就可以直接放空的.",
     );
+    if (noKey) {
+      log(
+        `VARIANTS — a further ${noKey} axis value(s) are NOT counted above and are NOT work: two or more of our rows ` +
+          "of one item at one quantity on one document carry no AutoCount line number, so which of ours answers which " +
+          "of the book's was the checker's own guess, and both sides state the SAME set of values. Listed by name in " +
+          "each type's section as `no-key`; docs/bugs/0709 has the trace.",
+      );
+    }
   }
 }
 
