@@ -1257,6 +1257,10 @@ is accepted only when `scm.my_localities` — the ERP's postcode -> city master,
 mig 0022, the same table the cascade above reads — lists it as a city of that
 exact postcode, and what is written is the master's spelling. `Selangor` at
 40000 is refused, a postcode with nothing after it is refused, `KL` is refused.
+APPLIED to production 2026-09-08, apply run `34222124527`: 417 of 711 blank
+cities written, the other 294 refused with a printed reason. Full before/after in
+`docs/customer-block-gap-2026-09-08.md`.
+
 Applied by `backend/scripts/repair-customer-block.mjs`; counted by
 `backend/scripts/check-customer-block-gap.mjs`.
 
