@@ -1,0 +1,74 @@
+name: Repair customer block (plan / apply)
+
+# Manual. Carries the customer block onto the delivery orders that never got one
+# — lib/migrated-do-writer.mjs's INSERT names 14 columns and none of them is
+# phone / email / address / city / state / postcode — and puts back the city that
+# the sales-order importer's state subtraction deleted.
+#
+# It never overwrites a value: every UPDATE carries its own emptiness predicate.
+# It writes no line, quantity, price, payment column or status, and enqueues no
+# AutoCount outbox row (owner 2026-09-08: 写回autocount的你不需要理了). PLAN is
+# the default; apply needs the confirm phrase, which the script itself requires
+# — docs/bugs/0700-the-backfill-workflow-never-passed-the-confirm-phrase.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'For apply ONLY, type exactly: CARRY THE CUSTOMER BLOCK'
+        required: false
+        default: ""
+        type: string
+      arm:
+        description: "both (default) | so (city only) | do (delivery headers only)"
+        required: false
+        default: "both"
+        type: choice
+        options: [both, so, do]
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+      top:
+        description: "Document numbers to list in the plan"
+        required: false
+        default: "25"
+        type: string
+
+# Its own group, never the deploy's: a repair must not queue behind - or
+# displace - a release. cancel-in-progress is FALSE: a write must never be
+# killed halfway.
+concurrency:
+  group: repair-customer-block
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-customer-block.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          ARM: ${{ inputs.arm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          TOP: ${{ inputs.top }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
