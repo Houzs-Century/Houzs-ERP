@@ -390,24 +390,17 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
   return (
     <div className="min-h-screen bg-[#0F766E]/5 text-gray-900">
       <div className="mx-auto max-w-5xl px-3 py-4 sm:px-5 sm:py-6">
-        <div className="mb-4">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-[#0F766E]">Houzs Event Schedule</div>
-          <h1 className="text-xl font-bold text-gray-900 sm:text-2xl">{party}</h1>
-          <p className="mt-0.5 text-[12px] text-gray-500">
-            {mode === "brand" ? "Confirmed events for your brand" : "Confirmed events you are in charge of"} · {eventCount} total · view-only
-          </p>
-        </div>
-
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          <button type="button" onClick={prev} className={`${navBtn} w-9`} aria-label={view === "week" ? "Previous week" : "Previous month"}>‹</button>
-          <button type="button" onClick={next} className={`${navBtn} w-9`} aria-label={view === "week" ? "Next week" : "Next month"}>›</button>
-          <button type="button" onClick={goToday} className={`${navBtn} px-3 text-[12px] font-semibold`}>Today</button>
-          <div className="ml-1 text-[15px] font-bold text-gray-900">{rangeLabel}</div>
-          <div className="ml-auto flex items-center gap-2">
-            <div className="flex overflow-hidden rounded-md border border-gray-200" role="group" aria-label="Calendar view">
-              <button type="button" onClick={() => setView("month")} className={toggleBtn(view === "month")} aria-pressed={view === "month"}>Month</button>
-              <button type="button" onClick={() => setView("week")} className={toggleBtn(view === "week")} aria-pressed={view === "week"}>Week</button>
-            </div>
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-[#0F766E]">Houzs Event Schedule</div>
+            <h1 className="text-xl font-bold text-gray-900 sm:text-2xl">{party}</h1>
+            <p className="mt-0.5 text-[12px] text-gray-500">
+              {mode === "brand" ? "Confirmed events for your brand" : "Confirmed events you are in charge of"} · {eventCount} total · view-only
+            </p>
+          </div>
+          {/* Owner 2026-09-08: the export sits up here beside the title, above the
+              month controls, not on the navigation row. */}
+          <div className="shrink-0 text-right">
             <button
               type="button"
               onClick={() => void exportExcel()}
@@ -416,9 +409,20 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
             >
               {exporting ? "Preparing…" : "Export to Excel"}
             </button>
+            {exportError ? <p className="mt-1 text-[12px] text-red-700">{exportError}</p> : null}
           </div>
         </div>
-        {exportError ? <p className="mb-2 text-right text-[12px] text-red-700">{exportError}</p> : null}
+
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <button type="button" onClick={prev} className={`${navBtn} w-9`} aria-label={view === "week" ? "Previous week" : "Previous month"}>‹</button>
+          <button type="button" onClick={next} className={`${navBtn} w-9`} aria-label={view === "week" ? "Next week" : "Next month"}>›</button>
+          <button type="button" onClick={goToday} className={`${navBtn} px-3 text-[12px] font-semibold`}>Today</button>
+          <div className="ml-1 text-[15px] font-bold text-gray-900">{rangeLabel}</div>
+          <div className="ml-auto flex overflow-hidden rounded-md border border-gray-200" role="group" aria-label="Calendar view">
+            <button type="button" onClick={() => setView("month")} className={toggleBtn(view === "month")} aria-pressed={view === "month"}>Month</button>
+            <button type="button" onClick={() => setView("week")} className={toggleBtn(view === "week")} aria-pressed={view === "week"}>Week</button>
+          </div>
+        </div>
 
         <div className="overflow-hidden rounded-xl border-2 border-slate-400 bg-white shadow-md ring-1 ring-slate-900/5">
           <div className="grid grid-cols-7 border-b-2 border-slate-600 bg-slate-800">
