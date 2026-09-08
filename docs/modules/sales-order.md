@@ -1363,8 +1363,14 @@ number to all thirty and refuses twenty-nine with `23505`.
 read pages (`fetchMonthlyDocNos` → `paginateAll`), the suffix widens to four
 digits, `maxMonthlySuffix` parses any width, and a truncated floor is harmless
 under the counter. What is left is cost: one extra PostgREST round trip per
-create per 1,000 rows in that month. `.github/workflows/doc-no-headroom.yml`
-reports how far the busiest month has ever got.
+create per 1,000 rows in that month. **Measured** on production by run
+[`34222385098`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34222385098)
+(*Document numbers — headroom and month-tag drift*, 2026-09-08): the busiest
+Sales Order month this ERP has ever recorded is **76** (`2990-SO-2608`), and the
+busiest month of ANY series is **162** (`2990-JE-2608`) — 16% of the 1,000 line.
+Reaching 1,000 Sales Orders in one month takes **38.5 orders every working day**,
+thirteen times the busiest month on record. Re-run that workflow rather than
+quoting these numbers.
 
 ### Caching / loading behaviour (why the list opens instantly)
 Three layers, tuned so the list never shows a full-load spinner on a revisit:

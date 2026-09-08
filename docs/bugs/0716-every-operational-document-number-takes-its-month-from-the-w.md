@@ -49,17 +49,46 @@ actually raises.
 document minted under `HC-SO-2609` takes the next free number in that series —
 it can never re-issue one. The cost is filing, not integrity.
 
-**Exposure — MEASURED?** NOT YET. The count of documents in the live book whose
-number month disagrees with their own date is what settles how much this has
-already cost, and it did not exist as a check. Section (C) of
-`backend/scripts/check-doc-no-headroom.mjs` +
-`.github/workflows/doc-no-headroom.yml` (both shipped in this PR) is that
-measurement, read-only. **UNTESTED against production at the time of writing —
-the workflow has to reach `main` before it can be dispatched.** Note when
-reading it that an EDITED document date also lands in that count: the owner's
-rule is that a number is an id and is never re-minted after a date change
-(单据存了后改日期号码不要重发), so a mismatch is not automatically a minting
-fault. The 1st-of-month cases are.
+**Exposure — MEASURED, and it is ZERO for this defect.** Run
+[`34222385098`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34222385098)
+(*Document numbers — headroom and month-tag drift*, read-only, 2026-09-08
+11:47Z), section (C), against production:
+
+```
+SO   0 mismatched  [date column: so_date]
+DO   0 mismatched  [date column: do_date]
+GRN  0 mismatched  [date column: received_at]
+SI   0 mismatched  [date column: invoice_date]
+PV   0 mismatched  [date column: voucher_date]
+PO   2 mismatched  [date column: po_date]
+PI  10 mismatched  [date column: invoice_date]
+JE  17 mismatched  [date column: entry_date]
+```
+
+**The 29 that ARE mismatched are a DIFFERENT cause, and saying so is the point.**
+This defect makes the number month EARLIER than the document date — a paper
+keyed at 02:00 MYT on 1 October takes September's series. Every one of the 29
+runs the other way: the number is LATER than the date.
+
+```
+2990-PI-2609-001  dated 2026-08-28      2990-PO-2608-025  dated 2026-07-31
+2990-JE-2609-0017 dated 2026-08-28      2990-PO-2607-001  dated 2026-06-01
+```
+
+That is a back-dated document keyed in a later month — the owner's 2026-09-07
+case (an AP invoice dated 31/03/2026 minted `2990-API-2609-001` because it was
+typed in September) and his ruling 「要根据文件日期，而不是文件几时 create 的
+日期」. `docMonthTag` fixed it where it was applied: AP invoices, payment
+vouchers, receipts and other-debtor documents, and **PV measures 0 here**.
+Purchase Invoices, Purchase Orders and Journal Entries still take their month
+from when the paper was keyed, which is why those three are the only non-zero
+rows. That is option C below, for three document types the owner has already
+ruled on, and it is separate work from this entry.
+
+**So this defect is LATENT, not realised.** It has never fired in the live book,
+for any of the eight families measured. Its window is 00:00-08:00 MYT on the 1st
+of a month, and the showroom is closed then; a background OCR draft or an
+after-hours entry is what would land in it.
 
 **Fix — NOT APPLIED. It is the owner's call, and here are the options.**
 Nothing about the minters changed in this PR. What a mainstream ERP does is not
@@ -78,7 +107,9 @@ owner's 2026-09-07 ruling 「要根据文件日期，而不是文件几时 creat
 carry their own month. B removes the disagreement between a document's number
 and its own date at zero risk; C is a rule change and belongs to him.
 
-**Ref.** `fix/so-number-concurrency`, 2026-09-08. Detection shipped; the minter
-change is not in this PR.
+**Ref.** `fix/so-number-concurrency` (#3271) shipped the detection;
+`docs/doc-no-month-tag-measured` recorded the measurement above, 2026-09-08. The
+minter change is in neither — it is the owner's choice between A, B and C.
 
-Module guide: `docs/modules/sales-order.md`, *Document numbers*.
+Module guide: `docs/modules/sales-order.md`, *Thirty people pressing Save at
+the same second*.
