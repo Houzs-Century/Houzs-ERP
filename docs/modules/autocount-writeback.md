@@ -4586,7 +4586,10 @@ NULL`, including both count scans; a third scan counts the retired documents
 separately and publishes `counts.archived`. It is never folded into `total` —
 every other number on that line is a claim about what AutoCount did, and this
 one is a claim about what somebody decided. `?state=archived` is the only filter
-that looks at the other shelf.
+that looks at the other shelf — and therefore the only one whose "N of M
+documents" line counts against `counts.archived` rather than `counts.total`
+(`acListTotal`). It read *"3 of 1 document"* on production for the first few
+minutes; `docs/bugs/0705-the-cleared-tab-counted-its-documents-against-a-total-that-e.md`.
 
 **On screen.** A **Clear** control on the document line and a **Cleared** tab,
 on BOTH surfaces (`acDocCanArchive` / `acDocCanRestore` decide visibility — a
