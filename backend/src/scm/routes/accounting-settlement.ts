@@ -31,7 +31,7 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId, allowedCompanyIds } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { parseStatement, type StatementColumnMap } from '../../acc/settlement-parse';
-import { matchStatement, recordedNotArrived, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
+import { matchStatement, recordedNotArrived, listOnce, UNTAGGED_LIST, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
 import {
   loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow, postStatementCharge,
   postBatchReceipt, loadBatchReceipts, undoBatchReceipt, unconfirmSettlementRow, clearOrphanBatch,
@@ -1017,13 +1017,16 @@ export const settlementWatchlist = guard(async (c) => {
   const settled = await loadSettledKeys(sb, co.companyId);
   if (!settled.ok) return c.json({ error: 'load_failed', reason: settled.reason }, 500);
 
-  const recorded: Array<PaymentCandidate & { ageDays: number; acquirerCode: string }> = [];
+  /* An untagged payment is in EVERY acquirer's pool — that is how a statement
+     finds it — but it is ONE payment on this list, under no acquirer
+     (docs/bugs/0688: the owner saw the same instalment under GHL, HLB, MBB and
+     PBB, and the header counting it four times). */
+  const recorded: Array<PaymentCandidate & { ageDays: number; acquirerCode: string | null }> = [];
+  const listedUntagged = new Set<string>();
   for (const a of acquirers) {
     const got = await loadPaymentCandidates(sb, co.companyId, a, from, to);
     if (!got.ok) return c.json({ error: 'load_failed', reason: got.reason }, 500);
-    for (const p of recordedNotArrived(got.payments, settled.keys, to)) {
-      recorded.push({ ...p, acquirerCode: a.code });
-    }
+    recorded.push(...listOnce(recordedNotArrived(got.payments, settled.keys, to), a.code, listedUntagged));
   }
 
   const { data: strandedRaw, error: sErr } = await sb.from('acc_settlement_rows')
@@ -1170,10 +1173,13 @@ export const settlementInTransit = guard(async (c) => {
     Math.round(Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86_400_000);
 
   const lines: Array<Record<string, unknown>> = [];
+  /* Same rule as the watchlist (docs/bugs/0688): money keyed in without a
+     bank is every acquirer's candidate but ONE line here, under no acquirer. */
+  const listedUntagged = new Set<string>();
   for (const a of (acqRaw ?? []) as Array<{ code: string; display_name: string; date_tolerance_days: number }>) {
     const got = await loadPaymentCandidates(sb, co.companyId, a, from, to);
     if (!got.ok) return c.json({ error: 'load_failed', reason: got.reason }, 500);
-    for (const p of got.payments) {
+    for (const p of listOnce(got.payments, a.code, listedUntagged)) {
       const key = `${p.source}:${p.id}`;
       const row = rowInfo.get(claim.get(key) ?? -1);
       if (row?.paid === true) continue; // the money is in the bank, out of transit
@@ -1181,7 +1187,7 @@ export const settlementInTransit = guard(async (c) => {
         : row.confirmed ? 'RECONCILED_NOT_PAID'
         : 'MATCHED_NOT_POSTED';
       lines.push({
-        acquirerCode: a.code,
+        acquirerCode: p.acquirerCode,
         source: p.source,
         paymentId: p.id,
         docNo: p.docNo,
@@ -1223,7 +1229,8 @@ export const settlementInTransit = guard(async (c) => {
   const buckets = (n: number) => (n <= 7 ? '0-7' : n <= 14 ? '8-14' : n <= 30 ? '15-30' : 'over-30');
   const byAcquirer: Record<string, Record<string, { count: number; sen: number }>> = {};
   for (const l of lines) {
-    const a = String(l.acquirerCode);
+    /* Money keyed in without a bank ages under its own key, 未标 (docs/bugs/0688). */
+    const a = l.acquirerCode == null ? UNTAGGED_LIST : String(l.acquirerCode);
     const b = buckets(Number(l.ageDays));
     ((byAcquirer[a] ??= {})[b] ??= { count: 0, sen: 0 });
     byAcquirer[a][b].count += 1;

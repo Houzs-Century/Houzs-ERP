@@ -109,6 +109,51 @@ async function downstreamMovedStock(doc, isPo, rowIds) {
   return { reasons, grns: grns.length, dos: dos.length };
 }
 
+/* The invoice raised from a migrated receipt or delivery note took the SAME
+   snapshot the GRN and DO lines took — create-migrated-invoices.mjs copies
+   `l._row.item_code` and `l._row.variants` straight off the parent row, at :305
+   for a purchase invoice and :345 for a sales one. So it has to follow this
+   correction for exactly the reason they do, and leaving it behind is what put
+   four invoice lines in production on a `-1S` placeholder their parent had
+   already left (docs/bugs/0687).
+
+   A typed invoice is NOT touched. `migrated_no_stock` is the same assertion the
+   GRN and DO carry rest on; an invoice that fails it is somebody's own
+   statement about what was billed, and it is reported by number rather than
+   overwritten. An invoice never moves stock in this ERP, so this is paperwork
+   only — the same standing the block below rests on. */
+async function carryToPurchaseInvoice(grnItemIds, t) {
+  if (!grnItemIds.length) return { moved: 0, held: [] };
+  const held = await sql`SELECT DISTINCT h.invoice_number FROM scm.purchase_invoice_items l
+                           JOIN scm.purchase_invoices h ON h.id = l.purchase_invoice_id
+                          WHERE l.grn_item_id = ANY(${grnItemIds})
+                            AND h.migrated_no_stock IS DISTINCT FROM true`;
+  const moved = await sql`UPDATE scm.purchase_invoice_items l
+                             SET item_code = ${t.code}, variants = ${sql.json(t.v)}
+                            FROM scm.purchase_invoices h
+                           WHERE h.id = l.purchase_invoice_id
+                             AND l.grn_item_id = ANY(${grnItemIds})
+                             AND h.migrated_no_stock = true
+                       RETURNING l.id`;
+  return { moved: moved.length, held: held.map((r) => r.invoice_number) };
+}
+
+async function carryToSalesInvoice(doItemIds, t) {
+  if (!doItemIds.length) return { moved: 0, held: [] };
+  const held = await sql`SELECT DISTINCT h.invoice_number FROM scm.sales_invoice_items l
+                           JOIN scm.sales_invoices h ON h.id = l.sales_invoice_id
+                          WHERE l.do_item_id = ANY(${doItemIds})
+                            AND h.migrated_no_stock IS DISTINCT FROM true`;
+  const moved = await sql`UPDATE scm.sales_invoice_items l
+                             SET item_code = ${t.code}, variants = ${sql.json(t.v)}
+                            FROM scm.sales_invoices h
+                           WHERE h.id = l.sales_invoice_id
+                             AND l.do_item_id = ANY(${doItemIds})
+                             AND h.migrated_no_stock = true
+                       RETURNING l.id`;
+  return { moved: moved.length, held: held.map((r) => r.invoice_number) };
+}
+
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"} company=${CO}${ONLY ? ` DOC=${ONLY}` : ""}${FILE ? ` FILE~${FILE}` : ""}`);
   for (const f of DATA.files) log(`source: ${f}`);
@@ -117,6 +162,7 @@ async function main() {
 
   let nBuilds = 0, nSofas = 0, nUpd = 0, nIns = 0, nDel = 0, nRefused = 0, nMissingSku = 0;
   let nPo = 0, nGr = 0, nDo = 0, nAmbiguous = 0, nStock = 0, nNoSeat = 0;
+  let nPi = 0, nSi = 0, nHeldInv = 0;
   /** doc -> { isPo, needle, want, copies } — re-checked on a fresh connection. */
   const verify = [];
 
@@ -363,6 +409,10 @@ async function main() {
             SET item_code = ${t.code}, variants = ${sql.json(t.v)}
             WHERE purchase_order_item_id = ${t.id} RETURNING id`;
           if (g.length) { nGr += g.length; log(`      -> ${g.length} GRN line(s) follow ${compartmentOf(t.code)}`); }
+          const pi = await carryToPurchaseInvoice(g.map((r) => r.id), t);
+          nPi += pi.moved;
+          if (pi.moved) log(`      -> ${pi.moved} purchase invoice line(s) follow ${compartmentOf(t.code)}`);
+          for (const n of pi.held) { nHeldInv++; log(`      HELD ${n} is not migrated paperwork — its item code is left as billed`); }
         } else {
           const po = await sql`UPDATE scm.purchase_order_items
             SET item_code = ${t.code}, variants = ${sql.json(t.v)}
@@ -375,12 +425,19 @@ async function main() {
                 SET item_code = ${t.code}, variants = ${sql.json(t.v)}
                 WHERE purchase_order_item_id = ${r.id} RETURNING id`;
               nGr += g.length;
+              const pi = await carryToPurchaseInvoice(g.map((x) => x.id), t);
+              nPi += pi.moved;
+              for (const n of pi.held) { nHeldInv++; log(`      HELD ${n} is not migrated paperwork — its item code is left as billed`); }
             }
           }
           const d = await sql`UPDATE scm.delivery_order_items
             SET item_code = ${t.code}, variants = ${sql.json(t.v)}
             WHERE so_item_id = ${t.id} RETURNING id`;
           if (d.length) { nDo += d.length; log(`      -> ${d.length} DO line(s) follow ${compartmentOf(t.code)}`); }
+          const si = await carryToSalesInvoice(d.map((r) => r.id), t);
+          nSi += si.moved;
+          if (si.moved) log(`      -> ${si.moved} sales invoice line(s) follow ${compartmentOf(t.code)}`);
+          for (const n of si.held) { nHeldInv++; log(`      HELD ${n} is not migrated paperwork — its item code is left as billed`); }
         }
       }
     }
@@ -389,6 +446,7 @@ async function main() {
   log("");
   log(`builds touched ${nBuilds} (${nSofas} sofa${nSofas === 1 ? "" : "s"}) · lines updated ${nUpd} · added ${nIns} · removed ${nDel}`);
   log(`downstream carried: PO lines ${nPo} · GRN lines ${nGr} · DO lines ${nDo}`);
+  log(`downstream carried onto the invoices raised from them: purchase invoice lines ${nPi} · sales invoice lines ${nSi}${nHeldInv ? ` · ${nHeldInv} invoice(s) HELD because they are not migrated paperwork` : ""}`);
   log(`refused ${nRefused} (downstream reference, unreadable copies, or the money would move) · piece SKU not minted ${nMissingSku} · refused as ambiguous ${nAmbiguous} · refused for real stock movement ${nStock} · seat not written ${nNoSeat}`);
   for (const h of DATA.held) log(`HELD ${h.docs.join(" / ")} [${h.source}] — ${h.why}`);
   await sql.end();

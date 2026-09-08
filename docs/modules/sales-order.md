@@ -508,12 +508,13 @@ liveState, gates)`, a UNION whose promotion arm is GATED (2026-08-30):
 |---|---|---|---|
 | `PENDING` | `stock` (gates open) | **READY** | the stale-projection case — the goods are physically there |
 | `PENDING` | `stock` (either gate closed) | `PENDING` | see the two gates below — the live verdict is answering a different question |
-| `READY` | anything | **READY** | the allocator knows BOUND MODE and dye-lot batches; MRP structurally cannot see either. The gates never veto a stored READY |
+| `READY` | anything | **READY** | the allocator knows BOUND MODE and dye-lot batches; MRP structurally cannot see either. The two PROMOTION gates never veto a stored READY |
 | `PENDING` | `po` / `shortage` | `PENDING` | an incoming PO is not stock |
 | `PARTIAL` | anything but gates-open `stock` | `PARTIAL` | |
 | anything | `null` | the stored value | MRP had no verdict, or `computeMrp` threw — fail-soft to the pre-2026-08-17 behaviour exactly |
+| anything | anything | `PENDING` | **`lineNonSellingWarehouse` — the one VETO** (2026-09-08). It outranks a stored READY, unlike the two rows above |
 
-**The two promotion gates** (`gates: { orderProcessed, lineHardBound } | null`,
+**The two promotion gates** (`gates: { orderProcessed, lineHardBound, lineNonSellingWarehouse } | null`,
 bug `docs/bugs/0569-the-display-union-promoted-pending-lines-to-ready-past-the-p.md`,
 owner report HC-SO-013367):
 
@@ -534,6 +535,32 @@ with no MRP result types `liveState: null` (the stored value stands), and a
 caller that cannot establish the gate context types `gates: null`, which fails
 in the STRICT direction: the promotion arm is off, the stored value still
 stands.
+
+**And the third field is not a gate, it is a VETO** —
+`lineNonSellingWarehouse`, added 2026-09-08 on the owner's ruling
+「分配时跳过这九个仓」,
+`docs/bugs/0686-the-allocator-promised-display-showroom-and-service-stock-to.md`. The two gates above arbitrate between two
+ENGINES about where the goods are, which is why they never veto a stored READY.
+This one is not an engine: `scm.warehouses.type` in
+{`showroom`, `display`, `service`} says the goods may not be PROMISED at all,
+however plainly both engines can see them — a showroom piece is doing its job on
+the floor, and a `SERVICE` unit is physically away at the supplier. So it
+outranks a stored READY, and it has to, or a stale projection keeps lighting the
+pill after the allocator has stopped promising the line.
+
+The allocator applies the same rule at SOURCE
+(`lib/non-selling-warehouse.ts` — the ONE home for the three type names, shared
+with the dead-stock exclusion in `routes/inventory.ts`), gating all three of its
+paths: the pooled on-hand walk, BOUND MODE and the sofa dye-lot matcher. This
+veto is the cover for the window in which the stored projection is stale.
+
+**Selling a display piece stays possible, through a stock transfer** into a
+selling warehouse (`/scm/stock-transfers/new`, and its mobile twin) — the SAP /
+Odoo / NetSuite model, where what a warehouse HOLDS and what may be PROMISED are
+two different numbers. The refusal says so on the line: the payload carries
+`non_selling_warehouse: { code, name, type, notice }`, the desktop pill prints
+the warehouse code plus "transfer to sell" with the sentence on hover, and the
+phone prints the whole sentence.
 
 Where it is used:
 
@@ -4362,3 +4389,24 @@ A line whose `(code, colour)` pair has no counterpart lands in `dropped`, which
 this module already reports out loud rather than inventing a link. **A missing
 link is recoverable; a wrong one lights the wrong stock.** Both callers in
 `mfg-sales-orders.ts` pass `variants`, which both sides already carried.
+
+## Which SO line a migrated delivery note binds to — colour decides, or nobody does (2026-09-08)
+
+`scripts/sync-ac-delta.mjs` lane `do` and `scripts/create-migrated-documents.mjs`
+both bind an AutoCount delivery line to one of THIS order's lines through
+`buildMigratedDoPlan`. That binding is what moves a sales-order line's delivered
+quantity, so getting it wrong under-delivers one line and over-delivers another.
+
+The bucket is `(AutoCount SO number, ERP item code)` and the tie-break used to be
+position alone. Two lines of one sofa model in different fabrics are the ordinary
+case, and the book's delivery row carries no colour and no line key — 0 of 48,772
+DO lines have `fromSoDtlKey` on the 2026-09-08 re-cut — so position was a coin
+flip that also copied the wrong `variants` onto the note.
+
+**Now: the candidates must be indistinguishable by `variantIdentity` before
+position may decide.** If two candidate SO lines of one code carry different
+colours, no link is written; the row is listed against the delivery note for a
+person, and the delta lane counts it in its ALL-OR-NOTHING refusal total so the
+whole note is refused rather than half-written. The refusal message names the
+count: `colour cannot say which line N`. `docs/bugs/0688`,
+`docs/modules/delivery-order.md`.

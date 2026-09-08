@@ -2154,3 +2154,46 @@ Identity is asserted **before** the quantity cap wherever both run: a ceiling
 computed against the wrong line is a number about the wrong thing, and reporting
 it sends the operator to fix a quantity when the real fault is the source they
 picked.
+
+## A migrated DO line will NOT bind to a sales-order line colour cannot choose (2026-09-08)
+
+`backend/scripts/lib/migrated-do-writer.mjs` `buildMigratedDoPlan` buckets
+candidate sales-order lines on `(AutoCount SO number, ERP item code)` and then
+takes them **by position**. Two lines of one sofa model in two fabrics are an
+ordinary order, and the account book's delivery line carries neither a colour nor
+a line key: `fromSoDtlKey` is populated on 10,792 of 18,890 purchase-order lines
+and **0 of 48,772 delivery-order lines** in the 2026-09-08 re-cut. When the two
+orders list the pair in a different sequence the result is an exact swap — and
+the writer copies `variants` off whichever line it paired with, so the note
+inherits the other customer's colour.
+
+`DO-011505` and `DO-011478` are NOT this mechanism, though `docs/bugs/0672` says
+they are. Their swapped keys carry different AutoCount codes that map to
+different ERP codes, so those rows never share a bucket here. See
+`docs/bugs/0689`.
+
+**The rule now: pair on model + colour; where colour cannot resolve it, write NO
+link.** Positional consumption happens only while the candidate lines are
+indistinguishable by `variantIdentity` (`scripts/lib/do-so-item-pairing.mjs` —
+`pwpCode`, then `colourId`, then the summary, then `description2`). Otherwise the
+row is refused into that delivery note's own `dropped` list with a reason naming
+the document and the code, and `stats.ambiguousColour` counts it.
+
+**What this changes for a person.** An affected delivery note comes out SHORT and
+LISTED rather than complete-and-wrong. `sync-ac-delta.mjs`'s DO lane counts the
+refusal in its ALL-OR-NOTHING total, so the note is refused whole rather than
+written partial; `create-migrated-documents.mjs` prints a `colour-guard:` line
+beside its `duplicate-guard:` one. A missing link is visible and recoverable; a
+wrong one puts the wrong colour in front of a customer and reads as correct to
+every check we have. `docs/bugs/0688`.
+
+## A migrated invoice follows its parent's compartment correction (2026-09-08)
+
+`create-migrated-invoices.mjs` copies `item_code` and `variants` off the delivery
+or receipt line it is raised from, so a migrated invoice line is a SNAPSHOT with
+no opinion of its own. When `apply-sofa-compartment-corrections.mjs` moves a sofa
+line off its `-1S` placeholder it now carries the new code onto
+`sales_invoice_items` and `purchase_invoice_items` as well as the PO, GRN and DO
+lines — guarded by `migrated_no_stock`, with a typed invoice HELD and reported by
+number rather than overwritten. Four production invoice lines were left quoting a
+parent that had already changed; `docs/bugs/0687` has the trace and the repair.

@@ -236,6 +236,18 @@ export const useMfgSalesOrderDetail = (docNo: string | null) => useQuery({
    source-PO chips upgrade in place a moment later. Keyed by the line `id`, one
    entry per line. The detail page overlays these onto its own lines when they
    arrive — never a loading gate. */
+/* Why a line can never read READY, when the reason is WHERE it stands (owner
+   ruling 2026-09-08). Null on every ordinary line. The SENTENCE is composed on
+   the SERVER (backend/src/scm/lib/non-selling-warehouse.ts) and rendered
+   verbatim by both surfaces, so the rule and its wording have ONE home and the
+   desktop and the phone cannot word a refusal differently. */
+export type NonSellingWarehouseNote = {
+  code: string | null;
+  name: string | null;
+  type: string | null;
+  notice: string;
+};
+
 export type SoLineCoverage = {
   id: string;
   stock_state: 'stock' | 'po' | 'shortage' | null;
@@ -243,6 +255,7 @@ export type SoLineCoverage = {
   coverage_eta: string | null;
   ready_source_pos: Array<{ po: string | null; qty: number; kind: 'po' | 'adjustment' }>;
   stock_status_effective: string | null;
+  non_selling_warehouse?: NonSellingWarehouseNote | null;
 };
 
 export const useSoLineCoverage = (docNo: string | null) => useQuery({

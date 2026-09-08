@@ -200,7 +200,15 @@ describe('SO stock-allocation sweep — read shape', () => {
        rather than a query. Chunked at 200 it is 2 requests for this fixture. A
        round trip is the currency this file is written in, so the trade is stated
        rather than absorbed: one extra request, in exchange for a read that
-       cannot stop working as the customer imports. */
-    expect(db.totalReads()).toBe(13);
+       cannot stop working as the customer imports.
+
+       14 since 2026-09-08: the fourteenth is `warehouses`, one unfiltered SELECT
+       of a table that holds 16 rows in company 1, for the owner's ruling that
+       display / showroom / service stock is never promised to a customer
+       (lib/non-selling-warehouse.ts). It is a CONSTANT — it does not chunk and
+       does not grow with the order book, which is the property this file cares
+       about — and the alternative was to read the warehouse type per line. */
+    expect(db.reads.get('warehouses')).toBe(1);
+    expect(db.totalReads()).toBe(14);
   });
 });

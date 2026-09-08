@@ -795,9 +795,9 @@ async function main() {
             Location: cell(r, F.loc),
           }));
           const { plan, stats } = buildMigratedDoPlan({ rows, itemMap, soItems: mine });
-          const dropped = stats.unmapped + stats.noSoLine + stats.exhausted;
+          const dropped = stats.unmapped + stats.noSoLine + stats.exhausted + stats.ambiguousColour;
           if (dropped > 0 || plan.length !== 1) {
-            doRefused.push(`${where}: ALL-OR-NOTHING - ${dropped} of ${rows.length} book line(s) did not resolve to a sales-order line (unmapped ${stats.unmapped}, no ERP line ${stats.noSoLine}, no unclaimed line left ${stats.exhausted})`);
+            doRefused.push(`${where}: ALL-OR-NOTHING - ${dropped} of ${rows.length} book line(s) did not resolve to a sales-order line (unmapped ${stats.unmapped}, no ERP line ${stats.noSoLine}, no unclaimed line left ${stats.exhausted}, colour cannot say which line ${stats.ambiguousColour})`);
             continue;
           }
           if (stats.collapsed) doNotes.push(`${where}: ${stats.collapsed} duplicate line(s) refused by the shape guard`);
