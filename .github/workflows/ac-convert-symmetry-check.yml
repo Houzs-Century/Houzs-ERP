@@ -62,7 +62,11 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: node scripts/check-ac-convert-symmetry.mjs
+      # tsx, not node: section 6b imports the REAL isHardBoundLine out of
+      # src/scm/lib/so-stock-allocation.ts rather than re-implementing the rule
+      # that decides which lines can never read READY. Same reason
+      # check-status-disagreement-why.yml runs under tsx for computeVariantKey.
+      - run: npx tsx scripts/check-ac-convert-symmetry.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}

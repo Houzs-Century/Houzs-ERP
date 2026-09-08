@@ -20,6 +20,7 @@ import { Button } from '@2990s/design-system';
 import {
   useAccounts, useOtherDebtors, useDebtorDetail, useCreateDebtor, useUpdateDebtor,
   useCreateDebtorBill, useUpdateDebtorBill, useCancelDebtorBill, useCreateDebtorReceipt, useDebtorReceiptAction,
+  postableAccounts,
   type Account, type DebtorBill, type DebtorReceipt,
 } from '../../vendor/scm/lib/accounting-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
@@ -74,7 +75,9 @@ export const OtherDebtors = () => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const detailQ = useDebtorDetail(selectedId);
   const accountsQ = useAccounts();
-  const accounts = useMemo<Account[]>(() => (accountsQ.data?.accounts ?? []).filter((a) => a.is_active), [accountsQ.data]);
+  /* The whole chart goes in: a header whose children are all retired is still
+     a header (docs/bugs/0693). */
+  const accounts = useMemo<Account[]>(() => postableAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
   const moneyAccounts = useMemo(() => accounts.filter((a) => a.acc_money === true), [accounts]);
 
   const createDebtor = useCreateDebtor();

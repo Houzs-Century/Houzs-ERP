@@ -44,6 +44,21 @@ export type Account = {
    decides what the pickers and the Chart page SHOW. */
 export const isControlSpecial = (special: string | null | undefined): boolean =>
   special === 'SDC' || special === 'SCC' || special === 'SBS';
+/* 父户不记账, one home for the screens (docs/bugs/0693). A header is any
+   account with a sub-account — RETIRED sub-accounts included: the owner's
+   900-R006 RENTAL- SHOWROOM kept three retired showrooms under it and was still
+   a header to him, while every picker (built from the active list alone)
+   called it a leaf and the GL gate (which counts every child) refused it at
+   approve. The gate's rule is the rule; this is the same rule for the pickers,
+   so hand the WHOLE chart in, never a pre-filtered list. */
+export const leafAccounts = (all: Account[]): Account[] => {
+  const parents = new Set(all.map((a) => a.parent_code).filter((p): p is string => !!p));
+  return all.filter((a) => a.is_active && !parents.has(a.account_code));
+};
+/** What a hand-picked line may debit or credit: a leaf that is not a CONTROL
+    account (AR / AP + deposits / stock post through their modules — 由模块过账). */
+export const postableAccounts = (all: Account[]): Account[] =>
+  leafAccounts(all).filter((a) => !isControlSpecial(a.special_type));
 /* The section vocabulary in render order — served by the API (its one home
    is backend lib/account-sections.ts), never copied here. */
 export type AccountSection = { section: string; type: Account['account_type'] };
