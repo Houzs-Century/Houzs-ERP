@@ -1,6 +1,7 @@
 ## The appointed cancellation approvers could not sign — the area guard asked for the document's area, not the approve key [high]
 
-<!-- area: Sales orders + purchase orders -->
+<!-- area: Auth, permissions, sessions -->
+<!-- status: fixed -->
 
 **Symptom.** Owner 2026-09-08, appointing the chain for the new two-signature
 cancellation (#3223): 「需要先给 sales director 审批才到 purchaser 审批」 —
