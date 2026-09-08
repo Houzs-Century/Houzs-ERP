@@ -1756,7 +1756,7 @@ settles either. The five surfaces that read it, all of which change together:
 
 | Surface | What it gates |
 |---|---|
-| `frontend/src/pages/scm-v2/SalesOrderDetailV2.tsx` | banner (`MigratedReadonlyBanner`), Edit button + its hint, the payments card |
+| `frontend/src/pages/scm-v2/SalesOrderDetailV2.tsx` | banner (`MigratedReadonlyBanner`), Edit + its hint, the payments card, and the whole HEADER BAR — **Collect payment** hidden, **Cancel SO** disabled with the reason. The header bar was missed on the first cut and shipped live (`docs/bugs/0687-*`): "the file consults the gate" is not "every write on the file is behind it". |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | the existing lock banner names the migrated lock FIRST and its **Override is disabled**; `isLocked`, Save / Submit-amendment, Cancel, payments |
 | `frontend/src/mobile/MobileSODetail.tsx` | the same lock banner, `isLocked`, Edit / Edit Draft / Create, Cancel, payments |
 | `frontend/src/mobile/MobileNewSO.tsx` | banner, `lineEditingBlocked` / `addressIdentityLocked` / `scheduleDatesLocked`, amendment mode, the Save button (reads "View only") |
