@@ -1,6 +1,6 @@
 ## Seven purchase-order lines showed no photograph because the object was never uploaded, and the obvious remedy would have written 15 dead addresses [high]
 
-<!-- area: Purchasing -->
+<!-- area: Purchase orders + GRN + PI -->
 <!-- status: fixed -->
 
 **Symptom.** The owner, the night the sales-order photographs were finished:
