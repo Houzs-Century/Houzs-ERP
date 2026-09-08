@@ -35,6 +35,7 @@ import {
   acGroupsOfType,
   acHeadline,
   acListCountLine,
+  acListTotal,
   acListTitle,
   acOpLabel,
   acOpensItself,
@@ -1001,6 +1002,27 @@ describe("one row per document", () => {
     expect(acDocTypeCounts(groups).all).toBe(3);
     expect(acListCountLine(groups.length, 3)).toBe("3 of 3 documents");
     expect(acListCountLine(1, 1)).toBe("1 of 1 document");
+  });
+
+  /* MEASURED ON PRODUCTION, 2026-09-08, minutes after the Cleared tab shipped:
+     three cleared documents rendered under "3 of 1 document". `counts.total`
+     counts what is ON the page and deliberately excludes the cleared shelf, so
+     it is the wrong denominator for the one filter that looks at that shelf. */
+  it("counts a cleared list against the CLEARED total, not the page total", () => {
+    const d = {
+      counts: { pending: 0, sent: 1, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 3, total: 1 },
+    } as unknown as Parameters<typeof acListTotal>[0];
+    expect(acListTotal(d, "archived")).toBe(3);
+    expect(acListCountLine(3, acListTotal(d, "archived"))).toBe("3 of 3 documents");
+  });
+
+  it("leaves every ordinary filter counting against the company total", () => {
+    const d = {
+      counts: { pending: 0, sent: 1, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 3, total: 1 },
+    } as unknown as Parameters<typeof acListTotal>[0];
+    for (const state of ["all", "pending", "attention", "sent"] as const) {
+      expect(acListTotal(d, state), state).toBe(1);
+    }
   });
 
   it("draws the row from the NEWEST send, whatever order they arrive in", () => {

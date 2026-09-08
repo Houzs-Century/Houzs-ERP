@@ -111,6 +111,7 @@ import {
   acGroupsOfType,
   acHeadline,
   acListCountLine,
+  acListTotal,
   acListTitle,
   acOpLabel,
   acReplacedHeading,
@@ -952,7 +953,7 @@ export function AutoCountSync() {
                     <span className="font-semibold text-ink">{acListTitle(state, docType)}</span>
                     <span className="mx-2 opacity-50">|</span>
                     <span className="tabular-nums">
-                      {q.fetching ? "Loading…" : acListCountLine(groups.length, d.counts.total)}
+                      {q.fetching ? "Loading…" : acListCountLine(groups.length, acListTotal(d, state))}
                     </span>
                   </span>
                 </div>

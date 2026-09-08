@@ -26,6 +26,7 @@ import {
   acGroupsOfType,
   acHeadline,
   acListCountLine,
+  acListTotal,
   acListTitle,
   acReplacedHeading,
   acRowDetail,
@@ -759,7 +760,7 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
                   here and "6 of 17 documents" there — two hand-written strings
                   making two different claims about one number. */}
               <span style={{ fontSize: 10.5, color: "var(--mut)", fontVariantNumeric: "tabular-nums" }}>
-                {acListCountLine(groups.length, d.counts.total)}
+                {acListCountLine(groups.length, acListTotal(d, state))}
               </span>
             </div>
 
