@@ -48,7 +48,14 @@
 //   2  THE PURCHASE SIDE IS ONE UNLINKED ROW AND THE SALES SIDE IS SEVERAL.
 //      Two purchase rows on one book line is somebody else's decomposition and
 //      is left alone; a row that already names a sales line is never re-pointed.
-//   3  THE PURCHASE ROW IS A COLLAPSED SINGLE and carries build text of its own.
+//   3  THE PURCHASE ROW IS A COLLAPSED SINGLE and carries build text of its own,
+//      and THE SALES SIDE IS A SOFA. What makes this a sofa is the sales side:
+//      the purchase row's own `item_group` did not survive the SO -> PO hop on
+//      this population (docs/bugs/0514) - measured, run 34218446892 - which is
+//      also why `redecode-collapsed-sofa-lines.mjs`, whose corpus is
+//      `WHERE i.item_group = 'sofa'`, cannot see it. That category is a real
+//      defect and is REPORTED, never written here: it would move
+//      `computeVariantKey` and with it which stock bucket the row matches.
 //   4  THE PURCHASE ROW'S OWN TEXT DECODES TO EXACTLY THE SALES SIDE'S PIECES,
 //      compared as a MULTISET (`lib/redecode-sofa-plan.mjs`), with every piece
 //      code unique so the dedication is an identity match and never a choice.
@@ -354,7 +361,21 @@ async function main() {
     /* Gate 2 - the shape this repair exists for, and nothing else. */
     if (rows.length !== 1) { refused.poNotOne++; continue; }
     const po = rows[0];
-    if ((po.item_group ?? "").toLowerCase() !== "sofa") { refused.notSofa++; continue; }
+    /* WHAT MAKES THIS A SOFA IS THE SALES SIDE, NOT THE PURCHASE ROW'S OWN
+       `item_group`. Measured on production, run 34218446892: HC-PO-009435's
+       two rows - the sofa AND its pillows - are BOTH refused by a
+       `po.item_group = 'sofa'` test, because the purchase row's category did
+       not survive the SO -> PO hop (the class docs/bugs/0514 names). That test
+       is also why `redecode-collapsed-sofa-lines.mjs`, whose corpus is
+       `WHERE i.item_group = 'sofa'`, cannot see this population either.
+       The category is a real defect and it is NOT repaired here - writing it
+       would move `computeVariantKey`, and with it which stock bucket the row
+       matches. It is REPORTED on every planned build instead. */
+    if (!soSide.every((r) => (r.item_group ?? "").toLowerCase() === "sofa")) {
+      refused.notSofa++;
+      note(`the sales side is not a sofa (${[...new Set(soSide.map((r) => r.item_group ?? "(null)"))].join(", ")})`);
+      continue;
+    }
     if (po.so_item_id) { refused.poLinked++; continue; }
     if (soSide.length < 2) { refused.soSideNotDecomposed++; continue; }
 
@@ -449,7 +470,7 @@ async function main() {
   out(`    the BOOK records no source order                   ${String(refused.bookHasNoSource).padStart(5)}  a link here would be INVENTED`);
   out(`    the source order is not live in the ERP            ${String(refused.soNotLive).padStart(5)}  not imported, or terminal`);
   out(`    the book line is several ERP purchase rows         ${String(refused.poNotOne).padStart(5)}  already decomposed`);
-  out(`    the purchase row is not a sofa                     ${String(refused.notSofa).padStart(5)}`);
+  out(`    the SALES side is not a sofa                       ${String(refused.notSofa).padStart(5)}`);
   out(`    the purchase row already names a sales line        ${String(refused.poLinked).padStart(5)}`);
   out(`    the sales side is a single row too                 ${String(refused.soSideNotDecomposed).padStart(5)}  1:1 - the other repair's job`);
   out(`    the purchase row is not a collapsed single         ${String(refused.poNotCollapsed).padStart(5)}  (gate 3)`);
@@ -469,7 +490,8 @@ async function main() {
     out(`      book ${b.acPo} <- ${b.acSo}, SO line ${b.soDtlKey}; the book moved ${b.bookMoved} of ${b.bookQty}`);
     out(`      purchase text ${JSON.stringify(oneLine(b.po.d2))}`);
     if (b.ps.why.length) out(`      decoder notes: ${b.ps.why.join("; ")}`);
-    out(`      ERP purchase row qty ${b.po.qty} received ${b.po.received_qty}`);
+    out(`      ERP purchase row qty ${b.po.qty} received ${b.po.received_qty}, item_group ${b.po.item_group ?? "(null)"}`
+      + `${(b.po.item_group ?? "").toLowerCase() === "sofa" ? "" : "   <- the PURCHASE row's category did not survive the SO -> PO hop (docs/bugs/0514). NOT repaired here: writing it would move computeVariantKey and with it the stock bucket."}`);
     for (const d of b.dedicate) {
       out(`      ${d.code === b.plan.update ? "re-code" : "insert "} ${String(d.code).padEnd(22)} -> ${d.so.doc} `
         + `[line ${d.so.stock_status}, batch ${d.so.allocated_batch_no ?? "(none)"}]`);

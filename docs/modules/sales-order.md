@@ -3312,6 +3312,27 @@ directions, and the seat-size axis carries the same shape — `STOOL(25 X 40INCH
 is a stool's length by its width, and reading `40"` off it put a phantom on the
 same tally.
 
+**The book has TWO field separators, and the decoder only knew one** (2026-09-08,
+`docs/bugs/0713-the-colour-label-ran-to-the-end-of-the-segment-and-swallowed.md`).
+Most Desc2 separate their fields with a SLASH, and `COL:` was written to run to
+the next one — `[^\/\n]+`. Newer entries separate with a DOUBLE SPACE and carry
+no slash at all, so the colour label ran to the end of the line and swallowed the
+build, the seat size and every instruction after it: `colour : HR805 -31 ( 30
+inch )  1EL + C + 1 NA + 1ER` decoded to **nothing**, and the line fell to the
+bare `-1S` placeholder. The same span was deleted before the special-order sweep
+ran, so the reconcile was told the BOOK asked for nothing while the ERP line
+carried `wrap bottom to umbrella fabric` — the "book blank" shape on the specials
+axis. `382 of 10,696` sofa Desc2 in the committed snapshot carry a colour label
+whose value contains a double space.
+
+`splitColourValue()` now ends the label where what FOLLOWS identifies itself as a
+piece list, a seat size, or an instruction from `SPECIAL_WORD`. **The cut is
+positive, never speculative** — a double space alone does not end a colour,
+because a shade's own name contains one (`COL- BEETEX     HARRING 8371 04#COFFEE`).
+Measured over all 2,239 distinct (model, Desc2) pairs both ways on `recl`: **0
+builds lost, 0 builds changed**, 72 lines gained a build they never had, and 274
+lines got back an instruction the book always stated.
+
 #### The compartments axis: a label and its own bracket are ONE sofa
 
 The floor often writes the build twice — a label, then the same build spelled
