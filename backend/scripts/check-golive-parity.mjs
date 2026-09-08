@@ -406,7 +406,10 @@ async function main() {
      PAINT path (mfg-sales-orders.ts:1678 passes exactly these two nulls), and it
      is the strict direction — the live-'stock' promotion arm cannot fire, so
      this check can never call a line READY that the allocator has not. */
-  const linesByDoc = readinessLinesByDoc(items, null, null);
+  /* FOURTH null (2026-09-08): the non-selling-warehouse set. Same strict
+     direction and the same reason — this check never promotes past the stored
+     status, and the allocator has already applied the rule at source. */
+  const linesByDoc = readinessLinesByDoc(items, null, null, null);
   attachLineCategories(linesByDoc.values(), prodCat);
 
   const acRemarkByDoc = new Map(acRemarks.map((r) => [norm(r.DocNo), txt(r.Remark2)]));

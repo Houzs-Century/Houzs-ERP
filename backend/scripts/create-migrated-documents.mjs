@@ -261,6 +261,7 @@ async function doDos() {
 
   log(`AutoCount delivery lines against open orders: ${rows.length}; unmapped code ${stats.unmapped}; no ERP SO line ${stats.noSoLine}`);
   log(`duplicate-guard: ${stats.exhausted} row(s) skipped for having no unclaimed SO line left; ${stats.collapsed} duplicate line(s) refused`);
+  log(`colour-guard: ${stats.ambiguousColour} row(s) left UNPAIRED because two or more sales-order lines of that code carry different colours and the book names none`);
   for (const [code, n] of [...stats.missCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)) log(`   no ERP line for ${code} x${n}`);
   /* A count of misses is not a diagnosis. For the first few, print what the ERP
      order ACTUALLY has on it, so the mismatch is visible instead of inferred. */

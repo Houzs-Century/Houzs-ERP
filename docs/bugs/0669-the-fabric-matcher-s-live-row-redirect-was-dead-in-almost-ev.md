@@ -104,3 +104,37 @@ script and its workflow already exist, and the decision is the owner's.
 
 **Ref.** fix/ac-lines-match-2026-09-07, 2026-09-07; applied and measured
 docs/cutover-keys-and-ledger, 2026-09-08.
+
+---
+
+### RE-CHECKED 2026-09-08 — the census above no longer reproduces, and the number is now 42, not 15
+
+The owner's August ruling stands and **nothing here was changed**: the other
+callers are left alone mid-go-live. What is recorded is only that this entry's
+own published count has expired, because a stale number in a doc is worse than
+no number — the next reader does arithmetic on it.
+
+Re-run of the command this entry publishes, on `fix/cutover-wrong-links`:
+
+```
+$ grep -ln "FROM scm.fabric_colours" backend/scripts/*.mjs | wc -l
+42
+```
+
+So the fifteen named above are no longer the population; twenty-seven more
+scripts have joined it since 2026-09-07. Measuring the same property the entry
+is about — does the SELECT list name `active` — over all 42:
+
+```
+files with a SELECT ... FROM scm.fabric_colours : 42
+of those, whose first such select list names `active` : 12
+still omitting it : 30
+```
+
+**Read that as a scope note, not as thirty new defects.** Many of the additions
+are read-only probes where a retired row changes no binding, and this count does
+not separate them. What it does establish is that the list of fifteen cannot be
+quoted as complete, and that whoever lifts the owner's deferral has a larger
+population to enumerate than this entry describes.
+
+**Ref.** fix/cutover-wrong-links, 2026-09-08 (measurement only; no behaviour changed).

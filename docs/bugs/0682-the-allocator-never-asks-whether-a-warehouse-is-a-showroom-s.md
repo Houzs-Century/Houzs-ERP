@@ -1,8 +1,11 @@
 ## The allocator never asks whether a warehouse is a showroom, so display stock is sellable [medium]
 
-**Status: OPEN — measured, NOT fixed.** The remedy is a business rule the owner
-has not ruled on yet, and it is deliberately not implemented here. This entry
-records the finding and the instrument; it claims no fix.
+**Status: CLOSED 2026-09-08 — the owner ruled the same day.** Shown this
+measurement he chose option A of `docs/showroom-stock-sellable-options.md`:
+「分配时跳过这九个仓」. The fix is `docs/bugs/0686-the-allocator-promised-display-showroom-and-service-stock-to.md`; this entry stays as the
+measurement and the instrument that found it. Everything below was written
+BEFORE that ruling and is left unedited — its closing "Fix. None here, by
+intent" is true of THIS entry and is superseded by that entry.
 
 **Symptom.** The 2026-09-08 cutover brought the book's 26 showroom display sofas
 into the ERP exactly as AutoCount holds them — 24 at the warehouse the ERP calls
