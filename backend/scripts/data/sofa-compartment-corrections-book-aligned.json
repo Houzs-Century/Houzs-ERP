@@ -349,8 +349,8 @@
     "2A(LHF)",
     "1A(RHF)"
    ],
-   "desc2Match": "2+1(28\")/Col:BO315-3/BO315-23/Seat infront add 2\")",
-   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-011221 DtlKey 775621 states \"2+1(28\")/Col:BO315-3/BO315-23/Seat infront add 2\")\", which the reconcile decodes to 2A(LHF)+1A(RHF), and the ERP holds 2S+1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in a form this file does not need, and the seat axis reads ZERO differences today which this change must not disturb."
+   "desc2Match": "BO315-3",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-011221 DtlKey 775621 states \"2+1(28\")/Col:BO315-3/BO315-23/Seat infront add 2\")\", which the reconcile decodes to 2A(LHF)+1A(RHF), and the ERP holds 2S+1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in a form this file does not need, and the seat axis reads ZERO differences today which this change must not disturb. | 2026-09-08: the FULL Desc2 was tried first as the needle and matched no ERP line on this document (dry run 34229134613: \"no line carries this text, exactly or normalised\"), so the ERP holds a different spelling of it. Shortened to the colour fragment BO315-3. That is safe HERE and would not be elsewhere: the account book carries exactly ONE sofa line on SO-011221, and the two ERP rows it selects (2S and 1S) are the two compartments of that one build, so a needle matching both is matching the right thing rather than dealing one build's answer onto another."
   },
   {
    "docs": [
