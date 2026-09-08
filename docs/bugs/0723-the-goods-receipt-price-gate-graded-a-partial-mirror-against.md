@@ -97,4 +97,19 @@ defect failed (`ACCEPTS a partial mirror that matches the book on the pairs it
 holds`, and three more) while the nine keyed-attribution tests passed. A
 module-not-found red would have proved nothing.
 
+**Two things added while fixing it, neither of which the bug asked for but both
+of which it exposed:**
+
+- **A STOCK GUARD on the apply path.** The script's header claimed every
+  document it prices is `migrated_no_stock = true` and moves no inventory. That
+  was a comment, and the owner deferred stock on 2026-09-08 (「库存先不看」). It is
+  now MEASURED against the live database immediately before the first UPDATE —
+  any document to be priced that carries an inventory movement REFUSES the whole
+  run. `trg_inventory_movement_fifo` is `AFTER INSERT ON inventory_movements` and
+  this writes three money columns, so nothing should fire; that is reading code,
+  which is why it is not the evidence.
+- **`backend/scripts/check-po-gr-pi-chain.mjs`** + `po-gr-pi-chain.yml` — the
+  chain walked a line at a time, both sides' lines summed to their document
+  total, and transpositions named BY KEY. Read-only.
+
 **Ref.** `fix/gr-line-align`, 2026-09-08.

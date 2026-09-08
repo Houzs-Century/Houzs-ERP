@@ -71,7 +71,12 @@
  * WHAT THIS DOES NOT TOUCH, said plainly:
  *   * PURCHASE ORDER lines. The book holds no price on them; 空白不覆盖.
  *   * STOCK. Every document here is `migrated_no_stock = true`; the cutover
- *     wrote no inventory movement for them and this writes none either.
+ *     wrote no inventory movement for them and this writes none either. That
+ *     used to be a claim in this comment; since 2026-09-08 the apply path
+ *     MEASURES it against the live database immediately before the first UPDATE
+ *     and REFUSES THE WHOLE RUN if any document to be priced carries one. The
+ *     owner deferred stock that day (「库存先不看」), so a price repair that could
+ *     move an on-hand figure has to stop, not proceed on a comment.
  *   * The GL. No journal entry is posted, here or by the invoices that follow.
  *   * A line that already carries money. The selection is zero-priced lines and
  *     a priced one is never overwritten.
@@ -501,10 +506,46 @@ async function main() {
     return;
   }
 
+  /* ── 库存先不看: PROVE no on-hand figure can move, do not assume it ───────
+     The owner deferred stock on 2026-09-08, so a price repair that moved an
+     on-hand figure would have to STOP rather than proceed. Two independent
+     reasons it cannot, and only the second is evidence:
+
+       1. Nothing recomputes stock from a price. `trg_inventory_movement_fifo`
+          is AFTER INSERT ON inventory_movements, and this writes three money
+          columns on grn_items plus a re-summed header. That is READING CODE,
+          which describes intent, not production.
+       2. The documents themselves have NO movements. That is measured here,
+          against the live database, immediately before the first UPDATE — and
+          a document that HAS one aborts the whole run rather than being skipped
+          quietly, because it would mean `migrated_no_stock` no longer means
+          what this script's selection believes it means. */
+  const byId = new Map(docs.map((d) => [d.docNo, d]));
+  const touched = [...new Set(writes.map((w) => w.docNo))].map((n) => byId.get(n)).filter(Boolean);
+  const docIds = touched.map((d) => d.id);
+  const docNos = touched.map((d) => d.docNo);
+  const moved = docIds.length
+    ? await sql`
+      SELECT m.source_doc_id::text AS doc_id, m.source_doc_no, m.source_doc_type, COUNT(*)::int AS n
+        FROM scm.inventory_movements m
+       WHERE m.source_doc_id::text = ANY(${docIds}) OR m.source_doc_no = ANY(${docNos})
+       GROUP BY 1, 2, 3`
+    : [];
+  if (moved.length) {
+    plain('');
+    bad(`REFUSING THE WHOLE RUN: ${moved.length} of the ${docIds.length} document(s) to be priced already carry an`);
+    bad('  inventory movement, so they are not the stock-free migrated paperwork this selection believes they are.');
+    bad('  The owner deferred stock 2026-09-08 (「库存先不看」), so a repair that could move an on-hand figure stops');
+    bad('  here rather than proceeding on a document whose meaning has changed.');
+    for (const m of moved.slice(0, 10)) bad(`     ${m.source_doc_no ?? m.doc_id} (${m.source_doc_type}) — ${m.n} movement(s)`);
+    await sql.end({ timeout: 5 });
+    process.exit(2);
+  }
+  note(`STOCK: the ${docIds.length} document(s) to be priced carry 0 inventory movements — measured just now, not assumed.`);
+
   /* ── the write ─────────────────────────────────────────────────────────── */
   plain('');
   note(`=== APPLYING ${writes.length} line(s) ===`);
-  const byId = new Map(docs.map((d) => [d.docNo, d]));
   let wroteLines = 0;
   const touchedDocs = new Set();
   for (const w of writes) {
