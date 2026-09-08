@@ -222,7 +222,28 @@ Edit and Copy is `frontend/src/pages/scm-v2/ApInvoiceForm.tsx` (Insert adds
 a line and lands on its account picker, Enter on an amount moves down, F3 or
 Ctrl+S is the save button once the form is ready — `useSaveHotkey`,
 payment-voucher.md; the amount is the shared `MoneyInput`; the scan sits on
-New and Copy). **Every
+New and Copy).
+
+**The bill pile for AP invoices (2026-09-08, owner: AP invoice 的 OCR 要优化像 PV
+这样 … 我可能同时 upload 多张 supplier 给的 invoice, 所以要分出来一张一张).**
+"📷 Scan bills" beside "+ New AP invoice" opens `/scm/ap-invoices/scan` — the
+voucher's pile page (`frontend/src/pages/scm-v2/PaymentVoucherScan.tsx`,
+`target="ap"`): drop or paste many files, one file = one bill, tick pages and
+Merge for a bill photographed in pieces, read them in one call. The difference
+from the voucher's pile is the last step: a bill IS an invoice with its own
+number, so every bill opens as ITS OWN AP invoice ("Open as AP invoice"; a
+same-supplier group is never offered as one). The hand-off lands on
+`frontend/src/pages/scm-v2/ApInvoices.tsx` as `location.state.apPrefill`, the
+pages riding the voucher's module stash (pv-file-handoff.ts); the list opens
+its New form pre-filled through `formFromExtraction` — the one home the form's
+own Scan bill fills through too (`ApInvoiceForm.tsx`, which also takes a bill
+DROPPED on its scan row) — and attaches the pages on save. What the reader
+fills goes UPPER CASE (`upperFill`, `frontend/src/vendor/scm/lib/ocr-fill.ts`;
+owner: 帮我 fill data 时默认全部大写, typed text left alone: 打字不需要先).
+Contracts: `ApInvoices.test.tsx` (the button, the hand-off, the drop, the
+casing), `PaymentVoucherScan.test.tsx` (the AP pile), routeManifest 154.
+
+**Every
 field can be edited** (edit 这个不能全部都设成可以改吗): `PATCH /:id` takes a
 DRAFT as before and RE-POSTS a posted bill — the old journal gets its contra
 dated as the old bill was, a fresh entry books the bill as saved, one active
@@ -1085,14 +1106,36 @@ heal their OR on first print.
 **Customer Refund (2026-09-07).** The refund to a customer is a payment
 voucher of purpose `CUSTOMER_REFUND` — payment-voucher.md §14 is the guide.
 Its entry is `customerRefundLines` in `backend/src/acc/rules.ts`, the mirror
-of `customerPaymentLines`: Dr AR (role `AR`, party CUSTOMER — the debtor
-code when the document carries one, the name always) / Cr the money account
-the refund leaves from, both legs stamped with the customer. It offsets the
-Cr AR the customer's own payment booked; 2990's customers carry no debtor
-code, so the two meet by name, which the voucher copies from the document.
+of `customerPaymentLines`: Dr AR (role `AR`, party CUSTOMER — the customer's
+code, see "One customer, one code" below, the name always) / Cr the money
+account the refund leaves from, both legs stamped with the customer. It
+offsets the Cr AR the customer's own payment booked; the two meet by the
+party code the voucher copies from the document.
 Migrations `20260907T1700_pv_purpose_customer_refund.sql` (the enum value)
 and `20260907T1705_pv_customer_refund_columns.sql` (source and customer on
 the header). Pinned by `backend/tests/pvCustomerRefund.test.ts`.
+
+**One customer, one code (2026-09-08, owner: 不是一个 customer 一个 account
+code 吗 → 做,第 3 点也做).** The AR control keeps customers apart by the
+party on each line, and 2990 keeps no debtor codes, so until this day its
+lines carried the customer's NAME alone: two customers sharing a name merged
+in every party view, one customer typed two ways split. `customerPartyCode`
+(`backend/src/acc/payments.ts`) is the one rule — the debtor code when the
+business keeps one (blank = not kept), else the document's own `customer_id`,
+which every 2990 order carries — and `postSoPayment` reads both off the order
+to stamp `party_code` beside `party_name`; SI payments keep the invoice's
+debtor code (invoices carry no customer_id); the refund voucher applies the
+same rule to its header's `debtor_code` / `customer_id`
+(`backend/src/scm/routes/payment-vouchers.ts`). The R&P party mode keys
+control rows by the code where one is stamped and still names them
+(`backend/src/scm/routes/accounting-rp.ts`). The lines booked before the rule
+— the 171 SOPAY entries of 2026-09-08 and any refund posted before it — are
+stamped from their documents by `.github/workflows/repair-customer-party-code.yml`
++ `backend/scripts/repair-customer-party-code.mjs` (plan/apply, environment-
+scoped, CONFIRM "STAMP CUSTOMER PARTY CODES"; a line whose document yields no
+code is listed and left alone; convergent; fresh-connection verification).
+Contracts: `backend/src/acc/payments.test.ts` (the code beside the name, the
+debtor code winning, a blank one falling back), `backend/tests/pvCustomerRefund.test.ts`.
 
 **One clearing account per card machine (2026-09-07, owner: 我想要拆账户，因为这样
 我比较然后检查回).** Until now every acquirer's card money sat in ONE account,

@@ -786,6 +786,21 @@ Two things it deliberately leaves alone: `unit_price_sen` (AutoCount's own
 valuation does not move). A GRN raised AFTER a repair inherits the corrected
 `discount_sen` through `grns.ts:1872`; one raised before keeps its own total.
 
+**⚠ THE POPULATION IS WHAT THE ERP HOLDS, NOT WHAT IS STILL OUTSTANDING —
+corrected 2026-09-08.** The repair used to walk `buildScope(book).PO`, the
+OUTSTANDING purchase orders. That is the right answer to *which documents should
+the ERP have* and the wrong answer to *which documents might the ERP have
+damaged*: a purchase order stops being outstanding the moment its goods arrive,
+and our copy of it, discount dropped, stays exactly where it is. Measured on the
+2026-09-08 08:03 Malaysia cut, the ERP holds **574** migrated purchase orders
+against a scope of **484** — 91 are unreachable by any repair keyed on the scope,
+and `PO-009770` (RM 18,525.00 held against the book's RM 13,893.75, all 15 lines
+at 75%) was one of them, sixteen hours after an APPLY that truthfully reported
+`89 of 89` written. `repairPopulation` in `backend/scripts/lib/po-discount-plan.mjs`
+now takes the UNION of the scope and the `linked_ac_docno` values the ERP holds —
+union, so that *in scope but absent from the ERP* stays reportable. Ledger:
+`docs/bugs/0694-a-one-shot-repair-walks-the-outstanding-scope-so-a-document.md`.
+
 **⚠ CURRENCY IS A REFUSAL, NOT A CONVERSION — and this cost RM 13,068.55 on a
 live document before it was one.** The repair ran against production on
 2026-09-07 (run 34116301278) and got nine of its ten orders right. The tenth,

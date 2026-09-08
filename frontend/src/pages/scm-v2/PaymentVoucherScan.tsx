@@ -13,6 +13,12 @@
 // document. And NOTHING saves here — each "Open as voucher" lands on the New
 // page pre-filled, where a person picks the account, checks the figures and
 // saves through the untouched approval cycle.
+//
+// The same pile serves the AP INVOICES (target="ap", at /scm/ap-invoices/scan;
+// owner 2026-09-08: 我可能同时 upload 多张 supplier 给的 invoice, 所以要分出来
+// 一张一张): the reading and the merge are identical, but every bill opens as
+// ITS OWN AP invoice — a bill is an invoice with its own number, so there is
+// no "one voucher for the group" here.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react';
@@ -34,7 +40,8 @@ const fmtRm = (sen: number | null | undefined): string =>
 
 type PickedFile = { rid: string; file: File; merged: boolean };
 
-export const PaymentVoucherScan = () => {
+export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } = {}) => {
+  const ap = target === 'ap';
   const navigate = useNavigate();
   const extract = useExtractBills();
 
@@ -158,6 +165,14 @@ export const PaymentVoucherScan = () => {
     navigate('/scm/purchase-invoices/new', { state: { scanBill: { extraction, supplierId, ...(lines ? { lines } : {}) } } });
   };
 
+  /* One bill = one AP invoice (target="ap"): the list page opens its New form
+     pre-filled from this bill, the pages riding the same stash the voucher
+     uses, attached on save. */
+  const openApInvoice = (b: Extract<ExtractedBill, { ok: true }>) => {
+    stashPvFiles(billFiles[b.index] ?? []);
+    navigate('/scm/ap-invoices', { state: { apPrefill: { extraction: b.extraction, supplierMatch: b.supplierMatch, memory: b.memory } } });
+  };
+
   const openGroupAsOne = (g: { label: string; bills: Array<Extract<ExtractedBill, { ok: true }>> }) => {
     const first = g.bills[0]!;
     const lines = g.bills.map((b) => ({
@@ -176,7 +191,7 @@ export const PaymentVoucherScan = () => {
 
   return (
     <div className="space-y-4">
-      <PageHeader back eyebrow="Finance" title="Scan bills" />
+      <PageHeader back eyebrow="Finance" title={ap ? 'Scan bills — AP invoices' : 'Scan bills'} />
 
       <section
         className={styles.card}
@@ -188,7 +203,7 @@ export const PaymentVoucherScan = () => {
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>The pile</h2>
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-            one PDF = one bill, however many pages · Merge is only for a bill photographed as several images
+            {ap ? 'one file = one bill = one AP invoice, however many pages' : 'one PDF = one bill, however many pages'} · Merge is only for a bill photographed as several images
           </span>
         </div>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -237,7 +252,8 @@ export const PaymentVoucherScan = () => {
       {results && (
         <>
           {groups.map((g) => {
-            const split = splitGroups.has(g.key) || g.bills.length === 1;
+            /* An AP invoice is one per bill by nature — a group never merges. */
+            const split = ap || splitGroups.has(g.key) || g.bills.length === 1;
             return (
               <section key={g.key} className={styles.card}>
                 <div className={styles.cardHeader}>
@@ -259,7 +275,11 @@ export const PaymentVoucherScan = () => {
                         <span style={{ color: 'var(--fg-muted)' }}>{fmtDate(b.extraction.invoiceDate)}</span>
                         <span style={{ color: 'var(--fg-muted)' }}>{b.extraction.dueDate ? `due ${fmtDate(b.extraction.dueDate)}` : ''}</span>
                         <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(b.extraction.totalSen)}</span>
-                        {split ? (
+                        {ap ? (
+                          <Button variant="primary" size="sm" onClick={() => openApInvoice(b)}>
+                            Open as AP invoice
+                          </Button>
+                        ) : split ? (
                           <span style={{ display: 'inline-flex', gap: 6 }}>
                             <Button variant="secondary" size="sm" onClick={() => openVoucher(b.extraction, { memory: b.memory, files: billFiles[b.index] ?? [] })}>
                               Open as voucher
@@ -289,7 +309,7 @@ export const PaymentVoucherScan = () => {
                       )}
                     </div>
                   ))}
-                  {g.bills.length > 1 && (
+                  {!ap && g.bills.length > 1 && (
                     <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
                       <label style={{ fontSize: 'var(--fs-12)', display: 'inline-flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
                         <input type="checkbox" checked={split}

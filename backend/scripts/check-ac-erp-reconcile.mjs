@@ -141,7 +141,11 @@ import {
 } from "./lib/variant-reconcile.mjs";
 
 import { buildScope, currencyVerdict, decodeSnapshot, isTestDoc, LOCAL_CURRENCY } from "./lib/ac-scope.mjs";
-import { splitBookUnpriced, splitDecidedAbsences, splitErpZeroMoney } from "./lib/ac-not-a-difference.mjs";
+import {
+  splitBookUnpriced, splitDecidedAbsences, splitErpZeroMoney,
+  splitGuessedItemCodePairing, splitMigratedChainLineShape,
+} from "./lib/ac-not-a-difference.mjs";
+import { isBlankBookRow, splitBlankBookRows } from "./lib/ac-blank-book-row.mjs";
 import { grPairGrain } from "./lib/ac-gr-pair-grain.mjs";
 import { FIELD_MAP } from "./lib/ac-field-identity.mjs";
 import {
@@ -470,6 +474,8 @@ const TYPES = [
   {
     t: "IV",
     label: "Sales Invoice",
+    /* Its lines come from OUR delivery order, not from AutoCount IVDTL. */
+    migratedChainLineShape: true,
     /* Same correction, same day, same reason as DO above. `ac-scope.mjs` was
        already corrected on 2026-09-07 with the owner's own ruling —
        「没有的 SO DO 何来发票？有的 SO DO 自然要发票」 — and gave IV a 47-document
@@ -492,6 +498,8 @@ const TYPES = [
   {
     t: "PI",
     label: "Purchase Invoice",
+    /* Its lines come from OUR goods receipt, not from AutoCount PIDTL. */
+    migratedChainLineShape: true,
     /* Same correction as DO and IV. 192 in the population, 21 absent — a gap,
        not a decision. What blocks the 21 is the money gate inside
        create-migrated-invoices.mjs, not the absence of a source to convert
@@ -605,6 +613,27 @@ for (const cfg of TYPES) {
       }
     }
   }
+  /* The BLANK-ROW declaration is proved against the book itself, in BOTH
+     directions, because a declaration that swallows too much reads as a clean
+     run. `SO-001473`'s key 98858 is empty in every column and must be declared;
+     `SO-011384`'s key 783795 has NO item code and QUANTITY 4 and must NOT be.
+     Both are real rows on the 2026-09-08 cut; if the exporter ever stops
+     carrying one, that is a snapshot problem and this says so rather than
+     reporting a clean run over a rule it could not exercise. */
+  for (const [dn, key, want] of [["SO-001473", "98858", true], ["SO-011384", "783795", false]]) {
+    const l = (book.SO.lines.get(dn) ?? []).find((x) => String(x.dtlKey) === key);
+    if (!l) {
+      problems.push(`the blank-row rule cannot be self-tested: ${dn} DtlKey ${key} is not in this snapshot`);
+    } else if (isBlankBookRow(l) !== want) {
+      problems.push(
+        `the blank-row rule answered ${!want} for ${dn} DtlKey ${key} and must answer ${want} — ` +
+          (want
+            ? "an empty AutoCount row would be counted as a missing line again"
+            : "a row the book orders 4 of would be declared away"),
+      );
+    }
+  }
+
   /* The field-identity comparators prove themselves on PLANTED defects before
      any of them is trusted — a comparator that cannot find a defect it is
      handed will report a clean run over real data. */
@@ -1018,7 +1047,27 @@ for (const cfg of TYPES) {
     lineCount: [], money: [], item: [], qty: [], price: [],
     keyOrphan: [], unmatchedErp: [], unmatchedAc: [],
   };
-  const D = { lineCount: 0, item: 0, price: 0 }; // declared, not gaps
+  const D = { lineCount: 0, item: 0, price: 0, blankRows: 0, blankRowDocs: new Set() }; // declared, not gaps
+  /* The item-code and line-count findings in a machine-readable shape, for the
+     same reason `moneyRows` exists below: a classifier must decide a column
+     from a MEASUREMENT, never by pattern-matching the printed string. */
+  const itemRows = [];
+  const lineCountRows = [];
+  /* Per document, the evidence those two classifiers need — built here, in the
+     loop that already holds both sides, so neither can be computed from a
+     narrower read later. See lib/ac-not-a-difference.mjs sections 4 and 5.
+       bags       each side's item-code MULTISET, plus whether ANY ERP line of
+                  the document carried a line key. A document with no key was
+                  PAIRED BY GUESSWORK, and the multiset is the verdict that
+                  survives that; a document with a key was paired for real.
+       shapeFacts whether the document totals are identical to the sen, and any
+                  item code on which the two sides disagree about quantity or
+                  money. Empty means every code reconciles. */
+  const bags = new Map();
+  const shapeFacts = new Map();
+  /* Every blank book row, named. A declared class the reader cannot enumerate
+     is a suppression, not a declaration. */
+  const blankRowRows = [];
   /* The two HARMLESS halves of the raw item-code difference, counted apart so
      the headline number is the DEFECT count and neither half can hide inside
      it. See lib/item-code-class.mjs. */
@@ -1052,9 +1101,26 @@ for (const cfg of TYPES) {
     if (!h) continue;
     bothSides++;
 
-    const acLines = (B.lines.get(ac) || [])
-      .slice()
-      .sort((a, b) => a.seq - b.seq || (a.dtlKey > b.dtlKey ? 1 : -1));
+    /* AutoCount's own EMPTY ROWS are declared, not compared — a row with no
+       ItemCode, no quantity and no money is not a line the ERP can hold, and
+       counting it made eleven blank rows on six sales orders read as MISSING
+       LINES on go-live morning. The rule and every clause of it is in
+       lib/ac-blank-book-row.mjs; the rows are counted and listed below, never
+       dropped silently. */
+    const { lines: acLines, blank: acBlank } = splitBlankBookRows(
+      (B.lines.get(ac) || [])
+        .slice()
+        .sort((a, b) => a.seq - b.seq || (a.dtlKey > b.dtlKey ? 1 : -1)),
+    );
+    if (acBlank.length) {
+      D.blankRows += acBlank.length;
+      D.blankRowDocs.add(ac);
+      for (const l of acBlank) {
+        blankRowRows.push(
+          `${ac}: DtlKey ${l.dtlKey} — AutoCount states no item code, no quantity and no money (ERP ${d.erp_no})`,
+        );
+      }
+    }
     const erpLines = (erpLinesByAc.get(ac) || [])
       .slice()
       .sort(
@@ -1088,7 +1154,71 @@ for (const cfg of TYPES) {
     if (acLines.length !== erpLines.length) {
       const msg = `${ac}: AutoCount ${acLines.length} vs ERP ${erpLines.length} (ERP ${d.erp_no})`;
       if (sofa) D.lineCount++;
-      else F.lineCount.push(msg);
+      else { F.lineCount.push(msg); lineCountRows.push({ key: ac, erpNo: d.erp_no, line: msg }); }
+    }
+
+    /* ── the two PAIRING-INDEPENDENT measurements ────────────────────────────
+       Both are computed over the whole document, so no zip, sort or fallback
+       can change either answer. That is the point of them: the line-level
+       verdicts below rest on a correspondence this checker sometimes has to
+       GUESS (grn/do/si/pi items carry no line key), and a guess must not be
+       able to manufacture — or bury — a finding.
+
+       A sofa is one book line and one ERP row per compartment, so neither
+       measurement is commensurable there and neither is recorded; the sofa
+       document keeps whatever the existing declared-decomposition path says. */
+    let shapePerCode = null;
+    if (!sofa) {
+      const bagOf = (pairs) => {
+        const m = new Map();
+        for (const [code, qty] of pairs) {
+          const c = norm(code);
+          if (!c) continue;
+          m.set(c, (m.get(c) ?? 0) + (Number.isFinite(qty) ? qty : 0));
+        }
+        return [...m.entries()].sort((a, b) => (a[0] > b[0] ? 1 : -1))
+          .map(([c, q]) => `${c} x${q}`).join(" | ");
+      };
+      /* The BOOK's raw code is translated, because comparing an untranslated
+         code against the ERP's own reports the whole catalogue as wrong
+         (trap 2 at the top of this file). */
+      const acPairs = acLines.map((l) => [mapped(l.itemKey), l.qty ?? 0]);
+      const erpPairs = erpLines.map((l) => [l.item_code, l.qty == null ? 0 : Number(l.qty)]);
+      bags.set(ac, {
+        book: bagOf(acPairs),
+        erp: bagOf(erpPairs),
+        keyed: erpLines.some((l) => l.ac_dtlkey != null),
+      });
+
+      /* PER ITEM CODE: quantity and money, both sides. A code the ERP does not
+         carry is permitted ONLY where the book prices it at RM 0.00 — that is
+         the free gift AutoCount bills as its own line (`AK-SLEEP ESSENTIAL 7
+         HOLES` on a mattress). A code carrying money is a missing line and
+         stays a difference. */
+      const sums = new Map();
+      const take = (side, code, qty, sen) => {
+        const c = norm(code);
+        if (!c) return;
+        if (!sums.has(c)) sums.set(c, { bookQty: 0, bookSen: 0, erpQty: 0, erpSen: 0 });
+        const s = sums.get(c);
+        s[`${side}Qty`] += Number.isFinite(qty) ? qty : 0;
+        s[`${side}Sen`] += Number.isFinite(sen) ? sen : 0;
+      };
+      for (const l of acLines) take("book", mapped(l.itemKey), l.qty ?? 0, l.subTotalSen ?? 0);
+      for (const l of erpLines) {
+        take("erp", l.item_code, l.qty == null ? 0 : Number(l.qty),
+          Math.round((l.qty == null ? 0 : Number(l.qty)) * (l.unit_price_sen == null ? 0 : Number(l.unit_price_sen))));
+      }
+      const perCode = [];
+      for (const [code, s] of sums) {
+        if (Math.abs(s.bookQty - s.erpQty) < 1e-4 && s.bookSen === s.erpSen) continue;
+        if (s.erpQty === 0 && s.erpSen === 0 && s.bookSen === 0) continue; // the free line we do not carry
+        perCode.push({
+          code,
+          why: `book qty ${s.bookQty} / RM ${rm(s.bookSen)} vs ours qty ${s.erpQty} / RM ${rm(s.erpSen)}`,
+        });
+      }
+      shapePerCode = perCode;
     }
     const erpTotal = d.total_sen == null ? null : Number(d.total_sen);
 
@@ -1129,6 +1259,15 @@ for (const cfg of TYPES) {
       /* The same difference in a shape a classifier can read. The string above
          is what a human sees; this is what decides which column it lands in. */
       moneyRows.push({ key: ac, erpNo: d.erp_no, bookSen: bookTotal, erpSen: erpTotal, line });
+    }
+
+    /* Recorded HERE and not where `shapePerCode` was computed, because the
+       totals are settled by the currency block immediately above: `bookTotal`
+       is the DOCUMENT-currency figure since 2026-09-07, and reading a
+       local-currency total instead is what once made an exchange rate look like
+       a RM 13,068.55 discount (docs/bugs/0665). One reader, one answer. */
+    if (shapePerCode !== null) {
+      shapeFacts.set(ac, { totalsEqual: bookTotal === erpTotal, perCode: shapePerCode });
     }
 
     /* When NO ERP line on this document carries a DtlKey and the two sides do
@@ -1243,11 +1382,12 @@ for (const cfg of TYPES) {
         else if (k.cls === "translation") { D.item++; C.itemTranslation++; }
         else if (k.cls === "decomposition") { D.item++; C.itemDecomposition++; }
         else {
-          F.item.push(
+          const line =
             `${ac} DtlKey ${al.dtlKey}: AutoCount "${al.itemKey}" vs ERP "${el.item_code ?? ""}"` +
-              (k.wanted ? ` — the sheet says "${k.wanted}"` : " — the mapping sheet does not carry the book's code") +
-              ` (ERP ${d.erp_no}; ${k.why})`,
-          );
+            (k.wanted ? ` — the sheet says "${k.wanted}"` : " — the mapping sheet does not carry the book's code") +
+            ` (ERP ${d.erp_no}; ${k.why})`;
+          F.item.push(line);
+          itemRows.push({ key: ac, erpNo: d.erp_no, line });
         }
       }
       const aq = al.qty ?? 0;
@@ -1294,9 +1434,24 @@ for (const cfg of TYPES) {
     decision: cfg.zeroMoneyDecision ?? null,
     proof: zeroMoneyProof[t] ?? null,
   });
+  /* THE TWO PAIRING-INDEPENDENT SPLITS. Both answer the same question about a
+     column this checker cannot always compute honestly: is the finding a
+     property of the DATA, or of the correspondence the checker had to invent
+     because neither side carries a line key?
+
+     Neither is an amnesty and both are tested to prove it
+     (tests/acNotADifference.test.ts): a document whose item-code MULTISETS
+     differ, or whose TOTAL differs, or which carries a priced line we do not
+     have, stays counted and is reported LOUDER as an impostor. */
+  const IC = splitGuessedItemCodePairing({ rows: itemRows, bags: bags.size ? bags : null });
+  const LS = cfg.migratedChainLineShape
+    ? splitMigratedChainLineShape({ rows: lineCountRows, facts: shapeFacts.size ? shapeFacts : null })
+    : { lineShape: 0, differ: lineCountRows.length, moved: [], impostors: [], applied: false,
+        why: "this type is not built by the migrated invoice chain, so a line-count difference is a difference" };
   log(
     `${t} DATA (${bothSides} documents on both sides, ${comparedLines} lines paired) — ` +
-      `line-count differs: ${F.lineCount.length}; item code: ${F.item.length}` +
+      `line-count differs: ${LS.differ}` + (LS.lineShape ? ` (+${LS.lineShape} the same goods and the same money on a different number of rows)` : "") +
+      `; item code: ${IC.differ}` + (IC.guessed ? ` (+${IC.guessed} where we hold no line key and both sides name the SAME goods)` : "") +
       /* SAY WHAT WAS TAKEN OUT, in the same sentence as the number, or the drop
          from 101 to 61 on 2026-09-08 reads as work nobody did. The same rule is
          why `unit price` and `document total` now carry their own parenthetical
@@ -1341,6 +1496,34 @@ for (const cfg of TYPES) {
     );
     for (const row of MZ.impostors.slice(0, SHOW)) plain(`      ${row.line} — ${row.why}`);
   }
+  /* THE TWO PAIRING-INDEPENDENT SPLITS, reported. The `moved` half is printed
+     with its proof so the reclassification can be checked; the `impostors` half
+     is printed LOUDER than an ordinary difference, because a document dressed
+     as benign is the one nobody goes and looks at. */
+  if (IC.guessed) {
+    log(
+      `${t} — ${IC.guessed} item-code difference(s) are the CHECKER's own guess, not a wrong product: ${IC.why}`,
+    );
+    for (const row of first(IC.moved)) plain(`      ${row.line}`);
+  }
+  if (IC.impostors.length) {
+    log(
+      `${t} ITEM CODE — ${IC.impostors.length} document(s) have no line key AND the two sides do NOT name the ` +
+        "same goods. These are the ones to look at first; every one stays counted as a difference:",
+    );
+    for (const row of IC.impostors.slice(0, SHOW)) plain(`      ${row.line} — ${row.why}`);
+  }
+  if (LS.lineShape) {
+    log(`${t} — ${LS.lineShape} line-count difference(s) are a line SHAPE, not a missing line: ${LS.why}`);
+    for (const row of first(LS.moved)) plain(`      ${row.line}`);
+  }
+  if (LS.impostors.length) {
+    log(
+      `${t} LINE COUNT — ${LS.impostors.length} document(s) differ in line count AND do not reconcile. ` +
+        "Every one stays counted as a difference:",
+    );
+    for (const row of LS.impostors.slice(0, SHOW)) plain(`      ${row.line} — ${row.why}`);
+  }
   if (!MZ.applied && zeroMoneyDocs) {
     log(
       `${t} — ${zeroMoneyDocs} of the ${bothSides} documents on both sides carry ZERO money in the ERP ` +
@@ -1379,6 +1562,16 @@ for (const cfg of TYPES) {
       `, declared for this type ${D.item - C.itemTranslation - C.itemDecomposition}]` +
       (cfg.itemCodeDeclared ? ` — ${cfg.itemCodeDeclared}` : ""),
   );
+  if (D.blankRows) {
+    log(
+      `${t} — ${D.blankRows} AutoCount row(s) across ${D.blankRowDocs.size} document(s) carry NO item code, NO ` +
+        "quantity and NO money. AutoCount lets a salesperson leave a row empty; the ERP cannot hold one (a line " +
+        "needs a product), so the two sides AGREE about them. DECLARED, not counted in the line-count column — " +
+        "and a row with a quantity, or with money, is NOT in this class and stays a finding.",
+    );
+    for (const row of first(blankRowRows)) plain(`      ${row}`);
+    if (blankRowRows.length > SHOW) plain(`      ... and ${blankRowRows.length - SHOW} more`);
+  }
   if (cfg.priceDeclared) {
     plain(`   unit price is DECLARED for this type — ${cfg.priceDeclared}. The QUANTITY is not: it is copied from the book and is compared above.`);
   }
@@ -1451,8 +1644,10 @@ for (const cfg of TYPES) {
     phantom: phantom.length,
     bothSides,
     unpairable: unpairableDocs.length,
-    lineCount: F.lineCount.length,
-    item: F.item.length,
+    lineCount: LS.differ,
+    lineShape: LS.lineShape,
+    item: IC.differ,
+    guessedPairing: IC.guessed,
     qty: F.qty.length,
     price: PX.differ,
     noPrice: PX.noPrice,
@@ -1461,7 +1656,7 @@ for (const cfg of TYPES) {
     foreign: foreignDocs.length,
     gaps:
       (countsAsGap ? AB.absent : 0) +
-      phantom.length + F.lineCount.length + F.item.length + F.qty.length + PX.differ + MZ.differ,
+      phantom.length + LS.differ + IC.differ + F.qty.length + PX.differ + MZ.differ,
   });
 }
 
@@ -1647,37 +1842,59 @@ plain("═══════════ SUMMARY ══════════�
    honest way to reach zero is to say what each count IS, not to stop counting
    it.  Each has a sentence under the table in his own terms. */
 plain("        <-------------------- DIFFERENCES (the work) --------------------->  <----- NOT differences ----->");
-plain("type  book  scope    erp  absent  phantom   both  lineCnt   item    qty  price  money  decided  no-price  ERP-RM0  non-MYR");
+/* ONE LIST FOR THE HEADER AND THE ROW, so they cannot drift apart.
+   They were two independent literals, and on run 34187812364 the header
+   announced `same-goods` and `same-money` while every row printed 16 cells
+   under an 18-column heading: the two cells were added to the heading and the
+   edit that was supposed to add them to the row silently did not apply. A
+   heading that promises a column the rows do not carry is a table that lies,
+   and nothing could catch it because nothing related the two. Now the same
+   array yields both, and the loop below asserts the counts agree. */
+const SUMMARY_COLUMNS = [
+  { label: "type", width: -4, get: (s) => s.t },
+  { label: "book", width: 5, get: (s) => s.acDocs },
+  { label: "scope", width: 6, get: (s) => s.scope },
+  { label: "erp", width: 6, get: (s) => s.erpLinked },
+  { label: "absent", width: 7, get: (s) => s.missing },
+  { label: "phantom", width: 8, get: (s) => s.phantom },
+  { label: "both", width: 6, get: (s) => s.bothSides },
+  { label: "lineCnt", width: 8, get: (s) => s.lineCount },
+  { label: "item", width: 6, get: (s) => s.item },
+  { label: "qty", width: 6, get: (s) => s.qty },
+  { label: "price", width: 6, get: (s) => s.price },
+  { label: "money", width: 6, get: (s) => s.money },
+  /* An absence the owner has already ruled on, named in full in its own
+     section above with the action still owed. */
+  { label: "decided", width: 8, get: (s) => s.decided ?? 0 },
+  /* The BOOK states no unit price. Copying it would ERASE the ERP's. */
+  { label: "no-price", width: 9, get: (s) => s.noPrice ?? 0 },
+  /* Our document carries RM 0.00 on migrated paperwork — the owner's standing
+     decision, proved per document, never assumed. */
+  { label: "ERP-RM0", width: 8, get: (s) => s.erpZeroMoney ?? 0 },
+  /* Its own column, deliberately not folded into `money` and not counted in
+     `gaps`: a foreign document is compared in its own currency and may be
+     perfectly correct. What it flags is that the ERP tags it MYR. Ledger 0665. */
+  { label: "non-MYR", width: 8, get: (s) => s.foreign ?? 0 },
+  /* No AutoCount line number on these rows, so which of our lines answers which
+     of the book's was the checker's own guess — and both sides list the same
+     products in the same quantities, which no ordering can fake. */
+  { label: "same-goods", width: 11, get: (s) => s.guessedPairing ?? 0 },
+  /* An invoice built from OUR receipt or delivery: total equal to the sen and
+     every item code agreeing, on a different number of rows. */
+  { label: "same-money", width: 11, get: (s) => s.lineShape ?? 0 },
+];
+const cell = (v, w) => (w < 0 ? String(v).padEnd(-w) : String(v).padStart(w));
+plain(SUMMARY_COLUMNS.map((c) => cell(c.label, c.width)).join(" "));
 for (const s of summary) {
-  plain(
-    [
-      s.t.padEnd(4),
-      String(s.acDocs).padStart(5),
-      String(s.scope).padStart(6),
-      String(s.erpLinked).padStart(6),
-      String(s.missing).padStart(7),
-      String(s.phantom).padStart(8),
-      String(s.bothSides).padStart(6),
-      String(s.lineCount).padStart(8),
-      String(s.item).padStart(6),
-      String(s.qty).padStart(6),
-      String(s.price).padStart(6),
-      String(s.money).padStart(6),
-      /* An absence the owner has already ruled on. Named in full in this type's
-         own section above, with the action still owed. */
-      String(s.decided ?? 0).padStart(8),
-      /* The BOOK states no unit price. Copying it would ERASE the ERP's. */
-      String(s.noPrice ?? 0).padStart(9),
-      /* Our document carries RM 0.00 on migrated paperwork — the owner's
-         standing decision, proved per document, never assumed. */
-      String(s.erpZeroMoney ?? 0).padStart(8),
-      /* Its own column, deliberately not folded into `money` and deliberately
-         not counted in `gaps`: a foreign-currency document is compared in its
-         own currency and may be perfectly correct. What it flags is that the
-         ERP tags it MYR. Ledger 0665. */
-      String(s.foreign ?? 0).padStart(8),
-    ].join(" "),
-  );
+  const cells = SUMMARY_COLUMNS.map((c) => cell(c.get(s), c.width));
+  if (cells.length !== SUMMARY_COLUMNS.length) {
+    throw new Error(
+      `summary row for ${s.t} rendered ${cells.length} cells under ` +
+        `${SUMMARY_COLUMNS.length} headings — the table would misalign, which is how ` +
+        "two announced columns went unprinted on run 34187812364",
+    );
+  }
+  plain(cells.join(" "));
 }
 plain("");
 plain("absent   = in the expected population and NOT in the ERP. A real gap: somebody has to carry the document over.");
@@ -1690,9 +1907,15 @@ plain("ERP-RM0  = our document carries RM 0.00 while the book states a value, on
 plain("           Your decision 「GR 0 没关系」. Proved per document (migrated_no_stock, zero stock movements), never assumed.");
 plain("           What it costs: a purchase invoice cannot be raised off a RM 0.00 receipt.");
 plain("non-MYR  = documents compared in their OWN currency. Not a money difference, and never repaired by script.");
+plain("same-goods = we hold NO AutoCount line number on these rows, so which of our lines answers which of the book's was the");
+plain("           checker's own guess. Both sides list the SAME products in the SAME quantities, which no ordering can fake.");
+plain("           What is unknown is the pairing, not the goods. A document whose two lists DIFFER stays counted above.");
+plain("same-money = a purchase/sales invoice we built from OUR receipt or delivery. Its total equals the book to the sen and");
+plain("           every item code agrees on quantity and money; only the number of rows differs, because AutoCount bills a");
+plain("           free gift as its own RM 0.00 line and sometimes splits one product across two. Nothing is owed here.");
 const totalGaps = summary.reduce((a, s) => a + s.gaps, 0);
 const n = (v) => (typeof v === "number" ? v : 0);
-const notWork = summary.reduce((a, s) => a + n(s.decided) + n(s.noPrice) + n(s.erpZeroMoney) + n(s.foreign), 0);
+const notWork = summary.reduce((a, s) => a + n(s.decided) + n(s.noPrice) + n(s.erpZeroMoney) + n(s.foreign) + n(s.guessedPairing) + n(s.lineShape), 0);
 plain("");
 log(
   totalGaps === 0

@@ -126,6 +126,49 @@ export function planDocument({ wantByKey, doc, rm }) {
 export { currencyVerdict, LOCAL_CURRENCY } from './ac-scope.mjs';
 
 /**
+ * THE POPULATION A REPAIR MUST WALK IS WHAT THE ERP HOLDS, NOT WHAT IS IN SCOPE.
+ *
+ * `buildScope(book).PO` is the OUTSTANDING purchase orders — the population the
+ * migration was defined to CARRY. It is the right answer to "which documents
+ * should the ERP have". It is the wrong answer to "which documents might the
+ * ERP have damaged", and the two drift apart the moment the book moves: a
+ * purchase order that was outstanding when it was imported stops being
+ * outstanding once its goods arrive, and drops out of scope while our copy of
+ * it stays exactly where it is, wrong.
+ *
+ * Measured on the 2026-09-08 08:03 (Malaysia) cut: the ERP holds 574 migrated
+ * purchase orders and `scope.PO` has 484 — 91 of ours are "present though out of
+ * scope", and `PO-009770` is one of them. All 15 of its lines carry AutoCount's
+ * line discount, the ERP holds the undiscounted RM 18,525.00 against the book's
+ * RM 13,893.75, and the repair walked straight past it because the scope no
+ * longer names it. Ledger: docs/bugs/0693-*.md.
+ *
+ * The union, not the ERP set alone: a document in scope that the ERP does NOT
+ * hold is a REPORTABLE absence ("in scope but absent from the ERP"), and
+ * dropping it from the population would silently delete that report.
+ */
+export function repairPopulation(scopePo, erpHeldAcNos) {
+  const inScope = new Set(scopePo);
+  /* `String(null)` is "null", a four-character document number that matches
+     nothing and hides that a row came back empty. Drop nullish BEFORE the cast. */
+  const held = new Set(
+    [...erpHeldAcNos].filter((s) => s !== null && s !== undefined).map((s) => String(s).trim()).filter(Boolean),
+  );
+  const union = new Set([...inScope, ...held]);
+  return {
+    population: union,
+    /* Named so a caller cannot print "in scope" over a number that is not. */
+    counts: {
+      inScope: inScope.size,
+      erpHeld: held.size,
+      /* The 91. The whole reason this function exists. */
+      heldButOutOfScope: [...held].filter((d) => !inScope.has(d)).length,
+      inScopeButNotHeld: [...inScope].filter((d) => !held.has(d)).length,
+    },
+  };
+}
+
+/**
  * The AutoCount side: every PO line whose own amount differs from
  * qty x unit price. THE OWNER'S BLANK RULE, 2026-09-07 —
  * 「保留 ERP 的价钱 — 空白不覆盖」 — a book line missing its qty, unit price or
@@ -139,7 +182,8 @@ export { currencyVerdict, LOCAL_CURRENCY } from './ac-scope.mjs';
  * to be printed. See `currencyVerdict` for why this is a refusal and not a
  * conversion.
  */
-export function readBookDiscounts(bookPoLines, scopePo, bookPoHeaders) {
+export function readBookDiscounts(bookPoLines, population, bookPoHeaders) {
+  const scopePo = population;
   if (!(bookPoHeaders instanceof Map)) {
     throw new Error('readBookDiscounts needs the PO headers to read each document\'s currency — see docs/bugs/0665-*.md');
   }

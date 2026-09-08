@@ -364,7 +364,14 @@ bill 我也想要用ocr. Two doors, one reader:
 
 - **In the form** — "📷 Scan bill (OCR)" in the New PV Lines card header.
   Multi-select = the PAGES of one bill; the form prefills payee, date, notes
-  and lines from what was read.
+  and lines from what was read. What the reader fills goes UPPER CASE since
+  2026-09-08 (`upperFill`, `frontend/src/vendor/scm/lib/ocr-fill.ts` — the
+  one home the AP invoice form shares; owner: 帮我 fill data 时默认全部大写);
+  the payee keeps the operator's own saved casing, and typed text is left
+  alone (打字不需要先).
+- **The same pile for AP invoices** — `/scm/ap-invoices/scan` is this page
+  with `target="ap"` (accounting.md, "The bill pile for AP invoices"): same
+  reading, same Merge, but every bill opens as its own AP invoice.
 - **The pile** — `/scm/payment-vouchers/scan` ("📷 Scan bills" on the list).
   Many files at once, the owner's three cases, his taxonomy exactly:
   1. 一张bill 几页 — tick the pages, press Merge: ONE bill. The rule that

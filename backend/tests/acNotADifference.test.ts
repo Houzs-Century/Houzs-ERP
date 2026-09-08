@@ -37,6 +37,8 @@ import {
   splitBookUnpriced,
   splitDecidedAbsences,
   splitErpZeroMoney,
+  splitGuessedItemCodePairing,
+  splitMigratedChainLineShape,
 } from '../scripts/lib/ac-not-a-difference.mjs';
 
 const rows = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `${tag}-${i}`);
@@ -303,5 +305,113 @@ describe('the committed register is honest', () => {
           'entry must go and the document must be counted as a gap again.',
       ).toBe(true);
     }
+  });
+});
+
+/* ── item code: the checker had to GUESS which line is which ─────────────── */
+
+/* A document the reconcile handed over as an item-code difference. */
+const codeRow = (key: string) => ({ key, erpNo: `HC-${key}`, line: `${key}: book X vs ERP Y` });
+
+describe('item code — a guessed pairing is not a wrong product, and a wrong product is not a guess', () => {
+  test('no bags measured: NOTHING moves, and the count is preserved', () => {
+    const r = splitGuessedItemCodePairing({ rows: [codeRow('a'), codeRow('b')], bags: null });
+    expect(r.applied).toBe(false);
+    expect(r.guessed).toBe(0);
+    expect(r.differ).toBe(2);
+    expect(r.guessed + r.differ).toBe(2);
+  });
+
+  test('equal multisets on a KEYLESS document move; the count is preserved', () => {
+    const bags = new Map([
+      ['a', { book: 'IMMORTAL x1 | ULTIMATE x1', erp: 'IMMORTAL x1 | ULTIMATE x1', keyed: false }],
+      ['b', { book: 'IMMORTAL x1 | ULTIMATE x1', erp: 'IMMORTAL x1 | ULTIMATE x1', keyed: false }],
+    ]);
+    const r = splitGuessedItemCodePairing({ rows: [codeRow('a'), codeRow('b')], bags });
+    expect(r.applied).toBe(true);
+    expect(r.guessed).toBe(2);
+    expect(r.differ).toBe(0);
+    expect(r.impostors).toHaveLength(0);
+  });
+
+  test('THE ONE THAT MATTERS: multisets that DIFFER stay counted, and are named as impostors', () => {
+    const bags = new Map([
+      ['ok', { book: 'A x1 | B x1', erp: 'A x1 | B x1', keyed: false }],
+      /* the wrong-product shape: we answer a product the book never names */
+      ['wrong', { book: 'CELENE (A)-(K) x1', erp: 'CELENE (A)-(SS) x1', keyed: false }],
+    ]);
+    const r = splitGuessedItemCodePairing({ rows: [codeRow('ok'), codeRow('wrong')], bags });
+    expect(r.guessed).toBe(1);
+    expect(r.differ).toBe(1);
+    expect(r.guessed + r.differ).toBe(2);
+    expect(r.impostors).toHaveLength(1);
+    expect(r.impostors[0].why).toContain('DIFFERENT goods');
+  });
+
+  test('a document that HAS a line key was paired for real, so its difference is real', () => {
+    const bags = new Map([['a', { book: 'A x1 | B x1', erp: 'A x1 | B x1', keyed: true }]]);
+    const r = splitGuessedItemCodePairing({ rows: [codeRow('a')], bags });
+    expect(r.guessed).toBe(0);
+    expect(r.differ).toBe(1);
+  });
+
+  test('a row with no measurement at all is an impostor, never a pass', () => {
+    const r = splitGuessedItemCodePairing({ rows: [codeRow('unmeasured')], bags: new Map() });
+    expect(r.guessed).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('unproven');
+  });
+
+  test('a quantity change is caught: the multiset carries counts, not just codes', () => {
+    const bags = new Map([['q', { book: 'PILLOW x4', erp: 'PILLOW x2', keyed: false }]]);
+    const r = splitGuessedItemCodePairing({ rows: [codeRow('q')], bags });
+    expect(r.guessed).toBe(0);
+    expect(r.differ).toBe(1);
+  });
+});
+
+/* ── line count: the migrated chain builds from OUR document ─────────────── */
+
+describe('line count — a shape difference is not a missing line', () => {
+  test('no facts: NOTHING moves', () => {
+    const r = splitMigratedChainLineShape({ rows: [codeRow('a')], facts: null });
+    expect(r.applied).toBe(false);
+    expect(r.lineShape).toBe(0);
+    expect(r.differ).toBe(1);
+  });
+
+  test('totals identical and every code reconciles: moves, count preserved', () => {
+    const facts = new Map([['PI-003477', { totalsEqual: true, perCode: [] }]]);
+    const r = splitMigratedChainLineShape({ rows: [codeRow('PI-003477')], facts });
+    expect(r.lineShape).toBe(1);
+    expect(r.differ).toBe(0);
+  });
+
+  test('THE ONE THAT MATTERS: totals that DIFFER stay counted as a money gap', () => {
+    const facts = new Map([['PI-x', { totalsEqual: false, perCode: [] }]]);
+    const r = splitMigratedChainLineShape({ rows: [codeRow('PI-x')], facts });
+    expect(r.lineShape).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('money gap');
+  });
+
+  test('totals agree but a PRICED line is missing: stays counted', () => {
+    const facts = new Map([
+      ['PI-y', { totalsEqual: true, perCode: [{ code: 'AK-ARMOUR MATT (K)', why: 'is in the book at RM 1880.00 and we do not carry it' }] }],
+    ]);
+    const r = splitMigratedChainLineShape({ rows: [codeRow('PI-y')], facts });
+    expect(r.lineShape).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('the goods do not');
+  });
+
+  test('a partial cover still reports differ: six of ten move, never ten', () => {
+    const facts = new Map<string, { totalsEqual: boolean; perCode: { code: string; why: string }[] }>();
+    const list = Array.from({ length: 10 }, (_, i) => codeRow(`d${i}`));
+    for (let i = 0; i < 10; i++) facts.set(`d${i}`, { totalsEqual: i < 6, perCode: [] });
+    const r = splitMigratedChainLineShape({ rows: list, facts });
+    expect(r.lineShape).toBe(6);
+    expect(r.differ).toBe(4);
+    expect(r.lineShape + r.differ).toBe(10);
   });
 });
