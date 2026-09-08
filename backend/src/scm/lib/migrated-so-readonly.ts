@@ -5,6 +5,13 @@
 // lib/migrated-so-lock.ts (pure, unit-tested); this is the one place that feeds
 // it a request and turns a `true` into something a salesperson can act on.
 //
+// TWO MOUNTS, ONE RULE. `migratedSoReadonly()` guards `/mfg-sales-orders/*` and
+// `migratedSoAmendmentReadonly()` guards `/so-amendments/*`. The second exists
+// because approve-so on an amendment is not a status flip: it runs
+// applySoAmendment, which rewrites the bound Sales Order's header and lines. The
+// first version of this file shipped with that door open and said so
+// (docs/migrated-so-lock.md §7) — see the factory below.
+//
 // GUARDED AT THE ROUTER, NOT PER HANDLER — the same argument the mirrored-SO
 // guard directly above it makes, and for the same file: mfg-sales-orders.ts
 // holds ~22 write routes that carry a :docNo, and a per-writer guard leaves the
@@ -44,6 +51,7 @@ import {
 const LOCK_TTL_MS = 30_000;
 const LOCK_KEY = 'scm.migrated_so_lock';
 const MOUNT_SEGMENT = 'mfg-sales-orders';
+const AMENDMENT_MOUNT_SEGMENT = 'so-amendments';
 
 type LockState = { value: MigratedSoLockValue; message: string | null };
 let cached: { at: number; state: LockState } | null = null;
@@ -76,6 +84,32 @@ export function soDocNoFromPath(path: string): string | null {
   if (i === -1 || i + 1 >= segs.length) return null;
   const raw = segs[i + 1];
   try { return decodeURIComponent(raw); } catch { return raw; }
+}
+
+/* scm.so_amendments.id is `uuid PRIMARY KEY` (mig 0080). The shape matters to
+   the guard, not just to the query: a segment that is not a uuid cannot address
+   a row in a uuid column, and asking anyway makes Postgres raise
+   `invalid input syntax for type uuid` — which this guard would read as "the
+   read failed", i.e. LOCK. There is no non-GET static route on the amendment
+   router today, so nothing hits that; the check is here so the FIRST one added
+   does not arrive as a 409 nobody can explain. */
+const AMENDMENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The amendment id a request targets, or null when it targets none.
+ *
+ * Exported for the tests, which are the specification: the collection route and
+ * a trailing slash must answer null, a nested write must answer the SAME id as
+ * a top-level one, and a segment that is not a uuid names no amendment.
+ */
+export function amendmentIdFromPath(path: string): string | null {
+  const segs = path.split('?')[0].split('/').filter((s) => s.length > 0);
+  const i = segs.lastIndexOf(AMENDMENT_MOUNT_SEGMENT);
+  if (i === -1 || i + 1 >= segs.length) return null;
+  const raw = segs[i + 1];
+  let decoded: string;
+  try { decoded = decodeURIComponent(raw); } catch { decoded = raw; }
+  return AMENDMENT_ID_RE.test(decoded) ? decoded : null;
 }
 
 async function readLock(read: ConfigReader): Promise<LockState> {
@@ -151,18 +185,41 @@ export async function migratedSoReadonlyState(
   return { locked: true, reason: migratedSoLockMessage(message) };
 }
 
-/**
- * Hono middleware. Mount ONCE on the sales-order router, after supabaseAuth
- * (which is what puts the client in the context) and after the mirrored-SO
- * guard (whose refusal is about a different kind of foreign ownership).
- */
-export function migratedSoReadonly() {
+/* ── The guard, once, for both prefixes ─────────────────────────────────────
+
+   TWO ROUTERS CAN WRITE ONE MIGRATED SALES ORDER, and the first version of this
+   file guarded one of them. `/mfg-sales-orders/*` holds the SO's own writes;
+   `/so-amendments/:id/*` holds the amendment gates, and `approve-so` there is
+   not a status flip — it runs applySoAmendment, which rewrites the SO's header
+   and its lines in place (lib/so-revision.ts). No NEW amendment can be raised on
+   a migrated order once the lock is on, because `POST /:docNo/amendments` lives
+   on the SO router and is behind the guard — but one that was ALREADY OPEN when
+   the lock shipped could still be driven through. docs/migrated-so-lock.md §7
+   recorded that as a known hole; this closes it.
+
+   ONE FACTORY, TWO MOUNTS, so the two prefixes cannot drift apart: the same
+   refusal body, the same bypass cohort, the same fail-closed answer to "the read
+   did not run". The ONLY difference between them is how a request names the
+   document it is about — a doc number in the path, or an amendment id that has
+   to be resolved to one — which is exactly the `keyFromPath` + `resolve` pair.
+
+   The ORDER of the steps is load-bearing and is the original's, unchanged: the
+   path is read FIRST, so a request naming no document (create) never reads
+   app_config at all; then the switch; then the bypass; and only then the
+   per-document lookup. */
+
+type GuardTarget = { docNo: string | null; isMigrated: boolean | null };
+
+function migratedGuard(
+  keyFromPath: (path: string) => string | null,
+  resolve: (sb: SupabaseLike, key: string) => Promise<GuardTarget | null>,
+) {
   return async (c: Context, next: Next) => {
     const method = c.req.method.toUpperCase();
     if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return next();
 
-    const docNo = soDocNoFromPath(c.req.path);
-    if (docNo == null) return next(); // create, or a collection-level route
+    const key = keyFromPath(c.req.path);
+    if (key == null) return next(); // create, or a collection-level route
 
     const sb = clientFor(c);
 
@@ -173,20 +230,10 @@ export function migratedSoReadonly() {
     if (value.scope === 'off') return next();
     if (callerBypasses(c)) return next();
 
-    /* `null` = we could not tell, and null LOCKS (see migrated-so-lock.ts).
-       soIsMigrated THROWS on a failed read rather than answering false, so this
-       catch is where "could not tell" is actually produced. */
-    let isMigrated: boolean | null;
-    try {
-      isMigrated = await soIsMigrated(
-        (d) => sb.from('mfg_sales_orders').select('linked_ac_docno').eq('doc_no', d).maybeSingle(),
-        docNo,
-      );
-    } catch {
-      isMigrated = null;
-    }
+    const target = await resolve(sb, key);
+    if (target == null) return next(); // the key names no sales order
 
-    const state = await migratedSoReadonlyState(c, isMigrated);
+    const state = await migratedSoReadonlyState(c, target.isMigrated);
     if (!state.locked) return next();
 
     const text = state.reason ?? migratedSoLockMessage(null);
@@ -198,10 +245,96 @@ export function migratedSoReadonly() {
        document, not a service that is briefly away, and api/client.ts retries a
        503 four times. */
     return c.json(
-      { error: MIGRATED_SO_READONLY_ERROR, reason: text, message: text, docNo },
+      { error: MIGRATED_SO_READONLY_ERROR, reason: text, message: text, docNo: target.docNo },
       409,
     );
   };
+}
+
+/* `null` = we could not tell, and null LOCKS (see migrated-so-lock.ts).
+   soIsMigrated THROWS on a failed read rather than answering false, so this
+   catch is where "could not tell" is actually produced. */
+async function migratedByDocNo(sb: SupabaseLike, docNo: string): Promise<GuardTarget> {
+  try {
+    return {
+      docNo,
+      isMigrated: await soIsMigrated(
+        (d) => sb.from('mfg_sales_orders').select('linked_ac_docno').eq('doc_no', d).maybeSingle(),
+        docNo,
+      ),
+    };
+  } catch {
+    return { docNo, isMigrated: null };
+  }
+}
+
+/**
+ * The Sales Order an amendment is bound to.
+ *
+ * THREE ANSWERS, NOT TWO, and the third is the point. A row that is simply not
+ * there is `null` — the handler will 404 and no write happens, so the guard has
+ * nothing to refuse. A row that IS there but whose `so_doc_no` we could not read
+ * THROWS, because that is "could not tell", and the permissive answer must not
+ * be reachable by a read that did not work. Folding the two together is how a
+ * gate ships looking applied.
+ *
+ * Both spellings are accepted for the same reason: this repo has already been
+ * caught by a PostgREST read coming back camelCase where the code expected
+ * snake_case, and here that mistake would read as "no amendment" — open, not
+ * shut. Exported for the tests.
+ */
+export type AmendmentSoReader = (id: string) => PromiseLike<{ data: unknown; error: unknown }>;
+
+export async function amendmentSoDocNo(read: AmendmentSoReader, id: string): Promise<string | null> {
+  const { data, error } = await read(id);
+  if (error) throw new Error(`amendmentSoDocNo: ${(error as { message?: string }).message ?? 'read failed'}`);
+  if (data == null) return null; // no such amendment — the handler answers 404
+  const row = data as { so_doc_no?: unknown; soDocNo?: unknown };
+  const v = row.so_doc_no ?? row.soDocNo;
+  if (typeof v === 'string' && v.length > 0) return v;
+  throw new Error('amendmentSoDocNo: the amendment row carries no readable so_doc_no');
+}
+
+async function migratedByAmendmentId(sb: SupabaseLike, id: string): Promise<GuardTarget | null> {
+  let docNo: string | null = null;
+  try {
+    docNo = await amendmentSoDocNo(
+      (i) => sb.from('so_amendments').select('so_doc_no').eq('id', i).maybeSingle(),
+      id,
+    );
+  } catch {
+    /* The amendment read itself failed. We do not know which document this is
+       about, so we cannot know it is safe — LOCK. */
+    return { docNo: null, isMigrated: null };
+  }
+  if (docNo == null) return null;
+  return migratedByDocNo(sb, docNo);
+}
+
+/**
+ * Hono middleware for the SALES ORDER router. Mount ONCE, after supabaseAuth
+ * (which is what puts the client in the context) and after the mirrored-SO
+ * guard (whose refusal is about a different kind of foreign ownership).
+ *
+ * WHAT IS DELIBERATELY NOT GUARDED is listed at the top of this file.
+ */
+export function migratedSoReadonly() {
+  return migratedGuard(soDocNoFromPath, migratedByDocNo);
+}
+
+/**
+ * Hono middleware for the AMENDMENT router — the same rule, reached by a
+ * different door.
+ *
+ * `/so-amendments/:id/{supplier-confirm,approve-so,approve-po,send,reject,
+ * withdraw}` are the six writes it covers; every one of them acts on an
+ * amendment that already exists, which is why the prefix guard on the SO router
+ * never sees them. Mounted at the PREFIX for the same reason that one is: a
+ * per-handler check leaves the NEXT gate added to the file unguarded by default,
+ * and that is the shape this repo has already paid for three times.
+ */
+export function migratedSoAmendmentReadonly() {
+  return migratedGuard(amendmentIdFromPath, migratedByAmendmentId);
 }
 
 /* Re-exported so routes/mfg-sales-orders.ts reaches the whole migrated-document
