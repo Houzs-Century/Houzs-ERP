@@ -95,7 +95,8 @@ import { freezeShipCost } from '../lib/fulfillment-costing';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { resolveItemGroups } from '../lib/sku-category';
 import { buildDoItemRow as buildItemRow, loadCarriedSoLinePhotos, carriedPhotoUrls } from '../lib/do-item-row';
-import { assertLinkedLineItemsMatch } from '../lib/line-link-item-identity';
+import { soRemainingByItemId } from '../lib/so-remaining-by-item';
+import { lineLinkItemMismatch, assertLinkedLineItemsMatch } from '../lib/line-link-item-identity';
 import { checkStockAvailability, shortStockResponse, stockCheckableLines, type StockShortage } from '../lib/check-stock-availability';
 import { findSofaLinesWithoutCompleteBatch, sofaNoCompleteBatchResponse, findIncompleteSofaSets, sofaIncompleteSetResponse, detectSofaSoItemIds } from '../lib/sofa-batch-guard';
 import { resolveExpectedBatchBySoItem, buildDropshipOffenders } from '../lib/dropship-batch';
@@ -2640,19 +2641,6 @@ export async function soCurrentDocNo(
    so every DO-line create / add / qty-increase respects the SAME cap the
    line-level picker enforces — no back door. SO lines that no longer exist map
    to 0 (treat as nothing left to deliver). */
-async function soRemainingByItemId(
-  sb: any,
-  soItemIds: Array<string | null | undefined>,
-): Promise<Map<string, number>> {
-  const ids = [...new Set(soItemIds.filter((x): x is string => !!x))];
-  const out = new Map<string, number>();
-  if (ids.length === 0) return out;
-  const { data } = await sb.from('mfg_sales_order_items').select('doc_no').in('id', ids);
-  const docNos = [...new Set(((data ?? []) as Array<{ doc_no: string | null }>).map((r) => r.doc_no).filter((d): d is string => !!d))];
-  const remainingMap = await soDeliverableRemaining(sb, docNos);
-  for (const id of ids) out.set(id, remainingMap.get(id)?.remaining ?? 0);
-  return out;
-}
 
 /* THE SO-MUST-BE-DELIVERABLE GATE MOVED to lib/source-document-gates.ts on
    2026-08-22 (mig 0324), beside the two conversions that ask the same question
@@ -3250,8 +3238,16 @@ deliveryOrdersMfg.post('/', async (c) => {
       .filter((x): x is string => !!x);
     if (lineSoItemIds.length > 0) {
       const { data: lineSoRows } = await sb
-        .from('mfg_sales_order_items').select('doc_no').in('id', lineSoItemIds);
-      for (const r of (lineSoRows ?? []) as Array<{ doc_no: string | null }>) refDocNos.push(r.doc_no);
+        .from('mfg_sales_order_items').select('id, doc_no, item_code').in('id', lineSoItemIds);
+      const soRows = (lineSoRows ?? []) as Array<{ id: string; doc_no: string | null; item_code: string | null }>;
+      for (const r of soRows) refDocNos.push(r.doc_no);
+      /* IDENTITY too — docs/bugs/0672 site 15; the rows are already in hand. A
+         wrong so_item_id ships against the wrong order line, prints that line's
+         photos, and (HARD-BOUND sofa/bedframe) lights the wrong stock. */
+      const idBad = lineLinkItemMismatch(
+        items.filter((it) => it.soItemId).map((it) => ({ linkId: it.soItemId as string, itemCode: it.itemCode })),
+        new Map(soRows.map((r) => [r.id, r.item_code])), { source: 'Sales Order line' });
+      if (idBad) { markIdempotencyNoWrite(c); return c.json(idBad, 409); }
     }
     const offender = await firstUndeliverableSo(sb, refDocNos);
     if (offender) return c.json(soNotDeliverableResponse(offender), 409);
@@ -3379,20 +3375,6 @@ deliveryOrdersMfg.post('/', async (c) => {
         }
       }
     }
-  }
-
-  /* IDENTITY, not just the key — docs/bugs/0672 site 15. The guards around this
-     one prove the SO line's company and that the pick does not exceed what was
-     ordered; none proved it is the SAME PRODUCT. `so_item_id` is what
-     `soRemainingByItemId` draws down and what the delivered-qty sync writes back
-     to the sales order, and `buildDoItemRow` copies the SOURCE line's photos
-     onto the delivery line through it — so a wrong link ships against the wrong
-     order line AND prints the wrong product's photos on the delivery note. */
-  {
-    const idc = await assertLinkedLineItemsMatch(sb, 'mfg_sales_order_items',
-      (items as Array<Record<string, unknown>>).map((it) => ({ linkId: (it.soItemId as string | undefined) ?? null, itemCode: it.itemCode })),
-      { source: 'Sales Order line' });
-    if (!idc.ok) { markIdempotencyNoWrite(c); return c.json(idc.body, idc.status); }
   }
 
   /* The back door that guard leaves open (Wei Siang 2026-08-04). "Uncapped"
@@ -4717,20 +4699,9 @@ export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Va
   const nextLineNo = typeof (maxNoRow as { line_no?: number | null } | null)?.line_no === 'number'
     ? (maxNoRow as { line_no: number }).line_no + 1
     : null;
-  /* IDENTITY, not just the key — docs/bugs/0672 site 15. The guards around this
-     one prove the SO line's company and that the pick does not exceed what was
-     ordered; none proved it is the SAME PRODUCT. `so_item_id` is what
-     `soRemainingByItemId` draws down and what the delivered-qty sync writes back
-     to the sales order, and `buildDoItemRow` copies the SOURCE line's photos
-     onto the delivery line through it — so a wrong link ships against the wrong
-     order line AND prints the wrong product's photos on the delivery note. */
-  {
-    const idc = await assertLinkedLineItemsMatch(sb, 'mfg_sales_order_items',
-      [{ linkId: (it.soItemId as string | undefined) ?? null, itemCode: it.itemCode }],
-      { source: 'Sales Order line' });
-    if (!idc.ok) { markIdempotencyNoWrite(c); return c.json(idc.body, idc.status); }
-  }
-
+  /* IDENTITY — docs/bugs/0672 site 15, the add-line twin of the create guard. */
+  const soIdc = await assertLinkedLineItemsMatch(sb, 'mfg_sales_order_items', [{ linkId: (it.soItemId as string | undefined) ?? null, itemCode: it.itemCode }], { source: 'Sales Order line' });
+  if (!soIdc.ok) return c.json(soIdc.body, soIdc.status);
   const addPhotos = await loadCarriedSoLinePhotos(sb, [it as { soItemId?: unknown }], (q) => scopeToCompany(q, c));
   const row = buildItemRow(id, it, nextLineNo, addCommitments.get('add') ?? null, addPhotos);
   const { data, error } = await sb.from('delivery_order_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();

@@ -58,7 +58,6 @@ import { readStatusCounts } from '../lib/status-counts';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { doLineRemaining, doRemainingByItemId, checkSiOverRemaining, checkSiReopenOverRemaining, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, siTransferRefusal, type DoRemainingLine } from '../lib/do-line-remaining';
-import { assertLinkedLineItemsMatch } from '../lib/line-link-item-identity';
 import { siShadowRefusal, unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
 import { resolveSiHeaderSources, resolveDoLineSources } from '../lib/source-po-trace';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
@@ -911,25 +910,6 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
     if (over) return c.json(over.body, over.status);
   }
 
-  /* IDENTITY, not just the key — docs/bugs/0672 site 15. Every check above this
-     line asks about the SOURCE LINE's company, its parent's status and its
-     remaining quantity; none asks whether it is the SAME PRODUCT. So a client
-     could post an invoice line for product B naming a delivery line for product
-     A: a valid foreign key, no dangle, no constraint broken, and `doLineRemaining`
-     then draws down the WRONG delivery line's remaining — leaving the right one
-     open to be invoiced a second time. probe-link-identity.mjs run 34139187692
-     found 2 such rows already live on this very column. */
-  {
-    const idc = await assertLinkedLineItemsMatch(sb, 'delivery_order_items',
-      items.map((it) => ({ linkId: (it.doItemId as string | undefined) ?? null, itemCode: it.itemCode })),
-      { source: 'Delivery Order line' });
-    if (!idc.ok) return c.json(idc.body, idc.status);
-    const sidc = await assertLinkedLineItemsMatch(sb, 'mfg_sales_order_items',
-      items.map((it) => ({ linkId: (it.soItemId as string | undefined) ?? null, itemCode: it.itemCode })),
-      { source: 'Sales Order line' });
-    if (!sidc.ok) return c.json(sidc.body, sidc.status);
-  }
-
   /* A delivery carried over from AutoCount is invoiced by the migrated-invoice
      converter, never by hand — see lib/migrated-chain.ts. Checked HERE as well
      as on /from-dos because this path reaches the same delivery lines through
@@ -1733,25 +1713,6 @@ export const appendSalesInvoiceItemHandler = async (c: any) => {
   {
     const over = await checkSiOverRemaining(sb, [it]);
     if (over) return c.json(over.body, over.status);
-  }
-
-  /* IDENTITY, not just the key — docs/bugs/0672 site 15. Every check above this
-     line asks about the SOURCE LINE's company, its parent's status and its
-     remaining quantity; none asks whether it is the SAME PRODUCT. So a client
-     could post an invoice line for product B naming a delivery line for product
-     A: a valid foreign key, no dangle, no constraint broken, and `doLineRemaining`
-     then draws down the WRONG delivery line's remaining — leaving the right one
-     open to be invoiced a second time. probe-link-identity.mjs run 34139187692
-     found 2 such rows already live on this very column. */
-  {
-    const idc = await assertLinkedLineItemsMatch(sb, 'delivery_order_items',
-      [{ linkId: (it.doItemId as string | undefined) ?? null, itemCode: it.itemCode }],
-      { source: 'Delivery Order line' });
-    if (!idc.ok) return c.json(idc.body, idc.status);
-    const sidc = await assertLinkedLineItemsMatch(sb, 'mfg_sales_order_items',
-      [{ linkId: (it.soItemId as string | undefined) ?? null, itemCode: it.itemCode }],
-      { source: 'Sales Order line' });
-    if (!sidc.ok) return c.json(sidc.body, sidc.status);
   }
 
   /* Same refusal as every other path that can attach a delivery line. */
