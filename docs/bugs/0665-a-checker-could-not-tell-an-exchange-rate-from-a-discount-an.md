@@ -1,6 +1,7 @@
 ## A checker could not tell an exchange rate from a discount and took RM 13,068.55 off a live CNY purchase order [critical]
 
 <!-- area: Purchase orders + GRN + PI -->
+<!-- status: fixed -->
 
 **Symptom.** `HC-PO-009335` (AutoCount `PO-009335`) read **RM 34,334.90** in the
 ERP, which is exactly what AutoCount's own header states. After the PO

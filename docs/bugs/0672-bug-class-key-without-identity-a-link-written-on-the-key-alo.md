@@ -245,11 +245,34 @@ again.
 
 Fifteen minutes after the first. Conclusion `success`.
 
-**PO -> SO went from 10 wrong to 0, and it was not us.** Linked rows moved
-1,122 -> 1,124 and NULLs 410 -> 408, so the ten were REPOINTED, not blanked.
-Another agent owns those rows and was working on them tonight; this file records
-the measurement, not the authorship. **PROVEN: `purchase_order_items.so_item_id`
-carries no item-code disagreement as of 23:37 local.**
+**PO -> SO went from 10 wrong to 0, and it was not us.** Another agent owns those
+rows and was working on them tonight; this file records the measurement, not the
+authorship. **PROVEN: `purchase_order_items.so_item_id` carries no item-code
+disagreement as of 23:37 local.**
+
+> **CORRECTED 2026-09-08.** This paragraph continued: *"Linked rows moved 1,122
+> -> 1,124 and NULLs 410 -> 408, so the ten were REPOINTED, not blanked."*
+> **That inference is wrong.** The ten were BLANKED, eleven minutes before this
+> measurement, by `revert-so-po-dedications` run
+> [34138205774](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34138205774)
+> (2026-09-07 23:25 local, `MODE: apply`, `CONFIRM: REVERT 10 DEDICATIONS`),
+> which reports in full:
+>
+> ```
+> dedications reverted: 10 of 10 intended
+> VERIFY on a fresh connection: 10 of 10 line(s) re-read; so_item_id now NULL on 10;
+>   still linked 0; missing 0; item_code changed 0
+> ```
+>
+> **How the wrong sentence got written, because that is the reusable part:** the
+> conclusion was drawn from two aggregate counts moving in a direction that
+> looked like repointing — but the PO line population was GROWING concurrently,
+> so the denominator was not stable between the two readings. A net `+2` on
+> linked rows is consistent with "ten blanked and twelve newly linked" just as
+> readily as with "ten repointed", and nothing distinguished them except the run
+> that had already said which. **Two moving aggregates cannot establish what
+> happened to a specific ten rows**; the run that touched those rows can, and it
+> was one `gh run view` away.
 
 **Still open, and still nobody else's finding:**
 

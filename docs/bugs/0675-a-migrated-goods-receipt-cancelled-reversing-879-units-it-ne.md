@@ -1,6 +1,28 @@
 ## A migrated goods receipt cancelled reversing 879 units it never received [critical]
 
 <!-- area: Cutover + migrated data -->
+<!-- status: open -->
+
+> **PARTLY ANSWERED 2026-09-08 — and the instrument was broken.** This entry's
+> one remaining action was the read-only probe it names, recorded here as
+> *"UNKNOWN at the time of writing"*. That probe had **never been dispatched
+> once**. It was dispatched on 2026-09-08 (run
+> [34189305983](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34189305983),
+> 13:05 local) and **crashed on the very question that matters** —
+> `COALESCE` over an enum column is refused by Postgres before any row is read,
+> so it could never have worked. Traced and fixed in
+> `docs/bugs/0698-the-migrated-cancel-exposure-probe-could-never-have-answered.md`.
+>
+> **What it did establish (Q1, company 1):** 473 migrated goods receipts, all
+> POSTED, **0 CANCELLED**; 173 migrated delivery orders, all DELIVERED, **0
+> CANCELLED**. By the script's own decision table that rules out the CANCEL path
+> having fired at all — which is the path this entry is named for.
+>
+> **Still UNKNOWN, and why this stays `open`:** the delivery-order LINE-EDIT path
+> writes a reversing movement WITHOUT a cancel, so a zero cancel count does not
+> clear it. That is Q2, and Q2 is the query that crashed. **Re-dispatch this
+> workflow once the fix is on `main`** — it is read-only and takes about a
+> minute.
 
 **Symptom.** Not reported by staff — found by reading `grns.ts` on 2026-09-07,
 the night before the Company 1 go-live, and reachable by anyone with the Cancel

@@ -81,6 +81,45 @@ export function parseEntry(text) {
 const AREA_TAG = /<!--\s*area:\s*([^>]+?)\s*-->/i;
 
 /**
+ * The four states an entry can be in. Deliberately four and not more: each one
+ * tells a reader something DIFFERENT to do.
+ *
+ *   fixed          — the remedy reached production. Nothing to do.
+ *   open           — still outstanding. This is the backlog.
+ *   owner-decision — the work is built and parked on a business judgement that
+ *                    is the owner's to make. Do not decide it in a script.
+ *   superseded     — a later entry replaced this one. Follow its Ref.
+ */
+export const STATUS_VALUES = new Set(["fixed", "open", "owner-decision", "superseded"]);
+
+const STATUS_TAG = /<!--\s*status:\s*([a-z][a-z-]*)\s*-->/i;
+
+/**
+ * Read the `<!-- status: ... -->` tag off an entry body.
+ *
+ * WHY A TAG AND NOT A GREP FOR PROSE. Measured on this ledger 2026-09-08: the
+ * word "unfixed" appears in 138 files, and in 126 of them it ONLY ever appears
+ * in the phrase "fails on the unfixed tree" — this repo's TDD convention for
+ * proving a test red BEFORE the fix, i.e. evidence the bug WAS fixed. A reader
+ * that treats the word as a status invents ~126 phantom backlog items, and that
+ * is precisely what a whole-ledger sweep reported. Prose describes the bug; only
+ * a declared field can describe the ENTRY.
+ *
+ * An absent tag returns `null` — never a default, and never "fixed". Inferring
+ * the state is the failure this function exists to remove, so "I was not told"
+ * has to stay distinguishable from "I was told it is done".
+ *
+ * @param {string} body
+ * @returns {{status: string|null, invalid: string|null}}
+ */
+export function readStatus(body) {
+  const m = STATUS_TAG.exec(String(body ?? ""));
+  if (!m) return { status: null, invalid: null };
+  const raw = m[1].toLowerCase();
+  return STATUS_VALUES.has(raw) ? { status: raw, invalid: null } : { status: null, invalid: m[1] };
+}
+
+/**
  * Read every entry, NEWEST FIRST.
  *
  * Line endings are normalised to LF on read. `core.autocrlf=true` is the norm on
@@ -111,6 +150,8 @@ export function readEntries(repoRoot) {
       text: raw,
       parsed,
       area: parsed ? AREA_TAG.exec(parsed.body)?.[1] ?? null : null,
+      status: parsed ? readStatus(parsed.body).status : null,
+      statusInvalid: parsed ? readStatus(parsed.body).invalid : null,
       ref: parsed ? (/\*\*Ref\*\*[.:]?\s*[-—]?\s*(.+)/.exec(parsed.body)?.[1] ?? "").replace(/`/g, "").trim() : "",
     });
   }

@@ -24,11 +24,52 @@ with the fix.
 | --- | --- |
 | "have we hit this before, in this subsystem?" | `npm --prefix backend run gen:bug-index` → `docs/generated/bug-index.md` [generated], grouped by area, one row per entry |
 | the whole ledger newest-first, as one document | `npm --prefix backend run gen:bug-history` → `docs/generated/bug-history.md` [generated] |
+| **"what is still OUTSTANDING?"** | `npm --prefix backend run gen:bug-status` — counts by state, then lists every `open` and `owner-decision` entry. `--open` for just the list, `--match autocount` to filter |
 | one entry | open its file — the path is the citation |
 
 Both generated views are **gitignored**. They are rebuilt from these files in
 under a second, and a generated copy in git would conflict on every pair of
 concurrent PRs, which is the problem this layout exists to remove.
+
+## Say what STATE the entry is in — `<!-- status: ... -->`
+
+Put it under the title, beside `<!-- area: ... -->`. Four values, each telling a
+reader something different to do:
+
+| value | means |
+| --- | --- |
+| `fixed` | the remedy reached production. Nothing to do. |
+| `open` | still outstanding. **This is the backlog.** |
+| `owner-decision` | built and parked on a business judgement that is the owner's. Do not decide it in a script. |
+| `superseded` | a later entry replaced this one; follow its `**Ref.**` |
+
+**An entry with no tag is UNKNOWN — not "fixed".** The reporter counts those
+separately and says so, because a missing answer and a clean answer are
+different things.
+
+### Why this field had to exist
+
+Until 2026-09-08 an entry's state lived only in its prose, so every session
+re-derived it by grepping — and the derivation was wrong in **both** directions:
+
+- A whole-ledger sweep for the word *"unfixed"* returned **138 files** and was
+  read as a backlog of open defects. **126 of them use the word only in the
+  phrase "fails on the unfixed tree"** — this repo's TDD convention for proving
+  a test red *before* the fix, i.e. evidence the bug **was** fixed. Most of that
+  "backlog" was an artefact of the instrument.
+- Meanwhile entries whose repair had been applied to production weeks earlier
+  still opened *"planned but not applied"*, because nothing brings the writer
+  back to the file after the run. Three were found in the PO line-discount chain
+  alone (`0662`, `0664`, `0665`) — all three applied, all three still reading as
+  open.
+
+Both are the same missing thing. Prose describes the **bug**; only a declared
+field can describe the **entry**.
+
+**The tag is an assertion, not a proof.** `status: fixed` says a person claims
+the remedy ran; the evidence is still the run id in the body. Working-agreement
+rule 3 is unchanged — a remedy claim needs the run that proved it, or the word
+UNTESTED.
 
 ## Why it is a directory and not one file
 
