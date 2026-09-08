@@ -52,6 +52,7 @@ import { isDocumentHeld } from '../lib/document-hold';
 import { dateOrNull } from '../lib/date-coerce';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { apControlRole, pvLines, customerRefundLines, resolveRoles } from '../../acc/rules';
+import { customerPartyCode } from '../../acc/payments';
 import { refundSourceHandler, refundCreateGuard, refundOwnControl, bookRefundCredit } from '../lib/pv-refund';
 import { CASH_SERIES_LETTER } from '../../acc/receipts';
 import { settleApInvoicePaidSen } from '../lib/ap-invoice-settlement';
@@ -1056,7 +1057,9 @@ export const postPaymentVoucherHandler = async (c: any) => {
      handler's own guard (it also heals the PV status flag); the engine's
      internal guard is the second net, and the acc_je_one_active_source index
      is the third. */
-  const refundPv = pvRaw as { refund_source_doc_no?: string | null; debtor_code?: string | null };
+  /* The customer's party code: the debtor code when kept, else the header's
+     customer_id — the same rule the payment booked with (owner 2026-09-08). */
+  const refundPv = pvRaw as { refund_source_doc_no?: string | null; debtor_code?: string | null; customer_id?: string | null };
   const r = await postJournal(sb, {
     companyId,
     entryDate: pv.voucher_date,
@@ -1064,7 +1067,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
     sourceDocNo: pv.pv_number,
     narration: isRefund(pv.purpose) ? `Customer refund ${pv.pv_number} — ${pv.payee_name} (${refundPv.refund_source_doc_no ?? '?'})` : `Payment voucher ${pv.pv_number} — ${pv.payee_name}`,
     lines: isRefund(pv.purpose)
-      ? customerRefundLines({ ...pv, refund_source_doc_no: refundPv.refund_source_doc_no ?? null }, (await resolveRoles(sb, companyId)).AR, { code: refundPv.debtor_code ?? null, name: pv.payee_name }, totalSen)
+      ? customerRefundLines({ ...pv, refund_source_doc_no: refundPv.refund_source_doc_no ?? null }, (await resolveRoles(sb, companyId)).AR, { code: customerPartyCode(refundPv.debtor_code, refundPv.customer_id), name: pv.payee_name }, totalSen)
       : pvLines(pv, debitLegs, supplier, apControlCode),
   });
   if (!r.ok) {

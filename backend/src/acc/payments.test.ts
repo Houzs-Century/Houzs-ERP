@@ -13,8 +13,10 @@ const CHART: Row[] = ['300-0000', '500-0000', '320-0000', '310-0010', '326-0000'
   account_code: code, account_name: code, account_type: 'ASSET', parent_code: null, is_active: true, company_id: 1,
 }));
 
-/* The order table's real columns (docs/bugs/0655): debtor_name and phone. */
-const SO: Row = { doc_no: 'SO-2608-001', company_id: 1, debtor_name: 'Ah Meng', phone: '0123' };
+/* The order table's real columns (docs/bugs/0655): debtor_name and phone —
+   and, for the party code, customer_id (every order has one) beside a debtor
+   code the business may or may not keep. */
+const SO: Row = { doc_no: 'SO-2608-001', company_id: 1, debtor_name: 'Ah Meng', phone: '0123', customer_id: 'cust-1', debtor_code: null };
 
 const PAY = (over: Partial<Row> = {}): Row => ({
   id: 'pay-1',
@@ -47,9 +49,29 @@ describe('postSoPayment — the money finally reaches the books', () => {
     expect(out).toMatchObject({ ok: true, status: 'posted' });
     const lines = sb.tables.journal_entry_lines;
     expect(lines[0]).toMatchObject({ account_code: '888-0000', debit_sen: 50000 });
-    expect(lines[1]).toMatchObject({ account_code: DEFAULT_ROLE_CODES.AR, credit_sen: 50000, party_name: 'Ah Meng' });
+    /* The AR leg carries the customer's CODE beside the name — the order's
+       customer_id when the business keeps no debtor code (owner 2026-09-08). */
+    expect(lines[1]).toMatchObject({ account_code: DEFAULT_ROLE_CODES.AR, credit_sen: 50000, party_type: 'CUSTOMER', party_code: 'cust-1', party_name: 'Ah Meng' });
     const je = sb.tables.journal_entries[0];
     expect(je).toMatchObject({ source_type: 'SOPAY', source_doc_no: 'pay-1', entry_date: '2026-08-10', posted: true });
+  });
+
+  it('a debtor code, when the business keeps one, is the party code; a blank one falls back to the customer id', async () => {
+    const coded = fakeSb({
+      accounts: CHART, acc_account_roles: [], acc_acquirers: [],
+      mfg_sales_orders: [{ ...SO, debtor_code: '300-C001' }],
+      mfg_sales_order_payments: [PAY({ method: 'cash' })], journal_entries: [], journal_entry_lines: [],
+    });
+    await postSoPayment(coded, PAY({ method: 'cash' }) as never);
+    expect(coded.tables.journal_entry_lines[1]).toMatchObject({ party_code: '300-C001', party_name: 'Ah Meng' });
+
+    const blank = fakeSb({
+      accounts: CHART, acc_account_roles: [], acc_acquirers: [],
+      mfg_sales_orders: [{ ...SO, debtor_code: '  ' }],
+      mfg_sales_order_payments: [PAY({ method: 'cash' })], journal_entries: [], journal_entry_lines: [],
+    });
+    await postSoPayment(blank, PAY({ method: 'cash' }) as never);
+    expect(blank.tables.journal_entry_lines[1]).toMatchObject({ party_code: 'cust-1' });
   });
 
   it('an UNMAPPED acquirer books to the generic EDC transit — loudly, never nowhere', async () => {
