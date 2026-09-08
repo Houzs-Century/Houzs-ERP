@@ -71,3 +71,7 @@ than it looked:
 value was changed by shipping it. `MODE` defaults to `plan`.
 
 **Ref.** PR pending, 2026-09-08. Runbook: `docs/write-freeze-staged-lift.md` §6.
+
+**Its first dispatch failed** — a defect of its own, not of this one:
+`docs/bugs/0711-the-freeze-setter-handed-an-array-to-a-library-that-calls-h.md`.
+Nothing was written; it was the plan path.
