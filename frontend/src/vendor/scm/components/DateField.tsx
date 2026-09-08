@@ -58,6 +58,43 @@ export function maskDmy(digits: string): string {
   return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`;
 }
 
+/** True when every `/` in `raw` sits where `maskDmy` itself would have written
+ *  one (index 2 and index 5) — i.e. the separators on screen are the MASK's,
+ *  not the operator's.
+ *
+ *  WHY THIS EXISTS. The mask re-derives the whole string from the digits on
+ *  every keystroke, so a separator the operator typed himself was stripped and
+ *  a fresh one re-inserted at a FIXED slot. With an unpadded day or month that
+ *  slot is the wrong one: `7/9/2026` typed character by character became
+ *  `79/20/26`, `parseDmy` refused it, `onChange` never fired, and blur snapped
+ *  the field back to its old value without a word. Padded input hid it —
+ *  `07/09/2026` re-lands on the same slots — which is why the mask test, which
+ *  fires whole padded strings, never saw it.
+ *
+ *  `-` and `.` are deliberately NOT considered here: the mask only ever writes
+ *  `/`, so a dash or a dot is always the operator's own and is already left
+ *  alone by the `^[\d/]*$` guard at the call site. */
+export function separatorsAreMaskOwn(raw: string): boolean {
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] === '/' && i !== 2 && i !== 5) return false;
+  }
+  return true;
+}
+
+/** True on a finger-first device. The calendar button is 20px and the native
+ *  input behind it is `pointer-events: none`, so on a phone the picker had no
+ *  reachable opener at all and the owner concluded typing was the only way in
+ *  (2026-09-08: mobile 的 date 为什么没有 dropdown calender 是要 manual type 的).
+ *  Guarded because jsdom and older embedded webviews have no `matchMedia`. */
+export function isCoarsePointer(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  try {
+    return window.matchMedia('(pointer: coarse)').matches;
+  } catch {
+    return false;
+  }
+}
+
 /** "2026-05-31" → "31/05/2026". Returns '' for empty/malformed. */
 export function isoToDmy(iso: string | null | undefined): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso ?? ''));
@@ -111,11 +148,18 @@ export function DateField({
   // time the display is derived straight from the canonical ISO `value`, so the
   // field can never drift out of sync with the parent.
   const [editing, setEditing] = useState<string | null>(null);
+  // Set on blur when the operator's own text does not parse. Before this the
+  // field silently reverted to the previous date and the operator read that as
+  // his own typo — the entry was lost with no border, no message and nothing
+  // announced, because `aria-invalid` came only from the `invalid` PROP.
+  const [draftInvalid, setDraftInvalid] = useState(false);
   const nativeRef = useRef<HTMLInputElement>(null);
   const fallbackId = useId();
   const inputId = id ?? fallbackId;
 
   const display = editing ?? isoToDmy(value);
+  const showInvalid = invalid || draftInvalid;
+  const errorId = `${inputId}-date-error`;
 
   const openPicker = () => {
     const el = nativeRef.current;
@@ -133,7 +177,7 @@ export function DateField({
     <span
       className={`${styles.wrap} ${fullWidth ? styles.fullWidth : ''} ${disabled ? styles.disabled : ''} ${className ?? ''}`}
       style={
-        invalid
+        showInvalid
           ? { ...style, borderColor: 'var(--c-festive-b, #B8331F)' }
           : highlight
             ? { ...style, borderColor: 'var(--c-orange)', background: 'var(--c-cream)' }
@@ -153,7 +197,8 @@ export function DateField({
         // The red border above is the SEEN half of this state; without the
         // attribute it was invisible to a screen reader and unassertable in a
         // test. Painting and announcing must not be able to drift apart.
-        aria-invalid={invalid || undefined}
+        aria-invalid={showInvalid || undefined}
+        aria-describedby={draftInvalid ? errorId : undefined}
         disabled={disabled}
         required={required}
         value={display}
@@ -161,22 +206,51 @@ export function DateField({
            the field often arrives pre-filled — today's date on a new bill —
            and typing into it APPENDED, so 31032026 became 06/09/202631032026,
            parsed as nothing, and snapped back on blur. Typing now replaces. */
-        onFocus={(e) => { setEditing(isoToDmy(value)); e.currentTarget.select(); }}
+        onFocus={(e) => { setEditing(isoToDmy(value)); setDraftInvalid(false); e.currentTarget.select(); }}
+        /* Touch only. The calendar button is 20px square with tabIndex -1 and
+           the native input behind it takes no pointer events, so a finger had
+           no way to reach the picker — tapping the box raised the numeric
+           keypad instead, which is why the owner reported that dates must be
+           typed. Hung on CLICK rather than FOCUS on purpose: a click is a tap,
+           while focus also arrives from Tab and from programmatic focus, so
+           keyboard and mouse users keep the field they had. */
+        onClick={() => { if (isCoarsePointer()) openPicker(); }}
         onChange={(e) => {
           const raw = e.target.value;
           /* Digits typed straight through wear the mask as they land:
              3103 → 31/03, 31032026 → 31/03/2026. Anything else (a pasted
-             31-03-2026, a stray letter) is left as typed for the parser. */
+             31-03-2026, a stray letter) is left as typed for the parser — and
+             so is anything carrying a separator the OPERATOR placed, which the
+             mask used to strip and re-insert at the wrong slot. */
           const digits = raw.replace(/\D/g, '');
-          const t = /^[\d/]*$/.test(raw) && digits.length <= 8 ? maskDmy(digits) : raw;
+          const maskable = /^[\d/]*$/.test(raw) && digits.length <= 8 && separatorsAreMaskOwn(raw);
+          const t = maskable ? maskDmy(digits) : raw;
           setEditing(t);
+          setDraftInvalid(false);
           const trimmed = t.trim();
           if (trimmed === '') { onChange(''); return; }
           const iso = parseDmy(trimmed);
-          if (iso) onChange(iso); // invalid/partial: hold until it parses or blur snaps back
+          if (iso) onChange(iso); // invalid/partial: hold until it parses or blur reports it
         }}
-        onBlur={() => { setEditing(null); onBlur?.(); }}
+        onBlur={() => {
+          const text = (editing ?? '').trim();
+          if (text !== '' && parseDmy(text) === null) {
+            // Keep what he typed on screen and SAY it was not understood. The
+            // old behaviour dropped it and restored the previous date, so a
+            // lost entry looked identical to no entry at all.
+            setDraftInvalid(true);
+          } else {
+            setEditing(null);
+            setDraftInvalid(false);
+          }
+          onBlur?.();
+        }}
       />
+      {draftInvalid && (
+        <span id={errorId} className={styles.draftError} role="alert">
+          Not a date — use dd/mm/yyyy
+        </span>
+      )}
       <button
         type="button"
         className={styles.iconBtn}
@@ -202,6 +276,11 @@ export function DateField({
         min={min}
         max={max}
         onChange={(e) => {
+          // A pick supersedes whatever draft the text box was holding, invalid
+          // or not; without this the flagged draft would sit on top of the
+          // date the operator just chose.
+          setEditing(null);
+          setDraftInvalid(false);
           onChange(e.target.value);
           // A calendar pick is a COMPLETED entry, but it lands on this hidden
           // input — the visible text box never focuses on this path, so it
