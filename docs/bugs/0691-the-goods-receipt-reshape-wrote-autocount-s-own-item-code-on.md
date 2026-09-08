@@ -11,9 +11,9 @@ GR-004474|PO-008483 DtlKey 801854: AutoCount "HOK-1007 (HF)(W) (SP)" vs ERP "HOK
 That looks like a checker bug and is not one. Two separate defects meet in that
 line — a DATA defect that put the book's code on an ERP document line, and a
 REPORTING defect that hid what the checker had actually compared. **This entry
-owns the DATA half only.** The reporting half is fixed in PR #3167
-(`fix/so-po-item-code-audit`), which rewrites the item-code reporting inside
-`check-ac-erp-reconcile.mjs`; nothing in this change touches that file.
+owns the DATA half only.** The reporting half was fixed by PR #3167
+(`fix/so-po-item-code-audit`), MERGED to `main` on 2026-09-08 while this branch
+was open; nothing in this change touches that file.
 
 **Root cause (traced).**
 
@@ -74,10 +74,14 @@ owns the DATA half only.** The reporting half is fixed in PR #3167
   else is left and counted, because replacing a wrong-but-traceable code with an
   orphan is a worse row, not a repaired one (docs/bugs/0577). PLAN by default;
   `APPLY=1` + `CONFIRM="REPAIR GRN ITEM CODES"` writes.
-- **Not fixed here:** the reconcile's print. PR #3167 rewrites the item-code
-  reporting in `check-ac-erp-reconcile.mjs`, and this branch deliberately leaves
-  that file at `main` so the two changes cannot conflict. Until #3167 lands, a
-  reconcile sample on this finding still shows the raw code on both sides.
+- **Not fixed here, because it is already fixed:** the reconcile's print. PR
+  #3167 (`fix/so-po-item-code-audit`, MERGED 2026-09-08) replaced that whole
+  branch with `lib/item-code-class.mjs` and its message now carries the mapped
+  value — `the sheet says "<erp code>"`. This branch leaves
+  `check-ac-erp-reconcile.mjs` byte-identical to `main`; a second edit to that
+  block would have been a text conflict over one shared intent. Verified rather
+  than assumed: `git show origin/main:backend/scripts/check-ac-erp-reconcile.mjs`
+  carries `the sheet says` and `classifyItemCode(`.
 
 **Why an item_code rewrite cannot move stock.** The FIFO trigger is
 `AFTER INSERT ON scm.inventory_movements`, not on `grn_items`; migrated receipts

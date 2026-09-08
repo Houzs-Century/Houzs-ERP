@@ -19,14 +19,11 @@
  * `REGAL (A)-(Q)`, `NK-1046 (Q)` for `MINI-(Q)`. `check-ac-erp-reconcile.mjs`
  * counted 103 company-1 GR item-code differences on 2026-09-08 (run
  * 34178538830) and its samples printed two identical-looking strings, because
- * that checker COMPARES the mapped value and PRINTED the raw one. Both halves are
- * fixed in this branch: the printing half in `check-ac-erp-reconcile.mjs`, the
- * data half here. This script repairs the rows already written;
+ * that checker COMPARES the mapped value and PRINTED the raw one. That printing
+ * defect is NOT fixed here and does not need to be: PR #3167 fixed it on `main`
+ * on 2026-09-08, and this branch leaves `check-ac-erp-reconcile.mjs` untouched.
+ * This script is the DATA half: it repairs the rows already written.
  * `reshape-migrated-grns.mjs` stops new ones being made.
- *
- * COORDINATION: PR #3167 is reported to touch `check-ac-erp-reconcile.mjs` too.
- * If both land, the printing change is the same one-line intent and the conflict
- * is a text merge, not a disagreement.
  *
  * ── WHAT IT TOUCHES, AND WHAT IT REFUSES TO ─────────────────────────────────
  * `scm.grn_items.item_code` and `.material_name`, on company-1 goods receipts

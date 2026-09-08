@@ -81,7 +81,8 @@
  * `CODY 2.0 (F)-(SP)`, and `check-ac-erp-reconcile.mjs` reported 103 company-1
  * item-code differences whose samples printed two identical-looking strings,
  * because the checker COMPARES the mapped value and PRINTED the raw one. (That
- * print is PR #3167's to fix; `check-ac-erp-reconcile.mjs` is untouched here.)
+ * print was fixed on `main` by PR #3167 on 2026-09-08 — its message now carries
+ * `the sheet says "<erp code>"`. `check-ac-erp-reconcile.mjs` is untouched here.)
  *
  * So the fallback now resolves through `data/autocount-erp-mapping-1561.csv`,
  * the same file every other AutoCount writer reads, with the same two rules
