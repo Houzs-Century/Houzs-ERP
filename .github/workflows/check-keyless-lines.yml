@@ -1,0 +1,73 @@
+name: Keyless documents — verify by multiset (read-only)
+
+# 「包括每个 line 都是要一样的」 (owner, 2026-09-08). Every LINE has to match the
+# book, not just the document.
+#
+# check-ac-erp-reconcile.mjs REFUSES to line-match a document when no ERP line
+# of it carries an AutoCount line key and the two sides disagree about how many
+# lines there are. The refusal is correct — pairing by POSITION produced
+# transposed pairs five separate times on 2026-09-07/08 — but it leaves the
+# document UNVERIFIED, and "the checker refused" was three times reported as
+# though it meant "the document is clean".
+#
+# This answers those documents without ever pairing by position: it compares the
+# two sides as MULTISETS of (item, quantity), which needs no line key. Equal
+# bags mean the document IS identical however its lines are ordered; unequal
+# bags NAME the defect; and only a sofa whose compartments are uneven comes back
+# undecidable, printed in full, per document.
+#
+# Manual trigger only — it is a question, not a gate, and a production DB read
+# on a schedule becomes CI noise nobody reads.
+on:
+  workflow_dispatch:
+    inputs:
+      types:
+        description: "Document types to verify (SO,GR,DO is where the unpairable ones are)"
+        required: false
+        default: "SO,GR,DO"
+        type: string
+      show:
+        description: "Offenders to print per verdict (AMBIGUOUS is always printed in full)"
+        required: false
+        default: "40"
+        type: string
+      max_snapshot_age_days:
+        description: "Refuse if the AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+      company_id:
+        description: "ERP company to verify (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+
+# Its OWN group, never the deploy's: a diagnostic must not queue behind - or
+# displace - a release.
+concurrency:
+  group: check-keyless-lines
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-keyless-lines.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TYPES: ${{ inputs.types }}
+          SHOW: ${{ inputs.show }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

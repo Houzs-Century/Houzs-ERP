@@ -164,6 +164,45 @@ describe("what it REFUSES, because a wrong key is worse than none", () => {
     expect(r.refusals[0].reason).toMatch(/no line of this item/);
   });
 
+  it("keeps the sofa and the accessory whose name contains SOFA apart", () => {
+    // The book writes both as "... SOFA ..." strings; only the one that yields a
+    // MODEL folds. A bucket string split on the first space would truncate both
+    // to "DSL-8030" and pair the pillow against the sofa.
+    const r = pairDocument({
+      bookLines: [
+        book({ dtlKey: 10, code: "8030-1S", rawCode: "DSL-8030 SOFA", qty: 1 }),
+        book({ dtlKey: 11, code: "SQUARE PILLOW", rawCode: "AMN-SOFA PILLOW", qty: 1 }),
+      ],
+      erpRows: [
+        erp({ id: "a", code: "8030-1A(LHF)" }),
+        erp({ id: "b", code: "8030-CNR" }),
+        erp({ id: "c", code: "SQUARE PILLOW" }),
+      ],
+      docNo: "D",
+    });
+    expect(r.refusals).toEqual([]);
+    expect(r.stamps.sort((x, y) => (x.id > y.id ? 1 : -1))).toEqual([
+      { id: "a", dtlKey: 10, key: "SOFA 8030", forced: "unique" },
+      { id: "b", dtlKey: 10, key: "SOFA 8030", forced: "unique" },
+      { id: "c", dtlKey: 11, key: "SQUARE PILLOW", forced: "unique" },
+    ]);
+  });
+
+  it("keeps two DIFFERENT plain codes apart when one is a prefix of the other", () => {
+    const r = pairDocument({
+      bookLines: [
+        book({ dtlKey: 10, code: "BC-CB49", rawCode: "BC-CB49", qty: 1 }),
+        book({ dtlKey: 11, code: "BC-CB49 PLUS", rawCode: "BC-CB49 PLUS", qty: 1, unitPriceSen: 999 }),
+      ],
+      erpRows: [erp({ id: "a", code: "BC-CB49" }), erp({ id: "b", code: "BC-CB49 PLUS" })],
+      docNo: "D",
+    });
+    expect(r.stamps.sort((x, y) => (x.id > y.id ? 1 : -1))).toEqual([
+      { id: "a", dtlKey: 10, key: "BC-CB49", forced: "unique" },
+      { id: "b", dtlKey: 11, key: "BC-CB49 PLUS", forced: "unique" },
+    ]);
+  });
+
   it("refuses when the QUANTITY differs, even though the code agrees", () => {
     const r = pairDocument({ bookLines: [book({ dtlKey: 10, qty: 2 })], erpRows: [erp({ id: "a", qty: 1 })], docNo: "D" });
     expect(r.stamps).toEqual([]);

@@ -10,8 +10,9 @@
    backend/tests/apInvoices.test.ts + apInvoiceEdit.test.ts. */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
+import { stashPvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 
 const createAsync = vi.fn(async (_b: unknown) => ({ ok: true, invoice: { id: 'api-2', invoice_number: '2990-API-2609-002', total_sen: 42_000 } }));
 const updateAsync = vi.fn(async (_v: unknown) => ({ ok: true, invoice: { id: 'api-1', invoice_number: '2990-API-2609-001', total_sen: 420_000 }, reposted: false }));
@@ -201,7 +202,66 @@ describe('the scanned bill (OCR) and its files', () => {
     await waitFor(() => expect(createAsync).toHaveBeenCalled());
     expect(createAsync.mock.calls[0]![0]).toMatchObject({
       supplierId: 'sup-h', supplierInvoiceRef: 'HVH-0912', invoiceDate: '2026-09-01', dueDate: '2026-09-30',
-      lines: [{ description: 'Rent Sept', debitAccountCode: '900-A001', amountSen: 400_000 }],
+      /* What the reader fills is upper case (owner 2026-09-08: 帮我 fill data 时默认全部大写). */
+      lines: [{ description: 'RENT SEPT', debitAccountCode: '900-A001', amountSen: 400_000 }],
+    });
+    await waitFor(() => expect(uploadAsync).toHaveBeenCalledWith({ invoiceId: 'api-2', file: { name: 'rent.pdf', mime: 'application/pdf', dataBase64: 'b64:rent.pdf' } }));
+  });
+
+  /* 拖进来 upload (owner 2026-09-08): a bill dropped on the scan row reads like a picked one. */
+  test('a bill dropped onto the New form is read like a picked one', async () => {
+    extractAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('New AP invoice'));
+    const zone = within(dialog()).getByLabelText('Drop the bill here');
+    fireEvent.drop(zone, { dataTransfer: { files: [new File(['%PDF'], 'drop.pdf', { type: 'application/pdf' })] } });
+    await waitFor(() => expect(extractAsync).toHaveBeenCalledWith([{ files: [{ name: 'drop.pdf', mime: 'application/pdf', dataBase64: 'b64:drop.pdf' }] }]));
+  });
+});
+
+/* The pile for AP invoices (owner 2026-09-08: 我可能同时 upload 多张 supplier 给的
+   invoice, 所以要分出来一张一张): "Scan bills" beside New opens the pile page,
+   and a bill handed back opens the New form pre-filled, upper case, its pages
+   waiting to attach. */
+describe('the bill pile hands one bill over as one AP invoice', () => {
+  test('Scan bills sits beside New AP invoice and opens the pile page', () => {
+    const view = render(
+      <MemoryRouter initialEntries={['/scm/ap-invoices']}>
+        <Routes>
+          <Route path="/scm/ap-invoices" element={<ApInvoices />} />
+          <Route path="/scm/ap-invoices/scan" element={<div>PILE PAGE</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByText('Scan bills'));
+    expect(screen.getByText('PILE PAGE')).toBeTruthy();
+    view.unmount();
+  });
+
+  test('a bill handed over from the pile opens the New form pre-filled, in upper case, with its pages waiting to attach', async () => {
+    createAsync.mockClear(); uploadAsync.mockClear();
+    stashPvFiles([{ name: 'rent.pdf', mime: 'application/pdf', dataBase64: 'b64:rent.pdf' }]);
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/scm/ap-invoices', state: { apPrefill: {
+        extraction: {
+          vendorName: 'HOUZS VENTURE HOLDING SDN. BHD.', vendorRegNo: null, documentKind: 'invoice', invoiceNumber: 'hvh-0913',
+          invoiceDate: '2026-09-02', dueDate: null, currency: 'MYR', totalSen: 150_000, sstSen: null,
+          lines: [{ description: 'Rent Oct', amountSen: 150_000 }],
+        },
+        supplierMatch: { id: 'sup-h', code: '405-H001', name: 'HOUZS VENTURE HOLDING SDN BHD', confidence: 'contains' },
+        memory: { payeeName: 'HOUZS VENTURE HOLDING SDN BHD', debitAccountCode: '900-A001', purpose: 'SUPPLIER_PAYMENT', timesSeen: 2 },
+      } } }]}><ApInvoices /></MemoryRouter>,
+    );
+    const d = dialog();
+    expect(within(d).getByText(/Read — check every figure/)).toBeTruthy();
+    expect((within(d).getByLabelText('Supplier invoice ref') as HTMLInputElement).value).toBe('HVH-0913');
+    expect((within(d).getByLabelText('line 1 description') as HTMLInputElement).value).toBe('RENT OCT');
+    expect(within(d).getByText(/1 scanned file\(s\) will be attached/)).toBeTruthy();
+    fireEvent.click(within(d).getByText('Save as draft'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalled());
+    expect(createAsync.mock.calls[0]![0]).toMatchObject({
+      supplierId: 'sup-h', supplierInvoiceRef: 'HVH-0913', invoiceDate: '2026-09-02',
+      lines: [{ description: 'RENT OCT', debitAccountCode: '900-A001', amountSen: 150_000 }],
     });
     await waitFor(() => expect(uploadAsync).toHaveBeenCalledWith({ invoiceId: 'api-2', file: { name: 'rent.pdf', mime: 'application/pdf', dataBase64: 'b64:rent.pdf' } }));
   });

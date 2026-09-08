@@ -1,6 +1,42 @@
 ## 70 migrated purchase orders carry a header total of zero while their lines are priced [medium]
 
 <!-- area: AutoCount sync + write-back -->
+<!-- status: fixed -->
+
+> **THE POPULATION IS NOW ZERO — measured 2026-09-08, nothing to repair.**
+>
+> This entry left the repair as the owner's call. He then ruled (recorded in
+> `.github/workflows/rollup-po-header-total.yml`, 2026-09-08): **recompute the
+> header = add up the lines.** The tool was built to that ruling and merged — and
+> **never dispatched, in any mode**, which is how it was still being read as open
+> money work a day later.
+>
+> Dispatched in PLAN mode on 2026-09-08, run
+> [34189363302](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34189363302)
+> (13:06 local, company 1, writes nothing):
+>
+> ```
+> company 1: 574 purchase order(s) read
+>   header already equals its own lines plus tax       71
+>   header is ZERO and the lines carry money  <- roll   0
+>   header is zero and the lines are zero too         503   (nothing to roll up)
+>   header disagrees with its lines but is NOT zero      0
+>   REFUSED, the header carries no currency              0
+>   REFUSED, the LINES disagree with themselves          0
+>   documents this run would write                       0
+> nothing to roll up - no purchase order in this company has a zero header over priced lines.
+> ```
+>
+> **The 70 are gone.** 574 is the same denominator this entry quotes, so it is the
+> same population. The zero-header-over-priced-lines class is empty, and the 503
+> that remain at zero are zero on BOTH sides — the book prices no factory purchase
+> order, which this entry already explains and which is not a defect.
+>
+> **What closed it is not established** (UNKNOWN): the line-discount repair and the
+> source-price stamping both re-sum headers, and either could have swept these up.
+> The population is what was measured, not the cause of its emptiness. Nothing is
+> owed either way — the roll-up tool stays, and a future zero-header document will
+> be found by re-running it.
 
 **Symptom.** The priced-specials money report (run **34138211541**) printed a
 `total now` for every document it listed. Every one of the **70 purchase

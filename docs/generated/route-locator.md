@@ -546,15 +546,15 @@ Total: 1182 route registrations across 152 files.
 - L1407  PATCH  /:id/photos/:photoId
 
 ## backend/src/scm/routes/sales-invoices.ts  (15)
-- L686  GET    /
-- L789  GET    /invoiceable-do-lines
-- L805  GET    /:id
-- L1144  POST   /
-- L1435  POST   /from-dos
-- L1581  POST   /:id/items/from-do/:doId
-- L1584  PATCH  /:id
-- L1781  POST   /:id/items
-- L1783  PATCH  /:id/items/:itemId
+- L687  GET    /
+- L790  GET    /invoiceable-do-lines
+- L806  GET    /:id
+- L1145  POST   /
+- L1436  POST   /from-dos
+- L1582  POST   /:id/items/from-do/:doId
+- L1585  PATCH  /:id
+- L1782  POST   /:id/items
+- L1784  PATCH  /:id/items/:itemId
 - L1928  DELETE /:id/items/:itemId
 - L1992  GET    /:id/payments
 - L2105  POST   /:id/payments

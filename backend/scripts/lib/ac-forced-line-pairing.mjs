@@ -24,16 +24,20 @@
 //
 // ── WHY THIS IS NOT THE THIRD IMPLEMENTATION ───────────────────────────────
 // Every decision this module needs already has a home, and it CALLS them:
+//   · the key a line is compared under, sofa fold and all -> keyless-multiset.mjs
+//     `comparisonKey`, which is also what `bagOf` there uses. The two MUST
+//     canonicalise a line identically or the bag that calls a document clean and
+//     the pairing that stamps its keys would describe different lines.
 //   · the sofa model, folded through SOFA_MODEL_ALIAS  -> item-code-class.mjs
 //     (5535 is its own model and is NOT in that table — never fold it)
-//   · what an ERP compartment code looks like          -> item-code-class.mjs
 //   · the comparison form of a code                    -> ac-mapping-csv.mjs
 //   · the AutoCount -> ERP sheet, read as RFC4180      -> ac-mapping-csv.mjs
 // What is NEW here, and has no home yet, is the PAIRING: turning two bags of
 // lines into an assignment, or into a refusal. `lib/keyless-multiset.mjs`
-// (PR #3195, the 93-document lane) answers the neighbouring question — "are the
+// (#3195, the 93-document lane) answers the neighbouring question — "are the
 // two bags EQUAL" — which needs no assignment at all. This answers "which is
-// which", and only where the document forces it.
+// which", and only where the document forces it. Ideally these keys land and
+// that lane then verifies WITH them instead of around them.
 //
 // ── THE RULE, AND WHY EACH CLAUSE IS SAFE ──────────────────────────────────
 // Lines are bucketed on (canonical item code, quantity). Then, per bucket:
@@ -77,42 +81,24 @@
 // SyntaxError (see lib/ac-mapping-csv.mjs for the same reason).
 // ---------------------------------------------------------------------------
 
-import { modelOf, isCompartmentCode } from "./item-code-class.mjs";
 import { normCode } from "./ac-mapping-csv.mjs";
+import { comparisonKey } from "./keyless-multiset.mjs";
 
-/** The same /SOFA/ substring test check-ac-erp-reconcile.mjs:245 applies to the
- *  BOOK's own ItemCode. Deliberately loose — "AMN-SOFA PILLOW" takes this
- *  branch too — which is why a MODEL is required on both sides before anything
- *  folds, and an accessory whose name merely contains the word stays a plain
- *  code. */
-export const isSofaCode = (s) => /SOFA/i.test(String(s ?? ""));
+export { comparisonKey };
 
 /** Quantities are float8 on the ERP side and decimal in the book. Bucketing on
  *  the raw double would split 1 from 1.0000000001; 4dp is finer than any
  *  quantity either system records and coarser than the noise. */
 const qtyKey = (q) => (Number.isFinite(Number(q)) ? Number(Number(q).toFixed(4)) : 0);
 
-/**
- * The key a line is compared under: its item code, or the SOFA MODEL when the
- * line is one sofa written the other system's way.
- *
- * @param {object} a
- * @param {string} a.code     the code in ERP terms (the book side must already
- *   be translated through the mapping sheet — this module never reads the CSV,
- *   because two readers of one file is the defect lib/ac-mapping-csv.mjs exists
- *   to record)
- * @param {string} [a.rawCode] the book's own untranslated ItemCode
- * @param {"book"|"erp"} a.side
- * @param {boolean} [a.suffixed] ERP side: the importer's own line_suffix flag
- * @returns {{key: string, model: string|null}}
- */
-export function comparisonKey({ code, rawCode, side, suffixed = false }) {
-  const c = normCode(code);
-  if (!c) return { key: "", model: null };
-  const looksSofa = side === "book" ? isSofaCode(rawCode ?? code) : Boolean(suffixed) || isCompartmentCode(c);
-  const model = looksSofa ? modelOf(c) : null;
-  return { key: model ? `SOFA ${model}` : c, model };
-}
+/* The bucket a line falls in: its comparison key and its quantity, joined.
+   JSON.stringify, not a hand-picked separator — an item code legitimately
+   CONTAINS spaces ("DSL-8030 SOFA") and hyphens, so any literal delimiter is
+   either ambiguous or has to be a control character, and a raw one of those in
+   source is what tests/noNulBytesInSource.test.mjs exists to refuse. The key is
+   carried BESIDE the bucket rather than parsed back out of it, so nothing ever
+   has to un-join this string. */
+const bucketOf = (key, qty) => JSON.stringify([key, qtyKey(qty)]);
 
 /**
  * Fold one document's ERP rows into UNITS — the things a book line can be.
@@ -220,25 +206,24 @@ export function pairDocument({ bookLines, erpRows, docNo }) {
       blankBookRows += 1;
       continue;
     }
-    const b = `${key} ${qtyKey(l.qty)}`;
-    if (!bookBuckets.has(b)) bookBuckets.set(b, []);
-    bookBuckets.get(b).push(l);
+    const b = bucketOf(key, l.qty);
+    if (!bookBuckets.has(b)) bookBuckets.set(b, { key, lines: [] });
+    bookBuckets.get(b).lines.push(l);
   }
 
   /** bucket -> ERP units */
   const erpBuckets = new Map();
   for (const u of foldErpUnits(erpRows)) {
-    const b = `${u.key} ${u.qty}`;
-    if (!erpBuckets.has(b)) erpBuckets.set(b, []);
-    erpBuckets.get(b).push(u);
+    const b = bucketOf(u.key, u.qty);
+    if (!erpBuckets.has(b)) erpBuckets.set(b, { key: u.key, units: [] });
+    erpBuckets.get(b).units.push(u);
   }
 
   const storedById = new Map();
   for (const r of erpRows) if (r.storedKey != null && r.storedKey !== "") storedById.set(String(r.id), Number(r.storedKey));
 
-  for (const [b, units] of erpBuckets) {
-    const key = b.slice(0, b.indexOf(" "));
-    const lines = bookBuckets.get(b) ?? [];
+  for (const [b, { key, units }] of erpBuckets) {
+    const lines = bookBuckets.get(b)?.lines ?? [];
 
     const uneven = units.filter((u) => u.uneven);
     if (uneven.length) {
@@ -316,9 +301,9 @@ export function pairDocument({ bookLines, erpRows, docNo }) {
      there is no row to stamp — but it is what a missing line looks like, so the
      caller can report it beside the reconcile's own line-count column. */
   const unmatchedBookLines = [];
-  for (const [b, lines] of bookBuckets) {
+  for (const [b, { key, lines }] of bookBuckets) {
     if (erpBuckets.has(b)) continue;
-    unmatchedBookLines.push({ key: b.slice(0, b.indexOf(" ")), lines: lines.length });
+    unmatchedBookLines.push({ key, lines: lines.length });
   }
 
   return { stamps, refusals, audits, blankBookRows, unmatchedBookLines, docNo };

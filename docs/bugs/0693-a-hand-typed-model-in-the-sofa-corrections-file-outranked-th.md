@@ -83,5 +83,7 @@ AssertionError: expected [ Array(1) ] to deeply equal []
 +   "HC-PO-009712+HC-SO-012629 file=8030 book=5535"
 ```
 
-**Ref.** fix/sofa-book-model-2026-09-08, 2026-09-08. Supersedes the OPEN status
+**Applied.** Per DOCUMENT, never as a whole-file run - the file also holds an unapplied insert for HC-SO-012929 that belongs to another lane. Runs 34188339400 / 34188392136 (Tee), 34188453353 / 34188506374 (Sulaiman), 34188567217 / 34188619213 (KONG KIT YING), each VERIFY OK on a fresh connection with both money columns unchanged. Probe 34188689460 re-read all six documents afterwards: every purchase-order row still dedicated to the sales-order row with the SAME code. Reconcile 34189267879: sales-order item-code differences 10 -> 1, purchase-order 9 -> 0.
+
+**Ref.** fix/sofa-book-model-2026-09-08, 2026-09-08 (#3185, #3190). Supersedes the OPEN status
 of `docs/sofa-model-disagreement-2026-09-08.md`.

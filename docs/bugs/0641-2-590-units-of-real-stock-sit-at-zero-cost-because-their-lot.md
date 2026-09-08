@@ -1,5 +1,8 @@
 ## 2,590 units of real stock sit at zero cost because their lot had already shipped a few [high]
 
+<!-- area: Inventory, costing, FIFO -->
+<!-- status: fixed -->
+
 **Symptom.** The owner, 2026-09-04, on the stock left over after the zero-cost
 backfill: 「库存也要」 — do the stock too — and why: 「要不然我们到时开 SI costing
 全部不对了」. 2,590 pillows and mattress protectors are on the shelf with a cost

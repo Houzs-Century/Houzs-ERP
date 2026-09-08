@@ -51,6 +51,8 @@ import { buildScope, decodeSnapshot } from "./lib/ac-scope.mjs";
 import { grPairGrain } from "./lib/ac-gr-pair-grain.mjs";
 import { readMappingCsv, normCode } from "./lib/ac-mapping-csv.mjs";
 import { planLineKeys } from "./lib/ac-forced-line-pairing.mjs";
+import { erpReconcileTypes } from "./lib/ac-reconcile-erp-sql.mjs";
+import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) {
@@ -189,29 +191,19 @@ async function main() {
   const before = await shapeOf(sql);
   printShape("SHAPE BEFORE", before);
 
-  /* ── THE ERP SIDE ────────────────────────────────────────────────────────
-     The SAME population check-ac-erp-reconcile.mjs compares (its GR block at
-     lines 425-435 and DO block at 465-473): a goods receipt keyed on the pair
-     `linked_ac_gr_docno|purchase_orders.linked_ac_docno`, cancelled receipts
-     excluded, and a delivery order keyed on its own `linked_ac_docno`. Reading
-     a DIFFERENT population would stamp rows the checker never looks at and
-     leave the ones it does — the payoff would then not be measurable, which is
-     the whole point of the exercise. */
-  const grRows = await sql`SELECT g.linked_ac_gr_docno || '|' || p.linked_ac_docno AS ac_no,
-      i.id::text AS id, i.item_code AS code, i.qty_accepted::float8 AS qty,
-      i.line_suffix, i.linked_ac_dtlkey AS stored_key
-    FROM scm.grn_items i
-    JOIN scm.grns g ON g.id = i.grn_id
-    JOIN scm.purchase_orders p ON p.id = g.purchase_order_id
-    WHERE g.company_id = ${CO} AND g.status <> 'CANCELLED'
-      AND g.linked_ac_gr_docno IS NOT NULL AND p.linked_ac_docno IS NOT NULL`;
-
-  const doRows = await sql`SELECT h.linked_ac_docno AS ac_no,
-      i.id::text AS id, i.item_code AS code, i.qty::float8 AS qty,
-      i.line_suffix, i.linked_ac_dtlkey AS stored_key
-    FROM scm.delivery_order_items i
-    JOIN scm.delivery_orders h ON h.id = i.delivery_order_id
-    WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`;
+  /* ── THE ERP SIDE, FROM THE ONE MODULE THAT DEFINES IT ───────────────────
+     `lib/ac-reconcile-erp-sql.mjs` is where "what the ERP holds for an AutoCount
+     document" is stated — which table, which company filter, which rows count as
+     cancelled, and (for a goods receipt) the `linked_ac_gr_docno|linked_ac_docno`
+     PAIR grain that `scm.grns.purchase_order_id` being a single purchase order
+     forces. Restating those SELECTs here would let this writer stamp rows the
+     checker never looks at while leaving the ones it does — and the payoff
+     could then not be measured, which is the whole point of the exercise. Same
+     module, same rows, three callers now. */
+  const erpTypes = erpReconcileTypes({ sql, CO, PDATE: soProcessingDateFragment(sql) });
+  const linesOf = (t) => erpTypes.find((c) => c.t === t).lines();
+  const grRows = await linesOf("GR");
+  const doRows = await linesOf("DO");
 
   /* The DENOMINATORS, stated whole so no number below floats free. */
   const [grAll] = await sql`SELECT count(*)::int n,
@@ -230,10 +222,10 @@ async function main() {
       if (!m.has(r.ac_no)) m.set(r.ac_no, []);
       m.get(r.ac_no).push({
         id: r.id,
-        code: r.code,
+        code: r.item_code,
         qty: r.qty,
         suffixed: Boolean(r.line_suffix),
-        storedKey: r.stored_key,
+        storedKey: r.ac_dtlkey,
       });
     }
     return m;

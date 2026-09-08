@@ -1,6 +1,60 @@
 ## A migrated goods receipt cancelled reversing 879 units it never received [critical]
 
 <!-- area: Cutover + migrated data -->
+<!-- status: fixed -->
+
+> **ANSWERED 2026-09-08: STOCK IS CLEAN. It never happened.**
+>
+> Run [34189651181](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34189651181),
+> 13:11 local, read-only, company 1 — the probe below, after the defect that
+> stopped it was fixed:
+>
+> ```
+> movements behind the 473 migrated goods receipts:   0 row(s), 0 units
+> movements behind the 173 migrated delivery orders:  0 row(s), 0 units
+> STOCK — CLEAN. 0 movement rows behind 646 migrated documents
+>   (473 receipts + 173 delivery orders). No phantom movement was ever written;
+>   the guard is preventive, not a repair.
+> CANCEL audit rows on migrated documents: 0
+> ```
+>
+> **Nothing to repair.** Q2 (the movement question, both source types) is 0, Q4
+> (the audit question, asked separately on purpose because the two can disagree
+> in both directions) is 0. The defect was reachable and was never reached.
+>
+> **What it would have cost, had it fired** — the same run's Q5: cancelling every
+> live migrated goods receipt would have written reversing OUTs for **1,334
+> units**, and editing one line on every live migrated delivery order for
+> **1,245 units**. Neither can happen now.
+>
+> Getting here required fixing the instrument first: it had **never once been
+> dispatched** and crashed on Q2 the first time it was
+> (`docs/bugs/0698-the-migrated-cancel-exposure-probe-could-never-have-answered.md`).
+
+<details>
+<summary>The earlier, partial answer — kept because the sequence is the lesson</summary>
+
+> **PARTLY ANSWERED 2026-09-08 — and the instrument was broken.** This entry's
+> one remaining action was the read-only probe it names, recorded here as
+> *"UNKNOWN at the time of writing"*. That probe had **never been dispatched
+> once**. It was dispatched on 2026-09-08 (run
+> [34189305983](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34189305983),
+> 13:05 local) and **crashed on the very question that matters** —
+> `COALESCE` over an enum column is refused by Postgres before any row is read,
+> so it could never have worked. Traced and fixed in
+> `docs/bugs/0698-the-migrated-cancel-exposure-probe-could-never-have-answered.md`.
+>
+> **What it did establish (Q1, company 1):** 473 migrated goods receipts, all
+> POSTED, **0 CANCELLED**; 173 migrated delivery orders, all DELIVERED, **0
+> CANCELLED**. By the script's own decision table that rules out the CANCEL path
+> having fired at all — which is the path this entry is named for.
+>
+> **Still UNKNOWN at that point:** the delivery-order LINE-EDIT path writes a
+> reversing movement WITHOUT a cancel, so a zero cancel count did not clear it.
+> That is Q2, and Q2 is the query that crashed — settled by the re-run quoted
+> above.
+
+</details>
 
 **Symptom.** Not reported by staff — found by reading `grns.ts` on 2026-09-07,
 the night before the Company 1 go-live, and reachable by anyone with the Cancel

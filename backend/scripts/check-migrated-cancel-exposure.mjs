@@ -103,7 +103,7 @@ async function main() {
   say("cancel/edit defect having fired, or the migrated_no_stock claim being false.");
 
   const grnMv = await sql`
-    SELECT COALESCE(m.movement_type, '?') AS status, COUNT(*)::int AS n,
+    SELECT COALESCE(m.movement_type::text, '?') AS status, COUNT(*)::int AS n,
            COALESCE(SUM(ABS(m.qty)), 0)::float8 AS units
       FROM scm.inventory_movements m
       JOIN scm.grns g ON g.id::text = m.source_doc_id::text
@@ -121,7 +121,7 @@ async function main() {
      buildDoReversalRows). Asking only about 'DO' would report a clean book on a
      document that had been reversed. */
   const doMv = await sql`
-    SELECT m.source_doc_type || ':' || COALESCE(m.movement_type, '?') AS status,
+    SELECT m.source_doc_type || ':' || COALESCE(m.movement_type::text, '?') AS status,
            COUNT(*)::int AS n, COALESCE(SUM(ABS(m.qty)), 0)::float8 AS units
       FROM scm.inventory_movements m
       JOIN scm.delivery_orders d ON d.id::text = m.source_doc_id::text

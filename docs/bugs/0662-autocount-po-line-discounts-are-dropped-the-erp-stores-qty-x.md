@@ -1,5 +1,27 @@
 ## AutoCount PO line discounts are dropped: the ERP stores qty x unit price undiscounted [high]
 
+<!-- area: Purchase orders + GRN + PI -->
+<!-- status: fixed -->
+
+> **RESOLVED 2026-09-07/08. Corrected 2026-09-08.**
+>
+> This entry recorded the defect and left the repair as the owner's decision,
+> because it moves money on live documents. **He decided: 修 —— 跟 AutoCount
+> 一模一样.** The repair was built, planned and applied: run
+> [34116301278](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34116301278)
+> wrote 89 lines / 10 headers (2026-09-07 19:23 local), and run
+> [34187837941](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34187837941)
+> wrote a further 15 lines / 1 header (2026-09-08 12:41 local) for the delivered
+> order the first run's scope walk had missed. See
+> `docs/bugs/0664-the-po-line-discount-repair-planned-but-not-applied-10-live.md`.
+>
+> **The EXPORT half of this entry is fixed too**: `export-ac-reconcile-truth.mjs`
+> now selects the discount columns and both the document- and local-currency
+> amounts per header, which is what made the CNY defect (0665) visible at all.
+>
+> The words "not yet fixed" below refer to the state on 2026-09-07 and are left
+> in place as the record. They are no longer the state.
+
 **Symptom.** A migrated purchase order shows a bigger line amount and a bigger
 document total than the same purchase order in AutoCount. `PO-009948` line 16 is
 one unit of `AK-ARMOUR MATT (K)` at a unit price of RM 1,880.00; AutoCount totals

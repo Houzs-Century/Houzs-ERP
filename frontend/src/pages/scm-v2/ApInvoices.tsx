@@ -30,9 +30,9 @@
 // read 1,800.00).
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Plus, Printer } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Camera, Plus, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useAccounts, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
@@ -41,7 +41,8 @@ import {
   useApInvoiceFiles, useUploadApInvoiceFile, useDeleteApInvoiceFile, fetchApInvoiceFileBlobUrl,
   type ApListKind, type ApListRow, type ApInvoiceHeader, type ApInvoiceLine,
 } from '../../vendor/scm/lib/ap-invoice-queries';
-import type { PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import type { PvFilePayload, BillExtraction, VendorMemory } from '../../vendor/scm/lib/payment-voucher-queries';
+import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { generateApListingPdf } from '../../vendor/scm/lib/ap-invoice-listing-pdf';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { Modal } from '../../vendor/scm/components/Modal';
@@ -52,7 +53,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { ApInvoiceForm, emptyApForm, type ApFormMode, type ApFormSubmit, type ApFormValues } from './ApInvoiceForm';
+import { ApInvoiceForm, emptyApForm, formFromExtraction, scanNoteFor, type ApFormMode, type ApFormSubmit, type ApFormValues } from './ApInvoiceForm';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
@@ -94,7 +95,11 @@ const fromDetail = (d: Detail, copy: boolean): ApFormValues => ({
   lines: d.lines.map((l, i) => ({ rid: i + 1, description: l.description ?? '', debitAccountCode: l.debit_account_code, amountSen: l.amount_sen })),
 });
 
-type FormState = { mode: ApFormMode; initial: ApFormValues; invoiceId?: string; invoiceNumber?: string; posted?: boolean; paidSen?: number };
+type FormState = {
+  mode: ApFormMode; initial: ApFormValues; invoiceId?: string; invoiceNumber?: string; posted?: boolean; paidSen?: number;
+  /** A bill handed over from the pile page: its read pages and the reader's sentence. */
+  scan?: { files: PvFilePayload[]; note: string };
+};
 
 export const ApInvoices = () => {
   const askConfirm = useConfirm();
@@ -142,6 +147,25 @@ export const ApInvoices = () => {
   /* The one form — New, Edit, Copy — in its own pop-out over the list. */
   const [form, setForm] = useState<FormState | null>(null);
   const openNew = () => setForm({ mode: 'new', initial: emptyApForm() });
+
+  /* The pile page's hand-off (/scm/ap-invoices/scan → here): ONE BILL = ONE AP
+     INVOICE (owner 2026-09-08: 每张单一张 ap invoice … 分出来一张一张). The
+     bill's bytes ride the module stash, not location.state (pv-file-handoff.ts);
+     the state is consumed once and cleared, so a refresh does not re-open it. */
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    const st = location.state as { apPrefill?: { extraction: BillExtraction; supplierMatch: { id: string; name: string } | null; memory: VendorMemory | null } } | null;
+    if (!st?.apPrefill) return;
+    const { extraction, supplierMatch, memory } = st.apPrefill;
+    setForm({
+      mode: 'new',
+      initial: { ...emptyApForm(), ...formFromExtraction(extraction, supplierMatch, memory) },
+      scan: { files: takePvFiles(), note: scanNoteFor({ extraction, supplierMatch, memory }) },
+    });
+    navigate(location.pathname, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
   const openEdit = (d: Detail) => setForm({
     mode: 'edit', initial: fromDetail(d, false), invoiceId: d.invoice.id, invoiceNumber: d.invoice.invoice_number,
     posted: d.invoice.status !== 'DRAFT', paidSen: Number(d.invoice.paid_sen),
@@ -240,9 +264,17 @@ export const ApInvoices = () => {
         eyebrow="Finance"
         title="AP Invoices"
         actions={canCreate ? (
-          <button type="button" onClick={openNew} style={linkBtn}>
-            <Plus {...ICON} /> New AP invoice
-          </button>
+          <span style={{ display: 'inline-flex', gap: 'var(--space-4)', alignItems: 'center' }}>
+            {/* The pile: many supplier bills at once, read and split one AP
+                invoice each (owner 2026-09-08: scan bill 的按钮可以直接做在
+                + new ap invoice 附近吗). */}
+            <button type="button" onClick={() => navigate('/scm/ap-invoices/scan')} style={linkBtn}>
+              <Camera {...ICON} /> Scan bills
+            </button>
+            <button type="button" onClick={openNew} style={linkBtn}>
+              <Plus {...ICON} /> New AP invoice
+            </button>
+          </span>
         ) : undefined}
       />
 
@@ -385,9 +417,11 @@ export const ApInvoices = () => {
       {form && (
         <Modal title={formTitle} onClose={() => setForm(null)} ariaLabel={formTitle}>
           <ApInvoiceForm
-            key={`${form.mode}-${form.invoiceId ?? 'new'}`}
+            key={`${form.mode}-${form.invoiceId ?? 'new'}${form.scan ? '-scan' : ''}`}
             mode={form.mode}
             initial={form.initial}
+            initialFiles={form.scan?.files}
+            initialNote={form.scan?.note}
             suppliers={suppliersQ.data ?? []}
             suppliersLoading={suppliersQ.isLoading}
             lineAccounts={lineAccounts}
