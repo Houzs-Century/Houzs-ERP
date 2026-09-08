@@ -1731,31 +1731,41 @@ one home, `scm/lib/so-is-migrated.ts`, and it fails CLOSED.
 | | |
 |---|---|
 | Switch | `scm.app_config` key **`scm.migrated_so_lock`** — `off` / `all` / company ids. Seeded `'1'` by `20260908T0014_scm_migrated_so_lock.sql`. Effective in 30s, no deploy. |
-| Guard | `scm/lib/migrated-so-readonly.ts`, mounted `mfgSalesOrders.use('*', migratedSoReadonly())` — at the ROUTER, one line below the mirrored-SO guard, for the argument that guard already makes: ~22 write routes reach their SO through the `:docNo` segment and a per-handler guard leaves the next one added unguarded. |
-| Decision | `scm/lib/migrated-so-lock.ts` — pure, unit-tested. `isMigrated: boolean \| null` is REQUIRED, and `null` ("the read failed") LOCKS. |
+| Guard | `backend/src/scm/lib/migrated-so-readonly.ts`, mounted in `backend/src/scm/index.ts` as `scm.use("/mfg-sales-orders/*", migratedSoReadonly())` — beside the write freeze it stacks with, and at the PREFIX rather than per handler: ~22 write routes reach their SO through the `:docNo` segment and a per-handler guard leaves the next one added unguarded. |
+| Decision | `backend/src/scm/lib/migrated-so-lock.ts` — pure, unit-tested. `isMigrated: boolean \| null` is REQUIRED, and `null` ("the read failed") LOCKS. |
 | Refusal | **`409 so_migrated_readonly`**, sentence on BOTH `reason` and `message`, curated in `authed-fetch.ts` `ERROR_CODE_MESSAGES`. NOT 503: a migrated order is not briefly away, and `api/client.ts` re-sends a 503 four times. |
 | Bypass | `*` / `scm.admin` — the SAME cohort as the write freeze, so there is one answer to "who can still save", not two. |
 | Never gated | Every GET. `POST /` (create) — it carries no doc number in its path, which is 「只开新单」 in one line of control flow. |
 
 **What the two front ends read.** `GET /:docNo` stamps `migrated_readonly` +
-`migrated_readonly_reason` on `salesOrder`, and the LIST stamps
-`migrated_readonly` per row — both computed by the SAME `migratedSoReadonlyState`
-the middleware refuses with, so a button and its endpoint cannot disagree.
+`migrated_readonly_reason` on `salesOrder` (`withSoMigratedReadonly`), and the
+LIST stamps `migrated_readonly` per row (`migratedSoListGate`) — both computed by
+the SAME `migratedSoReadonlyState` the middleware refuses with, so a button and
+its endpoint cannot disagree.
 `linked_ac_docno` rides the DETAIL select and the list's base-table enrichment
 read, never `HEADER`: `HEADER` also feeds the list, which reads the
 payment-totals VIEW, and a column that view does not enumerate 500s the page
 (VIEW-TRAP, above).
 
-The shared frontend layer is `vendor/scm/lib/so-detail-gates.ts` —
-`migratedReadonly()` / `migratedReadonlyReason()`, consumed by
-`SalesOrderDetailV2` (banner + Edit + payments), `SalesOrderDetail` (banner +
-`isLocked` + Save + Cancel + payments), `MobileSODetail` (banner + `isLocked` +
-payments), `MobileNewSO` (banner + `lineEditingBlocked` / `addressIdentityLocked`
-/ `scheduleDatesLocked` + Save) and `row-menus.ts` (a migrated row's menu drops
-to Open + Print). It is its OWN predicate, deliberately NOT folded into
-`isLocked`: `isLocked` takes `unlockOverride`, and the desktop Override button
-must not be able to reach this lock — the reasons are `sync-ac-delta` and
-unreconciled AutoCount payments, and no local certainty settles either.
+**The shared frontend layer is `frontend/src/vendor/scm/lib/so-detail-gates.ts`**
+— `migratedReadonly()` / `migratedReadonlyReason()`. It is its OWN predicate,
+deliberately NOT folded into `isLocked`: `isLocked` takes `unlockOverride`, and
+the desktop Override button must not be able to reach this lock — the reasons are
+`sync-ac-delta` and unreconciled AutoCount payments, and no local certainty
+settles either. The five surfaces that read it, all of which change together:
+
+| Surface | What it gates |
+|---|---|
+| `frontend/src/pages/scm-v2/SalesOrderDetailV2.tsx` | banner (`MigratedReadonlyBanner`), Edit button + its hint, the payments card |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | the existing lock banner names the migrated lock FIRST and its **Override is disabled**; `isLocked`, Save / Submit-amendment, Cancel, payments |
+| `frontend/src/mobile/MobileSODetail.tsx` | the same lock banner, `isLocked`, Edit / Edit Draft / Create, Cancel, payments |
+| `frontend/src/mobile/MobileNewSO.tsx` | banner, `lineEditingBlocked` / `addressIdentityLocked` / `scheduleDatesLocked`, amendment mode, the Save button (reads "View only") |
+| `frontend/src/pages/scm-v2/row-menus.ts` | a migrated row's right-click menu drops to **Open + Print** — no Edit, Confirm, Close, Reopen, Hold or Cancel |
+
+One banner component for all of them where a banner is new:
+`frontend/src/vendor/scm/components/MigratedReadonlyBanner.tsx`. The refusal
+sentence for a write that reaches the API anyway is curated in
+`frontend/src/vendor/scm/lib/authed-fetch.ts`.
 
 **Opening them again is ONE statement**, when collections are corrected:
 
