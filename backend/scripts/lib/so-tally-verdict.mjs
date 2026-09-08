@@ -506,17 +506,23 @@ export function renderVerdict(v, { show = 20, type = "SO" } = {}) {
   if (v.reconcileSummary?.erpZeroMoney) {
     p(`   ${v.reconcileSummary.erpZeroMoney} document(s) carrying RM 0.00 on migrated paperwork — your decision 「GR 0 没关系」.`);
   }
-  /* NOT a money difference, and STILL a difference. A foreign document's total
-     is compared in its own currency, so the money can be right to the sen while
-     the ERP's currency column reads MYR — which is wrong, locks on the
-     `currency` axis above, and is deliberately NOT in the SUMMARY's gap total.
-     Printed here so the two statements cannot be read as contradicting: the
-     money agrees, the currency does not. */
+  /* A foreign document is COMPARED IN ITS OWN CURRENCY, which is a fact about
+     the comparison and not yet a verdict about the document. Whether the ERP's
+     own currency column agrees is a separate question, answered on the CURRENCY
+     axis above.
+
+     THIS SENTENCE USED TO ANSWER IT HERE, and wrongly — it said "what is wrong
+     is the ERP's own currency column", which is the same unread assertion that
+     had the reconcile calling HC-PO-009335 'MYR' for nineteen hours after it was
+     repaired to CNY (docs/bugs/0721). A count of documents compared in their own
+     currency says nothing about whether their currency code is right. */
   if (v.reconcileSummary?.foreign) {
     p(
       `   ${v.reconcileSummary.foreign} document(s) are NOT in ${"MYR"}. Their totals are compared in the ` +
-        "document's own currency and may be right to the sen; what is wrong is the ERP's own currency column. " +
-        "That is counted on the CURRENCY axis above, never as money.",
+        "document's own currency, so the money can be right to the sen. Whether the ERP's currency column " +
+        "ALSO agrees with the book is checked separately and counted on the CURRENCY axis above — never as " +
+        "money, because reading a local-currency total as the document's is what made an exchange rate look " +
+        "like a discount.",
     );
   }
 

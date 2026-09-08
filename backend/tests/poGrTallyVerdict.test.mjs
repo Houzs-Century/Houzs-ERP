@@ -131,7 +131,19 @@ describe("THE CURRENCY TRAP — 'not a money gap' is not 'not a difference'", ()
   it("the non-MYR population is printed with WHY it is not money", () => {
     const out = render([row()], "PO", { population: { foreign: 1 } });
     expect(out).toMatch(/1 document\(s\) are NOT in MYR/);
-    expect(out).toMatch(/counted on the CURRENCY axis above, never as money/);
+    expect(out).toMatch(/counted on the CURRENCY axis above/);
+  });
+
+  /* THE REPORT MUST NOT REPEAT THE BUG IT EXISTS TO CATCH. This sentence used
+     to read "what is wrong is the ERP's own currency column" — the same unread
+     assertion that had the reconcile calling HC-PO-009335 'MYR' for nineteen
+     hours after it was repaired to CNY (docs/bugs/0721). A count of documents
+     compared in their own currency says nothing about whether their currency
+     code is right. */
+  it("does not assert the ERP's currency is wrong just because the document is foreign", () => {
+    const out = render([row()], "PO", { population: { foreign: 1 } });
+    expect(out).not.toMatch(/what is wrong is the ERP's own currency column/);
+    expect(out).toMatch(/Whether the ERP's currency column ALSO agrees with the book is checked separately/);
   });
 
   it("a corpus with no foreign document prints no such line", () => {
