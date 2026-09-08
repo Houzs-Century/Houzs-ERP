@@ -441,6 +441,12 @@ export const createDebtorReceiptHandler = async (c: any): Promise<Response> => {
   }
   const totalSen = allocs.reduce((s, a) => s + a.amountSen, 0);
   const receiptDate = dateOrNull(body.receiptDate) ?? todayMyt();
+  /* 录入即过账 from the Receipts page (owner 2026-09-08: 用这个方式 — the
+     Other Debtor's money is received where every other ringgit in is, and
+     posts on Post like a sundry receipt). The four layers stay the Other
+     Debtors page's own door; this one stamps all three marks with the same
+     hand and posts in the same call. */
+  const postNow = body.postNow === true;
 
   const receiptNumber = await mintMonthlyDocNo(sb, 'acc_debtor_receipts', 'receipt_number', `${companyDocPrefix(c)}ODR-${docMonthTag(receiptDate)}`);
   const { data: receipt, error: insErr } = await sb.from('acc_debtor_receipts').insert({
@@ -462,7 +468,22 @@ export const createDebtorReceiptHandler = async (c: any): Promise<Response> => {
     await sb.from('acc_debtor_receipts').delete().eq('company_id', coId).eq('id', receipt.id);
     return c.json({ error: 'save_failed', reason: aErr.message }, 500);
   }
-  return c.json({ ok: true, receipt: { id: receipt.id, receiptNumber: receipt.receipt_number, totalSen } }, 201);
+  const made = { id: receipt.id, receiptNumber: receipt.receipt_number, totalSen };
+  if (!postNow) return c.json({ ok: true, receipt: made }, 201);
+  if (coId == null) return c.json({ error: 'no_company', message: 'No active company resolves for this session.', receipt: made }, 409);
+
+  const s = stamp(c);
+  const { error: markErr } = await sb.from('acc_debtor_receipts').update({
+    submitted_at: s.at, submitted_by: s.by, checked_at: s.at, checked_by: s.by, approved_at: s.at, approved_by: s.by,
+  }).eq('company_id', coId).eq('id', receipt.id);
+  if (markErr) return c.json({ error: 'save_failed', reason: markErr.message, receipt: made }, 500);
+  const { data: fresh, error: freshErr } = await sb.from('acc_debtor_receipts').select('*').eq('company_id', coId).eq('id', receipt.id).maybeSingle();
+  if (freshErr || !fresh) return c.json({ error: 'load_failed', reason: freshErr?.message ?? 'receipt vanished', receipt: made }, 500);
+  /* A failure past this point leaves a stamped DRAFT the Other Debtors page
+     can re-approve (resume), so the number and the allocations are not lost. */
+  const posted = await postDebtorReceipt(c, sb, coId, fresh as Row);
+  if ('resp' in posted) return posted.resp;
+  return c.json({ ok: true, receipt: made, posted: true, jeNo: posted.jeNo }, 201);
 };
 
 const loadReceipt = async (c: any): Promise<{ receipt: Row } | { resp: Response }> => {
@@ -567,9 +588,17 @@ export const approveDebtorReceiptHandler = async (c: any): Promise<Response> => 
       .update({ approved_at: s.at, approved_by: s.by }).eq('company_id', r.company_id).eq('id', r.id);
     if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   }
+  const posted = await postDebtorReceipt(c, sb, coId, r);
+  if ('resp' in posted) return posted.resp;
+  return c.json({ ok: true, jeNo: posted.jeNo });
+};
 
+/* The posting itself — Dr bank / Cr AR_OTHER (source ODR), then the ticked
+   bills knocked off — shared by the fourth layer's Approve and by the
+   Receipts page's post-now door, so both book the identical entry. */
+const postDebtorReceipt = async (c: any, sb: any, coId: number, r: Row): Promise<{ jeNo: string } | { resp: Response }> => {
   const { data: debtor, error: dErr } = await sb.from('acc_debtors').select('name').eq('company_id', coId).eq('id', r.debtor_id).maybeSingle();
-  if (dErr) return c.json({ error: 'load_failed', reason: dErr.message }, 500);
+  if (dErr) return { resp: c.json({ error: 'load_failed', reason: dErr.message }, 500) };
   const roles = await resolveRoles(sb, coId);
   const lines: RuleLine[] = [
     {
@@ -591,19 +620,19 @@ export const approveDebtorReceiptHandler = async (c: any): Promise<Response> => 
     narration: `Debtor receipt ${r.receipt_number} — ${(debtor as Row | null)?.name ?? ''}`,
     lines,
   });
-  if (!post.ok) return c.json({ error: 'post_failed', reason: (post as { reason?: string }).reason ?? post.status }, 500);
+  if (!post.ok) return { resp: c.json({ error: 'post_failed', reason: (post as { reason?: string }).reason ?? post.status }, 500) };
 
   /* Knock the ticked bills off — clamped at each bill's outstanding, the
      pv-settle shape (a concurrent receipt may have landed first). */
   const { data: allocs, error: aErr } = await sb.from('acc_debtor_receipt_allocations')
     .select('bill_id, amount_sen').eq('company_id', coId).eq('receipt_id', r.id);
-  if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
+  if (aErr) return { resp: c.json({ error: 'load_failed', reason: aErr.message }, 500) };
   for (const a of (allocs ?? []) as Row[]) {
     const { data: bill, error: billErr } = await sb.from('acc_debtor_bills')
       .select('id, total_sen, received_sen').eq('company_id', coId).eq('id', a.bill_id).maybeSingle();
     /* Fail LOUD: the journal already posted; a bill we cannot read is a
        knock-off we cannot prove — the operator re-approves and it resumes. */
-    if (billErr) return c.json({ error: 'load_failed', reason: billErr.message }, 500);
+    if (billErr) return { resp: c.json({ error: 'load_failed', reason: billErr.message }, 500) };
     if (!bill) continue;
     const room = Number(bill.total_sen) - Number(bill.received_sen ?? 0);
     const applied = Math.min(room, Number(a.amount_sen));
@@ -616,13 +645,13 @@ export const approveDebtorReceiptHandler = async (c: any): Promise<Response> => 
       received_sen: nextReceived,
       status: nextReceived >= Number(bill.total_sen) ? 'PAID' : 'POSTED',
     }).eq('company_id', coId).eq('id', bill.id);
-    if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+    if (upErr) return { resp: c.json({ error: 'save_failed', reason: upErr.message }, 500) };
   }
 
   const { error: doneErr } = await sb.from('acc_debtor_receipts')
     .update({ status: 'POSTED', posted_at: now() }).eq('company_id', coId).eq('id', r.id);
-  if (doneErr) return c.json({ error: 'save_failed', reason: doneErr.message }, 500);
-  return c.json({ ok: true, jeNo: (post as Row).jeNo });
+  if (doneErr) return { resp: c.json({ error: 'save_failed', reason: doneErr.message }, 500) };
+  return { jeNo: String((post as Row).jeNo ?? '') };
 };
 
 /* ── Router ───────────────────────────────────────────────────────────────── */

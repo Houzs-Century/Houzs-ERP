@@ -2551,20 +2551,36 @@ prints one number for all of them (`Blank zero-value lines dropped: 17`), which
 is why the owner was answering a count rather than a list
 (`docs/bugs/0711-the-cutover-import-dropped-seventeen-book-lines-behind-one-c.md`).
 
-Measured over all 14,041 lines of `backend/scripts/data/ac-outstanding-so.json.gz`,
-the file the importer read — 22 code-less lines, 5 priced, 17 dropped:
+**THE RESOLVER RUNS FIRST, and a reader of the export alone gets that
+backwards.** `code-less AND zero-priced` is the CANDIDATE set, not the dropped
+set: a line in it that the live pick list can answer was imported as GOODS and
+the rule never saw it. Over all 14,041 lines of
+`backend/scripts/data/ac-outstanding-so.json.gz` the candidate set is 22
+code-less lines — 5 priced, 17 unpriced — and asked against the live pick list
+(probe run `34213244770`) **2 of the 17 resolve**, both on `SO-000015`, both
+already in the ERP. Reading the file alone would have had them written a second
+time onto a live order. What is actually dropped is 15:
 
 | class | n | who owns it |
 | --- | --- | --- |
-| NAMED GOODS the resolver could not read | 2 | the MATCHER. The drop is a resolver miss wearing the rule's clothes |
-| a build INSTRUCTION on a line of its own (`COLOUR : 885-4`, `LEG: FOLLOW DISPLAY`) | 2 | the FIELD it belongs on — a colour is a variant, never a product line |
-| the book states NOTHING (no code, no name, no money) | 13 | nobody, for the 12 at quantity 0. The 13th, `SO-011384` at quantity **4**, is the owner's: the book orders four of something it never names |
+| the book states NOTHING and quantity is 0 | 12 | nobody — `lib/ac-blank-book-row.mjs` rules the ERP holding no row for one as the two sides AGREEING |
+| a build INSTRUCTION on a line of its own (`COLOUR : 885-4`, `LEG: FOLLOW DISPLAY`) | 2 | the FIELD it belongs on — a colour is a variant, never a product line. Neither reached the ERP by any route, and `885-4` is in `scm.fabric_colours` **0 times**, so there is no colour field to write it to |
+| the book states nothing and ORDERS FOUR (`SO-011384` dtl 783795) | 1 | the OWNER — the original order slip is the only source |
 
 `backend/scripts/probe-dropped-book-lines.mjs` +
 `.github/workflows/probe-dropped-book-lines.yml` is the read-only way to re-ask
-this — it classifies every dropped line, runs the LIVE pick list through the
-resolver above so a miss reports the branch it fell out of, and says per document
-what the ERP holds and how many of its rows still carry an AutoCount line key.
+this. It asks the live pick list through the resolver above BEFORE it calls
+anything dropped, classifies what is left, says per document what the ERP holds,
+searches every field that could carry an instruction, and reports the PROVENANCE
+— how many rows still carry an AutoCount line key, and what the audit log says.
+
+**A keyless row on a migrated sales order is usually the import's own, not a
+hand edit.** `backfill-ac-line-keys.mjs` buckets by the TRANSLATED item code, so
+a code-less book line has no mapping row, is skipped, and the ERP row minted for
+it can never be keyed. Every keyless row on the five documents measured
+corresponds to a code-less book line, and their audit logs are empty
+(`docs/bugs/0712-a-code-less-book-line-can-never-be-keyed-so-the-eight-unjudg.md`).
+Do not read the missing key as evidence that somebody re-entered the line.
 
 **The other importers do NOT share this rule, and the difference matters.**
 `import-ac-outstanding-po.mjs` never drops a code-less purchase line — it records

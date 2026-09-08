@@ -181,8 +181,14 @@ for (const cfg of TYPES) {
        twice is what made these two scripts answer 25 and 26 for the same
        population at the same moment on 2026-09-08 (runs 34191731557 and
        34191733632) — the exact failure the shared SELECTs were extracted to
-       prevent, one layer up. */
-    const { lines: acLines } = splitBlankBookRows(B.lines.get(ac) || []);
+       prevent, one layer up.
+
+       The rule grew a SECOND ARM on 2026-09-08 (owner ruling): a row that
+       carries a quantity and still states no item code, no description, no
+       build text and no money is also nothing. That arm reads the Desc2, which
+       is why `B.desc2` is passed here — the module REFUSES to answer without
+       it, so this call site cannot silently drift back to the narrower rule. */
+    const { lines: acLines } = splitBlankBookRows(B.lines.get(ac) || [], B.desc2);
     const erpLines = erpLinesByAc.get(ac) || [];
 
     /* THE POPULATION, restated EXACTLY as check-ac-erp-reconcile.mjs states it

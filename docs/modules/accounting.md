@@ -460,6 +460,22 @@ Excel; the month picker, the count and the total ride in its toolbar and the
 total follows what is filtered. New / Edit open in the pop-out over the list
 (`Modal`, the AP invoice's) — the form used to be pushed in above the table,
 which sent the operator to the top of a long list (如果我在下面我要滑到很上面).
+**The same New receipt takes an Other Debtor's money (2026-09-08, owner:
+不可能链接起来吗? 想 pv 也可以付 AP invoice, expense — receipt 页我也希望这样 →
+用这个方式).** A kind switch — Sundry income / Other Debtor — and in the
+debtor kind the registry (active debtors, what each owes), the debtor's open
+bills with tick-in-full or a typed partial (the Other Debtors page's own
+picker), Received into, date; Post raises the ODR through
+`POST /other-debtors/:id/receipts` with `postNow: true`
+(`createDebtorReceiptHandler`, `backend/src/scm/routes/other-debtors.ts`),
+which stamps the three marks with the one hand that keyed it and books the
+identical entry the fourth layer's Approve writes — `postDebtorReceipt`, Dr
+bank / Cr 305, bills knocked off — in the same call (录入即过账; no four layers
+on this door; the Other Debtors page's own raise still starts at Draft). The
+bill itself is still raised on Other Debtors. Contracts:
+`backend/tests/otherDebtors.test.ts` ("postNow books the receipt in the same
+call", "without postNow nothing changes"), `Receipts.test.tsx` ("an Other
+Debtor's money is received here").
 Contracts:
 `backend/tests/receipts.test.ts` ("no month asked for lists every month"),
 `Receipts.test.tsx` ("opens on every month").
