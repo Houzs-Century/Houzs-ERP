@@ -22,7 +22,7 @@ test("the classifier passes its own planted cases — the runner refuses if it d
 
 test("every planted case is driven through the SAME function the runner calls", () => {
   for (const c of selfTestCases()) assert.equal(causeForChild(c.c), c.want, c.name);
-  for (const c of groupSelfTestCases()) assert.equal(causeForGroup(c.kids).cause, c.want, c.name);
+  for (const c of groupSelfTestCases()) assert.equal(causeForGroup(c.kids, c.counters ?? null).cause, c.want, c.name);
 });
 
 test("a defect and a decision are told apart, not summed", () => {

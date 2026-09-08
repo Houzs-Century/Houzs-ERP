@@ -2178,6 +2178,26 @@ the bucket it feeds. The word **TALLIED** is decided in exactly one place —
 `isTallied` in `backend/scripts/lib/so-tally-verdict.mjs`, zero `work` — so no
 summary can soften it.
 
+**A model the OWNER decided is a declared class, not a difference** (since
+2026-09-08, `docs/bugs/0727-the-owner-s-own-model-decision-was-still-counted-as-a-differ.md`).
+`owner-model-override` is a `NOTE_CLASSES` member in
+`backend/scripts/lib/so-verdict-derive.mjs`, labelled in `DECLARED_LABEL` in
+`backend/scripts/lib/so-tally-verdict.mjs`, and reached only through
+`VERDICT.reclassify` — so it can never make a document `clean` that the run did
+not compare. It fires ONLY where the owner-approved corrections file carries a
+`modelOverride` naming BOTH the book model it overrides AND who decided it
+(`backend/scripts/lib/ac-model-override.mjs`, applied by
+`backend/scripts/lib/ac-model-override-apply.mjs`). It EXPIRES by itself: the
+book model is re-checked every run, so refreshing the cut sends the line back to
+`work` with nobody editing anything.
+
+The same declaration also GUARDS the repair lane.
+`planSoItemCodeCorrections` (`backend/scripts/lib/so-item-code-correction.mjs`)
+takes a REQUIRED `overrideIndex` and refuses a row the owner has decided —
+without it, `correct-so-item-code-from-autocount.mjs` with `POPULATION=all`
+plans a correction that would UNDO his ruling (measured on prod run
+34258437955: 2 planned, 1 of them his).
+
 **It measures nothing.** `check-so-tally.mjs` runs
 `check-ac-erp-reconcile.mjs`, reads the verdict file that run writes, and
 classifies its rows; then it parses the reconcile's own printed `SO VERDICT` and
