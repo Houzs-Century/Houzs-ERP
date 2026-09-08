@@ -148,7 +148,7 @@ only source.
 | `HC-SO-011454` | 「这个是1AL+C+1NA+1AR」 | `1A(LHF)+CNR+1NA+1A(RHF)` model 9058 | — |
 | `HC-SO-011455` | 「第二个是1AL+C+2AR」 | `1A(LHF)+CNR+2A(RHF)` model 9050 | — |
 | `HC-SO-011601` | 「第一个是corner 你也应该懂的 32寸seat」 | **NOT WRITTEN — partial, see below** | 32 |
-| `HC-SO-011657` | 「第二个是stool」 | `STOOL` model 9838 | — |
+| `HC-SO-011657` | 「第二个是stool」 | `STOOL` model 9838 — **blocked, see below** | — |
 | `HC-SO-012026` | 「1AL+1NA+1NA+C+1AR」 | `1A(LHF)+1NA+1NA+CNR+1A(RHF)` model 9058 | — |
 | `HC-SO-012827` ① | 「第二个是1AL+1NA+1AR+1s」 | `1A(LHF)+1NA+1A(RHF)` model 8030 | 35 |
 | `HC-SO-012827` ② | 「…+1s」 (the separate chair) | `1S` model 8030 | 35 |
@@ -233,6 +233,16 @@ resemblance. It **never falls back to the text**: a key the document does not ca
 `none`, because quietly matching by text instead is the exact bug the mode was added to
 prevent. Mode and tests: `backend/scripts/lib/sofa-desc2-match.mjs`.
 
+**The containment only bites the SHORTER line, and the dry run proved which half needs
+what.** `3 seater` is carried by DtlKey 873100 and by nothing else on the document, so the
+three-seater is addressed by plain text. The single chair has no such needle and is
+addressed by its line key. And the prod dry run (`34234942367`) showed why that split is not
+merely tidy: **the ERP does not carry line key `873100` at all** — of this document's four
+sofa lines only `873101` is stamped — so the key could not have addressed the three-seater
+even if it were preferred. That unstamped line is a finding in its own right:
+`docs/cutover-sofa-line-keys-2026-09-08.md` records that a sales order holding a line with
+no AutoCount line key is **uneditable for staff**, and this is one of them.
+
 ## The decoder vocabulary was NOT the problem — measured, not assumed
 
 The brief for this lane predicted that teaching the decoder the `R` (recliner) and `B`
@@ -267,3 +277,18 @@ say what the build is** — which is exactly what the verdict has been reporting
 account book's own text does not say what the build is, so your drawing is the only
 source."* No decoder change was made in this round, because none would have closed a single
 document.
+
+
+## `HC-SO-011657` is blocked on a product that does not exist yet
+
+His answer is not in doubt and is written into the corrections file. The prod dry run
+(`34234942367`) refused it for one reason:
+
+```
+HC-SO-011657: REFUSED - piece SKU not minted: 9838-STOOL
+```
+
+`9838-STOOL` simply is not in `scm.products`. Minting a product code is a **catalogue**
+change, not a compartment correction, so this lane did not do it unilaterally. It needs one
+action from whoever owns the product list; after that this entry applies unchanged, with **no
+re-reading and nothing more from him**.
