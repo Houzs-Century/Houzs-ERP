@@ -153,5 +153,6 @@ permission the API enforces.
 | File | Pins |
 |---|---|
 | `backend/src/scm/shared/so-identity-lock.test.ts` | what still freezes, that `salesperson_id` does not, the `agent` carve-out, and that the carve-out smuggles nothing else through |
-| `backend/src/scm/routes/so-handover.test.ts` | the payload guard: both staff ids required, no self-handover, dedupe, the batch cap — plus four call-site assertions that the migrated-SO lock is asked here, reads `linked_ac_docno`, refuses BEFORE the update, and reports into `skipped` |
+| `backend/src/scm/routes/so-handover.test.ts` | the payload guard: both staff ids required, no self-handover, dedupe, the batch cap |
+| `backend/tests/soHandoverMigratedLock.test.mjs` | five call-site assertions: the migrated-SO lock is asked here, `linked_ac_docno` is read, the refusal reaches `skipped`, it happens BEFORE the update, and it is per order (`continue`, never a whole-batch `return`) |
 | `frontend/src/pages/scm-v2/SalespersonHandover.test.tsx` | the preview is a GET before any write, the 25-per-batch chunking, and that skips are reported rather than swallowed |
