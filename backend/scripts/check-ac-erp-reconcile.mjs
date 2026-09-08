@@ -575,6 +575,9 @@ try {
 const rm = (s) => (s == null ? "null" : (Number(s) / 100).toFixed(2));
 const first = (a) => a.slice(0, SHOW);
 const summary = [];
+/* type -> that type's summary row, by REFERENCE, so the verdict file and the
+   printed table can never state different numbers. */
+const summaryByType = new Map();
 const variantTotals = [];
 
 for (const cfg of TYPES) {
@@ -668,6 +671,14 @@ for (const cfg of TYPES) {
      an entry is honoured only while its stated REASON still measures true
      against the book, which is the 0668 lesson at document grain. */
   const AB = splitDecidedAbsences({ t, missing: missingInScope, linesOf: (d) => B.lines.get(d) || [] });
+  /* THE DOCUMENT AXIS, named per document rather than counted. A document that
+     is absent or phantom never reaches VERDICT.seen() — there is nothing to
+     compare — so without this the report could only say how many documents were
+     COMPARED, and "no phantom, no absent" would be an assertion nobody could
+     check against the run that made it. */
+  for (const docNo of AB.absentDocs) VERDICT.presence(t, "absent", docNo);
+  for (const e of AB.decidedRows) VERDICT.presence(t, "decided", e.docNo);
+  for (const p of phantom) VERDICT.presence(t, "phantom", p);
   log(
     `${t} DOCUMENTS — in-scope AutoCount documents absent from the ERP: ${AB.absent} (${absenceWord})` +
       (AB.decided ? `, plus ${AB.decided} the owner has already ruled on (listed below)` : "") +
@@ -1454,10 +1465,25 @@ for (const cfg of TYPES) {
     money: MZ.differ,
     erpZeroMoney: MZ.erpZero,
     foreign: foreignDocs.length,
+    /* Not printed in the summary table — carried for the machine-readable
+       verdict so check-so-tally.mjs can name the declared classes it excluded
+       without re-deriving any of them. */
+    outOfScopeAbsent: absentOutOfScope.length,
+    sofaDocs,
+    comparedLines,
+    acLinesPaired: variantRows.length,
+    declaredSofaDecomposition: { lineCount: D.lineCount, unitPrice: D.price, itemCode: D.item },
+    declaredBlankBookRows: { rows: D.blankRows, docs: D.blankRowDocs.size },
     gaps:
       (countsAsGap ? AB.absent : 0) +
       phantom.length + LS.differ + IC.differ + F.qty.length + PX.differ + MZ.differ,
   });
+  /* THE SUMMARY ROW ITSELF, keyed by type, for the verdict file. It is the
+     SAME OBJECT the table above prints from — not a copy re-derived from a
+     narrower read — which is what makes "the report's document, line, SKU,
+     quantity, price and money numbers are the reconcile's own" a fact about the
+     code rather than a claim about two runs agreeing. */
+  summaryByType.set(t, summary[summary.length - 1]);
 }
 
 /* ── the DO rule, stated so nobody "fixes" it ────────────────────────────── */
@@ -1796,6 +1822,13 @@ if (VERDICT_OUT) {
         ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
         : "local",
       summary: sum,
+      /* The reconcile's OWN summary row for this type and its OWN presence
+         lists, carried so check-so-tally.mjs states the document / line / SKU /
+         quantity / price / money axes without measuring anything itself.
+         publish-so-reconcile-verdict.mjs names the fields it inserts, so extra
+         keys here reach no database column. */
+      population: summaryByType.get("SO") ?? null,
+      presence: VERDICT.presenceFor("SO"),
       rows,
     }, null, 0),
   );

@@ -87,6 +87,66 @@ export const LOCKING_AXES = Object.freeze([
 
 const LOCKING = new Set(LOCKING_AXES);
 
+/* ── THE AXES ON WHICH THE CHECKER REFUSED TO ANSWER ─────────────────────────
+ * A locking axis, but NOT a difference: the two sides were never compared on
+ * it, so calling the document "different" is as wrong as calling it "the same".
+ * It locks — 「我们没看过」 must never open a document — and it is broken out by
+ * check-so-tally.mjs into its own column so it cannot be summed into either
+ * neighbour. On 2026-09-08 the same corpus was reported as "0 differ" and as
+ * "8 differ" on the same day; the per-document verdict said 149, of which 110
+ * were this. All three sentences were true about different axes, which is what
+ * made none of them an answer.
+ *
+ * Membership is a property of the AXIS, not of a document: `sofa build not
+ * verifiable` is recorded ONLY where variant-report set the compartment cell
+ * to UNREADABLE, and it is recorded for no other reason. */
+export const UNANSWERABLE_AXES = Object.freeze(['sofa build not verifiable']);
+
+const UNANSWERABLE = new Set(UNANSWERABLE_AXES);
+for (const a of UNANSWERABLE_AXES) {
+  /* An unanswerable axis that does not LOCK would be a document opened on a
+     comparison that never ran. Asserted at import so the two lists cannot drift
+     apart in a later edit. */
+  if (!LOCKING.has(a)) throw new Error(`UNANSWERABLE_AXES member ${a} is not in LOCKING_AXES`);
+}
+
+/** True when every finding on this row is the checker refusing to answer. */
+export const isUnanswerableOnly = (axes) =>
+  Array.isArray(axes) && axes.length > 0 && axes.every((a) => UNANSWERABLE.has(a));
+
+/* ── THE NON-LOCKING CHANNEL ─────────────────────────────────────────────────
+ * `note()` records the classes the reconcile prints as NOT differences —
+ * bookblank, no-key, pend, recorded, an ERP blank on an order nobody has
+ * proceeded, the sofa decomposition. None of them changes `clean`, and none of
+ * them can: the two channels are separate Maps and only `record()` feeds the
+ * lock.
+ *
+ * They are recorded at all because a declaration nobody can enumerate is a
+ * suppression (docs/bugs/0668). The owner has asked three times whether the
+ * sales orders tally; an answer that says "N differ" without also saying WHAT
+ * WAS EXCLUDED AND UNDER WHOSE RULING is the answer he has already been given
+ * twice and could not act on. */
+export const NOTE_CLASSES = Object.freeze([
+  /* the ERP states a value the book never did — an operator filled it in */
+  'book-blank',
+  /* the book says TBC/KIV */
+  'pending',
+  /* the priced special is carried under the owner's 2026-09-03 ruling 甲 */
+  'recorded',
+  /* our rows carry no book line number and both sides state the same set */
+  'no-line-key',
+  /* the ERP is blank on an order NOBODY HAS PROCEEDED — 还没proceed还没确认的就可以直接放空的 */
+  'erp-blank-not-proceeded',
+  /* one book line is one ERP line per compartment */
+  'sofa-decomposition',
+  /* AutoCount's own empty row */
+  'blank-book-row',
+  /* WHY a compartment answer was unanswerable — the sofa-unread-split bucket */
+  'unanswerable-cause',
+]);
+
+const NOTED = new Set(NOTE_CLASSES);
+
 /**
  * Collects findings per (type, AutoCount document).
  *
@@ -94,11 +154,14 @@ const LOCKING = new Set(LOCKING_AXES);
  * reconcile calls it from inside its comparison loops, and this module must
  * never be able to take down the check the owner is reading. An axis nobody
  * declared shows up as a missing lock, which the CI test below catches, not as
- * a failed run at go-live.
+ * a failed run at go-live. `note` is a NO-OP for an unknown class for the same
+ * reason.
  */
 export function makeVerdictRecorder() {
-  /** type -> Map(acDocNo -> { erpNo, axes: Map(axis -> string[]) }) */
+  /** type -> Map(acDocNo -> { erpNo, axes, proceededAxes, notes }) */
   const byType = new Map();
+  /** type -> Map(presence class -> string[]) — DOCUMENT grain, no ERP row */
+  const presenceByType = new Map();
 
   const bucket = (type) => {
     let m = byType.get(type);
@@ -108,7 +171,10 @@ export function makeVerdictRecorder() {
   const docOf = (type, acDocNo, erpNo) => {
     const m = bucket(type);
     let d = m.get(acDocNo);
-    if (!d) { d = { erpNo: erpNo ?? null, axes: new Map() }; m.set(acDocNo, d); }
+    if (!d) {
+      d = { erpNo: erpNo ?? null, axes: new Map(), proceededAxes: new Set(), notes: new Map() };
+      m.set(acDocNo, d);
+    }
     if (d.erpNo == null && erpNo != null) d.erpNo = erpNo;
     return d;
   };
@@ -117,17 +183,62 @@ export function makeVerdictRecorder() {
     /** This document was COMPARED. Required before it can ever be clean. */
     seen(type, acDocNo, erpNo) { docOf(type, acDocNo, erpNo); },
 
-    /** This document differs on `axis`. `detail` is one line for a human. */
-    record(type, acDocNo, erpNo, axis, detail) {
+    /**
+     * This document differs on `axis`. `detail` is one line for a human.
+     *
+     * `proceeded` is the 6th argument and OPTIONAL on purpose: every existing
+     * call site keeps its exact meaning, and only the ones that genuinely know
+     * whether the order has been proceeded pass it. An omitted flag records
+     * nothing rather than guessing `false` — the owner's blank rule turns on
+     * that fact and a defaulted answer would decide it silently.
+     */
+    record(type, acDocNo, erpNo, axis, detail, proceeded) {
       if (!LOCKING.has(axis)) return;
       const d = docOf(type, acDocNo, erpNo);
       let lines = d.axes.get(axis);
       if (!lines) { lines = []; d.axes.set(axis, lines); }
       if (detail && lines.length < 5) lines.push(String(detail));
+      if (proceeded === true) d.proceededAxes.add(axis);
+    },
+
+    /**
+     * This document carries a DECLARED class on `axis`. Never locks, never
+     * touches `clean`; counted and named so the reader can see what the verdict
+     * excluded without having to trust that it excluded the right things.
+     */
+    note(type, acDocNo, erpNo, klass, axis, detail, proceeded) {
+      if (!NOTED.has(klass)) return;
+      const d = docOf(type, acDocNo, erpNo);
+      let byAxis = d.notes.get(klass);
+      if (!byAxis) { byAxis = new Map(); d.notes.set(klass, byAxis); }
+      let cell = byAxis.get(axis);
+      if (!cell) { cell = { n: 0, proceeded: 0, lines: [] }; byAxis.set(axis, cell); }
+      cell.n += 1;
+      if (proceeded === true) cell.proceeded += 1;
+      if (detail && cell.lines.length < 5) cell.lines.push(String(detail));
+    },
+
+    /**
+     * A DOCUMENT-level fact about a document that has no ERP row to attach to —
+     * absent, phantom, decided. It cannot go through `record`, which is keyed on
+     * a comparison that happened.
+     */
+    presence(type, klass, docNo) {
+      let m = presenceByType.get(type);
+      if (!m) { m = new Map(); presenceByType.set(type, m); }
+      let list = m.get(klass);
+      if (!list) { list = []; m.set(klass, list); }
+      list.push(String(docNo));
     },
 
     /** Everything recorded for one document type. */
     forType(type) { return bucket(type); },
+
+    /** The document-level facts for one type, as a plain object. */
+    presenceFor(type) {
+      const m = presenceByType.get(type) || new Map();
+      return Object.fromEntries([...m.entries()].map(([k, v]) => [k, v]));
+    },
   };
 }
 
@@ -152,9 +263,23 @@ export function buildVerdictRows({ recorder, type, companyId, measuredAt, runId 
       doc_no: String(d.erpNo),
       company_id: companyId,
       ac_doc_no: acDocNo,
+      /* UNCHANGED, and it must stay unchanged: this is the column the migrated
+         sales-order guard reads, and the columns added below are for the report
+         the owner reads. An unanswerable axis is still NOT clean. */
       clean: axes.length === 0,
       axes,
       detail,
+      /* which of those axes had at least one finding on a PROCEEDED order */
+      axes_proceeded: axes.filter((a) => d.proceededAxes.has(a)),
+      /* the DECLARED classes, counted and named. Never affects `clean`. */
+      notes: Object.fromEntries(
+        [...d.notes.entries()].map(([klass, byAxis]) => [
+          klass,
+          Object.fromEntries(
+            [...byAxis.entries()].map(([axis, cell]) => [axis, { n: cell.n, proceeded: cell.proceeded, lines: cell.lines }]),
+          ),
+        ]),
+      ),
       measured_at: measuredAt,
       run_id: runId,
     });
