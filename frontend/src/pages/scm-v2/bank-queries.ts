@@ -231,6 +231,45 @@ export type BankRule = {
   trading_date_pattern: string | null; merchant_pattern: string | null;
   sort_order: number; is_active: boolean;
 };
+/* ── Which accounts take a statement, and how each file reads (2026-09-08) ─── */
+
+/** One heading, or the several a bank has used for the same column. */
+export type BankHeading = string | string[];
+export type BankColumnMap = Partial<Record<'date' | 'description' | 'reference' | 'amount' | 'debit' | 'credit' | 'indicator' | 'balance' | 'valueDate', BankHeading>>;
+export type BankConfig = {
+  id: number;
+  account_code: string;
+  bank_code: string;
+  account_no: string | null;
+  statement_format: string;
+  delimiter: string | null;
+  amount_format: 'decimal' | 'integer-sen';
+  credit_indicator: string;
+  column_map: BankColumnMap;
+  is_active: boolean;
+};
+
+export const useBankConfigs = () => useQuery({
+  queryKey: ['bank-config'],
+  queryFn: () => authedFetch<{ configs: BankConfig[]; defaultHeadings: Record<string, string[]> }>('/accounting/bank/config'),
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+export const useSaveBankConfig = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      accountCode: string; bankCode: string; accountNo?: string; statementFormat: string; delimiter?: string;
+      amountFormat: string; creditIndicator?: string; isActive?: boolean; columnMap: Record<string, string | string[]>;
+    }) => authedFetch<{ ok: boolean; config: BankConfig }>('/accounting/bank/config', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['bank-config'] });
+      void qc.invalidateQueries({ queryKey: ['bank-setup'] });
+    },
+  });
+};
+
 export const useBankRules = () => useQuery({
   queryKey: ['bank-rules'],
   queryFn: () => authedFetch<{ rules: BankRule[] }>(`/accounting/bank/rules`),

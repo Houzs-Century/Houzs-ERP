@@ -47,6 +47,35 @@ const RULES: BankRecognitionRule[] = [
   },
 ];
 
+/* ── The 2990 Hong Leong statement's two more shapes (2026-09-08) ──────────── */
+describe('GHL and the split "MERCHAN T" — the rules as 20260908T2100 seeds them', () => {
+  const RULES_2990: BankRecognitionRule[] = [
+    { acquirerCode: 'PBB', pattern: 'PBB-PBCS' },
+    { acquirerCode: 'HLB', pattern: 'CA Credit Advice', tradingDatePattern: 'MERCHAN\\s*T\\s+(\\d{8})', merchantPattern: '(\\d{9,})\\s+MERCHAN' },
+    { acquirerCode: 'GHL', pattern: '/GHL/|FOR GHL', merchantPattern: '/GHL/(\\d{6,})' },
+  ];
+
+  it('a GHL payout arrives as an interbank GIRO credit naming /GHL/<merchant>', () => {
+    const seen = recogniseAcquirer(RULES_2990, {
+      description: 'Cr Adv-Interbank GIRO at KLM',
+      reference: '161320P226260720 /GHL/6600030486 DMS A3 (FOR GHL)',
+    });
+    expect(seen).toEqual({ acquirerCode: 'GHL', tradingDate: null, merchantNo: '6600030486' });
+  });
+
+  it("Hong Leong's own credit reads the trading day whether the word MERCHANT is whole or split", () => {
+    const whole = recogniseAcquirer(RULES_2990, { description: 'CA Credit Advice', reference: '00005992235  MERCHANT 20260617' });
+    expect(whole).toEqual({ acquirerCode: 'HLB', tradingDate: '2026-06-17', merchantNo: '00005992235' });
+    const split = recogniseAcquirer(RULES_2990, { description: 'CA Credit Advice', reference: '00005992284 MERCHAN T 20260824' });
+    expect(split).toEqual({ acquirerCode: 'HLB', tradingDate: '2026-08-24', merchantNo: '00005992284' });
+  });
+
+  it("a Public Bank advice on the same statement is still Public Bank's", () => {
+    const seen = recogniseAcquirer(RULES_2990, { description: 'Cr Adv-Interbank GIRO at KLM', reference: '2026081200006541 03999061714 PBB-PBCS AC 3' });
+    expect(seen?.acquirerCode).toBe('PBB');
+  });
+});
+
 describe('joining a credit to the charge taken back against it', () => {
   /* The real pair: RM 875.00 in and RM 3.94 out, same reference, same day. */
   it('makes one payout of a credit and its charge', () => {
