@@ -22,7 +22,7 @@ import { summariseReadiness } from '../src/scm/lib/so-readiness';
 /* An order WITH a processing date, a line that is NOT hard-bound: the only
    context in which the live-stock promotion is trustworthy, so it is what every
    pre-2026-08-30 case here runs under. */
-const FREE = { orderProcessed: true, lineHardBound: false };
+const FREE = { orderProcessed: true, lineHardBound: false, lineNonSellingWarehouse: false };
 
 describe('effectiveLineStockStatus — the one verdict both surfaces answer from', () => {
   it('stale stored PENDING + live stock => READY (2990-SO-2608-002)', () => {
@@ -75,12 +75,12 @@ describe('the two promotion gates — HC-SO-013367, owner report 2026-08-30', ()
      The old union promoted it to READY on an order with no processing date and
      no purchase order — both gates the allocator itself enforces. */
   it('a hard-bound line never promotes on live stock — MRP is variant-blind', () => {
-    expect(effectiveLineStockStatus('PENDING', 'stock', { orderProcessed: true, lineHardBound: true })).toBe('PENDING');
+    expect(effectiveLineStockStatus('PENDING', 'stock', { orderProcessed: true, lineHardBound: true, lineNonSellingWarehouse: false })).toBe('PENDING');
   });
 
   it('an order with no processing date never promotes — the engine deliberately gated it', () => {
     // The same order's ACCESSORY lines lit "accessories Ready" through this hole.
-    expect(effectiveLineStockStatus('PENDING', 'stock', { orderProcessed: false, lineHardBound: false })).toBe('PENDING');
+    expect(effectiveLineStockStatus('PENDING', 'stock', { orderProcessed: false, lineHardBound: false, lineNonSellingWarehouse: false })).toBe('PENDING');
   });
 
   it('null gates = the caller cannot establish the context — the strict direction, no promotion', () => {
@@ -89,13 +89,38 @@ describe('the two promotion gates — HC-SO-013367, owner report 2026-08-30', ()
 
   it("stored READY stands whatever the gates say — the engine's own verdict is never vetoed", () => {
     // Bound mode WRITES READY when the line's own PO is received; gates only govern the live promotion.
-    expect(effectiveLineStockStatus('READY', 'stock', { orderProcessed: false, lineHardBound: true })).toBe('READY');
+    expect(effectiveLineStockStatus('READY', 'stock', { orderProcessed: false, lineHardBound: true, lineNonSellingWarehouse: false })).toBe('READY');
     expect(effectiveLineStockStatus('READY', null, null)).toBe('READY');
   });
 
   it('PARTIAL does not climb through a closed gate', () => {
-    expect(effectiveLineStockStatus('PARTIAL', 'stock', { orderProcessed: false, lineHardBound: false })).toBe('PARTIAL');
-    expect(effectiveLineStockStatus('PARTIAL', 'stock', { orderProcessed: true, lineHardBound: true })).toBe('PARTIAL');
+    expect(effectiveLineStockStatus('PARTIAL', 'stock', { orderProcessed: false, lineHardBound: false, lineNonSellingWarehouse: false })).toBe('PARTIAL');
+    expect(effectiveLineStockStatus('PARTIAL', 'stock', { orderProcessed: true, lineHardBound: true, lineNonSellingWarehouse: false })).toBe('PARTIAL');
+  });
+});
+
+describe('the non-selling warehouse VETO — owner ruling 2026-09-08', () => {
+  const DISPLAY = { orderProcessed: true, lineHardBound: false, lineNonSellingWarehouse: true };
+
+  it('a line standing in a display / showroom / service warehouse never reads READY', () => {
+    expect(effectiveLineStockStatus('PENDING', 'stock', DISPLAY)).toBe('PENDING');
+  });
+
+  it("it OUTRANKS a stored READY, unlike the two promotion gates", () => {
+    /* The distinction the module header states: the two gates above arbitrate
+       between two ENGINES about where the goods are, and never veto the stored
+       verdict. This is not an engine — it is the owner's RULE about whether
+       goods both engines can plainly see may be PROMISED. A stored READY
+       written before this shipped, or left behind by a recompute that has not
+       caught up, must not keep showing READY on the pill. */
+    expect(effectiveLineStockStatus('READY', 'stock', DISPLAY)).toBe('PENDING');
+    expect(effectiveLineStockStatus('READY', null, DISPLAY)).toBe('PENDING');
+    expect(effectiveLineStockStatus('PARTIAL', 'stock', DISPLAY)).toBe('PENDING');
+  });
+
+  it('and it changes nothing for a selling warehouse', () => {
+    expect(effectiveLineStockStatus('PENDING', 'stock', FREE)).toBe('READY');
+    expect(effectiveLineStockStatus('READY', 'shortage', FREE)).toBe('READY');
   });
 });
 
@@ -167,7 +192,11 @@ describe('the SO list rolls up the shared rule, not a raw stored column', () => 
     /* Third argument: the list first-paint carries no processing-date context
        (the payments VIEW's frozen column set) — with null coverage no promotion
        is possible anyway, so `null` is both honest and behaviour-identical. */
-    expect(mfgSalesOrders).toContain('readinessLinesByDoc(itemRows, null, null)');
+    /* FOURTH argument (2026-09-08): the non-selling-warehouse set, also `null`
+       here — the first paint runs no extra reads, and the STORED status it
+       rolls up was already gated by the allocator. The enrichment call below
+       passes the real set, which is where the live promotion can fire. */
+    expect(mfgSalesOrders).toContain('readinessLinesByDoc(itemRows, null, null, null)');
     /* The pre-fix shape: the handler building ReadinessLine rows itself off the
        raw stored column. If any of these comes back the board has its own
        opinion again, which is the whole defect. */
@@ -180,7 +209,7 @@ describe('the SO list rolls up the shared rule, not a raw stored column', () => 
        enrichment assembler, still through readinessLinesByDoc, still fed the
        live coverage. A hand-built ReadinessLine here would be the second opinion
        wearing a new coat. */
-    expect(listEnrichmentLib).toContain('readinessLinesByDoc(items, coverage, processedDocs)');
+    expect(listEnrichmentLib).toContain('readinessLinesByDoc(items, coverage, processedDocs, nonSellingWarehouseIds)');
     expect(listEnrichmentLib).not.toContain('stock_status: it.stock_status');
   });
 
@@ -190,8 +219,14 @@ describe('the SO list rolls up the shared rule, not a raw stored column', () => 
        GET /:docNo/coverage (2026-09-01), so it now passes `null` for the live
        state; the deferred re-compute lives in the enrichment route (below) and
        stamps the verdict from the LIVE state. The shared helper is still the only
-       place the verdict is formed. */
-    expect(mfgSalesOrders.split('stock_status_effective:').length - 1).toBe(2);
+       place the verdict is formed.
+       COUNTED DIFFERENTLY SINCE 2026-09-08: the two handlers no longer WRITE the
+       key — they spread `soLineStockVerdict`, which stamps it together with the
+       non-selling-warehouse note. That is the same property, one level tighter:
+       the key appearing here at all would mean a handler had gone back to
+       forming the verdict itself. */
+    expect(mfgSalesOrders.split('soLineStockVerdict(').length - 1).toBe(2);
+    expect(mfgSalesOrders).not.toContain('stock_status_effective:');
     expect(listEnrichmentRoute.split('stock_status_effective:').length - 1).toBe(1);
   });
 

@@ -39,6 +39,11 @@ export type CoverageOverlayFields = {
    *  Absent from this type, the overlay could not write it and the healed
    *  verdict was fetched over the wire and discarded. */
   stock_status_effective?: string | null;
+  /** The non-selling-warehouse refusal note (owner ruling 2026-09-08). Carried
+   *  through the overlay for the same reason `stock_status_effective` is: the
+   *  coverage endpoint recomputes it, and a field the overlay cannot write is a
+   *  field fetched over the wire and discarded. */
+  non_selling_warehouse?: { code: string | null; name: string | null; type: string | null; notice: string } | null;
 };
 
 /**
@@ -70,6 +75,12 @@ export function overlaySoLineCoverage<T extends CoverageOverlayFields>(
          dropping it there would silently re-stale that column instead. */
       stock_status_effective: cov.stock_status_effective ?? l.stock_status_effective,
       stock_status: cov.stock_status_effective ?? l.stock_status,
+      /* `!== undefined`, not `??`: null is the coverage endpoint SAYING the line
+         is fine, and must be able to clear a stale note. Only an absent field
+         (an older backend) leaves the detail's own value standing. */
+      non_selling_warehouse: cov.non_selling_warehouse !== undefined
+        ? cov.non_selling_warehouse
+        : l.non_selling_warehouse,
     };
   });
 }

@@ -50,6 +50,12 @@ export type SoLineSourceFields = {
   ready_source_pos?: ReadySourceChip[];
   delivered_qty?: number | null;
   remaining_qty?: number | null;
+  /** WHY this line can never read READY, when the reason is WHERE it stands —
+   *  a display / showroom / service warehouse (owner ruling 2026-09-08). The
+   *  server composes the sentence; both surfaces render it verbatim. */
+  non_selling_warehouse?: {
+    code: string | null; name: string | null; type: string | null; notice: string;
+  } | null;
 };
 
 /* 2990-parity stock pill (one home — formerly drillStock in the SO list):
@@ -80,14 +86,33 @@ export function soLineStockPill(l: SoLineSourceFields): { label: string; cls: st
 export function SoStockPill({ line }: { line: SoLineSourceFields }) {
   const stock = soLineStockPill(line);
   if (!stock) return <span className="text-[11px] text-ink-muted">—</span>;
+  /* A REFUSAL THAT REACHES NOBODY IS THE DEFECT (vendor/scm/lib/mutation-error.ts:
+     35 write paths once refused correctly and told no one, and the owner
+     reported it as "the button does nothing"). A PENDING pill on a line whose
+     goods are visibly sitting in KL DISPLAY is exactly that shape — correct,
+     and unexplainable to the person reading it. So the warehouse is NAMED under
+     the pill and the full sentence, including what to do instead, is on the
+     hover. Mobile renders the same two things from the same payload field
+     (mobile/source-chips.tsx) — one rule, two presentations. */
+  const ns = line.non_selling_warehouse ?? null;
   return (
-    <span
-      className={
-        "inline-block rounded-full px-2 py-0.5 text-[9.5px] font-bold uppercase tracking-wider " +
-        stock.cls
-      }
-    >
-      {stock.label}
+    <span className="inline-flex flex-col items-start gap-0.5">
+      <span
+        className={
+          "inline-block rounded-full px-2 py-0.5 text-[9.5px] font-bold uppercase tracking-wider " +
+          stock.cls
+        }
+      >
+        {stock.label}
+      </span>
+      {ns ? (
+        <span
+          className="text-[9px] font-semibold uppercase leading-tight tracking-wide text-warning-text"
+          title={ns.notice}
+        >
+          {ns.code ?? ns.name ?? "Display"} — transfer to sell
+        </span>
+      ) : null}
     </span>
   );
 }

@@ -258,7 +258,8 @@ import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink, soLineVariant
 import { advanceSoGeneration } from '../lib/so-generation';
 import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer-credits';
 import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
-import { effectiveLineStockStatus, readinessLinesByDoc, type LiveStockState } from '../lib/so-line-effective-stock';
+import { readinessLinesByDoc, soLineStockVerdict, type LiveStockState, type SoLineStockVerdictRow } from '../lib/so-line-effective-stock';
+import { loadNonSellingWarehouses } from '../lib/non-selling-warehouse';
 import { attachLineCategories, resolveLineCategories } from '../lib/so-readiness-category';
 import { deriveDisplayBrandingRowByDoc } from '../lib/so-display-branding';
 import { mintMonthlyDocNo, insertWithDocNoRetry, companyCodeById } from '../lib/doc-no';
@@ -1676,8 +1677,15 @@ mfgSalesOrders.get('/', async (c) => {
     const readinessByDoc = new Map<string, ReturnType<typeof summariseReadiness>>();
     /* Third argument null: the list first-paint reads the payment-totals VIEW
        (frozen column set, no processing_date) — and with null coverage the
-       promotion arm cannot fire anyway, so "cannot say" is exact. */
-    const linesByDoc = readinessLinesByDoc(itemRows, null, null);
+       promotion arm cannot fire anyway, so "cannot say" is exact.
+       FOURTH argument null, and typed rather than omitted (the parameter is
+       required): the first paint deliberately runs no extra reads, and it does
+       not need this one — the STORED status it rolls up was written by the
+       allocator, which applies the non-selling rule at source. The enrichment
+       fetch a beat later is where the live promotion can fire, and THAT call
+       passes the real set. What is given up here is only the cover for a stale
+       stored READY, for the few hundred ms until the enrichment lands. */
+    const linesByDoc = readinessLinesByDoc(itemRows, null, null, null);
     attachLineCategories(linesByDoc.values(), productCategory);
     for (const [docNo, ls] of linesByDoc) readinessByDoc.set(docNo, summariseReadiness(ls));
 
@@ -2840,7 +2848,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      stands as the verdict, and the client fetches the live coverage from
      `GET /:docNo/coverage` after the doc renders. The computation is UNCHANGED,
      just moved off the critical path — see that endpoint below. */
-  const [remainingMap, deliveriesMap, shippedTraceMap] = await Promise.all([
+  const [remainingMap, deliveriesMap, shippedTraceMap, nonSellingWh] = await Promise.all([
     soDeliverableRemaining(sb, [docNo]),
     soLineDeliveries(sb, itemRows.map((it) => it.id)),
     /* Traceability — the source PO(s) each line's SHIPPED goods came from,
@@ -2849,7 +2857,11 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        NOT MRP — stays inline so the detail keeps showing the source PO even
        after the line is delivered (MRP coverage drops off once satisfied). */
     soLineShippedSources(sb, itemRows.map((it) => it.id)),
+    // Owner ruling 2026-09-08: a 16-row read, alongside the three above so the
+    // detail's critical path costs no extra round trip.
+    loadNonSellingWarehouses(sb),
   ]);
+  const orderProcessed = !!(h.data as { processing_date?: string | null }).processing_date;
   const items = itemRows.map((it) => {
     const rem = remainingMap.get(it.id);
     const deliveries = deliveriesMap.get(it.id) ?? [];
@@ -2874,21 +2886,10 @@ mfgSalesOrders.get('/:docNo', async (c) => {
          service line and null (unknown) otherwise; GET /:docNo/coverage fills the
          real value in a beat later. */
       stock_state: stockState,
-      /* What the PILL renders, decided here so it and the board agree (§0.4).
-         Live state is passed as `null` so the STORED engine verdict stands
-         (so-line-effective-stock.ts: null live-state = stored verdict) — the
-         coverage endpoint recomputes it with the live state. */
-      stock_status_effective: effectiveLineStockStatus(
-        (it as { stock_status?: string | null }).stock_status ?? null,
-        null,
-        {
-          orderProcessed: !!(h.data as { processing_date?: string | null }).processing_date,
-          lineHardBound: isHardBoundLine(
-            (it as { item_group?: string | null }).item_group ?? null,
-            (it as { item_code?: string | null }).item_code ?? null,
-          ),
-        },
-      ),
+      /* What the PILL renders, and WHY when the reason is the warehouse — ONE
+         home (soLineStockVerdict, §0.4). Live state `null`: the STORED verdict
+         stands until GET /:docNo/coverage recomputes it. */
+      ...soLineStockVerdict(it as SoLineStockVerdictRow, null, orderProcessed, nonSellingWh),
       // coverage_po / coverage_eta are MRP-derived — unknown without the run.
       coverage_po: null,
       coverage_eta: null,
@@ -2991,14 +2992,18 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
   );
   // Coverage from the SAME MRP allocation engine the detail + MRP page use.
   // Best-effort: a failed allocation just drops lines to Pending.
-  const [remainingMap, deliveriesMap, shippedTraceMap, cov] = await Promise.all([
+  const [remainingMap, deliveriesMap, shippedTraceMap, cov, nonSellingWh] = await Promise.all([
     soDeliverableRemaining(sb, [docNo]),
     soLineDeliveries(sb, itemRows.map((it) => it.id)),
     soLineShippedSources(sb, itemRows.map((it) => it.id)),
     soCoverage(c, sb),
+    // Where the live-'stock' promotion fires, so it must know which
+    // warehouses may not promise (owner ruling 2026-09-08).
+    loadNonSellingWarehouses(sb),
   ]);
   const coverageMap = cov.coverage;
   const readyPosMap = await soLineReadySourcePos(sb, activeCompanyId(c) ?? null, cov.mrp, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>);
+  const orderProcessed = !!(h.data as { processing_date?: string | null }).processing_date;
   const items = itemRows.map((it) => {
     const rem = remainingMap.get(it.id);
     const deliveries = deliveriesMap.get(it.id) ?? [];
@@ -3031,20 +3036,9 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
       delivered_qty: rem?.delivered ?? deliveredQty,
       remaining_qty: rem?.remaining ?? Number(it.qty ?? 0),
       stock_state: stockState,
-      // What the PILL renders, decided here so it and the board agree (§0.4).
-      // Gated (2026-08-30): no processing date, or a hard-bound line, and the
-      // live-'stock' promotion is off — the stored engine verdict stands.
-      stock_status_effective: effectiveLineStockStatus(
-        (it as { stock_status?: string | null }).stock_status ?? null,
-        stockState as LiveStockState,
-        {
-          orderProcessed: !!(h.data as { processing_date?: string | null }).processing_date,
-          lineHardBound: isHardBoundLine(
-            (it as { item_group?: string | null }).item_group ?? null,
-            (it as { item_code?: string | null }).item_code ?? null,
-          ),
-        },
-      ),
+      // The pill's verdict + the warehouse refusal, through the same one home
+      // as GET /:docNo. Gated (2026-08-30) + vetoed (2026-09-08) inside it.
+      ...soLineStockVerdict(it as SoLineStockVerdictRow, stockState as LiveStockState, orderProcessed, nonSellingWh),
       coverage_po: covered ? cov?.po ?? null : null,
       coverage_eta: covered ? cov?.eta ?? null : null,
       shipped_source_pos: shippedPos,

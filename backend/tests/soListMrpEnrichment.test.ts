@@ -108,13 +108,18 @@ describe("assembleSoListMrpEnrichment", () => {
     remaining: new Map<string, number>([["SO-1", 1]]),
     today: "2026-08-18",
     processedDocs,
+    /* No warehouse in this fixture stands in a display / showroom / service
+       room, so the 2026-09-08 rule has nothing to bite on and the assembler
+       must answer exactly as it did before. An EMPTY set, not null: the caller
+       CAN say, and it says "none". */
+    nonSellingWarehouseIds: new Set<string>() as ReadonlySet<string>,
   };
 
   // Independent expected readiness for a coverage, via the SAME shared helpers
   // the list uses — proves the assembler delegates faithfully rather than
   // re-implementing.
   function expectedReadiness(coverage: Map<string, { source: string }> | null) {
-    const lines = readinessLinesByDoc(items, coverage, processedDocs);
+    const lines = readinessLinesByDoc(items, coverage, processedDocs, new Set<string>());
     attachLineCategories(lines.values(), categoryByCode);
     return summariseReadiness(lines.get("SO-1")!);
   }

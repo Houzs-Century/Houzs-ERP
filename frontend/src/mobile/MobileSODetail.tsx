@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { formatDate } from "../lib/utils";
-import { SourcePosRowMobile, soStockPillMobile } from "./source-chips";
+import { NonSellingWarehouseNoteMobile, SourcePosRowMobile, soStockPillMobile } from "./source-chips";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
 import type { FlowNav } from "./relationship-map-model";
 import { fmtAmt } from "../lib/scm";
@@ -204,6 +204,8 @@ type SoItem = {
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
   delivered_qty?: number | null;
   remaining_qty?: number | null;
+  /* Why the line can never read READY, when the reason is WHERE it stands (2026-09-08). */
+  non_selling_warehouse?: { code: string | null; name: string | null; type: string | null; notice: string } | null;
   /* A retired line — the SO's history, not part of the live order. Returned by
      GET /:docNo like every other row; filtered out at the use site. */
   cancelled?: boolean | null;
@@ -1100,6 +1102,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                         </div>
                       );
                     })()}
+                    <NonSellingWarehouseNoteMobile note={it.non_selling_warehouse} />
                     <SourcePosRowMobile
                       pos={it.shipped_source_pos ?? []}
                       adj={it.shipped_source_adj}

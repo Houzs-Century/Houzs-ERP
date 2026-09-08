@@ -59,6 +59,34 @@ export function soStockPillMobile(l: {
   return { label: "PENDING", fg: "#5c6357", bg: "#f4f6f3", bd: "#d9ded4" };
 }
 
+/* The non-selling-warehouse refusal, phone shell. Desktop twin: the note under
+   SoStockPill (components/SoSourceChips.tsx) — keep the two in lockstep. The
+   phone has vertical room the 96px desktop Stock column does not, so it shows
+   the SERVER's whole sentence instead of hiding it on a hover the phone has no
+   way to trigger. Same field, same words, different amount of it. */
+export function NonSellingWarehouseNoteMobile({
+  note,
+}: {
+  note?: { code: string | null; name: string | null; type: string | null; notice: string } | null;
+}) {
+  if (!note) return null;
+  return (
+    <div
+      style={{
+        marginTop: 4, padding: "4px 7px", borderRadius: 6,
+        background: "rgba(212,151,40,0.10)", border: "1px solid rgba(212,151,40,0.35)",
+        color: "#8a6116", fontSize: 10.5, lineHeight: 1.35, overflowWrap: "anywhere",
+      }}
+    >
+      <span style={{ fontWeight: 800, letterSpacing: ".3px", textTransform: "uppercase" }}>
+        {note.code ?? note.name ?? "Display"}
+      </span>
+      {" — "}
+      {note.notice}
+    </div>
+  );
+}
+
 export function StockAdjChipMobile() {
   return (
     <span
