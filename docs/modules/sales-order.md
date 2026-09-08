@@ -1944,17 +1944,17 @@ Parsing checks; it never decides. A second implementation of "different" is what
 cost.
 
 **MEASURED**, `node backend/scripts/check-so-tally.mjs` against PRODUCTION over
-the read-only DSN, 2026-09-08 10:59 UTC, company 1, exit 0 — **re-run before
+the read-only DSN, 2026-09-08 11:52 UTC, company 1, exit 0 — **re-run before
 quoting it**, the sofa lanes move these numbers daily:
 
-> 2,883 documents. **2,709 identical · 38 differ and are work · 109 cannot be
-> compared · 27 the book itself is the gap.** NOT TALLIED. Of the 38: 37 are
-> sofa-compartment/specials/line differences and 1 is a phantom
-> (`HC-SO-2609-001` — the ERP claims an account-book number the book does not
-> have). All 109 unanswerable ones have the same cause: keyed, but the book's
-> build text does not decode into pieces, so only the owner's drawing settles
-> them. The SKU, quantity, unit price, document total, colour/fabric and
-> bedframe-build axes are all at **zero**.
+> 2,882 documents. **2,711 identical · 37 differ and are work · 109 cannot be
+> compared · 25 the book itself is the gap.** NOT TALLIED. The 37 are 35 sofa
+> compartments, 1 specials and 1 `a book line we do not have`; **5 of the 35 sit
+> on a PROCEEDED order** and the rest do not. All 109 unanswerable ones have the
+> same cause — keyed, but the book's build text does not decode into pieces, so
+> only the owner's drawing settles them, and **none** can be closed by stamping a
+> line key. The document, SKU, quantity, unit price, document total,
+> colour/fabric, seat size and bedframe-build axes are all at **zero**.
 
 
 ### Deleting an SO — DRAFT only, and the test-order escape hatch

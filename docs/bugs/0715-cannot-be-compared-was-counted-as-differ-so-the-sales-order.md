@@ -71,7 +71,8 @@ over it, not a new opinion about it.
 
 The report **measures nothing**. It runs `check-ac-erp-reconcile.mjs` and
 classifies the rows that run decided; a second implementation of "different" is
-what `docs/bugs/0708` cost. The cross-check parses the reconcile's own printed
+what `docs/bugs/0708-two-tools-answered-the-same-pairing-question-differently-twe.md`
+cost. The cross-check parses the reconcile's own printed
 `SO VERDICT` and `SUMMARY SO` lines and refuses to print anything if they
 disagree with the file — parsing to CHECK, never to decide.
 
@@ -82,13 +83,20 @@ the row classifies as `work` and `isTallied` answers `false`, which is the
 2026-09-08 behaviour exactly.
 
 **What it measured.** `node backend/scripts/check-so-tally.mjs` run against
-PRODUCTION over the read-only DSN, 2026-09-08 10:59 UTC, company 1, exit 0.
-2,883 documents — **2,709 identical, 38 differ and are work (37 on content, 1
-phantom, `HC-SO-2609-001`), 109 cannot be compared, 27 the book itself is the
-gap.** The reconcile inside that run locked 146 (37 + 109); the 149 quoted at
-the top is the earlier run `34216507949`, and the corpus moved between the two
-because the live sofa lanes were landing. Both numbers split the same way: the
-large majority of what reads as `differ` was never compared.
+PRODUCTION over the read-only DSN, 2026-09-08 11:52 UTC, company 1, exit 0, on
+this branch merged up to `main`. 2,882 documents — **2,711 identical, 37 differ
+and are work, 109 cannot be compared, 25 the book itself is the gap.**
+
+The reconcile inside that run locked 146, and 146 = 37 + 109. **That is the
+whole defect in one line:** three quarters of what the old sentence called
+`differ` had never been compared.
+
+The 149 quoted at the top is the earlier run `34216507949`; an intermediate run
+at 10:59 UTC read 2,883 / 2,709 / 38 / 109 / 27, the extra document being the
+phantom `HC-SO-2609-001`, which #3266 then correctly reclassified as ERP-native
+and created after the cutover. **Re-run before quoting any of these** — the live
+sofa lanes move them within an afternoon, which is exactly why the report is a
+workflow and not a number typed into a document.
 
 **Ref.** `feat/so-tally-verdict`, PR #3267, 2026-09-08. Measured against
 reconcile run `34216507949` and the local production run above. The workflow's
