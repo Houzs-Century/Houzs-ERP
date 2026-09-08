@@ -98,10 +98,26 @@ would NOT have worked, because `soDocNoFromPath` resolves the document number ou
 of the PATH and `POST /apply` carries a LIST of them in the body — the guard
 would have found nothing, answered "not migrated", and waved every write
 through. So the handler asks the same decision itself, per order, through
-`migratedSoReadonlyState(c, isMigrated)` — the one function the guard and the SO
-detail screen also call, so the button and the endpoint cannot disagree.
+`migratedSoReadonlyState(c, docNo, isMigrated)` — the one function the guard and
+the SO detail screen also call, so the button and the endpoint cannot disagree.
 `isMigrated` is REQUIRED and answered off `linked_ac_docno` on the row the
 handler already reads.
+
+**`docNo` joined that call on 2026-09-08**, when the lock was re-grained from
+ORIGIN onto CORRECTNESS (`scm.migrated_so_lock = 'verdict:<companies>'`,
+`docs/migrated-so-lock.md` §10). Under that value the refusal is about ONE
+document — *"HC-SO-010789 still differs from the AutoCount book on: document
+total"* — so this route hands over the order it is looking at and each entry in
+`skipped[]` names its own reason instead of repeating a class sentence
+twenty-four times. Nothing else here changed: same function, same per-order
+shape, same bypass cohort, and while the switch reads `1` the sentence is the
+old class one exactly as before.
+
+The parameter is positional and REQUIRED, which is how this call site was found
+at all: it was written by a different lane hours before the re-grain landed, and
+the compiler refused it (`Expected 3-4 arguments, but got 2`) rather than letting
+it keep the old behaviour silently. That is the `optional-param-noop` rule
+(`docs/bugs/0098-*`) paying for itself across two branches.
 
 **`*` / `scm.admin` bypass it**, the same cohort that bypasses the write freeze.
 And read `docs/migrated-so-lock.md` §2b before trusting the predicate: the

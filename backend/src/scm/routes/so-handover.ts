@@ -182,7 +182,12 @@ soHandover.post('/apply', async (c) => {
        `skipped` with the lock's own sentence, which is the only reason this is
        safe to add: a handover that silently dropped an order is exactly the
        failure this route's per-order report exists to prevent. */
-    const lock = await migratedSoReadonlyState(c, before.linked_ac_docno != null);
+    /* `docNo` as well, since 2026-09-08: in CORRECTNESS mode the decision is
+       per document and the sentence has to name the one it is about, so this
+       route hands over the document it is looking at rather than letting the
+       refusal speak about the class. Everything else here is unchanged - the
+       refusal still lands in `skipped` with the lock's own sentence. */
+    const lock = await migratedSoReadonlyState(c, docNo, before.linked_ac_docno != null);
     if (lock.locked) {
       skipped.push({ docNo, reason: lock.reason ?? 'This order came from AutoCount and is view-only for now.' });
       continue;

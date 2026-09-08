@@ -34,7 +34,13 @@ const src = readFileSync(join(BACKEND, 'src/scm/routes/so-handover.ts'), 'utf8')
 describe('POST /so-handover/apply respects the migrated-SO lock', () => {
   it('asks the same decision function the guard and the SO detail screen use', () => {
     expect(src).toContain("import { migratedSoReadonlyState } from '../lib/migrated-so-readonly';");
-    expect(src).toContain('await migratedSoReadonlyState(c, before.linked_ac_docno != null)');
+    /* UPDATED 2026-09-08 with the correctness-mode re-grain: the decision is
+       now per DOCUMENT, so this route hands over the doc number it is looking
+       at as well. The assertion still pins the same two things it was written
+       to pin — that this route asks THE shared decision function, and that it
+       computes `isMigrated` from the row it already read rather than letting it
+       default. */
+    expect(src).toContain('await migratedSoReadonlyState(c, docNo, before.linked_ac_docno != null)');
   });
 
   it('reads linked_ac_docno, or it could not answer', () => {
