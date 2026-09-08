@@ -91,3 +91,21 @@ test("the REAL corrections files load, and the builds written on 2026-09-08 are 
     "held, so it must stay DIFFER in the reconcile",
   );
 });
+
+test("a LATER ruling supersedes an earlier one on the same build", () => {
+  /* HC-SO-012929, measured on the 2026-09-08 book: the owner ruled this build
+     TWICE. August read it as three pieces; on 2026-09-04 and again on 2026-09-05
+     he removed the surplus 1S and ruled 1A(LHF)+2A(RHF). Both entries' needles
+     match the SAME book text, so the lookup had two candidates and answered with
+     the FIRST — the stale August one. The ERP holds his September answer, the
+     stale ruling did not match it, and the document kept reporting as
+     "CANNOT BE COMPARED — your drawing decides these" on every run. He said
+     「这个很多我刚刚都给过你答案了啊」. The newest ruling is the ruling. */
+  const dir = withData({
+    aug: { entries: [{ docs: ["HC-SO-012929"], pieces: ["1S", "1A(LHF)", "2A(RHF)"], desc2Match: "Size:26”/Col:Modenza 02 Barley/Bottom wr" }] },
+    sep: { entries: [{ docs: ["HC-SO-012929"], pieces: ["1A(LHF)", "2A(RHF)"], desc2Match: "Size:26”/Col:Modenza 02 Barley" }] },
+  });
+  const hit = makeSofaRulingLookup(dir)("HC-SO-012929", lines('Size:26"/Col:Modenza 02 Barley/Bottom wrap nylon'));
+  assert.deepEqual(hit.pieces, ["1A(LHF)", "2A(RHF)"]);
+  assert.equal(hit.source, "sofa-compartment-corrections-2026-09.json");
+});
