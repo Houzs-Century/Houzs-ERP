@@ -37,6 +37,17 @@
  * reported as unkeyed, never quietly matched to the row that happens to sit at
  * the same index.
  *
+ * ── IT EXPLAINS; IT DOES NOT SECOND-GUESS ──────────────────────────────────
+ * `check-ac-erp-reconcile.mjs` owns the word DIFFERENT and its verdict is the
+ * one that counts — two implementations of "different" is how two statements of
+ * one rule come to disagree while both report on "the same" documents, which is
+ * written into that file's header twice and cost 40 wrong findings on go-live
+ * morning (docs/bugs/0689). So this prints NO verdict, NO bucket and NO differ
+ * count, and nothing here feeds the tally. It answers the other question — WHY
+ * a document the reconcile already named does not line up, and at which line.
+ * If this and the reconcile ever disagree, THE RECONCILE IS RIGHT and this is
+ * broken.
+ *
  * ── THE THREE THINGS IT PRINTS ──────────────────────────────────────────────
  * 1. MULTI-ORDER RECEIPTS — how many in-scope receipts draw on more than one
  *    purchase order, and the distribution. The fact the refusal was built on.
@@ -247,8 +258,10 @@ async function main() {
   }
 
   plain('');
-  plain('═════════ 2. LINE BY LINE — every pair whose lines do not agree ═════════');
-  note(`${differing.length} (receipt x purchase order) pair(s) differ on at least one LINE.`);
+  plain('═════════ 2. LINE BY LINE — where the two sides do not line up, and at which line ═════════');
+  plain('   NOT a verdict and NOT a count anyone should quote: check-ac-erp-reconcile.mjs owns the word');
+  plain('   DIFFERENT. This says WHERE, so a document it already named can be read line by line.');
+  note(`${differing.length} (receipt x purchase order) pair(s) have at least one line that does not line up.`);
   for (const d of differing.slice(0, SHOW)) {
     plain('');
     plain(`── ${d.doc}  (${d.pair})${d.inScope ? '' : '  [pair is OUTSIDE the migration scope]'}`);
@@ -295,15 +308,16 @@ async function main() {
     plain('   They are named, not guessed at by position — that guess is what put a REGAL in front of a');
     plain('   customer whose book line said TRION.');
     for (const u of unkeyed.slice(0, SHOW)) plain(`     ${u.doc}  ${u.item}  qty ${u.qty}`);
-    if (unkeyed.length > SHOW) plain(`     ... ${unkeyed.length - unkeyed.length + unkeyed.length - SHOW} more`);
+    if (unkeyed.length > SHOW) plain(`     ... ${unkeyed.length - SHOW} more`);
   }
 
   plain('');
   plain('═════════ 一句话 ═════════');
   note(differing.length === 0
     ? `GOODS RECEIPTS LINE UP with the account book, line by line, across ${heads.length} documents.`
-    : `${differing.length} goods-receipt pair(s) differ on a LINE. Each one is named above with both sides' `
-      + 'arithmetic; none of them is explained by a receipt spanning several purchase orders.');
+    : `${differing.length} goods-receipt pair(s) have a LINE that does not line up. Each is named above with `
+      + "both sides' arithmetic. Not one of them is explained by a receipt spanning several purchase orders — "
+      + 'that was the wrong instrument. Stating the TALLY VERDICT remains check-ac-erp-reconcile.mjs’s job.');
 
   await sql.end({ timeout: 5 });
   process.exit(0);
