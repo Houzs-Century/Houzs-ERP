@@ -209,9 +209,11 @@ describe('POST and CANCEL', () => {
     const je = sb.tables.journal_entries.find((r) => r.source_type === 'PV')!;
     expect(String(je.narration)).toMatch(/^Customer refund 2990-MRF-2607-001 — Ah Meng \(2990-SO-2607-001\)/);
     const lines = sb.tables.journal_entry_lines.filter((r) => r.journal_entry_id === je.id || r.je_id === je.id);
-    expect(lines.map((l) => [l.account_code, Number(l.debit_sen), Number(l.credit_sen), l.party_type, l.party_name])).toEqual([
-      ['300-0000', 30000, 0, 'CUSTOMER', 'Ah Meng'],
-      ['310-0010', 0, 30000, 'CUSTOMER', 'Ah Meng'],
+    /* Both legs carry the customer's CODE — the header's customer_id, since 2990
+       keeps no debtor code (owner 2026-09-08) — beside the name. */
+    expect(lines.map((l) => [l.account_code, Number(l.debit_sen), Number(l.credit_sen), l.party_type, l.party_code, l.party_name])).toEqual([
+      ['300-0000', 30000, 0, 'CUSTOMER', 'cust-1', 'Ah Meng'],
+      ['310-0010', 0, 30000, 'CUSTOMER', 'cust-1', 'Ah Meng'],
     ]);
     expect(sb.tables.payment_vouchers[0]!.status).toBe('POSTED');
     expect(sb.tables.customer_credits).toHaveLength(0);

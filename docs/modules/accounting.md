@@ -1081,14 +1081,36 @@ heal their OR on first print.
 **Customer Refund (2026-09-07).** The refund to a customer is a payment
 voucher of purpose `CUSTOMER_REFUND` — payment-voucher.md §14 is the guide.
 Its entry is `customerRefundLines` in `backend/src/acc/rules.ts`, the mirror
-of `customerPaymentLines`: Dr AR (role `AR`, party CUSTOMER — the debtor
-code when the document carries one, the name always) / Cr the money account
-the refund leaves from, both legs stamped with the customer. It offsets the
-Cr AR the customer's own payment booked; 2990's customers carry no debtor
-code, so the two meet by name, which the voucher copies from the document.
+of `customerPaymentLines`: Dr AR (role `AR`, party CUSTOMER — the customer's
+code, see "One customer, one code" below, the name always) / Cr the money
+account the refund leaves from, both legs stamped with the customer. It
+offsets the Cr AR the customer's own payment booked; the two meet by the
+party code the voucher copies from the document.
 Migrations `20260907T1700_pv_purpose_customer_refund.sql` (the enum value)
 and `20260907T1705_pv_customer_refund_columns.sql` (source and customer on
 the header). Pinned by `backend/tests/pvCustomerRefund.test.ts`.
+
+**One customer, one code (2026-09-08, owner: 不是一个 customer 一个 account
+code 吗 → 做,第 3 点也做).** The AR control keeps customers apart by the
+party on each line, and 2990 keeps no debtor codes, so until this day its
+lines carried the customer's NAME alone: two customers sharing a name merged
+in every party view, one customer typed two ways split. `customerPartyCode`
+(`backend/src/acc/payments.ts`) is the one rule — the debtor code when the
+business keeps one (blank = not kept), else the document's own `customer_id`,
+which every 2990 order carries — and `postSoPayment` reads both off the order
+to stamp `party_code` beside `party_name`; SI payments keep the invoice's
+debtor code (invoices carry no customer_id); the refund voucher applies the
+same rule to its header's `debtor_code` / `customer_id`
+(`backend/src/scm/routes/payment-vouchers.ts`). The R&P party mode keys
+control rows by the code where one is stamped and still names them
+(`backend/src/scm/routes/accounting-rp.ts`). The lines booked before the rule
+— the 171 SOPAY entries of 2026-09-08 and any refund posted before it — are
+stamped from their documents by `.github/workflows/repair-customer-party-code.yml`
++ `backend/scripts/repair-customer-party-code.mjs` (plan/apply, environment-
+scoped, CONFIRM "STAMP CUSTOMER PARTY CODES"; a line whose document yields no
+code is listed and left alone; convergent; fresh-connection verification).
+Contracts: `backend/src/acc/payments.test.ts` (the code beside the name, the
+debtor code winning, a blank one falling back), `backend/tests/pvCustomerRefund.test.ts`.
 
 **One clearing account per card machine (2026-09-07, owner: 我想要拆账户，因为这样
 我比较然后检查回).** Until now every acquirer's card money sat in ONE account,
