@@ -1076,3 +1076,23 @@ stays visible. Contracts: `backend/tests/settlementRoutes.test.ts` (the
 clearing list, the write and its refusals), `SettlementSetup.test.tsx` (the
 picker). Merchant reconciliation moving a matched untagged payment from the
 generic account to its bank's is the follow-up.
+
+**One line per untagged card payment (docs/bugs/0688, 2026-09-08).** The
+morning the per-bank accounts went live the owner opened Merchant
+reconciliation and saw 2990-SO-2606-013 four times — once under each active
+merchant, and the header counting it four times. That is `couldBeAcquirers`
+doing its job (a card payment recorded without a bank could be any of theirs,
+so every statement must be able to find it) walked acquirer by acquirer by the
+two watch screens: 2990's 43 untagged instalments read as 172 rows and
+RM 749,724 instead of 125 rows and RM 326,994. `listOnce`
+(`backend/src/acc/settlement-match.ts`) now puts an untagged payment on the
+watchlist and on the in-transit list ONCE, under no acquirer
+(`backend/src/scm/routes/accounting-settlement.ts`; the ageing table keys it
+未标), and the screens show the chip as 未标 with a line saying how many were
+keyed in without a bank (`frontend/src/pages/scm-v2/MerchantRecon.tsx`,
+`BankRecon.tsx`, the types in `settlement-queries.ts`). Matching is untouched:
+the payment is still offered to every merchant's report, and the confirm that
+stamps its bank is what moves it onto that merchant's list. Contracts:
+`settlement-match.test.ts` (listed once), `backend/tests/settlementRoutes.test.ts`
+(both lists, the acquirer filter, the ageing key), `MerchantRecon.test.tsx` and
+`BankRecon.test.tsx` (the chip and the counts).
