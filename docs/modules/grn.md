@@ -642,12 +642,22 @@ double-count; only the book can.** Two offline tests decide it, both in
 If `moneyAfter` ever exceeds the ceiling the run says so in those words and the
 plan is not to be applied.
 
-**What it unlocked.** `check-ac-erp-reconcile.mjs` printed *"GR DATA — line and
-money comparison NOT APPLICABLE"* and stopped, because the quantity was derived
-and the grains did not match. Both reasons are gone, so the GR section now
-compares line count, item code and QUANTITY at pair grain. The unit PRICE is
-still taken from the purchase-order line and is reported as DECLARED, not as a
-gap.
+**What it unlocked — measured, not predicted.** `check-ac-erp-reconcile.mjs`
+printed *"GR DATA — line and money comparison NOT APPLICABLE"* and stopped,
+because the quantity was derived and the grains did not match. Both reasons are
+gone, so the GR section now compares line count, item code and QUANTITY at pair
+grain. The unit PRICE is still taken from the purchase-order line and is reported
+as DECLARED, not as a gap.
+
+The reshape was **applied to production 2026-09-08 09:00 local** (run
+34175100153: created 153, updated 247, cancelled 0), and the reconcile then read
+**`GR DATA (400 documents on both sides, 506 lines paired)`** — absent 0, phantom
+0, line-count differs 0 of 400, quantity differs 0 of 400, unit price differs
+0 of 400; item code 103 of 400 and document total 109 of 400 remain, of which the
+run attributes 100 to documents carrying zero money in the ERP against a valued
+book line — `stamp-migrated-source-prices.mjs`'s to close. **44 of 400 could not
+be line-matched and are UNVERIFIED, not verified-clean.** Full evidence with
+denominators in `docs/bugs/0675`.
 
 ---
 
