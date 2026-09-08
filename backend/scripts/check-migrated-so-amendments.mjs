@@ -50,6 +50,10 @@ if (!url) {
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const warn = (m) => console.log(process.env.GITHUB_ACTIONS ? `::warning::${m}` : `WARNING: ${m}`);
 
+/* Malaysia is the only clock the floor uses, and a UTC timestamp in a go-live
+   report has already caused an argument about when something happened. */
+const myt = (d) => (d ? new Date(d).toLocaleString("en-GB", { timeZone: "Asia/Kuala_Lumpur", hour12: false }) : "-");
+
 const sql = postgres(url, { ssl: "require", prepare: false, max: 1 });
 
 async function main() {
@@ -59,7 +63,7 @@ async function main() {
   const [totals] = await sql`
     SELECT
       count(*)::int                                                        AS amendments_all,
-      count(*) FILTER (WHERE status = ANY(${OPEN_STATUSES}))::int          AS amendments_open
+      count(*) FILTER (WHERE status::text = ANY(${OPEN_STATUSES}))::int          AS amendments_open
     FROM scm.so_amendments
   `;
   const [soTotals] = await sql`
@@ -81,7 +85,7 @@ async function main() {
       FROM scm.so_amendments a
       JOIN scm.mfg_sales_orders so ON so.doc_no = a.so_doc_no
      WHERE so.linked_ac_docno IS NOT NULL
-       AND a.status = ANY(${OPEN_STATUSES})
+       AND a.status::text = ANY(${OPEN_STATUSES})
      GROUP BY a.status, so.company_id
      ORDER BY so.company_id, a.status
   `;
@@ -92,7 +96,7 @@ async function main() {
       FROM scm.so_amendments a
       JOIN scm.mfg_sales_orders so ON so.doc_no = a.so_doc_no
      WHERE so.linked_ac_docno IS NOT NULL
-       AND a.status = ANY(${OPEN_STATUSES})
+       AND a.status::text = ANY(${OPEN_STATUSES})
      ORDER BY so.company_id, a.created_at
      LIMIT 200
   `;
@@ -121,7 +125,7 @@ async function main() {
       log(
         `  ${d.so_doc_no}  amd ${d.amendment_no ?? d.id}  ${d.status}`
         + `  lane=${d.lane ?? "(legacy)"}  ac=${d.linked_ac_docno}`
-        + `  raised ${d.created_at?.toISOString?.() ?? d.created_at}`,
+        + `  raised ${myt(d.created_at)} MYT`,
       );
     }
     if (detail.length === 200) warn("detail list capped at 200 rows; the COUNT above is complete.");

@@ -98,7 +98,7 @@ async function main() {
       FROM scm.mfg_sales_orders
      WHERE company_id = ${COMPANY_ID}
        AND linked_ac_docno IS NULL
-       AND created_at > now() - make_interval(hours => ${HOURS})
+       AND created_at > now() - make_interval(hours => ${HOURS}::int)
   `;
   const [everNative] = await sql`
     SELECT count(*)::int AS n
@@ -111,7 +111,7 @@ async function main() {
       FROM scm.mfg_sales_orders
      WHERE company_id = ${COMPANY_ID}
        AND linked_ac_docno IS NULL
-       AND created_at > now() - make_interval(hours => ${HOURS})
+       AND created_at > now() - make_interval(hours => ${HOURS}::int)
      ORDER BY created_at DESC
      LIMIT 10
   `;
@@ -140,7 +140,7 @@ async function main() {
       JOIN scm.mfg_sales_orders so ON so.doc_no = a.so_doc_no
      WHERE so.company_id = ${COMPANY_ID}
        AND so.linked_ac_docno IS NOT NULL
-       AND a.created_at > now() - make_interval(hours => ${HOURS})
+       AND a.created_at > now() - make_interval(hours => ${HOURS}::int)
      ORDER BY a.created_at DESC
      LIMIT 50
   `;
