@@ -106,6 +106,16 @@ confirm phrase. The repair script's behaviour is therefore **UNTESTED** against
 production; only its no-ruling path has been executed (it prints the three
 choices and exits 0).
 
+> **SUPERSEDED 2026-09-08 — both tools have now been RUN against production, and
+> the paragraph above is kept only so the sequence reads correctly.** The census
+> answered 45 of 2,882 (RM 171,400.00) in bucket (a); the owner ruled 一律跟账本;
+> `settle-collected` was applied to 44 of them and bucket (a) fell to 1. Run ids,
+> the per-order list, what was deliberately refused, and why the gap RE-OPENS are
+> in `docs/bugs/0685-the-book-says-45-customers-had-already-paid-and-the-erp-stil.md`.
+> The repair script is no longer UNTESTED; the sentence above was true when it
+> was written and stopped being true, which is exactly the kind of stale claim
+> this ledger exists to catch.
+
 **A second finding, recorded because the sweep was cheap and nobody had
 counted.** `docs/bugs/0675` noted that `HC-SO-004188` carries 2 ERP lines
 against the book's 4 — DtlKeys `925621` and `925622`, both RM 0.00, both items
