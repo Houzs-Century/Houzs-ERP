@@ -2481,6 +2481,21 @@ computed against the wrong line is a number about the wrong thing, and reporting
 it sends the operator to fix a quantity when the real fault is the source they
 picked.
 
+## The Create-DO form carries the SO's delivery date and branding (2026-09-08)
+
+`DeliveryOrderNewV2.tsx` prefills from `GET /so-source/:docNo` and posts to
+`POST /`. Until 2026-09-08 that prefill seeded the customer, salesperson and
+address but NOT `customerDeliveryDate`, and the form had no `branding` at all, so
+a DO raised here carried `customer_delivery_date`, `expected_delivery_at` and
+`branding` as NULL while its order named them — 12 company-1 and 35 company-2
+documents, measured by `backfill-migrated-do-sales-fields.mjs` with
+`scope=all` and filled by it (docs/bugs/0723). The form now seeds the customer
+date from the source and carries `branding` as a hidden header field, the way
+`/from-sos` does; Expected-at stays the operator's field and, left blank, the
+server falls back to the customer date. `missingSourceFields` names
+**Delivery Date** when the source order has none. Mobile is unaffected: its
+convert wizard posts to `/from-sos`, which copies server-side.
+
 ## A migrated DO's sales / delivery fields come from the SO header too (2026-09-08)
 
 The customer block (phone, email, address, city, state, postcode, emergency
