@@ -4003,7 +4003,7 @@ cutover importer's header column list (`HCOLS` in
 | What it still refuses | an order with NO total in either column answers **0**. A zero total is UNKNOWN, not "owes nothing" |
 | Where it is served | `GET /mfg-sales-orders/:docNo` stamps it as `balance_sen` on the response, over the header column of the same name — which is NOT a balance (see `so-outstanding.ts`'s own header for the three candidates) |
 | The shared client half | `deriveBalance` (`frontend/src/vendor/scm/lib/so-detail-gates.ts`), consumed by the mobile detail KPI and the desktop print-preview card. A server balance of **0** does not outrank a computable `total - paid`; a NON-zero one does, because only the server applies the legacy header-deposit rule |
-| The write-back's rule is DIFFERENT | `soOutstandingSen` is clamped at 0 and does NOT fall back — AutoCount's `UDF_BALANCE` is only ever written from a total the ERP itself recomputed |
+| The write-back's rule is DIFFERENT | `soOutstandingSen` is clamped at 0 and does NOT fall back — AutoCount's `UDF_BALANCE` is only ever written from a total the ERP itself recomputed. **Enforced since 2026-09-09, not just intended:** `readSoOutstandingSen` (`backend/src/scm/lib/autocount-read.ts`) refuses any `total_revenue_sen` not greater than zero and omits the key, so the book keeps its own figure. It used to refuse only a NULL, which the `0 NOT NULL` column makes impossible, so it had been computing `max(0, 0 - paid) = 0` for every migrated order — `docs/bugs/0726-*` |
 
 Until 2026-09-08 the rule read `total_revenue_sen` alone, so the detail page
 answered Balance 0.00 for every migrated order while the LIST beside it (reading
