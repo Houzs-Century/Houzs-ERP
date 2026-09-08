@@ -292,3 +292,65 @@ HC-SO-011657: REFUSED - piece SKU not minted: 9838-STOOL
 change, not a compartment correction, so this lane did not do it unilaterally. It needs one
 action from whoever owns the product list; after that this entry applies unchanged, with **no
 re-reading and nothing more from him**.
+
+---
+
+## WHAT WAS ACTUALLY WRITTEN — production, 2026-09-08
+
+**Apply run `34236161221`**, company 1. Fifteen of the sixteen builds written and
+**verified on a fresh connection**, asserting the piece multiset and **both** money
+columns. Money did not move on any of them:
+
+| document | now holds | money before / after |
+|---|---|---|
+| `HC-SO-012108` | `1A(LHF)+1NA+L(RHF)` | 489000 / 489000 |
+| `HC-SO-004709` ① | `2S` | 788800 / 788800 |
+| `HC-SO-004709` ② | `1S` | 0 / 0 |
+| `HC-SO-008683` | `2A(LHF)+CNR+2NA` | 500000 / 500000 |
+| `HC-SO-010121` | `1A(LHF)+1NA+1A(RHF)` | 368800 / 368800 |
+| `HC-SO-011158` | `1A(LHF)+CNR+1NA+1A(RHF)` | 747000 / 747000 |
+| `HC-SO-011268` | `2A(LHF)+1A(RHF)` | 349000 / 349000 |
+| `HC-SO-011434` | `1B(LHF)+1B(RHF)` | 338000 / 338000 |
+| `HC-SO-011447` | `1A(LHF)+CNR+1NA+1A(RHF)` | 500000 / 500000 |
+| `HC-SO-011454` | `1A(LHF)+CNR+1NA+1A(RHF)` | 549000 / 549000 |
+| `HC-SO-011455` | `1A(LHF)+CNR+2A(RHF)` | 700000 / 700000 |
+| `HC-SO-012026` | `1A(LHF)+1NA+1NA+CNR+1A(RHF)` | 680000 / 680000 |
+| `HC-SO-012827` ① | `1A(LHF)+1A(RHF)+1NA` | 538800 / 538800 |
+| `HC-SO-012827` ② | `1S` | 0 / 0 |
+| `HC-SO-012947` | `L(LHF)+2A(RHF)` | 408800 / 408800 |
+
+`VERIFY OK — 46 document(s), piece multiset and both money columns.`
+
+### The tally moved 45 → 33, and nothing else moved
+
+| | before (`34233001504`) | after (`34237483155`) |
+|---|---|---|
+| identical to the account book | 2775 | **2783** |
+| differ, and it is work | 6 | **6** |
+| **cannot be compared** | **45** | **33** |
+| the book itself is the gap | 56 | 60 |
+
+**The control: every other axis still reads 0** — SKU, quantity, unit price and document
+total, colour, seat size, bedframe build. `differ` stayed at exactly 6, the same six
+documents; no document changed bucket except the twelve that closed.
+
+### The three of his that are still open, and what each needs
+
+- **`HC-SO-011434` — his sofa IS written and correct.** The document is still flagged
+  because of a **second** line the book carries: `DSL-9028 SOFA`, qty 2,
+  Desc2 `9028 Arm (pillow)` — two spare arms sold as pillows. It is not a sofa build, it
+  states none, and he did not rule on it. Nothing about `1B+1B` is outstanding.
+- **`HC-SO-011601`** — needs **one line** from him: the rest of the build around the
+  corner he already named.
+- **`HC-SO-011657`** — needs the product `9838-STOOL` created. His answer is written and
+  applies unchanged the moment it exists.
+
+### One bug this round opened, found by measuring rather than by assuming
+
+The first tally after the apply still reported `HC-SO-012827` as *"sofa build not
+verifiable"* **with the owner's answer already in the database**. The reconcile's ruling
+lookup chose an entry by `desc2Match` only, so the new line-key address was invisible to it
+— the report handing him back work he had already done, the same class as
+`docs/bugs/0720`. Worse, its `only` branch would have returned a needle-less `lineKeys`
+ruling for **any** line of that document, which is blessing the wrong furniture. Both are
+fixed and pinned; full trace in `docs/bugs/0722`.
