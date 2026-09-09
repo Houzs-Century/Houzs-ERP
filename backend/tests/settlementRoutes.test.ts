@@ -765,3 +765,150 @@ describe('maintenance — the clearing account per merchant', () => {
     expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ transit_account_code: '326-0000' });
   });
 });
+
+/* ── WHAT THE OWNER SAW ON 2026-09-09 ────────────────────────────────────────
+   Nine PBB lines stood MATCHED, each carrying the clue "Reference 034766
+   matches 2990-SO-2606-046", and every one of them ALSO said "No payment in the
+   ERP explains this money". Pressing "Confirm all 9 matched" posted nothing.
+
+   Three separate faults produced that one screen, and each gets a test here:
+     • the detail read `candidates`/`suggested`, which matchStatement empties on
+       purpose for a ref match — the payment lives in `matched`;
+     • the link insert was skipped in silence when the rows insert returned no
+       ids, leaving nine MATCHED lines and zero links;
+     • a payment carrying the exact reference was never LOADED when it fell
+       outside the date window, so four other lines read "No payment recorded
+       near …" with the payment sitting in the ERP. */
+
+describe('a reference-matched line always arrives carrying its payment', () => {
+  test('the detail offers the matched payment, pre-ticked, even with no link stored', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+
+    /* Reproduce the prod state exactly: the line stands MATCHED and its link
+       row is gone. Before the fix this rendered "No payment in the ERP explains
+       this money" under a clue naming the sale. */
+    sb.tables.acc_settlement_matches = [];
+
+    const body = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as {
+      rows: Array<{ bucket: string; clue: string | null; candidates: Array<{ id: string }>; suggested: Array<{ id: string }>; linked: unknown[] }>;
+    };
+    const matched = body.rows.find((r) => r.bucket === 'MATCHED')!;
+    expect(matched.linked).toHaveLength(0);
+    expect(matched.candidates.map((p) => p.id)).toEqual(['p1']);
+    expect(matched.suggested.map((p) => p.id)).toEqual(['p1']);
+    /* The two sentences can no longer contradict each other. */
+    expect(matched.clue).toMatch(/Reference A1 matches SO-2608-001/);
+  });
+});
+
+describe('the link insert cannot fail in silence', () => {
+  /* On prod the rows insert reported no error and returned no ids, so every
+     link hit its `continue` and nine MATCHED lines kept zero links. A count
+     that cannot be reconciled to the decisions is the only thing that says so. */
+  test('an upload whose lines report no ids is refused, and keeps nothing', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const realFrom = sb.from.bind(sb);
+    sb.from = ((table: string) => {
+      const q = realFrom(table);
+      if (table !== 'acc_settlement_rows') return q;
+      const realInsert = q.insert.bind(q);
+      /* The shape of the failure: the write happens, the representation does
+         not come back. */
+      q.insert = (rows: unknown) => {
+        const ins = realInsert(rows);
+        ins.select = () => Promise.resolve({ data: [], error: null });
+        return ins;
+      };
+      return q;
+    }) as typeof sb.from;
+
+    const res = await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as Row;
+    expect(String(body.message)).toMatch(/could not be linked/);
+    /* Nothing kept: the batch is cleaned up so the file can come in again. */
+    expect(sb.tables.acc_settlement_batches).toHaveLength(0);
+  });
+});
+
+describe('an exact reference is not hidden by the date window', () => {
+  /* The owner's four PBB lines: same reference, same amount, keyed eleven days
+     late because the sale was written up late. MBB's tolerance here is 3. */
+  test('a payment keyed long after the swipe is found and offered', async () => {
+    const { app } = harness({
+      mfg_sales_order_payments: [soPayment({ paid_at: '2026-08-12T10:00:00' })],
+    });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    const body = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as {
+      rows: Array<{ ref: string | null; bucket: string; clue: string | null; suggested: Array<{ id: string }> }>;
+    };
+    const line = body.rows.find((r) => r.ref === 'A1')!;
+    /* Offered, not taken — a reference across eleven days is also the shape of
+       a mis-keyed code, and this is the path that books money. */
+    expect(line.bucket).toBe('NEEDS_CONFIRM');
+    expect(line.suggested.map((p) => p.id)).toEqual(['p1']);
+    expect(line.clue).toMatch(/outside the 3-day window/);
+    expect(line.clue).not.toMatch(/No payment recorded/);
+  });
+});
+
+/* ── "CONFIRM ALL 9 MATCHED" MUST NOT POST 0 ──────────────────────────────────
+   The detail screen was fixed to fall back to the matcher when a link is
+   missing (docs/bugs/0760), and the owner then saw the payment on screen — but
+   the bulk button reads the LINK TABLE, so it still sent an empty selection for
+   every one of those nine lines and answered "Posted 0. 9 could not be".
+
+   The same fallback belongs here, with one difference that is the whole point:
+   only `matched` is rescued, never `suggested`. Nobody is reading each line on
+   this path, and this button's promise is "post every line the unique reference
+   already matched". */
+
+describe('confirm-all posts a matched line whose link went missing', () => {
+  test('the payment is recovered from the matcher, and the link is written back', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+
+    /* Exactly the prod state: MATCHED bucket, no link. */
+    sb.tables.acc_settlement_matches = [];
+
+    const res = await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { attempted: number; confirmed: number; failed: unknown[] };
+    expect(body.attempted).toBe(1);
+    expect(body.confirmed).toBe(1);
+    expect(body.failed).toEqual([]);
+
+    /* Confirming writes the link, so the data heals as he works. */
+    expect((sb.tables.acc_settlement_matches as Row[]).length).toBe(1);
+    const row = (sb.tables.acc_settlement_rows as Row[]).find((r) => r.bucket === 'MATCHED')!;
+    expect(row.confirmed_at).toBeTruthy();
+    expect(row.posted_je_no).toBeTruthy();
+  });
+
+  /* THE LINE THAT MUST NOT MOVE. A payment the matcher only SUGGESTS — here an
+     out-of-window reference — is not something a bulk button may post: it is
+     offered on the detail screen for a human to look at. */
+  test('a merely suggested payment is not posted by the bulk button', async () => {
+    const { app, sb } = harness({
+      mfg_sales_order_payments: [soPayment({ paid_at: '2026-08-12T10:00:00' })],
+    });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    /* Eleven days out: NEEDS_CONFIRM with the payment pre-ticked, so the bulk
+       button has nothing to do — and must not invent something. */
+    const rows = sb.tables.acc_settlement_rows as Row[];
+    expect(rows.find((r) => r.ref === 'A1')!.bucket).toBe('NEEDS_CONFIRM');
+
+    const res = await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+    const body = (await res.json()) as { attempted: number; confirmed: number };
+    expect(body.attempted).toBe(0);
+    expect(body.confirmed).toBe(0);
+    expect(sb.tables.acc_settlement_matches).toHaveLength(0);
+  });
+
+  test('a batch that does not exist is a 404, not an empty success', async () => {
+    const { app } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const res = await post(app, '/settlement/batches/9999/confirm-matched');
+    expect(res.status).toBe(404);
+  });
+});

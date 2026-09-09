@@ -1,0 +1,81 @@
+name: Relink HC-SO-000870's doubled purchase line
+
+# ONE purchase line is on the wrong sales-order row, and the account book's own
+# edge is what made it ambiguous.
+#
+# HC-PO-000290 holds two CODY-(K) bedframe lines, both RECEIVED, and both point
+# at the sales-order row carrying book line 60702 (qty 1). That row reads
+# po_qty_picked 2 against a qty of 1, while HC-SO-000870's OTHER CODY-(K) row
+# (book 60699, qty 1) reads 0 and still offers itself for purchase — one bedframe
+# on the order looks entirely unbought.
+#
+# Read from live AED_HOUZS:
+#   PO-000290 DtlKey 61216  NB-KHJ57(K) "NB-CODY B/FRAME(K)"  FromSODtlKey 60700
+#   PO-000290 DtlKey 61217  NB-KHJ57(K) "NB-CODY B/FRAME(K)"  FromSODtlKey 60702
+# and on the book's own SO-000870, 60699 and 60702 are CODY bedframes while
+# 60700 is a MYLATEX LUMBARIA MATTRESS. The book points a bedframe purchase at a
+# mattress line. lib/so-po-counter-cause.mjs calls that
+# `book_source_is_another_product` and refuses to repair it, correctly — copying
+# the edge is what docs/bugs/0671 cost. That refusal is NOT widened here.
+#
+# THE OWNER DECIDED, shown both products side by side, 2026-09-09: 「乙 · 照产品
+# 对」 — link it to 60699. His standing 「一律跟账本」 governs the VALUES the book
+# states about a line, not an edge that names the wrong line.
+#
+# ONE FOREIGN KEY IS WRITTEN. No quantity, price, status or receipt moves, and
+# the other purchase line (61217 -> 60702) is left exactly as it is.
+#
+# po_qty_picked IS LEFT STALE ON PURPOSE — 60702 falls 2 -> 1 and 60699 rises
+# 0 -> 1. recompute-so-po-qty-picked owns that counter and is idempotent; two
+# scripts writing one denormalised value is how it stops being trustworthy. Run
+# "Recompute SO po_qty_picked" after this.
+#
+# DEFAULT IS PLAN. Applying needs the confirm phrase, and the UPDATE is pinned to
+# the row id, its current so_item_id AND its book line key, so a row that has
+# moved matches nothing rather than being repaired blind.
+#
+# REVERSAL:
+#   UPDATE scm.purchase_order_items
+#      SET so_item_id = '47da23a1-9d7f-42a8-9099-b35cdf9cb80e'
+#    WHERE id = '4266996c-1a36-443a-b230-117271435047';
+#   then re-run the recompute.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "Required for apply: relink so-000870 po line"
+        required: false
+        default: ""
+
+concurrency:
+  group: relink-so-000870-po-line
+  cancel-in-progress: false
+
+jobs:
+  relink:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/relink-so-000870-po-line.mjs
+        env:
+          MODE: ${{ github.event.inputs.mode }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

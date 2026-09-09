@@ -61,8 +61,15 @@ try {
        what inAcLineOrder does. There is no line_no on this table, and ordering
        any other way would number the lines differently from the document the
        reader is looking at. */
-    ? await pg`SELECT doc_no, id, item_code, item_group, variants, description2,
-                      qty, unit_price_sen
+    /* EVERY field CollapsibleLine has, not the handful the rendering needs.
+       The collapse decides between echoing a stored Desc2 and composing a new
+       one, and that decision reads linked_ac_dtlkey; fed a partial line it
+       takes a different branch from the one the write-back takes, which is why
+       the first run reported no over-length sofa on two documents the queue
+       refuses for exactly that. */
+    ? await pg`SELECT doc_no, id, item_code, item_group, variants, description,
+                      description2, qty, unit_price_sen, linked_ac_dtlkey,
+                      warehouse_id, line_delivery_date
                  FROM scm.mfg_sales_order_items
                 WHERE doc_no = ANY(${soNos})
                 ORDER BY doc_no, created_at, id`
@@ -113,10 +120,13 @@ try {
     const lines = soLines.filter((r) => r.doc_no === docNo).map((r) => ({
       item_code: String(r.item_code ?? ''),
       item_group: r.item_group ?? null,
+      description: r.description ?? null,
       description2: r.description2 ?? null,
       variants: r.variants ?? null,
       qty: Number(r.qty ?? 1),
       unit_price_sen: Number(r.unit_price_sen ?? 0),
+      linked_ac_dtlkey: r.linked_ac_dtlkey ?? null,
+      delivery_date: r.line_delivery_date ?? null,
     }));
     if (!lines.length) continue;
     let result;
@@ -126,9 +136,18 @@ try {
       console.log(`${docNo}: collapse threw — ${e instanceof Error ? e.message : String(e)}`);
       continue;
     }
+    /* EVERY refusal, not only the over-length ones. Filtering to /characters/
+       is how the first run answered "none" for two documents the queue refuses
+       daily — a filter that matches nothing reads exactly like nothing being
+       wrong, which is the failure mode CLAUDE.md names. */
     for (const ref of result.refusals ?? []) {
       const why = String(ref.reason ?? '');
-      if (!/characters/.test(why)) continue;
+      if (!/characters/.test(why)) {
+        console.log('');
+        console.log(`${docNo}  ${(ref.itemCodes ?? []).join(', ')}`);
+        console.log(`  refused for another reason: ${why}`);
+        continue;
+      }
       sofas += 1;
       console.log('');
       console.log(`${docNo}  ${(ref.itemCodes ?? []).join(', ')}`);

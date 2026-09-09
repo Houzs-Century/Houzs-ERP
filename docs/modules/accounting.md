@@ -721,6 +721,44 @@ the reason, for a human to confirm. Offered, never taken: two possible answers i
 a question, so nothing is ticked and he chooses;
 `acc/settlement.ts` confirms, which POSTS that moment.
 
+**A REFERENCE IS NOT BOUND BY THE DATE WINDOW (2026-09-09, docs/bugs/0760).**
+`loadPaymentCandidates` used to read the tolerance window only, and the
+reference was consulted afterwards — so a payment outside the window was never
+loaded and its reference never looked at. Four PBB lines on prod read "No
+payment recorded near …" while their payment sat in the ERP with the identical
+reference and the identical amount, keyed five to eleven days later because the
+sale was written up late. The window answers "which payments could plausibly be
+this amount on this day"; it is the wrong instrument for a reference, which is
+the acquirer's own identifier for the swipe. The loader now takes the
+statement's own refs and fetches them whatever their date (deduplicated against
+the window read, so one payment reaches the matcher once). The matcher **offers**
+such a payment pre-ticked with the distance named, rather than auto-taking it —
+a reference matching across two weeks is also the shape of a code mis-keyed onto
+a later sale, and this is the one path that books money without a human. Inside
+the tolerance the automatic match is unchanged.
+
+**A ref-matched line carries its payment in `matched`, not `candidates`
+(same bug).** matchStatement empties `candidates`/`suggested` for that bucket on
+purpose — there is nothing to choose. The batch detail read only those two
+fields, so a matched line whose link had not persisted arrived with no payment
+and the screen ran its last branch, "No payment in the ERP explains this money",
+directly under the clue naming the sale it had matched; Confirm then sent an
+empty selection and was refused. The detail now falls back to `matched` for
+both, and the upload REFUSES when its rows insert returns fewer ids than
+decisions — the silent skip that left nine MATCHED lines with zero links.
+
+**AND THE BULK BUTTON IS ITS OWN PATH (docs/bugs/0761).** `settlementConfirmMatched`
+("Confirm all N matched") builds each line's payments from `acc_settlement_matches`
+alone, so the detail fix left it still answering *Posted 0* over lines whose
+payment the screen was by then showing. It now applies the same fallback — for a
+pending MATCHED row with **no link**, recompute and take the matcher's `matched`
+— recomputed only for unlinked rows, so a stored human decision is never
+overridden, and confirming writes the link back so the data heals as it is
+worked. **Only `matched` is rescued, never `suggested`:** nobody reads each line
+on this path, and an out-of-window reference or a lone amount match is offered on
+the detail screen precisely because it needs eyes. The handler also 404s on a
+missing batch rather than reporting an empty success.
+
 **Which payments are candidates (2026-09-04, the owner's first real uploads
 made the gap loud: four MBB lines all UNMATCHED while their sales sat in the
 ERP).** `couldBeAcquirers` in acc/settlement.ts is the one rule: a card payment
