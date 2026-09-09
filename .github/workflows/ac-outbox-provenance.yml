@@ -1,0 +1,59 @@
+name: AutoCount write-back queue — provenance (read-only)
+
+# Answers "who put these rows in the write-back queue — a salesperson, or our
+# own cutover repair?" The owner asked it on 2026-09-09 after finding 173 sales
+# orders waiting, all queued that day, and the queue could not answer him:
+# scm.autocount_outbox records WHAT was queued, never WHY.
+#
+# Read-only, manual trigger only, own concurrency group — the three rules in
+# CLAUDE.md "Never ask the owner to run a query". A production DB read on a
+# schedule turns a real question into CI noise nobody reads, so there is no
+# `schedule:` here and there must not be one.
+#
+# It decides NOTHING. Cancelling a queued row is irreversible, so the report
+# prints the evidence — created_by, created_at, op, the refusal reason — and a
+# human draws the line. The companion cancel script refuses to touch any row
+# this report has not listed first.
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "Detail the rows created at or after this UTC timestamp"
+        required: false
+        default: "2026-09-07T00:00:00Z"
+      company_id:
+        description: "Limit to one company (blank = all). Houzs Century is 1."
+        required: false
+        default: "1"
+
+# Its OWN group, never the deploy's: a diagnostic must not queue behind — or
+# displace — a release. On 2026-09-09 one lane cancelled another lane's
+# production run by sharing a group, which is why this is spelled out.
+concurrency:
+  group: ac-outbox-provenance
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-ac-outbox-provenance.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SINCE: ${{ inputs.since }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

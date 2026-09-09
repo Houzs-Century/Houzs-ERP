@@ -75,7 +75,8 @@ if (APPLY && CONFIRM_DOC !== DOC_NO) {
 const OP = 'so_to_do';
 
 const pg = postgres(url, { ssl: 'require', prepare: false, max: 1 });
-const sb = pgrestShim(pg, 'scm');
+/* PUSHING IS THIS TOOL'S PURPOSE — see pgrest-shim.mjs. */
+const sb = pgrestShim(pg, 'scm', { writeback: 'enqueue' });
 
 try {
   const [doc] = await pg`

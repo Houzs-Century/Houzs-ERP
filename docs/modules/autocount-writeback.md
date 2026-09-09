@@ -293,6 +293,65 @@ live account book on a guess is worse).
 
 ---
 
+## 4b. The repair gate — a script's write never reaches the book (2026-09-09)
+
+The toggle above answers *"is the write-back on for this company"*. This second
+gate answers a different question: **"did a cutover repair make this change"** —
+and a repair's change must never travel.
+
+> 「正常来说你的这批更改不应该是syncback autocount啊 应该remain啊」
+> 「你不可以有记录再这边啊 这是你import进来的错误 所以没有影响这些啊」
+> — owner, 2026-09-09, on finding 173 sales orders waiting in the queue
+
+A repair **copies a value out of the account book**. Sending it back is
+pointless where the two agree, and where they differ it overwrites his single
+source of truth with our version.
+
+**The mark is on the CLIENT, not in the caller's options.** An option is
+something ~40 repair scripts have to remember, and forgetting is silent and
+lands in a live account book. The transport is what a script cannot avoid: a
+script reaches the database through `backend/scripts/lib/pgrest-shim.mjs`, a
+request through `src/db/supabase.ts`. Marking the shim marks every script at
+once, including ones not written yet.
+
+```
+pgrestShim(sql, "scm")                              -> repair client, queues NOTHING
+pgrestShim(sql, "scm", { writeback: "enqueue" })    -> a deliberate push tool
+```
+
+**Suppressed is the DEFAULT and the polarity is the point.** A repair that
+forgets gets the safe behaviour; pushing has to be typed out, so pushing is what
+a reviewer sees.
+
+`src/scm/lib/ac-repair-suppression.ts` holds the mark, and **the check lives
+inside `isWritebackEnabled`** (`autocount-writeback-flag.ts`) rather than at each
+enqueue. One function, two questions: is the write-back on for this company, and
+is a repair making the change. Every enqueue path already gates on that call —
+including `enqueueCancel` and `enqueueEdit`, whose own UPDATE paths never reach
+`enqueueAcOp`'s insert — so asking there reaches all of them and cannot be
+forgotten at a new call site the way a second, parallel check could be.
+
+**It is a `Symbol`**, so "cannot be set from a UI request" is structural rather
+than a convention: a request body, query string and header can only produce
+string keys, and JSON has no symbols. It is non-enumerable, so it cannot leak
+into a payload either.
+
+**The five tools that may push** are pinned by
+`backend/tests/acWritebackPushAllowlist.test.mjs`, so a sixth cannot join by
+copying a neighbour: `rebuild-ac-document.mjs`, `requeue-autocount-skipped.mjs`,
+`recompose-autocount-transfer.mjs`, `reraise-hc-po-2608-001.mjs`, and
+`sync-ac-delta.mjs` under `LANES=push` only.
+
+The drain is not gated this way and does not need to be: `drainAutoCountOutbox`
+builds its own client from `env` and can never receive a shim client.
+
+See `docs/bugs/0753-cutover-repairs-queue-an-autocount-write-back-and-overwrite.md`
+— including what is still **UNKNOWN**: the gate closes the class, but the path
+that queued 454 edit rows on 2026-09-09 was outside GitHub Actions and has not
+been identified.
+
+---
+
 ## 5. The downstream lock — owner rule, 2026-08-10
 
 > **"已经转到下游的单据, AutoCount 不许取消/改动 ... 是的 我们也是要这样"**

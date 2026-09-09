@@ -90,6 +90,24 @@ mechanical reason: this route runs in the WORKER and a Worker bundle cannot
 import out of `backend/scripts`, while a script CAN import a `.ts`. That is the
 only direction in which all three callers get one answer.
 
+**And the push half now has to SAY it is a push (2026-09-09).** Every client
+`scripts/lib/pgrest-shim.mjs` builds is a *repair* client by default, and a
+repair client cannot queue an AutoCount write-back at all — a repair copies a
+value out of the account book, so sending it back overwrites the owner's source
+of truth (owner: 「你不可以有记录再这边啊 这是你import进来的错误」). That default
+would have silenced this module's push half too, so `sync-ac-delta.mjs` opts
+back in explicitly, and only on the lane that means it:
+
+```js
+// inside if (LANES.has("push")) — every OTHER lane stays suppressed
+const sb = pgrestShim(sql, "scm", { writeback: "enqueue" });
+```
+
+The direction of authority the owner set — a person's ERP edit is the highest
+standard and AutoCount follows it — is exactly what that opt-in preserves. It
+is pinned by `backend/tests/acWritebackPushAllowlist.test.mjs`; the mechanism is
+`docs/modules/autocount-writeback.md` §4b.
+
 ---
 
 ## The surface
