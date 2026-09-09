@@ -117,8 +117,8 @@ counted and printed, not hidden.
 lines. **506 of 657 carry the book's line key** — 459 distinct book receipt
 lines, the gap being sofa compartments that share one. The book's invoices bill
 **362** of those 459. The run would write **141 invoices** made of **362 lines,
-every one copied from PIDTL**, of which 31 stand for several of our rows and
-carry no single `grn_item_id`. Refused: 72 receipts where NO row carries a book
+every one copied from PIDTL**, of which 31 stand for several of our rows (a
+sofa) and point at one while consuming all. Refused: 72 receipts where NO row carries a book
 line key, 61 with nothing left to invoice, 57 the book's invoices bill none of.
 No invoice was created; the apply is the owner's.
 

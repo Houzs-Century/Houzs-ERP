@@ -326,6 +326,11 @@ function splitGrnSourcesByBookLines(sources, book) {
       if (!byKey.has(l.acLineKey)) byKey.set(l.acLineKey, []);
       byKey.get(l.acLineKey).push(l);
     }
+    /* Deterministic order inside a fold, so the row the invoice line POINTS at
+       is the same on every run and in every report. */
+    for (const rows of byKey.values()) {
+      rows.sort((a, b) => String(a._row.id).localeCompare(String(b._row.id)));
+    }
     if (byKey.size === 0) {
       stats.receiptsWithNoKeyAtAll++;
       preBlocked.push({
@@ -376,6 +381,15 @@ function splitGrnSourcesByBookLines(sources, book) {
              Only the FIRST invoice line of a split carries the order-line key,
              because a split is one receipt line seen twice, not two of them. */
           sourceLineKey: i === 0 ? rows[0].sourceLineKey : null,
+          /* The row the invoice line POINTS at, and whose item code, build and
+             specials it snapshots. For a sofa that is the lowest-id compartment
+             — a pointer to the receipt, NOT a claim that only that compartment
+             was billed, which is why every one of them is consumed below.
+             It must not be NULL: apply-sofa-compartment-corrections.mjs finds
+             an invoice line by `l.grn_item_id = ANY(...)` to carry a corrected
+             sofa code onto it, and a null there would make that carry silently
+             miss the exact lines it exists for
+             (tests/sofaCorrectionsCarryToInvoices.test.mjs pins the snapshot). */
           _row: rows[0]._row,
           /* Every one of our rows this book line stands for. One when the
              shapes agree; several for a sofa, whose compartments share the key. */
@@ -507,8 +521,9 @@ function reportBookLines({ stats, noKeyExamples, unbilledExamples, splitExamples
   log(`  book receipt lines of ours the book's invoices bill: ${stats.keysBilled} of ${stats.keys}`);
   for (const e of unbilledExamples) log(`     ${e}`);
   log(`  INVOICE LINES this run would write, all copied from PIDTL: ${stats.invoiceLines}`);
-  log(`  of those, ${stats.unlinkedInvoiceLines} stand for SEVERAL of our rows (a sofa build) and carry no single `
-    + `grn_item_id; the book's line key identifies them instead. ${stats.foldedRows} of our rows fold that way.`);
+  log(`  of those, ${stats.unlinkedInvoiceLines} stand for SEVERAL of our rows (a sofa build): the line points at `
+    + `the lowest-id compartment and CONSUMES all of them, so the whole sofa leaves the outstanding picker. `
+    + `${stats.foldedRows} extra row(s) fold that way.`);
   log(`  receipt lines the BOOK SPLIT into several invoice lines: ${stats.splitKeys}`
     + `, of which ${stats.splitAcrossInvoices} across MORE THAN ONE invoice`);
   for (const e of splitExamples) log(`     ${e}`);
@@ -665,13 +680,7 @@ async function writePi(plan, lineIndex, headIndex) {
               ${`Carried over from AutoCount ${plan.acInvoiceNo}`}, true, ${plan.acInvoiceNo})
       RETURNING id`;
     const rows = lines.map((l) => ({
-      purchase_invoice_id: h.id,
-      /* NULL when the book's one line stands for several of our rows (a sofa's
-         compartments). Pointing at whichever compartment sorts first would be a
-         choice nothing in either document supports; `linked_ac_dtlkey` below
-         carries the identity instead. */
-      grn_item_id: (l._grnItemIds && l._grnItemIds.length === 1) ? l._grnItemIds[0] : (l._grnItemIds ? null : l._row.id),
-      company_id: CO,
+      purchase_invoice_id: h.id, grn_item_id: l._row.id, company_id: CO,
       material_kind: l._row.material_kind, item_code: l._row.item_code,
       material_name: l._row.material_name, item_group: l._row.item_group,
       description: l._row.description, description2: l._row.description2,

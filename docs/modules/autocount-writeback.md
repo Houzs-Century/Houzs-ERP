@@ -595,7 +595,7 @@ Of 473 migrated goods receipts, 412 had something left to invoice and carried
 receipt lines; the gap is sofa compartments sharing one), the book's invoices
 bill **362** of those 459, and the run would write **141 invoices** made of
 **362 lines, every one copied from PIDTL**. 31 of the 362 stand for several of
-our rows (a sofa) and carry no single `grn_item_id`. Refused: 72 receipts where
+our rows (a sofa) and point at one while consuming all. Refused: 72 receipts where
 no row carries a book line key, 61 with nothing left to invoice, 57 the book's
 invoices bill none of. Before this change the same run wrote 159 invoices from
 our own receipt rows, whose line amounts were not the book's.
