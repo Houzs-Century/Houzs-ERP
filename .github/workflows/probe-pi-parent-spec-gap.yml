@@ -1,0 +1,67 @@
+name: Purchase invoice vs the receipt it came from — where is the spec (read-only)
+
+# Nine of the 35 differing purchase invoices differ only because the book states
+# a colour / divan / gap / leg / total height and OUR invoice line is blank
+# (run 34354779733, 2026-09-09). Two different repairs close that, and they are
+# not interchangeable:
+#
+#   · if the invoice's own PARENT goods receipt holds the value, the invoice is
+#     a stale snapshot and the fix is a re-copy from the parent — no book
+#     reading, no judgement;
+#   · if the receipt is blank too, the value has to come from the ACCOUNT BOOK,
+#     which is a different script and a different review.
+#
+# Writing the wrong one is not a smaller mistake than writing nothing, so this
+# measures which world we are in BEFORE anything is written.
+#
+# READ-ONLY, AND THIS WORKFLOW WRITES NOTHING. SELECTs only, one connection, no
+# DDL, no transaction, no MODE=apply. The script opens no write path.
+#
+# Manual trigger only: it is a question, not a gate, and a production DB read on
+# a schedule becomes CI noise nobody reads.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+      docs:
+        description: "Optional: only these invoices, comma separated (ERP or AutoCount numbers). Blank = every migrated purchase invoice"
+        required: false
+        default: ""
+        type: string
+
+# Its OWN group, and NOT cancel-in-progress: several lanes are reading this
+# database at once and asking a question must never cancel somebody else's
+# answer. Never the deploy's group — a diagnostic must not displace a release.
+concurrency:
+  group: probe-pi-parent-spec-gap
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Where the spec actually is
+        run: node scripts/probe-pi-parent-spec-gap.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          DOCS: ${{ inputs.docs }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
