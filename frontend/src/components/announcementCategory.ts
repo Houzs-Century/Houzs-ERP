@@ -121,3 +121,21 @@ export function requiresAcknowledgement(a: {
   if (typeof a.requireAck === "boolean") return a.requireAck;
   return categoryRequiresAck(categoryOf(a));
 }
+
+// ── Category → document family (owner 2026-09-09) ──────────────────────────
+// The composer's Type row and its category row were read as one question
+// asked twice, so the type FOLLOWS the category until the writer picks one by
+// hand: Warning → WARN, SOP → SOP, Notice (GENERAL) → NTC, Learning → ANN. A
+// family the registry does not offer (Settings → Documents) falls back to
+// ANN. Both composers (desktop ComposerModal, the phone sheet) apply this one
+// function, so the rule has one home.
+export const CATEGORY_DOC_TYPE: Record<AnnouncementCategory, string> = {
+  WARNING: "WARN",
+  SOP: "SOP",
+  GENERAL: "NTC",
+  LEARNING: "ANN",
+};
+export function docTypeForCategory(category: AnnouncementCategory, offered: ReadonlyArray<{ code: string }>): string {
+  const want = CATEGORY_DOC_TYPE[category];
+  return offered.some((t) => t.code === want) ? want : "ANN";
+}
