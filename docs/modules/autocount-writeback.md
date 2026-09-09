@@ -5270,3 +5270,78 @@ and it is NOT built — `docs/bugs/0728`.
 
 **The refusal is per DOCUMENT, not per field.** One over-long string keeps the
 whole sales order out of the accounts.
+## `chain-onward-not-migrated` — a decision the cutover made, not a backlog (2026-09-09)
+
+The reconcile's note vocabulary — the classes `so-verdict-derive.mjs` declares
+and `so-tally-verdict.mjs` gives a sentence to — gained a **twelfth** member, so
+it belongs here for the same reason `RULED` did.
+
+**Why it had to exist.** Run 34255416449 answered `GOODS RECEIPTS NOT TALLIED —
+289 of 400`. 283 of those differed on one axis only, 单据转换链 `transfer to`
+("how much of this receipt has been invoiced"), and every one read the same way:
+the account book states the line fully invoiced and the ERP records 0.
+
+Measured on `backend/scripts/data/ac-convert-edges.json.gz`, opened rather than
+quoted: the book holds **21,746** goods-receipt lines with **21,450 fully
+transferred onward**, and **5,283** purchase invoices. The ERP holds **55**,
+because the purchase-invoice HISTORY was deliberately never migrated. So
+`scm.grn_items.invoiced_qty` is 0 on those lines and always will be — not a
+wrong number, an ABSENT one, and the owner's decision rather than a defect.
+
+`lib/ac-transfer-chain-run.mjs` had no way to say that. Every `erp_low` went
+down `recorder.record()`, which LOCKS the document — the same channel a wrong
+quantity goes down — so a choice read as 283 documents somebody owed.
+
+**Where the answer comes from.** `splitUnmigratedOnwardTransfer` in
+`lib/ac-not-a-difference.mjs` (section 6), declared per CHILD type in
+`UNMIGRATED_ONWARD`: a goods receipt's onward type is `PI`, a purchase order's
+is `GR`. Nothing is believed. A row leaves the difference column only when four
+things hold, and the last two are MEASURED in the same run:
+
+1. the type declares the decision;
+2. the shape is exactly *the book moved some and we record NONE* — a partial
+   figure is a number we computed, and a computed number that disagrees is a
+   difference;
+3. the book names at least one onward document raised off this one
+   (`onwardIndex`, cancelled onward documents excluded — the conservative
+   direction, since leaving one out can only push a row back into `differ`);
+4. the ERP holds **none** of them — `ONWARD_COVERAGE` reads
+   `scm.purchase_invoices` / `scm.grns` for the AutoCount numbers we carry.
+
+Anything else is an **impostor**: it stays counted and prints LOUDER than the
+differences around it. A goods receipt whose purchase invoice we DO hold is the
+real defect this bucket must never swallow, which is
+`docs/bugs/0668-the-reconcile-printed-real-gaps-as-owner-decisions-for-do-iv.md`
+in the permissive direction.
+
+**The grain is the DOCUMENT and it is said so.** `FromDocDtlKey` is NULL on
+every one of the ~220,000 AutoCount detail rows, so the proof states "no onward
+DOCUMENT we hold was raised off this one" and is never dressed up as a
+line-level accounting.
+
+**Measured, on run 34257834858.** GR: **283 documents, 362 findings, 0
+impostors** excluded, and the verdict fell 289 → **26**. PO: the same decision
+covered **nothing**, so all 7 purchase orders stayed counted. A bucket that
+excused 283 and refused 7 in one run is the evidence that it discriminates
+rather than absorbs.
+
+**Nothing is repaired by it.** A transfer-quantity correction moves an on-hand
+figure and stock is DEFERRED (「库存先不看」). Reclassifying says what a number
+MEANS; it writes nothing.
+
+**A second guard came out of the same work.** `tests/transferChainAxis.test.mjs`
+now asserts every declared NOTE class carries a `DECLARED_LABEL` sentence — a
+class without one prints as its own bare identifier under "WHAT THIS VERDICT
+EXCLUDED", which is a suppression wearing a label. It named a real gap on its
+first run: `unanswerable-cause` has no sentence because it prints under its own
+heading, and that exemption was hand-known in the divert and hand-absent from
+any check. `NOT_DECLARED_CLASSES` in `so-tally-verdict.mjs` now names it once
+and the divert reads from it.
+
+**Reading the residue.** `check-po-gr-residue.mjs` +
+`.github/workflows/po-gr-residue.yml` print one line per still-open document
+saying why. That answer already existed in the reconcile's chain block and was
+unreadable: it is a subprocess's stdout printed at the end of a 1,300-line log
+and GitHub truncates the step before reaching it (runs 34255914713 and
+34258038309, cut off both times). Read-only — SELECTs, one connection, no DDL,
+no transaction, no apply path.

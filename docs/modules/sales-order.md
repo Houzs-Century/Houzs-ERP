@@ -2241,9 +2241,43 @@ so neither could lock a document or move a tally answer.
 
 `LOCKING_AXES` now carries `transfer from` and `transfer to`;
 `UNANSWERABLE_AXES` carries `transfer chain not verifiable`. `bucketOf` and
-`isTallied` are untouched. Three NOTE classes carry the silences so none of them
-reads as agreement: `chain-line-not-in-book`, `chain-no-source` and
-`chain-no-erp-counter`.
+`isTallied` are untouched. FOUR NOTE classes carry the silences so none of them
+reads as agreement: `chain-line-not-in-book`, `chain-no-source`,
+`chain-no-erp-counter` and — since 2026-09-09 — `chain-onward-not-migrated`.
+
+**`chain-onward-not-migrated` is a DECISION the cutover made, and it was being
+counted as a backlog.** Run 34255416449 said 289 of 400 goods receipts differ;
+283 of them differed on `transfer to` alone, every one reading "the book says
+fully invoiced, we say 0". Measured on the committed chain snapshot: the book
+holds 21,450 fully-transferred receipt lines and 5,283 purchase invoices, and
+the ERP holds 55, because the purchase-invoice HISTORY was deliberately never
+migrated. So `scm.grn_items.invoiced_qty` is 0 there and always will be — not a
+wrong number, an ABSENT one.
+
+It is NOT an amnesty, and that is the whole design:
+`splitUnmigratedOnwardTransfer` in `backend/scripts/lib/ac-not-a-difference.mjs`
+moves a row only when the shape is exactly "the book moved some and we record
+NONE", the book names an onward document raised off this one, and the ERP holds
+**none** of them — the last measured from `scm.purchase_invoices` / `scm.grns`
+in the same run. Anything else is an `impostor`: it stays counted and prints
+LOUDER, because a receipt whose purchase invoice we DO hold is the real defect
+this bucket must never swallow
+(`docs/bugs/0668-the-reconcile-printed-real-gaps-as-owner-decisions-for-do-iv.md`
+in the permissive direction).
+
+On run 34257834858 it excluded **283 documents / 362 findings with 0 impostors**
+on goods receipts — 289 → **26** — and covered **nothing** on purchase orders,
+where all 7 stayed counted. **The sales-order figures were the control and did
+not move: 38 differ / 30 cannot compare, before and after.** Full write-up in
+`docs/modules/autocount-writeback.md` and
+`docs/bugs/0728-the-reconcile-counted-a-migration-decision-as-283-goods-rece.md`.
+
+A guard came with it: `backend/tests/transferChainAxis.test.mjs` asserts every
+declared NOTE class carries a `DECLARED_LABEL` sentence, since a class without
+one prints as its own bare identifier under "WHAT THIS VERDICT EXCLUDED".
+`NOT_DECLARED_CLASSES` in `backend/scripts/lib/so-tally-verdict.mjs` names the
+one deliberate exemption (`unanswerable-cause`, which prints under its own
+heading) so the divert and the check cannot drift apart.
 
 **What the account book can answer, and it is less than it sounds.**
 `FromDocDtlKey` is EMPTY on every one of the ~220,000 detail rows of all six

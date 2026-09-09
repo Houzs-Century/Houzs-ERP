@@ -470,3 +470,151 @@ export function splitMigratedChainLineShape({ rows, facts }) {
       "priced at RM 0.00. Same goods, same money, a different number of rows.",
   };
 }
+
+/* ── 6. THE ONWARD TRANSFER NOBODY MIGRATED ──────────────────────────────── */
+
+/* THE DECLARATION, per CHILD document type. One entry per type whose ONWARD
+ * document type the cutover deliberately left behind, so this can never leak to
+ * a type nobody ruled on — the same shape as `decision` in section 2.
+ *
+ * `onwardType` is the type whose ABSENCE explains the shortfall, and it is what
+ * the caller must measure our coverage of. Nothing here is believed: the caller
+ * hands in the set of onward documents WE ACTUALLY HOLD, and a row whose onward
+ * document is in that set is an impostor however well it fits the sentence. */
+export const UNMIGRATED_ONWARD = Object.freeze({
+  GR: {
+    label: "the purchase-invoice history was never migrated",
+    onwardType: "PI",
+    decidedOn: "2026-09-08",
+    source: "the owner, in the go-live cutover brief — the purchase-invoice HISTORY was not imported",
+    ruling:
+      "the account book holds 5,283 purchase invoices and the ERP holds 55, because the purchase-invoice " +
+      "HISTORY was deliberately never migrated. AutoCount therefore states a goods-receipt line as fully " +
+      "invoiced while we record nothing having gone on — not a wrong number, an ABSENT one",
+    consequence:
+      "our receipt cannot show an invoiced quantity for an invoice we do not hold, and it never will for " +
+      "these documents. Repairing it would write a transfer quantity nothing in the ERP raised",
+  },
+  PO: {
+    label: "the goods-receipt history outside the outstanding population was never migrated",
+    onwardType: "GR",
+    decidedOn: "2026-09-08",
+    source: "the owner, in the go-live cutover brief — only receipts against OUTSTANDING orders were imported",
+    ruling:
+      "the account book holds 11,623 receipt×order pairs and 400 are in the expected ERP population, because " +
+      "only the outstanding backlog was carried over. A purchase-order line the book received on a receipt we " +
+      "never imported reads here as received in the book and untouched by us",
+    consequence:
+      "our purchase order cannot show a received quantity raised by a receipt we do not hold",
+  },
+});
+
+/**
+ * Split the transfer-TO differences into the ones the migration decision
+ * explains and the ones that are real.
+ *
+ * THE SENTENCE IS NOT THE PROOF, and that is the whole design. "AutoCount moved
+ * it and we record nothing" also describes a receipt whose purchase invoice we
+ * DO hold and never counted — a genuine defect, and one this bucket would
+ * swallow whole. So a row leaves the column only when all four hold, and the
+ * last two are MEASURED, not assumed:
+ *
+ *   a. the type DECLARES the decision (`decision` non-null),
+ *   b. the shape is exactly `the book moved some and we record NONE` — a
+ *      partial figure is a number we computed, and a computed number that
+ *      disagrees is a difference,
+ *   c. the BOOK names at least one onward document raised off this one. If the
+ *      book moved a quantity and no document of the onward type accounts for
+ *      it, nothing has been explained and saying otherwise would be inventing a
+ *      reason,
+ *   d. NONE of those onward documents is in `coverage` — the set we actually
+ *      hold. One that we do hold is exactly the defect this must not swallow.
+ *
+ * A row failing (b), (c) or (d) is returned in `impostors`, stays counted, and
+ * the caller prints it louder than an ordinary difference.
+ *
+ * THE GRAIN IS THE DOCUMENT, AND IT IS STATED RATHER THAN DRESSED UP.
+ * `FromDocDtlKey` is NULL on every one of the ~220,000 AutoCount detail rows,
+ * so the book records which DOCUMENT an invoice or receipt was raised from and
+ * nothing finer. The proof therefore says "no onward DOCUMENT we hold was
+ * raised off this one", which is the strongest true statement available, and it
+ * is never reported as a line-level accounting.
+ *
+ * @param {{rows:{key:string,ac:string,erpNo:string,bookDocNo:string,verdict:string,
+ *                bookTransfered:number,erpCounter:number,line:string,proceeded?:boolean}[],
+ *          decision:{label:string,onwardType:string,ruling:string,consequence:string}|null,
+ *          coverage:Set<string>|null,
+ *          onwardOf:(bookDocNo:string)=>string[]}} args
+ * @returns {{notMigrated:number,differ:number,moved:object[],
+ *            impostors:{line:string,why:string}[],applied:boolean,why:string}}
+ */
+export function splitUnmigratedOnwardTransfer({ rows, decision, coverage, onwardOf }) {
+  const total = rows.length;
+  const none = (why) => {
+    preserveTotal("onward transfer (not applied)", total, { notMigrated: 0, differ: total });
+    return { notMigrated: 0, differ: total, moved: [], impostors: [], applied: false, why };
+  };
+  if (!decision) {
+    return none(
+      "this type declares no migration decision about its onward document, so every transfer difference is a " +
+        "difference",
+    );
+  }
+  if (!coverage) {
+    return none(
+      `「${decision.label}」 is DECLARED for this type but the set of ${decision.onwardType} documents the ERP ` +
+        "actually holds could not be read. Nothing is reclassified: an unproven decision is not a decision, and " +
+        "without that set this cannot tell a migration gap from an invoice we hold and never counted.",
+    );
+  }
+
+  const moved = [];
+  const impostors = [];
+  for (const r of rows) {
+    /* (b) THE SHAPE. Only "we record NOTHING" is the absence the decision
+       describes. `erp_high` and `erp_asserts_untransferred` are the ERP
+       claiming MORE than the book, which no missing import can cause. */
+    if (r.verdict !== "erp_low" || Number(r.erpCounter) !== 0) {
+      impostors.push({
+        line: r.line,
+        why:
+          `${r.ac} is not the absence this decision covers — the book moved ${r.bookTransfered} and ` +
+          `we record ${r.erpCounter} (${r.verdict}). A number we computed and got wrong is a difference.`,
+      });
+      continue;
+    }
+    /* (c) THE BOOK MUST NAME THE ONWARD DOCUMENT. */
+    const onward = onwardOf(r.bookDocNo) || [];
+    if (!onward.length) {
+      impostors.push({
+        line: r.line,
+        why:
+          `${r.ac}: the book moved ${r.bookTransfered} off ${r.bookDocNo} and no ${decision.onwardType} in the ` +
+          `book names it as a source, so nothing explains the transfer — unproven, counted as a difference`,
+      });
+      continue;
+    }
+    /* (d) AND WE MUST HOLD NONE OF THEM. */
+    const held = onward.filter((d) => coverage.has(d));
+    if (held.length) {
+      impostors.push({
+        line: r.line,
+        why:
+          `${r.ac}: we DO hold ${decision.onwardType} ${held.join(", ")}, raised off ${r.bookDocNo} — the ` +
+          `migration decision does not cover this one and a zero here is a real defect`,
+      });
+      continue;
+    }
+    moved.push({ ...r, onward });
+  }
+
+  const parts = { notMigrated: moved.length, differ: total - moved.length };
+  preserveTotal("onward transfer", total, parts);
+  return {
+    ...parts,
+    moved,
+    impostors,
+    applied: true,
+    why: decision.ruling,
+  };
+}

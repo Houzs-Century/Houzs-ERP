@@ -333,11 +333,28 @@ export const DECLARED_LABEL = Object.freeze({
   "chain-no-erp-counter":
     "this edge has no stored ceiling in the ERP: how much has gone on is worked out from the child documents " +
     "every time it is asked, so there is no saved number that can drift out of step",
+  "chain-onward-not-migrated":
+    "the account book has moved this line ON to a document type the cutover deliberately did NOT bring over — " +
+    "the book holds 5,283 purchase invoices and we hold 55, and only receipts against OUTSTANDING orders were " +
+    "imported. So we record 0 transferred: not a wrong number, an ABSENT one, and your decision rather than a " +
+    "defect. PROVED per document (every onward document the book raised off this one is absent from ours); a " +
+    "line whose onward document we DO hold is still counted as a difference",
   "owner-model-override":
     "the ERP names a different product from the account book because YOU decided it — 「那就放8030 daybed把」. " +
     "The decision is written down with the book's own model beside it, so if the book ever stops saying that, " +
     "this goes straight back to being a difference without anybody editing anything",
 });
+
+/* The note classes that are NOT printed in "WHAT THIS VERDICT EXCLUDED": they
+ * have a section of their own. Named ONCE, here, because the divert below and
+ * the test that every other class carries a readable sentence must agree about
+ * which classes are exempt — two hand-kept lists is how a class comes to be
+ * exempt from a guard nobody meant to exempt it from.
+ *
+ * `unanswerable-cause` is not an exclusion at all: it is WHY a compartment
+ * could not be read, and it prints under "WHAT 'CANNOT BE COMPARED' MEANS, BY
+ * CAUSE" with its own vocabulary (`UNREAD_LABEL`). */
+export const NOT_DECLARED_CLASSES = Object.freeze(["unanswerable-cause"]);
 
 /**
  * Which of the four this document is. Exactly one, always.
@@ -409,7 +426,7 @@ export function tallyVerdict(payload) {
     }
 
     for (const [klass, byAxisNotes] of Object.entries(row.notes || {})) {
-      if (klass === "unanswerable-cause") {
+      if (NOT_DECLARED_CLASSES.includes(klass)) {
         for (const [cause, cell] of Object.entries(byAxisNotes)) {
           if (!causes.has(cause)) causes.set(cause, { cause, docs: 0, findings: 0, findingsProceeded: 0 });
           const c = causes.get(cause);
