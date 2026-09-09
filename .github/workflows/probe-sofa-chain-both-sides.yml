@@ -52,6 +52,16 @@ on:
         required: false
         default: ""
         type: string
+      book_line_keys:
+        # The other half of the same question. A chain repair often does NOT
+        # know the ERP document number - one account-book receipt covering two
+        # purchase orders becomes TWO ERP receipts and only one carries the
+        # book's number - so the book LINE KEY is the only handle that always
+        # works. Blank skips this step entirely.
+        description: "AutoCount DtlKeys, comma separated: find the ERP rows carrying them, whatever document they are on"
+        required: false
+        default: ""
+        type: string
       company_id:
         description: "ERP company (AED_HOUZS is company 1)"
         required: false
@@ -83,7 +93,7 @@ jobs:
       - run: npm ci
       - name: Refuse an empty sweep
         env:
-          ALL: "${{ inputs.so_docs }}${{ inputs.po_docs }}${{ inputs.gr_docs }}${{ inputs.do_docs }}${{ inputs.iv_docs }}${{ inputs.pi_docs }}"
+          ALL: "${{ inputs.so_docs }}${{ inputs.po_docs }}${{ inputs.gr_docs }}${{ inputs.do_docs }}${{ inputs.iv_docs }}${{ inputs.pi_docs }}${{ inputs.book_line_keys }}"
         run: |
           if [ -z "$(printf '%s' "$ALL" | tr -d '[:space:],')" ]; then
             echo "REFUSED: every document list is empty. This probe reads NAMED documents; it never sweeps."
@@ -112,3 +122,14 @@ jobs:
             TYPE="$t" DOCS="$docs" node scripts/probe-book-line-gaps.mjs || rc=$?
           done
           exit $rc
+      - name: Where each book LINE lives in the ERP, and what triggers guard the write
+        # `!cancelled()` and not the default: one document type failing to read
+        # must not hide the line-key answer, which is often the very thing that
+        # explains the failure. The job still fails overall on the earlier step.
+        if: ${{ !cancelled() && inputs.book_line_keys != '' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY: ${{ inputs.company_id }}
+          KEYS: ${{ inputs.book_line_keys }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: node scripts/probe-book-line-in-erp.mjs

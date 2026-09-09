@@ -78,6 +78,13 @@ const READERS = {
   },
   DO: {
     acOf: (d) => d.replace(/^HC-(DO-)/, "$1"),
+    /* `so_doc_no`, not `so_number`. The column has been `so_doc_no` since it was
+       indexed in migration 0111 and there has never been a `so_number` on
+       scm.delivery_orders, so this header threw 42703 and took the WHOLE DO
+       branch down with it - the type could not be probed at all, and the
+       failure looks exactly like a document the ERP does not hold. Measured on
+       prod, run 34315008484: `column "so_number" does not exist`, hint
+       `Perhaps you meant to reference the column "delivery_orders.do_number"`. */
     header: (d) => sql`SELECT do_number AS doc_no, linked_ac_docno, status, local_total_sen, so_doc_no
       FROM scm.delivery_orders WHERE company_id = ${CO} AND do_number = ${d}`,
     lines: (d) => sql`SELECT i.id::text, i.line_no, i.item_code, i.item_group, i.line_suffix, i.qty::float8 AS qty,
