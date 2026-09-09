@@ -1328,7 +1328,7 @@ instruction, 2026-09-09: 「把我们的 address lock成 40 个字」.
 
 **ONE BUNDLE, because the two halves are not separable.** Every sales-order
 address input spreads `{...addressLineProps(setLine, spill)}` from
-`frontend/src/lib/addressLimit.ts`, which is the cap and the paste handler
+`frontend/src/lib/acColumnWidths.ts`, which is the cap and the paste handler
 together. `maxLength` alone would be a REGRESSION, not
 a lock: a browser truncates an over-long PASTE to fit and the tail is gone, where
 the write-back re-flows the same text across four lines and loses no word. The
@@ -1341,7 +1341,7 @@ it".
 **The number lives in two files and is checked as one.** `ADDRESS_LINE_MAX`
 (frontend) is a copy of `AC_ADDRESS_LINE_MAX` (backend, measured on AED_HOUZS);
 the frontend cannot import from the backend, so
-`frontend/scripts/check-address-line-max.mjs` reads both and fails if they
+`frontend/scripts/check-ac-column-widths.mjs` reads both and fails if they
 disagree. It also fails a sales-order address input that does not go through the bundle,
 and it runs in BOTH required jobs — `frontend-checks` for a form edit and
 `backend-typecheck` for a change to the width itself, which a backend-only PR

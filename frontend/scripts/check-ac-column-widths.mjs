@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ----------------------------------------------------------------------------
-// check-address-line-max.mjs — the sales-order address boxes stop at the width
+// check-ac-column-widths.mjs — the sales-order address boxes stop at the width
 // the account book actually has.
 //
 // WHY THIS IS A GATE AND NOT A NOTE. AutoCount's four InvAddr columns are 40
@@ -37,7 +37,7 @@
 //
 // NO DEPENDENCIES, so it runs in a worktree with no node_modules.
 //
-// Usage: node frontend/scripts/check-address-line-max.mjs
+// Usage: node frontend/scripts/check-ac-column-widths.mjs
 // ----------------------------------------------------------------------------
 import fs from 'node:fs';
 import path from 'node:path';
@@ -45,8 +45,9 @@ import { fileURLToPath } from 'node:url';
 
 const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(frontendRoot, '..');
-const FE_CONST = path.join(frontendRoot, 'src', 'lib', 'addressLimit.ts');
+const FE_CONST = path.join(frontendRoot, 'src', 'lib', 'acColumnWidths.ts');
 const BE_CONST = path.join(repoRoot, 'backend', 'src', 'services', 'autocount-address-fit.ts');
+const BE_DESC2 = path.join(repoRoot, 'backend', 'src', 'services', 'autocount-sofa-collapse.ts');
 
 const read = (p) => fs.readFileSync(p, 'utf8');
 
@@ -135,6 +136,23 @@ if (fe && be && fe[1] !== be[1]) {
   );
 }
 if (fe && be && fe[1] === be[1]) console.log(`address line limit: ${fe[1]}, agreed by both sides`);
+
+/* THE SAME CHECK FOR THE SECOND WIDTH, and there will be a third. AutoCount's
+   columns are fixed width and it refuses the WHOLE document when one is over;
+   the address was found by a document stopping, Desc2 by three more. Each width
+   the screen enforces is a COPY of a backend constant, so each one is compared
+   here rather than remembered. */
+const feD = read(FE_CONST).match(/export const AC_DESC2_MAX = (\d+);/);
+const beD = read(BE_DESC2).match(/export const AC_DESC2_MAX = (\d+);/);
+if (!feD) failures.push(`AC_DESC2_MAX not found in ${path.relative(repoRoot, FE_CONST)}`);
+if (!beD) failures.push(`AC_DESC2_MAX not found in ${path.relative(repoRoot, BE_DESC2)}`);
+if (feD && beD && feD[1] !== beD[1]) {
+  failures.push(
+    `the Description 2 limit on screen is ${feD[1]} and the account book's column is ${beD[1]}. ` +
+    'One of them is wrong; the book is the authority.',
+  );
+}
+if (feD && beD && feD[1] === beD[1]) console.log(`Description 2 limit: ${feD[1]}, agreed by both sides`);
 
 // -- 2. every sales-order address box carries the cap and the spill ----------
 function tsxFiles(dir) {
