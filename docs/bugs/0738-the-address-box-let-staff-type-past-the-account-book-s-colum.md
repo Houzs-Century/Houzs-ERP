@@ -1,6 +1,6 @@
 ## The address box let staff type past the account book's column [medium]
 
-<!-- area: Sales order -->
+<!-- area: Sales orders + pricing -->
 
 **Symptom.** Nothing visible, until a sales order silently failed to reach
 AutoCount. The person filling the form could type an address of any length; the
