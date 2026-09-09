@@ -46,18 +46,40 @@ That is the outstanding-only scope showing up at line grain rather than document
 grain. **PR #3392's own plan closed the 12 of these that were closable; the 20
 that remain are what is left after it.**
 
-**2. The specification axes — 9 documents, plus 2 single-axis neighbours.** `T.Heights`, `colour / fabric`,
+**2. The specification axes — 9 documents, plus 2 single-axis neighbours. A
+REAL DEFECT, and it is on the invoice.** `T.Heights`, `colour / fabric`,
 `divan height`, `gap` and `leg height` on HC-PI-003230, 006244, 007555, 007761,
 007797, 007702, 007811, 007875 and 007893 — and `colour / fabric` alone on
 HC-PI-007917, `seat size` alone on HC-PI-001793: the book states a value and the
-ERP line is `(blank)` on every axis at once. A migrated invoice line is a COPY —
-`create-migrated-invoices.mjs` `writePi` writes `l._row.variants`,
-`l._row.description2` and `l._row.item_code` straight off the goods-receipt row
-— so an all-axes blank on the invoice is an all-axes blank on the receipt it was
-copied from. `diag-pi-line-provenance.mjs` (this PR) is what prints the receipt
-side beside the invoice side; **until it has been run the receipt's own values
-are UNKNOWN**, and repairing the invoice without knowing them would be repairing
-the copy and leaving the original.
+ERP line is `(blank)` on every axis at once.
+
+`diag-pi-line-provenance.mjs`, run **34377138255**, prints our line beside the
+receipt line it was built from. Over the 40 documents: **137 invoice lines,
+every one linked to a receipt line**, and
+
+```
+18 lines on 11 documents hold variants = null while the RECEIPT LINE holds the full object
+59 lines are blank on both sides
+60 lines already carry values
+```
+
+`HC-PI-006244` is the clean case. Our invoice line reads `variants=null, d2=""`;
+its receipt line `HC-GR-004126` key 745317 reads
+`{"gap":"12\"","colourId":"PC151-14","legHeight":"2\"","divanHeight":"10\"","totalHeight":"24\"", ...}`
+— value for value what the reconcile reports the book stating and us missing.
+
+**It is not the creator's bug.** `create-migrated-invoices.mjs` `writePi` has
+carried `variants: l._row.variants` since the file's first commit
+(`git log -S "variants: l._row.variants"` -> 76962abb7, and only that commit),
+and the invoices made most recently prove it still works: every line of
+`HC-PI-007968` carries its receipt's variants verbatim. So the invoice took a
+faithful SNAPSHOT of a receipt line that was EMPTY at the time, and the receipt
+was filled afterwards — the fabric and height backfills of 2026-09-02..09 — with
+nothing carrying the new value onto the invoice raised from it. That is
+docs/bugs/0687's class exactly: `repair-invoice-item-from-parent.mjs` fixed the
+ITEM CODE half of it and says in its own header that it leaves `variants` alone,
+because docs/bugs/0672 then recorded the colour comparison as invalid. It no
+longer is (docs/bugs/0755, docs/bugs/0756).
 
 **3. The specials — 7 documents, and NEITHER writer can reach them.** HC-PI-
 007702, 007811, 007824, 007854, 007875, 007894 and 007917 carry the shape *"the book asks for
@@ -73,13 +95,35 @@ and **neither touches `scm.purchase_invoice_items`**. So there is no
 money-guarded path to a purchase-invoice line today. Writing one by hand is
 exactly the third writer `repair-so-variant-from-book.mjs` refuses to become.
 
-**Fix.** None yet, deliberately. What lands here is the measurement that was
-missing: `diag-pi-line-provenance.mjs`, read-only, pinned with
-`default_transaction_read_only`, which prints our invoice line, the receipt line
-it was copied from, and the book's own source line with its Desc2 — the three
-sides nobody had put next to each other. It decides nothing:
-`check-ac-erp-reconcile.mjs` remains the only thing here that says two values
-differ (docs/bugs/0689, docs/bugs/0708).
+**Fix.** Two things, in two PRs.
+
+First the measurement that was missing: `diag-pi-line-provenance.mjs`,
+read-only, pinned with `default_transaction_read_only`, printing our invoice
+line, the receipt line it was copied from, and the book's own source line with
+its Desc2 — the three sides nobody had put next to each other. It decides
+nothing; `check-ac-erp-reconcile.mjs` remains the only thing here that says two
+values differ (docs/bugs/0689, docs/bugs/0708).
+
+Then the repair for story 2 only:
+`repair-migrated-invoice-variants-from-receipt.mjs` + workflow. It copies the
+receipt line's own `variants` onto the invoice line, and ONLY where the invoice
+line has none — the UPDATE carries
+`COALESCE(variants,'{}'::jsonb) = '{}'::jsonb`, so a line somebody has since
+filled keeps its value. It writes one column, restricted to
+`OWNED_PI_SNAPSHOT_KEYS`, a THIRD owned-key list rather than a widening of
+either sweep's (docs/bugs/0755). `specials` and `special` are deliberately
+absent from it and that absence is the money guard: a priced add-on folds into
+the authoritative unit price, so stamping one on a historical line reprices the
+document on its next edit, which the owner ruled out on 2026-08-11. A parent key
+in neither the owned nor the withheld list makes the row REFUSE rather than be
+copied in part. `description2` is REPORTED and never written: it is what the
+sofa decoder reads, so filling it can move a `sofa build` verdict, and that is
+the owner's lane.
+
+Proved RED: `variantRefreshOwnedKeys.test.ts` asserts the fill predicate is on
+the purchase-invoice statement and on no other; deleting that one line from
+`lib/variant-merge.mjs` fails it (`1 failed | 24 passed`), and restoring it
+passes 25 of 25.
 
 **Owner's, not ours.** `sofa compartments` (HC-PI-007968, 008023, 008024 — the
 book's one sofa line decomposes to two pieces and we hold one) and `sofa build
@@ -101,4 +145,4 @@ sitting on the wrong row. It is docs/bugs/0690's class exactly, and it is what
 migrated without line keys ... REPORTED, not guessed"*. Nothing here should be
 written until the rows carry keys.
 
-**Ref.** fix/pi-last-38, 2026-09-09.
+**Ref.** fix/pi-last-38 (#3478 and its follow-up), 2026-09-09.

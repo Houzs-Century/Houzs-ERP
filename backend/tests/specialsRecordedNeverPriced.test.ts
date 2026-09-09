@@ -66,6 +66,14 @@ const ALLOWED = new Set([
      file. It computes no price and reads no money. */
   'backend/scripts/lib/variant-report.mjs',
   'backend/scripts/plan-priced-specials-money.mjs',
+  /* The migrated-invoice receipt snapshot names the key only to WITHHOLD it.
+     `repair-migrated-invoice-variants-from-receipt.mjs` copies a goods-receipt
+     line's variants onto the invoice line raised from it, and its `WITHHELD`
+     map lists every key it refuses to carry across with the reason — this one
+     among them. Mentioning a key in order not to write it is the opposite of
+     pricing it, and the refusal is the safer of the two ways to fail: a parent
+     key that is in neither the owned list nor this one makes the row REFUSE. */
+  'backend/scripts/repair-migrated-invoice-variants-from-receipt.mjs',
 ]);
 
 const SCAN = ['backend/src', 'backend/scripts', 'frontend/src'];
