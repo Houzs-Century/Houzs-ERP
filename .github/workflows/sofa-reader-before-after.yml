@@ -1,0 +1,160 @@
+name: Sofa reader before/after — all six document types (read-only)
+
+# What the two parse-sofa reader fixes did to every figure the owner reads.
+#
+# `docs/bugs/0740` (the colour label `Clr:`) and `docs/bugs/0741` (the sofa leg)
+# were both held back by an earlier lane because each moves rows on ALL SIX
+# document types and that lane was scoped to sales orders. The bar for shipping
+# them is therefore a before/after over all six — and the only honest way to
+# produce one is to measure both sides in ONE job, against ONE committed book
+# snapshot, with nothing changed between the two passes except the reader files
+# under test.
+#
+# HOW THE "BEFORE" IS PRODUCED. The AFTER pass runs the branch as it stands.
+# Then the reader files are checked out from the MERGE BASE with origin/main and
+# the reconcile is run again. Restoring from the merge base rather than from
+# origin/main is deliberate: it measures what THIS branch changed, and a reader
+# change somebody else merges while this PR is open cannot creep into the
+# comparison and be reported as ours.
+#
+# READ-ONLY, AND THIS LANE WRITES NOTHING TO PRODUCTION. It runs
+# check-ac-erp-reconcile.mjs — SELECTs only, one connection, no DDL, no
+# transaction — twice, and reads the machine-readable verdicts each run writes
+# to a temp directory. There is no MODE=apply and no publish step. The git
+# checkout touches the RUNNER's working tree only; nothing is committed and
+# nothing is pushed.
+#
+# The AutoCount side is the committed snapshot
+# backend/scripts/data/ac-reconcile-truth.json.gz — the book is reachable only
+# over ZeroTier from the office network, which a GitHub-hosted runner has no
+# route to. The reconcile REFUSES when that snapshot is stale rather than
+# answering against an old book, and a refusal on either pass fails this job:
+# half a comparison must never print as a result.
+#
+# Manual trigger only: it is a question, not a gate.
+on:
+  workflow_dispatch:
+    inputs:
+      types:
+        description: "Document types to measure, comma separated. SI is spelled IV, the book's own name"
+        required: false
+        default: "SO,PO,GR,DO,IV,PI"
+        type: string
+      show:
+        description: "Offenders the reconcile lists per section"
+        required: false
+        default: "20"
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+      max_snapshot_age_days:
+        description: "Refuse if the AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+
+# Its OWN group. Not the deploy's, not the reconcile's, and not either tally
+# lane's — several lanes are working this book at once and asking this question
+# must not cancel somebody else's run mid-flight.
+concurrency:
+  group: sofa-reader-before-after
+  cancel-in-progress: true
+
+jobs:
+  before-after:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The merge base has to be reachable, so the shallow default will not do.
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+        working-directory: backend
+
+      - name: Name the merge base the BEFORE pass will be restored from
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          BASE="$(git merge-base origin/main HEAD)"
+          echo "BASE=$BASE" >> "$GITHUB_ENV"
+          echo "Merge base with origin/main: $BASE"
+          git --no-pager log -1 --oneline "$BASE"
+
+      - name: AFTER — the reconcile with this branch's reader
+        working-directory: backend
+        run: node scripts/check-ac-erp-reconcile.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          VERDICT_DIR: ${{ runner.temp }}/after
+          VERDICT_TYPES: ${{ inputs.types }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          SHOW: ${{ inputs.show }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          GITHUB_ACTIONS: ""
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+      - name: Put the MERGE BASE's reader back, and prove it actually changed
+        run: |
+          set -euo pipefail
+          # Only the reader. lib/so-tally-verdict.mjs is deliberately NOT restored:
+          # this branch's change to it is one label string, and the classifier that
+          # reads both sides must be the SAME one or the two columns are not
+          # comparable.
+          git checkout "$BASE" -- \
+            backend/scripts/lib/parse-sofa.mjs \
+            backend/scripts/lib/variant-reconcile.mjs
+          if git diff --quiet -- backend/scripts/lib/parse-sofa.mjs backend/scripts/lib/variant-reconcile.mjs; then
+            echo "REFUSED: restoring the merge base's reader changed nothing, so both passes would"
+            echo "measure the SAME code and the comparison would report a difference of zero that"
+            echo "means nothing. A verdict computed over nothing must never read as a pass."
+            exit 2
+          fi
+          git --no-pager diff --stat -- backend/scripts/lib/parse-sofa.mjs backend/scripts/lib/variant-reconcile.mjs
+
+      - name: BEFORE — the same reconcile with the merge base's reader
+        working-directory: backend
+        run: node scripts/check-ac-erp-reconcile.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          VERDICT_DIR: ${{ runner.temp }}/before
+          VERDICT_TYPES: ${{ inputs.types }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          SHOW: ${{ inputs.show }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          GITHUB_ACTIONS: ""
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+      - name: Restore this branch's reader before anything reads the tree again
+        run: |
+          set -euo pipefail
+          git checkout HEAD -- \
+            backend/scripts/lib/parse-sofa.mjs \
+            backend/scripts/lib/variant-reconcile.mjs
+          git --no-pager status --porcelain
+
+      - name: The six numbers, before and after
+        working-directory: backend
+        run: node scripts/compare-tally-verdicts.mjs
+        env:
+          BEFORE_DIR: ${{ runner.temp }}/before
+          AFTER_DIR: ${{ runner.temp }}/after
+          TYPES: ${{ inputs.types }}
+
+      - name: The full verdict for every type, this branch's reader
+        working-directory: backend
+        run: node scripts/check-po-gr-tally.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TYPES: ${{ inputs.types }}
+          SHOW: ${{ inputs.show }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
