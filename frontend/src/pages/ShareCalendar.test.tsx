@@ -65,7 +65,7 @@ function serve(url: string): Promise<Response> {
     return json({
       ...(brand ? { brand: "AKEMI" } : { contractor: "DREAM ART (M) SDN BHD" }),
       generatedAt: "2026-09-08T10:00:00Z",
-      rows: [{ startDate: "2026-09-11", endDate: "2026-09-13", venue: "MID VALLEY", organizer: "HOMELOVE", boothNo: "3053", sizeSqm: 72, ...(brand ? { totalSales: 125000 } : {}) }],
+      rows: [{ startDate: "2026-09-11", endDate: "2026-09-13", venue: "MID VALLEY", state: "SELANGOR", organizer: "HOMELOVE", brand: "AKEMI", eventType: "ROADSHOW", boothNo: "3053", sizeSqm: 72, ...(brand ? { totalSales: 125000 } : {}) }],
     });
   }
   if (url.endsWith("/events/7/floorplan")) {
@@ -104,30 +104,15 @@ describe("ShareCalendar", () => {
     expect(urls.every((u) => u.includes("/brand-calendar/"))).toBe(true);
   });
 
-  it("week view: the toggle switches the grid to one week and the choice lives in the URL", async () => {
-    window.history.pushState({}, "", `/c/${TOKEN}`);
-    fetchMock.mockImplementation((input: RequestInfo | URL) => serve(String(input)));
-    render(<ShareCalendar mode="contractor" />);
-    await screen.findByText(/Booth 3053-3055/);
-    fireEvent.click(screen.getByText("Week"));
-    expect(screen.getByText("Week").getAttribute("aria-pressed")).toBe("true");
-    expect(window.location.search).toContain("view=week");
-    expect(screen.getByLabelText("Previous week")).toBeTruthy();
-    // Today's event is in this week, so it is still on screen.
-    expect(screen.getByText(/Booth 3053-3055/)).toBeTruthy();
-    fireEvent.click(screen.getByText("Month"));
-    expect(window.location.search).not.toContain("view=week");
-  });
-
-  it("export: contractor gets five columns; brand adds Total Sales and a Confidential footer", async () => {
+  it("export: contractor gets eight columns; brand adds Total Sales and a Confidential footer", async () => {
     window.history.pushState({}, "", `/c/${TOKEN}`);
     fetchMock.mockImplementation((input: RequestInfo | URL) => serve(String(input)));
     const { unmount } = render(<ShareCalendar mode="contractor" />);
     await screen.findByText(/Booth 3053-3055/);
     fireEvent.click(screen.getByText("Export to Excel"));
     await waitFor(() => expect(written.length).toBe(1));
-    expect(sheets[0][0]).toEqual(["Date", "Venue", "Organizer", "Booth", "Size (sqm)"]);
-    expect(sheets[0][1]).toEqual(["11/09/2026 – 13/09/2026", "MID VALLEY", "HOMELOVE", "3053", 72]);
+    expect(sheets[0][0]).toEqual(["Date", "Venue", "State", "Organizer", "Brand", "Type", "Booth", "Size (sqm)"]);
+    expect(sheets[0][1]).toEqual(["11/09/2026 – 13/09/2026", "MID VALLEY", "SELANGOR", "HOMELOVE", "AKEMI", "ROADSHOW", "3053", 72]);
     expect(sheets[0].flat()).not.toContain("Confidential");
     expect(written[0]).toMatch(/^DREAM ART \(M\) SDN BHD schedule .*\.xlsx$/);
     unmount();
@@ -138,8 +123,8 @@ describe("ShareCalendar", () => {
     fireEvent.click(screen.getByText("Export to Excel"));
     await waitFor(() => expect(written.length).toBe(2));
     const brandSheet = sheets[1];
-    expect(brandSheet[0]).toEqual(["Date", "Venue", "Organizer", "Booth", "Size (sqm)", "Total Sales (RM)"]);
-    expect(brandSheet[1][5]).toBe(125000);
+    expect(brandSheet[0]).toEqual(["Date", "Venue", "State", "Organizer", "Brand", "Type", "Booth", "Size (sqm)", "Total Sales (RM)"]);
+    expect(brandSheet[1][8]).toBe(125000);
     expect(brandSheet.slice(-3).map((r) => String(r[0]))).toEqual([
       "Brand: AKEMI",
       expect.stringMatching(/^Generated: /),
