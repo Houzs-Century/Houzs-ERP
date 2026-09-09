@@ -129,7 +129,12 @@ jobs:
           git checkout "$BASE" -- \
             backend/scripts/lib/parse-sofa.mjs \
             backend/scripts/lib/variant-reconcile.mjs
-          if git diff --quiet -- backend/scripts/lib/parse-sofa.mjs backend/scripts/lib/variant-reconcile.mjs; then
+          # AGAINST HEAD, not against the index. `git checkout <commit> -- <path>`
+          # writes the INDEX as well as the working tree, so a bare `git diff`
+          # compares the restored file against itself and answers "no change" on a
+          # restore that worked perfectly. That is what failed run 34312272059:
+          # the guard fired on a correct restore and refused the measurement.
+          if git diff --quiet HEAD -- backend/scripts/lib/parse-sofa.mjs backend/scripts/lib/variant-reconcile.mjs; then
             echo "REFUSED: restoring the merge base's reader changed nothing, so both passes would"
             echo "measure the SAME code and the comparison would report a difference of zero that"
             echo "means nothing. A verdict computed over nothing must never read as a pass."

@@ -142,9 +142,9 @@ import {
 
 import { buildScope, currencyVerdict, decodeSnapshot, isTestDoc, LOCAL_CURRENCY } from "./lib/ac-scope.mjs";
 import {
-  splitBookUnpriced, splitDecidedAbsences, splitErpZeroMoney,
-  splitGuessedItemCodePairing, splitMigratedChainLineShape,
+  splitBookUnpriced, splitDecidedAbsences, splitErpZeroMoney, splitGuessedItemCodePairing,
 } from "./lib/ac-not-a-difference.mjs";
+import { applyChainShape, reportChainShape } from "./lib/ac-chain-shape.mjs";
 import { blankRowArm, isBlankBookRow, splitBlankBookRows } from "./lib/ac-blank-book-row.mjs";
 import { grPairGrain } from "./lib/ac-gr-pair-grain.mjs";
 import { erpReconcileTypes } from "./lib/ac-reconcile-erp-sql.mjs";
@@ -854,6 +854,10 @@ for (const cfg of TYPES) {
      from a MEASUREMENT, never by pattern-matching the printed string. */
   const itemRows = [];
   const lineCountRows = [];
+  /* The unpaired BOOK lines in the same machine-readable shape, for the same
+     reason, and split by the SAME `shapeFacts` — a classifier reading a printed
+     string is the failure this file already avoids twice above. */
+  const unpairedBookLineRows = [];
   /* Per document, the evidence those two classifiers need — built here, in the
      loop that already holds both sides, so neither can be computed from a
      narrower read later. See lib/ac-not-a-difference.mjs sections 4 and 5.
@@ -1241,7 +1245,12 @@ for (const cfg of TYPES) {
     for (let i = 0; i < Math.max(freeAc.length, freeErp.length); i++) {
       if (i < freeAc.length && i < freeErp.length) pairs.push([freeAc[i], freeErp[i], false]);
       else if (i < freeAc.length) {
-        F.unmatchedAc.push(`${ac}: AutoCount DtlKey ${freeAc[i].dtlKey} has no ERP line`);
+        const msgAc = `${ac}: AutoCount DtlKey ${freeAc[i].dtlKey} has no ERP line`;
+        F.unmatchedAc.push(msgAc);
+        /* ONE row per DOCUMENT, or `preserveTotal` counts one document twice. */
+        if (!unpairedBookLineRows.some((r) => r.key === ac)) {
+          unpairedBookLineRows.push({ key: ac, erpNo: d.erp_no, line: msgAc });
+        }
         VERDICT.record(t, ac, d.erp_no, "a book line we do not have",
           `AutoCount DtlKey ${freeAc[i].dtlKey} has no ERP line`);
       } else {
@@ -1395,10 +1404,11 @@ for (const cfg of TYPES) {
      have, stays counted and is reported LOUDER as an impostor. */
   const MO = applyOwnerModelOverride({ rows: itemRows, dataDir: DATA, recorder: VERDICT, t }, { log, plain, show: SHOW });
   const IC = splitGuessedItemCodePairing({ rows: MO.differ, bags: bags.size ? bags : null });
-  const LS = cfg.migratedChainLineShape
-    ? splitMigratedChainLineShape({ rows: lineCountRows, facts: shapeFacts.size ? shapeFacts : null })
-    : { lineShape: 0, differ: lineCountRows.length, moved: [], impostors: [], applied: false,
-        why: "this type is not built by the migrated invoice chain, so a line-count difference is a difference" };
+  /* The migrated invoice chain's line SHAPE, both halves, split from ONE set of
+     facts and RECORDED on the verdict — it used to reach the summary line and
+     nothing else (docs/bugs/0746). lib/ac-chain-shape.mjs. */
+  const { LS, UB } = applyChainShape({ eligible: Boolean(cfg.migratedChainLineShape),
+    t, lineCountRows, unpairedBookLineRows, shapeFacts, recorder: VERDICT });
   log(
     `${t} DATA (${bothSides} documents on both sides, ${comparedLines} lines paired) — ` +
       `line-count differs: ${LS.differ}` + (LS.lineShape ? ` (+${LS.lineShape} the same goods and the same money on a different number of rows)` : "") +
@@ -1465,17 +1475,7 @@ for (const cfg of TYPES) {
     );
     for (const row of IC.impostors.slice(0, SHOW)) plain(`      ${row.line} — ${row.why}`);
   }
-  if (LS.lineShape) {
-    log(`${t} — ${LS.lineShape} line-count difference(s) are a line SHAPE, not a missing line: ${LS.why}`);
-    for (const row of first(LS.moved)) plain(`      ${row.line}`);
-  }
-  if (LS.impostors.length) {
-    log(
-      `${t} LINE COUNT — ${LS.impostors.length} document(s) differ in line count AND do not reconcile. ` +
-        "Every one stays counted as a difference:",
-    );
-    for (const row of LS.impostors.slice(0, SHOW)) plain(`      ${row.line} — ${row.why}`);
-  }
+  reportChainShape({ t, LS, UB, log, plain, first, show: SHOW });
   if (!MZ.applied && zeroMoneyDocs) {
     log(
       `${t} — ${zeroMoneyDocs} of the ${bothSides} documents on both sides carry ZERO money in the ERP ` +

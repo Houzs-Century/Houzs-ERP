@@ -1,9 +1,12 @@
-/* Cancelling a Sales Order / Purchase Order now needs a reason and two
- * signatures (owner 2026-09-08). This suite drives the request routes and the
- * guard in front of the two existing cancel endpoints over the in-memory
- * PostgREST fake, with the audit + notify + downstream-lock collaborators
- * stubbed: what is under test is the wiring — who may do what, in which order,
- * and that the cancel stays refused until both signatures are on the row. */
+/* Cancelling a SALES ORDER needs a reason and two signatures (owner
+ * 2026-09-08). Cancelling a PURCHASE ORDER needs the reason and nothing else
+ * (owner 2026-09-09) — it carries the reason on the cancel call itself. This
+ * suite drives the request routes and the guard in front of the two existing
+ * cancel endpoints over the in-memory PostgREST fake, with the audit + notify +
+ * downstream-lock collaborators stubbed: what is under test is the wiring — who
+ * may do what, in which order, that the SO cancel stays refused until both
+ * signatures are on the row, and that the PO cancel is refused until the buyer
+ * has said why. */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { SupabaseClient, User } from '@supabase/supabase-js';
@@ -37,7 +40,7 @@ const {
 
 type Who = { id: number; name: string; perms: string[] };
 const REQUESTER: Who = { id: 11, name: 'Sales Amy', perms: ['scm.access', 'scm.so.view_all'] };
-const L1: Who = { id: 21, name: 'Ops Ben', perms: ['scm.access', 'scm.so.view_all', 'scm.so_cancel.approve_l1', 'scm.po_cancel.approve'] };
+const L1: Who = { id: 21, name: 'Ops Ben', perms: ['scm.access', 'scm.so.view_all', 'scm.so_cancel.approve_l1'] };
 const L2: Who = { id: 31, name: 'MD Cara', perms: ['*'] };
 const BOTH: Who = { id: 41, name: 'IT Dan', perms: ['*'] };
 const NOBODY: Who = { id: 51, name: 'Eve', perms: ['scm.access', 'scm.so.view_all'] };
@@ -119,11 +122,15 @@ describe('raising a request', () => {
     expect(notify).toHaveBeenCalledWith(expect.anything(), 'raised', expect.objectContaining({ docType: 'SO', docNumber: 'SO-1', requesterUserId: 11 }));
   });
 
-  it('a PO request audits on the entity log with the real caller', async () => {
+  /* Owner 2026-09-09 — the Purchase Order has no approval to ask for, so the
+     route that used to raise one refuses and writes nothing. Its reason now
+     rides the cancel itself (the guard suite below). */
+  it('refuses to raise one on a purchase order at all', async () => {
     const res = await post(REQUESTER, '/mfg-purchase-orders/po-1/cancel-request', { reason: 'Supplier cannot deliver' });
-    expect(res.status).toBe(201);
-    expect((await body(res)).request).toMatchObject({ doc_type: 'PO', doc_key: 'po-1', doc_number: 'PO-1' });
-    expect(poAudit.mock.calls[0]![1]).toMatchObject({ entityType: 'PURCHASE_ORDER', entityId: 'po-1', entityDocNo: 'PO-1', action: 'SUBMIT_FOR_APPROVAL', actor: { id: 11, name: 'Sales Amy' } });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: 'no_approval_needed' });
+    expect(rows()).toHaveLength(0);
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it('refuses a second open request on the same document', async () => {
@@ -137,7 +144,6 @@ describe('raising a request', () => {
   it('refuses a draft, a cancelled document, a locked document, and another company\'s', async () => {
     expect((await post(REQUESTER, '/mfg-sales-orders/SO-DRAFT/cancel-request', { reason: 'Junk scan draft' })).status).toBe(409);
     expect(await body(await post(REQUESTER, '/mfg-sales-orders/SO-DONE/cancel-request', { reason: 'Already gone' }))).toMatchObject({ error: 'already_cancelled' });
-    expect((await post(REQUESTER, '/mfg-purchase-orders/po-draft/cancel-request', { reason: 'Draft purchase' })).status).toBe(409);
     expect((await post(REQUESTER, '/mfg-sales-orders/SO-OTHER/cancel-request', { reason: 'Wrong company' })).status).toBe(404);
     downstream = { error: 'so_locked_downstream', message: 'A delivery order exists.' };
     const locked = await post(REQUESTER, '/mfg-sales-orders/SO-1/cancel-request', { reason: 'Customer cancelled' });
@@ -208,11 +214,15 @@ describe('the two signatures', () => {
     expect(detail.open).toMatchObject({ status: 'REQUESTED' });
     expect(detail.history).toHaveLength(1);
     expect(detail.needsApproval).toBe(true);
-    await post(REQUESTER, '/mfg-purchase-orders/po-1/cancel-request', { reason: 'Supplier cannot deliver' });
+    /* A cancelled PO lands in the same inbox as an EXECUTED row — that is
+       where "why was this purchase order cancelled" is answered — but it is
+       never OPEN, so the default scope does not carry it. */
+    await patch(NOBODY, '/mfg-purchase-orders/po-1/cancel', { reason: 'Supplier cannot deliver' });
     const inbox = await body(await get(NOBODY, '/cancel-requests'));
-    expect(inbox.requests.map((r: { doc_number: string }) => r.doc_number).sort()).toEqual(['PO-1', 'SO-1']);
+    expect(inbox.requests.map((r: { doc_number: string }) => r.doc_number)).toEqual(['SO-1']);
+    expect((await body(await get(NOBODY, '/cancel-requests?scope=all'))).requests.map((r: { doc_number: string }) => r.doc_number).sort()).toEqual(['PO-1', 'SO-1']);
     await post(REQUESTER, '/mfg-sales-orders/SO-1/cancel-request/withdraw');
-    expect((await body(await get(NOBODY, '/cancel-requests'))).requests).toHaveLength(1);
+    expect((await body(await get(NOBODY, '/cancel-requests'))).requests).toHaveLength(0);
     expect((await body(await get(NOBODY, '/cancel-requests?scope=all'))).requests).toHaveLength(2);
   });
 });
@@ -234,7 +244,9 @@ describe('the area-guard bypass for approvers', () => {
     /* Any other write on the prefix stays behind the area. */
     expect(so(ctx('PATCH', '/api/scm/mfg-sales-orders/SO-1/status', ['scm.so_cancel.approve_l2']))).toBe(false);
     expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request/approve', ['scm.access']))).toBe(false);
-    expect(cancelApproverWriteBypass('PO')(ctx('POST', '/api/scm/mfg-purchase-orders/po-1/cancel-request/approve', ['scm.po_cancel.approve']))).toBe(true);
+    /* The Purchase Order has no approve key at all since 2026-09-09, so its
+       bypass admits nobody — not even the wildcard. */
+    expect(cancelApproverWriteBypass('PO')(ctx('POST', '/api/scm/mfg-purchase-orders/po-1/cancel-request/approve', ['*']))).toBe(false);
     expect(CANCEL_REQUEST_OPEN_READ_PATH).toBe('/cancel-request');
   });
 });
@@ -270,24 +282,59 @@ describe('the guard in front of the cancel', () => {
     expect((await patch(L2, '/mfg-sales-orders/SO-1/status', { status: 'CANCELLED' })).status).toBe(403);
   });
 
-  it('a draft purchase order needs no approval; a live one needs ONE signature', async () => {
-    expect((await patch(NOBODY, '/mfg-purchase-orders/po-draft/cancel')).status).toBe(200);
-    const none = await patch(NOBODY, '/mfg-purchase-orders/po-1/cancel');
-    expect(none.status).toBe(403);
-    expect((await body(none)).message).toContain('an approval');
-    await post(REQUESTER, '/mfg-purchase-orders/po-1/cancel-request', { reason: 'Supplier cannot deliver' });
-    expect(notify).toHaveBeenLastCalledWith(expect.anything(), 'raised', expect.objectContaining({ docType: 'PO' }));
-    /* The requester still cannot sign their own. */
-    expect(await body(await post(REQUESTER, '/mfg-purchase-orders/po-1/cancel-request/approve'))).toMatchObject({ error: 'self_approval' });
-    const one = await post(L1, '/mfg-purchase-orders/po-1/cancel-request/approve');
-    expect(one.status).toBe(200);
-    expect(await body(one)).toMatchObject({ execute: true, request: { status: 'APPROVED', l1_by: 21 } });
+  /* THE 2026-09-09 RULE. No approval, no request, no second person — and no
+     silent cancel either: without a reason the PO is never reached. */
+  it('a purchase order cancels on its reason alone, and not without one', async () => {
+    const bare = await patch(NOBODY, '/mfg-purchase-orders/po-1/cancel');
+    expect(bare.status).toBe(400);
+    expect(await body(bare)).toMatchObject({ error: 'reason_required' });
+    expect(reached).not.toHaveBeenCalled();
+    expect(rows()).toHaveLength(0);
+
+    /* Too short is the same refusal — 'no' is not a remark. */
+    expect((await patch(NOBODY, '/mfg-purchase-orders/po-1/cancel', { reason: 'no' })).status).toBe(400);
+    expect(reached).not.toHaveBeenCalled();
+
+    const ok = await patch(NOBODY, '/mfg-purchase-orders/po-1/cancel', { reason: '  Supplier   cannot deliver  ' });
+    expect(ok.status).toBe(200);
+    expect(reached).toHaveBeenCalledWith('po');
+    /* The ledger row is written by the guard, already EXECUTED: whitespace
+       collapsed, the real caller on both the request and the execution. */
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toMatchObject({
+      doc_type: 'PO', doc_key: 'po-1', doc_number: 'PO-1', status: 'EXECUTED',
+      reason: 'Supplier cannot deliver', requested_by: 51, requested_by_name: 'Eve',
+      executed_by: 51, doc_status_at_request: 'SUBMITTED', company_id: CO,
+    });
+    expect(rows()[0]?.l1_by ?? null).toBeNull();
     expect(rows()[0]?.l2_by ?? null).toBeNull();
-    expect(notify).toHaveBeenLastCalledWith(expect.anything(), 'approved', expect.objectContaining({ docType: 'PO', requesterUserId: 11 }));
-    /* Nothing is left to sign. */
-    expect((await post(L2, '/mfg-purchase-orders/po-1/cancel-request/approve')).status).toBe(409);
-    expect((await patch(NOBODY, '/mfg-purchase-orders/po-1/cancel')).status).toBe(200);
-    expect(rows()[0]).toMatchObject({ doc_type: 'PO', status: 'EXECUTED' });
+    /* Nobody was asked to approve anything. */
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('a DRAFT purchase order is asked why too — one rule, whatever the status', async () => {
+    expect((await patch(NOBODY, '/mfg-purchase-orders/po-draft/cancel')).status).toBe(400);
+    expect((await patch(NOBODY, '/mfg-purchase-orders/po-draft/cancel', { reason: 'Raised against the wrong supplier' })).status).toBe(200);
+    expect(rows()[0]).toMatchObject({ doc_key: 'po-draft', status: 'EXECUTED', doc_status_at_request: 'DRAFT' });
+  });
+
+  it('a cancel the handler REFUSED writes no ledger row claiming it happened', async () => {
+    const a = app(NOBODY);
+    /* Stand in for the real handler refusing (a GRN on the PO, a drop-ship DO,
+       an already-received order): the guard must not record a cancellation. */
+    const refusing = new Hono<{ Bindings: Env; Variables: Variables }>();
+    refusing.use('*', async (c, next) => {
+      c.set('user', CALLER); c.set('companyId', CO);
+      c.set('supabase', sb as unknown as SupabaseClient);
+      c.set('houzsUser', { id: NOBODY.id, name: NOBODY.name, permissions_set: new Set(NOBODY.perms), permissions: NOBODY.perms });
+      await next();
+    });
+    refusing.use('/mfg-purchase-orders/:id/cancel', cancelApprovalGuard('PO'));
+    refusing.patch('/mfg-purchase-orders/:id/cancel', (c) => c.json({ error: 'po_locked_downstream' }, 409));
+    const res = await refusing.request('/mfg-purchase-orders/po-1/cancel', { method: 'PATCH', ...json({ reason: 'Supplier cannot deliver' }) }, ENV);
+    expect(res.status).toBe(409);
+    expect(rows()).toHaveLength(0);
+    expect(a).toBeDefined();
   });
 
   it('admits the cancel write for an approver who lacks the area, and only then', async () => {

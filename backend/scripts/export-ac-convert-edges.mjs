@@ -30,10 +30,20 @@
  *
  *   3. `FromDocDtlKey` exists on ALL SIX detail tables and is NULL on EVERY ONE
  *      of the ~220,000 rows.  It is exported anyway, precisely so the checker
- *      can PROVE that rather than assume it: the day the write-back starts
- *      populating it, line-level resolution becomes possible for the other four
- *      edges and the checker should notice by itself instead of quietly going
- *      on comparing at document grain.
+ *      can PROVE that rather than assume it.
+ *
+ *      ⚠️ CORRECTED 2026-09-09.  This bullet used to end: *"the day the
+ *      write-back starts populating it, line-level resolution becomes possible
+ *      for the other four edges"* — which reads as "until then, the book cannot
+ *      say".  The book CAN say, and always could.  AutoCount keeps the
+ *      line-to-line graph in `DocTransfer`, not in the detail tables: 134,501
+ *      rows on this book, `FromDocDtlKey` and `ToDocDtlKey` set on every one,
+ *      exactly one source per child.  `export-ac-doc-transfer.mjs` pulls it and
+ *      `docs/bugs/0746` has the measurement.  This exporter is deliberately NOT
+ *      changed to read it — several lanes read this committed .gz and filling
+ *      the column would move every downstream verdict at once — so the two
+ *      snapshots stay separate and this bullet stays a statement about the
+ *      DETAIL TABLES only.
  *
  * THE TRAP THIS EXPORT EXISTS TO RECORD.  `PODTL.FromDocType` is NULL on all
  * 10,789 real SO->PO rows in this book.  AutoCount records that one edge as

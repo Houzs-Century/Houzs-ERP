@@ -4,10 +4,12 @@
    two existing cancel endpoints wait for it.
 
    THE OWNER, 2026-09-08: 「SO 和 PO 取消的话需要 approval 2 层 — 已经输入原因」,
-   and later that day 「只有 SO 需要 sales director approval, PO 不需要 … PO 只要
-   Purchaser 一个审批」 — so a Sales Order takes two signatures and a Purchase
-   Order one (shared/document-cancel.ts APPROVAL_LEVELS). Nothing here counts
-   to two: every handler asks the table.
+   later that day 「只有 SO 需要 sales director approval, PO 不需要 … PO 只要
+   Purchaser 一个审批」, and on 2026-09-09 「PO cancelled 不需要审批，只需要 remark
+   原因取消」 — so a Sales Order takes two signatures and a Purchase Order takes
+   NONE: its cancel carries the reason and runs on the spot
+   (shared/document-cancel.ts APPROVAL_LEVELS, `isReasonOnly`). Nothing here
+   counts signatures itself: every handler asks that table.
 
    WHAT IT MOUNTS (routes/../index.ts):
 
@@ -18,8 +20,12 @@
        POST /mfg-sales-orders/:docNo/cancel-request/reject     { reason }
        POST /mfg-sales-orders/:docNo/cancel-request/withdraw
 
-     Purchase Order (rides the scm.procurement.po area guard) — same five under
-       /mfg-purchase-orders/:id/cancel-request
+     Purchase Order (rides the scm.procurement.po area guard) — the same five
+       under /mfg-purchase-orders/:id/cancel-request. Since 2026-09-09 the PO
+       needs no approval, so RAISING one is refused (409 no_approval_needed)
+       and only the GET survives in practice — it is what the History card
+       reads to show WHY a purchase order was cancelled. The rows it reads are
+       written by the guard below, not by the POST.
 
      Inbox          GET /cancel-requests?scope=open|all — both documents, this
                     company, newest first (coarse scm.access only: an inbox
@@ -27,15 +33,27 @@
 
      THE GUARD   `cancelApprovalGuard('SO')` on PATCH /mfg-sales-orders/:docNo/status
                  (only when the body says CANCELLED) and `cancelApprovalGuard('PO')`
-                 on PATCH /mfg-purchase-orders/:id/cancel. It refuses with
-                 `cancel_approval_required` unless the document carries an
-                 APPROVED request, lets the existing handler run, and on a 2xx
-                 stamps the request EXECUTED. The two cancel handlers are NOT
-                 edited: mfg-sales-orders.ts (11,947 lines) and
-                 mfg-purchase-orders.ts (4,485) sit on their size ceilings, and
-                 a middleware at the mount is the same position the write freeze
-                 and the migrated-SO lock occupy — a document-level rule beside
-                 the module-level ones, not buried in a route file.
+                 on PATCH /mfg-purchase-orders/:id/cancel.
+
+                 On a document that takes signatures it refuses with
+                 `cancel_approval_required` unless an APPROVED request is on the
+                 document, lets the existing handler run, and on a 2xx stamps
+                 that request EXECUTED.
+
+                 On a REASON-ONLY document (the PO) there is no request to wait
+                 for, so the guard is what makes the reason mandatory: it reads
+                 `{ reason }` off the cancel's own body, refuses 400
+                 `reason_required` without one, and on a 2xx writes the EXECUTED
+                 ledger row itself. Putting it here rather than in the handler
+                 is what makes it unskippable — desktop read page, desktop
+                 editor, list menu and mobile all reach the same PATCH.
+
+                 The two cancel handlers are NOT edited: mfg-sales-orders.ts
+                 (11,947 lines) and mfg-purchase-orders.ts (4,485) sit on their
+                 size ceilings, and a middleware at the mount is the same
+                 position the write freeze and the migrated-SO lock occupy — a
+                 document-level rule beside the module-level ones, not buried in
+                 a route file.
 
    WHY THE APPROVE DOES NOT CANCEL. Level 2's approve marks the request
    APPROVED and answers `{ execute: true }`; the client then calls the
@@ -82,6 +100,7 @@ import {
   executionRefusal,
   isFinalLevel,
   isOpenCancelStatus,
+  isReasonOnly,
   levelsFor,
   readReason,
   rejectRefusal,
@@ -180,7 +199,7 @@ async function loadOpenRequest(sb: AnyCtx, docType: CancelDocType, key: string, 
 /** One audit row per step, on the document's own history. The SO has its own
  *  log (mfg_so_audit_log) and the PO rides entity_audit_log; both are
  *  best-effort here — the request row is the record, the history is the echo. */
-async function audit(c: AnyCtx, docType: CancelDocType, doc: DocRow, action: 'SUBMIT_FOR_APPROVAL' | 'APPROVE' | 'REJECT' | 'WITHDRAW_FROM_APPROVAL', note: string) {
+async function audit(c: AnyCtx, docType: CancelDocType, doc: DocRow, action: 'SUBMIT_FOR_APPROVAL' | 'APPROVE' | 'REJECT' | 'WITHDRAW_FROM_APPROVAL' | 'CANCEL', note: string) {
   const sb = c.get('supabase');
   const actor = actorOf(c);
   if (docType === 'SO') {
@@ -507,6 +526,81 @@ export function cancelExecutionBypass(docType: CancelDocType) {
 /* ── The guard in front of the cancel itself ─────────────────────────────── */
 
 /**
+ * The reason-only half of `cancelApprovalGuard` — the Purchase Order since
+ * 2026-09-09. No signature is waited for; what the cancel may not do is happen
+ * without the buyer's words, so the reason rides the cancel's own body and is
+ * validated by the SAME `readReason` an SO request is (5-1000 chars, whitespace
+ * collapsed).
+ *
+ * ORDER MATTERS. The reason is checked BEFORE the handler runs — a cancel with
+ * no reason must not reach the document — and the ledger row is written AFTER,
+ * only on a 2xx, so a cancel the handler refused (downstream GRN, drop-ship DO,
+ * already RECEIVED) leaves no row claiming it happened. The row is written
+ * best-effort: the document IS cancelled by then, and failing the response
+ * would tell the operator the opposite of the truth.
+ *
+ * The caller must be identifiable — `requested_by` is NOT NULL and naming the
+ * wrong person is worse than refusing — so an unknown caller is refused before
+ * anything is cancelled, exactly as raising a request is.
+ */
+async function reasonOnlyCancel(
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+  docType: CancelDocType,
+  key: string,
+  companyId: number,
+  next: Next,
+): Promise<Response | void> {
+  let body: { reason?: unknown } = {};
+  /* Hono caches the parsed body, so the handler's own c.req.json() still gets
+     this object; a body that is not JSON is simply one with no reason. */
+  try { body = ((await c.req.json()) as { reason?: unknown } | null) ?? {}; } catch { body = {}; }
+  const reason = readReason(body.reason);
+  if (!reason.ok) return c.json(reason.refusal, 400);
+
+  const actor = actorOf(c as AnyCtx);
+  if (actor.id == null) {
+    return c.json({ error: 'caller_unknown', message: 'Could not identify who is cancelling this document.' }, 403);
+  }
+
+  const cfg = DOCS[docType];
+  const sb = (c as AnyCtx).get('supabase') ?? getSupabaseService(c.env);
+  const { data: docRow, error: docErr } = await scopeToCompanyId(
+    sb.from(cfg.table).select(`${cfg.numberColumn}, status`).eq(cfg.keyColumn, key),
+    companyId,
+  ).maybeSingle();
+  /* A read that FAILED is not "no such document" (the swallowed-reads gate). */
+  if (docErr) return c.json({ error: 'load_failed', reason: docErr.message }, 500);
+  const before = (docRow ?? null) as Record<string, unknown> | null;
+
+  await next();
+  if (!c.res.ok || !before) return;
+
+  const at = nowIso();
+  /* The document's own history says WHY, beside the status change its handler
+     wrote — the History drawer is where a reader already is. The handler is not
+     edited for this (it is at its size ceiling, and this module's whole shape is
+     that the rule lives at the mount); the row is this module's, written the
+     same way every approval step writes one. */
+  const doc = { key, number: String(before[cfg.numberColumn] ?? key), status: String(before.status ?? '') };
+  await audit(c as AnyCtx, docType, doc, 'CANCEL', reason.reason);
+  const { error } = await sb.from(CANCEL_REQUESTS_TABLE).insert({
+    company_id: companyId,
+    doc_type: docType,
+    doc_key: key,
+    doc_number: doc.number,
+    doc_status_at_request: doc.status,
+    status: 'EXECUTED',
+    reason: reason.reason,
+    requested_by: actor.id,
+    requested_by_name: actor.name,
+    requested_at: at,
+    executed_by: actor.id,
+    executed_at: at,
+  });
+  if (error) console.error('[cancel-guard] reason-only ledger row failed', { docType, key, error: error.message });
+}
+
+/**
  * Middleware for the two existing cancel endpoints. Passes everything that is
  * not a cancel straight through (the SO status route carries every other
  * transition too), passes a DRAFT through (discarded, never approved), and
@@ -532,6 +626,7 @@ export function cancelApprovalGuard(docType: CancelDocType): MiddlewareHandler<{
     if (!key) return next();
     const co = requireActiveCompanyId(c as AnyCtx);
     if (!co.ok) return next();
+    if (isReasonOnly(docType)) return reasonOnlyCancel(c, docType, key, co.companyId, next);
     /* Mounted BEFORE the area guard and the router's own supabaseAuth, so the
        bridge has not stashed a client yet on the first request through; the
        service client is the same one supabaseAuth would mint. */

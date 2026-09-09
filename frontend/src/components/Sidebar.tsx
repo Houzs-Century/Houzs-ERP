@@ -61,6 +61,7 @@ import {
   Map,
   MapPinned,
   Megaphone,
+  FileSignature,
   History,
   Wand2,
   CalendarOff,
@@ -520,7 +521,7 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/mrp", label: "MRP · Stock Status", icon: Calculator, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.mrp"], hideForSalesRep: true },
           { to: "/scm/purchase-orders", label: "Purchase Orders", icon: ClipboardList, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.po"], hideForSalesRep: true },
           { to: "/scm/po-amendments", label: "PO Amendments", icon: History, anyPerm: ["*", "scm.access", "scm.po_amendment.create", "scm.po_amendment.approve"], anyAccess: ["scm.procurement.po"], hideForSalesRep: true, badge: "po-amendment-approvals" },
-          { to: "/scm/cancel-requests", label: "Cancellation Requests", icon: ClipboardCheck, anyPerm: ["*", "scm.access", "scm.so_cancel.approve_l1", "scm.so_cancel.approve_l2", "scm.po_cancel.approve"], anyAccess: ["scm.procurement.po", "scm.sales.orders"], hideForSalesRep: true },
+          { to: "/scm/cancel-requests", label: "Cancellation Requests", icon: ClipboardCheck, anyPerm: ["*", "scm.access", "scm.so_cancel.approve_l1", "scm.so_cancel.approve_l2"], anyAccess: ["scm.procurement.po", "scm.sales.orders"], hideForSalesRep: true },
           { to: "/scm/grns", label: "Goods Receipt", icon: PackageCheck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.grn"], hideForSalesRep: true },
           { to: "/scm/purchase-invoices", label: "Purchase Invoices", icon: ReceiptText, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.pi"], hideForSalesRep: true },
           { to: "/scm/purchase-returns", label: "Purchase Returns", icon: Undo2, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.pr"], hideForSalesRep: true },
@@ -769,6 +770,15 @@ export const NAV_TABS: NavTab[] = [
     to: "/announcements",
     label: "Announcements",
     icon: Megaphone,
+  },
+  // ── Memos — the department memo register (docs/modules/memos.md). Ungated
+  // like Announcements: the register is read by any signed-in user and a
+  // department registers its own memos; memos.manage widens it.
+  {
+    section: "operations",
+    to: "/memos",
+    label: "Memos",
+    icon: FileSignature,
   },
 
   // Fleet Health moved into SCM > Transportation (2026-07-26) so the fleet-wide

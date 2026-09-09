@@ -59,14 +59,12 @@ import {
   usePurchaseOrdersPaged,
   useEnrichedPoListRows,
   usePurchaseOrderDetail,
-  useCancelPurchaseOrder,
   fetchPurchaseOrderDetail,
   type PoHeaderRow,
   type PoItemRow,
 } from "../../vendor/scm/lib/suppliers-queries";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
-import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
@@ -74,7 +72,7 @@ import { convertToLink, transferToLabel, transferFromLabel } from "../../lib/con
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useHoldAction } from "./use-hold-action";
-import { useCancelRequestAction } from "./use-cancel-request-action";
+import { usePoCancelAction } from "./use-po-cancel-action";
 import { StatusWithHold, rowIsHeld } from "../../vendor/scm/components/HoldChip";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { purchaseOrderPrintChain } from "../../lib/printChain";
@@ -732,7 +730,6 @@ export function PurchaseOrdersListV2() {
   const queryClient = useQueryClient();
   const notify = useNotify();
   const askChoice = useChoice();
-  const askConfirm = useConfirm();
   const warehousesQ = useWarehouses({ includeInactive: true });
 
   const status = (params.get("status") ?? "all") as StatusTab;
@@ -777,8 +774,7 @@ export function PurchaseOrdersListV2() {
   // rows it describes. Same flag SearchScopeHint already uses for its count.
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
-  const cancelPo = useCancelPurchaseOrder();
-  const requestCancel = useCancelRequestAction("po");
+  const { cancelPo } = usePoCancelAction();
   const holdAction = useHoldAction("po");
 
   // Server already filtered + sorted this page — render verbatim. The MRP-derived
@@ -1036,18 +1032,11 @@ export function PurchaseOrdersListV2() {
     canCancel: (r) => !["CANCELLED", "RECEIVED"].includes(r.status.toUpperCase()),
     isDraft: (r) => r.status.toUpperCase() === "DRAFT",
   });
-  /* Owner 2026-09-08 — a live PO is cancelled by REQUEST (reason + two
-     approvals); only a DRAFT still cancels directly, behind the confirm. */
+  /* Owner 2026-09-09 — a PO cancel needs no approval, only its reason
+     (./use-po-cancel-action.ts holds the prompt and the words; the server
+     refuses a cancel without one). DRAFT and live take the same path. */
   const doCancel = async (r: PoHeaderRow) => {
-    if (r.status.toUpperCase() !== "DRAFT") { void requestCancel(r.id, r.po_number); return; }
-    if (await askConfirm({
-      title: `Cancel PO ${r.po_number}?`,
-      body: "This can only be undone if no GRN has been raised.",
-      confirmLabel: "Cancel PO",
-      danger: true,
-    })) {
-      cancelPo.mutate(r.id, { onSuccess: () => setSelected(null) });
-    }
+    if (await cancelPo(r.id, r.po_number)) setSelected(null);
   };
 
   const columns: Column<PoHeaderRow>[] = [

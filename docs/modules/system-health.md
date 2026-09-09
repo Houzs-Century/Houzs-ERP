@@ -450,6 +450,8 @@ order: `routes/announcements.ts` (the module, at its file-size ceiling) and
 `routes/announcementApproval.ts` (2026-09-07: submit / approve / reject /
 files). Hono tries them in mount order, so a path both could match belongs to
 the first; today none overlaps. See `docs/modules/announcements.md` §3.
+`/api/memos` (2026-09-09) is `routes/memos.ts`, the department memo register
+(`docs/modules/memos.md`), mounted right after the announcement routers.
 
 ## The cron slots (`backend/src/index.ts` `scheduled()`)
 
