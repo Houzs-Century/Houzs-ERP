@@ -606,6 +606,14 @@ plan cannot describe two vintages. That file's 2-day freshness gate now applies
 only when the SALES half runs, which is the half that still reads it. The book
 snapshot has a gate of its own, same limit. `docs/bugs/0766`.
 
+**The map has a TWO-DAY expiry, and the refusal now names the right script.**
+`data/ac-invoice-refs.json.gz` is written by `export-ac-invoice-refs.py` — not by
+`export-ac-reimport.py`, which the refusal message used to name with a section
+(`ONLY=ivrefs`) that has never existed in its `SECTION_ORDER` (`docs/bugs/0766`,
+the staleness-guard entry). Refresh it with
+`AC_CRED_FILE=<path> python backend/scripts/export-ac-invoice-refs.py` before any
+run, and read the date the converter prints on its first line.
+
 **And `scm.write_freeze` does NOT gate this script.** The freeze is HTTP-layer
 middleware (`src/scm/index.ts:127`); this converter opens Postgres directly and
 never reads the row (`grep`: zero hits). A frozen module is a statement about the
