@@ -107,6 +107,8 @@ import { dbInject, withPgDb } from "./middleware/db";
 import { companyContext } from "./middleware/companyContext";
 import { publicDoScan } from "./routes/publicDoScan";
 import { publicContractorCalendar } from "./routes/publicContractorCalendar";
+import { publicBrandCalendar } from "./routes/publicBrandCalendar";
+import { brandShare } from "./routes/brandShare";
 import { drainEmailOutbox } from "./services/email";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
@@ -326,6 +328,10 @@ app.route("/api/public/do-scan", publicDoScan);
 // dates) for the ONE contractor the token resolves to — never finance or any
 // other contractor's events. See routes/publicContractorCalendar.ts.
 app.route("/api/public/contractor-calendar", publicContractorCalendar);
+// PUBLIC no-login BRAND CALENDAR — same shape and the same reasons: a brand's
+// own confirmed events, its display floorplan, its own size and total sales,
+// scoped by the token's brand on every read. See routes/publicBrandCalendar.ts.
+app.route("/api/public/brand-calendar", publicBrandCalendar);
 
 app.use("/api/*", auth);
 
@@ -389,6 +395,9 @@ app.route("/api/notifications", notifications);
 app.route("/api/push", pushDevices);
 app.route("/api/presence", presence);
 app.route("/api/projects", projects);
+// The office side of a brand's share link (generate / revoke). Own file because
+// routes/projects.ts is at its size ceiling. See routes/brandShare.ts.
+app.route("/api/brand-share", brandShare);
 app.route("/api/sales", sales);
 app.route("/api/finance", finance);
 app.route("/api/stockitems", stockItems);
