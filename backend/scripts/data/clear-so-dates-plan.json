@@ -1,0 +1,23 @@
+{
+  "_note": "The ONE order whose Processing Date and Delivery Date the owner asked to have removed, and the fingerprint of the row that ruling was reviewed against. clear-so-dates.mjs will not write to any other document, and at MODE=apply it refuses unless the live row still hashes to headerDigest — if the order moved between the plan and the apply, the thing about to be written is not the thing anyone approved.",
+  "_ruling": "Owner, 2026-09-09: 「这个remove掉processing date和delivery date」 / 「我让sales 重新proceed」. The colour is `tbc`, so the factory cannot build it, so it cannot really be in production. Sales re-proceeds it once a colour is chosen.",
+  "_digestCovers": "every header column EXCEPT processing_date, customer_delivery_date and version — the three this write is allowed to change. Dates are canonicalised to ISO instants first, so the same row read over postgres.js (JS Date) and over PostgREST (string) hashes the same; that is the docs/bugs/0636 trap.",
+  "_howToRefresh": "Run the workflow at MODE=plan. It prints `digest (every column except …)`. Paste that value into headerDigest and commit it in the same change that reviewed the plan.",
+  "docNo": "HC-SO-013495",
+  "companyId": 1,
+  "headerDigest": null,
+  "observedOnPlanRun": null,
+  "before": {
+    "_source": "probe run 34315803944, production, 2026-09-09",
+    "status": "CONFIRMED",
+    "version": 1,
+    "processing_date": "2026-09-07",
+    "customer_delivery_date": "2026-09-08",
+    "amended_delivery_date": null,
+    "lines": [
+      { "line_no": 1, "item_code": "9058-1S", "line_delivery_date": "2026-10-10", "line_delivery_date_overridden": false },
+      { "line_no": 2, "item_code": "AMN-SOFA PILLOW", "line_delivery_date": "2026-09-08", "line_delivery_date_overridden": false }
+    ],
+    "_downstream": "no delivery order, no purchase order dedicated to its lines, no sales invoice, zero inventory_movements rows"
+  }
+}
