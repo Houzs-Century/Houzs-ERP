@@ -165,6 +165,12 @@ export function planReceiptMoney({ header, items, bookLine, localCurrency, keyle
       const u = lead ? unit : 0, t = lead ? total : 0, d = lead ? disc : 0;
       rows.push({
         item: i, unit: u, total: t, disc: d, lead, siblings: members.length,
+        /* WHICH BOOK ROW this figure came from. The verifier re-derives from the
+           BOOK rather than trusting these three numbers, and a keyless row has
+           no key of its own to look one up with — so the row it was FORCED to
+           carries it here. It is the book's key, never stamped onto the ERP row:
+           `bookDtlKey` on a plan is not `linked_ac_dtlkey` on a line. */
+        bookDtlKey: String(bl.dtlKey ?? ""),
         changed: u !== n0(i.unitPriceSen) || t !== n0(i.lineTotalSen) || d !== n0(i.discountSen),
       });
     });
@@ -232,7 +238,12 @@ function forceKeylessMoney({ items, keyless, keylessMoney }) {
           "keyless lines is which decides the figure - and nothing here can decide it",
       );
     }
-    for (const r of rows) byRow.set(r, cand[0]);
+    /* PAIRED ONE-TO-ONE, not all onto `cand[0]`. The money is identical either
+       way — that is what made the bucket forced — but a book row claimed twice
+       makes the verifier group two ERP rows under one book line, where one of
+       them must then be zero. Giving each row its own candidate keeps the
+       assignment ARBITRARY and the accounting exact. */
+    rows.forEach((r, n) => byRow.set(r, cand[n]));
     bookBy.delete(code);
   }
   /* WHAT IS LEFT OVER. AutoCount bills a free gift as its own RM 0.00 line and
