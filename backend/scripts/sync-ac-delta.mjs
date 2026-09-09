@@ -1763,7 +1763,10 @@ async function main() {
       colsByDoc.get(x.doc).add(x.col);
       if (!whoByDoc.has(x.doc)) whoByDoc.set(x.doc, x.who);
     }
-    const sb = pgrestShim(sql, "scm");
+    /* LANES=push exists to carry the ERP's own value OUT to the account book,
+       so this one client opts out of repair suppression. Every OTHER lane in
+       this script is a repair and must stay suppressed. See pgrest-shim.mjs. */
+    const sb = pgrestShim(sql, "scm", { writeback: "enqueue" });
     for (const [docNo, cols] of colsByDoc) {
       const queued = await enqueueEdit(sb, {
         companyId: 1,
