@@ -124,8 +124,12 @@ export const AXIS_GROUPS = Object.freeze([
     axes: ["transfer from", "transfer to", "transfer chain not verifiable"],
   },
   {
+    /* `leg height` is the one axis here that is NOT bedframe-only. A sofa has a
+       Leg Height picker too, and since `docs/bugs/0741` the reconcile compares
+       it, so a row printed under this heading may be a sofa. The label says so
+       rather than telling the owner a sofa's leg is a bedframe problem. */
     key: "bedframe-build",
-    label: "bedframe build (divan / gap / leg / total height)",
+    label: "build heights (divan / gap / total height — bedframe; leg — bedframe AND sofa)",
     axes: ["divan height", "gap", "leg height", "T.Heights"],
   },
 ]);

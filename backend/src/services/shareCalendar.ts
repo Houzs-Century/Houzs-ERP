@@ -305,16 +305,22 @@ export function monthBounds(month: string): { first: string; last: string } {
 
 /** The party's confirmed events that touch `month`, as export rows. An event
  *  counts when any of its days fall in the month (a 30 Aug – 2 Sep show is in
- *  both months' exports). The money column is only SELECTed when `withSales` —
+ *  both months' exports). `month: null` means the whole schedule — what a page
+ *  loaded BEFORE 2026-09-09's deploy still asks for; a tab that is open across
+ *  a deploy keeps its old JavaScript until it reloads, and refusing it made the
+ *  export fail for the owner within minutes of shipping. The money column is
+ *  only SELECTed when `withSales` —
  *  a contractor export never reads project_finance. Owner 2026-09-09 ("tambah
  *  state brand type"): State, Brand and the event TYPE (project_event_types.name,
  *  the project's own type picker) ride along. */
-export async function listShareExportRows(env: Env, scope: ShareScope, withSales: boolean, month: string): Promise<ShareExportRow[]> {
+export async function listShareExportRows(env: Env, scope: ShareScope, withSales: boolean, month: string | null): Promise<ShareExportRow[]> {
   // company-scope: intentionally cross-company — see listShareEvents.
-  const { first, last } = monthBounds(month);
   const cols = `p.start_date, p.end_date, p.venue, p.state, p.organizer, p.brand, et.name AS event_type, p.booth_no, p.size_sqm`;
   // Dates are 'YYYY-MM-DD[...]' text; the first ten characters compare as days.
-  const inMonth = `substr(p.start_date, 1, 10) <= ? AND substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?`;
+  const inMonth = month
+    ? `substr(p.start_date, 1, 10) <= ? AND substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?`
+    : `1 = 1`;
+  const window = month ? [monthBounds(month).last, monthBounds(month).first] : [];
   const sql = withSales
     ? `SELECT ${cols}, pf.total_sales
          FROM projects p
@@ -331,7 +337,7 @@ export async function listShareExportRows(env: Env, scope: ShareScope, withSales
           AND lower(p.status) = 'confirmed' AND p.archived_at IS NULL
           AND ${inMonth}
         ORDER BY p.start_date`;
-  const rows = await env.DB.prepare(sql).bind(scope.value, last, first).all<ExportRowDb>();
+  const rows = await env.DB.prepare(sql).bind(scope.value, ...window).all<ExportRowDb>();
   return rows.results.map((r) => {
     const out: ShareExportRow = {
       startDate: r.start_date,

@@ -262,7 +262,20 @@ export const AXES = [
     erpKeys: ["fabricCode", "colorCode", "colourCode", "fabricColor", "colourId"] },
   { key: "divan", label: "divan height", groups: ["bedframe"], erpKeys: ["divanHeight"] },
   { key: "gap", label: "gap", groups: ["bedframe"], erpKeys: ["gap"] },
-  { key: "leg", label: "leg height", groups: ["bedframe"], erpKeys: ["legHeight"] },
+  /* ── THE LEG IS A SOFA AXIS TOO (docs/bugs/0741) ──────────────────────────
+     It was bedframe-only, so a sofa's leg had nowhere to be compared and
+     parse-sofa filed it under `specials` — reporting a specials difference on
+     HC-SO-010284, where the book says `LEG 1"`, the ERP holds
+     `legHeight: "1\""` and its specials list is correctly empty. The ERP is
+     right; the reader had no axis.
+
+     `sofaLegHeight` is read BESIDE `legHeight` because the two surfaces spell
+     it differently: the backend writes `legHeight`, the POS configurator sends
+     `sofaLegHeight`, and `src/scm/shared/so-variant-rule.ts` lists both as
+     aliases of the one sofa picker. Reading only the backend spelling would
+     report every POS-entered sofa leg as blank. It is harmless on a bedframe,
+     which never carries the POS key. */
+  { key: "leg", label: "leg height", groups: ["bedframe", "sofa"], erpKeys: ["legHeight", "sofaLegHeight"] },
   { key: "totalHeight", label: "T.Heights", groups: ["bedframe"], erpKeys: ["totalHeight"] },
   { key: "seat", label: "seat size", groups: ["sofa"], erpKeys: ["seatHeight", "depth"] },
   { key: "compartments", label: "sofa compartments", groups: ["sofa"], erpKeys: [] },
@@ -357,6 +370,12 @@ export function decodeBook(deps, { desc2, itemGroup, itemCode }) {
   const ps = deps.parseSofa(d2, model, deps.reclOf(model), { knownColour: deps.knownColour });
   out.colour = ps.color ?? null;
   out.seat = ps.size ?? null;
+  /* The leg the book states, on the axis the ERP keeps it on (docs/bugs/0741).
+     `parseSofa` answers null wherever the text names a leg without stating a
+     height — "USE IRON LEG", "LEG REFER PHOTOS" — so an instruction is never
+     read as a measurement, and ABSENT STAYS ABSENT rather than becoming zero
+     (docs/bugs/0732). */
+  out.leg = ps.leg ?? null;
   out.specials = Array.isArray(ps.specials) ? ps.specials : [];
   if (ps.conf === "low" || !ps.pieces.length) {
     /* The structure could not be read.  Colour, seat and specials that DID come

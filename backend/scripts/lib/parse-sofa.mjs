@@ -77,6 +77,39 @@ const isTradeName = (s) => {
   return !SPECIAL_WORD.test(t) && !INSTRUCTION_TOKEN.test(t.toUpperCase().replace(/\s+/g, ""));
 };
 
+/* ── HOW THE FLOOR SPELLS "COLOUR" ─────────────────────────────────────────
+   ONE PLACE, because it was four and the fourth spelling was missing from all
+   of them (`docs/bugs/0740`). An unmatched label is not skipped — it stays in
+   the text and the structure pass glues it to the token in FRONT of it, so
+   "2S+L Clr: B0315-21 Pearl" decoded as one piece `2S` plus an invented special
+   `LCLR`: the chaise was eaten by the label (HC-SO-007293, owner 「CLR 应该是
+   colour」).
+
+   CENSUSED, NOT GUESSED. Every alphabetic token that sits in front of a ':',
+   '：' or '-' was counted across all 9,029 sofa Desc2 in the committed cut, on
+   all six document types — the token, not the spellings we expected to find,
+   because an earlier census "proved" a piece type did not exist by searching
+   for the wrong string. The whole colour vocabulary of this book is:
+
+     COL     5,613     COLOUR    705     COLOR    153     CLR      59
+
+   and nothing else. `CIL:` occurs on one document (SO-003646, 2 rows) and is a
+   typo of COL rather than a spelling the floor uses; it is left alone
+   deliberately — one row is not a vocabulary, and `unlabelledColour` already
+   has a path to that code. The compound tokens the census also printed —
+   "L CLR", "S CLR", "ER COL", "RR COL" — are not other labels: they are THIS
+   defect, the piece in front of the label showing up glued to it.
+
+   Anything added here must be measured over all six document types the way
+   `Clr` was, not appended and shipped. */
+const COLOUR_LABEL = String.raw`(?:col(?:our|or)?|clr)`;
+/* per-piece "colour (2S): X" */
+const RE_COLOUR_PER_PIECE_KEEP = new RegExp(String.raw`${COLOUR_LABEL}\s*\([^)]*\)\s*[:：]([^\/\n]*)`, "gi");
+const RE_COLOUR_PER_PIECE = new RegExp(String.raw`${COLOUR_LABEL}\s*\(([^)]+)\)\s*[:：]\s*([^\/\n]+)`, "gi");
+/* general "COL: X" / "colour - X" */
+const RE_COLOUR_KEEP = new RegExp(String.raw`${COLOUR_LABEL}\s*[-:：]([^\/\n]*)`, "gi");
+const RE_COLOUR = new RegExp(String.raw`${COLOUR_LABEL}\s*[-:：]\s*([^\/\n]+)`, "gi");
+
 /* ── WHERE A LABELLED COLOUR ENDS ──────────────────────────────────────────
    `COL:`/`colour :` used to run to the end of its segment — `[^\/\n]+` — and on
    a slash-separated Desc2 that is exactly right: the next slash ends the field.
@@ -114,6 +147,55 @@ const looksLikeBuild = (tail) => {
    double-space scan above never reaches it, and it would ride into the colour
    and be lost with it. Moved to the tail, where the size pass reads it. */
 const TRAILING_SIZE = /[\s(]*\d{2,3}\s*(?:''|"|'(?!\w)|\s*inch(?:es)?|\s*cm)\b\s*\)?\s*$/i;
+/* SIZE_TAIL with the trailing `\b` dropped, and ONLY for the single-space arm
+   below. That `\b` cannot fire after a quote mark — `44" per seat` has a
+   non-word character on both sides of the boundary it asks for — so SIZE_TAIL
+   answers NO to the commonest way this book writes a size, and the seat size on
+   SO-006807 rode into the colour because of it. SIZE_TAIL itself is left
+   untouched: it is the double-space arm's test, that arm has been measured over
+   six document types as it stands, and widening it there would move rows this
+   change was never asked about. */
+const SIZE_HEAD = /^[\s("']*\d{2,3}\s*(?:''|"|”|'(?!\w)|\s*inch(?:es)?\b|\s*cm\b)/i;
+
+/* ── A LEG HEIGHT IS A HEIGHT, NOT A SPECIAL ORDER ─────────────────────────
+   `docs/bugs/0741`. The book writes `LEG 1"`, the ERP holds `legHeight: "1\""`
+   on every compartment of the build and an EMPTY specials list — the two agree
+   — and the reconcile reported a specials difference, because this reader had
+   nowhere to put a leg and dropped it into `specials`. The ERP is right; only
+   the reader was wrong (HC-SO-010284, a PROCEEDED order).
+
+   IT IS A REAL AXIS IN THE ERP, which is the fact that makes this a defect
+   rather than a design choice: `src/scm/shared/so-variant-rule.ts` gives the
+   SOFA group a `legHeight` picker with aliases `['legHeight','sofaLegHeight']`,
+   and `scripts/backfill-sofa-leg-default.mjs` fills it — skipping, on purpose,
+   exactly the lines whose own text names a leg, so a human could pick those.
+   Those skipped lines are this population.
+
+   THE HEIGHT IS READ OFF THE RAW TEXT. By the time the leg sweep runs, the
+   seat-size pass has already replaced every unit-carrying number with a space,
+   so `2 inch leg` has become ` leg` and the height is gone. Same reason the
+   colour reader reaches for `d2raw`.
+
+   WHAT IT WILL NOT TOUCH:
+     - `BACKCUSHION+LEG 8030` — 8030 is a MODEL number with no unit, so it is
+       not a height and this does not answer one.
+     - `USE IRON LEG`, `LEG REFER PHOTOS`, `*LEG MUST USE 5527*` — no number.
+     - the phrase itself, unless it is ONLY the height statement. `3"LEG
+       (WITHOUT RECLINER)` states a 3" leg AND a request, so the leg is
+       answered and the request stays a special. Dropping an instruction is the
+       expensive direction — a sofa built wrong — and this rule cannot do it. */
+const LEG_HEIGHT =
+  /(?:\bleg[s]?\b[^A-Za-z0-9]{0,4}(\d+(?:\.\d+)?)\s*(?:''|"|”|'|\s*inch(?:es)?\b))|(?:(\d+(?:\.\d+)?)\s*(?:''|"|”|'|\s*inch(?:es)?)\s*\)?\s*\(?\s*leg[s]?\b)/i;
+/* Nothing but the height statement and the words that join it to one. What is
+   left of "add 1 inch leg" once the statement is removed is "add "; what is
+   left of "seat extend to the floor with 1inch leg" is an instruction. */
+const LEG_ONLY_RESIDUE = /^[\s+*()\-,.:]*(?:\b(?:add|on|with|need|use|to|the|a|please|pls|change)\b[\s+*()\-,.:]*)*$/i;
+/** The leg height the book states, in inches, or null. */
+function legHeightOf(text) {
+  const m = LEG_HEIGHT.exec(String(text ?? ""));
+  if (m) return { value: Number(m[1] ?? m[2]), statement: m[0] };
+  return null;
+}
 function splitColourValue(val) {
   const s = String(val ?? "");
   const cut = (at) => {
@@ -122,12 +204,52 @@ function splitColourValue(val) {
     if (sz && sz.index > 0) { tail = value.slice(sz.index) + tail; value = value.slice(0, sz.index); }
     return { value, tail };
   };
-  const re = /\s{2,}/g;
+  /* ── THE TWO SHAPES A SINGLE SPACE HAS TO END, AND ONLY THOSE ─────────────
+     Teaching the label the fourth spelling (`Clr`, above) makes this function
+     reach three strings the double-space rule was never asked about, and all
+     three came out WORSE — measured, `docs/bugs/0740`:
+
+       SO-013475  colour "HR805-30 -Wrap bottom to nylon"   an INSTRUCTION
+                                                            inside the shade name
+       SO-006807  seat size 44 -> null, "44" per seat including handle"
+                                                            swallowed by the colour
+
+     The floor separates those fields with ONE space, so the double-space scan
+     never sees the boundary. The cut stays POSITIVE — it still only fires where
+     what FOLLOWS identifies itself as something else — and it is narrowed to the
+     two shapes that identify themselves without a doubt:
+
+       - a SIZE WITH NO BUILD AFTER IT. "44"" is a seat size in any book and a
+         shade is not named after one — but a size with a '+' still to come is
+         a PER-PIECE size inside a build ("B0315-2 1EL (24") +CNR+2ER (30")"),
+         and cutting there ends the colour in the middle of a piece list. Both
+         rows that rule keeps out were measured getting worse without it: that
+         one lost its 1EL, and "…*L Shape total length Cut 1Feet Total 170cm+-"
+         moved the seat size from the book's own 26" to a 170cm TOTAL LENGTH.
+       - a DASH THAT OPENS AN INSTRUCTION, and it must open it IMMEDIATELY.
+         The floor writes "-Wrap bottom to nylon" as a bullet, letter straight
+         after the dash. A shade CONTINUES after its dash with a space or a
+         digit — "ninja - 02,03,07,09", "ZL -20- Black", "M2402 -18 LIGHT GREY",
+         "GD2502#22 - INK", "Cove -03" — and testing the whole tail let an
+         instruction further along it authorise a cut at the shade's own dash.
+         Measured: without the letter-immediately rule those five lost their
+         shade number, and "M2402 -18 LIGHT GREY" also took its three correct
+         pieces down to none.
+
+     `looksLikeBuild` is deliberately NOT in the single-space arm: a shade name
+     token can read like a piece ("DE 11", "Orion-11"), and at one space that
+     guess would cut a real colour in half. */
+  const re = /\s+/g;
   let m;
   while ((m = re.exec(s))) {
     const t = s.slice(m.index).trim();
     if (!t) break;
-    if (SIZE_TAIL.test(t) || looksLikeBuild(t) || (SPECIAL_WORD.test(t) && !COLOUR_LIKE.test(t))) return cut(m.index);
+    const wide = m[0].length >= 2;
+    if (wide && (SIZE_TAIL.test(t) || looksLikeBuild(t) || (SPECIAL_WORD.test(t) && !COLOUR_LIKE.test(t)))) return cut(m.index);
+    if (wide) continue;
+    const sz = SIZE_HEAD.exec(t);
+    if (sz && !t.slice(sz[0].length).includes("+")) return cut(m.index);
+    if (/^-[A-Za-z]/.test(t) && SPECIAL_WORD.test(t) && !COLOUR_LIKE.test(t)) return cut(m.index);
   }
   return { value: s, tail: "" };
 }
@@ -218,7 +340,11 @@ function unlabelledColour(d2raw, knownColour) {
 }
 
 function parseSofa(d2raw, model, recl = false, opts = {}) {
-  const o = { pieces: [], size: null, color: null, perPieceColor: {}, specials: [], conf: "high", why: [] };
+  /* `leg` is declared here, not assigned only where it is found. A field that
+     exists on some results and not others reads as `undefined` at every call
+     site that never met one — the shape trap this repo has already paid for
+     (`unitPriceSen` / `subTotalSen`). */
+  const o = { pieces: [], size: null, color: null, leg: null, perPieceColor: {}, specials: [], conf: "high", why: [] };
   if (!d2raw || !String(d2raw).trim()) { o.conf = "low"; o.why.push("empty Desc2"); return o; }
   let d2 = String(d2raw).replace(/[\[\]{}]/g, " ").replace(/[”“″’‘′]/g, '"').replace(/\r/g, "")
     .replace(/\b(?:icnh|inhc|inchs|inc?h?es|ich)\b/gi, "inch").trim();
@@ -256,8 +382,8 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
        a special. */
     const tails = [];
     const keep = (_, v) => { const { tail } = splitColourValue(v); if (tail.trim()) tails.push(tail); return " "; };
-    const src = d2.replace(/col(?:our|or)?\s*\([^)]*\)\s*[:：]([^\/\n]*)/gi, keep)
-                  .replace(/col(?:our|or)?\s*[-:：]([^\/\n]*)/gi, keep);
+    const src = d2.replace(RE_COLOUR_PER_PIECE_KEEP, keep)
+                  .replace(RE_COLOUR_KEEP, keep);
     const chunks = src.split(/[\/\n*]+/);
     for (const t of tails) for (const piece of t.split(/[\/\n*]+|\s{2,}/)) chunks.push(piece);
     for (const chunk of chunks) {
@@ -274,13 +400,27 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
     .replace(/\bCORNER\s*\((?=[^)]*[A-Za-z])/gi, "(").replace(/NO\s*CONSOLE/gi, " NOCONS ")
     .replace(/\bC\s+TABLE\b\.?/gi, "+CT+").replace(/([12])B\/S/gi, "$1B")
     .replace(/\bC\/?T\s*TABLE\.?/gi, "CT").replace(/CONSOLE\s*TABLE\.?/gi, "CT")
-    .replace(/\bC\/T\b/gi, "CT").replace(/(\d?NA)\/(L|R)T/gi, "$1$2T").replace(/CONSOLE/gi, "CT");
+    .replace(/\bC\/T\b/gi, "CT").replace(/(\d?NA)\/(L|R)T/gi, "$1$2T")
+    /* "1EL/T" is 1ELT — the chaise — with a slash typed inside the token, the
+       same shape `NA/LT` above is already protected from. It matters because
+       the slash-SPLITTER runs next: it cuts "1EL/T(35")+ 2ER(35")" into a bare
+       "1EL" and a "T(35")+ 2ER(35")", and the second half decodes on its own to
+       a whole sofa with the chaise gone. The leftover-segment guard cannot save
+       it — that guard only inspects segments containing a '+', and "1EL" has
+       none — so the line shipped at HIGH confidence one piece short (SO-003951,
+       exposed by the `Clr` fix above, which is what finally let the second half
+       decode at all).
+
+       ONLY EL, never ER. The owner named ELT and 2ER on 2026-09-04 and no "ERT"
+       arm is invented here, so "1ER/T" keeps today's reading. */
+    .replace(/\b([12]?EL)\s*\/\s*T\b/gi, "$1T")
+    .replace(/CONSOLE/gi, "CT");
   // colours: per-piece "colour (2s): X" first, then general COL:/COLOUR:
-  d2 = d2.replace(/col(?:our|or)?\s*\(([^)]+)\)\s*[:：]\s*([^\/\n]+)/gi, (_, pc, val) => {
+  d2 = d2.replace(RE_COLOUR_PER_PIECE, (_, pc, val) => {
     const { value, tail } = splitColourValue(val);
     o.perPieceColor[pc.trim().toUpperCase()] = value.trim(); return " " + tailAsSegments(tail);
   });
-  d2 = d2.replace(/col(?:our|or)?\s*[-:：]\s*([^\/\n]+)/gi, (_, val) => {
+  d2 = d2.replace(RE_COLOUR, (_, val) => {
     const { value, tail } = splitColourValue(val);
     if (!o.color) o.color = value.trim(); return " " + tailAsSegments(tail);
   });
@@ -347,6 +487,27 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
        fall back to the mangled copy when it did not, or the size cleanup's
        leftovers land beside the clean wording ("ADD 1INCH LEG" + "ADD 1 LEG"). */
     if (lg) { if (!o.specials.some((s) => /leg/i.test(s))) addSpecial(lg[0]); d2 = d2.replace(/[^\/\n+)]*\bleg\b[^\/\n]*/gi, " "); }
+    /* THE LEG AXIS (docs/bugs/0741). Read off the RAW text — see LEG_HEIGHT
+       above for why `d2` no longer carries the number by this point — and only
+       from the segment the leg word is actually in, so a seat size elsewhere in
+       the line can never be read as a leg. */
+    for (const seg of String(d2raw).split(/[\/\n]+/)) {
+      if (!/\bleg[s]?\b/i.test(seg)) continue;
+      const hit = legHeightOf(seg);
+      if (!hit) continue;
+      o.leg = hit.value;
+      o.why.push(`leg height "${hit.statement.trim()}" from the book`);
+      /* A phrase that is ONLY the height stops being a special: it is now
+         answered on the axis the ERP keeps it on, and leaving it in specials
+         would go on reporting the difference this fixes. A phrase that also
+         carries a request keeps that request. */
+      o.specials = o.specials.filter((s) => {
+        if (!/\bleg[s]?\b/i.test(s)) return true;
+        const rest = String(s).replace(LEG_HEIGHT, " ");
+        return !LEG_ONLY_RESIDUE.test(rest);
+      });
+      break;
+    }
   }
   // specials that ride along
   if (/nylon|nilon/i.test(d2)) addSpecial("nylon");

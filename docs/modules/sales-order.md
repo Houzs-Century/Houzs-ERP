@@ -4023,6 +4023,75 @@ Two things worth carrying forward:
   PHOTO before writing a compartment — `probe-sofa-absent-pieces.mjs` puts the
   build, its purchase order, the drawing and the decode on one screen.
 
+#### The sofa reader's axes, and the two the book writes that it could not read
+
+`backend/scripts/lib/parse-sofa.mjs` answers `pieces`, `size`, `color`,
+`perPieceColor`, `specials` and — since 2026-09-09 — **`leg`**.
+`lib/variant-reconcile.mjs`'s `decodeBook` copies each onto the BOOK side, and
+`AXES` decides which item group asks for which.
+
+**`leg` is a SOFA axis, not only a bedframe one.**
+`src/scm/shared/so-variant-rule.ts` gives the sofa group a Leg Height picker
+(aliases `legHeight` / `sofaLegHeight`), and `backfill-sofa-leg-default.mjs`
+fills it — skipping, on purpose, the lines whose own text names a leg so a human
+can pick those. Until 2026-09-09 the reconcile's `leg` axis was
+`groups: ["bedframe"]`, so a sofa's leg had nowhere to be compared and
+`parse-sofa` filed it under `specials`: `HC-SO-010284` reported a specials
+difference on a PROCEEDED order where the book says `LEG 1"`, the ERP holds
+`legHeight: "1\""` and its specials list is correctly empty
+(`docs/bugs/0741`, `docs/bugs/0745`).
+
+Three rules govern what the leg reader will answer, and each is a guard:
+
+- **the UNIT is the whole test.** `LEG 8030` is a MODEL number, not a height.
+- **an instruction is not a measurement.** `USE IRON LEG`, `LEG REFER PHOTOS`,
+  `*LEG MUST USE 5527*` answer `null`.
+- **a phrase that states a height AND asks for something keeps the request.**
+  `3"LEG (WITHOUT RECLINER)` answers the axis and stays a special; dropping an
+  instruction is the expensive direction. Only a phrase that is nothing but the
+  height stops being a special.
+- **ABSENT IS NOT ZERO** (`docs/bugs/0732`). A bare `NO LEG` is deliberately NOT
+  read as 0 — 46 rows in the committed cut, almost all inside a covering
+  instruction whose leg is a consequence rather than a pick.
+
+**The colour label has FOUR spellings, and they live in one constant.**
+`COLOUR_LABEL` in `parse-sofa.mjs` is `COL` / `COLOUR` / `COLOR` / `CLR`, and
+all four regexes are built from it. It was three spellings in four separate
+places until 2026-09-09, and an unmatched label is not skipped — it stays in the
+text and the structure pass glues it to the token in FRONT of it, so `2S+L Clr:`
+lost its chaise to an invented special `LCLR` (`docs/bugs/0740`). **Census the
+token before adding a fifth**: the whole vocabulary of this book was counted
+across all 9,029 sofa Desc2 on all six document types — COL 5,613, COLOUR 705,
+COLOR 153, CLR 59, and nothing else.
+
+**Where a labelled colour ENDS is the other half of that rule and is the fragile
+one.** The cut is POSITIVE — it fires only where what FOLLOWS identifies itself
+as a build, a size or an instruction — and at a SINGLE space it is narrower
+still, because a shade name is full of things that look like the end of one:
+
+- a dash ends the colour only when a LETTER follows it immediately
+  (`-Wrap bottom to nylon`). A shade CONTINUES after its own dash with a space
+  or a digit — `ninja - 02,03,07,09`, `M2402 -18 LIGHT GREY`, `Cove -03`.
+- a size ends the colour only when no `+` follows it, because a size with a
+  build still to come is a PER-PIECE size inside that build.
+
+Both guards were bought by measurement: without them five shades lost their
+number and two builds lost a piece.
+
+**`1EL/T` is `1ELT`, the chaise.** The slash-splitter used to cut it in two, and
+the half holding the `+` decoded on its own as a whole sofa with the chaise
+gone — 42 rows across all six document types reading one piece short at HIGH
+confidence (`docs/bugs/0744`). `1ER/T` is deliberately untouched: the owner
+named `ELT` and `2ER` and no `ERT` arm is invented.
+
+**Measuring a reader change:** `.github/workflows/sofa-reader-before-after.yml`
+runs the reconcile TWICE in one job — once with the branch's reader, once with
+the reader restored from a named commit — and
+`backend/scripts/compare-tally-verdicts.mjs` prints all six types' `compared`,
+`differ` and `cannot compare` side by side. It prints `compared` beside `differ`
+on purpose: a `differ` that falls WHILE `compared` falls with it is a comparison
+that stopped happening, not a fix.
+
 A compartment difference on a PROCEEDED order also has a second innocent cause:
 the owner may have RULED on that build from the drawing, in which case the ERP
 is meant to differ from the text. The reconcile does not read
