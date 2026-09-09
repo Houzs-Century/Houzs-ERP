@@ -941,7 +941,7 @@
         "HC-SO-013312",
         "HC-PO-010041"
       ],
-      "model": "5536",
+      "model": "9058",
       "pieces": [
         "L(LHF)",
         "1NA",
@@ -950,7 +950,7 @@
       "seat": "32",
       "desc2Match": "back rest",
       "confidence": "owner",
-      "why": "OWNER 2026-09-09, answering the returned spreadsheet: 「L（LHF）+1NA+1AR model是5536 special order change backrest to 5540/8030, 然后backcushion align 或者fully extend」. THE PIECES ARE UNCHANGED - they are his own 2026-09-09 ruling and the ERP already holds them (docs/bugs/0736). WHAT MOVES IS THE MODEL: three names were in play on one line - AutoCount's item is HOK-5536 SOFA, its Desc2 says 'back rest (5540)', and the ERP stored the build under 9058. He says the model is 5536 and the 5540/8030 backrest is a SPECIAL ORDER on it, not the model. So 5536 is the SKU prefix and the backrest change is a special, which this file does not write - it is raised separately."
+      "why": "OWNER 2026-09-09, in two messages. First, answering the returned spreadsheet: 「L（LHF）+1NA+1AR model是5536 special order change backrest to 5540/8030, 然后backcushion align 或者fully extend」. Then, when told this file was about to recode the rows to 5536: 「那就是9058 然后去给supplier的时候才是5536」. SO NOTHING CHANGES ON THIS DOCUMENT. The pieces are his own ruling from this morning and are already written (docs/bugs/0736), and the model stays 9058. THE RULE THIS BUYS, which is worth more than the entry: on a PURCHASE ORDER the account book's item code is the SUPPLIER'S model, not ours - 'HOK-5536 SOFA' is supplier HOK's name for what we call 9058, and 'back rest (5540)' is a special order on it. A PO item code differing from the ERP's is therefore EXPECTED and is not by itself a defect. I had read the three names as a contradiction to resolve and was one dispatch away from recoding three live rows to a supplier's SKU. Recorded so the reconcile's ruling lookup reads RULED and stops returning this document to him."
     }
   ]
 }
