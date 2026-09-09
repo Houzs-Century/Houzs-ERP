@@ -147,11 +147,11 @@ one cause, two symptoms. This is history recorded in AutoCount before the
 cutover; the ERP copied it faithfully. **Nothing to repair — an owner call on
 whether any of it needs correcting in the book.**
 
-### c. 6 sofa orders where the factory order and the sales order list different pieces
+### c. 6 sofa orders that looked like a content mismatch — five of them are NOT
 
-This is the one with a customer behind it. These are the 5 forward PO ← SO gaps
-plus one more; the link is missing **because the content differs**, so no
-matcher could pair them.
+These are the 5 forward PO ← SO gaps plus one more. The link is missing because
+the two documents cannot be paired 1:1 — but on five of the six that is a
+DIFFERENCE OF SHAPE, not of content. See the correction below the table.
 
 | purchase order | the sales order asks for | the purchase order asks the factory to build |
 | --- | --- | --- |
@@ -162,18 +162,50 @@ matcher could pair them.
 | `HC-PO-009830` / `HC-SO-011207` (Beh Zhe Quan, DELIVERED) | `9028-2A(LHF)`, `9028-L(RHF)` | `9028-1S` |
 | `HC-PO-010085` / `HC-SO-010287` (Jack Lai, **IN_PRODUCTION**) | `9058-2A(LHF)`, `9058-1A(RHF)` | `9058-1A(LHF)`, `9058-2A(RHF)` |
 
+> ## CORRECTED 2026-09-09 — THE FIRST FIVE ARE NOT A CONTENT MISMATCH AT ALL
+>
+> The paragraph this replaces read: *"the sales order lists arms and no seat. A
+> sofa of two arms and no seat is unlikely, so the more probable reading is that
+> the SALES ORDER is the incomplete one and the factory order is right."*
+>
+> **That is backwards.** The owner read the drawing on `HC-PO-009467` in one
+> line — 「这个是1A+1A 28寸啊 你认不出？」 — and checking the two sides' `Desc2`
+> against each other settles every one of the five:
+>
+> | order | `Desc2` (IDENTICAL on both documents) | the sales order's pieces | verdict |
+> | --- | --- | --- | --- |
+> | `HC-SO-012128` | `(1EL+1ER)28inch` | `1A(LHF)` + `1A(RHF)` | **matches** |
+> | `HC-SO-012729` | `30" CORNER` | `2A(LHF)` + `CNR` + `1A(RHF)` | **matches** |
+> | `HC-SO-010209` | `L shape` | `1A(LHF)` + `1NA` + `L(RHF)` | **matches** |
+> | `HC-SO-010955` | `{SIZE:2ER+C+1ER+(28")}` | `2A(LHF)` + `CNR` + `1A(RHF)` | **matches** |
+> | `HC-SO-011207` | `2L(30")` | `2A(LHF)` + `L(RHF)` | **matches** |
+>
+> **Every sales order is right, and so is every purchase order.** The purchase
+> order books the WHOLE SOFA as ONE line — its description is
+> `HOK SOFA - 5530` / `HOK SOFA - 5536`, the supplier's model, because a sofa is
+> bought as a set — and the cutover's item mapping gave that line a COMPARTMENT
+> code (`-1S`), which is what made it look like a missing seat. So the shape is
+> **1 purchase line against N sales lines**, which no 1:1 matcher can pair. It is
+> not a disagreement about the goods.
+>
+> **What was actually wrong was the method.** The item codes were compared and
+> the `Desc2` was not, even though `Desc2` is the build spec and sits on both
+> documents — and `sofa-slip-notation` already says to read the photo and the
+> `Desc2` TOGETHER. `docs/bugs/0747` records that.
+>
+> The only open question left on these five is cosmetic and they are all
+> DELIVERED: should that purchase line carry the sofa MODEL rather than a
+> compartment code.
+
 **A bare seat code is NOT itself wrong** — 19 other purchase orders carry
 `-1S`/`-2S` and link cleanly, because their sales order carries the same seat
-line. The question is these six specifically, and it is a judgement call, so it
-is asked rather than answered:
+line.
 
-- On the first five, the sales order lists **arms and no seat**. A sofa of two
-  arms and no seat is unlikely, so the more probable reading is that the SALES
-  ORDER is the incomplete one and the factory order is right. All five are
-  already DELIVERED, so this is a paperwork correction, not goods.
-- `HC-PO-010085` is the live one. The sales order wants a **2-seat left arm and
-  a 1-seat right arm**; the purchase order asks for a **1-seat LEFT and a 2-seat
-  RIGHT**. That is the mirror image, and the order is still IN_PRODUCTION.
+- `HC-PO-010085` was the live one and is **now RESOLVED**: re-read 2026-09-09
+  before any repair ran, it lists `9058-1A(RHF)` + `9058-2A(LHF)` — the same
+  multiset as its sales order — with all three lines linked. Somebody corrected
+  it between the measurement and the repair, which is why the repair script runs
+  a plan against live data rather than against a recorded finding.
 
 **Not in this list, and worth stating because it looked like one:**
 `HC-PO-009024` / `HC-SO-012025` (WINNIE, IN_PRODUCTION). Its 3 unlinked lines
