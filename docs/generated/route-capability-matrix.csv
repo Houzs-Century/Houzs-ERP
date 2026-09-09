@@ -351,6 +351,7 @@ POST,/api/projects/checklist/attachments/:attId/actions,AUTHENTICATED_MIDDLEWARE
 GET,/api/projects/contractors,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""projects"")",,NO,DECLARED_GATE,backend/src/routes/projects.ts
 POST,/api/projects/contractors,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 DELETE,/api/projects/contractors/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
+PATCH,/api/projects/contractors/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 DELETE,/api/projects/contractors/:id/share-link,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 POST,/api/projects/contractors/:id/share-link,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 GET,/api/projects/cost-rates,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""projects.finances"")",,NO,DECLARED_GATE,backend/src/routes/projects.ts

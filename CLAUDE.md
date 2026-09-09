@@ -1050,6 +1050,17 @@ the SHAPE, not PostgREST credentials: `backend/scripts/lib/pgrest-shim.mjs`
 gives you `sb.from(...)` over the pg connection. Copy
 `recompute-so-allocation.mjs`, which does exactly this.
 
+**The Supabase MCP lists THREE projects, and the one called "Houzs PostgreSQL
+Database" is NOT production.** *Added 2026-09-09.* Production is **"HOUZS ERP SG"
+(`anogrigyjbduyzclzjgn`)** — the one with `_pg_migrations`, the share-token tables
+and `projects.contractor`; "Houzs ERP Staging" (`minnapsemfzjmtvnnvdd`) is
+staging. `ctbaifabbzghtsrmpirm` holds an older copy with most of the same tables,
+which is exactly what makes it convincing: on 2026-09-09 two "read-only probe
+against production" claims were written from it (an export statement that
+"ran on production", a display-floorplan count of "1 JPEG" that is really
+232 JPEG + 49 PNG + 14 PDF). Before calling a Supabase MCP query evidence about
+production, check the project id against the migration headers, which name it.
+
 **`SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` exist — as WORKER secrets, never
 as Actions ones.** Both halves matter, and stating only the first sent two
 authors down a dead end. They are real and in use: `src/db/supabase.ts:66`

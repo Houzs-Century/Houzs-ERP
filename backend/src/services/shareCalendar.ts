@@ -311,13 +311,53 @@ type ExportRowDb = {
 /** `YYYY-MM` — the one month an export covers (owner 2026-09-09: "when chose
  *  september then click export will export event on september only"). */
 export const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+/** `YYYY` — the whole year, for the contractors whose master row says so. */
+export const YEAR_RE = /^\d{4}$/;
 
-/** First and last calendar day of a `YYYY-MM` month, as 'YYYY-MM-DD'. */
-export function monthBounds(month: string): { first: string; last: string } {
+/** The days an export covers, inclusive, as 'YYYY-MM-DD'. */
+export type ExportWindow = { first: string; last: string };
+
+/** First and last calendar day of a `YYYY-MM` month. */
+export function monthBounds(month: string): ExportWindow {
   const y = Number(month.slice(0, 4));
   const m = Number(month.slice(5, 7));
   const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
   return { first: `${month}-01`, last: `${month}-${String(lastDay).padStart(2, "0")}` };
+}
+
+/** 1 Jan to 31 Dec of a `YYYY` year. */
+export function yearBounds(year: string): ExportWindow {
+  return { first: `${year}-01-01`, last: `${year}-12-31` };
+}
+
+/** The window a request asked for: `?month=YYYY-MM`, `?year=YYYY`, or neither
+ *  (the whole schedule — what a page loaded before the month rule shipped still
+ *  sends until it reloads, docs/bugs/0743). Both at once, or a malformed value,
+ *  is a bad request — never silently the whole schedule. */
+export function exportWindowFromQuery(month: string | undefined, year: string | undefined): { window: ExportWindow | null } | { error: string } {
+  const m = (month ?? "").trim();
+  const y = (year ?? "").trim();
+  if (m && y) return { error: "Send month or year, not both." };
+  if (m) return MONTH_RE.test(m) ? { window: monthBounds(m) } : { error: "Month must look like 2026-09." };
+  if (y) return YEAR_RE.test(y) ? { window: yearBounds(y) } : { error: "Year must look like 2026." };
+  return { window: null };
+}
+
+/** What a contractor's link exports on one press: the month on screen, or the
+ *  whole year (owner 2026-09-09: YEN CREATIVE, BAND OF GORILLA, JH CONTRACTOR
+ *  export the year; the rest, and every brand, the month). A per-row setting on
+ *  the contractor picker table, flipped from Project Maintenance. */
+export type ContractorExportScope = "month" | "year";
+
+export async function readContractorExportScope(env: Env, contractor: string): Promise<ContractorExportScope> {
+  // company-scope: intentionally cross-company — the contractor picker is a
+  // global lookup table, read by the party's own name (see listShareEvents).
+  const row = await env.DB.prepare(
+    `SELECT share_export_scope FROM project_contractors WHERE lower(name) = lower(?) ORDER BY id LIMIT 1`
+  )
+    .bind(contractor)
+    .first<{ share_export_scope: string | null }>();
+  return row?.share_export_scope === "year" ? "year" : "month";
 }
 
 /** The party's confirmed events that touch `month`, as export rows. An event
@@ -330,14 +370,14 @@ export function monthBounds(month: string): { first: string; last: string } {
  *  a contractor export never reads project_finance. Owner 2026-09-09 ("tambah
  *  state brand type"): State, Brand and the event TYPE (project_event_types.name,
  *  the project's own type picker) ride along. */
-export async function listShareExportRows(env: Env, scope: ShareScope, withSales: boolean, month: string | null): Promise<ShareExportRow[]> {
+export async function listShareExportRows(env: Env, scope: ShareScope, withSales: boolean, win: ExportWindow | null): Promise<ShareExportRow[]> {
   // company-scope: intentionally cross-company — see listShareEvents.
   const cols = `p.start_date, p.end_date, p.venue, p.state, p.organizer, p.brand, et.name AS event_type, p.booth_no, p.size_sqm`;
   // Dates are 'YYYY-MM-DD[...]' text; the first ten characters compare as days.
-  const inMonth = month
+  const inMonth = win
     ? `substr(p.start_date, 1, 10) <= ? AND substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?`
     : `1 = 1`;
-  const window = month ? [monthBounds(month).last, monthBounds(month).first] : [];
+  const window = win ? [win.last, win.first] : [];
   const sql = withSales
     ? `SELECT ${cols}, pf.total_sales
          FROM projects p
@@ -402,12 +442,12 @@ type PlanManifestRow = {
  *  upload first within an event. An event with no display floorplan is simply
  *  absent (owner 2026-09-09: "skip events with no display floorplan uploaded").
  *  Display plans have no legacy home, so no project_attachments fallback. */
-export async function listDisplayPlanManifest(env: Env, scope: ShareScope, month: string | null): Promise<SharePlanEvent[]> {
+export async function listDisplayPlanManifest(env: Env, scope: ShareScope, win: ExportWindow | null): Promise<SharePlanEvent[]> {
   // company-scope: intentionally cross-company — see listShareEvents.
-  const inMonth = month
+  const inMonth = win
     ? `substr(p.start_date, 1, 10) <= ? AND substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?`
     : `1 = 1`;
-  const window = month ? [monthBounds(month).last, monthBounds(month).first] : [];
+  const window = win ? [win.last, win.first] : [];
   const rows = await env.DB.prepare(
     `SELECT p.id, p.name, p.venue, p.booth_no, p.start_date, p.end_date,
             a.id AS file_id, a.file_name, a.content_type, a.size_bytes

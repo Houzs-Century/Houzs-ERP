@@ -9,7 +9,11 @@ answer 400 without it (`routes/publicContractorCalendar.ts`, `routes/publicBrand
 The deploy carrying it (run 3518) finished at 04:21 UTC; the owner's calendar tab was
 loaded before that and still ran the previous page, which sends no month. Observed: the
 export SQL itself runs on production (read-only `SELECT` over `projects` joined to
-`project_event_types`, 2026-09-09 04:2x, 3 rows back), so the query was ruled out; the PR
+`project_event_types`, re-run 2026-09-09 07:5x against prod Supabase `anogrigyjbduyzclzjgn`,
+3 September rows back — the 04:2x probe cited here at first had been run against the Supabase
+project named "Houzs PostgreSQL Database" (`ctbaifabbzghtsrmpirm`), which is NOT production:
+it has no `_pg_migrations`, no share-token tables and no `projects.contractor`; see CLAUDE.md,
+*Never ask the owner to run a query*), so the query was ruled out; the PR
 merge time (04:13), the deploy conclusion (success, 04:21) and the complaint (04:2x) line
 up on the 400. An open tab keeps its JavaScript until it reloads — the service worker
 swaps the bundle for the NEXT load, and the 60s poll re-reads the list, not the code — so

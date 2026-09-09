@@ -1350,7 +1350,7 @@ app.delete("/organizers/:id", requirePermission("projects.manage"), async (c) =>
 
 app.get("/contractors", requirePageAccess("projects"), async (c) => {
   const rows = await c.env.DB.prepare(
-    `SELECT id, name, notes, active FROM project_contractors
+    `SELECT id, name, notes, active, share_export_scope FROM project_contractors
       WHERE active = 1 ORDER BY name`
   ).all();
   return c.json({ data: rows.results ?? [] });
@@ -1393,6 +1393,19 @@ app.delete("/contractors/:id", requirePermission("projects.manage"), async (c) =
   )
     .bind(id)
     .run();
+  return c.json({ ok: true });
+});
+
+// What this contractor's public link exports on one press: the month on screen
+// or the whole year (owner 2026-09-09; mig 20260909T0800). A row setting, not a
+// list of names in code, so the office flips it from Project Maintenance.
+app.patch("/contractors/:id", requirePermission("projects.manage"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  const body = await c.req.json<{ share_export_scope?: string }>();
+  const scope = body.share_export_scope;
+  if (scope !== "month" && scope !== "year") return c.json({ error: "share_export_scope must be month or year" }, 400);
+  await c.env.DB.prepare(`UPDATE project_contractors SET share_export_scope = ? WHERE id = ?`).bind(scope, id).run();
   return c.json({ ok: true });
 });
 
