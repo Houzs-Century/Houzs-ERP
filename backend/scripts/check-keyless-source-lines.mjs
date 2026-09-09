@@ -179,6 +179,41 @@ try {
   console.log('READ IT LIKE THIS: the ones already SENT cost nothing and need no repair.');
   console.log('What is left after them is the real backlog, and sections 2 and 3 say which');
   console.log('remedy each part of it takes.');
+
+  /* ── 7. THE LIST, so somebody can actually work through it ─────────────
+     Every section above is a COUNT, and a count cannot be actioned: the owner
+     asked for "the listing of what needs me to do" and a number is not one.
+
+     DOCUMENT NUMBERS AND A YES/NO ONLY. This repository and its Actions logs
+     are PUBLIC, so no customer name, item code, amount or address goes through
+     here — the document number is enough to open the record in the ERP, and
+     everything sensitive stays where it already is.
+
+     Tab-separated on purpose: it pastes into a spreadsheet as columns. */
+  console.log('');
+  console.log('=== 7. THE LIST — every delivery order held up by a keyless line ===');
+  const list = await pg.unsafe(`
+    SELECT d.do_number,
+           so.doc_no                                       AS so_doc_no,
+           d.created_at::date                              AS raised,
+           bool_or(${SERVICE_SQL('si')})                   AS any_service_line,
+           bool_and(${SERVICE_SQL('si')})                  AS only_service_lines,
+           count(*)::int                                   AS keyless_lines
+      FROM scm.delivery_orders d
+      JOIN scm.delivery_order_items di ON di.delivery_order_id = d.id
+      JOIN scm.mfg_sales_order_items si ON si.id = di.so_item_id
+      JOIN scm.mfg_sales_orders so ON so.doc_no = si.doc_no
+     WHERE si.linked_ac_dtlkey IS NULL
+     GROUP BY d.do_number, so.doc_no, d.created_at::date
+     ORDER BY d.created_at::date, d.do_number`);
+  console.log('DELIVERY ORDER	SALES ORDER	RAISED	KEYLESS LINES	SERVICE LINE ONLY');
+  for (const r of list) {
+    console.log(`${r.do_number}	${r.so_doc_no}	${String(r.raised).slice(0, 10)}	${r.keyless_lines}	${r.only_service_lines ? 'YES' : (r.any_service_line ? 'SOME' : 'no')}`);
+  }
+  console.log(`(${list.length} row(s))`);
+  console.log('SERVICE LINE ONLY = the only thing without a book key is a service or fee');
+  console.log('line. If those do not belong on an AutoCount sales order at all, every YES');
+  console.log('row is unblocked by that one ruling and needs nothing else.');
 } catch (e) {
   console.error('DB unreachable or query failed:', e.message);
   process.exit(1);

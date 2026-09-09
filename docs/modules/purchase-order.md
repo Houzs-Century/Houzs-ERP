@@ -268,7 +268,7 @@ with no per-area level consulted.
 | PATCH | `/:id/submit` | `:2904` | Legacy no-op/echo — returns 409 unless already SUBMITTED. Also 409 `purchase_location_id_required` if the PO has no ship-to warehouse (2026-08-02). |
 | PATCH | `/:id/confirm` | `:2998` | **The commit**: DRAFT → SUBMITTED. Blocked 409 `purchase_location_id_required` (via `poWarehouseGap`) if the header `purchase_location_id` is blank AND any line has no `warehouse_id` — a warehouse-less PO can't go live because its GR would receive into the wrong warehouse (owner 2026-08-02). |
 | POST | `/:id/send-to-supplier` | `:3019` | Email the PO PDF. Fail-closed on the `purchase_order` email channel (`:3032`). |
-| PATCH | `/:id/cancel` | `:3182` | → CANCELLED; releases SO quota AND clears the line's mig-0235 allocation sub-lines (a cancelled PO attributes nothing — 2026-08-02). **Since 2026-09-08 a non-DRAFT PO reaches this only after a cancellation request with a reason has been approved (one Purchaser signature)** — `cancelApprovalGuard('PO')` at the mount refuses 403 `cancel_approval_required` otherwise (`docs/modules/document-cancel-approval.md`). A DRAFT still cancels directly. |
+| PATCH | `/:id/cancel` | `:3182` | → CANCELLED; releases SO quota AND clears the line's mig-0235 allocation sub-lines (a cancelled PO attributes nothing — 2026-08-02). **Since 2026-09-09 the body must carry a `reason` (owner:「PO cancelled 不需要审批，只需要 remark 原因取消」)** — `cancelApprovalGuard('PO')` at the mount refuses 400 `reason_required` otherwise, at every status including DRAFT, and records the cancellation with its reason in `scm.document_cancel_requests` (`docs/modules/document-cancel-approval.md`). No approval: the one Purchaser signature the 2026-09-08 rule added lasted a day. |
 | PATCH | `/:id/reopen` | `:3276` | CANCELLED → SUBMITTED; re-claims SO quota. Allocation sub-lines are NOT restored (they were cleared on cancel); the coarse `so_item_id` link remains, re-split via the allocation editor if needed. **Since 2026-08-13 it also runs `poWarehouseGap` and stamps `submitted_at`** — reopen was the third door to SUBMITTED and the only one with no warehouse gate, so cancel-then-reopen turned a warehouse-less DRAFT into a live, GR-receivable PO. |
 | POST | `/bulk-supplier-date` | — | **Was missing from this table until 2026-08-13.** Sets ONE supplier-REVISED delivery-date slot (`slot` 2/3/4 → `supplier_delivery_date_2..4`) across up to 100 POs. It never touches `supplier_id` and never touches `expected_at`. `applyToLines` **defaults to TRUE**, so unless the caller opts out it cascades onto every line's date as well. A downstream-locked or foreign-company PO is reported in `skipped`, never written; each updated PO still gets its own audit row. |
 
@@ -405,8 +405,11 @@ works and is multi-select at line level — but only for a line that is
   stamps `submitted_at`, writes a `POST` audit row, then runs `recomputeSoPicked`
   best-effort (`:2983-2989`). Idempotent on SUBMITTED / PARTIALLY_RECEIVED
   (`:2943`); rejects anything else with 409.
-- **Cancel** (`:3182`). Behind the reason + one-approval request for any non-DRAFT PO
-  (`document-cancel-approval.md`). Refuses RECEIVED (`:3200`); idempotent on CANCELLED;
+- **Cancel** (`:3182`). Needs a `reason` in the body and nothing else — no
+  approval since 2026-09-09 (`document-cancel-approval.md`); the guard records
+  the reason as its own CANCEL history row and in the cancellation ledger, and
+  the handler is unchanged.
+  Refuses RECEIVED (`:3200`); idempotent on CANCELLED;
   then two locks — `poHasDownstream` (`:3208`) and `poHasOutstandingDropshipOut`
   (`:3214`). Releases every converted SO line's quota via `recomputeSoPicked`
   (`:3251-3259`).
@@ -438,6 +441,28 @@ works and is multi-select at line level — but only for a line that is
   nothing more ships against the order and nothing more is bought for it. The
   PURCHASE ORDER'S OWN `CLOSED` is a separate question and is not built; see
   `docs/modules/document-status-vocabulary.md` §1b.
+
+### The SO-drift note, and what may NOT trip it
+
+`computeSoDrift` (`backend/src/scm/lib/so-po-drift.ts`, called once per line by
+the detail read) stamps `so_drift` on a line whose source SO line no longer
+matches what the PO snapshotted. Three arms: **item swap** (different SKU — redo
+the PO), **spec drift** (the variant summary moved), **warehouse** (the SO line's
+EFFECTIVE ship-from warehouse moved; a NULL line warehouse inherits the header
+and has NOT moved). Both surfaces render it — the desktop detail / list red note
+and banner, and the mobile detail's warning line — from this ONE server-side
+computation, so there is no second copy of the rule to keep in step.
+
+**The spec arm compares SPEC, never display.** Variants carry keys a READ path
+stamps for presentation only — today `fabricSupplierCode`, the supplier's own
+code for our fabric, which makes a line read `EZ-010 Silver (M2402-17)`. Those
+keys are listed in `DISPLAY_ONLY_VARIANT_KEYS` and stripped from BOTH sides
+before either summary is built. They have to be: an editor Save round-trips the
+enriched line back through the write path, so one side of a PO↔SO pair can carry
+the stamp while the other does not, and the raw compare then told the purchaser
+to re-send a PO whose spec nobody had touched (`docs/bugs/0742`). Anything else
+that becomes a read-side stamp on `variants` belongs in that list on the same
+day it is added.
 
 ### Binding a PO line to its source SO line (`so_item_id`)
 

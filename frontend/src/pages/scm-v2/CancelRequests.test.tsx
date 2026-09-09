@@ -1,6 +1,12 @@
 /* The cancellation-request inbox (owner 2026-09-08): one queue for both
- * documents, the approver's actions on the row, and the level-2 approve
- * running the document's OWN cancel afterwards. */
+ * documents, the approver's actions on the row, and the level-2 approve running
+ * the document's OWN cancel afterwards.
+ *
+ * Since 2026-09-09 a PURCHASE ORDER raises no request — it is cancelled on its
+ * reason alone — so the only PO rows here are the EXECUTED record of a
+ * cancellation that has already run, with nothing to approve. The one PO row
+ * that can still be pending is a legacy one raised before that ruling; it is
+ * kept as a fixture because the inbox must still be able to finish it. */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,11 +20,12 @@ const base = (over: Partial<Row>): Row => ({
   rejected_by: null, rejected_by_name: null, rejected_at: null, reject_reason: null, executed_by: null, executed_at: null,
   ...over,
 });
-const ROWS: Row[] = [
+const freshRows = (): Row[] => [
   base({ id: 'r1' }),
-  /* A Purchase Order takes ONE signature, so a fresh request is already at its final level. */
-  base({ id: 'r2', doc_type: 'PO', doc_key: 'po-7', doc_number: 'PO-7', reason: 'Supplier cannot deliver', status: 'REQUESTED', requested_by: 12, requested_by_name: 'Dee' }),
+  /* The record of a PO cancelled on its reason: no signature, already done. */
+  base({ id: 'r2', doc_type: 'PO', doc_key: 'po-7', doc_number: 'PO-7', reason: 'Supplier cannot deliver', status: 'EXECUTED', requested_by: 12, requested_by_name: 'Dee', executed_by: 12, executed_at: '2026-09-09T02:00:00Z' }),
 ];
+let ROWS: Row[] = freshRows();
 
 let viewer = { id: 31, perms: ['*'] };
 const approveSo = vi.fn(async (_v: unknown) => ({ request: {}, execute: false }));
@@ -50,6 +57,7 @@ const mount = () => render(<MemoryRouter initialEntries={['/scm/cancel-requests'
 
 beforeEach(() => {
   viewer = { id: 31, perms: ['*'] };
+  ROWS = freshRows();
   approveSo.mockClear(); approvePo.mockClear(); cancelSo.mockClear(); cancelPo.mockClear(); confirm.mockClear(); notify.mockClear();
   try { window.localStorage.clear(); } catch { /* jsdom without storage */ }
 });
@@ -60,30 +68,32 @@ describe('CancelRequests', () => {
     expect(await screen.findByText('SO-1')).toBeTruthy();
     expect(screen.getByText('PO-7')).toBeTruthy();
     expect(screen.getByText('Waiting for level-1 approval (0 of 2)')).toBeTruthy();
-    expect(screen.getByText('Waiting for approval (0 of 1)')).toBeTruthy();
+    expect(screen.getByText('Cancelled')).toBeTruthy();
     expect(screen.getByText('Amy')).toBeTruthy();
-    expect(screen.getByText(/2 open requests/)).toBeTruthy();
   });
 
-  it('a wildcard holder sees Approve (level 1) on the SO and Approve & cancel on the PO', async () => {
+  it('offers no signature on a purchase order, wildcard or not', async () => {
     mount();
     expect(await screen.findByText('Approve (level 1)')).toBeTruthy();
-    expect(screen.getByText('Approve & cancel')).toBeTruthy();
+    expect(screen.queryByText('Approve & cancel')).toBeNull();
   });
 
-  it('the PO\'s single approval runs the PO\'s own cancel afterwards', async () => {
+  it('a legacy APPROVED purchase-order request still cancels — with its OWN reason', async () => {
+    ROWS[1] = base({
+      id: 'r2', doc_type: 'PO', doc_key: 'po-7', doc_number: 'PO-7', reason: 'Supplier cannot deliver',
+      status: 'APPROVED', requested_by: 12, requested_by_name: 'Dee', l1_by: 21, l1_by_name: 'Ben',
+    });
     mount();
-    fireEvent.click(await screen.findByText('Approve & cancel'));
-    await waitFor(() => expect(approvePo).toHaveBeenCalledWith({ key: 'po-7' }));
-    await waitFor(() => expect(cancelPo).toHaveBeenCalledWith('po-7'));
+    fireEvent.click(await screen.findByText('Cancel now'));
+    await waitFor(() => expect(cancelPo).toHaveBeenCalledWith({ id: 'po-7', reason: 'Supplier cannot deliver' }));
     expect(cancelSo).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ title: 'Purchase Order PO-7 cancelled' }));
   });
 
-  it('the person who raised PO-7 cannot sign it, wildcard or not', async () => {
-    viewer = { id: 12, perms: ['*'] };
+  it('the person who raised the SO request cannot sign it, wildcard or not', async () => {
+    viewer = { id: 11, perms: ['*'] };
     mount();
-    expect(await screen.findByText('Approve (level 1)')).toBeTruthy();
-    expect(screen.queryByText('Approve & cancel')).toBeNull();
+    expect(await screen.findByText('SO-1')).toBeTruthy();
+    expect(screen.queryByText('Approve (level 1)')).toBeNull();
   });
 });

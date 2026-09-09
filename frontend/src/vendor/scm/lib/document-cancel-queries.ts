@@ -61,18 +61,23 @@ export type CancelRequestDetail = {
 
 export type ApprovalLevel = 1 | 2;
 
-/** How many signatures each document needs. MUST match the server's table
- *  (backend/src/scm/shared/document-cancel.ts APPROVAL_LEVELS). */
-export const APPROVAL_LEVELS: Record<CancelDocType, ApprovalLevel> = { so: 2, po: 1 };
+/** How many signatures each document needs. ZERO is a real answer: the Purchase
+ *  Order takes none since 2026-09-09 (「PO cancelled 不需要审批，只需要 remark 原因
+ *  取消」) — it is cancelled on its reason alone, so no PO row ever waits here.
+ *  MUST match the server's table (backend/src/scm/shared/document-cancel.ts
+ *  APPROVAL_LEVELS). */
+export type RequiredSignatures = 0 | 1 | 2;
 
-export const levelsFor = (docType: CancelDocType): ApprovalLevel => APPROVAL_LEVELS[docType];
+export const APPROVAL_LEVELS: Record<CancelDocType, RequiredSignatures> = { so: 2, po: 0 };
+
+export const levelsFor = (docType: CancelDocType): RequiredSignatures => APPROVAL_LEVELS[docType];
 
 /** The permission that signs each level. MUST match the server's table
  *  (CANCEL_APPROVE_KEY there) — the screen only decides whether to SHOW a
  *  button; the server's 403 is the real gate. */
 export const CANCEL_APPROVE_KEY: Record<CancelDocType, Partial<Record<ApprovalLevel, string>>> = {
   so: { 1: 'scm.so_cancel.approve_l1', 2: 'scm.so_cancel.approve_l2' },
-  po: { 1: 'scm.po_cancel.approve' },
+  po: {},
 };
 
 /** Every key that may sign or refuse on this document type. */
@@ -114,7 +119,7 @@ export function cancelRequestLine(row: Pick<CancelRequestRow, 'status' | 'doc_ty
 
 /** The approve button's words: names the level only where there are two. */
 export function approveLabel(docType: CancelDocType, level: ApprovalLevel): string {
-  if (levelsFor(docType) === 1) return 'Approve & cancel';
+  if (levelsFor(docType) <= 1) return 'Approve & cancel';
   return level === 2 ? 'Approve & cancel (level 2)' : 'Approve (level 1)';
 }
 
