@@ -1,0 +1,51 @@
+name: Address too long for the account book (read-only)
+
+# HC-SO-2609-006 never reached the book: "Cannot set column 'InvAddr1'. The
+# value violates the MaxLength limit of this column." The four InvAddr columns
+# are 40 characters and fitAddressLines re-packs an overflowing address across
+# them — but four lines of forty is 160 characters, and past that something has
+# to be left out.
+#
+# Whether THIS document is inside or outside that is unknown until somebody
+# measures, and the honest way to find out is to measure rather than to send it
+# and see. It asks the same of every other sales order, so a second one behind
+# this is known about before it stops too.
+#
+# Read-only. No address is ever printed — only its LENGTH.
+on:
+  workflow_dispatch:
+    inputs:
+      doc_no:
+        description: "One sales order to size up, e.g. HC-SO-2609-006"
+        required: false
+        default: ""
+        type: string
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind — or displace — a release.
+concurrency:
+  group: address-too-long
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-address-too-long.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DOC_NO: ${{ inputs.doc_no }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
