@@ -296,8 +296,20 @@ async function main() {
           const [{ n }] = await tx`SELECT COUNT(*)::int AS n FROM scm.inventory_movements m WHERE m.source_doc_id::text = ${g.grn_id} OR m.source_doc_no = ${g.doc}`;
           if (Number(n) > 0) throw new Error(`${g.doc} now carries ${n} inventory movement(s)`);
         }
+        /* THE SECOND HALF OF THE DELIVERY GATE, and it must read the SAME
+           switch as the first. ALLOW_DELIVERED opened the plan's gate and not
+           this one, so five builds planned cleanly, entered the transaction and
+           were ROLLED BACK one by one (runs 34327433537 and the four after it) —
+           nothing written, which is the transaction doing its job, and a
+           half-applied switch doing not much.
+
+           It is NOT redundant with the plan's gate and is not being weakened:
+           the plan reads a snapshot and this re-reads inside the transaction, so
+           it still catches a delivery raised in between. What it must not do is
+           enforce a rule the operator has already been asked about and answered. */
         const [{ n: dn }] = await tx`SELECT COUNT(*)::int AS n FROM scm.delivery_order_items WHERE so_item_id = ANY(${b.target.map((t) => t.soItemId)}::uuid[])`;
-        if (Number(dn) > 0) throw new Error(`${b.so.doc} now carries ${dn} delivery-order line(s)`);
+        if (Number(dn) > 0 && !ALLOW_DELIVERED) throw new Error(`${b.so.doc} now carries ${dn} delivery-order line(s)`);
+        if (Number(dn) > 0) log(`     proceeding on ${b.so.doc} despite ${dn} delivery-order line(s) — ALLOW_DELIVERED=1`);
 
         const notes = `${b.row.notes ? b.row.notes + ' | ' : ''}sofa: re-filed from the alias placeholder ${b.row.code} ${STAMP} (importer filed it as others; pieces are ${b.so.doc}'s own)`;
         const skuOf = (code) => `${b.row.supplier_sku} ${compartmentOfVerbatim(code)}`;
