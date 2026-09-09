@@ -35,10 +35,13 @@ vi.mock('./personalNotice', () => ({
   },
 }));
 
-// Reporting chain: 41 reports to 40, 40 to nobody. 42 stands alone.
+/* Reporting chain, shaped like the real one: the purchasing desk (41) reports
+   to 40, who reports to 39, who reports to the owner account 38. Every other id
+   stands alone. Prod's chain is exactly this deep — Purchaser -> Nico -> Lim ->
+   HOUZS CENTURY — which is why the top-two trim matters at all. */
 vi.mock('./orgScope', () => ({
   uplineUserIds: async (_env: unknown, id: number) =>
-    id === 41 ? [41, 40] : [id],
+    id === 41 ? [41, 40, 39, 38] : [id],
 }));
 
 const { notifySoAmendmentRaised, notifySoAmendmentResolved } = await import('./amendmentNotify');
@@ -105,8 +108,8 @@ describe('amendment notice audience', () => {
     await notifySoAmendmentRaised(fakeEnv(), {
       amendmentNo: 'SO-1/A1', soDocNo: 'SO-1', lane: 'LINES', companyId: 1,
     });
-    // 41 holds approve_lines and reports to 40 — both notified, 43 (delivery)
-    // and 44 (wildcard) are not.
+    // 41 holds approve_lines and reports to 40 — both notified. 43 (delivery),
+    // 44 (wildcard) and the two chain-top levels (39, 38) are not.
     expect(posted[0].userIds.sort()).toEqual([40, 41]);
 
     posted.length = 0;
@@ -177,6 +180,30 @@ describe('amendment notice audience', () => {
     expect(posted[0].userIds.sort()).toEqual([40, 77]);
     expect(posted[0].body).toContain('price below floor');
     expect(posted[0].body).toContain('by Ken');
+  });
+
+  it('leaves the top two levels of the reporting chain out of the audience', async () => {
+    /* THE REGRESSION THIS EXISTS FOR. The wildcard exclusion was supposed to
+       keep the owner off every amendment; the upline expansion put them back,
+       and six days of prod data showed every single approver audience reading
+       [1, 4, 5, …]. Trimming by DEPTH, not by naming ids, so it survives the
+       org chart moving. */
+    await notifySoAmendmentRaised(fakeEnv(), {
+      amendmentNo: 'SO-7/A1', soDocNo: 'SO-7', lane: 'LINES', companyId: 1,
+    });
+    const audience = posted[0].userIds;
+    expect(audience.sort()).toEqual([40, 41]);   // desk + its manager
+    expect(audience).not.toContain(39);          // …and not the two above them
+    expect(audience).not.toContain(38);
+  });
+
+  it('still reaches an approver who reports straight to the top', async () => {
+    // 43's chain is [43] alone — trimming two levels off a one-link chain must
+    // never empty it. The person who has to sign always hears about it.
+    await notifySoAmendmentRaised(fakeEnv(), {
+      amendmentNo: 'SO-8/A1', soDocNo: 'SO-8', lane: 'DELIVERY', companyId: null,
+    });
+    expect(posted[0].userIds).toEqual([43]);
   });
 
   it('says nothing when the only person to tell is the one who acted', async () => {
