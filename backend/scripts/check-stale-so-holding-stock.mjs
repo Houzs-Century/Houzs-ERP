@@ -44,6 +44,9 @@
 //   DAYS=90 node scripts/check-stale-so-holding-stock.mjs
 //   COMPANY_ID=1 SHOW=40 node scripts/check-stale-so-holding-stock.mjs
 import { readFileSync } from "node:fs";
+import path from "node:path";
+import zlib from "node:zlib";
+import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
 const DSN = process.env.DATABASE_URL;
@@ -96,7 +99,7 @@ async function main() {
   const want = [
     ["mfg_sales_orders", "status"], ["mfg_sales_orders", "company_id"],
     ["mfg_sales_orders", "customer_delivery_date"], ["mfg_sales_orders", "amended_delivery_date"],
-    ["mfg_sales_orders", "processing_date"],
+    ["mfg_sales_orders", "processing_date"], ["mfg_sales_orders", "linked_ac_docno"],
     ["mfg_sales_order_items", "cancelled"], ["mfg_sales_order_items", "stock_status"],
     ["mfg_sales_order_items", "stock_qty_ready"],
   ];
@@ -116,6 +119,7 @@ async function main() {
   const rows = await sql`
     SELECT h.doc_no,
            h.status,
+           h.linked_ac_docno,
            h.processing_date,
            COALESCE(h.amended_delivery_date, h.customer_delivery_date) AS eff_date,
            ((now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date
@@ -130,7 +134,7 @@ async function main() {
        AND COALESCE(h.amended_delivery_date, h.customer_delivery_date) IS NOT NULL
        AND COALESCE(h.amended_delivery_date, h.customer_delivery_date)::date
            < ((now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date - ${DAYS}::int)
-     GROUP BY h.doc_no, h.status, h.processing_date, eff_date, days_over
+     GROUP BY h.doc_no, h.status, h.linked_ac_docno, h.processing_date, eff_date, days_over
      HAVING COALESCE(SUM(i.stock_qty_ready) FILTER (WHERE i.cancelled = false), 0) > 0
      ORDER BY held DESC, days_over DESC`;
 
@@ -168,8 +172,64 @@ async function main() {
     log(`  ${label.padEnd(30)} ${String(b.length).padStart(6)} ${String(u).padStart(12)}`);
   }
 
+  /* THE OWNER'S OWN QUESTION, 2026-09-09: 「送货了就不会再里面了…因为那么久了好几
+     个月前的 应该都送货了啊」. He is right that a DELIVERED order leaves the queue
+     by itself — the terminal statuses above are exactly that. So an order still
+     in the queue months later is one of two things, and only the second is a
+     defect:
+
+       a) genuinely not delivered — a real backlog, nothing to fix here;
+       b) DELIVERED IN THE ACCOUNT BOOK AND NOT IN OURS — the delivery note
+          never reached us, so our copy stays open and holds its stock for ever.
+
+     The book settles it. `data/ac-live-so-remark2.json.gz` carries, per
+     non-cancelled AutoCount sales order, an `Outstanding` flag computed as
+     "some line still has Qty - TransferedQty > 0" (`export-ac-live.py`). If the
+     book says a stale order has NOTHING outstanding, our copy is holding stock
+     for goods that already left the warehouse.
+
+     The snapshot is a CUT, not a live read — its own timestamp is printed, and
+     an order delivered after that cut reads as still outstanding. That errs
+     towards UNDER-reporting (b), which is the safe direction for a number that
+     would justify releasing stock. */
+  let book = null;
+  try {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const raw = zlib.gunzipSync(readFileSync(path.join(here, "data", "ac-live-so-remark2.json.gz"))).toString("utf8").replace(/^﻿/, "");
+    book = new Map(JSON.parse(raw).map((r) => [String(r.DocNo).trim().toUpperCase(), Number(r.Outstanding)]));
+    const man = JSON.parse(readFileSync(path.join(here, "data", "ac-live-export-manifest.json"), "utf8"));
+    log("");
+    log(`AGAINST THE ACCOUNT BOOK — cut ${man.exported_at} (+08), ${book.size} sales orders`);
+  } catch (e) {
+    log("");
+    log(`AGAINST THE ACCOUNT BOOK — SKIPPED, the snapshot could not be read (${e.message}). The counts above stand; the delivered/not-delivered split does not.`);
+  }
+
+  if (book) {
+    const withKey = rows.filter((r) => r.linked_ac_docno);
+    const settled = [], open = [], absent = [];
+    for (const r of withKey) {
+      const v = book.get(String(r.linked_ac_docno).trim().toUpperCase());
+      if (v === undefined) absent.push(r);
+      else if (v === 0) settled.push(r);
+      else open.push(r);
+    }
+    const u = (xs) => xs.reduce((n, r) => n + Number(r.held), 0);
+    log(`  of the ${rows.length} stale order(s), ${withKey.length} came from the book and ${rows.length - withKey.length} were raised in the ERP (the book has no opinion on those)`);
+    log(`  THE BOOK SAYS FULLY DELIVERED, and we still hold their stock: ${settled.length} order(s), ${u(settled)} unit(s)  <- work we owe`);
+    log(`  the book agrees they are still outstanding:                  ${open.length} order(s), ${u(open)} unit(s)  <- a real backlog, not a defect`);
+    if (absent.length) log(`  the book no longer carries the document at all:              ${absent.length} order(s), ${u(absent)} unit(s)  <- cancelled in the book, or renumbered`);
+    if (settled.length) {
+      log("");
+      log(`  delivered in the book, still holding stock here — worst ${Math.min(SHOW, settled.length)}:`);
+      for (const r of settled.slice(0, SHOW)) {
+        log(`    ${r.doc_no} (${r.linked_ac_docno})  ${String(r.status).padEnd(14)} due ${String(r.eff_date).slice(0, 10)}  ${String(r.days_over).padStart(5)} days over  holding ${String(r.held).padStart(4)} unit(s)`);
+      }
+    }
+  }
+
   log("");
-  log(`  worst ${Math.min(SHOW, rows.length)} by units held:`);
+  log(`  every stale order, worst ${Math.min(SHOW, rows.length)} by units held:`);
   for (const r of rows.slice(0, SHOW)) {
     log(`    ${r.doc_no}  ${String(r.status).padEnd(14)} due ${String(r.eff_date).slice(0, 10)}  ${String(r.days_over).padStart(5)} days over  holding ${String(r.held).padStart(4)} unit(s) over ${r.lines} line(s), ${r.ready_lines} READY${r.processing_date ? "" : "  [no processing date]"}`);
   }
@@ -177,7 +237,8 @@ async function main() {
   log("");
   log("This script decides nothing. Whether a stale order should stop claiming");
   log("stock, after how long, and whether it drops to the BACK of the queue or");
-  log("leaves it, is the owner's call.");
+  log("leaves it, is the owner's call. The one row above that is NOT a judgement");
+  log("is the book-says-delivered set: that is a document we are missing.");
   await sql.end();
 }
 
