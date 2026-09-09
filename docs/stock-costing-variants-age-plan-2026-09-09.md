@@ -80,6 +80,19 @@ by the channel above.
 `{colourId, colourLabel, fabricId, fabricCode, fabricLabel, gap, divanHeight,
 legHeight, totalHeight, specials[]}` with strings like `14"`, `No Leg`.
 
+**The target is the Stock Breakdown screen's ATTRIBUTES column**, which the
+owner pointed at directly. A correctly filled bedframe lot reads:
+
+```
+BF-01 (PC151-01) / GAP 14" / DIVAN 8" / LEG 2" / TOTAL H 24"
+```
+
+so the fields behind it are the fabric code + colour, `gap`, `divanHeight`,
+`legHeight` and `totalHeight`, each an inch string. That screen already carries
+UNIT COST, SOURCE, MOVEMENTS (every stock change) and COGS (the FIFO
+consumptions) — **the screen is not the gap, the data is**: 277 lots have no
+unit cost and 218 bedframe lots have no attributes.
+
 **Reuse `backend/scripts/lib/parse-bedframe.mjs`. Do not write a second
 parser.** That module's own header records why: two copies drifted twice, and a
 refresh script that rebuilt the parser from source text with `new Function()`
