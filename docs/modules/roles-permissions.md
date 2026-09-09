@@ -75,6 +75,11 @@ GL in the same request, so this key also opens the standalone post door
 (docs/modules/payment-voucher.md §0b). Declared like every key, deliberately granted to **no** seed role: only
 `*` (Owner / IT Admin) can approve until the owner assigns it to a position.
 
+**`memos.manage`** (the department memo register, owner 2026-09-08, mig
+`20260909T0500`): the register is own-department for any signed-in user; this
+key registers a memo for ANY department and voids anyone's memo. Conferred by
+`*`. Granted to **no** seed role. Contract: docs/modules/memos.md.
+
 **`announcements.approve`** (approval workflow, owner 2026-09-06, mig
 `20260906T1509`) is the announcements approval desk: every notice — the MD's
 own included — is published by this holder's Approve click (`POST

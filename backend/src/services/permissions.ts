@@ -259,6 +259,11 @@ export const PERMISSIONS: PermissionDef[] = [
   // signs off; re-point it whenever the approver changes.
   { key: "announcements.approve", resource: "Announcements", verb: "approve", label: "Approve announcements", description: "Approve or reject submitted announcements before they go live; receives the approval-needed notice" },
 
+  // Memos — the department memo register (mig 20260909T0500). Any signed-in
+  // user registers for their own department; this key registers for any
+  // department and voids anyone's memo.
+  { key: "memos.manage", resource: "Memos", verb: "manage", label: "Manage memos", description: "Register a memo for any department and void any memo (the register is otherwise own-department only)" },
+
   // System
   { key: "udf.manage", resource: "Custom Fields", verb: "manage", label: "Manage custom fields", description: "Add or remove user-defined fields on tables" },
   { key: "settings.manage", resource: "Settings", verb: "manage", label: "Manage settings", description: "Edit connection and sync configuration" },
