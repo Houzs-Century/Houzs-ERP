@@ -929,7 +929,20 @@ all three, mirroring `so-relationship-map.ts`.
 > call `customerRefOf(header)` from `frontend/src/lib/customer-ref.ts`, which
 > resolves `ref || customer_so_no || po_doc_no`. Owner ruling: `ref` is the
 > customer-reference field; `customer_so_no` is a retired near-duplicate and
-> `po_doc_no`/`customer_po*` are dead columns dropped in a later migration. Each hook
+> `po_doc_no`/`customer_po*` are dead columns dropped in a later migration.
+>
+> **That rule was inert until 2026-09-09 (`docs/bugs/0726`).** The three
+> `*RelationshipHeader` types were written independently of it and listed only
+> `so_doc_no` / `po_doc_no` / `customer_so_no` — no `ref` — so the pages never
+> put `ref` into `relMapHeader` and the cell fell through to two columns that
+> are empty on live data. 174 of 246 delivery orders carry their reference in
+> `ref` and NOTHING else, and every one of them read "Not linked". The types are
+> now `CustomerRefHeader & { … }`, defined in terms of the rule's own input, so a
+> column the rule reads cannot again be missing from a type that feeds it.
+> Nothing warned: the pages build the header in a `useMemo`, so what reaches the
+> hook is a variable, not an object literal, and TypeScript's excess-property
+> check never fires. **If you add a fourth document type here, extend
+> `CustomerRefHeader` — do not re-list the columns.** Each hook
 (`useDoRelationshipMap` / `useSiRelationshipMap` / `useDrRelationshipMap`) reads
 `useDocumentFlow(type, id)` — linkage **B**, the same company-scoped graph the
 SO map, the vendor `DocumentFlowModal` and the purchase-side maps use — and a

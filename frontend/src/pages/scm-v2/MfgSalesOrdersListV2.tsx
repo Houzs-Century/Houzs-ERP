@@ -97,6 +97,7 @@ import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAcc
 import { capability } from "../../auth/capabilities";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
+import { customerRefOf } from '../../lib/customer-ref';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Minimal row shape the listing needs. The full SoRow (in MfgSalesOrdersList
@@ -210,10 +211,8 @@ const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
 
 // Customer's PO / Ref number — spec: "Every list must show the customer SO
-// Ref number". Prefer po_doc_no (populated by the SO New form's "Customer
-// PO #"), then customer_so_no, then the legacy `ref` column, then dash.
-const refOf = (r: SoRow): string =>
-  r.po_doc_no || r.customer_so_no || r.ref || "—";
+// Ref number". Resolution order is the ONE rule in lib/customer-ref.ts.
+const refOf = (r: SoRow): string => customerRefOf(r) || "—";
 
 // Branding badge tone. Spec: 2990 SOFA = success (green), AKEMI = neutral,
 // BEDFRAME = accent, other brands = warning (amber). brandOf's old `|| "—"`

@@ -26,7 +26,7 @@
 // anchors keep their existing vendor DocumentFlowModal map — these hooks are the
 // bespoke 5-node canvas the regular DO/SI/DR detail pages render.
 
-import { customerRefOf } from '../../lib/customer-ref';
+import { customerRefOf, type CustomerRefHeader } from '../../lib/customer-ref';
 import { useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
@@ -58,12 +58,10 @@ function useCanOpenGrn() {
 
 // ── Delivery Order chain — Customer PO ▶ Sales Order ▶ Delivery Order (current)
 //    ▶ GRN ▶ Sales Invoice (Nick 2026-07-08 5-node shape) ─────────────────────
-export type DoRelationshipHeader = {
+export type DoRelationshipHeader = CustomerRefHeader & {
   id: string;
   do_number: string;
   so_doc_no?: string | null;
-  po_doc_no?: string | null;
-  customer_so_no?: string | null;
 };
 
 /** Pure node builder for the DO chain (exported for unit tests). Given the
@@ -211,12 +209,10 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
 //    Payments ▶ Sales Invoice (current). The 5-node shape's downstream slot is
 //    the AR payments the live graph carries off this invoice (the hand-built
 //    chain dropped them for a dead "no GRN" tile). ────────────────────────────
-export type SiRelationshipHeader = {
+export type SiRelationshipHeader = CustomerRefHeader & {
   id: string;
   invoice_number: string;
   so_doc_no?: string | null;
-  customer_so_no?: string | null;
-  po_doc_no?: string | null;
 };
 
 /** Pure node builder for the SI chain (exported for unit tests). The 5-node
@@ -347,11 +343,10 @@ export function useSiRelationshipMap(header: SiRelationshipHeader | null): {
 // ── Delivery Return chain — Customer PO ▶ Sales Order ▶ Delivery Order ▶
 //    Sales Invoice ▶ Delivery Return (current). The return branches off the DO;
 //    the SO + SI nodes are now the real family documents, not "Upstream …". ────
-export type DrRelationshipHeader = {
+export type DrRelationshipHeader = CustomerRefHeader & {
   id: string;
   return_number: string;
   do_doc_no?: string | null;
-  customer_so_no?: string | null;
 };
 
 /** Pure node builder for the DR chain (exported for unit tests). The audit-R8
