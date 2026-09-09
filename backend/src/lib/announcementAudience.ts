@@ -368,6 +368,10 @@ export type MediaLayout = { photo?: PhotoLayout; video?: VideoLayout };
 // snake_case -> camelCase on read — the #1 Hookka read-gotcha).
 export type AnnouncementRow = {
   id: string;
+  // Numbered under (mig 20260909T0900): the department whose series the
+  // number is minted on; NULL = the submitter's own department.
+  number_dept_id?: number | null;
+  numberDeptId?: number | null;
   title: string;
   body: string;
   // Rich body (mig 20260904T1700). Canonical HTML fragment — see
@@ -518,6 +522,13 @@ export function readApprovalStatus(r: Pick<AnnouncementRow, "approval_status" | 
 export function readDocType(r: Pick<AnnouncementRow, "doc_type" | "docType">): string {
   const v = String(r.docType ?? r.doc_type ?? "").trim().toUpperCase();
   return /^[A-Z]{2,4}$/.test(v) ? v : "ANN";
+}
+
+/** The department the number is minted under (mig 20260909T0900), or null
+ *  for the rule before it — the submitter's own department. */
+export function readNumberDept(r: Pick<AnnouncementRow, "number_dept_id" | "numberDeptId">): number | null {
+  const v = Number(r.numberDeptId ?? r.number_dept_id ?? NaN);
+  return Number.isFinite(v) && v > 0 ? v : null;
 }
 
 /** True once the notice was voided (mig 20260907T1030). */
