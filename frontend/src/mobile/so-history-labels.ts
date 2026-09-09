@@ -48,7 +48,12 @@ export const HIST_FIELD_LABEL: Record<string, string> = {
   collaboratorStaffIds: "Shared with",
 };
 
-export const HIST_MONEY_FIELDS = new Set([
-  "unitPriceSen", "discountSen", "totalSen", "depositSen",
-  "localTotalSen", "unitCostSen", "amountSen",
-]);
+/* WHICH audit fields are money has ONE home, and it is desktop's SO audit
+   dictionary. The two sets were byte-identical copies until 2026-09-09, when
+   lifting this file out of MobileSODetail.tsx made them visible to
+   `audit:duplicated-decisions` — the gate was right: whether `depositSen` is
+   money is one question, and two surfaces answering it separately is a
+   divergence waiting to happen, not a presentation difference.
+   (Mobile importing a pure data module out of `pages/` follows
+   MobileMailCenter.tsx, which reads `pages/MailCenter/mail-labels`.) */
+export { SO_AUDIT_MONEY_FIELDS as HIST_MONEY_FIELDS } from "../pages/scm-v2/so-audit-labels";
