@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-180 route modules (50 in `backend/src/routes`, 130 in `backend/src/scm/routes`), 1239 endpoint registrations.
+180 route modules (50 in `backend/src/routes`, 130 in `backend/src/scm/routes`), 1240 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -21,7 +21,7 @@ resolves full mounted paths and their gates.
 |---|---|---|
 | `backend/src/routes/agent-console.ts` | 33 | 1304 |
 | `backend/src/routes/announcementApproval.ts` | 5 | 134 |
-| `backend/src/routes/announcements.ts` | 15 | 1980 |
+| `backend/src/routes/announcements.ts` | 15 | 1997 |
 | `backend/src/routes/assistant.ts` | 4 | 225 |
 | `backend/src/routes/assr.ts` | 62 | 3360 |
 | `backend/src/routes/assrFormIntake.ts` | 6 | 965 |
@@ -34,7 +34,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/clientErrors.ts` | 2 | 232 |
 | `backend/src/routes/companies.ts` | 1 | 48 |
 | `backend/src/routes/departments.ts` | 4 | 281 |
-| `backend/src/routes/documentRefs.ts` | 4 | 93 |
+| `backend/src/routes/documentRefs.ts` | 5 | 133 |
 | `backend/src/routes/finance.ts` | 2 | 466 |
 | `backend/src/routes/fleet.ts` | 1 | 37 |
 | `backend/src/routes/inbox.ts` | 1 | 545 |
@@ -43,7 +43,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/logs.ts` | 1 | 66 |
 | `backend/src/routes/mail-center.ts` | 21 | 2284 |
 | `backend/src/routes/mail-inbound.ts` | 1 | 59 |
-| `backend/src/routes/memos.ts` | 5 | 297 |
+| `backend/src/routes/memos.ts` | 5 | 316 |
 | `backend/src/routes/notifications.ts` | 1 | 218 |
 | `backend/src/routes/portal.ts` | 6 | 329 |
 | `backend/src/routes/pos.ts` | 9 | 506 |
@@ -209,13 +209,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 152 | `153_sessions_stay_signed_in.sql` (153) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 389 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 391 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2091 files, 725159 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2091 files, 725485 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -243,7 +243,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 
 ## 4. Frontend desktop routes
 
-159 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
+158 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
 `frontend/src/lib/routeAliases.ts` are expanded at runtime and not counted here).
 
 | path | page module |
@@ -262,7 +262,6 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `/fleet-health/:lorryId` | `frontend/src/pages/LorryRecord` |
 | `/mail-center` | `frontend/src/pages/MailCenter/Inbox` |
 | `/mail-center/:id` | `frontend/src/pages/MailCenter/Thread` |
-| `/memos` | `frontend/src/pages/Memos` |
 | `/my-cases` | `frontend/src/pages/MyCases` |
 | `/my-cases/:id` | `frontend/src/pages/MyCases` |
 | `/notifications` | `frontend/src/pages/Notifications` |
@@ -412,9 +411,9 @@ Page files by directory:
 
 | directory | *.tsx |
 |---|---|
-| `frontend/src/pages` | 39 |
+| `frontend/src/pages` | 38 |
 | `frontend/src/pages/MailCenter` | 3 |
-| `frontend/src/pages/announcements` | 4 |
+| `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/scm-v2` | 148 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/settings` | 1 |
