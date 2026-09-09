@@ -747,6 +747,18 @@ empty selection and was refused. The detail now falls back to `matched` for
 both, and the upload REFUSES when its rows insert returns fewer ids than
 decisions — the silent skip that left nine MATCHED lines with zero links.
 
+**AND THE BULK BUTTON IS ITS OWN PATH (docs/bugs/0761).** `settlementConfirmMatched`
+("Confirm all N matched") builds each line's payments from `acc_settlement_matches`
+alone, so the detail fix left it still answering *Posted 0* over lines whose
+payment the screen was by then showing. It now applies the same fallback — for a
+pending MATCHED row with **no link**, recompute and take the matcher's `matched`
+— recomputed only for unlinked rows, so a stored human decision is never
+overridden, and confirming writes the link back so the data heals as it is
+worked. **Only `matched` is rescued, never `suggested`:** nobody reads each line
+on this path, and an out-of-window reference or a lone amount match is offered on
+the detail screen precisely because it needs eyes. The handler also 404s on a
+missing batch rather than reporting an empty success.
+
 **Which payments are candidates (2026-09-04, the owner's first real uploads
 made the gap loud: four MBB lines all UNMATCHED while their sales sat in the
 ERP).** `couldBeAcquirers` in acc/settlement.ts is the one rule: a card payment

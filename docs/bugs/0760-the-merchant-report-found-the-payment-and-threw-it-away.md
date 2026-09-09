@@ -89,6 +89,8 @@ from the line it really belongs to) and `backend/tests/settlementRoutes.test.ts`
 upload whose rows report no ids, and a payment keyed eleven days late).
 `src/acc` and the settlement routes: 363 → 370 passing.
 
+**The bulk button had the same fault on its own path** — see 0761.
+
 **Not fixed here, and worth naming.** A line with genuinely nothing in the
 window still offers no way to reach a payment by hand — three MBB lines on prod
 have no matching amount or reference anywhere, which is the honest UNMATCHED
