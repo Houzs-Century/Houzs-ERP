@@ -1,0 +1,5473 @@
+{
+ "book": "AED_HOUZS",
+ "exported_at": "2026-09-09T14:16:50Z",
+ "items": {
+  "2376-1A(LHF)": {
+   "avg_cost_sen": 90000,
+   "last_move": "2026-08-22",
+   "movements": 1,
+   "qty_in": 1.0
+  },
+  "2376-1A(RHF)": {
+   "avg_cost_sen": 85000,
+   "last_move": "2026-08-23",
+   "movements": 3,
+   "qty_in": 2.0
+  },
+  "5530-1A(LHF)": {
+   "avg_cost_sen": 70000,
+   "last_move": "2026-08-26",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "5530-1A(RHF)": {
+   "avg_cost_sen": 70000,
+   "last_move": "2026-08-26",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "9028-1A(LHF)": {
+   "avg_cost_sen": 45964,
+   "last_move": "2026-08-25",
+   "movements": 4,
+   "qty_in": 3.0
+  },
+  "9028-1A(RHF)": {
+   "avg_cost_sen": 37500,
+   "last_move": "2026-08-25",
+   "movements": 3,
+   "qty_in": 2.0
+  },
+  "9028-2A(RHF)": {
+   "avg_cost_sen": 112308,
+   "last_move": "2026-08-21",
+   "movements": 1,
+   "qty_in": 1.0
+  },
+  "AERO-DIVAN ONLY (K)": {
+   "avg_cost_sen": 45000,
+   "last_move": "2024-11-23",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "AERO-DIVAN ONLY (SS)": {
+   "avg_cost_sen": 25000,
+   "last_move": "2024-08-30",
+   "movements": 2,
+   "qty_in": 2.0
+  },
+  "AERO-MP (K)": {
+   "avg_cost_sen": 2892,
+   "last_move": "2026-09-09",
+   "movements": 2046,
+   "qty_in": 3113.0
+  },
+  "AERO-MP (Q)": {
+   "avg_cost_sen": 2512,
+   "last_move": "2026-09-09",
+   "movements": 2171,
+   "qty_in": 3631.0
+  },
+  "AERO-MP (S)": {
+   "avg_cost_sen": 2040,
+   "last_move": "2026-09-02",
+   "movements": 217,
+   "qty_in": 342.0
+  },
+  "AERO-MP (SS)": {
+   "avg_cost_sen": 2073,
+   "last_move": "2026-09-08",
+   "movements": 441,
+   "qty_in": 682.0
+  },
+  "AERO-Y04 (K)": {
+   "avg_cost_sen": 101385,
+   "last_move": "2026-08-19",
+   "movements": 46,
+   "qty_in": 26.0
+  },
+  "AERO-Y04 (Q)": {
+   "avg_cost_sen": 91350,
+   "last_move": "2026-08-19",
+   "movements": 20,
+   "qty_in": 10.0
+  },
+  "AERO-Y09 (K)": {
+   "avg_cost_sen": 91059,
+   "last_move": "2026-08-19",
+   "movements": 27,
+   "qty_in": 17.0
+  },
+  "AERO-Y09 (Q)": {
+   "avg_cost_sen": 107565,
+   "last_move": "2026-08-19",
+   "movements": 29,
+   "qty_in": 17.0
+  },
+  "AERO-Y103 (K)": {
+   "avg_cost_sen": 57600,
+   "last_move": "2024-07-12",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "AERO-Y103 (Q)": {
+   "avg_cost_sen": 74619,
+   "last_move": "2026-08-19",
+   "movements": 39,
+   "qty_in": 21.0
+  },
+  "AERO-Y103 (SS)": {
+   "avg_cost_sen": 37000,
+   "last_move": "2024-06-13",
+   "movements": 6,
+   "qty_in": 4.0
+  },
+  "AERO-Y31 (Q)": {
+   "avg_cost_sen": 45000,
+   "last_move": "2025-06-09",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "AERO-Y41 (K)": {
+   "avg_cost_sen": 60309,
+   "last_move": "2024-12-12",
+   "movements": 22,
+   "qty_in": 11.0
+  },
+  "AERO-Y41 (Q)": {
+   "avg_cost_sen": 51971,
+   "last_move": "2026-08-19",
+   "movements": 85,
+   "qty_in": 53.0
+  },
+  "AERO-Y41 (SS)": {
+   "avg_cost_sen": 39400,
+   "last_move": "2024-05-20",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "AERO-Y44 (K)": {
+   "avg_cost_sen": 54000,
+   "last_move": "2025-06-09",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "AERO-Y44 (Q)": {
+   "avg_cost_sen": 55000,
+   "last_move": "2024-12-14",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "AERO-Y45 (Q)": {
+   "avg_cost_sen": 50000,
+   "last_move": "2025-06-09",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "AERO-Y78 (K)": {
+   "avg_cost_sen": 47400,
+   "last_move": "2024-06-20",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "AERO-Y78 (Q)": {
+   "avg_cost_sen": 78100,
+   "last_move": "2026-08-19",
+   "movements": 35,
+   "qty_in": 20.0
+  },
+  "AK  ARO - BE HP BD LT PSTV ENR": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - BE HP BD WASH PSTV E": {
+   "avg_cost_sen": 2793,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - BE HP CDL MD LIFT": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 6.0
+  },
+  "AK  ARO - BE HP CDL PSTV ENRG": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 6.0
+  },
+  "AK  ARO - BE HP CDL PURE JOY": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 6.0
+  },
+  "AK  ARO - BE HP HD CRM MD LIFT": {
+   "avg_cost_sen": 1393,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - BE HP HD CRM PSTV EN": {
+   "avg_cost_sen": 1393,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - BE HP RD DFSR MD LIF": {
+   "avg_cost_sen": 6293,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 6.0
+  },
+  "AK  ARO - BE HP RD DFSR PSTV E": {
+   "avg_cost_sen": 6293,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 6.0
+  },
+  "AK  ARO - BE HP RD DFSR PURE J": {
+   "avg_cost_sen": 6293,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 6.0
+  },
+  "AK  ARO - BE HP RM SPRY MD LIF": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - BE HP RM SPRY PSTV E": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - BE HP RM SPRY PURE J": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - DE-STR BD LT RESTORE": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - DE-STR BD WASH RESTO": {
+   "avg_cost_sen": 2793,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - DE-STR CDL CALM": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 6.0
+  },
+  "AK  ARO - DE-STR CDL MEDITATE": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 6.0
+  },
+  "AK  ARO - DE-STR CDL RESTORE": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 6.0
+  },
+  "AK  ARO - DE-STR HD CRM MEDITA": {
+   "avg_cost_sen": 1393,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - DE-STR HD CRM RESTOR": {
+   "avg_cost_sen": 1393,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - DE-STR RD DFSR CALM": {
+   "avg_cost_sen": 6293,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 6.0
+  },
+  "AK  ARO - DE-STR RD DFSR MEDIT": {
+   "avg_cost_sen": 6293,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 6.0
+  },
+  "AK  ARO - DE-STR RD DFSR RESTO": {
+   "avg_cost_sen": 6293,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 6.0
+  },
+  "AK  ARO - DE-STR RM SPRY CALM": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - DE-STR RM SPRY MEDIT": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - DE-STR RM SPRY RESTO": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - SLP BTT BD LT DEEP R": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - SLP BTT BD WASH DEEP": {
+   "avg_cost_sen": 2793,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - SLP BTT CDL DRM CCHR": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 6.0
+  },
+  "AK  ARO - SLP BTT CDL WIND DOW": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 6.0
+  },
+  "AK  ARO - SLP BTT HD CRM DEEP": {
+   "avg_cost_sen": 1393,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - SLP BTT HD CRM DRM C": {
+   "avg_cost_sen": 1393,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - SLP BTT RD DFSR DRM": {
+   "avg_cost_sen": 6293,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 6.0
+  },
+  "AK  ARO - SLP BTT RD DFSR WIND": {
+   "avg_cost_sen": 6293,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 6.0
+  },
+  "AK  ARO - SLP BTT RM SPRY DRM": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK  ARO - SLP BTT RM SPRY WIND": {
+   "avg_cost_sen": 3493,
+   "last_move": "2026-05-30",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK- ESSENTIAL BOLSTER": {
+   "avg_cost_sen": 2160,
+   "last_move": "2026-09-19",
+   "movements": 2513,
+   "qty_in": 4715.0
+  },
+  "AK- LTX CLS PIL": {
+   "avg_cost_sen": 9400,
+   "last_move": "2026-07-17",
+   "movements": 178,
+   "qty_in": 524.0
+  },
+  "AK- SL ES WP QLT FIT MP (K)": {
+   "avg_cost_sen": 11818,
+   "last_move": "2026-05-24",
+   "movements": 32,
+   "qty_in": 44.0
+  },
+  "AK- SL ES WP QLT FIT MP (Q)": {
+   "avg_cost_sen": 10400,
+   "last_move": "2026-03-08",
+   "movements": 38,
+   "qty_in": 53.0
+  },
+  "AK- SL ES WP QLT FIT MP (SS)": {
+   "avg_cost_sen": 8582,
+   "last_move": "2026-04-06",
+   "movements": 22,
+   "qty_in": 33.0
+  },
+  "AK-AF AM CL GRY 4KFIT": {
+   "avg_cost_sen": 16800,
+   "last_move": "2026-05-24",
+   "movements": 6,
+   "qty_in": 8.0
+  },
+  "AK-AF AM CL GRY 4QFIT": {
+   "avg_cost_sen": 14700,
+   "last_move": "2026-05-24",
+   "movements": 4,
+   "qty_in": 8.0
+  },
+  "AK-AF LE CK BLU 4KFIT": {
+   "avg_cost_sen": 16800,
+   "last_move": "2026-04-11",
+   "movements": 2,
+   "qty_in": 8.0
+  },
+  "AK-AF LE CK BLU 4QFIT": {
+   "avg_cost_sen": 14700,
+   "last_move": "2026-04-06",
+   "movements": 1,
+   "qty_in": 8.0
+  },
+  "AK-AF LE CR MINI 4KFIT": {
+   "avg_cost_sen": 16800,
+   "last_move": "2026-04-06",
+   "movements": 1,
+   "qty_in": 8.0
+  },
+  "AK-AF LE CR MINI 4QFIT": {
+   "avg_cost_sen": 14700,
+   "last_move": "2026-05-24",
+   "movements": 5,
+   "qty_in": 8.0
+  },
+  "AK-AF RM CBS BRW 4KFIT": {
+   "avg_cost_sen": 16800,
+   "last_move": "2026-02-27",
+   "movements": 6,
+   "qty_in": 9.0
+  },
+  "AK-AF RM CBS BRW 4QFIT": {
+   "avg_cost_sen": 14700,
+   "last_move": "2026-05-22",
+   "movements": 2,
+   "qty_in": 7.0
+  },
+  "AK-AF RM LQ KHK 3SSFIT": {
+   "avg_cost_sen": 12600,
+   "last_move": "2026-03-07",
+   "movements": 3,
+   "qty_in": 4.0
+  },
+  "AK-AF RM LQ KHK 4KFIT": {
+   "avg_cost_sen": 16800,
+   "last_move": "2025-07-04",
+   "movements": 11,
+   "qty_in": 9.0
+  },
+  "AK-AF RM LQ KHK 4QFIT": {
+   "avg_cost_sen": 14700,
+   "last_move": "2025-02-16",
+   "movements": 9,
+   "qty_in": 8.0
+  },
+  "AK-AF RM LQ KHK 5KQLT": {
+   "avg_cost_sen": 30900,
+   "last_move": "2026-04-12",
+   "movements": 21,
+   "qty_in": 22.0
+  },
+  "AK-AF RM LQ KHK 5QQLT": {
+   "avg_cost_sen": 28000,
+   "last_move": "2025-06-28",
+   "movements": 3,
+   "qty_in": 16.0
+  },
+  "AK-AF RM MIL BLU 4KFIT": {
+   "avg_cost_sen": 16800,
+   "last_move": "2025-12-20",
+   "movements": 9,
+   "qty_in": 14.0
+  },
+  "AK-AF RM MIL BLU 4QFIT": {
+   "avg_cost_sen": 14700,
+   "last_move": "2026-05-23",
+   "movements": 3,
+   "qty_in": 11.0
+  },
+  "AK-AF RM PE PNK 3SSFIT": {
+   "avg_cost_sen": 12600,
+   "last_move": "2026-04-12",
+   "movements": 3,
+   "qty_in": 7.0
+  },
+  "AK-AF RM PE PNK 4KFIT": {
+   "avg_cost_sen": 16800,
+   "last_move": "2026-05-24",
+   "movements": 21,
+   "qty_in": 23.0
+  },
+  "AK-AF RM PE PNK 4QFIT": {
+   "avg_cost_sen": 14700,
+   "last_move": "2026-04-11",
+   "movements": 23,
+   "qty_in": 23.0
+  },
+  "AK-AF RM PL CRM 3SSFIT": {
+   "avg_cost_sen": 12600,
+   "last_move": "2026-03-06",
+   "movements": 4,
+   "qty_in": 4.0
+  },
+  "AK-AF RM PL CRM 4KFIT": {
+   "avg_cost_sen": 16800,
+   "last_move": "2026-03-01",
+   "movements": 9,
+   "qty_in": 10.0
+  },
+  "AK-AF RM PL CRM 4QFIT": {
+   "avg_cost_sen": 14700,
+   "last_move": "2025-06-14",
+   "movements": 12,
+   "qty_in": 11.0
+  },
+  "AK-AF RM PL CRM 5KQLT": {
+   "avg_cost_sen": 30900,
+   "last_move": "2025-02-28",
+   "movements": 2,
+   "qty_in": 4.0
+  },
+  "AK-AF RM PL CRM 5QQLT": {
+   "avg_cost_sen": 28000,
+   "last_move": "2026-04-06",
+   "movements": 4,
+   "qty_in": 8.0
+  },
+  "AK-AF RM RN BLU 3SSFIT": {
+   "avg_cost_sen": 12600,
+   "last_move": "2026-04-11",
+   "movements": 3,
+   "qty_in": 6.0
+  },
+  "AK-AF RM RN BLU 4KFIT": {
+   "avg_cost_sen": 16217,
+   "last_move": "2025-07-04",
+   "movements": 15,
+   "qty_in": 18.0
+  },
+  "AK-AF RM RN BLU 4QFIT": {
+   "avg_cost_sen": 14700,
+   "last_move": "2025-07-04",
+   "movements": 15,
+   "qty_in": 14.0
+  },
+  "AK-AF RM RN BLU 5KQLT": {
+   "avg_cost_sen": 29494,
+   "last_move": "2026-05-23",
+   "movements": 10,
+   "qty_in": 33.0
+  },
+  "AK-AF RM RN BLU 5QQLT": {
+   "avg_cost_sen": 5895,
+   "last_move": "2026-05-24",
+   "movements": 9,
+   "qty_in": 19.0
+  },
+  "AK-AF RM VI PUP 4KFIT": {
+   "avg_cost_sen": 16800,
+   "last_move": "2026-03-01",
+   "movements": 12,
+   "qty_in": 16.0
+  },
+  "AK-AF RM VI PUP 4QFIT": {
+   "avg_cost_sen": 14700,
+   "last_move": "2026-04-11",
+   "movements": 9,
+   "qty_in": 15.0
+  },
+  "AK-APEX MATT (Q)": {
+   "avg_cost_sen": 108000,
+   "last_move": "2026-06-27",
+   "movements": 3,
+   "qty_in": 3.0
+  },
+  "AK-ARISTOI MATT (K)": {
+   "avg_cost_sen": 258909,
+   "last_move": "2026-08-13",
+   "movements": 123,
+   "qty_in": 81.0
+  },
+  "AK-ARISTOI MATT (Q)": {
+   "avg_cost_sen": 225000,
+   "last_move": "2026-07-22",
+   "movements": 13,
+   "qty_in": 8.0
+  },
+  "AK-ARISTOI MATT (SK)": {
+   "avg_cost_sen": 333333,
+   "last_move": "2025-09-13",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "AK-ARMOUR MATT (K)": {
+   "avg_cost_sen": 185783,
+   "last_move": "2026-09-15",
+   "movements": 883,
+   "qty_in": 537.0
+  },
+  "AK-ARMOUR MATT (Q)": {
+   "avg_cost_sen": 155780,
+   "last_move": "2026-09-04",
+   "movements": 513,
+   "qty_in": 338.0
+  },
+  "AK-ARMOUR MATT (S)": {
+   "avg_cost_sen": 97000,
+   "last_move": "2026-07-30",
+   "movements": 18,
+   "qty_in": 14.0
+  },
+  "AK-ARMOUR MATT (SK)": {
+   "avg_cost_sen": 238000,
+   "last_move": "2026-08-12",
+   "movements": 21,
+   "qty_in": 11.0
+  },
+  "AK-ARMOUR MATT (SP)": {
+   "avg_cost_sen": 260500,
+   "last_move": "2026-06-20",
+   "movements": 16,
+   "qty_in": 8.0
+  },
+  "AK-ARMOUR MATT (SS)": {
+   "avg_cost_sen": 112320,
+   "last_move": "2026-07-16",
+   "movements": 41,
+   "qty_in": 25.0
+  },
+  "AK-AV DR ROL PACK PIL": {
+   "avg_cost_sen": 1804,
+   "last_move": "2025-02-05",
+   "movements": 82,
+   "qty_in": 102.0
+  },
+  "AK-BASTION MATT (K)": {
+   "avg_cost_sen": 124552,
+   "last_move": "2026-09-08",
+   "movements": 719,
+   "qty_in": 488.0
+  },
+  "AK-BASTION MATT (Q)": {
+   "avg_cost_sen": 104065,
+   "last_move": "2026-09-19",
+   "movements": 1413,
+   "qty_in": 977.0
+  },
+  "AK-BASTION MATT (S)": {
+   "avg_cost_sen": 69000,
+   "last_move": "2026-08-26",
+   "movements": 154,
+   "qty_in": 101.0
+  },
+  "AK-BASTION MATT (SK)": {
+   "avg_cost_sen": 144020,
+   "last_move": "2026-08-03",
+   "movements": 19,
+   "qty_in": 10.0
+  },
+  "AK-BASTION MATT (SP)": {
+   "avg_cost_sen": 157133,
+   "last_move": "2026-05-15",
+   "movements": 12,
+   "qty_in": 6.0
+  },
+  "AK-BASTION MATT (SS)": {
+   "avg_cost_sen": 80000,
+   "last_move": "2026-09-08",
+   "movements": 275,
+   "qty_in": 198.0
+  },
+  "AK-BULWARK MATT (K)": {
+   "avg_cost_sen": 253692,
+   "last_move": "2026-09-05",
+   "movements": 401,
+   "qty_in": 237.0
+  },
+  "AK-BULWARK MATT (Q)": {
+   "avg_cost_sen": 213989,
+   "last_move": "2026-09-01",
+   "movements": 205,
+   "qty_in": 122.0
+  },
+  "AK-BULWARK MATT (S)": {
+   "avg_cost_sen": 140000,
+   "last_move": "2025-07-23",
+   "movements": 10,
+   "qty_in": 6.0
+  },
+  "AK-BULWARK MATT (SK)": {
+   "avg_cost_sen": 330000,
+   "last_move": "2026-04-02",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "AK-BULWARK MATT (SP)": {
+   "avg_cost_sen": 357000,
+   "last_move": "2026-08-22",
+   "movements": 4,
+   "qty_in": 3.0
+  },
+  "AK-BULWARK MATT (SS)": {
+   "avg_cost_sen": 160000,
+   "last_move": "2026-08-24",
+   "movements": 8,
+   "qty_in": 5.0
+  },
+  "AK-COMFORT H+C MATT (S)": {
+   "avg_cost_sen": 19400,
+   "last_move": "2025-12-22",
+   "movements": 3,
+   "qty_in": 2.0
+  },
+  "AK-COMFORT HB MATT (Q)": {
+   "avg_cost_sen": 47900,
+   "last_move": "2025-09-03",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "AK-COMFORT HB MATT (SS)": {
+   "avg_cost_sen": 29900,
+   "last_move": "2026-01-06",
+   "movements": 7,
+   "qty_in": 5.0
+  },
+  "AK-COOL HUGGY BLANKET": {
+   "avg_cost_sen": 19000,
+   "last_move": "2026-09-04",
+   "movements": 221,
+   "qty_in": 283.0
+  },
+  "AK-COOL HUGGY BLANKET (SK)": {
+   "avg_cost_sen": 29000,
+   "last_move": "2026-09-08",
+   "movements": 17,
+   "qty_in": 25.0
+  },
+  "AK-CS AIRLOFT COMFY PIL": {
+   "avg_cost_sen": 7500,
+   "last_move": "2026-09-19",
+   "movements": 2284,
+   "qty_in": 5668.0
+  },
+  "AK-CT HYD.G BB CHC MEM PIL": {
+   "avg_cost_sen": 13400,
+   "last_move": "2026-05-22",
+   "movements": 9,
+   "qty_in": 12.0
+  },
+  "AK-ELEVATION MATT (K)": {
+   "avg_cost_sen": 388810,
+   "last_move": "2026-09-04",
+   "movements": 73,
+   "qty_in": 42.0
+  },
+  "AK-ELEVATION MATT (Q)": {
+   "avg_cost_sen": 390000,
+   "last_move": "2026-05-09",
+   "movements": 19,
+   "qty_in": 15.0
+  },
+  "AK-ELEVATION MATT (SK)": {
+   "avg_cost_sen": 540000,
+   "last_move": "2026-03-03",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "AK-EMINENT MATT (K)": {
+   "avg_cost_sen": 255000,
+   "last_move": "2024-11-11",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "AK-EMINENT MATT (Q)": {
+   "avg_cost_sen": 46072,
+   "last_move": "2026-07-06",
+   "movements": 15,
+   "qty_in": 14.0
+  },
+  "AK-EQUINOX MATT (K)": {
+   "avg_cost_sen": 129654,
+   "last_move": "2026-09-07",
+   "movements": 296,
+   "qty_in": 188.0
+  },
+  "AK-EQUINOX MATT (Q)": {
+   "avg_cost_sen": 106234,
+   "last_move": "2026-09-10",
+   "movements": 519,
+   "qty_in": 367.0
+  },
+  "AK-EQUINOX MATT (S)": {
+   "avg_cost_sen": 70000,
+   "last_move": "2026-09-07",
+   "movements": 43,
+   "qty_in": 34.0
+  },
+  "AK-EQUINOX MATT (SK)": {
+   "avg_cost_sen": 170000,
+   "last_move": "2026-08-07",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "AK-EQUINOX MATT (SP)": {
+   "avg_cost_sen": 91900,
+   "last_move": "2026-07-18",
+   "movements": 6,
+   "qty_in": 4.0
+  },
+  "AK-EQUINOX MATT (SS)": {
+   "avg_cost_sen": 85000,
+   "last_move": "2026-08-07",
+   "movements": 78,
+   "qty_in": 48.0
+  },
+  "AK-EXALTED MATT (K)": {
+   "avg_cost_sen": 255000,
+   "last_move": "2026-09-07",
+   "movements": 29,
+   "qty_in": 15.0
+  },
+  "AK-EXALTED MATT (Q)": {
+   "avg_cost_sen": 196304,
+   "last_move": "2026-07-06",
+   "movements": 32,
+   "qty_in": 23.0
+  },
+  "AK-EXALTED MATT (S)": {
+   "avg_cost_sen": 140000,
+   "last_move": "2025-03-12",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "AK-EXALTED MATT (SK)": {
+   "avg_cost_sen": 325000,
+   "last_move": "2026-03-03",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "AK-EXALTED MATT (SS)": {
+   "avg_cost_sen": 160000,
+   "last_move": "2026-04-15",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "AK-FORTRESS MATT (K)": {
+   "avg_cost_sen": 245556,
+   "last_move": "2025-07-22",
+   "movements": 17,
+   "qty_in": 9.0
+  },
+  "AK-FORTRESS MATT (Q)": {
+   "avg_cost_sen": 151250,
+   "last_move": "2026-07-27",
+   "movements": 22,
+   "qty_in": 20.0
+  },
+  "AK-GUARDIAN MATT (K)": {
+   "avg_cost_sen": 129926,
+   "last_move": "2026-09-09",
+   "movements": 623,
+   "qty_in": 440.0
+  },
+  "AK-GUARDIAN MATT (Q)": {
+   "avg_cost_sen": 107669,
+   "last_move": "2026-09-09",
+   "movements": 1005,
+   "qty_in": 815.0
+  },
+  "AK-GUARDIAN MATT (S)": {
+   "avg_cost_sen": 70000,
+   "last_move": "2026-09-07",
+   "movements": 76,
+   "qty_in": 55.0
+  },
+  "AK-GUARDIAN MATT (SK)": {
+   "avg_cost_sen": 56667,
+   "last_move": "2026-07-25",
+   "movements": 5,
+   "qty_in": 3.0
+  },
+  "AK-GUARDIAN MATT (SP)": {
+   "avg_cost_sen": 143600,
+   "last_move": "2026-08-27",
+   "movements": 12,
+   "qty_in": 6.0
+  },
+  "AK-GUARDIAN MATT (SS)": {
+   "avg_cost_sen": 85000,
+   "last_move": "2026-09-09",
+   "movements": 173,
+   "qty_in": 128.0
+  },
+  "AK-HAPPY SLEEP EASY": {
+   "avg_cost_sen": 203,
+   "last_move": "2026-09-09",
+   "movements": 868,
+   "qty_in": 1997.0
+  },
+  "AK-HM CL BRW 4SSQLT": {
+   "avg_cost_sen": 19300,
+   "last_move": "2025-12-19",
+   "movements": 3,
+   "qty_in": 4.0
+  },
+  "AK-HM CL BRW 5KQLT": {
+   "avg_cost_sen": 25200,
+   "last_move": "2025-12-21",
+   "movements": 34,
+   "qty_in": 39.0
+  },
+  "AK-HM CL BRW 5QQLT": {
+   "avg_cost_sen": 23100,
+   "last_move": "2025-12-21",
+   "movements": 17,
+   "qty_in": 25.0
+  },
+  "AK-HM FR APC 5KQLT": {
+   "avg_cost_sen": 25200,
+   "last_move": "2026-02-28",
+   "movements": 2,
+   "qty_in": 8.0
+  },
+  "AK-HM FR APC 5QQLT": {
+   "avg_cost_sen": 23100,
+   "last_move": "2025-12-16",
+   "movements": 1,
+   "qty_in": 8.0
+  },
+  "AK-HM HD GRN 4SSQLT": {
+   "avg_cost_sen": 19300,
+   "last_move": "2025-04-10",
+   "movements": 3,
+   "qty_in": 4.0
+  },
+  "AK-HM HD GRN 5KQLT": {
+   "avg_cost_sen": 25200,
+   "last_move": "2026-02-28",
+   "movements": 13,
+   "qty_in": 21.0
+  },
+  "AK-HM HD GRN 5QQLT": {
+   "avg_cost_sen": 23100,
+   "last_move": "2025-07-04",
+   "movements": 8,
+   "qty_in": 21.0
+  },
+  "AK-HM IN GRY 4SSQLT": {
+   "avg_cost_sen": 19300,
+   "last_move": "2025-12-19",
+   "movements": 6,
+   "qty_in": 7.0
+  },
+  "AK-HM IN GRY 5KQLT": {
+   "avg_cost_sen": 25200,
+   "last_move": "2025-12-21",
+   "movements": 38,
+   "qty_in": 41.0
+  },
+  "AK-HM IN GRY 5QQLT": {
+   "avg_cost_sen": 23100,
+   "last_move": "2026-04-11",
+   "movements": 30,
+   "qty_in": 40.0
+  },
+  "AK-HM RY YLW 4SSQLT": {
+   "avg_cost_sen": 19300,
+   "last_move": "2025-03-09",
+   "movements": 3,
+   "qty_in": 4.0
+  },
+  "AK-HM RY YLW 5KQLT": {
+   "avg_cost_sen": 25200,
+   "last_move": "2026-05-24",
+   "movements": 16,
+   "qty_in": 16.0
+  },
+  "AK-HM RY YLW 5QQLT": {
+   "avg_cost_sen": 23100,
+   "last_move": "2025-09-06",
+   "movements": 12,
+   "qty_in": 16.0
+  },
+  "AK-HM TF BGE 5KQLT": {
+   "avg_cost_sen": 25200,
+   "last_move": "2025-12-16",
+   "movements": 1,
+   "qty_in": 8.0
+  },
+  "AK-HM TF BGE 5QQLT": {
+   "avg_cost_sen": 23100,
+   "last_move": "2025-12-16",
+   "movements": 1,
+   "qty_in": 8.0
+  },
+  "AK-HP CM MATT CVR S+AD": {
+   "avg_cost_sen": 3080,
+   "last_move": "2025-02-28",
+   "movements": 2,
+   "qty_in": 12.0
+  },
+  "AK-HP LL AQU 4KFIT": {
+   "avg_cost_sen": 5530,
+   "last_move": "2025-12-16",
+   "movements": 1,
+   "qty_in": 8.0
+  },
+  "AK-HP LL AQU 4QFIT": {
+   "avg_cost_sen": 4830,
+   "last_move": "2025-12-16",
+   "movements": 1,
+   "qty_in": 8.0
+  },
+  "AK-HP LL AQU AD BL CS": {
+   "avg_cost_sen": 910,
+   "last_move": "2025-02-28",
+   "movements": 2,
+   "qty_in": 24.0
+  },
+  "AK-HP LL AQU AD PIL CS": {
+   "avg_cost_sen": 1330,
+   "last_move": "2025-02-28",
+   "movements": 2,
+   "qty_in": 24.0
+  },
+  "AK-HP LL AQU CFT (K)": {
+   "avg_cost_sen": 7630,
+   "last_move": "2026-05-23",
+   "movements": 2,
+   "qty_in": 4.0
+  },
+  "AK-HP LL AQU CFT (SS)": {
+   "avg_cost_sen": 5530,
+   "last_move": "2026-05-24",
+   "movements": 2,
+   "qty_in": 4.0
+  },
+  "AK-HP LL BRR 4KFIT": {
+   "avg_cost_sen": 5530,
+   "last_move": "2025-12-17",
+   "movements": 2,
+   "qty_in": 16.0
+  },
+  "AK-HP LL BRR 4QFIT": {
+   "avg_cost_sen": 4830,
+   "last_move": "2026-03-08",
+   "movements": 3,
+   "qty_in": 16.0
+  },
+  "AK-HP LL BRR AD BL CS": {
+   "avg_cost_sen": 910,
+   "last_move": "2025-02-28",
+   "movements": 2,
+   "qty_in": 24.0
+  },
+  "AK-HP LL BRR AD PIL CS": {
+   "avg_cost_sen": 1330,
+   "last_move": "2026-03-08",
+   "movements": 7,
+   "qty_in": 24.0
+  },
+  "AK-HP LL BRR CFT (K)": {
+   "avg_cost_sen": 7630,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 4.0
+  },
+  "AK-HP LL BRR CFT (Q)": {
+   "avg_cost_sen": 6930,
+   "last_move": "2026-04-06",
+   "movements": 2,
+   "qty_in": 5.0
+  },
+  "AK-HP LL BRR CFT (SS)": {
+   "avg_cost_sen": 4130,
+   "last_move": "2025-04-09",
+   "movements": 3,
+   "qty_in": 12.0
+  },
+  "AK-HP LL GRY AD PIL CS": {
+   "avg_cost_sen": 1330,
+   "last_move": "2025-02-28",
+   "movements": 2,
+   "qty_in": 24.0
+  },
+  "AK-HP LL WIN 3SSFIT": {
+   "avg_cost_sen": 3430,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 8.0
+  },
+  "AK-HP LL WIN 4KFIT": {
+   "avg_cost_sen": 5530,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 8.0
+  },
+  "AK-HP LL WIN 4QFIT": {
+   "avg_cost_sen": 4830,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 8.0
+  },
+  "AK-HP LL WIN AD BL CS": {
+   "avg_cost_sen": 910,
+   "last_move": "2025-02-28",
+   "movements": 2,
+   "qty_in": 24.0
+  },
+  "AK-HP LL WIN AD PIL CS": {
+   "avg_cost_sen": 1330,
+   "last_move": "2026-03-08",
+   "movements": 2,
+   "qty_in": 24.0
+  },
+  "AK-HP LL WIN CFT (K)": {
+   "avg_cost_sen": 7630,
+   "last_move": "2026-04-06",
+   "movements": 2,
+   "qty_in": 8.0
+  },
+  "AK-HP LL WIN CFT (Q)": {
+   "avg_cost_sen": 6930,
+   "last_move": "2026-04-06",
+   "movements": 2,
+   "qty_in": 5.0
+  },
+  "AK-HP LL WIN CFT (SS)": {
+   "avg_cost_sen": 5530,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 4.0
+  },
+  "AK-HP LL WOD AD PIL CS": {
+   "avg_cost_sen": 1330,
+   "last_move": "2025-02-28",
+   "movements": 2,
+   "qty_in": 24.0
+  },
+  "AK-HP MM VR EM GRN 3SSFIT": {
+   "avg_cost_sen": 3430,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 8.0
+  },
+  "AK-HP MM VR EM GRN 4KFIT": {
+   "avg_cost_sen": 5530,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 8.0
+  },
+  "AK-HP MM VR EM GRN 4QFIT": {
+   "avg_cost_sen": 4830,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 8.0
+  },
+  "AK-HP MM VR EM GRN CFT (K)": {
+   "avg_cost_sen": 7630,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 4.0
+  },
+  "AK-HP MM VR EM GRN CFT (Q)": {
+   "avg_cost_sen": 6930,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 4.0
+  },
+  "AK-HP MM VR EM GRN CFT (SS)": {
+   "avg_cost_sen": 5530,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 4.0
+  },
+  "AK-HP MM VR TR NAV 3SSFIT": {
+   "avg_cost_sen": 3430,
+   "last_move": "2025-02-28",
+   "movements": 2,
+   "qty_in": 8.0
+  },
+  "AK-HP MM VR TR NAV 4KFIT": {
+   "avg_cost_sen": 5530,
+   "last_move": "2025-12-18",
+   "movements": 3,
+   "qty_in": 8.0
+  },
+  "AK-HP MM VR TR NAV 4QFIT": {
+   "avg_cost_sen": 4830,
+   "last_move": "2025-02-28",
+   "movements": 2,
+   "qty_in": 8.0
+  },
+  "AK-HP MM VR TR NAV CFT (K)": {
+   "avg_cost_sen": 7630,
+   "last_move": "2025-02-28",
+   "movements": 2,
+   "qty_in": 4.0
+  },
+  "AK-HP MM VR TR NAV CFT (Q)": {
+   "avg_cost_sen": 6930,
+   "last_move": "2025-02-28",
+   "movements": 2,
+   "qty_in": 4.0
+  },
+  "AK-HP MM VR TR NAV CFT (SS)": {
+   "avg_cost_sen": 5530,
+   "last_move": "2025-02-28",
+   "movements": 2,
+   "qty_in": 4.0
+  },
+  "AK-HP SL ERGO PIL": {
+   "avg_cost_sen": 4800,
+   "last_move": "2026-03-08",
+   "movements": 23,
+   "qty_in": 78.0
+  },
+  "AK-HP SL MOB MATT (Q) -2F": {
+   "avg_cost_sen": 17900,
+   "last_move": "2026-05-23",
+   "movements": 4,
+   "qty_in": 9.0
+  },
+  "AK-HP SL MOB MATT (S) -2F": {
+   "avg_cost_sen": 11900,
+   "last_move": "2026-03-06",
+   "movements": 5,
+   "qty_in": 15.0
+  },
+  "AK-HP SL MOB MATT (S) -3F": {
+   "avg_cost_sen": 17900,
+   "last_move": "2026-03-07",
+   "movements": 7,
+   "qty_in": 9.0
+  },
+  "AK-HP SL MOB MATT (S) -5F": {
+   "avg_cost_sen": 6900,
+   "last_move": "2026-05-24",
+   "movements": 97,
+   "qty_in": 104.0
+  },
+  "AK-HP SL MP (K)": {
+   "avg_cost_sen": 6230,
+   "last_move": "2026-05-24",
+   "movements": 18,
+   "qty_in": 25.0
+  },
+  "AK-HP SL MP (Q)": {
+   "avg_cost_sen": 5530,
+   "last_move": "2026-05-24",
+   "movements": 24,
+   "qty_in": 28.0
+  },
+  "AK-HP SL MP (SS)": {
+   "avg_cost_sen": 4130,
+   "last_move": "2026-03-08",
+   "movements": 18,
+   "qty_in": 25.0
+  },
+  "AK-HS SOLACE (K)": {
+   "avg_cost_sen": 89162,
+   "last_move": "2025-12-11",
+   "movements": 14,
+   "qty_in": 8.0
+  },
+  "AK-HS SOLACE (Q)": {
+   "avg_cost_sen": 82698,
+   "last_move": "2026-05-26",
+   "movements": 63,
+   "qty_in": 41.0
+  },
+  "AK-HS SOLACE (S)": {
+   "avg_cost_sen": 53900,
+   "last_move": "2024-08-20",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "AK-HS SOLACE (SS)": {
+   "avg_cost_sen": 59900,
+   "last_move": "2024-11-30",
+   "movements": 2,
+   "qty_in": 2.0
+  },
+  "AK-IMMORTAL MATT (K)": {
+   "avg_cost_sen": 153080,
+   "last_move": "2026-09-09",
+   "movements": 1085,
+   "qty_in": 666.0
+  },
+  "AK-IMMORTAL MATT (Q)": {
+   "avg_cost_sen": 129416,
+   "last_move": "2026-09-11",
+   "movements": 658,
+   "qty_in": 501.0
+  },
+  "AK-IMMORTAL MATT (S)": {
+   "avg_cost_sen": 85000,
+   "last_move": "2026-09-07",
+   "movements": 39,
+   "qty_in": 27.0
+  },
+  "AK-IMMORTAL MATT (SK)": {
+   "avg_cost_sen": 196654,
+   "last_move": "2026-09-01",
+   "movements": 49,
+   "qty_in": 26.0
+  },
+  "AK-IMMORTAL MATT (SP)": {
+   "avg_cost_sen": 203071,
+   "last_move": "2026-02-09",
+   "movements": 14,
+   "qty_in": 7.0
+  },
+  "AK-IMMORTAL MATT (SS)": {
+   "avg_cost_sen": 100000,
+   "last_move": "2026-09-01",
+   "movements": 105,
+   "qty_in": 73.0
+  },
+  "AK-LAVISH MATT (K)": {
+   "avg_cost_sen": 155000,
+   "last_move": "2026-09-01",
+   "movements": 23,
+   "qty_in": 16.0
+  },
+  "AK-LAVISH MATT (Q)": {
+   "avg_cost_sen": 130000,
+   "last_move": "2026-08-08",
+   "movements": 18,
+   "qty_in": 13.0
+  },
+  "AK-M+H AV SOFT TC MEM PIL (IM)": {
+   "avg_cost_sen": 13400,
+   "last_move": "2026-03-08",
+   "movements": 40,
+   "qty_in": 52.0
+  },
+  "AK-MONARCH MATT (K)": {
+   "avg_cost_sen": 176134,
+   "last_move": "2026-09-04",
+   "movements": 100,
+   "qty_in": 54.0
+  },
+  "AK-MONARCH MATT (Q)": {
+   "avg_cost_sen": 153231,
+   "last_move": "2026-08-17",
+   "movements": 109,
+   "qty_in": 65.0
+  },
+  "AK-MONARCH MATT (S)": {
+   "avg_cost_sen": 98000,
+   "last_move": "2026-07-30",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "AK-MONARCH MATT (SS)": {
+   "avg_cost_sen": 115000,
+   "last_move": "2026-09-04",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "AK-NA DUAL DS LTX PIL": {
+   "avg_cost_sen": 16700,
+   "last_move": "2025-12-17",
+   "movements": 2,
+   "qty_in": 16.0
+  },
+  "AK-NOBILITY MATT (K)": {
+   "avg_cost_sen": 124514,
+   "last_move": "2026-09-09",
+   "movements": 250,
+   "qty_in": 193.0
+  },
+  "AK-NOBILITY MATT (Q)": {
+   "avg_cost_sen": 103551,
+   "last_move": "2026-09-07",
+   "movements": 826,
+   "qty_in": 603.0
+  },
+  "AK-NOBILITY MATT (S)": {
+   "avg_cost_sen": 68760,
+   "last_move": "2026-09-07",
+   "movements": 72,
+   "qty_in": 72.0
+  },
+  "AK-NOBILITY MATT (SK)": {
+   "avg_cost_sen": 155000,
+   "last_move": "2025-09-18",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "AK-NOBILITY MATT (SP)": {
+   "avg_cost_sen": 99429,
+   "last_move": "2026-07-21",
+   "movements": 12,
+   "qty_in": 7.0
+  },
+  "AK-NOBILITY MATT (SS)": {
+   "avg_cost_sen": 80000,
+   "last_move": "2026-09-04",
+   "movements": 204,
+   "qty_in": 183.0
+  },
+  "AK-NT VTL LTX PIL": {
+   "avg_cost_sen": 16659,
+   "last_move": "2026-04-12",
+   "movements": 46,
+   "qty_in": 59.0
+  },
+  "AK-OASIS MATT (K)": {
+   "avg_cost_sen": 188000,
+   "last_move": "2026-03-18",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "AK-OASIS MATT (Q)": {
+   "avg_cost_sen": 158000,
+   "last_move": "2026-02-12",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "AK-OL AC HILOFT PIL": {
+   "avg_cost_sen": 16000,
+   "last_move": "2026-04-11",
+   "movements": 37,
+   "qty_in": 50.0
+  },
+  "AK-OL AC MEM PIL": {
+   "avg_cost_sen": 20009,
+   "last_move": "2026-05-24",
+   "movements": 41,
+   "qty_in": 46.0
+  },
+  "AK-OMNIA MATT (SK)": {
+   "avg_cost_sen": 155000,
+   "last_move": "2026-07-17",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "AK-PANTHEON MATT (K)": {
+   "avg_cost_sen": 203000,
+   "last_move": "2026-08-03",
+   "movements": 21,
+   "qty_in": 20.0
+  },
+  "AK-PANTHEON MATT (Q)": {
+   "avg_cost_sen": 240000,
+   "last_move": "2025-01-13",
+   "movements": 2,
+   "qty_in": 2.0
+  },
+  "AK-PANTHEON MATT (SK)": {
+   "avg_cost_sen": 360000,
+   "last_move": "2024-05-04",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "AK-PINNACLE MATT (Q)": {
+   "avg_cost_sen": 108000,
+   "last_move": "2026-02-04",
+   "movements": 3,
+   "qty_in": 3.0
+  },
+  "AK-RD DIF EV lll LIN 24": {
+   "avg_cost_sen": 5250,
+   "last_move": "2025-12-21",
+   "movements": 8,
+   "qty_in": 12.0
+  },
+  "AK-RD DIF EV lll LLV 24": {
+   "avg_cost_sen": 5250,
+   "last_move": "2025-06-11",
+   "movements": 1,
+   "qty_in": 12.0
+  },
+  "AK-RD DIF EV lll WHT 24": {
+   "avg_cost_sen": 5250,
+   "last_move": "2025-12-21",
+   "movements": 6,
+   "qty_in": 12.0
+  },
+  "AK-SANCTUM MATT (K)": {
+   "avg_cost_sen": 260000,
+   "last_move": "2026-02-13",
+   "movements": 1,
+   "qty_in": 2.0
+  },
+  "AK-SK + MICROFIL PIL": {
+   "avg_cost_sen": 8525,
+   "last_move": "2026-09-15",
+   "movements": 422,
+   "qty_in": 1136.0
+  },
+  "AK-SK CT MEM FOAM PIL": {
+   "avg_cost_sen": 20767,
+   "last_move": "2026-09-08",
+   "movements": 90,
+   "qty_in": 147.0
+  },
+  "AK-SK FX AIRLOFT PIL": {
+   "avg_cost_sen": 8575,
+   "last_move": "2026-07-01",
+   "movements": 1029,
+   "qty_in": 2236.0
+  },
+  "AK-SL ES FIT MP+PIL PRO": {
+   "avg_cost_sen": 3100,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 10.0
+  },
+  "AK-SL ES LF MIC WHT QLT (K)": {
+   "avg_cost_sen": 12800,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 4.0
+  },
+  "AK-SL ES LF MIC WHT QLT (Q)": {
+   "avg_cost_sen": 11200,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 4.0
+  },
+  "AK-SL ES LF MIC WHT QLT (SS)": {
+   "avg_cost_sen": 8000,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 4.0
+  },
+  "AK-SLEEP ES DENSEFIL PILLOW": {
+   "avg_cost_sen": 1011,
+   "last_move": "2025-08-26",
+   "movements": 45,
+   "qty_in": 203.0
+  },
+  "AK-SLEEP ESSENTIAL 7 HOLES": {
+   "avg_cost_sen": 431,
+   "last_move": "2026-09-09",
+   "movements": 3929,
+   "qty_in": 10366.0
+  },
+  "AK-SOLITUDE MATT (K)": {
+   "avg_cost_sen": 101536,
+   "last_move": "2026-09-05",
+   "movements": 183,
+   "qty_in": 140.0
+  },
+  "AK-SOLITUDE MATT (Q)": {
+   "avg_cost_sen": 83400,
+   "last_move": "2026-09-09",
+   "movements": 980,
+   "qty_in": 642.0
+  },
+  "AK-SOLITUDE MATT (S)": {
+   "avg_cost_sen": 53900,
+   "last_move": "2026-09-07",
+   "movements": 121,
+   "qty_in": 93.0
+  },
+  "AK-SOLITUDE MATT (SS)": {
+   "avg_cost_sen": 60076,
+   "last_move": "2026-09-08",
+   "movements": 203,
+   "qty_in": 143.0
+  },
+  "AK-TRANQUIL MATT (K)": {
+   "avg_cost_sen": 155000,
+   "last_move": "2026-06-30",
+   "movements": 10,
+   "qty_in": 11.0
+  },
+  "AK-TRANQUIL MATT (Q)": {
+   "avg_cost_sen": 130000,
+   "last_move": "2026-03-17",
+   "movements": 4,
+   "qty_in": 5.0
+  },
+  "AK-ULTIMATE MATT (K)": {
+   "avg_cost_sen": 154213,
+   "last_move": "2026-09-19",
+   "movements": 1992,
+   "qty_in": 1415.0
+  },
+  "AK-ULTIMATE MATT (Q)": {
+   "avg_cost_sen": 129488,
+   "last_move": "2026-09-08",
+   "movements": 1127,
+   "qty_in": 952.0
+  },
+  "AK-ULTIMATE MATT (S)": {
+   "avg_cost_sen": 85000,
+   "last_move": "2026-08-12",
+   "movements": 47,
+   "qty_in": 29.0
+  },
+  "AK-ULTIMATE MATT (SK)": {
+   "avg_cost_sen": 195000,
+   "last_move": "2026-09-05",
+   "movements": 73,
+   "qty_in": 37.0
+  },
+  "AK-ULTIMATE MATT (SP)": {
+   "avg_cost_sen": 197667,
+   "last_move": "2026-05-22",
+   "movements": 22,
+   "qty_in": 12.0
+  },
+  "AK-ULTIMATE MATT (SS)": {
+   "avg_cost_sen": 99857,
+   "last_move": "2026-09-09",
+   "movements": 151,
+   "qty_in": 105.0
+  },
+  "AK-VI OD 4KFIT": {
+   "avg_cost_sen": 23100,
+   "last_move": "2025-02-28",
+   "movements": 2,
+   "qty_in": 8.0
+  },
+  "AK-VI OD 4QFIT": {
+   "avg_cost_sen": 21700,
+   "last_move": "2025-02-28",
+   "movements": 2,
+   "qty_in": 8.0
+  },
+  "AK-VI OD 5KQLT": {
+   "avg_cost_sen": 44100,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 4.0
+  },
+  "AK-VI OD 5QQLT": {
+   "avg_cost_sen": 40600,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 4.0
+  },
+  "AK-VI RT 4KFIT": {
+   "avg_cost_sen": 23100,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 8.0
+  },
+  "AK-VI RT 4QFIT": {
+   "avg_cost_sen": 21700,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 8.0
+  },
+  "AK-VI RT 5KQLT": {
+   "avg_cost_sen": 44100,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 4.0
+  },
+  "AK-VI RT 5QQLT": {
+   "avg_cost_sen": 40600,
+   "last_move": "2025-02-28",
+   "movements": 1,
+   "qty_in": 4.0
+  },
+  "AK-ZENITHAL MATT (K)": {
+   "avg_cost_sen": 197143,
+   "last_move": "2025-03-10",
+   "movements": 12,
+   "qty_in": 7.0
+  },
+  "AK-ZENITHAL MATT (SK)": {
+   "avg_cost_sen": 540000,
+   "last_move": "2024-07-02",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "AMN-LONG PILLOW": {
+   "avg_cost_sen": 8721,
+   "last_move": "2026-08-18",
+   "movements": 33,
+   "qty_in": 34.0
+  },
+  "AMN-SF9025 SOFA": {
+   "avg_cost_sen": 220000,
+   "last_move": "2025-07-05",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "AMN-SF9027 SOFA": {
+   "avg_cost_sen": 111650,
+   "last_move": "2025-09-01",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "AMN-SF9028 SOFA": {
+   "avg_cost_sen": 190400,
+   "last_move": "2026-09-09",
+   "movements": 467,
+   "qty_in": 241.0
+  },
+  "AMN-SF9033 SOFA": {
+   "avg_cost_sen": 76333,
+   "last_move": "2026-06-24",
+   "movements": 4,
+   "qty_in": 3.0
+  },
+  "AMN-SF9050 SOFA": {
+   "avg_cost_sen": 262655,
+   "last_move": "2026-08-26",
+   "movements": 56,
+   "qty_in": 29.0
+  },
+  "AMN-SF9058 SOFA": {
+   "avg_cost_sen": 227800,
+   "last_move": "2026-09-04",
+   "movements": 163,
+   "qty_in": 86.0
+  },
+  "AMN-SOFA PILLOW": {
+   "avg_cost_sen": 962,
+   "last_move": "2026-09-19",
+   "movements": 278,
+   "qty_in": 2191.0
+  },
+  "AMN-SQUARE PILLOW": {
+   "avg_cost_sen": 2579,
+   "last_move": "2026-09-09",
+   "movements": 126,
+   "qty_in": 189.0
+  },
+  "AN-DINING CHAIR": {
+   "avg_cost_sen": 17767,
+   "last_move": "2026-02-14",
+   "movements": 128,
+   "qty_in": 288.0
+  },
+  "AN-DINING LEG": {
+   "avg_cost_sen": 75252,
+   "last_move": "2026-08-20",
+   "movements": 61,
+   "qty_in": 36.0
+  },
+  "AN-TABLE TOP": {
+   "avg_cost_sen": 118470,
+   "last_move": "2026-08-20",
+   "movements": 65,
+   "qty_in": 38.0
+  },
+  "BC-CB49": {
+   "avg_cost_sen": 84991,
+   "last_move": "2025-06-09",
+   "movements": 11,
+   "qty_in": 6.0
+  },
+  "BC-CBK818(K)": {
+   "avg_cost_sen": 93566,
+   "last_move": "2024-07-30",
+   "movements": 14,
+   "qty_in": 7.0
+  },
+  "BC-CBK818(SK)": {
+   "avg_cost_sen": 225500,
+   "last_move": "2026-08-12",
+   "movements": 1,
+   "qty_in": 1.0
+  },
+  "BC-G25(K)": {
+   "avg_cost_sen": 22000,
+   "last_move": "2025-06-09",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "BC-G510": {
+   "avg_cost_sen": 91800,
+   "last_move": "2025-06-09",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "BC-K832 (K)": {
+   "avg_cost_sen": 106100,
+   "last_move": "2024-01-18",
+   "movements": 10,
+   "qty_in": 5.0
+  },
+  "CH-ELEC ADJT BED (S)": {
+   "avg_cost_sen": 70025,
+   "last_move": "2026-09-08",
+   "movements": 73,
+   "qty_in": 124.0
+  },
+  "COFFEE TABLE": {
+   "avg_cost_sen": 2716,
+   "last_move": "2025-07-22",
+   "movements": 36,
+   "qty_in": 44.0
+  },
+  "CP-ELEGANCERUG 300x400 8694": {
+   "avg_cost_sen": 221667,
+   "last_move": "2025-06-09",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "CP-SILKTOUCHRUG 200x200 LT BG": {
+   "avg_cost_sen": 89000,
+   "last_move": "2025-06-09",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "CR- MICROFIBER WP MP (K)": {
+   "avg_cost_sen": 2593,
+   "last_move": "2025-09-13",
+   "movements": 16,
+   "qty_in": 28.0
+  },
+  "CR- MICROFIBER WP MP (Q)": {
+   "avg_cost_sen": 2400,
+   "last_move": "2026-02-04",
+   "movements": 10,
+   "qty_in": 22.0
+  },
+  "CR-B1201F MATT (K)": {
+   "avg_cost_sen": 88200,
+   "last_move": "2025-09-13",
+   "movements": 8,
+   "qty_in": 4.0
+  },
+  "CR-B1201F MATT (Q)": {
+   "avg_cost_sen": 73800,
+   "last_move": "2026-02-04",
+   "movements": 8,
+   "qty_in": 5.0
+  },
+  "CR-B1201F MATT (SP)": {
+   "avg_cost_sen": 105900,
+   "last_move": "2025-09-06",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "CR-B1201S MATT (Q)": {
+   "avg_cost_sen": 73800,
+   "last_move": "2025-08-30",
+   "movements": 4,
+   "qty_in": 3.0
+  },
+  "CR-LV626-MD/SC-1521-1 (K)": {
+   "avg_cost_sen": 118000,
+   "last_move": "2025-09-13",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "CR-M1401F MATT (K)": {
+   "avg_cost_sen": 95600,
+   "last_move": "2025-09-06",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "CR-M1401F MATT (Q)": {
+   "avg_cost_sen": 79900,
+   "last_move": "2025-10-10",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "CR-S1601F MATT (K)": {
+   "avg_cost_sen": 132500,
+   "last_move": "2025-09-13",
+   "movements": 4,
+   "qty_in": 3.0
+  },
+  "CR-S1601S MATT (K)": {
+   "avg_cost_sen": 154000,
+   "last_move": "2025-08-30",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "CR-S1601S MATT (SP)": {
+   "avg_cost_sen": 184800,
+   "last_move": "2025-08-18",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-5' WATERPROOF PROTECTOR": {
+   "avg_cost_sen": 6779,
+   "last_move": "2026-08-17",
+   "movements": 18,
+   "qty_in": 24.0
+  },
+  "DL-6' WATERPROOF MP": {
+   "avg_cost_sen": 6186,
+   "last_move": "2026-08-17",
+   "movements": 20,
+   "qty_in": 21.0
+  },
+  "DL-AMIRA DELUXE PLUS (K)": {
+   "avg_cost_sen": 114783,
+   "last_move": "2026-05-26",
+   "movements": 44,
+   "qty_in": 23.0
+  },
+  "DL-AMIRA DELUXE PLUS (Q)": {
+   "avg_cost_sen": 100111,
+   "last_move": "2026-08-17",
+   "movements": 45,
+   "qty_in": 27.0
+  },
+  "DL-AMIRA DELUXE PLUS (S)": {
+   "avg_cost_sen": 81900,
+   "last_move": "2026-04-16",
+   "movements": 19,
+   "qty_in": 10.0
+  },
+  "DL-AMIRA DELUXE PLUS (SS)": {
+   "avg_cost_sen": 90000,
+   "last_move": "2026-02-14",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "DL-AMIRA PREMUIM (K)": {
+   "avg_cost_sen": 168000,
+   "last_move": "2026-05-14",
+   "movements": 23,
+   "qty_in": 15.0
+  },
+  "DL-AMIRA PREMUIM (Q)": {
+   "avg_cost_sen": 141000,
+   "last_move": "2026-08-17",
+   "movements": 37,
+   "qty_in": 25.0
+  },
+  "DL-AMIRA PREMUIM (S)": {
+   "avg_cost_sen": 109929,
+   "last_move": "2026-08-17",
+   "movements": 11,
+   "qty_in": 7.0
+  },
+  "DL-AMIRA PREMUIM (SS)": {
+   "avg_cost_sen": 126000,
+   "last_move": "2026-07-10",
+   "movements": 10,
+   "qty_in": 6.0
+  },
+  "DL-AQUA RELAXER 300(K)": {
+   "avg_cost_sen": 170259,
+   "last_move": "2025-10-22",
+   "movements": 28,
+   "qty_in": 15.0
+  },
+  "DL-AQUA RELAXER 300(Q)": {
+   "avg_cost_sen": 145012,
+   "last_move": "2026-08-17",
+   "movements": 29,
+   "qty_in": 23.0
+  },
+  "DL-AQUA RELAXER 300(SS)": {
+   "avg_cost_sen": 119900,
+   "last_move": "2026-08-17",
+   "movements": 7,
+   "qty_in": 4.0
+  },
+  "DL-AQUA SENSATION 2.0  (K)": {
+   "avg_cost_sen": 219900,
+   "last_move": "2026-07-16",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-AQUA SUPPORTER 1 (K)": {
+   "avg_cost_sen": 133987,
+   "last_move": "2026-08-17",
+   "movements": 39,
+   "qty_in": 23.0
+  },
+  "DL-AQUA SUPPORTER 1 (Q)": {
+   "avg_cost_sen": 98185,
+   "last_move": "2025-10-31",
+   "movements": 95,
+   "qty_in": 72.0
+  },
+  "DL-AQUA SUPPORTER 1 (S)": {
+   "avg_cost_sen": 38950,
+   "last_move": "2024-12-02",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "DL-AQUA SUPPORTER 1 (SS)": {
+   "avg_cost_sen": 95900,
+   "last_move": "2024-01-27",
+   "movements": 8,
+   "qty_in": 5.0
+  },
+  "DL-BACK SUPPORTER 100 (K)": {
+   "avg_cost_sen": 143300,
+   "last_move": "2026-05-15",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-BACK SUPPORTER 100 (Q)": {
+   "avg_cost_sen": 120500,
+   "last_move": "2026-05-15",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-BIOKINETIC SUPPORTER 100(K)": {
+   "avg_cost_sen": 154200,
+   "last_move": "2024-12-09",
+   "movements": 10,
+   "qty_in": 7.0
+  },
+  "DL-BIOKINETIC SUPPORTER 100(Q)": {
+   "avg_cost_sen": 134569,
+   "last_move": "2026-04-29",
+   "movements": 41,
+   "qty_in": 22.0
+  },
+  "DL-CLASSIC AURORA REST (Q)": {
+   "avg_cost_sen": 82500,
+   "last_move": "2026-08-27",
+   "movements": 1,
+   "qty_in": 1.0
+  },
+  "DL-CLASSIC DREAM VALLEY (Q)": {
+   "avg_cost_sen": 101250,
+   "last_move": "2026-08-27",
+   "movements": 1,
+   "qty_in": 1.0
+  },
+  "DL-CLASSIC PEARL (K)": {
+   "avg_cost_sen": 161900,
+   "last_move": "2026-04-01",
+   "movements": 25,
+   "qty_in": 24.0
+  },
+  "DL-CLASSIC PEARL (Q)": {
+   "avg_cost_sen": 98369,
+   "last_move": "2026-08-19",
+   "movements": 71,
+   "qty_in": 59.0
+  },
+  "DL-CLASSIC RUBY (K)": {
+   "avg_cost_sen": 161900,
+   "last_move": "2026-07-01",
+   "movements": 9,
+   "qty_in": 8.0
+  },
+  "DL-CLASSIC RUBY (Q)": {
+   "avg_cost_sen": 117248,
+   "last_move": "2026-08-04",
+   "movements": 34,
+   "qty_in": 33.0
+  },
+  "DL-CLASSIC RUBY (SS)": {
+   "avg_cost_sen": 145700,
+   "last_move": "2026-07-05",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-CS2 ARCTIC DREAM (K)": {
+   "avg_cost_sen": 420094,
+   "last_move": "2026-08-17",
+   "movements": 15,
+   "qty_in": 8.0
+  },
+  "DL-CS2 ARCTIC DREAM (Q)": {
+   "avg_cost_sen": 394100,
+   "last_move": "2026-01-13",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "DL-CS2 COOL EXTRA FIRM (K)": {
+   "avg_cost_sen": 175419,
+   "last_move": "2026-08-17",
+   "movements": 15,
+   "qty_in": 8.0
+  },
+  "DL-CS2 COOL EXTRA FIRM (Q)": {
+   "avg_cost_sen": 179354,
+   "last_move": "2026-04-07",
+   "movements": 23,
+   "qty_in": 13.0
+  },
+  "DL-CS2 COOL FRESH (K)": {
+   "avg_cost_sen": 202112,
+   "last_move": "2025-06-23",
+   "movements": 13,
+   "qty_in": 8.0
+  },
+  "DL-CS2 COOL FRESH (Q)": {
+   "avg_cost_sen": 122252,
+   "last_move": "2026-08-17",
+   "movements": 36,
+   "qty_in": 24.0
+  },
+  "DL-CS2 COOL LUXE (K)": {
+   "avg_cost_sen": 351450,
+   "last_move": "2026-08-17",
+   "movements": 9,
+   "qty_in": 5.0
+  },
+  "DL-CS2 COOL LUXE (Q)": {
+   "avg_cost_sen": 170050,
+   "last_move": "2026-04-29",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "DL-CS2 ELEGANCE SUITE (K)": {
+   "avg_cost_sen": 226398,
+   "last_move": "2026-07-17",
+   "movements": 286,
+   "qty_in": 244.0
+  },
+  "DL-CS2 ELEGANCE SUITE (Q)": {
+   "avg_cost_sen": 137236,
+   "last_move": "2026-09-04",
+   "movements": 163,
+   "qty_in": 122.0
+  },
+  "DL-CS2 ELEGANCE SUITE (S)": {
+   "avg_cost_sen": 140300,
+   "last_move": "2026-08-17",
+   "movements": 12,
+   "qty_in": 15.0
+  },
+  "DL-CS2 ELEGANCE SUITE (SK)": {
+   "avg_cost_sen": 336830,
+   "last_move": "2024-10-09",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-CS2 ELEGANCE SUITE (SP)": {
+   "avg_cost_sen": 350870,
+   "last_move": "2026-01-23",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-CS2 ELEGANCE SUITE (SS)": {
+   "avg_cost_sen": 149446,
+   "last_move": "2026-01-06",
+   "movements": 32,
+   "qty_in": 26.0
+  },
+  "DL-CS2 GLACIAL COMFORT (K)": {
+   "avg_cost_sen": 226518,
+   "last_move": "2026-08-17",
+   "movements": 27,
+   "qty_in": 14.0
+  },
+  "DL-CS2 GLACIAL COMFORT (Q)": {
+   "avg_cost_sen": 196273,
+   "last_move": "2026-04-29",
+   "movements": 18,
+   "qty_in": 11.0
+  },
+  "DL-CS2 HEAVENLY SLEEP (K)": {
+   "avg_cost_sen": 374762,
+   "last_move": "2026-02-23",
+   "movements": 40,
+   "qty_in": 24.0
+  },
+  "DL-CS2 HEAVENLY SLEEP (Q)": {
+   "avg_cost_sen": 377900,
+   "last_move": "2025-06-20",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-CS2 NANO BREEZE (K)": {
+   "avg_cost_sen": 208512,
+   "last_move": "2025-10-24",
+   "movements": 13,
+   "qty_in": 8.0
+  },
+  "DL-CS2 NANO BREEZE (Q)": {
+   "avg_cost_sen": 177889,
+   "last_move": "2026-02-23",
+   "movements": 20,
+   "qty_in": 11.0
+  },
+  "DL-CS2 NN-G T.CTNT (K)": {
+   "avg_cost_sen": 577591,
+   "last_move": "2026-09-08",
+   "movements": 40,
+   "qty_in": 32.0
+  },
+  "DL-CS2 NN-G T.CTNT (SK)": {
+   "avg_cost_sen": 755860,
+   "last_move": "2026-06-26",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-CS2 NN-WINTER FLOW MATT (K)": {
+   "avg_cost_sen": 222600,
+   "last_move": "2026-07-09",
+   "movements": 14,
+   "qty_in": 13.0
+  },
+  "DL-CS2 NN-WINTER FLOW MATT (Q)": {
+   "avg_cost_sen": 146074,
+   "last_move": "2026-07-21",
+   "movements": 19,
+   "qty_in": 17.0
+  },
+  "DL-CS2 NN-WINTER FLOW MATT(SK)": {
+   "avg_cost_sen": 311640,
+   "last_move": "2026-06-24",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-CS2 NN-WINTER REST MATT (K)": {
+   "avg_cost_sen": 222600,
+   "last_move": "2026-01-28",
+   "movements": 3,
+   "qty_in": 3.0
+  },
+  "DL-CS2 NN-WINTER REST MATT (Q)": {
+   "avg_cost_sen": 124162,
+   "last_move": "2026-05-30",
+   "movements": 5,
+   "qty_in": 4.0
+  },
+  "DL-CS2 NN-WINTER SLEEP MATT (K": {
+   "avg_cost_sen": 294000,
+   "last_move": "2026-07-09",
+   "movements": 20,
+   "qty_in": 15.0
+  },
+  "DL-CS2 NN-WINTER SLEEP MATT (Q": {
+   "avg_cost_sen": 243000,
+   "last_move": "2026-01-13",
+   "movements": 7,
+   "qty_in": 7.0
+  },
+  "DL-CS2 PERFECT DREAMS (K)": {
+   "avg_cost_sen": 215540,
+   "last_move": "2026-04-01",
+   "movements": 18,
+   "qty_in": 15.0
+  },
+  "DL-CS2 PERFECT DREAMS (Q)": {
+   "avg_cost_sen": 194300,
+   "last_move": "2026-03-26",
+   "movements": 28,
+   "qty_in": 24.0
+  },
+  "DL-CS2 PURE BREEZE (K)": {
+   "avg_cost_sen": 238364,
+   "last_move": "2026-08-29",
+   "movements": 66,
+   "qty_in": 35.0
+  },
+  "DL-CS2 PURE BREEZE (Q)": {
+   "avg_cost_sen": 183364,
+   "last_move": "2026-07-29",
+   "movements": 65,
+   "qty_in": 35.0
+  },
+  "DL-CS2 PURE BREEZE (SS)": {
+   "avg_cost_sen": 183500,
+   "last_move": "2026-04-04",
+   "movements": 10,
+   "qty_in": 5.0
+  },
+  "DL-CS2 RITZ LUXURY (K)": {
+   "avg_cost_sen": 227452,
+   "last_move": "2026-08-17",
+   "movements": 40,
+   "qty_in": 22.0
+  },
+  "DL-CS2 RITZ LUXURY (Q)": {
+   "avg_cost_sen": 205706,
+   "last_move": "2026-08-27",
+   "movements": 30,
+   "qty_in": 18.0
+  },
+  "DL-CS2 VISCO BLISS (K)": {
+   "avg_cost_sen": 248300,
+   "last_move": "2024-09-06",
+   "movements": 10,
+   "qty_in": 5.0
+  },
+  "DL-CS2 VISCO BLISS (Q)": {
+   "avg_cost_sen": 125556,
+   "last_move": "2025-06-09",
+   "movements": 37,
+   "qty_in": 19.0
+  },
+  "DL-CS2 VISCO DREAM (K)": {
+   "avg_cost_sen": 224808,
+   "last_move": "2025-08-21",
+   "movements": 36,
+   "qty_in": 21.0
+  },
+  "DL-CS2 VISCO DREAM (Q)": {
+   "avg_cost_sen": 167944,
+   "last_move": "2025-08-23",
+   "movements": 17,
+   "qty_in": 9.0
+  },
+  "DL-D.ESCAPADE(K)": {
+   "avg_cost_sen": 230400,
+   "last_move": "2025-04-15",
+   "movements": 14,
+   "qty_in": 7.0
+  },
+  "DL-D.ESCAPADE(Q)": {
+   "avg_cost_sen": 149027,
+   "last_move": "2026-08-17",
+   "movements": 54,
+   "qty_in": 38.0
+  },
+  "DL-D.ESCAPADE(SS)": {
+   "avg_cost_sen": 163200,
+   "last_move": "2023-11-15",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-D.RELAXATION (K)": {
+   "avg_cost_sen": 309000,
+   "last_move": "2025-06-09",
+   "movements": 11,
+   "qty_in": 6.0
+  },
+  "DL-D.RELAXATION(Q)": {
+   "avg_cost_sen": 218743,
+   "last_move": "2024-09-04",
+   "movements": 26,
+   "qty_in": 14.0
+  },
+  "DL-D.ULTIMATE SANTUARY (K)": {
+   "avg_cost_sen": 352000,
+   "last_move": "2024-12-09",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "DL-D.ULTIMATE SANTUARY (Q)": {
+   "avg_cost_sen": 282545,
+   "last_move": "2026-08-17",
+   "movements": 21,
+   "qty_in": 11.0
+  },
+  "DL-DEEP SLEEP (K)": {
+   "avg_cost_sen": 118211,
+   "last_move": "2026-08-27",
+   "movements": 103,
+   "qty_in": 71.0
+  },
+  "DL-DEEP SLEEP (Q)": {
+   "avg_cost_sen": 87027,
+   "last_move": "2026-08-15",
+   "movements": 225,
+   "qty_in": 173.0
+  },
+  "DL-DEEP SLEEP (S)": {
+   "avg_cost_sen": 73412,
+   "last_move": "2026-06-30",
+   "movements": 14,
+   "qty_in": 8.0
+  },
+  "DL-DEEP SLEEP (SP)": {
+   "avg_cost_sen": 159767,
+   "last_move": "2025-05-31",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "DL-DEEP SLEEP (SS)": {
+   "avg_cost_sen": 89900,
+   "last_move": "2026-01-23",
+   "movements": 34,
+   "qty_in": 27.0
+  },
+  "DL-DR SLEEP(K)": {
+   "avg_cost_sen": 252400,
+   "last_move": "2023-10-05",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-DR SLEEP(Q)": {
+   "avg_cost_sen": 131841,
+   "last_move": "2024-09-24",
+   "movements": 16,
+   "qty_in": 8.0
+  },
+  "DL-ECO COMFORT LATEX PILLOW": {
+   "avg_cost_sen": 7408,
+   "last_move": "2025-08-21",
+   "movements": 105,
+   "qty_in": 352.0
+  },
+  "DL-ECO COOL LATEX PILLOW": {
+   "avg_cost_sen": 20830,
+   "last_move": "2025-08-26",
+   "movements": 33,
+   "qty_in": 47.0
+  },
+  "DL-ECO NECK COMFORT PIL": {
+   "avg_cost_sen": 11101,
+   "last_move": "2026-08-17",
+   "movements": 40,
+   "qty_in": 40.0
+  },
+  "DL-ECO SUPPORT CONTOUR PILLOW": {
+   "avg_cost_sen": 12969,
+   "last_move": "2026-08-17",
+   "movements": 72,
+   "qty_in": 146.0
+  },
+  "DL-FIRMMEST LUXE 2.0 (K)": {
+   "avg_cost_sen": 236933,
+   "last_move": "2026-05-06",
+   "movements": 12,
+   "qty_in": 6.0
+  },
+  "DL-FIRMMEST LUXE 2.0 (Q)": {
+   "avg_cost_sen": 202395,
+   "last_move": "2026-08-17",
+   "movements": 44,
+   "qty_in": 25.0
+  },
+  "DL-GENERASI (K)": {
+   "avg_cost_sen": 71000,
+   "last_move": "2024-11-01",
+   "movements": 2,
+   "qty_in": 2.0
+  },
+  "DL-GENERASI (S)": {
+   "avg_cost_sen": 19121,
+   "last_move": "2026-08-17",
+   "movements": 333,
+   "qty_in": 287.0
+  },
+  "DL-GENERASI (SS)": {
+   "avg_cost_sen": 28202,
+   "last_move": "2026-09-01",
+   "movements": 226,
+   "qty_in": 199.0
+  },
+  "DL-GENERASI 3.0 20CM (K)": {
+   "avg_cost_sen": 71000,
+   "last_move": "2026-06-23",
+   "movements": 45,
+   "qty_in": 28.0
+  },
+  "DL-GENERASI 3.0 20CM (Q)": {
+   "avg_cost_sen": 47717,
+   "last_move": "2026-08-28",
+   "movements": 169,
+   "qty_in": 137.0
+  },
+  "DL-GENERASI 3.0 20CM (S)": {
+   "avg_cost_sen": 35227,
+   "last_move": "2026-07-23",
+   "movements": 90,
+   "qty_in": 70.0
+  },
+  "DL-GENERASI 3.0 20CM (SS)": {
+   "avg_cost_sen": 36900,
+   "last_move": "2026-04-11",
+   "movements": 60,
+   "qty_in": 51.0
+  },
+  "DL-GENERASI Z": {
+   "avg_cost_sen": 25545,
+   "last_move": "2025-08-21",
+   "movements": 140,
+   "qty_in": 180.0
+  },
+  "DL-GN + TCL FD MATT (S)": {
+   "avg_cost_sen": 19696,
+   "last_move": "2026-08-17",
+   "movements": 28,
+   "qty_in": 36.0
+  },
+  "DL-HOTEL PILLOW(M)": {
+   "avg_cost_sen": 7629,
+   "last_move": "2026-08-27",
+   "movements": 179,
+   "qty_in": 391.0
+  },
+  "DL-HOTEL PILLOW(XL)": {
+   "avg_cost_sen": 12350,
+   "last_move": "2024-12-09",
+   "movements": 18,
+   "qty_in": 22.0
+  },
+  "DL-IMPERIAL DUCHESS": {
+   "avg_cost_sen": 576800,
+   "last_move": "2025-01-14",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-MP(K)": {
+   "avg_cost_sen": 3217,
+   "last_move": "2026-09-08",
+   "movements": 515,
+   "qty_in": 623.0
+  },
+  "DL-MP(Q)": {
+   "avg_cost_sen": 2998,
+   "last_move": "2026-09-04",
+   "movements": 398,
+   "qty_in": 478.0
+  },
+  "DL-MP(S)": {
+   "avg_cost_sen": 4356,
+   "last_move": "2026-07-03",
+   "movements": 24,
+   "qty_in": 36.0
+  },
+  "DL-MP(SS)": {
+   "avg_cost_sen": 2799,
+   "last_move": "2026-07-10",
+   "movements": 64,
+   "qty_in": 56.0
+  },
+  "DL-NATURAL TOPPER (S)": {
+   "avg_cost_sen": 59900,
+   "last_move": "2025-06-09",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-ORT RELAX BED LITE MATT(S)": {
+   "avg_cost_sen": 20300,
+   "last_move": "2025-06-09",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-ORT RELAX BED LITE MATT(SS)": {
+   "avg_cost_sen": 27500,
+   "last_move": "2025-06-09",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-OTR AQUA DREAM (K)": {
+   "avg_cost_sen": 129500,
+   "last_move": "2024-01-29",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-OTR AQUA DREAM (Q)": {
+   "avg_cost_sen": 49771,
+   "last_move": "2025-06-09",
+   "movements": 12,
+   "qty_in": 6.0
+  },
+  "DL-PERFECT POSTURE (K)": {
+   "avg_cost_sen": 184511,
+   "last_move": "2024-01-18",
+   "movements": 14,
+   "qty_in": 7.0
+  },
+  "DL-PERFECT POSTURE (Q)": {
+   "avg_cost_sen": 252400,
+   "last_move": "2023-10-28",
+   "movements": 2,
+   "qty_in": 2.0
+  },
+  "DL-RELAX SLEEP LUXURY (K)": {
+   "avg_cost_sen": 213554,
+   "last_move": "2026-08-17",
+   "movements": 78,
+   "qty_in": 46.0
+  },
+  "DL-RELAX SLEEP LUXURY (Q)": {
+   "avg_cost_sen": 121792,
+   "last_move": "2026-08-17",
+   "movements": 46,
+   "qty_in": 30.0
+  },
+  "DL-RELAX SLEEP LUXURY (S)": {
+   "avg_cost_sen": 130000,
+   "last_move": "2023-11-11",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-RELAX SLEEP LUXURY (SS)": {
+   "avg_cost_sen": 93750,
+   "last_move": "2026-08-17",
+   "movements": 7,
+   "qty_in": 8.0
+  },
+  "DL-ROY IMP DUCHESS (K)": {
+   "avg_cost_sen": 368700,
+   "last_move": "2025-06-09",
+   "movements": 11,
+   "qty_in": 6.0
+  },
+  "DL-ROYAL EXECUTIVE LUXE 2.0(K)": {
+   "avg_cost_sen": 408346,
+   "last_move": "2026-08-17",
+   "movements": 64,
+   "qty_in": 37.0
+  },
+  "DL-ROYAL EXECUTIVE LUXE 2.0(Q)": {
+   "avg_cost_sen": 412000,
+   "last_move": "2025-08-08",
+   "movements": 8,
+   "qty_in": 4.0
+  },
+  "DL-ROYAL EXECUTIVE LUXE2.0(SK)": {
+   "avg_cost_sen": 648900,
+   "last_move": "2025-06-09",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "DL-ROYAL IMPERIAL (K)": {
+   "avg_cost_sen": 336656,
+   "last_move": "2026-08-17",
+   "movements": 41,
+   "qty_in": 24.0
+  },
+  "DL-SENSATION 2.0 (K)": {
+   "avg_cost_sen": 162490,
+   "last_move": "2024-06-26",
+   "movements": 24,
+   "qty_in": 13.0
+  },
+  "DL-SENSATION 2.0 (S)": {
+   "avg_cost_sen": 134925,
+   "last_move": "2024-05-25",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-SENSATION 2.0 (SK)": {
+   "avg_cost_sen": 300164,
+   "last_move": "2024-07-09",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-SENSATION 2.0(Q)": {
+   "avg_cost_sen": 160963,
+   "last_move": "2026-04-29",
+   "movements": 33,
+   "qty_in": 19.0
+  },
+  "DL-SERENE LATEX PILLOW": {
+   "avg_cost_sen": 1975,
+   "last_move": "2026-08-27",
+   "movements": 292,
+   "qty_in": 577.0
+  },
+  "DL-SIGTWG PINNACLE (K)": {
+   "avg_cost_sen": 579600,
+   "last_move": "2026-02-23",
+   "movements": 19,
+   "qty_in": 10.0
+  },
+  "DL-SILVERPRO ORTHO RELAXER (Q)": {
+   "avg_cost_sen": 129500,
+   "last_move": "2023-09-18",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-SLEEP WELL PILLOW": {
+   "avg_cost_sen": 354,
+   "last_move": "2026-08-27",
+   "movements": 901,
+   "qty_in": 2562.0
+  },
+  "DL-TENCEL DREAM (K)": {
+   "avg_cost_sen": 130367,
+   "last_move": "2026-08-26",
+   "movements": 150,
+   "qty_in": 124.0
+  },
+  "DL-TENCEL DREAM (Q)": {
+   "avg_cost_sen": 82921,
+   "last_move": "2026-07-07",
+   "movements": 166,
+   "qty_in": 131.0
+  },
+  "DL-TENCEL DREAM (S)": {
+   "avg_cost_sen": 81170,
+   "last_move": "2026-08-17",
+   "movements": 27,
+   "qty_in": 23.0
+  },
+  "DL-TENCEL DREAM (SK)": {
+   "avg_cost_sen": 210000,
+   "last_move": "2024-10-04",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-TENCEL DREAM (SS)": {
+   "avg_cost_sen": 96131,
+   "last_move": "2026-02-13",
+   "movements": 30,
+   "qty_in": 26.0
+  },
+  "DL-TENCEL SENSACTION 2.0 (K)": {
+   "avg_cost_sen": 219900,
+   "last_move": "2024-12-04",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DL-WHITE BOLSTER": {
+   "avg_cost_sen": 4400,
+   "last_move": "2026-08-28",
+   "movements": 124,
+   "qty_in": 187.0
+  },
+  "DL-WHITE PILLOW": {
+   "avg_cost_sen": 3435,
+   "last_move": "2025-06-09",
+   "movements": 17,
+   "qty_in": 65.0
+  },
+  "DSL-8021 SOFA": {
+   "avg_cost_sen": 220000,
+   "last_move": "2026-08-13",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DSL-8030 SOFA": {
+   "avg_cost_sen": 187768,
+   "last_move": "2026-09-08",
+   "movements": 289,
+   "qty_in": 149.0
+  },
+  "DSL-8038 SOFA": {
+   "avg_cost_sen": 187323,
+   "last_move": "2026-07-07",
+   "movements": 49,
+   "qty_in": 26.0
+  },
+  "DSL-8039 SOFA": {
+   "avg_cost_sen": 110000,
+   "last_move": "2026-01-16",
+   "movements": 4,
+   "qty_in": 3.0
+  },
+  "DSL-8050 SOFA": {
+   "avg_cost_sen": 120621,
+   "last_move": "2026-09-02",
+   "movements": 145,
+   "qty_in": 75.0
+  },
+  "DSL-8051 SOFA": {
+   "avg_cost_sen": 133079,
+   "last_move": "2026-09-09",
+   "movements": 122,
+   "qty_in": 68.0
+  },
+  "DSL-8060 SOFA": {
+   "avg_cost_sen": 202700,
+   "last_move": "2026-07-17",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "DSL-8069 SOFA": {
+   "avg_cost_sen": 147500,
+   "last_move": "2026-09-05",
+   "movements": 3,
+   "qty_in": 2.0
+  },
+  "DSL-9028 SOFA": {
+   "avg_cost_sen": 181887,
+   "last_move": "2026-09-19",
+   "movements": 135,
+   "qty_in": 69.0
+  },
+  "DSL-9058 SOFA": {
+   "avg_cost_sen": 227360,
+   "last_move": "2026-09-07",
+   "movements": 97,
+   "qty_in": 50.0
+  },
+  "DSL-LONG PILLOW": {
+   "avg_cost_sen": 3400,
+   "last_move": "2026-09-07",
+   "movements": 14,
+   "qty_in": 15.0
+  },
+  "DSL-SQUARE PILLOW": {
+   "avg_cost_sen": 2783,
+   "last_move": "2026-09-08",
+   "movements": 202,
+   "qty_in": 297.0
+  },
+  "DSL-STOOL 1": {
+   "avg_cost_sen": 11079,
+   "last_move": "2026-08-12",
+   "movements": 16,
+   "qty_in": 19.0
+  },
+  "EG-CLOUDREST MATT (K)": {
+   "avg_cost_sen": 132500,
+   "last_move": "2026-04-18",
+   "movements": 11,
+   "qty_in": 8.0
+  },
+  "EG-ECOZONE-C MATT (K)": {
+   "avg_cost_sen": 177800,
+   "last_move": "2026-05-09",
+   "movements": 9,
+   "qty_in": 5.0
+  },
+  "EG-ECOZONE-C MATT (Q)": {
+   "avg_cost_sen": 154255,
+   "last_move": "2026-09-08",
+   "movements": 17,
+   "qty_in": 11.0
+  },
+  "EG-ECOZONE-S MATT (K)": {
+   "avg_cost_sen": 188883,
+   "last_move": "2026-08-15",
+   "movements": 19,
+   "qty_in": 12.0
+  },
+  "EG-ECOZONE-S MATT (Q)": {
+   "avg_cost_sen": 158560,
+   "last_move": "2026-08-01",
+   "movements": 18,
+   "qty_in": 15.0
+  },
+  "EG-ERGOLITE MATT (K)": {
+   "avg_cost_sen": 82379,
+   "last_move": "2026-09-08",
+   "movements": 28,
+   "qty_in": 24.0
+  },
+  "EG-ERGOLITE MATT (Q)": {
+   "avg_cost_sen": 69475,
+   "last_move": "2026-09-08",
+   "movements": 88,
+   "qty_in": 79.0
+  },
+  "EG-ERGOLITE MATT (S)": {
+   "avg_cost_sen": 51544,
+   "last_move": "2026-08-12",
+   "movements": 9,
+   "qty_in": 9.0
+  },
+  "EG-ERGOLITE MATT (SP)": {
+   "avg_cost_sen": 106340,
+   "last_move": "2026-02-12",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "EG-ERGOLITE MATT (SS)": {
+   "avg_cost_sen": 56980,
+   "last_move": "2026-09-08",
+   "movements": 31,
+   "qty_in": 25.0
+  },
+  "EG-FLEXICARE-C MATT (K)": {
+   "avg_cost_sen": 108700,
+   "last_move": "2026-09-09",
+   "movements": 20,
+   "qty_in": 15.0
+  },
+  "EG-FLEXICARE-C MATT (Q)": {
+   "avg_cost_sen": 85494,
+   "last_move": "2026-09-04",
+   "movements": 23,
+   "qty_in": 17.0
+  },
+  "EG-FLEXICARE-C MATT (S)": {
+   "avg_cost_sen": 58400,
+   "last_move": "2026-08-07",
+   "movements": 8,
+   "qty_in": 5.0
+  },
+  "EG-FLEXICARE-C MATT (SS)": {
+   "avg_cost_sen": 66000,
+   "last_move": "2026-08-08",
+   "movements": 7,
+   "qty_in": 6.0
+  },
+  "EG-FLEXICARE-S MATT (K)": {
+   "avg_cost_sen": 110929,
+   "last_move": "2026-09-08",
+   "movements": 30,
+   "qty_in": 21.0
+  },
+  "EG-FLEXICARE-S MATT (Q)": {
+   "avg_cost_sen": 89206,
+   "last_move": "2026-09-04",
+   "movements": 47,
+   "qty_in": 33.0
+  },
+  "EG-FLEXICARE-S MATT (S)": {
+   "avg_cost_sen": 58400,
+   "last_move": "2026-07-24",
+   "movements": 9,
+   "qty_in": 6.0
+  },
+  "EG-FLEXICARE-S MATT (SS)": {
+   "avg_cost_sen": 66000,
+   "last_move": "2026-09-04",
+   "movements": 19,
+   "qty_in": 15.0
+  },
+  "EG-FLEXMOTION-C MATT (S)": {
+   "avg_cost_sen": 75922,
+   "last_move": "2026-09-04",
+   "movements": 29,
+   "qty_in": 27.0
+  },
+  "EG-FLEXMOTION-S MATT (S)": {
+   "avg_cost_sen": 77123,
+   "last_move": "2026-09-08",
+   "movements": 45,
+   "qty_in": 43.0
+  },
+  "EG-PUREZONE-C MATT (K)": {
+   "avg_cost_sen": 184700,
+   "last_move": "2026-08-28",
+   "movements": 11,
+   "qty_in": 6.0
+  },
+  "EG-PUREZONE-C MATT (Q)": {
+   "avg_cost_sen": 154000,
+   "last_move": "2026-06-04",
+   "movements": 9,
+   "qty_in": 7.0
+  },
+  "EG-PUREZONE-S MATT (K)": {
+   "avg_cost_sen": 189669,
+   "last_move": "2026-08-06",
+   "movements": 22,
+   "qty_in": 13.0
+  },
+  "EG-PUREZONE-S MATT (Q)": {
+   "avg_cost_sen": 154000,
+   "last_move": "2026-08-06",
+   "movements": 16,
+   "qty_in": 11.0
+  },
+  "EG-SPINECARE-C MATT (K)": {
+   "avg_cost_sen": 116717,
+   "last_move": "2026-07-30",
+   "movements": 11,
+   "qty_in": 6.0
+  },
+  "EG-SPINECARE-C MATT (Q)": {
+   "avg_cost_sen": 99967,
+   "last_move": "2026-09-03",
+   "movements": 10,
+   "qty_in": 6.0
+  },
+  "EG-SPINECARE-S MATT (K)": {
+   "avg_cost_sen": 113500,
+   "last_move": "2026-06-10",
+   "movements": 12,
+   "qty_in": 8.0
+  },
+  "EG-SPINECARE-S MATT (Q)": {
+   "avg_cost_sen": 99967,
+   "last_move": "2026-09-03",
+   "movements": 11,
+   "qty_in": 6.0
+  },
+  "EG-SPINECARE-S MATT (SS)": {
+   "avg_cost_sen": 73800,
+   "last_move": "2026-05-19",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "GMS-B25(K)": {
+   "avg_cost_sen": 22000,
+   "last_move": "2025-08-08",
+   "movements": 12,
+   "qty_in": 6.0
+  },
+  "GMS-B25(Q)": {
+   "avg_cost_sen": 56000,
+   "last_move": "2024-05-27",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "GN--IN LOVE (QD)": {
+   "avg_cost_sen": 129173,
+   "last_move": "2026-03-18",
+   "movements": 8,
+   "qty_in": 4.0
+  },
+  "GN-ALAMANDA (Q)": {
+   "avg_cost_sen": 58433,
+   "last_move": "2025-06-09",
+   "movements": 19,
+   "qty_in": 47.0
+  },
+  "GN-COLONIA 2.0 DPC (Q)": {
+   "avg_cost_sen": 45429,
+   "last_move": "2025-06-09",
+   "movements": 9,
+   "qty_in": 5.0
+  },
+  "GN-FINNACLE (Q)": {
+   "avg_cost_sen": 52924,
+   "last_move": "2024-04-26",
+   "movements": 2,
+   "qty_in": 4.0
+  },
+  "GN-HOTEL SIGNATURE (Q)": {
+   "avg_cost_sen": 143896,
+   "last_move": "2025-02-26",
+   "movements": 11,
+   "qty_in": 6.0
+  },
+  "GN-PERFECT LOVE (K)": {
+   "avg_cost_sen": 321773,
+   "last_move": "2025-02-26",
+   "movements": 8,
+   "qty_in": 4.0
+  },
+  "GN-TENDER LOVE (KD)": {
+   "avg_cost_sen": 247173,
+   "last_move": "2026-04-05",
+   "movements": 8,
+   "qty_in": 4.0
+  },
+  "GT-COMPASS GREEN (KD)": {
+   "avg_cost_sen": 465000,
+   "last_move": "2025-06-09",
+   "movements": 7,
+   "qty_in": 4.0
+  },
+  "GT-HEADBROAD DIAMOND SQUARE-DM": {
+   "avg_cost_sen": 155000,
+   "last_move": "2025-06-09",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "GT-TOGETHA BOX DIVAN-DEMO": {
+   "avg_cost_sen": 96000,
+   "last_move": "2025-06-09",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "HB109M-CC": {
+   "avg_cost_sen": 2794,
+   "last_move": "2026-09-01",
+   "movements": 1490,
+   "qty_in": 4126.0
+  },
+  "HB109NL": {
+   "avg_cost_sen": 4954,
+   "last_move": "2026-09-01",
+   "movements": 1796,
+   "qty_in": 4929.0
+  },
+  "HB208M-CC": {
+   "avg_cost_sen": 2954,
+   "last_move": "2026-08-08",
+   "movements": 112,
+   "qty_in": 238.0
+  },
+  "HB208NL": {
+   "avg_cost_sen": 5147,
+   "last_move": "2026-08-08",
+   "movements": 73,
+   "qty_in": 218.0
+  },
+  "HB209M-CC": {
+   "avg_cost_sen": 3025,
+   "last_move": "2026-08-08",
+   "movements": 121,
+   "qty_in": 277.0
+  },
+  "HB209NL": {
+   "avg_cost_sen": 5405,
+   "last_move": "2026-08-08",
+   "movements": 72,
+   "qty_in": 216.0
+  },
+  "HB211NL": {
+   "avg_cost_sen": 5500,
+   "last_move": "2025-07-30",
+   "movements": 5,
+   "qty_in": 10.0
+  },
+  "HB709M-CC": {
+   "avg_cost_sen": 3170,
+   "last_move": "2026-09-03",
+   "movements": 395,
+   "qty_in": 772.0
+  },
+  "HB709NL": {
+   "avg_cost_sen": 7521,
+   "last_move": "2026-09-03",
+   "movements": 508,
+   "qty_in": 844.0
+  },
+  "HL-DC-BEVERLY 109/520": {
+   "avg_cost_sen": 12300,
+   "last_move": "2025-05-22",
+   "movements": 3,
+   "qty_in": 8.0
+  },
+  "HL-DC-KAIRI 102/6184": {
+   "avg_cost_sen": 20200,
+   "last_move": "2025-05-22",
+   "movements": 5,
+   "qty_in": 12.0
+  },
+  "HL-DC-LOTFI 109/113/6368": {
+   "avg_cost_sen": 18100,
+   "last_move": "2025-05-22",
+   "movements": 3,
+   "qty_in": 12.0
+  },
+  "HL-DC-LOWEN 111": {
+   "avg_cost_sen": 19000,
+   "last_move": "2025-05-22",
+   "movements": 3,
+   "qty_in": 4.0
+  },
+  "HL-DC-LOWEN 111/3791": {
+   "avg_cost_sen": 20500,
+   "last_move": "2025-05-22",
+   "movements": 5,
+   "qty_in": 8.0
+  },
+  "HL-DT KACEY 102 (900X1500)": {
+   "avg_cost_sen": 34900,
+   "last_move": "2025-05-22",
+   "movements": 5,
+   "qty_in": 3.0
+  },
+  "HL-DT-GERALD 114/109 (900X1800": {
+   "avg_cost_sen": 50600,
+   "last_move": "2025-05-22",
+   "movements": 3,
+   "qty_in": 2.0
+  },
+  "HL-DT-LONY 111 (750X1200 )": {
+   "avg_cost_sen": 50000,
+   "last_move": "2025-05-22",
+   "movements": 5,
+   "qty_in": 3.0
+  },
+  "HL-DT-OKARA 113 (DIA1200)": {
+   "avg_cost_sen": 96900,
+   "last_move": "2025-05-22",
+   "movements": 3,
+   "qty_in": 2.0
+  },
+  "HOK- DIVAN ONLY (SS)": {
+   "avg_cost_sen": 31879,
+   "last_move": "2026-09-04",
+   "movements": 53,
+   "qty_in": 38.0
+  },
+  "HOK-1003 (A) (K)": {
+   "avg_cost_sen": 72956,
+   "last_move": "2026-09-19",
+   "movements": 243,
+   "qty_in": 126.0
+  },
+  "HOK-1003 (A) (Q)": {
+   "avg_cost_sen": 58952,
+   "last_move": "2026-09-07",
+   "movements": 279,
+   "qty_in": 157.0
+  },
+  "HOK-1003 (A) (S)": {
+   "avg_cost_sen": 46000,
+   "last_move": "2025-12-26",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-1003 (A) (SK)": {
+   "avg_cost_sen": 140420,
+   "last_move": "2026-08-04",
+   "movements": 10,
+   "qty_in": 5.0
+  },
+  "HOK-1003 (A) (SP)": {
+   "avg_cost_sen": 137000,
+   "last_move": "2026-03-16",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-1003 (A) (SS)": {
+   "avg_cost_sen": 49078,
+   "last_move": "2026-09-04",
+   "movements": 36,
+   "qty_in": 20.0
+  },
+  "HOK-1003 (A)(HF)(W) (K)": {
+   "avg_cost_sen": 78000,
+   "last_move": "2026-05-08",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-1003 (A)(HF)(W) (Q)": {
+   "avg_cost_sen": 56000,
+   "last_move": "2026-04-10",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "HOK-1005 (K)": {
+   "avg_cost_sen": 57537,
+   "last_move": "2026-09-08",
+   "movements": 77,
+   "qty_in": 41.0
+  },
+  "HOK-1005 (Q)": {
+   "avg_cost_sen": 42532,
+   "last_move": "2026-09-07",
+   "movements": 351,
+   "qty_in": 188.0
+  },
+  "HOK-1005 (S)": {
+   "avg_cost_sen": 44750,
+   "last_move": "2026-09-04",
+   "movements": 28,
+   "qty_in": 16.0
+  },
+  "HOK-1005 (SK)": {
+   "avg_cost_sen": 112000,
+   "last_move": "2025-08-22",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-1005 (SS)": {
+   "avg_cost_sen": 45193,
+   "last_move": "2026-08-29",
+   "movements": 64,
+   "qty_in": 36.0
+  },
+  "HOK-1007 (HF)(W) (K)": {
+   "avg_cost_sen": 64300,
+   "last_move": "2026-06-23",
+   "movements": 8,
+   "qty_in": 4.0
+  },
+  "HOK-1007 (HF)(W) (Q)": {
+   "avg_cost_sen": 47500,
+   "last_move": "2025-12-30",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "HOK-1007 (HF)(W) (SP)": {
+   "avg_cost_sen": 111200,
+   "last_move": "2026-05-02",
+   "movements": 2,
+   "qty_in": 2.0
+  },
+  "HOK-1007 (K)": {
+   "avg_cost_sen": 55177,
+   "last_move": "2026-09-09",
+   "movements": 405,
+   "qty_in": 219.0
+  },
+  "HOK-1007 (Q)": {
+   "avg_cost_sen": 42748,
+   "last_move": "2026-09-19",
+   "movements": 1047,
+   "qty_in": 584.0
+  },
+  "HOK-1007 (S)": {
+   "avg_cost_sen": 40408,
+   "last_move": "2026-08-28",
+   "movements": 40,
+   "qty_in": 24.0
+  },
+  "HOK-1007 (SK)": {
+   "avg_cost_sen": 80500,
+   "last_move": "2026-04-22",
+   "movements": 7,
+   "qty_in": 4.0
+  },
+  "HOK-1007 (SP)": {
+   "avg_cost_sen": 66000,
+   "last_move": "2026-09-07",
+   "movements": 7,
+   "qty_in": 4.0
+  },
+  "HOK-1007 (SS)": {
+   "avg_cost_sen": 41161,
+   "last_move": "2026-09-05",
+   "movements": 155,
+   "qty_in": 94.0
+  },
+  "HOK-1009 (A) (K)": {
+   "avg_cost_sen": 52000,
+   "last_move": "2026-01-22",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-1009 (A) (Q)": {
+   "avg_cost_sen": 40060,
+   "last_move": "2026-07-04",
+   "movements": 9,
+   "qty_in": 5.0
+  },
+  "HOK-1013 (K)": {
+   "avg_cost_sen": 41617,
+   "last_move": "2026-09-09",
+   "movements": 231,
+   "qty_in": 124.0
+  },
+  "HOK-1013 (Q)": {
+   "avg_cost_sen": 29699,
+   "last_move": "2026-09-09",
+   "movements": 541,
+   "qty_in": 310.0
+  },
+  "HOK-1013 (S)": {
+   "avg_cost_sen": 24850,
+   "last_move": "2026-09-02",
+   "movements": 48,
+   "qty_in": 30.0
+  },
+  "HOK-1013 (SS)": {
+   "avg_cost_sen": 28490,
+   "last_move": "2026-09-08",
+   "movements": 104,
+   "qty_in": 56.0
+  },
+  "HOK-1019 (A) (HF)(W) (K)": {
+   "avg_cost_sen": 74500,
+   "last_move": "2026-03-08",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "HOK-1019 (A) (HF)(W) (Q)": {
+   "avg_cost_sen": 64000,
+   "last_move": "2026-02-07",
+   "movements": 1,
+   "qty_in": 1.0
+  },
+  "HOK-1019 (K)": {
+   "avg_cost_sen": 101900,
+   "last_move": "2026-04-18",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-1019 (Q)": {
+   "avg_cost_sen": 50400,
+   "last_move": "2025-12-09",
+   "movements": 6,
+   "qty_in": 5.0
+  },
+  "HOK-1023 (HF)(W) (Q)": {
+   "avg_cost_sen": 45000,
+   "last_move": "2026-04-29",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-1023 (HF)(W) (SS)": {
+   "avg_cost_sen": 43950,
+   "last_move": "2026-06-23",
+   "movements": 6,
+   "qty_in": 4.0
+  },
+  "HOK-1023 (K)": {
+   "avg_cost_sen": 55000,
+   "last_move": "2026-06-30",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-1023 (Q)": {
+   "avg_cost_sen": 37857,
+   "last_move": "2026-02-01",
+   "movements": 10,
+   "qty_in": 7.0
+  },
+  "HOK-1030 (HF)(W) (K)": {
+   "avg_cost_sen": 64600,
+   "last_move": "2026-05-15",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "HOK-1030 (HF)(W) (Q)": {
+   "avg_cost_sen": 38611,
+   "last_move": "2026-08-21",
+   "movements": 13,
+   "qty_in": 9.0
+  },
+  "HOK-1030 (HF)(W) (SS)": {
+   "avg_cost_sen": 62900,
+   "last_move": "2026-05-15",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "HOK-1030 (K)": {
+   "avg_cost_sen": 55000,
+   "last_move": "2026-07-09",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "HOK-1030 (Q)": {
+   "avg_cost_sen": 44375,
+   "last_move": "2026-08-27",
+   "movements": 12,
+   "qty_in": 8.0
+  },
+  "HOK-1030 (SP)": {
+   "avg_cost_sen": 90500,
+   "last_move": "2026-08-27",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-1041 (K)": {
+   "avg_cost_sen": 49115,
+   "last_move": "2026-09-07",
+   "movements": 24,
+   "qty_in": 13.0
+  },
+  "HOK-1041 (Q)": {
+   "avg_cost_sen": 37685,
+   "last_move": "2026-09-03",
+   "movements": 35,
+   "qty_in": 23.0
+  },
+  "HOK-1041 (SP)": {
+   "avg_cost_sen": 73000,
+   "last_move": "2026-02-12",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-1041 (SS)": {
+   "avg_cost_sen": 38250,
+   "last_move": "2026-08-29",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "HOK-1051 (K)": {
+   "avg_cost_sen": 48000,
+   "last_move": "2026-07-29",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-1051 (Q)": {
+   "avg_cost_sen": 35500,
+   "last_move": "2026-09-08",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-1052 (K)": {
+   "avg_cost_sen": 52000,
+   "last_move": "2026-08-29",
+   "movements": 8,
+   "qty_in": 4.0
+  },
+  "HOK-1052 (Q)": {
+   "avg_cost_sen": 38143,
+   "last_move": "2026-09-08",
+   "movements": 23,
+   "qty_in": 14.0
+  },
+  "HOK-1052 (SS)": {
+   "avg_cost_sen": 35583,
+   "last_move": "2026-09-02",
+   "movements": 5,
+   "qty_in": 3.0
+  },
+  "HOK-1056 (Q)": {
+   "avg_cost_sen": 41000,
+   "last_move": "2026-09-08",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "HOK-2003 (K)": {
+   "avg_cost_sen": 86950,
+   "last_move": "2026-07-31",
+   "movements": 20,
+   "qty_in": 10.0
+  },
+  "HOK-2003 (Q)": {
+   "avg_cost_sen": 81667,
+   "last_move": "2026-02-16",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "HOK-2003 (SP)": {
+   "avg_cost_sen": 180000,
+   "last_move": "2026-01-20",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-2006(A) (K)": {
+   "avg_cost_sen": 70830,
+   "last_move": "2026-09-07",
+   "movements": 198,
+   "qty_in": 105.0
+  },
+  "HOK-2006(A) (Q)": {
+   "avg_cost_sen": 59914,
+   "last_move": "2026-09-01",
+   "movements": 103,
+   "qty_in": 58.0
+  },
+  "HOK-2006(A) (SK)": {
+   "avg_cost_sen": 141625,
+   "last_move": "2026-09-02",
+   "movements": 8,
+   "qty_in": 4.0
+  },
+  "HOK-2006(A) (SP)": {
+   "avg_cost_sen": 119500,
+   "last_move": "2026-08-27",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-2006(A) (SS)": {
+   "avg_cost_sen": 52583,
+   "last_move": "2026-07-07",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "HOK-2008(A) (K)": {
+   "avg_cost_sen": 81510,
+   "last_move": "2026-09-19",
+   "movements": 548,
+   "qty_in": 299.0
+  },
+  "HOK-2008(A) (Q)": {
+   "avg_cost_sen": 73136,
+   "last_move": "2026-09-05",
+   "movements": 120,
+   "qty_in": 66.0
+  },
+  "HOK-2008(A) (SK)": {
+   "avg_cost_sen": 142917,
+   "last_move": "2026-09-07",
+   "movements": 18,
+   "qty_in": 12.0
+  },
+  "HOK-2008(A) (SP)": {
+   "avg_cost_sen": 157125,
+   "last_move": "2026-08-22",
+   "movements": 8,
+   "qty_in": 4.0
+  },
+  "HOK-2009(A) (K)": {
+   "avg_cost_sen": 83812,
+   "last_move": "2026-09-08",
+   "movements": 567,
+   "qty_in": 298.0
+  },
+  "HOK-2009(A) (Q)": {
+   "avg_cost_sen": 71964,
+   "last_move": "2026-09-07",
+   "movements": 156,
+   "qty_in": 84.0
+  },
+  "HOK-2009(A) (S)": {
+   "avg_cost_sen": 64000,
+   "last_move": "2025-10-14",
+   "movements": 2,
+   "qty_in": 2.0
+  },
+  "HOK-2009(A) (SK)": {
+   "avg_cost_sen": 148167,
+   "last_move": "2026-08-12",
+   "movements": 11,
+   "qty_in": 6.0
+  },
+  "HOK-2009(A) (SP)": {
+   "avg_cost_sen": 150000,
+   "last_move": "2026-01-20",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "HOK-2009(A) (SS)": {
+   "avg_cost_sen": 67000,
+   "last_move": "2025-12-23",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-2010(A) (K)": {
+   "avg_cost_sen": 84100,
+   "last_move": "2026-02-10",
+   "movements": 19,
+   "qty_in": 10.0
+  },
+  "HOK-2010(A) (Q)": {
+   "avg_cost_sen": 80000,
+   "last_move": "2025-10-29",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-2011(A) (K)": {
+   "avg_cost_sen": 82400,
+   "last_move": "2026-08-15",
+   "movements": 10,
+   "qty_in": 5.0
+  },
+  "HOK-2011(A) (Q)": {
+   "avg_cost_sen": 72500,
+   "last_move": "2026-08-06",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-2023 (K)": {
+   "avg_cost_sen": 63261,
+   "last_move": "2026-09-08",
+   "movements": 41,
+   "qty_in": 23.0
+  },
+  "HOK-2023 (S)": {
+   "avg_cost_sen": 49267,
+   "last_move": "2026-06-03",
+   "movements": 12,
+   "qty_in": 6.0
+  },
+  "HOK-2027 (K)": {
+   "avg_cost_sen": 95000,
+   "last_move": "2025-10-30",
+   "movements": 2,
+   "qty_in": 2.0
+  },
+  "HOK-2033 (HF)(W) (K)": {
+   "avg_cost_sen": 90400,
+   "last_move": "2026-07-17",
+   "movements": 9,
+   "qty_in": 5.0
+  },
+  "HOK-2033 (HF)(W) (Q)": {
+   "avg_cost_sen": 98000,
+   "last_move": "2026-02-12",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-2033 (HF)(W) (SS)": {
+   "avg_cost_sen": 68750,
+   "last_move": "2026-07-07",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-2033 (K)": {
+   "avg_cost_sen": 85000,
+   "last_move": "2026-09-08",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-2033 (Q)": {
+   "avg_cost_sen": 70000,
+   "last_move": "2026-02-11",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-2038 (A) (K)": {
+   "avg_cost_sen": 70883,
+   "last_move": "2026-09-09",
+   "movements": 129,
+   "qty_in": 72.0
+  },
+  "HOK-2038 (A) (Q)": {
+   "avg_cost_sen": 55143,
+   "last_move": "2026-09-10",
+   "movements": 171,
+   "qty_in": 96.0
+  },
+  "HOK-2038 (A) (S)": {
+   "avg_cost_sen": 51500,
+   "last_move": "2026-06-26",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-2038 (A) (SK)": {
+   "avg_cost_sen": 132250,
+   "last_move": "2026-08-12",
+   "movements": 2,
+   "qty_in": 2.0
+  },
+  "HOK-2038 (A) (SS)": {
+   "avg_cost_sen": 52071,
+   "last_move": "2026-09-09",
+   "movements": 25,
+   "qty_in": 14.0
+  },
+  "HOK-2038 (A)(HF)(W) (K)": {
+   "avg_cost_sen": 73391,
+   "last_move": "2026-08-27",
+   "movements": 19,
+   "qty_in": 11.0
+  },
+  "HOK-2038 (A)(HF)(W) (Q)": {
+   "avg_cost_sen": 56094,
+   "last_move": "2026-09-07",
+   "movements": 30,
+   "qty_in": 16.0
+  },
+  "HOK-2038 (A)(HF)(W) (SS)": {
+   "avg_cost_sen": 54750,
+   "last_move": "2026-08-14",
+   "movements": 1,
+   "qty_in": 1.0
+  },
+  "HOK-2041 (A) (HF)(W) (Q)": {
+   "avg_cost_sen": 58500,
+   "last_move": "2026-08-21",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-2041 (A) (K)": {
+   "avg_cost_sen": 75009,
+   "last_move": "2026-08-28",
+   "movements": 20,
+   "qty_in": 11.0
+  },
+  "HOK-2041 (A) (Q)": {
+   "avg_cost_sen": 58429,
+   "last_move": "2026-09-02",
+   "movements": 51,
+   "qty_in": 29.0
+  },
+  "HOK-2041 (A) (SS)": {
+   "avg_cost_sen": 62267,
+   "last_move": "2026-08-28",
+   "movements": 5,
+   "qty_in": 3.0
+  },
+  "HOK-2049 (K)": {
+   "avg_cost_sen": 77000,
+   "last_move": "2026-05-23",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-5530 SOFA": {
+   "avg_cost_sen": 183024,
+   "last_move": "2026-09-08",
+   "movements": 144,
+   "qty_in": 78.0
+  },
+  "HOK-5535 SOFA": {
+   "avg_cost_sen": 183686,
+   "last_move": "2026-09-09",
+   "movements": 41,
+   "qty_in": 22.0
+  },
+  "HOK-5536 SOFA": {
+   "avg_cost_sen": 224994,
+   "last_move": "2026-09-05",
+   "movements": 60,
+   "qty_in": 31.0
+  },
+  "HOK-5537 SOFA": {
+   "avg_cost_sen": 141633,
+   "last_move": "2026-06-19",
+   "movements": 35,
+   "qty_in": 18.0
+  },
+  "HOK-5540 SOFA": {
+   "avg_cost_sen": 168794,
+   "last_move": "2026-09-08",
+   "movements": 29,
+   "qty_in": 16.0
+  },
+  "HOK-DIVAN ONLY (K)": {
+   "avg_cost_sen": 45065,
+   "last_move": "2026-09-09",
+   "movements": 188,
+   "qty_in": 113.0
+  },
+  "HOK-DIVAN ONLY (Q)": {
+   "avg_cost_sen": 33171,
+   "last_move": "2026-09-05",
+   "movements": 175,
+   "qty_in": 108.0
+  },
+  "HOK-DIVAN ONLY (S)": {
+   "avg_cost_sen": 33267,
+   "last_move": "2026-08-21",
+   "movements": 38,
+   "qty_in": 24.0
+  },
+  "HOK-DIVAN ONLY (SK)": {
+   "avg_cost_sen": 90250,
+   "last_move": "2026-01-23",
+   "movements": 8,
+   "qty_in": 4.0
+  },
+  "HOK-DIVAN ONLY (SP)": {
+   "avg_cost_sen": 72667,
+   "last_move": "2026-01-29",
+   "movements": 11,
+   "qty_in": 6.0
+  },
+  "HOK-HEADBOARD ONLY (K)": {
+   "avg_cost_sen": 27455,
+   "last_move": "2026-08-04",
+   "movements": 19,
+   "qty_in": 11.0
+  },
+  "HOK-HEADBOARD ONLY (Q)": {
+   "avg_cost_sen": 26667,
+   "last_move": "2026-05-28",
+   "movements": 10,
+   "qty_in": 6.0
+  },
+  "HOK-HEADBOARD ONLY (S)": {
+   "avg_cost_sen": 19000,
+   "last_move": "2025-11-01",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-HEADBOARD ONLY (SP)": {
+   "avg_cost_sen": 52000,
+   "last_move": "2025-09-27",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "HOK-LONG PILLOW": {
+   "avg_cost_sen": 4452,
+   "last_move": "2026-09-09",
+   "movements": 28,
+   "qty_in": 41.0
+  },
+  "HOK-SQUARE PILLOW": {
+   "avg_cost_sen": 1798,
+   "last_move": "2026-09-07",
+   "movements": 74,
+   "qty_in": 114.0
+  },
+  "HOK-STOOL": {
+   "avg_cost_sen": 50000,
+   "last_move": "2026-06-20",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "JM-BAMBOO JACQUARD WP MP (K)": {
+   "avg_cost_sen": 2863,
+   "last_move": "2026-02-13",
+   "movements": 266,
+   "qty_in": 556.0
+  },
+  "JM-BAMBOO JACQUARD WP MP (Q)": {
+   "avg_cost_sen": 2517,
+   "last_move": "2026-04-18",
+   "movements": 245,
+   "qty_in": 525.0
+  },
+  "JM-BAMBOO JACQUARD WP MP (S)": {
+   "avg_cost_sen": 1810,
+   "last_move": "2026-07-31",
+   "movements": 23,
+   "qty_in": 35.0
+  },
+  "JM-BAMBOO JACQUARD WP MP (SK)": {
+   "avg_cost_sen": 3098,
+   "last_move": "2026-03-03",
+   "movements": 48,
+   "qty_in": 67.0
+  },
+  "JM-BAMBOO JACQUARD WP MP (SS)": {
+   "avg_cost_sen": 2024,
+   "last_move": "2025-10-31",
+   "movements": 23,
+   "qty_in": 39.0
+  },
+  "JM-CL JAC WP MP (K)": {
+   "avg_cost_sen": 4052,
+   "last_move": "2026-09-19",
+   "movements": 796,
+   "qty_in": 1207.0
+  },
+  "JM-CL JAC WP MP (Q)": {
+   "avg_cost_sen": 3506,
+   "last_move": "2026-09-19",
+   "movements": 594,
+   "qty_in": 1032.0
+  },
+  "JM-CL JAC WP MP (S)": {
+   "avg_cost_sen": 2376,
+   "last_move": "2026-08-11",
+   "movements": 70,
+   "qty_in": 106.0
+  },
+  "JM-CL JAC WP MP (SK)": {
+   "avg_cost_sen": 4500,
+   "last_move": "2026-09-05",
+   "movements": 54,
+   "qty_in": 83.0
+  },
+  "JM-CL JAC WP MP (SS)": {
+   "avg_cost_sen": 2810,
+   "last_move": "2026-09-09",
+   "movements": 156,
+   "qty_in": 274.0
+  },
+  "LV-3068 SOFA": {
+   "avg_cost_sen": 225510,
+   "last_move": "2026-08-29",
+   "movements": 41,
+   "qty_in": 21.0
+  },
+  "MAJ-DINING CHAIR": {
+   "avg_cost_sen": 17261,
+   "last_move": "2026-08-07",
+   "movements": 6,
+   "qty_in": 13.0
+  },
+  "MAJ-TABLE TOP": {
+   "avg_cost_sen": 178600,
+   "last_move": "2026-07-15",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "MDS-SOFA": {
+   "avg_cost_sen": 36000,
+   "last_move": "2025-08-06",
+   "movements": 7,
+   "qty_in": 7.0
+  },
+  "MN-TABLE": {
+   "avg_cost_sen": 75000,
+   "last_move": "2025-05-24",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "MYLATEX AURORA (K)": {
+   "avg_cost_sen": 119636,
+   "last_move": "2026-05-07",
+   "movements": 82,
+   "qty_in": 55.0
+  },
+  "MYLATEX AURORA (Q)": {
+   "avg_cost_sen": 89936,
+   "last_move": "2026-02-13",
+   "movements": 116,
+   "qty_in": 78.0
+  },
+  "MYLATEX AURORA (S)": {
+   "avg_cost_sen": 66000,
+   "last_move": "2026-02-25",
+   "movements": 17,
+   "qty_in": 10.0
+  },
+  "MYLATEX AURORA (SK)": {
+   "avg_cost_sen": 156000,
+   "last_move": "2024-06-26",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "MYLATEX AURORA (SP)": {
+   "avg_cost_sen": 100000,
+   "last_move": "2024-09-19",
+   "movements": 1,
+   "qty_in": 1.0
+  },
+  "MYLATEX AURORA (SS)": {
+   "avg_cost_sen": 77000,
+   "last_move": "2025-04-29",
+   "movements": 19,
+   "qty_in": 11.0
+  },
+  "MYLATEX BACKSHIRE (K)": {
+   "avg_cost_sen": 134667,
+   "last_move": "2025-12-04",
+   "movements": 69,
+   "qty_in": 36.0
+  },
+  "MYLATEX BACKSHIRE (Q)": {
+   "avg_cost_sen": 115708,
+   "last_move": "2025-06-09",
+   "movements": 72,
+   "qty_in": 48.0
+  },
+  "MYLATEX BACKSHIRE (S)": {
+   "avg_cost_sen": 79200,
+   "last_move": "2025-05-07",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "MYLATEX BACKSHIRE (SS)": {
+   "avg_cost_sen": 92400,
+   "last_move": "2025-02-13",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "MYLATEX BACKTON (K)": {
+   "avg_cost_sen": 181760,
+   "last_move": "2026-08-05",
+   "movements": 50,
+   "qty_in": 30.0
+  },
+  "MYLATEX BACKTON (Q)": {
+   "avg_cost_sen": 137626,
+   "last_move": "2026-08-17",
+   "movements": 51,
+   "qty_in": 31.0
+  },
+  "MYLATEX CELESTIA (K)": {
+   "avg_cost_sen": 275926,
+   "last_move": "2026-08-17",
+   "movements": 46,
+   "qty_in": 27.0
+  },
+  "MYLATEX CELESTIA (Q)": {
+   "avg_cost_sen": 260000,
+   "last_move": "2026-08-17",
+   "movements": 9,
+   "qty_in": 5.0
+  },
+  "MYLATEX CELESTIA (SK)": {
+   "avg_cost_sen": 405600,
+   "last_move": "2024-12-13",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "MYLATEX CRESTLAKE (K)": {
+   "avg_cost_sen": 151294,
+   "last_move": "2026-02-25",
+   "movements": 121,
+   "qty_in": 72.0
+  },
+  "MYLATEX CRESTLAKE (Q)": {
+   "avg_cost_sen": 124922,
+   "last_move": "2025-09-20",
+   "movements": 56,
+   "qty_in": 32.0
+  },
+  "MYLATEX CRESTLAKE (S)": {
+   "avg_cost_sen": 85800,
+   "last_move": "2026-02-25",
+   "movements": 8,
+   "qty_in": 4.0
+  },
+  "MYLATEX CRESTLAKE (SK)": {
+   "avg_cost_sen": 202800,
+   "last_move": "2024-09-07",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "MYLATEX LUMBARIA (K)": {
+   "avg_cost_sen": 95084,
+   "last_move": "2025-12-10",
+   "movements": 81,
+   "qty_in": 55.0
+  },
+  "MYLATEX LUMBARIA (Q)": {
+   "avg_cost_sen": 77409,
+   "last_move": "2026-08-05",
+   "movements": 183,
+   "qty_in": 127.0
+  },
+  "MYLATEX LUMBARIA (S)": {
+   "avg_cost_sen": 52814,
+   "last_move": "2025-02-18",
+   "movements": 22,
+   "qty_in": 14.0
+  },
+  "MYLATEX LUMBARIA (SK)": {
+   "avg_cost_sen": 62400,
+   "last_move": "2024-08-26",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "MYLATEX LUMBARIA (SS)": {
+   "avg_cost_sen": 59152,
+   "last_move": "2025-11-21",
+   "movements": 46,
+   "qty_in": 31.0
+  },
+  "MYLATEX VELVETON (K)": {
+   "avg_cost_sen": 198704,
+   "last_move": "2025-06-09",
+   "movements": 35,
+   "qty_in": 25.0
+  },
+  "MYLATEX VELVETON (Q)": {
+   "avg_cost_sen": 156750,
+   "last_move": "2026-08-17",
+   "movements": 31,
+   "qty_in": 20.0
+  },
+  "MYLATEX-CS MATT COVER (K)": {
+   "avg_cost_sen": 25000,
+   "last_move": "2024-03-25",
+   "movements": 2,
+   "qty_in": 4.0
+  },
+  "MYLATEX-FOOTREST": {
+   "avg_cost_sen": 10000,
+   "last_move": "2025-06-09",
+   "movements": 2,
+   "qty_in": 7.0
+  },
+  "Miscellaneous": {
+   "avg_cost_sen": 25625,
+   "last_move": "2026-09-02",
+   "movements": 80,
+   "qty_in": 24.0
+  },
+  "NB- DIVAN ONLY (SS)": {
+   "avg_cost_sen": 30869,
+   "last_move": "2026-07-09",
+   "movements": 46,
+   "qty_in": 32.0
+  },
+  "NB-DIVAN ONLY": {
+   "avg_cost_sen": 40058,
+   "last_move": "2024-12-09",
+   "movements": 31,
+   "qty_in": 21.0
+  },
+  "NB-DIVAN ONLY (K)": {
+   "avg_cost_sen": 48762,
+   "last_move": "2026-07-30",
+   "movements": 268,
+   "qty_in": 193.0
+  },
+  "NB-DIVAN ONLY (Q)": {
+   "avg_cost_sen": 34013,
+   "last_move": "2026-07-09",
+   "movements": 229,
+   "qty_in": 135.0
+  },
+  "NB-DIVAN ONLY (S)": {
+   "avg_cost_sen": 29496,
+   "last_move": "2025-12-18",
+   "movements": 30,
+   "qty_in": 25.0
+  },
+  "NB-DIVAN ONLY (SK)": {
+   "avg_cost_sen": 58000,
+   "last_move": "2026-03-13",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "NB-DIVAN ONLY (SP)": {
+   "avg_cost_sen": 62000,
+   "last_move": "2025-01-04",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-DOUBLE DACKER (DDB002)": {
+   "avg_cost_sen": 118000,
+   "last_move": "2026-08-15",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-HEADBOARD ONLY (K)": {
+   "avg_cost_sen": 44767,
+   "last_move": "2026-07-25",
+   "movements": 12,
+   "qty_in": 6.0
+  },
+  "NB-HEADBOARD ONLY (Q)": {
+   "avg_cost_sen": 13057,
+   "last_move": "2026-07-09",
+   "movements": 14,
+   "qty_in": 7.0
+  },
+  "NB-HEADBOARD ONLY (S)": {
+   "avg_cost_sen": 15200,
+   "last_move": "2024-09-12",
+   "movements": 1,
+   "qty_in": 1.0
+  },
+  "NB-HEADBOARD ONLY (SS)": {
+   "avg_cost_sen": 4000,
+   "last_move": "2026-02-26",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "NB-KHB(C)-00 (Q)": {
+   "avg_cost_sen": 45000,
+   "last_move": "2025-06-09",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-KHJ01(K)": {
+   "avg_cost_sen": 49462,
+   "last_move": "2026-07-11",
+   "movements": 26,
+   "qty_in": 13.0
+  },
+  "NB-KHJ01(Q)": {
+   "avg_cost_sen": 37957,
+   "last_move": "2026-08-28",
+   "movements": 44,
+   "qty_in": 23.0
+  },
+  "NB-KHJ01(S)": {
+   "avg_cost_sen": 37000,
+   "last_move": "2026-07-03",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "NB-KHJ01(SS)": {
+   "avg_cost_sen": 34053,
+   "last_move": "2026-08-28",
+   "movements": 23,
+   "qty_in": 15.0
+  },
+  "NB-KHJ02(K)": {
+   "avg_cost_sen": 48043,
+   "last_move": "2026-04-10",
+   "movements": 156,
+   "qty_in": 81.0
+  },
+  "NB-KHJ02(Q)": {
+   "avg_cost_sen": 38762,
+   "last_move": "2026-06-03",
+   "movements": 270,
+   "qty_in": 149.0
+  },
+  "NB-KHJ02(S)": {
+   "avg_cost_sen": 32382,
+   "last_move": "2026-01-27",
+   "movements": 28,
+   "qty_in": 17.0
+  },
+  "NB-KHJ02(SS)": {
+   "avg_cost_sen": 45479,
+   "last_move": "2026-07-21",
+   "movements": 55,
+   "qty_in": 34.0
+  },
+  "NB-KHJ05(K)": {
+   "avg_cost_sen": 45000,
+   "last_move": "2025-02-25",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "NB-KHJ05(Q)": {
+   "avg_cost_sen": 33824,
+   "last_move": "2026-02-10",
+   "movements": 32,
+   "qty_in": 17.0
+  },
+  "NB-KHJ05(S)": {
+   "avg_cost_sen": 33000,
+   "last_move": "2024-01-31",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-KHJ05(SS)": {
+   "avg_cost_sen": 32000,
+   "last_move": "2024-12-12",
+   "movements": 3,
+   "qty_in": 2.0
+  },
+  "NB-KHJ06(K)": {
+   "avg_cost_sen": 47278,
+   "last_move": "2026-08-26",
+   "movements": 16,
+   "qty_in": 9.0
+  },
+  "NB-KHJ06(Q)": {
+   "avg_cost_sen": 35750,
+   "last_move": "2026-08-26",
+   "movements": 29,
+   "qty_in": 18.0
+  },
+  "NB-KHJ06(S)": {
+   "avg_cost_sen": 32500,
+   "last_move": "2024-05-27",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-KHJ06(SS)": {
+   "avg_cost_sen": 32000,
+   "last_move": "2024-05-28",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-KHJ19 (Q)": {
+   "avg_cost_sen": 34400,
+   "last_move": "2025-06-09",
+   "movements": 9,
+   "qty_in": 5.0
+  },
+  "NB-KHJ21 (SP)": {
+   "avg_cost_sen": 75000,
+   "last_move": "2025-06-20",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-KHJ21(K)": {
+   "avg_cost_sen": 52222,
+   "last_move": "2026-02-05",
+   "movements": 37,
+   "qty_in": 18.0
+  },
+  "NB-KHJ21(Q)": {
+   "avg_cost_sen": 40433,
+   "last_move": "2026-08-17",
+   "movements": 153,
+   "qty_in": 91.0
+  },
+  "NB-KHJ21(S)": {
+   "avg_cost_sen": 40000,
+   "last_move": "2024-06-28",
+   "movements": 4,
+   "qty_in": 3.0
+  },
+  "NB-KHJ21(SS)": {
+   "avg_cost_sen": 35750,
+   "last_move": "2024-10-15",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "NB-KHJ33(K)": {
+   "avg_cost_sen": 71083,
+   "last_move": "2026-02-02",
+   "movements": 96,
+   "qty_in": 48.0
+  },
+  "NB-KHJ33(Q)": {
+   "avg_cost_sen": 61571,
+   "last_move": "2026-05-26",
+   "movements": 164,
+   "qty_in": 91.0
+  },
+  "NB-KHJ33(SK)": {
+   "avg_cost_sen": 116000,
+   "last_move": "2024-09-07",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-KHJ33(SS)": {
+   "avg_cost_sen": 58388,
+   "last_move": "2026-07-03",
+   "movements": 32,
+   "qty_in": 17.0
+  },
+  "NB-KHJ35 (K)": {
+   "avg_cost_sen": 55551,
+   "last_move": "2026-08-28",
+   "movements": 165,
+   "qty_in": 85.0
+  },
+  "NB-KHJ35 (Q)": {
+   "avg_cost_sen": 43724,
+   "last_move": "2026-09-04",
+   "movements": 599,
+   "qty_in": 340.0
+  },
+  "NB-KHJ35 (S)": {
+   "avg_cost_sen": 40763,
+   "last_move": "2026-07-11",
+   "movements": 34,
+   "qty_in": 19.0
+  },
+  "NB-KHJ35 (SP)": {
+   "avg_cost_sen": 73000,
+   "last_move": "2025-07-05",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-KHJ35 (SS)": {
+   "avg_cost_sen": 41507,
+   "last_move": "2026-03-26",
+   "movements": 115,
+   "qty_in": 69.0
+  },
+  "NB-KHJ38 (A)(F) (K)": {
+   "avg_cost_sen": 99000,
+   "last_move": "2026-02-12",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-KHJ38 (A)(F) (Q)": {
+   "avg_cost_sen": 63833,
+   "last_move": "2025-12-09",
+   "movements": 7,
+   "qty_in": 6.0
+  },
+  "NB-KHJ38 (SP)": {
+   "avg_cost_sen": 93000,
+   "last_move": "2025-10-06",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-KHJ38(K)": {
+   "avg_cost_sen": 81386,
+   "last_move": "2026-09-08",
+   "movements": 88,
+   "qty_in": 44.0
+  },
+  "NB-KHJ38(Q)": {
+   "avg_cost_sen": 65250,
+   "last_move": "2026-09-11",
+   "movements": 125,
+   "qty_in": 68.0
+  },
+  "NB-KHJ38(SS)": {
+   "avg_cost_sen": 56333,
+   "last_move": "2025-10-21",
+   "movements": 10,
+   "qty_in": 6.0
+  },
+  "NB-KHJ50 (SK)": {
+   "avg_cost_sen": 112000,
+   "last_move": "2026-01-13",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-KHJ50 (SP)": {
+   "avg_cost_sen": 86000,
+   "last_move": "2025-01-13",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-KHJ50(K)": {
+   "avg_cost_sen": 75279,
+   "last_move": "2026-09-09",
+   "movements": 265,
+   "qty_in": 136.0
+  },
+  "NB-KHJ50(Q)": {
+   "avg_cost_sen": 60414,
+   "last_move": "2026-08-17",
+   "movements": 371,
+   "qty_in": 205.0
+  },
+  "NB-KHJ50(S)": {
+   "avg_cost_sen": 54500,
+   "last_move": "2025-05-28",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "NB-KHJ50(SS)": {
+   "avg_cost_sen": 60174,
+   "last_move": "2026-01-30",
+   "movements": 36,
+   "qty_in": 23.0
+  },
+  "NB-KHJ57 (F) (K)": {
+   "avg_cost_sen": 66000,
+   "last_move": "2026-02-11",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "NB-KHJ57 (SK)": {
+   "avg_cost_sen": 132000,
+   "last_move": "2025-07-31",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "NB-KHJ57 (SP)": {
+   "avg_cost_sen": 112000,
+   "last_move": "2026-07-03",
+   "movements": 8,
+   "qty_in": 4.0
+  },
+  "NB-KHJ57(K)": {
+   "avg_cost_sen": 58527,
+   "last_move": "2026-08-29",
+   "movements": 510,
+   "qty_in": 267.0
+  },
+  "NB-KHJ57(Q)": {
+   "avg_cost_sen": 44744,
+   "last_move": "2026-09-08",
+   "movements": 1111,
+   "qty_in": 628.0
+  },
+  "NB-KHJ57(S)": {
+   "avg_cost_sen": 41203,
+   "last_move": "2026-08-11",
+   "movements": 61,
+   "qty_in": 37.0
+  },
+  "NB-KHJ57(SS)": {
+   "avg_cost_sen": 42300,
+   "last_move": "2025-12-02",
+   "movements": 142,
+   "qty_in": 78.0
+  },
+  "NB-KHL(C)-00(Q)": {
+   "avg_cost_sen": 50000,
+   "last_move": "2025-06-09",
+   "movements": 2,
+   "qty_in": 2.0
+  },
+  "NB-KHL(C)-00(S)": {
+   "avg_cost_sen": 40500,
+   "last_move": "2024-05-29",
+   "movements": 2,
+   "qty_in": 4.0
+  },
+  "NB-LSD013 (K)": {
+   "avg_cost_sen": 33545,
+   "last_move": "2026-09-02",
+   "movements": 244,
+   "qty_in": 132.0
+  },
+  "NB-LSD013 (Q)": {
+   "avg_cost_sen": 21326,
+   "last_move": "2026-09-04",
+   "movements": 725,
+   "qty_in": 428.0
+  },
+  "NB-LSD013 (S)": {
+   "avg_cost_sen": 19076,
+   "last_move": "2026-06-05",
+   "movements": 56,
+   "qty_in": 33.0
+  },
+  "NB-LSD013 (SS)": {
+   "avg_cost_sen": 21748,
+   "last_move": "2026-09-04",
+   "movements": 134,
+   "qty_in": 87.0
+  },
+  "NB-NBG 06 DEMO": {
+   "avg_cost_sen": 116800,
+   "last_move": "2024-12-19",
+   "movements": 5,
+   "qty_in": 5.0
+  },
+  "NB-NBG02(SS+S)": {
+   "avg_cost_sen": 128000,
+   "last_move": "2025-12-26",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-NBG06 (SP)": {
+   "avg_cost_sen": 63400,
+   "last_move": "2026-01-31",
+   "movements": 10,
+   "qty_in": 5.0
+  },
+  "NB-NBG06(Q)": {
+   "avg_cost_sen": 103000,
+   "last_move": "2025-12-22",
+   "movements": 3,
+   "qty_in": 2.0
+  },
+  "NB-NBG06(S)": {
+   "avg_cost_sen": 66938,
+   "last_move": "2026-08-08",
+   "movements": 16,
+   "qty_in": 8.0
+  },
+  "NB-NBG06(SS)": {
+   "avg_cost_sen": 58100,
+   "last_move": "2026-06-05",
+   "movements": 15,
+   "qty_in": 8.0
+  },
+  "NB-NBG06(SS+S)": {
+   "avg_cost_sen": 66554,
+   "last_move": "2026-08-11",
+   "movements": 312,
+   "qty_in": 170.0
+  },
+  "NB-NH112 (F) (K)": {
+   "avg_cost_sen": 82500,
+   "last_move": "2025-12-09",
+   "movements": 13,
+   "qty_in": 8.0
+  },
+  "NB-NH125 (KD) (K)": {
+   "avg_cost_sen": 150400,
+   "last_move": "2026-07-04",
+   "movements": 10,
+   "qty_in": 5.0
+  },
+  "NB-NH125 (KD) (Q)": {
+   "avg_cost_sen": 128000,
+   "last_move": "2025-08-06",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "NB-NH23 (K)": {
+   "avg_cost_sen": 78076,
+   "last_move": "2026-09-05",
+   "movements": 121,
+   "qty_in": 66.0
+  },
+  "NB-NH23 (Q)": {
+   "avg_cost_sen": 71868,
+   "last_move": "2026-07-04",
+   "movements": 36,
+   "qty_in": 19.0
+  },
+  "NB-NH23 (S)": {
+   "avg_cost_sen": 64000,
+   "last_move": "2026-01-24",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-NH23 (SP)": {
+   "avg_cost_sen": 145000,
+   "last_move": "2025-12-26",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-NH23 (SS)": {
+   "avg_cost_sen": 67000,
+   "last_move": "2026-03-12",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-NH25(A)(K)": {
+   "avg_cost_sen": 95171,
+   "last_move": "2026-07-17",
+   "movements": 46,
+   "qty_in": 23.0
+  },
+  "NB-NH25(A)(Q)": {
+   "avg_cost_sen": 72000,
+   "last_move": "2026-05-29",
+   "movements": 20,
+   "qty_in": 10.0
+  },
+  "NB-NH25(A)(SS)": {
+   "avg_cost_sen": 67000,
+   "last_move": "2026-01-10",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-NH27 (K)": {
+   "avg_cost_sen": 85077,
+   "last_move": "2026-08-28",
+   "movements": 25,
+   "qty_in": 13.0
+  },
+  "NB-NH27 (Q)": {
+   "avg_cost_sen": 77125,
+   "last_move": "2026-08-28",
+   "movements": 11,
+   "qty_in": 8.0
+  },
+  "NB-NH27 (SS)": {
+   "avg_cost_sen": 77300,
+   "last_move": "2026-06-10",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "NB-NH27(A) (SK)": {
+   "avg_cost_sen": 145000,
+   "last_move": "2026-03-03",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-NH30(A) (KD)": {
+   "avg_cost_sen": 22500,
+   "last_move": "2024-12-19",
+   "movements": 9,
+   "qty_in": 4.0
+  },
+  "NB-NH36 (K)": {
+   "avg_cost_sen": 76729,
+   "last_move": "2026-08-07",
+   "movements": 247,
+   "qty_in": 129.0
+  },
+  "NB-NH36 (Q)": {
+   "avg_cost_sen": 61090,
+   "last_move": "2026-07-22",
+   "movements": 277,
+   "qty_in": 163.0
+  },
+  "NB-NH36(A) (SK)": {
+   "avg_cost_sen": 165333,
+   "last_move": "2025-06-28",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "NB-NH36(A) (SP)": {
+   "avg_cost_sen": 92000,
+   "last_move": "2025-09-17",
+   "movements": 8,
+   "qty_in": 4.0
+  },
+  "NB-NH36(SS)": {
+   "avg_cost_sen": 54307,
+   "last_move": "2026-06-05",
+   "movements": 26,
+   "qty_in": 15.0
+  },
+  "NB-NH39(A) (SP)": {
+   "avg_cost_sen": 136400,
+   "last_move": "2025-07-09",
+   "movements": 10,
+   "qty_in": 5.0
+  },
+  "NB-NH39(A)(K)": {
+   "avg_cost_sen": 85066,
+   "last_move": "2026-08-28",
+   "movements": 1389,
+   "qty_in": 726.0
+  },
+  "NB-NH39(A)(Q)": {
+   "avg_cost_sen": 73799,
+   "last_move": "2026-08-14",
+   "movements": 404,
+   "qty_in": 214.0
+  },
+  "NB-NH39(A)(S)": {
+   "avg_cost_sen": 68667,
+   "last_move": "2025-05-15",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "NB-NH39(A)(SK)": {
+   "avg_cost_sen": 140231,
+   "last_move": "2026-03-03",
+   "movements": 27,
+   "qty_in": 13.0
+  },
+  "NB-NH39(A)(SS)": {
+   "avg_cost_sen": 66222,
+   "last_move": "2025-07-22",
+   "movements": 16,
+   "qty_in": 9.0
+  },
+  "NB-NH41 (K)": {
+   "avg_cost_sen": 65571,
+   "last_move": "2026-05-09",
+   "movements": 14,
+   "qty_in": 7.0
+  },
+  "NB-NH41 (Q)": {
+   "avg_cost_sen": 49633,
+   "last_move": "2026-07-25",
+   "movements": 48,
+   "qty_in": 30.0
+  },
+  "NB-NH44 (K)": {
+   "avg_cost_sen": 79725,
+   "last_move": "2026-08-14",
+   "movements": 7,
+   "qty_in": 4.0
+  },
+  "NB-NH61(K)": {
+   "avg_cost_sen": 153429,
+   "last_move": "2026-08-17",
+   "movements": 12,
+   "qty_in": 7.0
+  },
+  "NB-NH63 (K)": {
+   "avg_cost_sen": 74000,
+   "last_move": "2024-12-09",
+   "movements": 19,
+   "qty_in": 11.0
+  },
+  "NB-NH63 (Q)": {
+   "avg_cost_sen": 45455,
+   "last_move": "2025-11-29",
+   "movements": 22,
+   "qty_in": 11.0
+  },
+  "NB-NH63 (SS)": {
+   "avg_cost_sen": 92000,
+   "last_move": "2024-03-20",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-NH66(A)(K)": {
+   "avg_cost_sen": 90626,
+   "last_move": "2026-08-22",
+   "movements": 59,
+   "qty_in": 33.0
+  },
+  "NB-NH66(A)(Q)": {
+   "avg_cost_sen": 88000,
+   "last_move": "2026-03-28",
+   "movements": 8,
+   "qty_in": 5.0
+  },
+  "NB-NH72(A) (SK)": {
+   "avg_cost_sen": 224000,
+   "last_move": "2025-07-29",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-NH72(A)(K)": {
+   "avg_cost_sen": 104353,
+   "last_move": "2026-05-07",
+   "movements": 31,
+   "qty_in": 17.0
+  },
+  "NB-NH72(A)(Q)": {
+   "avg_cost_sen": 99500,
+   "last_move": "2025-08-08",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "NB-NH79(A) (K)": {
+   "avg_cost_sen": 81259,
+   "last_move": "2026-06-12",
+   "movements": 52,
+   "qty_in": 27.0
+  },
+  "NB-NH79(A) (Q)": {
+   "avg_cost_sen": 75833,
+   "last_move": "2025-12-15",
+   "movements": 12,
+   "qty_in": 6.0
+  },
+  "NB-NH79(A) (SK)": {
+   "avg_cost_sen": 137000,
+   "last_move": "2024-11-16",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-NH79(A) (SS)": {
+   "avg_cost_sen": 89000,
+   "last_move": "2026-03-14",
+   "movements": 2,
+   "qty_in": 2.0
+  },
+  "NB-NH85(A) (K)": {
+   "avg_cost_sen": 79043,
+   "last_move": "2026-08-18",
+   "movements": 118,
+   "qty_in": 69.0
+  },
+  "NB-NH85(A) (Q)": {
+   "avg_cost_sen": 76793,
+   "last_move": "2026-08-29",
+   "movements": 56,
+   "qty_in": 29.0
+  },
+  "NB-NH85(A) (SK)": {
+   "avg_cost_sen": 124000,
+   "last_move": "2025-07-22",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-NH85(A) (SP)": {
+   "avg_cost_sen": 104000,
+   "last_move": "2025-01-13",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-NH85(A) (SS)": {
+   "avg_cost_sen": 87800,
+   "last_move": "2026-08-26",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NB-NH86 (K)": {
+   "avg_cost_sen": 78389,
+   "last_move": "2025-12-22",
+   "movements": 33,
+   "qty_in": 18.0
+  },
+  "NB-NH86 (Q)": {
+   "avg_cost_sen": 70357,
+   "last_move": "2025-08-15",
+   "movements": 26,
+   "qty_in": 14.0
+  },
+  "NB-NH86 (SK)": {
+   "avg_cost_sen": 160000,
+   "last_move": "2025-09-13",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "NK-1003 (K)": {
+   "avg_cost_sen": 45543,
+   "last_move": "2025-08-08",
+   "movements": 11,
+   "qty_in": 7.0
+  },
+  "NK-1003 (Q)": {
+   "avg_cost_sen": 37460,
+   "last_move": "2025-07-01",
+   "movements": 18,
+   "qty_in": 10.0
+  },
+  "NK-1005 (K)": {
+   "avg_cost_sen": 76167,
+   "last_move": "2025-02-18",
+   "movements": 12,
+   "qty_in": 6.0
+  },
+  "NK-1005 (Q)": {
+   "avg_cost_sen": 58533,
+   "last_move": "2026-05-30",
+   "movements": 12,
+   "qty_in": 6.0
+  },
+  "NK-1008 (K)": {
+   "avg_cost_sen": 82000,
+   "last_move": "2024-08-19",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NK-1008 (Q)": {
+   "avg_cost_sen": 58000,
+   "last_move": "2025-08-21",
+   "movements": 13,
+   "qty_in": 6.0
+  },
+  "NK-1009 (Q)": {
+   "avg_cost_sen": 48000,
+   "last_move": "2025-04-25",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "NK-1009 (SS)": {
+   "avg_cost_sen": 56000,
+   "last_move": "2024-06-20",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NK-1010 (Q)": {
+   "avg_cost_sen": 12500,
+   "last_move": "2025-06-09",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "NK-1011 (Q)": {
+   "avg_cost_sen": 35000,
+   "last_move": "2025-01-24",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NK-1013 (K)": {
+   "avg_cost_sen": 38500,
+   "last_move": "2025-10-22",
+   "movements": 8,
+   "qty_in": 4.0
+  },
+  "NK-1013 (Q)": {
+   "avg_cost_sen": 23538,
+   "last_move": "2025-09-25",
+   "movements": 24,
+   "qty_in": 13.0
+  },
+  "NK-1013 (SS)": {
+   "avg_cost_sen": 38000,
+   "last_move": "2024-05-17",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NK-1016 (Q)": {
+   "avg_cost_sen": 40000,
+   "last_move": "2024-11-22",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NK-1025 (K)": {
+   "avg_cost_sen": 71125,
+   "last_move": "2025-06-09",
+   "movements": 8,
+   "qty_in": 4.0
+  },
+  "NK-1026 (Q)": {
+   "avg_cost_sen": 75000,
+   "last_move": "2024-12-09",
+   "movements": 3,
+   "qty_in": 2.0
+  },
+  "NK-1030 (Q)": {
+   "avg_cost_sen": 25000,
+   "last_move": "2023-10-28",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NK-1038 (K)": {
+   "avg_cost_sen": 38500,
+   "last_move": "2026-01-20",
+   "movements": 12,
+   "qty_in": 6.0
+  },
+  "NK-1038 (Q)": {
+   "avg_cost_sen": 26000,
+   "last_move": "2025-07-31",
+   "movements": 33,
+   "qty_in": 18.0
+  },
+  "NK-1038 (SS)": {
+   "avg_cost_sen": 22700,
+   "last_move": "2025-11-01",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "NK-1044 (K)": {
+   "avg_cost_sen": 68750,
+   "last_move": "2025-02-23",
+   "movements": 27,
+   "qty_in": 16.0
+  },
+  "NK-1044 (Q)": {
+   "avg_cost_sen": 29143,
+   "last_move": "2025-03-11",
+   "movements": 14,
+   "qty_in": 7.0
+  },
+  "NK-1044 (SS)": {
+   "avg_cost_sen": 66000,
+   "last_move": "2024-06-20",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NK-1045 (K)": {
+   "avg_cost_sen": 49831,
+   "last_move": "2026-02-10",
+   "movements": 108,
+   "qty_in": 55.0
+  },
+  "NK-1045 (Q)": {
+   "avg_cost_sen": 38181,
+   "last_move": "2026-01-27",
+   "movements": 252,
+   "qty_in": 171.0
+  },
+  "NK-1045 (S)": {
+   "avg_cost_sen": 34100,
+   "last_move": "2025-09-19",
+   "movements": 13,
+   "qty_in": 8.0
+  },
+  "NK-1045 (SK)": {
+   "avg_cost_sen": 59300,
+   "last_move": "2025-07-05",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "NK-1045 (SP)": {
+   "avg_cost_sen": 70000,
+   "last_move": "2024-10-26",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NK-1045 (SS)": {
+   "avg_cost_sen": 33125,
+   "last_move": "2025-09-19",
+   "movements": 19,
+   "qty_in": 12.0
+  },
+  "NK-1046 (K)": {
+   "avg_cost_sen": 88730,
+   "last_move": "2026-09-04",
+   "movements": 14,
+   "qty_in": 7.0
+  },
+  "NK-1046 (Q)": {
+   "avg_cost_sen": 76865,
+   "last_move": "2026-08-17",
+   "movements": 29,
+   "qty_in": 17.0
+  },
+  "NK-1058 (K)": {
+   "avg_cost_sen": 32000,
+   "last_move": "2023-09-23",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NK-1058 (Q)": {
+   "avg_cost_sen": 31682,
+   "last_move": "2025-01-21",
+   "movements": 38,
+   "qty_in": 22.0
+  },
+  "NK-1058 (S)": {
+   "avg_cost_sen": 23000,
+   "last_move": "2024-10-24",
+   "movements": 3,
+   "qty_in": 2.0
+  },
+  "NK-1058 (SS)": {
+   "avg_cost_sen": 25000,
+   "last_move": "2024-05-16",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "NK-1075B (K)": {
+   "avg_cost_sen": 41950,
+   "last_move": "2025-08-02",
+   "movements": 8,
+   "qty_in": 4.0
+  },
+  "NK-1075B (Q)": {
+   "avg_cost_sen": 23133,
+   "last_move": "2025-12-22",
+   "movements": 16,
+   "qty_in": 9.0
+  },
+  "NK-1084 (K)": {
+   "avg_cost_sen": 72000,
+   "last_move": "2024-10-26",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "NK-1084 (Q)": {
+   "avg_cost_sen": 58000,
+   "last_move": "2025-06-09",
+   "movements": 13,
+   "qty_in": 7.0
+  },
+  "NK-SPECIAL SET": {
+   "avg_cost_sen": 66000,
+   "last_move": "2025-06-09",
+   "movements": 3,
+   "qty_in": 2.0
+  },
+  "NTYR-CL MX MICR PIL": {
+   "avg_cost_sen": 1827,
+   "last_move": "2026-09-08",
+   "movements": 103,
+   "qty_in": 620.0
+  },
+  "NTYR-CS LTX PIL + CSC": {
+   "avg_cost_sen": 3528,
+   "last_move": "2026-09-19",
+   "movements": 776,
+   "qty_in": 2756.0
+  },
+  "NTYR-ERGO LTX PIL": {
+   "avg_cost_sen": 2230,
+   "last_move": "2026-09-08",
+   "movements": 77,
+   "qty_in": 588.0
+  },
+  "NTYR-MEM FM CT PIL": {
+   "avg_cost_sen": 1744,
+   "last_move": "2026-09-08",
+   "movements": 747,
+   "qty_in": 2521.0
+  },
+  "NTYR-TECHGEL MEM PIL": {
+   "avg_cost_sen": 5079,
+   "last_move": "2026-08-07",
+   "movements": 23,
+   "qty_in": 530.0
+  },
+  "RC-COM": {
+   "avg_cost_sen": 32000,
+   "last_move": "2026-09-01",
+   "movements": 1,
+   "qty_in": 1.0
+  },
+  "RC-CUS": {
+   "avg_cost_sen": 9600,
+   "last_move": "2026-09-01",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "RDS-5152 SOFA": {
+   "avg_cost_sen": 791568,
+   "last_move": "2025-05-22",
+   "movements": 11,
+   "qty_in": 6.0
+  },
+  "RDS-5526 CONSOLE": {
+   "avg_cost_sen": 162315,
+   "last_move": "2024-07-12",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "RDS-5526 SOFA": {
+   "avg_cost_sen": 274824,
+   "last_move": "2026-07-29",
+   "movements": 161,
+   "qty_in": 85.0
+  },
+  "RDS-5527 SOFA": {
+   "avg_cost_sen": 238036,
+   "last_move": "2026-07-27",
+   "movements": 350,
+   "qty_in": 180.0
+  },
+  "RDS-558 HEADREST": {
+   "avg_cost_sen": 10789,
+   "last_move": "2026-01-31",
+   "movements": 37,
+   "qty_in": 52.0
+  },
+  "RDS-558 SOFA": {
+   "avg_cost_sen": 263617,
+   "last_move": "2026-01-31",
+   "movements": 75,
+   "qty_in": 52.0
+  },
+  "RDS-70153 SOFA": {
+   "avg_cost_sen": 164560,
+   "last_move": "2025-08-16",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "RDS-810 SOFA": {
+   "avg_cost_sen": 309825,
+   "last_move": "2025-03-22",
+   "movements": 12,
+   "qty_in": 6.0
+  },
+  "RDS-8133 SOFA": {
+   "avg_cost_sen": 212703,
+   "last_move": "2026-04-29",
+   "movements": 78,
+   "qty_in": 46.0
+  },
+  "RDS-822 SOFA": {
+   "avg_cost_sen": 272389,
+   "last_move": "2026-03-06",
+   "movements": 18,
+   "qty_in": 9.0
+  },
+  "RDS-822 SQUARE PILLOW": {
+   "avg_cost_sen": 2800,
+   "last_move": "2024-08-06",
+   "movements": 2,
+   "qty_in": 2.0
+  },
+  "RDS-823 HEADREST": {
+   "avg_cost_sen": 11560,
+   "last_move": "2025-08-28",
+   "movements": 4,
+   "qty_in": 4.0
+  },
+  "RDS-823 LONG PILLOW": {
+   "avg_cost_sen": 3182,
+   "last_move": "2025-08-06",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "RDS-823 SOFA": {
+   "avg_cost_sen": 84940,
+   "last_move": "2026-06-10",
+   "movements": 11,
+   "qty_in": 6.0
+  },
+  "RDS-HEADREST": {
+   "avg_cost_sen": 8000,
+   "last_move": "2025-03-22",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "RDS-HORSEROPE BOLSTER": {
+   "avg_cost_sen": 6418,
+   "last_move": "2025-08-06",
+   "movements": 7,
+   "qty_in": 11.0
+  },
+  "RDS-LONG PILLOW": {
+   "avg_cost_sen": 4123,
+   "last_move": "2025-01-16",
+   "movements": 9,
+   "qty_in": 7.0
+  },
+  "RDS-R819 SOFA": {
+   "avg_cost_sen": 144977,
+   "last_move": "2026-03-25",
+   "movements": 142,
+   "qty_in": 83.0
+  },
+  "RDS-SGABELLO": {
+   "avg_cost_sen": 17282,
+   "last_move": "2026-03-28",
+   "movements": 44,
+   "qty_in": 34.0
+  },
+  "RDS-SQUARE PILLOW": {
+   "avg_cost_sen": 3524,
+   "last_move": "2026-07-29",
+   "movements": 73,
+   "qty_in": 98.0
+  },
+  "RDS-STOOL": {
+   "avg_cost_sen": 22300,
+   "last_move": "2025-03-19",
+   "movements": 6,
+   "qty_in": 4.0
+  },
+  "SOFA-333 44": {
+   "avg_cost_sen": 96400,
+   "last_move": "2024-12-26",
+   "movements": 7,
+   "qty_in": 12.0
+  },
+  "SOFT PILLOW": {
+   "avg_cost_sen": 1187,
+   "last_move": "2026-08-29",
+   "movements": 173,
+   "qty_in": 862.0
+  },
+  "SVI-00830 SOFA": {
+   "avg_cost_sen": 190000,
+   "last_move": "2025-06-09",
+   "movements": 10,
+   "qty_in": 12.0
+  },
+  "SVI-00909 SOFA": {
+   "avg_cost_sen": 150000,
+   "last_move": "2025-02-05",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "SVI-00913 SOFA": {
+   "avg_cost_sen": 184235,
+   "last_move": "2025-03-01",
+   "movements": 31,
+   "qty_in": 17.0
+  },
+  "SVI-MD490 SOFA": {
+   "avg_cost_sen": 62500,
+   "last_move": "2025-08-06",
+   "movements": 4,
+   "qty_in": 2.0
+  },
+  "TD-5119 SOFA": {
+   "avg_cost_sen": 308800,
+   "last_move": "2026-09-02",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "TD-BS30 SOFA": {
+   "avg_cost_sen": 215333,
+   "last_move": "2025-10-15",
+   "movements": 12,
+   "qty_in": 6.0
+  },
+  "TD-SF5015A SOFA": {
+   "avg_cost_sen": 171600,
+   "last_move": "2025-08-21",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "TD-SF5071 SOFA": {
+   "avg_cost_sen": 155222,
+   "last_move": "2025-12-31",
+   "movements": 18,
+   "qty_in": 9.0
+  },
+  "TD-SF5080 SOFA": {
+   "avg_cost_sen": 132000,
+   "last_move": "2025-11-19",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "TD-SF5117A SOFA": {
+   "avg_cost_sen": 144133,
+   "last_move": "2025-12-23",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "THL-1068 STOOL": {
+   "avg_cost_sen": 17100,
+   "last_move": "2025-11-29",
+   "movements": 2,
+   "qty_in": 2.0
+  },
+  "THL-2376": {
+   "avg_cost_sen": 311600,
+   "last_move": "2026-04-28",
+   "movements": 13,
+   "qty_in": 7.0
+  },
+  "THL-2379": {
+   "avg_cost_sen": 133085,
+   "last_move": "2026-06-11",
+   "movements": 373,
+   "qty_in": 195.0
+  },
+  "THL-2391": {
+   "avg_cost_sen": 221508,
+   "last_move": "2026-05-11",
+   "movements": 10,
+   "qty_in": 6.0
+  },
+  "THL-5135": {
+   "avg_cost_sen": 299386,
+   "last_move": "2025-11-29",
+   "movements": 14,
+   "qty_in": 7.0
+  },
+  "THL-5142": {
+   "avg_cost_sen": 353600,
+   "last_move": "2026-04-28",
+   "movements": 7,
+   "qty_in": 4.0
+  },
+  "THL-5142 PILLOW": {
+   "avg_cost_sen": 6175,
+   "last_move": "2024-10-17",
+   "movements": 2,
+   "qty_in": 2.0
+  },
+  "THL-5150": {
+   "avg_cost_sen": 282804,
+   "last_move": "2025-12-23",
+   "movements": 25,
+   "qty_in": 13.0
+  },
+  "THL-7179": {
+   "avg_cost_sen": 186849,
+   "last_move": "2026-08-17",
+   "movements": 77,
+   "qty_in": 39.0
+  },
+  "THL-7218": {
+   "avg_cost_sen": 145000,
+   "last_move": "2025-01-16",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "THL-7219": {
+   "avg_cost_sen": 125788,
+   "last_move": "2026-04-28",
+   "movements": 42,
+   "qty_in": 25.0
+  },
+  "THL-7221": {
+   "avg_cost_sen": 399000,
+   "last_move": "2025-06-04",
+   "movements": 2,
+   "qty_in": 1.0
+  },
+  "THL-7223": {
+   "avg_cost_sen": 172681,
+   "last_move": "2026-04-29",
+   "movements": 24,
+   "qty_in": 13.0
+  },
+  "THL-7226": {
+   "avg_cost_sen": 185000,
+   "last_move": "2026-04-28",
+   "movements": 5,
+   "qty_in": 4.0
+  },
+  "THL-7233": {
+   "avg_cost_sen": 258872,
+   "last_move": "2026-08-17",
+   "movements": 30,
+   "qty_in": 16.0
+  },
+  "THL-POWER BANK INCLINER": {
+   "avg_cost_sen": 30000,
+   "last_move": "2025-01-27",
+   "movements": 4,
+   "qty_in": 3.0
+  },
+  "THL-SOFA PILLOW": {
+   "avg_cost_sen": 992,
+   "last_move": "2026-02-20",
+   "movements": 47,
+   "qty_in": 252.0
+  },
+  "THL-SQUARE PILLOW": {
+   "avg_cost_sen": 5527,
+   "last_move": "2025-12-29",
+   "movements": 30,
+   "qty_in": 35.0
+  },
+  "TNS-9838 SOFA": {
+   "avg_cost_sen": 184000,
+   "last_move": "2026-04-10",
+   "movements": 6,
+   "qty_in": 3.0
+  },
+  "TRANSPORTATION CHARGES": {
+   "avg_cost_sen": 25363,
+   "last_move": "2026-09-19",
+   "movements": 1090,
+   "qty_in": 12.0
+  }
+ },
+ "source": "AED_HOUZS StockDTL, movement-weighted average of positive-quantity rows"
+}

@@ -1,89 +1,97 @@
 #!/usr/bin/env node
 /* cost-zero-cutover-lots-2026-09-09 — give every zero-cost cutover stock lot a
- * unit cost, so a sales invoice raised against it carries a COGS.
+ * unit cost, taken from AutoCount, so a sales invoice raised against it carries
+ * a COGS.
  *
- * WHY IT MATTERS, in the owner's words (2026-09-09): 「Costing 一定要有，因为要
- * 不然的话，我开 SCM 就 capture 不到 COGS」 and 「最重要是有COGS」. Measured on
- * production the same day: 403 of the 10,336 units on hand (3.9%) carry
- * `unit_cost_sen = 0`, across 277 lots and 132 item codes, and EVERY ONE of them
- * arrived through `source_doc_type = 'AC_CUTOVER'` — the migration imported a
- * quantity and no cost. Sell one and the invoice books revenue against nothing.
+ * Owner, 2026-09-09: 「Costing 一定要有，因为要不然的话，我开 SCM 就 capture 不到
+ * COGS」. Measured on production the same day: 403 of the 10,336 units on hand
+ * (3.9%) carry `unit_cost_sen = 0`, across 277 lots and 132 item codes, and
+ * every one arrived through `source_doc_type = 'AC_CUTOVER'` — the migration
+ * imported a quantity and no cost.
  *
- * ── WHERE A COST CAN HONESTLY COME FROM ────────────────────────────────────
- * Two sources, in this order, and NOTHING is invented beyond them:
+ * ── THE SOURCE IS AUTOCOUNT, ON THE OWNER'S INSTRUCTION ────────────────────
+ * 「通过 AutoCount 的通道去查看整个计算 … 通过那边去提取，得到准确的 costing。
+ * 要不然我的 COGS 和开 Invoice 全部都不对了」.
  *
- *  1. THE ACCOUNT BOOK. AutoCount's `StockDTL.Cost` for that item code, averaged
- *     over its positive-quantity movements. Checked against the live book: 11 of
- *     the 132 codes (43 units) have one. This is the book's own number and it
- *     wins wherever it exists.
+ * `backend/scripts/data/ac-item-costs.json` is that extraction: the
+ * movement-weighted average cost of every item in the book's own stock ledger
+ * (`StockDTL`, positive-quantity rows only — those are the receipts that carry a
+ * cost). 911 items, exported over ZeroTier because THIS RUNNER CANNOT REACH THE
+ * BOOK: AutoCount is on the office LAN and a GitHub runner has no ZeroTier. The
+ * file is the same pattern as `data/ac-convert-edges.json.gz` and every other
+ * book snapshot in this directory.
  *
- *  2. A SOFA'S OWN PURCHASE PRICE, SPREAD ACROSS ITS COMPARTMENTS BY THE
- *     OWNER'S PRICE LIST. A sofa purchase order carries the WHOLE sofa's money
- *     on ONE compartment line and RM 0 on the rest — verified on the live data:
- *         HC-PO-008783  9058-1NA=0 | 9058-1A(RHF)=0 | 9058-CNR=0 | 9058-1NA=0 | 9058-2A(LHF)=4215
- *     so a naive "average purchase price per compartment code" reads the whole
- *     sofa as the price of one piece and overstates COGS several times over.
- *     That is the same shape of error as the FX-rate-read-as-a-discount that put
- *     RM 13,068 of fake discount on a purchase order, and it is why this script
- *     allocates instead of averaging.
+ * ── WHY OUR OWN PURCHASE ORDERS ARE THE WRONG SOURCE, MEASURED ─────────────
+ * The first version of this script derived the cost from our purchase orders and
+ * was wrong twice over. A sofa PO carries the WHOLE sofa's money on ONE
+ * compartment line and RM 0 on the rest — `HC-PO-008783` reads
+ * `9058-1NA=0 | 9058-1A(RHF)=0 | 9058-CNR=0 | 9058-1NA=0 | 9058-2A(LHF)=4215` —
+ * so averaging per compartment code reads a whole sofa as the price of one
+ * piece. And summing money and weight across ALL purchase orders came out **6x
+ * too low**, because the orders whose sofa carries no price contribute weight
+ * and no money. The book says a 9058 sofa costs RM 2,278; our POs implied
+ * RM 4,215. The book wins.
  *
- *     The owner's ruling, asked with the two options in front of him:
- *     「乙 你根据我们目前的价格的比例大概去算就行 / 最重要是有COGS」 — weight the
- *     split by compartment TYPE using our current price list, which is
- *     `scm.compartment_library.default_price` (2-seater 1990, 1-seater 1490,
- *     corner 1490, L 1490, 2NA 1490, 1NA 990, console 590, stool 490).
+ * ── HOW A SOFA COMPARTMENT IS PRICED ───────────────────────────────────────
+ * The book prices a SOFA; we hold COMPARTMENTS, because a sofa is one line there
+ * and one row per compartment here. So:
  *
- *     THE RATE IS COMPUTED PER PURCHASE ORDER, NOT OVER THE WHOLE MODEL. The
- *     first attempt summed every PO line's money over every PO line's weight and
- *     produced a rate 6x too low, because the purchase orders whose sofa carries
- *     no price at all contribute weight and no money. Per-order rates, then the
- *     MEDIAN per model, is what makes a five-piece RM 4,215 sofa price a
- *     1-seater at ~RM 760-900 instead of ~RM 158.
+ *     compartment cost = book's whole-sofa cost
+ *                        ÷ that model's TYPICAL BUILD WEIGHT
+ *                        × this compartment's weight
  *
- *     Two models have exactly ONE priced purchase order, so their "median" is
- *     that one sample: 9050 reads low (RM 259 for a 1-seater) and 5526 high
- *     (RM 1,439). Put to the owner, he chose to use them as computed —
- *     「照算」 — because a rough COGS beats none.
+ *   · the weight is `scm.compartment_library.default_price` — the owner's own
+ *     price list, read at run time, never hardcoded. Owner: 「乙 你根据我们目前的
+ *     价格的比例大概去算就行」.
+ *   · the TYPICAL BUILD WEIGHT is measured from real sales, not invented: our
+ *     sales-order compartment rows grouped by `linked_ac_dtlkey` — one book line
+ *     IS one sofa — then the median total weight per model. Measured: 8030 over
+ *     120 real sofas is 3,480; 9058 over 92 is 4,965.
+ *   · so the pieces of one typical sofa sum back to the book's cost for that
+ *     sofa. The books balance rather than being made to look balanced.
  *
- * ── WHAT IS DELIBERATELY LEFT AT ZERO ──────────────────────────────────────
- * Whatever neither source can answer: models with no priced purchase order at
- * all (8051, 5535, 2379, 7226, 8069, 5527), the `-1S` / `-2S` whole-sofa codes
- * that are not a compartment and have no entry in the price list, and non-sofa
- * items the book has never costed. Roughly 209 units. Inventing a number for
- * those would put a figure in the accounts that nothing supports; they stay 0
- * and are REPORTED, so the gap is visible rather than papered over.
+ * Worked, from the live data: 9058 = RM 2,278.00 / 4,965 x 1490 = RM 683.60 for
+ * a 1-seater; 8030 = RM 1,877.68 / 3,480 x 1490 = RM 803.90.
  *
- * ── WHAT THIS CHANGES, SAID PLAINLY ────────────────────────────────────────
- * It RAISES inventory value: ~151 sofa-compartment units gain about RM 121,000
- * between them, plus the book-costed units. That is the point — those units are
- * currently carried at nothing. It writes ONE column, `unit_cost_sen`, on lots
- * whose current value is 0, so no existing cost is overwritten and no already
- * costed lot moves. It posts no journal entry and touches no movement.
+ * ── WHAT STAYS AT ZERO, AND IS REPORTED RATHER THAN GUESSED ────────────────
+ * Items the book has never costed, sofa models with no book item at all (1025,
+ * 2376, 2379, 2391, 5142, 5150, 7179, 7219, 7226, 7233), and the `-1S` / `-2S`
+ * whole-sofa codes, which are not a compartment and have no weight. Owner:
+ * 「如果没有 variant，那就算了」 — the same applies to a cost nothing supports.
+ * Inventing one would put a figure in the accounts that no document backs.
+ *
+ * ── WHAT THIS CHANGES ──────────────────────────────────────────────────────
+ * It RAISES inventory value — those units are currently carried at nothing,
+ * which is the whole problem. It writes ONE column, `unit_cost_sen`, only on
+ * lots whose value is currently 0, so nothing already costed moves. No journal
+ * entry, no stock movement, no quantity.
  *
  * SAFETY (release discipline, CLAUDE.md):
- *   MODE=plan|apply   default PLAN, printing every lot and the totals.
+ *   MODE=plan|apply   default PLAN, printing every item code and the totals.
  *   CONFIRM=<phrase>  required on apply, refused with a non-zero exit.
- *   Every UPDATE carries `coalesce(unit_cost_sen,0) = 0`, so a lot somebody has
- *   costed since this was measured is skipped, never overwritten.
+ *   Every UPDATE carries `coalesce(unit_cost_sen,0) = 0`, so a lot costed since
+ *   this was measured is skipped, never overwritten.
  *   Verification re-reads on a FRESH connection and asserts the SHAPE: no lot
- *   this run costed is still zero, no cost is negative, the count of already
- *   costed lots is unchanged, and the total value rise equals what the plan said.
+ *   this run costed is still zero, no negative cost exists anywhere, the lot
+ *   count is unchanged, and the costed count rose by exactly what was written.
+ *   A row count alone would pass on a run that costed the wrong lots.
  *
- * RE-RUN: idempotent. A second run finds those lots costed and reports 0.
+ * RE-RUN: idempotent — a second run finds them costed and reports 0.
  *
  * Env:  DATABASE_URL (required)   MODE=plan|apply   CONFIRM (on apply)
- *
- * Usage:
- *   DATABASE_URL=... node backend/scripts/cost-zero-cutover-lots-2026-09-09.mjs
- *   DATABASE_URL=... MODE=apply CONFIRM='cost zero cutover lots 2026-09-09' \
- *     node backend/scripts/cost-zero-cutover-lots-2026-09-09.mjs
+ *       COMPANY_ID (default 1)
  */
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
 
 const MODE = (process.env.MODE ?? 'plan').toLowerCase();
 const CONFIRM_PHRASE = 'cost zero cutover lots 2026-09-09';
 const APPLY = MODE === 'apply';
-const CO = 1;
+const CO = Number(process.env.COMPANY_ID || 1);
+const here = path.dirname(fileURLToPath(import.meta.url));
+const SNAP = path.join(here, 'data', 'ac-item-costs.json');
 
 if (!process.env.DATABASE_URL) {
   console.error('DATABASE_URL is required.');
@@ -93,103 +101,146 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
   console.error(`MODE=apply requires CONFIRM='${CONFIRM_PHRASE}'.`);
   process.exit(2);
 }
+if (!fs.existsSync(SNAP)) {
+  console.error(`REFUSED: ${SNAP} is missing. It is the AutoCount extraction and `
+    + 'this runner cannot reach the book itself. Nothing was written.');
+  process.exit(1);
+}
+const snap = JSON.parse(fs.readFileSync(SNAP, 'utf8'));
+const bookCost = new Map(Object.entries(snap.items).map(([k, v]) => [k.trim().toUpperCase(), v]));
 
 const sql = postgres(process.env.DATABASE_URL, { max: 1, prepare: false });
 
-/** The owner's own price list decides the weight. Read, never hardcoded. */
-function weightFor(code, lib) {
+/** compartment token -> the owner's price-list weight. */
+function weightOf(code, lib) {
   const comp = (code.includes('-') ? code.slice(code.indexOf('-') + 1) : code).toUpperCase();
-  const pick = (re) => lib.find((r) => re.test(r.label.toUpperCase()));
-  if (/^2A|^2B/.test(comp)) return pick(/^2A/)?.price ?? null;
-  if (/^2NA/.test(comp)) return pick(/2NA/)?.price ?? null;
-  if (/^1NA/.test(comp)) return pick(/1NA/)?.price ?? null;
-  if (/^1A|^1B/.test(comp)) return pick(/^1A/)?.price ?? null;
-  if (/^CNR|CORNER/.test(comp)) return pick(/CORNER/)?.price ?? null;
-  if (/^L\b|^L\(/.test(comp)) return pick(/^L /)?.price ?? null;
-  if (/CONSOLE/.test(comp)) return pick(/CONSOLE/)?.price ?? null;
-  if (/STOOL|OTTOMAN/.test(comp)) return pick(/STOOL|OTTOMAN/)?.price ?? null;
+  const by = (re) => lib.find((r) => re.test(r.label.toUpperCase()))?.price ?? null;
+  if (/^2NA/.test(comp)) return by(/2NA/);
+  if (/^1NA/.test(comp)) return by(/1NA/);
+  if (/^2A|^2B/.test(comp)) return by(/^2A/);
+  if (/^1A|^1B/.test(comp)) return by(/^1A/);
+  if (/^CNR|CORNER/.test(comp)) return by(/CORNER/);
+  if (/CONSOLE/.test(comp)) return by(/CONSOLE/);
+  if (/STOOL|OTTOMAN/.test(comp)) return by(/STOOL|OTTOMAN/);
+  if (/^L[\s(-]|^L$/.test(comp)) return by(/^L /);
   return null;
 }
 
 const median = (xs) => {
   const s = [...xs].sort((a, b) => a - b);
-  const n = s.length;
-  return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+  return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
 };
 
 try {
-  console.log(`MODE=${MODE}`);
+  console.log(`MODE=${MODE}  company ${CO}`);
+  console.log(`AutoCount extraction: ${Object.keys(snap.items).length} item(s), exported ${snap.exported_at}`);
 
-  const libRows = await sql`
+  const lib = (await sql`
     SELECT label, default_price::int AS price FROM scm.compartment_library
-     WHERE company_id = ${CO} AND coalesce(default_price,0) > 0`;
-  const lib = libRows.map((r) => ({ label: r.label, price: r.price }));
-  console.log(`price list: ${lib.length} compartment types`);
+     WHERE company_id = ${CO} AND coalesce(default_price,0) > 0`)
+    .map((r) => ({ label: r.label, price: r.price }));
+  console.log(`price list: ${lib.length} compartment type(s)`);
 
-  const poLines = await sql`
-    SELECT ph.po_number, split_part(p.item_code,'-',1) AS model, p.item_code,
-           p.qty::numeric AS qty, coalesce(p.unit_price_sen,0)::bigint AS price_sen
+  /* THIRD SOURCE, non-sofa only: what we actually paid.
+     The owner approved it (2026-09-09) once the book's own coverage was shown to
+     stop at 223 of 403 units. A MATTRESS purchase order prices one line per
+     mattress, so its unit price is a real per-unit cost and carries none of the
+     sofa trap this file's header describes — a sofa's whole price sits on ONE
+     compartment line, which is why sofas are excluded here and priced from the
+     book instead. Weighted by quantity over PRICED lines only, so an unpriced
+     line cannot drag the average down. */
+  const poPrice = new Map();
+  for (const r of await sql`
+    SELECT p.item_code,
+           sum(p.qty * p.unit_price_sen)::numeric AS value_sen,
+           sum(p.qty)::numeric AS qty
       FROM scm.purchase_order_items p
       JOIN scm.purchase_orders ph ON ph.id = p.purchase_order_id
      WHERE ph.company_id = ${CO} AND ph.status NOT IN ('CANCELLED','DRAFT')
-       AND p.item_code ~ '^[0-9]{4}-'`;
+       AND coalesce(p.unit_price_sen,0) > 0 AND p.qty > 0
+       AND p.item_code !~ '^[0-9]{4}-'
+     GROUP BY p.item_code`) {
+    const q = Number(r.qty);
+    if (q > 0) poPrice.set(r.item_code.trim().toUpperCase(), Math.round(Number(r.value_sen) / q));
+  }
+  console.log(`our purchase history: ${poPrice.size} non-sofa item(s) with a real unit price`);
 
-  const perPo = new Map();
-  for (const l of poLines) {
-    const w = weightFor(l.item_code, lib);
-    if (w == null) continue;
-    const k = `${l.po_number}|${l.model}`;
-    const d = perPo.get(k) ?? { money: 0, wt: 0, model: l.model };
-    d.money += Number(l.price_sen);
-    d.wt += w * Number(l.qty);
-    perPo.set(k, d);
+  /* TYPICAL BUILD WEIGHT, from real sales. One book line IS one sofa. */
+  const soRows = await sql`
+    SELECT i.linked_ac_dtlkey::text AS key, split_part(i.item_code,'-',1) AS model,
+           i.item_code, i.qty::numeric AS qty
+      FROM scm.mfg_sales_order_items i
+      JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+     WHERE h.company_id = ${CO} AND i.linked_ac_dtlkey IS NOT NULL
+       AND i.item_code ~ '^[0-9]{4}-' AND coalesce(i.cancelled,false) = false`;
+  const perSofa = new Map();
+  for (const r of soRows) {
+    const w = weightOf(r.item_code, lib);
+    if (!w) continue;
+    const k = `${r.key}|${r.model}`;
+    perSofa.set(k, (perSofa.get(k) ?? 0) + w * Number(r.qty));
   }
-  const rates = new Map();
-  for (const d of perPo.values()) {
-    if (d.money > 0 && d.wt > 0) {
-      if (!rates.has(d.model)) rates.set(d.model, []);
-      rates.get(d.model).push(d.money / d.wt);
-    }
+  const builds = new Map();
+  for (const [k, wsum] of perSofa) {
+    const model = k.slice(k.indexOf('|') + 1);
+    if (!builds.has(model)) builds.set(model, []);
+    builds.get(model).push(wsum);
   }
-  const rate = new Map([...rates].map(([m, v]) => [m, median(v)]));
-  console.log('\n=== per-model rate (sen per weight point), from PRICED purchase orders ===');
-  for (const [m, r] of [...rate].sort()) {
-    console.log(`  ${m}  ${String(rates.get(m).length).padStart(2)} priced PO(s)`
-      + `  rate ${r.toFixed(4)}  -> a 1-seater costs RM ${((r * 1490) / 100).toFixed(2)}`
-      + (rates.get(m).length === 1 ? '   [ONE SAMPLE — owner said use it]' : ''));
-  }
+  const buildWeight = new Map([...builds].map(([m, v]) => [m, median(v)]));
 
-  const book = await sql`
-    SELECT item_code, cost_sen FROM scm.ac_item_cost_hint
-     WHERE company_id = ${CO}`.catch(() => []);
-  const bookCost = new Map(book.map((r) => [r.item_code, Number(r.cost_sen)]));
+  /* model -> the book's sofa items carrying that model number */
+  const modelCost = new Map();
+  for (const m of buildWeight.keys()) {
+    const hits = [...bookCost.entries()].filter(([k]) => k.includes('SOFA') && k.includes(m));
+    if (!hits.length) continue;
+    const q = hits.reduce((a, [, v]) => a + v.qty_in, 0);
+    const c = hits.reduce((a, [, v]) => a + v.qty_in * v.avg_cost_sen, 0) / q;
+    modelCost.set(m, { sen: c, items: hits.map(([k]) => k) });
+  }
+  console.log('\n=== per-model rate, from the book ===');
+  for (const [m, mc] of [...modelCost].sort()) {
+    const bw = buildWeight.get(m);
+    console.log(`  ${m}  book RM ${(mc.sen / 100).toFixed(2).padStart(9)}`
+      + `  / build ${String(bw).padStart(5)}  -> 1-seater RM ${((mc.sen / bw) * 1490 / 100).toFixed(2)}`
+      + `   [${mc.items.join(', ')}]`);
+  }
 
   const lots = await sql`
     SELECT id, item_code, qty_remaining::numeric AS qty
       FROM scm.inventory_lots
-     WHERE company_id = ${CO} AND qty_remaining > 0
-       AND coalesce(unit_cost_sen,0) = 0
+     WHERE company_id = ${CO} AND qty_remaining > 0 AND coalesce(unit_cost_sen,0) = 0
      ORDER BY item_code`;
 
   const plan = [];
-  const skipped = new Map();
+  const left = new Map();
   for (const l of lots) {
+    const up = l.item_code.trim().toUpperCase();
     let sen = null;
     let why = null;
-    if (bookCost.has(l.item_code)) {
-      sen = bookCost.get(l.item_code);
-      why = 'book';
+    if (bookCost.has(up)) {
+      sen = bookCost.get(up).avg_cost_sen;
+      why = 'book item cost';
     } else if (/^[0-9]{4}-/.test(l.item_code)) {
-      const model = l.item_code.slice(0, l.item_code.indexOf('-'));
-      const w = weightFor(l.item_code, lib);
-      if (rate.has(model) && w != null) {
-        sen = Math.round(rate.get(model) * w);
-        why = 'sofa-weighted';
+      const m = l.item_code.slice(0, l.item_code.indexOf('-'));
+      const w = weightOf(l.item_code, lib);
+      const mc = modelCost.get(m);
+      const bw = buildWeight.get(m);
+      if (mc && w && bw) {
+        sen = Math.round((mc.sen / bw) * w);
+        why = 'sofa share of the book cost';
       }
     }
-    if (sen == null || sen <= 0) {
-      const key = /^[0-9]{4}-/.test(l.item_code) ? 'sofa, no priced PO or no weight' : 'not a sofa, book has no cost';
-      skipped.set(key, (skipped.get(key) ?? 0) + Number(l.qty));
+    if ((!sen || sen <= 0) && !/^[0-9]{4}-/.test(l.item_code) && poPrice.has(up)) {
+      sen = poPrice.get(up);
+      why = 'what we paid (purchase order)';
+    }
+    if (!sen || sen <= 0) {
+      const k = /^[0-9]{4}-/.test(l.item_code)
+        ? 'sofa: the book has no cost for this model, or the piece has no weight'
+        : 'not a sofa: neither the book nor our own purchase history has a price';
+      const d = left.get(k) ?? { units: 0, codes: new Set() };
+      d.units += Number(l.qty); d.codes.add(l.item_code);
+      left.set(k, d);
       continue;
     }
     plan.push({ id: l.id, code: l.item_code, qty: Number(l.qty), sen, why });
@@ -197,20 +248,23 @@ try {
 
   const byCode = new Map();
   for (const p of plan) {
-    const d = byCode.get(p.code) ?? { units: 0, sen: p.sen, why: p.why, lots: 0 };
-    d.units += p.qty; d.lots += 1;
+    const d = byCode.get(p.code) ?? { units: 0, sen: p.sen, why: p.why };
+    d.units += p.qty;
     byCode.set(p.code, d);
   }
   console.log('\n=== WOULD COST ===');
   for (const [code, d] of [...byCode].sort((a, b) => b[1].units - a[1].units)) {
-    console.log(`  ${code.padEnd(22)} ${String(d.units).padStart(4)} unit(s)`
+    console.log(`  ${code.padEnd(24)} ${String(d.units).padStart(4)} unit(s)`
       + `  RM ${(d.sen / 100).toFixed(2).padStart(9)} each  [${d.why}]`);
   }
-  const totalUnits = plan.reduce((a, p) => a + p.qty, 0);
-  const totalValue = plan.reduce((a, p) => a + p.qty * p.sen, 0);
-  console.log(`\n  ${plan.length} lot(s), ${totalUnits} unit(s), inventory value +RM ${(totalValue / 100).toFixed(2)}`);
-  console.log('  LEFT AT ZERO on purpose:');
-  for (const [k, u] of skipped) console.log(`    ${String(u).padStart(4)} unit(s) — ${k}`);
+  const units = plan.reduce((a, p) => a + p.qty, 0);
+  const value = plan.reduce((a, p) => a + p.qty * p.sen, 0);
+  console.log(`\n  ${plan.length} lot(s), ${units} unit(s), inventory value +RM ${(value / 100).toFixed(2)}`);
+  console.log('\n  LEFT AT ZERO, reported not guessed:');
+  for (const [k, d] of left) {
+    console.log(`    ${String(d.units).padStart(4)} unit(s), ${d.codes.size} code(s) — ${k}`);
+    console.log(`        ${[...d.codes].slice(0, 10).join(', ')}${d.codes.size > 10 ? ' …' : ''}`);
+  }
 
   if (!APPLY) {
     console.log('\nPLAN ONLY — nothing was written.');
@@ -241,30 +295,30 @@ try {
            count(*)::int AS lots,
            coalesce(sum(qty_remaining * coalesce(unit_cost_sen,0)),0)::bigint AS value_sen
       FROM scm.inventory_lots WHERE company_id = ${CO} AND qty_remaining > 0`;
-  const stillZero = await check`
+  const [stillZero] = await check`
     SELECT count(*)::int AS n FROM scm.inventory_lots
      WHERE id = ANY(${plan.map((p) => p.id)}) AND coalesce(unit_cost_sen,0) = 0`;
   await check.end();
 
-  console.log('\n=== VERIFY (fresh connection) ===');
   const ok = {
-    'no lot this run costed is still zero': stillZero[0].n === 0,
+    'no lot this run costed is still zero': stillZero.n === 0,
     'no negative cost anywhere': after.negative === 0,
     'lot count unchanged': after.lots === before.lots,
     'costed lots rose by exactly what was written': after.costed === before.costed + wrote,
   };
+  console.log('\n=== VERIFY (fresh connection) ===');
   let bad = 0;
   for (const [k, v] of Object.entries(ok)) {
     if (!v) bad += 1;
     console.log(`  ${v ? 'OK   ' : 'WRONG'} ${k}`);
   }
-  console.log(`  inventory value now RM ${(Number(after.value_sen) / 100).toFixed(2)}`);
   console.log(`  costed lots ${before.costed} -> ${after.costed} of ${after.lots}`);
+  console.log(`  inventory value now RM ${(Number(after.value_sen) / 100).toFixed(2)}`);
   if (bad) {
     console.error('VERIFY FAILED.');
     process.exit(1);
   }
-  console.log('VERIFY OK — every unit this run could price now carries a COGS.');
+  console.log('VERIFY OK — every unit the book could price now carries a COGS.');
 } catch (e) {
   console.error(e);
   try { await sql.end(); } catch { /* already closed */ }

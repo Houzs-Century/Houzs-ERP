@@ -6,6 +6,35 @@ COGS」, then 「你尽量把所有的东西都补齐吧，Costing、Variants �
 整个计算 … 通过那边去提取，得到准确的 costing」 and 「确保 Variant 是根据我们的写法，
 在我们的系统写的」.
 
+> ## CORRECTED 2026-09-09, BEFORE ANYTHING WAS APPLIED — READ THIS FIRST
+>
+> Everything below describes costing from a **movement-weighted AVERAGE** of the
+> book's stock ledger. **That is wrong and nothing was written with it.** The
+> owner caught it in one line: 「不是跟着FIFO的嘛？」
+>
+> This ERP is FIFO. The Stock Breakdown screen says so itself — "STOCK LOTS
+> (OLDEST FIRST — CONSUMED FIRST ON THE NEXT DO)" and "COGS — FIFO
+> CONSUMPTIONS" — and each lot carries its own `unit_cost_sen`. Writing one
+> blended number onto every lot flattens the layers: you sell the old cheap
+> stock and the system books the expensive cost, and the margin is wrong.
+>
+> **The costs genuinely vary, so this is not a rounding argument.** Measured on
+> the live book, `AMN-SF9058 SOFA` was received at RM 1,210 (2026-08-13),
+> RM 1,710 (08-19) and RM 3,040 (08-26) — a 2.5x spread on one model in two
+> weeks. Across all its layers: 42 distinct costs, RM 0 to RM 4,215.
+> `DSL-8030 SOFA` has 81 distinct costs across 289 layers. The average of
+> RM 2,278 matches no actual receipt.
+>
+> **The right source is `FIFOCost`** — 74,187 layers over 73,415 movements,
+> joined to `StockDTL` for the item code. A `GR` row is a receipt carrying its
+> own cost; a `DO` row is an issue with a negative quantity. What a cutover lot
+> should inherit is the cost of the layers still OPEN, in FIFO order — not a
+> lifetime average.
+>
+> The sofa allocation below (whole-sofa cost, split by the owner's price-list
+> weight over the model's real build weight) stays exactly as it is. Only the
+> number being split changes: the OPEN LAYER's cost, not the average.
+
 ## What is measured (production, read-only DSN, 2026-09-09)
 
 `scm.inventory_lots`, company 1, `qty_remaining > 0` — **1,560 lots, 10,336 units**.
