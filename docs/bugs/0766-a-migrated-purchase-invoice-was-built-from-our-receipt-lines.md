@@ -112,6 +112,25 @@ column for one — so the book's amount is still what `line_total_sen` carries a
 only the arithmetic between the other two columns falls 2 sen short. It is
 counted and printed, not hidden.
 
+**What it produces on production, dry run 34365807410 (read-only, 2026-09-09).**
+473 migrated goods receipts; 412 with something left to invoice, carrying 657
+lines. **506 of 657 carry the book's line key** — 459 distinct book receipt
+lines, the gap being sofa compartments that share one. The book's invoices bill
+**362** of those 459. The run would write **141 invoices** made of **362 lines,
+every one copied from PIDTL**, of which 31 stand for several of our rows and
+carry no single `grn_item_id`. Refused: 72 receipts where NO row carries a book
+line key, 61 with nothing left to invoice, 57 the book's invoices bill none of.
+No invoice was created; the apply is the owner's.
+
+Before this change the same run planned 159 invoices — but from our own receipt
+rows, whose line amounts were not required to be the book's. The 18 difference
+is receipts whose rows carry no book line key, and those are **not waiting on
+the line-key backfill**: it ran to exhaustion on this same book cut
+(run 34355496796, APPLY, 2026-09-09 13:11Z, "0 to stamp ... 576 already keyed;
+73 NOT stamped") and REFUSED them — two lines of one item it cannot tell apart,
+an uneven sofa fold, or an item the book has no matching line for. Recovering
+them is an owner decision, not a re-run.
+
 **A note that is not about invoices.** `scm.write_freeze` is enforced in the HTTP
 layer (`backend/src/scm/index.ts`). This script opens Postgres directly and never
 reads it, so freezing the module does not gate this run — restated from

@@ -586,8 +586,19 @@ Three surface changes follow, and they are the ones to know before reading a run
 |---|---|
 | `ambiguous_autocount_invoices` can no longer arise on the purchase path | the book's LINE states which invoice it is on, so a receipt billed across several invoices is SPLIT into one ERP invoice per book invoice instead of refused. `src/scm/lib/migrated-chain.ts` still carries the rule for any other caller |
 | a new refusal, `book_invoice_bills_none_of_our_lines` | decided in the converter, not the planner: the receipt exists in the book but none of OUR lines appears on any of its invoices |
-| a new refusal, `no_book_line_key_on_our_receipt` | not one row of the receipt carries `linked_ac_dtlkey`, so nothing on it can be read against the book. Run the line-key backfill and re-run |
+| a new refusal, `no_book_line_key_on_our_receipt` | not one row of the receipt carries `linked_ac_dtlkey`, so nothing on it can be read against the book. **Not waiting on the backfill** — that ran to exhaustion on the same book cut (run 34355496796, APPLY, "0 to stamp ... 576 already keyed; 73 NOT stamped") and REFUSED these: two lines of one item it cannot tell apart, an uneven sofa fold, or an item the book has no matching line for |
 | a FOREIGN-currency purchase invoice is refused | the book states a line in MYR and in the document's currency, and the migrated purchase order was written with a hard-coded MYR — mixing them books an exchange rate as a discount (`docs/bugs/0665`). 20 of 5,283 are foreign; none in scope today |
+
+**What it produces, measured — prod dry run 34365807410, read-only, 2026-09-09.**
+Of 473 migrated goods receipts, 412 had something left to invoice and carried
+657 lines. **506 of those 657 carry the book's line key** (459 distinct book
+receipt lines; the gap is sofa compartments sharing one), the book's invoices
+bill **362** of those 459, and the run would write **141 invoices** made of
+**362 lines, every one copied from PIDTL**. 31 of the 362 stand for several of
+our rows (a sofa) and carry no single `grn_item_id`. Refused: 72 receipts where
+no row carries a book line key, 61 with nothing left to invoice, 57 the book's
+invoices bill none of. Before this change the same run wrote 159 invoices from
+our own receipt rows, whose line amounts were not the book's.
 
 The purchase half no longer opens `ac-invoice-refs.json.gz` at all — invoice,
 lines, date and cancellation all come from `ac-reconcile-truth.json.gz`, so one

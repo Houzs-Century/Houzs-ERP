@@ -494,8 +494,15 @@ function reportBookLines({ stats, noKeyExamples, unbilledExamples, splitExamples
   for (const e of noKeyExamples) log(`     ${e}`);
   if (stats.ourLinesNoKey > noKeyExamples.length) log(`     ... and ${stats.ourLinesNoKey - noKeyExamples.length} more`);
   if (stats.ourLinesNoKey) {
-    log("     REMEDY: run backfill-ac-downstream-line-keys.mjs (workflow: Backfill AutoCount line keys) "
-      + "and re-run this. UNTESTED here — this run did not execute it.");
+    /* NOT "re-run the backfill". It has already been run to exhaustion —
+       run 34355496796, APPLY, 2026-09-09 13:11Z, against this same book cut:
+       "0 to stamp ... 576 already keyed; 73 NOT stamped". Telling anyone that
+       running it again would recover these lines would be a remedy claim with
+       no run behind it, and its own log refutes it. */
+    log("     These are NOT waiting on the line-key backfill: it ran to exhaustion on this same book cut "
+      + "(run 34355496796, APPLY) and reported 0 left to stamp. It REFUSED these — two lines of one item it "
+      + "cannot tell apart, an uneven sofa fold, or an item the book has no matching line for. Recovering "
+      + "them is an owner decision, not a re-run.");
   }
   log(`  book receipt lines of ours the book's invoices bill: ${stats.keysBilled} of ${stats.keys}`);
   for (const e of unbilledExamples) log(`     ${e}`);
