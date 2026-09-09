@@ -52,6 +52,7 @@ export const CORRECTION_FILES = [
   "sofa-compartment-corrections-2026-09.json",
   "sofa-compartment-corrections-book-aligned.json",
   "sofa-compartment-corrections-drawings.json",
+  "sofa-compartment-corrections-purchase-side.json",
 ];
 
 /**
