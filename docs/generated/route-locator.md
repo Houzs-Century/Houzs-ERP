@@ -1023,14 +1023,14 @@ Total: 1226 route registrations across 158 files.
 - L1119  PATCH  /:id/post
 
 ## backend/src/scm/routes/warehouse.ts  (8)
-- L89  GET    /
-- L283  POST   /racks
-- L286  PATCH  /racks/:id
-- L316  DELETE /racks/:id
-- L336  POST   /stock-in
-- L403  POST   /stock-out
-- L465  POST   /transfer
-- L566  GET    /movements
+- L90  GET    /
+- L296  POST   /racks
+- L299  PATCH  /racks/:id
+- L329  DELETE /racks/:id
+- L349  POST   /stock-in
+- L416  POST   /stock-out
+- L478  POST   /transfer
+- L579  GET    /movements
 
 ## backend/src/scm/routes/delivery-planning-regions.ts  (7)
 - L79  GET    /

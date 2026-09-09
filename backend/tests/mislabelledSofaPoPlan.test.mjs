@@ -119,6 +119,31 @@ describe('the refusals — every one a stop, never a fallback', () => {
     expect(p.kind).toBe('expand');
     expect(p.target.map((t) => t.code)).toEqual(['8030-2A(LHF)', '8030-1A(RHF)']);
   });
+  /* THE OWNER'S RULE, per document. HC-PO-009587's purchase text decodes to a
+     two-piece build where HC-SO-010209 holds three; shown the drawing he said
+     the sales order is right. followSalesOrder carries that and says so. */
+  test('followSalesOrder takes the sales order when the two texts disagree', () => {
+    const p = planMislabelledBuild(base({
+      decoded: decoded(['2A(LHF)', 'L(RHF)']), followSalesOrder: true,
+    }));
+    expect(p.kind).toBe('expand');
+    expect(p.target.map((t) => t.code)).toEqual(['8030-2A(LHF)', '8030-1A(RHF)']);
+    expect(p.overrode).toMatch(/taking .* FOLLOW_SALES_ORDER=1/);
+  });
+  test('...and SILENCE still refuses the disagreement', () => {
+    const p = planMislabelledBuild(base({ decoded: decoded(['2A(LHF)', 'L(RHF)']) }));
+    expect(p.kind).toBe('refuse');
+    expect(p.why).toMatch(/decodes to/);
+  });
+  test('an AGREEING pair never reports an override', () => {
+    expect(planMislabelledBuild(base({ followSalesOrder: true })).overrode).toBe(null);
+  });
+  test('followSalesOrder opens NO other gate', () => {
+    const p = planMislabelledBuild(base({ followSalesOrder: true, doLines: 2 }));
+    expect(p.kind).toBe('refuse');
+    expect(p.why).toMatch(/delivery-order/);
+  });
+
   test('allowDelivered opens NO other gate', () => {
     const p = planMislabelledBuild(base({ doLines: 2, allowDelivered: true, so: so({ cancelled: true }) }));
     expect(p.kind).toBe('refuse');
