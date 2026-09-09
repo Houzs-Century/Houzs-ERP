@@ -901,6 +901,56 @@
         "926847"
       ],
       "why": "LIKELY, and the reason is named rather than smoothed over. Photo SO-013497__926847_1.jpg, enlarged 4x and then the run cropped and enlarged 10x: the model 9058 is written above, TV to the upper left. The bottom run reads left to right as a box hatched inside its LEFT edge, two plain boxes, and then a piece whose left side sweeps up in a rounded curve into a section drawn much deeper than the seats and closed by a vertical at the far right - a chaise running out at the right-hand end of the row. WHAT MAKES IT LIKELY: a FIFTH element is drawn detached ABOVE the run, a single box hatched along its TOP edge, and whether it belongs to this sofa or is a separate chair in the room cannot be decided from the crop. HC-SO-012729's slip proves detached pieces DO belong on these slips - but there they are joined by written + signs, and here there are none. If that box is a piece, this build is short by one and the entry is a one-line edit. The rounded sweep is read as the chaise rather than as a corner because the owner's confirmed corner (HC-SO-012729) is drawn as a SEPARATE quarter-round outline, not as a curve inside a larger one, and because a corner with nothing after it is not an elbow. NO NUMBER IS WRITTEN IN ANY BOX - the stored crop cuts the sizes off - so the seat of 30 is the ACCOUNT BOOK's own \"Col : HR805-90 30 inch\", never the drawing's."
+    },
+    {
+      "docs": [
+        "HC-PO-000254",
+        "HC-GR-000287"
+      ],
+      "model": "5526",
+      "pieces": [
+        "L(LHF)",
+        "1NA",
+        "2A(RHF)"
+      ],
+      "seat": "28",
+      "desc2Match": "(1 ELT",
+      "confidence": "owner",
+      "why": "OWNER 2026-09-09, answering the returned spreadsheet: 「L（LHF）+1NA+2AR」. AutoCount holds NO drawing for this line at all (FurtherDescription is 0 bytes on DtlKey 59343) - the only source is the book's own text '( 1 ELT / T + NA + 2ER ) (28\")', whose 'T' decodes to nothing this repo knows. He was asked and answered. NOTHING IS BEING CHANGED BY THIS ENTRY: the ERP already holds L(LHF)+2A(RHF)+1NA, which is his answer as a MULTISET - only the row order differs, and order is not part of a build. It is recorded so lib/sofa-rulings.mjs can feed it to the reconcile, which then reads RULED instead of parking the document in CANNOT BE COMPARED run after run and handing him back work he has already done."
+    },
+    {
+      "docs": [
+        "HC-PO-009881",
+        "HC-GR-005306"
+      ],
+      "model": "9058",
+      "pieces": [
+        "1A(LHF)",
+        "1NA",
+        "CNR",
+        "1NA",
+        "1A(RHF)"
+      ],
+      "seat": "30",
+      "desc2Match": "wrap bottom to Nilon",
+      "confidence": "owner",
+      "why": "OWNER 2026-09-09, confirming the reading sent to him with the photograph (PO-009881__896791_1.jpg, DtlKey 896791). The plan is L-shaped: along the top, a hatched arm block on the far LEFT then two boxes, then the corner; down the right leg, one box then a box with a hatched arm block BELOW it. Read under the mirror rule (sofa-handedness-is-mirrored): the far end of the vertical leg is drawn on the right and is therefore the LEFT-hand piece, and the build is written drawing-right to drawing-left. The ERP held only 1A(LHF) - one piece of five."
+    },
+    {
+      "docs": [
+        "HC-SO-013312",
+        "HC-PO-010041"
+      ],
+      "model": "5536",
+      "pieces": [
+        "L(LHF)",
+        "1NA",
+        "1A(RHF)"
+      ],
+      "seat": "32",
+      "desc2Match": "back rest",
+      "confidence": "owner",
+      "why": "OWNER 2026-09-09, answering the returned spreadsheet: 「L（LHF）+1NA+1AR model是5536 special order change backrest to 5540/8030, 然后backcushion align 或者fully extend」. THE PIECES ARE UNCHANGED - they are his own 2026-09-09 ruling and the ERP already holds them (docs/bugs/0736). WHAT MOVES IS THE MODEL: three names were in play on one line - AutoCount's item is HOK-5536 SOFA, its Desc2 says 'back rest (5540)', and the ERP stored the build under 9058. He says the model is 5536 and the 5540/8030 backrest is a SPECIAL ORDER on it, not the model. So 5536 is the SKU prefix and the backrest change is a special, which this file does not write - it is raised separately."
     }
   ]
 }
