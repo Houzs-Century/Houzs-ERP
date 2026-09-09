@@ -1264,18 +1264,10 @@ mfgSalesOrders.get('/', async (c) => {
     const otherStatusOr = `status.is.null,status.not.in.(${[...SO_STATUSES].join(',')})`;
     if (status === 'ON_HOLD') q = q.or(HELD_OR_TERM);
     else if (status) { const vals = soStatusesForTab(status); q = status === 'OTHER' ? q.or(otherStatusOr) : (vals.length === 1 ? q.eq('status', vals[0]) : q.in('status', vals)); }
-    /* free-text search replaces the legacy `debtor` param in this branch.
-       One term matches customer NAME (debtor_name), PHONE, or the SO
-       REFERENCE — plus doc_no / debtor_code / agent / location / branding it
-       already covered. The reference the list DISPLAYS is `customerRefOf`
-       (`ref || customer_so_no || po_doc_no`, frontend/src/lib/customer-ref.ts),
-       so the search MUST cover the same fields or a shown reference is
-       unsearchable. `ref` was the only one here: an order whose reference lives
-       only in `customer_so_no` (native create path leaves `ref` null — 21 live
-       Houzs orders on 2026-09-09) rendered its ref yet never matched it. Adding
-       `customer_so_no` closes that. `po_doc_no` is a 0%-filled dead column that
-       is not even projected onto this list, so it is intentionally NOT searched
-       here. See BUG-HISTORY 2026-09-09. */
+    /* free-text search over the reference the list DISPLAYS: customerRefOf is
+       `ref || customer_so_no`, so BOTH are searched — an order whose `ref` is
+       null shows its reference from `customer_so_no` yet was unsearchable
+       before (bug 0755). Plus doc_no / debtor_code / agent / location / branding. */
     const search = c.req.query('q');
     if (search) {
       const s = escapeForOr(search);

@@ -4804,6 +4804,21 @@ Flow:
 `?summary=1` skips the view join + item read entirely (dashboard only needs status
 buckets) — do not fully-hydrate 500 rows for a count.
 
+### List free-text search (`?q=`)
+
+The paginated list's `?q=` runs ONE PostgREST `.or()` — built identically in the
+page-rows query and the money-KPI aggregate query, which must filter the same set
+— over `doc_no / debtor_name / debtor_code / agent / sales_location / ref /
+customer_so_no / branding` + phone. It must cover the fields `customerRefOf`
+(`ref || customer_so_no || po_doc_no`, `frontend/src/lib/customer-ref.ts`) can
+DISPLAY as the Reference, or a shown reference is unsearchable. That was the
+2026-09-09 bug: an order carrying its reference only in `customer_so_no` (the
+native New-SO path leaves `ref` null) rendered `PG10213` in the REFERENCE column
+yet could not be found by it — 21 live orders were in that state. `customer_so_no`
+was added to the search; `po_doc_no` is a 0%-filled dead column not projected onto
+this list and is intentionally not searched. Entry
+`docs/bugs/0755-so-list-search-ignored-customer-so-no-so-a-shown-reference-c.md`.
+
 ---
 
 ## 4. Database
