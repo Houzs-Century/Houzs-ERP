@@ -118,11 +118,20 @@ try {
   console.log('');
   console.log('=== 3. AND HOW MANY COULD NOT FIT EVEN RE-PACKED ===');
   const huge = await pg`
-    SELECT count(*)::int AS n
+    SELECT doc_no,
+           length(coalesce(address1,'')) + length(coalesce(address2,''))
+         + length(coalesce(address3,'')) + length(coalesce(address4,'')) AS total
       FROM scm.mfg_sales_orders
      WHERE length(coalesce(address1,'')) + length(coalesce(address2,''))
-         + length(coalesce(address3,'')) + length(coalesce(address4,'')) > ${LINES * LINE}`;
-  console.log(`  sales orders whose whole address is over ${LINES * LINE} characters: ${huge[0].n}`);
+         + length(coalesce(address3,'')) + length(coalesce(address4,'')) > ${LINES * LINE}
+     ORDER BY total DESC`;
+  console.log(`  sales orders whose whole address is over ${LINES * LINE} characters: ${huge.length}`);
+  /* THE DOCUMENT NUMBER, AND NOT THE ADDRESS. The owner asked to see the one
+     that will not fit (2026-09-09, 「160 个字的是怎么样的？你发我」) and this log
+     is public — a customer's address printed here is published. The number lets
+     him open it in the ERP, where it belongs, and it is already the identifier
+     every other line of this output uses. */
+  for (const r of huge) console.log(`    ${r.doc_no} — ${r.total} characters of address`);
   console.log('');
   console.log('READ IT LIKE THIS: section 2 is what the re-flow fixes. Section 3 is what it');
   console.log('cannot, and each one there needs somebody to decide what comes off the label.');
