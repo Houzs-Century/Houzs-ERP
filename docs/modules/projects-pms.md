@@ -357,7 +357,7 @@ by a flag from the browser:
 | office side | `POST`/`DELETE /api/projects/contractors/:id/share-link` | `POST`/`DELETE /api/brand-share/:id/share-link` (`routes/brandShare.ts`, own file: `routes/projects.ts` is at its size ceiling); both wired through `pages/project-maintenance/shareLinks.ts` from the row menus in `ProjectMaintenance.tsx` |
 | public routes | `routes/publicContractorCalendar.ts` | `routes/publicBrandCalendar.ts`, mounted before `auth` beside it |
 | tap an event | `Blank Floorplan` task files (legacy fallback) | `Display Floor Plan` task files (no legacy fallback) + `GET .../events/:eventId` → `{ sizeSqm, totalSales }` from the `size_sqm` column of `projects` and `total_sales` of `project_finance` |
-| export `GET .../export` | rows Date / Venue / State / Organizer / Brand / Type / Booth / Size (Type = `project_event_types.name`; owner 2026-09-09 "tambah state brand type") — `project_finance` is never read | the same + `totalSales`; the sheet ends with `Brand: X`, `Generated: <time>`, `Confidential` |
+| export `GET .../export?month=YYYY-MM` (the month on screen; required, 400 without it — owner 2026-09-09 "when chose september then click export will export event on september only"; an event touching any day of the month is in) | rows Date / Venue / State / Organizer / Brand / Type / Booth / Size (Type = `project_event_types.name`; owner 2026-09-09 "tambah state brand type") — `project_finance` is never read | the same + `totalSales`; the sheet ends with `Brand: X`, `Generated: <time>`, `Confidential` |
 | export log | both write one `share_export_log` row (mig `20260908T1501_share_export_log.sql`): kind, party, token, ip, row count | |
 
 The `.xlsx` is built in the browser (`lib/xlsx-runtime.ts`) from rows the server
