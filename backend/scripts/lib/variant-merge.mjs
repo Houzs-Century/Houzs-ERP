@@ -100,6 +100,41 @@ export const OWNED_SOFA_KEYS = Object.freeze([
   "seatHeight",
 ]);
 
+/* The keys the REVIEWED-LIST book correction owns — `repair-so-variant-from-book.mjs`.
+   OWNED_SOFA_KEYS plus `legHeight`, and the difference between the two lists is
+   the difference between a SWEEP and a LIST.
+
+   The comment above leaves `legHeight` out of OWNED_SOFA_KEYS on purpose and is
+   right to: that list arms `refresh-po-variants.mjs` / `refresh-so-variants.mjs`,
+   which RECOMPUTE from Desc2 on every run, so a key there is a key overwritten
+   on every run — "adding it here would make a colour sweep start writing
+   heights". None of that applies to the book correction, which is a different
+   kind of writer:
+
+     · its population is `data/variant-book-corrections.json`, entries a human
+       reviewed one at a time — never a sweep, never a query;
+     · every entry states `erp_now` and is SKIPPED if the row no longer holds it,
+       so it cannot overwrite a later human edit;
+     · it refuses a build whose pieces disagree with each other.
+
+   So it may own a key the sweeps must not. Kept as its own list rather than by
+   widening theirs, because the two are not the same statement and merging them
+   would silently arm the sweeps (docs/bugs/0755).
+
+   The leg is a real sofa axis — `src/scm/shared/so-variant-rule.ts` gives the
+   SOFA group a Leg Height picker, and `lib/variant-reconcile.mjs:278` COMPARES
+   it. Until now it was compared and never writable, which is how two purchase
+   orders sat in the tally with nothing able to correct them. */
+export const OWNED_BOOK_CORRECTION_KEYS = Object.freeze([
+  "fabricId",
+  "colourId",
+  "fabricCode",
+  "colourLabel",
+  "fabricLabel",
+  "seatHeight",
+  "legHeight",
+]);
+
 /* The subset a non-bedframe (SP) special-size line owns: its dimensions only.
    No fabric, no gap, no divan, no leg - a custom-size MATTRESS has none of
    those and must not have them nulled. */
