@@ -593,7 +593,7 @@ The purchase half no longer opens `ac-invoice-refs.json.gz` at all — invoice,
 lines, date and cancellation all come from `ac-reconcile-truth.json.gz`, so one
 plan cannot describe two vintages. That file's 2-day freshness gate now applies
 only when the SALES half runs, which is the half that still reads it. The book
-snapshot has a gate of its own, same limit. `docs/bugs/0765`.
+snapshot has a gate of its own, same limit. `docs/bugs/0766`.
 
 **And `scm.write_freeze` does NOT gate this script.** The freeze is HTTP-layer
 middleware (`src/scm/index.ts:127`); this converter opens Postgres directly and
