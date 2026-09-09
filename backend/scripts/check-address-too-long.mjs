@@ -73,6 +73,35 @@ try {
   }
 
   console.log('');
+  console.log('=== 1b. AND WHAT DID THE QUEUE ACTUALLY SEND ===');
+  console.log('(the composer is right in a test; the question is what the STORED payload holds)');
+  /* THE ONE FACT THAT SETTLES IT. fitAddressLines demonstrably fits a 62-
+     character line, and HC-SO-2609-006 still came back refused for InvAddr1 —
+     so either the row was composed before the fix, or the fix is not on this
+     path. The payload is what was posted; nothing else is evidence. */
+  if (DOC_NO) {
+    const rows = await pg`
+      SELECT status, attempts, created_at,
+             length(coalesce(payload #>> '{body,InvAddr1}', '')) AS a1,
+             length(coalesce(payload #>> '{body,InvAddr2}', '')) AS a2,
+             length(coalesce(payload #>> '{body,InvAddr3}', '')) AS a3,
+             length(coalesce(payload #>> '{body,InvAddr4}', '')) AS a4
+        FROM scm.autocount_outbox
+       WHERE doc_no = ${DOC_NO}
+       ORDER BY created_at DESC LIMIT 5`;
+    if (!rows.length) console.log('  no outbox row for this document');
+    for (const r of rows) {
+      const over = [r.a1, r.a2, r.a3, r.a4].some((n) => Number(n) > LINE);
+      console.log(
+        `  ${String(r.created_at)}  ${r.status} after ${r.attempts}  `
+        + `InvAddr lengths ${r.a1}/${r.a2}/${r.a3}/${r.a4}  ${over ? 'OVER THE COLUMN' : 'fits'}`,
+      );
+    }
+    console.log('  a row that is OVER was composed before the fit shipped; one that FITS and still');
+    console.log('  failed means the fit is not on this path and the search moves there.');
+  }
+
+  console.log('');
   console.log('=== 2. IS THERE A SECOND ONE BEHIND IT ===');
   console.log('(sales orders whose address would be refused by the same rule)');
   const wide = await pg`
