@@ -492,6 +492,26 @@ export class KeylessLineError extends Error {
  * as refusals on the sales side rather than as guesses.
  */
 export interface ComposeOptions {
+  /**
+   * AN EDIT DOES NOT SEND AN ITEMCODE FOR A LINE THE BOOK ALREADY HOLDS, so it
+   * must not refuse one it cannot resolve.
+   *
+   * `composeEdit` strips `ItemCode` from every keyed line — AUTOCOUNT OWNS THE
+   * ITEM ON A LINE IT ALREADY HOLDS, the owner's rule of 2026-08-13 — and then
+   * asked `composeDetails` to resolve that code first anyway. So an edit to
+   * HC-PO-006690 was refused for `DIVAN ONLY-(Q)` resolving to four book items,
+   * none under its creditor: a code the payload was never going to carry.
+   *
+   * `forTransfer` has said exactly this since it was written ("A TRANSFER KEEPS
+   * THE LINE. The ItemCode below is never sent"). This is the same statement for
+   * the edit path, and it is deliberately NOT folded into `forTransfer`: a
+   * transfer sends four fields, an edit sends the line.
+   *
+   * KEYED LINES ONLY. A keyless line on an edit is APPENDED and does carry its
+   * ItemCode, so it must still resolve or be refused — and a REBUILD puts every
+   * ItemCode back, so it must refuse too. Both are checked at the use site.
+   */
+  keyedLinesKeepTheBooksItem?: boolean;
   rebuild?: boolean;        // clear the details, lay these Lines down — 0607
   rebuildBlocked?: string;  // present = keyed path, never rebuild — 0609
   supplierCode?: string | null;
@@ -967,7 +987,15 @@ export function composeDetails(
       index: opts.itemIndex,
       bindings: opts.bindings ?? null,
     });
-    if (!r.ok && !opts.forTransfer) {
+    /* A line whose ItemCode will not be SENT cannot be wrong, so it is not
+       refused. Two ways that happens: a transfer sends four fields and no code,
+       and an edit leaves the book's own item on a line the book already holds.
+       A keyless line is appended WITH its code, and a rebuild puts every code
+       back, so both of those still have to resolve. */
+    const keyed = l.linked_ac_dtlkey != null && String(l.linked_ac_dtlkey) !== '';
+    const codeWillBeSent = !opts.forTransfer
+      && !(opts.keyedLinesKeepTheBooksItem && keyed && !opts.rebuild);
+    if (!r.ok && codeWillBeSent) {
       failures.push({ index: i, erpItemCode: l.item_code, detail: r.detail });
       return;
     }
@@ -1375,7 +1403,14 @@ export function composeEdit(
   opts: ComposeOptions = {},
   retired: AcRetiredLine[] = [],
 ): AcEditPayload {
-  const effOpts: ComposeOptions = { ...opts, rebuild: shouldRebuild(opts, docType, retired) };  // 0608, authoritative - 0615
+  /* keyedLinesKeepTheBooksItem is set HERE and nowhere else: composeEdit is the
+     only caller that strips ItemCode from a keyed line, so it is the only one
+     entitled to skip resolving it. A create sends every code. */
+  const effOpts: ComposeOptions = {
+    ...opts,
+    rebuild: shouldRebuild(opts, docType, retired),  // 0608, authoritative - 0615
+    keyedLinesKeepTheBooksItem: true,
+  };
   const { details, collapsed } = composeDetails(lines, effOpts);
   /* The key is read off the COLLAPSED line, not the ERP line. One AutoCount
      line has one DtlKey, and a sofa build's compartments only carry line
