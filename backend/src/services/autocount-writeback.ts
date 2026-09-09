@@ -99,10 +99,12 @@ const norm = (s: string | null | undefined): string =>
 
 /** Whitespace-collapsed and trimmed, or null. `/ensure-masters` opens a master
  *  under EXACTLY the string it is given, so two spaces would open two of it. */
-export const tidy = (s: unknown): string | null => {
-  const v = String(s ?? '').replace(/\s+/g, ' ').trim();
-  return v || null;
-};
+/* The account book's own string rules live next door and are RE-EXPORTED, so
+   every caller and test keeps one import site (docs/repo-hygiene.md: this file
+   is at its ceiling and a ceiling only moves down). */
+import { tidy, soInvoiceAddress } from './autocount-address-fit';
+export { AC_ADDRESS_LINE_MAX, AC_ADDRESS_LINES, fitAddressLines, tidy, soInvoiceAddress } from './autocount-address-fit';
+
 
 /**
  * The ACCOUNT BOOK'S OWN SPELLING of a value it already knows — or null.
@@ -827,50 +829,6 @@ export function soBranding(
   return null;
 }
 
-/**
- * The customer's address, packed into AutoCount's FOUR numbered lines.
- *
- * FIVE ERP FIELDS, FOUR AUTOCOUNT LINES — this is the one decision that had to
- * be written down rather than derived, and this comment is where it lives (the
- * DO/SI note in `autocount-outbox.ts` declined to invent it and omitted the
- * keys instead; on a CREATE there is nothing to preserve, so the packing has to
- * be chosen).
- *
- * | AutoCount | ERP |
- * |---|---|
- * | `InvAddr1` | `address1` |
- * | `InvAddr2` | `address2` |
- * | `InvAddr3` | `address3`, else `postcode` + `city` |
- * | `InvAddr4` | `address4`, else `customer_state` |
- *
- * `address3` / `address4` WIN when they are populated: only the cutover import
- * ever wrote them, and that text is AutoCount's own. An ERP-created order has
- * both blank and keeps the same facts in `city` / `postcode` / `customer_state`
- * — measured 2026-08-14 on production, 94 of 115 unpushed sales orders are in
- * exactly that shape, so AutoCount's document carried the street lines and no
- * town, no postcode and no state, on the address a delivery is printed from.
- *
- * Postcode before town, state on its own line, is the Malaysian postal order
- * ("43300 SERI KEMBANGAN" / "SELANGOR"). Free text, no master, no foreign key.
- */
-export function soInvoiceAddress(h: {
-  /* `unknown` and optional for the same reason as soCustomerRef above. */
-  address1?: unknown; address2?: unknown; address3?: unknown; address4?: unknown;
-  city?: unknown; postcode?: unknown; customer_state?: unknown;
-}): {
-    InvAddr1: string | null;
-    InvAddr2: string | null;
-    InvAddr3: string | null;
-    InvAddr4: string | null;
-  } {
-  const town = [tidy(h.postcode), tidy(h.city)].filter(Boolean).join(' ');
-  return {
-    InvAddr1: tidy(h.address1),
-    InvAddr2: tidy(h.address2),
-    InvAddr3: tidy(h.address3) ?? (town || null),
-    InvAddr4: tidy(h.address4) ?? tidy(h.customer_state),
-  };
-}
 
 /**
  * The document's own AutoCount stock location, for a CREATE.

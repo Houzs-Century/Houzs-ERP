@@ -5290,6 +5290,37 @@ refused" instead of "is it still refused".
 **An unknown order leaves the refusal standing.** Hiding a real one costs a
 document; showing a stale one costs a glance.
 
+## Every AutoCount column has a WIDTH, and the ERP measures one of them (2026-09-09)
+
+`HC-SO-2609-006` never reached the book: *"Cannot set column 'InvAddr1'. The
+value violates the MaxLength limit of this column."* The four invoice-address
+columns are **40 characters** — measured on `AED_HOUZS`, not assumed:
+
+```
+SELECT CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS
+ WHERE TABLE_NAME='SO' AND COLUMN_NAME LIKE 'InvAddr%'
+```
+
+`fitAddressLines` (`services/autocount-writeback.ts`) now fits the address to
+that, and three rules go with it:
+
+- **An address that already fits is returned untouched.** Re-flowing every
+  address would rewrite the line breaks of every document on its next edit for
+  the sake of the few that overflow.
+- **Re-flow at word boundaries, never cut.** This is the address a delivery is
+  printed from.
+- **What still does not fit is reported**, not dropped.
+
+**THE CLASS IS OPEN.** AutoCount's columns are fixed-width, and this repo holds
+exactly one of those widths — `AC_ADDRESS_LINE_MAX` — because somebody went and
+looked after a document stopped. Whether any other string the write-back sends
+can overrun its column is UNMEASURED, not ruled out; a customer name, a
+reference or a remark are the obvious candidates. The remedy is a census of the
+widths the write-back can reach plus a guard that fits each string to its own,
+and it is NOT built — `docs/bugs/0728`.
+
+**The refusal is per DOCUMENT, not per field.** One over-long string keeps the
+whole sales order out of the accounts.
 ## `chain-onward-not-migrated` — a decision the cutover made, not a backlog (2026-09-09)
 
 The reconcile's note vocabulary — the classes `so-verdict-derive.mjs` declares
