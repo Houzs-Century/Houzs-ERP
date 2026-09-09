@@ -40,6 +40,7 @@ import {
   SO_PROCESSING_DATE_COLUMN,
 } from '../scm/shared/so-processing-date';
 import { buildVariantSummary } from '../scm/shared/variant-summary';
+import { abbreviateDesc2 } from './autocount-desc2-abbrev';
 
 /** Fixed AutoCount debtor account; the customer's real name is written over it. */
 export const AC_DEBTOR_CODE = '300-C002';
@@ -949,8 +950,13 @@ export class Desc2TooLongError extends Error {
  * when it is not). Re-deriving either from variants would be lossy.
  */
 export function composeDescription2(line: ErpLine): string | null {
-  if (line.description2 && line.description2.trim()) return line.description2.trim();
-  return buildVariantSummary(line.item_group ?? null, line.variants ?? null) || null;
+  const stored = line.description2 && line.description2.trim();
+  const text = stored || buildVariantSummary(line.item_group ?? null, line.variants ?? null);
+  if (!text) return null;
+  /* Shortened HERE and never in the data: `variants.specials` is priced by NAME
+     and a rename drops the surcharge — autocount-desc2-abbrev.ts has the trace.
+     A text that already fits comes back unchanged. */
+  return abbreviateDesc2(text, AC_DESC2_MAX);
 }
 
 /**
