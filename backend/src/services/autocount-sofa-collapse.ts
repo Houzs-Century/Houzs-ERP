@@ -38,6 +38,7 @@
 // decoder the cutover importers use — deliberately the same module, because a
 // second copy that drifts would make the gate prove nothing.
 // ----------------------------------------------------------------------------
+import { liveColour } from '../scm/shared/variant-summary';
 import { parseSofa, type SofaParse } from '../../scripts/lib/parse-sofa.mjs';
 
 /**
@@ -339,12 +340,6 @@ function collapseRun(
   if (!desc2) {
     return { refusal: 'no Desc2 on the compartment lines — nothing to carry the build into AutoCount' };
   }
-  if (desc2.length > AC_DESC2_MAX) {
-    return {
-      refusal: `Desc2 is ${desc2.length} characters and AutoCount's field holds ${AC_DESC2_MAX}; `
-        + 'truncating would silently drop part of the build',
-    };
-  }
 
   const qtys = new Set(run.map((r) => Number(r.line.qty)));
   if (qtys.size !== 1) {
@@ -410,9 +405,26 @@ function collapseRun(
   const v = (run[0].line.variants ?? {}) as Record<string, unknown>;
   const sizeRaw = v.seatHeight != null ? String(v.seatHeight).trim() : (ps.size ?? null);
   const size = sizeRaw ? sizeRaw.replace(/["']+$/, '') : null;
-  const colour = v.colourLabel != null && String(v.colourLabel).trim()
+  /* THE LIVE COLOUR, not the dead row's obituary. The fabric library renumbered
+     itself on 2026-08-11 and left `[superseded by X on 2026-08-11]` written into
+     each old row's own LABEL — 39 characters of bookkeeping in the middle of a
+     build specification. `buildVariantSummary` has stripped it since that day;
+     THIS renderer did not, and it is the one three sofa orders go through, which
+     is why they were still refused after the fix that was supposed to clear
+     them: HC-SO-008460 at 112 characters, HC-SO-012513 at 113, HC-SO-012629 at
+     117, against a field that holds 100.
+
+     It is applied to the EXPECTATION as well as to the text, because `colour` is
+     the one value handed to both composeSofaDesc2 and decodesTo. That is the
+     property that keeps the round-trip honest rather than merely passing: the
+     gate compares the decoded colour against the same live name the text was
+     written with. Two documents were refused on exactly that mismatch —
+     HC-SO-004725 and HC-SO-007958, whose composed text lost the brackets the
+     expectation still carried. */
+  const colourRaw = v.colourLabel != null && String(v.colourLabel).trim()
     ? String(v.colourLabel).trim()
     : (ps.color ?? null);
+  const colour = colourRaw ? liveColour(colourRaw) : null;
   const specials = readSpecials(v).length ? readSpecials(v) : ps.specials;
 
   /* 1. ECHO — the stored text still decodes to exactly what the ERP holds.
@@ -422,7 +434,16 @@ function collapseRun(
      account book with nothing anywhere recording that the edit was dropped.
      Whatever the ERP disagrees with its own imported text about falls through to
      compose, which either spells the current build or refuses it visibly. */
-  if (reps > 0 && decodesTo(desc2, model, build, { size, colour, specials }).ok) {
+  /* The length gate belongs to the text that is actually SENT, and this branch
+     is the only one that sends the STORED text. It used to sit at the top of
+     this function, where it refused a document whose stored line text was long
+     even though the composer was about to replace it with something short:
+     HC-SO-013339's stored Desc2 is 107 characters and the text it would have
+     written is 30. Over-long stored text now falls through to compose, which
+     either spells the build inside the column or refuses it visibly. */
+  if (reps > 0
+    && desc2.length <= AC_DESC2_MAX
+    && decodesTo(desc2, model, build, { size, colour, specials }).ok) {
     const out: CollapsedLine[] = [];
     for (let k = 0; k < reps; k += 1) {
       out.push(mkLine(run.slice(k * build.length, (k + 1) * build.length), desc2, 'echo'));

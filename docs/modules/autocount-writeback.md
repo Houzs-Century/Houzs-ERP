@@ -5768,3 +5768,48 @@ that, along with the identity case and the never-truncates case.
 rule can shorten. Those two still need the owner or a shorter note. The other
 four fix themselves: `HC-SO-012312` x3 and `HC-PO-2609-017` need the document
 SAVED once, and no repair script at all, because the shortening happens on send.
+
+## A sofa's colour travels as its LIVE name (2026-09-09)
+
+New SURFACE on `backend/src/services/autocount-sofa-collapse.ts` and on both
+mirrors of `variant-summary.ts`: `liveColour` is now a module-scope export, and
+`collapseRun` applies it to the colour it hands the composer.
+
+**The fabric library renumbered itself on 2026-08-11** and left every old row in
+place with `[superseded by X on 2026-08-11]` written into the row's own LABEL. A
+line still pointing at a dead row therefore renders **39 characters of
+bookkeeping** in the middle of the build specification. Read off production:
+
+```
+LR + 2EL / COL: BO315-3 [superseded by BO315-03 on 2026-08-11] / BOTTOM USE UMBRELLA FABRIC / Nylon Fabric
+```
+
+**One fault, two faces.** Three sofa orders were over the 100-character column by
+almost exactly those 39 characters (`HC-SO-008460` 112, `HC-SO-012513` 113,
+`HC-SO-012629` 117); two more failed the round-trip gate because the decoder eats
+the brackets while the expectation still carried them (`HC-SO-004725`,
+`HC-SO-007958`).
+
+**Why the earlier fix did not reach them.** `liveColour` was a local const inside
+`buildVariantSummary`, so it protected the one renderer it lived in. A sofa's
+Desc2 is built by `composeSofaDesc2` on its own path. This is the module's
+recurring shape — two renderers of the same value, one of them fixed — and the
+cure is the same as always: the rule moves to one place both can read.
+
+**Applied to the EXPECTATION as well as to the text.** `colour` is the single
+value handed to `composeSofaDesc2` AND to `decodesTo`, so one change keeps the
+round trip honest instead of trading a length refusal for a colour mismatch.
+
+## The length gate belongs to the text that is SENT (2026-09-09)
+
+Same file. `collapseRun` refused a document whose STORED `description2` was over
+100 characters — the ERP's own line summary, which for a sofa is never what goes
+to AutoCount; the composed build is. `HC-SO-013339` is refused today at 107
+stored characters without the composer being asked at all.
+
+The gate moved into the ECHO branch, the only branch that sends that string. The
+compose branch keeps its own length gate on the text it produces.
+
+**This does not promise such a document then goes.** A long specification is long
+whichever renderer writes it, and the composed text has its own gate. What it
+removes is a refusal that never consulted the text being sent.
