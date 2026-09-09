@@ -9,6 +9,7 @@ export type AppSurface =
   | "invite"
   | "privacy"
   | "contractor"
+  | "brand"
   | "staff";
 
 /**
@@ -41,6 +42,9 @@ export function appSurfaceForPath(pathname: string): AppSurface {
   // it and sees only their confirmed events; the token in the path is the only
   // credential. Outside AuthGate for the same reason /d/ is.
   if (pathname.startsWith("/c/")) return "contractor";
+  // The per-brand calendar share link — the same no-login token rule, a brand's
+  // own events with display floorplan, size and total sales.
+  if (pathname.startsWith("/b/")) return "brand";
   if (pathname.startsWith("/reset/")) return "reset";
   if (pathname.startsWith("/invite/")) return "invite";
   // The App Store's privacy-policy URL. A static file cannot survive the

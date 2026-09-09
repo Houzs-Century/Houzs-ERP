@@ -36,9 +36,10 @@ let legacyAtts: Row[] = [];
 /** Every table a statement read, in order — the DB-touch tripwire. */
 let touched: string[] = [];
 let bucketGets: string[] = [];
+let exportLog: Row[] = [];
 
 function tableOf(sql: string): string {
-  const m = /FROM\s+([a-z_]+)/i.exec(sql);
+  const m = /(?:FROM|INTO)\s+([a-z_]+)/i.exec(sql);
   return m ? m[1] : "?";
 }
 
@@ -57,7 +58,14 @@ function run(sql: string, args: unknown[]): Row[] {
     }
     return projects.filter((p) => p.contractor === args[0] && live(p));
   }
+  if (table === "share_export_log") {
+    exportLog.push({ kind: args[0], subject: args[1], token: args[2], ip: args[3], row_count: args[4] });
+    return [];
+  }
   if (table === "project_checklist_attachments") {
+    // The task-title pattern is a bind now; the contractor route must ask for the BLANK task.
+    const like = String(args[args.length - 1]);
+    if (like !== "blankfloorplan%") throw new Error("contractor route asked for the wrong task: " + like);
     const blank = (itemId: unknown) =>
       checklist.some(
         (it) => it.id === itemId && /^blankfloorplan/.test(String(it.title).toLowerCase().replace(/ /g, "")),
@@ -87,6 +95,7 @@ function fakeEnv(): Env {
       bind: (...args: unknown[]) => ({
         first: async () => run(sql, args)[0] ?? null,
         all: async () => ({ results: run(sql, args) }),
+        run: async () => { run(sql, args); return { success: true }; },
       }),
     }),
   };
@@ -108,8 +117,9 @@ const get = (path: string) => publicContractorCalendar.request(path, {}, fakeEnv
 beforeEach(() => {
   touched = [];
   bucketGets = [];
+  exportLog = [];
   projects = [
-    { id: 7, contractor: MINE, status: "Confirmed", archived_at: null, brand: "AKEMI", organizer: null, state: null, venue: "MID VALLEY", booth_no: "3053", start_date: "2026-09-11", end_date: "2026-09-13", name: null },
+    { id: 7, contractor: MINE, status: "Confirmed", archived_at: null, brand: "AKEMI", organizer: "HOMELOVE", state: null, venue: "MID VALLEY", booth_no: "3053", start_date: "2026-09-11", end_date: "2026-09-13", name: null, size_sqm: 72 },
     { id: 8, contractor: THEIRS, status: "Confirmed", archived_at: null, brand: "ZANOTTI", organizer: null, state: null, venue: "IOI", booth_no: "1", start_date: "2026-09-11", end_date: "2026-09-13", name: null },
   ];
   checklist = [
@@ -186,9 +196,22 @@ describe("public contractor calendar — unfilled floorplan", () => {
     expect(bucketGets).toEqual([]);
   });
 
+  test("export carries Date/Venue/Organizer/Booth/Size, never sales, never reads project_finance, and is logged", async () => {
+    const res = await get(`/${TOKEN}/export`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { contractor: string; rows: Array<Record<string, unknown>> };
+    expect(body.contractor).toBe(MINE);
+    expect(body.rows).toEqual([
+      { startDate: "2026-09-11", endDate: "2026-09-13", venue: "MID VALLEY", organizer: "HOMELOVE", boothNo: "3053", sizeSqm: 72 },
+    ]);
+    expect(Object.keys(body.rows[0])).not.toContain("totalSales");
+    expect(touched).not.toContain("project_finance");
+    expect(exportLog).toEqual([{ kind: "contractor", subject: MINE, token: TOKEN, ip: "unknown", row_count: 1 }]);
+  });
+
   test("an unknown or revoked token gets the same 404 on every route", async () => {
     const bad = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
-    for (const p of [`/${bad}`, `/${bad}/events/7/floorplan`, `/${bad}/events/7/floorplan/t700`]) {
+    for (const p of [`/${bad}`, `/${bad}/events/7/floorplan`, `/${bad}/events/7/floorplan/t700`, `/${bad}/export`]) {
       const res = await get(p);
       expect(res.status).toBe(404);
       expect(((await res.json()) as { error: string }).error).toBe("unknown_link");
