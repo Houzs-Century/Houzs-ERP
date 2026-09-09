@@ -253,3 +253,23 @@ test("the `only` filter loads one round without replanning the other", () => {
   assert.equal(one.files.length, 1);
   assert.ok(one.builds.every((b) => b.source.includes("2026-09")));
 });
+
+/* ── THE PURCHASE-SIDE ROUND, PINNED ────────────────────────────────────────
+ * Its whole reason for existing is that every entry addresses a PURCHASE order
+ * by the ACCOUNT BOOK's own DtlKey rather than by text, because the ERP's
+ * purchase row holds different `description2` from the book's line and eleven
+ * text-addressed entries were skipped on production for exactly that
+ * (plan run 34297962031, `no line carries this text`). A later edit that
+ * dropped a `lineKeys` back to a `desc2Match` would re-open that hole silently
+ * and the round would go on reporting as applied while writing nothing, so the
+ * addressing mode is pinned rather than left to review. */
+test("every purchase-side build is addressed by the book's line key, never by text", () => {
+  const { builds } = loadCorrections(DATA, "purchase-side");
+  assert.equal(builds.length, 15, builds.map((b) => b.docs.join("/")).join(" | "));
+  for (const b of builds) {
+    const where = `purchase-side ${(b.docs || []).join("/")}`;
+    assert.ok(Array.isArray(b.lineKeys) && b.lineKeys.length === 1, `${where}: must carry exactly one lineKeys entry`);
+    assert.equal(b.desc2Match, undefined, `${where}: must NOT also carry a desc2Match — a key is identity and needs no help`);
+    assert.ok(/^HC-PO-/.test(b.docs[0]), `${where}: this round is the PURCHASE side only`);
+  }
+});
