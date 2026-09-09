@@ -113,6 +113,41 @@ poAmendments.get('/', async (c) => {
   return c.json({ amendments: data ?? [] });
 });
 
+/* ── GET /pending-count — PO amendments waiting for THIS caller ────────────
+   Twin of the SO route's /pending-count, feeding the red count on the "PO
+   Amendments" sidebar entry (owner 2026-09-09, added alongside the SO one:
+   "PO Amendments 也一起加").
+
+   SIMPLER THAN ITS SO SIBLING, and the difference is real rather than an
+   oversight: a PO amendment has ONE approver key (scm.po_amendment.approve —
+   see the header of the approve gate), no lanes and no legacy chain, so there
+   is nothing to split. Someone without that key gets 0 and the badge never
+   renders, which is the same "only on accounts that must approve" rule.
+
+   The follow-up rows an approved SO amendment auto-raises land here too, and
+   those are exactly the ones nobody asked for by hand — the count is the only
+   thing that says they arrived.
+
+   Registered BEFORE `/:id` (Hono matches in order) and fails SOFT with 0. */
+poAmendments.get('/pending-count', async (c) => {
+  if (!hasHouzsPerm(c, 'scm.po_amendment.approve')) return c.json({ count: 0 });
+  const sb = c.get('supabase');
+  try {
+    const { data, error } = await scopeToCompany(
+      sb.from('po_amendments').select('id').eq('status', 'REQUESTED'),
+      c,
+    );
+    if (error) {
+      console.error('[po-amendment] pending-count failed:', error.message);
+      return c.json({ count: 0 });
+    }
+    return c.json({ count: (data ?? []).length });
+  } catch (e) {
+    console.error('[po-amendment] pending-count threw:', (e as Error).message);
+    return c.json({ count: 0 });
+  }
+});
+
 /* ── GET /:id — amendment detail ───────────────────────────────────────────
    Returns the amendment row + its po_amendment_lines + a light PO header summary
    (po_number, status, revision). */

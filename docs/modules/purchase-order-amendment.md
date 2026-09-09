@@ -178,6 +178,30 @@ amendment table in 0080.
 
 ## 6. Frontend
 
+### The sidebar count — SHIPPED 2026-09-09
+
+The **PO Amendments** nav entry carries a red count of amendments waiting for
+THIS user's confirmation. Owner asked for it on the SO entry first and then
+"PO Amendments 也一起加" — the follow-up rows an approved LINES-lane SO amendment
+auto-raises are exactly the ones nobody requested by hand, so the count is the
+only thing on screen that says they arrived.
+
+`GET /api/scm/po-amendments/pending-count`
+(`backend/src/scm/routes/po-amendments.ts`) answers it: `REQUESTED` rows for the
+active company, gated on `scm.po_amendment.approve`. Someone who can only RAISE
+one gets 0 and the badge never renders.
+
+**Deliberately simpler than its SO twin.** A PO amendment has ONE approver key
+and no lanes, so there is nothing to split. If the two endpoints are ever
+"unified", this is the property to keep: pretending a PO amendment is
+lane-routed would invent a distinction the approval gate does not make.
+
+The count is invalidated from `invalidatePoAmendmentSideEffects`
+(`frontend/src/vendor/scm/lib/po-amendment-queries.ts`) — every gate passes
+through there, so it drops the moment you confirm. The shared mechanism, the
+hook and the "no second visibility rule" reasoning live in
+[`so-amendment.md`](./so-amendment.md) §5.
+
 ### Printable amendment document — SHIPPED (both SO and PO)
 
 `frontend/src/vendor/scm/lib/amendment-pdf.ts` — ONE client-side jsPDF template

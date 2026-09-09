@@ -356,6 +356,64 @@ soAmendments.get('/', async (c) => {
   return c.json({ amendments });
 });
 
+/* ── GET /pending-count — how many amendments are waiting for THIS caller ───
+   Feeds the red count on the "Sales Order Amendment" sidebar entry (owner
+   2026-09-09: "根据目前还有多少单需要被审批 — 在需要审批人员账号显示, 审批后就
+   根据目前需要的单号改变").
+
+   THE COUNT IS PER-SIGNER, NOT A GLOBAL BACKLOG. It counts only the lanes this
+   caller can actually sign, so the badge answers "how much is waiting for ME".
+   Someone who holds neither lane key gets 0 and the badge never renders — which
+   is the whole "在需要审批人员账号显示" half of the ask: a number on a menu the
+   reader cannot act on is worse than no number, because it never goes down for
+   them no matter what they do.
+
+   REQUESTED only — that is the one open state a lane row has (amendment-lane.ts
+   state machine); everything else is terminal. Legacy (lane IS NULL) rows are
+   counted for the legacy key holder for the same reason the gates still honour
+   it: a finite backlog that still needs clearing.
+
+   Registered BEFORE `/:id` — Hono matches in order, and a param route above
+   this one would swallow "pending-count" as an amendment id.
+
+   Fails SOFT with 0. A badge is decoration on someone else's screen; a count
+   query that errors must not turn the sidebar into an error state. */
+soAmendments.get('/pending-count', async (c) => {
+  const lanes: string[] = [];
+  if (hasHouzsPerm(c, LANE_APPROVE_KEY.LINES)) lanes.push('LINES');
+  if (hasHouzsPerm(c, LANE_APPROVE_KEY.DELIVERY)) lanes.push('DELIVERY');
+  const legacy = hasHouzsPerm(c, 'scm.amendment.approve_so');
+  if (lanes.length === 0 && !legacy) return c.json({ count: 0 });
+
+  const sb = c.get('supabase');
+  try {
+    /* Every OPEN amendment for the company, then split by lane in JS.
+       Deliberately not an `.or('lane.in.(…),lane.is.null')`: `lane` is nullable,
+       so the legacy half cannot ride the same `.in()`, and the two-predicate OR
+       is PostgREST filter-grammar that reads as a string and fails as a string.
+       The set it walks is BOUNDED and small by construction — the partial unique
+       indexes (uq_so_amendment_open_legacy / uq_so_amendment_open_lane, mig 0215)
+       allow at most one open row per SO per lane, and prod carries a handful.
+       A count that is easy to read beats a filter that is clever to write. */
+    const { data, error } = await scopeToCompany(
+      sb.from('so_amendments').select('id, lane').eq('status', 'REQUESTED'),
+      c,
+    );
+    if (error) {
+      console.error('[so-amendment] pending-count failed:', error.message);
+      return c.json({ count: 0 });
+    }
+    const rows = (data ?? []) as Array<{ lane: string | null }>;
+    const mine = rows.filter((r) =>
+      r.lane == null ? legacy : lanes.includes(r.lane),
+    );
+    return c.json({ count: mine.length });
+  } catch (e) {
+    console.error('[so-amendment] pending-count threw:', (e as Error).message);
+    return c.json({ count: 0 });
+  }
+});
+
 /* ── GET /command-diag — the owner's dry-run for the write-back channel ─────
    Cannot be verified without a live 2990 bridge account, so this is how the
    owner checks it once the account exists (same idea as the mirror probes). It
