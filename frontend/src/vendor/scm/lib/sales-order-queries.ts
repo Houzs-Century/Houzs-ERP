@@ -1207,7 +1207,12 @@ export type SoHandoverHolder = {
  */
 export const useSoHandoverHolders = () => useQuery({
   queryKey: ['so-handover-holders'],
-  queryFn: () => authedFetch<{ holders: SoHandoverHolder[] }>('/so-handover/holders')
+  /* `holders?` is OPTIONAL because this is the WIRE, not a local object, and
+     the `?? []` is the guard that keeps one odd payload from rendering a picker
+     that throws instead of one that is empty. Declaring it always-present would
+     make that guard read as dead code — which is exactly what the linter said
+     when it was typed that way. */
+  queryFn: () => authedFetch<{ holders?: SoHandoverHolder[] }>('/so-handover/holders')
     .then((r) => r.holders ?? []),
   staleTime: 60_000,
 });
