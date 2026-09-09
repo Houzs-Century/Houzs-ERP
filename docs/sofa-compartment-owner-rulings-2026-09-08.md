@@ -158,6 +158,41 @@ His shorthand maps `AL`→`A(LHF)`, `AR`→`A(RHF)`, `BL`→`B(LHF)`, `BR`→`B(
 `LR`→`L(RHF)`, `C`→`CNR`, `2s`→`2S`. The chaise carries **no count prefix** in the ERP,
 so `LR` is `L(RHF)` and not `1L(RHF)`.
 
+## The `ELT / T` line, decoded once so nobody asks him a fourth time
+
+The account book writes one 5526 sofa as
+`[ (1 ELT / T + NA +2ER) (28") / COL: J9883-1-1 PAMA]`, and it has been put to him
+more than once. **He has now answered it on the goods receipt, the delivery order,
+the purchase order and the sales invoice, with the same six characters each time:
+`L(LHF) + 1NA + 2A(RHF)`.** This is the durable record; the decoder is not changed
+by it and does not need to be.
+
+| book token | piece | how it is known |
+|---|---|---|
+| **`ELT`** | **`L`** — the chaise | 「1ELT 就是L来的」 (2026-09-05) and 「这个对ELT=L」 again on the answer sheet. He has had to say it more than once |
+| `1 ELT` | `L(LHF)` | the chaise at the LEFT end of this run |
+| `NA` | `1NA` | a bare `NA` is one no-arm seat |
+| **`2ER`** | **`2A(RHF)`** | a **two-seat** arm-right piece — the `2` is the seat count, not a second piece |
+| `/ T` | **not a piece** | part of the `ELT/T` notation. It is also what breaks the decoder: the stray `/ T` splits the segment, `parse-sofa.mjs` returns `conf=low` with no pieces, and that is why this build is corrected from a data file rather than by re-running the reader |
+
+**A build the book states in plain seat counts is not unreadable.** The same
+receipt carries a second sofa written `[2S(35")+2S(28') LEFT WOODEN ARM / COL:J9883-1]`,
+and it was escalated to him anyway. His answer: **「2s 就是2s啊 你不会吗?」** — it is a
+two-seater at 35" and a two-seater at 28", with a left wooden arm, colour `J9883-1`.
+Do not hand that shape back again.
+
+### The chain is corrected TOGETHER, and that is not optional
+
+One sofa build spans several documents, and correcting one of them leaves the rest
+holding the lead piece alone. Measured on production before this was written
+(probe run `34316985562`): `HC-SO-000814` and `HC-PO-000254` held all three pieces
+while `HC-GR-000287`, `HC-DO-000542` and `HC-I-000745` each held **one row — the
+chaise alone**, because the applier's downstream carry could only *update* rows that
+already existed. A corrections entry now names the receipt, the delivery note and
+the invoices beside the order, and the applier brings each of them to the build's
+own shape in the same run. `docs/bugs/0719` is why a half-write is refused;
+`HC-SO-013320` / `HC-PO-010008` is the worked example on a pair.
+
 ## His reading rules — these are the durable part
 
 Apply them; **do not ask him again.**
