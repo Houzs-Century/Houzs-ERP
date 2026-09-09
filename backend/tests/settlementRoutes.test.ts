@@ -852,3 +852,63 @@ describe('an exact reference is not hidden by the date window', () => {
     expect(line.clue).not.toMatch(/No payment recorded/);
   });
 });
+
+/* ── "CONFIRM ALL 9 MATCHED" MUST NOT POST 0 ──────────────────────────────────
+   The detail screen was fixed to fall back to the matcher when a link is
+   missing (docs/bugs/0760), and the owner then saw the payment on screen — but
+   the bulk button reads the LINK TABLE, so it still sent an empty selection for
+   every one of those nine lines and answered "Posted 0. 9 could not be".
+
+   The same fallback belongs here, with one difference that is the whole point:
+   only `matched` is rescued, never `suggested`. Nobody is reading each line on
+   this path, and this button's promise is "post every line the unique reference
+   already matched". */
+
+describe('confirm-all posts a matched line whose link went missing', () => {
+  test('the payment is recovered from the matcher, and the link is written back', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+
+    /* Exactly the prod state: MATCHED bucket, no link. */
+    sb.tables.acc_settlement_matches = [];
+
+    const res = await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { attempted: number; confirmed: number; failed: unknown[] };
+    expect(body.attempted).toBe(1);
+    expect(body.confirmed).toBe(1);
+    expect(body.failed).toEqual([]);
+
+    /* Confirming writes the link, so the data heals as he works. */
+    expect((sb.tables.acc_settlement_matches as Row[]).length).toBe(1);
+    const row = (sb.tables.acc_settlement_rows as Row[]).find((r) => r.bucket === 'MATCHED')!;
+    expect(row.confirmed_at).toBeTruthy();
+    expect(row.posted_je_no).toBeTruthy();
+  });
+
+  /* THE LINE THAT MUST NOT MOVE. A payment the matcher only SUGGESTS — here an
+     out-of-window reference — is not something a bulk button may post: it is
+     offered on the detail screen for a human to look at. */
+  test('a merely suggested payment is not posted by the bulk button', async () => {
+    const { app, sb } = harness({
+      mfg_sales_order_payments: [soPayment({ paid_at: '2026-08-12T10:00:00' })],
+    });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    /* Eleven days out: NEEDS_CONFIRM with the payment pre-ticked, so the bulk
+       button has nothing to do — and must not invent something. */
+    const rows = sb.tables.acc_settlement_rows as Row[];
+    expect(rows.find((r) => r.ref === 'A1')!.bucket).toBe('NEEDS_CONFIRM');
+
+    const res = await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+    const body = (await res.json()) as { attempted: number; confirmed: number };
+    expect(body.attempted).toBe(0);
+    expect(body.confirmed).toBe(0);
+    expect(sb.tables.acc_settlement_matches).toHaveLength(0);
+  });
+
+  test('a batch that does not exist is a 404, not an empty success', async () => {
+    const { app } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const res = await post(app, '/settlement/batches/9999/confirm-matched');
+    expect(res.status).toBe(404);
+  });
+});
