@@ -873,10 +873,22 @@ export const settlementConfirmMatched = guard(async (c) => {
   if (!Number.isInteger(batchId)) return c.json({ error: 'bad_id' }, 400);
   const sb = c.get('supabase');
 
+  /* The batch itself, for the acquirer and the period the recompute below
+     needs. Read first so a missing batch is a 404 rather than an empty run
+     reporting that it confirmed nothing. */
+  const { data: batchRaw, error: bErr } = await sb.from('acc_settlement_batches')
+    .select('id, acquirer_code, period_from, period_to')
+    .eq('id', batchId).eq('company_id', co.companyId).maybeSingle();
+  if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
+  if (!batchRaw) return c.json({ error: 'not_found' }, 404);
+  const b = batchRaw as { acquirer_code: string; period_from: string; period_to: string };
+
   const { data: rowsRaw, error } = await sb.from('acc_settlement_rows')
-    .select('id, bucket, confirmed_at').eq('batch_id', batchId).eq('company_id', co.companyId);
+    .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, confirmed_at')
+    .eq('batch_id', batchId).eq('company_id', co.companyId);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const pending = ((rowsRaw ?? []) as StoredRow[]).filter((r) => r.bucket === 'MATCHED' && !r.confirmed_at);
+  const stored = (rowsRaw ?? []) as StoredRow[];
+  const pending = stored.filter((r) => r.bucket === 'MATCHED' && !r.confirmed_at);
 
   const { data: linkRaw, error: lErr } = await sb.from('acc_settlement_matches')
     .select('settlement_row_id, payment_source, payment_id, doc_no, amount_sen').eq('company_id', co.companyId);
@@ -888,22 +900,68 @@ export const settlementConfirmMatched = guard(async (c) => {
     else linksByRow.set(Number(l.settlement_row_id), [l]);
   }
 
+  /* A MATCHED ROW WHOSE LINK IS MISSING STILL KNOWS ITS PAYMENT.
+     This button reads the link table, and on prod nine reference-matched lines
+     had none: the upload's link insert was skipped in silence (docs/bugs/0760),
+     so every one of them sent an empty selection and was refused —
+     "Posted 0. 9 could not be" over nine lines whose payment the screen was by
+     then showing. The detail view already falls back to the matcher; this is
+     the same fallback on the bulk path, and confirming writes the link, so the
+     data heals itself as he works.
+
+     ONLY `matched`, never `suggested`. This button's promise is "post every
+     line the unique reference already matched", and nobody is reading each line
+     — a suggestion needs the eyes the detail screen gives it. Recomputed only
+     for rows that have no link, so a human's stored decision is never
+     overridden. */
+  const unlinked = pending.filter((r) => (linksByRow.get(r.id) ?? []).length === 0);
+  const rescued = new Map<number, Array<{ source: 'SOPAY' | 'SIPAY'; id: string; docNo: string | null; amountSen: number }>>();
+  if (unlinked.length > 0) {
+    const acq = await loadAcquirer(sb, co.companyId, b.acquirer_code);
+    if (!acq.ok) return c.json({ error: 'acquirer_unavailable', message: acq.reason }, 400);
+    const [cands, settled] = await Promise.all([
+      loadPaymentCandidates(sb, co.companyId, acq.acquirer, b.period_from, b.period_to,
+        stored.map((r) => r.ref).filter((r): r is string => typeof r === 'string' && r !== '')),
+      loadSettledKeys(sb, co.companyId),
+    ]);
+    if (!cands.ok) return c.json({ error: 'load_failed', reason: cands.reason }, 500);
+    if (!settled.ok) return c.json({ error: 'load_failed', reason: settled.reason }, 500);
+
+    const byLine = new Map(unlinked.map((r) => [r.line_no, r.id]));
+    for (const d of matchStatement(
+      { code: acq.acquirer.code, has_unique_ref: acq.acquirer.has_unique_ref, date_tolerance_days: acq.acquirer.date_tolerance_days },
+      unlinked.map((r) => ({ lineNo: r.line_no, txnDate: String(r.txn_date).slice(0, 10), ref: r.ref, grossSen: Number(r.gross_sen), feeSen: Number(r.fee_sen), netSen: Number(r.net_sen) })),
+      cands.payments,
+      settled.keys,
+    )) {
+      if (d.bucket !== 'MATCHED' || d.matched.length === 0) continue;
+      const rowId = byLine.get(d.row.lineNo);
+      if (rowId == null) continue;
+      rescued.set(rowId, d.matched.map((p) => ({
+        source: p.source, id: p.id, docNo: p.docNo, amountSen: p.amountSen,
+      })));
+    }
+  }
+
   const userName = (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
   let confirmed = 0;
   const failed: Array<{ rowId: number; reason: string }> = [];
   for (const row of pending) {
     const links = linksByRow.get(row.id) ?? [];
+    const payments = links.length > 0
+      ? links.map((l) => ({
+        source: (l.payment_source === 'SIPAY' ? 'SIPAY' : 'SOPAY') as 'SOPAY' | 'SIPAY',
+        id: String(l.payment_id),
+        docNo: (l.doc_no ?? null) as string | null,
+        amountSen: Number(l.amount_sen ?? 0),
+      }))
+      : rescued.get(row.id) ?? [];
     const r = await confirmSettlementRow(sb, {
       companyId: co.companyId,
       rowId: row.id,
       matchReason: 'ref',
       userName,
-      payments: links.map((l) => ({
-        source: l.payment_source === 'SIPAY' ? 'SIPAY' : 'SOPAY',
-        id: String(l.payment_id),
-        docNo: l.doc_no ?? null,
-        amountSen: Number(l.amount_sen ?? 0),
-      })),
+      payments,
     });
     if (r.ok) confirmed += 1;
     else failed.push({ rowId: row.id, reason: r.reason });
