@@ -10,6 +10,13 @@ plus the 2 that cannot be compared — into 161 documents by cause. **121** carr
 outstanding-only scope plus a total the owner has ruled need not match. The
 other **40** are the subject of this entry.
 
+The 121 have their own entry, written the same night by the lane that owns them
+— `docs/bugs/0767-the-purchase-invoices-differ-because-a-receipt-spans-purchas.md`.
+Its measurement and this one agree and neither is a re-derivation of the other:
+it traces the missing lines to purchase orders the cutover did not bring in
+(*in-scope receipts 211, of which 124 carry lines from an out-of-scope purchase
+order*), and hands over "about 38 documents", which is this set.
+
 **Root cause (traced).** The 40 are three separate stories and only one of them
 is a defect in the invoice.
 
