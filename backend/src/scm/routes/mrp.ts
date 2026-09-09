@@ -1180,13 +1180,40 @@ export async function computeMrp(
              a shortage being reported for goods already received on its own PO.
            · A PURCHASE ORDER IS A PLAN. MRP exists to answer "what must I buy",
              and a purchase order already on order for this exact bucket is a
-             legitimate answer to "you do not need to buy this again". Its own
-             dedicated PO is offered FIRST, then the pooled queue.
+             legitimate answer to "you do not need to buy this again" — but ONLY
+             where that purchase order can actually become this line's supply.
 
-         The narrower rule was found by a test, not by taste: excluding the pooled
-         PO queue as well made `po-so-coverage` answer that an unlinked purchase
-         order serves nobody, which is the screen the buyer uses to see who a PO
-         is for. A planning engine may not quietly delete that. */
+         SO A BOUND LINE IS OFFERED ITS OWN DEDICATED PO AND NOTHING ELSE (owner
+         2026-09-09, "修,但只能动 Houzs Century"). This used to fall through to the
+         pooled queue after the dedicated one, and that produced the exact mirror
+         of bug 0572 on the other screen: MRP reported the line as covered by a
+         purchase order belonging to nobody, while the stored allocator — which
+         accepts only the line's OWN purchase order — left it PENDING for ever.
+         The buyer read "already on order", the order never moved, and nothing
+         said so. Measured on prod 2026-09-09: 10 of the 126 proceeded company-1
+         bedframe/sofa lines carrying no purchase order of their own were masked
+         this way.
+
+         THE OBJECTION THIS REPLACES, AND WHY IT NO LONGER STANDS. The previous
+         comment kept the pooled fallback because removing it made
+         `po-so-coverage` (layer c, the inverted MRP coverage) answer that an
+         unlinked purchase order serves nobody — the screen the buyer uses to see
+         who a PO is for. That reasoning was right about the mechanism and never
+         measured its scale. The population it protects is every company-1 OPEN,
+         UNLINKED purchase-order line on a hard-bound item, and on prod
+         2026-09-09 that is FIVE lines on TWO purchase orders — `HC-PO-009024`
+         and `HC-PO-010085` — neither carrying a "From SOs" provenance note, and
+         both already on the repair list for the same underlying reason (their
+         lines should be linked to the sales order they were raised for;
+         docs/mrp-stock-vs-bound-rules-2026-09-09.md §3). A layer-(c) guess that
+         the readiness engine will never honour is not worth keeping for two
+         documents that need a layer-(b) link anyway.
+
+         POOLED SUPPLY IS STILL REPORTED, which is the part that keeps the page
+         honest: `poOutstanding` on the SKU row still counts that purchase order.
+         What changes is only that it may no longer be named as THIS line's
+         cover, so the line reads as the shortage it is. Company 2 is untouched —
+         `boundCompany` gates the whole branch. */
       const bound = boundCompany && isHardBoundLine(r.item_group, r.item_code);
       const fromStock = bound
         ? Math.min(need, dedicatedReceivedByLine.get(r.id) ?? 0)
@@ -1196,7 +1223,7 @@ export async function computeMrp(
       let poNumber: string | null = null;
       let poEta: string | null = null;
       let poSupplierId: string | null = null;
-      const queues = bound ? [dedicatedOpenByLine.get(r.id) ?? [], poQueue] : [poQueue];
+      const queues = bound ? [dedicatedOpenByLine.get(r.id) ?? []] : [poQueue];
       for (const queue of queues) {
         while (need > 0 && queue.length > 0) {
           const front = queue[0];

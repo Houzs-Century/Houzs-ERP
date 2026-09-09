@@ -1231,6 +1231,30 @@ describe('company 1: a bound line is planned from its own purchase order only', 
     expect(row.shortage).toBe(5);
   });
 
+  test('an UNLINKED purchase order does not cover a bound line either (owner 2026-09-09)', async () => {
+    /* THE HOLE THIS CLOSES. The dedicated queue was tried first and the POOLED
+       queue second, so a purchase order belonging to nobody could report a bound
+       line as covered — while the readiness engine, which accepts only the
+       line's OWN purchase order, left it PENDING for ever. The buyer read
+       "already on order" and the order never moved.
+
+       Measured on prod 2026-09-09: 10 of the 126 proceeded company-1
+       bedframe/sofa lines with no purchase order of their own were masked this
+       way. A pooled purchase order is not a real answer for a bound line —
+       nothing can ever turn it into that line's supply. */
+    const sb = world({
+      mfg_sales_order_items: [demandRed(5)],
+      purchase_order_items: [poLine('PO-NOBODYS', 5, { fabricCode: 'RED' }, '2026-10-01')],
+    });
+
+    const res = await computeMrp(asSb(sb), co1);
+
+    const row = res.skus.find((s) => s.variantKey === 'fabriccode=red')!;
+    expect(row.lines[0]!.poNumber).toBeNull();   // not named as its cover
+    expect(row.shortage).toBe(5);                // it still has to be bought
+    expect(row.poOutstanding).toBe(5);           // and the PO is still REPORTED as supply
+  });
+
   test('company 2 keeps the pooled model — the rule is company-1 only, for now', async () => {
     const sb = world({
       mfg_sales_order_items: [demandRed(5)],
