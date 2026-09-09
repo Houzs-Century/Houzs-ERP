@@ -101,6 +101,10 @@ permission-derived audience and why the `*` wildcard is excluded, is in
 | Event | Told |
 |---|---|
 | raised (one notice **per lane**) | the lane's approvers + their upline **minus the top two levels**; separately the SO's salesperson |
+
+Approvers are LITERAL key holders (`permissionHolders.ts`), so a role carrying
+only `*` is not on the list — and from 2026-09-09 the Owner role carries the
+three real keys precisely so its account IS (see §5).
 | approved | the requester + the salesperson |
 | rejected | same pair, carrying the rejection reason |
 | PO follow-up auto-raised | the purchasing desk |
@@ -139,6 +143,15 @@ Four decisions worth keeping:
   every desk's backlog on its menu. One rule now. A wildcard holder can still
   approve anything and still sees every row inside the module; they are simply
   not told it is theirs.
+
+  **How the owner gets it back — a ROLE change, not a code exception**
+  (mig `20260909T1000_owner_role_amendment_approver_keys.sql`). The owner signs
+  in as the shared `HOUZS CENTURY` account and covers approvals when a desk is
+  away, so he needs both the count and the notice. The instrument is the
+  narrow one: grant that ONE role the three literal keys, rather than widen the
+  badge to every `*` holder — which would also have shown it to four Super
+  Admins who are not covering anything. If someone else later needs the same,
+  grant the keys; do not reintroduce a wildcard exception here.
 - **There is no second visibility rule in the frontend.** "在需要审批人员账号显示"
   is enforced by the count itself: a non-approver gets 0, and the badge renders
   nothing at 0 — which is also what a failed poll produces, so the chrome says

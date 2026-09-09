@@ -91,6 +91,18 @@ export function sameText(a, b) {
  * @param {object}   o.decoded   parseSofa() over the PURCHASE text
  * @param {Set}      o.codeSet   every product code, upper-cased
  * @param {Function} o.canonical the catalogue's own spelling of a code
+ * @param {boolean}  o.allowDelivered  REQUIRED, and never optional. `false`
+ *                               refuses a build whose goods have already left
+ *                               the warehouse, which is the default and the
+ *                               only safe answer without a person. `true` is
+ *                               the owner saying, for a NAMED set of documents,
+ *                               that the history is to be corrected anyway.
+ *                               Written as a required parameter on purpose
+ *                               (CLAUDE.md: "a parameter that DECIDES something
+ *                               is required, never optional") — as `?:` every
+ *                               existing caller would silently keep refusing
+ *                               and the switch would apply only where somebody
+ *                               remembered it.
  * @returns {{kind:'refuse', why:string} | {kind:'expand', target:Array<{code:string, soItemId:string, variants:object|null}>}}
  *
  * Every gate is a refusal, never a fallback. The one thing this plan is allowed
@@ -99,7 +111,7 @@ export function sameText(a, b) {
  * allowed to do that only when the purchase text, read by the same decoder,
  * says the same pieces in the same order (or is the same text byte for byte).
  */
-export function planMislabelledBuild({ po, so, grns, doLines, decoded, codeSet, canonical }) {
+export function planMislabelledBuild({ po, so, grns, doLines, decoded, codeSet, canonical, allowDelivered }) {
   const refuse = (why) => ({ kind: 'refuse', why });
   if (!so) return refuse('the book names a sales line the ERP does not hold (no line carries that AutoCount key)');
   if (so.cancelled) return refuse(`the sales order ${so.doc} is cancelled`);
@@ -115,7 +127,20 @@ export function planMislabelledBuild({ po, so, grns, doLines, decoded, codeSet, 
   if (unminted.length) return refuse(`a piece SKU is not minted: ${unminted.join(', ')}`);
   if (Number(po.qty) !== 1) return refuse(`the purchase line orders ${po.qty}, not one build`);
   if (po.soItemId && !live.some((l) => l.id === po.soItemId)) return refuse(`the purchase line is already dedicated to a line that is not under this key`);
-  if (Number(doLines) > 0) return refuse(`${doLines} delivery-order line(s) already state this build on ${so.doc}`);
+  /* THE GOODS HAVE ALREADY SHIPPED. Refusing is the default and stays the
+     default: re-describing a build that a delivery note already states is a
+     change to history, and nothing in a script may decide that on its own.
+
+     The owner authorised it for these five on 2026-09-09, told plainly what it
+     does and does not touch — no money, no stock, no delivery line moves; the
+     purchase row stops saying "one single seater" and says the four pieces the
+     sales order already says. His standing rule is the reason: 「已经出货了的单
+     金额不用追，可是还是要确保 transaction flow 的数据是一样的」 — the figures on a
+     delivered order do not need chasing, but the document CHAIN does.
+
+     `allowDelivered` is REQUIRED, never optional, so this decision cannot be
+     inherited by silence. */
+  if (Number(doLines) > 0 && !allowDelivered) return refuse(`${doLines} delivery-order line(s) already state this build on ${so.doc}`);
   const real = (grns ?? []).filter((g) => !g.migrated || Number(g.movements) > 0);
   if (real.length) return refuse(`goods-receipt line(s) really moved stock (${real.map((g) => g.doc).join(', ')}) — splitting those needs a compensating movement, not a re-code`);
 
