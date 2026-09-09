@@ -548,7 +548,12 @@ function report(kind, sources, plans, blocked, already, lineIndex, extraAcDocs) 
     const notes = [
       p.valueSen === 0 ? "ZERO-VALUE — AutoCount billed RM 0.00 on this invoice too" : null,
       recovered ? `${recovered} line price(s) recovered from the sales order` : null,
-      folded.length ? `folds AutoCount receipts ${folded.join(" + ")} into one ERP receipt — the total still reconciles` : null,
+      /* Said "— the total still reconciles" until 2026-09-09. On the purchase
+         side that is no longer what makes the invoice right: the total is not
+         required to match at all, and every LINE is the book's by construction.
+         A sentence claiming a reconciliation nothing performed is worse than no
+         sentence. */
+      folded.length ? `folds AutoCount receipts ${folded.join(" + ")} into one ERP receipt` : null,
     ].filter(Boolean);
     log(`  ${APPLY ? "CREATE" : "WOULD CREATE"} ${p.invoiceNumber}  (AutoCount ${p.acInvoiceNo})  `
       + `${rm(p.valueSen)}  ${p.lineCount} line(s), ${p.qty} unit(s)  from ${[...new Set(p.sourceDocNos.map(showDoc))].join(" + ")}`
