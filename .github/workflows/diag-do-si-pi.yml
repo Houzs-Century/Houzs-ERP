@@ -88,6 +88,31 @@ jobs:
           DOCS: ${{ inputs.docs }}
           NODE_OPTIONS: --dns-result-order=ipv4first
 
+      # The purchase-invoice chain is the largest number this lane owns, and its
+      # remaining cause splits two ways that want OPPOSITE writes — see this
+      # script's own header and docs/bugs/0730. Run in the SAME dispatch so the
+      # split and the dump above describe one moment of the database.
+      - name: Why the purchase invoices differ on the chain, per line (READ-ONLY)
+        if: always()
+        run: npx tsx scripts/diag-pi-gr-links.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          SHOW: ${{ inputs.show }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+      # Whether a pointer write could become a quantity move. The owner's
+      # 「库存先不看」 makes this a precondition and not a curiosity: every repair
+      # this lane might ship writes a link column, and a trigger on the target
+      # table is the one way that becomes stock. Read from the LIVE database.
+      - name: What fires on the tables this lane would write (READ-ONLY)
+        if: always()
+        run: node scripts/diag-lane-triggers.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
       - name: Keep the machine-readable verdicts
         if: always()
         uses: actions/upload-artifact@v4
