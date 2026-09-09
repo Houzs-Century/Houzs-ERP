@@ -1,0 +1,75 @@
+name: Book-line-gap lane — the six numbers, before and after (read-only)
+
+# THE SAME REPORT `po-gr-tally-verdict.yml` prints, in this lane's OWN
+# concurrency group. It runs the same script with the same inputs and computes
+# nothing of its own.
+#
+# WHY A SECOND COPY EXISTS AND IS NOT A DUPLICATED RULE. Not one number, not one
+# comparison and not one word of the report lives here — this file names a
+# script and a concurrency group, and the script is `check-po-gr-tally.mjs`
+# unchanged. What it does NOT share is the group: `po-gr-tally-verdict` is
+# declared `cancel-in-progress: true`, so a lane that wants a before-and-after
+# reading of its own would cancel whatever another lane had in flight, and
+# GitHub keeps only ONE pending run per group — a third dispatch silently
+# cancels the second, which is how two of this lane's own diagnostics were
+# dropped on 2026-09-09 with no error anywhere.
+#
+# So: same measurement, its own queue, and `cancel-in-progress: false` so this
+# lane cannot drop its own runs either.
+#
+# READ-ONLY. `check-po-gr-tally.mjs` opens no connection of its own; it runs
+# `check-ac-erp-reconcile.mjs`, which is SELECTs only, one connection, no DDL
+# and no transaction. There is no mode input and no write path.
+on:
+  workflow_dispatch:
+    inputs:
+      types:
+        description: "Document types to answer for (SI is spelled IV, the book's own name)"
+        required: false
+        default: "SO,PO,GR,DO,IV,PI"
+        type: string
+      show:
+        description: "Offenders to list per section"
+        required: false
+        default: "20"
+        type: string
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+      max_snapshot_age_days:
+        description: "Refuse if the AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+
+concurrency:
+  group: book-line-gaps-tally
+  cancel-in-progress: false
+
+jobs:
+  verdict:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: The verdicts
+        run: node scripts/check-po-gr-tally.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TYPES: ${{ inputs.types }}
+          SHOW: ${{ inputs.show }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
