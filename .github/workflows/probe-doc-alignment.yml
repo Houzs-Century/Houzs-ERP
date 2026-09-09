@@ -1,0 +1,47 @@
+# Read-only. Prints what the ERP actually holds for the seven documents the
+# alignment lane is closing, and — the figure that decides whether any of them
+# may be written at all — how many stock movements each delivery order carries.
+#
+# 「库存先不看」: a write that moves an on-hand figure STOPS. The zero-movement
+# fact behind these seven was measured hours ago and then carried in prose;
+# several lanes have written this database since. This re-measures it, in ONE
+# read-only snapshot, so an apply can quote a number it just took rather than
+# one it remembers.
+#
+# Manual trigger only, own concurrency group, SELECTs inside a single
+# REPEATABLE READ **READ ONLY** transaction — the server itself refuses a write.
+name: probe-doc-alignment
+
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+
+concurrency:
+  group: probe-doc-alignment
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: The seven, as the ERP holds them
+        run: node scripts/probe-doc-alignment-2026-09-09.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -1,0 +1,45 @@
+name: MRP line check (read-only)
+
+# Answers "why is this SO line not on the MRP page?" without anyone opening a
+# SQL console. The facts that decide it — the line's category, its resolved
+# warehouse, its variant key, what its bucket holds — live only in production.
+#
+# Manual trigger only: this is a question, not a gate, and a production DB read
+# must never become routine CI noise.
+on:
+  workflow_dispatch:
+    inputs:
+      so_doc:
+        description: 'Sales Order doc no (e.g. HC-SO-013043, or just 013043)'
+        required: true
+        type: string
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind — or displace — a release.
+concurrency:
+  group: mrp-line-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-mrp-so-line.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SO_DOC: ${{ inputs.so_doc }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
