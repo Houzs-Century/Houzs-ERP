@@ -92,6 +92,7 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
 import { buildScope, decodeSnapshot, currencyVerdict } from "./lib/ac-scope.mjs";
+import { readMappingCsv, normCode } from "./lib/ac-mapping-csv.mjs";
 import { planReceiptMoney } from "./lib/gr-money-from-book.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -149,6 +150,15 @@ const receipts = await sql`SELECT g.id, g.grn_number, g.linked_ac_gr_docno AS ac
 plain(`mode=${MODE.toUpperCase()}  company=${CO}  book cut ${snap.exported_at} (${ageDays.toFixed(2)} days old)${DOC ? `  DOC=${DOC}` : ""}`);
 plain(`${receipts.length} migrated goods receipt(s) in range.`);
 
+/* The AutoCount -> ERP item-code sheet, read by the repo's ONE parser. Two
+   parsers for this file is how 40 of 101 item-code "defects" were invented
+   (docs/bugs/0689), so this reads it the same way the reconcile does. */
+const codeMap = new Map(
+  [...readMappingCsv(fs.readFileSync(path.join(DATA, "autocount-erp-mapping-1561.csv"), "utf8"))]
+    .map(([ac, m]) => [ac, normCode(m.erp)]),
+);
+const codeKey = (c) => codeMap.get(normCode(c)) ?? normCode(c);
+
 let nMoved = 0, nStock = 0, nKeyless = 0, nForeign = 0, nAgree = 0, nOutOfScope = 0;
 let senBefore = 0, senAfter = 0;
 const plan = [];
@@ -178,6 +188,18 @@ for (const g of receipts) {
       migratedNoStock: g.migrated_no_stock === true, movements: n0(g.movements),
     },
     items, bookLine, localCurrency: currencyVerdict(hdr).kind === "local",
+    /* THE KEYLESS MONEY ARM. The book's OWN rows of this receipt plus the
+       importer's OWN item-code sheet — the module guesses neither. It writes
+       money only where every candidate book row states the same quantity, the
+       same UnitPrice and the same SubTotal, and it stamps no line key: identity
+       stays lib/ac-forced-line-pairing.mjs's to refuse. */
+    keylessMoney: {
+      bookLines: (book.GR.lines.get(acGr) ?? []).map((l) => ({
+        dtlKey: String(l.dtlKey), code: l.itemKey, qty: n0(l.qty),
+        unitPriceSen: Math.round(n0(l.unitPriceSen)), subTotalSen: Math.round(n0(l.subTotalSen)),
+      })),
+      codeKey,
+    },
   });
 
   if (got.verdict === "agree") { nAgree++; continue; }

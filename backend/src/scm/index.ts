@@ -289,16 +289,14 @@ scm.route("/quotes", quotes);
 scm.use("/suppliers/*", scmAreaGuard("scm.procurement.suppliers"));
 scm.route("/suppliers", suppliers);
 // ── Purchase Orders / GRN / PI (scm.procurement.*) ──────────────────────────
-// Cancellation approvers sign by KEY, not by area (owner 2026-09-08: the Sales
-// Director signs level 1 on a PO cancel and holds no procurement area at all).
-// The bypass admits only POST …/cancel-request/{approve,reject,withdraw} for a
-// holder of scm.po_cancel.approve_l1|l2; the open-read suffix lets the card on
-// the document load for them. routes/document-cancel-routes.ts explains both.
-// The cancel guard runs FIRST: when PATCH /:id/cancel is the execution of an
-// APPROVED request by a holder of the PO's approve key it sets
-// cancelExecutionAdmitted, which the area guard's bypass below honours — the
-// approver may lack the area's edit level (docs/bugs/0717). Everything else the
-// guard does (refuse without approval, stamp EXECUTED) is order-independent.
+// The cancel guard runs FIRST. On a Purchase Order it is what makes the REASON
+// mandatory (owner 2026-09-09:「PO cancelled 不需要审批，只需要 remark 原因取消」):
+// PATCH /:id/cancel without one is refused 400 before the router is reached,
+// and the cancellation is recorded with its reason afterwards. No approval, so
+// nothing here signs and the bypass below admits nobody on this prefix — it and
+// the open-read suffix stay because the mount is shared with the Sales Order's
+// approvers, whose keys DO open …/cancel-request (docs/bugs/0717,
+// routes/document-cancel-routes.ts).
 scm.use("/mfg-purchase-orders/:id/cancel", cancelApprovalGuard("PO"));
 scm.use("/mfg-purchase-orders/*", scmAreaGuard("scm.procurement.po", {
   openReadPaths: [CANCEL_REQUEST_OPEN_READ_PATH],

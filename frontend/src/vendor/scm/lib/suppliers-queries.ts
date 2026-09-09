@@ -1302,15 +1302,20 @@ export function useConfirmPurchaseOrder() {
   });
 }
 
+/** Cancel a PO. The REASON is mandatory (owner 2026-09-09: 「PO cancelled 不需要
+ *  审批，只需要 remark 原因取消」) — the server's cancel guard refuses a body
+ *  without one (400 reason_required) and records it in the cancellation ledger,
+ *  so every surface has to ask for it. Use usePoCancelAction (pages/scm-v2/
+ *  use-po-cancel-action.ts) rather than calling this with words of your own. */
 export function useCancelPurchaseOrder() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) =>
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
       authedFetch<{ purchaseOrder: { id: string; status: PoStatus; cancelled_at: string } }>(
         `/mfg-purchase-orders/${id}/cancel`,
-        { method: 'PATCH' },
+        { method: 'PATCH', body: JSON.stringify({ reason }) },
       ),
-    onSuccess: (_, id) => {
+    onSuccess: (_, { id }) => {
       // Prefix key also matches ['mfg-purchase-orders','outstanding-so-items'],
       // so the released SO lines reappear in the From-SO picker.
       qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
