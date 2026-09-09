@@ -128,3 +128,64 @@ describe("SalespersonHandover", () => {
     expect(screen.getByText(/No longer attributed/)).toBeTruthy();
   });
 });
+
+/* SHARING is the second operation on this panel (owner 2026-09-09, 全部平等，
+   不设主). It writes a different column to a different endpoint and must NOT be
+   able to move anybody's orders — which is the thing worth pinning, because both
+   buttons sit in the same header over the same list. */
+describe("SalespersonHandover — sharing", () => {
+  const share = (optionText: string | RegExp) => pick("Also give access to", optionText);
+
+  it("collects several people and posts them to /share, moving nothing", async () => {
+    authedFetch.mockResolvedValueOnce(preview(2));
+    render(<SalespersonHandover />);
+    pickFrom("alicia (inactive)");
+    await waitFor(() => expect(screen.getByText("HC-SO-1")).toBeTruthy());
+
+    share("Bernard");
+    share("Sim");
+
+    authedFetch.mockImplementation(() => Promise.resolve({ changed: [], skipped: [] }));
+    fireEvent.click(screen.getByRole("button", { name: /Share with 2/ }));
+
+    await waitFor(() => {
+      const posts = authedFetch.mock.calls.filter((c) => c[0] === "/so-handover/share");
+      expect(posts).toHaveLength(1);
+      expect(JSON.parse(posts[0][1].body)).toMatchObject({
+        staffIds: ["s-2", "s-3"],
+        mode: "add",
+      });
+    });
+    /* The whole point of the owner's ruling: sharing never touches attribution. */
+    expect(authedFetch.mock.calls.filter((c) => c[0] === "/so-handover/apply")).toHaveLength(0);
+  });
+
+  it("sends mode=remove for a withdrawal, on the same list", async () => {
+    authedFetch.mockResolvedValueOnce(preview(1));
+    render(<SalespersonHandover />);
+    pickFrom("alicia (inactive)");
+    await waitFor(() => expect(screen.getByText("HC-SO-1")).toBeTruthy());
+
+    share("Bernard");
+    authedFetch.mockImplementation(() => Promise.resolve({ changed: [{ docNo: "HC-SO-1" }], skipped: [] }));
+    fireEvent.click(screen.getByRole("button", { name: "Withdraw" }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Withdrew access on 1 order/)).toBeTruthy(),
+    );
+    const posts = authedFetch.mock.calls.filter((c) => c[0] === "/so-handover/share");
+    expect(JSON.parse(posts[0][1].body).mode).toBe("remove");
+  });
+
+  it("keeps the two actions independent — no share picked, no Share button", async () => {
+    authedFetch.mockResolvedValueOnce(preview(1));
+    render(<SalespersonHandover />);
+    pickFrom("alicia (inactive)");
+    await waitFor(() => expect(screen.getByText("HC-SO-1")).toBeTruthy());
+
+    expect(screen.queryByRole("button", { name: /Share with/ })).toBeNull();
+    /* And the handover button is still gated by ITS own field, not by the
+       sharing one. */
+    expect(screen.getByRole("button", { name: /Move to/ }).hasAttribute("disabled")).toBe(true);
+  });
+});

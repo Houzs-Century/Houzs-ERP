@@ -65,6 +65,8 @@ import { getBrandingCompanyCode } from "../../lib/branding";
 import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
+import { useStaff } from "../../vendor/scm/lib/admin-queries";
+import { collaboratorLabel } from "../../vendor/scm/lib/so-collaborators";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { CancelRequestPanel } from "../../vendor/scm/components/CancelRequestPanel";
@@ -105,6 +107,9 @@ type SoHeader = {
   debtor_code: string | null;
   agent: string | null;
   salesperson_id: string | null;
+  /* Who ELSE may see and edit this order (mig 20260909T1000). Attribution stays
+     salesperson_id above — these people carry none of it. */
+  collaborator_staff_ids: string[] | null;
   sales_location: string | null;
   customer_so_no: string | null;
   po_doc_no: string | null;
@@ -573,6 +578,7 @@ function SalesOrderDetailV2ReadOnly() {
   const updateStatus = useUpdateMfgSalesOrderStatus();
   const requestCancel = useCancelRequestAction("so");
   const { nameOf: salespersonNameOf } = useStaffLookup();
+  const staffRoster = useStaff();
   const notify = useNotify();
   const askConfirm = useConfirm();
   // Followup #81 — the printed SO reads payments from the ledger, not the
@@ -588,6 +594,10 @@ function SalesOrderDetailV2ReadOnly() {
   ]);
 
   const salesOrder = (detail.data as { salesOrder?: SoHeader } | undefined)?.salesOrder ?? null;
+  /* Who else may see and edit this order. Null when it is shared with nobody,
+     which is most orders — the field is then not rendered at all. Granting and
+     withdrawing live on SO Maintenance (docs/modules/so-handover.md §8). */
+  const sharedWith = collaboratorLabel(salesOrder, staffRoster.data);
   // Coverage keyed by line id; empty until the async coverage query returns (or
   // when the endpoint 404s on an older backend). Overlaid onto the lines below.
   /* The overlay is SHARED with the list drill-down (vendor/scm/lib/
@@ -1280,6 +1290,12 @@ function SalesOrderDetailV2ReadOnly() {
                     !salesOrder.agent && !salesOrder.salesperson_id
                   }
                 />
+                {/* Rendered ONLY when the order is actually shared. A field
+                    that is blank on almost every order teaches people to stop
+                    reading it, and this one has to be read. */}
+                {sharedWith && (
+                  <Field label="Shared with" value={sharedWith} />
+                )}
               </div>
             </Section>
 

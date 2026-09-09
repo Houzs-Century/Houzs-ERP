@@ -1825,6 +1825,25 @@ On a hard-locked order the page-level Edit button now opens for a caller who may
 re-attribute, with the Salesperson field as the only live control. Bulk handover
 (a resignation is fifty orders) has its own routes and guide: **`so-handover.md`**.
 
+> **AN ORDER CAN NOW HAVE MORE THAN ONE OWNER (owner 2026-09-09).** Asked whether
+> orders could be handed to several salespeople at once — *"可以让接手的几位 sales
+> person 都有权限"* — the owner ruled 全部平等，不设主: equal access, no primary.
+> So **`salesperson_id` is still exactly one person and still the attribution**,
+> and a second column carries the rest:
+>
+> - `collaborator_staff_ids uuid[]` — who else may see and edit this order.
+> - `access_staff_ids uuid[]` — DERIVED by trigger (`salesperson_id` +
+>   collaborators). **This is now the column §2's row-level filters overlap
+>   against**; `.in('salesperson_id', scopeIds)` became
+>   `applySoScope(q, scopeIds)` (`scm/lib/salesScope.ts`) on the SO reads.
+>
+> Sharing reaches **Sales Orders only**. DO / SI / delivery returns / consignment
+> / quotes / reports / AR reconciliation still filter on `salesperson_id`,
+> because those documents snapshot the rep who sold the order and commission is
+> booked from that snapshot. Migrations `20260909T1000` (columns + trigger) and
+> `20260909T1001` (the view must enumerate them — see the VIEW TRAP below).
+> Full reasoning: **`so-handover.md` §8**.
+
 Paginated contract (`?page=`) returns `{ salesOrders, total, page, pageSize,
 statusCounts, aggregates }`. `statusCounts` carries `all` plus ONE lowercase
 bucket per `SO_STATUSES` vocabulary entry (draft / confirmed / in_production /

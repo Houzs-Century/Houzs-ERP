@@ -64,6 +64,7 @@ naming `agent` on an otherwise legitimate handover.
 |--------|------|-----------|---------|
 | GET | `/api/scm/so-handover/preview?from=<staffId>` | `scm.so.attribute_other` | Every SO in the active company currently attributed to that staff id: `{ from, total, truncated, batchMax, orders[] }`, capped at 500 |
 | POST | `/api/scm/so-handover/apply` | `scm.so.attribute_other` | Moves a named batch: `{ fromStaffId, toStaffId, docNos[] }` → `{ moved[], skipped[] }` |
+| POST | `/api/scm/so-handover/share` | `scm.so.attribute_other` | Grants or withdraws ACCESS without moving attribution: `{ staffIds[], docNos[], mode }` → `{ changed[], skipped[] }`. See §8 |
 
 Both in `backend/src/scm/routes/so-handover.ts`, mounted in `scm/index.ts` behind
 the `scm.sales.orders` area guard. The preview is gated too — it enumerates
@@ -162,13 +163,189 @@ permission the API enforces.
   tool exists for. Inactive people are labelled.
 - **To** reads `usePickableStaff` (company-scoped, active only), so an order can
   never land on a departed or cross-company rep.
-- Both pickers are the house `SearchableSelect`.
+- **Also give access to** (2026-09-09) reads the same pickable list and ADDS to a
+  chip list — one `SearchableSelect` that resets to `""` after each pick, rather
+  than a multi-select control nothing else in this codebase uses.
+- All pickers are the house `SearchableSelect`.
+- The two actions sit side by side on the preview header and each is enabled by
+  its OWN field, so the one the operator has not filled in cannot fire. Progress
+  carries the action that owns it (`{ done, total, action }`) — without that the
+  Share button counted orders a running handover was moving.
 
 ## 7. Tests
 
 | File | Pins |
 |---|---|
 | `backend/src/scm/shared/so-identity-lock.test.ts` | what still freezes, that `salesperson_id` does not, the `agent` carve-out, and that the carve-out smuggles nothing else through |
-| `backend/src/scm/routes/so-handover.test.ts` | the payload guard: both staff ids required, no self-handover, dedupe, the batch cap |
+| `backend/src/scm/routes/so-handover.test.ts` | the payload guard for BOTH operations: `parseHandoverBody` (both staff ids required, no self-handover, dedupe, batch cap) and `parseShareBody` (dedupe, the 10-people cap, the same batch cap, and that `mode` defaults to `add` — including that an unrecognised mode like `replace` falls back to `add` rather than through) |
 | `backend/tests/soHandoverMigratedLock.test.mjs` | five call-site assertions: the migrated-SO lock is asked here, `linked_ac_docno` is read, the refusal reaches `skipped`, it happens BEFORE the update, and it is per order (`continue`, never a whole-batch `return`) |
 | `frontend/src/pages/scm-v2/SalespersonHandover.test.tsx` | the preview is a GET before any write, the 25-per-batch chunking, and that skips are reported rather than swallowed |
+| `backend/tests/soSharedOrderScope.test.ts` | that the SO-only reach is real: every SO scope site goes through `applySoScope` / `soDocOutOfScope`, and the downstream sales documents still filter on `salesperson_id` |
+
+---
+
+## 8. SHARING — several salespeople on one order (2026-09-09)
+
+> Owner, on the handover panel: *"接手的 sales person 可以选择 multiple 吗？可以让
+> 接手的几位 sales person 都有权限"*. Asked who the account book should then name,
+> he ruled **全部平等，不设主** — equal access, no primary among them.
+
+### 8.1 It is a SECOND operation, not a flag on the first
+
+`/apply` moves attribution: one person, `salesperson_id` + `agent` + the
+AutoCount edit. `/share` grants access: any number of people,
+`collaborator_staff_ids` and nothing else.
+
+They are separate endpoints because the owner's ruling forced it. A "multiple
+recipients" flag on `/apply` would still have to write ONE `salesperson_id`,
+which means picking one of the selected people — the primary he said not to have.
+Splitting the operations is that ruling made structural: the panel offers
+**Hand them to** (one person, moves the name) and **Also give access to** (any
+number, moves nothing), and the operator can run either, both, or neither.
+
+**The consequence, stated plainly:** sharing alone leaves `salesperson_id` where
+it was. If that is a departed rep, the SO list, the reports and the AutoCount
+book keep naming them — which is the thing `/apply`'s `enqueueEdit` exists to
+prevent. That is the accepted trade of "no primary", and a resignation that also
+needs the book corrected runs **Hand them to** as well.
+
+### 8.2 Two columns, and the split is the whole design
+
+`backend/src/db/migrations-pg/20260909T1000_scm_so_collaborator_staff_ids.sql`
+adds both columns, the trigger and the backfill;
+`backend/src/db/migrations-pg/20260909T1001_scm_so_payment_totals_view_carries_collaborators.sql`
+teaches the view to enumerate them, and is a separate file because it is the
+risky half (§8.8).
+
+| Column | Role |
+|---|---|
+| `collaborator_staff_ids uuid[]` | **INPUT.** What an operator granted. The only one anything writes. |
+| `access_staff_ids uuid[]` | **DERIVED.** `salesperson_id` + collaborators, maintained by `trg_mfg_so_sync_access_staff_ids`. What every scoped read filters on. Never write it. |
+
+**Why derive instead of filtering on both.** A read asking "salesperson_id is
+mine OR collaborators overlaps mine" is a PostgREST `or=(...)` built by string
+concatenation, with the scope's uuids inside BOTH an `in.(a,b)` list and an
+`ov.{a,b}` array literal — two kinds of comma nesting in one term, which is the
+sort of thing that works in testing and then quietly matches the wrong set.
+Against one derived column the filter is a single `ov` and each call site is a
+one-word swap.
+
+**Why a trigger.** `salesperson_id` has many writers — SO create, the header
+PATCH, `/apply`, and `sync-ac-delta`'s header lane copying back from AutoCount. A
+derived column maintained in TypeScript is correct until the first writer that
+forgets, and the symptom of forgetting is an order nobody can see.
+
+**The trigger's `UPDATE OF` list names `access_staff_ids` itself**, not just the
+two sources. Without that, a write touching only the derived column would not
+fire the trigger and would persist whatever it said — a row-level permission set
+by a typo.
+
+**Why arrays on the header rather than a child table.** Every scoped SO read is a
+LIST filtered by the caller's scope. A child table becomes a join, or an
+`IN (<every shared doc_no>)` built per request — a rep sharing 500 orders would
+put 500 doc numbers in a query string. Overlap against an array is bounded by the
+number of PEOPLE in the caller's scope, typically one. The cost is no per-grant
+metadata; the SO audit log carries actor and timestamp on field
+`collaboratorStaffIds`, which is the record anybody would actually read.
+
+### 8.3 Reach: Sales Orders ONLY, by owner ruling
+
+Asked how far shared access should go, the owner chose Sales Orders only. So:
+
+| Honours sharing (`applySoScope` / `soDocOutOfScope`) | Still `salesperson_id` only |
+|---|---|
+| SO list + summary + counts + money KPIs (`mfg-sales-orders.ts`) | Delivery Orders |
+| SO detail, `/items`, the write-side mutation guard | Sales Invoices |
+| SO list enrichment (list + detail) | Delivery Returns |
+| SO amendments (list + detail) | Consignment orders |
+| The amendment-creation gate | Quotes, reports, AR reconciliation, unbilled deliveries |
+
+The right-hand column is not an oversight. Those documents snapshot the rep who
+sold the order, and that snapshot is what commission is booked from — the same
+reason `/apply` writes no financial column. A co-owner sees the Sales Order they
+are working; they do not inherit someone else's invoice.
+
+### 8.4 The migrated-SO lock is deliberately NOT asked
+
+`/apply` asks it (§3). `/share` does not, and that is the one decision in the
+handler worth arguing with. The lock stops an order whose ERP copy already
+differs from the AutoCount book from being edited in ways that widen the gap.
+`collaborator_staff_ids` has no counterpart in that book — nothing syncs it and
+no verdict can disagree about it — while asking the lock would mean the migrated
+open orders, most of the book, could never be shared: exactly the population a
+resignation strands. `/apply` still asks, because `/apply` writes `agent`, which
+IS an AutoCount field.
+
+### 8.5 `add` / `remove`, and why there is no `replace`
+
+The operator is acting on up to 25 orders whose current collaborators they cannot
+see. A replace would silently drop a grant somebody else made — the bulk-tool
+version of losing data. So `mode` is `add` (default) or `remove`, both explicit
+and both bulk, and an unrecognised value falls back to `add` rather than through.
+Re-running a grant reports "Already shared with all of them" in `skipped` rather
+than counting as done: an operator who ran it twice should see that the second
+run changed nothing.
+
+Unlike `/apply` there is no `same_staff` refusal — sharing an order with the
+person already attributed to it is harmless (the derived column de-duplicates),
+and refusing it would fail a bulk grant because one order in the batch happened
+to be theirs.
+
+### 8.6 Where a share is VISIBLE
+
+> Owner 2026-09-09, immediately after the bulk tool shipped: *"SO 详情页也要能
+> 看到共享给了谁"*. Until then a grant existed only on the maintenance panel and
+> in the audit log — **state a user cannot see is state they cannot correct.**
+
+| Surface | What it shows |
+|---|---|
+| SO Detail, desktop (`SalesOrderDetailV2.tsx`) | a **Shared with** `Field` beside Salesperson, names A→Z |
+| SO Detail, mobile (`MobileSODetail.tsx`) | the same, as a `RoField` under the Salesperson row |
+| SO History drawer / mobile timeline | the audit row's field key `collaboratorStaffIds` reads **"Shared with"** (`so-audit-labels.ts`, `mobile/so-history-labels.ts`) — it printed the raw key until this shipped |
+| SO Maintenance | where granting and withdrawing actually happen (§8.1) |
+
+**The field is absent, not blank, on an unshared order.** Most orders are shared
+with nobody, and a field that is empty on almost every order teaches people to
+stop reading it — which defeats the point of showing it at all.
+
+The two screens share the LOGIC and not the rendering:
+`frontend/src/vendor/scm/lib/so-collaborators.ts` (`collaboratorNames`,
+`collaboratorLabel`) resolves ids to names, dedupes, sorts A→Z, and answers
+**"Unknown user"** for an id that resolves to nobody — a grant to somebody since
+removed is information, and a uuid on screen is the defect it replaces
+(`useStaffLookup`'s `actorNameOf` set that convention). Desktop renders a
+`Field`, mobile a `RoField`; neither re-derives which names to show.
+
+> `MobileSODetail.tsx` was AT its file-size ceiling, so this could not be added
+> until something left. `HIST_FIELD_LABEL` / `HIST_MONEY_FIELDS` moved verbatim
+> to `frontend/src/mobile/so-history-labels.ts` — pure constants, no behaviour,
+> and the file's own comment already called the map a duplicate of desktop's.
+> That is the repo's prescribed remedy for a file at its ceiling (a new module,
+> never a bigger number), not an optional tidy-up.
+
+### 8.7 What each shared order writes
+
+| Sink | What lands |
+|---|---|
+| `mfg_sales_orders` | `collaborator_staff_ids` = the new set; `access_staff_ids` re-derived by the trigger. **No attribution column, no `agent`, no money.** |
+| `mfg_so_audit_log` | `recordSoAudit` `UPDATE_DETAILS`, field `collaboratorStaffIds` from → to (comma-joined uuids), note `Sales order shared` / `Sales order sharing withdrawn` |
+| AutoCount outbox | **nothing.** There is no field to write. |
+
+### 8.8 The view migration is the risky half — read this before touching it
+
+`20260909T1001` is separate from `20260909T1000` for the same reason 0325 was
+separate from 0324: one is an `ALTER TABLE` that cannot fail, the other touches a
+view that took production's Sales Order list down for every user once already.
+
+**Shipping T1000 without T1001 does not degrade the list — it 500s it**, for
+every user, because the scope filter itself moved onto `access_staff_ids` and the
+view would not carry that column. The two files must land together.
+
+`CREATE OR REPLACE`, never DROP + CREATE. A recreated view is a NEW object with
+an EMPTY ACL — that is how 0189 killed the list and needed both 0190 and 0191 to
+repair, with nobody having written down what the grants were. `CREATE OR REPLACE`
+may only ADD columns at the END of the select list, which is what this does;
+every prior column keeps its name, type and position byte-for-byte from 0325. If
+a future edit needs to REORDER or RETYPE one, `CREATE OR REPLACE` will refuse —
+the answer is to carry 0312's grant-restore block, never to reach for DROP to
+silence it.

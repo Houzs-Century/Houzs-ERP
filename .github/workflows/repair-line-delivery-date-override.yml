@@ -1,0 +1,64 @@
+name: Repair line delivery date override
+
+# Honour the per-line delivery date the ACCOUNT BOOK carries, on the seven lines
+# where the book confirms it. The cutover copied AutoCount's SODTL.DeliveryDate
+# into line_delivery_date and did not set line_delivery_date_overridden, so the
+# ERP promises the HEADER date instead. Worst case: HC-SO-013495 (MR JERALD) —
+# the book says the sofa is due 2026-10-10, the ERP promises 2026-09-08.
+#
+# SEVEN, NOT NINE. Nine live lines look identical in SQL. Each was checked
+# against the book one by one over ZeroTier and two are NOT the same thing:
+#   HC-SO-000517 SOFT PILLOW — the ERP's 2026-08-28 is in no AutoCount row
+#     (all six lines of SO-000517 read 2026-08-27). Honouring it invents delay.
+#   2990-SO-2607-023 — its line date is a stale mirror of the pre-amendment
+#     customer date; the order was rescheduled EARLIER. Honouring it would push
+#     a READY_TO_SHIP order two months later.
+# The script PINS the seven and refuses if the tree no longer matches.
+#
+# DEFAULT IS PLAN. Applying needs the mode change AND the confirm phrase.
+#
+# REVERSAL: SET line_delivery_date_overridden = false on those ids. Every target
+# was false; no date is written, only the switch, so nothing else is disturbed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "Required for apply: honour the book line delivery dates"
+        required: false
+        default: ""
+
+# Its own group: a repair must never queue behind, or displace, a release.
+concurrency:
+  group: repair-line-delivery-date-override
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    # Where DATABASE_URL lives — the same environment the deploy uses.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-line-delivery-date-override.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
