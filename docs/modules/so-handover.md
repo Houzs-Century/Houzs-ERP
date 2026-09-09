@@ -211,7 +211,11 @@ needs the book corrected runs **Hand them to** as well.
 
 ### 8.2 Two columns, and the split is the whole design
 
-Migration `20260909T1000`:
+`backend/src/db/migrations-pg/20260909T1000_scm_so_collaborator_staff_ids.sql`
+adds both columns, the trigger and the backfill;
+`backend/src/db/migrations-pg/20260909T1001_scm_so_payment_totals_view_carries_collaborators.sql`
+teaches the view to enumerate them, and is a separate file because it is the
+risky half (§8.7).
 
 | Column | Role |
 |---|---|
@@ -294,3 +298,22 @@ to be theirs.
 | `mfg_sales_orders` | `collaborator_staff_ids` = the new set; `access_staff_ids` re-derived by the trigger. **No attribution column, no `agent`, no money.** |
 | `mfg_so_audit_log` | `recordSoAudit` `UPDATE_DETAILS`, field `collaboratorStaffIds` from → to (comma-joined uuids), note `Sales order shared` / `Sales order sharing withdrawn` |
 | AutoCount outbox | **nothing.** There is no field to write. |
+
+### 8.7 The view migration is the risky half — read this before touching it
+
+`20260909T1001` is separate from `20260909T1000` for the same reason 0325 was
+separate from 0324: one is an `ALTER TABLE` that cannot fail, the other touches a
+view that took production's Sales Order list down for every user once already.
+
+**Shipping T1000 without T1001 does not degrade the list — it 500s it**, for
+every user, because the scope filter itself moved onto `access_staff_ids` and the
+view would not carry that column. The two files must land together.
+
+`CREATE OR REPLACE`, never DROP + CREATE. A recreated view is a NEW object with
+an EMPTY ACL — that is how 0189 killed the list and needed both 0190 and 0191 to
+repair, with nobody having written down what the grants were. `CREATE OR REPLACE`
+may only ADD columns at the END of the select list, which is what this does;
+every prior column keeps its name, type and position byte-for-byte from 0325. If
+a future edit needs to REORDER or RETYPE one, `CREATE OR REPLACE` will refuse —
+the answer is to carry 0312's grant-restore block, never to reach for DROP to
+silence it.
