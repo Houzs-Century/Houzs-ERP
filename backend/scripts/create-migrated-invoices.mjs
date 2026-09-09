@@ -92,7 +92,7 @@ const REFS = gz("ac-invoice-refs.json.gz");
   const ageDays = (Date.now() - new Date(REFS._exportedAt).getTime()) / 86400000;
   if (!(ageDays <= 2)) {
     console.error(`REFUSED: ac-invoice-refs.json.gz was exported ${REFS._exportedAt} (${ageDays.toFixed(1)} days ago).`);
-    console.error("Invoices raised since are invisible to it and its totals are superseded. Re-export the map first (export-ac-reimport.py ONLY=ivrefs).");
+    console.error("Invoices raised since are invisible to it and its totals are superseded. Re-export the map first: AC_CRED_FILE=<path> python backend/scripts/export-ac-invoice-refs.py");
     process.exit(2);
   }
 }
