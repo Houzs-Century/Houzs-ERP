@@ -200,7 +200,13 @@ const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) =
         </button>
       </div>
 
-      {q.data && (
+      {/* MOUNTED ONLY WHILE OPEN. The dialog reads the company branding through
+          react-query, so mounting it closed puts a live query on every month a
+          person merely looks at — and, more sharply, makes this whole screen
+          require a QueryClientProvider that BankRecon's own tests do not set up.
+          It has no entry state to preserve, so mounting on the press is the same
+          dialog and one fewer subscription. */}
+      {q.data && print.open && (
         <PrintPreviewModal
           open={print.open}
           onClose={print.close}
