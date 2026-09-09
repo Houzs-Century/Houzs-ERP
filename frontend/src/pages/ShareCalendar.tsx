@@ -45,7 +45,9 @@ type ShareEvent = {
   endDate: string | null;
   name: string | null;
 };
-type ShareData = { contractor?: string; brand?: string; events: ShareEvent[] };
+/** `exportScope` (contractor links): what one press of Export covers — the month
+ *  on screen, or the whole year for the contractors the office marked so. */
+type ShareData = { contractor?: string; brand?: string; exportScope?: "month" | "year"; events: ShareEvent[] };
 type ShareFile = { fileId: string; fileName: string; contentType: string | null; sizeBytes: number | null };
 /** A brand gets both; a contractor's route answers size only (owner 2026-09-09). */
 type ShareFigures = { sizeSqm: number | null; totalSales?: number | null };
@@ -387,7 +389,11 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
     setExporting(true);
     setExportError(null);
     try {
-      const res = await correlatedFetch(`${base}/export?month=${monthParam()}`);
+      // Owner 2026-09-09: three contractors' links export the whole YEAR on
+      // screen (a Project Maintenance setting the server reports); the rest,
+      // and every brand, the month on screen.
+      const yearWide = mode === "contractor" && data?.exportScope === "year";
+      const res = await correlatedFetch(yearWide ? `${base}/export?year=${cursor.y}` : `${base}/export?month=${monthParam()}`);
       if (!res.ok) {
         setExportError(EXPORT_FAIL);
         return;
@@ -419,7 +425,7 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
       const ws = XLSX.utils.aoa_to_sheet(aoa);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Schedule");
-      XLSX.writeFileXLSX(wb, `${fileStem(party)} schedule ${monthLabel}.xlsx`);
+      XLSX.writeFileXLSX(wb, `${fileStem(party)} schedule ${yearWide ? String(cursor.y) : monthLabel}.xlsx`);
     } catch {
       setExportError(EXPORT_FAIL);
     } finally {
@@ -674,13 +680,17 @@ function EventPanel({
           <button type="button" onClick={onClose} className="h-8 w-8 shrink-0 rounded-md border border-gray-200 text-gray-600 hover:border-accent" aria-label="Close">×</button>
         </div>
 
-        {/* Size for both parties (owner 2026-09-09: "size not in here. please
-            add also"); money for the brand only, and the contractor's route
-            never sends it. */}
-        <dl className="grid grid-cols-2 gap-3 border-b border-slate-200 px-4 py-3 text-[13px]">
+        {/* Size and Booth for both parties (owner 2026-09-09: "size, booth
+            number and floorplan"); money for the brand only, and the
+            contractor's route never sends it. */}
+        <dl className="flex flex-wrap gap-x-8 gap-y-2 border-b border-slate-200 px-4 py-3 text-[13px]">
           <div>
             <dt className="text-[11px] uppercase tracking-wide text-gray-500">Size</dt>
             <dd className="font-semibold text-gray-900">{figures?.sizeSqm != null ? `${figures.sizeSqm} sqm` : "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-[11px] uppercase tracking-wide text-gray-500">Booth</dt>
+            <dd className="font-semibold text-gray-900">{booth || "—"}</dd>
           </div>
           {mode === "brand" ? (
             <div>

@@ -101,6 +101,33 @@ retryable via the allocation editor.
 `poReceivedFloorViolation(line, po)` — a revised qty may never drop below what has
 already been received. Tests: `shared/po-amendment.test.ts`.
 
+**When a follow-up is raised at all, and against WHICH PO —
+`lib/amendment-po-followup.ts`.** Approving the LINES lane of an SO amendment
+raises follow-ups; three filters decide what, and where:
+
+1. `poRelevant` — QTY / ADD / REMOVE always reshape the PO; SPEC only when the
+   code or the variants moved (a sell-price-only edit is the customer's side).
+2. `serviceOnlyChange` — **SERVICE lines never escalate (owner, 2026-09-09).**
+   Storage / disposal / delivery charges ride the SO->DO->SI chain but are not
+   goods: they never become MRP demand and never become a PO line, so there is
+   nothing for the supplier to follow. Judged on the line's IDENTITY on BOTH
+   sides of the edit (`shared/service-sku` `isServiceLine`, over the live SO row
+   or — for a REMOVE, which hard-deletes it — the pre-apply snapshot), so a SPEC
+   edit that swaps a service SKU for real goods still escalates. An identity that
+   cannot be read is NOT treated as service: an extra follow-up the purchaser
+   withdraws beats a real change the supplier never hears about.
+3. **Only the PO that HOSTS a changed line** (owner, 2026-09-09) — it used to be
+   every PO bound to the SO, so a one-line change on a multi-PO order raised a
+   0-change amendment against each untouched PO too. **The narrowing applies only
+   when EVERY changed line already has a PO home.** A changed line with none may
+   still need one — an ADD by construction, and equally a line that was never
+   ordered — so there the full bound set stays in play and `reviseBoundPo` does
+   the supplier matching at confirm.
+
+Nothing left after all three = no PO amendment, and the SO audit row says
+"No PO follow-up needed for this amendment." Tests:
+`lib/amendment-po-followup.test.ts`.
+
 **Barrel note:** this module is NOT re-exported through `shared/index.ts` — its
 `canTransition` / `nextStatus` names collide with `so-amendment`'s. Import it
 directly: `from '../shared/po-amendment'`.

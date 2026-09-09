@@ -23,6 +23,7 @@ import {
   audienceSummary,
   type AudienceValue,
 } from "./AudiencePicker";
+import { docTypeForCategory } from "../../components/announcementCategory";
 import {
   CATEGORY_META,
   CATEGORY_ORDER,
@@ -224,6 +225,11 @@ export function ComposerModal(p: ComposerModalProps) {
   const restored = useMemo(() => readDraft(storageKey), [storageKey]);
 
   const [docType, setDocType] = useState<string>(restored?.docType ?? "ANN");
+  const typeOptions = useMemo(() => p.docTypes ?? [], [p.docTypes]);
+  // The type follows the category (docTypeForCategory, owner 2026-09-09)
+  // until the writer picks one by hand; a restored draft keeps what it saved.
+  const [typeTouched, setTypeTouched] = useState<boolean>(restored != null);
+  const [typeOpen, setTypeOpen] = useState(false);
   // Numbered under (owner 2026-09-09: 需要可以选部门): the department whose
   // series the number is minted on — a director composing on a department's
   // behalf picks it; empty = the submitter's own department.
@@ -357,6 +363,10 @@ export function ComposerModal(p: ComposerModalProps) {
     setRequireAck(categoryRequiresAck(c));
     if (c === "SOP") setExpiresAt("");
   }
+  useEffect(() => {
+    if (typeTouched) return;
+    setDocType(docTypeForCategory(category, typeOptions));
+  }, [category, typeTouched, typeOptions]);
 
   const onPickFiles = useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -479,7 +489,6 @@ export function ComposerModal(p: ComposerModalProps) {
   const hasPhotos = attachments.some((a) => a.mime.startsWith("image/"));
   const hasVideos = attachments.some((a) => a.mime.startsWith("video/"));
   const canPost = !posting && !uploading && title.trim().length > 0;
-  const typeOptions = p.docTypes ?? [];
   const pickedType = typeOptions.find((t) => t.code === docType);
   const typeNeedsFile = pickedType ? pickedType.attachmentRequired : p.attachmentRequired === true;
   const missingAttachment = typeNeedsFile && attachments.length === 0;
@@ -520,61 +529,6 @@ export function ComposerModal(p: ComposerModalProps) {
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_520px]">
           {/* ── Editor column ─────────────────────────────────────────── */}
           <div className="flex min-h-0 flex-col gap-3.5 overflow-auto border-r border-border px-[18px] py-4">
-            {typeOptions.length > 1 && (
-              <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Document type">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">Type</span>
-                {typeOptions.map((t) => {
-                  const on = t.code === docType;
-                  return (
-                    <button
-                      key={t.code}
-                      type="button"
-                      role="radio"
-                      aria-checked={on}
-                      onClick={() => setDocType(t.code)}
-                      className={cn(
-                        "rounded-full border px-3 py-[5px] text-[11.5px] font-[650]",
-                        on ? "border-transparent bg-ink text-white" : "border-border bg-surface text-ink-secondary hover:bg-surface-dim",
-                      )}
-                    >
-                      {t.label}
-                      <span className="ml-1 font-mono text-[10px] opacity-70">{t.code}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-            <div className="flex flex-wrap items-center gap-2">
-              <label htmlFor="composer-number-dept" className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
-                Numbered under
-              </label>
-              <select
-                id="composer-number-dept"
-                aria-label="Numbered under"
-                className={cn(FIELD_CLS, "min-w-[240px]")}
-                value={numberDeptId ?? ""}
-                onChange={(e) => setNumberDeptId(e.target.value ? Number(e.target.value) : null)}
-              >
-                <option value="">My department</option>
-                {p.departments.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                    {d.code ? ` (${d.code})` : " — no code"}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {(nextRef.refNo || nextRef.reason) && (
-              <p className="text-[11.5px] text-ink-secondary" data-testid="ref-no-preview">
-                {nextRef.refNo ? (
-                  <>
-                    Number on approval: <span className="font-mono font-semibold text-ink">{nextRef.refNo}</span> · the next on {numberDept ? `${numberDept.name}'s` : "your department's"} {docType} series this month
-                  </>
-                ) : (
-                  nextRef.reason
-                )}
-              </p>
-            )}
             <div className="flex flex-wrap items-center gap-2">
               {CATEGORY_ORDER.map((c) => {
                 const m = CATEGORY_META[c];
@@ -613,6 +567,84 @@ export function ComposerModal(p: ComposerModalProps) {
                 Require acknowledgement
               </label>
             </div>
+            {/* Numbering (owner 2026-09-09): the family the number is minted as
+                (follows the category until picked by hand), the department it
+                is minted under, and the number itself, previewed. */}
+            <div className="flex flex-wrap items-center gap-2" data-testid="numbering-row">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">Numbered as</span>
+              <span
+                className="rounded-full border border-border bg-surface-dim px-2.5 py-[3px] text-[11.5px] font-[650] text-ink"
+                data-testid="numbering-type"
+              >
+                {pickedType?.label ?? docType}
+                <span className="ml-1 font-mono text-[10px] opacity-70">{docType}</span>
+              </span>
+              {typeOptions.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setTypeOpen((v) => !v)}
+                  aria-expanded={typeOpen}
+                  className="text-[11.5px] font-semibold text-primary hover:underline"
+                >
+                  {typeOpen ? "Done" : "Change type"}
+                </button>
+              )}
+              <label htmlFor="composer-number-dept" className="ml-2 text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
+                under
+              </label>
+              <select
+                id="composer-number-dept"
+                aria-label="Numbered under"
+                className={cn(FIELD_CLS, "min-w-[240px]")}
+                value={numberDeptId ?? ""}
+                onChange={(e) => setNumberDeptId(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">My department</option>
+                {p.departments.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                    {d.code ? ` (${d.code})` : " — no code"}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {typeOpen && typeOptions.length > 1 && (
+              <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Document type">
+                {typeOptions.map((t) => {
+                  const on = t.code === docType;
+                  return (
+                    <button
+                      key={t.code}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      onClick={() => {
+                        setTypeTouched(true);
+                        setDocType(t.code);
+                      }}
+                      className={cn(
+                        "rounded-full border px-3 py-[5px] text-[11.5px] font-[650]",
+                        on ? "border-transparent bg-ink text-white" : "border-border bg-surface text-ink-secondary hover:bg-surface-dim",
+                      )}
+                    >
+                      {t.label}
+                      <span className="ml-1 font-mono text-[10px] opacity-70">{t.code}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {(nextRef.refNo || nextRef.reason) && (
+              <p className="text-[11.5px] text-ink-secondary" data-testid="ref-no-preview">
+                {nextRef.refNo ? (
+                  <>
+                    Number on approval: <span className="font-mono font-semibold text-ink">{nextRef.refNo}</span> · the next on {numberDept ? `${numberDept.name}'s` : "your department's"} {docType} series this month
+                  </>
+                ) : (
+                  nextRef.reason
+                )}
+              </p>
+            )}
 
             <input
               type="text"

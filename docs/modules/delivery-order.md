@@ -824,15 +824,48 @@ delivery order by that fallback would be writing on a guess.
 
 So `backend/scripts/topup-ac-lines-from-truth.mjs` has two lanes and they are not
 symmetrical. Its SO lane is a general rule keyed on DtlKey. Its **DO lane is a
-NAMED list** — `DO_TARGETS` in that file, one entry per line it may add, each
-asserted against the book (document, DtlKey, quantity, unit price, line
-subtotal) and against the ERP (no row already answering it) before anything is
-written. A target whose book row has moved is REFUSED, never adjusted to fit.
-Today the list holds one line: `DO-001604`, whose book row is
-`* DISPOSE 3S L SHAPE SOFA + CONSOLE TABLE`, no item code, quantity 1,
-**RM 150.00** — a text-only line carrying real money, explicitly NOT in the
+NAMED list** — `DO_TARGETS`, which since 2026-09-09 lives in
+`backend/scripts/lib/do-topup-targets.mjs` so a test can read it. One entry per
+line it may add, each asserted against the book (document, DtlKey, quantity,
+unit price, line subtotal) and against the ERP (no row already answering it)
+before anything is written. A target whose book row has moved is REFUSED, never
+adjusted to fit.
+
+**As of 2026-09-09 the list holds six lines.** The first is `DO-001604`, whose
+book row is `* DISPOSE 3S L SHAPE SOFA + CONSOLE TABLE`, no item code, quantity
+1, **RM 150.00** — a text-only line carrying real money, explicitly NOT in the
 blank-row class of `docs/bugs/0695` (section G of
-`docs/cutover-so-do-remainder-2026-09-08.md`).
+`docs/cutover-so-do-remainder-2026-09-08.md`). Four more are the substituted
+lines of `DO-001953` / `DO-004903` (`docs/bugs/0711`, described below). The last
+is a **free line the book gives away**: `DO-011465`'s four `HOK-SQUARE PILLOW`
+at RM 0.00, the book's own Desc2 reading *for conpesantion wrong item
+delivery.* Being RM 0.00 it moves no header total, which is why the line-count
+comparison was the only thing that could find it
+(`docs/bugs/0752-the-book-s-two-free-delivery-lines-were-never-written-and-a.md`).
+
+**`DO-010332` was written into this list and then taken out again, and the
+reason belongs here.** The book has two lines on that note — `2 x RM 3,250`
+Desc2 `.../2S`, and `1 @ RM 0.00` Desc2 `.../1S`. The ERP holds ONE row, keyed
+to the **2S** line, carrying the **1S** line's build text *and* the item code
+`8050-1S`. Inserting the free line on its own would leave the note with two rows
+both claiming 1S, one of them priced at the other line's money. The existing row
+has to become the 2S line first — a SEAT SIZE on a delivered document, which
+belongs to the sofa tooling and not to a top-up that copies quantities and
+prices. `backend/tests/doTopupTargets.test.mjs` pins its absence so it cannot be
+re-added as a simple top-up.
+
+**Two properties of this lane changed with them, and both are load-bearing.**
+
+- **The insert carries the book's own `Desc2` into `description2`.** It used to
+  write a hard-coded `NULL`, so every line the lane had ever topped up landed
+  with no build text on a note whose other rows all carried theirs. The value
+  comes from `book.DO.desc2` — the account book — never from a target.
+- **Every target is resolved against the committed book snapshot on every PR**,
+  by `backend/tests/doTopupTargets.test.mjs`. That is why `DO_TARGETS` moved to
+  `scripts/lib/`. A named list is hand-typed assertions about a book nobody
+  re-reads, and the script's own drift check runs only when someone dispatches
+  it against production — the worst moment to find a typo. The test also plants
+  four typo shapes and asserts each is rejected.
 
 Two deliberate choices in that write, both recorded because neither is obvious:
 

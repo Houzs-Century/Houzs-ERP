@@ -6,7 +6,7 @@
 //   GET /api/public/contractor-calendar/:token/events/:eventId
 //   GET /api/public/contractor-calendar/:token/events/:eventId/floorplan
 //   GET /api/public/contractor-calendar/:token/events/:eventId/floorplan/:fileId
-//   GET /api/public/contractor-calendar/:token/export?month=YYYY-MM
+//   GET /api/public/contractor-calendar/:token/export?month=YYYY-MM   (or ?year=YYYY)
 //
 // The unguessable token IS the credential (pattern: routes/publicDoScan.ts and
 // mig 0126's kill switch). The contractor the link belongs to is read off the
@@ -33,12 +33,13 @@ import type { Env } from "../types";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
 import { resolveShareToken } from "../services/contractorShare";
 import {
-  MONTH_RE,
   TOKEN_RE,
+  exportWindowFromQuery,
   listPlanFiles,
   listShareEvents,
   listShareExportRows,
   logShareExport,
+  readContractorExportScope,
   readShareEventSize,
   resolveShareEvent,
   streamPlanFile,
@@ -89,11 +90,14 @@ async function gateEvent(c: Ctx): Promise<{ scope: ShareScope; projectId: number
   return { scope: g.scope, projectId };
 }
 
+// `exportScope` tells the page what one press of Export covers for THIS
+// contractor — the month on screen, or the whole year (a Project Maintenance
+// setting; owner 2026-09-09).
 publicContractorCalendar.get("/:token", async (c) => {
   const g = await gate(c);
   if (g instanceof Response) return g;
-  const events = await listShareEvents(c.env, g.scope);
-  return c.json({ contractor: g.scope.value, events });
+  const [events, exportScope] = await Promise.all([listShareEvents(c.env, g.scope), readContractorExportScope(c.env, g.scope.value)]);
+  return c.json({ contractor: g.scope.value, exportScope, events });
 });
 
 // The event's SIZE, and nothing else — no money, ever, on this route (owner
@@ -133,12 +137,12 @@ publicContractorCalendar.get("/:token/events/:eventId/floorplan/:fileId", async 
 publicContractorCalendar.get("/:token/export", async (c) => {
   const g = await gate(c);
   if (g instanceof Response) return g;
-  // No month = the whole schedule: a page loaded before the month rule shipped
-  // still asks that way until it reloads. A month that is PRESENT but malformed
-  // is a bad request, never silently the whole schedule.
-  const raw = (c.req.query("month") ?? "").trim();
-  if (raw && !MONTH_RE.test(raw)) return c.json({ error: "bad_month", message: "Month must look like 2026-09." }, 400);
-  const rows = await listShareExportRows(c.env, g.scope, false, raw || null);
+  // ?month= (the month on screen) or ?year= (the whole year, for the contractors
+  // whose master row says so); neither = the whole schedule, what a page loaded
+  // before the month rule shipped still sends until it reloads.
+  const w = exportWindowFromQuery(c.req.query("month"), c.req.query("year"));
+  if ("error" in w) return c.json({ error: "bad_window", message: w.error }, 400);
+  const rows = await listShareExportRows(c.env, g.scope, false, w.window);
   await logShareExport(c.env, "contractor", g.scope.value, g.token, clientIp(c), rows.length);
   return c.json({ contractor: g.scope.value, generatedAt: new Date().toISOString(), rows });
 });
