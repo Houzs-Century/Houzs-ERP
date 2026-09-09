@@ -13,6 +13,7 @@ import { GlobalSearchProvider } from "./components/GlobalSearch";
 import { NotificationsProvider } from "./hooks/useNotifications";
 import { BrowserPushSink } from "./components/BrowserPushSink";
 import { AnnouncementBanner } from "./components/AnnouncementBanner";
+import { PendingTasksReminder } from "./components/PendingTasksReminder";
 import { QuickActionsFAB } from "./components/QuickActionsFAB";
 import { BackToTopFAB } from "./components/BackToTopFAB";
 import { AssistantLauncher } from "./components/AssistantLauncher";
@@ -420,6 +421,7 @@ export default function App() {
       <BreadcrumbsProvider>
       <BrowserPushSink />
       <AnnouncementBanner />
+      <PendingTasksReminder />
       <QuickActionsFAB />
       <BackToTopFAB />
       <AssistantPanelProvider>

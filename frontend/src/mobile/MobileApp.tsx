@@ -16,6 +16,7 @@ import { useApplyHtmlLang } from "./mobileI18n";
 import { useAnnouncementUnread } from "./useAnnouncementUnread";
 import { MobileCrashBoundary } from "./MobileCrashBoundary";
 import { IosInstallGuide } from "../components/IosInstallGuide";
+import { PendingTasksReminder } from "../components/PendingTasksReminder";
 import { AndroidInstallGuide } from "../components/AndroidInstallGuide";
 // Heavy mobile screens are lazy-loaded so the initial mobile chunk stays small
 // (desktop routes were already lazy — this closes the mobile gap that made the
@@ -880,6 +881,7 @@ function MobileAppInner() {
         {overlay}
       </MobileCrashBoundary>
       {annPopup}
+      <PendingTasksReminder />
     </>
   );
 
@@ -1002,6 +1004,7 @@ function MobileAppInner() {
       )}
 
       {annPopup}
+      <PendingTasksReminder />
     </div>
   );
 }
