@@ -31,14 +31,26 @@ book's grouping that differs, not our money.
 planner already carried and the runner never exposed. Opt-in per run, never the
 default.
 
-**What is given up, said plainly.** The total equality was doing a second job:
+**The owner sharpened it, and it shrinks the cost below.** 「就是每一个 line item
+都要跟 autocall 一样啊」 — every LINE ITEM must match AutoCount; it is only the
+invoice TOTAL that is not required to. That is already true of the source: the
+goods receipts were reconciled to the book line by line earlier the same day
+(`repair-gr-money-from-book.mjs`, and the owner's rulings on the 25% discount and
+the RM 55), and the PO/GR tally now reads 400 receipts with ONE differing, which
+he accepted (`docs/bugs/0762`). So a receipt's lines ARE the book's lines, and
+writing an invoice from them writes the book's lines.
+
+**What is given up, said plainly, and it is smaller than the first draft of this
+entry claimed.** The total equality was doing a second job:
 the script recovers a price the cutover dropped (483 of 496 migrated GRN lines
 carry no price) by reading it back off the order line, and the file's own comment
 names the total gate as the proof that a recovered price is right —
 *"an invoice whose recovered prices are wrong fails that test rather than being
-written"*. **With the gate off, nothing here catches a wrong recovered price.**
-That is the whole cost of the switch, and it is why it is opt-in and printed in
-the run's first line.
+written"*. **With the gate off, nothing IN THIS SCRIPT catches a wrong recovered price** —
+but the receipt lines it copies were already reconciled to the book by a
+different lane, which is the check that actually matters and which the total gate
+was only a proxy for. Still opt-in and printed in the run's first line: a proxy
+that is usually redundant is not the same as one that is never needed.
 
 **A second thing found while doing this, which is not about invoices at all.**
 `scm.write_freeze` is enforced in the HTTP layer (`backend/src/scm/index.ts:127`).
