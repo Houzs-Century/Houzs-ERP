@@ -58,6 +58,14 @@ The owner's instruction, 2026-09-09: 「我们超过 40 个字的地址全部拆
   paste over a SELECTION replaces only what was selected; the LAST line keeps an
   over-long paste uncut; and the bundle carries both the width and a working
   spill.
+* `frontend/src/lib/addressLimit.dom.test.tsx` — **4 tests, in a real DOM**,
+  because this is a UI change and the rule here is to observe it: both boxes
+  render `maxLength` 40; typing a 46-character street line through `user-event`
+  leaves exactly 40 in the box; a pasted 73-character address ends up split
+  across the two boxes and, put back together, is character-for-character what
+  was on the clipboard; the last box keeps an over-long paste rather than cutting
+  it. Proven capable of failing: with the cap set to 999 the typing test lands 46
+  characters and the test fails.
 * `npm --prefix frontend run typecheck` (`tsc -b`) clean.
 * Full frontend suite **3977 passed** (359 files), coverage floors held, lint at
   ceiling, `check:file-size` OK, `check-docs-drift --strict` 0 CERTAIN.
