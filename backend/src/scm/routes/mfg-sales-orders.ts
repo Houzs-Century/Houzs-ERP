@@ -43,6 +43,7 @@ import { SO_STATUSES, SO_STATUS_RANK, soStatusTransitionError, soDiscardBlocked 
 import { HELD_OR_TERM, HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
 import { mountHoldRoute } from './document-hold-routes';
 import { enqueueSoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { fitSoAddress, AC_ADDRESS_LINE_MAX } from '../../services/autocount-address-fit';
 import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
 /* The payment insert core, the Account Sheet rule and the payment column list
    moved to scm/lib so scan-so.ts's background writer reaches the same rules
@@ -5039,10 +5040,21 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        to, resolved above via the active-fair resolver. NULL when the salesperson
        has no active fair; never blocks creation. */
     project_id: projectIdToStamp,
-    address1: (body.address1 as string) ?? null,
-    address2: (body.address2 as string) ?? null,
-    address3: (body.address3 as string) ?? null,
-    address4: (body.address4 as string) ?? null,
+    /* FITTED TO THE ACCOUNT BOOK'S OWN WIDTH ON THE WAY IN, not on the way out.
+       AutoCount's four address columns are 40 characters and it refuses the
+       WHOLE document when one is over, so a customer whose street line runs long
+       could not have a sales order in the accounts at all (docs/bugs/0728).
+       Fitting it at the SEND was a patch; the owner asked for the data itself,
+       2026-09-09: 「我们超过 40 个字的地址全部拆分成 address 1 和 address 2 ...
+       把我们的 address lock成 40 个字」.
+       An address that already fits is stored exactly as typed — only an
+       overflowing one is re-packed, at word boundaries, across the four lines. */
+    ...fitSoAddress([
+      (body.address1 as string) ?? null,
+      (body.address2 as string) ?? null,
+      (body.address3 as string) ?? null,
+      (body.address4 as string) ?? null,
+    ]),
     /* Task #91 — defensively normalize to E.164 storage form. The UI does this
        on blur via <PhoneInput>, but a misbehaving client could still POST a
        raw "+60 12 345 6789" — normalize once on the server so the DB never
@@ -6606,6 +6618,9 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     ['debtorCode', 'debtor_code'], ['debtorName', 'debtor_name'], ['agent', 'agent'],
     ['salesLocation', 'sales_location'], ['ref', 'ref'],
     ['venue', 'venue'], ['venueId', 'venue_id'], ['branding', 'branding'], ['transferTo', 'transfer_to'],
+    /* The four address keys go through the map like any other, and are then
+       RE-FITTED together below — a line cannot be fitted on its own, because an
+       over-long first line spills into the second. */
     ['address1', 'address1'], ['address2', 'address2'], ['address3', 'address3'],
     ['address4', 'address4'], ['phone', 'phone'], ['note', 'note'],
     ['remark2', 'remark2'], ['remark3', 'remark3'], ['remark4', 'remark4'],
@@ -6707,6 +6722,39 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       updates[to] = Math.max(0, typeof body[from] === 'number' ? (body[from] as number) : 0);
     } else {
       updates[to] = isDateColumn(to) ? dateOrNull(body[from]) : body[from]; // "" -> NULL
+    }
+  }
+  /* ── THE ADDRESS IS FITTED TO THE BOOK'S 40-CHARACTER LINES, TOGETHER ──────
+     Owner 2026-09-09: 「把我们的 address lock成 40 个字」. AutoCount refuses the
+     WHOLE document when one address column is over, so an over-long line kept a
+     sales order out of the accounts entirely (docs/bugs/0728).
+
+     TOGETHER, and that is why this cannot sit inside the loop above: a line
+     cannot be fitted on its own, because an over-long first line spills into the
+     second. A PATCH that carries only `address1` therefore needs the other three
+     AS STORED — merged, fitted, and all four written back — or the spill would
+     overwrite a line the caller never mentioned with nothing.
+
+     Only when the change actually TOUCHES an address. An address that already
+     fits is stored exactly as typed; nothing else on the document is re-flowed
+     by a save that had nothing to do with the address. */
+  const ADDRESS_COLS = ['address1', 'address2', 'address3', 'address4'] as const;
+  if (ADDRESS_COLS.some((col) => col in updates)) {
+    const { data: held, error: heldErr } = await scopeToCompany(
+      sb.from('mfg_sales_orders').select('address1, address2, address3, address4').eq('doc_no', docNo), c,
+    ).maybeSingle();
+    /* A READ FAILURE LEAVES THE ADDRESS ALONE. The merge needs the three lines
+       the caller did not send; without them, writing the fitted set would blank
+       whatever it could not see. The un-fitted value is still caught on the way
+       out by soInvoiceAddress, so nothing reaches the account book over-long —
+       the cost of this branch is a stored line wider than 40, not a refused
+       document. Not writing beats writing something wrong. */
+    if (!heldErr) {
+      const stored = (held ?? {}) as Record<string, string | null>;
+      const merged = ADDRESS_COLS.map((col) => (
+        col in updates ? ((updates[col] as string | null) ?? null) : (stored[col] ?? null)
+      ));
+      Object.assign(updates, fitSoAddress(merged));
     }
   }
   /* Mig 0175 (owner 2026-07-22) — canonicalize customer_state at write so a

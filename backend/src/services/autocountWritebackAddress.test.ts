@@ -16,6 +16,7 @@ import {
   soInvoiceAddress,
   AC_ADDRESS_LINE_MAX,
 } from './autocount-writeback';
+import { fitSoAddress } from './autocount-address-fit';
 
 const LONG = 'No 12A, Jalan Perindustrian Bukit Minyak 5, Kawasan Perindustrian';
 
@@ -100,5 +101,40 @@ describe('soInvoiceAddress carries the fit', () => {
     expect(inv.InvAddr2).toBe('Taman Sentosa');
     expect(inv.InvAddr3).toBe('43300 Seri Kembangan');
     expect(inv.InvAddr4).toBe('Selangor');
+  });
+});
+
+/* ── THE SAVE SIDE — 「把我们的 address lock成 40 个字」 ────────────────────────
+   Fitting on the way OUT was a patch. The owner asked for the data itself on
+   2026-09-09, and this is the half that makes the ERP hold what the account book
+   holds — so the two never disagree about where a customer lives, and a person
+   reading the sales order sees the lines the invoice will carry. */
+describe('fitSoAddress locks a stored address to the column', () => {
+  test('a long street line is split across address1 and address2', () => {
+    const out = fitSoAddress([LONG, null, null, null]);
+    expect((out.address1 ?? '').length).toBeLessThanOrEqual(AC_ADDRESS_LINE_MAX);
+    expect(out.address2).toBeTruthy();
+    /* Not one word lost, and in order — this is the address a delivery is
+       printed from. */
+    expect([out.address1, out.address2, out.address3, out.address4]
+      .filter(Boolean).join(' ')).toBe(LONG);
+  });
+
+  test('an address that already fits is stored exactly as typed', () => {
+    const out = fitSoAddress(['No 1, Jalan Besar', 'Taman Sentosa', '43300 Seri Kembangan', 'Selangor']);
+    expect(out).toEqual({
+      address1: 'No 1, Jalan Besar',
+      address2: 'Taman Sentosa',
+      address3: '43300 Seri Kembangan',
+      address4: 'Selangor',
+    });
+  });
+
+  /* A line the fitted address no longer needs is BLANKED, not left holding what
+     was there before — otherwise a re-flow that moves text up leaves a ghost. */
+  test('a line the address no longer needs comes back null', () => {
+    const out = fitSoAddress(['short', 'also short', null, null]);
+    expect(out.address3).toBeNull();
+    expect(out.address4).toBeNull();
   });
 });
