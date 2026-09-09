@@ -168,6 +168,8 @@ is the ones that matter; the full machine-checked gate list is
 | PATCH | `/api/assr/:id` | `requirePermission("service_cases.write")` `:1657` | Field edits, whitelisted by `PATCH_FIELDS` |
 | POST | `/api/assr/:id/transition` | `service_cases.write` `:2570` | Move stage (any-to-any; fires the survey email on `completed`) |
 | POST | `/api/assr/:id/mark-opened` | `service_cases.write` `:1744` | Mig 106 auto-advance `pending_review` → `under_verification` on first open |
+| POST | `/api/assr/:id/access` | `service_cases.write` | Grant Nth-person read access (mig 0284); idempotent; notifies grantee + upline |
+| DELETE | `/api/assr/:id/access/:userId` | `service_cases.write` | Revoke a grant (mig 0284) |
 | POST | `/api/assr/:id/approve` | `service_cases.approve` `:2523` | Cost approval |
 | POST | `/api/assr/:id/generate-po` | `service_cases.manage` `:2470` | Mint the service PO number |
 | GET | `/api/assr/summary` | `service_cases.read` `:584` | KPI tiles (backlog, aging, SLA breach, by stage/status/location/category) |
@@ -299,6 +301,7 @@ Schema `public` (not `scm`). Core table `assr_cases`; children keyed by
 | `assr_issue_categories`, `assr_resolution_methods`, `assr_ncr_categories` | Editable lookups |
 | `assr_alert_acks` | Alert ack / snooze / override |
 | `assr_supplier_tokens`, `assr_survey_tokens`, `case_track_tokens` | The three portal token families |
+| `assr_case_access` | Nth-person access list (mig 0284): `(assr_id, user_id, added_by, created_at)`, PK `(assr_id, user_id)`. Grants row visibility without a `sales_agent` / `assigned_to` slot — read as an additive OR-branch by the four visibility touchpoints (section 6). Empty table = no behaviour change. |
 
 Columns that were added late and are easy to miss (all in `migrations-pg/`):
 `0062` `qc_receipt_date` · `0063` supplier/goods-returned notes · `0064`
@@ -381,6 +384,28 @@ subtree by `assrVisibleUserIds` (`:148-156`, `subtreeUserIds`, full depth) plus
 identity. Scoped callers additionally lose creditor fields (`stripCreditorFields`
 `:800`, applied at `:832-834`).
 
+**Nth-person access list (mig 0284).** Two assignee slots + one salesperson
+cannot express "keep this rep as the salesperson but let four other people work
+the case". `assr_case_access` (one row per `(assr_id, user_id)`) is the
+open-ended reach: a scoped caller ALSO sees a case when a member of their
+subtree holds a grant — the additive branch
+`OR EXISTS (SELECT 1 FROM assr_case_access acc WHERE acc.assr_id = c.id AND
+acc.user_id IN (<subtree ids>))`. It NEVER touches `sales_agent` or the
+`assigned_to` slots. **This is ONE rule written in four places that MUST change
+together** — a drift makes the list and its own totals disagree:
+
+1. `pushVisibilityScope` (`services/assr.ts`, bound ids) — list + CSV export;
+2. `assrVisibilitySql` (`routes/assr.ts`, inlined ids) — summary / metrics;
+3. `caseInCallerScope` (`routes/assr.ts`) — attachment / timeline / sales-comment
+   sub-routes;
+4. the detail GET `/:id` inline row check (`routes/assr.ts`).
+
+Granted via `POST /api/assr/:id/access {user_id}`, revoked via
+`DELETE /api/assr/:id/access/:userId`, both gated `service_cases.write` (a
+read-only sales rep cannot grant). The detail payload returns `access[]`
+(`getAssrDetail`). Grant/revoke land in `assr_activity` as `access_grant` /
+`access_revoke`.
+
 Company scope is orthogonal: every reader filters on `allowedCompanyIds`
 (`assrCompanySql` `:109`, `assrCompanyIds` `:115`), every creator stamps
 `assrCreateCompanyId` (`:124`), and an SO-attached case inherits the SO's own
@@ -419,6 +444,8 @@ module that means:
 | Patchable fields | `InlineEdit` sites in `ServiceCases.tsx` | `EditableAcc` field list `MobileServiceCase.tsx:1197` | `PATCH_FIELDS` `backend/src/services/assr.ts:785-830` |
 | Attachment upload / thumbs | `ServiceCases.tsx:2472-2498` | `MobileServiceCase.tsx:1890-1905` | `lib/assrAttachmentUpload.ts`, `lib/imagePipeline.ts` |
 | Access gating | `App.tsx` `PageGuard` | `MobileApp.tsx` nav gate + `MobileServiceCase.tsx:340` | backend capabilities (`services/capabilities.ts`) |
+| Nth-person access list (mig 0284) | `ServiceCases.tsx` "Access" `PanelSection` (`UserMultiSelect` → `syncAccess`) | `MobileServiceCase.tsx` "Access" `Acc` (`grantAccess` / `revokeAccess`) | `POST`/`DELETE /api/assr/:id/access`; the FOUR visibility touchpoints in section 6 |
+| Salesperson edit guard | `ServiceCases.tsx` Agent `InlineEdit` confirm | (mobile does NOT edit `sales_agent`) | server `PATCH_FIELDS` still accepts `sales_agent` — the guard is UI-only |
 
 The history is not hypothetical: `stages.ts:1-16` exists because mobile once
 ignored the internal-resolution skip and mis-routed cases into the two

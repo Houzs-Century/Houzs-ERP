@@ -780,6 +780,19 @@ export async function getAssrDetail(env: Env, id: number) {
   // link on panel-open instead of forcing a regenerate each time.
   const portalToken = await getActiveStaffToken(env, id);
 
+  // Nth-person access list (mig 0284): staff granted row visibility WITHOUT
+  // taking a sales_agent / assigned_to slot. The UI renders these as chips and
+  // manages them via POST/DELETE /api/assr/:id/access.
+  const access = await env.DB.prepare(
+    `SELECT ac.user_id, u.name as user_name, ac.added_by, ac.created_at
+       FROM assr_case_access ac
+       LEFT JOIN users u ON u.id = ac.user_id
+      WHERE ac.assr_id = ?
+      ORDER BY ac.created_at ASC, ac.user_id ASC`
+  )
+    .bind(id)
+    .all();
+
   return {
     case: caseRow,
     // The multi-select form needs the categories as a list; the flat
@@ -792,6 +805,7 @@ export async function getAssrDetail(env: Env, id: number) {
     related_pos: relatedPOs.results ?? [],
     portal_token: portalToken,
     stage_history: stageHistory.results ?? [],
+    access: access.results ?? [],
   };
 }
 
@@ -1729,8 +1743,14 @@ function pushVisibilityScope(
     `c.created_by IN (${ph})`,
     `c.assigned_to IN (${ph})`,
     `c.assigned_to_2 IN (${ph})`,
+    // Nth-person access list (mig 0284): a case is in scope when a member of the
+    // caller's subtree was granted access, exactly like assigned_to but
+    // open-ended. Additive OR-branch; keeps sales_agent untouched. The three
+    // twins of this rule (assrVisibilitySql, caseInCallerScope, detail GET) MUST
+    // carry the same clause - see docs/modules/service-case.md section 6.
+    `EXISTS (SELECT 1 FROM assr_case_access acc WHERE acc.assr_id = c.id AND acc.user_id IN (${ph}))`,
   ];
-  binds.push(...ids, ...ids, ...ids);
+  binds.push(...ids, ...ids, ...ids, ...ids);
   // Legacy reach: OLD cases carry only a free-text `sales_agent` name (no id),
   // so also admit a case whose agent name matches a subtree member's display
   // name. Substring match (member name ⊆ agent text) mirrors My Cases so a row

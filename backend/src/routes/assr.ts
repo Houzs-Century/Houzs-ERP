@@ -235,6 +235,11 @@ function assrVisibilitySql(
     `${prefix}created_by IN (${idList})`,
     `${prefix}assigned_to IN (${idList})`,
     `${prefix}assigned_to_2 IN (${idList})`,
+    // Nth-person access list (mig 0284) - twin of pushVisibilityScope's clause.
+    // Ids are inlined here (same re-validated integers as the clauses above), so
+    // no binds; the access user_id set is that same subtree. Keeps sales_agent
+    // untouched. See docs/modules/service-case.md section 6.
+    `EXISTS (SELECT 1 FROM assr_case_access acc WHERE acc.assr_id = ${prefix}id AND acc.user_id IN (${idList}))`,
   ];
   const binds: string[] = [];
   const names = (agentNames ?? [])
@@ -306,6 +311,19 @@ async function caseInCallerScope(
     (Number.isFinite(assignedTo2) && visibleIds.includes(assignedTo2))
   ) {
     return true;
+  }
+  // Nth-person access list (mig 0284) — same additive reach as the list scope:
+  // a case is openable when a member of the caller's subtree holds a grant.
+  // Guarded on length so a scoped caller with no identity (visibleIds === [])
+  // never emits `IN ()`. Twin of the EXISTS branch in pushVisibilityScope.
+  if (visibleIds.length) {
+    const ph = visibleIds.map(() => "?").join(",");
+    const accessHit = await c.env.DB.prepare(
+      `SELECT 1 FROM assr_case_access WHERE assr_id = ? AND user_id IN (${ph}) LIMIT 1`,
+    )
+      .bind(caseId, ...visibleIds)
+      .first();
+    if (accessHit) return true;
   }
   // Legacy agent-name reach — same additive rule as the list scope: a case
   // whose free-text sales_agent matches a subtree member's name is openable.
@@ -1616,6 +1634,18 @@ app.get("/:id{[0-9]+}", requireServiceCaseAccess(), async (c) => {
       (Number.isFinite(createdBy) && visibleIds.includes(createdBy)) ||
       (Number.isFinite(assignedTo) && visibleIds.includes(assignedTo)) ||
       (Number.isFinite(assignedTo2) && visibleIds.includes(assignedTo2));
+    if (!inScope && visibleIds.length) {
+      // Nth-person access list (mig 0284) — same additive reach as the list
+      // scope: a granted subtree member may open the case. Guarded on length so
+      // an empty scope never emits `IN ()`.
+      const ph = visibleIds.map(() => "?").join(",");
+      const hit = await c.env.DB.prepare(
+        `SELECT 1 FROM assr_case_access WHERE assr_id = ? AND user_id IN (${ph}) LIMIT 1`,
+      )
+        .bind(id, ...visibleIds)
+        .first();
+      if (hit) inScope = true;
+    }
     if (!inScope) {
       // Legacy agent-name reach — mirrors the list scope so an old case that
       // shows in the salesperson's list (matched on sales_agent) also opens.
@@ -1636,6 +1666,98 @@ app.get("/:id{[0-9]+}", requireServiceCaseAccess(), async (c) => {
   }
   return c.json(detail);
 });
+
+// ── Access list (Nth-person visibility) ──────────────────────
+// Grant / revoke row visibility for staff who are NEITHER the salesperson
+// (sales_agent) NOR one of the two assigned_to slots — the open-ended reach
+// ops needs when a case must stay attributed to its original rep while several
+// other people work it (owner 2026-09-09). Gated at service_cases.write, the
+// same tier as Assign, so a read-only sales rep cannot grant. The four
+// visibility touchpoints read assr_case_access as an additive OR-branch
+// (mig 0284) — see docs/modules/service-case.md section 6.
+app.post("/:id{[0-9]+}/access", requirePermission("service_cases.write"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  const userId = (c as any).get?.("userId") ?? null;
+  const body = await c.req
+    .json<{ user_id?: number }>()
+    .catch(() => ({}) as { user_id?: number });
+  const grantee = Number(body.user_id);
+  if (!Number.isInteger(grantee) || grantee <= 0) {
+    return c.json({ error: "user_id required" }, 400);
+  }
+  // Must be a case the caller can already see (company + row scope). Out-of-scope
+  // → 404, so a grant can never target a case across the visibility boundary.
+  if (!(await caseInCallerScope(c, id))) return c.json({ error: "Not found" }, 404);
+  const granteeRow = await c.env.DB.prepare(
+    `SELECT name FROM users WHERE id = ? LIMIT 1`,
+  )
+    .bind(grantee)
+    .first<{ name: string | null }>();
+  if (!granteeRow) return c.json({ error: "User not found" }, 404);
+  // Idempotent: a repeat grant is a no-op and must not re-notify. Check-then-
+  // insert (internal ERP, no meaningful race) keeps the notify path single-fire.
+  const already = await c.env.DB.prepare(
+    `SELECT 1 FROM assr_case_access WHERE assr_id = ? AND user_id = ? LIMIT 1`,
+  )
+    .bind(id, grantee)
+    .first();
+  if (already) return c.json({ ok: true, already: true });
+  await c.env.DB.prepare(
+    `INSERT INTO assr_case_access (assr_id, user_id, added_by, created_at)
+     VALUES (?, ?, ?, datetime('now'))`,
+  )
+    .bind(id, grantee, userId)
+    .run();
+  const caseRow = await c.env.DB.prepare(
+    `SELECT assr_no, customer_name FROM assr_cases WHERE id = ?`,
+  )
+    .bind(id)
+    .first<{ assr_no: string | null; customer_name: string | null }>();
+  await c.env.DB.prepare(
+    `INSERT INTO assr_activity (assr_id, action, from_value, to_value, note, user_id)
+     VALUES (?, 'access_grant', NULL, ?, ?, ?)`,
+  )
+    .bind(id, String(grantee), (granteeRow.name ?? "").trim() || null, userId)
+    .run();
+  // Same responsible-change notice as Assign (best-effort — never throws): tell
+  // the granted user + their upline they can now reach this case.
+  await notifyServiceCaseResponsible(c.env, {
+    reason: "reassigned",
+    assrNo: caseRow?.assr_no ?? null,
+    customerName: caseRow?.customer_name ?? null,
+    userIds: [grantee],
+  });
+  return c.json({ ok: true });
+});
+
+app.delete(
+  "/:id{[0-9]+}/access/:userId{[0-9]+}",
+  requirePermission("service_cases.write"),
+  async (c) => {
+    const id = parseInt(c.req.param("id"), 10);
+    const uid = parseInt(c.req.param("userId"), 10);
+    if (isNaN(id) || isNaN(uid)) return c.json({ error: "Invalid ID" }, 400);
+    const actorId = (c as any).get?.("userId") ?? null;
+    if (!(await caseInCallerScope(c, id))) return c.json({ error: "Not found" }, 404);
+    const res = await c.env.DB.prepare(
+      `DELETE FROM assr_case_access WHERE assr_id = ? AND user_id = ?`,
+    )
+      .bind(id, uid)
+      .run();
+    // Only log a revoke that actually removed a grant, so replaying a stale
+    // delete doesn't post a phantom timeline entry.
+    if (Number(res.meta?.changes ?? res.meta?.rows_written ?? 0) > 0) {
+      await c.env.DB.prepare(
+        `INSERT INTO assr_activity (assr_id, action, from_value, to_value, note, user_id)
+         VALUES (?, 'access_revoke', ?, NULL, NULL, ?)`,
+      )
+        .bind(id, String(uid), actorId)
+        .run();
+    }
+    return c.json({ ok: true });
+  },
+);
 
 // ── Supplier rating ──────────────────────────────────────────
 // Posted from the Close-Case prompt when the case had a supplier

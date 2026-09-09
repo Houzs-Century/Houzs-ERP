@@ -333,6 +333,16 @@ export interface AssrDetail {
   related_pos: PurchaseOrder[];
   portal_token?: string | null;
   stage_history?: AssrStageHistoryRow[];
+  /** Nth-person access list (mig 0284): staff granted row visibility on this
+   *  case without taking a sales_agent / assigned_to slot. */
+  access?: AssrCaseAccessRow[];
+}
+
+export interface AssrCaseAccessRow {
+  user_id: number;
+  user_name: string | null;
+  added_by: number | null;
+  created_at: string;
 }
 
 export interface ExecutionLog {
