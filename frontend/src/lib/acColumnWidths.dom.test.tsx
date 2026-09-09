@@ -1,6 +1,6 @@
 // What a person actually experiences at the address box, in a real DOM.
 //
-// addressLimit.test.ts asserts the RULES; this asserts the BEHAVIOUR through a
+// acColumnWidths.test.ts asserts the RULES; this asserts the BEHAVIOUR through a
 // rendered <input> driven by user-event — the 41st keystroke does not land, and
 // a pasted address that is too long breaks at a word and continues on line 2.
 // The repo's standing rule is that a UI change is verified by observing it, and
@@ -10,7 +10,7 @@ import { describe, expect, test } from 'vitest';
 import { useState } from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ADDRESS_LINE_MAX, addressLineProps } from './addressLimit';
+import { ADDRESS_LINE_MAX, addressLineProps } from './acColumnWidths';
 
 /** The two address boxes as the sales-order forms wire them, and nothing else. */
 function AddressPair() {

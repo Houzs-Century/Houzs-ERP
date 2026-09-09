@@ -101,6 +101,14 @@ function notice(over: Partial<Record<string, unknown>> = {}): Row {
   };
 }
 
+const DOC_TYPES = [
+  { code: "ANN", label: "Announcement", attachmentRequired: false },
+  { code: "MEMO", label: "Memo", attachmentRequired: false },
+  { code: "SOP", label: "Standard operating procedure", attachmentRequired: true },
+  { code: "WARN", label: "Warning", attachmentRequired: false },
+  { code: "NTC", label: "Notice", attachmentRequired: false },
+];
+
 function mountWith(rows: Row[]) {
   apiGet.mockImplementation(async (url: string) => {
     if (url.startsWith("/api/announcements/banner?scope=human")) {
@@ -120,6 +128,11 @@ function mountWith(rows: Row[]) {
       };
     }
     if (url === "/api/departments") return { departments: [] };
+    if (url === "/api/document-types") return { data: DOC_TYPES };
+    if (url.startsWith("/api/document-refs/next")) {
+      const t = /typeCode=([A-Z]+)/.exec(url)?.[1] ?? "ANN";
+      return { data: { refNo: `OPS-${t}-2609-0001` } };
+    }
     if (url === "/api/positions") return { positions: [] };
     if (url === "/api/users") return { users: [] };
     if (url === "/api/companies") return { companies: [{ id: 1, code: "HZ", name: "Houzs" }] };
@@ -197,6 +210,34 @@ describe("MobileAnnouncements — a phone-posted notice can expire", () => {
     expect(Date.parse(String(sent.expiresAt))).toBe(
       new Date("2026-09-01T18:00").getTime(),
     );
+  });
+});
+
+describe("MobileAnnouncements — numbering on the phone (owner 2026-09-09)", () => {
+  it("the type follows the category until picked by hand; the number is previewed; a file-demanding type holds Submit", async () => {
+    await openCompose();
+    const type = screen.getByLabelText("Document type") as HTMLSelectElement;
+    // General (Notice) is the default category → NTC, and the number is previewed.
+    await waitFor(() => expect(type.value).toBe("NTC"));
+    await waitFor(() => expect(screen.getByTestId("ref-no-preview").textContent).toContain("OPS-NTC-2609-0001"));
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "SOP" } });
+    await waitFor(() => expect(type.value).toBe("SOP"));
+    // SOP demands a file: the hint shows and Submit is held.
+    expect(screen.getByTestId("attachment-required-hint")).toBeTruthy();
+    expect((screen.getByText(/Submit for approval/) as HTMLButtonElement).disabled).toBe(true);
+    // Picked by hand: the category no longer moves it, and the hold lifts.
+    fireEvent.change(type, { target: { value: "MEMO" } });
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "WARNING" } });
+    expect(type.value).toBe("MEMO");
+    expect(screen.queryByTestId("attachment-required-hint")).toBeNull();
+    expect(screen.getByLabelText("Numbered under")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Sticky type" } });
+    await act(async () => {
+      fireEvent.click(screen.getByText(/Submit for approval/));
+    });
+    await waitFor(() => expect(apiPost).toHaveBeenCalled());
+    const [, payload] = apiPost.mock.calls.find((c) => c[0] === "/api/announcements")!;
+    expect(payload).toEqual(expect.objectContaining({ docType: "MEMO", category: "WARNING" }));
   });
 });
 

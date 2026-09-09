@@ -111,7 +111,39 @@ export function splitTopLevel(s) {
   return out.map((x) => x.trim()).filter((x) => x !== "");
 }
 
-export function pgrestShim(sql, schema = "scm") {
+/* THE MARK THAT STOPS A REPAIR REACHING THE ACCOUNT BOOK.
+   Spelled as a string here and as Symbol.for(...) in
+   src/scm/lib/ac-repair-suppression.ts — the registry key IS the contract
+   between the two files, because this module is plain ESM loaded by `node` as
+   well as by `tsx` and cannot import the TypeScript one. If you change it,
+   change it in both; ac-repair-suppression.test.ts pins the behaviour. */
+const REPAIR_CLIENT = Symbol.for("houzs.ac.repairClient");
+
+/**
+ * @param sql      a `postgres` connection
+ * @param schema   the Postgres schema these reads resolve in
+ * @param opts.writeback
+ *   "suppress" (DEFAULT) — nothing this client does may be written back to
+ *   AutoCount. A cutover repair COPIES a value out of the account book, so
+ *   sending it back is pointless where they agree and overwrites the owner's
+ *   source of truth where they do not (owner, 2026-09-09: 「正常来说你的这批更改
+ *   不应该是syncback autocount啊 应该remain啊」).
+ *
+ *   "enqueue" — this tool's PURPOSE is to push. Only the deliberate re-queue
+ *   tools pass it, by name, and it must stay a short list:
+ *     rebuild-ac-document.mjs · requeue-autocount-skipped.mjs
+ *     recompose-autocount-transfer.mjs · sync-ac-delta.mjs (LANES=push)
+ *
+ * The DEFAULT is the safe one on purpose. A repair that forgets gets
+ * suppression; pushing is the thing that has to be typed out, so it is the
+ * thing a reviewer can see. The opposite polarity puts the silent failure on
+ * the common path, which is backwards.
+ */
+export function pgrestShim(sql, schema = "scm", opts = {}) {
+  const writeback = opts.writeback ?? "suppress";
+  if (writeback !== "suppress" && writeback !== "enqueue") {
+    throw new Error(`pgrestShim: writeback must be "suppress" or "enqueue", got ${JSON.stringify(writeback)}`);
+  }
   const gaps = [];
   const q = (id) => {
     if (EMBEDDED_FILTER.test(String(id))) {
@@ -475,7 +507,7 @@ export function pgrestShim(sql, schema = "scm") {
     return proxied;
   };
 
-  return {
+  const client = {
     from,
     rpc(name) {
       const msg = `pgrest-shim GAP: .rpc("${name}") is not implemented — call the function with sql.unsafe instead`;
@@ -484,4 +516,11 @@ export function pgrestShim(sql, schema = "scm") {
     },
     __gaps: gaps,
   };
+  /* Non-enumerable, so it never leaks into a spread or a JSON payload. */
+  if (writeback === "suppress") {
+    Object.defineProperty(client, REPAIR_CLIENT, {
+      value: true, enumerable: false, writable: false, configurable: false,
+    });
+  }
+  return client;
 }
