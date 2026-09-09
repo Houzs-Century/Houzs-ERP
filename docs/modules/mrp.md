@@ -644,6 +644,42 @@ Frontend pair (one logic layer): desktop `pages/scm-v2/Inventory.tsx`
 | `backend/scripts/lib/undated-demand-queries.mjs` | That probe's SQL, in one home so a test can EXECUTE it. No shebang — a test imports it |
 | `backend/tests-pg/probeUndatedDemandSql.pg.test.ts` | Runs every one of those queries against real Postgres in `backend-postgres`. Exists because the probe's first production dispatch died on unexecuted SQL |
 
+## 7b. The page's frozen header (2026-09-09)
+
+Owner, 2026-09-09: "MRP 需要freeze row title" — the same rule he set on
+2026-07-24 for every table ("每个table的header都要freeze"). MRP kept its own
+hand-built Model -> Variant -> SO tree instead of `<DataTable>`, so it never
+inherited the freeze.
+
+The geometry was LIFTED OUT of `DataTable.tsx` into
+`frontend/src/components/useFrozenTableHeader.ts` and both now drive it — a
+second implementation would have had to rediscover the iterations that one
+already survived (the cap must not eat the visible list, the page must still be
+able to scroll the composition up to the pinned header). Read that file before
+changing either surface.
+
+What it means for this page, structurally:
+
+- `.tableWrap` is now the bordered BOX only (`overflow: hidden`), and it carries
+  the sticky offset. The scrolling moved one level in, to a new `.tableScroll`
+  (`overflow-x: auto; overflow-y: auto`) — a sticky box cannot also be the
+  scrollport its own sticky children resolve against. The horizontal scroll the
+  wrap was added for in 2026-05-29 ("右边卡到了") lives there now.
+- The sticky rule is `.stickyHead th`, on the TOP-LEVEL `<thead>` only. A bare
+  `.table thead th` would also match the drilldown `.childTable`, which renders
+  inside a `<td>` of this table, and float those nested headers over their own
+  rows.
+- The rule under the header is drawn with `box-shadow: inset 0 -2px 0`, not
+  `border-bottom`: `.table` is `border-collapse: collapse`, where a sticky
+  cell's collapsed border belongs to the table's border grid and stops painting
+  once the cell leaves its resting place.
+- A runway spacer renders at the bottom of the page while the freeze is armed.
+  Capping the table's height shortens the page; the spacer gives back exactly
+  the scroll that cap removed.
+
+The freeze DISARMS itself when the rows do not overflow the cap, so a short
+list keeps its plain flow and never grows an inner scrollbar.
+
 ## 8. Traps
 
 - The engine runs in a Worker behind PostgREST: unbounded selects clip at

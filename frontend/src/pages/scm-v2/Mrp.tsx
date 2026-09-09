@@ -23,6 +23,7 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { ChevronRight, ChevronDown, RefreshCw, Truck, ShoppingCart, CalendarRange, Clock } from 'lucide-react';
+import { useFrozenTableHeader } from '../../components/useFrozenTableHeader';
 import {
   useMrp, useRegenerateMrp, useCategoryLeadTimes, useUpdateCategoryLeadTime, GLOBAL_LEAD_KEY,
   type MrpSku, type MrpLine, type MrpResponse, type SofaSet, type LeadCategory,
@@ -868,8 +869,16 @@ export const Mrp = () => {
   const basisLabel = dateBasis === 'processing' ? 'Processing Date' : dateBasis === 'soDate' ? 'SO Date' : dateBasis === 'orderBy' ? 'Order-by' : 'Delivery';
   const windowLabel = hasWindow ? `${basisLabel} ${dateFrom || '…'} → ${dateTo || '…'}` : '';
 
+  /* Frozen header — owner 2026-07-24 "每个table的header都要freeze", and again on
+     2026-09-09 for this page ("MRP 需要freeze row title"). MRP keeps its own
+     hand-built Model -> Variant -> SO tree instead of <DataTable>, so it never
+     inherited the freeze; it now drives the SAME hook rather than a second copy
+     of that geometry. Always armed: the hook disarms itself when the rows do
+     not overflow the cap, so a short list keeps its plain flow. */
+  const freeze = useFrozenTableHeader(true);
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" ref={freeze.rootRef}>
       <PageHeader
         eyebrow="Planning"
         title="MRP · Stock Status Report"
@@ -1044,9 +1053,10 @@ export const Mrp = () => {
       {/* Table — 3-level Model → Variant → SO orders, identical for both tabs.
           Sofa feeds the same renderer via the sofaSetsToSkus adapter; only the
           select handlers differ (sofa selects the whole same-SO set). */}
-      <div className={styles.tableWrap}>
+      <div className={styles.tableWrap} style={freeze.boxStyle}>
+        <div ref={freeze.scrollWrapRef} className={`thin-scroll ${styles.tableScroll}`} style={freeze.scrollStyle}>
         <table className={styles.table}>
-          <thead>
+          <thead className={styles.stickyHead}>
             <tr>
               <th className={styles.colSelect}>
                 <input
@@ -1111,7 +1121,15 @@ export const Mrp = () => {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
+      {/* The runway spacer: capping the table's height shortens the page, so
+          page scroll would stop just short of carrying the composition up to
+          the pinned header. This gives that scroll back. Rendered only while
+          the freeze is armed. */}
+      {freeze.freezeBox && freeze.freezeBox.runway > 0 && (
+        <div ref={freeze.spacerRef} aria-hidden style={{ height: freeze.freezeBox.runway }} />
+      )}
 
       {/* In-app result dialog — Commander 2026-05-29: confirm/result inside the
           page, not a browser alert. The 'confirm' kind is the Proceed-PO step
