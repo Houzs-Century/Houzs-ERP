@@ -141,7 +141,7 @@ poAmendments.get('/pending-count', async (c) => {
       console.error('[po-amendment] pending-count failed:', error.message);
       return c.json({ count: 0 });
     }
-    return c.json({ count: (data ?? []).length });
+    return c.json({ count: data.length });
   } catch (e) {
     console.error('[po-amendment] pending-count threw:', (e as Error).message);
     return c.json({ count: 0 });

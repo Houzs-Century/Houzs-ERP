@@ -403,7 +403,7 @@ soAmendments.get('/pending-count', async (c) => {
       console.error('[so-amendment] pending-count failed:', error.message);
       return c.json({ count: 0 });
     }
-    const rows = (data ?? []) as Array<{ lane: string | null }>;
+    const rows = data as Array<{ lane: string | null }>;
     const mine = rows.filter((r) =>
       r.lane == null ? legacy : lanes.includes(r.lane),
     );

@@ -145,7 +145,7 @@ const invalidatePoAmendmentSideEffects = (
      that forgot to call it would look exactly like the 60s poll being slow. The
      key is IMPORTED, not respelled — a second copy would drift silently and
      show as a badge that just never updates. */
-  qc.invalidateQueries({ queryKey: PO_AMENDMENT_APPROVALS_KEY });
+  void qc.invalidateQueries({ queryKey: PO_AMENDMENT_APPROVALS_KEY });
 };
 
 /* ── List ──────────────────────────────────────────────────────────────── */
