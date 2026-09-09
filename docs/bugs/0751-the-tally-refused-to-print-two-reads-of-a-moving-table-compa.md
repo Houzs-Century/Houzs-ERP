@@ -10,8 +10,22 @@ REFUSED: SO: the field query returned 15258 ERP lines but COUNT(*) says 15264.
 The answer is being truncated; a count taken from a truncated read is a lie.
 ```
 
-Nothing was truncated. The six missing lines had not been dropped — they had not
-been BORN yet when the first of the two statements ran.
+Nothing was truncated. The two numbers were taken at two different moments,
+and the population moved between them.
+
+> **CORRECTED the same day, by the probe this entry's own PR shipped.**
+> The first version of this paragraph said the six lines *"had not been BORN
+> yet when the first of the two statements ran"* -- a concurrent INSERT.
+> `probe-field-read-snapshot` run 34328813129 REFUTES that: **zero**
+> in-scope sales-order lines carry a `created_at` inside the failing run's
+> own window (07:45:05Z..07:45:35Z), and the hourly histogram shows the last
+> creation before it in the 06:00Z bucket. What is PROVEN is the class, not
+> that mechanism: the driver returned a 60,000-row result whole, so nothing
+> capped the read, and one snapshot makes the two statements agree. The
+> exact write remains **UNKNOWN**; the leading candidate is a header
+> GAINING `linked_ac_docno` and bringing its existing rows into the filter,
+> which changes the count without creating a row -- lanes were stamping
+> AutoCount links that night. It is not bridged into a story here.
 
 **Root cause (traced).** `loadErpFieldSide`
 (`backend/scripts/lib/ac-field-identity-run.mjs`) fires **seven statements on

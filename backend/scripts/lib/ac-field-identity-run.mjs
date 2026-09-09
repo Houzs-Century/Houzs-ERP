@@ -311,9 +311,16 @@ export async function loadErpFieldSide(sql, CO, { betweenReadsForTest } = {}) {
    *     REFUSED: SO: the field query returned 15258 ERP lines but COUNT(*) says
    *     15264. The answer is being truncated
    *
-   * Nothing was truncated; six lines were BORN between the two statements while
-   * other lanes wrote this database. The owner saw no number at all because two
-   * honest reads of a moving table were compared to each other.
+   * Nothing was truncated. probe-field-read-snapshot run 34328813129 proved it
+   * on production: the driver returns a 60,000-row result WHOLE, so no cap
+   * exists, and one snapshot makes the two statements agree. It also refuted
+   * the first explanation written here -- ZERO in-scope sales-order lines carry
+   * a created_at inside that run's own window, so the six were not INSERTED.
+   * Which committed write moved the population is UNKNOWN; a header gaining
+   * linked_ac_docno pulls its existing rows into this filter without creating
+   * one, and lanes were stamping those links that night. The class is what
+   * matters here and the class is proven: two honest reads of a moving table,
+   * compared to each other.
    *
    * REPEATABLE READ pins one snapshot for every statement in the block, so the
    * array and its count describe the same database at the same instant, and the
