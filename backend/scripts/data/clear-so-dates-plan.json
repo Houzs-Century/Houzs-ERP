@@ -5,8 +5,8 @@
   "_howToRefresh": "Run the workflow at MODE=plan. It prints `digest (every column except …)`. Paste that value into headerDigest and commit it in the same change that reviewed the plan.",
   "docNo": "HC-SO-013495",
   "companyId": 1,
-  "headerDigest": null,
-  "observedOnPlanRun": null,
+  "headerDigest": "0b5381b50caae209e89b19bb6a26902dd8afb3dcd4779f44f2ceebae56e7209a",
+  "observedOnPlanRun": "probe run 34317089514, production, 2026-09-09 — headerDigest and its independent cross-check agreed, headerSets {processing_date:null, customer_delivery_date:null, version:2}",
   "before": {
     "_source": "probe run 34315803944, production, 2026-09-09",
     "status": "CONFIRMED",
@@ -15,8 +15,18 @@
     "customer_delivery_date": "2026-09-08",
     "amended_delivery_date": null,
     "lines": [
-      { "line_no": 1, "item_code": "9058-1S", "line_delivery_date": "2026-10-10", "line_delivery_date_overridden": false },
-      { "line_no": 2, "item_code": "AMN-SOFA PILLOW", "line_delivery_date": "2026-09-08", "line_delivery_date_overridden": false }
+      {
+        "line_no": 1,
+        "item_code": "9058-1S",
+        "line_delivery_date": "2026-10-10",
+        "line_delivery_date_overridden": false
+      },
+      {
+        "line_no": 2,
+        "item_code": "AMN-SOFA PILLOW",
+        "line_delivery_date": "2026-09-08",
+        "line_delivery_date_overridden": false
+      }
     ],
     "_downstream": "no delivery order, no purchase order dedicated to its lines, no sales invoice, zero inventory_movements rows"
   }
