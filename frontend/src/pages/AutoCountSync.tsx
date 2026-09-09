@@ -181,6 +181,10 @@ import {
   AC_HOST_LOG_UNREACHABLE,
   type AcHostLogTone,
 } from "../lib/autocountHostLog";
+import {
+  AC_SWEEP_BLURB, AC_SWEEP_BUSY, AC_SWEEP_RUN, AC_SWEEP_TITLE,
+  acSweepHeadline, useAcLineOrderSweep,
+} from "../lib/acLineOrderSweep";
 
 const TONE_BANNER: Record<AcTone, string> = {
   good: "border-synced/40 bg-synced/5 text-synced",
@@ -765,6 +769,61 @@ const HOST_LOG_TONE: Record<AcHostLogTone, string> = {
  * tunnel to a desktop PC in the office; a panel that loaded with the page would
  * put that machine on the critical path of a screen everybody opens.
  */
+/* THE SWEEP WAS BUILT AND NEVER WIRED UP — measured 2026-09-09, no workflow and
+   no screen called it. It cannot be a workflow: it reads the LIVE account book
+   through the host, whose credentials are Worker secrets and must never become
+   Actions secrets. A button is the only place it can live. */
+function LineOrderSweepPanel() {
+  const [open, setOpen] = useState(false);
+  const q = useAcLineOrderSweep(open);
+  const failing = q.data?.failing ?? [];
+
+  return (
+    <div className="rounded-lg border border-border bg-surface">
+      <button
+        type="button"
+        className="flex w-full items-start gap-2 px-3 py-2.5 text-left"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        {open ? <ChevronDown size={14} className="mt-0.5 shrink-0 text-ink-muted" />
+              : <ChevronRight size={14} className="mt-0.5 shrink-0 text-ink-muted" />}
+        <span className="min-w-0">
+          <span className="block text-[13px] font-semibold text-ink">{AC_SWEEP_TITLE}</span>
+          <span className="mt-0.5 block text-[12px] text-ink-muted">{AC_SWEEP_BLURB}</span>
+        </span>
+      </button>
+
+      {open && (
+        <div className="space-y-2 border-t border-border px-3 py-2.5">
+          <Button
+            variant="secondary"
+            icon={<RefreshCw size={14} className={q.fetching ? "animate-spin" : undefined} />}
+            onClick={() => q.reload()}
+          >
+            {q.fetching ? AC_SWEEP_BUSY : AC_SWEEP_RUN}
+          </Button>
+          {q.error && (
+            <div className="rounded border border-danger/30 bg-danger/5 px-2 py-1.5 text-[12px] text-danger">
+              <p className="whitespace-pre-wrap break-words font-mono text-[11px]">{q.error}</p>
+            </div>
+          )}
+          {q.data && <p className="text-[12px] text-ink">{acSweepHeadline(q.data)}</p>}
+          {failing.length > 0 && (
+            <ul className="space-y-1">
+              {failing.map((r) => (
+                <li key={r.docNo} className="font-mono text-[11px] text-ink-muted">
+                  {r.docNo} — {r.verdict} (book {r.bookLines ?? "?"} / ERP {r.erpLines ?? "?"})
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HostLogPanel() {
   const [open, setOpen] = useState(false);
   const [onlyErrors, setOnlyErrors] = useState(true);
@@ -985,6 +1044,7 @@ export function AutoCountSync() {
 
       {/* AND WHEN THE ANSWER NAMES NOTHING, where the reason actually is. */}
       <HostLogPanel />
+      <LineOrderSweepPanel />
 
       {/* A failure that reaches nobody is worse than a crash — this page exists
           because a state went unseen, so its own load error is stated, not
