@@ -147,4 +147,89 @@ them:
 Neither ran today, so neither explains the 454 rows. But the fix is not the
 no-op the earlier paragraph made it out to be.
 
+---
+
+## ANSWERED 2026-09-09, against production (runs `34338645467`, `34338928192`)
+
+**Yes — the account book was changed to values it did not already hold. 161
+values across 60 sales orders the book already had.** Everything below is
+measured, not inferred.
+
+### The two structural facts, settled
+
+- **No database trigger writes to the outbox.** `pg_trigger` asked directly:
+  *"none — no trigger writes to the outbox, so every row came from application
+  code"*. The hypothesis this entry carried is REFUTED.
+- **The rows came in through the ERP's own API as a logged-in user, not from a
+  repair script.** Of 483 rows sent on 2026-09-09, **480 carry a `created_by`**
+  and only 3 are unattributed. The bulk is one account:
+  `id=1 HOUZS CENTURY — 350 sent`, then `id=84 Sim 44`, `id=30 Lim Yau Wei 33`,
+  `id=29 Chea Huan 33`. That is what a Node client looping over the ERP's API
+  while authenticated as user 1 looks like, and it matches the burst shape
+  exactly.
+
+  **This is why the guard shipped in this PR would NOT have stopped it.** The
+  suppression marks *script* clients; these rows arrived on a *request* client,
+  which the write-back is supposed to honour. Said plainly rather than left for
+  someone to discover.
+
+### What actually changed in the book
+
+7,039 field values compared against the 00:18:49Z snapshot; **6,825 identical**
+(we echoed his own value back, harmless); **214 different**. Split by who did it
+and whose document it was:
+
+| who | document | values | docs | fields |
+| --- | --- | --- | --- | --- |
+| person 1 (HOUZS CENTURY) | MIGRATED | 83 | 55 | Desc2, Qty |
+| person 84 | ERP-created | 53 | 35 | Qty, UnitPrice |
+| person 30 | MIGRATED | 53 | 3 | Desc2 |
+| person 29 | MIGRATED | 17 | 1 | Desc2 |
+| person 40 | MIGRATED | 6 | 1 | Desc2 |
+| unattributed | MIGRATED | 2 | 1 | Desc2 |
+
+The 53 on **ERP-created** documents are the write-back working as designed — the
+ERP raised those, so it is master and pushing the price out is the point.
+
+**The 161 on MIGRATED documents are the ones that matter**: 160 `Desc2` + 1
+`Qty`, over **60 sales orders**. Of the 160 Desc2:
+
+- **83 differ ONLY by the inch mark** — the book holds `25"` (U+0022) and we
+  sent `25”` (U+201D). Same specification, different character. Harmless to
+  read, but it is a real edit to his data and it will defeat any exact-string
+  match on those lines.
+- **77 are a genuine rewrite of the specification.** These are our corrected
+  build text replacing the book's older text, e.g.
+  `tbc` -> `PC151-01 / DIVAN 10" + NO LEG / GAP 14" / T.Heights 24"`;
+  `[1NA/LT+C+2ER(28") / COL:TBC}` -> `C + 2ER + 1NALT (28") / COL: TBC`;
+  `[ 2.5(35") + C/T + 2S(28") / COL:HARRING GD8371 15#DARIL GREY ]` ->
+  `2EL + CT + 2ER (35") / COL: GD8371-15 DARK GREY`.
+  Several are corrections the owner authorised — but 「除了sofa compartment
+  而已啊」 makes the sofa build the ONE thing he judges himself, and these went
+  into his book without him.
+- **1 `Qty`**: `HC-SO-006772` DtlKey 764239, the book held **7**, we sent **10**.
+  This is the only quantity change and the only one that moves stock or money.
+
+The 60 documents: HC-SO-000559, 000624, 001162, 001639, 003188, 003190, 003191,
+003271, 003304, 003481, 003540, 003726, 003875, 003878, 003939, 004391, 004451,
+004727, 004731, 006068, 006089, 006276, 006295, 006572, 006575, 006703, 006772,
+007164, 007194, 007195, 007197, 007199, 007305, 007308, 007415, 007422, 007424,
+007595, 007604, 008464, 009609, 010298, 010508, 010688, 010734, 011090, 011091,
+011093, 011095, 011096, 011838, 012008, 012393, 012805, 012913, 012948, 012954,
+012964, 012994, 013401.
+
+### Nothing was cancelled, because there was nothing left
+
+`=== PENDING ROWS (0) ===`. The queue drained completely while this was being
+built — sent edits went 73 (05:32) -> 316 (08:0x) -> 469 (09:36) -> 492. The
+cancel tool shipped and was never needed for this incident.
+
+### A defect in the first version of this check, recorded
+
+The first run reported **217** differences. Three of them were mine: the DocDate
+comparison sliced ten characters off `"Tue Jun 17 2025 00:00:00 GMT+0000"`,
+compared `"Tue Jun 17"` against the book's `"2025-06-17"`, and called the same
+day a change to a live account book. Fixed to parse both sides as dates. The
+honest number is 214.
+
 **Ref.** `fix/ac-writeback-suppress-repairs`, 2026-09-09.
