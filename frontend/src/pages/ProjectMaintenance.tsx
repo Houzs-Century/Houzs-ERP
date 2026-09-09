@@ -12,6 +12,7 @@ import { Skeleton } from "../components/Skeleton";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
 import { clearBrandLogoCache } from "../lib/branding";
+import { copyShareLink, revokeShareLink } from "./project-maintenance/shareLinks";
 import {
   useLocalities,
   distinctCountries,
@@ -366,39 +367,6 @@ function ContractorManager() {
     }
   }
 
-  // Generate (or reuse) this contractor's public, no-login calendar link and put
-  // it on the clipboard, ready to paste into WhatsApp. The link shows only their
-  // confirmed events + booth numbers — see pages/ContractorCalendar.tsx.
-  async function copyShareLink(o: ContractorRow) {
-    try {
-      const res = await api.post<{ token: string }>(`/api/projects/contractors/${o.id}/share-link`);
-      const url = `${window.location.origin}/c/${res.token}`;
-      await navigator.clipboard.writeText(url);
-      toast.success(`Share link for ${o.name} copied`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not create the share link.");
-    }
-  }
-
-  // Kill the current link (a leaked or wrong-contractor link). A fresh one can be
-  // generated anytime by copying again.
-  async function revokeShareLink(o: ContractorRow) {
-    if (
-      !(await dialog.confirm({
-        title: "Revoke share link",
-        message: `Revoke ${o.name}'s calendar link? Anyone holding the old link loses access. Copy the link again to issue a new one.`,
-        danger: true,
-        confirmLabel: "Revoke",
-      }))
-    )
-      return;
-    try {
-      await api.del(`/api/projects/contractors/${o.id}/share-link`);
-      toast.success("Share link revoked");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not revoke the share link.");
-    }
-  }
 
   const rows = q.data?.data ?? [];
   return (
@@ -445,14 +413,14 @@ function ContractorManager() {
                   type: "action",
                   icon: Link2,
                   label: "Copy share link",
-                  onClick: () => copyShareLink(o),
+                  onClick: () => void copyShareLink("contractor", o, toast),
                 },
                 {
                   type: "action",
                   icon: Ban,
                   label: "Revoke share link",
                   danger: true,
-                  onClick: () => revokeShareLink(o),
+                  onClick: () => void revokeShareLink("contractor", o, toast, dialog),
                 },
                 {
                   type: "action",
@@ -1913,6 +1881,19 @@ function BrandManager() {
                   label: b.active ? "Hide from picker" : "Show in picker",
                   active: !!b.active,
                   onClick: () => patch(b, { active: !b.active }),
+                },
+                {
+                  type: "action",
+                  icon: Link2,
+                  label: "Copy share link",
+                  onClick: () => void copyShareLink("brand", b, toast),
+                },
+                {
+                  type: "action",
+                  icon: Ban,
+                  label: "Revoke share link",
+                  danger: true,
+                  onClick: () => void revokeShareLink("brand", b, toast, dialog),
                 },
                 {
                   type: "action",
