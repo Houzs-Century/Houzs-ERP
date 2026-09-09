@@ -223,7 +223,7 @@ async function columnsOf(sql, schema, table) {
   return new Set(rows.map((r) => r.column_name));
 }
 
-export async function loadErpFieldSide(sql, CO) {
+export async function loadErpFieldSide(sql, CO, { betweenReadsForTest } = {}) {
   const cols = {
     so: await columnsOf(sql, "scm", "mfg_sales_orders"),
     soi: await columnsOf(sql, "scm", "mfg_sales_order_items"),
@@ -315,6 +315,12 @@ export async function loadErpFieldSide(sql, CO) {
       lines: await q(`SELECT ${doLine} FROM scm.delivery_order_items i JOIN scm.delivery_orders h ON h.id = i.delivery_order_id WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`),
     },
   };
+
+  /* TEST SEAM — see tests-pg/fieldReadSnapshot.pg.test.ts. The failure being
+     chased is a WRITE ARRIVING HERE: after the arrays, before the counts. No
+     mock and no sleep can schedule that, so the suite fires a second connection
+     through this point. Nothing in production passes it. */
+  if (typeof betweenReadsForTest === "function") await betweenReadsForTest(sql);
 
   /* The no-LIMIT claim, asserted rather than trusted. */
   const counts = {};
