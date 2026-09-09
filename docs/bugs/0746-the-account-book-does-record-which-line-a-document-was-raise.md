@@ -111,4 +111,47 @@ receipts, and `scm.grns.linked_ac_gr_docno` is one column — so that shortcut
 would stamp a wrong number on a receipt that is really four. It was written,
 measured, and abandoned before anything was applied.
 
-**Ref.** fix/transfer-chain-56, 2026-09-09.
+**APPLIED, and here is what running it produced.** Not a prediction — the runs.
+
+| step | run | result |
+| --- | --- | --- |
+| before | [34313894506](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34313894506) | SO 13 · PO 8 · GR 11 · DO 10 · IV 16 · PI 48 differ. Transfer chain: SO 7, PO 5, GR 7, DO 5, IV 0, PI 32 = **56** |
+| plan (CI) | [34314412212](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34314412212) | 51 links, digest `151dfeeeeb2d2f14` — identical to the local plan against the read-only DSN, so both connections saw the same database |
+| apply | [34314469840](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34314469840) | `wrote 51, left alone 0` · `51 row(s) verified at the book's own line key; 0 did NOT hold the shape` |
+| after | [34314570746](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34314570746) | SO 13 · PO 8 · GR **5** · DO **6** · IV 16 · PI **40**. Transfer chain: SO 7, PO 5, GR **0**, DO **1**, IV 0, PI **20** = **33** |
+
+**23 documents closed on the transfer-chain axis; it went 56 -> 33.** All seven
+goods receipts, four of five delivery orders, twelve of thirty-two purchase
+invoices.
+
+**Where the document totals moved LESS than the axis did, and why.** GR fell 11
+-> 5 and DO 10 -> 6 while their chain axes fell 7 -> 0 and 5 -> 1: a document
+locked on two axes stays locked on the other one. `HC-GR-005334` is the clearest
+— its `transfer from` is now correct and it remains counted for `item code`.
+
+**One number moved that this repair caused and did not intend to fix**: purchase
+invoices `cannot compare` went 1 -> 2. That is the report's own precedence
+(`work > cannot-compare`), working: a document whose only WORK finding was the
+chain now falls through to the column for its unreadable sofa. No other type's
+figures moved — SO, PO and IV are identical before and after, which is the
+control this lane needed.
+
+**The remaining 33, measured rather than estimated.**
+
+| documents | cause |
+| --- | --- |
+| 5 purchase orders + 5 sales orders | the `-1S` sofa placeholder — `docs/bugs/0739`, untouched |
+| 1 purchase order | `line_not_stamped`, already in the `cannot compare` column |
+| 20 purchase invoices + 1 delivery order | the book names a line we hold no row carrying that AutoCount line key for |
+
+For that last row the next step is now measured and is NOT a judgement call for
+19 of them: of the **102** ERP receipts holding an unkeyed line, `DocTransfer`
+forces every line to **one** book receipt on **61**, while **15** hold lines
+belonging to **two** book receipts each (`HC-GR-005284-PO-009736` ->
+`GR-005284` + `GR-005294`, and fourteen more) and **26** have nothing forced.
+The 61 are mechanical. The 15 are a real design question and belong to whoever
+owns `backfill-ac-downstream-line-keys.mjs`: `scm.grns.linked_ac_gr_docno` is
+ONE column and those receipts are TWO book receipts, so there is no value it can
+hold that is not half wrong.
+
+**Ref.** fix/transfer-chain-56, 2026-09-09. PR #3392.
