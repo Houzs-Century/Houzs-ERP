@@ -5775,8 +5775,8 @@ New SURFACE on `backend/src/services/autocount-sofa-collapse.ts` and on both
 mirrors of `variant-summary.ts`: `liveColour` is now a module-scope export, and
 `collapseRun` applies it to the colour it hands the composer.
 
-**The fabric library renumbered itself on 2026-08-11** and left every old row in
-place with `[superseded by X on 2026-08-11]` written into the row's own LABEL. A
+**The fabric library renumbered itself on 2026-08-11** and left the superseded rows in
+place, each carrying `[superseded by X on 2026-08-11]` in its own LABEL. A
 line still pointing at a dead row therefore renders **39 characters of
 bookkeeping** in the middle of the build specification. Read off production:
 

@@ -19,7 +19,7 @@ LR + 2EL / COL: BO315-3 [superseded by BO315-03 on 2026-08-11] / BOTTOM USE UMBR
   never agree.
 
 **Root cause (traced).** The fabric library renumbered itself on 2026-08-11 and
-left each old row in place with the note written into the row's own LABEL. A line
+left the superseded rows in place, each carrying the note in its own LABEL. A line
 still pointing at the dead row therefore renders 39 characters of bookkeeping in
 the middle of the build. `buildVariantSummary` has stripped it since the day that
 was found — and `liveColour`, the helper that does it, was a **local const inside
