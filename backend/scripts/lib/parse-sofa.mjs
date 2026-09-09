@@ -628,6 +628,19 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
       else if (t === "2R") U.push({ k: "armed", n: "2", side: "R", raw: t, flag2r: recl });
       else if (/^([12])E$/.test(t)) U.push({ k: "eside", raw: t }); // owner: E 少了 L/R
       else if (t === "1P") U.push({ k: "pw", raw: t });
+      /* A CHAISE THAT SAYS ITS OWN SIDE. `L` is sided by POSITION, which is
+         the book's own convention and stays untouched — but position cannot
+         express a build whose chaise sits on the side its position denies, and
+         three sales orders are refused for exactly that (HC-SO-007399,
+         HC-SO-007958, HC-SO-008460). `LL` / `LR` say it outright, the way
+         `1EL` / `1ER` already do for an armed end.
+
+         SAFE BY MEASUREMENT, not by argument: across the committed cutover
+         snapshots — 41,953 lines carrying a Desc2 — NOT ONE uses `LL` or `LR`
+         as a token. Adding them cannot change how any existing text reads,
+         which the decode fingerprint in tests/sofaDecodeBaseline.test.ts
+         asserts over all 15,950 SO values. */
+      else if ((m = /^L([LR])$/.exec(t))) U.push({ k: "chaise", side: m[1], raw: t });
       else if (t === "L") U.push({ k: "chaise", raw: t });
       /* owner 2026-09-04: "ELT" is L, the chaise — "1 ELT" written first is
          L(LHF). Sided by position exactly like a bare L. He named ELT and 2ER
@@ -760,7 +773,12 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
             o._photo = (o._photo ? o._photo + "; " : "") + "E没写左右,先放—看图可换";
             break;
           }
-          case "chaise": out.push(i === 0 ? "L(LHF)" : "L(RHF)"); break;
+          case "chaise":
+            /* An explicit side WINS; a bare L keeps the positional reading it
+               has always had. */
+            out.push(u.side ? (u.side === "L" ? "L(LHF)" : "L(RHF)")
+                            : (i === 0 ? "L(LHF)" : "L(RHF)"));
+            break;
           case "corner":
             if (single) { out.push("2A(LHF)", "CNR", "1A(RHF)"); o._photo = "corner单写=2A+C+1A,左右看图"; }
             else out.push("CNR");
