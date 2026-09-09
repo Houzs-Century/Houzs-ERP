@@ -62,12 +62,11 @@
  *   this lane repairs only the documents NAMED in DO_TARGETS below, and each
  *   target is asserted against the book — document, DtlKey, quantity, unit
  *   price, line subtotal — and against the ERP — no row already answering it —
- *   before anything is written. As of 2026-09-09 that list is SEVEN lines:
+ *   before anything is written. As of 2026-09-09 that list is SIX lines:
  *   section G of the remainder doc, the four lines on DO-001953 / DO-004903
  *   whose item code was changed on the delivery order AFTER it was converted
- *   from its sales order (docs/bugs/0711), and the two RM 0.00 lines the
- *   alignment lane found on DO-011465 and DO-010332. Those four are written in
- *   the SUBSTITUTED shape
+ *   from its sales order (docs/bugs/0711), and DO-011465's four free
+ *   compensation pillows. Those four are written in the SUBSTITUTED shape
  *   docs/modules/delivery-order.md declares — `ac_substituted = true`,
  *   `so_item_id` NULL, `item_group` blank — never linked to an ordered line,
  *   because which ordered line each answers is a human judgement the book does

@@ -115,15 +115,26 @@ export const DO_TARGETS = [
     expect: { hasCode: true, qty: 4, unitSen: 0, subTotalSen: 0 },
     why: "the four compensation pillows the book gives away free — its Desc2 reads \"for conpesantion wrong item delivery.\" The ERP note holds only the sofa. 「一律跟账本」",
   },
-  {
-    acDoc: "DO-010332",
-    dtlKey: "836941",
-    erpCode: "DSL-8050 SOFA",
-    group: null,
-    /* The book's own LineDesc, read from data/ac-partial-dos.json.gz — the same
-       cut lib/migrated-do-writer.mjs read for the four rows above. */
-    description: "DSL SOFA - 8050",
-    expect: { hasCode: true, qty: 1, unitSen: 0, subTotalSen: 0 },
-    why: "the book's delivery note has TWO DSL-8050 SOFA lines — 2 x RM 3,250 and one at RM 0.00 — and the ERP note holds one. This is the free one; its own Desc2 says 1S while the priced line says 2S",
-  },
+  /* ── DO-010332 IS NOT IN THIS LIST, AND THAT IS THE FINDING ───────────────
+   * It was, until probe-doc-alignment run 34328818076 read the live row:
+   *
+   *   HC-DO-010332  1 line
+   *     item 8050-1S  qty 2 @ RM 3,250   ac_dtlkey 836939
+   *     description2 "BO315-11 metal/75cm/1S"
+   *
+   * The book has TWO lines on that note — 836939, `2 x RM 3,250`, Desc2
+   * ".../2S", and 836941, `1 @ RM 0.00`, Desc2 ".../1S". Our single row is
+   * KEYED to the 2S line and carries the 1S line's build text — and its item
+   * code, `8050-1S`, says 1S as well.
+   *
+   * So this is not a free-line insert. Adding 836941 on its own would leave the
+   * note with TWO rows both claiming 1S, one of them priced at the 2S line's
+   * money. The existing row has to become the 2S line FIRST, and that is a seat
+   * size on a delivered document — 「never invent a seat size」, and a seat
+   * change belongs to the sofa tooling, not to a line top-up that copies
+   * quantities and prices.
+   *
+   * It stays OPEN, with the evidence, rather than half-written. See
+   * docs/cutover-book-line-align-seven-2026-09-09.md.
+   */
 ];

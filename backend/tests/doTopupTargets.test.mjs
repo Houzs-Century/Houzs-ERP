@@ -15,9 +15,9 @@
 // PR. It is a data test: it reads `data/ac-reconcile-truth.json.gz` — the whole
 // book, unfiltered — and fails naming the field.
 //
-// The last two entries were added 2026-09-09 for the alignment lane:
-// DO-011465's four free compensation pillows and DO-010332's second DSL-8050
-// SOFA line at RM 0.00.
+// One entry was added 2026-09-09 for the alignment lane: DO-011465's four free
+// compensation pillows. A second, DO-010332, was written and then REMOVED when
+// probe-doc-alignment read the live row — see the test that pins its absence.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -61,7 +61,7 @@ describe('the named delivery-note top-up targets', () => {
   test('the snapshot this test reads is the book, not an empty file', () => {
     // A verdict computed over nothing must never read as a pass.
     expect(BOOK.size).toBeGreaterThan(40_000);
-    expect(DO_TARGETS.length).toBeGreaterThanOrEqual(7);
+    expect(DO_TARGETS.length).toBeGreaterThanOrEqual(6);
   });
 
   test.each(DO_TARGETS.map((t) => [`${t.acDoc} DtlKey ${t.dtlKey}`, t]))(
@@ -96,11 +96,11 @@ describe('the named delivery-note top-up targets', () => {
     }
   });
 
-  test('the two 2026-09-09 targets are free lines — neither can move a sen', () => {
-    // 「多收钱也 ok」 does not license moving money the other way. Both of these
-    // are RM 0.00 in the book, so the delivery note's header total is unchanged
-    // by the insert and stays equal to the book's.
-    for (const key of ['DO-011465|924550', 'DO-010332|836941']) {
+  test('the 2026-09-09 target is a free line — it cannot move a sen', () => {
+    // 「多收钱也 ok」 does not license moving money the other way. This line is
+    // RM 0.00 in the book, so the delivery note's header total is unchanged by
+    // the insert and stays equal to the book's.
+    for (const key of ['DO-011465|924550']) {
       const [acDoc, dtlKey] = key.split('|');
       const t = DO_TARGETS.find((x) => x.acDoc === acDoc && x.dtlKey === dtlKey);
       expect(t, `${key} is not in DO_TARGETS`).toBeDefined();
@@ -109,17 +109,24 @@ describe('the named delivery-note top-up targets', () => {
     }
   });
 
-  test('the book states a build text for both of them, and it is what gets written', () => {
+  test('the book states a build text for it, and it is what gets written', () => {
     // The insert now carries `book.DO.desc2` rather than NULL —
     // 「autocount怎么写我们就怎么写」. If the book ever stopped stating one, the
     // write would silently go back to a blank build text, so the presence is
     // asserted here rather than assumed.
     expect(DESC2.get('924550')).toBe('for conpesantion wrong item delivery.');
-    expect(DESC2.get('836941')).toBe('BO315-11 metal/75cm/1S');
-    // And the line this one sits beside — the PRICED DSL-8050 — states the
-    // OTHER build. Two lines, two texts; that they differ is the whole finding.
+  });
+
+  test('DO-010332 is deliberately NOT a target, and the book says why', () => {
+    // Its two book lines state DIFFERENT builds, and the ERP holds ONE row that
+    // is keyed to the 2S line while carrying the 1S line's text and item code
+    // (probe-doc-alignment run 34328818076). Inserting the free line on its own
+    // would leave the note with two rows both claiming 1S. This assertion is
+    // what stops it being re-added as a simple top-up.
     expect(DESC2.get('836939')).toBe('BO315-11 metal/75cm/2S');
+    expect(DESC2.get('836941')).toBe('BO315-11 metal/75cm/1S');
     expect(DESC2.get('836939')).not.toBe(DESC2.get('836941'));
+    expect(DO_TARGETS.some((t) => t.acDoc === 'DO-010332')).toBe(false);
   });
 
   test('THE GATE CAN FAIL — a target with a wrong value is rejected', () => {

@@ -8,7 +8,7 @@ either cites the run that produced it or is labelled UNKNOWN.
 | document | what the book has that we do not | the writer that does it | state |
 | --- | --- | --- | --- |
 | `HC-DO-011465` | a second line: `HOK-SQUARE PILLOW` x4 @ RM 0.00, Desc2 *"for conpesantion wrong item delivery."* | `topup-ac-lines-from-truth.mjs` DO lane, target `DO-011465/924550` | **BUILT** (PR #3419); apply pending |
-| `HC-DO-010332` | a second line: `DSL-8050 SOFA` x1 @ RM 0.00, Desc2 `BO315-11 metal/75cm/1S` | same lane, target `DO-010332/836941` | **BUILT** (PR #3419); apply pending |
+| `HC-DO-010332` | a second line: `DSL-8050 SOFA` x1 @ RM 0.00, Desc2 `BO315-11 metal/75cm/1S` | NOT a top-up - see below | OPEN, blocked on a seat size |
 | `HC-DO-010332` | our EXISTING row carries the OTHER line's build text (`1S` where its own book line says `2S`) | none yet — see *What is not built* | OPEN |
 | `HC-I-2606-0047` | the same two things one document down: the missing RM 0.00 invoice line, and the build text on the existing one | none yet — no invoice-line INSERT lane exists | OPEN |
 | `HC-DO-010104` | the option CODE `Nylon Fabric` in `variants.specials` (the line carries the words, not the code) | none yet | OPEN |
@@ -101,3 +101,75 @@ reached.
   encouraged.
 - Money: none of these seven lines is priced except the two that already exist,
   and no header total moves.
+
+---
+
+## MEASURED 2026-09-09 — what production actually holds
+
+`probe-doc-alignment` run 34328818076, one read-only snapshot at
+`2026-09-09T08:23:41.238Z`. Re-run it before any apply rather than quoting this.
+
+**Stock: every delivery note in this lane reads ZERO movements.**
+`HC-DO-010104`, `HC-DO-010332`, `HC-DO-011371`, `HC-DO-011465` — all
+`STOCK MOVEMENTS: 0`. Writing on them moves no on-hand figure. (Sales invoices
+write no movement at all; stock leaves on the delivery note.)
+
+### The `Nylon Fabric` blocker is GONE — the rows answer it themselves
+
+The worry was "a sofa is one book line and several ERP rows, so which
+compartment carries the option?". The rows settle it: every compartment row of
+one book line shares the SAME `linked_ac_dtlkey` and an IDENTICAL `variants`
+object. `HC-DO-010104` has four rows, all keyed `818716`, all carrying
+
+```
+specials: ["Bttm upgrade to umbrella fabric"]
+```
+
+So the write is a union-add of `Nylon Fabric` into `variants.specials` on
+**every row carrying that DtlKey** — there is no compartment to choose, and
+after the write every row of the line still holds an identical object. Same
+shape on `HC-DO-011371` (2 rows, key `909888`, `specials:
+["BOTTOM USE UMBRELLA FABRIC"]`) and `HC-I-2605-0294` (5 rows, key `856708`).
+
+The CODE is not typed by anyone: `scripts/lib/sofa-special-map.mjs` derives it
+from the book's own words. Verified locally against those exact two texts, both
+answer `["Nylon Fabric"]`, and `"BO315-11 metal/75cm/2S"` correctly answers `[]`.
+
+`custom_specials` is `null` on every one of these rows — leave it that way, it
+is derived and self-erasing.
+
+### `HC-I-2506-0056` — the colour has a parent to copy from
+
+The invoice line carries `do_item_id`, and its `variants` holds every bedframe
+axis EXCEPT the colour:
+
+```
+{"gap":"12\"","colourId":null,"fabricId":null,"specials":[],"legHeight":"0\"",
+ "fabricCode":null,"colourLabel":null,"divanHeight":"8\"","fabricLabel":null,
+ "totalHeight":"20\""}
+```
+
+So this is `repair-migrated-do-line-colour.mjs` one hop further down: copy the
+colour keys from the row `do_item_id` names, blank-only, never overwrite, and
+never parse them out of Desc2. Which key to write is not a choice — copy the
+ones the parent uses (`colourId` / `fabricId` / `fabricCode` / `colourLabel` /
+`fabricLabel`).
+
+### `HC-DO-010332` — NOT a missing line. A seat size
+
+```
+HC-DO-010332  1 line
+  item 8050-1S  qty 2 @ RM 3,250   ac_dtlkey 836939
+  description2 "BO315-11 metal/75cm/1S"
+```
+
+The row is keyed to the book's **2S** line and carries the **1S** line's build
+text and item code. Adding the free 1S line on its own would leave two rows both
+claiming 1S, one priced at the other's money. The existing row must become the
+2S line first — a seat size on a delivered document, which belongs to the sofa
+tooling. `HC-I-2606-0047` is the same document one hop down and inherits the
+same block.
+
+**A target that satisfied every assertion the book could make was still wrong.**
+It was in `DO_TARGETS` until this probe ran. `tests/doTopupTargets.test.mjs`
+pins its absence.
