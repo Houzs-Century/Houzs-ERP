@@ -71,4 +71,9 @@ purchase row stops saying "one single seater" and says the four pieces the sales
 order already says — he answered 「那就修」. His standing rule is why:
 「已经出货了的单金额不用追，可是还是要确保 transaction flow 的数据是一样的」.
 
+**FOLLOW-UP, the same day.** The apply wrote nothing on any of the five: the
+delivery rule is enforced in TWO places and `ALLOW_DELIVERED` was wired to one,
+so every build planned cleanly, entered the transaction and rolled back. Traced
+and fixed in `docs/bugs/0753`.
+
 **Ref.** PR for `fix/mislabelled-sofa-po-allow-delivered`, 2026-09-09.
