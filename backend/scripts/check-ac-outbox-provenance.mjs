@@ -36,6 +36,16 @@
 // attribute is printed under UNATTRIBUTED and left alone; the companion
 // cancel script refuses to touch anything this one has not listed.
 //
+// ── THIS REPOSITORY IS PUBLIC, AND SO ARE ITS ACTIONS LOGS ──────────────────
+//
+// probe-outbox-queued-or-not.mjs states the hazard plainly and answers it by
+// emitting only counts and booleans. This report cannot do that — naming the
+// documents IS the deliverable, because the owner has to decide row by row what
+// to cancel. So it matches the exposure the queue health report already
+// publishes daily (document numbers, ops, refusal reasons) and goes no further:
+// no staff e-mail, no customer name, no address, no money. The acting user is
+// shown as an id and a display name, which is what "who queued this" means.
+//
 // Strictly read-only: SELECTs only, no DDL, no writes, no transaction. Exits 0
 // for every legitimate answer — the answer is the output. Only an unreachable
 // database exits non-zero.
@@ -140,18 +150,18 @@ try {
 
   // ── who, by name, for the rows that DO carry a user ──────────────────────
   const byUser = await pg`
-    SELECT o.created_by, u.name, u.email, o.status, count(*)::int AS n
+    SELECT o.created_by, u.name, o.status, count(*)::int AS n
     FROM scm.autocount_outbox o
     LEFT JOIN public.users u ON u.id = o.created_by
     WHERE o.created_by IS NOT NULL
       AND o.created_at >= ${SINCE}::timestamptz
       ${COMPANY == null ? pg`` : pg`AND o.company_id = ${COMPANY}`}
-    GROUP BY o.created_by, u.name, u.email, o.status
+    GROUP BY o.created_by, u.name, o.status
     ORDER BY n DESC`;
   say("=== NAMED ACTORS IN THE WINDOW ===");
   if (!byUser.length) say("  (no row in the window carries a created_by)");
   for (const r of byUser) {
-    say(`  id=${String(r.created_by).padEnd(6)} ${String(r.name ?? "(unknown)").padEnd(24)} ${r.status.padEnd(8)} ${String(r.n).padStart(5)}  ${r.email ?? ""}`);
+    say(`  id=${String(r.created_by).padEnd(6)} ${String(r.name ?? "(unknown)").padEnd(24)} ${r.status.padEnd(8)} ${String(r.n).padStart(5)}`);
   }
   say();
 
