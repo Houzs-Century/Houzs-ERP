@@ -1,0 +1,93 @@
+name: Stamp AutoCount line keys (2026-09-09)
+
+# OPEN SALES-ORDER EDITING on nine documents that are currently refused.
+#
+# autocount-line-keys.ts:155 requires every ERP row behind one AutoCount line to
+# carry the SAME key; composeEdit treats a build whose rows hold none as having
+# no line identity, so ONE keyless row costs the WHOLE document its editability.
+# backfill-ac-sofa-line-keys.mjs measured it on 2026-09-09 05:47 (run
+# 34316280108): "UNEDITABLE AFTER: 8 migrated sales order(s)", zero rows stamped.
+#
+# That script is right to refuse these. `lib/ac-forced-line-pairing.mjs` stamps
+# only where the DOCUMENT forces the answer, and on HC-SO-012025 and
+# HC-SO-013384 two book lines share the rows, so the document does not. Its own
+# log named both as "split, untouched by this run". Loosening that rule is
+# docs/bugs/0708; this script instead brings evidence from OUTSIDE the document,
+# one source per row, recorded in the manifest:
+#
+#   RULED  the owner already adjudicated the build; the sales-order verdict
+#          (run 34336644061) prints his ruling, and it forces the grouping
+#          uniquely — the alternative pairing builds something he did not rule.
+#   DESC2  the owner 2026-09-09: 「如果没有图片的就看description 2」. HC-SO-013145
+#          has no drawing in the book (115-byte empty RTF, checked live) and its
+#          Desc2 states the builds; the money agrees independently.
+#   ONE    exactly one unclaimed book line on that document, matching on both
+#          quantity and price.
+#
+# NOT INCLUDED: HC-SO-012312. Its extra HILTON (A)-(Q) carries RM 250 the book
+# does not, which is money, and the owner said twice that somebody else has it.
+#
+# IDENTITY, NOT VALUE. One column is written, `linked_ac_dtlkey`. The
+# verification asserts on a FRESH connection that the whole table's rows,
+# quantities, unit prices, totals and cancelled count are unchanged, that no
+# document still holds a keyless line, and that each stamped book line's
+# compartment multiset is exactly the expected one — a row count cannot tell a
+# correct grouping from a wrong one with the same count.
+#
+# NOTHING IS SENT TO AUTOCOUNT. enqueueAcEdit runs on the API save path, and no
+# trigger on scm.mfg_sales_order_items writes to scm.autocount_outbox (checked
+# against pg_trigger on production 2026-09-09), so a direct row update queues
+# nothing.
+#
+# DEFAULT IS PLAN. The defaults write nothing and print every row. Applying
+# needs a deliberate mode change AND the confirm phrase; the script refuses
+# without it, and refuses the whole run if any manifest row has moved.
+#
+# REVERSAL. Uniform — every stamped row was NULL:
+#   UPDATE scm.mfg_sales_order_items SET linked_ac_dtlkey = NULL
+#    WHERE (doc_no, line_no) IN (...the 23 pairs in the script's MANIFEST...);
+# Re-running the script stamps them again, so the undo is safe to try.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "Required for apply: stamp ac line keys 2026-09-09"
+        required: false
+        default: ""
+
+# Its own group: a repair must never queue behind, or displace, a release.
+concurrency:
+  group: stamp-ac-line-keys-2026-09-09
+  cancel-in-progress: false
+
+jobs:
+  stamp:
+    runs-on: ubuntu-latest
+    # Where DATABASE_URL lives — the same environment the deploy uses.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/stamp-ac-line-keys-2026-09-09.mjs
+        env:
+          MODE: ${{ github.event.inputs.mode }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
