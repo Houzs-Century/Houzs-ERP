@@ -1364,7 +1364,7 @@ function Compose({
     if (bucket === "DEPT" && selDepts.size === 0) { setErr("Pick at least one department, or choose All staff."); return; }
     if (bucket === "POSITION" && selPositions.size === 0) { setErr("Pick at least one position, or choose All staff."); return; }
     if (bucket === "USER" && selUsers.size === 0) { setErr("Pick at least one person, or choose All staff."); return; }
-    if (missingAttachment) { setErr(`A ${pickedType?.label ?? docType} must carry its file (Settings → Documents). Attach one first.`); return; }
+    if (missingAttachment) { setErr(`A ${pickedType.label} must carry its file (Settings → Documents). Attach one first.`); return; }
     setErr(null);
     setSaving(true);
     try {
@@ -1517,7 +1517,7 @@ function Compose({
         )}
         {missingAttachment && (
           <div style={{ fontSize: 11.5, color: "#a16a2e", margin: "0 2px 12px", lineHeight: 1.45 }} data-testid="attachment-required-hint">
-            A {pickedType?.label ?? docType} must carry its file (Settings → Documents) — attach one below before submitting.
+            A {pickedType.label} must carry its file (Settings → Documents) — attach one below before submitting.
           </div>
         )}
 
