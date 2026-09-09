@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-181 route modules (51 in `backend/src/routes`, 130 in `backend/src/scm/routes`), 1242 endpoint registrations.
+181 route modules (51 in `backend/src/routes`, 130 in `backend/src/scm/routes`), 1243 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -53,8 +53,8 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/presence.ts` | 2 | 201 |
 | `backend/src/routes/projects.ts` | 115 | 5153 |
 | `backend/src/routes/projects_print.ts` | 1 | 1320 |
-| `backend/src/routes/publicBrandCalendar.ts` | 6 | 138 |
-| `backend/src/routes/publicContractorCalendar.ts` | 5 | 148 |
+| `backend/src/routes/publicBrandCalendar.ts` | 6 | 144 |
+| `backend/src/routes/publicContractorCalendar.ts` | 5 | 154 |
 | `backend/src/routes/publicDoScan.ts` | 4 | 926 |
 | `backend/src/routes/push.ts` | 2 | 71 |
 | `backend/src/routes/roles.ts` | 8 | 376 |
@@ -179,7 +179,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/slips.ts` | 3 | 246 |
 | `backend/src/scm/routes/so-amendments.ts` | 10 | 1414 |
 | `backend/src/scm/routes/so-dropdown-options.ts` | 4 | 318 |
-| `backend/src/scm/routes/so-handover.ts` | 3 | 404 |
+| `backend/src/scm/routes/so-handover.ts` | 4 | 487 |
 | `backend/src/scm/routes/so-mirror.ts` | 1 | 333 |
 | `backend/src/scm/routes/so-settings.ts` | 2 | 61 |
 | `backend/src/scm/routes/sofa-combos.ts` | 7 | 795 |
@@ -216,7 +216,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2101 files, 727933 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2101 files, 728142 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
