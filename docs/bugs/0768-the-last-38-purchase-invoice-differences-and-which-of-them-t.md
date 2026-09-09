@@ -65,10 +65,13 @@ receipt line it was built from. Over the 40 documents: **137 invoice lines,
 every one linked to a receipt line**, and
 
 ```
-18 lines on 11 documents hold variants = null while the RECEIPT LINE holds the full object
-59 lines are blank on both sides
-60 lines already carry values
+137 invoice lines: 110 linked to a receipt line, 27 carrying no link at all
+ 12 of the linked lines, on 9 documents, hold variants = null while the RECEIPT LINE holds the full object
 ```
+
+That 12 is the repair's own plan run against production (34379677063) and not a
+count taken off a log; a first reading of the log here said 18 on 11 documents,
+which counted six UNLINKED rows as linked. There is nothing to copy onto those.
 
 `HC-PI-006244` is the clean case. Our invoice line reads `variants=null, d2=""`;
 its receipt line `HC-GR-004126` key 745317 reads
@@ -126,6 +129,12 @@ in neither the owned nor the withheld list makes the row REFUSE rather than be
 copied in part. `description2` is REPORTED and never written: it is what the
 sofa decoder reads, so filling it can move a `sofa build` verdict, and that is
 the owner's lane.
+
+Applied and verified: run
+[34379825762](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34379825762)
+— `APPLIED: 12 of 12 invoice line(s) filled` and `VERIFIED on a fresh
+connection: 12 invoice line(s) hold the receipt's own values, every one still a
+jsonb OBJECT, and item code, quantity and receipt link unchanged on all of them.`
 
 Proved RED: `variantRefreshOwnedKeys.test.ts` asserts the fill predicate is on
 the purchase-invoice statement and on no other; deleting that one line from
