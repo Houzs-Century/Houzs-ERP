@@ -8,7 +8,7 @@
 //   GET /api/public/brand-calendar/:token/events/:eventId
 //   GET /api/public/brand-calendar/:token/events/:eventId/floorplan
 //   GET /api/public/brand-calendar/:token/events/:eventId/floorplan/:fileId
-//   GET /api/public/brand-calendar/:token/export
+//   GET /api/public/brand-calendar/:token/export?month=YYYY-MM
 //
 // Sibling of routes/publicContractorCalendar.ts over the same service
 // (services/shareCalendar.ts). The unguessable token IS the credential
@@ -24,6 +24,7 @@ import type { Env } from "../types";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
 import { resolveBrandShareToken } from "../services/brandShare";
 import {
+  MONTH_RE,
   TOKEN_RE,
   listPlanFiles,
   listShareEvents,
@@ -106,12 +107,15 @@ publicBrandCalendar.get("/:token/events/:eventId/floorplan/:fileId", async (c) =
   return res ?? c.json({ error: "not_found" }, 404);
 });
 
-// Export rows, WITH total sales, scoped server-side to the token's brand; the
-// browser builds the .xlsx. Every call is logged for accountability.
+// Export rows, WITH total sales, scoped server-side to the token's brand AND to
+// the one month asked for (owner 2026-09-09: the export follows the month on
+// screen); the browser builds the .xlsx. Every call is logged for accountability.
 publicBrandCalendar.get("/:token/export", async (c) => {
   const g = await gate(c);
   if (g instanceof Response) return g;
-  const rows = await listShareExportRows(c.env, g.scope, true);
+  const month = (c.req.query("month") ?? "").trim();
+  if (!MONTH_RE.test(month)) return c.json({ error: "month_required", message: "Pick a month first." }, 400);
+  const rows = await listShareExportRows(c.env, g.scope, true, month);
   await logShareExport(c.env, "brand", g.scope.value, g.token, clientIp(c), rows.length);
   return c.json({ brand: g.scope.value, generatedAt: new Date().toISOString(), rows });
 });
