@@ -1405,6 +1405,19 @@ here: `probe-link-identity` counted 5 at 2026-09-07 23:22 and
 across, touching no money and no link; the decision is pure in
 `scripts/lib/invoice-snapshot-repair.mjs`. `docs/bugs/0676` and `docs/bugs/0687`.
 
+**Two correction files may rule on one build, and the LATER one is the answer.**
+`CORRECTION_FILES` (`scripts/lib/sofa-corrections-source.mjs`) is ordered oldest
+first on purpose, so `apply-sofa-compartment-corrections.mjs` can be handed a
+round that revises an earlier one. Its verification asserts only the SURVIVING
+entry per build: `supersededBy()` in `scripts/lib/sofa-build-plan.mjs` overrules
+an entry when a later entry on the same document selects any of the same row
+ids, and the overruled one prints `SUPERSEDED` rather than disappearing. The
+test is ROW IDS, not the selector text — the pair that bought this rule,
+`HC-SO-012929`, carries two different `desc2Match` strings for one build, so a
+key built from the selector groups them apart and asserts both. `docs/bugs/0742`
+also records what is still open: the APPLY runs both entries, so the end state is
+correct only while the file order is.
+
 **Edit-side re-point guard (GAP-2), rows 9 & 11 — closed 2026-08-20.** The
 `Unlinked-line back door closed` column above is the CREATE / add-line half. A
 second half of the same door is EDITING an already-saved unlinked line's
