@@ -28,6 +28,7 @@
 // where the SO changed but the purchaser's to-do vanished.
 
 import type { Context } from 'hono';
+import { isServiceLine } from '../shared/service-sku';
 import { activeCompanyId, stampCompany } from './companyScope';
 
 type Sb = any;
@@ -58,6 +59,38 @@ const poRelevant = (l: SoAmendLine): boolean => {
   return false;
 };
 
+/** The SO line a change targets, from the live row when it survived and from
+ *  the pre-apply snapshot when it did not (a REMOVE hard-deletes the row). */
+export type SoLineIdentity = { item_code?: string | null; item_group?: string | null };
+
+/* SERVICE lines are not goods (shared/service-sku): storage, disposal and
+   delivery charges ride the SO->DO->SI chain but never become MRP demand and
+   never become a PO line, so a change to one has nothing for the supplier to
+   follow. Owner 2026-09-09 — "SO amendment 如果是关于 Service (storage /
+   disposal / delivery) 无需升级到 PO amendment": HC-SO-006772/A1 moved a
+   storage charge from 7 to 10 months and still raised HC-PO-006690/A1 with
+   ZERO changes, an empty second signature the purchaser had to clear by hand.
+
+   Decided on the line's IDENTITY, both sides of the edit: an existing line is
+   service-only when it was service BEFORE and (if the code moved) still is
+   AFTER, so a SPEC edit that swaps a service SKU for real goods still
+   escalates. Unknown identity is NOT service — an extra follow-up the
+   purchaser withdraws beats a supplier never hearing about a real change. */
+const serviceOnlyChange = (
+  l: SoAmendLine,
+  identityOf: (soItemId: string) => SoLineIdentity | undefined,
+): boolean => {
+  const base = l.sales_order_item_id ? identityOf(l.sales_order_item_id) : undefined;
+  const before = base
+    ? isServiceLine({ itemGroup: base.item_group ?? null, itemCode: base.item_code ?? null })
+    : null;
+  const after = l.new_item_code != null ? isServiceLine({ itemCode: l.new_item_code }) : null;
+  if (before == null && after == null) return false;   // no identity to judge — escalate
+  if (before == null) return after === true;           // ADD: the new code decides
+  if (after == null) return before;                    // QTY / REMOVE / variant-only SPEC
+  return before && after;
+};
+
 export async function raisePoFollowUps(
   sb: Sb,
   c: Context<any>,
@@ -77,8 +110,8 @@ export async function raisePoFollowUps(
     .select('sales_order_item_id, change_type, new_item_code, new_variants, new_qty, new_unit_price_sen')
     .eq('amendment_id', args.soAmendmentId);
   if (lineErr) throw new Error(`raisePoFollowUps: amendment lines load failed: ${lineErr.message}`);
-  const soLines = ((lineRows ?? []) as SoAmendLine[]).filter(poRelevant);
-  if (soLines.length === 0) return none;
+  const changedLines = ((lineRows ?? []) as SoAmendLine[]).filter(poRelevant);
+  if (changedLines.length === 0) return none;
 
   // (2) The pre-apply snapshot (written by applySoAmendment moments ago in this
   //     same transaction) — previous line ids + the frozen SO→PO links.
@@ -105,11 +138,22 @@ export async function raisePoFollowUps(
      which the column default forbids but a partial row shape does not — reads
      as LIVE, never as removed. */
   const { data: soItemRows, error: soItemErr } = await sb.from('mfg_sales_order_items')
-    .select('id, cancelled').eq('doc_no', args.soDocNo);
+    .select('id, cancelled, item_code, item_group').eq('doc_no', args.soDocNo);
   if (soItemErr) throw new Error(`raisePoFollowUps: SO items load failed: ${soItemErr.message}`);
-  const soItemIds = ((soItemRows ?? []) as Array<{ id: string; cancelled?: boolean | null }>)
-    .filter((r) => r.cancelled !== true).map((r) => r.id);
+  const soItemRowsTyped = (soItemRows ?? []) as Array<{ id: string; cancelled?: boolean | null } & SoLineIdentity>;
+  const soItemIds = soItemRowsTyped.filter((r) => r.cancelled !== true).map((r) => r.id);
   const currentIdSet = new Set(soItemIds);
+
+  /* (3b) Drop the SERVICE-only changes. A removed line is gone from
+     mfg_sales_order_items, so its identity comes from the snapshot frozen a
+     moment ago. Nothing PO-relevant left = nothing for purchasing to sign. */
+  const identityById = new Map<string, SoLineIdentity>();
+  for (const r of ((snap?.lines ?? []) as Array<{ id?: string } & SoLineIdentity>)) {
+    if (r.id) identityById.set(String(r.id), { item_code: r.item_code, item_group: r.item_group });
+  }
+  for (const r of soItemRowsTyped) identityById.set(r.id, { item_code: r.item_code, item_group: r.item_group });
+  const soLines = changedLines.filter((l) => !serviceOnlyChange(l, (id) => identityById.get(id)));
+  if (soLines.length === 0) return none;
 
   type PoItem = {
     id: string; purchase_order_id: string | null; so_item_id: string | null;
@@ -136,11 +180,45 @@ export async function raisePoFollowUps(
     orphanItems = (oRows ?? []) as PoItem[];
   }
 
-  // (5) Candidate POs = surviving links ∪ orphan homes, minus CANCELLED.
-  const candidatePoIds = [...new Set([
+  /* (5) Candidate POs = the POs that actually HOST a changed line — its live
+     link, or its frozen orphan home when the change removed it — minus
+     CANCELLED. Owner 2026-09-09: this used to be EVERY PO bound to the SO, so
+     a one-line change on a multi-PO order raised a 0-change amendment against
+     each untouched PO as well. Confirming one was harmless (reviseBoundPo
+     re-derives that PO from the SO and finds nothing to change) but it is a
+     signature the purchaser had to clear for nothing.
+
+     NARROWING ONLY APPLIES WHEN EVERY CHANGED LINE ALREADY HAS A PO HOME. A
+     changed line that has none may still NEED one — an ADD by construction (a
+     brand-new SO line has no link yet), and equally an existing line that was
+     never on a PO, including one a SPEC edit just turned from a service SKU
+     into real goods. For those the full bound set stays in play and the supplier
+     matching happens at confirm, in reviseBoundPo, exactly as before; narrowing
+     them away would mean new goods never reach a supplier. */
+  const changedSoItemIds = new Set(soLines
+    .map((l) => l.sales_order_item_id).filter((x): x is string => Boolean(x)));
+  const linkedSoItemIds = new Set(livePoItems
+    .map((r) => r.so_item_id).filter((x): x is string => Boolean(x)));
+  const needsHome = soLines.some((l) =>
+    String(l.change_type).toUpperCase() === 'ADD'
+    || !(l.sales_order_item_id && linkedSoItemIds.has(l.sales_order_item_id)));
+
+  const boundPoIds = [...new Set([
     ...livePoItems.map((r) => r.purchase_order_id),
     ...orphanItems.map((r) => r.purchase_order_id),
   ].filter((x): x is string => Boolean(x)))];
+  const orphanIdsForChanged = new Set(removedSoItemIds
+    .filter((id) => changedSoItemIds.has(id)).flatMap((id) => poLinks[id] ?? []));
+  const touchedPoIds = new Set<string>();
+  for (const r of livePoItems) {
+    if (r.purchase_order_id && r.so_item_id && changedSoItemIds.has(r.so_item_id)) touchedPoIds.add(r.purchase_order_id);
+  }
+  for (const r of orphanItems) {
+    if (r.purchase_order_id && orphanIdsForChanged.has(r.id)) touchedPoIds.add(r.purchase_order_id);
+  }
+  /* When narrowing applies, touchedPoIds cannot be empty: every changed line
+     has a live link, so at least one PO hosts one. */
+  const candidatePoIds = needsHome ? boundPoIds : [...touchedPoIds];
   if (candidatePoIds.length === 0) {
     return { followUps: [], warnings: ['No purchase order is bound to this Sales Order yet, so there is nothing to revise on the purchasing side.'] };
   }
