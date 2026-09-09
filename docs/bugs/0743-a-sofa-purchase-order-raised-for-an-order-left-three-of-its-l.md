@@ -49,7 +49,7 @@ returns **3**. Both numbers are recorded so the weaker one is not reused.
 three links, matching PO line to SO line BY ITEM CODE inside this one document
 pair, so the same-product gate is structural rather than an afterthought —
 skipping that comparison is what put nine sales-order lines on a different bed
-(`docs/bugs/0671-a-key-pair-is-not-an-identity-match-nine-sales-order-lines-w.md`).
+(`docs/bugs/0671-the-delta-sync-dedicated-9-sales-order-lines-to-purchase-ord.md`).
 It refuses outright if the unlinked remainder is not exactly three, which would
 mean the document pair moved since this was written.
 
