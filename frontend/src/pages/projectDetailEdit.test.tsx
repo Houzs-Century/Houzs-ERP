@@ -182,28 +182,32 @@ describe("ProjectDetail — Edit project details", () => {
   /* Owner 2026-09-03: "frontend only should have start date / end date /
      rental / size — other details keep hidden behind edit". The resting strip
      had grown to Start, End, Booth, Venue, State, Organizer and Contractor,
-     which pushed the two NUMBERS the owner reads at a glance off the row. */
-  it("shows only Start, End, Size and Rental until Edit is clicked", async () => {
+     which pushed the two NUMBERS the owner reads at a glance off the row.
+     Owner 2026-09-09: Booth comes back to the resting strip — it is read at a
+     glance too, so the set is Start, End, Size, Booth, Rental. */
+  it("shows only Start, End, Size, Booth and Rental until Edit is clicked", async () => {
     await renderDetail();
     // Wait for the strip itself, not just the page shell.
     await screen.findByText("Start");
 
-    for (const shown of ["Start", "End", "Size · sqm", "Rental · RM"]) {
+    for (const shown of ["Start", "End", "Size · sqm", "Booth", "Rental · RM"]) {
       expect(screen.getByText(shown), `${shown} must be on the resting strip`).toBeTruthy();
     }
-    for (const hidden of ["Booth", "Venue *", "State", "Organizer", "Contractor", "Brand"]) {
+    // Booth reads its value without opening Edit.
+    expect(screen.getByText("A12"), "the booth number must render at rest").toBeTruthy();
+    for (const hidden of ["Venue *", "State", "Organizer", "Contractor", "Brand"]) {
       expect(screen.queryByText(hidden), `${hidden} must be behind Edit`).toBeNull();
     }
 
     await clickEditOnce();
 
     // …and Edit still reveals every one of them.
-    await waitFor(() => expect(screen.getByText("Booth")).toBeTruthy());
-    for (const revealed of ["Venue *", "State", "Organizer", "Contractor", "Brand"]) {
+    await waitFor(() => expect(screen.getByText("Venue *")).toBeTruthy());
+    for (const revealed of ["State", "Organizer", "Contractor", "Brand"]) {
       expect(screen.getByText(revealed), `${revealed} must appear in edit mode`).toBeTruthy();
     }
-    // The four never leave.
-    for (const kept of ["Start", "End", "Size · sqm", "Rental · RM"]) {
+    // The five never leave.
+    for (const kept of ["Start", "End", "Size · sqm", "Booth", "Rental · RM"]) {
       expect(screen.getByText(kept), `${kept} must stay in edit mode`).toBeTruthy();
     }
   });

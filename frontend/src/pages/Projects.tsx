@@ -7209,15 +7209,16 @@ function ProjectSpecStrip({
       <div
         className={cn(
           "grid grid-cols-1 divide-x divide-y divide-border-subtle border-y border-border-subtle md:grid-cols-2",
-          // View mode = the 4 fields the owner reads at a glance, one row.
+          // View mode = the 5 fields the owner reads at a glance, one row.
           // Edit mode = a 4-col grid for every field.
-          "lg:grid-cols-4",
+          editing ? "lg:grid-cols-4" : "lg:grid-cols-5",
         )}
       >
-        {/* Owner 2026-09-03: the resting strip shows START, END, RENTAL and SIZE
-            and nothing else — "other details keep hidden behind edit". Booth,
+        {/* Owner 2026-09-03: the resting strip shows START, END, SIZE, BOOTH and
+            RENTAL and nothing else — "other details keep hidden behind edit".
             Venue, State, Organizer and Contractor were on it too, which pushed
-            the two numbers the owner actually checks off the row entirely.
+            the numbers the owner actually checks off the row entirely.
+            Booth came back on 2026-09-09 — it reads at a glance like the rest.
             Clicking Edit still reveals every field. */}
         {editing && (<>
         <SpecCell label="Brand">
@@ -7341,15 +7342,6 @@ function ProjectSpecStrip({
           )}
         </SpecCell>
         {editing && (<>
-        <SpecCell label="Booth">
-          <SpecTextField
-            editing={editing}
-            value={p.booth_no}
-            placeholder="—"
-            onChange={(v) => patch({ booth_no: v })}
-          />
-        </SpecCell>
-
         <SpecCell label="Venue *">
           <VenuePicker
             value={p.venue}
@@ -7380,8 +7372,8 @@ function ProjectSpecStrip({
           />
         </SpecCell>
         </>)}
-        {/* Size and Rental stay on the resting strip — the two numbers the
-            owner checks without opening anything (owner 2026-09-03). */}
+        {/* Size, Booth and Rental stay on the resting strip — what the owner
+            checks without opening anything (owner 2026-09-03/09-09). */}
         <SpecCell label="Size · sqm">
           <div className="flex items-center gap-1.5">
             <SpecTextField
@@ -7401,6 +7393,15 @@ function ProjectSpecStrip({
               toast={toast}
             />
           </div>
+        </SpecCell>
+
+        <SpecCell label="Booth">
+          <SpecTextField
+            editing={editing}
+            value={p.booth_no}
+            placeholder="—"
+            onChange={(v) => patch({ booth_no: v })}
+          />
         </SpecCell>
 
         <SpecCell label="Rental · RM">

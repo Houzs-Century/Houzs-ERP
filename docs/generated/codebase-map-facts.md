@@ -229,12 +229,12 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2455 files, 790589 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2456 files, 790698 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
-| `frontend/src/pages/Projects.tsx` | 15144 |
+| `frontend/src/pages/Projects.tsx` | 15145 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 11871 |
 | `frontend/src/pages/ServiceCases.tsx` | 8850 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 8581 |

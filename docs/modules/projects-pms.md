@@ -90,16 +90,19 @@ Landmarks worth grepping to:
 
 **`ProjectSpecStrip` — what shows at rest vs behind Edit.** The strip under the
 "Project Detail" header is two layers gated by one `editing` flag. At rest it
-renders exactly **Start · End · Size · sqm · Rental · RM** in a 4-column grid —
-the two dates and the two numbers the owner reads at a glance (owner 2026-09-03:
-"frontend only should have start date / end date / rental / size, other details
-keep hidden behind edit"). Everything else — Brand, Event Type, Created,
-Duration, Booth, Venue, State, Organizer, Contractor, Name, Add-to-Calendar —
-lives inside `{editing && (<>…</>)}` blocks and appears only after the Edit
-button (`fullAccess` only). When adding a field, put it in an edit-only block
-unless the owner has asked for it on the resting row; the resting set is pinned
-by `projectDetailEdit.test.tsx` ("shows only Start, End, Size and Rental until
-Edit is clicked"). Size keeps its `DetectSizeButton` and Rental its
+renders exactly **Start · End · Size · sqm · Booth · Rental · RM** in a 5-column
+grid — the two dates and the three values the owner reads at a glance (owner
+2026-09-03: "frontend only should have start date / end date / rental / size,
+other details keep hidden behind edit"; owner 2026-09-09 added Booth back to that
+row). Edit mode drops back to a 4-column grid for the full field set. Everything
+else — Brand, Event Type, Created, Duration, Venue, State, Organizer,
+Contractor, Name, Add-to-Calendar — lives inside `{editing && (<>…</>)}` blocks
+and appears only after the Edit button (`fullAccess` only). When adding a field,
+put it in an edit-only block unless the owner has asked for it on the resting
+row; the resting set is pinned by `projectDetailEdit.test.tsx` ("shows only
+Start, End, Size, Booth and Rental until Edit is clicked"). Booth renders
+read-only text at rest via `SpecTextField`'s `editing` flag; Size keeps its
+`DetectSizeButton` and Rental its
 `QuickRentalField` in both modes — those two write on their own, without Edit.
 
 Per-view access is resolved at `:811-816` with `usePageAccess("projects.list" |
