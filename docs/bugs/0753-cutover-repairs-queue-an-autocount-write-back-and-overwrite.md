@@ -89,4 +89,27 @@ known.
    what it already held" from "we overwrote it". Rows sent BEFORE the export are
    reported UNDECIDABLE rather than harmless.
 
+**A CONTRADICTION, NOT BRIDGED.** Part 1 hardens the class, but it does **not**
+explain today's rows, and saying otherwise would be the tidy answer rather than
+the true one. Measured on this branch:
+
+```
+$ grep -c enqueue backend/scripts/recompute-so-allocation.mjs       backend/scripts/repair-so-delivered-from-imported-dos.mjs       backend/scripts/restamp-do-actual-cost.mjs       backend/scripts/backfill-zero-line-costs.ts
+0  (all four)
+```
+
+Every repair script that now gets a suppressed client **never reached an
+enqueue in the first place**, and neither does the SO allocator they drive. So
+the suppression changes nothing about today's four scripts: it is a guard
+against a class, not a repair of an observed path. The five tools that DO
+enqueue are the deliberate push tools, and they keep working by design.
+
+It follows that the path which queued ~36 migrated-SO edits at 08:48 is **still
+UNKNOWN**. The remaining candidates are a production trigger absent from this
+repo, or a route on the ERP's own API (`so-amendments.ts:952`,
+`so-handover.ts:303`, `po-amendments.ts:494`, `so-payment-row.ts:211` all call
+`enqueueEdit`), which would leave a `created_by`. `check-ac-outbox-provenance.mjs`
+asks both questions — `pg_trigger` directly, and `created_by` per row — and its
+production run is what closes this.
+
 **Ref.** `fix/ac-writeback-suppress-repairs`, 2026-09-09.
