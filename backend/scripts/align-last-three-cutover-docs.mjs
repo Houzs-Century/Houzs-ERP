@@ -122,7 +122,8 @@ async function main() {
     for (const r of poRows) log(`   line ${r.item_code} qty ${r.qty} unit ${rm(r.unit_price_sen)} total ${rm(r.line_total_sen)} key ${r.linked_ac_dtlkey ?? "(none)"}`);
     log(`   header total ${rm(poRows[0].total_sen)} · lines sum ${rm(sum)} · status ${poRows[0].status}`);
     if (sum !== PO_MONEY.nowTotalSen) {
-      bad(`${PO_MONEY.doc}: the lines now sum to ${rm(sum)}, the list expected ${rm(PO_MONEY.nowTotalSen)} — somebody edited it since; re-review before writing. REFUSED`);
+      const already = sum === PO_MONEY.wantTotalSen;
+      bad(`${PO_MONEY.doc}: the lines now sum to ${rm(sum)}, the list expected ${rm(PO_MONEY.nowTotalSen)} — ${already ? "ALREADY the book's value, nothing to do" : 'somebody edited it since; re-review before writing'}. REFUSED`);
       refused++;
     } else {
       poPlan = { poId: poRows[0].po_id, ids: poRows.map((r) => r.id) };
@@ -137,13 +138,22 @@ async function main() {
     SELECT gi.id, gi.item_code, gi.material_name, gi.linked_ac_dtlkey, g.id AS grn_id, g.grn_number, g.migrated_no_stock
       FROM scm.grn_items gi
       JOIN scm.grns g ON g.id = gi.grn_id
-     WHERE g.company_id = ${CO} AND g.grn_number = ${GR_SWAP.doc}
+     WHERE g.company_id = ${CO}
        AND gi.linked_ac_dtlkey::text = ANY(${GR_SWAP.pair.map((p) => p.dtlKey)})
      ORDER BY gi.linked_ac_dtlkey`;
   let swapPlan = null;
   const byKey = new Map(swapRows.map((r) => [String(r.linked_ac_dtlkey).trim(), r]));
-  if (swapRows.length !== 2) { bad(`${GR_SWAP.doc}: expected 2 keyed line(s), found ${swapRows.length} — REFUSED`); refused++; }
-  else if (swapRows.some((r) => r.migrated_no_stock !== true)) { bad(`${GR_SWAP.doc}: not migrated paperwork — REFUSED`); refused++; }
+  /* FOUND BY THE BOOK'S LINE KEY, not by our document number. The first version
+     joined on `g.grn_number = 'HC-GR-005334'` and found ZERO rows: a migrated
+     receipt's ERP number is not always the book's number with a prefix — several
+     in this batch carry a `-PO-NNNNNN` suffix. The KEY is the identity; the
+     number is a label. The document is printed rather than assumed, and both
+     rows must be on the SAME one. */
+  const swapDocs = [...new Set(swapRows.map((r) => r.grn_number))];
+  if (swapRows.length) log(`   found on ${swapDocs.join(", ")}`);
+  if (swapRows.length !== 2) { bad(`${GR_SWAP.acDoc}: expected 2 keyed line(s), found ${swapRows.length} — REFUSED`); refused++; }
+  else if (swapDocs.length !== 1) { bad(`${GR_SWAP.acDoc}: the two keys sit on DIFFERENT documents (${swapDocs.join(", ")}) — that is not a swap. REFUSED`); refused++; }
+  else if (swapRows.some((r) => r.migrated_no_stock !== true)) { bad(`${GR_SWAP.acDoc}: not migrated paperwork — REFUSED`); refused++; }
   else {
     const mism = GR_SWAP.pair.filter((p) => K(byKey.get(p.dtlKey)?.item_code) !== K(p.now));
     for (const p of GR_SWAP.pair) log(`   DtlKey ${p.dtlKey}: holds ${JSON.stringify(byKey.get(p.dtlKey)?.item_code)} -> ${JSON.stringify(p.want)}`);
@@ -161,26 +171,35 @@ async function main() {
   log("");
   log(`── C ${GR_LEG.doc}: the receipt's leg is blank; the book and the purchase order both say ${GR_LEG.want} ──`);
   const legRows = await sql`
-    SELECT gi.id, gi.item_code, gi.variants, gi.linked_ac_dtlkey,
+    SELECT gi.id, gi.item_code, gi.variants, gi.linked_ac_dtlkey, g.grn_number,
            jsonb_typeof(COALESCE(gi.variants,'{}'::jsonb)) AS kind, g.migrated_no_stock
       FROM scm.grn_items gi
       JOIN scm.grns g ON g.id = gi.grn_id
-     WHERE g.company_id = ${CO} AND g.grn_number = ${GR_LEG.doc}
-       AND gi.linked_ac_dtlkey::text = ${GR_LEG.dtlKey}`;
+     WHERE g.company_id = ${CO} AND gi.linked_ac_dtlkey::text = ${GR_LEG.dtlKey}
+     ORDER BY gi.id`;
+  /* ONE BOOK LINE IS MANY ERP ROWS. A sofa is one line in the book and one ERP
+     row PER COMPARTMENT, every one carrying the same DtlKey
+     (docs/modules/purchase-order.md: "indexed, NOT unique"). The first version
+     asked for exactly one row and refused on finding two — this repo's own
+     documented shape. A SCALAR axis is written identically to every piece of a
+     build, so all are read, all must agree, and all are written. */
   let legPlan = null;
-  if (legRows.length !== 1) { bad(`${GR_LEG.doc}: expected 1 line on DtlKey ${GR_LEG.dtlKey}, found ${legRows.length} — REFUSED`); refused++; }
-  else {
-    const r = legRows[0];
-    const held = r.variants && typeof r.variants === "object" && !Array.isArray(r.variants)
-      ? String(r.variants.legHeight ?? r.variants.sofaLegHeight ?? "").trim() : "";
-    log(`   ${r.item_code}: legHeight ${JSON.stringify(held || "(blank)")} · variants is jsonb ${r.kind} · migrated_no_stock ${r.migrated_no_stock}`);
-    if (r.kind !== "object") { bad(`${GR_LEG.doc}: variants is jsonb ${r.kind}, not an object — REFUSED`); refused++; }
-    else if (r.migrated_no_stock !== true) { bad(`${GR_LEG.doc}: not migrated paperwork — REFUSED`); refused++; }
-    else if (held) {
-      bad(`${GR_LEG.doc}: the leg already reads ${JSON.stringify(held)} — this list expected blank. ${held === GR_LEG.want ? "ALREADY the book's value" : "somebody edited it since"} — REFUSED`);
-      refused++;
-    } else { legPlan = { id: r.id }; log(`   -> merge { legHeight: ${JSON.stringify(GR_LEG.want)} } (a MERGE, never a rebuild of the object)`); }
-  }
+  const legDocs = [...new Set(legRows.map((r) => r.grn_number))];
+  if (legRows.length) log(`   found ${legRows.length} compartment row(s) on ${legDocs.join(", ")}: ${legRows.map((r) => r.item_code).join(" + ")}`);
+  const heldOf = (r) => (r.variants && typeof r.variants === "object" && !Array.isArray(r.variants)
+    ? String(r.variants.legHeight ?? r.variants.sofaLegHeight ?? "").trim() : "");
+  const spread = [...new Set(legRows.map(heldOf))];
+  if (!legRows.length) { bad(`${GR_LEG.acDoc}: no line on DtlKey ${GR_LEG.dtlKey} — REFUSED`); refused++; }
+  else if (legDocs.length !== 1) { bad(`${GR_LEG.acDoc}: that key sits on ${legDocs.length} documents (${legDocs.join(", ")}) — REFUSED`); refused++; }
+  else if (legRows.some((r) => r.kind !== "object")) { bad(`${GR_LEG.acDoc}: a row's variants is not a jsonb object — REFUSED`); refused++; }
+  else if (legRows.some((r) => r.migrated_no_stock !== true)) { bad(`${GR_LEG.acDoc}: not migrated paperwork — REFUSED`); refused++; }
+  else if (spread.length > 1) {
+    bad(`${GR_LEG.acDoc}: the ${legRows.length} pieces of this build do not agree on the leg (${spread.map((x) => JSON.stringify(x || "")).join(", ")}) — a human has to look at that. REFUSED`);
+    refused++;
+  } else if (spread[0]) {
+    bad(`${GR_LEG.acDoc}: the leg already reads ${JSON.stringify(spread[0])} — this list expected blank. ${spread[0] === GR_LEG.want ? "ALREADY the book's value" : "somebody edited it since"} — REFUSED`);
+    refused++;
+  } else { legPlan = { ids: legRows.map((r) => r.id) }; log(`   -> merge { legHeight: ${JSON.stringify(GR_LEG.want)} } onto all ${legRows.length} piece(s) (a MERGE, never a rebuild)`); }
 
   log("");
   const ready = [poPlan && "A", swapPlan && "B", legPlan && "C"].filter(Boolean);
@@ -213,7 +232,7 @@ async function main() {
   if (legPlan) {
     await sql`UPDATE scm.grn_items
                  SET variants = COALESCE(variants,'{}'::jsonb) || ${sql.json({ legHeight: GR_LEG.want })}
-               WHERE id = ${legPlan.id}::uuid
+               WHERE id = ANY(${legPlan.ids}::uuid[])
                  AND jsonb_typeof(COALESCE(variants,'{}'::jsonb)) = 'object'`;
     log(`   C ${GR_LEG.doc}: written`);
   }
@@ -241,10 +260,10 @@ async function main() {
     else log(`   OK ${GR_SWAP.doc}: ${GR_SWAP.pair.map((p) => `${p.dtlKey}=${p.want}`).join(" · ")}`);
   }
   if (legPlan) {
-    const [r] = await v`SELECT variants, jsonb_typeof(COALESCE(variants,'{}'::jsonb)) AS kind FROM scm.grn_items WHERE id = ${legPlan.id}::uuid`;
-    const held = r?.variants?.legHeight ?? null;
-    if (r?.kind !== "object" || held !== GR_LEG.want) wrong.push(`${GR_LEG.doc}: legHeight reads ${JSON.stringify(held)} (jsonb ${r?.kind}), wanted ${GR_LEG.want}`);
-    else log(`   OK ${GR_LEG.doc}: legHeight ${GR_LEG.want}, variants still a jsonb object`);
+    const rows = await v`SELECT id, variants, jsonb_typeof(COALESCE(variants,'{}'::jsonb)) AS kind FROM scm.grn_items WHERE id = ANY(${legPlan.ids}::uuid[])`;
+    const off = rows.filter((r) => r.kind !== "object" || (r.variants?.legHeight ?? null) !== GR_LEG.want);
+    if (rows.length !== legPlan.ids.length || off.length) wrong.push(`${GR_LEG.acDoc}: ${off.length} of ${rows.length} piece(s) do not read legHeight ${GR_LEG.want}`);
+    else log(`   OK ${GR_LEG.acDoc}: all ${rows.length} piece(s) read legHeight ${GR_LEG.want}, variants still jsonb objects`);
   }
   await v.end();
   if (wrong.length) {
