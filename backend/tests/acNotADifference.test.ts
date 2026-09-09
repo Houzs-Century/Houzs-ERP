@@ -41,6 +41,7 @@ import {
   splitMigratedChainLineShape,
   splitMigratedChainUnpairedBookLine,
   splitUnmigratedOnwardTransfer,
+  splitUnmigratedSourceLine,
 } from '../scripts/lib/ac-not-a-difference.mjs';
 
 const rows = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `${tag}-${i}`);
@@ -639,6 +640,202 @@ describe('onward transfer — the downstream document type was never migrated', 
     ]) {
       const r = splitUnmigratedOnwardTransfer({ rows: list, onwardOf, ...args } as never);
       expect(r.notMigrated + r.differ).toBe(9);
+    }
+  });
+});
+
+/**
+ * SOURCE LINE — the purchase order the book raised this line FROM was never
+ * migrated. The mirror of the block above, one level up the chain, and the
+ * distinction is the whole reason it could not share that code: the onward
+ * split keys on the DOCUMENT, this one keys on the SOURCE of an individual
+ * LINE. `GR-000201` carries 12 lines raised from TEN purchase orders, two of
+ * which are in scope — so the document is half-covered and only a per-line
+ * answer is honest.
+ *
+ * Measured 2026-09-09: 124 of the 211 in-scope goods receipts carry lines from
+ * a purchase order we never imported, 837 such lines against 587 in scope.
+ * The book's purchase invoice bills all of them; ours can only carry the ones
+ * whose order came in. Not a line we lost — a line we never had.
+ *
+ * The danger this file exists for applies here exactly: the same sentence
+ * would also cover a line raised from a purchase order we DO hold and simply
+ * failed to import, which is a real defect. So the proof is per LINE and it is
+ * measured — the book must name the source, it must be a purchase order, and
+ * that order must be ABSENT from ours.
+ */
+describe('source line — the purchase order the line was raised from was never migrated', () => {
+  const toRow = (ac: string, bookDocNo: string, ...bookDtlKeys: string[]) => ({
+    key: `k-${ac}`, ac, erpNo: `HC-${ac}`, bookDocNo, bookDtlKeys,
+    line: `${ac}: the book bills ${bookDtlKeys.length} line(s) we do not carry`,
+  });
+  const DECISION = {
+    label: 'the purchase orders outside the outstanding population were never migrated',
+    sourceType: 'PO',
+    ruling: 'only OUTSTANDING purchase orders were imported',
+    consequence: 'our invoice carries only the lines whose purchase order was migrated',
+  };
+  /* PI-1 line 11 came off PO-OUT (never imported), line 12 off PO-IN (we hold
+     it), line 13 off a SALES order, line 14 off nothing the book names. Line 15
+     is the AMBIGUOUS hop: the receipt took that item against two orders and the
+     book cannot say which, so both are carried. */
+  const SOURCES: Record<string, { type: string; docNo: string }[]> = {
+    'PI-1|11': [{ type: 'PO', docNo: 'PO-OUT' }],
+    'PI-1|12': [{ type: 'PO', docNo: 'PO-IN' }],
+    'PI-1|13': [{ type: 'SO', docNo: 'SO-9' }],
+    'PI-1|14': [],
+    'PI-1|15': [{ type: 'PO', docNo: 'PO-OUT' }, { type: 'PO', docNo: 'PO-OUT2' }],
+    'PI-1|16': [{ type: 'PO', docNo: 'PO-OUT' }, { type: 'PO', docNo: 'PO-IN' }],
+  };
+  const sourceOf = (d: string, k: string) => SOURCES[`${d}|${k}`] ?? [];
+  const COVERAGE = new Set(['PO-IN']);
+
+  test('no decision declared: nothing moves', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-1', 'PI-1', '11')], decision: null, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.applied).toBe(false);
+  });
+
+  test('no coverage measurement: nothing moves — an unproven decision is not a decision', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-1', 'PI-1', '11')], decision: DECISION, coverage: null, sourceOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.applied).toBe(false);
+  });
+
+  test('the line came off a purchase order we never imported: the decision covers it', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-1', 'PI-1', '11')], decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(1);
+    expect(r.differ).toBe(0);
+    expect(r.impostors).toHaveLength(0);
+    expect(r.moved[0].sources[0].docNo).toBe('PO-OUT');
+  });
+
+  test('WE HOLD THE SOURCE PURCHASE ORDER: a missing line there is a real defect', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-1', 'PI-1', '12')], decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('PO-IN');
+  });
+
+  test('the source is NOT a purchase order: this decision does not cover it', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-1', 'PI-1', '13')], decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('SO-9');
+  });
+
+  test('the book names NO source for the line: unexplained, stays counted', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-1', 'PI-1', '14')], decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('names no source document');
+  });
+
+  test('a source with a type but no document number is not a source', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-2', 'PI-2', '21')],
+      decision: DECISION,
+      coverage: COVERAGE,
+      sourceOf: () => [{ type: 'PO', docNo: '' }],
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+  });
+
+  test('the hop is AMBIGUOUS and every candidate is out of scope: still proven', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-5', 'PI-1', '15')], decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(1);
+    expect(r.differ).toBe(0);
+    expect(r.moved[0].sources).toHaveLength(2);
+  });
+
+  test('the hop is AMBIGUOUS and ONE candidate is a PO we hold: never proven', () => {
+    /* The checker cannot say which order the line came from, so it must not
+       pick the one that suits the answer — docs/bugs/0690. */
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-6', 'PI-1', '16')], decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('PO-IN');
+  });
+
+  test('no line key recorded at all: nothing to attribute, so nothing moves', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-3', 'PI-3')], decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('no unpaired book line key');
+  });
+
+  test('MANY LINES, ALL EXPLAINED: the document moves, and every source is kept', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-4', 'PI-4', 'a', 'b')],
+      decision: DECISION,
+      coverage: COVERAGE,
+      sourceOf: (_d: string, k: string) => [{ type: 'PO', docNo: k === 'a' ? 'PO-X' : 'PO-Y' }],
+    });
+    expect(r.notMigrated).toBe(1);
+    expect(r.differ).toBe(0);
+    expect(r.moved[0].sources.map((s: { docNo: string }) => s.docNo)).toEqual(['PO-X', 'PO-Y']);
+  });
+
+  test('ONE DOCUMENT, LINES BOTH WAYS: ONE real line keeps the whole document counted', () => {
+    /* `GR-000201`'s shape in miniature, and the property that matters most
+       here: a document carrying eleven migration gaps and one line we really
+       lost must NOT leave the difference column. That is docs/bugs/0668. */
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-1', 'PI-1', '11', '12')],   // PO-OUT covered, PO-IN real
+      decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('PO-IN');
+  });
+
+  test('a mixed population: only the wholly-explained documents move', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [
+        toRow('PI-a', 'PI-1', '11'),         // wholly covered
+        toRow('PI-b', 'PI-1', '11', '12'),   // one line we hold the PO for
+        toRow('PI-c', 'PI-1', '13'),         // wrong source type
+        toRow('PI-d', 'PI-1', '14'),         // no source named
+      ],
+      decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(1);
+    expect(r.differ).toBe(3);
+    expect(r.impostors).toHaveLength(3);
+  });
+
+  test('THE COUNT IS NEVER LOST, on every path', () => {
+    const list = [['11'], ['12'], ['13'], ['14'], ['11', '12'], [], ['11']].map((k, i) =>
+      toRow(`p${i}`, 'PI-1', ...k));
+    for (const args of [
+      { decision: null, coverage: COVERAGE },
+      { decision: DECISION, coverage: null },
+      { decision: DECISION, coverage: new Set<string>() },
+      { decision: DECISION, coverage: COVERAGE },
+    ]) {
+      const r = splitUnmigratedSourceLine({ rows: list, sourceOf, ...args } as never);
+      expect(r.notMigrated + r.differ).toBe(7);
     }
   });
 });

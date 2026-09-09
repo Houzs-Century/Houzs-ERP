@@ -18,7 +18,7 @@ import { describe, expect, test } from 'vitest';
 import reconcileRaw from '../scripts/check-ac-erp-reconcile.mjs?raw';
 import splitsRaw from '../scripts/lib/ac-not-a-difference.mjs?raw';
 import chainRaw from '../scripts/lib/ac-chain-shape.mjs?raw';
-import { NOTE_CHAIN_SHAPE } from '../scripts/lib/ac-chain-shape.mjs';
+import { NOTE_CHAIN_SHAPE, NOTE_SOURCE_NOT_MIGRATED } from '../scripts/lib/ac-chain-shape.mjs';
 import { NOTE_CLASSES } from '../scripts/lib/so-verdict-derive.mjs';
 import { DECLARED_LABEL } from '../scripts/lib/so-tally-verdict.mjs';
 
@@ -35,9 +35,9 @@ const KLASS = 'migrated-chain-line-shape';
 describe('the migrated-chain shape reaches the per-document verdict', () => {
   test('the reconcile CALLS the module, on both halves, with the recorder', () => {
     expect(reconcile).toContain('import { applyChainShape, reportChainShape }');
-    expect(reconcile).toContain('const { LS, UB } = applyChainShape({');
-    expect(reconcile).toContain('recorder: VERDICT }');
-    expect(reconcile).toContain('reportChainShape({ t, LS, UB, log, plain, first, show: SHOW });');
+    expect(reconcile).toContain('const { LS, UB, SRC } = applyChainShape({');
+    expect(reconcile).toContain('recorder: VERDICT,');
+    expect(reconcile).toContain('reportChainShape({ t, LS, UB, SRC, log, plain, first, show: SHOW });');
   });
 
   test('the module reclassifies the LINE COUNT the split cleared', () => {
@@ -62,11 +62,57 @@ describe('the migrated-chain shape reaches the per-document verdict', () => {
     // A classifier that pattern-matches a human-readable line is the failure the
     // reconcile already avoids for `itemRows` and `moneyRows`.
     expect(reconcile).toContain('const unpairedBookLineRows = [];');
-    expect(reconcile).toContain('unpairedBookLineRows.push({ key: ac, erpNo: d.erp_no, line: msgAc });');
+    expect(reconcile).toContain('key: ac, erpNo: d.erp_no, bookDocNo: ac, bookDtlKeys: [freeAc[i].dtlKey], line: msgAc,');
   });
 
   test('one row per DOCUMENT, or the count-preserving check would count one document twice', () => {
-    expect(reconcile).toContain('if (!unpairedBookLineRows.some((r) => r.key === ac)) {');
+    expect(reconcile).toContain('const already = unpairedBookLineRows.find((r) => r.key === ac);');
+  });
+
+  test('EVERY unpaired book line key is kept, not just the first', () => {
+    // The second pass judges the document by all of them. Keeping only the
+    // first would amnesty a document whose later line is a real defect.
+    expect(reconcile).toContain('if (already) already.bookDtlKeys.push(freeAc[i].dtlKey);');
+  });
+});
+
+/* The SECOND pass over the same axis. It is the one that can hide real work, so
+ * everything that makes it honest is anchored here as well as unit-tested:
+ * it runs on the rows the shape proof REFUSED, its coverage is READ off the ERP
+ * and never off `SCOPE`, and it reclassifies through the recorder. */
+describe('the unmigrated source order reaches the per-document verdict', () => {
+  test('it runs on the REFUSED rows, so the two lanes cannot both claim a document', () => {
+    expect(chain).toContain('rows: UB.refused, decision: sourceDecision, coverage: sourceCoverage, sourceOf,');
+  });
+
+  test('it reclassifies, and only when it APPLIED', () => {
+    expect(NOTE_SOURCE_NOT_MIGRATED).toBe('chain-source-not-migrated');
+    expect(chain).toContain('if (SRC.applied) {');
+    expect(chain).toContain('recorder.reclassify(t, r.key, "a book line we do not have", NOTE_SOURCE_NOT_MIGRATED, r.line)');
+  });
+
+  test('the coverage is MEASURED off the ERP rows, never taken from the scope', () => {
+    expect(reconcile).toContain('const rows = erp[sourceType]?.docs;');
+    expect(reconcile).toContain('if (!Array.isArray(rows) || !rows.length) return null;');
+    // SCOPE states the population the migration was DEFINED to carry. Reading
+    // it as what we HOLD is how a gap gets read out as a decision (bugs 0668).
+    expect(reconcile).not.toContain('sourceCoverage: SCOPE');
+  });
+
+  test('the type declares it — no type letter is written into the wiring', () => {
+    expect(reconcile).toContain('const srcDecision = UNMIGRATED_SOURCE[t] ?? null;');
+    expect(chain).not.toMatch(/["'](IV|PI)["']/);
+  });
+
+  test('the class is declared, and says what still counts as a difference', () => {
+    expect(NOTE_CLASSES).toContain(NOTE_SOURCE_NOT_MIGRATED);
+    expect(DECLARED_LABEL[NOTE_SOURCE_NOT_MIGRATED]).toBeTruthy();
+    expect(DECLARED_LABEL[NOTE_SOURCE_NOT_MIGRATED]).toContain('still counted as a difference');
+  });
+
+  test('a document the second pass answered is NOT also printed as still counted', () => {
+    expect(chain).toContain('const answered = new Set(SRC.applied ? SRC.moved.map((r) => r.key) : []);');
+    expect(chain).toContain('const stillCounted = UB.impostors.filter((i) => !answered.has(i.key));');
   });
 
   test('the two axes are split by ONE verdict function, so they cannot disagree about a document', () => {

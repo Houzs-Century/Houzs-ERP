@@ -33,13 +33,20 @@
 // Windows vitest reason).
 // ---------------------------------------------------------------------------
 
-import { splitMigratedChainLineShape, splitMigratedChainUnpairedBookLine } from "./ac-not-a-difference.mjs";
+import {
+  splitMigratedChainLineShape,
+  splitMigratedChainUnpairedBookLine,
+  splitUnmigratedSourceLine,
+} from "./ac-not-a-difference.mjs";
 
 /** The declared class both axes are reclassified into. Named once. */
 export const NOTE_CHAIN_SHAPE = "migrated-chain-line-shape";
 
+/** The declared class of the SECOND pass over `a book line we do not have`. */
+export const NOTE_SOURCE_NOT_MIGRATED = "chain-source-not-migrated";
+
 const inert = (rows, why) => ({
-  lineShape: 0, differ: rows.length, moved: [], impostors: [], applied: false, why,
+  lineShape: 0, differ: rows.length, moved: [], impostors: [], refused: rows, applied: false, why,
 });
 
 /**
@@ -50,12 +57,23 @@ const inert = (rows, why) => ({
  *   config decides, never a list of type letters written here.
  * @param {string} a.t                  document type
  * @param {{key:string,erpNo:string,line:string}[]} a.lineCountRows
- * @param {{key:string,erpNo:string,line:string}[]} a.unpairedBookLineRows
+ * @param {{key:string,erpNo:string,bookDocNo:string,bookDtlKeys:string[],line:string}[]} a.unpairedBookLineRows
  * @param {Map<string,{totalsEqual:boolean,perCode:object[]}>} a.shapeFacts
  * @param {{reclassify:Function}} a.recorder
- * @returns {{LS:object,UB:object}}
+ * @param {object|null} a.sourceDecision   `UNMIGRATED_SOURCE[t]`, or null where
+ *   no migration decision is declared for this type. REQUIRED, never optional:
+ *   its absence decides that nothing is reclassified, and an argument a caller
+ *   can forget applies the rule only where somebody remembered it.
+ * @param {Set<string>|null} a.sourceCoverage  the source documents the ERP
+ *   ACTUALLY holds, measured. `null` means it could not be read, and then
+ *   nothing moves — an unproven decision is not a decision.
+ * @param {(bookDocNo:string,bookDtlKey:string)=>{type:string,docNo:string}[]} a.sourceOf
+ * @returns {{LS:object,UB:object,SRC:object}}
  */
-export function applyChainShape({ eligible, t, lineCountRows, unpairedBookLineRows, shapeFacts, recorder }) {
+export function applyChainShape({
+  eligible, t, lineCountRows, unpairedBookLineRows, shapeFacts, recorder,
+  sourceDecision, sourceCoverage, sourceOf,
+}) {
   const facts = shapeFacts && shapeFacts.size ? shapeFacts : null;
   const LS = eligible
     ? splitMigratedChainLineShape({ rows: lineCountRows, facts })
@@ -70,7 +88,20 @@ export function applyChainShape({ eligible, t, lineCountRows, unpairedBookLineRo
   if (UB.applied) {
     for (const r of UB.moved) recorder.reclassify(t, r.key, "a book line we do not have", NOTE_CHAIN_SHAPE, r.line);
   }
-  return { LS, UB };
+  /* SECOND PASS, over the rows the shape proof REFUSED — never over all of
+     them. A document the shape proof already cleared is not asked a second
+     question, so the two lanes cannot both claim it and `preserveTotal` cannot
+     count it twice. It also means this pass only ever sees the documents that
+     are still being reported as work. */
+  const SRC = splitUnmigratedSourceLine({
+    rows: UB.refused, decision: sourceDecision, coverage: sourceCoverage, sourceOf,
+  });
+  if (SRC.applied) {
+    for (const r of SRC.moved) {
+      recorder.reclassify(t, r.key, "a book line we do not have", NOTE_SOURCE_NOT_MIGRATED, r.line);
+    }
+  }
+  return { LS, UB, SRC };
 }
 
 /**
@@ -78,7 +109,7 @@ export function applyChainShape({ eligible, t, lineCountRows, unpairedBookLineRo
  * than an ordinary difference, because a document dressed as benign is the one
  * nobody goes and looks at.
  */
-export function reportChainShape({ t, LS, UB, log, plain, first, show }) {
+export function reportChainShape({ t, LS, UB, SRC, log, plain, first, show }) {
   if (LS.lineShape) {
     log(`${t} — ${LS.lineShape} line-count difference(s) are a line SHAPE, not a missing line: ${LS.why}`);
     for (const row of first(LS.moved)) plain(`      ${row.line}`);
@@ -91,8 +122,28 @@ export function reportChainShape({ t, LS, UB, log, plain, first, show }) {
     log(`${t} — ${UB.lineShape} document(s) carry a book line we do not have that is the SAME shape: ${UB.why}`);
     for (const row of first(UB.moved)) plain(`      ${row.line}`);
   }
-  if (UB.impostors.length) {
-    log(`${t} A BOOK LINE WE DO NOT HAVE — ${UB.impostors.length} document(s) do not reconcile. Every one stays counted as a difference:`);
-    for (const row of UB.impostors.slice(0, show)) plain(`      ${row.line} — ${row.why}`);
+  /* THE SECOND PASS. Printed with its proof, and the count it took OUT of the
+     line below is stated in the same breath — a number that shrinks with no
+     reason attached is the thing the owner has to come back and ask about. */
+  if (SRC.notMigrated) {
+    log(
+      `${t} — ${SRC.notMigrated} document(s) carry a book line we do not have because the PURCHASE ORDER it ` +
+        `was raised from was never migrated: ${SRC.why}`,
+    );
+    plain(`      PROVED per document, not assumed: EVERY unpaired book line on it names a source purchase order we do not hold.`);
+    for (const row of first(SRC.moved)) plain(`      ${row.line}`);
+  }
+  const answered = new Set(SRC.applied ? SRC.moved.map((r) => r.key) : []);
+  const stillCounted = UB.impostors.filter((i) => !answered.has(i.key));
+  if (stillCounted.length) {
+    log(`${t} A BOOK LINE WE DO NOT HAVE — ${stillCounted.length} document(s) do not reconcile. Every one stays counted as a difference:`);
+    for (const row of stillCounted.slice(0, show)) plain(`      ${row.line} — ${row.why}`);
+  }
+  if (SRC.impostors.length) {
+    log(
+      `${t} SOURCE-ORDER DECISION REFUSED for ${SRC.impostors.length} document(s) — they look like the ` +
+        `${SRC.notMigrated} above and are NOT. Every one is counted as a difference:`,
+    );
+    for (const row of SRC.impostors.slice(0, show)) plain(`      ${row.line} — ${row.why}`);
   }
 }

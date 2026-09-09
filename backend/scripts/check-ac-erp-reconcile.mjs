@@ -142,6 +142,7 @@ import {
 
 import { buildScope, currencyVerdict, decodeSnapshot, isTestDoc, LOCAL_CURRENCY } from "./lib/ac-scope.mjs";
 import {
+  UNMIGRATED_SOURCE,
   splitBookUnpriced, splitDecidedAbsences, splitErpZeroMoney, splitGuessedItemCodePairing,
 } from "./lib/ac-not-a-difference.mjs";
 import { applyChainShape, reportChainShape } from "./lib/ac-chain-shape.mjs";
@@ -373,6 +374,53 @@ try {
 } catch (e) {
   await refuse(`the ERP database could not be read: ${e.message}`);
 }
+
+/* THE SOURCE DOCUMENTS WE ACTUALLY HOLD, per type. `UNMIGRATED_SOURCE` explains
+   a book line we do not carry by the document it was RAISED FROM never having
+   been migrated — and that sentence is worthless unless somebody checks. This
+   is the check: the set is READ off the ERP rows already loaded above, never
+   taken from `SCOPE`, which states the population the migration was DEFINED to
+   carry rather than the one it actually did. Where the type has no rows at all,
+   the set is null and the rule refuses rather than reading an unread table as
+   an empty one — an unproven decision is not a decision. */
+const sourceCoverageOf = (sourceType) => {
+  const rows = erp[sourceType]?.docs;
+  if (!Array.isArray(rows) || !rows.length) return null;
+  const held = new Set();
+  for (const d of rows) if (d.ac_no) held.add(String(d.ac_no).trim());
+  return held.size ? held : null;
+};
+
+/* WHICH DOCUMENT THE BOOK RAISED A LINE FROM — as a LIST, because the answer is
+   not always one document. `PIDTL.FromDocType` is `GR` on every purchase-invoice
+   line in the committed cut, so the purchase order is one hop further up and is
+   found by matching the invoice line's item against the receipt's own lines.
+   Measured on that cut over the 1,349 lines of the 189 in-scope invoices: 827
+   resolve to exactly one order, 493 to more than one because the receipt took
+   that item against several, and 29 do not resolve. Collapsing the 493 to one
+   would be this checker inventing a correspondence, which is what docs/bugs/0690
+   was paid for — so all of them are returned and the rule requires every one to
+   hold. */
+const bookSourceOf = (type) => (bookDocNo, bookDtlKey) => {
+  const line = book[type]?.byDtlKey?.get(bookDtlKey);
+  if (!line) return [];
+  const ft = String(line.fromDocType ?? "").trim().toUpperCase();
+  const fd = String(line.fromDocNo ?? "").trim();
+  if (!ft || !fd) return [];
+  /* The book names the source document itself. No hop, nothing to guess. */
+  if (ft !== "GR") return [{ type: ft, docNo: fd }];
+  const receiptLines = book.GR?.lines?.get(fd);
+  /* The receipt is not in the snapshot: unresolved, and unresolved never moves. */
+  if (!receiptLines) return [];
+  const orders = new Set();
+  for (const g of receiptLines) {
+    if (g.itemKey !== line.itemKey) continue;
+    if (String(g.fromDocType ?? "").trim().toUpperCase() !== "PO") continue;
+    const po = String(g.fromDocNo ?? "").trim();
+    if (po) orders.add(po);
+  }
+  return [...orders].map((docNo) => ({ type: "PO", docNo }));
+};
 
 /* WHEN THE ERP WROTE EACH ROW. It answers ONE question — is this document newer
    than the AutoCount snapshot it is being compared against — and it is read
@@ -1247,9 +1295,18 @@ for (const cfg of TYPES) {
       else if (i < freeAc.length) {
         const msgAc = `${ac}: AutoCount DtlKey ${freeAc[i].dtlKey} has no ERP line`;
         F.unmatchedAc.push(msgAc);
-        /* ONE row per DOCUMENT, or `preserveTotal` counts one document twice. */
-        if (!unpairedBookLineRows.some((r) => r.key === ac)) {
-          unpairedBookLineRows.push({ key: ac, erpNo: d.erp_no, line: msgAc });
+        /* ONE row per DOCUMENT, or `preserveTotal` counts one document twice.
+           EVERY unpaired book line key is kept on it, because the second pass
+           over this axis (the source purchase order nobody migrated) has to be
+           able to ask about all of them: a document whose eleven unpaired lines
+           are migration gaps and whose twelfth is a line we really lost must
+           NOT leave the difference column. */
+        const already = unpairedBookLineRows.find((r) => r.key === ac);
+        if (already) already.bookDtlKeys.push(freeAc[i].dtlKey);
+        else {
+          unpairedBookLineRows.push({
+            key: ac, erpNo: d.erp_no, bookDocNo: ac, bookDtlKeys: [freeAc[i].dtlKey], line: msgAc,
+          });
         }
         VERDICT.record(t, ac, d.erp_no, "a book line we do not have",
           `AutoCount DtlKey ${freeAc[i].dtlKey} has no ERP line`);
@@ -1407,8 +1464,16 @@ for (const cfg of TYPES) {
   /* The migrated invoice chain's line SHAPE, both halves, split from ONE set of
      facts and RECORDED on the verdict — it used to reach the summary line and
      nothing else (docs/bugs/0746). lib/ac-chain-shape.mjs. */
-  const { LS, UB } = applyChainShape({ eligible: Boolean(cfg.migratedChainLineShape),
-    t, lineCountRows, unpairedBookLineRows, shapeFacts, recorder: VERDICT });
+  /* The SECOND pass over `a book line we do not have` rides in the same call,
+     so the two answers about one document come from one place. The decision is
+     the TYPE's — `UNMIGRATED_SOURCE` declares it, nothing here names a type
+     letter — and its coverage is measured off the ERP, not assumed. */
+  const srcDecision = UNMIGRATED_SOURCE[t] ?? null;
+  const { LS, UB, SRC } = applyChainShape({ eligible: Boolean(cfg.migratedChainLineShape),
+    t, lineCountRows, unpairedBookLineRows, shapeFacts, recorder: VERDICT,
+    sourceDecision: srcDecision,
+    sourceCoverage: srcDecision ? sourceCoverageOf(srcDecision.sourceType) : null,
+    sourceOf: bookSourceOf(t) });
   log(
     `${t} DATA (${bothSides} documents on both sides, ${comparedLines} lines paired) — ` +
       `line-count differs: ${LS.differ}` + (LS.lineShape ? ` (+${LS.lineShape} the same goods and the same money on a different number of rows)` : "") +
@@ -1475,7 +1540,7 @@ for (const cfg of TYPES) {
     );
     for (const row of IC.impostors.slice(0, SHOW)) plain(`      ${row.line} — ${row.why}`);
   }
-  reportChainShape({ t, LS, UB, log, plain, first, show: SHOW });
+  reportChainShape({ t, LS, UB, SRC, log, plain, first, show: SHOW });
   if (!MZ.applied && zeroMoneyDocs) {
     log(
       `${t} — ${zeroMoneyDocs} of the ${bothSides} documents on both sides carry ZERO money in the ERP ` +

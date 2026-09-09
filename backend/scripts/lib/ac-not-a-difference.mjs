@@ -448,18 +448,28 @@ function splitOnChainShape({ rows, facts }, what, why, unprovenWhy) {
   const total = rows.length;
   if (!facts) {
     preserveTotal(`${what} (not applied)`, total, { lineShape: 0, differ: total });
-    return { lineShape: 0, differ: total, moved: [], impostors: [], applied: false, why: unprovenWhy };
+    return { lineShape: 0, differ: total, moved: [], impostors: [], refused: rows, applied: false, why: unprovenWhy };
   }
   const moved = [];
   const impostors = [];
+  /* The refused ROWS, beside the sentences. `impostors` is what the report
+     PRINTS and carries no row, so a later split cannot be handed it — and a
+     second lane that re-derives "which rows were refused" from anything else
+     would be free to disagree with this one about a document. */
+  const refused = [];
   for (const r of rows) {
     const v = migratedChainShapeVerdict(facts.get(r.key), r.key);
     if (v.ok) moved.push(r);
-    else impostors.push({ line: r.line, why: v.why });
+    else {
+      /* `key` so a LATER pass over the refused rows can say which of these
+         sentences it has since answered, without matching on printed text. */
+      impostors.push({ key: r.key, line: r.line, why: v.why });
+      refused.push(r);
+    }
   }
   const parts = { lineShape: moved.length, differ: total - moved.length };
   preserveTotal(what, total, parts);
-  return { ...parts, moved, impostors, applied: true, why };
+  return { ...parts, moved, impostors, refused, applied: true, why };
 }
 
 const CHAIN_SHAPE_UNPROVEN =
@@ -658,4 +668,164 @@ export function splitUnmigratedOnwardTransfer({ rows, decision, coverage, onward
     applied: true,
     why: decision.ruling,
   };
+}
+
+/* ── 7. THE SOURCE DOCUMENT NOBODY MIGRATED ──────────────────────────────── */
+
+/* The mirror of section 6, and it is a DIFFERENT question. Section 6 asks why
+ * the book moved a quantity ONWARD that we never recorded. This one asks why a
+ * book line is ABSENT from our copy of the document — and the answer is one
+ * level upstream: the line's own source document was never imported.
+ *
+ * WHY IT COULD NOT SHARE SECTION 6's CODE. That one keys on the DOCUMENT the
+ * book raised onward; this one keys on the SOURCE of an individual LINE, and a
+ * single document mixes both. Measured on the committed cut 2026-09-09:
+ * `GR-000201` carries 12 lines raised from TEN purchase orders, of which two are
+ * in scope — so the receipt is in scope, eight of its ten parents are not, and
+ * any rule written at document grain answers the wrong question. The first
+ * hypothesis tried here WAS document grain ("the source receipt is out of
+ * scope") and explained 17 of 189 invoices; this one explains them because it
+ * asks about the line (docs/bugs/0767).
+ *
+ * WHAT MAKES IT SAFE is section 6's design, unchanged: the sentence is not the
+ * proof. A book line we do not carry ALSO describes a line we simply failed to
+ * import from a document we DO hold — a real defect, and one this bucket would
+ * swallow whole. A row leaves the column only when all four hold, and the last
+ * two are MEASURED:
+ *
+ *   a. the type DECLARES the decision,
+ *   b. the book NAMES a source document for that line — an unattributed line
+ *      explains nothing and stays a difference,
+ *   c. that source document is of the declared type,
+ *   d. it is NOT in `coverage`, the set we actually hold. One we DO hold is
+ *      exactly the defect this must not swallow.
+ *
+ * `sourceOf` RETURNS A LIST, NOT A DOCUMENT, and that is not defensiveness.
+ * The book does not name a purchase order on a purchase-invoice line at all:
+ * measured on the committed cut, `PIDTL.FromDocType` is `GR` on every one of
+ * them, so the order is one hop further up and is found by matching the line's
+ * item against the receipt's own lines. A receipt can legitimately receive the
+ * same item against TWO orders, and then the hop has two answers. Collapsing
+ * them to one would be the checker inventing a correspondence — the exact
+ * failure docs/bugs/0690 paid for. So every candidate is carried, and gates
+ * (c) and (d) must hold for ALL of them: if any candidate is a purchase order
+ * we hold, the line could be a real defect and the document stays counted.
+ *
+ * AND THE VERDICT IS PER DOCUMENT, SO IT IS ALL OR NOTHING. The reconcile
+ * records `a book line we do not have` once per DOCUMENT, and reclassifying
+ * moves the whole document out of the difference column. A receipt whose twelve
+ * unpaired lines are eleven migration gaps and ONE line we really lost would
+ * then leave the column carrying the defect with it — the precise shape of
+ * docs/bugs/0668, which cost 30 documents. So the gates run over EVERY unpaired
+ * line on the document and the document moves only when all of them pass; the
+ * first line that fails is named as the reason it stayed.
+ */
+export const UNMIGRATED_SOURCE = Object.freeze({
+  PI: {
+    label: "the purchase orders outside the outstanding population were never migrated",
+    sourceType: "PO",
+    decidedOn: "2026-09-09",
+    source:
+      "the owner, in the go-live cutover brief — only OUTSTANDING purchase orders were imported, and the " +
+      "receipts that came with them carry only those orders' lines",
+    ruling:
+      "the account book holds 9,416 purchase orders and 474 are in the expected ERP population. One AutoCount " +
+      "goods receipt serves MANY purchase orders — 124 of the 211 in-scope receipts carry lines from an order " +
+      "we never imported, 837 such lines against 587 in scope — so the book's purchase invoice bills lines " +
+      "whose purchase order is not in our books at all. Not a line we lost, a line we never had",
+    consequence:
+      "our purchase invoice can only carry the lines whose purchase order was migrated, and the document total " +
+      "differs by exactly the lines that were not. The owner ruled the total need not match: " +
+      "「total amount不需要 可是line amount一定一样」",
+  },
+});
+
+/**
+ * Split "a book line we do not have" into the documents whose every unpaired
+ * book line the migration decision explains, and the ones that are real.
+ *
+ * One row is one DOCUMENT, carrying every book line on it that found no ERP
+ * line. The document moves only when all of them are explained.
+ *
+ * @param {{rows:{key:string,ac:string,erpNo:string,bookDocNo:string,bookDtlKeys:string[],line:string}[],
+ *          decision:{label:string,sourceType:string,ruling:string,consequence:string}|null,
+ *          coverage:Set<string>|null,
+ *          sourceOf:(bookDocNo:string,bookDtlKey:string)=>{type:string,docNo:string}[]}} args
+ * @returns {{notMigrated:number,differ:number,moved:object[],
+ *            impostors:{line:string,why:string}[],applied:boolean,why:string}}
+ */
+export function splitUnmigratedSourceLine({ rows, decision, coverage, sourceOf }) {
+  const total = rows.length;
+  const none = (why) => {
+    preserveTotal("source line (not applied)", total, { notMigrated: 0, differ: total });
+    return { notMigrated: 0, differ: total, moved: [], impostors: [], applied: false, why };
+  };
+  if (!decision) {
+    return none(
+      "this type declares no migration decision about the documents its lines are raised from, so every book " +
+        "line we do not carry is a difference",
+    );
+  }
+  if (!coverage) {
+    return none(
+      `「${decision.label}」 is DECLARED for this type but the set of ${decision.sourceType} documents the ERP ` +
+        "actually holds could not be read. Nothing is reclassified: an unproven decision is not a decision, and " +
+        "without that set this cannot tell a migration gap from a line we failed to import from a document we hold.",
+    );
+  }
+
+  /* Why one line fails the whole document, in the words the report prints.
+     Returns the reason, or null with the candidates it proved. */
+  const judge = (r, dtlKey) => {
+    const cand = (sourceOf(r.bookDocNo, dtlKey) || []).filter((s) => s && s.docNo);
+    /* (b) THE BOOK MUST NAME A SOURCE for the line. */
+    if (!cand.length) {
+      return { why: `${r.ac}: the book names no source document for line ${dtlKey}, so nothing explains why we ` +
+        "do not carry it — unproven, counted as a difference" };
+    }
+    /* (c) AND EVERY CANDIDATE MUST BE THE DECLARED TYPE. A line raised from
+       something else is not what this decision is about. */
+    const wrong = cand.find((s) => String(s.type ?? "").toUpperCase() !== decision.sourceType);
+    if (wrong) {
+      return { why: `${r.ac}: line ${dtlKey} is raised from ${wrong.type || "(no type)"} ${wrong.docNo}, not ` +
+        `from a ${decision.sourceType} — this decision does not cover it` };
+    }
+    /* (d) AND WE MUST HOLD NONE OF THEM. One we DO hold means the line could be
+       one we failed to import, which is the defect this must never swallow. */
+    const held = cand.find((s) => coverage.has(s.docNo));
+    if (held) {
+      return { why: `${r.ac}: we DO hold ${decision.sourceType} ${held.docNo}, which line ${dtlKey} may have ` +
+        "been raised from — the migration decision does not cover this one and a missing line here is a real defect" };
+    }
+    return { cand };
+  };
+
+  const moved = [];
+  const impostors = [];
+  for (const r of rows) {
+    const keys = Array.isArray(r.bookDtlKeys) ? r.bookDtlKeys : [];
+    /* A document recorded on this axis with no line keys is not evidence of
+       anything. It cannot be proven and it does not move. */
+    if (!keys.length) {
+      impostors.push({
+        line: r.line,
+        why: `${r.ac}: no unpaired book line key was recorded for this document, so there is nothing to ` +
+          "attribute to a source purchase order — unproven, counted as a difference",
+      });
+      continue;
+    }
+    const sources = [];
+    let why = null;
+    for (const dtlKey of keys) {
+      const v = judge(r, dtlKey);
+      if (v.why) { why = v.why; break; }
+      sources.push(...v.cand);
+    }
+    if (why) impostors.push({ line: r.line, why });
+    else moved.push({ ...r, sources });
+  }
+
+  const parts = { notMigrated: moved.length, differ: total - moved.length };
+  preserveTotal("source line", total, parts);
+  return { ...parts, moved, impostors, applied: true, why: decision.ruling };
 }
