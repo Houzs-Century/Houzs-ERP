@@ -48,10 +48,25 @@ because the handover keys on the id and cannot move either kind.
 Read-only by construction: SELECTs only, no DDL, no writes, no transaction,
 exit 0 for every legitimate answer so a red job never reads as the finding.
 
-**NOT FIXED — the picker still lists the roster.** The durable repair is to feed
-it the HOLDER list this probe computes, which cannot omit a holder by
-construction. It is an owner-facing behaviour change to the panel's data source
-and is deliberately not bundled with the diagnostic. Workaround meanwhile:
-switch the active company and look again.
+**FIXED, and the diagnostic is what proved the fix was needed.** The probe's
+first production run (34336422828) settled two things at once. The three named
+reps are `ACIMP-*` rows — AutoCount imports with no ERP login — and **their
+orders are in HOUZS**, not 2990: `YANG` 75, `STEPHY` 20, `SHUANG` 10. So the
+workaround this entry originally offered — switch company and look again — is
+**wrong**, and was corrected the moment there was data: under HOUZS you see the
+orders and not the person; under 2990 you see the person and not the orders.
+Neither company can complete the handover. And it was never three people:
+**22 holders / 339 non-cancelled orders** were unselectable.
 
-**Ref.** `diag/so-holders`, 2026-09-09. Evidence: run 34326349540.
+The picker now lists ORDER HOLDERS — `GET /api/scm/so-handover/holders`, gated
+on the same `scm.so.attribute_other` as the rest of that router because it
+enumerates the company's order book, counted the same way `/preview` lists so
+the two numbers cannot disagree. A list derived from the orders cannot omit
+somebody who holds one.
+
+Pinned by `SalespersonHandover.test.tsx`: the mocked holder `alicia` is inactive
+AND absent from the pickable roster, so the assertion that she is selectable
+with her 30 orders fails against the old data source by construction.
+
+**Ref.** `diag/so-holders` (probe) + `feat/handover-holders` (fix), 2026-09-09.
+Evidence: runs 34326349540 (null-rate) and 34336422828 (the holder census).
