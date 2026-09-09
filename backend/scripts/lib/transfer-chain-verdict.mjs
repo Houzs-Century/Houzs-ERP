@@ -31,14 +31,31 @@
  * an explanation and never the evidence.
  *
  *   1. `FromDocDtlKey` IS NULL ON ALL ~220,000 ROWS of all six detail tables.
- *      AutoCount does not record which LINE a delivery, invoice, receipt or
- *      purchase invoice was raised from. It records the source DOCUMENT and
- *      nothing finer. So "does the source LINE agree" is answerable on exactly
- *      ONE edge — SO->PO, which AutoCount stores differently as
+ *      So "does the source LINE agree" is answerable FROM THE DETAIL TABLES on
+ *      exactly ONE edge — SO->PO, which AutoCount stores differently as
  *      `PODTL.FromSODtlKey` (10,792 rows) — and on the other four it is
- *      UNANSWERABLE. Reporting document agreement as line agreement would be
- *      claiming a comparison that never ran, which is the permissive answer
- *      lib/so-verdict-derive.mjs's header forbids being reachable.
+ *      unanswerable FROM THEM. Reporting document agreement as line agreement
+ *      would be claiming a comparison that never ran, which is the permissive
+ *      answer lib/so-verdict-derive.mjs's header forbids being reachable.
+ *
+ *      ⚠️ CORRECTED 2026-09-09 — THE SECOND HALF OF THIS FACT WAS WRONG, AND IT
+ *      IS THE HALF EVERY BRIEF QUOTED. This paragraph used to continue:
+ *      *"AutoCount does not record which LINE a delivery, invoice, receipt or
+ *      purchase invoice was raised from. It records the source DOCUMENT and
+ *      nothing finer."* The measurement was right; the CONCLUSION was not.
+ *      AutoCount does not keep the line graph in the detail tables — it keeps it
+ *      in its own `DocTransfer` table, and on this book that table holds 134,501
+ *      rows with `FromDocDtlKey` AND `ToDocDtlKey` set on every single one,
+ *      exactly one source per child (`docs/bugs/0746`). `SO->DO` 48,740,
+ *      `DO->IV` 44,589, `GR->PI` 21,481, `PO->GR` 18,944.
+ *
+ *      Nothing in THIS module changes: it is handed `bookFromLineKey` and the
+ *      snapshot that feeds it still reads the detail column, so every edge but
+ *      SO->PO still arrives with an empty line key and still lands on
+ *      `agree_doc_line_unstated`. That verdict is honest about what was
+ *      compared. What is no longer honest is calling the missing line key a
+ *      property of the BOOK: it is a property of the SNAPSHOT, and
+ *      `export-ac-doc-transfer.mjs` is where the book's real answer now lives.
  *
  *   2. `PODTL.FromDocType` IS NULL on all 18,890 PO rows while `FromDocNo` is
  *      set on 10,291. AutoCount stamps no type on the SO->PO edge, even on a
