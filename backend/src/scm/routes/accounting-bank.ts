@@ -27,17 +27,82 @@ import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-r
 import {
   loadBankConfigs, loadBankConfig, parseConfigFrom,
   loadRecognitionRules, loadPayableBatches, loadPayoutAdvices, loadAccountLedger,
+  loadLiveMonthLock, loadLineMonth,
 } from '../../acc/bank';
+import { lockedRefusal, lockMonthOf } from '../../acc/bank-lock';
 import { postBatchReceipt, undoBatchReceipt } from '../../acc/settlement';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
-const guard = (handler: (c: Ctx) => Promise<Response>) => async (c: Ctx): Promise<Response> => {
+/* Exported so the month view (accounting-bank-months) guards on exactly this
+   and not on a copy of it: two spellings of one permission rule are one
+   refactor away from being two different rules. */
+export const bankGuard = (handler: (c: Ctx) => Promise<Response>) => async (c: Ctx): Promise<Response> => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) {
     return c.json({ error: "You don't have permission to reconcile bank statements." }, 403);
   }
   return handler(c);
 };
+
+const guard = bankGuard;
+
+/**
+ * A CLOSED MONTH REFUSES EVERY WRITE THAT WOULD CHANGE WHAT IT SAYS.
+ *
+ * Owner, 2026-09-08: 还有lock 起来不可以随便碰. Every handler below that books,
+ * matches, ignores or undoes a movement asks this first, by the movement's OWN
+ * date — the month a movement belongs to is the month its date falls in
+ * (acc/bank-month rule 1), never the month of the file it arrived in, so a
+ * straddling file cannot smuggle a write into a closed September.
+ *
+ * Returns a Response to send, or null to carry on.
+ */
+async function refuseIfLocked(
+  c: Ctx, companyId: number, accountCode: string, isoDate: string, what: string,
+): Promise<Response | null> {
+  const sb = c.get('supabase');
+  const held = await loadLiveMonthLock(sb, companyId, accountCode, lockMonthOf(isoDate));
+  /* A LOCK THAT CANNOT BE READ IS A REFUSAL, not a pass. The one failure mode
+     worth spending a 500 on is writing into a closed month because the check
+     itself broke quietly. */
+  if (!held.ok) {
+    return c.json({
+      error: 'lock_check_failed',
+      reason: held.reason,
+      message: 'Whether this month is closed could not be checked, so nothing was changed. Try again.',
+    }, 500);
+  }
+  if (!held.lock) return null;
+  return c.json(lockedRefusal(held.lock, what), 409);
+}
+
+/** The same question asked of a LINE, which knows its own account and date. */
+async function refuseIfLineLocked(
+  c: Ctx, companyId: number, lineId: number, what: string,
+): Promise<Response | null> {
+  const sb = c.get('supabase');
+  const where = await loadLineMonth(sb, companyId, lineId);
+  if (!where.ok) {
+    return c.json({
+      error: 'lock_check_failed',
+      reason: where.reason,
+      message: 'Whether this month is closed could not be checked, so nothing was changed. Try again.',
+    }, 500);
+  }
+  /* Not found here is not a refusal — the handler's own 404 is the better
+     message, and it is one line further down. */
+  if (!where.found) return null;
+  const held = await loadLiveMonthLock(sb, companyId, where.accountCode, where.month);
+  if (!held.ok) {
+    return c.json({
+      error: 'lock_check_failed',
+      reason: held.reason,
+      message: 'Whether this month is closed could not be checked, so nothing was changed. Try again.',
+    }, 500);
+  }
+  if (!held.lock) return null;
+  return c.json(lockedRefusal(held.lock, what), 409);
+}
 
 /** The same fingerprint layer 3 uses: one file is one statement, and a second
     upload of it loses to the UNIQUE rather than doubling the movements. */
@@ -121,6 +186,20 @@ export const bankUpload = guard(async (c) => {
     content,
   );
   if (!parsed.ok) return c.json({ error: 'unreadable_statement', message: parsed.reason }, 400);
+
+  /* A CLOSED MONTH TAKES NO NEW MOVEMENTS. Checked here, after the file has been
+     read and before a single row is written, because the answer depends on the
+     DATES the file turned out to carry — a file is refused for the months it
+     lands in, not for the month somebody meant it for. Both ends are checked:
+     one file can straddle a close, and a September that is shut must refuse a
+     28 Aug – 3 Sep export even though August is open. */
+  for (const edge of new Set([parsed.periodFrom, parsed.periodTo])) {
+    const shut = await refuseIfLocked(
+      c, co.companyId, accountCode, edge,
+      `loading a statement carrying movements dated ${edge}`,
+    );
+    if (shut) return shut;
+  }
 
   const [rules, batches, payouts] = await Promise.all([
     loadRecognitionRules(sb), loadPayableBatches(sb, co.companyId), loadPayoutAdvices(sb, co.companyId),
@@ -430,6 +509,14 @@ export const bankLineReceipt = guard(async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const lineId = Number(c.req.param('id'));
   if (!Number.isInteger(lineId)) return c.json({ error: 'bad_id' }, 400);
+
+  /* A closed month refuses this (owner: 还有lock 起来不可以随便碰).
+     Asked BEFORE the row is read, so a locked month gives the same answer
+     whether or not the movement exists. */
+  {
+    const shut = await refuseIfLineLocked(c, co.companyId, lineId, "booking this credit");
+    if (shut) return shut;
+  }
   let body: any;
   try { body = await c.req.json(); } catch { body = {}; }
   const sb = c.get('supabase');
@@ -565,6 +652,14 @@ export const bankLineUndo = guard(async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const lineId = Number(c.req.param('id'));
   if (!Number.isInteger(lineId)) return c.json({ error: 'bad_id' }, 400);
+
+  /* A closed month refuses this (owner: 还有lock 起来不可以随便碰).
+     Asked BEFORE the row is read, so a locked month gives the same answer
+     whether or not the movement exists. */
+  {
+    const shut = await refuseIfLineLocked(c, co.companyId, lineId, "undoing this movement");
+    if (shut) return shut;
+  }
   const sb = c.get('supabase');
 
   const { data: lineRaw, error } = await sb.from('acc_bank_statement_lines')
@@ -617,6 +712,14 @@ export const bankLineIgnore = guard(async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const lineId = Number(c.req.param('id'));
   if (!Number.isInteger(lineId)) return c.json({ error: 'bad_id' }, 400);
+
+  /* A closed month refuses this (owner: 还有lock 起来不可以随便碰).
+     Asked BEFORE the row is read, so a locked month gives the same answer
+     whether or not the movement exists. */
+  {
+    const shut = await refuseIfLineLocked(c, co.companyId, lineId, "leaving this movement out");
+    if (shut) return shut;
+  }
   let body: any;
   try { body = await c.req.json(); } catch { body = {}; }
   const note = String(body.note ?? '').trim();
@@ -652,6 +755,14 @@ export const bankLineMatch = guard(async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const lineId = Number(c.req.param('id'));
   if (!Number.isInteger(lineId)) return c.json({ error: 'bad_id' }, 400);
+
+  /* A closed month refuses this (owner: 还有lock 起来不可以随便碰).
+     Asked BEFORE the row is read, so a locked month gives the same answer
+     whether or not the movement exists. */
+  {
+    const shut = await refuseIfLineLocked(c, co.companyId, lineId, "matching this movement");
+    if (shut) return shut;
+  }
   let body: any;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const jeNo = String(body.jeNo ?? '').trim();

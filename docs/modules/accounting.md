@@ -1010,6 +1010,89 @@ fingerprint), `backend/src/acc/bank-match.test.ts` (GHL, HLB whole and
 split), `backend/tests/bankRoutes.test.ts` ("uploading overlapping exports",
 "setting up a statement account"), `SettlementSetup.test.tsx` (the card).
 
+**A MONTH, not a file at a time (2026-09-09; owner, uploading one a day: 每天我
+上传bank statement 和 merchant report 测试，但是有办法选这个是几月的？因为我发现
+好像没有).** Layer 4 reconciled one FILE, which is the right unit for a monthly
+statement and the wrong one for Hong Leong's any-day export — a file per day made
+September thirty separate answers and none of them the answer to "did September
+agree". `backend/src/acc/bank-month.ts` assembles the month by three rules and
+hands it to the SAME `reconcileBankStatement`, so nothing new judges money:
+(1) a MOVEMENT belongs to the month its own date falls in, never to the file it
+arrived in — a date cannot lie about its month, a filing label can, so a file
+straddling a month end feeds both and daily/monthly/both uploads build the same
+September; (2) a BALANCE speaks for a month only when its file lies wholly
+inside it — the opening on a 28 Aug–3 Sep file is August's, and using it as
+September's is wrong by four days of movement while looking authoritative, so
+such a file is listed and LABELLED rather than dropped; (3) the files are
+CHAINED and the chain is CHECKED — Hong Leong prints the prior day's balance, so
+each file should open where the previous closed, and a break is reported with
+both file names, both dates and the amount that moved between them (an
+overlapping longer export is NOT a break). The reconciliation window follows the
+days actually uploaded, not the calendar, so ten days of bank are never set
+against thirty of ledger. Doors: `GET /accounting/bank/months` (every account ×
+month, with whether it is covered end to end) and
+`GET /accounting/bank/months/:accountCode/:month`
+(`backend/src/scm/routes/accounting-bank-months.ts`, guarded by the same
+`bankGuard` exported from `accounting-bank.ts`). **By month** is the first tab of
+`/scm/bank-recon`; the per-file view stays one press away
+(`frontend/src/pages/scm-v2/BankMonthTab.tsx`, reusing the file screen's own
+reconciliation panel and movement rows so one movement has one set of buttons).
+What is MISSING prints above the verdict — a difference computed over a month
+short of four days is an answer about a different month.
+
+**The reconciliation statement on paper (2026-09-09; owner: 然后就是match 完了我
+要report).** `frontend/src/vendor/scm/lib/bank-reconciliation-pdf.ts` walks
+balance per bank statement − on the bank not in the books + in the books not on
+the bank − difference brought forward = balance per the books, which is the
+identity `acc/bank-reconcile` checks, written as lines. It TIES BY CONSTRUCTION
+and is then checked against the ledger balance the server sent; three refusals
+keep it from being filed when it should not be — the walk arriving anywhere but
+the ledger, the server having already found the figures inconsistent (no walk is
+drawn at all, because a tidy one would launder the error), and no file printing a
+closing balance (a zero is not an absence). Every step names the count behind it
+and every count has its list: unposted movements with the file they came off,
+ledger entries the bank never showed, movements POSTED, and — printed whether or
+not the month reconciles — everything LEFT OUT with the reason given, which is
+the only record that decision will ever have. Reached through the house's one
+print dialog (`PrintPreviewModal`) from the month view. Contracts:
+`backend/src/acc/bank-month.test.ts` (leap February, a missing day, an
+overlapping export that is not a break, a straddling file speaking only for its
+movements), `frontend/src/pages/scm-v2/BankMonthTab.test.tsx`,
+`frontend/src/vendor/scm/lib/bank-reconciliation-pdf.test.ts` (the walk ties, or
+it is not drawn).
+
+**Closing a reconciled month (2026-09-09; owner: 还有lock 起来不可以随便碰).**
+Until now every bank movement could be booked, ignored or UNDONE at any time,
+for ever — right while a month is being worked, wrong the moment it has been
+reconciled and its statement printed, because a reconciliation somebody filed is
+a claim and a month that can still move behind the paper makes the paper a lie.
+`backend/src/acc/bank-lock.ts` holds both rules. **May it close:** never while
+movements are still undecided (an unfinished month is not a month with a problem,
+so a reason must NOT buy a way past it) and never when it is empty; freely when
+it reconciles and is covered end to end; WITH A REQUIRED REASON when the bank and
+books still differ, a day was never uploaded, no file printed a closing balance,
+or the figures failed the identity check — businesses do close over known
+differences, and what must not happen is closing silently. **What a closed month
+refuses:** booking, matching, ignoring, undoing, and uploading a statement whose
+movements land inside it — checked by the movement's OWN date (bank-month rule 1)
+so a straddling file cannot smuggle a write into a closed September, and a lock
+read that FAILS is a refusal rather than a pass. The refusal names the month, who
+closed it and when. Doors: `GET /accounting/bank/locks` and
+`POST /accounting/bank/months/:accountCode/:month/lock` | `/unlock`
+(`backend/src/scm/routes/accounting-bank-locks.ts`). Unlock asks a SECOND key —
+`scm.payment_voucher.approve`, because reopening undoes a document somebody filed
+— plus its own required reason. Migration `20260909T0243_acc_bank_month_lock.sql`
+adds `scm.acc_bank_month_locks`: one row per company × account × month, a partial
+unique index keeping one live lock at a time, and the two closing balances, the
+difference, the file count and `was_complete` SNAPSHOTTED at the moment of
+closing — deliberately frozen, because a claim that silently follows today's data
+is not a claim and a later disagreement with the ledger IS the finding. A lock is
+never deleted: releasing sets `released_at` and the row stays. **It is not a GL
+period close** — it stops the bank reconciliation screens from changing a closed
+month, not a journal entry posted into those dates from elsewhere. Contracts:
+`backend/src/acc/bank-lock.test.ts` (an unfinished month refuses even with a
+reason; each unclean month refuses without one and closes with one).
+
 On both reconciliation screens, working a statement REPLACES the list rather than stacking under it —
 the owner on the version that stacked: 就感觉很多东西挤在一页. Each page links to
 the other where the work hands over. What they share is presentation only
