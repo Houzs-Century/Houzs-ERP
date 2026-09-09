@@ -316,7 +316,7 @@ async function main() {
     notice(`  on-hand ${stockLeft}   open PO ${queue.reduce((a, p) => a + p.qtyLeft, 0)}`
       + `${useLegacy ? " (from the legacy empty-variant pool)" : ""}`
       + `   demand lines ${active.length}`);
-    for (const p of queue) notice(`    PO ${p.po_number} eta ${p.eta ?? "—"} left ${p.qtyLeft}`);
+    for (const p of queue) notice(`    PO ${p.poNumber} eta ${p.eta ?? "—"} left ${p.qtyLeft}`);
     if (queue.length === 0 && legacy.length > 0) {
       notice(`    (${legacy.length} empty-variant PO line(s) exist but this bucket has its own supply, so they are not folded in)`);
     }
