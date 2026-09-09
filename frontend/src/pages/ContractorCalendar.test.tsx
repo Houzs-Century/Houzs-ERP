@@ -98,9 +98,13 @@ describe("ContractorCalendar (public, no-login)", () => {
     expect(download?.getAttribute("href")).toMatch(/\/events\/7\/floorplan\/t700\?download=1$/);
     const view = screen.getByText("View").closest("a");
     expect(view?.getAttribute("href")).toMatch(/\/events\/7\/floorplan\/t700$/);
-    // The panel never asks the server for anything but the floorplan.
+    // The panel asks the server for the floorplan and the size (owner
+    // 2026-09-09: "size not in here. please add also") and nothing else.
     const urls = fetchMock.mock.calls.map((c) => String(c[0]));
-    expect(urls.filter((u) => u.includes("/events/"))).toEqual([expect.stringMatching(/\/events\/7\/floorplan$/)]);
+    expect(urls.filter((u) => u.includes("/events/")).sort()).toEqual([
+      expect.stringMatching(/\/events\/7$/),
+      expect.stringMatching(/\/events\/7\/floorplan$/),
+    ]);
   });
 
   it("shows a friendly message for an invalid or revoked link", async () => {

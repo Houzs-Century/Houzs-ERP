@@ -132,6 +132,23 @@ export async function resolveShareEvent(env: Env, scope: ShareScope, rawId: stri
 
 /** Size and total sales for ONE event on the party's schedule. Only the brand
  *  route calls this — a contractor link never reads money. */
+/** Size only — what a CONTRACTOR may see of an event's figures (owner
+ *  2026-09-09, on the panel: "size not in here. please add also"). Reads
+ *  projects alone; project_finance is never touched on the contractor side. */
+export async function readShareEventSize(env: Env, scope: ShareScope, projectId: number): Promise<{ sizeSqm: number | null } | null> {
+  // company-scope: intentionally cross-company — see listShareEvents.
+  const row = await env.DB.prepare(
+    `SELECT size_sqm
+       FROM projects
+      WHERE id = ?
+        AND ${scope.column} = ?
+        AND ${LIVE}`
+  )
+    .bind(projectId, scope.value)
+    .first<{ size_sqm: number | null }>();
+  return row ? { sizeSqm: row.size_sqm } : null;
+}
+
 export async function readShareEventFigures(
   env: Env,
   scope: ShareScope,
@@ -355,11 +372,78 @@ export async function listShareExportRows(env: Env, scope: ShareScope, withSales
   });
 }
 
+/** One event's DISPLAY floorplan files, for the brand link's "Display Floorplan
+ *  (PDF)" export — the browser walks this and fetches each file by id. */
+export type SharePlanEvent = {
+  eventId: number;
+  name: string | null;
+  venue: string | null;
+  boothNo: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  files: ShareFile[];
+};
+
+type PlanManifestRow = {
+  id: number;
+  name: string | null;
+  venue: string | null;
+  booth_no: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  file_id: number;
+  file_name: string | null;
+  content_type: string | null;
+  size_bytes: number | null;
+};
+
+/** The display floorplans of the party's confirmed events touching `month`
+ *  (null = the whole schedule), in ONE statement, oldest event first, newest
+ *  upload first within an event. An event with no display floorplan is simply
+ *  absent (owner 2026-09-09: "skip events with no display floorplan uploaded").
+ *  Display plans have no legacy home, so no project_attachments fallback. */
+export async function listDisplayPlanManifest(env: Env, scope: ShareScope, month: string | null): Promise<SharePlanEvent[]> {
+  // company-scope: intentionally cross-company — see listShareEvents.
+  const inMonth = month
+    ? `substr(p.start_date, 1, 10) <= ? AND substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?`
+    : `1 = 1`;
+  const window = month ? [monthBounds(month).last, monthBounds(month).first] : [];
+  const rows = await env.DB.prepare(
+    `SELECT p.id, p.name, p.venue, p.booth_no, p.start_date, p.end_date,
+            a.id AS file_id, a.file_name, a.content_type, a.size_bytes
+       FROM projects p
+       JOIN project_checklist pc ON pc.project_id = p.id
+       JOIN project_checklist_attachments a ON a.item_id = pc.id
+      WHERE p.${scope.column} = ?
+        AND lower(p.status) = 'confirmed' AND p.archived_at IS NULL
+        AND lower(replace(pc.title, ' ', '')) LIKE ?
+        AND a.archived_at IS NULL
+        AND ${inMonth}
+      ORDER BY p.start_date, p.id, a.uploaded_at DESC, a.id DESC`
+  )
+    .bind(scope.value, PLAN_TITLE_LIKE.display, ...window)
+    .all<PlanManifestRow>();
+  const out: SharePlanEvent[] = [];
+  for (const r of rows.results) {
+    let ev = out.length ? out[out.length - 1] : null;
+    if (!ev || ev.eventId !== r.id) {
+      ev = { eventId: r.id, name: r.name, venue: r.venue, boothNo: r.booth_no, startDate: r.start_date, endDate: r.end_date, files: [] };
+      out.push(ev);
+    }
+    ev.files.push({ fileId: `t${r.file_id}`, fileName: r.file_name ?? `file-${r.file_id}`, contentType: r.content_type, sizeBytes: r.size_bytes });
+  }
+  return out;
+}
+
+/** What a share_export_log row says was exported: a party's Excel, or the brand
+ *  link's display-floorplan PDF (whose row_count is the number of EVENTS). */
+export type ShareExportKind = ShareScope["column"] | "brand_floorplans";
+
 /** Append-only accountability row: who (which link, which party) exported,
  *  from where, how many rows, when. Never on a request path that reads it. */
 export async function logShareExport(
   env: Env,
-  kind: ShareScope["column"],
+  kind: ShareExportKind,
   subject: string,
   token: string,
   ip: string,
