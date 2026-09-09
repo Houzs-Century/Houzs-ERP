@@ -54,7 +54,7 @@ get worse**. Reproduced here exactly, then fixed:
 | --- | --- | --- |
 | `SO-013475` (×2) | colour became `HR805-30 -Wrap bottom to nylon` — an INSTRUCTION inside the shade name | a ` -` that opens an instruction ends the colour |
 | `SO-006807` | seat size `44` -> `null`, the tail swallowed by the colour | a trailing seat size ends the colour |
-| `SO-003951` | pieces `[]` (honest) -> `["2S"]` (wrong) | `docs/bugs/0742` — `1EL/T` is the chaise |
+| `SO-003951` | pieces `[]` (honest) -> `["2S"]` (wrong) | `docs/bugs/0744` — `1EL/T` is the chaise |
 
 **The cut stays POSITIVE, and BOTH new arms had to be narrowed after
 measurement**, which is the part worth keeping:
@@ -144,7 +144,7 @@ fabric rows happen to exist:
 | what reached the row | rows | SO | PO | GR | DO | IV | PI | texts |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | the `Clr:` label | 113 | 22 | 19 | 19 | 19 | 15 | 19 | 26 |
-| `1EL/T` (`docs/bugs/0742`) | 42 | 8 | 6 | 6 | 8 | 8 | 6 | 10 |
+| `1EL/T` (`docs/bugs/0744`) | 42 | 8 | 6 | 6 | 8 | 8 | 6 | 10 |
 | the leg axis | 64 | 15 | 10 | 10 | 10 | 9 | 10 | 17 |
 | where a labelled colour ends | 68 | 12 | 11 | 11 | 12 | 11 | 11 | 14 |
 | **total** | **287** | **57** | **46** | **46** | **49** | **43** | **46** | **67** |
@@ -165,4 +165,4 @@ per-piece-size case, `1ER/T`, and the bare-`CLR` case were already right and had
 to stay right, so the suite cannot be passing by making everything move.
 
 **Ref.** fix/sofa-clr-leg-reader, 2026-09-09. Fixes `docs/bugs/0740` and
-`docs/bugs/0741`; found `docs/bugs/0742`.
+`docs/bugs/0741`; found `docs/bugs/0744`.
