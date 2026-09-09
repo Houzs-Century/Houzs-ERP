@@ -252,4 +252,18 @@ describe("public contractor calendar — unfilled floorplan", () => {
     }
     expect(touched).not.toContain("projects");
   });
+
+  test("no display-floorplan manifest on a contractor link (owner: brand links only)", async () => {
+    const res = await get(`/${TOKEN}/floorplans?month=2026-09`);
+    expect(res.status).toBe(404);
+    expect(exportLog).toEqual([]);
+  });
+
+  test("an event's size is readable, never its money, and only for my own event", async () => {
+    const res = await get(`/${TOKEN}/events/7`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ sizeSqm: 72 });
+    expect(touched).not.toContain("project_finance");
+    expect((await get(`/${TOKEN}/events/8`)).status).toBe(404);
+  });
 });

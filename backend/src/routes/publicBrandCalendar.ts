@@ -9,6 +9,7 @@
 //   GET /api/public/brand-calendar/:token/events/:eventId/floorplan
 //   GET /api/public/brand-calendar/:token/events/:eventId/floorplan/:fileId
 //   GET /api/public/brand-calendar/:token/export?month=YYYY-MM
+//   GET /api/public/brand-calendar/:token/floorplans?month=YYYY-MM
 //
 // Sibling of routes/publicContractorCalendar.ts over the same service
 // (services/shareCalendar.ts). The unguessable token IS the credential
@@ -26,6 +27,7 @@ import { resolveBrandShareToken } from "../services/brandShare";
 import {
   MONTH_RE,
   TOKEN_RE,
+  listDisplayPlanManifest,
   listPlanFiles,
   listShareEvents,
   listShareExportRows,
@@ -113,12 +115,33 @@ publicBrandCalendar.get("/:token/events/:eventId/floorplan/:fileId", async (c) =
 publicBrandCalendar.get("/:token/export", async (c) => {
   const g = await gate(c);
   if (g instanceof Response) return g;
-  // No month = the whole schedule: a page loaded before the month rule shipped
-  // still asks that way until it reloads. A month that is PRESENT but malformed
-  // is a bad request, never silently the whole schedule.
-  const raw = (c.req.query("month") ?? "").trim();
-  if (raw && !MONTH_RE.test(raw)) return c.json({ error: "bad_month", message: "Month must look like 2026-09." }, 400);
-  const rows = await listShareExportRows(c.env, g.scope, true, raw || null);
+  const month = monthParam(c);
+  if (month instanceof Response) return month;
+  const rows = await listShareExportRows(c.env, g.scope, true, month);
   await logShareExport(c.env, "brand", g.scope.value, g.token, clientIp(c), rows.length);
   return c.json({ brand: g.scope.value, generatedAt: new Date().toISOString(), rows });
 });
+
+// The DISPLAY floorplans of every event in the month, in one call — the
+// manifest the browser's "Display Floorplan (PDF)" export walks, fetching each
+// file through the per-event stream route above (owner 2026-09-09, BRAND links
+// only: the contractor sibling has no such route). Logged like the Excel
+// export; row_count is the number of events with a floorplan.
+publicBrandCalendar.get("/:token/floorplans", async (c) => {
+  const g = await gate(c);
+  if (g instanceof Response) return g;
+  const month = monthParam(c);
+  if (month instanceof Response) return month;
+  const events = await listDisplayPlanManifest(c.env, g.scope, month);
+  await logShareExport(c.env, "brand_floorplans", g.scope.value, g.token, clientIp(c), events.length);
+  return c.json({ brand: g.scope.value, generatedAt: new Date().toISOString(), events });
+});
+
+// No month = the whole schedule: a page loaded before the month rule shipped
+// still asks that way until it reloads. A month that is PRESENT but malformed
+// is a bad request, never silently the whole schedule.
+function monthParam(c: Ctx): string | null | Response {
+  const raw = (c.req.query("month") ?? "").trim();
+  if (raw && !MONTH_RE.test(raw)) return c.json({ error: "bad_month", message: "Month must look like 2026-09." }, 400);
+  return raw || null;
+}
