@@ -75,6 +75,7 @@ import { diffHeaderPayload, hasHeaderChanges } from '../../vendor/scm/lib/so-hea
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER,
   AMENDMENT_NOTHING_TO_SUBMIT } from '../../vendor/scm/lib/so-amendment-submit';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { addressLineProps } from '../../lib/addressLimit';
 /* lib/utils formatDate (NOT the vendored fmtDate) for the amendment's header
    dates: these are bare YYYY-MM-DD strings, and fmtDate's `new Date(d)` parses
    those as UTC midnight then renders in the DEVICE zone — the documented
@@ -3579,7 +3580,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <input className={styles.fieldInput} value={form.address1}
                 placeholder="Unit, street, area"
                 autoComplete="houzs-no-autofill"
-                disabled={inputsDisabled}
+                disabled={inputsDisabled} {...addressLineProps((v) => set('address1', v), { value: form.address2, set: (v) => set('address2', v) })}
                 onChange={(e) => set('address1', e.target.value)} />
             </label>
             <label className={`${styles.field}`} style={{ gridColumn: 'span 4' }}>
@@ -3587,7 +3588,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <input className={styles.fieldInput} value={form.address2}
                 placeholder="Apt, floor, building (optional)"
                 autoComplete="houzs-no-autofill"
-                disabled={inputsDisabled}
+                disabled={inputsDisabled} {...addressLineProps((v) => set('address2', v), null)}
                 onChange={(e) => set('address2', e.target.value)} />
             </label>
             {/* Owner spec 2026-07-23 — StatePicker (MY-default, click Others for CN/SG, Search). Same shared component as Warehouse / Supplier / Venue / MobileNewSO / SalesOrderNew. No `(legacy)` sneak-through, no free-text fallback. */}
