@@ -136,14 +136,15 @@ because there is no request to wait for and the reason is the whole rule:
 2. refuses **403 `caller_unknown`** if the Houzs caller cannot be identified —
    `requested_by` is `NOT NULL`, and naming the wrong person is worse than
    refusing;
-3. puts the reason on the context (`Variables.cancelReason`) so the cancel
-   handler's own audit row carries it as `cancelReason` beside the status
-   change — the History drawer then answers "why" where the reader already is;
-4. lets the handler run, then writes the `EXECUTED` ledger row **only on a
-   2xx**. A cancel the handler refused (a GRN on the PO, a drop-ship DO already
-   shipped, an already-received order) leaves no row claiming it happened. That
-   write is best-effort: the PO is cancelled by then, and failing the response
-   would tell the operator the opposite of the truth.
+3. lets the handler run, then — **only on a 2xx** — writes TWO things: a
+   `CANCEL` row on the document's own history carrying the reason as its note,
+   so the History drawer answers "why" beside the status change the handler
+   wrote; and the `EXECUTED` ledger row. A cancel the handler refused (a GRN on
+   the PO, a drop-ship DO already shipped, an already-received order) leaves
+   neither. Both writes are best-effort: the PO is cancelled by then, and
+   failing the response would tell the operator the opposite of the truth. The
+   cancel handler is NOT edited for this — it sits on its size ceiling, and this
+   module's whole shape is that the rule lives at the mount.
 
 Putting the reason in the guard rather than in the four screens is what makes it
 unskippable: the PO read page, the editor, the list row menu and mobile all
@@ -229,8 +230,10 @@ SCM bundle); `cancelRequestNotify.test.ts` asserts they equal the gate's table.
   needed — and this reason is kept on the PO"), used by
   `PurchaseOrderDetailV2.tsx` (the read page), `PurchaseOrderDetail.tsx` (the
   editor) and the PO list right-click (`PurchaseOrdersListV2.tsx`). Mobile says
-  the same thing through `MobileModuleDetail.tsx`'s `reasonPrompt` action field
-  (`PO_CANCEL_PROMPT` there is the mirror that must not drift). All four end at
+  the same thing through the `reasonPrompt` field on a mobile `DocAction`
+  (`frontend/src/mobile/doc-actions.ts` — the action shape, `PO_CANCEL_PROMPT`
+  and `askActionReason`, extracted there because `MobileModuleDetail.tsx` is at
+  its 2000-line ceiling; that copy is the mirror that must not drift). All four end at
   the same `PATCH /mfg-purchase-orders/:id/cancel` with `{ reason }`, which is
   why the server holds the rule.
 - **The card on the document**:
@@ -261,9 +264,9 @@ SCM bundle); `cancelRequestNotify.test.ts` asserts they equal the gate's table.
 
 ## 7. What did NOT change
 
-- The cancel handlers, their guards and their side effects. (The PO handler
-  gained ONE line on 2026-09-09: its audit row now carries `cancelReason` from
-  the context.)
+- The cancel handlers, their guards and their side effects — including on
+  2026-09-09: the PO cancel's reason is recorded by the guard, in a row of its
+  own.
 - `PATCH /mfg-purchase-orders/:id/reopen` — a cancelled PO can still be
   reopened; a later cancel needs a fresh request.
 - Draft discard on the SO (`DELETE /mfg-sales-orders/:docNo`).
@@ -286,8 +289,9 @@ SCM bundle); `cancelRequestNotify.test.ts` asserts they equal the gate's table.
 - `backend/src/services/cancelRequestNotify.test.ts` — audiences per document,
   and the key-table referee.
 - Frontend: `document-cancel-queries.test.tsx`, `use-cancel-request-action.test.tsx`,
-  `use-po-cancel-action.test.tsx` (the reason is the gate: a dismissed prompt
-  cancels nothing), `CancelRequestPanel.test.tsx`, `CancelRequests.test.tsx`.
+  `use-po-cancel-action.test.tsx` and `mobile/doc-actions.test.ts` (the reason
+  is the gate on both surfaces: a dismissed prompt fires nothing),
+  `CancelRequestPanel.test.tsx`, `CancelRequests.test.tsx`.
 - Staging, 2026-09-08: the whole SO chain and the PO chain driven end to end
   over the API (31 checks) before the depth change; the PO single-signature
   path is pinned by the route suite.

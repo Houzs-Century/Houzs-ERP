@@ -199,7 +199,7 @@ async function loadOpenRequest(sb: AnyCtx, docType: CancelDocType, key: string, 
 /** One audit row per step, on the document's own history. The SO has its own
  *  log (mfg_so_audit_log) and the PO rides entity_audit_log; both are
  *  best-effort here — the request row is the record, the history is the echo. */
-async function audit(c: AnyCtx, docType: CancelDocType, doc: DocRow, action: 'SUBMIT_FOR_APPROVAL' | 'APPROVE' | 'REJECT' | 'WITHDRAW_FROM_APPROVAL', note: string) {
+async function audit(c: AnyCtx, docType: CancelDocType, doc: DocRow, action: 'SUBMIT_FOR_APPROVAL' | 'APPROVE' | 'REJECT' | 'WITHDRAW_FROM_APPROVAL' | 'CANCEL', note: string) {
   const sb = c.get('supabase');
   const actor = actorOf(c);
   if (docType === 'SO') {
@@ -564,29 +564,31 @@ async function reasonOnlyCancel(
 
   const cfg = DOCS[docType];
   const sb = (c as AnyCtx).get('supabase') ?? getSupabaseService(c.env);
-  const { data: doc, error: docErr } = await scopeToCompanyId(
+  const { data: docRow, error: docErr } = await scopeToCompanyId(
     sb.from(cfg.table).select(`${cfg.numberColumn}, status`).eq(cfg.keyColumn, key),
     companyId,
   ).maybeSingle();
   /* A read that FAILED is not "no such document" (the swallowed-reads gate). */
   if (docErr) return c.json({ error: 'load_failed', reason: docErr.message }, 500);
-  const before = (doc ?? null) as Record<string, unknown> | null;
-
-  /* The reason is on the context for the handler's own audit row, so the PO
-     History drawer shows WHY beside the status change rather than only in the
-     cancellation ledger. */
-  c.set('cancelReason', reason.reason);
+  const before = (docRow ?? null) as Record<string, unknown> | null;
 
   await next();
   if (!c.res.ok || !before) return;
 
   const at = nowIso();
+  /* The document's own history says WHY, beside the status change its handler
+     wrote — the History drawer is where a reader already is. The handler is not
+     edited for this (it is at its size ceiling, and this module's whole shape is
+     that the rule lives at the mount); the row is this module's, written the
+     same way every approval step writes one. */
+  const doc = { key, number: String(before[cfg.numberColumn] ?? key), status: String(before.status ?? '') };
+  await audit(c as AnyCtx, docType, doc, 'CANCEL', reason.reason);
   const { error } = await sb.from(CANCEL_REQUESTS_TABLE).insert({
     company_id: companyId,
     doc_type: docType,
     doc_key: key,
-    doc_number: String(before[cfg.numberColumn] ?? key),
-    doc_status_at_request: String(before.status ?? ''),
+    doc_number: doc.number,
+    doc_status_at_request: doc.status,
     status: 'EXECUTED',
     reason: reason.reason,
     requested_by: actor.id,

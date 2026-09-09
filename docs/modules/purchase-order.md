@@ -406,8 +406,9 @@ works and is multi-select at line level — but only for a line that is
   best-effort (`:2983-2989`). Idempotent on SUBMITTED / PARTIALLY_RECEIVED
   (`:2943`); rejects anything else with 409.
 - **Cancel** (`:3182`). Needs a `reason` in the body and nothing else — no
-  approval since 2026-09-09 (`document-cancel-approval.md`); the reason lands on
-  the CANCEL audit row as `cancelReason` and in the cancellation ledger.
+  approval since 2026-09-09 (`document-cancel-approval.md`); the guard records
+  the reason as its own CANCEL history row and in the cancellation ledger, and
+  the handler is unchanged.
   Refuses RECEIVED (`:3200`); idempotent on CANCELLED;
   then two locks — `poHasDownstream` (`:3208`) and `poHasOutstandingDropshipOut`
   (`:3214`). Releases every converted SO line's quota via `recomputeSoPicked`

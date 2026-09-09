@@ -61,13 +61,6 @@ export interface Variables {
    *  document's edit level (prod: the Purchaser signs level 2 on a Sales Order
    *  with Sales Orders at view). Absent/false = normal area rules. */
   cancelExecutionAdmitted?: boolean;
-  /** The words the buyer typed to cancel a REASON-ONLY document (the Purchase
-   *  Order, owner 2026-09-09). Set by cancelApprovalGuard after it has
-   *  validated them and BEFORE the cancel handler runs, so the handler's own
-   *  audit row can carry the reason beside the status change. The ledger row in
-   *  scm.document_cancel_requests is written by the guard either way — this is
-   *  the echo on the document's own history, not the record. */
-  cancelReason?: string;
   // The DOOR this request's session was minted at (mig 0120) — 'pos' when it
   // came from the POS PIN login, undefined otherwise. Set by the GLOBAL
   // middleware/auth (which runs before this sub-app) and, unlike `user`, NOT
