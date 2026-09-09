@@ -1,0 +1,43 @@
+name: What did the edit actually send (read-only)
+
+# HC-SO-009373 is refused by AutoCount with "The quantity of the item code
+# HOK-2041 (A) (Q) is less than the quantity it was partially transferred to
+# Purchase Order". Reasoning about it produced two wrong answers on 2026-09-09,
+# both readings of the code standing in for a reading of the ROW.
+#
+# This prints the row: the stored payload's lines, and the ERP lines beside them.
+#
+# Read-only, scoped to the documents you name.
+on:
+  workflow_dispatch:
+    inputs:
+      doc_nos:
+        description: "Documents, comma separated"
+        required: true
+        default: "HC-SO-009373"
+        type: string
+
+concurrency:
+  group: what-the-edit-sent
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-what-the-edit-sent.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DOC_NOS: ${{ inputs.doc_nos }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
