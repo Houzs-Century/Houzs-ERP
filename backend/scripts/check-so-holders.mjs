@@ -43,6 +43,15 @@
 // Manual dispatch only, own concurrency group, never on a schedule.
 //
 // RE-RUN: safe and free. It reads and prints; running it twice changes nothing.
+//
+// `status` IS AN ENUM (scm.mfg_so_status), so it is compared with
+// `IS DISTINCT FROM 'CANCELLED'` and never `COALESCE(status,'') <> 'CANCELLED'`.
+// The COALESCE form asks Postgres to cast '' into the enum and dies with
+// `invalid input value for enum scm.mfg_so_status: ""` — which is what the FIRST
+// dispatch of this workflow did (run 34334122124), before it had read a single
+// holder. `IS DISTINCT FROM` keeps the same NULL-inclusive meaning without the
+// cast. Anywhere else in this repo that reaches for the COALESCE idiom on a
+// TEXT column is fine; this column is not text.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 
@@ -101,7 +110,7 @@ async function main() {
           LEFT JOIN public.user_companies uc ON uc.user_id = s.user_id
          WHERE so.company_id = ${co.id}
            AND so.salesperson_id IS NOT NULL
-           AND COALESCE(so.status, '') <> 'CANCELLED'
+           AND so.status IS DISTINCT FROM 'CANCELLED'
          GROUP BY so.salesperson_id
          ORDER BY COUNT(*) DESC`;
 
@@ -134,7 +143,7 @@ async function main() {
           FROM scm.mfg_sales_orders so
          WHERE so.company_id = ${co.id}
            AND so.salesperson_id IS NULL
-           AND COALESCE(so.status, '') <> 'CANCELLED'`;
+           AND so.status IS DISTINCT FROM 'CANCELLED'`;
       note(
         `  no salesperson_id: ${unattributed.total} order(s), of which ${unattributed.with_agent} ` +
         `name somebody in the legacy 'agent' text — the handover tool keys on ` +
