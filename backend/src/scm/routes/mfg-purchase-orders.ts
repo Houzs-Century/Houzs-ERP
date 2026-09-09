@@ -20,6 +20,7 @@ import { Hono } from 'hono';
 import { PO_STATUS_BUCKETS } from '../lib/po-status-buckets';
 import { HELD_OR_TERM, HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
 import { firstUnorderableSo, soNotOrderableResponse } from '../lib/source-document-gates';
+import { soLinkItemMismatch, type SoSourceLine } from '../lib/so-link-item-identity';
 import { mountHoldRoute } from './document-hold-routes';
 import {
   buildVariantSummary, pickComboMatch, spreadComboTotal,
@@ -1143,14 +1144,13 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
       .filter((x): x is string => !!x);
     if (lineSoItemIds.length > 0) {
       // Company scope (2026-08-19) — service-role bypasses RLS: scope the SO-item read and refuse a foreign soItemId BEFORE it is linked / photo-copied / po_qty_picked-rolled (mirrors soLinkTargetRefusal).
-      const { data: lineSoRows } = await scopeToCompany(supabase.from('mfg_sales_order_items').select('id, doc_no, qty, po_qty_picked'), c).in('id', lineSoItemIds);
-      const soRows = (lineSoRows ?? []) as Array<{
-        id: string; doc_no: string | null; qty: number; po_qty_picked: number;
-      }>;
+      const { data: lineSoRows } = await scopeToCompany(supabase.from('mfg_sales_order_items').select('id, doc_no, item_code, qty, po_qty_picked'), c).in('id', lineSoItemIds);
+      const soRows = (lineSoRows ?? []) as SoSourceLine[];
       const foreignSoItemId = lineSoItemIds.find((id) => !new Set(soRows.map((r) => r.id)).has(id));
-      if (foreignSoItemId) {
-        return c.json({ error: 'so_line_not_found', reason: 'That Sales Order line does not exist on this company.', soItemId: foreignSoItemId }, 404);
-      }
+      if (foreignSoItemId) return c.json({ error: 'so_line_not_found', reason: 'That Sales Order line does not exist on this company.', soItemId: foreignSoItemId }, 404);
+      // ... and the IDENTITY half of soLinkTargetRefusal, which this path was missing (lib/so-link-item-identity.ts, docs/bugs/0672).
+      const badSoLink = soLinkItemMismatch(items, soRows);
+      if (badSoLink) return c.json(badSoLink, 409);
       const offender = await firstUnorderableSo(
         supabase,
         soRows.map((r) => r.doc_no),

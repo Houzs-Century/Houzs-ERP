@@ -17,14 +17,14 @@
 // where a person adjusts afterwards. The file itself never enters the repo.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useRef, useState } from 'react';
+import { Fragment, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { ChevronDown, ChevronRight, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
   useChartUnion, useChartTick, useChartImport,
   useChartRename, useChartUpdate, useChartDelete, useChartCreate, isControlSpecial,
-  type ChartRow, type ChartImportRow,
+  type ChartRow, type ChartImportRow, type AccountSection,
 } from '../../vendor/scm/lib/accounting-queries';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -38,13 +38,10 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const CODE_RE = /^(\s*)(\d{3}-[A-Za-z0-9]{4})\s*$/;
 
-const SECTION_TYPE: Record<string, ChartImportRow['accountType']> = {
-  'CAPITAL': 'EQUITY', 'RETAINED EARNING': 'EQUITY',
-  'FIXED ASSETS': 'ASSET', 'OTHER ASSETS': 'ASSET', 'CURRENT ASSETS': 'ASSET',
-  'CURRENT LIABILITIES': 'LIABILITY', 'LONG TERM LIABILITIES': 'LIABILITY',
-  'SALES': 'INCOME', 'SALES ADJUSTMENTS': 'INCOME', 'OTHER INCOMES': 'INCOME',
-  'COST OF GOODS SOLD': 'EXPENSE', 'EXPENSES': 'EXPENSE', 'TAXATION': 'EXPENSE',
-};
+/* The section headings → type map is NOT written here: the server hands the
+   vocabulary down (GET /accounting/chart `sections`, one home in backend
+   lib/account-sections.ts) and the parser takes it as an argument, so the
+   import, the page headers and the Section pickers can never disagree. */
 
 /* Company-specific by nature: banks and cash are THIS company's accounts
    (SBK/SCH), and the related-party/director/HP/borrowing series name real
@@ -55,9 +52,10 @@ const isExclusive = (code: string, special: string): boolean =>
 
 export type ParsedChart = { rows: ChartImportRow[]; sections: string[]; unknownSections: string[] };
 
-export function parseChartXlsx(wb: XLSX.WorkBook): ParsedChart {
+export function parseChartXlsx(wb: XLSX.WorkBook, known: ReadonlyArray<AccountSection>): ParsedChart {
   const sheet = wb.Sheets[wb.SheetNames[0]!];
   const grid = XLSX.utils.sheet_to_json<unknown[]>(sheet!, { header: 1, raw: false });
+  const typeOf = new Map(known.map((s) => [s.section, s.type]));
   const rows: ChartImportRow[] = [];
   const sections: string[] = [];
   const unknownSections: string[] = [];
@@ -74,7 +72,7 @@ export function parseChartXlsx(wb: XLSX.WorkBook): ParsedChart {
         && !label.includes('SDN') && !label.includes('BHD') && !label.includes('PAGE')) {
         section = label;
         sections.push(label);
-        if (!(label in SECTION_TYPE)) unknownSections.push(label);
+        if (!typeOf.has(label)) unknownSections.push(label);
       }
       continue;
     }
@@ -85,7 +83,8 @@ export function parseChartXlsx(wb: XLSX.WorkBook): ParsedChart {
     rows.push({
       code,
       name: String(r[1] ?? '').trim() || code,
-      accountType: SECTION_TYPE[section] ?? 'EXPENSE',
+      accountType: typeOf.get(section) ?? 'EXPENSE',
+      section: typeOf.has(section) ? section : null,
       parentCode: depth > 0 ? (prevByDepth[depth - 1] ?? null) : null,
       accMoney: special === 'SBK' || special === 'SCH',
       specialType: special || null,
@@ -123,6 +122,9 @@ const TYPE_TONE: Record<string, string> = {
   ASSET: '#2F5D4F', LIABILITY: '#B06000', EQUITY: '#4A4A8A', INCOME: '#16695f', EXPENSE: '#8A3B3B',
 };
 
+/* The shelf for a row the server has not sectioned (predates the migration). */
+const UNSECTIONED = 'UNSECTIONED';
+
 export const ChartOfAccounts = () => {
   const askConfirm = useConfirm();
   const notify = useNotify();
@@ -140,6 +142,41 @@ export const ChartOfAccounts = () => {
 
   const companies = unionQ.data?.companies ?? [];
   const accounts = useMemo(() => treeOrder(unionQ.data?.accounts ?? []), [unionQ.data]);
+  const sections = useMemo(() => unionQ.data?.sections ?? [], [unionQ.data]);
+
+  /* ── The AutoCount tree (owner 2026-09-06: 每个 account type 的 header):
+     one header row per SECTION in the server's order, the accounts of that
+     section as a tree beneath it. A row whose section the server does not
+     know (older than the migration) trails under UNSECTIONED rather than
+     vanishing — a chart that hides an account is worse than one with an
+     odd shelf. */
+  const sectioned = useMemo(() => {
+    const all = unionQ.data?.accounts ?? [];
+    const groups = new Map<string, ChartRow[]>();
+    const names = new Set(sections.map((s) => s.section));
+    for (const a of all) {
+      const key = a.section && names.has(a.section) ? a.section : UNSECTIONED;
+      const list = groups.get(key) ?? [];
+      list.push(a);
+      groups.set(key, list);
+    }
+    const out: Array<{ section: string; type: string; rows: ChartRow[] }> = [];
+    for (const s of sections) {
+      const rows = groups.get(s.section);
+      if (rows && rows.length > 0) out.push({ section: s.section, type: s.type, rows: treeOrder(rows) });
+    }
+    const rest = groups.get(UNSECTIONED);
+    if (rest && rest.length > 0) out.push({ section: UNSECTIONED, type: '', rows: treeOrder(rest) });
+    return out;
+  }, [unionQ.data, sections]);
+  const [foldedSections, setFoldedSections] = useState<Set<string>>(new Set());
+  const toggleSection = (section: string) => {
+    setFoldedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(section)) next.delete(section); else next.add(section);
+      return next;
+    });
+  };
   const [parsed, setParsed] = useState<ParsedChart | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   /* 快速模式 — session-only, never persisted: every visit starts with the
@@ -153,6 +190,33 @@ export const ChartOfAccounts = () => {
     for (const a of accounts) m.set(a.code, a.parentCode);
     return m;
   }, [accounts]);
+  /* Depth per code — the indent must STEP with the level (owner 2026-09-04:
+     父子account 不清楚; the old indent was a has-parent boolean, so a
+     grandchild sat as shallow as its parent). Same 6-level cap as isHidden. */
+  const depthOf = useMemo(() => {
+    const m = new Map();
+    for (const a of accounts) {
+      let d = 0;
+      let cursor = a.parentCode ?? null;
+      while (cursor && d < 6) { d += 1; cursor = parentOf.get(cursor) ?? null; }
+      m.set(a.code, d);
+    }
+    return m;
+  }, [accounts, parentOf]);
+  /* Other income = anything hanging under 700-0000 — the owner's one-header
+     split (2026-09-04: other income 我想挂在 700-0000; 就做一个 header 分类).
+     DERIVED from the tree, never a second stored flag, so the badge can't
+     contradict where the account actually hangs. Not under it = 正常生意
+     income, deliberately unlabelled (别乱分类). */
+  const OTHER_INCOME_HEADER = '700-0000';
+  const isOtherIncome = (code: string): boolean => {
+    let cursor: string | null = code;
+    for (let d = 0; cursor && d < 7; d += 1) {
+      if (cursor === OTHER_INCOME_HEADER) return true;
+      cursor = parentOf.get(cursor) ?? null;
+    }
+    return false;
+  };
   const isHidden = (code: string): boolean => {
     let cursor = parentOf.get(code) ?? null;
     for (let depth = 0; cursor && depth < 6; depth += 1) {
@@ -194,27 +258,57 @@ export const ChartOfAccounts = () => {
     }
   };
 
+  /* ── 换节 (the owner, 2026-09-06: 你先帮我分类,然后我自己还能调动 — 用拖拉式).
+     Drop a HEADER-level account on a section row → confirm → it and its
+     subtree move there; the type follows the section (the server's rule),
+     and the reports follow the section. A child is refused with its header
+     named — 子户跟着 header 走. */
+  const onDropIntoSection = async (section: string) => {
+    const src = dragCode;
+    setDragCode(null);
+    if (!src || section === UNSECTIONED) return;
+    const srcRow = accounts.find((x) => x.code === src);
+    if (!srcRow || srcRow.section === section) return;
+    if (srcRow.parentCode) {
+      void notify({ title: `${src} 是子户`, body: `子户跟着 header 走 — drag ${srcRow.parentCode} instead, or move ${src} to the root first.`, tone: 'error' });
+      return;
+    }
+    const newType = sections.find((s) => s.section === section)?.type ?? srcRow.type;
+    const kids = accounts.filter((x) => x.parentCode === src).length;
+    const ok = await askConfirm({
+      title: `把 ${src} 移到 ${section}?`,
+      body: `${srcRow.name}${kids > 0 ? ` and its ${kids} sub-account(s)` : ''} → ${section}${newType !== srcRow.type ? ` — the type changes ${srcRow.type} → ${newType}, and the statements follow the section` : ''}. The GL is untouched.`,
+      confirmLabel: 'Move',
+    });
+    if (!ok) return;
+    try {
+      await doUpdate.mutateAsync({ code: src, section });
+    } catch (e) {
+      void notify({ title: 'Move failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+
   /* ── 改码/改名 (owner point 1): edit panel above the table. A changed code
      goes through the rename RPC (改码全账跟); name/type ride the update. ── */
   const [editing, setEditing] = useState<ChartRow | null>(null);
   const [editCode, setEditCode] = useState('');
   const [editName, setEditName] = useState('');
-  const [editType, setEditType] = useState<ChartRow['type']>('ASSET');
+  const [editSection, setEditSection] = useState('');
   const [editParent, setEditParent] = useState('');
   const openEdit = (row: ChartRow) => {
     setEditing(row);
     setEditCode(row.code);
     setEditName(row.name);
-    setEditType(row.type);
+    setEditSection(row.section ?? '');
     setEditParent(row.parentCode ?? '');
   };
   const saveEdit = async () => {
     if (!editing) return;
     const codeChanged = editCode.trim() !== editing.code;
     const nameChanged = editName.trim() !== editing.name;
-    const typeChanged = editType !== editing.type;
+    const sectionChanged = editSection !== '' && editSection !== (editing.section ?? '');
     const parentChanged = editParent.trim() !== (editing.parentCode ?? '');
-    if (!codeChanged && !nameChanged && !typeChanged && !parentChanged) { setEditing(null); return; }
+    if (!codeChanged && !nameChanged && !sectionChanged && !parentChanged) { setEditing(null); return; }
     if (codeChanged) {
       const ok = await askConfirm({
         title: `Rename ${editing.code} → ${editCode.trim()}?`,
@@ -230,11 +324,11 @@ export const ChartOfAccounts = () => {
           .map(([k, n]) => `${k}: ${n}`).join(', ');
         void notify({ title: `${editing.code} → ${editCode.trim()}`, body: moved ? `Moved — ${moved}.` : 'Renamed.', tone: 'info' });
       }
-      if (nameChanged || typeChanged || parentChanged) {
+      if (nameChanged || sectionChanged || parentChanged) {
         await doUpdate.mutateAsync({
           code: codeChanged ? editCode.trim() : editing.code,
           ...(nameChanged ? { name: editName.trim() } : {}),
-          ...(typeChanged ? { accountType: editType } : {}),
+          ...(sectionChanged ? { section: editSection } : {}),
           ...(parentChanged ? { parentCode: editParent.trim() || null } : {}),
         });
       }
@@ -250,7 +344,7 @@ export const ChartOfAccounts = () => {
   const [addingNew, setAddingNew] = useState(false);
   const [newCode, setNewCode] = useState('');
   const [newName, setNewName] = useState('');
-  const [newType, setNewType] = useState<ChartRow['type']>('ASSET');
+  const [newSection, setNewSection] = useState('');
   const [newParent, setNewParent] = useState('');
   const [newMoney, setNewMoney] = useState(false);
   const [newSpecial, setNewSpecial] = useState('');
@@ -260,7 +354,7 @@ export const ChartOfAccounts = () => {
   const [newCompanies, setNewCompanies] = useState<Set<number>>(new Set());
   const openAdd = () => {
     setAddingNew(true);
-    setNewCode(''); setNewName(''); setNewType('ASSET'); setNewParent(''); setNewMoney(false);
+    setNewCode(''); setNewName(''); setNewSection(''); setNewParent(''); setNewMoney(false);
     setNewSpecial(''); setDepOn(true); setDepCode(''); setDepName('');
     setNewCompanies(new Set(companies.map((co) => co.id)));
   };
@@ -282,7 +376,7 @@ export const ChartOfAccounts = () => {
       const res = await doCreate.mutateAsync({
         code: newCode.trim(),
         name: newName.trim(),
-        accountType: newType,
+        section: newSection,
         parentCode: newParent.trim() || null,
         accMoney: newMoney,
         ...(newSpecial ? { specialType: newSpecial } : {}),
@@ -353,7 +447,7 @@ export const ChartOfAccounts = () => {
     if (!f) return;
     try {
       const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
-      const p = parseChartXlsx(wb);
+      const p = parseChartXlsx(wb, sections);
       if (p.rows.length === 0) {
         void notify({ title: 'Nothing to import', body: 'No account codes were found in the file — is this the AutoCount chart export?', tone: 'error' });
         return;
@@ -443,14 +537,15 @@ export const ChartOfAccounts = () => {
                 style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }} />
             </label>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Type</span>
-              <select value={newType} onChange={(e) => setNewType(e.target.value as ChartRow['type'])}
+              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Section — 决定 type</span>
+              <select value={newSection} onChange={(e) => setNewSection(e.target.value)} aria-label="New account section"
                 style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }}>
-                {Object.keys(TYPE_TONE).map((t) => <option key={t} value={t}>{t}</option>)}
+                <option value="">— section —</option>
+                {sections.map((s) => <option key={s.section} value={s.section}>{s.section} · {s.type}</option>)}
               </select>
             </label>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Parent (optional)</span>
+              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Parent (optional — 子户跟着 header 的 section)</span>
               <input value={newParent} onChange={(e) => setNewParent(e.target.value)} list="chart-parent-codes" placeholder="305-0000"
                 style={{ fontFamily: 'var(--font-mono)', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, width: 150 }} />
             </label>
@@ -519,7 +614,7 @@ export const ChartOfAccounts = () => {
             </div>
             <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
               <Button variant="primary" size="sm" onClick={() => void saveNew()}
-                disabled={doCreate.isPending || !newCode.trim() || !newName.trim() || newCompanies.size === 0}>
+                disabled={doCreate.isPending || !newCode.trim() || !newName.trim() || !newSection || newCompanies.size === 0}>
                 {doCreate.isPending ? 'Creating…' : 'Create'}
               </Button>
               <Button variant="ghost" size="sm" onClick={() => setAddingNew(false)} disabled={doCreate.isPending}>
@@ -589,10 +684,12 @@ export const ChartOfAccounts = () => {
                 style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }} />
             </label>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Type</span>
-              <select value={editType} onChange={(e) => setEditType(e.target.value as ChartRow['type'])}
+              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Section — 决定 type{editing.parentCode ? ' (子户跟着 header)' : ''}</span>
+              <select value={editSection} onChange={(e) => setEditSection(e.target.value)} aria-label="Edit section"
+                disabled={editing.parentCode != null}
                 style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }}>
-                {Object.keys(TYPE_TONE).map((t) => <option key={t} value={t}>{t}</option>)}
+                {!editSection && <option value="">— section —</option>}
+                {sections.map((s) => <option key={s.section} value={s.section}>{s.section} · {s.type}</option>)}
               </select>
             </label>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -672,10 +769,36 @@ export const ChartOfAccounts = () => {
                 </tr>
               </thead>
               <tbody>
-                {accounts.map((a) => {
+                {sectioned.map((grp) => (
+                  <Fragment key={grp.section}>
+                    {/* The section row: AutoCount's header line. Fold it, or
+                        drop an account on it to re-shelve (换节). */}
+                    <tr
+                      onDragOver={(e) => { if (canManage && dragCode) e.preventDefault(); }}
+                      onDrop={(e) => { e.preventDefault(); void onDropIntoSection(grp.section); }}
+                      style={{ background: 'var(--c-cream, #f5f1ea)' }}
+                    >
+                      <td colSpan={3 + companies.length + (canManage ? 1 : 0)} data-section={grp.section}
+                          style={{ padding: '6px 8px', fontWeight: 700, letterSpacing: '0.04em', color: TYPE_TONE[grp.type] ?? 'inherit', whiteSpace: 'nowrap' }}>
+                        <button
+                          type="button"
+                          aria-label={`${foldedSections.has(grp.section) ? 'Expand' : 'Collapse'} section ${grp.section}`}
+                          onClick={() => toggleSection(grp.section)}
+                          style={{ background: 'none', border: 'none', padding: 0, marginRight: 4, cursor: 'pointer', verticalAlign: 'middle', color: 'var(--fg-muted)' }}
+                        >
+                          {foldedSections.has(grp.section) ? <ChevronRight size={14} strokeWidth={2} /> : <ChevronDown size={14} strokeWidth={2} />}
+                        </button>
+                        {grp.section}
+                        <span style={{ marginLeft: 8, fontWeight: 400, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
+                          {grp.type ? `${grp.type} · ` : ''}{grp.rows.length}
+                        </span>
+                      </td>
+                    </tr>
+                    {!foldedSections.has(grp.section) && grp.rows.map((a) => {
                   const isParent = accounts.some((x) => x.parentCode === a.code);
                   if (isHidden(a.code)) return null;
                   const isControl = isControlSpecial(a.special);
+                  const depth = depthOf.get(a.code) ?? 0;
                   return (
                     <tr
                       key={a.code}
@@ -685,7 +808,7 @@ export const ChartOfAccounts = () => {
                       onDrop={(e) => { e.preventDefault(); void onDropInto(a); }}
                       style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)', cursor: canManage ? 'grab' : undefined }}
                     >
-                      <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)', paddingLeft: a.parentCode ? 28 : 8, fontWeight: isParent ? 700 : 400, whiteSpace: 'nowrap' }}>
+                      <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)', paddingLeft: 8 + depth * 22, fontWeight: isParent ? 700 : 400, whiteSpace: 'nowrap' }}>
                         {isParent ? (
                           <button
                             type="button"
@@ -700,7 +823,12 @@ export const ChartOfAccounts = () => {
                         )}
                         {a.code}
                       </td>
-                      <td style={{ padding: '4px 8px', fontWeight: isParent ? 700 : 400 }}>
+                      {/* The NAME steps with the level too — the eye scans
+                          this column, and an all-flush name column is what
+                          made the tree unreadable. └ marks a child; child
+                          names sit a shade quieter than their header. */}
+                      <td style={{ padding: '4px 8px', paddingLeft: 8 + depth * 22, fontWeight: isParent ? 700 : 400, color: depth > 0 && !isParent ? 'var(--fg-strong, #3a3a3a)' : undefined }}>
+                        {depth > 0 && <span style={{ color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)', marginRight: 6 }}>└</span>}
                         {a.name}
                         {a.accMoney && <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', color: 'var(--c-secondary-a, #2F5D4F)' }}>money</span>}
                         {isParent && <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>header</span>}
@@ -710,7 +838,12 @@ export const ChartOfAccounts = () => {
                           </span>
                         )}
                       </td>
-                      <td style={{ padding: '4px 8px', fontSize: 'var(--fs-11)', color: TYPE_TONE[a.type] ?? 'inherit' }}>{a.type}</td>
+                      <td style={{ padding: '4px 8px', fontSize: 'var(--fs-11)', color: TYPE_TONE[a.type] ?? 'inherit', whiteSpace: 'nowrap' }}>
+                        {a.type}
+                        {a.type === 'INCOME' && isOtherIncome(a.code) && (
+                          <span style={{ color: 'var(--fg-muted)' }}> · Other</span>
+                        )}
+                      </td>
                       {companies.map((co) => {
                         const active = a.perCompany[co.id]?.active === true;
                         const key = `${co.id}:${a.code}`;
@@ -751,6 +884,8 @@ export const ChartOfAccounts = () => {
                     </tr>
                   );
                 })}
+                  </Fragment>
+                ))}
               </tbody>
             </table>
           )}

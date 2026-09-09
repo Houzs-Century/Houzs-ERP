@@ -1,10 +1,17 @@
 name: Apply sofa compartment + seat-size corrections
 
-# Manual. Creates the sofa special-order codes the AutoCount slips use but the
-# Specials master does not have yet. Counted from the 1,456 sofa Desc2 strings
-# in the cutover exports; prices are left at 0 for the owner to set.
-# Writes scm.special_addons directly - NOT the snapshot route, which deactivates
-# every code missing from the payload. DRY-RUN unless apply=1.
+# Manual. Writes the owner-approved sofa compartment + seat answers onto the
+# live documents: a build that reached the ERP as a bare -1S placeholder becomes
+# its real pieces, matched and UPDATED in place so the row id - and the purchase
+# dedication hanging off it - survives. Reads EVERY corrections file under
+# backend/scripts/data (2026-08 and 2026-09 today); `file` narrows it to one
+# round. DRY-RUN unless apply=1, and an APPLY run ends by re-reading every
+# document on a fresh connection and asserting the piece multiset.
+#
+# The header this file used to carry described creating special-order codes in
+# scm.special_addons. That was a copy-paste from add-missing-sofa-fabrics.yml
+# and had nothing to do with the job below - it is the kind of thing an operator
+# reads instead of the script.
 on:
   workflow_dispatch:
     inputs:
@@ -23,6 +30,31 @@ on:
         description: "1 to create them, else DRY-RUN"
         required: false
         default: "0"
+        type: string
+      # Both jobs already pass `DOC: ${{ inputs.doc }}` to the script, and the
+      # script has always read it — but the input was never declared, so the
+      # expression resolved to empty and the whole file ran every time. Declared
+      # here so a single document can be dry-run and applied on its own.
+      doc:
+        description: "one document (e.g. HC-SO-012828), or blank for all of them"
+        required: false
+        default: ""
+        type: string
+      file:
+        description: "one corrections round (e.g. 2026-09), or blank for every file"
+        required: false
+        default: ""
+        type: string
+      # apply=1 is refused unless this says exactly I HAVE REVIEWED THE DRY-RUN.
+      # The script grew that gate because a build changes the ROW COUNT of a live
+      # sales order and carries the change onto the PO, GRN, DO and invoices. The
+      # input is declared HERE and passed in BOTH jobs below, which is the half
+      # docs/bugs/0700 records going missing: the phrase existed in the script and
+      # the workflow around it had no way to satisfy it, so apply=1 died in 8s.
+      confirm:
+        description: 'type exactly: I HAVE REVIEWED THE DRY-RUN (only needed when apply=1)'
+        required: false
+        default: ""
         type: string
 
 concurrency:
@@ -43,8 +75,10 @@ jobs:
       - run: node scripts/apply-sofa-compartment-corrections.mjs
         env:
           APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
           COMPANY: ${{ inputs.company }}
           DOC: ${{ inputs.doc }}
+          FILE: ${{ inputs.file }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
   run-prod:
@@ -59,6 +93,8 @@ jobs:
       - run: node scripts/apply-sofa-compartment-corrections.mjs
         env:
           APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
           COMPANY: ${{ inputs.company }}
           DOC: ${{ inputs.doc }}
+          FILE: ${{ inputs.file }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

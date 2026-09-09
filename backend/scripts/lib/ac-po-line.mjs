@@ -68,3 +68,72 @@ export function mergeAcPoLines(...rowSets) {
   }
   return byKey;
 }
+
+/* ── the SO -> PO dedication rule, stated ONCE ─────────────────────────────
+   `purchase_order_items.so_item_id` is what makes a bedframe or sofa line
+   READY: those lines are HARD-BOUND (`isHardBoundLine`,
+   src/scm/lib/so-stock-allocation.ts) and light only through their OWN
+   dedicated purchase order's received_qty, never through the pooled balance.
+   So a dedication is not bookkeeping — it decides what the floor is told is
+   ready to ship, and a wrong one lights the wrong bed.
+
+   AutoCount's own evidence is the DtlKey pair: PODTL.FromSODtlKey names the
+   SODTL row the buyer transferred from. That pair is sound — checked against
+   the 2026-09-07T09:35Z truth snapshot, every PO line involved in the incident
+   below resolves to an SO line with a BYTE-IDENTICAL item code.
+
+   WHAT WAS MISSING was the assertion that OUR two rows agree. sync-ac-delta's
+   lane `links` resolved both ends by `linked_ac_dtlkey` and wrote the
+   dedication on the key pair alone. Run 34123720786 (2026-09-07 12:46Z,
+   mode=apply) wrote 10; the sofa chain audit's SO->PO code mismatch went 0
+   (11:54Z) -> 9 (14:02Z), and all nine bind a sales-order line to a
+   purchase-order line for a different bed: REGAL (A)-(K) to a
+   TRION (A) (HB STR)-(K), CODY-(Q) to a JAGER-(Q), JAGER-(Q) to a JAGER-(SS).
+   The book and autocount-erp-mapping-1561.csv both agree with the PURCHASE
+   ORDER, so the disagreement is between our own two rows.
+
+   UNDER-REPAIR, NEVER WRONG-LINK — the same rule buildMigratedDoPlan states for
+   the delivery matcher, for the same reason: a wrong link is worse than none,
+   because it then reads as evidence. */
+
+export const normItemCode = (s) => String(s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+
+/**
+ * Which SO->PO dedications may be written, and why each of the rest may not.
+ *
+ * `edges`      AutoCount PODTL rows (DocNo, DtlKey, FromDocNo, FromSODtlKey)
+ * `soItemByDtl`/`poItemByDtl`  ERP lines keyed by `linked_ac_dtlkey` (string)
+ * `alreadyClaimed`  SO line ids some PO line already dedicates (strings)
+ *
+ * Returns { plan, missing, mismatch } — `plan` is what to write, and the other
+ * two are the reasons, kept apart because they need different answers: a
+ * `missing` is an import that has not happened yet, a `mismatch` is a
+ * disagreement inside the ERP that a person has to settle.
+ */
+export function planSoPoDedications({ edges, soItemByDtl, poItemByDtl, alreadyClaimed = new Set() }) {
+  const claimed = new Set([...alreadyClaimed].map(String));
+  const plan = [];
+  const missing = [];
+  const mismatch = [];
+  for (const e of edges ?? []) {
+    const key = acFromSoDtlKey(e);
+    if (key == null) continue;
+    const pi = poItemByDtl.get(String(e.DtlKey));
+    const si = soItemByDtl.get(String(key));
+    if (!pi) { missing.push({ po: e.DocNo, why: "the PO line is not in the ERP yet (import it first)" }); continue; }
+    if (!si) { missing.push({ po: e.DocNo, why: `the SO line ${key} (${e.FromDocNo}) is not in the ERP` }); continue; }
+    if (pi.so_item_id) continue;
+    if (claimed.has(String(si.id))) { missing.push({ po: e.DocNo, why: `SO line ${key} is already dedicated to another PO line` }); continue; }
+    if (normItemCode(si.item_code) !== normItemCode(pi.item_code)) {
+      mismatch.push({
+        po: e.DocNo, poNo: pi.po_number, soNo: e.FromDocNo, soDoc: si.doc_no,
+        poItemId: String(pi.id), soItemId: String(si.id), soDtl: String(key), poDtl: String(e.DtlKey),
+        soCode: si.item_code, poCode: pi.item_code,
+      });
+      continue;
+    }
+    claimed.add(String(si.id));
+    plan.push({ poItemId: pi.id, soItemId: si.id, poNo: pi.po_number, soNo: e.FromDocNo });
+  }
+  return { plan, missing, mismatch };
+}

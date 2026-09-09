@@ -1,22 +1,22 @@
 {
-  "exported_at": "2026-08-28T23:27:37",
+  "exported_at": "2026-09-09T10:24:26",
   "source": "AED_HOUZS live (read-only)",
   "post_cutoff_activity": {
     "DO": {
-      "docs": 227,
-      "latest": "2026-08-29"
+      "docs": 350,
+      "latest": "2026-09-19"
     },
     "GR": {
-      "docs": 120,
-      "latest": "2026-08-28"
+      "docs": 170,
+      "latest": "2026-09-07"
     },
     "IV": {
-      "docs": 89,
-      "latest": "2026-08-26"
+      "docs": 147,
+      "latest": "2026-08-29"
     },
     "ADJ": {
-      "docs": 4,
-      "latest": "2026-08-24"
+      "docs": 5,
+      "latest": "2026-09-03"
     },
     "CS": {
       "docs": 0,
@@ -30,8 +30,8 @@
       "error": "('42S02', \"[42S02] [Microsoft][SQL Server Native Client 11.0][SQL Server]Invalid"
     },
     "PI": {
-      "docs": 62,
-      "latest": "2026-08-26"
+      "docs": 119,
+      "latest": "2026-09-04"
     },
     "ISS": {
       "docs": 0,
@@ -45,15 +45,15 @@
       "error": "('42S02', \"[42S02] [Microsoft][SQL Server Native Client 11.0][SQL Server]Invalid"
     },
     "CN": {
-      "docs": 0,
-      "latest": null
+      "docs": 1,
+      "latest": "2026-09-02"
     },
     "DN": {
       "docs": 0,
       "latest": null
     }
   },
-  "balance_cells": 2683,
-  "so_rows": 13241,
-  "items": 1589
+  "balance_cells": 2689,
+  "so_rows": 13373,
+  "items": 1591
 }

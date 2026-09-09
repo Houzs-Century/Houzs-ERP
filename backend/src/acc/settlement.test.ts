@@ -14,8 +14,9 @@
 import { describe, it, expect } from 'vitest';
 import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
 import {
-  loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow,
+  loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow, unconfirmSettlementRow,
   postStatementCharge, postBatchReceipt, undoBatchReceipt,
+  couldBeAcquirers, clearOrphanBatch,
 } from './settlement';
 
 /* Two banks, because the interesting question is which one a payout lands in
@@ -103,6 +104,43 @@ describe('loadPaymentCandidates', () => {
     const sb = fakeSb({ mfg_sales_order_payments: [], sales_invoice_payments: [] }, { mfg_sales_order_payments: ['approval_code'] });
     const r = await loadPaymentCandidates(sb, 1, { display_name: 'MBB', date_tolerance_days: 3 }, '2026-08-01', '2026-08-03');
     expect(r.ok).toBe(false);
+  });
+
+  /* The owner's first real uploads: four MBB statement lines, four matching
+     sales — every one recorded by the migration with method 'imported' and no
+     merchant tag, and every one invisible to a loader that filtered on the
+     tag. Untagged money must be OFFERED (marked, never auto-decided);
+     another acquirer's money must never be. */
+  it('offers untagged and migration-era payments, and still refuses another acquirer\'s', async () => {
+    const sb = world({
+      mfg_sales_order_payments: [
+        { id: 'p1', so_doc_no: 'SO-1', paid_at: '2026-08-01T10:00:00', amount_sen: 258800, approval_code: 'znt6187', method: 'imported', merchant_provider: null, company_id: 1 },
+        { id: 'p2', so_doc_no: 'SO-2', paid_at: '2026-08-01T11:00:00', amount_sen: 100000, approval_code: 'A2', method: 'merchant', merchant_provider: 'PBB', company_id: 1 },
+        { id: 'p3', so_doc_no: 'SO-3', paid_at: '2026-08-01T12:00:00', amount_sen: 5000, approval_code: null, method: 'merchant', merchant_provider: '  ', company_id: 1 },
+        { id: 'p4', so_doc_no: 'SO-4', paid_at: '2026-08-01T13:00:00', amount_sen: 700, approval_code: null, method: 'cash', merchant_provider: null, company_id: 1 },
+      ],
+      sales_invoice_payments: [],
+    });
+    const r = await loadPaymentCandidates(sb, 1, { display_name: 'MBB', date_tolerance_days: 3 }, '2026-08-01', '2026-08-03');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // p2 is PBB's stream; p4 is cash — neither belongs on an MBB screen.
+    expect(r.payments.map((p) => p.id).sort()).toEqual(['p1', 'p3']);
+    // Both reach the screen saying they are untagged (blank counts as untagged).
+    expect(r.payments.map((p) => p.merchantProvider)).toEqual([null, null]);
+  });
+});
+
+describe('couldBeAcquirers — which recorded payment may belong to this statement', () => {
+  it('answers per method and tag', () => {
+    expect(couldBeAcquirers('merchant', 'MBB', 'MBB')).toBe(true);
+    expect(couldBeAcquirers('installment', null, 'MBB')).toBe(true);   // tag skipped at the till
+    expect(couldBeAcquirers('imported', null, 'MBB')).toBe(true);      // migration-era row
+    expect(couldBeAcquirers('imported', 'MBB', 'MBB')).toBe(true);     // stamped by an earlier confirm
+    expect(couldBeAcquirers('merchant', 'PBB', 'MBB')).toBe(false);    // someone else's stream
+    expect(couldBeAcquirers('imported', 'PBB', 'MBB')).toBe(false);
+    expect(couldBeAcquirers('cash', null, 'MBB')).toBe(false);         // cash never settles through an acquirer
+    expect(couldBeAcquirers('transfer', 'MBB', 'MBB')).toBe(false);
   });
 });
 
@@ -204,6 +242,123 @@ describe('confirmSettlementRow — reconciling the card machine books the FEE, a
     const lines = sb.tables.journal_entry_lines;
     expect(lines.find((l) => l.account_code === '930-0000')).toMatchObject({ credit_sen: 750 });
     expect(lines.find((l) => l.account_code === '326-0000')).toMatchObject({ debit_sen: 750 });
+  });
+});
+
+describe('confirmSettlementRow — stamping the merchant tag on', () => {
+  /* The human confirming has just decided whose money this is; the payment
+     record learns it. Only NULL is written over — a tag chosen at the till is
+     not the confirm's to change. */
+  it('writes the acquirer onto an untagged payment, and leaves a tagged one alone', async () => {
+    const sb = world({
+      mfg_sales_order_payments: [
+        { id: 'p1', company_id: 1, method: 'imported', merchant_provider: null },
+        { id: 'p2', company_id: 1, method: 'merchant', merchant_provider: 'PBB' },
+      ],
+    });
+    const r = await confirmSettlementRow(sb, {
+      companyId: 1,
+      rowId: 7,
+      payments: [
+        { source: 'SOPAY', id: 'p1', docNo: 'SO-1', amountSen: 60000 },
+        { source: 'SOPAY', id: 'p2', docNo: 'SO-2', amountSen: 40000 },
+      ],
+      matchReason: 'manual',
+      userName: 'Ah Chew',
+    });
+    expect(r).toMatchObject({ ok: true, status: 'confirmed' });
+    expect(sb.tables.mfg_sales_order_payments.find((p) => p.id === 'p1')).toMatchObject({ merchant_provider: 'MBB' });
+    expect(sb.tables.mfg_sales_order_payments.find((p) => p.id === 'p2')).toMatchObject({ merchant_provider: 'PBB' });
+  });
+});
+
+/* 做 B, then 做 2 (owner, 2026-09-07/08: 我想要拆账户 … match 了就不见). A card
+   payment keyed in without a bank was booked to the GENERIC clearing account
+   because nobody could say whose it was; the merchant's statement has now
+   named it, so confirming moves the money onto that merchant's own clearing
+   account — and the payout clears it from there. */
+describe("confirmSettlementRow — money keyed in without a bank moves to the merchant's own clearing account", () => {
+  const OWN_CHART: Row[] = [
+    ...CHART,
+    { account_code: '326-0010', account_name: 'CLEARING — MBB', account_type: 'ASSET', parent_code: null, is_active: true, company_id: 1 },
+  ];
+  const OWN_ACCOUNT: Row = { ...ACQUIRER, transit_account_code: '326-0010' };
+  /* The payment's own booking, the day it was keyed in: Dr clearing / Cr AR. */
+  const booked = (id: string, amountSen: number, account = '326-0000'): Record<string, Row[]> => ({
+    journal_entries: [{ id: `je-${id}`, company_id: 1, je_no: `JE-${id}`, entry_date: '2026-08-01', source_type: 'SOPAY', source_doc_no: id, posted: true, reversed: false }],
+    journal_entry_lines: [
+      { id: `l-${id}-1`, journal_entry_id: `je-${id}`, company_id: 1, line_no: 1, account_code: account, debit_sen: amountSen, credit_sen: 0 },
+      { id: `l-${id}-2`, journal_entry_id: `je-${id}`, company_id: 1, line_no: 2, account_code: '300-0000', debit_sen: 0, credit_sen: amountSen },
+    ],
+  });
+  const confirm = (sb: ReturnType<typeof world>) =>
+    confirmSettlementRow(sb, { companyId: 1, rowId: 7, payments: ONE_PAYMENT, matchReason: 'ref', userName: 'Ah Chew' });
+
+  it("posts Dr own clearing / Cr generic for what the payment booked there, dated by the transaction, keyed to the line", async () => {
+    const sb = world({ accounts: OWN_CHART, acc_acquirers: [OWN_ACCOUNT], ...booked('p1', 100000) });
+    const r = await confirm(sb);
+    expect(r).toMatchObject({ ok: true, status: 'confirmed', movedSen: 100000 });
+    const move = sb.tables.journal_entries.find((e) => e.source_type === 'SETTLEMOVE')!;
+    expect(move).toMatchObject({ source_doc_no: 'SETTLEMOVE-7', entry_date: '2026-08-03', posted: true });
+    expect((r as { moveJeNo?: string }).moveJeNo).toBe(move.je_no);
+    const moveLines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === move.id);
+    expect(moveLines.find((l) => l.account_code === '326-0010')).toMatchObject({ debit_sen: 100000 });
+    expect(moveLines.find((l) => l.account_code === '326-0000')).toMatchObject({ credit_sen: 100000 });
+    /* The generic account is empty of this money; the merchant's own account
+       holds the net after its fee — which is exactly what the payout clears. */
+    expect(balance(sb, '326-0000')).toBe(0);
+    expect(balance(sb, '326-0010')).toBe(98500);
+  });
+
+  it("moves nothing when the payment already sits on the merchant's account, when the merchant sits on the generic account, or when nothing was booked", async () => {
+    const own = world({ accounts: OWN_CHART, acc_acquirers: [OWN_ACCOUNT], ...booked('p1', 100000, '326-0010') });
+    await confirm(own);
+    expect(own.tables.journal_entries.some((e) => e.source_type === 'SETTLEMOVE')).toBe(false);
+
+    const generic = world(booked('p1', 100000)); // ACQUIRER itself sits on 326-0000 (CIMB, AEON, HOUZS)
+    await confirm(generic);
+    expect(generic.tables.journal_entries.some((e) => e.source_type === 'SETTLEMOVE')).toBe(false);
+
+    const unbooked = world({ accounts: OWN_CHART, acc_acquirers: [OWN_ACCOUNT] });
+    expect(await confirm(unbooked)).toMatchObject({ ok: true, status: 'confirmed' });
+    expect(unbooked.tables.journal_entries.some((e) => e.source_type === 'SETTLEMOVE')).toBe(false);
+  });
+
+  it('taking the confirmation back reverses the move too, and confirming again moves once', async () => {
+    const sb = world({ accounts: OWN_CHART, acc_acquirers: [OWN_ACCOUNT], ...booked('p1', 100000) });
+    await confirm(sb);
+    expect(await unconfirmSettlementRow(sb, 1, 7)).toMatchObject({ ok: true, status: 'unconfirmed' });
+    expect(sb.tables.journal_entries.filter((e) => e.source_type === 'SETTLEMOVE_REVERSAL')).toHaveLength(1);
+    expect(balance(sb, '326-0000')).toBe(100000);
+    expect(balance(sb, '326-0010')).toBe(0);
+
+    await confirm(sb);
+    expect(sb.tables.journal_entries.filter((e) => e.source_type === 'SETTLEMOVE' && e.reversed !== true)).toHaveLength(1);
+    expect(balance(sb, '326-0000')).toBe(0);
+  });
+});
+
+describe('clearOrphanBatch — the wreck a half-failed upload leaves', () => {
+  it('clears a batch with no lines so its file can come in again', async () => {
+    const sb = world({
+      acc_settlement_batches: [{ ...BATCH, file_hash: 'h1' }],
+      acc_settlement_rows: [],
+    });
+    const r = await clearOrphanBatch(sb, 1, 'h1');
+    expect(r).toEqual({ ok: true, state: 'cleared_orphan' });
+    expect(sb.tables.acc_settlement_batches).toHaveLength(0);
+  });
+
+  it('keeps a batch that HAS lines — that one really was uploaded', async () => {
+    const sb = world({ acc_settlement_batches: [{ ...BATCH, file_hash: 'h1' }] });
+    const r = await clearOrphanBatch(sb, 1, 'h1');
+    expect(r).toEqual({ ok: true, state: 'duplicate' });
+    expect(sb.tables.acc_settlement_batches).toHaveLength(1);
+  });
+
+  it('reports a hash nobody holds as clear', async () => {
+    const r = await clearOrphanBatch(world(), 1, 'nobody');
+    expect(r).toEqual({ ok: true, state: 'clear' });
   });
 });
 

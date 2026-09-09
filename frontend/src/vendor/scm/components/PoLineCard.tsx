@@ -65,6 +65,19 @@ export type PoLineDraft = {
   materialKind: MaterialKind;
   itemCode: string;
   materialName: string;
+  /** Per-line free text — scm.purchase_order_items.notes. The PO twin of the
+      SO line's `remark`, and the column AutoCount's own Description 2 was
+      copied into by the 2026-08-28 migration (measured on production
+      2026-09-04: 923 of 1,117 migrated company-1 PO lines carry the book's
+      wording here — 891 byte-identical to description2, 32 the same text plus
+      a suffix).
+      It is NOT on the AutoCount write-back path — PO_ITEM_COLS
+      (backend/src/scm/lib/autocount-outbox.ts) does not select `notes` — so it
+      is the one place the book's wording survives a save, unlike description2,
+      which the item PATCH regenerates from buildVariantSummary on every write
+      (mfg-purchase-orders.ts, "Description 2 is server-owned"). Until 2026-09-04
+      this card had no field for it at all, so the text was invisible. */
+  notes?: string;
   supplierSku?: string;
   qty: number;
   unitPriceSen: number;
@@ -98,6 +111,7 @@ export const emptyPoLine = (): PoLineDraft => ({
   materialKind: 'mfg_product',
   itemCode: '',
   materialName: '',
+  notes: '',
   qty: 1,
   unitPriceSen: 0,
   variants: {},
@@ -128,6 +142,7 @@ export const PoLineCard = ({
   hidePoFields = false,
   identityReadOnly = false,
   soLinkOptions,
+  showRemarks = false,
   photos = null,
 }: {
   index: number;
@@ -191,6 +206,15 @@ export const PoLineCard = ({
       the SAME /outstanding-so-items shortage view the From-SO picker and the
       mobile convert wizard use, rather than inventing a second query. */
   soLinkOptions?: Array<{ value: string; label: string }>;
+  /** Render the per-line Remarks box (writes `notes`). OPT-IN, and default OFF
+      on purpose: this card is reused by the Purchase Invoice and the
+      Purchase-Consignment Order details, and each of those parents enumerates
+      the fields it sends on add/update. A box those parents do not send would
+      accept typing and silently discard it on save, which is worse than no box
+      at all. Turn it on in a parent only when that parent also carries `notes`
+      in BOTH its add-item and update-item payloads. On today's tree that is
+      the Purchase Order detail. */
+  showRemarks?: boolean;
 }) => {
   const l = line;
   /* Per-Model allowed_options for this line's SKU — the SAME by-code source
@@ -436,6 +460,29 @@ export const PoLineCard = ({
           className={styles.fieldInput}
         />
       </label>
+
+      {/* Remarks — full width, opt-in via showRemarks. The PO twin of SoLineCard's "Type remarks…" box
+          (owner 2026-09-04: 「SO line 和 PO line 的 remarks」). Writes
+          purchase_order_items.notes, which is where the AutoCount migration
+          parked the book's own Description 2 — 923 of 1,117 migrated
+          company-1 PO lines already carry it (measured 2026-09-04) and nothing
+          on this screen could show it. NOT gated by identityLocked: a GRN-sourced PI line freezes
+          its identity and variants, but a note is not identity, and locking the
+          only readable copy of the customer's spec text behind a GRN would
+          re-hide what this field exists to surface. */}
+      {showRemarks && (
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>Remarks</span>
+          <input
+            type="text"
+            value={l.notes ?? ''}
+            disabled={disabled}
+            onChange={(e) => onChange({ notes: e.target.value })}
+            placeholder="Type remarks…"
+            className={styles.fieldInput}
+          />
+        </label>
+      )}
 
       {/* Per-category variant editor (PR #126 logic, PR #129 card layout) */}
       {showVariants && (

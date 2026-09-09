@@ -1039,6 +1039,12 @@ const SupplierCard = ({
                 onChange={(e) => onField('currency', e.target.value)}>
                 <option value="MYR">MYR</option>
                 <option value="RMB">RMB</option>
+                {/* CNY — same currency as RMB under its ISO code. A GRN
+                    INHERITS its currency from the source PO (resolveGrnFx,
+                    routes/grns.ts), so a CNY purchase order puts CNY here; a
+                    value missing from the list renders blank and the next save
+                    would rewrite it. */}
+                <option value="CNY">CNY</option>
                 <option value="USD">USD</option>
                 <option value="SGD">SGD</option>
               </select>

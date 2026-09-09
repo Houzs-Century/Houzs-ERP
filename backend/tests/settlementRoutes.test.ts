@@ -278,6 +278,24 @@ describe('POST /settlement/batches — a bad upload is loud', () => {
     expect(await again.json()).toMatchObject({ error: 'already_uploaded' });
     expect(sb.tables.acc_settlement_batches).toHaveLength(1);
   });
+
+  /* An upload that wrote its batch head and then died left a batch with NO
+     lines still holding the file hash — and told the operator "already
+     uploaded" about an upload that never finished (the owner's PBB statement
+     of 2026-08-01 sat exactly like this). The retry must be let in. */
+  test('a half-failed upload does not hold its file hostage — the retry replaces the wreck', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    expect((await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).status).toBe(200);
+    // Simulate the half-failure: the lines vanish, the batch head remains.
+    sb.tables.acc_settlement_rows = [];
+    sb.tables.acc_settlement_matches = [];
+
+    const retry = await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
+    expect(retry.status).toBe(200);
+    // One batch — the retry's, whole this time — never the wreck plus a twin.
+    expect(sb.tables.acc_settlement_batches).toHaveLength(1);
+    expect(sb.tables.acc_settlement_rows).toHaveLength(2);
+  });
 });
 
 describe('POST /settlement/batches — the four piles', () => {
@@ -654,6 +672,40 @@ describe('the batch detail and the watchlists', () => {
     expect(body.arrivedNotRecorded.map((r) => r.ref)).toEqual(['ZZ9']);
     expect(body.clean).toBe(false);
   });
+
+  /* docs/bugs/0688 — the owner, the morning per-bank clearing went live: the
+     same instalment under GHL, HLB, MBB and PBB, and the header counting it
+     four times. An untagged payment is every acquirer's CANDIDATE (that is how
+     a statement finds it) but ONE payment on a watch list. */
+  test('an untagged payment sits on each watch list once, under no acquirer', async () => {
+    const { app } = harness({
+      acc_acquirers: [MBB, GHL],
+      mfg_sales_order_payments: [
+        soPayment(),
+        soPayment({ id: 'u1', so_doc_no: 'SO-2608-013', method: 'installment', merchant_provider: null, amount_sen: 336500, approval_code: '009577' }),
+      ],
+    });
+    const byId = (rows: Array<{ id: string; acquirerCode: string | null }>) =>
+      Object.fromEntries(rows.map((r) => [r.id, r.acquirerCode]));
+
+    const w = await (await app.request('/settlement/watchlist?from=2026-07-20&to=2026-08-16')).json() as {
+      recordedNotArrived: Array<{ id: string; acquirerCode: string | null }>;
+    };
+    expect(byId(w.recordedNotArrived)).toEqual({ p1: 'MBB', u1: null });
+    /* Asked about the merchant that never tagged it, it is still his candidate — once. */
+    const g = await (await app.request('/settlement/watchlist?acquirer=GHL&from=2026-07-20&to=2026-08-16')).json() as {
+      recordedNotArrived: Array<{ id: string; acquirerCode: string | null }>;
+    };
+    expect(byId(g.recordedNotArrived)).toEqual({ u1: null });
+
+    const t = await (await app.request('/settlement/in-transit?from=2026-07-20&to=2026-08-16')).json() as {
+      totalSen: number; ageing: Record<string, unknown>; lines: Array<{ paymentId: string; acquirerCode: string | null }>;
+    };
+    expect(Object.fromEntries(t.lines.map((l) => [l.paymentId, l.acquirerCode]))).toEqual({ p1: 'MBB', u1: null });
+    expect(t.lines).toHaveLength(2);
+    expect(t.totalSen).toBe(436500);
+    expect(Object.keys(t.ageing).sort()).toEqual(['MBB', '未标']);
+  });
 });
 
 describe('GET /settlement/batches', () => {
@@ -663,5 +715,53 @@ describe('GET /settlement/batches', () => {
     const body = await (await app.request('/settlement/batches')).json() as { batches: Array<Record<string, unknown>> };
     expect(body.batches).toHaveLength(1);
     expect(body.batches[0]).toMatchObject({ acquirer_code: 'MBB', file_name: 'aug.csv', row_count: 2 });
+  });
+});
+
+/* One clearing account per bank (owner 2026-09-07: 我想要拆账户，因为这样我比较然后
+   检查回). The maintenance screen offers each company's 326-/327- accounts and
+   points a merchant at one; the write refuses anything that is not a live
+   clearing account of that company. */
+describe('maintenance — the clearing account per merchant', () => {
+  const CLEARING: Row[] = [
+    { account_code: '326-0000', account_name: 'CARD MACHINE CLEARING (EDC)', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: false, company_id: 2 },
+    { account_code: '326-0010', account_name: 'CARD MACHINE CLEARING — PBB', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: false, company_id: 2 },
+    { account_code: '326-0090', account_name: 'RETIRED', account_type: 'ASSET', parent_code: null, is_active: false, acc_money: false, company_id: 2 },
+    { account_code: '310-0010', account_name: 'Bank — Maybank', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: 2 },
+    { account_code: '900-0000', account_name: 'Rent', account_type: 'EXPENSE', parent_code: null, is_active: true, acc_money: false, company_id: 2 },
+  ];
+  const world = () => harness({
+    accounts: CLEARING,
+    acc_acquirer_config: [{ code: 'PBB', display_name: 'PBB', statement_format: 'CSV', has_unique_ref: true, fee_method: 'stated', date_tolerance_days: 3, column_map: { date: 'D', gross: 'G' }, is_active: true }],
+    acc_company_acquirers: [{ company_id: 2, acquirer_code: 'PBB', transit_account_code: '326-0010', fee_account_code: '930-0000', bank_account_code: '310-0010', is_active: true }],
+  });
+
+  test('the screen reads each company\'s live clearing accounts and where the merchant sits today', async () => {
+    const { app } = world();
+    const body = await (await app.request('/settlement/maintenance')).json() as {
+      merchants: Array<{ code: string; byCompany: Record<string, { transitAccountCode: string | null }> }>;
+      clearings: Record<string, Array<{ account_code: string }>>;
+    };
+    expect(body.merchants.find((m) => m.code === 'PBB')!.byCompany['2']).toMatchObject({ transitAccountCode: '326-0010' });
+    /* Live 326-/327- only — the retired one and the bank and the expense never appear. */
+    expect(body.clearings['2']!.map((a) => a.account_code)).toEqual(['326-0000', '326-0010']);
+    expect(body.clearings['1']).toEqual([]);
+  });
+
+  test('pointing the merchant at a clearing account writes the link; a bank, an expense, a retired or a foreign code is refused', async () => {
+    const { app, sb } = world();
+    const ok = await patch(app, '/settlement/maintenance/merchant', { companyId: 2, code: 'PBB', transitAccountCode: '326-0000' });
+    expect(ok.status, await ok.clone().text()).toBe(200);
+    expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ transit_account_code: '326-0000' });
+    for (const bad of ['310-0010', '900-0000', '326-0090', '326-0777']) {
+      const res = await patch(app, '/settlement/maintenance/merchant', { companyId: 2, code: 'PBB', transitAccountCode: bad });
+      expect(res.status, bad).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe('bad_clearing_account');
+    }
+    expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ transit_account_code: '326-0000' });
+    /* Blank = back to the generic account. */
+    const blank = await patch(app, '/settlement/maintenance/merchant', { companyId: 2, code: 'PBB', transitAccountCode: '' });
+    expect(blank.status).toBe(200);
+    expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ transit_account_code: '326-0000' });
   });
 });

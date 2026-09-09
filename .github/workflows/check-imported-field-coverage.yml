@@ -1,0 +1,38 @@
+name: Imported documents — which fields actually came across (read-only)
+
+# The owner, 2026-09-04: 「然后我的 description 2 的也进来 erp 了？」
+#
+# The same question in its third shape in one day — did the delivery orders come
+# across, did their lines, did Description 2 — and every time the honest answer
+# was a COUNT, not a reading of the importer. This is the count, for the fields a
+# person can see on a document.
+#
+# READ-ONLY: SELECTs on one connection, no DDL, no writes, no transaction.
+# Manual trigger only. Own concurrency group. Exit 0 for every legitimate answer.
+#
+# Counts only — never the TEXT of a description, an item code, a customer or an
+# amount. The share is the answer; the content is what must not travel.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: check-imported-field-coverage
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-imported-field-coverage.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

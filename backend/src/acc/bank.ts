@@ -17,6 +17,7 @@
 import type { BankColumnMap, BankParseConfig } from './bank-parse';
 import type { BankRecognitionRule, PayableBatch, PayoutAdviceForMatch } from './bank-match';
 import type { LedgerMovement } from './bank-reconcile';
+import { lockMonthOf, monthAsDate, monthFromDate, type MonthLock } from './bank-lock';
 
 export type BankStatementConfig = {
   id: number;
@@ -245,4 +246,86 @@ export async function loadAccountLedger(
     }
   }
   return { ok: true, movements: [...byJe.values()].sort((a, b) => a.entryDate.localeCompare(b.entryDate)) };
+}
+
+/**
+ * The LIVE lock on one month of one account, or null.
+ *
+ * Lives here rather than beside the lock routes because it is a read, and
+ * because every guarded write in layer 4 has to make it — a guard that imported
+ * from a route module would put a cycle between the two files that need it most
+ * (owner, 2026-09-08: 还有lock 起来不可以随便碰).
+ *
+ * A released lock is NOT live: the row stays for ever as the record that the
+ * month was closed and reopened, and only `released_at IS NULL` stops a write.
+ */
+export async function loadLiveMonthLock(
+  sb: any, companyId: number, accountCode: string, month: string,
+): Promise<{ ok: true; lock: MonthLock | null } | Fail> {
+  const { data, error } = await sb.from('acc_bank_month_locks')
+    .select('account_code, period_month, locked_by, locked_at, lock_note,'
+      + ' closing_statement_sen, closing_ledger_sen, difference_sen, statement_count, was_complete')
+    .eq('company_id', companyId)
+    .eq('account_code', accountCode)
+    .eq('period_month', monthAsDate(month))
+    .is('released_at', null)
+    .maybeSingle();
+  if (error) return { ok: false, reason: error.message };
+  if (!data) return { ok: true, lock: null };
+  const r = data as Record<string, any>;
+  return {
+    ok: true,
+    lock: {
+      accountCode: String(r.account_code),
+      month: monthFromDate(String(r.period_month ?? '')),
+      lockedBy: r.locked_by == null ? null : String(r.locked_by),
+      lockedAt: String(r.locked_at ?? ''),
+      lockNote: r.lock_note == null ? null : String(r.lock_note),
+      closingStatementSen: r.closing_statement_sen == null ? null : Number(r.closing_statement_sen),
+      closingLedgerSen: r.closing_ledger_sen == null ? null : Number(r.closing_ledger_sen),
+      differenceSen: r.difference_sen == null ? null : Number(r.difference_sen),
+      statementCount: Number(r.statement_count ?? 0),
+      wasComplete: r.was_complete === true,
+    },
+  };
+}
+
+/**
+ * Which bank account a statement line belongs to, and the month its own date
+ * puts it in — the two things a guard needs before it can ask about a lock.
+ *
+ * TWO PLAIN READS, not one read with an embed. `select('…, acc_bank_statements
+ * !inner(account_code)')` would do it in one trip and was the first shape here;
+ * it is wrong twice over. PostgREST returns an embedded row as an object or a
+ * one-element array depending on how it read the relationship, so the caller
+ * has to guess — and a guard that guesses wrong does not fail loudly, it
+ * silently decides the line has no account and lets a locked month through or
+ * refuses an open one. The fake client the route tests run on models no embeds
+ * at all, which means the guard would have been exercised by nothing.
+ *
+ * Two reads that both work everywhere beat one that is only tested in
+ * production.
+ */
+export async function loadLineMonth(
+  sb: any, companyId: number, lineId: number,
+): Promise<{ ok: true; found: false } | { ok: true; found: true; accountCode: string; month: string } | Fail> {
+  const { data: lineRow, error } = await sb.from('acc_bank_statement_lines')
+    .select('booked_on, statement_id')
+    .eq('id', lineId).eq('company_id', companyId).maybeSingle();
+  if (error) return { ok: false, reason: error.message };
+  if (!lineRow) return { ok: true, found: false };
+  const line = lineRow as Record<string, any>;
+
+  const { data: stmtRow, error: sErr } = await sb.from('acc_bank_statements')
+    .select('account_code')
+    .eq('id', Number(line.statement_id)).eq('company_id', companyId).maybeSingle();
+  if (sErr) return { ok: false, reason: sErr.message };
+  const accountCode = stmtRow == null ? '' : String((stmtRow as Record<string, any>).account_code ?? '');
+  /* A line whose statement cannot be found is not a line this guard can clear.
+     Saying so is a refusal the operator can act on; assuming "not locked" is
+     the failure this whole function exists to prevent. */
+  if (!accountCode) {
+    return { ok: false, reason: `bank line ${lineId} has no statement to check a lock against` };
+  }
+  return { ok: true, found: true, accountCode, month: lockMonthOf(String(line.booked_on).slice(0, 10)) };
 }

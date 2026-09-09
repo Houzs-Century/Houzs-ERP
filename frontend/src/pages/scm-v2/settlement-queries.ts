@@ -48,6 +48,10 @@ export type SettlementCandidate = {
   /** Who paid — on the batch-detail candidates (the matcher carries it); the
       watchlist's do not, so a reader has to ask. */
   customerName?: string | null;
+  /** Which acquirer the payment was recorded as. Null on migration-era rows —
+      shown as 未标 merchant so the operator knows he is claiming untagged
+      money; confirming stamps the tag on. */
+  merchantProvider?: string | null;
 };
 
 export type SettlementLink = {
@@ -192,7 +196,7 @@ export type MaintenanceMerchant = {
   autoMatchable: boolean;
   /* Keyed by company id, and only for the companies the server answered for —
      so a lookup can miss, and every reader has to say what it does then. */
-  byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null } | undefined>;
+  byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null; transitAccountCode?: string | null } | undefined>;
 };
 
 /** One account CODE across every company — the rows of the bank matrix. */
@@ -206,6 +210,10 @@ export type MaintenanceData = {
   companies: MaintenanceCompany[];
   merchants: MaintenanceMerchant[];
   banks: MaintenanceBank[];
+  /** Each company's clearing accounts (326-/327-, not money) — where a
+      machine's card money sits before the payout (owner 2026-09-07: one per
+      bank). Keyed by company id; absent on an older server. */
+  clearings?: Record<string, Array<{ account_code: string; account_name: string }> | undefined>;
 };
 
 export const useSettlementMaintenance = () => useQuery({
@@ -225,7 +233,7 @@ const invalidateMaintenance = (qc: ReturnType<typeof useQueryClient>) => {
 export const useSaveMaintenanceMerchant = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { companyId: number; code: string; enabled?: boolean; bankAccountCode?: string | null }) =>
+    mutationFn: (body: { companyId: number; code: string; enabled?: boolean; bankAccountCode?: string | null; transitAccountCode?: string }) =>
       authedFetch<{ ok: boolean; created: boolean }>('/accounting/settlement/maintenance/merchant', {
         method: 'PATCH', body: JSON.stringify(body),
       }),
@@ -460,14 +468,18 @@ export const useIgnoreSettlementRow = () => {
 
 export type Watchlist = {
   from: string; to: string; clean: boolean;
-  recordedNotArrived: Array<SettlementCandidate & { ageDays: number; acquirerCode: string }>;
+  /** acquirerCode null = keyed in without a bank; the server lists such a
+      payment ONCE (docs/bugs/0688) and the screen shows it as 未标. */
+  recordedNotArrived: Array<SettlementCandidate & { ageDays: number; acquirerCode: string | null }>;
   arrivedNotRecorded: Array<{ id: number; acquirer_code: string; txn_date: string; ref: string | null; gross_sen: number; notes: string | null }>;
 };
 
 export type AgeBucket = '0-7' | '8-14' | '15-30' | 'over-30';
 
 export type InTransitLine = {
-  acquirerCode: string;
+  /** null = keyed in without a bank, listed once (docs/bugs/0688); the
+      ageing table keys such money 未标. */
+  acquirerCode: string | null;
   source: 'SOPAY' | 'SIPAY';
   paymentId: string;
   docNo: string;

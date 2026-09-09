@@ -1,0 +1,208 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AckTrendCard, AnnouncementBannerStack, TeamPendingCard } from "./AnnouncementDashboard";
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Overview pieces (design handoff 2026-09-04, screen 5): the banner stack —
+   first notice expanded, the rest collapsed, the overflow row — and the
+   supervisor's "My team's pending" card that renders only for a user with
+   direct reports.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+const { navigate, ack, hookState, apiGet, apiPost, canWrite } = vi.hoisted(() => ({
+  navigate: vi.fn(),
+  ack: vi.fn(),
+  hookState: { notices: [] as unknown[], ackedIds: new Set<string>() },
+  apiGet: vi.fn(),
+  apiPost: vi.fn(),
+  canWrite: { value: true },
+}));
+
+vi.mock("react-router-dom", () => ({ useNavigate: () => navigate }));
+vi.mock("./useAnnouncementBanner", () => ({
+  useAnnouncementBanner: () => ({ notices: hookState.notices, ackedIds: hookState.ackedIds, ack }),
+}));
+vi.mock("../api/client", () => ({ api: { get: apiGet, post: apiPost } }));
+vi.mock("../auth/AuthContext", () => ({
+  useAuth: () => ({ can: () => canWrite.value }),
+}));
+vi.mock("../hooks/useToast", () => ({
+  useToast: () => ({ success: vi.fn(), error: vi.fn() }),
+}));
+vi.mock("../hooks/useDialog", () => ({
+  useDialog: () => ({ confirm: vi.fn(async () => true) }),
+}));
+// A minimal useQuery: fetch once on mount, expose reload — enough for the card.
+vi.mock("../hooks/useQuery", async () => {
+  const React = await import("react");
+  return {
+    useQuery: (_key: string, fn: () => Promise<unknown>) => {
+      const [state, setState] = React.useState<{ data: unknown; loading: boolean }>({ data: null, loading: true });
+      const load = React.useCallback(() => void fn().then((d) => setState({ data: d, loading: false })), [fn]);
+      React.useEffect(() => {
+        load();
+      }, []);
+      return { ...state, error: null, fetching: false, placeholder: false, reload: load };
+    },
+  };
+});
+
+function notice(id: string, category: string, extra: Record<string, unknown> = {}) {
+  return {
+    id,
+    title: `Title ${id}`,
+    body: `Body of ${id}\nsecond line`,
+    createdAt: "2026-09-05T08:00:00Z",
+    remindedAt: null,
+    category,
+    createdByName: "Lee Wei",
+    ...extra,
+  };
+}
+
+describe("AnnouncementBannerStack", () => {
+  beforeEach(() => {
+    navigate.mockReset();
+    ack.mockReset();
+  });
+
+  it("renders nothing when everything is acknowledged", () => {
+    hookState.notices = [notice("a", "WARNING")];
+    hookState.ackedIds = new Set(["a"]);
+    const { container } = render(<AnnouncementBannerStack />);
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("expands the first unacknowledged notice, collapses the rest, and folds the overflow", () => {
+    hookState.notices = [notice("w", "WARNING"), notice("s", "SOP"), notice("l", "LEARNING"), notice("g", "GENERAL")];
+    hookState.ackedIds = new Set();
+    render(<AnnouncementBannerStack />);
+    // Expanded card: body + the 150px action column with the category CTA.
+    expect(screen.getByText("Body of w")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Got it" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "View details" }).length).toBeGreaterThan(0);
+    // Collapsed SOP row keeps its own CTA wording and secondary.
+    expect(screen.getByRole("button", { name: "Acknowledge" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Read SOP" })).toBeTruthy();
+    // Three visible, one folded.
+    expect(screen.queryByText("Title g")).toBeNull();
+    expect(screen.getByText("1 more notice collapsed")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Expand" }));
+    expect(screen.getByText("Title g")).toBeTruthy();
+  });
+
+  it("the CTA acknowledges through the shared hook; the secondary deep-links to the notice", () => {
+    hookState.notices = [notice("w", "WARNING"), notice("s", "SOP")];
+    hookState.ackedIds = new Set();
+    render(<AnnouncementBannerStack />);
+    fireEvent.click(screen.getByRole("button", { name: "Got it" }));
+    expect(ack).toHaveBeenCalledWith(expect.objectContaining({ id: "w" }));
+    fireEvent.click(screen.getByRole("button", { name: "Read SOP" }));
+    expect(navigate).toHaveBeenCalledWith("/announcements?id=s");
+    // Clicking a collapsed title expands it in place.
+    fireEvent.click(screen.getByRole("button", { name: "Title s" }));
+    expect(screen.getByText("Body of s")).toBeTruthy();
+  });
+});
+
+describe("TeamPendingCard", () => {
+  beforeEach(() => {
+    apiGet.mockReset();
+    apiPost.mockReset();
+    canWrite.value = true;
+  });
+
+  it("renders nothing for a user without direct reports", async () => {
+    apiGet.mockResolvedValue({ success: true, data: { reports: 0, pending: [] } });
+    const { container } = render(<TeamPendingCard />);
+    await waitFor(() => expect(apiGet).toHaveBeenCalledWith("/api/announcements/team-pending"));
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("lists each report's pending notice with its state and reminds every distinct notice", async () => {
+    apiGet.mockResolvedValue({
+      success: true,
+      data: {
+        reports: 6,
+        pending: [
+          { userId: 1, name: "Ooi Sze Wei", positionName: "HR Admin", announcementId: "w", title: "Shipping marks", category: "WARNING", createdAt: null, state: "overdue" },
+          { userId: 2, name: "Sim Yong Han", positionName: "IT Admin", announcementId: "w", title: "Shipping marks", category: "WARNING", createdAt: null, state: "overdue" },
+          { userId: 2, name: "Sim Yong Han", positionName: "IT Admin", announcementId: "s", title: "PO Amendment", category: "SOP", createdAt: null, state: "reminded" },
+        ],
+      },
+    });
+    apiPost.mockResolvedValue({ success: true, pendingCount: 2 });
+    render(<TeamPendingCard />);
+    await waitFor(() => expect(screen.getByText("2 of 6")).toBeTruthy());
+    expect(screen.getAllByText("overdue").length).toBe(2);
+    expect(screen.getByText("reminded")).toBeTruthy();
+    expect(screen.getByText("HR Admin · Shipping marks")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remind all 2" }));
+    await waitFor(() => expect(apiPost).toHaveBeenCalledTimes(2));
+    expect(apiPost).toHaveBeenCalledWith("/api/announcements/w/remind", { scope: "unacked" });
+    expect(apiPost).toHaveBeenCalledWith("/api/announcements/s/remind", { scope: "unacked" });
+  });
+
+  it("a supervisor without announcements.write sees the list but no Remind button", async () => {
+    canWrite.value = false;
+    apiGet.mockResolvedValue({
+      success: true,
+      data: {
+        reports: 2,
+        pending: [
+          { userId: 1, name: "Ooi Sze Wei", positionName: null, announcementId: "w", title: "Shipping marks", category: "WARNING", createdAt: null, state: "pending" },
+        ],
+      },
+    });
+    render(<TeamPendingCard />);
+    await waitFor(() => expect(screen.getByText("1 of 2")).toBeTruthy());
+    expect(screen.queryByRole("button", { name: /Remind all/ })).toBeNull();
+  });
+});
+
+describe("AckTrendCard", () => {
+  const trend = {
+    success: true,
+    data: {
+      days: 30,
+      buckets: [
+        { start: "2026-08-07T00:00:00Z", end: "2026-08-12T00:00:00Z", notices: 0, total: 0, acked: 0, pct: null },
+        { start: "2026-08-12T00:00:00Z", end: "2026-08-17T00:00:00Z", notices: 1, total: 10, acked: 10, pct: 100 },
+        { start: "2026-08-17T00:00:00Z", end: "2026-08-22T00:00:00Z", notices: 2, total: 20, acked: 15, pct: 75 },
+        { start: "2026-08-22T00:00:00Z", end: "2026-08-27T00:00:00Z", notices: 1, total: 8, acked: 2, pct: 25 },
+        { start: "2026-08-27T00:00:00Z", end: "2026-09-01T00:00:00Z", notices: 0, total: 0, acked: 0, pct: null },
+        { start: "2026-09-01T00:00:00Z", end: "2026-09-06T00:00:00Z", notices: 1, total: 12, acked: 6, pct: 50 },
+      ],
+      summary: { days: 30, notices: 5, total: 50, acked: 33, pct: 66 },
+    },
+  };
+  beforeEach(() => {
+    apiGet.mockReset();
+    canWrite.value = true;
+  });
+
+  it("draws six bars with the threshold colours, empty buckets as empty, and the 30-day summary", async () => {
+    apiGet.mockResolvedValue(trend);
+    render(<AckTrendCard />);
+    const card = await screen.findByTestId("ack-trend");
+    expect(card.textContent).toContain("Ack rate · last 30 days");
+    expect(card.textContent).toContain("66%");
+    expect(card.textContent).toContain("07/08/2026"); // house DD/MM/YYYY, never a month name
+    expect(card.textContent).toContain("5 notices posted · 33 of 50 acknowledgements received (66%)");
+    const bars = card.querySelectorAll("[title]");
+    expect(bars).toHaveLength(6);
+    expect(bars[1].className).toContain("bg-synced");
+    expect(bars[2].className).toContain("bg-primary");
+    expect(bars[3].className).toContain("bg-warning-text");
+    expect((bars[0] as HTMLElement).style.height).toBe("0px");
+    expect(bars[0].getAttribute("title")).toBe("No notice posted in these five days");
+    expect(bars[5].getAttribute("title")).toBe("1 notice · 6 of 12 acknowledged");
+  });
+
+  it("renders nothing for a user without announcements.write, and never calls the endpoint", async () => {
+    canWrite.value = false;
+    const { container } = render(<AckTrendCard />);
+    await waitFor(() => expect(container.firstChild).toBeNull());
+    expect(apiGet).not.toHaveBeenCalled();
+  });
+});

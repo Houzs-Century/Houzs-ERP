@@ -1,0 +1,279 @@
+/**
+ * THREE DECISIONS THE COMPARTMENT CORRECTION HAS TO GET RIGHT, KEPT PURE SO
+ * THEY CAN BE TESTED WITHOUT A DATABASE.
+ *
+ * Each one was bought by a real document measured on prod (company 1) on
+ * 2026-09-04, and each one is a way the previous shape of the script was
+ * silently WRONG rather than loudly broken.
+ *
+ * ── 1. TWO IDENTICAL LINES ARE TWO SOFAS, NOT ONE ───────────────────────────
+ * HC-SO-013384 holds two `8030-1S` lines with byte-identical Desc2, and so does
+ * HC-SO-012025 (with its purchase order HC-PO-009024). They are two identical
+ * sofas. The matcher correctly returns BOTH rows, and the pairing then dealt
+ * them out as if they were two compartments of ONE build: row 1 became the
+ * first piece, row 2 the second, the third was inserted — one sofa where the
+ * customer ordered two, with no error and no refusal. `splitBuildCopies` below
+ * is what stops that.
+ *
+ * ── 2. THE MONEY ASSERTION HAS TO MEASURE THE MONEY ─────────────────────────
+ * The rule is right: the whole build's price rides the FIRST piece and every
+ * other piece is 0, before and after. The check was reading only
+ * `line_total_sen`, and on `scm.purchase_order_items` that column is 0 on ALL
+ * 289 company-1 sofa lines while `unit_price_sen` carries the price. So on a PO
+ * the check compared 0 against a recomputed `unit x qty` and REFUSED correct
+ * work (HC-PO-009582 at 183200, HC-PO-009260 at 254000, HC-PO-009024 at 95000)
+ * — while asserting nothing at all about the money, because 0 == 0 would have
+ * passed for any price. This is the repo's "check that answers a different
+ * question", and the fix is to assert BOTH columns and to RECOMPUTE NOTHING:
+ * the lead piece keeps the lead row's own numbers verbatim, everything else
+ * goes to 0.
+ *
+ * ── 3. A SEAT IS INCHES, AND `60cm` IS NOT ──────────────────────────────────
+ * `variants.seatHeight` is a bare number of inches — measured on prod the live
+ * values are 22, 24, 25, 26, 28, 30, 31, 32, 35, 38, 40 and null, with no unit
+ * anywhere. HC-SO-003295's slip says `60cm`. Writing "60cm" makes a numeric
+ * field non-numeric; writing "60" makes a 60-INCH seat out of a 60-centimetre
+ * one. Neither is honest, so `seatHeightToWrite` writes nothing and says so.
+ *
+ * Zero dependencies — `node --test scripts/lib/*.test.mjs` runs the test on a
+ * bare checkout.
+ */
+
+/** Upper-cased, trimmed — the form codes are compared in. */
+export const K = (s) => String(s ?? "").trim().toUpperCase();
+
+/** The compartment half of `8030-1A(LHF)`; "" for a code with no dash. */
+export const compartmentOf = (code) => {
+  const c = K(code);
+  const d = c.indexOf("-");
+  return d < 0 ? "" : c.slice(d + 1);
+};
+
+/**
+ * Should this correction's `seat` be written into `variants.seatHeight`?
+ *
+ * @param {unknown} seat the correction's `seat`
+ * @returns {{ write: boolean, value: string|null, why: string }}
+ */
+export function seatHeightToWrite(seat) {
+  if (seat === null || seat === undefined || String(seat).trim() === "")
+    return { write: false, value: null, why: "no seat on this correction" };
+  const s = String(seat).trim();
+  if (/^\d{1,3}(\.\d+)?$/.test(s)) return { write: true, value: s, why: "inches" };
+  return {
+    write: false,
+    value: null,
+    why: `seat "${s}" is not a number of inches — seatHeight holds bare inches, so it is left as it is rather than stored as ${s.replace(/[^\d.]/g, "") || "?"} inches`,
+  };
+}
+
+/**
+ * Split the rows the matcher selected for ONE correction into the sofas they
+ * actually are.
+ *
+ * HOW MANY SOFAS: count each code. A code the target list does not use is a
+ * PLACEHOLDER, and one placeholder is one sofa. A code the target list DOES use
+ * is one sofa's worth per occurrence in that list — a build whose pieces are
+ * `1A+1NA+CNR+1NA+1A` may hold two `1NA` rows and still be a single sofa. The
+ * number of sofas is therefore the largest `count / how many the build uses`,
+ * and it only stands if EVERY code divides that way exactly. Anything else is
+ * refused rather than guessed.
+ *
+ * The "already a target piece" arm is not hypothetical, and the first shape of
+ * this function got it wrong. It counted PLACEHOLDERS only, and refused as soon
+ * as any row was already a target piece. HC-PO-009024's two lines had been
+ * carried from their sales order — the SO half of the correction runs first and
+ * its downstream carry set both PO lines to `9050-1A(LHF)` — so by the time the
+ * PO half read them neither was a placeholder, while the document still held
+ * two sofas. Measured on prod, run 33891638140: the build was refused and the
+ * purchase order was left half corrected.
+ *
+ * @param {any[]} rows the build's rows, in document order
+ * @param {string[]} want the target piece codes, fully qualified and upper-cased
+ * @param {(row:any)=>unknown} [codeOf]
+ * @returns {{ ok: true, copies: any[][], how: string } | { ok: false, why: string }}
+ */
+export function splitBuildCopies(rows, want, codeOf = (r) => r.code) {
+  const all = Array.isArray(rows) ? rows.slice() : [];
+  if (all.length <= 1) return { ok: true, copies: [all], how: "one sofa on this build" };
+
+  /** how many of each code the target list uses; 0 for a placeholder code */
+  const uses = new Map();
+  for (const w of want) uses.set(K(w), (uses.get(K(w)) ?? 0) + 1);
+
+  const have = new Map();
+  for (const r of all) {
+    const c = K(codeOf(r));
+    if (!have.has(c)) have.set(c, []);
+    have.get(c).push(r);
+  }
+
+  let copies = 1;
+  for (const [c, rs] of have) copies = Math.max(copies, Math.ceil(rs.length / Math.max(1, uses.get(c) ?? 0)));
+  if (copies === 1) return { ok: true, copies: [all], how: "one sofa on this build" };
+
+  for (const [c, rs] of have) {
+    const per = uses.get(c) ?? 0;
+    const owed = per === 0 ? copies : copies * per;
+    if (rs.length !== owed)
+      return {
+        ok: false,
+        why: `this looks like ${copies} identical sofas, but ${c} appears ${rs.length} time(s) where ${copies} sofa(s) would need ${owed} — the document does not divide evenly and which line belongs to which sofa is not written down anywhere`,
+      };
+  }
+
+  /* Deal each code's rows out one per sofa, in document order. */
+  const out = Array.from({ length: copies }, () => []);
+  for (const [c, rs] of have) {
+    const per = uses.get(c) ?? 0;
+    const each = per === 0 ? 1 : per;
+    rs.forEach((r, i) => out[Math.floor(i / each)].push(r));
+  }
+  return {
+    ok: true,
+    copies: out,
+    how: `${copies} identical sofas on this build — each takes the whole build`,
+  };
+}
+
+/** The two money columns of one row, as numbers. */
+export const moneyOfRow = (r) => ({
+  total: Number(r?.total ?? 0),
+  charged: Number(r?.unit_price_sen ?? 0) * (Number(r?.qty ?? 1) || 1),
+});
+
+/** Both money columns summed over a set of rows. */
+export function moneyOfRows(rows) {
+  return (rows || []).reduce(
+    (a, r) => {
+      const m = moneyOfRow(r);
+      return { total: a.total + m.total, charged: a.charged + m.charged };
+    },
+    { total: 0, charged: 0 },
+  );
+}
+
+/**
+ * Which row carries this sofa's price, and what every piece is worth after.
+ *
+ * NOTHING IS RECOMPUTED. The lead piece keeps the lead row's own
+ * `unit_price_sen` and its own total column, verbatim; every other piece is 0
+ * in both. That is the only assignment under which the document's money is
+ * arithmetically identical before and after, whichever of the two columns the
+ * table actually maintains.
+ *
+ * @param {any[]} copyRows the rows of ONE sofa
+ * @returns {{ ok: true, lead: any, price: number, total: number, before: {total:number,charged:number} }
+ *          | { ok: false, why: string }}
+ */
+export function planCopyMoney(copyRows) {
+  const rows = copyRows || [];
+  if (!rows.length) return { ok: false, why: "no rows" };
+  const before = moneyOfRows(rows);
+  const lead = rows.reduce((a, r) => {
+    const m = moneyOfRow(r), n = moneyOfRow(a);
+    if (m.total !== n.total) return m.total > n.total ? r : a;
+    return m.charged > n.charged ? r : a;
+  }, rows[0]);
+  const m = moneyOfRow(lead);
+  const after = { total: m.total, charged: m.charged };
+  if (after.total !== before.total || after.charged !== before.charged)
+    return {
+      ok: false,
+      why: `money would move — total ${before.total} -> ${after.total}, charged ${before.charged} -> ${after.charged}. More than one line of this sofa carries money, so "the price rides the first piece" is not true of it and this script must not make it true`,
+    };
+  return { ok: true, lead, price: Number(lead.unit_price_sen ?? 0), total: m.total, before };
+}
+
+/**
+ * Pair a sofa's existing rows onto the target pieces, in place wherever the
+ * code already matches, so a row id — and the purchase dedication hanging off
+ * it — survives.
+ *
+ * ── THREE PASSES, IN THIS ORDER, AND THE MIDDLE ONE WAS BOUGHT ──────────────
+ * 1. FULL CODE. The row is already this piece; nothing about it moves.
+ * 2. COMPARTMENT. Same piece, different MODEL — `9058-CNR` onto `8030-CNR`.
+ * 3. WHATEVER IS LEFT, in document order. Genuinely a different piece.
+ *
+ * Pass 2 did not exist until 2026-09-08 and its absence was invisible while
+ * every correction kept the model it found. The moment the owner ruled that the
+ * three disagreeing sofas follow the account book, a model change made pass 1
+ * match NOTHING, so all three rows fell to pass 3 and were dealt out by
+ * position. Measured on prod (run `34187267757`), `HC-PO-009550` holds its
+ * compartments in the order `2A(RHF), CNR, 1A(LHF)` while the build is written
+ * `1A(LHF), CNR, 2A(RHF)`, so two of three compartments would have landed on a
+ * DIFFERENT row — and the same probe shows every one of those rows carries a
+ * `so_item_id` dedication to the sales-order row with the same code, which is
+ * what bound-mode readiness reads (`isHardBoundLine`). Position is not identity;
+ * the compartment is.
+ *
+ * A model change is now identity-preserving on its own, rather than only when
+ * the sales-order half happens to run second and overwrite the purchase order
+ * through that dedication. That ordering held for all three of these builds and
+ * it is not a property anything asserts.
+ *
+ * @param {any[]} rows one sofa's rows
+ * @param {string[]} want target piece codes, fully qualified and upper-cased
+ * @param {(row:any)=>unknown} [codeOf]
+ * @returns {{ pairs: {want:string,row:any|null}[], surplus: any[] }}
+ */
+export function pairRowsToPieces(rows, want, codeOf = (r) => r.code) {
+  const pool = (rows || []).slice();
+  const pairs = [];
+  for (const w of want) {
+    const i = pool.findIndex((r) => K(codeOf(r)) === K(w));
+    pairs.push({ want: K(w), row: i >= 0 ? pool.splice(i, 1)[0] : null });
+  }
+  /* Same compartment under another model keeps its own row. Only a piece with
+     a compartment at all can match this way — a bare `8030` has none, and two
+     codeless rows must not be paired to each other on the strength of "". */
+  for (const p of pairs) {
+    if (p.row) continue;
+    const comp = compartmentOf(p.want);
+    if (!comp) continue;
+    const i = pool.findIndex((r) => compartmentOf(codeOf(r)) === comp);
+    if (i >= 0) p.row = pool.splice(i, 1)[0];
+  }
+  /* Reuse a leftover row rather than delete-and-insert: the id is what carries
+     the dedication. */
+  for (const p of pairs) if (!p.row && pool.length) p.row = pool.shift();
+  return { pairs, surplus: pool };
+}
+
+/**
+ * WHICH VERIFY ENTRIES A LATER RULING HAS ALREADY OVERRULED.
+ *
+ * `CORRECTION_FILES` is ordered oldest first on purpose, so two files may rule
+ * on one build and the NEWER ruling is the answer. `lib/sofa-rulings.mjs`
+ * states that for the lookup path with `findLast` (docs/bugs/0722); this is the
+ * same rule for the applier's own verification, which kept one expectation per
+ * ENTRY and asserted every one of them — including the entry the next file had
+ * just overruled.
+ *
+ * SUPERSEDING IS DECIDED ON ROW IDS, NOT ON THE SELECTOR TEXT. The pair that
+ * bought this (`HC-SO-012929`, run 34301924900) carries two different
+ * `desc2Match` strings — "...Barley/Bottom wr" and "...Barley" — so any key
+ * built from the selector calls them separate builds and changes nothing. What
+ * makes them one build is that they select the same rows.
+ *
+ * An entry that selects NO rows is never superseded and never supersedes: an
+ * empty set intersects nothing, and a build whose rows vanished is a finding
+ * that must still be asserted rather than explained away.
+ *
+ * @param {string[]} docKeys one per entry, in file order; entries are only
+ *        compared within the same key
+ * @param {Array<Array<string|number>>} idSets the row ids each entry selects
+ * @returns {number[]} for each entry, the index of the LATER entry that
+ *        overrules it, or -1
+ */
+export function supersededBy(docKeys, idSets) {
+  const sets = idSets.map((ids) => new Set(ids.map((x) => String(x))));
+  return docKeys.map((key, n) => {
+    if (!sets[n].size) return -1;
+    for (let m = n + 1; m < docKeys.length; m++) {
+      if (docKeys[m] !== key) continue;
+      for (const id of sets[m]) if (sets[n].has(id)) return m;
+    }
+    return -1;
+  });
+}

@@ -20,7 +20,7 @@
 export interface PermissionDef {
   key: string;
   resource: string;
-  verb: "read" | "create" | "write" | "manage";
+  verb: "read" | "create" | "write" | "manage" | "approve";
   label: string;
   description: string;
 }
@@ -124,6 +124,20 @@ export const PERMISSIONS: PermissionDef[] = [
   // positions via the Team > Positions matrix. po_amendment.approve also gates reject.
   { key: "scm.po_amendment.create",  resource: "Supply Chain", verb: "manage", label: "Raise PO amendment",   description: "Raise an amendment request against a Purchase Order (opens the single-approver PO revision flow)" },
   { key: "scm.po_amendment.approve", resource: "Supply Chain", verb: "manage", label: "Approve/reject PO amendment", description: "Approve a Purchase Order amendment — snapshots the prior version, applies the line + header diffs, bumps the PO revision (REQUESTED -> APPROVED) — or reject it (-> REJECTED)" },
+  // Document cancellation approval (owner 2026-09-08, 「SO 和 PO 取消的话需要
+  // approval 2 层 — 已经输入原因」, then 「只有 SO 需要 sales director approval,
+  // PO 不需要 … PO 只要 Purchaser 一个审批」). Cancelling is a REQUEST with a
+  // mandatory reason, then the document's signatures — a Sales Order takes TWO
+  // (level 1 = Sales Director, level 2 = Purchaser; two different people,
+  // neither the requester), a Purchase Order takes ONE (Purchaser) — before the
+  // document's own cancel route is allowed to run (scm/shared/document-cancel.ts
+  // APPROVAL_LEVELS). Approve keys also gate reject. Owner + IT Admin +
+  // Managing Director pass via "*" but still cannot sign both SO levels.
+  // `scm.po_cancel.approve_l1` / `_l2` existed for a few hours on 2026-09-08 and
+  // were never granted to a role that shipped; the PO key is the level-less one.
+  { key: "scm.so_cancel.approve_l1", resource: "Supply Chain", verb: "approve", label: "Approve SO cancellation — level 1", description: "Give the FIRST of two approvals (or reject) a request to cancel a Sales Order. The order is not cancelled until level 2 also approves" },
+  { key: "scm.so_cancel.approve_l2", resource: "Supply Chain", verb: "approve", label: "Approve SO cancellation — level 2", description: "Give the SECOND and final approval (or reject) a request to cancel a Sales Order. Must be a different person from the level-1 approver and from the requester; the cancel runs on this signature" },
+  { key: "scm.po_cancel.approve",    resource: "Supply Chain", verb: "approve", label: "Approve PO cancellation",           description: "Give the single approval (or reject) a request to cancel a Purchase Order. Cannot be the person who raised it; the cancel runs on this signature" },
 
   // Payment Vouchers — standalone AP cash-out document (port of 2990 0189/0202,
   // Phase 1-B MYR). A PV pays a vendor that is NOT a goods invoice (freight
@@ -202,6 +216,16 @@ export const PERMISSIONS: PermissionDef[] = [
   // already exists — a key nobody holds is an endpoint nobody can call).
   // Owner + IT Admin cover it via "*".
   { key: "scm.autocount.read", resource: "Supply Chain", verb: "read", label: "View AutoCount sync queue", description: "See every document the ERP pushed to AutoCount, its state (queued / sent / failed / skipped) and the reason it failed or was skipped" },
+  /* DECLARED 2026-09-08, for the go-live change log the owner asked for when he
+     opened sales orders, delivery orders, purchase orders and goods receipts to
+     staff: 「谁改了东西 谁改了」. It is a SUPERVISION key, not an operational one —
+     the page shows what every colleague changed on every document in the
+     company, so it is deliberately its own key rather than riding
+     scm.autocount.read (watching the account-book queue and watching your
+     colleagues are different grants) and rather than riding an SCM area key (a
+     change log spans every area at once). Owner + IT Admin cover it via "*";
+     settings.manage is the other key the route accepts. */
+  { key: "scm.changelog.read", resource: "Supply Chain", verb: "read", label: "View the change log", description: "See who changed which sales order, delivery order, purchase order or goods receipt, when, and from what to what — with the system's own automated changes counted separately" },
   /* DECLARED 2026-08-16, when the page grew a per-row "Send again" button.
      The read key above used to end "Read-only: re-sending stays in
      requeue-autocount-skipped.yml"; it does not any more, and the two are
@@ -230,6 +254,10 @@ export const PERMISSIONS: PermissionDef[] = [
   // authed user can see + ack their own banner). Owner + IT Admin bypass via "*".
   { key: "announcements.read",  resource: "Announcements", verb: "read",  label: "View announcements",  description: "Open the Announcements list page and see read-receipts" },
   { key: "announcements.write", resource: "Announcements", verb: "write", label: "Manage announcements", description: "Post, edit, hide, remind, and delete announcements" },
+  // The approval desk (mig 20260906T1509): every notice — the MD's own
+  // included — is published by an approve click. Give this to the role that
+  // signs off; re-point it whenever the approver changes.
+  { key: "announcements.approve", resource: "Announcements", verb: "approve", label: "Approve announcements", description: "Approve or reject submitted announcements before they go live; receives the approval-needed notice" },
 
   // System
   { key: "udf.manage", resource: "Custom Fields", verb: "manage", label: "Manage custom fields", description: "Add or remove user-defined fields on tables" },

@@ -186,6 +186,12 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "mobile/useIsMobile.ts",
   "pages/MailCenter/mail-local.ts",
   "pages/MailCenter/mail-prefs.ts",
+  // Composer draft autosave (2026-09-05): "announcements:draft:u<user>",
+  // written debounced while a notice is being written, cleared on post. A
+  // half-written notice surviving a closed modal / reload is the point; the
+  // key is per user so a shared browser never shows one person's draft to the
+  // next. Reviewed with the announcements redesign.
+  "pages/announcements/ComposerModal.tsx",
   "pages/scm-v2/ProductModels.tsx",
   "pages/scm-v2/SoFromProducts.tsx",
   "pages/scm-v2/SupplierDetail.tsx",

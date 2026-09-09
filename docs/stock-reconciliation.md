@@ -28,6 +28,40 @@
 > PARTIAL-is-not-READY rule, the sofa single-batch coverage rule, and the new
 > checker's per-warehouse grouping and never-guess UNMAPPED reporting.
 
+> # ⚠ Corrections — 2026-09-07, the two go-live rulings
+>
+> 6. **"Sofa is excluded from the balance comparison by design" (§7.3, §4) is
+>    no longer true.** The owner lifted it the night of 2026-09-07:
+>    「把我们的件数折回成整张沙发再比」. `check-stock-vs-autocount.mjs` gained
+>    **PART A2**, which folds the ERP's compartments up into whole sofas and
+>    compares them per model + warehouse.
+>
+>    The direction matters: decomposing an AutoCount balance row would invent
+>    which build it is, which is why §4's exclusion was right at the time.
+>    Folding invents nothing, because `import-ac-sofa-stock.mjs` stamps one
+>    build's compartment lots with a shared `batch_no` = its source PO number.
+>    **batch = build.** The rule is MIN across a build's distinct compartment
+>    SKUs — a sofa is whole only while each of its pieces is still there — with
+>    the MAX reported beside it. `backend/scripts/lib/sofa-piece-fold.mjs`,
+>    pinned by `backend/tests/sofaPieceFold.test.ts`.
+>
+>    **Only the comparison changed.** Sofa stock is still STORED per
+>    compartment, because `sofa-set-coverage.ts` `findCoveringBatch` is bound to
+>    that grain.
+>
+> 7. **§7.3's "20 open sofa lots and none of them carries a `batch_no`" predates
+>    the sofa opening import.** `import-ac-sofa-stock.mjs` writes `batch_no` on
+>    the movement itself, so lots it opened DO carry one. Rows that still carry
+>    none are folded as a single pseudo-build per model + warehouse and COUNTED
+>    as such in PART A2's output — read that number rather than this sentence.
+>
+> 8. **The ERP's stock balance was re-seeded from a newer AutoCount snapshot.**
+>    Owner ruling the same night: 「盖，用今晚的结存为准」.
+>    `backend/scripts/reseed-stock-from-ac-snapshot.mjs` overwrites the balance
+>    from `data/ac-live-stock-balance.json.gz`. Every figure in §5 and §7 below
+>    was measured BEFORE that, against the 2026-08-28 seeding, and is kept as the
+>    record of what was found rather than as the current state.
+
 # Stock reconciliation: ERP vs live AutoCount
 
 Two-axis reconciliation of the ERP's stock against the live AutoCount book
@@ -374,6 +408,17 @@ construction, and are listed as such rather than counted as ERP defects.
 ---
 
 ## 5. Drift since the cutover snapshot
+
+> **Superseded on 2026-09-07 as to the FILE, not the method.** The drift baseline
+> is now `data/ac-seed-baseline-balance.json.gz`, which is frozen.
+> `ac-stock-balance.json.gz` is a *working* export that `export-ac-reimport.py`
+> re-cuts every round; it was re-cut after the ERP was seeded, at which point it
+> equalled the live book (measured: 0 cells differ), the drift set collapsed to
+> empty, and 175 cells / 1,211 units of "AutoCount has moved on" were reported as
+> "the seeding was wrong" — the opposite remedy. See `docs/bugs/0669` and
+> `docs/stock-vs-autocount-2026-09-07.md`. The numbers in the table below are the
+> 2026-08-11 reading and are kept as the historical record; for the current
+> reading, run the workflow.
 
 The ERP was seeded from an AutoCount balance snapshot taken **2026-08-09**
 (`data/ac-stock-balance.json.gz`). Staff have kept working in AutoCount since.
@@ -1100,4 +1145,8 @@ not narrow the comparison — it fabricates a difference.
 - `backend/src/scm/lib/so-readiness.ts` — the Remark 2 convention in code
 - `backend/src/db/migrations-pg/0276_scm_migrated_documents.sql` — why migrated
   paperwork has no movements
-- `BUG-HISTORY.md` — the per-bug ledger
+- `docs/stock-vs-autocount-2026-09-07.md` — the owner-facing answer to "what is
+  different", measured against the 2026-09-07 22:21 (+08) live cut
+- `backend/scripts/data/ac-seed-baseline-balance.README.md` — why the drift
+  baseline is a separate frozen file, and what re-cutting it breaks
+- `BUG-HISTORY.md` — the signpost; the per-bug ledger is `docs/bugs/`

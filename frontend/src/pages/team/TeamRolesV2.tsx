@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
+import { Plus } from "lucide-react";
 import { api } from "../../api/client";
 import { useQuery } from "../../hooks/useQuery";
 import { useToast } from "../../hooks/useToast";
 import { useAuth } from "../../auth/AuthContext";
 import { cn } from "../../lib/utils";
 import { Badge } from "../../components/Badge";
+import { Button } from "../../components/Button";
+import { RolesTab } from "../Roles";
 import { EmptyState } from "../../components/EmptyState";
 import { ListSkeleton } from "../../components/Skeleton";
 import type { Position } from "../../types";
@@ -42,7 +45,9 @@ type MatrixPayload = {
   baselines: Partial<Record<string, Partial<Record<string, string>>>>;
 };
 
-const GOD_SLUGS = new Set(["super_admin", "owner"]);
+// Mirrors GOD_POSITIONS in backend/src/services/positionPolicy.ts (by slug):
+// these positions hold '*' by position, so the matrix shows them locked-on.
+const GOD_SLUGS = new Set(["super_admin", "owner", "managing_director"]);
 
 const LEVEL_CYCLE = ["none", "view", "edit", "full"] as const;
 const LEVEL_CODE: Record<string, string> = {
@@ -124,8 +129,16 @@ export function TeamRolesV2() {
     () => [...new Set(scmKeys.map(areaOf))],
     [scmKeys],
   );
-  type Tab = "actions" | (string & {});
-  const [tab, setTab] = useState<Tab>("actions");
+  // "roles" is the ROLE editor (Roles.tsx: role list + permission checkboxes
+  // + New Role) embedded as the first section — owner 2026-09-07 ("Roles &
+  // Permissions 里加个 Roles 分区"): the strip lost its Roles tab in the
+  // redesign and the only way to a role's permission checkboxes was the
+  // URL ?tab=roles, which nobody finds. The other sections are the
+  // POSITION matrix as before.
+  type Tab = "roles" | "actions" | (string & {});
+  const [tab, setTab] = useState<Tab>("roles");
+  const [creatingRole, setCreatingRole] = useState(false);
+  const isRoles = tab === "roles";
 
   // Drafts — seeded from the server, edited optimistically; a failed PUT
   // rolls the row back to the last server truth.
@@ -205,7 +218,9 @@ export function TeamRolesV2() {
     }
   }
 
-  if (positionsQ.loading || matrixQ.loading) return <ListSkeleton rows={5} />;
+  // The Roles section has its own loading state (RolesTab); only the matrix
+  // sections wait for the position + capability queries.
+  if (!isRoles && (positionsQ.loading || matrixQ.loading)) return <ListSkeleton rows={5} />;
   if (matrixQ.error)
     return (
       <EmptyState
@@ -235,18 +250,33 @@ export function TeamRolesV2() {
           value={tab}
           onChange={setTab}
           options={[
+            { value: "roles", label: "Roles" },
             { value: "actions", label: "Actions" },
             ...areas.map((a) => ({ value: a, label: areaLabel(a) })),
           ]}
         />
-        {!isActions && (
+        {isRoles ? (
+          canEdit && (
+            <Button
+              variant="brass"
+              icon={<Plus size={14} />}
+              onClick={() => setCreatingRole(true)}
+            >
+              New Role
+            </Button>
+          )
+        ) : !isActions ? (
           <span className="text-[11.5px] text-ink-muted">
             Cells show the effective level — click cycles none / view / edit / full /
             inherit. Marked cells override the position policy.
           </span>
-        )}
+        ) : null}
       </div>
 
+      {isRoles ? (
+        <RolesTab creating={creatingRole} onCloseCreate={() => setCreatingRole(false)} />
+      ) : (
+        <>
       <div className="overflow-x-auto">
         <div className="min-w-[760px] overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
           {/* Header row */}
@@ -418,6 +448,8 @@ export function TeamRolesV2() {
           always pass and stay locked.
         </p>
       </div>
+        </>
+      )}
     </div>
   );
 }

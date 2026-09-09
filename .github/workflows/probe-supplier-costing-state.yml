@@ -29,7 +29,14 @@ jobs:
       - name: Run read-only probe
         env:
           DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
-        run: node scripts/probe-supplier-costing-state.mjs | tee probe-out.ndjson
+        # `set -o pipefail` is NOT optional here. A `run:` step with no `shell:`
+        # key uses `bash -e {0}` - WITHOUT pipefail - so the pipeline's status is
+        # tee's, always 0, and a probe that died reports a GREEN run. Measured
+        # 2026-09-08: probe-catalogue-alias-disagreement threw postgres 42703 on
+        # its last query, exited 1, and the run concluded `success`.
+        run: |
+          set -o pipefail
+          node scripts/probe-supplier-costing-state.mjs | tee probe-out.ndjson
       - uses: actions/upload-artifact@v4
         with:
           name: probe-supplier-costing-state

@@ -28,6 +28,7 @@ import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { bookCurrency } from "./lib/ac-currency.mjs";
 import postgres from "postgres";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
@@ -201,6 +202,9 @@ async function main() {
      to two DIFFERENT SO lines instead of both claiming the first. */
   const plan = [];
   let noSoLine = 0, noWh = 0, noSupplier = 0, recvUnits = 0, sofaPlaceholderBind = 0;
+  /* Binds REFUSED because the sales-order line the book points at is for a
+     different product than the purchase line itself — docs/bugs/0672 site 4. */
+  let soCodeMismatch = 0;
   const sofaDecode = [];
   for (const [doc, lines] of toCreate) {
     const first = lines[0];
@@ -316,7 +320,28 @@ async function main() {
         continue;
       }
 
-      const soItemId = takeSoLine(byAc.get(norm(src ? src.code : "")));
+      /* IDENTITY — docs/bugs/0672 site 4. This bind resolved `FromSODtlKey` to a
+         sales-order line and then asked for the SO line carrying the SO's OWN
+         AutoCount code, TRANSLATED. The purchase line's own `l.erp` — the
+         translation of the PURCHASE line's AutoCount code — was never compared
+         to it. The two translations come from different source codes and the
+         mapping is not injective (117 ERP codes are claimed by two or more
+         AutoCount codes in this repo's own CSV), so they can legitimately differ
+         while the key pair still resolves. Binding then dedicates a purchase
+         line to a sales line for another product, and `so_item_id` is what
+         decides READY for a HARD-BOUND line.
+
+         Refused rather than repaired: a missing dedication is visible and
+         recoverable (this script already counts it, and repair-po-so-links-*
+         exists to fill it), while a wrong one lights the wrong stock and reads
+         as correct. The SOFA paths above are deliberately NOT gated this way —
+         their placeholder bind is an owner-sanctioned mismatch (a build's
+         `${model}-1S` placeholder against a compartment code) and is counted
+         separately as sofaPlaceholderBind. */
+      const srcErpCode = byAc.get(norm(src ? src.code : ""));
+      let soItemId = null;
+      if (srcErpCode && norm(srcErpCode) === norm(l.erp)) soItemId = takeSoLine(srcErpCode);
+      else if (srcErpCode) soCodeMismatch++;
       if (!soItemId) noSoLine++;
       recvUnits += recv;
       items.push({
@@ -331,6 +356,9 @@ async function main() {
     plan.push({
       acDoc: doc, supId, docDate: (first.DocDate || "").slice(0, 10) || null,
       ref: first.Ref || null, items,
+      /* THE BOOK'S OWN CURRENCY, not the constant 'MYR' the INSERT below used to
+         carry. One rule, one home: lib/ac-currency.mjs. */
+      currency: bookCurrency(first),
       status: allRecv ? "RECEIVED" : anyRecv ? "PARTIALLY_RECEIVED" : "SUBMITTED",
     });
   }
@@ -338,6 +366,7 @@ async function main() {
   const linked = plan.reduce((s, p) => s + p.items.filter((i) => i.soItemId).length, 0);
   log(`to create: ${plan.length} POs / ${lineCount} lines; dedicated to an SO line: ${linked}; received units carried: ${recvUnits}`);
   log(`unresolved -> SO line ${noSoLine}; warehouse ${noWh}; supplier ${noSupplier}`);
+  log(`SO binds REFUSED because the book's sales line is a different product: ${soCodeMismatch} (docs/bugs/0672 site 4 — left unlinked on purpose, not repaired)`);
   for (const p of plan.slice(0, 10)) log(`   ${p.acDoc} [${p.status}] ${p.items.length} lines, recv ${p.items.reduce((s, i) => s + i.recv, 0)}`);
   if (sofaDecode.length) {
     const ok = sofaDecode.filter((d) => d.pieces);
@@ -387,7 +416,7 @@ async function main() {
           (po_number, linked_ac_docno, supplier_id, status, po_date, expected_at, purchase_location_id, currency,
            subtotal_sen, tax_sen, total_sen, revision, company_id, created_by, notes)
         VALUES (${poNo}, ${p.acDoc}, ${p.supId}, ${p.status}, ${p.docDate ?? sql`CURRENT_DATE`}, ${headerEta},
-                ${p.items[0]?.wh ?? null}, 'MYR', ${subtotal}, 0, ${subtotal}, 1, 1, ${SYS_USER},
+                ${p.items[0]?.wh ?? null}, ${p.currency}, ${subtotal}, 0, ${subtotal}, 1, 1, ${SYS_USER},
                 ${"imported from AutoCount " + p.acDoc + " (already received; stock came in with the balance snapshot)"})
         RETURNING id`;
       for (const it of p.items) {

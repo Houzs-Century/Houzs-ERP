@@ -6,11 +6,29 @@ name: Record priced specials on migrated lines
 #
 # Owner's choice 甲, 2026-09-03: record the option on the line so the factory can
 # see what to build, and the document's money must NOT change. The stamp writes
-# variants.specials (what the picker reads) PLUS variants.specialsRecordedOnly —
-# the line-level statement that those codes are a RECORD of what AutoCount had
-# already priced in, not a new charge. The pricing engine drops a recorded-only
-# code from both the selling and the cost surcharge, so the tick shows and the
-# money stays put.
+# ONE key — `variants.specialsRecorded` — and does NOT touch `variants.specials`
+# or `custom_specials` at all. That key is the line-level statement that those
+# codes are a RECORD of what AutoCount had already priced in, not a new charge,
+# and NO pricing path reads it, so the money cannot move even on a later edit.
+# Two DISPLAY surfaces render it: Description 2 (variant-summary.ts) and the
+# picker (SpecialOrders.tsx), as a ticked locked row.
+#
+# CORRECTED 2026-09-04. This header used to say the stamp writes "variants.specials
+# (what the picker reads) PLUS variants.specialsRecordedOnly", and that the pricing
+# engine "drops a recorded-only code" from the surcharge. That describes an EARLIER
+# design that was abandoned before merge: filtering inside the engine had to be right
+# in eight places and fails OPEN on money, so #2901 shipped the key no pricing path
+# reads, which fails closed. Believing the old text would have you expect this
+# workflow to move `variants.specials` — it never does. Verify, do not believe:
+#   grep -n "jsonb_set" backend/scripts/record-priced-specials-on-migrated-lines.mjs
+#
+# RE-RUN / IDEMPOTENCE — read this before concluding an apply did not work. The
+# selection is driven by codes the AutoCount slip asks for that the line does not
+# carry in `variants.specials`, and this script never writes `variants.specials`.
+# So a PLAN re-run after a successful APPLY still reports the SAME line count with
+# the SAME records=[...] values — that is the design, not a failure. The apply's
+# own read-back on a fresh connection, and a direct count of lines carrying
+# `variants.specialsRecorded`, are what prove the write landed.
 #
 # PLAN by default and PLAN writes nothing. The plan report carries: the exact
 # lines, the live scm.special_addons prices, a pg_catalog census proving no

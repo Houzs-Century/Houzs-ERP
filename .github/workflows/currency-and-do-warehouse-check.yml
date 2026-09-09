@@ -1,0 +1,69 @@
+name: Currency + delivery-line warehouse check (read-only)
+
+# The two questions the owner's 2026-09-07 rulings ask, answered against
+# production rather than from a migration file:
+#
+#   1. Which migrated documents are non-MYR in the AutoCount book while the ERP
+#      says 'MYR'? (import-ac-outstanding-po.mjs:403 writes the CONSTANT 'MYR'.)
+#      Plus the TYPE of every currency column — a text column and an enum are two
+#      different repairs — and what hangs downstream of those documents, because
+#      the amount is only re-interpreted by a GRN / PI / PV exchange rate, never
+#      by the purchase order's own label.
+#   2. Does scm.delivery_order_items already carry a column that could hold
+#      AutoCount's per-line Location, and is the AutoCount line key populated
+#      well enough to backfill it?
+#
+# QUESTION 2 IS SETTLED, AND NOT THE WAY IT IS PHRASED HERE. The owner ruled
+# later the same day — 「记在单头就好」 — that the delivery location lives on the DO
+# HEADER (`delivery_orders.warehouse_id` + `sales_location`), never on a per-line
+# column (#3121). So read that half of the output as DESCRIPTIVE: "NO column on
+# the delivery line names a warehouse" is the design, not a gap, and a per-line
+# column is not the remedy. The header columns are filled by
+# backfill-migrated-do-warehouse.mjs. Kept because its warehouse-master and
+# SALESLOC readout is what the shared location map resolves against, and because
+# question 1 is still live.
+#
+# The answer lives only in production, so this runs here rather than putting the
+# production DSN in front of a human for a SELECT (repo rule: build the check,
+# never ask the owner to run a query). Strictly read-only — SELECT only, no DDL,
+# no writes, no transaction. See backend/scripts/check-currency-and-do-warehouse.mjs.
+#
+# Manual trigger only — it is a question, not a gate, and a production DB read
+# must never become routine CI noise.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "Company to report on (1 = Houzs Century)"
+        required: false
+        default: "1"
+
+# Own concurrency group — touches nothing, must never queue behind or displace a
+# release (and must not share the deploy's group).
+concurrency:
+  group: currency-and-do-warehouse-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-currency-and-do-warehouse.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          # GitHub-hosted runners have no IPv6 egress; match the deploy jobs and
+          # the sibling read-only checks.
+          NODE_OPTIONS: --dns-result-order=ipv4first

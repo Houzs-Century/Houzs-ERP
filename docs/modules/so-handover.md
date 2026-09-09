@@ -84,6 +84,46 @@ the door for addresses and lines.
 | 400 | `missing_staff` / `same_staff` / `no_orders` / `too_many_orders` | payload guard, `parseHandoverBody` |
 | 409 | company-unresolved refusal | no active company on the request |
 
+**A MIGRATED order is refused per order, not with a status.** *Added 2026-09-08,
+`docs/bugs/0702-*`.* While `scm.migrated_so_lock` is on, an order carried across
+from AutoCount cannot be reassigned here — it lands in `skipped[]` with the
+lock's own sentence, and the rest of the batch still moves. That is deliberate:
+a 409 for the whole POST would refuse twenty-four movable orders because one was
+migrated, and this route's entire shape is per-order reporting.
+
+This is the module's **third door onto a migrated sales order**, and it was open
+until that date. The router-level factory `migratedSoReadonly()` guards
+`/mfg-sales-orders/*` and `/so-amendments/*` (`scm/index.ts`); mounting it here
+would NOT have worked, because `soDocNoFromPath` resolves the document number out
+of the PATH and `POST /apply` carries a LIST of them in the body — the guard
+would have found nothing, answered "not migrated", and waved every write
+through. So the handler asks the same decision itself, per order, through
+`migratedSoReadonlyState(c, docNo, isMigrated)` — the one function the guard and
+the SO detail screen also call, so the button and the endpoint cannot disagree.
+`isMigrated` is REQUIRED and answered off `linked_ac_docno` on the row the
+handler already reads.
+
+**`docNo` joined that call on 2026-09-08**, when the lock was re-grained from
+ORIGIN onto CORRECTNESS (`scm.migrated_so_lock = 'verdict:<companies>'`,
+`docs/migrated-so-lock.md` §10). Under that value the refusal is about ONE
+document — *"HC-SO-010789 still differs from the AutoCount book on: document
+total"* — so this route hands over the order it is looking at and each entry in
+`skipped[]` names its own reason instead of repeating a class sentence
+twenty-four times. Nothing else here changed: same function, same per-order
+shape, same bypass cohort, and while the switch reads `1` the sentence is the
+old class one exactly as before.
+
+The parameter is positional and REQUIRED, which is how this call site was found
+at all: it was written by a different lane hours before the re-grain landed, and
+the compiler refused it (`Expected 3-4 arguments, but got 2`) rather than letting
+it keep the old behaviour silently. That is the `optional-param-noop` rule
+(`docs/bugs/0098-*`) paying for itself across two branches.
+
+**`*` / `scm.admin` bypass it**, the same cohort that bypasses the write freeze.
+And read `docs/migrated-so-lock.md` §2b before trusting the predicate: the
+AutoCount write-back stamps `linked_ac_docno` on the ERP's own documents, so a
+NEW order joins the locked population shortly after it is saved.
+
 ## 4. Why apply() is shaped the way it is
 
 - **The operator sees the list first.** Three steps — pick who is leaving, read
@@ -107,7 +147,7 @@ the door for addresses and lines.
 
 | Sink | What lands |
 |---|---|
-| `mfg_sales_orders` | `salesperson_id` = new staff; `agent` = new staff's name (skipped when that name cannot be read — a stale name beats an empty one) |
+| `mfg_sales_orders` | `salesperson_id` = new staff; `agent` = new staff's name (skipped when that name cannot be read — a stale name beats an empty one). **Both are fields `sync-ac-delta`'s header lane copies back from AutoCount**, so an edit here and that sync meet on the same column — see `docs/modules/sales-order.md`, "The lane will NOT write a field a person owns" |
 | `mfg_so_audit_log` | `recordSoAudit` `UPDATE_DETAILS`, field changes `salespersonId` and `agent` with from → to, note `Salesperson handover` |
 | AutoCount outbox | `enqueueEdit({ docType: 'SO', touchedFields: ['agent'] })` — see `autocount-writeback.md`; without it the account book keeps naming the departed rep |
 
@@ -130,4 +170,5 @@ permission the API enforces.
 |---|---|
 | `backend/src/scm/shared/so-identity-lock.test.ts` | what still freezes, that `salesperson_id` does not, the `agent` carve-out, and that the carve-out smuggles nothing else through |
 | `backend/src/scm/routes/so-handover.test.ts` | the payload guard: both staff ids required, no self-handover, dedupe, the batch cap |
+| `backend/tests/soHandoverMigratedLock.test.mjs` | five call-site assertions: the migrated-SO lock is asked here, `linked_ac_docno` is read, the refusal reaches `skipped`, it happens BEFORE the update, and it is per order (`continue`, never a whole-batch `return`) |
 | `frontend/src/pages/scm-v2/SalespersonHandover.test.tsx` | the preview is a GET before any write, the 25-per-batch chunking, and that skips are reported rather than swallowed |

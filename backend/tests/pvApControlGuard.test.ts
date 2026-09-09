@@ -88,8 +88,12 @@ function harness(tables: Record<string, Row[]>) {
 const tablesWith = (): Record<string, Row[]> => ({
   accounts: [
     { account_code: '310-0010', account_name: 'Bank', acc_money: true, is_active: true, company_id: CO },
-    { account_code: '400-0000', account_name: 'AP', acc_money: false, is_active: true, company_id: CO },
-    { account_code: '405-0000', account_name: 'Other Creditos', acc_money: false, is_active: true, company_id: CO },
+    /* special_type: the production shape (0649) — both AP controls ARE control
+       accounts, which the typing-time lock refuses on a typed line. */
+    { account_code: '400-0000', account_name: 'AP', acc_money: false, is_active: true, company_id: CO, special_type: 'SCC' },
+    { account_code: '405-0000', account_name: 'Other Creditos', acc_money: false, is_active: true, company_id: CO, special_type: 'SCC' },
+    { account_code: '300-0000', account_name: 'AR', acc_money: false, is_active: true, company_id: CO, special_type: 'SDC' },
+    { account_code: '900-A001', account_name: 'RENTAL', acc_money: false, is_active: true, company_id: CO },
   ],
   suppliers: [
     { id: 'sup-405', code: '405-Z002', name: 'ZHEJIANG JU MIAO', company_id: CO },
@@ -140,5 +144,51 @@ describe('the AP split guard — wrong control refuses, right control saves', ()
       });
       expect(res.status, `${sup} → ${debit} should save; got ${await res.clone().text()}`).toBe(201);
     }
+  });
+});
+
+
+/* docs/bugs/0649 — the typing-time control lock (requireLeafAccount, #2913)
+   judged EVERY debit line, including the supplier payment's one line that
+   debits the AP control the page itself chose — so from 2026-09-03 every AP
+   Payment was refused. The lock now spares exactly that line; every other
+   line, and every line of an expense voucher, is judged as before. */
+const otherBody = (debit: string) => ({
+  payeeName: 'TENAGA NASIONAL',
+  purpose: 'OTHER',
+  currency: 'MYR',
+  exchangeRate: 1,
+  creditAccountCode: '310-0010',
+  lines: [{ description: 'Electricity', debitAccountCode: debit, amountSen: 15000 }],
+});
+const send = (app: Hono, body: unknown) => app.request('/payment-vouchers', {
+  method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' },
+});
+
+describe("the control lock spares the supplier payment's OWN AP-control line (docs/bugs/0649)", () => {
+  test('a 405 supplier prepaying onto 405-0000 saves, and a trade supplier onto 400-0000 saves', async () => {
+    const app = harness(tablesWith());
+    const other = await send(app, apBody('sup-405', '405-0000'));
+    expect(other.status, await other.text()).toBe(201);
+    const trade = await send(app, apBody('sup-400', '400-0000'));
+    expect(trade.status, await trade.text()).toBe(201);
+  });
+
+  test('an expense voucher typing a control account on a line is still refused', async () => {
+    const app = harness(tablesWith());
+    const res = await send(app, otherBody('405-0000'));
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toBe('control_account_locked');
+    const fine = await send(app, otherBody('900-A001'));
+    expect(fine.status, await fine.text()).toBe(201);
+  });
+
+  test("a supplier payment's OTHER lines are still judged — a second line on the AR control refuses", async () => {
+    const app = harness(tablesWith());
+    const body = apBody('sup-405', '405-0000');
+    body.lines.push({ description: 'typed by hand', debitAccountCode: '300-0000', amountSen: 100 });
+    const res = await send(app, body);
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toBe('control_account_locked');
   });
 });

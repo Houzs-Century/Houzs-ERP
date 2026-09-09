@@ -67,6 +67,8 @@ import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
+import { CancelRequestPanel } from "../../vendor/scm/components/CancelRequestPanel";
+import { useCancelRequestAction } from "./use-cancel-request-action";
 import { DocumentRelationshipMapModal, DocumentChoiceDialog } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
@@ -84,7 +86,12 @@ import { formatPhone } from "@2990s/shared/phone";
 import {
   isLocked as isSoLocked,
   amendmentEligible as soAmendmentEligible,
+  deriveBalance as soDeriveBalance,
+  migratedReadonly as soMigratedReadonly,
+  migratedReadonlyReason as soMigratedReadonlyReason,
 } from "../../vendor/scm/lib/so-detail-gates";
+import { MigratedReadonlyBanner } from "../../vendor/scm/components/MigratedReadonlyBanner";
+import { customerRefOf } from '../../lib/customer-ref';
 
 // ─── Row types (subset — see MfgSalesOrdersList.tsx for the full SoRow) ────
 
@@ -109,6 +116,11 @@ type SoHeader = {
   local_total_sen: number;
   balance_sen: number;
   paid_sen: number;
+  /* Stamped by GET /:docNo (ledger + the legacy header deposit) — the only
+     paid figure that is maintained. `paid_sen` is deprecated and is 0 on any
+     order paid through the payment drawer. */
+  paid_sen_total?: number | null;
+  total_revenue_sen?: number | null;
   discount_sen?: number;
   phone: string | null;
   email: string | null;
@@ -204,8 +216,7 @@ type SoItem = {
    shared helper renders "—" for a number the ERP does not have. */
 const fmtMoney = fmtMoneySen;
 
-const refOf = (h: SoHeader): string =>
-  h.po_doc_no || h.customer_so_no || h.ref || "—";
+const refOf = (h: SoHeader): string => customerRefOf(h) || "—";
 
 /* HEADER FIRST, then the SAME shared rule the SO list falls back to — byte-for-
    byte the list's brandOf. Owner 2026-08-18: "我要表头啊", so a filled header
@@ -560,6 +571,7 @@ function SalesOrderDetailV2ReadOnly() {
      the badge + source-PO chips upgrade in place when this arrives. */
   const coverage = useSoLineCoverage(docNo ?? null);
   const updateStatus = useUpdateMfgSalesOrderStatus();
+  const requestCancel = useCancelRequestAction("so");
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
   const askConfirm = useConfirm();
@@ -629,10 +641,20 @@ function SalesOrderDetailV2ReadOnly() {
      order to a resigning rep's replacement meant Override — which unlocks the
      whole order, addresses and lines included. */
   const canAttributeOther = useHouzsAuth().can("scm.so.attribute_other");
-  const editDisabled = hardLocked && !canAttributeOther;
-  const lockedEditHint = hardLocked && canAttributeOther
-    ? "This order is locked by a downstream Delivery Order / Sales Invoice — only the Salesperson can still be changed."
-    : "This order is locked — it already has a downstream Delivery Order / Sales Invoice.";
+  /* CUTOVER: an order carried across from AutoCount is view-only (owner
+     2026-09-08). It out-ranks the salesperson door above — `canAttributeOther`
+     exists so a hard-locked order can still change hands, and re-attributing a
+     migrated order is still a write the API will refuse. Kept as its own term
+     rather than folded into `hardLocked` so the hint below can say WHICH lock
+     the operator is looking at; two locks with one sentence is how a refusal
+     stops being actionable. */
+  const migratedLocked = soMigratedReadonly(salesOrder);
+  const editDisabled = migratedLocked || (hardLocked && !canAttributeOther);
+  const lockedEditHint = migratedLocked
+    ? soMigratedReadonlyReason(salesOrder)
+    : hardLocked && canAttributeOther
+      ? "This order is locked by a downstream Delivery Order / Sales Invoice — only the Salesperson can still be changed."
+      : "This order is locked — it already has a downstream Delivery Order / Sales Invoice.";
   const editLabel = canAmend
     ? hasOpenAmend
       ? "View amendment"
@@ -691,20 +713,13 @@ function SalesOrderDetailV2ReadOnly() {
     setPayEditing(true);
     paymentsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
-  const doCancel = async () => {
+  /* Cancel is a REQUEST now (owner 2026-09-08): a reason, then two approvals;
+     the cancel itself (executeCancel) is run by CancelRequestPanel on the
+     second signature, with every guard the status route always had. */
+  const doCancel = () => { if (salesOrder) void requestCancel(salesOrder.doc_no, salesOrder.doc_no); };
+  const executeCancel = () => {
     if (!salesOrder) return;
-    if (await askConfirm({
-      title: `Cancel sales order ${salesOrder.doc_no}?`,
-      body: "This cannot be undone.",
-      confirmLabel: "Cancel order",
-      danger: true,
-    })) {
-      updateStatus.mutate({
-        docNo: salesOrder.doc_no,
-        status: "cancelled",
-        expectedStatus: salesOrder.status,
-      });
-    }
+    updateStatus.mutate({ docNo: salesOrder.doc_no, status: "CANCELLED", expectedStatus: salesOrder.status });
   };
   /* History (owner 2026-08-13: "点history的时候没有反应").
      This used to `navigate(\`…/${docNo}?tab=history\`)` — to the route we are
@@ -1053,6 +1068,8 @@ function SalesOrderDetailV2ReadOnly() {
         </div>
       </div>
 
+      <CancelRequestPanel docType="so" docKey={salesOrder.doc_no} docNumber={salesOrder.doc_no} onExecute={executeCancel} executing={updateStatus.isPending} />
+
       {/* ─── Desktop sticky header (hidden on phone) ────────────────── */}
       {/* Nick 2026-07-09 — "这个圈起来的需要 pin 起来".
           TopNavbar (components/TopNavbar.tsx) sits sticky top-0 z-30 h-12
@@ -1153,7 +1170,13 @@ function SalesOrderDetailV2ReadOnly() {
                 and NOTHING else: it does not set ?edit=1, so lines, header and
                 addresses stay read-only under their own `isLocked` gate, which
                 is the lock that genuinely belongs to them. */}
-            {!["cancelled", "draft"].includes(salesOrder.status?.toLowerCase() ?? "") && (
+            {/* CUTOVER: a migrated order takes no money here either. Its balance
+                is the ONE figure the ERP knows is wrong (AutoCount payments
+                since 2026-08-28 have not reached us), which is the whole reason
+                the document is shut — so this is the last door to leave open.
+                The API refuses the write regardless; hiding the button stops the
+                operator being offered a click that can only 409. */}
+            {!migratedLocked && !["cancelled", "draft"].includes(salesOrder.status?.toLowerCase() ?? "") && (
               <Button
                 variant="secondary"
                 icon={<Wallet size={14} />}
@@ -1163,13 +1186,20 @@ function SalesOrderDetailV2ReadOnly() {
                 Collect payment
               </Button>
             )}
+            {/* Cancel is a WRITE (PATCH /:docNo/status), and on a migrated order
+                it is refused. It is also the most destructive thing on this bar,
+                so it is disabled-with-a-reason rather than hidden: a salesperson
+                looking for it must find out WHY it cannot be used, not wonder
+                where it went. */}
             {salesOrder.status?.toLowerCase() !== "cancelled" && (
               <Button
                 variant="danger"
                 icon={<XCircle size={14} />}
                 onClick={doCancel}
+                disabled={migratedLocked}
+                title={migratedLocked ? lockedEditHint : undefined}
               >
-                Cancel SO
+                Request cancellation
               </Button>
             )}
             <Button
@@ -1178,7 +1208,7 @@ function SalesOrderDetailV2ReadOnly() {
               onClick={goEdit}
               disabled={editDisabled}
               title={
-                hardLocked
+                migratedLocked || hardLocked
                   ? lockedEditHint
                   : canAmend
                     ? "This order is processing-locked — changes go through the SO Amendment workflow."
@@ -1193,6 +1223,7 @@ function SalesOrderDetailV2ReadOnly() {
 
       {/* ─── Detail body ────────────────────────────────────────────── */}
       <div className="py-5">
+        <MigratedReadonlyBanner header={salesOrder} />
         {/* Mobile-only Order total hero — sits at the very top of the scroll
             body, above the Customer section. On md+ the dark Order total lives
             in the sticky aside instead (below). */}
@@ -1390,8 +1421,14 @@ function SalesOrderDetailV2ReadOnly() {
                 deep-links land with the toggle already open. */}
             {(() => {
               const soStatus = salesOrder.status?.toLowerCase() ?? "";
-              const canOfferPayEdit = !["cancelled", "draft"].includes(soStatus);
-              const canEditPayments = soStatus === "draft" || (soStatus !== "cancelled" && payEditing);
+              /* A migrated order's balance is the one number we KNOW is wrong
+                 (AutoCount payments since 2026-08-28 have not reached the ERP),
+                 so the payments card is the last place to offer an edit on one.
+                 The API refuses these writes too; this stops the operator being
+                 offered the click at all. */
+              const canOfferPayEdit = !migratedLocked && !["cancelled", "draft"].includes(soStatus);
+              const canEditPayments = !migratedLocked
+                && (soStatus === "draft" || (soStatus !== "cancelled" && payEditing));
               return (
                 <div ref={paymentsRef}>
                   <PaymentsTable
@@ -1560,7 +1597,7 @@ function SalesOrderDetailV2ReadOnly() {
             type="button"
             onClick={goEdit}
             disabled={editDisabled}
-            title={hardLocked ? lockedEditHint : undefined}
+            title={migratedLocked || hardLocked ? lockedEditHint : undefined}
             className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink disabled:opacity-40"
           >
             <Edit3 size={16} /> {editLabel}
@@ -1643,8 +1680,17 @@ function SalesOrderDetailV2ReadOnly() {
             value: fmtMoney(salesOrder.local_total_sen, salesOrder.currency),
           },
           {
+            /* Through the SHARED gate, not off `balance_sen` — the same number
+               the mobile detail shows and the same one the PDF below prints.
+               Reading the column directly is what put a 0 here for every
+               AutoCount-imported order, on a card whose Order total row above
+               it was correct. Trace: the entry named in `deriveBalance`'s own
+               docblock (vendor/scm/lib/so-detail-gates.ts). */
             label: "Balance",
-            value: fmtMoney(salesOrder.balance_sen, salesOrder.currency),
+            value: fmtMoney(
+              soDeriveBalance(salesOrder, printPaymentsQ.data),
+              salesOrder.currency,
+            ),
           },
         ]}
         {...print.handlers}

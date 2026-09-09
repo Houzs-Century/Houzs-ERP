@@ -36,20 +36,28 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 /* The owner's four layers as chips (2026-09-02). The enum underneath stays
    DRAFT/POSTED/CANCELLED — Prepared and Checked are DRAFTs wearing marks, so
    the chip filter reads the marks, not just the status. */
-const STATUS_CHIPS = ['all', 'DRAFT', 'PREPARED', 'CHECKED', 'POSTED', 'CANCELLED'] as const;
+const STATUS_CHIPS = ['all', 'DRAFT', 'PREPARED', 'CHECKED', 'POSTED', 'ADVANCE', 'CANCELLED'] as const;
+
+/* An advance not yet knocked off (owner 2026-09-06: 如果这个 prepay 还没有
+   knock off 单,在 listing 要特别显示 — AutoCount paints such rows blue). The
+   row goes blue AND wears a pill with the open amount: colour alone says
+   neither how much nor, to a colour-blind clerk, anything at all. */
+const advanceOpenSen = (r: PaymentVoucherRow): number => Number(r.advance_remaining_sen ?? 0);
+const ADVANCE_BLUE = 'var(--c-blue, #1d4ed8)';
 
 const chipMatches = (chip: string, r: PaymentVoucherRow): boolean => {
   switch (chip) {
     case 'DRAFT':    return r.status === 'DRAFT' && r.submitted_at == null;
     case 'PREPARED': return r.status === 'DRAFT' && r.submitted_at != null && r.checked_at == null;
     case 'CHECKED':  return r.status === 'DRAFT' && r.checked_at != null;
+    case 'ADVANCE':  return advanceOpenSen(r) > 0;
     default:         return r.status === chip;
   }
 };
 
 const CHIP_LABELS: Record<string, string> = {
   all: 'All', DRAFT: 'Draft', PREPARED: 'Prepared', CHECKED: 'Checked',
-  POSTED: 'Approved', CANCELLED: 'Cancelled',
+  POSTED: 'Approved', ADVANCE: 'Advance open', CANCELLED: 'Cancelled',
 };
 
 const fmtMoney = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
@@ -109,6 +117,11 @@ const buildPvColumns = (): DataGridColumn<PaymentVoucherRow>[] => [
         )}
         {r.status === 'DRAFT' && r.submitted_at != null && r.checked_at == null && (
           <span style={{ fontSize: 'var(--fs-12, 12px)', color: 'var(--c-orange, #b06000)' }}>prepared — awaiting check</span>
+        )}
+        {advanceOpenSen(r) > 0 && (
+          <span style={{ fontSize: 'var(--fs-12, 12px)', color: ADVANCE_BLUE, fontWeight: 600, whiteSpace: 'nowrap' }}>
+            预付未冲 {fmtMoney(advanceOpenSen(r), r.currency)}
+          </span>
         )}
       </span>
     ),
@@ -195,7 +208,12 @@ export const PaymentVouchers = () => {
   const approveTargets = canApprove ? tickedRows.filter(isApprovable) : [];
 
   const runBatch = async (kind: 'prepare' | 'check' | 'approve') => {
-    const targets = kind === 'prepare' ? prepareTargets : kind === 'check' ? checkTargets : approveTargets;
+    /* Voucher-date order, then the Draft/creation order (docs/bugs/0653): the
+       formal number is minted the moment a voucher is checked, so a batch that
+       ran in TICK order once gave the 28/04 vouchers 001/002 and the 21/04 ones
+       003–006. Tick order is the operator's mouse; the date is the paper's. */
+    const targets = [...(kind === 'prepare' ? prepareTargets : kind === 'check' ? checkTargets : approveTargets)]
+      .sort((a, b) => String(a.voucher_date ?? '').localeCompare(String(b.voucher_date ?? '')) || String(a.pv_number).localeCompare(String(b.pv_number)));
     if (targets.length === 0) return;
     /* Prepare is freely reversible (withdraw, and the voucher stays editable)
        so it runs without a dialog — same as the detail page's button. The two
@@ -329,6 +347,12 @@ export const PaymentVouchers = () => {
                   <Plus {...ICON} />
                   <span>New Payment Voucher</span>
                 </Button>
+                {/* The third kind (§14): money back to a customer, named by
+                    the order or the cancelled invoice it refunds. */}
+                <Button variant="secondary" size="sm" onClick={() => navigate('/scm/payment-vouchers/new?type=refund')}>
+                  <Plus {...ICON} />
+                  <span>New Customer Refund</span>
+                </Button>
                 {/* The bill pile: drop many bills, they come back read and
                     grouped by supplier (owner's three cases, 2026-09-02). */}
                 <Button variant="ghost" size="sm" onClick={() => navigate('/scm/payment-vouchers/scan')}>
@@ -433,7 +457,7 @@ export const PaymentVouchers = () => {
         onRowDoubleClick={(r) => navigate(`/scm/payment-vouchers/${r.id}`)}
         rowStyle={(r) => r.status === 'CANCELLED'
           ? { opacity: 0.6, filter: 'grayscale(0.4)' }
-          : undefined}
+          : advanceOpenSen(r) > 0 ? { color: ADVANCE_BLUE } : undefined}
         contextMenu={(r) => {
           // DRAFT is editable; a POSTED / CANCELLED voucher is read-only. Cancel
           // is hidden once cancelled. View always available.
@@ -448,7 +472,7 @@ export const PaymentVouchers = () => {
              identity is fresh. An AP Payment copies to an AP Payment. */
           menu.push({
             label: 'Copy as new',
-            onClick: () => navigate(`/scm/payment-vouchers/new?copyFrom=${r.id}${(r as Record<string, unknown>).purpose === 'SUPPLIER_PAYMENT' ? '&type=ap' : ''}`),
+            onClick: () => navigate(`/scm/payment-vouchers/new?copyFrom=${r.id}${(r as Record<string, unknown>).purpose === 'SUPPLIER_PAYMENT' ? '&type=ap' : (r as Record<string, unknown>).purpose === 'CUSTOMER_REFUND' ? '&type=refund' : ''}`),
           });
           /* Print (owner 2026-09-03: print pv include ocr 的文件一起) — the
              established list→print route: land on the detail with ?print=1

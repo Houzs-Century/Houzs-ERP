@@ -23,11 +23,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, Trash2, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { useCreatePaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, useExtractBills, useUploadPvFile, fileToBase64, type BillExtraction, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useCreatePaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, usePvReservations, NO_RESERVATIONS, useExtractBills, useUploadPvFile, useRefundSource, fileToBase64, type BillExtraction, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { useIdempotencyKey } from '../../lib/idempotency';
-import { useAccounts, useAccountRoles, type Account } from '../../vendor/scm/lib/accounting-queries';
+import { useAccounts, useAccountRoles, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
+import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
+import { upperFill } from '../../vendor/scm/lib/ocr-fill';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
+import { useApInvoices } from '../../vendor/scm/lib/ap-invoice-queries';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
 import { useActiveCurrencies, rateFor } from '../../vendor/scm/lib/currencies-queries';
 import { CurrencySelect } from '../../vendor/scm/components/CurrencySelect';
@@ -54,7 +57,7 @@ const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
 /* Migration 0202 — what this voucher is FOR. SUPPLIER_PAYMENT settles a
    supplier's outstanding PIs at face value (the "Apply to PI" section);
    FREIGHT / OTHER are plain cash-out vouchers (lines only, no settlement). */
-type PvPurpose = 'SUPPLIER_PAYMENT' | 'FREIGHT' | 'OTHER';
+type PvPurpose = 'SUPPLIER_PAYMENT' | 'FREIGHT' | 'OTHER' | 'CUSTOMER_REFUND';
 
 type DraftLine = {
   rid:              string;
@@ -73,10 +76,17 @@ const newLine = (): DraftLine => ({
 /* One outstanding-PI row in the "Apply to PI" picker, with the amount the
    operator chooses to apply (centi, MYR). */
 type PiAlloc = {
+  /** The row's id — a purchase invoice's, or (kind API) an AP invoice's. */
   piId:               string;
+  /** A purchase invoice (stock) or an AP invoice (the non-stock bill, owner
+      2026-09-06) — both settle here, the payload names which. */
+  kind:               'PI' | 'API';
   invoiceNumber:      string;
   supplierInvoiceRef: string | null;
   invoiceDate:        string | null;
+  /** The invoice's own total — shown beside what is left (owner 2026-09-07:
+      我要显示 invoice 的原本 amount). */
+  totalSen:           number;
   outstandingSen:   number;
   amountSen:        number;
 };
@@ -91,6 +101,10 @@ export const PaymentVoucherNew = () => {
      Payment Voucher: expense lines only, no supplier, no PI section. */
   const [searchParams] = useSearchParams();
   const isAp = searchParams.get('type') === 'ap';
+  /* ?type=refund — the Customer Refund (§14): the operator names the document
+     (SO any time, SI when cancelled), the server says who and how much, and
+     the one Dr AR line is the system's. No payee typed, no lines, no PIs. */
+  const isRefund = searchParams.get('type') === 'refund';
   const create   = useCreatePaymentVoucher();
   /* One key for the one voucher this page is open to raise (lib/idempotency.ts).
      Minted once by useState's lazy init: stable across re-renders and across a
@@ -104,7 +118,9 @@ export const PaymentVoucherNew = () => {
   const saving   = create.isPending;
 
   const accountsQ = useAccounts();
-  const accounts  = useMemo<Account[]>(() => (accountsQ.data?.accounts ?? []).filter((a) => a.is_active), [accountsQ.data]);
+  /* The whole chart goes in: a header whose children are all retired is still
+     a header (docs/bugs/0693). */
+  const accounts  = useMemo<Account[]>(() => postableAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
   /* Paid From offers MONEY only (owner: paid from 应该只能选cash 和银行) — the
      server refuses anything else anyway; the picker just stops offering it. */
   const moneyAccounts = useMemo<Account[]>(() => accounts.filter((a) => a.acc_money === true), [accounts]);
@@ -116,7 +132,7 @@ export const PaymentVoucherNew = () => {
   const [supplierId, setSupplierId]               = useState<string>('');
   /* Fixed by the document type — AP Payment settles PIs, Payment Voucher is
      plain cash-out. The old three-way dropdown is gone with the split. */
-  const purpose: PvPurpose = isAp ? 'SUPPLIER_PAYMENT' : 'OTHER';
+  const purpose: PvPurpose = isRefund ? 'CUSTOMER_REFUND' : isAp ? 'SUPPLIER_PAYMENT' : 'OTHER';
   const [creditAccountCode, setCreditAccountCode] = useState<string>('');
   /* Pre-fill Paid From with the company's own default bank (BANK_DEFAULT —
      the role the owner maintains in Recon Setup). Only while untouched. */
@@ -128,6 +144,18 @@ export const PaymentVoucherNew = () => {
   }, [rolesQ.data, moneyAccounts]);
   const [voucherDate, setVoucherDate]             = useState<string>(() => todayMyt());
   const [notes, setNotes]                         = useState<string>('');
+
+  /* Internal transfer INSIDE the PV (GL redesign item 10, owner: 不能直接在
+     pv 那边开转账就好吗) — same document, same Draft→Checked→Approved chain,
+     same per-bank number series. The "payee" becomes one of our own money
+     accounts and the lines collapse to a single Dr <destination> leg; the
+     server refuses destination === Paid From (same_account). PV mode only —
+     an AP Payment settles suppliers by definition. */
+  const [isTransfer, setIsTransfer]               = useState(false);
+  const [toAccountCode, setToAccountCode]         = useState<string>('');
+  const [transferAmount, setTransferAmount]       = useState<string>('');
+  const transferSen = Math.round((Number(transferAmount) || 0) * 100);
+  const toAccount = moneyAccounts.find((a) => a.account_code === toAccountCode) ?? null;
 
   /* ── Bill OCR (2026-09-02) ──────────────────────────────────────────────
      "Scan bill": pick the bill's page(s) — MULTI-SELECT MEANS ONE BILL — and
@@ -150,11 +178,18 @@ export const PaymentVoucherNew = () => {
        print ("TNB" over "TENAGA NASIONAL BERHAD"); the print fills the gap. */
     const payee = extras?.memory?.payeeName ?? ex.vendorName;
     if (payee) setPayeeName((prev) => prev.trim() ? prev : payee);
-    if (ex.invoiceDate) setVoucherDate(ex.invoiceDate);
-    const noteBits = [
+    /* The voucher stays dated TODAY — the bill's date no longer overwrites it
+       (owner 2026-09-08: 普通 payment scan bill 可以 default 放今天吗 → 做): the
+       voucher's date is when he records the payment. The bill's own date rides
+       in the notes instead, so nothing read is lost. The AP invoice form keeps
+       the bill's date — there it IS the invoice date. */
+    /* What the reader fills goes upper case (owner 2026-09-08; ocr-fill.ts);
+       the payee above keeps the operator's own saved casing. */
+    const noteBits = upperFill([
       ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : null,
+      ex.invoiceDate ? `dated ${ex.invoiceDate}` : null,
       ex.dueDate ? `due ${ex.dueDate}` : null,
-    ].filter(Boolean).join(' · ');
+    ].filter(Boolean).join(' · '));
     if (noteBits) setNotes((prev) => prev.trim() ? prev : noteBits);
     /* The account: ONLY what this operator saved for this vendor before
        (mig 0341) — never a model guess. Absent a memory it stays empty and a
@@ -163,10 +198,10 @@ export const PaymentVoucherNew = () => {
     const srcLines = extras?.lines ?? ex.lines;
     const drafts = srcLines
       .filter((l) => l.amountSen != null && l.amountSen > 0)
-      .map((l) => ({ ...newLine(), description: l.description ?? '', amountSen: l.amountSen!, debitAccountCode: rememberedAccount }));
+      .map((l) => ({ ...newLine(), description: upperFill(l.description) ?? '', amountSen: l.amountSen!, debitAccountCode: rememberedAccount }));
     /* A bill with no readable lines still carries its total — one line. */
     if (drafts.length === 0 && ex.totalSen != null && ex.totalSen > 0) {
-      drafts.push({ ...newLine(), description: ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : 'As per bill', amountSen: ex.totalSen, debitAccountCode: rememberedAccount });
+      drafts.push({ ...newLine(), description: upperFill(ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : 'As per bill') ?? '', amountSen: ex.totalSen, debitAccountCode: rememberedAccount });
     }
     if (drafts.length > 0) setLines(drafts);
   };
@@ -231,6 +266,21 @@ export const PaymentVoucherNew = () => {
   const [currencyOverride, setCurrencyOverride]   = useState<string | null>(null);
   const [lines, setLines]                         = useState<DraftLine[]>([newLine()]);
   const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string } | null>(null);
+  /* ── Customer Refund state (§14). refundDocNo is the COMMITTED number (blur /
+     Enter on the input); the source is read from the server by that number. */
+  const [refundType, setRefundType]         = useState<'SO' | 'SI'>('SO');
+  const [refundDocInput, setRefundDocInput] = useState<string>('');
+  const [refundDocNo, setRefundDocNo]       = useState<string>('');
+  const [refundAmountSen, setRefundAmountSen] = useState<number | null>(null);
+  const refundQ = useRefundSource(refundType, isRefund ? refundDocNo : '');
+  const refundSrc = isRefund && refundQ.data ? refundQ.data.source : null;
+  /* The amount opens at the headroom (a full refund is the common case) and
+     follows a re-load; a typed figure stays until the document changes. */
+  useEffect(() => {
+    if (!refundSrc) { setRefundAmountSen(null); return; }
+    setRefundAmountSen((prev) => (prev == null || prev > refundSrc.refundableSen ? refundSrc.refundableSen : prev));
+  }, [refundSrc]);
+  const refundError = refundQ.isError ? (refundQ.error instanceof Error ? refundQ.error.message : 'The document could not be read.') : null;
 
   /* ── Copy as new (the owner, 2026-09-03, AutoCount in hand) ─────────────
      ?copyFrom=<pvId> pre-fills CONTENT from an existing voucher — payee,
@@ -250,6 +300,13 @@ export const PaymentVoucherNew = () => {
     if (v.supplier_id) setSupplierId(String(v.supplier_id));
     if (v.credit_account_code) setCreditAccountCode(String(v.credit_account_code));
     if (v.notes) setNotes(String(v.notes));
+    /* A copied refund carries its document, never its amount — the headroom
+       is re-read live. */
+    if (v.purpose === 'CUSTOMER_REFUND' && v.refund_source_doc_no) {
+      setRefundType(v.refund_source_type === 'SI' ? 'SI' : 'SO');
+      setRefundDocInput(String(v.refund_source_doc_no));
+      setRefundDocNo(String(v.refund_source_doc_no));
+    }
     const cur = typeof v.currency === 'string' ? v.currency : null;
     if (cur && cur !== 'MYR') {
       setCurrencyOverride(cur);
@@ -297,6 +354,25 @@ export const PaymentVoucherNew = () => {
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
   const dropLine = (rid: string) => setLines((prev) => (prev.length <= 1 ? prev : prev.filter((l) => l.rid !== rid)));
   const addLine  = () => setLines((prev) => [...prev, newLine()]);
+  /* Insert adds a line and LANDS on its account (owner 2026-09-06: 按 Ins 直接
+     加然后直接跳到那一行去输入资料 — the AP invoice's manners, here too);
+     Enter on an amount hops to the next line's account, adding one when
+     there is none. The landing happens after React has drawn the card. */
+  const [landOn, setLandOn] = useState<string | null>(null);
+  useEffect(() => {
+    if (landOn == null) return;
+    document.querySelector<HTMLInputElement>(`[data-line="${landOn}"] input[role="combobox"]`)?.focus();
+    setLandOn(null);
+  }, [landOn, lines]);
+  const addLineAndLand = () => {
+    const l = newLine();
+    setLines((prev) => [...prev, l]);
+    setLandOn(l.rid);
+  };
+  const hopFrom = (rid: string) => {
+    const next = lines.at(lines.findIndex((l) => l.rid === rid) + 1);
+    if (next) setLandOn(next.rid); else addLineAndLand();
+  };
 
   const linesTotalSen = useMemo(() => lines.reduce((s, l) => s + l.amountSen, 0), [lines]);
 
@@ -316,6 +392,11 @@ export const PaymentVoucherNew = () => {
      per PI. The allocations settle AP at face value (MYR). */
   const applyToPi = isAp && !!supplierId;
   const piListQ = usePurchaseInvoices();
+  /* What other UNPOSTED vouchers already applied (docs/bugs/0653): an invoice
+     with nothing left is not offered; a partly reserved one offers only what
+     remains. paid_sen alone moves at Approve and would offer the same bill twice. */
+  const reservationsQ = usePvReservations(applyToPi ? supplierId : null);
+  const reserved = reservationsQ.data ?? NO_RESERVATIONS;
   const outstandingPiRows = useMemo(() => {
     if (!applyToPi) return [] as Array<Record<string, any>>;
     return ((piListQ.data?.purchaseInvoices ?? []) as Array<Record<string, any>>).filter((r) => {
@@ -323,12 +404,12 @@ export const PaymentVoucherNew = () => {
       if (sid !== supplierId) return false;
       const st = String(r.status ?? '').toUpperCase();
       if (st !== 'POSTED' && st !== 'PARTIALLY_PAID') return false;
-      const outstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
+      const outstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) - (reserved.byPi[String(r.id ?? '')] ?? 0);
       return outstanding > 0;
     /* Oldest first — the order you settle a supplier in (the owner asked to
        SEE the dates; the list endpoint sends newest-first for browsing). */
     }).sort((a, b) => String(a.invoice_date ?? '').localeCompare(String(b.invoice_date ?? '')));
-  }, [applyToPi, piListQ.data, supplierId]);
+  }, [applyToPi, piListQ.data, supplierId, reserved]);
 
   // The per-PI amounts the operator has entered, keyed by PI id.
   const [allocAmounts, setAllocAmounts] = useState<Record<string, number>>({});
@@ -338,21 +419,49 @@ export const PaymentVoucherNew = () => {
   /* AP Payment: every row starts at 0 — TICK pays an invoice in full, typing
      pays part of it, and the voucher total FOLLOWS the ticks (the reverse of
      the old cascade, where lines drove a guessed spread). */
+  /* The supplier's open AP INVOICES (non-stock bills) list beside the PIs —
+     the owner's 我想要两个都看到 — same tick, same partial, same clamp. */
+  const apListQ = useApInvoices('API');
+  const outstandingApiRows = useMemo(() => {
+    if (!applyToPi) return [];
+    return (apListQ.data?.rows ?? []).filter((r) =>
+      String(r.supplierId ?? '') === supplierId
+      && (r.status === 'POSTED' || r.status === 'PARTIALLY_PAID')
+      && r.outstandingSen - (reserved.byApInvoice[r.id] ?? 0) > 0);
+  }, [applyToPi, apListQ.data, supplierId, reserved]);
+
   const allocations: PiAlloc[] = useMemo(() => {
-    return outstandingPiRows.map((r) => {
+    const fromPis: PiAlloc[] = outstandingPiRows.map((r) => {
       const piId = String(r.id ?? '');
-      const outstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
+      const outstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) - (reserved.byPi[piId] ?? 0);
       const amountSen = Math.max(0, Math.min(allocAmounts[piId] ?? 0, outstanding));
       return {
         piId,
+        kind:               'PI' as const,
         invoiceNumber:      String(r.invoice_number ?? piId),
         supplierInvoiceRef: (r.supplier_invoice_ref ?? null) as string | null,
         invoiceDate:        (r.invoice_date ?? null) as string | null,
+        totalSen:           Number(r.total_sen ?? 0),
         outstandingSen:   outstanding,
         amountSen,
       };
     });
-  }, [outstandingPiRows, allocAmounts]);
+    const fromApis: PiAlloc[] = outstandingApiRows.map((r) => {
+      const left = r.outstandingSen - (reserved.byApInvoice[r.id] ?? 0);
+      return {
+        piId: r.id,
+        kind: 'API' as const,
+        invoiceNumber: r.invoiceNumber,
+        supplierInvoiceRef: r.supplierInvoiceRef,
+        invoiceDate: r.invoiceDate,
+        totalSen: r.totalSen,
+        outstandingSen: left,
+        amountSen: Math.max(0, Math.min(allocAmounts[r.id] ?? 0, left)),
+      };
+    });
+    /* Oldest first across both kinds — the order you settle a supplier in. */
+    return [...fromPis, ...fromApis].sort((a, b) => String(a.invoiceDate ?? '').localeCompare(String(b.invoiceDate ?? '')));
+  }, [outstandingPiRows, outstandingApiRows, allocAmounts, reserved]);
 
   const allocatedSen = useMemo(() => allocations.reduce((s, a) => s + a.amountSen, 0), [allocations]);
 
@@ -368,7 +477,7 @@ export const PaymentVoucherNew = () => {
 
   /* The voucher total: an AP Payment IS its ticks plus any prepay; a Payment
      Voucher is its lines. Nothing to over-allocate in either shape. */
-  const totalSen = isAp ? allocatedSen + advanceSen : linesTotalSen;
+  const totalSen = isRefund ? (refundAmountSen ?? 0) : isAp ? allocatedSen + advanceSen : linesTotalSen;
 
   /* RINGGIT IN, RATE OUT — re-derived when either side moves (see the header
      comment on the MYR-paid field). */
@@ -389,21 +498,44 @@ export const PaymentVoucherNew = () => {
     ? rolesQ.data?.roles.AP_OTHER
     : rolesQ.data?.roles.AP) ?? '';
   const realLines = lines.filter((l) => l.debitAccountCode && l.amountSen > 0);
-  const canSave = isAp
+  const canSave = isRefund
+    ? !!refundSrc && refundSrc.eligible && !!creditAccountCode && (refundAmountSen ?? 0) > 0 && (refundAmountSen ?? 0) <= refundSrc.refundableSen
+    : isAp
     ? !!payeeName.trim() && !!supplierId && !!creditAccountCode && totalSen > 0 && !!apAccountCode
-    : !!payeeName.trim() && !!creditAccountCode && realLines.length > 0;
+    : isTransfer
+      ? !!creditAccountCode && !!toAccountCode && toAccountCode !== creditAccountCode && transferSen > 0
+      : !!payeeName.trim() && !!creditAccountCode && realLines.length > 0;
 
+  const transferMode = !isAp && isTransfer;
+  const transferPayee = toAccount ? `Internal transfer to ${toAccount.account_code} ${toAccount.account_name}` : '';
   const onSave = async () => {
+    if (isRefund) {
+      if (!refundSrc) { setDialog({ title: 'Name the document', body: 'Type the Sales Order or Sales Invoice number this refunds, then press Enter.' }); return; }
+      if (!refundSrc.eligible) { setDialog({ title: 'This document cannot be refunded', body: refundSrc.reason ?? 'Nothing to refund.' }); return; }
+      if (!creditAccountCode) { setDialog({ title: 'Pick a “Paid From” account', body: 'Choose the bank / cash account the refund leaves.' }); return; }
+      if ((refundAmountSen ?? 0) <= 0) { setDialog({ title: 'Enter the refund amount', body: 'How much goes back to the customer?' }); return; }
+      if ((refundAmountSen ?? 0) > refundSrc.refundableSen) { setDialog({ title: 'More than was collected', body: `${refundSrc.docNo} has ${fmtRm(refundSrc.refundableSen)} left to refund.` }); return; }
+    } else if (transferMode) {
+      if (!creditAccountCode) { setDialog({ title: 'Pick a “Paid From” account', body: 'Choose the account the money leaves.' }); return; }
+      if (!toAccountCode) { setDialog({ title: 'Pick the destination', body: 'Choose which of our own accounts the money goes into.' }); return; }
+      if (toAccountCode === creditAccountCode) { setDialog({ title: 'Same account both sides', body: 'A transfer needs two different accounts.' }); return; }
+      if (transferSen <= 0) { setDialog({ title: 'Enter the amount', body: 'How much is moving?' }); return; }
+    } else {
     if (!payeeName.trim()) { setDialog({ title: 'Enter a payee', body: 'Who is this voucher paying?' }); return; }
     if (!creditAccountCode) { setDialog({ title: 'Pick a “Paid From” account', body: 'Choose the bank / cash account the money leaves.' }); return; }
     if (isAp && !supplierId) { setDialog({ title: 'Pick a supplier', body: 'An AP Payment settles a supplier — choose whose invoices this pays.' }); return; }
     if (isAp && totalSen === 0) { setDialog({ title: 'Nothing to pay yet', body: 'Tick an invoice, type a partial amount, or enter a prepay figure.' }); return; }
     if (!isAp && realLines.length === 0) { setDialog({ title: 'Add at least one line', body: 'Each line needs a debit account and an amount > 0.' }); return; }
+    }
 
     /* AP Payment: the ONE GL line is written here — Dr the AP control account
        for exactly what the ticks apply. The operator never touches a debit
        account on this document, so it cannot be mis-booked. */
-    const sendLines = isAp
+    const sendLines = isRefund
+      ? [] /* the server composes the one Dr AR line (§14) */
+      : transferMode
+      ? [{ description: 'Internal transfer', debitAccountCode: toAccountCode, amountSen: transferSen }]
+      : isAp
       ? [{
         description: [
           allocations.filter((a) => a.amountSen > 0).length > 0 ? `Settle ${allocations.filter((a) => a.amountSen > 0).length} invoice(s)` : null,
@@ -417,14 +549,18 @@ export const PaymentVoucherNew = () => {
         amountSen:      l.amountSen,
       }));
     const sendAllocations = applyToPi
-      ? allocations.filter((a) => a.amountSen > 0).map((a) => ({ piId: a.piId, amountSen: a.amountSen }))
+      ? allocations.filter((a) => a.amountSen > 0).map((a) => (
+        a.kind === 'API'
+          ? { apInvoiceId: a.piId, amountSen: a.amountSen }
+          : { piId: a.piId, amountSen: a.amountSen }))
       : [];
     try {
       const res = await create.mutateAsync({
         idempotencyKey:    idemKey,
-        payeeName:         payeeName.trim(),
-        supplierId:        supplierId || null,
+        payeeName:         isRefund ? (refundSrc?.customer.name ?? refundSrc?.docNo ?? '') : transferMode ? transferPayee : payeeName.trim(),
+        supplierId:        transferMode || isRefund ? null : (supplierId || null),
         purpose,
+        ...(isRefund ? { refundSourceType: refundType, refundSourceDocNo: refundSrc?.docNo, refundAmountSen: refundAmountSen ?? 0 } : {}),
         creditAccountCode,
         voucherDate,
         notes:             notes || undefined,
@@ -469,19 +605,24 @@ export const PaymentVoucherNew = () => {
     }
   };
 
+  /* F3 / Ctrl+S = the Create button (owner 2026-09-08: 像 autocount 按 f3);
+     onSave keeps its own sentences for what is still missing. */
+  useSaveHotkey(() => { void onSave(); }, !saving);
+
   return (
     <div className="space-y-4">
       <PageHeader back
         eyebrow="Finance"
-        title={isAp ? 'New AP Payment' : 'New Payment Voucher'}
+        title={isRefund ? 'New Customer Refund' : isAp ? 'New AP Payment' : 'New Payment Voucher'}
         actions={
           <div className={styles.actions}>
+            <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{SAVE_HOTKEY_HINT}</span>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/payment-vouchers')}>
               <X {...ICON} /> Cancel
             </Button>
             <Button variant="primary" size="md" onClick={onSave} disabled={saving || !canSave}>
               <Save {...ICON} />
-              {saving ? 'Saving…' : isAp ? 'Create AP Payment' : 'Create Voucher'}
+              {saving ? 'Saving…' : isRefund ? 'Create Refund' : isAp ? 'Create AP Payment' : 'Create Voucher'}
             </Button>
           </div>
         }
@@ -490,12 +631,38 @@ export const PaymentVoucherNew = () => {
       <section className={styles.card}>
         <div className={styles.cardHeader}><h2 className={styles.cardTitle}>Header</h2></div>
         <div className={styles.cardBody}>
+          {!isAp && !isRefund && (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 'var(--space-3)' }}>
+              {/* 付给供应商/其他 vs 内部转账 (item 10) — same paper, same chain. */}
+              <Button variant={!isTransfer ? 'primary' : 'secondary'} onClick={() => setIsTransfer(false)}>付款 Payment</Button>
+              <Button variant={isTransfer ? 'primary' : 'secondary'} onClick={() => setIsTransfer(true)}>内部转账 Transfer</Button>
+            </div>
+          )}
           <div className={styles.formGrid2}>
+            {transferMode ? (
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Transfer to *</span>
+                <select value={toAccountCode} onChange={(e) => setToAccountCode(e.target.value)} className={styles.fieldInput}>
+                  <option value="">— which of our accounts receives it —</option>
+                  {moneyAccounts.filter((a) => a.account_code !== creditAccountCode).map((a) => (
+                    <option key={a.account_code} value={a.account_code}>{a.account_code} · {a.account_name}</option>
+                  ))}
+                </select>
+              </label>
+            ) : isRefund ? (
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Customer</span>
+              {/* From the document, never retyped — the payee IS the customer. */}
+              <input type="text" readOnly aria-label="Customer" value={refundSrc ? `${refundSrc.customer.name ?? '—'}${refundSrc.customer.phone ? ` · ${refundSrc.customer.phone}` : ''}` : ''}
+                placeholder="— from the document below —" className={styles.fieldInput} style={{ background: 'var(--c-cream)' }} />
+            </label>
+            ) : (
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Payee *</span>
               <input type="text" value={payeeName} onChange={(e) => setPayeeName(e.target.value)}
                 placeholder="Who are we paying? (e.g. ABC Freight Forwarding)" className={styles.fieldInput} required />
             </label>
+            )}
             <label className={styles.field}>
               <span className={styles.fieldLabel}>PV #</span>
               <input type="text" readOnly value="(assigned on Save)" className={styles.fieldInput}
@@ -540,14 +707,14 @@ export const PaymentVoucherNew = () => {
             {/* Multi-currency (Phase 1-A). Currency defaults to the linked
                 supplier's currency (MYR = strict no-op, rate field hidden); a
                 foreign currency reveals the auto-filled, editable exchange rate. */}
-            <CurrencySelect
+            {!isRefund && <CurrencySelect
               currency={currency}
               onCurrencyChange={setCurrencyOverride}
               exchangeRate={exchangeRate}
               onRateChange={(v) => { setRateSource('rate'); setMyrPaidSen(null); setExchangeRate(v); }}
               rateHint={<>≈ {fmtRm(Math.round(totalSen * resolveFxRate(exchangeRate)), 'MYR')} posted to GL</>}
               styles={styles}
-            />
+            />}
 
             {/* ── Ringgit in, rate out ─────────────────────────────────────────
                 The owner knows what left the bank, not what the rate was. Enter the
@@ -579,7 +746,104 @@ export const PaymentVoucherNew = () => {
       {/* Expense lines — the Payment Voucher's body. An AP Payment has no
           hand-written lines at all: its one GL line (Dr the AP control) is
           composed on save from the ticks below. */}
-      {!isAp && (
+      {transferMode && (
+        <section className={styles.card}>
+          <div className={styles.cardHeader}><h2 className={styles.cardTitle}>Amount</h2></div>
+          <div className={styles.cardBody}>
+            <label className={styles.field} style={{ maxWidth: 260 }}>
+              <span className={styles.fieldLabel}>How much moves (RM) *</span>
+              <input type="number" min="0" step="0.01" value={transferAmount}
+                onChange={(e) => setTransferAmount(e.target.value)} className={styles.fieldInput}
+                placeholder="0.00" aria-label="Transfer amount" />
+            </label>
+            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+              过账时:Dr {toAccountCode || '收方'} / Cr {creditAccountCode || 'Paid From'} — approve 才进 GL,和付款单同一条审批链。
+            </div>
+          </div>
+        </section>
+      )}
+      {/* ── Refunds — the Customer Refund's body (§14): name the document,
+          read what it collected, decide how much goes back. ── */}
+      {isRefund && (
+        <section className={styles.card}>
+          <div className={styles.cardHeader}>
+            <h2 className={styles.cardTitle}>Refunds</h2>
+            <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+              {refundSrc ? `${fmtRm(refundSrc.refundableSen)} refundable` : '认单为主 — name the order or the cancelled invoice'}
+            </span>
+          </div>
+          <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+            <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Button variant={refundType === 'SO' ? 'primary' : 'secondary'} onClick={() => { setRefundType('SO'); setRefundDocNo(''); }}>Sales Order</Button>
+                <Button variant={refundType === 'SI' ? 'primary' : 'secondary'} onClick={() => { setRefundType('SI'); setRefundDocNo(''); }}>Sales Invoice</Button>
+              </div>
+              <label className={styles.field} style={{ flex: '1 1 260px' }}>
+                <span className={styles.fieldLabel}>{refundType === 'SO' ? 'Sales Order no. *' : 'Sales Invoice no. *'}</span>
+                <input type="text" value={refundDocInput} aria-label="Refunded document"
+                  onChange={(e) => setRefundDocInput(e.target.value)}
+                  onBlur={() => setRefundDocNo(refundDocInput.trim())}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); setRefundDocNo(refundDocInput.trim()); } }}
+                  placeholder={refundType === 'SO' ? 'e.g. 2990-SO-2607-001' : 'e.g. HC-SI-2607-001'} className={styles.fieldInput} />
+              </label>
+            </div>
+            {refundQ.isLoading && refundDocNo && <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Reading {refundDocNo}…</p>}
+            {refundError && <p style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-13)' }}>{refundError}</p>}
+            {refundSrc && (
+              <>
+                {!refundSrc.eligible && (
+                  <p style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-13)', fontWeight: 600 }}>{refundSrc.reason}</p>
+                )}
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+                  <thead>
+                    <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                      <th style={{ padding: '6px 8px' }}>Paid on</th>
+                      <th style={{ padding: '6px 8px' }}>Method</th>
+                      <th style={{ padding: '6px 8px' }}>Bank</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Amount</th>
+                      <th style={{ padding: '6px 8px' }}>In the ledger</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {refundSrc.payments.length === 0 && (
+                      <tr><td colSpan={5} style={{ padding: '6px 8px', color: 'var(--fg-muted)' }}>No payment recorded on {refundSrc.docNo}.</td></tr>
+                    )}
+                    {refundSrc.payments.map((p) => (
+                      <tr key={p.id} style={{ borderTop: '1px solid var(--line)', color: p.booked ? 'inherit' : 'var(--fg-muted)' }}>
+                        <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>{fmtDate(p.paidOn)}</td>
+                        <td style={{ padding: '6px 8px' }}>{p.method}</td>
+                        <td style={{ padding: '6px 8px' }}>{p.provider ?? '—'}</td>
+                        <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(p.amountSen)}</td>
+                        <td style={{ padding: '6px 8px' }}>{p.booked ? '✓ booked' : p.method === 'imported' ? 'AutoCount era' : 'not booked'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', fontSize: 'var(--fs-13)', borderTop: '1px solid var(--line)', paddingTop: 'var(--space-3)' }}>
+                  <span>Booked here <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.bookedSen)}</b></span>
+                  <span>Already on refund vouchers <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.refundedSen)}</b>
+                    {refundSrc.refunds.map((r) => <span key={r.id}> · <a href={`/scm/payment-vouchers/${r.id}`} style={{ color: 'var(--c-orange)' }}>{r.pvNumber}</a></span>)}
+                  </span>
+                  <span>Refundable <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.refundableSen)}</b></span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+                  <b style={{ fontSize: 'var(--fs-13)' }}>Refund amount (MYR)</b>
+                  <label style={{ width: 180 }}>
+                    <span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>Refund amount</span>
+                    <MoneyInput bare valueSen={refundAmountSen ?? 0} aria-label="Refund amount"
+                      onCommit={(sen) => setRefundAmountSen(Math.max(0, sen ?? 0))}
+                      inputClassName={styles.fieldInput} selectOnFocus disabled={!refundSrc.eligible} />
+                  </label>
+                  <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+                    Books: Dr {rolesQ.data?.roles.AR ?? '300-0000'} Trade Debtors ({refundSrc.customer.name ?? refundSrc.docNo}) {fmtRm(refundAmountSen ?? 0)} · Cr {creditAccountCode || 'Paid From'} {fmtRm(refundAmountSen ?? 0)}
+                  </span>
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+      )}
+      {!isAp && !transferMode && !isRefund && (
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Lines</h2>
@@ -607,11 +871,13 @@ export const PaymentVoucherNew = () => {
             </div>
           )}
           {lines.map((l, idx) => (
-            <div key={l.rid} style={{
-              background: 'var(--c-paper)', border: '1px solid var(--line)',
-              borderRadius: 'var(--radius-lg)', padding: 'var(--space-4)',
-              display: 'flex', flexDirection: 'column', gap: 'var(--space-3)',
-            }}>
+            <div key={l.rid} data-line={l.rid}
+              onKeyDown={(e) => { if (e.key === 'Insert') { e.preventDefault(); addLineAndLand(); } }}
+              style={{
+                background: 'var(--c-paper)', border: '1px solid var(--line)',
+                borderRadius: 'var(--radius-lg)', padding: 'var(--space-4)',
+                display: 'flex', flexDirection: 'column', gap: 'var(--space-3)',
+              }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
                 <span style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-12)', fontWeight: 700, letterSpacing: '0.10em', color: 'var(--fg-muted)' }}>LINE {idx + 1}</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
@@ -625,12 +891,10 @@ export const PaymentVoucherNew = () => {
                 </div>
               </div>
 
+              {/* The owner's typing order (2026-09-08: 先 account, 再 description,
+                  再 amount) — the same order the AP invoice and Other Debtor
+                  bill already keep; Tab follows the DOM. */}
               <div className={styles.formGrid2}>
-                <label className={styles.field}>
-                  <span className={styles.fieldLabel}>Description</span>
-                  <input type="text" value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })}
-                    placeholder="e.g. Sea freight — Shenzhen → Klang" className={styles.fieldInput} />
-                </label>
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Account (Debit) *</span>
                   <AccountSelect
@@ -641,13 +905,19 @@ export const PaymentVoucherNew = () => {
                     placeholder={accountsQ.isLoading ? 'Loading accounts…' : '— Expense / charge account —'}
                   />
                 </label>
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Description</span>
+                  <input type="text" value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })}
+                    placeholder="e.g. Sea freight — Shenzhen → Klang" className={styles.fieldInput} />
+                </label>
               </div>
 
               <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Amount (MYR)</span>
-                  <MoneyInput bare valueSen={l.amountSen}
+                  <MoneyInput bare valueSen={l.amountSen} aria-label={`line ${idx + 1} amount`}
                     onCommit={(sen) => setLine(l.rid, { amountSen: sen ?? 0 })}
+                    onKeyDown={(e) => { if (e.key === 'Enter') hopFrom(l.rid); }}
                     inputClassName={styles.fieldInput} selectOnFocus />
                 </label>
               </div>
@@ -682,10 +952,16 @@ export const PaymentVoucherNew = () => {
               </p>
             ) : piListQ.isLoading ? (
               <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Loading outstanding invoices…</p>
-            ) : allocations.length === 0 ? (
-              <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>This supplier has no outstanding purchase invoices.</p>
             ) : (
               <>
+                {/* No open invoice is NOT a dead end: the prepay box below
+                    still books the money as this supplier's advance. It used
+                    to hide behind this empty-list sentence — exactly when a
+                    prepay is the whole point (owner 2026-09-06: AP payment 时
+                    如何 advance pay). */}
+                {allocations.length === 0 ? (
+                  <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>This supplier has no outstanding invoices — a prepay below still books as their advance.</p>
+                ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
                   <thead>
                     <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
@@ -693,6 +969,7 @@ export const PaymentVoucherNew = () => {
                       <th style={{ padding: '6px 8px' }}>Invoice</th>
                       <th style={{ padding: '6px 8px' }}>Date</th>
                       <th style={{ padding: '6px 8px' }}>Supplier Ref</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Amount</th>
                       <th style={{ padding: '6px 8px', textAlign: 'right' }}>Outstanding</th>
                       <th style={{ padding: '6px 8px', textAlign: 'right' }}>Apply</th>
                     </tr>
@@ -715,9 +992,15 @@ export const PaymentVoucherNew = () => {
                             style={{ width: 16, height: 16, accentColor: 'var(--c-orange)' }}
                           />
                         </td>
-                        <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>{a.invoiceNumber}</td>
+                        <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>
+                          {a.invoiceNumber}
+                          {a.kind === 'API' && (
+                            <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', fontFamily: 'inherit', color: 'var(--fg-muted)' }} title="AP invoice — a non-stock supplier bill">AP</span>
+                          )}
+                        </td>
                         <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDate(a.invoiceDate)}</td>
                         <td style={{ padding: '6px 8px', color: a.supplierInvoiceRef ? 'var(--fg)' : 'var(--fg-muted)' }}>{a.supplierInvoiceRef || '—'}</td>
+                        <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(a.totalSen)}</td>
                         <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(a.outstandingSen)}</td>
                         <td style={{ padding: '6px 8px', textAlign: 'right' }}>
                           <MoneyInput bare valueSen={a.amountSen}
@@ -731,6 +1014,7 @@ export const PaymentVoucherNew = () => {
                     ))}
                   </tbody>
                 </table>
+                )}
                 {/* 预付 — money for this supplier AHEAD of any invoice. Rides
                     the same voucher; the server records it as their advance,
                     knocked off later from the voucher that holds it. */}

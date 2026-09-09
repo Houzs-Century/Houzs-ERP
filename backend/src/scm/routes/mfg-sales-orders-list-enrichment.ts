@@ -39,6 +39,7 @@ import { computeMrp, mrpLineCoverage, type MrpResult } from './mrp';
 import { soLineReadySourcePos } from '../lib/source-po-trace';
 import { soCoverage } from './mfg-sales-orders';
 import { effectiveLineStockStatus, type LiveStockState } from '../lib/so-line-effective-stock';
+import { loadNonSellingWarehouses, nonSellingWarehouseNotice } from '../lib/non-selling-warehouse';
 import { isHardBoundLine } from '../lib/so-stock-allocation';
 import { isServiceLine } from '../shared/service-sku';
 import { soDeliverableRemaining } from './delivery-orders-mfg';
@@ -125,10 +126,10 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
     const { data, error } = await chunkIn<{
       id: string; doc_no: string; item_group: string | null; item_code: string | null;
       stock_status: string | null; cancelled: boolean | null;
-      qty: number | null; allocated_batch_no: string | null;
+      qty: number | null; allocated_batch_no: string | null; warehouse_id: string | null;
     }>(visibleDocNos, (batch, from, to) => {
       let q = sb.from('mfg_sales_order_items')
-        .select('id, doc_no, item_group, item_code, stock_status, cancelled, qty, allocated_batch_no')
+        .select('id, doc_no, item_group, item_code, stock_status, cancelled, qty, allocated_batch_no, warehouse_id')
         .in('doc_no', batch)
         .eq('cancelled', false);
       if (companyId != null) q = q.eq('company_id', companyId);
@@ -136,7 +137,7 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
     });
     if (error) return c.json({ error: 'enrichment_failed', reason: error.message }, 500);
     for (const r of data) {
-      items.push({ id: r.id, doc_no: r.doc_no, item_group: r.item_group, item_code: r.item_code, stock_status: r.stock_status, cancelled: r.cancelled });
+      items.push({ id: r.id, doc_no: r.doc_no, item_group: r.item_group, item_code: r.item_code, stock_status: r.stock_status, cancelled: r.cancelled, warehouse_id: r.warehouse_id });
       readyItems.push({ id: r.id, doc_no: r.doc_no, item_group: r.item_group, item_code: r.item_code, stock_status: r.stock_status, cancelled: r.cancelled, qty: r.qty, allocated_batch_no: r.allocated_batch_no });
     }
   }
@@ -189,6 +190,14 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
     }
   }
 
+  /* 7. Display / showroom / service warehouses (owner ruling 2026-09-08). One
+     small read, on the DEFERRED path where the live-'stock' promotion fires —
+     the list's first paint deliberately passes null and leans on the stored
+     status the allocator already gated. */
+  const nonSellingWarehouseIds = new Set(
+    (await loadNonSellingWarehouses(sb)).keys(),
+  ) as ReadonlySet<string>;
+
   const enrichment = assembleSoListMrpEnrichment({
     docNos: visibleDocNos,
     items,
@@ -201,6 +210,7 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
     remaining,
     today: todayMyt(),
     processedDocs,
+    nonSellingWarehouseIds,
   });
 
   return c.json({ enrichment: Object.fromEntries(enrichment) });
@@ -222,15 +232,22 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
 mfgSalesOrdersListEnrichment.get('/:docNo/coverage', async (c) => {
   const sb = c.get('supabase') as Sb;
   const docNo = c.req.param('docNo');
-  const [h, i] = await Promise.all([
+  const [h, i, nonSellingWh] = await Promise.all([
     // Header read is company-scoped + minimal — exist check, salesperson_id for
     // the same self-scoped-sales gate, and processing_date for the promotion gate.
     scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id, processing_date').eq('doc_no', docNo), c).maybeSingle(),
     // Only the columns the MRP per-line rule needs, in line_no order (nulls last
-    // → pre-0165 fallback to created_at).
-    sb.from('mfg_sales_order_items').select('id, item_group, item_code, qty, stock_status, allocated_batch_no').eq('doc_no', docNo)
+    // → pre-0165 fallback to created_at). `warehouse_id` joined the list on
+    // 2026-09-08: the non-selling-warehouse rule decides per line, so the line
+    // has to say where it stands.
+    sb.from('mfg_sales_order_items').select('id, item_group, item_code, qty, stock_status, allocated_batch_no, warehouse_id').eq('doc_no', docNo)
       .order('line_no', { ascending: true, nullsFirst: false })
       .order('created_at'),
+    /* Display / showroom / service warehouses (owner ruling 2026-09-08). THIS
+       is the endpoint where the live-'stock' promotion actually fires, so it is
+       the one that must know which warehouses may not promise — MRP pools per
+       warehouse and would happily report 'stock' for a line in KL DISPLAY. */
+    loadNonSellingWarehouses(sb),
   ]);
   if (h.error) return c.json({ error: 'load_failed', reason: h.error.message }, 500);
   if (!h.data) return c.json({ error: 'not_found' }, 404);
@@ -243,7 +260,7 @@ mfgSalesOrdersListEnrichment.get('/:docNo/coverage', async (c) => {
       return c.json({ error: 'not_found' }, 404);
     }
   }
-  const lineRows = (i.data ?? []) as Array<{ id: string; item_group?: string | null; item_code?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>;
+  const lineRows = (i.data ?? []) as Array<{ id: string; item_group?: string | null; item_code?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null; warehouse_id?: string | null }>;
   /* Coverage from the SAME allocation engine the MRP page uses (Wei Siang
      2026-05-31): stock first → earliest-ETA outstanding PO → shortage. The MRP
      allocation is GLOBAL by design and cannot be narrowed to one order; a failed
@@ -270,6 +287,7 @@ mfgSalesOrdersListEnrichment.get('/:docNo/coverage', async (c) => {
        is always undefined; a service is inherently available, so surface it as
        READY ('stock'). (Owner Q2, 2026-07-24.) */
     const isSvcLine = isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.item_code ?? null });
+    const lineNonSelling = nonSellingWh.get(String(it.warehouse_id ?? '')) ?? null;
     const stockState = isSvcLine
       ? 'stock'
       : isSofaLine
@@ -287,8 +305,18 @@ mfgSalesOrdersListEnrichment.get('/:docNo/coverage', async (c) => {
         {
           orderProcessed,
           lineHardBound: isHardBoundLine(it.item_group ?? null, it.item_code ?? null),
+          lineNonSellingWarehouse: lineNonSelling !== null,
         },
       ),
+      /* WHY the line reads PENDING, named — the twin of the field GET /:docNo
+         stamps. A correct refusal that reaches nobody is the "the button does
+         nothing" defect wearing a different hat. */
+      non_selling_warehouse: lineNonSelling === null ? null : {
+        code: lineNonSelling.code,
+        name: lineNonSelling.name,
+        type: lineNonSelling.type,
+        notice: nonSellingWarehouseNotice(lineNonSelling),
+      },
       coverage_po: covered ? lineCov?.po ?? null : null,
       coverage_eta: covered ? lineCov?.eta ?? null : null,
       ready_source_pos: readyPosMap.get(it.id) ?? [],

@@ -1,0 +1,75 @@
+name: Top up migrated SO lines from AutoCount
+
+# Manual. The SO twin of "Top up migrated PO lines": import-ac-outstanding-so.mjs
+# is idempotent at DOCUMENT level, so a line an earlier run did not carry can
+# never arrive later. This finds every AutoCount line whose DtlKey sits on no ERP
+# row of that document, and writes back the money-neutral ones — the RM 0.00
+# give-away lines the owner's rule says must appear on our document even though
+# no money moves.
+#
+# The DRY RUN IS THE CENSUS: run it first and read it. It prints how many lines
+# are missing, how many are zero-priced, how many are priced (reported, never
+# written), and what it refuses and why.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: 'Required when apply=1: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+      top:
+        description: "How many rows to list per section"
+        required: false
+        default: "60"
+
+concurrency:
+  group: topup-ac-so-lines-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/topup-ac-so-lines.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          TOP: ${{ inputs.top }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/topup-ac-so-lines.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          TOP: ${{ inputs.top }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

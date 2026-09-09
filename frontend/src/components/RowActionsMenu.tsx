@@ -25,6 +25,35 @@ export interface MenuItem {
   danger?: boolean;
 }
 
+/** Menu width in px. Must match the `w-44` on the panel below — the flip
+ *  measurement needs the number, and Tailwind only gives it as a class. */
+const MENU_W = 176;
+
+/**
+ * Left edge of the nearest ancestor that CLIPS horizontally, in viewport px.
+ *
+ * `Layout`'s <main> carries `overflow-x-hidden`, so a right-aligned panel on a
+ * trigger near the content's left edge is cut in half rather than overflowing
+ * visibly — Project Maintenance's picker rows sit ~85px in, and this panel is
+ * wider than that (owner 2026-09-04, screenshot: "once i click three dot it
+ * will open on left side and cant see fully").
+ *
+ * Walks to the real clipper rather than assuming the viewport, because the
+ * viewport is NOT the boundary here — the sidebar occupies everything to the
+ * left of <main>. Same ancestor-walk shape as PullToRefresh.findScrollAncestor.
+ */
+function clippingLeftEdge(el: HTMLElement | null): number {
+  let node = el?.parentElement ?? null;
+  while (node) {
+    const overflowX = getComputedStyle(node).overflowX;
+    if (/(hidden|auto|scroll|overlay)/.test(overflowX)) {
+      return node.getBoundingClientRect().left;
+    }
+    node = node.parentElement;
+  }
+  return 0;
+}
+
 export function RowActionsMenu({
   items,
   indicator,
@@ -41,7 +70,17 @@ export function RowActionsMenu({
   size?: number;
 }) {
   const [open, setOpen] = useState(false);
+  /** Open RIGHTWARD when the default right-aligned panel would be clipped. */
+  const [flipRight, setFlipRight] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  // Measure at OPEN, not at render: the row can be scrolled or the sidebar
+  // collapsed between mounts, and a stale side is exactly the bug being fixed.
+  useEffect(() => {
+    if (!open || !wrapRef.current) return;
+    const trigger = wrapRef.current.getBoundingClientRect();
+    setFlipRight(trigger.right - MENU_W < clippingLeftEdge(wrapRef.current) + 4);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -86,7 +125,11 @@ export function RowActionsMenu({
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-30 mt-1 w-48 overflow-hidden rounded-md border border-border bg-surface shadow-slab"
+          data-flipped={flipRight ? "right" : undefined}
+          className={cn(
+            "absolute top-full z-30 mt-1 w-44 overflow-hidden rounded-md border border-border bg-surface shadow-slab",
+            flipRight ? "left-0" : "right-0",
+          )}
         >
           {items.map((it, i) => {
             const Icon = it.icon;
@@ -105,7 +148,7 @@ export function RowActionsMenu({
                     it.onClick();
                   }}
                   className={cn(
-                    "flex w-full items-center gap-2 px-2.5 py-2 text-left text-[11.5px]",
+                    "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11.5px]",
                     isDanger
                       ? "text-err hover:bg-err/10"
                       : "hover:bg-accent-soft/30"

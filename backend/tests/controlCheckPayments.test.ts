@@ -24,7 +24,7 @@ const harness = (tables: Record<string, Row[]>) => {
     ],
     acc_account_roles: [],
     journal_entries: [], journal_entry_lines: [], v_gl_entries: [],
-    sales_invoices: [], purchase_invoices: [],
+    sales_invoices: [], purchase_invoices: [], ap_invoices: [],
     mfg_sales_order_payments: [], sales_invoice_payments: [],
     ...tables,
   } as never);
@@ -81,13 +81,24 @@ describe('the self-check reports payments that never reached the ledger', () => 
 
   /* The trial-period state. No entry exists, so there is no boundary and every
      payment would be listed — which is the noise that would kill the card. */
-  test('lists nothing at all before this company has booked its first payment', async () => {
+  test('lists nothing at all before this company has booked its first payment — but SAYS how much is sitting there', async () => {
     const app = harness({
       mfg_sales_order_payments: [pay('a', 'SO-1', '2026-01-05', 900000), pay('b', 'SO-2', '2026-02-05', 700000)],
     });
     const body = await (await app.request('/control-check')).json() as any;
     expect(body.payments.since).toBeNull();
     expect(body.payments.rows).toHaveLength(0);
+    /* docs/bugs/0654: the figure was computed and dropped on the way out, so a
+       company whose hook had failed on every row read "all of them". */
+    expect(body.payments.neverBooked).toEqual({ count: 2, totalSen: 1600000, firstPaidOn: '2026-01-05', lastPaidOn: '2026-02-05' });
+    expect(body.payments.ok).toBe(false);
+  });
+
+  test('nothing booked AND nothing recorded is the one clean never-booked state', async () => {
+    const body = await (await harness({}).request('/control-check')).json() as any;
+    expect(body.payments.since).toBeNull();
+    expect(body.payments.neverBooked).toEqual({ count: 0, totalSen: 0, firstPaidOn: null, lastPaidOn: null });
+    expect(body.payments.ok).toBe(true);
   });
 
   test('the control-account checks still answer alongside it — AR, AP, and the 0349 split’s AP_OTHER', async () => {

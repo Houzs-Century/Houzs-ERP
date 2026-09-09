@@ -739,6 +739,7 @@ function PurchaseOrderDetailV2ReadOnly() {
           description: l.description || l.material_name,
           variant: buildVariantSummary(l.item_group ?? "others", l.variants) || (l.description2 ?? ""),
         });
+        const remark = (l.notes ?? "").trim();
         return (
           <div className="min-w-0">
             <div className="truncate text-[13px] font-semibold text-ink">
@@ -747,6 +748,22 @@ function PurchaseOrderDetailV2ReadOnly() {
             {secondary && (
               <div className="mt-0.5 flex items-center gap-2 font-mono text-[11px] text-ink-muted">
                 <span className="truncate text-ink-secondary">{secondary}</span>
+              </div>
+            )}
+            {/* The line's REMARK (purchase_order_items.notes) — the SO line's
+                twin, rendered the same way (SalesOrderDetailV2's Item cell).
+                Owner 2026-09-04: 「SO line 和 PO line 的 remarks」. This is not
+                a duplicate of the identity above: it is free text that appears
+                nowhere else on the row, and on the 923 of 1,117 migrated
+                company-1 PO lines that carry it (measured 2026-09-04), it is
+                AutoCount's own Description 2 — the customer's spec text in the
+                salesperson's own words. Nothing on
+                this page rendered it before, so the migration's copy was
+                invisible. It WRAPS rather than truncating: half an instruction
+                is worse than none. */}
+            {remark && (
+              <div className="mt-1 whitespace-pre-wrap break-words text-[11.5px] italic leading-snug text-ink-secondary">
+                {remark}
               </div>
             )}
             {/* SO-drift redline — what the source SO now requests vs what this
@@ -766,6 +783,26 @@ function PurchaseOrderDetailV2ReadOnly() {
               </div>
             )}
           </div>
+        );
+      },
+    },
+    /* Remark as its OWN column — hidden by default because the text already
+       renders under the item above, where it is read. This column exists so the
+       remark is SEARCHABLE, filterable and lands in the CSV export: a `render`
+       has no getValue, so without it the text is invisible to every one of
+       those. Exact twin of SalesOrderDetailV2's Remark column. */
+    {
+      key: "remark",
+      label: "Remark",
+      width: "220px",
+      defaultHidden: true,
+      getValue: (l) => (l.notes ?? "").trim(),
+      render: (l) => {
+        const remark = (l.notes ?? "").trim();
+        return remark ? (
+          <span className="whitespace-pre-wrap break-words text-[12px] text-ink-secondary">{remark}</span>
+        ) : (
+          <span className="text-ink-muted">—</span>
         );
       },
     },

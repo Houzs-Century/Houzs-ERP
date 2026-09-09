@@ -1,14 +1,15 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { formatDate } from "../lib/utils";
-import { SourcePosRowMobile, soStockPillMobile } from "./source-chips";
+import { NonSellingWarehouseNoteMobile, SourcePosRowMobile, soStockPillMobile } from "./source-chips";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
 import type { FlowNav } from "./relationship-map-model";
 import { fmtAmt } from "../lib/scm";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
-import { usePrompt } from "../vendor/scm/components/PromptDialog";
+import { usePrompt } from "../vendor/scm/components/PromptDialog"; import { CancelRequestPanel } from "../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "../pages/scm-v2/use-cancel-request-action";
 import { fetchScanSlipImageBlobUrl } from "../vendor/scm/lib/slip";
+import { MobileLinePhotos } from "./MobileLinePhotos";
 import { useStaff, usePickableStaff } from "../vendor/scm/lib/admin-queries";
 import { statusLabel } from "../vendor/scm/lib/status-pill";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
@@ -29,7 +30,7 @@ import {
   CANCELLABLE_STATUSES,
   isLocked as isSoLocked,
   procLockActive as soProcLockActive,
-  amendmentEligible as soAmendmentEligible,
+  amendmentEligible as soAmendmentEligible, migratedReadonly as soMigratedReadonly, migratedReadonlyReason as soMigratedReason,
   deriveBalance,
 } from "../vendor/scm/lib/so-detail-gates";
 import {
@@ -88,6 +89,7 @@ import {
    owns any payment-row markup: that second, read-only copy is exactly what made
    Edit Draft offer LESS than the screen it was opened from. */
 import { AddPaymentSheet, RecordedPaymentsList, type RecordedPayment } from "./RecordedPayments";
+import { MobileLineRemark } from "./MobileLineRemark";
 import "./mobile.css";
 
 /* Shapes are the subset of the /mfg-sales-orders/:docNo + /:docNo/payments
@@ -202,6 +204,8 @@ type SoItem = {
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
   delivered_qty?: number | null;
   remaining_qty?: number | null;
+  /* Why the line can never read READY, when the reason is WHERE it stands (2026-09-08). */
+  non_selling_warehouse?: { code: string | null; name: string | null; type: string | null; notice: string } | null;
   /* A retired line — the SO's history, not part of the live order. Returned by
      GET /:docNo like every other row; filtered out at the use site. */
   cancelled?: boolean | null;
@@ -209,6 +213,8 @@ type SoItem = {
      line card's "Type remarks…" box). Served by GET /:docNo all along and
      rendered on neither platform until 2026-08-11 — see the render site. */
   remark?: string | null;
+  photo_urls?: string[] | null;
+  photoUrls?: string[] | null;
 };
 type SoPayment = {
   id: string;
@@ -283,7 +289,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
   const sendAmendment = useSendAmendment();
   const rejectAmendment = useRejectAmendment();
   const withdrawAmendment = useWithdrawAmendment();
-  const updateStatus = useUpdateMfgSalesOrderStatus();
+  const updateStatus = useUpdateMfgSalesOrderStatus(); const requestCancel = useCancelRequestAction("so"); // cancel = request + two approvals (owner 2026-09-08)
   const deleteDraft = useDeleteMfgSalesOrder();
 
   /* Reads route through the SHARED vendored hooks (vendor/scm/lib/
@@ -421,8 +427,8 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
        (has_children). Mirrors SalesOrderDetail.isLocked. */
   const rawStatus = (h?.status ?? "").toUpperCase();
   const hasChildren = Boolean(h?.has_children);
-  const canCancel = CANCELLABLE_STATUSES.includes(rawStatus);
-  const isLocked = isSoLocked(h?.status, hasChildren);
+  const migratedLocked = soMigratedReadonly(h), canCancel = !migratedLocked && CANCELLABLE_STATUSES.includes(rawStatus);
+  const isLocked = migratedLocked || isSoLocked(h?.status, hasChildren); // migrated sits OUTSIDE: there is no override or amendment route out of it
 
   /* Processing LOCK — the shared procLockActive: once the SO has a Processing
      Date AND that day has passed (compared against todayMyt() — the Malaysia
@@ -710,8 +716,8 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
      processing lock does NOT gate payments either (owner rule 2026-07-05). */
   const isDraftSo = ph === "draft";
   const [payEditing, setPayEditing] = useState(false);
-  const canOfferPayEdit = ph === "submitted" && !paymentLocked;
-  const canEditPayments = isDraftSo || (canOfferPayEdit && payEditing);
+  const canOfferPayEdit = !migratedLocked && ph === "submitted" && !paymentLocked;
+  const canEditPayments = !migratedLocked && (isDraftSo || (canOfferPayEdit && payEditing));
   const canAddPayment = canEditPayments;
   const [payOpen, setPayOpen] = useState(false);
 
@@ -804,10 +810,10 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                 the reason, mirroring the desktop SO Detail lock banner — and the
                 footer Edit button is disabled below. */}
             {editLocked ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(232,107,58,0.08)", border: "1px solid var(--c-orange, #e86b3a)", borderRadius: 10, padding: "9px 11px", marginBottom: 12, fontSize: 11, color: "#8a4a24" }}>
+              <div data-testid={migratedLocked ? "so-migrated-readonly-banner" : "so-locked-banner"} style={{ display: "flex", alignItems: "flex-start", gap: 8, background: "rgba(232,107,58,0.08)", border: "1px solid var(--c-orange, #e86b3a)", borderRadius: 10, padding: "9px 11px", marginBottom: 12, fontSize: 11, color: "#8a4a24", lineHeight: 1.45 }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c66a34" strokeWidth="2" strokeLinecap="round"><rect x="4" y="10" width="16" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
-                {processingLocked
-                  ? "Locked — the processing date has passed and this order was proceeded. Line items can't be edited."
+                {migratedLocked ? soMigratedReason(h)
+                  : processingLocked ? "Locked — the processing date has passed and this order was proceeded. Line items can't be edited."
                   : hasChildren
                   ? "Locked — a delivery order or invoice references this SO. Line items can't be edited."
                   : "Locked — this order has moved past editing. Line items can't be edited."}
@@ -838,6 +844,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                 approve the bound PO (SO_APPROVED) / send to supplier (PO_APPROVED)
                 — mirroring the desktop SalesOrderDetail + PurchaseOrderDetail
                 amendment banners so mobile can finish + send the amendment. */}
+            <CancelRequestPanel compact docType="so" docKey={docNo} docNumber={docNo} onExecute={() => setStatus("CANCELLED")} executing={busy} />
             {hasOpenAmendment && openAmendment && (
               <div style={{ display: "flex", flexDirection: "column", gap: 9, background: "rgba(214,158,46,0.14)", border: "1px solid rgba(214,158,46,0.55)", borderRadius: 12, padding: "11px 13px", marginBottom: 12 }}>
                 <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
@@ -1074,16 +1081,10 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)", overflowWrap: "anywhere" }}>{primary || "—"}</div>
                     {secondary ? <div style={{ fontSize: 11.5, color: "var(--mut)", marginTop: 2, overflowWrap: "anywhere" }}>{secondary}</div> : null}
-                    {/* The line's REMARK — desktop parity (SalesOrderDetailV2's
-                        Item column). Free text that appears nowhere else on the
-                        row: a service line's whole job lives here ("Please take
-                        back Cody Bedframe (King Size) 2 units"). Wraps, never
-                        truncates — half an instruction is worse than none. */}
-                    {(it.remark ?? "").trim() ? (
-                      <div style={{ fontSize: 11, color: "var(--mut)", marginTop: 3, fontStyle: "italic", whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.35 }}>
-                        {it.remark!.trim()}
-                      </div>
-                    ) : null}
+                    {/* The line's REMARK — one renderer, shared with the phone's
+                        PO surface since 2026-09-04 (see MobileLineRemark). */}
+                    <MobileLineRemark text={it.remark} />
+                    <MobileLinePhotos docNo={docNo} line={it} />
                     {/* UOM only — never the code (see the primary line above). */}
                     {(it.uom ?? "").trim() ? <div className="money" style={{ fontSize: 10, color: "var(--mut2)", marginTop: 3 }}>{it.uom!.trim()}</div> : null}
                     {/* Stock pill + source-PO trace (owner 2026-08-01) — the
@@ -1102,6 +1103,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                         </div>
                       );
                     })()}
+                    <NonSellingWarehouseNoteMobile note={it.non_selling_warehouse} />
                     <SourcePosRowMobile
                       pos={it.shipped_source_pos ?? []}
                       adj={it.shipped_source_adj}
@@ -1268,8 +1270,8 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
           {ph === "draft" && canWriteSo && (
             <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
               <div style={{ display: "flex", gap: 9 }}>
-                <button className="btn-ghost" style={{ flex: 1, opacity: busy ? 0.55 : 1 }} disabled={busy} onClick={() => onEdit?.(docNo)}>Edit Draft</button>
-                <button className="btn" style={{ flex: 1.3, opacity: busy ? 0.55 : 1 }} disabled={busy} onClick={() => setStatus("CONFIRMED")}>{busy ? "Working…" : "Create Sales Order"}</button>
+                <button className="btn-ghost" style={{ flex: 1, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => onEdit?.(docNo)}>Edit Draft</button>
+                <button className="btn" style={{ flex: 1.3, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => setStatus("CONFIRMED")}>{busy ? "Working…" : "Create Sales Order"}</button>
               </div>
               {/* Discard draft — the escape hatch for a junk draft (esp. a bad
                   scan/OCR draft). Secondary red-outline so it never competes with
@@ -1295,7 +1297,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                 {/* Cancel — only on in-flight statuses (not SHIPPED+ / INVOICED /
                     CLOSED), matching the desktop's cancellableStatuses. */}
                 {canCancel ? (
-                  <button className="btn-danger" style={{ flex: 1, opacity: busy ? 0.55 : 1 }} disabled={busy} onClick={() => setStatus("CANCELLED", `Cancel ${docNo}? This voids the order.`)}>{busy ? "Working…" : "Cancel Order"}</button>
+                  <button className="btn-danger" style={{ flex: 1, opacity: busy ? 0.55 : 1 }} disabled={busy} onClick={() => void requestCancel(docNo, docNo)}>{busy ? "Working…" : "Request cancel"}</button>
                 ) : (
                   <div style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--mut2)", alignSelf: "center" }}>Locked — downstream documents exist.</div>
                 )}

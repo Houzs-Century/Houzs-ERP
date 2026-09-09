@@ -18,7 +18,7 @@
 // the scm.payment_voucher.* flat permissions.
 // ----------------------------------------------------------------------------
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, Copy, History, Pencil, Plus, Printer, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
 import { Button } from '@2990s/design-system';
@@ -33,12 +33,17 @@ import {
   useApprovePaymentVoucher,
   useRejectPaymentVoucher,
   useSupplierAdvances, useApplyAdvance,
-  usePvFiles, useUploadPvFile, useDeletePvFile, fetchPvFileBlobUrl, fileToBase64, PV_FILE_ACCEPT,
+  usePvFiles, useUploadPvFile, useDeletePvFile, fetchPvFileBlobUrl,
+  usePvReservations, NO_RESERVATIONS,
 } from '../../vendor/scm/lib/payment-voucher-queries';
+import { isRefundPurpose, pvTypeLabel, pvTypeOf } from '../../vendor/scm/lib/pv-type-label';
+import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
-import { useAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
+import { useAccounts, useAccountRoles, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
+import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
+import { useApInvoices } from '../../vendor/scm/lib/ap-invoice-queries';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
@@ -63,11 +68,20 @@ const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   return `${currency} ${(v / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
-/* Migration 0202 — human label for the PV purpose. */
-const purposeLabel = (p: string | null | undefined): string =>
-  p === 'FREIGHT' ? 'Freight'
-  : p === 'OTHER' ? 'Other'
-  : 'Supplier payment (settle PI)';
+/* The stored `purpose` is the document kind — shown as "Type: AP Payment /
+   Payment Voucher" (owner 2026-09-07: 为什么我一直看到 purpose - others?); the
+   labels live in vendor/scm/lib/pv-type-label.ts. */
+
+/* One row of the edit-mode invoice picker — a purchase invoice or an AP
+   invoice, keyed by that document's id (what pv_allocations names). */
+type EditAllocRow = {
+  key: string; kind: 'PI' | 'API';
+  invoiceNumber: string; supplierInvoiceRef: string | null; invoiceDate: string | null;
+  totalSen: number; outstandingSen: number;
+};
+/** The invoice an allocation row names, whichever kind and casing the API used. */
+const allocKeyOf = (a: Record<string, unknown>): string =>
+  String(a.apInvoiceId ?? a.ap_invoice_id ?? a.piId ?? a.pi_id ?? '');
 
 type EditLine = {
   rid:              string;
@@ -139,10 +153,14 @@ export const PaymentVoucherDetail = () => {
   const [rejectNote, setRejectNote] = useState<string | null>(null);
 
   const accountsQ = useAccounts();
-  const accounts  = useMemo<Account[]>(() => (accountsQ.data?.accounts ?? []).filter((a) => a.is_active), [accountsQ.data]);
+  /* The whole chart goes in: a header whose children are all retired is still
+     a header (docs/bugs/0693). Names below read the unfiltered chart. */
+  const accounts  = useMemo<Account[]>(() => postableAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
   const accountLabel = (code: string | null | undefined): string => {
     if (!code) return '—';
-    const a = accounts.find((x) => x.account_code === code);
+    /* Off the UNFILTERED chart: a refund's AR control line and a since-retired
+       account must still print their names. */
+    const a = (accountsQ.data?.accounts ?? []).find((x) => x.account_code === code);
     return a ? `${a.account_code} · ${a.account_name}` : code;
   };
 
@@ -185,6 +203,11 @@ export const PaymentVoucherDetail = () => {
 
   const isDraft = pv?.status === 'DRAFT';
   const [isEditing, setIsEditing] = useState(() => searchParams.get('edit') === '1');
+  /* F3 / Ctrl+S = Save while editing (owner 2026-09-08: 像 autocount 按 f3).
+     A hook, so it sits above the loading return; onSave is defined below
+     that return and the key reaches it through this ref. */
+  const saveRef = useRef<() => void>(() => {});
+  useSaveHotkey(() => saveRef.current(), isEditing && !busy);
 
   // Edit draft state.
   const [payeeName, setPayeeName]                 = useState('');
@@ -201,8 +224,18 @@ export const PaymentVoucherDetail = () => {
      editable as the fallback. Mirrors PaymentVoucherNew. */
   const [myrPaidSen, setMyrPaidSen]               = useState<number | null>(null);
   const [editLines, setEditLines]                 = useState<EditLine[]>([]);
-  // Migration 0202 — edit allocations: applied amount per PI id (centi).
+  /* A Customer Refund (§14) has ONE line the system writes; an edit moves the
+     amount and the server re-composes it (refundAmountSen), never the lines. */
+  const isRefundPv = isRefundPurpose(pv?.purpose);
+  const [editRefundAmountSen, setEditRefundAmountSen] = useState<number>(0);
+  // Migration 0202 — edit allocations: applied amount per invoice id (PI or AP invoice), in sen.
   const [allocAmounts, setAllocAmounts]           = useState<Record<string, number>>({});
+  /* 预付 on an AP Payment being edited (owner 2026-09-08, a rejected voucher
+     whose Edit showed the plain-voucher line editor: reject ap payment 后, 他的
+     edit 不是退回去 knock pi?). Seeded as what the stored total exceeds its
+     allocations by; the total FOLLOWS ticks + prepay, exactly as on PV New. */
+  const [editAdvanceSen, setEditAdvanceSen]       = useState<number>(0);
+  const rolesQ = useAccountRoles();
 
   // A POSTED/CANCELLED voucher can never enter edit mode.
   useEffect(() => { if (!isDraft && isEditing) setIsEditing(false); }, [isDraft, isEditing]);
@@ -212,7 +245,7 @@ export const PaymentVoucherDetail = () => {
     if (!isEditing || !pv) return;
     setPayeeName(pv.payee_name ?? '');
     setSupplierId(pv.supplier_id ?? '');
-    setPurpose((pv.purpose ?? 'SUPPLIER_PAYMENT') as 'SUPPLIER_PAYMENT' | 'FREIGHT' | 'OTHER');
+    setPurpose(pvTypeOf(pv.purpose));
     setCreditAccountCode(pv.credit_account_code ?? '');
     setVoucherDate(pv.voucher_date ?? '');
     setNotes(pv.notes ?? '');
@@ -221,10 +254,14 @@ export const PaymentVoucherDetail = () => {
        field means "this is what I actually paid", and inventing it from a rate would
        put a figure nobody typed in front of the operator as if it were evidence. */
     setMyrPaidSen(null);
-    // Seed the applied-amount map from the loaded allocations (keyed by PI id).
-    setAllocAmounts(Object.fromEntries(
-      allocations.map((a) => [String(a.piId ?? a.pi_id ?? ''), Number(a.amountSen ?? a.amount_sen ?? 0)]),
-    ));
+    setEditRefundAmountSen(Number(pv.total_sen ?? 0));
+    // Seed the applied-amount map from the loaded allocations (keyed by the
+    // invoice's id — a PI's or an AP invoice's), and the prepay as the rest.
+    const applied = allocations.map((a) => [allocKeyOf(a), Number(a.amountSen ?? a.amount_sen ?? 0)] as const).filter(([k]) => k);
+    setAllocAmounts(Object.fromEntries(applied));
+    setEditAdvanceSen(pvTypeOf(pv.purpose) === 'SUPPLIER_PAYMENT'
+      ? Math.max(0, Number(pv.total_sen ?? 0) - applied.reduce((s, [, v]) => s + v, 0))
+      : 0);
     setEditLines(
       lines.length > 0
         ? lines.map((l) => ({
@@ -243,9 +280,11 @@ export const PaymentVoucherDetail = () => {
   const dropLine = (rid: string) => setEditLines((prev) => (prev.length <= 1 ? prev : prev.filter((l) => l.rid !== rid)));
   const addLine  = () => setEditLines((prev) => [...prev, newLine()]);
 
-  const editTotalSen = useMemo(() => editLines.reduce((s, l) => s + l.amountSen, 0), [editLines]);
+  const editLinesTotalSen = useMemo(() => editLines.reduce((s, l) => s + l.amountSen, 0), [editLines]);
   const viewTotalSen = Number(pv?.total_sen ?? 0);
-  const totalSen = isEditing ? editTotalSen : viewTotalSen;
+  /* An AP Payment's edit has no typed lines: its total is the ticks plus the
+     prepay, and its ONE debit line (the AP control) is written on save. */
+  const apEdit = isEditing && !isRefundPv && purpose === 'SUPPLIER_PAYMENT';
 
   /* Multi-currency (Phase 1-A) — the PV keeps its own currency; the exchange
      rate converts the GL posting to MYR. In VIEW we show the stored currency; in
@@ -258,6 +297,90 @@ export const PaymentVoucherDetail = () => {
   const currency  = isEditing ? editCurrency : viewCurrency;
   const isForeign = currency !== 'MYR';
   useEffect(() => { if (isEditing && !isForeign) { setExchangeRate('1'); setMyrPaidSen(null); } }, [isEditing, isForeign]);
+  const rate = resolveFxRate(isEditing ? exchangeRate : pv?.exchange_rate);
+
+  /* ── Edit allocations (migration 0202) ────────────────────────────────────
+     In Edit mode on a SUPPLIER_PAYMENT voucher, list the supplier's outstanding
+     PIs AND AP invoices — the two kinds PV New lists side by side (owner
+     2026-09-08: a rejected AP Payment whose bill was an AP invoice showed "no
+     outstanding purchase invoices" and could not be re-knocked) — so the
+     operator can add/adjust settlements. The already-allocated rows stay
+     listed (their outstanding excludes what this PV applies, so add it back). */
+  const editApplyToPi = isEditing && purpose === 'SUPPLIER_PAYMENT' && !!supplierId;
+  const piListQ = usePurchaseInvoices();
+  const apListQ = useApInvoices('API');
+  /* Other UNPOSTED vouchers' reservations (docs/bugs/0653) — this voucher's own
+     rows are excluded by id, so what it already applies stays visible. */
+  const reservationsQ = usePvReservations(editApplyToPi ? supplierId : null, id || null);
+  const reservedByOthers = reservationsQ.data ?? NO_RESERVATIONS;
+  const editAllocRows = useMemo<EditAllocRow[]>(() => {
+    if (!editApplyToPi) return [];
+    /* Outstanding = the invoice's unpaid balance less what OTHER unposted
+       vouchers reserve. This voucher is a DRAFT: nothing of its own is in
+       paid_sen yet and its rows are excluded from the reservations by id, so
+       its own allocation is already inside that balance — adding it back
+       (as this list once did) counted it twice and let the tick pay an
+       invoice twice over. */
+    const byKey = new Map<string, EditAllocRow>();
+    for (const r of ((piListQ.data?.purchaseInvoices ?? []) as Array<Record<string, any>>)) {
+      const sid = String(r.supplier_id ?? r.supplier?.id ?? '');
+      if (sid !== supplierId) continue;
+      const st = String(r.status ?? '').toUpperCase();
+      if (st !== 'POSTED' && st !== 'PARTIALLY_PAID') continue;
+      const piId = String(r.id ?? '');
+      if (!piId) continue;
+      const outstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) - (reservedByOthers.byPi[piId] ?? 0);
+      if (outstanding <= 0) continue;
+      byKey.set(piId, {
+        key: piId, kind: 'PI',
+        invoiceNumber:      String(r.invoice_number ?? piId),
+        supplierInvoiceRef: (r.supplier_invoice_ref ?? null) as string | null,
+        invoiceDate:        (r.invoice_date ?? null) as string | null,
+        totalSen:           Number(r.total_sen ?? 0),
+        outstandingSen:   outstanding,
+      });
+    }
+    for (const r of apListQ.data?.rows ?? []) {
+      if (String(r.supplierId ?? '') !== supplierId) continue;
+      if (r.status !== 'POSTED' && r.status !== 'PARTIALLY_PAID') continue;
+      const outstanding = r.outstandingSen - (reservedByOthers.byApInvoice[r.id] ?? 0);
+      if (outstanding <= 0) continue;
+      byKey.set(r.id, {
+        key: r.id, kind: 'API',
+        invoiceNumber: r.invoiceNumber, supplierInvoiceRef: r.supplierInvoiceRef, invoiceDate: r.invoiceDate,
+        totalSen: r.totalSen, outstandingSen: outstanding,
+      });
+    }
+    // Ensure every already-allocated invoice is present even if it dropped off.
+    for (const a of allocations) {
+      const key = allocKeyOf(a);
+      if (!key || byKey.has(key)) continue;
+      byKey.set(key, {
+        key, kind: String(a.kind ?? '') === 'API' ? 'API' : 'PI',
+        invoiceNumber:      String(a.invoiceNumber ?? a.invoice_number ?? key),
+        supplierInvoiceRef: (a.supplierInvoiceRef ?? a.supplier_invoice_ref ?? null) as string | null,
+        invoiceDate:        (a.invoiceDate ?? a.invoice_date ?? null) as string | null,
+        totalSen:           Number(a.totalSen ?? a.total_sen ?? a.amountSen ?? a.amount_sen ?? 0),
+        outstandingSen:   Number(a.amountSen ?? a.amount_sen ?? 0),
+      });
+    }
+    /* Oldest first across both kinds — the order you settle a supplier in. */
+    return [...byKey.values()].sort((a, b) => String(a.invoiceDate ?? '').localeCompare(String(b.invoiceDate ?? '')));
+  }, [editApplyToPi, piListQ.data, apListQ.data, allocations, supplierId, reservedByOthers]);
+
+  const editAllocatedSen = useMemo(
+    () => editAllocRows.reduce((s, r) => s + (allocAmounts[r.key] ?? 0), 0),
+    [editAllocRows, allocAmounts],
+  );
+  const editTotalSen = apEdit ? editAllocatedSen + editAdvanceSen : editLinesTotalSen;
+  const totalSen = isEditing ? (isRefundPv ? editRefundAmountSen : editTotalSen) : viewTotalSen;
+  /* Only a typed-lines voucher can apply more than it totals; an AP Payment's
+     total IS its ticks plus prepay. */
+  const editOverAllocated = editApplyToPi && !apEdit && editAllocatedSen > editTotalSen;
+  /* The AP split (owner 2026-09-03): a 405-x supplier is an OTHER CREDITOR — its
+     payment debits AP_OTHER, everyone else AP. The server holds the rule
+     (acc/rules.ts apControlRole); this is the display mirror, as on PV New. */
+  const apAccountCode = (supplierRow?.code.startsWith('405-') ? rolesQ.data?.roles.AP_OTHER : rolesQ.data?.roles.AP) ?? '';
   /* Derived from the ringgit actually paid over the foreign face total, re-derived
      when either moves. null (blank figure, or a zero total — the divide-by-zero)
      leaves the rate alone rather than blanking it. */
@@ -269,57 +392,6 @@ export const PaymentVoucherDetail = () => {
     if (derivedRate === null) return;
     setExchangeRate(String(derivedRate));
   }, [derivedRate]);
-  const rate = resolveFxRate(isEditing ? exchangeRate : pv?.exchange_rate);
-
-  /* ── Edit allocations (migration 0202) ────────────────────────────────────
-     In Edit mode on a SUPPLIER_PAYMENT voucher, list the supplier's outstanding
-     PIs (derived client-side from the PI list) so the operator can add/adjust
-     settlements. The already-allocated PIs stay listed (their outstanding
-     excludes what this PV applies, so add it back). */
-  const editApplyToPi = isEditing && purpose === 'SUPPLIER_PAYMENT' && !!supplierId;
-  const piListQ = usePurchaseInvoices();
-  const editAllocRows = useMemo(() => {
-    if (!editApplyToPi) return [] as Array<{ piId: string; invoiceNumber: string; supplierInvoiceRef: string | null; outstandingSen: number }>;
-    const appliedByThisPv = new Map<string, number>(
-      allocations.map((a) => [String(a.piId ?? a.pi_id ?? ''), Number(a.amountSen ?? a.amount_sen ?? 0)]),
-    );
-    const byId = new Map<string, { piId: string; invoiceNumber: string; supplierInvoiceRef: string | null; outstandingSen: number }>();
-    for (const r of ((piListQ.data?.purchaseInvoices ?? []) as Array<Record<string, any>>)) {
-      const sid = String(r.supplier_id ?? r.supplier?.id ?? '');
-      if (sid !== supplierId) continue;
-      const st = String(r.status ?? '').toUpperCase();
-      if (st !== 'POSTED' && st !== 'PARTIALLY_PAID') continue;
-      const piId = String(r.id ?? '');
-      if (!piId) continue;
-      const baseOutstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
-      const outstanding = baseOutstanding + (appliedByThisPv.get(piId) ?? 0);
-      if (outstanding <= 0) continue;
-      byId.set(piId, {
-        piId,
-        invoiceNumber:      String(r.invoice_number ?? piId),
-        supplierInvoiceRef: (r.supplier_invoice_ref ?? null) as string | null,
-        outstandingSen:   outstanding,
-      });
-    }
-    // Ensure every already-allocated PI is present even if it dropped off.
-    for (const a of allocations) {
-      const piId = String(a.piId ?? a.pi_id ?? '');
-      if (!piId || byId.has(piId)) continue;
-      byId.set(piId, {
-        piId,
-        invoiceNumber:      String(a.invoiceNumber ?? a.invoice_number ?? piId),
-        supplierInvoiceRef: (a.supplierInvoiceRef ?? a.supplier_invoice_ref ?? null) as string | null,
-        outstandingSen:   Number(a.amountSen ?? a.amount_sen ?? 0),
-      });
-    }
-    return [...byId.values()];
-  }, [editApplyToPi, piListQ.data, allocations, supplierId]);
-
-  const editAllocatedSen = useMemo(
-    () => editAllocRows.reduce((s, r) => s + (allocAmounts[r.piId] ?? 0), 0),
-    [editAllocRows, allocAmounts],
-  );
-  const editOverAllocated = editApplyToPi && editAllocatedSen > editTotalSen;
 
   if (detailQ.isLoading || !pv) return <SkeletonDetailPage />;
 
@@ -327,24 +399,42 @@ export const PaymentVoucherDetail = () => {
     const realLines = editLines.filter((l) => l.debitAccountCode && l.amountSen > 0);
     if (!payeeName.trim()) { notify({ title: 'Enter a payee', body: 'Who is this voucher paying?', tone: 'error' }); return; }
     if (!creditAccountCode) { notify({ title: 'Pick a “Paid From” account', body: 'Choose the bank / cash / payables account.', tone: 'error' }); return; }
-    if (realLines.length === 0) { notify({ title: 'Add at least one line', body: 'Each line needs a debit account and an amount > 0.', tone: 'error' }); return; }
+    if (isRefundPv && editRefundAmountSen <= 0) { void notify({ title: 'Enter the refund amount', body: 'How much goes back to the customer?', tone: 'error' }); return; }
+    if (apEdit && !supplierId) { void notify({ title: 'Pick a supplier', body: 'An AP Payment settles a supplier — choose whose invoices this pays.', tone: 'error' }); return; }
+    if (apEdit && !apAccountCode) { void notify({ title: 'No AP control account', body: 'The AP / Other Creditor role has no account yet — set it on Accounting.', tone: 'error' }); return; }
+    if (apEdit && editTotalSen <= 0) { void notify({ title: 'Nothing to pay yet', body: 'Tick an invoice, type a partial amount, or enter a prepay figure.', tone: 'error' }); return; }
+    if (!isRefundPv && !apEdit && realLines.length === 0) { notify({ title: 'Add at least one line', body: 'Each line needs a debit account and an amount > 0.', tone: 'error' }); return; }
     if (editOverAllocated) {
       notify({ title: 'Applied more than the voucher total', body: `You've applied ${fmtRm(editAllocatedSen)} to PIs but the voucher total is only ${fmtRm(editTotalSen)}.`, tone: 'error' });
       return;
     }
-    // Migration 0202 — settled PIs (SUPPLIER_PAYMENT only). Send the full set of
-    // applied rows (amount > 0) so the server replaces the prior allocations.
+    // Migration 0202 — settled invoices (SUPPLIER_PAYMENT only). Send the full
+    // set of applied rows (amount > 0), both kinds, so the server replaces the
+    // prior allocations.
     const sendAllocations = editApplyToPi
       ? editAllocRows
-          .map((r) => ({ piId: r.piId, amountSen: allocAmounts[r.piId] ?? 0 }))
-          .filter((a) => a.amountSen > 0)
+        .map((r) => ({ row: r, amountSen: allocAmounts[r.key] ?? 0 }))
+        .filter((a) => a.amountSen > 0)
+        .map((a) => (a.row.kind === 'API' ? { apInvoiceId: a.row.key, amountSen: a.amountSen } : { piId: a.row.key, amountSen: a.amountSen }))
       : [];
+    /* AP Payment: the ONE GL line is written here — Dr the AP control account
+       for exactly the ticks plus the prepay, as PV New writes it. The operator
+       never touches a debit account on this document. */
+    const settledCount = sendAllocations.length;
+    const apLines = [{
+      description: [
+        settledCount > 0 ? `Settle ${settledCount} invoice(s)` : null,
+        editAdvanceSen > 0 ? `prepay ${(editAdvanceSen / 100).toFixed(2)}` : null,
+      ].filter(Boolean).join(' + ') + ` — ${payeeName.trim()}`,
+      debitAccountCode: apAccountCode, amountSen: editTotalSen,
+    }];
     try {
       await update.mutateAsync({
         id,
         payeeName:         payeeName.trim(),
-        supplierId:        supplierId || null,
-        purpose,
+        supplierId:        isRefundPv ? null : (supplierId || null),
+        /* A refund's kind is fixed at birth — the edit never re-types it. */
+        purpose:           isRefundPv ? 'CUSTOMER_REFUND' : purpose,
         creditAccountCode,
         voucherDate,
         notes:             notes || null,
@@ -354,11 +444,15 @@ export const PaymentVoucherDetail = () => {
         exchangeRate:      isForeign
           ? resolveFxRate(exchangeRate)
           : 1,
-        lines: realLines.map((l) => ({
-          description:      l.description || undefined,
-          debitAccountCode: l.debitAccountCode,
-          amountSen:      l.amountSen,
-        })),
+        ...(isRefundPv
+          ? { refundAmountSen: editRefundAmountSen }
+          : apEdit
+            ? { lines: apLines }
+            : { lines: realLines.map((l) => ({
+              description:      l.description || undefined,
+              debitAccountCode: l.debitAccountCode,
+              amountSen:      l.amountSen,
+            })) }),
         // Always send allocations for a SUPPLIER_PAYMENT edit (empty clears
         // them); FREIGHT/OTHER omit the key so the server leaves them untouched.
         ...(editApplyToPi ? { allocations: sendAllocations } : {}),
@@ -372,6 +466,8 @@ export const PaymentVoucherDetail = () => {
   /* There is no standalone Post button any more — the second yes posts
      (owner 2026-09-02: 当approved 了才会进gl), and re-approving resumes a
      post that died halfway. */
+  saveRef.current = () => { void onSave(); };
+
   const onCancel = async () => {
     if (!(await askConfirm({ title: `Cancel voucher ${pv.pv_number}?`, body: 'This sets status to CANCELLED and reverses the GL entry if it was posted.', confirmLabel: 'Cancel voucher', danger: true }))) return;
     try {
@@ -511,6 +607,7 @@ export const PaymentVoucherDetail = () => {
                 <Button variant="ghost" size="md" onClick={() => setIsEditing(false)} disabled={busy}>
                   <X {...ICON} /> Back
                 </Button>
+                <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{SAVE_HOTKEY_HINT}</span>
                 <Button variant="primary" size="md" onClick={onSave} disabled={busy}>
                   <Save {...ICON} /> {update.isPending ? 'Saving…' : 'Save'}
                 </Button>
@@ -526,9 +623,17 @@ export const PaymentVoucherDetail = () => {
         <div className={styles.cardBody}>
           {!isEditing ? (
             <div className={styles.formGrid2}>
-              <InfoCell label="Payee" value={pv.payee_name} />
-              <InfoCell label="Supplier" value={pv.supplier?.name ?? null} />
-              <InfoCell label="Purpose" value={purposeLabel(pv.purpose)} />
+              <InfoCell label={isRefundPv ? 'Customer' : 'Payee'} value={pv.payee_name} />
+              {!isRefundPv && <InfoCell label="Supplier" value={pv.supplier?.name ?? null} />}
+              <InfoCell label="Type" value={pvTypeLabel(pv.purpose)} />
+              {isRefundPv && (
+                <div className={styles.field}>
+                  <span className={styles.fieldLabel}>Refunds</span>
+                  {pv.refund_source_type === 'SO' && pv.refund_source_doc_no
+                    ? <Link to={`/scm/sales-orders/${String(pv.refund_source_doc_no)}`} style={{ color: 'var(--c-orange)', fontFamily: 'var(--font-mono)' }}>{String(pv.refund_source_doc_no)}</Link>
+                    : <span style={{ fontFamily: 'var(--font-mono)' }}>{pv.refund_source_type ?? ''} {pv.refund_source_doc_no ?? '—'}</span>}
+                </div>
+              )}
               <InfoCell label="Paid From" value={accountLabel(pv.credit_account_code)} />
               <InfoCell label="Voucher Date" value={pv.voucher_date ? fmtDateOrDash(pv.voucher_date) : null} />
               <InfoCell label="Currency" value={viewCurrency} />
@@ -538,9 +643,18 @@ export const PaymentVoucherDetail = () => {
           ) : (
             <div className={styles.formGrid2}>
               <label className={styles.field}>
-                <span className={styles.fieldLabel}>Payee *</span>
-                <input type="text" value={payeeName} onChange={(e) => setPayeeName(e.target.value)} className={styles.fieldInput} />
+                <span className={styles.fieldLabel}>{isRefundPv ? 'Customer' : 'Payee *'}</span>
+                <input type="text" value={payeeName} onChange={(e) => setPayeeName(e.target.value)} className={styles.fieldInput} readOnly={isRefundPv} />
               </label>
+              {isRefundPv && (
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Refund amount (MYR) *</span>
+                  <MoneyInput bare valueSen={editRefundAmountSen} aria-label="Refund amount"
+                    onCommit={(sen) => setEditRefundAmountSen(Math.max(0, sen ?? 0))}
+                    inputClassName={styles.fieldInput} selectOnFocus />
+                </label>
+              )}
+              {!isRefundPv && (<>
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Supplier {purpose === 'SUPPLIER_PAYMENT' ? '*' : '(optional)'}</span>
                 <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={styles.fieldInput} disabled={suppliersQ.isLoading}>
@@ -551,16 +665,16 @@ export const PaymentVoucherDetail = () => {
                 </select>
               </label>
               <label className={styles.field}>
-                <span className={styles.fieldLabel}>Purpose</span>
+                <span className={styles.fieldLabel}>Type</span>
                 <span className={styles.selectWrap}>
-                  <select className={styles.fieldSelect} value={purpose} onChange={(e) => setPurpose(e.target.value as 'SUPPLIER_PAYMENT' | 'FREIGHT' | 'OTHER')}>
-                    <option value="SUPPLIER_PAYMENT">Supplier payment (settle PI)</option>
-                    <option value="FREIGHT">Freight</option>
-                    <option value="OTHER">Other</option>
+                  <select className={styles.fieldSelect} value={purpose} onChange={(e) => setPurpose(pvTypeOf(e.target.value))}>
+                    <option value="SUPPLIER_PAYMENT">AP Payment</option>
+                    <option value="OTHER">Payment Voucher</option>
                   </select>
                   <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
                 </span>
               </label>
+              </>)}
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Paid From (Credit) *</span>
                 <AccountSelect accounts={accounts} value={creditAccountCode} onChange={setCreditAccountCode} className={styles.fieldInput} />
@@ -608,11 +722,18 @@ export const PaymentVoucherDetail = () => {
       {/* ── Lines ─────────────────────────────────────────────────────── */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
-          <h2 className={styles.cardTitle}>Lines ({isEditing ? editLines.length : lines.length})</h2>
+          <h2 className={styles.cardTitle}>Lines ({isEditing ? (apEdit ? 1 : editLines.length) : lines.length})</h2>
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>total {fmtRm(totalSen, currency)}</span>
         </div>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-          {!isEditing ? (
+          {apEdit ? (
+            /* No line editor on an AP Payment: its one debit line is the AP
+               control, written on save from the ticks below — as on PV New. */
+            <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)', margin: 0 }}>
+              One line, written by the system on save: Dr {accountLabel(apAccountCode)} {fmtRm(editTotalSen, currency)}
+              {editAdvanceSen > 0 ? ` (incl. prepay ${fmtRm(editAdvanceSen, currency)})` : ''} — pick the invoices below.
+            </p>
+          ) : !isEditing || isRefundPv ? (
             lines.length === 0 ? (
               <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>No lines.</p>
             ) : (
@@ -620,8 +741,8 @@ export const PaymentVoucherDetail = () => {
                 <thead>
                   <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                     <th style={{ padding: '6px 8px' }}>#</th>
-                    <th style={{ padding: '6px 8px' }}>Description</th>
                     <th style={{ padding: '6px 8px' }}>Account (Debit)</th>
+                    <th style={{ padding: '6px 8px' }}>Description</th>
                     <th style={{ padding: '6px 8px', textAlign: 'right' }}>Amount</th>
                   </tr>
                 </thead>
@@ -629,8 +750,11 @@ export const PaymentVoucherDetail = () => {
                   {lines.map((l, idx) => (
                     <tr key={l.id} style={{ borderTop: '1px solid var(--line)' }}>
                       <td style={{ padding: '6px 8px', color: 'var(--fg-muted)' }}>{idx + 1}</td>
+                      {/* A refund's one line debits the AR control; the customer it
+                          is for rides beside the account, as the party does in the
+                          journal (owner 2026-09-08: 看不到是谁 → 可以). */}
+                      <td style={{ padding: '6px 8px' }}>{accountLabel(l.debit_account_code)}{isRefundPv && pv.payee_name ? ` · ${pv.payee_name}` : ''}</td>
                       <td style={{ padding: '6px 8px' }}>{l.description || '—'}</td>
-                      <td style={{ padding: '6px 8px' }}>{accountLabel(l.debit_account_code)}</td>
                       <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(Number(l.amount_sen ?? 0), currency)}</td>
                     </tr>
                   ))}
@@ -657,14 +781,16 @@ export const PaymentVoucherDetail = () => {
                       )}
                     </div>
                   </div>
+                  {/* Account first, then description, then amount — the owner's
+                      typing order (2026-09-08), as on PV New. */}
                   <div className={styles.formGrid2}>
-                    <label className={styles.field}>
-                      <span className={styles.fieldLabel}>Description</span>
-                      <input type="text" value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })} className={styles.fieldInput} />
-                    </label>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Account (Debit) *</span>
                       <AccountSelect accounts={accounts} value={l.debitAccountCode} onChange={(v) => setLine(l.rid, { debitAccountCode: v })} className={styles.fieldInput} />
+                    </label>
+                    <label className={styles.field}>
+                      <span className={styles.fieldLabel}>Description</span>
+                      <input type="text" value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })} className={styles.fieldInput} />
                     </label>
                   </div>
                   <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
@@ -690,10 +816,12 @@ export const PaymentVoucherDetail = () => {
       {(purpose === 'SUPPLIER_PAYMENT' || allocations.length > 0) && (
         <section className={styles.card}>
           <div className={styles.cardHeader}>
-            <h2 className={styles.cardTitle}>Linked Purchase Invoices</h2>
+            <h2 className={styles.cardTitle}>Linked invoices</h2>
             {isEditing && editApplyToPi ? (
               <span style={{ fontSize: 'var(--fs-12)', color: editOverAllocated ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)' }}>
-                Allocated {fmtRm(editAllocatedSen)} / PV total {fmtRm(editTotalSen)}
+                {apEdit
+                  ? `Applying ${fmtRm(editAllocatedSen)}${editAdvanceSen > 0 ? ` + prepay ${fmtRm(editAdvanceSen)}` : ''} = ${fmtRm(editTotalSen)}`
+                  : `Allocated ${fmtRm(editAllocatedSen)} / PV total ${fmtRm(editTotalSen)}`}
               </span>
             ) : (
               <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
@@ -705,10 +833,8 @@ export const PaymentVoucherDetail = () => {
             {isEditing && editApplyToPi ? (
               !supplierId ? (
                 <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Pick a supplier to list outstanding invoices.</p>
-              ) : piListQ.isLoading ? (
+              ) : piListQ.isLoading || apListQ.isLoading ? (
                 <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Loading outstanding invoices…</p>
-              ) : editAllocRows.length === 0 ? (
-                <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>This supplier has no outstanding purchase invoices.</p>
               ) : (
                 <>
                   {editOverAllocated && (
@@ -716,26 +842,49 @@ export const PaymentVoucherDetail = () => {
                       You've applied more than the voucher total — reduce the amounts below before saving.
                     </div>
                   )}
+                  {editAllocRows.length === 0 ? (
+                    <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>
+                      This supplier has no outstanding invoice{apEdit ? ' — a prepay below still books as their advance' : ''}.
+                    </p>
+                  ) : (
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
                     <thead>
                       <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                        <th style={{ padding: '6px 8px', width: 34 }} aria-label="Pay in full" />
                         <th style={{ padding: '6px 8px' }}>Invoice</th>
+                        <th style={{ padding: '6px 8px' }}>Date</th>
                         <th style={{ padding: '6px 8px' }}>Supplier Ref</th>
+                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Amount</th>
                         <th style={{ padding: '6px 8px', textAlign: 'right' }}>Outstanding</th>
                         <th style={{ padding: '6px 8px', textAlign: 'right' }}>Apply</th>
                       </tr>
                     </thead>
                     <tbody>
                       {editAllocRows.map((r) => (
-                        <tr key={r.piId} style={{ borderTop: '1px solid var(--line)' }}>
-                          <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>{r.invoiceNumber}</td>
+                        <tr key={r.key} style={{ borderTop: '1px solid var(--line)' }}>
+                          <td style={{ padding: '6px 8px' }}>
+                            {/* Tick = pay this invoice in full; untick clears it. A
+                                typed partial shows unchecked — the AMOUNT is the truth. */}
+                            <input type="checkbox" aria-label={`Pay ${r.invoiceNumber} in full`}
+                              checked={(allocAmounts[r.key] ?? 0) === r.outstandingSen && r.outstandingSen > 0}
+                              onChange={(e) => { const v = e.target.checked ? r.outstandingSen : 0; setAllocAmounts((prev) => ({ ...prev, [r.key]: v })); }}
+                              style={{ width: 16, height: 16, accentColor: 'var(--c-orange)' }} />
+                          </td>
+                          <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>
+                            {r.invoiceNumber}
+                            {r.kind === 'API' && (
+                              <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', fontFamily: 'inherit', color: 'var(--fg-muted)' }} title="AP invoice — a non-stock supplier bill">AP</span>
+                            )}
+                          </td>
+                          <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDateOrDash(r.invoiceDate)}</td>
                           <td style={{ padding: '6px 8px', color: r.supplierInvoiceRef ? 'var(--fg)' : 'var(--fg-muted)' }}>{r.supplierInvoiceRef || '—'}</td>
+                          <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(r.totalSen)}</td>
                           <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(r.outstandingSen)}</td>
                           <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-                            <MoneyInput bare valueSen={allocAmounts[r.piId] ?? 0}
+                            <MoneyInput bare valueSen={allocAmounts[r.key] ?? 0} aria-label={`Apply to ${r.invoiceNumber}`}
                               onCommit={(sen) => {
                                 const v = Math.max(0, Math.min(r.outstandingSen, sen ?? 0));
-                                setAllocAmounts((prev) => ({ ...prev, [r.piId]: v }));
+                                setAllocAmounts((prev) => ({ ...prev, [r.key]: v }));
                               }}
                               inputClassName={styles.fieldInput} selectOnFocus />
                           </td>
@@ -743,10 +892,32 @@ export const PaymentVoucherDetail = () => {
                       ))}
                     </tbody>
                   </table>
+                  )}
+                  {apEdit && (
+                    /* 预付 — money for this supplier AHEAD of any invoice, on the
+                       same voucher; on approve the server records it as their
+                       advance. The total follows ticks + prepay (PV New's rule). */
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap', borderTop: '1px solid var(--line)', paddingTop: 'var(--space-3)', marginTop: 'var(--space-3)' }}>
+                        <b style={{ fontSize: 'var(--fs-13)' }}>Prepay (advance)</b>
+                        <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>pay ahead of any invoice — hangs on this supplier until knocked off</span>
+                        <span style={{ flex: 1 }} />
+                        <label style={{ width: 160 }}>
+                          <span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>Prepay amount</span>
+                          <MoneyInput bare valueSen={editAdvanceSen}
+                            onCommit={(sen) => setEditAdvanceSen(Math.max(0, sen ?? 0))}
+                            inputClassName={styles.fieldInput} selectOnFocus />
+                        </label>
+                      </div>
+                      <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', marginTop: 'var(--space-2)' }}>
+                        Books: Dr {apAccountCode || 'AP'} Account Payable {fmtRm(editTotalSen)}{editAdvanceSen > 0 ? ` (incl. prepay ${fmtRm(editAdvanceSen)})` : ''} · Cr {creditAccountCode || 'Paid From'} {fmtRm(editTotalSen)}
+                      </div>
+                    </>
+                  )}
                 </>
               )
             ) : allocations.length === 0 ? (
-              <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>No purchase invoices settled by this voucher.</p>
+              <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>No invoices settled by this voucher.</p>
             ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
                 <thead>
@@ -766,6 +937,9 @@ export const PaymentVoucherDetail = () => {
                           {piId
                             ? <Link to={`/scm/purchase-invoices/${piId}`} style={{ color: 'var(--c-orange)' }}>{a.invoiceNumber ?? a.invoice_number ?? piId}</Link>
                             : (a.invoiceNumber ?? a.invoice_number ?? '—')}
+                          {String(a.kind ?? '') === 'API' && (
+                            <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', fontFamily: 'inherit', color: 'var(--fg-muted)' }} title="AP invoice — a non-stock supplier bill">AP</span>
+                          )}
                         </td>
                         <td style={{ padding: '6px 8px', color: (a.supplierInvoiceRef ?? a.supplier_invoice_ref) ? 'var(--fg)' : 'var(--fg-muted)' }}>{a.supplierInvoiceRef ?? a.supplier_invoice_ref ?? '—'}</td>
                         <td style={{ padding: '6px 8px' }}>
@@ -868,13 +1042,17 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
   const advancesQ = useSupplierAdvances(supplierId);
   const applyM = useApplyAdvance();
   const piListQ = usePurchaseInvoices();
+  /* The other creditor's bills (2026-09-06): an advance to a 405-x supplier
+     lands on its AP INVOICES, which the purchase-invoice list never carries. */
+  const apListQ = useApInvoices('API');
   const [amounts, setAmounts] = useState<Record<string, number>>({});
   const [note, setNote] = useState<string | null>(null);
 
   const mine = (advancesQ.data?.advances ?? []).find((a: { pv_id: string }) => a.pv_id === pvId) ?? null;
 
-  const outstanding = useMemo(() => {
-    return ((piListQ.data?.purchaseInvoices ?? []) as Array<{
+  type Open = { key: string; kind: 'PI' | 'API'; id: string; number: string; date: string | null; outSen: number };
+  const outstanding = useMemo<Open[]>(() => {
+    const pis = ((piListQ.data?.purchaseInvoices ?? []) as Array<{
       id: string; invoice_number?: string | null; supplier_id?: string | null;
       supplier?: { id?: string | null } | null; status?: string | null;
       total_sen?: number | null; paid_sen?: number | null; invoice_date?: string | null;
@@ -885,8 +1063,12 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
         return sid === supplierId && (st === 'POSTED' || st === 'PARTIALLY_PAID')
           && Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) > 0;
       })
-      .sort((a, b) => String(a.invoice_date ?? '').localeCompare(String(b.invoice_date ?? '')));
-  }, [piListQ.data, supplierId]);
+      .map((r): Open => ({ key: `pi:${r.id}`, kind: 'PI', id: String(r.id), number: String(r.invoice_number ?? r.id), date: r.invoice_date ?? null, outSen: Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) }));
+    const apis = (apListQ.data?.rows ?? [])
+      .filter((r) => r.supplierId === supplierId && (r.status === 'POSTED' || r.status === 'PARTIALLY_PAID') && r.outstandingSen > 0)
+      .map((r): Open => ({ key: `api:${r.id}`, kind: 'API', id: r.id, number: r.invoiceNumber, date: r.invoiceDate, outSen: r.outstandingSen }));
+    return [...pis, ...apis].sort((a, b) => String(a.date ?? '').localeCompare(String(b.date ?? '')));
+  }, [piListQ.data, apListQ.data, supplierId]);
 
   if (!mine) return null;
   const remaining = mine.remaining_sen;
@@ -904,7 +1086,7 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
       <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
         <p style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', margin: 0 }}>
           This voucher paid ahead of any invoice. Knock the remainder off the supplier&rsquo;s
-          outstanding invoices below — no money moves; both legs are already in AP.
+          outstanding invoices below — purchase invoices and AP invoices alike; no money moves, both legs are already in AP.
         </p>
         {outstanding.length === 0 ? (
           <p style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', margin: 0 }}>No outstanding invoice from this supplier yet — the advance waits.</p>
@@ -919,22 +1101,21 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
               </tr>
             </thead>
             <tbody>
-              {outstanding.map((r) => {
-                const piId = String(r.id);
-                const out = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
-                return (
-                  <tr key={piId} style={{ borderTop: '1px solid var(--line)' }}>
-                    <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>{String(r.invoice_number ?? piId)}</td>
-                    <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDate(r.invoice_date as string | null)}</td>
-                    <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(out)}</td>
-                    <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-                      <MoneyInput bare valueSen={amounts[piId] ?? 0}
-                        onCommit={(sen) => setAmounts((prev) => ({ ...prev, [piId]: Math.max(0, Math.min(out, sen ?? 0)) }))}
-                        inputClassName={styles.fieldInput} selectOnFocus />
-                    </td>
-                  </tr>
-                );
-              })}
+              {outstanding.map((r) => (
+                <tr key={r.key} style={{ borderTop: '1px solid var(--line)' }}>
+                  <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>
+                    {r.number}
+                    {r.kind === 'API' && <span style={{ marginLeft: 6, fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-11)', fontWeight: 600, color: 'var(--c-orange, #b06000)' }}>AP</span>}
+                  </td>
+                  <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDate(r.date)}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(r.outSen)}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                    <MoneyInput bare valueSen={amounts[r.key] ?? 0}
+                      onCommit={(sen) => setAmounts((prev) => ({ ...prev, [r.key]: Math.max(0, Math.min(r.outSen, sen ?? 0)) }))}
+                      inputClassName={styles.fieldInput} selectOnFocus />
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}
@@ -944,9 +1125,9 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
             disabled={applyM.isPending || asked === 0 || over}
             onClick={() => {
               setNote(null);
-              const allocations = Object.entries(amounts)
-                .filter(([, v]) => v > 0)
-                .map(([piId, amountSen]) => ({ piId, amountSen }));
+              const allocations = outstanding
+                .filter((r) => (amounts[r.key] ?? 0) > 0)
+                .map((r) => (r.kind === 'API' ? { apInvoiceId: r.id, amountSen: amounts[r.key]! } : { piId: r.id, amountSen: amounts[r.key]! }));
               applyM.mutate({ pvId, allocations }, {
                 onSuccess: (d: { appliedSen: number; remainingSen: number }) => { setAmounts({}); setNote(`Knocked off ${fmtRm(d.appliedSen)} — ${fmtRm(d.remainingSen)} of the advance remains.`); },
                 onError: (e) => setNote(e instanceof Error ? e.message : 'Not applied.'),
@@ -960,110 +1141,27 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
   );
 };
 
-/* ── Files card — the bill pages behind this voucher (mig 0352). sort_no =
-   attach order = the order printing appends them after the voucher page.
-   View streams the bytes through the Worker (authed) into a blob tab —
-   there is no public URL to leak. Add/delete follow the four-layer rule:
-   a CHECKED voucher's evidence stays (delete hidden, server refuses too),
+/* ── Files card — the bill pages behind this voucher (mig 0352). The card
+   itself is the shared DocFilesCard (since 2026-09-06 the AP invoice shows
+   the same one); this binds the voucher's hooks and its four-layer rule:
+   a CHECKED voucher's evidence stays (remove hidden, server refuses too),
    a CANCELLED one takes no more files. */
-const fmtSize = (bytes: number): string =>
-  bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
-
 const PvFilesCard = ({ pvId, canWrite, locked, cancelled }: { pvId: string; canWrite: boolean; locked: boolean; cancelled: boolean }) => {
-  const notify = useNotify();
-  const askConfirm = useConfirm();
   const filesQ = usePvFiles(pvId);
   const upload = useUploadPvFile();
   const remove = useDeletePvFile();
-  const [viewingId, setViewingId] = useState<string | null>(null);
-
-  const files = filesQ.data?.files ?? [];
-
-  const view = async (fileId: string, fileName: string) => {
-    setViewingId(fileId);
-    try {
-      const { url } = await fetchPvFileBlobUrl(pvId, fileId);
-      window.open(url, '_blank', 'noopener');
-      /* Revoke AFTER the new tab has loaded the blob — immediate revocation
-         races the open and shows a blank tab. */
-      setTimeout(() => { URL.revokeObjectURL(url); }, 60_000);
-    } catch (e) {
-      void notify({ title: `Couldn't open ${fileName}`, body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
-    } finally {
-      setViewingId(null);
-    }
-  };
-
-  const onPick = async (list: FileList | null) => {
-    if (!list || list.length === 0) return;
-    for (const f of [...list]) {
-      try {
-        await upload.mutateAsync({
-          pvId,
-          file: { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) },
-        });
-      } catch (e) {
-        void notify({ title: `${f.name} did not attach`, body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
-        break;
-      }
-    }
-  };
-
-  const onDelete = async (fileId: string, fileName: string) => {
-    if (!(await askConfirm({ title: `Remove ${fileName}?`, body: 'The stored file is deleted with its row. A checked voucher refuses this — evidence locks with the document.', confirmLabel: 'Remove file', danger: true }))) return;
-    try {
-      await remove.mutateAsync({ pvId, fileId });
-    } catch (e) {
-      void notify({ title: 'Not removed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
-    }
-  };
-
   return (
-    <section className={styles.card}>
-      <div className={styles.cardHeader}>
-        <h2 className={styles.cardTitle}>Files</h2>
-        {canWrite && !cancelled && (
-          <label style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)', cursor: 'pointer', fontWeight: 600 }}>
-            📎 {upload.isPending ? 'Attaching…' : 'Attach file'}
-            <input type="file" multiple accept={PV_FILE_ACCEPT}
-              aria-label="Attach voucher files" style={{ display: 'none' }}
-              disabled={upload.isPending}
-              onChange={(e) => { void onPick(e.target.files); e.target.value = ''; }} />
-          </label>
-        )}
-        <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-          {files.length} file{files.length === 1 ? '' : 's'}{locked ? ' · locked with the checked voucher' : ''}
-        </span>
-      </div>
-      <div className={styles.cardBody}>
-        {files.length === 0 ? (
-          <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)', margin: 0 }}>
-            No files yet. A voucher opened from Scan bills attaches its scans here by itself; use Attach file for anything else.
-          </p>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {files.map((f) => (
-              <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', fontSize: 'var(--fs-13)', padding: '4px 0' }}>
-                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)', width: 18, textAlign: 'right' }}>{f.sort_no}</span>
-                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.file_name}</span>
-                <span style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-12)', whiteSpace: 'nowrap' }}>
-                  {f.mime === 'application/pdf' ? 'PDF' : 'image'} · {fmtSize(f.size_bytes)} · {fmtDate(f.created_at)}
-                </span>
-                <Button variant="secondary" size="sm" disabled={viewingId === f.id} onClick={() => void view(f.id, f.file_name)}>
-                  {viewingId === f.id ? 'Opening…' : 'View'}
-                </Button>
-                {canWrite && !locked && !cancelled && (
-                  <button type="button" aria-label={`Remove ${f.file_name}`} disabled={remove.isPending}
-                    onClick={() => void onDelete(f.id, f.file_name)}
-                    style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2 }}>
-                    <Trash2 size={14} strokeWidth={1.75} />
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </section>
+    <DocFilesCard
+      files={filesQ.data?.files ?? []}
+      canWrite={canWrite} locked={locked} closed={cancelled}
+      lockedNote=" · locked with the checked voucher"
+      emptyNote="No files yet. A voucher opened from Scan bills attaches its scans here by itself; use Attach file for anything else."
+      removeBody="The stored file is deleted with its row. A checked voucher refuses this — evidence locks with the document."
+      attachAriaLabel="Attach voucher files"
+      uploading={upload.isPending} removing={remove.isPending}
+      onUpload={(file) => upload.mutateAsync({ pvId, file })}
+      onRemove={(fileId) => remove.mutateAsync({ pvId, fileId })}
+      openUrl={(fileId) => fetchPvFileBlobUrl(pvId, fileId)}
+    />
   );
 };

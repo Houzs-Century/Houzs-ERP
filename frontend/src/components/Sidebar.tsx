@@ -64,7 +64,7 @@ import {
   History,
   Wand2,
   CalendarOff,
-  type LucideIcon, Landmark, CreditCard, Banknote } from "lucide-react";
+  type LucideIcon, Landmark, CreditCard, Banknote, Receipt } from "lucide-react";
 import { cn } from "../lib/utils";
 import { booleanRecordPreference, useIdentityPreference } from "../hooks/useIdentityPreference";
 import { useAuth } from "../auth/AuthContext";
@@ -508,6 +508,7 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/mrp", label: "MRP · Stock Status", icon: Calculator, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.mrp"], hideForSalesRep: true },
           { to: "/scm/purchase-orders", label: "Purchase Orders", icon: ClipboardList, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.po"], hideForSalesRep: true },
           { to: "/scm/po-amendments", label: "PO Amendments", icon: History, anyPerm: ["*", "scm.access", "scm.po_amendment.create", "scm.po_amendment.approve"], anyAccess: ["scm.procurement.po"], hideForSalesRep: true },
+          { to: "/scm/cancel-requests", label: "Cancellation Requests", icon: ClipboardCheck, anyPerm: ["*", "scm.access", "scm.so_cancel.approve_l1", "scm.so_cancel.approve_l2", "scm.po_cancel.approve"], anyAccess: ["scm.procurement.po", "scm.sales.orders"], hideForSalesRep: true },
           { to: "/scm/grns", label: "Goods Receipt", icon: PackageCheck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.grn"], hideForSalesRep: true },
           { to: "/scm/purchase-invoices", label: "Purchase Invoices", icon: ReceiptText, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.pi"], hideForSalesRep: true },
           { to: "/scm/purchase-returns", label: "Purchase Returns", icon: Undo2, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.pr"], hideForSalesRep: true },
@@ -646,11 +647,19 @@ export const NAV_TABS: NavTab[] = [
       // after. Both gated on the same GL key the backend checks
       // (scm.payment_voucher.post) — front and back both.
       { to: "/scm/merchant-recon", label: "Merchant Recon", icon: CreditCard, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
+      // Official Receipts (GL redesign item 9): every customer payment's OR
+      // document — drafts waiting for their money, the formal run, print +
+      // manual confirm. NOT the money-in list — that stays at /scm/receipts.
+      { to: "/scm/official-receipts", label: "Official Receipts", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.accounting"] },
       { to: "/scm/bank-recon", label: "Bank Recon", icon: Banknote, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
       // Maintained across companies from one screen (owner, 2026-08-18).
       { to: "/scm/settlement-setup", label: "Recon Setup", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
       { to: "/scm/chart-of-accounts", label: "Chart of Accounts", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
       { to: "/scm/other-debtors", label: "Other Debtors", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
+      // AP Invoices (owner 2026-09-06): the Finance side's supplier bills —
+      // AP invoices raised there beside the purchase invoices mirrored from
+      // Procurement. Same key as Other Debtors: the bill-raising people.
+      { to: "/scm/ap-invoices", label: "AP Invoices", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
       { to: "/scm/receipts", label: "Receipts", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
       { to: "/scm/payment-vouchers", label: "Payment Vouchers", icon: Wallet, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.accounting"] },
       { to: "/scm/outstanding", label: "Outstanding", icon: AlertCircle, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
@@ -805,6 +814,17 @@ export const NAV_TABS: NavTab[] = [
     label: "AutoCount Sync",
     icon: RefreshCw,
     anyPerm: ["*", "scm.autocount.read", "settings.manage"],
+  },
+  // Beside AutoCount Sync because it answers the neighbouring question. That
+  // one is "did my document reach the account book"; this one is "who changed
+  // my document, and to what" — the supervision the owner asked for when he
+  // opened sales, delivery, purchase and receipt documents to staff.
+  {
+    section: "system",
+    to: "/change-log",
+    label: "Change Log",
+    icon: History,
+    anyPerm: ["*", "scm.changelog.read", "settings.manage"],
   },
   {
     section: "system",

@@ -79,6 +79,7 @@ describePg('execIdRestamp against real Postgres (savepoints + a real partial uni
         qty int NOT NULL DEFAULT 1,
         unit_cost_sen int NOT NULL DEFAULT 0,
         total_cost_sen int NOT NULL DEFAULT 0,
+        movement_date date,
         source_doc_type text,
         source_doc_no text,
         source_doc_id uuid,

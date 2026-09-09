@@ -23,7 +23,12 @@
 >   outsourced teams are excluded by owner ruling (`isOutsourced`).
 > * `departments2` → `TeamDepartmentsV2.tsx`, `mail2` → `TeamMailboxesV2.tsx`
 >   (Mail Center reskin with derived personal/department/orphaned types).
-> * `permissions` → `TeamRolesV2.tsx` — the EDITABLE position-capability
+> * `permissions` → `TeamRolesV2.tsx` — since 2026-09-07 the first section
+>   ("Roles") embeds the ROLE editor from `pages/Roles.tsx` (role list, the
+>   permission checkboxes grouped by module, New Role — owner: "Roles &
+>   Permissions 里加个 Roles 分区", because the strip's Roles tab was removed
+>   and the editor was reachable only by URL `?tab=roles`, which still
+>   works); the remaining sections are the EDITABLE position-capability
 >   matrix (owner 2026-08-22: "要界面可编辑"). Grants are rows in
 >   `position_capabilities` (PG mig 0322, D1 mirror 150); the catalogue + the
 >   fail-closed gate live in `backend/src/services/positionCapabilities.ts`;
@@ -167,7 +172,13 @@ was a placeholder). Owner 2026-08-26 made both real:
 `backend/src/db/schema.pg.ts` gains `departments.lead_user_id` (FK `users`,
 `ON DELETE SET NULL`) and `departments.headcount_target`
 (`backend/src/db/migrations-pg/0331_departments_lead_and_headcount.sql`, D1
-mirror `152`). `backend/src/routes/departments.ts` exposes both on GET and
+mirror `152`). **`departments.code` (mig
+`backend/src/db/migrations-pg/20260906T1417_departments_code_document_refs.sql`,
+2026-09-06)**: the 2–4 letter `[DEPT]` segment of a document reference number
+(OPS-ANN-2609-0001, see `docs/modules/document-refs.md`); optional, unique
+case-insensitively, accepted by POST / PATCH `/api/departments` (`code`;
+`""`/`null` clears), edited in `TeamDepartmentsV2.tsx` and shown as a chip
+on the card. `backend/src/routes/departments.ts` exposes both on GET and
 accepts them on PATCH (lead must be a known user or `null`; target a
 non-negative int or `null`).
 
@@ -197,7 +208,8 @@ card shows `active / target` when a target is set.
 - **A targeting edit busts the member's announcements banner cache.** The banner
   filters by department_id / position_id / company grants, and its per-user KV
   snapshot lives 300s (> the 60s poll), so PATCH `/:id` (when it changes
-  department / position / role / status / department_ids / company_ids), PUT
+  department / position / role / status / department_ids / company_ids, and —
+  since announcements can target a division, mig 20260906T0639 — `division`), PUT
   `/:id/companies`, and DELETE `/:id` all call `bustBannerForUser` (both scopes);
   a department DELETE (`routes/departments.ts`) bumps the banner family version
   because it un-assigns an unknown set of members at once. Session bust alone did
@@ -260,11 +272,16 @@ whole no-login surface: `/survey/:token`, `/track` + `/portal/*`,
 `/reset/:token`, `/invite/:token`, `/privacy`, **`/d/:token`** — the printed
 delivery-order QR (`frontend/src/pages/PublicDoScan.tsx`) — and, since
 2026-08-27, **`/d/scan`**, the pile scanner
-(`frontend/src/pages/PublicDoScanBasket.tsx`). The QR one is the owner's
-decision: the driver has no account, so the token printed on the paper is the
-credential. It is 10 characters since 2026-08-27 — the length is a print setting,
+(`frontend/src/pages/PublicDoScanBasket.tsx`). Since 2026-09-03 the list also
+carries **`/c/:token`** — a booth contractor's own confirmed calendar
+(`frontend/src/pages/ContractorCalendar.tsx`), same no-login token rule, served
+by `backend/src/routes/publicContractorCalendar.ts` mounted before the auth gate
+in `index.ts`; see `docs/modules/projects-pms.md` for the token lifecycle. The QR
+one is the owner's decision: the driver has no account, so the token printed on
+the paper is the credential. It is 10 characters since 2026-08-27 — the length is a print setting,
 see `docs/bugs/0552-…` — and the 64-hex form on every sheet already printed still
 resolves.
+Since 2026-09-08 the same file also serves two per-event routes behind the same token gate — `GET .../:token/events/:eventId/floorplan` (the files on the event's `Blank Floorplan` task, else the legacy project-level floorplan) and `.../floorplan/:fileId` (stream, `?download=1` = attachment) — so a contractor can tap an event and view/download ONLY its unfilled floorplan; and **`/b/:token`** is the same page in brand mode (`routes/publicBrandCalendar.ts`, `brand_share_tokens`) — a brand's own events, display floorplan, size and total sales, Excel export logged. Since 2026-09-09 both modes' `GET .../:token/export` takes `?month=YYYY-MM` and returns only the events touching that month (the month on screen; without it the whole schedule, so a tab loaded before the deploy keeps working; a malformed month is 400). Full rule and tests: `docs/modules/projects-pms.md`, contractor share links.
 
 **`/d/scan` IS DECIDED BEFORE THE TOKEN BRANCH**, and that ordering is the whole
 of its correctness: `startsWith("/d/")` would otherwise classify it as a token

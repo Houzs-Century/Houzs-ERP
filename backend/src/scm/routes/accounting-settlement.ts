@@ -31,12 +31,14 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId, allowedCompanyIds } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { parseStatement, type StatementColumnMap } from '../../acc/settlement-parse';
-import { matchStatement, recordedNotArrived, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
+import { matchStatement, recordedNotArrived, listOnce, UNTAGGED_LIST, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
 import {
   loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow, postStatementCharge,
-  postBatchReceipt, loadBatchReceipts, undoBatchReceipt, unconfirmSettlementRow,
+  postBatchReceipt, loadBatchReceipts, undoBatchReceipt, unconfirmSettlementRow, clearOrphanBatch,
 } from '../../acc/settlement';
 import { resolveRoles } from '../../acc/rules';
+import { loadLineMonth, loadLiveMonthLock } from '../../acc/bank';
+import { lockedRefusal } from '../../acc/bank-lock';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -196,6 +198,10 @@ function maintenanceCompany(c: Ctx, asked: unknown): { ok: true; companyId: numb
    companies the caller may maintain, every merchant with whether THIS company
    uses it and where its money lands, and this company's money accounts with
    whether it banks with them. */
+/** A clearing account: the 326- (card machine) and 327- (online) codes — where
+    money sits between the swipe and the payout. */
+const isClearingCode = (code: string): boolean => /^32[67]-/.test(code);
+
 export const settlementMaintenance = guard(async (c) => {
   const sb = c.get('supabase');
 
@@ -238,8 +244,23 @@ export const settlementMaintenance = guard(async (c) => {
   if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
   const bankRows = (bankRaw ?? []) as Array<Record<string, any>>;
 
+  /* Every company's CLEARING accounts — where a machine's card money sits
+     before the payout (owner 2026-09-07: 我想要拆账户 — one per bank, so the
+     screen must offer them). The 326-/327- codes: card and online clearing;
+     not money, so the payout picker above never shows them. */
+  const { data: clearRaw, error: clErr } = await sb.from('accounts')
+    .select('company_id, account_code, account_name')
+    .in('company_id', ids).eq('acc_money', false).eq('is_active', true).order('account_code');
+  if (clErr) return c.json({ error: 'load_failed', reason: clErr.message }, 500);
+  const clearings: Record<string, Array<{ account_code: string; account_name: string }>> = {};
+  for (const id of ids) clearings[String(id)] = [];
+  for (const r of (clearRaw ?? []) as Array<Record<string, any>>) {
+    if (!isClearingCode(String(r.account_code))) continue;
+    clearings[String(Number(r.company_id))]?.push({ account_code: String(r.account_code), account_name: String(r.account_name ?? r.account_code) });
+  }
+
   const merchants = ((cfgRaw ?? []) as Array<Record<string, any>>).map((g) => {
-    const byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null }> = {};
+    const byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null; transitAccountCode: string | null }> = {};
     for (const id of ids) {
       const link = linkOf.get(`${id}:${String(g.code)}`);
       byCompany[String(id)] = {
@@ -248,6 +269,7 @@ export const settlementMaintenance = guard(async (c) => {
         enabled: link ? link.is_active !== false : false,
         linked: Boolean(link),
         bankAccountCode: link?.bank_account_code ?? null,
+        transitAccountCode: link?.transit_account_code ?? null,
       };
     }
     return {
@@ -288,7 +310,7 @@ export const settlementMaintenance = guard(async (c) => {
     };
   });
 
-  return c.json({ companies, merchants, banks });
+  return c.json({ companies, merchants, banks, clearings });
 });
 
 
@@ -312,12 +334,28 @@ export const settlementMaintenanceMerchant = guard(async (c) => {
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (body.enabled !== undefined) patch.is_active = Boolean(body.enabled);
   if (body.bankAccountCode !== undefined) patch.bank_account_code = body.bankAccountCode || null;
+  /* The clearing account (owner 2026-09-07: one per bank). Must be one of THIS
+     company's live 326-/327- accounts — the posting rules read it blind, so a
+     typo here would book card money onto an address that is not a clearing
+     account at all. Blank = back to the generic 326-0000. */
+  if (body.transitAccountCode !== undefined) {
+    const code = String(body.transitAccountCode ?? '').trim() || '326-0000';
+    if (!isClearingCode(code)) return c.json({ error: 'bad_clearing_account', message: `${code} is not a clearing account (326-/327-).` }, 400);
+    const { data: acct, error: aErr } = await sb.from('accounts')
+      .select('account_code, is_active, acc_money').eq('company_id', companyId).eq('account_code', code).maybeSingle();
+    if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
+    const a = acct as { is_active?: boolean; acc_money?: boolean } | null;
+    if (!a || a.is_active === false || a.acc_money === true) {
+      return c.json({ error: 'bad_clearing_account', message: `${code} is not a live clearing account in this company's chart.` }, 400);
+    }
+    patch.transit_account_code = code;
+  }
 
   if (!existing) {
     const { error } = await sb.from('acc_company_acquirers').insert({
       company_id: companyId,
       acquirer_code: code,
-      transit_account_code: '326-0000',
+      transit_account_code: (patch.transit_account_code as string | undefined) ?? '326-0000',
       fee_account_code: '930-0000',
       bank_account_code: body.bankAccountCode || null,
       is_active: body.enabled === undefined ? true : Boolean(body.enabled),
@@ -409,6 +447,14 @@ export const settlementUpload = guard(async (c) => {
   if (!parsed.ok) return c.json({ error: 'unreadable_statement', message: parsed.reason }, 400);
 
   const fileHash = await sha256Hex(content);
+  /* A batch left WITHOUT lines by a half-failed upload holds this hash hostage
+     — clear it so the same file can come in again; a batch WITH lines keeps
+     its refusal below. */
+  const gate = await clearOrphanBatch(sb, co.companyId, fileHash);
+  if (!gate.ok) return c.json({ error: 'load_failed', reason: gate.reason }, 500);
+  if (gate.state === 'duplicate') {
+    return c.json({ error: 'already_uploaded', message: 'This exact file has already been uploaded. Open the existing batch instead of loading it twice.' }, 409);
+  }
   const { data: batchRow, error: batchErr } = await sb.from('acc_settlement_batches').insert({
     company_id: co.companyId,
     acquirer_code: acquirerCode,
@@ -432,13 +478,20 @@ export const settlementUpload = guard(async (c) => {
     }, twice ? 409 : 500);
   }
   const batchId = (batchRow as { id: number }).id;
+  /* From here to the lines being written, every failure must take the batch
+     head back out — leaving it is what created the hash-hostage orphan the
+     gate above cleans up after. Best effort: if even the delete fails, the
+     next upload's gate clears it. */
+  const abandonBatch = async () => {
+    await sb.from('acc_settlement_batches').delete().eq('id', batchId).eq('company_id', co.companyId);
+  };
 
   const [candidates, settled] = await Promise.all([
     loadPaymentCandidates(sb, co.companyId, acq.acquirer, parsed.periodFrom, parsed.periodTo),
     loadSettledKeys(sb, co.companyId),
   ]);
-  if (!candidates.ok) return c.json({ error: 'load_failed', reason: candidates.reason }, 500);
-  if (!settled.ok) return c.json({ error: 'load_failed', reason: settled.reason }, 500);
+  if (!candidates.ok) { await abandonBatch(); return c.json({ error: 'load_failed', reason: candidates.reason }, 500); }
+  if (!settled.ok) { await abandonBatch(); return c.json({ error: 'load_failed', reason: settled.reason }, 500); }
 
   const decisions = matchStatement(
     { code: acq.acquirer.code, has_unique_ref: acq.acquirer.has_unique_ref, date_tolerance_days: acq.acquirer.date_tolerance_days },
@@ -461,7 +514,7 @@ export const settlementUpload = guard(async (c) => {
       notes: d.clue,
     })),
   ).select('id, line_no');
-  if (rowsErr) return c.json({ error: 'save_failed', reason: rowsErr.message }, 500);
+  if (rowsErr) { await abandonBatch(); return c.json({ error: 'save_failed', reason: rowsErr.message }, 500); }
 
   /* Link the reference-matched payments to their line. A link that loses the
      acc_settlement_payment_once race (another statement claimed that payment
@@ -883,7 +936,55 @@ export const settlementReceiptUndo = guard(async (c) => {
   const receiptId = Number(c.req.param('id'));
   if (!Number.isInteger(receiptId)) return c.json({ error: 'bad_id' }, 400);
 
-  const r = await undoBatchReceipt(c.get('supabase'), co.companyId, receiptId);
+  const sb = c.get('supabase');
+
+  /* THE BACK DOOR INTO A CLOSED MONTH, shut here (owner, 2026-09-08: 还有lock
+     起来不可以随便碰).
+
+     A credit booked FROM a bank statement carries `bank_line_id`, and reversing
+     it from this side would undo an entry that a closed bank month has already
+     counted and reported — the bank screen's own undo refuses, and without this
+     the same act would simply be done through the other door. A credit typed by
+     hand has no bank line and is none of the lock's business, which is why this
+     is a guard on the LINK rather than on the receipt. */
+  const { data: receiptRow, error: rErr } = await sb.from('acc_settlement_receipts')
+    .select('bank_line_id').eq('id', receiptId).eq('company_id', co.companyId).maybeSingle();
+  if (rErr) {
+    return c.json({
+      error: 'lock_check_failed',
+      reason: rErr.message,
+      message: 'Whether this credit belongs to a closed month could not be checked, so nothing was'
+        + ' changed. Try again.',
+    }, 500);
+  }
+  const bankLineId = (receiptRow as { bank_line_id?: number | null } | null)?.bank_line_id ?? null;
+  if (bankLineId != null) {
+    const where = await loadLineMonth(sb, co.companyId, Number(bankLineId));
+    if (!where.ok) {
+      return c.json({
+        error: 'lock_check_failed',
+        reason: where.reason,
+        message: 'Whether this credit belongs to a closed month could not be checked, so nothing was'
+          + ' changed. Try again.',
+      }, 500);
+    }
+    if (where.found) {
+      const held = await loadLiveMonthLock(sb, co.companyId, where.accountCode, where.month);
+      if (!held.ok) {
+        return c.json({
+          error: 'lock_check_failed',
+          reason: held.reason,
+          message: 'Whether this credit belongs to a closed month could not be checked, so nothing was'
+            + ' changed. Try again.',
+        }, 500);
+      }
+      if (held.lock) {
+        return c.json(lockedRefusal(held.lock, 'taking this credit back'), 409);
+      }
+    }
+  }
+
+  const r = await undoBatchReceipt(sb, co.companyId, receiptId);
   if (!r.ok) return c.json({ error: r.status, message: r.reason }, r.status === 'not_found' ? 404 : 500);
   return c.json(r);
 });
@@ -966,13 +1067,16 @@ export const settlementWatchlist = guard(async (c) => {
   const settled = await loadSettledKeys(sb, co.companyId);
   if (!settled.ok) return c.json({ error: 'load_failed', reason: settled.reason }, 500);
 
-  const recorded: Array<PaymentCandidate & { ageDays: number; acquirerCode: string }> = [];
+  /* An untagged payment is in EVERY acquirer's pool — that is how a statement
+     finds it — but it is ONE payment on this list, under no acquirer
+     (docs/bugs/0688: the owner saw the same instalment under GHL, HLB, MBB and
+     PBB, and the header counting it four times). */
+  const recorded: Array<PaymentCandidate & { ageDays: number; acquirerCode: string | null }> = [];
+  const listedUntagged = new Set<string>();
   for (const a of acquirers) {
     const got = await loadPaymentCandidates(sb, co.companyId, a, from, to);
     if (!got.ok) return c.json({ error: 'load_failed', reason: got.reason }, 500);
-    for (const p of recordedNotArrived(got.payments, settled.keys, to)) {
-      recorded.push({ ...p, acquirerCode: a.code });
-    }
+    recorded.push(...listOnce(recordedNotArrived(got.payments, settled.keys, to), a.code, listedUntagged));
   }
 
   const { data: strandedRaw, error: sErr } = await sb.from('acc_settlement_rows')
@@ -1119,10 +1223,13 @@ export const settlementInTransit = guard(async (c) => {
     Math.round(Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86_400_000);
 
   const lines: Array<Record<string, unknown>> = [];
+  /* Same rule as the watchlist (docs/bugs/0688): money keyed in without a
+     bank is every acquirer's candidate but ONE line here, under no acquirer. */
+  const listedUntagged = new Set<string>();
   for (const a of (acqRaw ?? []) as Array<{ code: string; display_name: string; date_tolerance_days: number }>) {
     const got = await loadPaymentCandidates(sb, co.companyId, a, from, to);
     if (!got.ok) return c.json({ error: 'load_failed', reason: got.reason }, 500);
-    for (const p of got.payments) {
+    for (const p of listOnce(got.payments, a.code, listedUntagged)) {
       const key = `${p.source}:${p.id}`;
       const row = rowInfo.get(claim.get(key) ?? -1);
       if (row?.paid === true) continue; // the money is in the bank, out of transit
@@ -1130,7 +1237,7 @@ export const settlementInTransit = guard(async (c) => {
         : row.confirmed ? 'RECONCILED_NOT_PAID'
         : 'MATCHED_NOT_POSTED';
       lines.push({
-        acquirerCode: a.code,
+        acquirerCode: p.acquirerCode,
         source: p.source,
         paymentId: p.id,
         docNo: p.docNo,
@@ -1172,7 +1279,8 @@ export const settlementInTransit = guard(async (c) => {
   const buckets = (n: number) => (n <= 7 ? '0-7' : n <= 14 ? '8-14' : n <= 30 ? '15-30' : 'over-30');
   const byAcquirer: Record<string, Record<string, { count: number; sen: number }>> = {};
   for (const l of lines) {
-    const a = String(l.acquirerCode);
+    /* Money keyed in without a bank ages under its own key, 未标 (docs/bugs/0688). */
+    const a = l.acquirerCode == null ? UNTAGGED_LIST : String(l.acquirerCode);
     const b = buckets(Number(l.ageDays));
     ((byAcquirer[a] ??= {})[b] ??= { count: 0, sen: 0 });
     byAcquirer[a][b].count += 1;

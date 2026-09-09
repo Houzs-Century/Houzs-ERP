@@ -58,6 +58,10 @@ export interface PoLineShape {
    * does not exist YET from one that never will — see the `wait` shape.
    */
   sourceSoInBook: boolean;
+  /** This purchase-order line's own product. */
+  itemCode?: string | null;
+  /** The product of the sales-order line it names. docs/bugs/0672 site 13. */
+  sourceItemCode?: string | null;
 }
 
 export type PoTransferShape =
@@ -147,6 +151,38 @@ export function poTransferShape(lines: readonly PoLineShape[]): PoTransferShape 
       kind: 'create',
       reason:
         'two purchase lines name the same sales-order line, which a transfer would count twice',
+    };
+  }
+
+  /* THE SAME PRODUCT ON BOTH SIDES — docs/bugs/0672 site 13.
+     Every refusal above is about CARDINALITY or PRESENCE: how many lines, how
+     many keys, how many source documents, whether the book has seen them. None
+     asked whether the purchase-order line and the sales-order line it names are
+     the same thing.
+
+     The transfer is executed as `doc.DocTransfer(dtlKeys)`, and the key is the
+     ONLY handle — `composeEdit` even strips ItemCode off a keyed line, so
+     nothing in flight could reveal the mistake. A purchase line for a TRION
+     naming a REGAL sales line would transfer the REGAL's book line into a
+     purchase order for TRIONs, in a licensed account book, silently.
+
+     A BLANK on either side is not agreement; it is the absence of anything to
+     agree about, and it falls back too. This file's header states the rule the
+     whole module is built on — "every case that is not certainly 1:1 is
+     asserted to fall back" — and identity is part of 1:1. The fallback costs a
+     link and writes nothing wrong. */
+  const norm = (v: string | null | undefined) => String(v ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
+  const crossed = lines.filter((l) => {
+    const mine = norm(l.itemCode);
+    const theirs = norm(l.sourceItemCode);
+    return !mine || !theirs || mine !== theirs;
+  });
+  if (crossed.length) {
+    return {
+      kind: 'create',
+      reason:
+        `${crossed.length} line(s) name a sales-order line for a different product, so a transfer `
+        + 'would address the wrong line in the account book',
     };
   }
 

@@ -6,6 +6,7 @@ import { useQuery } from "../hooks/useQuery";
 import { useAuth } from "../auth/AuthContext";
 import { Button } from "../components/Button";
 import { Badge } from "../components/Badge";
+import { AckTrendCard, AnnouncementBannerStack, TeamPendingCard } from "../components/AnnouncementDashboard";
 import { cn } from "../lib/utils";
 import { fmtDate } from "../vendor/shared/format";
 
@@ -141,6 +142,18 @@ export function Overview() {
             </Button>
           </div>
         </div>
+      </div>
+
+      {/* ── Unacknowledged notices (design handoff 2026-09-04): up to three
+          cards, no modal wall; the supervisor card below it renders only for
+          a user with direct reports. Both read the announcements feed the
+          modal reads, so an acknowledgement here settles everywhere. */}
+      <AnnouncementBannerStack />
+      {/* Two-up panel row (handoff screen 5): the supervisor card and the
+          announcer's ack-rate chart; each renders only for its audience. */}
+      <div className="grid gap-3.5 lg:grid-cols-2">
+        <TeamPendingCard />
+        <AckTrendCard />
       </div>
 
       {/* ── KPI ribbon ──────────────────────────────────────────── */}

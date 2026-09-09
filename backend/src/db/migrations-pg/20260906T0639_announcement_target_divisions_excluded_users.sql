@@ -1,0 +1,31 @@
+-- 20260906T0639_announcement_target_divisions_excluded_users.sql
+-- REVERSAL: ALTER TABLE public.announcements DROP COLUMN IF EXISTS target_divisions;
+--           ALTER TABLE public.announcements DROP COLUMN IF EXISTS excluded_user_ids;
+-- Verified against: staging (minnapsemfzjmtvnnvdd) through the normal
+--           migrate-before-deploy path on merge; prod (anogrigyjbduyzclzjgn)
+--           carries the same 0058 + 20260905T1125 shape.
+--
+-- WHAT THIS CHANGES, and why it is safe to run against production:
+--   Two additive, nullable text columns on public.announcements. No backfill,
+--   no constraint change, no index. Nothing that shipped before this
+--   migration reads either column; a row with both NULL behaves exactly as
+--   before (target_type + the three id lists decide the audience).
+--
+-- WHY (owner, 2026-09-06, "按 Division 选择为主 — 一个部门里面有好几个
+-- Division，尤其是 operation"):
+--   · target_divisions — JSON array of {"deptId": <departments.id>,
+--     "division": "<users.division text>"}. A division is the free-text
+--     sub-grouping inside ONE department (mig 0021, the org chart's columns),
+--     so the pair is the key. The audience gate (userCanSee) matches a reader
+--     whose primary department_id equals deptId and whose users.division
+--     equals the text case-insensitively. Resolved at read time, like a
+--     department target, so someone who joins the division later is in.
+--     It counts as the DEPARTMENT bucket of target_type — the CHECK
+--     constraint on target_type is untouched.
+--   · excluded_user_ids — JSON integer array of people carved OUT of the
+--     audience ("people 那边要可以 untick"). An excluded id never sees the
+--     notice, whatever else targets them. Replaces the 2026-09-05 client-side
+--     workaround that expanded an unticked department into a people list.
+ALTER TABLE public.announcements ADD COLUMN IF NOT EXISTS target_divisions text;
+--> statement-breakpoint
+ALTER TABLE public.announcements ADD COLUMN IF NOT EXISTS excluded_user_ids text;

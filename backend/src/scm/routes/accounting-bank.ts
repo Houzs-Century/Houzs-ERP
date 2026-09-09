@@ -21,23 +21,88 @@ import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
-import { parseBankStatement } from '../../acc/bank-parse';
+import { parseBankStatement, movementFingerprint } from '../../acc/bank-parse';
 import { groupBankMovements, matchBankMovements } from '../../acc/bank-match';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
 import {
   loadBankConfigs, loadBankConfig, parseConfigFrom,
   loadRecognitionRules, loadPayableBatches, loadPayoutAdvices, loadAccountLedger,
+  loadLiveMonthLock, loadLineMonth,
 } from '../../acc/bank';
+import { lockedRefusal, lockMonthOf } from '../../acc/bank-lock';
 import { postBatchReceipt, undoBatchReceipt } from '../../acc/settlement';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
-const guard = (handler: (c: Ctx) => Promise<Response>) => async (c: Ctx): Promise<Response> => {
+/* Exported so the month view (accounting-bank-months) guards on exactly this
+   and not on a copy of it: two spellings of one permission rule are one
+   refactor away from being two different rules. */
+export const bankGuard = (handler: (c: Ctx) => Promise<Response>) => async (c: Ctx): Promise<Response> => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) {
     return c.json({ error: "You don't have permission to reconcile bank statements." }, 403);
   }
   return handler(c);
 };
+
+const guard = bankGuard;
+
+/**
+ * A CLOSED MONTH REFUSES EVERY WRITE THAT WOULD CHANGE WHAT IT SAYS.
+ *
+ * Owner, 2026-09-08: 还有lock 起来不可以随便碰. Every handler below that books,
+ * matches, ignores or undoes a movement asks this first, by the movement's OWN
+ * date — the month a movement belongs to is the month its date falls in
+ * (acc/bank-month rule 1), never the month of the file it arrived in, so a
+ * straddling file cannot smuggle a write into a closed September.
+ *
+ * Returns a Response to send, or null to carry on.
+ */
+async function refuseIfLocked(
+  c: Ctx, companyId: number, accountCode: string, isoDate: string, what: string,
+): Promise<Response | null> {
+  const sb = c.get('supabase');
+  const held = await loadLiveMonthLock(sb, companyId, accountCode, lockMonthOf(isoDate));
+  /* A LOCK THAT CANNOT BE READ IS A REFUSAL, not a pass. The one failure mode
+     worth spending a 500 on is writing into a closed month because the check
+     itself broke quietly. */
+  if (!held.ok) {
+    return c.json({
+      error: 'lock_check_failed',
+      reason: held.reason,
+      message: 'Whether this month is closed could not be checked, so nothing was changed. Try again.',
+    }, 500);
+  }
+  if (!held.lock) return null;
+  return c.json(lockedRefusal(held.lock, what), 409);
+}
+
+/** The same question asked of a LINE, which knows its own account and date. */
+async function refuseIfLineLocked(
+  c: Ctx, companyId: number, lineId: number, what: string,
+): Promise<Response | null> {
+  const sb = c.get('supabase');
+  const where = await loadLineMonth(sb, companyId, lineId);
+  if (!where.ok) {
+    return c.json({
+      error: 'lock_check_failed',
+      reason: where.reason,
+      message: 'Whether this month is closed could not be checked, so nothing was changed. Try again.',
+    }, 500);
+  }
+  /* Not found here is not a refusal — the handler's own 404 is the better
+     message, and it is one line further down. */
+  if (!where.found) return null;
+  const held = await loadLiveMonthLock(sb, companyId, where.accountCode, where.month);
+  if (!held.ok) {
+    return c.json({
+      error: 'lock_check_failed',
+      reason: held.reason,
+      message: 'Whether this month is closed could not be checked, so nothing was changed. Try again.',
+    }, 500);
+  }
+  if (!held.lock) return null;
+  return c.json(lockedRefusal(held.lock, what), 409);
+}
 
 /** The same fingerprint layer 3 uses: one file is one statement, and a second
     upload of it loses to the UNIQUE rather than doubling the movements. */
@@ -66,10 +131,11 @@ export const bankSetup = guard(async (c) => {
       account_no: cfg.account_no,
       statement_format: cfg.statement_format,
       is_active: cfg.is_active,
-      /* A config with no date/description mapping cannot read anything, and
-         saying so HERE means the operator learns it before he uploads. */
-      ready: Boolean(cfg.column_map?.date && cfg.column_map?.description
-        && (cfg.column_map?.amount || (cfg.column_map?.debit && cfg.column_map?.credit))),
+      /* The reader carries built-in headings for every role (bank-parse.ts
+         DEFAULT_HEADINGS), so a config that names nothing still reads a
+         file captioned the way banks caption them; a file it cannot read is
+         refused at upload with its own headings quoted. */
+      ready: true,
     })),
     /* Which acquirers this system can recognise on a statement at all. An
        acquirer missing here is one whose money will read as "not a card
@@ -121,6 +187,20 @@ export const bankUpload = guard(async (c) => {
   );
   if (!parsed.ok) return c.json({ error: 'unreadable_statement', message: parsed.reason }, 400);
 
+  /* A CLOSED MONTH TAKES NO NEW MOVEMENTS. Checked here, after the file has been
+     read and before a single row is written, because the answer depends on the
+     DATES the file turned out to carry — a file is refused for the months it
+     lands in, not for the month somebody meant it for. Both ends are checked:
+     one file can straddle a close, and a September that is shut must refuse a
+     28 Aug – 3 Sep export even though August is open. */
+  for (const edge of new Set([parsed.periodFrom, parsed.periodTo])) {
+    const shut = await refuseIfLocked(
+      c, co.companyId, accountCode, edge,
+      `loading a statement carrying movements dated ${edge}`,
+    );
+    if (shut) return shut;
+  }
+
   const [rules, batches, payouts] = await Promise.all([
     loadRecognitionRules(sb), loadPayableBatches(sb, co.companyId), loadPayoutAdvices(sb, co.companyId),
   ]);
@@ -144,21 +224,56 @@ export const bankUpload = guard(async (c) => {
      tells him to go and reconcile a merchant report that is already done.
      Correct about the money, useless as an instruction.
 
-     So a movement whose reference, day and amount are already POSTED on this
-     account is named for what it is. Keyed on all three, not on the reference
-     alone: three AEON payouts share a reference on one day, and only the amount
-     tells them apart. */
-  const seenBefore = new Map<string, string>();
+     So a movement this account has ALREADY TAKEN IN — posted, still open on an
+     earlier statement, or ignored there — is named for what it is. The owner
+     reconciles every few days and again at month end (2026-09-08: 可能隔几天我
+     就做一次), so overlapping exports are the ordinary case, not a mistake.
+
+     Keyed on the movement's FINGERPRINT (bank-parse.ts movementFingerprint):
+     its day, its amount and its WORDS in any order — not its text, because the
+     same transaction reads "Fund transfer RACHEL NG" on Hong Leong's monthly
+     statement and "RACHEL NG Fund transfer" on its any-day export. COUNTED, not
+     just seen: two identical transfers on one day are two movements, and a
+     longer export carrying one more of them than an earlier one contributes
+     exactly that one. */
+  const seenBefore = new Map<string, { count: number; where: string }>();
   {
-    const { data, error: seenErr } = await sb.from('acc_bank_statement_lines')
-      .select('booked_on, reference, amount_sen, state, posted_je_no, statement_id')
-      .eq('company_id', co.companyId).eq('state', 'POSTED');
-    if (seenErr) return c.json({ error: 'load_failed', reason: seenErr.message }, 500);
-    for (const r of (data ?? []) as Array<Record<string, any>>) {
-      const key = `${String(r.booked_on).slice(0, 10)}|${r.reference ?? ''}|${r.amount_sen}`;
-      seenBefore.set(key, String(r.posted_je_no ?? `statement ${r.statement_id}`));
+    const { data: mine, error: mErr } = await sb.from('acc_bank_statements')
+      .select('id').eq('company_id', co.companyId).eq('account_code', accountCode);
+    if (mErr) return c.json({ error: 'load_failed', reason: mErr.message }, 500);
+    const ids = ((mine ?? []) as Array<{ id: number }>).map((s) => Number(s.id));
+    if (ids.length > 0) {
+      const { data, error: seenErr } = await sb.from('acc_bank_statement_lines')
+        .select('booked_on, description, reference, amount_sen, state, posted_je_no, statement_id')
+        .eq('company_id', co.companyId).in('statement_id', ids);
+      if (seenErr) return c.json({ error: 'load_failed', reason: seenErr.message }, 500);
+      for (const r of (data ?? []) as Array<Record<string, any>>) {
+        const key = movementFingerprint({
+          bookedOn: String(r.booked_on).slice(0, 10), amountSen: Number(r.amount_sen ?? 0),
+          description: String(r.description ?? ''), reference: (r.reference as string | null) ?? null,
+        });
+        const at = seenBefore.get(key) ?? { count: 0, where: '' };
+        at.count += 1;
+        at.where = r.posted_je_no
+          ? String(r.posted_je_no)
+          : `statement ${r.statement_id}${String(r.state) === 'OPEN' ? ' (still open there)' : String(r.state) === 'IGNORED' ? ' (ignored there)' : ''}`;
+        seenBefore.set(key, at);
+      }
     }
   }
+  /* Which of THIS file's movements are repeats — decided once, in file order,
+     so the first occurrences of a repeated fingerprint are the ones that match
+     what was seen and any beyond that count are new. */
+  const usedNow = new Map<string, number>();
+  const alreadyRecorded = decisions.map((d) => {
+    const key = movementFingerprint(d.movement);
+    const seen = seenBefore.get(key);
+    if (!seen) return null;
+    const used = usedNow.get(key) ?? 0;
+    if (used >= seen.count) return null;
+    usedNow.set(key, used + 1);
+    return seen.where;
+  });
 
   const fileHash = await sha256Hex(content);
   const { data: stmtRow, error: stmtErr } = await sb.from('acc_bank_statements').insert({
@@ -188,10 +303,8 @@ export const bankUpload = guard(async (c) => {
   const statementId = (stmtRow as { id: number }).id;
 
   const { error: linesErr } = await sb.from('acc_bank_statement_lines').insert(
-    decisions.map((raw) => {
-      const already = seenBefore.get(
-        `${raw.movement.bookedOn}|${raw.movement.reference ?? ''}|${raw.movement.amountSen}`,
-      );
+    decisions.map((raw, idx) => {
+      const already = alreadyRecorded[idx];
       /* Named, not silently dropped: a movement that looks identical is not
          PROVEN identical, and the person who uploaded the file is the one who
          can say. What the screen owes him is the truth about why it is here. */
@@ -247,9 +360,8 @@ export const bankUpload = guard(async (c) => {
   );
   if (linesErr) return c.json({ error: 'save_failed', reason: linesErr.message }, 500);
 
-  const counts = decisions.reduce<Record<string, number>>((acc, d) => {
-    const kind = seenBefore.has(`${d.movement.bookedOn}|${d.movement.reference ?? ''}|${d.movement.amountSen}`)
-      ? 'DUPLICATE' : d.kind;
+  const counts = decisions.reduce<Record<string, number>>((acc, d, idx) => {
+    const kind = alreadyRecorded[idx] ? 'DUPLICATE' : d.kind;
     acc[kind] = (acc[kind] ?? 0) + 1;
     return acc;
   }, {});
@@ -397,6 +509,14 @@ export const bankLineReceipt = guard(async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const lineId = Number(c.req.param('id'));
   if (!Number.isInteger(lineId)) return c.json({ error: 'bad_id' }, 400);
+
+  /* A closed month refuses this (owner: 还有lock 起来不可以随便碰).
+     Asked BEFORE the row is read, so a locked month gives the same answer
+     whether or not the movement exists. */
+  {
+    const shut = await refuseIfLineLocked(c, co.companyId, lineId, "booking this credit");
+    if (shut) return shut;
+  }
   let body: any;
   try { body = await c.req.json(); } catch { body = {}; }
   const sb = c.get('supabase');
@@ -532,6 +652,14 @@ export const bankLineUndo = guard(async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const lineId = Number(c.req.param('id'));
   if (!Number.isInteger(lineId)) return c.json({ error: 'bad_id' }, 400);
+
+  /* A closed month refuses this (owner: 还有lock 起来不可以随便碰).
+     Asked BEFORE the row is read, so a locked month gives the same answer
+     whether or not the movement exists. */
+  {
+    const shut = await refuseIfLineLocked(c, co.companyId, lineId, "undoing this movement");
+    if (shut) return shut;
+  }
   const sb = c.get('supabase');
 
   const { data: lineRaw, error } = await sb.from('acc_bank_statement_lines')
@@ -584,6 +712,14 @@ export const bankLineIgnore = guard(async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const lineId = Number(c.req.param('id'));
   if (!Number.isInteger(lineId)) return c.json({ error: 'bad_id' }, 400);
+
+  /* A closed month refuses this (owner: 还有lock 起来不可以随便碰).
+     Asked BEFORE the row is read, so a locked month gives the same answer
+     whether or not the movement exists. */
+  {
+    const shut = await refuseIfLineLocked(c, co.companyId, lineId, "leaving this movement out");
+    if (shut) return shut;
+  }
   let body: any;
   try { body = await c.req.json(); } catch { body = {}; }
   const note = String(body.note ?? '').trim();
@@ -619,6 +755,14 @@ export const bankLineMatch = guard(async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const lineId = Number(c.req.param('id'));
   if (!Number.isInteger(lineId)) return c.json({ error: 'bad_id' }, 400);
+
+  /* A closed month refuses this (owner: 还有lock 起来不可以随便碰).
+     Asked BEFORE the row is read, so a locked month gives the same answer
+     whether or not the movement exists. */
+  {
+    const shut = await refuseIfLineLocked(c, co.companyId, lineId, "matching this movement");
+    if (shut) return shut;
+  }
   let body: any;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const jeNo = String(body.jeNo ?? '').trim();

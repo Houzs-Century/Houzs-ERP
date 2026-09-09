@@ -51,6 +51,7 @@ const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
   can_requeue: false,
   can_send_now: false,
   ac_doc_no: null,
+  archived_at: null,
   created_at: "2026-08-15T00:00:00.000Z",
   updated_at: "2026-08-15T00:00:00.000Z",
   sent_at: null,
@@ -59,7 +60,7 @@ const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
 
 const payload = (over: Partial<AcOutboxResponse> = {}): AcOutboxResponse => ({
   writeback: { value: "1", on: true, scope: "1" },
-  counts: { pending: 0, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 0 },
+  counts: { pending: 0, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 0 },
   oldest_pending: null,
   rows: [],
   truncated: false,
@@ -164,7 +165,7 @@ const rows = [
 
 const busy = payload({
   rows,
-  counts: { pending: 1, sent: 1, failed: 1, skipped: 1, requeued: 1, attention: 2, total: 5 },
+  counts: { pending: 1, sent: 1, failed: 1, skipped: 1, requeued: 1, attention: 2, archived: 0, total: 5 },
 });
 
 describe("AutoCountSync — is anything stuck, first", () => {
@@ -218,7 +219,7 @@ describe("AutoCountSync — the counts are on something you can click", () => {
       Promise.resolve(url.includes("state=sent")
         ? payload({
           rows: [rows[0]!],
-          counts: { pending: 1, sent: 1, failed: 1, skipped: 1, requeued: 1, attention: 2, total: 5 },
+          counts: { pending: 1, sent: 1, failed: 1, skipped: 1, requeued: 1, attention: 2, archived: 0, total: 5 },
         })
         : busy));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -299,7 +300,7 @@ describe("AutoCountSync — the reason is on the row", () => {
     const long = `AutoCount refused it: ${"x".repeat(700)}`;
     await mount(payload({
       rows: [row({ status: "failed", state: "failed", needs_attention: true, reason: long })],
-      counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 0, attention: 1, total: 1 },
+      counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 0, attention: 1, archived: 0, total: 1 },
     }));
     expect(await screen.findByText(/AutoCount would not take this document/)).toBeTruthy();
     const card = await openRow("HC-SO-2608-001");
@@ -310,7 +311,7 @@ describe("AutoCountSync — the reason is on the row", () => {
   it("does not pretend AutoCount answered when nothing came back", async () => {
     await mount(payload({
       rows: [row({ status: "failed", state: "failed", needs_attention: true, reason: null })],
-      counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 0, attention: 1, total: 1 },
+      counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 0, attention: 1, archived: 0, total: 1 },
     }));
     await screen.findByText("HC-SO-2608-001");
     const card = await openRow("HC-SO-2608-001");
@@ -324,7 +325,7 @@ describe("AutoCountSync — the reason is on the row", () => {
     await mount(payload({
       rows: [row({ status: "skipped", state: "skipped", needs_attention: true,
         reason: "a refusal class written next month", reason_kind: "unrecognised" })],
-      counts: { pending: 0, sent: 0, failed: 0, skipped: 1, requeued: 0, attention: 1, total: 1 },
+      counts: { pending: 0, sent: 0, failed: 0, skipped: 1, requeued: 0, attention: 1, archived: 0, total: 1 },
     }));
     expect(await screen.findByText(/no wording for yet/)).toBeTruthy();
     expect(screen.getByText("a refusal class written next month")).toBeTruthy();
@@ -443,7 +444,7 @@ describe("AutoCountSync — filters and failure", () => {
     await mount(payload({
       truncated: true,
       rows: [row()],
-      counts: { pending: 900, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 900 },
+      counts: { pending: 900, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 900 },
     }));
     expect(await screen.findByText(/Only the most recent documents are shown/)).toBeTruthy();
   });
@@ -637,7 +638,7 @@ describe("AutoCountSync — a thousand documents", () => {
   it("does not put several hundred rows into the page at once", async () => {
     await mount(payload({
       rows: manyRows(400),
-      counts: { pending: 0, sent: 320, failed: 80, skipped: 0, requeued: 0, attention: 80, total: 400 },
+      counts: { pending: 0, sent: 320, failed: 80, skipped: 0, requeued: 0, attention: 80, archived: 0, total: 400 },
     }));
     /* `SO-1`, not `SO-0`: the register sorts by WHEN, newest first, and the 320
        arrived documents carry a `sent_at` an hour after everything else's
@@ -652,7 +653,7 @@ describe("AutoCountSync — a thousand documents", () => {
   it("says nothing needs attention rather than telling you to try another filter", async () => {
     await mount(payload({
       rows: [],
-      counts: { pending: 0, sent: 900, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 900 },
+      counts: { pending: 0, sent: 900, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 900 },
     }));
     expect(await screen.findByText(/Nothing needs your attention/)).toBeTruthy();
     expect(screen.queryByText(/Try another status/)).toBeNull();
@@ -680,7 +681,7 @@ describe("AutoCountSync — no machine prose in the plain-language block", () =>
     + "created in the account book at all and will stay ERP-only.";
 
   const heldBack = payload({
-    counts: { pending: 0, sent: 0, failed: 0, skipped: 1, requeued: 0, attention: 1, total: 1 },
+    counts: { pending: 0, sent: 0, failed: 0, skipped: 1, requeued: 0, attention: 1, archived: 0, total: 1 },
     rows: [row({ id: "iv", doc_no: "HC-IV-2608-004", doc_type: "IV", op: "do_to_iv",
       status: "skipped", state: "skipped", needs_attention: true,
       reason_kind: "no-source-document", reason: PARENTLESS })],
@@ -731,7 +732,7 @@ describe("AutoCountSync — AutoCount's sentence stays, its evidence folds", () 
     + "docCancelled=F outstanding=1.00000000";
 
   const refused = payload({
-    counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 0, attention: 1, total: 1 },
+    counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 0, attention: 1, archived: 0, total: 1 },
     rows: [row({ id: "do2", doc_no: "HC-DO-2608-002", doc_type: "DO", op: "so_to_do",
       status: "failed", state: "failed", attempts: 6, needs_attention: true,
       can_requeue: true, reason: WITH_DUMP })],
@@ -785,7 +786,7 @@ describe("AutoCountSync — history is not half the list", () => {
   /* His screen: fifteen rows, SIX of them already sent again, with
      HC-DO-2608-001 and HC-DO-2608-002 each appearing twice. */
   const fifteen = payload({
-    counts: { pending: 0, sent: 3, failed: 4, skipped: 2, requeued: 6, attention: 6, total: 15 },
+    counts: { pending: 0, sent: 3, failed: 4, skipped: 2, requeued: 6, attention: 6, archived: 0, total: 15 },
     rows: [
       ...Array.from({ length: 6 }, (_, i) => row({
         id: `old${i}`, doc_no: i < 2 ? `HC-DO-2608-00${i + 1}` : `HC-SO-2608-00${i}`,
@@ -831,7 +832,7 @@ describe("AutoCountSync — history is not half the list", () => {
      below covers that folded presentation. */
   it("does not tell a reader to try another filter when the matches are all history", async () => {
     await mount(payload({
-      counts: { pending: 0, sent: 0, failed: 0, skipped: 0, requeued: 2, attention: 0, total: 2 },
+      counts: { pending: 0, sent: 0, failed: 0, skipped: 0, requeued: 2, attention: 0, archived: 0, total: 2 },
       rows: [
         row({ id: "h1", doc_no: "HC-DO-2608-001", status: "skipped", state: "requeued",
           reason: "[re-queued …] refused" }),
@@ -874,7 +875,7 @@ describe("AutoCountSync — one document, one row", () => {
 
   /** His six rows, in the order the route returns them: newest first. */
   const hisScreen = payload({
-    counts: { pending: 0, sent: 3, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 3 },
+    counts: { pending: 0, sent: 3, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 3 },
     rows: [
       sent({ id: "s4", op: "edit", doc_no: "HC-SO-2608-002",
         created_at: "2026-08-16T08:31:40.000Z", sent_at: "2026-08-16T08:31:55.000Z" }),
@@ -937,12 +938,31 @@ describe("AutoCountSync — one document, one row", () => {
     expect(within(card).queryByText("New sales order")).toBeNull();
   });
 
-  /* A document sent once has no second opener at all — the majority row must
-     not grow a control it has nothing to put behind. */
+  /* A document sent once has no second OPENER at all — the majority row must
+     not grow a control it has nothing to put behind.
+
+     `queryByRole("button")` used to stand in for that, and stopped being able
+     to on 2026-09-08 when the row grew a control that opens nothing: Clear
+     takes a finished document off the list. So the property is asserted
+     directly now — there is no reason to expand and no history to unfold —
+     which is what the sentence above always meant. */
   it("gives a document sent once nothing extra to open", async () => {
     await mount(hisScreen, "/autocount-sync?state=sent");
     await screen.findByText("HC-SO-2608-003");
-    expect(within(cardOf("HC-SO-2608-003")).queryByRole("button")).toBeNull();
+    const card = cardOf("HC-SO-2608-003");
+    expect(card.querySelector("[data-ac-why]")).toBeNull();
+    expect(within(card).queryByRole("button", { expanded: false })).toBeNull();
+    expect(within(card).queryByRole("button", { expanded: true })).toBeNull();
+  });
+
+  /* AND THE CONTROL THAT REPLACED THE OLD ASSERTION IS THERE. The owner asked
+     twice for three finished test documents to stop appearing on this page;
+     this is the button that does it, and a test that only checked what is
+     ABSENT would have let it quietly disappear. */
+  it("offers Clear on a document whose work is finished", async () => {
+    await mount(hisScreen, "/autocount-sync?state=sent");
+    await screen.findByText("HC-SO-2608-003");
+    expect(within(cardOf("HC-SO-2608-003")).getByRole("button", { name: "Clear" })).toBeTruthy();
   });
 });
 
@@ -952,7 +972,7 @@ describe("AutoCountSync — a partial count says so", () => {
     await mount(payload({
       counts_complete: false,
       rows: [row({ status: "sent", state: "sent", ac_doc_no: "SO-1" })],
-      counts: { pending: 0, sent: 1, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 1 },
+      counts: { pending: 0, sent: 1, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 1 },
     }), "/autocount-sync?state=all");
     expect(await screen.findByText(/at least this many and possibly more/)).toBeTruthy();
   });
@@ -1130,7 +1150,7 @@ describe("AutoCountSync — In the book as", () => {
   });
 
   const twoBooked = payload({
-    counts: { pending: 0, sent: 2, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 2 },
+    counts: { pending: 0, sent: 2, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 2 },
     rows: [
       inBook({ id: "m", doc_no: "HC-PO-2608-001", doc_type: "PO", op: "create_po",
         ac_doc_no: "PO-009968" }),
@@ -1161,7 +1181,9 @@ describe("AutoCountSync — In the book as", () => {
     await mount(twoBooked, "/autocount-sync?state=sent");
     await screen.findByText("HC-PO-2608-001");
     const card = cardOf("HC-PO-2608-001");
-    expect(within(card).queryByRole("button")).toBeNull();
+    /* Nothing to EXPAND — the flag is readable where it sits. The row does
+       carry Clear, which opens nothing. */
+    expect(card.querySelector("[data-ac-why]")).toBeNull();
     expect(card.querySelector("[title*='PO-009968']")).toBeTruthy();
   });
 
@@ -1179,7 +1201,7 @@ describe("AutoCountSync — days, the footer and the two lenses", () => {
   });
 
   const threeDays = payload({
-    counts: { pending: 0, sent: 3, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 3 },
+    counts: { pending: 0, sent: 3, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 3 },
     rows: [
       onDay("a", "SO-A", "2026-08-15T02:00:00.000Z"),
       onDay("b", "SO-B", "2026-08-14T02:00:00.000Z"),
@@ -1256,7 +1278,7 @@ describe("AutoCountSync — matching a held-back document's lines up", () => {
         reason: "refused, nothing sent (MissingLocationError): line 2 carries no warehouse",
         reason_kind: "missing-location", remedy: "set the warehouse on the line" }),
     ],
-    counts: { pending: 0, sent: 0, failed: 0, skipped: 2, requeued: 0, attention: 2, total: 2 },
+    counts: { pending: 0, sent: 0, failed: 0, skipped: 2, requeued: 0, attention: 2, archived: 0, total: 2 },
   });
 
   it("is offered on the keyless row and on no other", async () => {
@@ -1289,5 +1311,75 @@ describe("AutoCountSync — matching a held-back document's lines up", () => {
     await screen.findByText("SO-KL");
     await userEvent.click(within(cardOf("SO-KL")).getByRole("button", { name: "Match up lines" }));
     expect(await within(cardOf("SO-KL")).findByText(/9058-1S/)).toBeTruthy();
+  });
+});
+
+/* ── THE OFFICE MACHINE'S OWN LOG ───────────────────────────────────
+   `Invalid transfer item.` names nothing, and ten delivery orders carried those
+   eleven words through six attempts each while the host wrote the sentence that
+   explains them into a log file nobody could reach. These four pin the panel
+   that reaches it: it does NOT call the office machine until asked, it lifts the
+   answering line out of the wall of text, it says the tunnel is down rather than
+   rendering empty, and it never reads an empty match as "nothing is wrong".
+
+   THE MOCK IS ARMED AFTER `mount`, NOT BEFORE, and that ordering is the test.
+   `mount` ends with `apiGet.mockResolvedValue(body)`, which REPLACES any
+   implementation set before it — arming first left the host-log call answering
+   the outbox payload, whose `lines` is undefined, so the empty-match test passed
+   for entirely the wrong reason. Arming after is safe precisely because of the
+   property the first test asserts: nothing calls that route until the panel is
+   opened. */
+describe("the host log panel", () => {
+  const SHORTFALL =
+    "  valid-transfer-item check: AutoCount kept FEWER rows than keys given - the shortfall IS the invalid transfer item(s)";
+  const ORDINARY = "  SO->DO shape: the ERP named 3 line(s)";
+  const OPEN_IT = /What the office machine said/;
+
+  /** Answer the host-log route with these lines; everything else keeps the list. */
+  const armHostLog = (lines: string[]) => {
+    const list = payload();
+    apiGet.mockImplementation((url: string) =>
+      typeof url === "string" && url.includes("/host-log")
+        ? Promise.resolve({ ok: true, path: "C:\Temp\ac-sync-service.log", exists: true, lines })
+        : Promise.resolve(list));
+  };
+
+  /* UNANNOTATED on purpose: `mock.calls` is `any[][]`, so a tuple annotation on
+     the destructured parameter matches no overload of `filter`. Inference gives
+     the right thing and writes no `any` for the linter to count. */
+  const hostLogCalls = () =>
+    apiGet.mock.calls.filter((call) => typeof call[0] === "string" && call[0].includes("/host-log")).length;
+
+  it("does NOT reach the office machine until somebody opens it", async () => {
+    await mount(payload());
+    expect(hostLogCalls()).toBe(0);
+  });
+
+  it("lifts the line that answers the refusal out of the wall of text", async () => {
+    await mount(payload());
+    armHostLog([ORDINARY, SHORTFALL]);
+    await userEvent.click(screen.getByRole("button", { name: OPEN_IT }));
+    /* The MEANING, not the log line — both carry the same words, so the assertion
+       names the element that explains rather than the one that quotes. */
+    expect(await screen.findByText(/AutoCount refused some of the lines/)).toBeTruthy();
+  });
+
+  it("says the tunnel is down instead of rendering nothing", async () => {
+    await mount(payload());
+    apiGet.mockImplementation((url: string) =>
+      typeof url === "string" && url.includes("/host-log")
+        ? Promise.reject(new Error("fetch failed"))
+        : Promise.resolve(payload()));
+    await userEvent.click(screen.getByRole("button", { name: OPEN_IT }));
+    expect(await screen.findByText(/did not answer/)).toBeTruthy();
+  });
+
+  /* A tail that matched nothing is not a clean bill of health — the failure
+     being chased may simply be older than the tail. */
+  it("an empty match reads as 'nothing matched', never as 'nothing is wrong'", async () => {
+    await mount(payload());
+    armHostLog([ORDINARY]);
+    await userEvent.click(screen.getByRole("button", { name: OPEN_IT }));
+    expect(await screen.findByText(/matched a known pattern/)).toBeTruthy();
   });
 });

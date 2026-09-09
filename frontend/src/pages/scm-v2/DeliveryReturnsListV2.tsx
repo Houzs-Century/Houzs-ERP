@@ -71,6 +71,7 @@ import { deliveryReturnRowMenu } from "./row-menus";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { deliveryReturnPrintChain } from "../../lib/printChain";
 import { deliveryReturnPdfBundle } from "../../lib/printDocumentPdf";
+import { customerRefOf } from '../../lib/customer-ref';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the DR header (see DeliveryReturnsList.tsx for the full 40-field
@@ -138,7 +139,7 @@ const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
 
 // Customer's PO / Ref. Same fallback chain as SO / DO V2.
-const refOf = (r: DrRow): string => r.customer_so_no || r.ref || "—";
+const refOf = (r: DrRow): string => customerRefOf(r) || "—";
 
 const doOf = (r: DrRow): string => r.do_doc_no || "—";
 

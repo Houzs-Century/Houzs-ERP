@@ -37,9 +37,10 @@ import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { bookCurrency, currencyTally, sawCurrencyColumn } from "./lib/ac-currency.mjs";
 import postgres from "postgres";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
-import { parseBedframe } from "./lib/parse-bedframe.mjs";
+import { bedframeVariants, parseBedframe } from "./lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { acDeliveryDate, acDtlKey, acFromSoDtlKey } from "./lib/ac-po-line.mjs";
 import { makeSoLineTaker } from "./lib/so-line-dedication.mjs";
@@ -86,6 +87,11 @@ function parsePayment(p) {
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}${LIMIT ? ` LIMIT=${LIMIT}` : ""}`);
   const rows = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", "ac-outstanding-po.json.gz"))).toString("utf8").replace(/^﻿/, ""));
+  /* Whether THIS cut can answer the currency question at all. The column was
+     added to export-ac-reimport.py's PO lanes on 2026-09-07; a cut taken before
+     that has no CurrencyCode and every document then defaults to MYR. Saying so
+     once is the difference between a copy and an assumption. */
+  const cutCarriesCurrency = rows.some((r) => sawCurrencyColumn(r));
   log(`AutoCount outstanding PO lines: ${rows.length}`);
 
   const csv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8").replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
@@ -183,7 +189,47 @@ async function main() {
      customer leg is still open. The SO side's DO rule governs the CUSTOMER
      delivery only and deliberately does not mirror onto purchasing. */
   const doneDocs = new Set();
-  for (const r of rows) { if (doneDocs.has(r.DocNo)) continue; if (!SOFA && isSofa(r.ItemCode)) continue; if (!groups.has(r.DocNo)) groups.set(r.DocNo, []); groups.get(r.DocNo).push(r); }
+  /* A SOFA LINE DROPPED HERE USED TO VANISH WITHOUT A TRACE, and on a MIXED
+     document that is worse than an exclusion. The gate is per LINE, so a
+     purchase order carrying one sofa and three pillows is still BUILT — from
+     the pillows alone — and the ERP ends up holding a document that looks
+     whole and is short its sofa. The next run cannot repair it either: both
+     importers are idempotent at DOCUMENT level, so a re-run with SOFA=1 sees
+     the document already present and skips it entirely (that is exactly what
+     topup-ac-po-lines.mjs exists to undo).
+
+     Measured 2026-09-08 against the fresh cut: PO-010085, PO-010086,
+     PO-010146, PO-010150, PO-010151, PO-010160 and PO-010161 sit in the ERP
+     as SUBMITTED holding only their pillow lines. Each has exactly one sofa
+     line in the book, in BOTH export lanes. Nothing in any log said so.
+
+     So the drop is COUNTED and the documents are NAMED, and the mixed ones —
+     the harmful class — are named separately from the all-sofa ones, which
+     are a clean exclusion. */
+  const sofaDropped = new Map();
+  for (const r of rows) {
+    if (doneDocs.has(r.DocNo)) continue;
+    if (!SOFA && isSofa(r.ItemCode)) {
+      if (!sofaDropped.has(r.DocNo)) sofaDropped.set(r.DocNo, []);
+      sofaDropped.get(r.DocNo).push(r.ItemCode);
+      continue;
+    }
+    if (!groups.has(r.DocNo)) groups.set(r.DocNo, []);
+    groups.get(r.DocNo).push(r);
+  }
+  if (sofaDropped.size) {
+    const droppedLines = [...sofaDropped.values()].reduce((a, v) => a + v.length, 0);
+    /* MIXED = the document still has non-sofa lines, so it IS built here and
+       arrives incomplete. ALL-SOFA = nothing left, the document does not come
+       in at all — visible by its absence, and not a partial document. */
+    const mixed = [...sofaDropped.keys()].filter((d) => groups.has(d));
+    const allSofa = [...sofaDropped.keys()].filter((d) => !groups.has(d));
+    log(`SOFA=1 is not set: ${droppedLines} sofa line(s) on ${sofaDropped.size} purchase order(s) are NOT carried.`);
+    log(`   ${allSofa.length} document(s) drop out whole (nothing left to import) — a clean exclusion.`);
+    log(`   ${mixed.length} document(s) are MIXED and WILL be imported WITHOUT their sofa line(s):`);
+    for (const d of mixed) log(`      ${d}: ${sofaDropped.get(d).join(", ")}`);
+    if (mixed.length) log(`   Re-running with SOFA=1 will NOT fix these — the importer is idempotent per document. Use topup-ac-po-lines.mjs.`);
+  }
   let pos = [...groups.entries()];
   if (LIMIT) pos = pos.slice(0, LIMIT);
 
@@ -220,8 +266,24 @@ async function main() {
           exceptions.push({ po: acPo, code: null, reason: "no item code AND no description — nothing to carry" });
           continue;
         }
+        /* The owner's 2026-09-02 ruling is that a code-less line becomes an
+           ACCESSORY, and the item push below duly wrote item_code NULL for it.
+           That was marked UNVERIFIED against the live column. It is now VERIFIED
+           and it does not hold: scm.purchase_order_items.item_code is NOT NULL —
+           created as material_code by mig 0090, renamed by mig 0307, never
+           relaxed by any migration in the tree. The row cannot be inserted.
+
+           So the line is reported and the run continues. It used to reach the
+           catalog guard with a blank code, which REFUSED THE WHOLE RUN: on
+           2026-09-07 one line (PO-009979 "ERGOTEX PILLOW CASE - FAIR") blocked
+           all 165 purchase orders on go-live day. One unmintable accessory must
+           not cost the other 164 documents. Mint the product, or point the code
+           at a real one in the mapping CSV, and re-run — the import is
+           idempotent, so the rest will simply be skipped. */
         codelessLines++;
-        log(`  code-less line imported as accessory: ${acPo} "${desc.slice(0, 40)}" x${Math.round(num(l.Qty)) || 1}`);
+        exceptions.push({ po: acPo, code: null,
+          reason: `code-less line "${desc.slice(0, 40)}" x${Math.round(num(l.Qty)) || 1} — needs an accessory product before it can be imported (item_code is NOT NULL)` });
+        continue;
       }
       const grp = codeless ? "accessories" : (CATG[cat] || "others");
       const qty = Math.round(num(l.Qty)) || 1;
@@ -236,8 +298,10 @@ async function main() {
         const fc = pending ? null : findColour(bf.color);
         if (fc) bfCol++; else if (pending) bfPending++;
         else if (bf.color) exceptions.push({ po: acPo, code: l.ItemCode, reason: `colour "${bf.color}" not in fabric_colours` });
-        const tot = (Number(bf.gap) || 0) + (Number(bf.divan) || 0) + (Number(bf.leg) || 0);
-        variants = { fabricId: fc ? fc.fabric_id : null, colourId: fc ? fc.colour_id : null, fabricCode: fc ? fc.colour_id : null, colourLabel: fc ? fc.label : null, fabricLabel: fc ? fc.fabric_id : null, gap: bf.gap != null ? bf.gap + '"' : null, divanHeight: bf.divan != null ? bf.divan + '"' : null, legHeight: bf.leg != null ? bf.leg + '"' : null, totalHeight: tot ? tot + '"' : null, specials: bf.specials || [] };
+        /* One statement of the block, in lib/parse-bedframe.mjs beside the
+           parser that feeds it. It used to be written out here, in
+           import-ac-outstanding-so.mjs and in topup-ac-po-lines.mjs. */
+        variants = bedframeVariants(bf, findColour);
       }
       if (grp === "sofa" && SOFA) {
         /* One AutoCount sofa PO line -> one ERP line per compartment, exactly
@@ -295,7 +359,15 @@ async function main() {
         }
         continue;
       }
-      const prod = prodByCode.get(erp.toUpperCase());
+      /* Guarded because `erp` is set to null a few lines up whenever the binding
+         misses, and reading it unguarded threw
+         `Cannot read properties of null (reading 'toUpperCase')` here, killing
+         the whole run on the first code-less line — PO-009979 "ERGOTEX PILLOW
+         CASE - FAIR", in the 2026-09-07 cut. The code-less branch above now
+         returns before reaching this line, so nothing should arrive null today;
+         the guard stays because a future accepted-null case must degrade to "no
+         product found", never to a crash. */
+      const prod = erp ? prodByCode.get(erp.toUpperCase()) : null;
       const soItemId = dedicate(l, erp);
       if (!soItemId && !skipDedication) noSoLine++;
       /* A code-less line carries item_code NULL — the book HAS no code for it and
@@ -312,7 +384,11 @@ async function main() {
         up, lt, w, deliv: acDeliveryDate(l), bf, variants });
     }
     if (!items.length) continue;
-    built.push({ poNo: "HC-" + acPo, acPo, supId, poDate: h.DocDate, locWh: whId(h.Location), subtotal, status: anyReceived ? "PARTIALLY_RECEIVED" : "SUBMITTED", items });
+    /* THE BOOK'S OWN CURRENCY, not the constant 'MYR' this line used to imply.
+       A migration copies and never computes (lib/ac-currency.mjs). Falls back to
+       MYR only when the cut carries no CurrencyCode column at all, which
+       reproduces today's behaviour exactly rather than inventing a new one. */
+    built.push({ poNo: "HC-" + acPo, acPo, supId, poDate: h.DocDate, locWh: whId(h.Location), currency: bookCurrency(h), subtotal, status: anyReceived ? "PARTIALLY_RECEIVED" : "SUBMITTED", items });
   }
 
   log("");
@@ -327,7 +403,7 @@ async function main() {
   const dated = built.reduce((a, o) => a + o.items.filter((i) => i.deliv).length, 0);
   log(`POs already in the ERP (dedication left to the repair): ${built.length - fresh.length}`);
   log(`dedicated to an SO line: ${dedicated} of ${fresh.reduce((a, o) => a + o.items.length, 0)} new lines; no SO line found: ${noSoLine}; lines carrying a delivery date: ${dated}`);
-  log(`code-less lines imported as ACCESSORIES (owner 2026-09-02 「要进 accessories」): ${codelessLines}`);
+  log(`code-less lines HELD BACK, listed in the exceptions above (owner 2026-09-02 「要进 accessories」 — they need an accessory product first, item_code is NOT NULL): ${codelessLines}`);
   log(`exceptions: ${exceptions.length}`);
   for (const e of exceptions.slice(0, 15)) log(`   PO ${e.po} ${e.code ? `code="${e.code}" ` : ""}${e.reason}`);
   const s = built.find((o) => o.items.some((i) => i.grp === "bedframe" && i.variants && i.variants.colourId)) || built[0];
@@ -364,6 +440,17 @@ async function main() {
   for (let i = 0; i < nums.length; i += 500) { const r = await sql`SELECT po_number FROM scm.purchase_orders WHERE company_id = 1 AND po_number = ANY(${nums.slice(i, i + 500)})`; for (const x of r) existing.add(x.po_number); }
   const todo = built.filter((o) => !existing.has(o.poNo));
   log(`already imported: ${existing.size}; to insert: ${todo.length}`);
+  /* SAY WHICH CURRENCY EACH DOCUMENT IS GOING IN AS, and say whether the cut
+     could answer at all. A writer that silently defaults 22 CNY documents to
+     ringgit is exactly what happened here before; a count that distinguishes
+     "the book said MYR" from "the cut had no column" is the difference between
+     a copy and an assumption. */
+  {
+    const t = currencyTally(todo.map((o) => ({ CurrencyCode: o.currency })));
+    log(`currency: ${[...t.tally].map(([k, v]) => `${k}=${v}`).join(", ") || "(none)"}`);
+    if (!todo.length) log("   (nothing to insert)");
+    else if (!cutCarriesCurrency) log("   NOTE: this cut carries no CurrencyCode column, so every document defaults to MYR — the pre-2026-09-07 behaviour, not a reading of the book. Re-cut ac-outstanding-po.json.gz to fix that.");
+  }
 
   let nPo = 0, nItems = 0;
   for (const o of todo) {
@@ -376,7 +463,7 @@ async function main() {
       const ins = await tx`INSERT INTO scm.purchase_orders
         (po_number, linked_ac_docno, supplier_id, status, po_date, expected_at, purchase_location_id, currency,
          subtotal_sen, tax_sen, total_sen, revision, company_id, created_by, notes)
-        VALUES (${o.poNo}, ${o.acPo}, ${o.supId}, ${o.status}, ${o.poDate || sql`CURRENT_DATE`}, ${headerEta}, ${o.locWh}, 'MYR',
+        VALUES (${o.poNo}, ${o.acPo}, ${o.supId}, ${o.status}, ${o.poDate || sql`CURRENT_DATE`}, ${headerEta}, ${o.locWh}, ${o.currency},
          ${o.subtotal}, 0, ${o.subtotal}, 1, 1, ${SYS_USER}, ${"imported from AutoCount " + o.acPo})
         ON CONFLICT (po_number) DO NOTHING RETURNING id`;
       if (!ins.length) return;

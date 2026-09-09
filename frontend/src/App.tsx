@@ -50,6 +50,7 @@ const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m
 const Team = lazy(() => import("./pages/Team").then((m) => ({ default: m.Team })));
 const SystemHealth = lazy(() => import("./pages/SystemHealth").then((m) => ({ default: m.SystemHealth })));
 const AutoCountSync = lazy(() => import("./pages/AutoCountSync").then((m) => ({ default: m.AutoCountSync })));
+const ChangeLog = lazy(() => import("./pages/ChangeLog").then((m) => ({ default: m.ChangeLog })));
 const FleetHealth = lazy(() => import("./pages/FleetHealth").then((m) => ({ default: m.FleetHealth })));
 const LorryRecord = lazy(() => import("./pages/LorryRecord").then((m) => ({ default: m.LorryRecord })));
 const Agents = lazy(() => import("./pages/Agents").then((m) => ({ default: m.Agents })));
@@ -99,6 +100,8 @@ const ScmPaymentVoucherScanV2 = lazy(() => import("./pages/scm-v2/PaymentVoucher
 const ScmChartOfAccountsV2 = lazy(() => import("./pages/scm-v2/ChartOfAccounts").then((m) => ({ default: m.ChartOfAccounts })));
 const ScmOtherDebtorsV2 = lazy(() => import("./pages/scm-v2/OtherDebtors").then((m) => ({ default: m.OtherDebtors })));
 const ScmReceiptsV2 = lazy(() => import("./pages/scm-v2/Receipts").then((m) => ({ default: m.Receipts })));
+const ScmOfficialReceiptsV2 = lazy(() => import("./pages/scm-v2/OfficialReceipts").then((m) => ({ default: m.OfficialReceipts })));
+const ScmApInvoicesV2 = lazy(() => import("./pages/scm-v2/ApInvoices").then((m) => ({ default: m.ApInvoices })));
 const ScmPaymentVoucherDetailV2 = lazy(() => import("./pages/scm-v2/PaymentVoucherDetail").then((m) => ({ default: m.PaymentVoucherDetail })));
 const ScmStockAdjustmentsV2 = lazy(() => import("./pages/scm-v2/StockAdjustments").then((m) => ({ default: m.StockAdjustments })));
 const ScmStockAdjustmentNewV2 = lazy(() => import("./pages/scm-v2/StockAdjustmentNew").then((m) => ({ default: m.StockAdjustmentNew })));
@@ -158,6 +161,7 @@ const ScmSalesOrderDetailV2 = lazy(() => import("./pages/scm-v2/SalesOrderDetail
 const ScmAmendmentsV2 = lazy(() => import("./pages/scm-v2/Amendments").then((m) => ({ default: m.Amendments })));
 const ScmAmendmentDetailV2 = lazy(() => import("./pages/scm-v2/AmendmentDetailV2").then((m) => ({ default: m.AmendmentDetailV2 })));
 const ScmPoAmendmentsV2 = lazy(() => import("./pages/scm-v2/PoAmendments").then((m) => ({ default: m.PoAmendments })));
+const ScmCancelRequestsV2 = lazy(() => import("./pages/scm-v2/CancelRequests").then((m) => ({ default: m.CancelRequests })));
 const ScmPoAmendmentDetailV2 = lazy(() => import("./pages/scm-v2/PoAmendmentDetailV2").then((m) => ({ default: m.PoAmendmentDetailV2 })));
 const ScmSoDetailListingV2 = lazy(() => import("./pages/scm-v2/SalesOrderDetailListing").then((m) => ({ default: m.SalesOrderDetailListing })));
 const ScmDoDetailListingV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderDetailListing").then((m) => ({ default: m.DeliveryOrderDetailListing })));
@@ -563,6 +567,18 @@ export default function App() {
             </Guard>
           }
         />
+        {/* Go-live Change Log — who changed which document since the system was
+            opened to staff. anyPerm mirrors the two keys GET /api/scm/change-log
+            accepts; the server is still the boundary, this only decides whether
+            the door opens. */}
+        <Route
+          path="/change-log"
+          element={
+            <Guard anyPerm={["*", "scm.changelog.read", "settings.manage"]}>
+              <ChangeLog />
+            </Guard>
+          }
+        />
         <Route
           path="/team"
           element={
@@ -639,6 +655,9 @@ export default function App() {
             in the sidebar sense — routes are matched exactly, so order is safe. */}
         <Route path="/scm/po-amendments" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPoAmendmentsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/po-amendments/:id" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPoAmendmentDetailV2 /></Scm2990Shell></ScmGuard>} />
+        {/* Cancellation requests (owner 2026-09-08) — one inbox for both documents; a
+            row's actions still hit the per-document routes behind their own area guards. */}
+        <Route path="/scm/cancel-requests" element={<ScmGuard area="scm" allowDirector><Scm2990Shell><ScmCancelRequestsV2 /></Scm2990Shell></ScmGuard>} />
         {/* Vendored 2990's MRP + read/list pages. Each wrapped in <Scm2990Shell>.
             product-models list precedes /:id so the literal segment matches first. */}
         <Route path="/scm/mrp" element={<ScmGuard area="scm.procurement.mrp"><Scm2990Shell><ScmMrpV2 /></Scm2990Shell></ScmGuard>} />
@@ -682,6 +701,9 @@ export default function App() {
         <Route path="/scm/chart-of-accounts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmChartOfAccountsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/other-debtors" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOtherDebtorsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmReceiptsV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/official-receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOfficialReceiptsV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/ap-invoices" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmApInvoicesV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/ap-invoices/scan" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherScanV2 target="ap" /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/payment-vouchers/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherDetailV2 /></Scm2990Shell></ScmGuard>} />
         {/* TEMP — vendored 2990's stock-movement pages (wave 4: Adjustments /
             Transfers / Takes), parallel to the native /scm/* below. Each wrapped

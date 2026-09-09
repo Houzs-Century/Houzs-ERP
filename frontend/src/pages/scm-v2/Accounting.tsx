@@ -16,7 +16,7 @@
 
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpen, FileText, ListTree, Receipt, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
+import { ArrowLeftRight, BookOpen, Boxes, CalendarClock, FileText, LineChart, ListTree, Receipt, Scale, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
 import {
   useJournalEntries,
   useJournalEntryDetail,
@@ -27,6 +27,7 @@ import {
   useArAging,
   useApAging,
   useAccounts,
+  leafAccounts,
   type Account,
   type ArAgingRow,
   type ApAgingRow,
@@ -36,10 +37,18 @@ import {
 import {
   useReverseJournalEntry,
   useControlCheck,
+  usePaymentBookingDryRun,
+  useBookUnbookedPayments,
   type ControlCheckRow,
   type UnbookedPayments,
+  type PaymentDryRun,
 } from './accounting-phase1-queries';
 import { DataTable, type Column } from '../../components/DataTable';
+import { ItemGroupsTab } from './ItemGroups';
+import { StockCloseTab } from './StockClose';
+import { PnLTab, BalanceSheetTab } from './Reports';
+import { ReceiptsPaymentsTab } from './ReceiptsPayments';
+import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
@@ -53,7 +62,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 // amount, never "RM NaN". Kept under the local name so callsites are unchanged.
 const fmt = (sen: number | null | undefined) => fmtSen(sen);
 
-type Tab = 'coa' | 'je' | 'gl' | 'tb' | 'ar' | 'ap' | 'check';
+type Tab = 'coa' | 'groups' | 'je' | 'gl' | 'tb' | 'close' | 'pnl' | 'bs' | 'rp' | 'ar' | 'ap' | 'check';
 
 export const Accounting = () => {
   const [tab, setTab] = useState<Tab>('je');
@@ -64,18 +73,28 @@ export const Accounting = () => {
 
       <div className={styles.statusChips} style={{ gap: 'var(--space-2)' }}>
         <TabBtn label="Chart of Accounts" icon={<ListTree {...ICON} />} active={tab === 'coa'} onClick={() => setTab('coa')} />
+        <TabBtn label="Item Groups"     icon={<Boxes {...ICON} />}    active={tab === 'groups'} onClick={() => setTab('groups')} />
         <TabBtn label="Journal Entries" icon={<BookOpen {...ICON} />} active={tab === 'je'}    onClick={() => setTab('je')} />
         <TabBtn label="General Ledger"  icon={<FileText {...ICON} />} active={tab === 'gl'}    onClick={() => setTab('gl')} />
         <TabBtn label="Trial Balance"   icon={<Receipt {...ICON} />}  active={tab === 'tb'} onClick={() => setTab('tb')} />
+        <TabBtn label="Month-end"       icon={<CalendarClock {...ICON} />} active={tab === 'close'} onClick={() => setTab('close')} />
+        <TabBtn label="P&L"             icon={<LineChart {...ICON} />} active={tab === 'pnl'} onClick={() => setTab('pnl')} />
+        <TabBtn label="Balance Sheet"   icon={<Scale {...ICON} />} active={tab === 'bs'} onClick={() => setTab('bs')} />
+        <TabBtn label="Receipts & Payments" icon={<ArrowLeftRight {...ICON} />} active={tab === 'rp'} onClick={() => setTab('rp')} />
         <TabBtn label="AR Aging"        icon={<TrendingUp {...ICON} />} active={tab === 'ar'}  onClick={() => setTab('ar')} />
         <TabBtn label="AP Aging"        icon={<TrendingDown {...ICON} />} active={tab === 'ap'} onClick={() => setTab('ap')} />
         <TabBtn label="Self-check"      icon={<ShieldCheck {...ICON} />} active={tab === 'check'} onClick={() => setTab('check')} />
       </div>
 
       {tab === 'coa'   && <CoaTab />}
+      {tab === 'groups' && <ItemGroupsTab />}
       {tab === 'je'    && <JeTab />}
       {tab === 'gl'    && <GlTab />}
       {tab === 'tb'    && <TrialBalanceTab />}
+      {tab === 'close' && <StockCloseTab />}
+      {tab === 'pnl'   && <PnLTab />}
+      {tab === 'bs'    && <BalanceSheetTab />}
+      {tab === 'rp'    && <ReceiptsPaymentsTab />}
       {tab === 'ar'    && <ArAgingTab />}
       {tab === 'ap'    && <ApAgingTab />}
       {tab === 'check' && <SelfCheckTab />}
@@ -241,8 +260,17 @@ const CoaTab = () => {
 const jeStatus = (r: JournalEntry): string =>
   r.reversed ? 'REVERSED' : r.posted ? 'POSTED' : 'DRAFT';
 
+/* The five journals (GL redesign item 7) — the AutoCount way the owner reads
+   his books. The class arrives on each row from the server (derived from the
+   source type and, for money documents, from which money account the lines
+   touch); the chips are a client filter over the loaded page. */
+const JOURNAL_CHIPS = ['SALES', 'PURCHASE', 'BANK', 'CASH', 'GENERAL'] as const;
+const journalClassOf = (r: JournalEntry): string =>
+  String((r as { journal_class?: string }).journal_class ?? 'GENERAL');
+
 const JeTab = () => {
   const [sourceType, setSourceType] = useState<string>('');
+  const [journal, setJournal] = useState<string>('');
   const q = useJournalEntries(sourceType ? { sourceType } : undefined);
   const rows = useMemo(() => q.data?.journalEntries ?? [], [q.data]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -250,14 +278,15 @@ const JeTab = () => {
 
   const [search, setSearch] = useState('');
   const visible = useMemo(() => {
+    const inJournal = journal ? rows.filter((r) => journalClassOf(r) === journal) : rows;
     const term = search.trim().toLowerCase();
-    if (!term) return rows;
-    return rows.filter((r) =>
-      `${r.je_no} ${r.entry_date} ${r.source_type} ${r.source_doc_no ?? ''} ${jeStatus(r)}`
+    if (!term) return inJournal;
+    return inJournal.filter((r) =>
+      `${r.je_no} ${r.entry_date} ${r.source_type} ${r.source_doc_no ?? ''} ${journalClassOf(r)} ${jeStatus(r)}`
         .toLowerCase()
         .includes(term),
     );
-  }, [rows, search]);
+  }, [rows, search, journal]);
 
   return (
     <div className="space-y-3">
@@ -280,6 +309,13 @@ const JeTab = () => {
           <option value="MANUAL">Manual</option>
           <option value="MANUAL_REVERSAL">Manual Reversal</option>
         </select>
+        {/* The five journals, AutoCount's own vocabulary. */}
+        <button type="button" style={btnStyle(journal === '')} onClick={() => setJournal('')}>All journals</button>
+        {JOURNAL_CHIPS.map((jc) => (
+          <button key={jc} type="button" style={btnStyle(journal === jc)} onClick={() => setJournal(journal === jc ? '' : jc)}>
+            {jc}
+          </button>
+        ))}
       </div>
 
       {creating && <NewJournalForm onDone={() => setCreating(false)} />}
@@ -306,6 +342,7 @@ const JeTab = () => {
         columns={[
           { key: 'je_no', label: 'JE No', width: '140px', getValue: (r) => r.je_no, render: (r) => <span className={styles.codeChip}>{r.je_no}</span> },
           { key: 'entry_date', label: 'Date', width: '110px', getValue: (r) => r.entry_date, render: (r) => fmtDateOrDash(r.entry_date) },
+          { key: 'journal', label: 'Journal', width: '100px', getValue: (r) => journalClassOf(r), render: (r) => journalClassOf(r) },
           { key: 'source', label: 'Source', width: '110px', getValue: (r) => r.source_type, render: (r) => r.source_type },
           { key: 'doc', label: 'Doc', width: '140px', getValue: (r) => r.source_doc_no ?? '', render: (r) => r.source_doc_no ?? '—' },
           { key: 'debit', label: 'Debit', align: 'right', width: '130px', getValue: (r) => r.total_debit_sen / 100, render: (r) => fmt(r.total_debit_sen) },
@@ -345,10 +382,10 @@ const NewJournalForm = ({ onDone }: { onDone: () => void }) => {
   const [lines, setLines] = useState<DraftLine[]>([{ ...EMPTY_LINE }, { ...EMPTY_LINE }]);
 
   const all = accounts.data?.accounts ?? [];
-  const parents = useMemo(() => new Set(all.map((a) => a.parent_code).filter(Boolean) as string[]), [all]);
-  // Postable = active and not a header — the same rule the engine enforces,
-  // applied here so the picker cannot offer an account the post will refuse.
-  const postable = all.filter((a) => a.is_active && !parents.has(a.account_code));
+  // Postable = active and not a header (retired children count, docs/bugs/0693)
+  // — the engine's own rule from its one screen-side home, applied here so the
+  // picker cannot offer an account the post will refuse.
+  const postable = useMemo(() => leafAccounts(all), [all]);
 
   const totals = useMemo(() => {
     let dr = 0; let cr = 0; let bad = false;
@@ -662,10 +699,25 @@ const SelfCheckTab = () => {
    ever booked one; a card that silently spoke about a period nobody could see
    would be its own kind of lie. */
 
-const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
+/* docs/bugs/0652: a company whose hook had refused EVERY payment read "all of
+   them" here — nothing had ever booked, so there was "no period to check". The
+   card now says so in red, with the money, and the Why? button puts each
+   unbooked payment through the gate's own checks (dry run, nothing written) and
+   prints the verdict and reason the console-only hook never showed anyone. */
+export const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
   const good = 'var(--c-secondary-a, #2F5D4F)';
   const bad = 'var(--c-festive-b, #B8331F)';
-  const clean = p.ok && p.rows.length === 0;
+  const never = p.since == null && (p.neverBooked?.count ?? 0) > 0;
+  const clean = p.ok && p.rows.length === 0 && !never;
+  const dry = usePaymentBookingDryRun();
+  const book = useBookUnbookedPayments();
+  const askConfirm = useConfirm();
+  /* The real run is offered only after a dry run the gate refused nothing on
+     (docs/bugs/0655) — the owner presses it himself; the write is his. */
+  const bookable = dry.data && dry.data.scanned > 0 && dry.data.failed.length === 0 ? dry.data : null;
+  const bookableSen = bookable ? bookable.rows.reduce((s, r) => s + r.amountSen, 0) : 0;
+  const unbookedCount = never ? (p.neverBooked?.count ?? 0) : p.rows.length;
+  const unbookedSen = never ? (p.neverBooked?.totalSen ?? 0) : p.totalSen;
 
   return (
     <div style={{ ...cardStyle, borderColor: clean ? good : bad }} className="space-y-2">
@@ -676,9 +728,15 @@ const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
           background: clean ? 'rgba(47, 93, 79, 0.12)' : 'rgba(184, 51, 31, 0.12)',
           color: clean ? good : bad,
         }}>
-          {clean ? 'all of them' : `${p.rows.length} did not`}
+          {clean ? 'all of them' : never ? 'none, ever' : `${p.rows.length} did not`}
         </span>
-        {!clean && <span>{fmt(p.totalSen)} on documents and not in the books</span>}
+        {!clean && <span>{fmt(unbookedSen)} on {unbookedCount} payment{unbookedCount === 1 ? '' : 's'} and not in the books</span>}
+        {!clean && (
+          <button type="button" onClick={() => dry.mutate()} disabled={dry.isPending}
+            style={{ marginLeft: 'auto', border: `1px solid ${bad}`, color: bad, background: 'none', borderRadius: 6, padding: '2px 10px', cursor: 'pointer', fontSize: 'var(--fs-12)', fontWeight: 600 }}>
+            {dry.isPending ? 'Asking the gate…' : 'Why? (dry run)'}
+          </button>
+        )}
       </div>
 
       {p.error && <div style={{ fontSize: 'var(--fs-13)', color: bad }}>The check could not run: {p.error}</div>}
@@ -687,11 +745,38 @@ const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
           speaking about nothing. */}
       <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)' }}>
         {p.since == null
-          ? 'No payment has been booked in this company yet, so there is no period to check. '
-            + 'Payments recorded before the accounting module starts here are expected to be unbooked.'
+          ? (never
+            ? `No payment has ever been booked in this company, yet ${p.neverBooked?.count ?? 0} were recorded between ${p.neverBooked?.firstPaidOn ?? '?'} and ${p.neverBooked?.lastPaidOn ?? '?'} (imported and zero rows not counted). The booking hook is not reaching the books — press Why? for the gate's own reason on each.`
+            : 'No payment has been booked in this company yet, and its SO/SI payment tables hold no bookable row (imported and zero rows are skipped by design).')
           : `Counting payments from ${p.since}, the first day this company booked one. `
             + 'Anything earlier is history that was deliberately left unbooked.'}
       </div>
+
+      {dry.isError && <div style={{ fontSize: 'var(--fs-13)', color: bad }}>The dry run could not run: {dry.error instanceof Error ? dry.error.message : String(dry.error)}</div>}
+      {dry.data && <DryRunResult r={dry.data} />}
+      {bookable && !book.data && (
+        <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
+          <button type="button" disabled={book.isPending}
+            onClick={() => {
+              void askConfirm({
+                title: `Book ${bookable.scanned} payment${bookable.scanned === 1 ? '' : 's'} into the ledger?`,
+                body: `The gate refused none of them. Each posts on its own paid date — ${fmt(bookableSen)} in total, Dr bank / cash / clearing, Cr Trade Debtors.`,
+                confirmLabel: 'Book them',
+              }).then((ok) => { if (ok) book.mutate(); });
+            }}
+            style={{ border: `1px solid ${good}`, color: good, background: 'none', borderRadius: 6, padding: '4px 12px', cursor: 'pointer', fontSize: 'var(--fs-12)', fontWeight: 700 }}>
+            {book.isPending ? 'Booking…' : `Book ${bookable.scanned} payment${bookable.scanned === 1 ? '' : 's'} now`}
+          </button>
+          <span style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)' }}>Nothing is written until you confirm.</span>
+        </div>
+      )}
+      {book.isError && <div style={{ fontSize: 'var(--fs-13)', color: bad }}>The booking could not run: {book.error instanceof Error ? book.error.message : String(book.error)}</div>}
+      {book.data && (
+        <div style={{ fontSize: 'var(--fs-13)', color: book.data.failed.length > 0 ? bad : good, fontWeight: 600 }}>
+          Booked {book.data.posted}, skipped {book.data.skipped}, refused {book.data.failed.length}
+          {book.data.remaining > 0 ? ` — ${book.data.remaining} still waiting, press Why? and book again` : ' — the card re-reads now'}.
+        </div>
+      )}
 
       {p.rows.length > 0 && (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
@@ -707,6 +792,46 @@ const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
                 <td>{r.paidOn}</td>
                 <td>{r.method}</td>
                 <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmt(r.amountSen)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+};
+
+/* The dry run's answer, row by row — the verdict column is the gate's own
+   status word (would_post, account_invalid, …) and the reason is its sentence. */
+const DryRunResult = ({ r }: { r: PaymentDryRun }) => {
+  const good = 'var(--c-secondary-a, #2F5D4F)';
+  const bad = 'var(--c-festive-b, #B8331F)';
+  const byStatus = new Map<string, number>();
+  for (const row of r.rows) byStatus.set(row.status, (byStatus.get(row.status) ?? 0) + 1);
+  const summary = [...byStatus].map(([s, n]) => `${n} ${s === 'would_post' ? 'would post' : s}`).join(', ');
+  return (
+    <div className="space-y-1" style={{ fontSize: 'var(--fs-13)' }}>
+      <div>
+        <b>Dry run</b> — {r.scanned} unbooked payment{r.scanned === 1 ? '' : 's'} put through the gate, nothing written
+        {r.rows.length > 0 ? `: ${summary}.` : '.'}
+        {r.remaining > r.rows.length ? ` Showing the first ${r.rows.length}.` : ''}
+      </div>
+      {r.rows.length > 0 && (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+          <thead>
+            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.18))' }}>
+              <th>Document</th><th>Paid on</th><th>How</th><th style={{ textAlign: 'right' }}>Amount</th><th>Verdict</th><th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {r.rows.map((row) => (
+              <tr key={row.id} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.10))' }}>
+                <td>{row.docNo}</td>
+                <td>{row.paidOn}</td>
+                <td>{row.method}</td>
+                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmt(row.amountSen)}</td>
+                <td style={{ fontWeight: 600, color: row.status === 'would_post' ? good : bad }}>{row.status === 'would_post' ? 'would post' : row.status}</td>
+                <td>{row.reason ?? '—'}</td>
               </tr>
             ))}
           </tbody>
@@ -832,6 +957,9 @@ const ApAgingTab = () => {
         getRowKey={(r) => r.invoice_id}
         columns={[
           { key: 'invoice', label: 'Invoice', width: '140px', getValue: (r) => r.invoice_number, render: (r) => <span className={styles.codeChip}>{r.invoice_number}</span> },
+          /* Both kinds age here since 2026-09-06 — the AP invoice (non-stock
+             bill) beside the purchase invoice; the column says which. */
+          { key: 'kind', label: 'Kind', width: '90px', getValue: (r) => r.kind ?? 'PI', render: (r) => (r.kind === 'API' ? 'AP inv' : 'PI') },
           // Owner 2026-07-24: supplier NAME and CODE are separate columns on
           // every procurement table, not one combined cell.
           { key: 'supplier', label: 'Supplier', getValue: (r) => r.supplier_name ?? '', render: (r) => r.supplier_name ?? '—' },

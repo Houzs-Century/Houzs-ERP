@@ -32,6 +32,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { reconcileLedger } from '../lib/reconcile-ledger';
+import { inventoryValuationHandler } from './inventory-valuation';
 import {
   activeCompanyId, scopeToCompany,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
@@ -43,6 +44,7 @@ import {
 } from '../lib/inventory-movements';
 import { computeVariantKey, effectiveDelivery, effectiveSoDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import { warehouseLabel } from '../lib/warehouse-label';
+import { isNonSellingWarehouseType } from '../lib/non-selling-warehouse';
 import { computeMrp, mrpStockAssignment, stockAssignmentKey } from './mrp';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import type { Env, Variables } from '../env';
@@ -106,9 +108,16 @@ inventory.use('*', supabaseAuth);
    `type = 'showroom'`), so nothing new is stored — the axis was there and dead
    stock simply never read it. Shared by the ANALYTICS dead-stock list and the
    LIST's per-SKU Dead/Spare badge: the 2026-08-05 fix reached only the first, so
-   the screen the owner actually looks at kept tagging display pieces DEAD. */
-const NON_SELLING_WAREHOUSE_TYPES = new Set(['showroom', 'display', 'service']);
+   the screen the owner actually looks at kept tagging display pieces DEAD.
 
+   THE SET ITSELF MOVED OUT on 2026-09-08 (lib/non-selling-warehouse.ts). The
+   owner's ruling that day put the same axis in front of the SO ALLOCATOR, so
+   the same three type names now decide two things — what counts as dead stock,
+   and what may be promised to a customer. Two copies of one business question
+   is the duplicated-decision gate's whole subject; the local copy here was the
+   second home and it is gone. This file keeps its own COMPANY-SCOPED loader,
+   because a report is scoped to the active company while the allocator sweeps
+   every company at once. */
 async function loadNonSellingWarehouseIds(
   sb: any,
   c: Parameters<typeof scopeToCompany>[1],
@@ -116,7 +125,7 @@ async function loadNonSellingWarehouseIds(
   const ids = new Set<string>();
   const { data } = await scopeToCompany(sb.from('warehouses').select('id, type'), c);
   for (const w of (data ?? []) as Array<{ id: string; type: string | null }>) {
-    if (NON_SELLING_WAREHOUSE_TYPES.has(String(w.type ?? '').toLowerCase())) ids.add(w.id);
+    if (isNonSellingWarehouseType(w.type)) ids.add(w.id);
   }
   return ids;
 }
@@ -415,6 +424,9 @@ export const listInventoryHandler = async (c: any) => {
 };
 
 inventory.get('/', listInventoryHandler);
+/* The as-of-date photograph (GL redesign item 5) — handler in
+   inventory-valuation.ts, replay shared with the month-end close. */
+inventory.get('/valuation', inventoryValuationHandler);
 
 /* Σ delivered / Σ returned per SO line id (net-of-delivered). Only
    non-cancelled AND non-draft DOs count as delivered (a DRAFT DO hasn't

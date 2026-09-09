@@ -18,48 +18,52 @@
 
 import { Hono } from 'hono';
 import { hasHouzsPerm } from '../lib/houzs-perms';
+import { supabaseAuth } from '../middleware/auth';
 import { companyDocPrefix, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
-import { mintMonthlyDocNo } from '../lib/doc-no';
+import { docMonthTag, mintMonthlyDocNo } from '../lib/doc-no';
+import { dateOrNull } from '../lib/date-coerce';
+import { todayMyt } from '../lib/my-time';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { type RuleLine } from '../../acc/rules';
 import { requireLeafAccount } from './accounting-chart';
 
 type Row = Record<string, any>;
 
-const yymm = () => {
-  const d = new Date();
-  return `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
-};
-
-/* Month window "YYYY-MM" → [first day, first day of next month). Defaults to
-   the current month — the page answers 这个月收了什么钱 without pagination. */
-const monthWindow = (raw: string | undefined): { from: string; to: string } | null => {
-  const m = /^(\d{4})-(\d{2})$/.exec(String(raw ?? '').trim() || new Date().toISOString().slice(0, 7));
-  if (!m) return null;
+/* Month window "YYYY-MM" → [first day, first day of next month). Absent (or
+   "all") means EVERY month: the page opens on everything that ever came in and
+   the month is a filter (owner 2026-09-08: 月份只是筛选 — it used to default to
+   this month). A malformed value is refused, never read as "this month". */
+const monthWindow = (raw: string | undefined): { from: string; to: string } | null | 'bad' => {
+  const s = String(raw ?? '').trim();
+  if (s === '' || s.toLowerCase() === 'all') return null;
+  const m = /^(\d{4})-(\d{2})$/.exec(s);
+  if (!m) return 'bad';
   const y = Number(m[1]); const mo = Number(m[2]);
-  if (mo < 1 || mo > 12) return null;
+  if (mo < 1 || mo > 12) return 'bad';
   const pad = (n: number) => String(n).padStart(2, '0');
   const from = `${y}-${pad(mo)}-01`;
   const to = mo === 12 ? `${y + 1}-01-01` : `${y}-${pad(mo + 1)}-01`;
   return { from, to };
 };
 
-/* ── GET /receipts?month=YYYY-MM — the unified money-in list ─────────────── */
+/* ── GET /receipts[?month=YYYY-MM] — the unified money-in list ───────────── */
 export const listReceiptsHandler = async (c: any): Promise<Response> => {
   const win = monthWindow(c.req.query('month'));
-  if (!win) return c.json({ error: 'bad_month', message: 'month must look like 2026-09.' }, 400);
+  if (win === 'bad') return c.json({ error: 'bad_month', message: 'month must look like 2026-09, or be left out for every month.' }, 400);
   const sb = c.get('supabase');
+  /* No month asked for = the three reads are whole. */
+  const windowed = (q: any, col: string) => (win ? q.gte(col, win.from).lt(col, win.to) : q);
 
   const [general, debtor, customer] = await Promise.all([
-    scopeToCompany(sb.from('acc_receipts')
-      .select('id, receipt_number, payer_name, receipt_date, bank_account_code, total_sen, status, notes')
-      .gte('receipt_date', win.from).lt('receipt_date', win.to), c).order('receipt_number'),
-    scopeToCompany(sb.from('acc_debtor_receipts')
-      .select('id, receipt_number, receipt_date, bank_account_code, total_sen, status, debtor_id, debtor:acc_debtors(name)')
-      .gte('receipt_date', win.from).lt('receipt_date', win.to), c).order('receipt_number'),
-    scopeToCompany(sb.from('mfg_sales_order_payments')
-      .select('id, so_doc_no, paid_at, method, amount_sen, is_deposit')
-      .gte('paid_at', win.from).lt('paid_at', win.to), c).order('paid_at'),
+    scopeToCompany(windowed(sb.from('acc_receipts')
+      .select('id, receipt_number, payer_name, receipt_date, bank_account_code, total_sen, status, notes'), 'receipt_date'), c)
+      .order('receipt_number'),
+    scopeToCompany(windowed(sb.from('acc_debtor_receipts')
+      .select('id, receipt_number, receipt_date, bank_account_code, total_sen, status, debtor_id, debtor:acc_debtors(name)'), 'receipt_date'), c)
+      .order('receipt_number'),
+    scopeToCompany(windowed(sb.from('mfg_sales_order_payments')
+      .select('id, so_doc_no, paid_at, method, amount_sen, is_deposit'), 'paid_at'), c)
+      .order('paid_at'),
   ]);
   if (general.error) return c.json({ error: 'load_failed', reason: general.error.message }, 500);
   if (debtor.error) return c.json({ error: 'load_failed', reason: debtor.error.message }, 500);
@@ -84,7 +88,7 @@ export const listReceiptsHandler = async (c: any): Promise<Response> => {
     })),
   ].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.number < b.number ? 1 : -1));
 
-  return c.json({ month: win.from.slice(0, 7), receipts: rows });
+  return c.json({ month: win ? win.from.slice(0, 7) : null, receipts: rows });
 };
 
 /* ── POST /receipts — record + post, one motion (不需要走四层) ────────────── */
@@ -133,10 +137,10 @@ export const createReceiptHandler = async (c: any): Promise<Response> => {
     const leafErr = await requireLeafAccount(c, coId, code);
     if (leafErr) return leafErr;
   }
-  const receiptDate = String(body.receiptDate ?? '').trim() || new Date().toISOString().slice(0, 10);
+  const receiptDate = dateOrNull(body.receiptDate) ?? todayMyt();
   const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
 
-  const receiptNumber = await mintMonthlyDocNo(sb, 'acc_receipts', 'receipt_number', `${companyDocPrefix(c)}OR-${yymm()}`);
+  const receiptNumber = await mintMonthlyDocNo(sb, 'acc_receipts', 'receipt_number', `${companyDocPrefix(c)}OR-${docMonthTag(receiptDate)}`);
   const { data: receipt, error: insErr } = await sb.from('acc_receipts').insert({
     company_id: coId,
     receipt_number: receiptNumber,
@@ -218,9 +222,152 @@ export const voidReceiptHandler = async (c: any): Promise<Response> => {
   return c.json({ ok: true });
 };
 
+/* ── GET /receipts/:id — the general receipt with its lines (the edit form's seed) */
+export const getReceiptHandler = async (c: any): Promise<Response> => {
+  const sb = c.get('supabase');
+  const { data: receipt, error } = await scopeToCompany(
+    sb.from('acc_receipts').select('id, receipt_number, payer_name, receipt_date, bank_account_code, total_sen, status, notes').eq('id', c.req.param('id')), c,
+  ).maybeSingle();
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (!receipt) return c.json({ error: 'not_found' }, 404);
+  const { data: lines, error: lErr } = await scopeToCompany(
+    sb.from('acc_receipt_lines').select('id, line_no, description, credit_account_code, amount_sen').eq('receipt_id', receipt.id), c,
+  ).order('line_no');
+  if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+  return c.json({ receipt, lines: lines ?? [] });
+};
+
+/* ── PATCH /receipts/:id — edit and RE-POST (owner 2026-09-07, four receipts
+   keyed on the wrong day: 收钱的日期错了 → 做 b). A posted receipt may change
+   its date, payer, landing account and lines; the ledger keeps the trail the
+   way an edited AP invoice does — the engine's contra voids the old RCT entry
+   (dated as the receipt WAS) and a fresh RCT books it as it now reads (dated
+   as it now is). THE NUMBER STAYS (his rule: 改日期号码不重发) — a receipt
+   dated back into August keeps its September series number; the entry_date
+   is what the reports and the reconciliation read. A cancelled receipt is
+   left alone: raise it again. */
+export const updateReceiptHandler = async (c: any): Promise<Response> => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.write') && !hasHouzsPerm(c, 'scm.payment_voucher.create')) {
+    return c.json({ error: "You don't have permission to do that." }, 403);
+  }
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json({ error: 'no_company', message: 'No active company resolves for this session.' }, 409);
+  const coId = co.companyId;
+  const sb = c.get('supabase');
+  const { data: cur, error: curErr } = await scopeToCompany(
+    sb.from('acc_receipts').select('id, receipt_number, payer_name, receipt_date, bank_account_code, total_sen, status, notes, company_id').eq('id', c.req.param('id')), c,
+  ).maybeSingle();
+  if (curErr) return c.json({ error: 'load_failed', reason: curErr.message }, 500);
+  if (!cur) return c.json({ error: 'not_found' }, 404);
+  const receipt = cur as { id: string; receipt_number: string; payer_name: string; receipt_date: string; bank_account_code: string; total_sen: number; status: string; notes: string | null; company_id: number };
+  if (receipt.status === 'CANCELLED') {
+    return c.json({ error: 'receipt_cancelled', message: `${receipt.receipt_number} is void — raise it again instead.` }, 409);
+  }
+  /* Snapshot BEFORE the update: a client that hands out live row references
+     (the test fake does) would otherwise show the edited date here, and the
+     contra must be dated as the OLD receipt was. */
+  const oldDate = String(receipt.receipt_date).slice(0, 10);
+
+  const payer = body.payerName !== undefined ? String(body.payerName ?? '').trim() : receipt.payer_name;
+  if (!payer) return c.json({ error: 'payer_required', message: 'Who paid? Type the name.' }, 400);
+  const bank = body.bankAccountCode !== undefined ? String(body.bankAccountCode ?? '').trim() : receipt.bank_account_code;
+  if (!bank) return c.json({ error: 'bank_required' }, 400);
+  if (bank !== receipt.bank_account_code) {
+    const { data, error } = await sb.from('accounts')
+      .select('acc_money, is_active').eq('company_id', coId).eq('account_code', bank).maybeSingle();
+    if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+    const a = data as { acc_money?: boolean; is_active?: boolean } | null;
+    if (!a || a.is_active !== true || a.acc_money !== true) {
+      return c.json({ error: 'not_a_money_account', message: `${bank} is not an active bank/cash account — the receipt must land on money.` }, 400);
+    }
+  }
+  const receiptDate = body.receiptDate !== undefined ? (dateOrNull(body.receiptDate) ?? oldDate) : oldDate;
+  const notes = body.notes !== undefined ? (body.notes ? String(body.notes).trim() : null) : receipt.notes;
+
+  let lines: Array<{ description: string | null; code: string; amountSen: number }>;
+  if (body.lines !== undefined) {
+    const rawLines = Array.isArray(body.lines) ? body.lines : [];
+    if (rawLines.length === 0 || rawLines.length > 50) {
+      return c.json({ error: 'lines_required', message: 'A receipt takes 1 to 50 lines.' }, 400);
+    }
+    lines = [];
+    for (const [i, l] of rawLines.entries()) {
+      const code = String(l?.creditAccountCode ?? '').trim();
+      const amount = Number(l?.amountSen);
+      if (!code) return c.json({ error: 'bad_line', message: `Line ${i + 1} has no account.` }, 400);
+      if (!Number.isInteger(amount) || amount <= 0) {
+        return c.json({ error: 'bad_line', message: `Line ${i + 1}: amountSen must be a positive integer (got ${String(l?.amountSen)}).` }, 400);
+      }
+      lines.push({ description: l?.description ? String(l.description).trim() : null, code, amountSen: amount });
+    }
+    for (const code of [...new Set(lines.map((l) => l.code))]) {
+      const leafErr = await requireLeafAccount(c, coId, code);
+      if (leafErr) return leafErr;
+    }
+  } else {
+    const { data: old, error: oldErr } = await scopeToCompany(
+      sb.from('acc_receipt_lines').select('description, credit_account_code, amount_sen').eq('receipt_id', receipt.id), c,
+    ).order('line_no');
+    if (oldErr) return c.json({ error: 'load_failed', reason: oldErr.message }, 500);
+    lines = ((old ?? []) as Array<{ description: string | null; credit_account_code: string; amount_sen: number }>)
+      .map((l) => ({ description: l.description ?? null, code: l.credit_account_code, amountSen: Number(l.amount_sen) }));
+    if (lines.length === 0) return c.json({ error: 'lines_required', message: `${receipt.receipt_number} has no lines to re-post.` }, 409);
+  }
+  const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
+
+  const { error: upErr } = await sb.from('acc_receipts').update({
+    /* The coercion sits at the write (tests/dateWriteCoercion.test.ts): a
+       missing or unreadable date keeps the receipt's own. */
+    payer_name: payer, receipt_date: dateOrNull(body.receiptDate) ?? oldDate, bank_account_code: bank, total_sen: totalSen, notes,
+  }).eq('company_id', coId).eq('id', receipt.id);
+  if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+  if (body.lines !== undefined) {
+    await sb.from('acc_receipt_lines').delete().eq('company_id', coId).eq('receipt_id', receipt.id);
+    const { error: lineErr } = await sb.from('acc_receipt_lines').insert(lines.map((l, i) => ({
+      company_id: coId, receipt_id: receipt.id, line_no: i + 1,
+      description: l.description, credit_account_code: l.code, amount_sen: l.amountSen,
+    })));
+    if (lineErr) return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
+  }
+
+  /* The re-post: contra the entry the old receipt wrote, then book it as it
+     now reads — through the one gate, so numbering and the one-active-entry
+     rule hold exactly as on the first post. */
+  const rev = await reverseJournal(sb, {
+    companyId: coId,
+    sourceType: 'RCT',
+    sourceDocNo: receipt.receipt_number,
+    narration: (orig) => `Reversal of ${orig.je_no} — receipt ${receipt.receipt_number} edited`,
+    entryDate: oldDate,
+  });
+  if (!rev.ok) return c.json({ error: 'reverse_failed', status: rev.status, reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
+  const ruleLines: RuleLine[] = [
+    { accountCode: bank, debitSen: totalSen, creditSen: 0, partyType: null, partyCode: null, partyName: payer, notes: `Receipt ${receipt.receipt_number} — ${payer}` },
+    ...lines.map((l) => ({ accountCode: l.code, debitSen: 0, creditSen: l.amountSen, partyType: null, partyCode: null, partyName: null, notes: l.description ?? receipt.receipt_number })),
+  ];
+  const r = await postJournal(sb, {
+    companyId: coId,
+    entryDate: receiptDate,
+    sourceType: 'RCT',
+    sourceDocNo: receipt.receipt_number,
+    narration: `Receipt ${receipt.receipt_number} — ${payer} — edited`,
+    lines: ruleLines,
+  });
+  if (!r.ok) return c.json({ error: 'post_failed', status: r.status, reason: (r as { reason?: string }).reason ?? r.status }, 500);
+  return c.json({ ok: true, reposted: true, jeNo: r.jeNo, receipt: { id: receipt.id, receiptNumber: receipt.receipt_number, totalSen, receiptDate } });
+};
+
 /* ── Router ───────────────────────────────────────────────────────────────── */
 
 export const receipts = new Hono();
+/* The SCM bridge is PER ROUTER (scm/index.ts mounts no global one): it stashes
+   the real caller as houzsUser — what hasHouzsPerm reads — and hands out the
+   service client. This router shipped without it and GET /receipts answered 500 to everyone. See docs/bugs/0648; tests/scmRouterBridge.test.ts pins it. */
+receipts.use('*', supabaseAuth);
 receipts.get('/', listReceiptsHandler);
 receipts.post('/', createReceiptHandler);
 receipts.post('/:id/void', voidReceiptHandler);
+receipts.get('/:id', getReceiptHandler);
+receipts.patch('/:id', updateReceiptHandler);

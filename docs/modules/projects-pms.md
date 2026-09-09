@@ -301,8 +301,78 @@ setup/dismantle contractor, chosen on the Detail page (`ContractorPicker` in
 `services/projects.ts`. Options come from a `project_contractors` picker table on
 the exact organizer pattern: `GET /contractors` (read), `POST /contractors`
 (`projects.write`), `DELETE /contractors/:id` (`projects.manage`), managed by
-`ContractorManager` in `ProjectMaintenance.tsx`. Feeds the planned per-contractor
-calendar share links.
+`ContractorManager` in `ProjectMaintenance.tsx`.
+
+**Contractor share links (2026-09-03).** Each contractor has a public, no-login
+calendar at `/c/<token>` — a view-only month grid of only THEIR confirmed events
+with booth numbers, so Houzs stops exporting/screenshotting schedules to
+contractors. The token IS the credential (`contractor_share_tokens`, mig
+`20260903T1237_contractor_share_tokens.sql`; `revoked_at` kill switch — pattern
+mig 0126); minted against the contractor NAME. `services/contractorShare.ts` does
+get-or-create / resolve / revoke. The **public read**
+`GET /api/public/contractor-calendar/:token` (`routes/publicContractorCalendar.ts`)
+is mounted BEFORE the `auth` gate in `index.ts` and returns ONLY whitelisted
+confirmed columns (brand/organizer/state/venue/booth_no/start/end/name) through
+`c.env.DB` — never finance, never another contractor, never the anon PostgREST
+path (RLS is off prod-wide, so the WHERE clause is the boundary; the contractor
+comes off the token row, never the request). Admin generates/revokes a link per
+contractor via `POST`/`DELETE /contractors/:id/share-link` (authed,
+`projects.write`/`projects.manage`), surfaced as row actions in `ContractorManager`.
+The page `frontend/src/pages/ContractorCalendar.tsx` is a self-contained public
+surface (own month grid, no import from `Projects.tsx`), routed by
+`routing/appSurface.ts` (`/c/` → `contractor`) outside `AuthGate` in `main.tsx`.
+It renders each event as ONE Houzs-teal bar SPANNING its days (label shown once,
+lane-packed per week — a multi-day event does not repeat per day), on a teal
+frame/header/grid (owner 2026-09-04: the plain version read as empty and the
+per-day repetition confused contractors; header and frame went dark slate on
+2026-09-08 so the bars are the only green — the owner tried the brass `accent`
+token the same day and chose slate).
+**Tapping an event opens ONLY its unfilled floorplan (owner 2026-09-08).** The
+list now carries `eventId` (the project id; it opens nothing on its own), and two
+more public routes in the same file sit behind the same token gate + limiter:
+`GET /api/public/contractor-calendar/:token/events/:eventId/floorplan` lists the
+files and `.../floorplan/:fileId` streams one (`?download=1` = attachment
+disposition). Both re-check `id = ? AND contractor = <token's contractor> AND
+confirmed AND not archived` per call. "Unfilled floorplan" is the same rule as
+the mobile Floor Plans card's Unfilled tile: live attachments on the
+`Blank Floorplan` checklist task, else the legacy project-level
+`project_attachments` row with category `floorplan`. The Display Floor Plan, the
+Filled Floorplan and every other file stay server-side; the file id is
+`t<attachment id>` / `l<legacy id>` and the R2 key never reaches the browser.
+Pinned by `backend/tests/publicContractorCalendarFloorplan.test.ts` (light
+project) and the panel test in `ContractorCalendar.test.tsx`.
+
+**Brand share links + Excel export (owner 2026-09-08, second half).** The same
+page now serves two modes — `frontend/src/pages/ShareCalendar.tsx` is the page,
+`ContractorCalendar.tsx` only exports `ContractorCalendar` (`/c/`) and
+`BrandCalendar` (`/b/`, `appSurface.ts` → `brand`). Both modes: confirmed events
+only, booth on the bar, month view only (the owner removed the month/week toggle on 2026-09-09), prev /
+next / Today, a re-read every 60s (polling, the ERP's cadence), no filter, no
+search, nothing editable. The reads live once in
+`backend/src/services/shareCalendar.ts` and take a SCOPE — `{column:
+"contractor"|"brand", value}` off the token row — re-applied on every statement;
+which floorplan task and whether money is read is decided by the ROUTE, never
+by a flag from the browser:
+
+| | contractor `/c/` | brand `/b/` |
+| --- | --- | --- |
+| token table / service | `contractor_share_tokens` / `services/contractorShare.ts` | `brand_share_tokens` (mig `20260908T1500_brand_share_tokens.sql`) / `services/brandShare.ts` |
+| office side | `POST`/`DELETE /api/projects/contractors/:id/share-link` | `POST`/`DELETE /api/brand-share/:id/share-link` (`routes/brandShare.ts`, own file: `routes/projects.ts` is at its size ceiling); both wired through `pages/project-maintenance/shareLinks.ts` from the row menus in `ProjectMaintenance.tsx` |
+| public routes | `routes/publicContractorCalendar.ts` | `routes/publicBrandCalendar.ts`, mounted before `auth` beside it |
+| tap an event | `Blank Floorplan` task files (legacy fallback) | `Display Floor Plan` task files (no legacy fallback) + `GET .../events/:eventId` → `{ sizeSqm, totalSales }` from the `size_sqm` column of `projects` and `total_sales` of `project_finance` |
+| export `GET .../export?month=YYYY-MM` (the month on screen — owner 2026-09-09 "when chose september then click export will export event on september only"; an event touching any day of the month is in; NO month = the whole schedule, because a tab open across the deploy kept asking that way and the export failed for the owner within minutes — a malformed month is 400) | rows Date / Venue / State / Organizer / Brand / Type / Booth / Size (Type = `project_event_types.name`; owner 2026-09-09 "tambah state brand type") — `project_finance` is never read | the same + `totalSales`; the sheet ends with `Brand: X`, `Generated: <time>`, `Confidential` |
+| export log | both write one `share_export_log` row (mig `20260908T1501_share_export_log.sql`): kind, party, token, ip, row count | |
+
+The `.xlsx` is built in the browser (`lib/xlsx-runtime.ts`) from rows the server
+already scoped and logged — the backend has no Excel writer. Spec contradiction
+recorded, not bridged: the owner's text says the contractor "does NOT see size"
+and lists Size in the contractor export columns; the export follows the column
+list, the on-screen contractor panel shows no size. Pinned by
+`backend/tests/publicBrandCalendar.test.ts` (the AKEMI token never sees a
+ZANOTTI event, the blank task's file id is 404 under a brand link, the export is
+logged), the export test in `publicContractorCalendarFloorplan.test.ts` (never
+touches `project_finance`), and `ShareCalendar.test.tsx` (contractor panel never
+fetches figures; brand export has the footer, contractor export does not).
 **The role BADGE is the second half of the checklist-tick gate, and the UI must
 ask it too.** A caller holding `projects.checklist.tick` but **not**
 `projects.write` may attach, edit, delete and status-change only on tasks whose
@@ -1205,10 +1275,25 @@ Three traps this table exists to stop:
   refuses, and hid it from a finance user holding `projects.write`.
 
 `canWriteProjectFinance` mirrors `denyFinance` -> `financeHiddenForUser`
-(`position_id == null` OR `project_finance_viewer`), NOT the per-project
-`_access.pms.canFinancial` flag. The flag is the DIRECTOR-only section tier and
-is a strict subset: it excludes the granular `projects.finance.view` holders
-(the BD role, owner 2026-07-23) that the write route accepts.
+(`position_id == null` OR `project_finance_viewer`), and since 2026-09-04
+`_access.pms.canFinancial` AGREES with it: the flag is
+`sections.includes("FINANCIAL") || permissions_set.has("projects.finance.view")`,
+the same additive shape `canEdit` and `canSensitive` already had.
+
+**It used to be the DIRECTOR-only section tier — a strict subset that excluded
+the granular `projects.finance.view` holders (the BD role, owner 2026-07-23).
+That divergence was a money bug, not a nuance.** `GET /projects/:id` strips
+`finance` + `finance_lines` on `!canFinancial`, so a holder of the permission was
+served an EMPTY ledger; `QuickRentalField` picks PATCH vs CREATE by counting the
+rental lines it can see, took the CREATE branch every time, and blanked its own
+input from the same empty list — so each retype booked another line. Twelve on
+one project, a Rental box reading 201,195 against a real 18,126
+(`docs/bugs/0637-projects-finance-view-was-ignored-by-the-project-detail-stri.md`).
+The write gate and the read gate must not disagree about who may see money.
+
+Still NOT closed: the Rental box is never gated on `canRental` (declared in
+`Projects.tsx`, never read), so a user who genuinely cannot see finance can still
+type into it and duplicate lines the same way.
 
 ### Desktop and mobile files that must change together
 

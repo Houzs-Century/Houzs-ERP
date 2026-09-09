@@ -77,9 +77,7 @@
       "rerun-note"
     ],
     "apply-sofa-compartment-corrections.mjs": [
-      "confirm-phrase",
-      "fresh-verify",
-      "rerun-note"
+      "fresh-verify"
     ],
     "apply-variant-patch.mjs": [
       "confirm-phrase"
@@ -101,11 +99,6 @@
     "backfill-ac-line-keys.mjs": [
       "confirm-phrase",
       "fresh-verify"
-    ],
-    "backfill-ac-sofa-line-keys.mjs": [
-      "confirm-phrase",
-      "fresh-verify",
-      "rerun-note"
     ],
     "backfill-branding-to-canonical.mjs": [
       "confirm-phrase",
@@ -245,9 +238,6 @@
     ],
     "delete-so-by-docnos.mjs": [
       "confirm-phrase",
-      "fresh-verify"
-    ],
-    "delete-test-so.mjs": [
       "fresh-verify"
     ],
     "diag-pwp-price-gap.mjs": [
@@ -638,12 +628,6 @@
       "mode-gate",
       "confirm-phrase",
       "fresh-verify"
-    ],
-    "set-write-freeze.mjs": [
-      "mode-gate",
-      "confirm-phrase",
-      "fresh-verify",
-      "rerun-note"
     ],
     "split-collapsed-sofa-lines.mjs": [
       "confirm-phrase",

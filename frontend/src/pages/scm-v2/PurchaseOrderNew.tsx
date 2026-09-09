@@ -81,6 +81,10 @@ type DraftLine = {
   materialKind: MaterialKind;
   itemCode: string;
   materialName: string;
+  /** Per-line free text — scm.purchase_order_items.notes, the PO twin of the
+      SO line's `remark` (owner 2026-09-04: 「SO line 和 PO line 的 remarks」).
+      NOT on the AutoCount write-back path, unlike description2. */
+  notes?: string;
   supplierSku?: string;
   qty: number;
   unitPriceSen: number;
@@ -117,6 +121,7 @@ const newLine = (): DraftLine => ({
   materialKind: 'mfg_product',
   itemCode: '',
   materialName: '',
+  notes: '',
   qty: 1,
   unitPriceSen: 0,
   variants: {},
@@ -650,6 +655,7 @@ export const PurchaseOrderNew = () => {
       materialKind:   l.materialKind,
       itemCode:   l.itemCode,
       materialName:   l.materialName || l.itemCode,
+      notes:          l.notes || undefined,
       supplierSku:    l.supplierSku,
       qty:            l.qty,
       unitPriceSen: l.unitPriceSen,
@@ -1167,6 +1173,20 @@ export const PurchaseOrderNew = () => {
                     value={l.materialName}
                     onChange={(e) => setLine(l.rid, { materialName: e.target.value })}
                     placeholder="(auto-filled if bound — editable for one-off purchases)"
+                    className={styles.fieldInput}
+                  />
+                </label>
+
+                {/* Remarks — full width. Same box PoLineCard renders on Edit,
+                    so a note typed on Create survives into the edit view rather
+                    than appearing only after someone re-opens the line. */}
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Remarks</span>
+                  <input
+                    type="text"
+                    value={l.notes ?? ''}
+                    onChange={(e) => setLine(l.rid, { notes: e.target.value })}
+                    placeholder="Type remarks…"
                     className={styles.fieldInput}
                   />
                 </label>

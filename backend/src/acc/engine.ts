@@ -119,16 +119,14 @@ async function checkAccounts(
   return { ok: true };
 }
 
-export async function postJournal(sb: any, input: PostJournalInput): Promise<PostJournalResult> {
-  const { companyId, sourceType, sourceDocNo, narration } = input;
-  /* `entryDate: string` does not stop `""` — an unfilled <input type="date">
-     posts one, and journal_entries.entry_date is `date NOT NULL`. Blank would
-     500 the whole post AND poison nextJeNo (`new Date("")` is Invalid Date,
-     so the month prefix comes out NaN). Today is the only sane document date
-     for a journal being written today, and it is what every caller that omits
-     the key already gets. */
-  const entryDate = dateOrNull(input.entryDate) ?? todayMyt();
-  const postNow = input.postNow !== false;
+/**
+ * The read-only half of the gate — steps 1–3b: shape, balance, the chart, the
+ * control guard. postJournal runs it first; a DRY RUN (acc/payments' diagnosis,
+ * docs/bugs/0652) runs it alone, so "would this post, and if not why?" is
+ * answered by the same code that posts — never by a second opinion.
+ */
+export async function validateJournal(sb: any, input: PostJournalInput): Promise<{ ok: true; totalSen: number } | PostJournalErr> {
+  const { companyId, sourceType } = input;
   const lines = input.lines ?? [];
 
   // 1+2 — shape and balance. Rejected before any read or write.
@@ -168,6 +166,27 @@ export async function postJournal(sb: any, input: PostJournalInput): Promise<Pos
       };
     }
   }
+  return { ok: true, totalSen: dr };
+}
+
+export async function postJournal(sb: any, input: PostJournalInput): Promise<PostJournalResult> {
+  const { companyId, sourceType, sourceDocNo, narration } = input;
+  /* `entryDate: string` does not stop `""` — an unfilled <input type="date">
+     posts one, and journal_entries.entry_date is `date NOT NULL`. Blank would
+     500 the whole post AND poison nextJeNo (`new Date("")` is Invalid Date,
+     so the month prefix comes out NaN). Today is the only sane document date
+     for a journal being written today, and it is what every caller that omits
+     the key already gets. */
+  const entryDate = dateOrNull(input.entryDate) ?? todayMyt();
+  const postNow = input.postNow !== false;
+  const lines = input.lines ?? [];
+
+  // 1–3b — shape, balance, the chart, the control guard: the read-only half of
+  // the gate, shared with validateJournal (the dry run asks exactly this).
+  const v = await validateJournal(sb, input);
+  if (!v.ok) return v;
+  const dr = v.totalSen;
+  const cr = dr;
 
   // 4 — one ACTIVE entry per source document. The read fails CLOSED (a blip
   // must never read as "no entry exists yet" — that is precisely how a second

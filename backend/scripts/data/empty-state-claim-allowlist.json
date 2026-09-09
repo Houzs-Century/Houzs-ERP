@@ -22,6 +22,11 @@
   ],
   "reviewed": [
     {
+      "file": "frontend/src/pages/scm-v2/ApInvoiceForm.tsx",
+      "text": "{paidSen > 0 ? ` ${fmtSen(paidSen)} is already paid against it, so the total cannot fall below that and the supplier stays.` : ''}",
+      "why": "The edit form's cap sentence for ONE named AP invoice: paidSen is the server's own paid_sen on that invoice's row, handed over with the bill - a figure the server counted, not an inference from an empty read - shown only above zero to explain why the total may not fall below it."
+    },
+    {
       "file": "backend/src/scm/lib/convert-ceilings.test.ts",
       "text": "test('a PO line amended BELOW what was already received refuses any further GRN', () => {",
       "why": "A test NAME describing a fixture, not a string any operator can see."
@@ -285,6 +290,16 @@
       "file": "backend/src/scm/routes/other-debtors.ts",
       "text": "return c.json({ error: 'bill_has_receipts', message: 'Money was already received against this bill — it cannot be cancelled.' }, 409);",
       "why": "The refusal states THIS bill's own received_sen > 0 — the document's status, not an empty read reported as finished work; the cancel is being refused, not claimed done."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/DebtorBillForm.tsx",
+      "text": "{receivedSen > 0 ? ` ${fmtSen(receivedSen)} is already received against it, so the total cannot fall below that.` : ''}",
+      "why": "The edit form's cap sentence for ONE named debtor bill: receivedSen is the server's own received_sen on that bill's row - a counted figure, not an inference from an empty read - shown only above zero to explain why the total may not fall below it."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/OtherDebtors.test.tsx",
+      "text": "expect(within(d).getByText(/is already received against it/)).toBeTruthy();",
+      "why": "A test asserting the cap sentence renders for a fixture bill that carries received_sen 20000 - it checks the form repeats the server's counted figure; nothing empty is read or claimed."
     }
   ]
 }

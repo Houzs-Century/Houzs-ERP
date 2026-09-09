@@ -244,8 +244,10 @@ export function useApplyHtmlLang() {
 // Announcement localisation
 // ------------------------------------------------------------
 
-/** One translated pair as stored in `announcements.translations`. */
-export type TranslationPair = { title: string; body: string };
+/** One translated pair as stored in `announcements.translations`. `bodyHtml`
+ *  exists only for a notice composed with formatting — the translated body
+ *  as a canonical rich fragment (lib/announcementRichText.ts). */
+export type TranslationPair = { title: string; body: string; bodyHtml?: string };
 export type AnnouncementTranslations = Partial<
   Record<MobileLang, TranslationPair | null | undefined>
 > | null;
@@ -253,6 +255,10 @@ export type AnnouncementTranslations = Partial<
 export type LocalizedAnnouncement = {
   title: string;
   body: string;
+  /** Rich fragment to render instead of `body`, when the shown version has
+   *  one. NEVER the original's html paired with a translated body — a
+   *  translation that came back without its tags shows as plain text. */
+  bodyHtml: string | null;
   /** True when title/body above came from the stored MACHINE translation. */
   isTranslated: boolean;
   /** True when a translation for the chosen language exists at all. */
@@ -278,10 +284,15 @@ export type LocalizedAnnouncement = {
  * authoritative thing we have to show.
  */
 export function localizeAnnouncement(
-  a: { title: string; body: string; translations?: AnnouncementTranslations },
+  a: {
+    title: string;
+    body: string;
+    bodyHtml?: string | null;
+    translations?: AnnouncementTranslations;
+  },
   lang: MobileLang,
 ): LocalizedAnnouncement {
-  const original = { title: a.title, body: a.body };
+  const original = { title: a.title, body: a.body, bodyHtml: a.bodyHtml ?? null };
   if (lang === "en") {
     return { ...original, isTranslated: false, hasTranslation: false };
   }
@@ -298,9 +309,12 @@ export function localizeAnnouncement(
     return { ...original, isTranslated: false, hasTranslation: false };
   }
 
+  const bodyHtml =
+    typeof pair?.bodyHtml === "string" && pair.bodyHtml.trim() ? pair.bodyHtml : null;
   return {
     title,
     body: a.body.trim() ? body : a.body,
+    bodyHtml: a.body.trim() ? bodyHtml : null,
     isTranslated: true,
     hasTranslation: true,
   };

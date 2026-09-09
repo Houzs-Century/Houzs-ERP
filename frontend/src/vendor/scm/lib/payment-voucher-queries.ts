@@ -51,6 +51,10 @@ export type PaymentVoucherRow = Record<string, unknown> & {
   checked_by?: string | null;
   approved_at?: string | null;
   approved_by?: string | null;
+  /** What remains of this voucher's ADVANCE (paid ahead of any invoice, not
+      yet knocked off) — the list paints such rows and offers a chip. 0 when
+      none. Server: listPaymentVouchersHandler. */
+  advance_remaining_sen?: number | null;
 };
 
 export type PaymentVoucherAllocation = {
@@ -145,7 +149,7 @@ export const useSupplierAdvances = (supplierId: string | null) => useQuery({
 export const useApplyAdvance = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ pvId, allocations }: { pvId: string; allocations: Array<{ piId: string; amountSen: number }> }) =>
+    mutationFn: ({ pvId, allocations }: { pvId: string; allocations: Array<{ piId?: string; apInvoiceId?: string; amountSen: number }> }) =>
       authedFetch<{ ok: true; appliedSen: number; remainingSen: number }>(
         `/payment-vouchers/${pvId}/apply-advance`,
         { method: 'POST', body: JSON.stringify({ allocations }) },
@@ -154,6 +158,9 @@ export const useApplyAdvance = () => {
       void qc.invalidateQueries({ queryKey: ['supplier-advances'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', pvId] });
       void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
+      void qc.invalidateQueries({ queryKey: ['ap-invoices'] });
+      void qc.invalidateQueries({ queryKey: ['ap-invoice'] });
+      void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
     },
   });
 };
@@ -287,16 +294,17 @@ export const useDeletePvFile = () => {
   });
 };
 
-/* The authed byte fetch behind both attachment readers (authedFetch
-   JSON-parses, so it can't carry these). Same Worker-proxy pattern as
-   slip.ts's fetchSlipAsObjectUrl, reusing the exported API_URL instead of
-   declaring another copy. */
-async function fetchPvFileResponse(pvId: string, fileId: string): Promise<Response> {
+/* The authed byte fetch behind every attachment reader (authedFetch
+   JSON-parses, so it can't carry these) — the voucher's files and, since
+   2026-09-06, the AP invoice's (ap-invoice-queries.ts hands its own path
+   in). Same Worker-proxy pattern as slip.ts's fetchSlipAsObjectUrl, reusing
+   the exported API_URL instead of declaring another copy. */
+async function fetchDocFileResponse(path: string): Promise<Response> {
   const token = readAuthToken();
   if (!token) throw new Error('Your session has expired — please sign in again.');
   let signal: AbortSignal | undefined;
   try { signal = AbortSignal.timeout(60_000); } catch { signal = undefined; } // pre-2022 browsers
-  const res = await correlatedFetch(`${API_URL}/payment-vouchers/${pvId}/files/${fileId}`, {
+  const res = await correlatedFetch(`${API_URL}${path}`, {
     headers: { authorization: `Bearer ${token}`, ...companyHeader() },
     signal,
   });
@@ -308,14 +316,16 @@ async function fetchPvFileResponse(pvId: string, fileId: string): Promise<Respon
 }
 
 /* View one attachment as a blob object URL. The caller revokes it. */
-export async function fetchPvFileBlobUrl(pvId: string, fileId: string): Promise<{ url: string; contentType: string }> {
-  const res = await fetchPvFileResponse(pvId, fileId);
+export async function fetchDocFileBlobUrl(path: string): Promise<{ url: string; contentType: string }> {
+  const res = await fetchDocFileResponse(path);
   const contentType = res.headers.get('content-type') ?? 'application/octet-stream';
   return consumeCorrelated(res, async () => ({
     url: URL.createObjectURL(await res.blob()),
     contentType,
   }));
 }
+export const fetchPvFileBlobUrl = (pvId: string, fileId: string): Promise<{ url: string; contentType: string }> =>
+  fetchDocFileBlobUrl(`/payment-vouchers/${pvId}/files/${fileId}`);
 
 /* The print's merge lives ON THE WORKER (backend pv-files.ts print-bundle +
    lib/pdf-attach.ts): the stored bills are in R2 next door, and pdf-lib in
@@ -352,3 +362,49 @@ export async function fetchPvPrintDetail(pvId: string): Promise<{
 }> {
   return authedFetch(`/payment-vouchers/${pvId}`);
 }
+
+/** What UNPOSTED vouchers have already applied to each of a supplier's
+    invoices (docs/bugs/0653) — the picker subtracts it, so an invoice a saved
+    voucher already covers leaves the list (owner 2026-09-07: payment 已经分配了
+    就不要显示). excludePvId keeps the voucher being edited out of its own way. */
+export type PvReservations = { byPi: Record<string, number>; byApInvoice: Record<string, number>; holders: Record<string, string[]> };
+export const NO_RESERVATIONS: PvReservations = { byPi: {}, byApInvoice: {}, holders: {} };
+export const usePvReservations = (supplierId: string | null, excludePvId: string | null = null) => useQuery({
+  queryKey: ['pv-reservations', supplierId ?? 'none', excludePvId ?? ''],
+  queryFn: () => authedFetch<PvReservations>(
+    `/payment-vouchers/reservations/list?supplierId=${encodeURIComponent(supplierId ?? '')}${excludePvId ? `&excludePvId=${encodeURIComponent(excludePvId)}` : ''}`,
+  ),
+  enabled: Boolean(supplierId),
+  staleTime: 10_000,
+  retry: retryUnlessClientError,
+});
+
+/* ── Customer Refund (payment-voucher.md §14) ─────────────────────────────
+   The document a refund refunds — 认单为主: the operator names the Sales
+   Order (any status) or the Sales Invoice (CANCELLED only), and the server
+   answers with the customer, every payment it collected (booked = reached
+   this ledger), the refunds already on it and the headroom. */
+export type RefundPayment = { id: string; paidOn: string; method: string; provider: string | null; amountSen: number; booked: boolean };
+export type RefundVoucherRow = { id: string; pvNumber: string; status: string; voucherDate: string; totalSen: number };
+export type RefundSource = {
+  type: 'SO' | 'SI';
+  docNo: string;
+  status: string | null;
+  customer: { name: string | null; phone: string | null; customerId: string | null; debtorCode: string | null };
+  payments: RefundPayment[];
+  bookedSen: number;
+  refunds: RefundVoucherRow[];
+  refundedSen: number;
+  refundableSen: number;
+  eligible: boolean;
+  reason: string | null;
+};
+
+export const useRefundSource = (type: 'SO' | 'SI', docNo: string, excludePvId: string | null = null) => useQuery({
+  queryKey: ['pv-refund-source', type, docNo.trim(), excludePvId],
+  enabled: docNo.trim().length > 0,
+  retry: false,
+  queryFn: () => authedFetch<{ source: RefundSource }>(
+    `/payment-vouchers/refund-source?type=${type}&docNo=${encodeURIComponent(docNo.trim())}${excludePvId ? `&excludePvId=${encodeURIComponent(excludePvId)}` : ''}`,
+  ),
+});

@@ -25,6 +25,10 @@ export type Account = {
   account_name: string;
   account_type: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'INCOME' | 'EXPENSE';
   parent_code: string | null;
+  /** The AutoCount section (CAPITAL / CURRENT ASSETS / COST OF GOODS SOLD…)
+      the account hangs under — decides the type; the owner moves it on the
+      chart page. NULL only on a row older than the sections migration. */
+  section?: string | null;
   is_active: boolean;
   /** True for the money set (bank / cash / e-wallet — what Daily Bank shows).
       The PV "Paid From" picker offers only these. */
@@ -40,7 +44,25 @@ export type Account = {
    decides what the pickers and the Chart page SHOW. */
 export const isControlSpecial = (special: string | null | undefined): boolean =>
   special === 'SDC' || special === 'SCC' || special === 'SBS';
-export const useAccounts = () => baseQuery<{ accounts: Account[] }>(
+/* 父户不记账, one home for the screens (docs/bugs/0693). A header is any
+   account with a sub-account — RETIRED sub-accounts included: the owner's
+   900-R006 RENTAL- SHOWROOM kept three retired showrooms under it and was still
+   a header to him, while every picker (built from the active list alone)
+   called it a leaf and the GL gate (which counts every child) refused it at
+   approve. The gate's rule is the rule; this is the same rule for the pickers,
+   so hand the WHOLE chart in, never a pre-filtered list. */
+export const leafAccounts = (all: Account[]): Account[] => {
+  const parents = new Set(all.map((a) => a.parent_code).filter((p): p is string => !!p));
+  return all.filter((a) => a.is_active && !parents.has(a.account_code));
+};
+/** What a hand-picked line may debit or credit: a leaf that is not a CONTROL
+    account (AR / AP + deposits / stock post through their modules — 由模块过账). */
+export const postableAccounts = (all: Account[]): Account[] =>
+  leafAccounts(all).filter((a) => !isControlSpecial(a.special_type));
+/* The section vocabulary in render order — served by the API (its one home
+   is backend lib/account-sections.ts), never copied here. */
+export type AccountSection = { section: string; type: Account['account_type'] };
+export const useAccounts = () => baseQuery<{ accounts: Account[]; sections?: AccountSection[] }>(
   ['accounts'], `/accounting/accounts`,
 );
 
@@ -224,6 +246,8 @@ export const useArAging = () => baseQuery<{ arAging: ArAgingRow[] }>(
 
 export type ApAgingRow = {
   invoice_id: string;
+  /** 'PI' (purchase invoice) or 'API' (AP invoice) — v_ap_aging lists both since 2026-09-06. */
+  kind?: 'PI' | 'API';
   invoice_number: string;
   supplier_invoice_ref: string | null;
   supplier_id: string;
@@ -253,9 +277,10 @@ export type ChartRow = {
   parentCode: string | null;
   accMoney: boolean;
   special: string | null;
+  section: string | null;
   perCompany: Partial<Record<number, { active: boolean }>>;
 };
-export const useChartUnion = () => baseQuery<{ companies: ChartCompany[]; accounts: ChartRow[] }>(
+export const useChartUnion = () => baseQuery<{ companies: ChartCompany[]; sections: AccountSection[]; accounts: ChartRow[] }>(
   ['chart-union'], `/accounting/chart`,
 );
 
@@ -273,6 +298,9 @@ export const useChartTick = () => {
 
 export type ChartImportRow = {
   code: string; name: string; accountType: string;
+  /** The heading the row sat under in the file when it is a known section; the
+      server derives the type from it and shelves a null by type. */
+  section?: string | null;
   parentCode: string | null; accMoney: boolean; specialType?: string | null; shared: boolean;
 };
 export const useChartImport = () => {
@@ -296,7 +324,9 @@ export const useChartCreate = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: {
-      code: string; name: string; accountType: string;
+      code: string; name: string;
+      /** The section decides the type; accountType alone lands on that type's default shelf. */
+      section?: string; accountType?: string;
       parentCode?: string | null; accMoney?: boolean; specialType?: string | null;
       /** SFA only: the SAD twin created in the same call (固定资产带折旧). */
       depreciation?: { code: string; name: string };
@@ -332,7 +362,7 @@ export const useChartRename = () => {
 export const useChartUpdate = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { code: string; name?: string; accountType?: string; accMoney?: boolean; parentCode?: string | null }) =>
+    mutationFn: (body: { code: string; name?: string; accountType?: string; accMoney?: boolean; parentCode?: string | null; section?: string }) =>
       authedFetch<{ ok: boolean; companies: number }>(
         `/accounting/chart/update`, { method: 'PUT', body: JSON.stringify(body) },
       ),
@@ -368,9 +398,12 @@ export type OtherDebtor = {
   id: string; name: string; phone: string | null; notes: string | null;
   is_active: boolean; outstanding_sen: number;
 };
+export type DebtorBillLine = { id: string; line_no: number; description: string | null; credit_account_code: string; amount_sen: number };
 export type DebtorBill = {
   id: string; bill_number: string; bill_date: string;
   total_sen: number; received_sen: number; status: string; notes: string | null;
+  /** The bill's lines (2026-09-06) — Edit and Copy start from them. */
+  lines?: DebtorBillLine[];
 };
 export type DebtorReceipt = {
   id: string; receipt_number: string; receipt_date: string;
@@ -423,6 +456,19 @@ export const useCreateDebtorBill = () => {
     onSuccess: () => invalidateDebtors(qc),
   });
 };
+/** Edit a bill — every field (owner 2026-09-06); the route re-posts and says so with `reposted`. */
+export const useUpdateDebtorBill = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ billId, body }: {
+      billId: string;
+      body: { billDate?: string; notes?: string; lines?: Array<{ description?: string; creditAccountCode: string; amountSen: number }> };
+    }) => authedFetch<{ ok: boolean; bill: { id: string; billNumber: string; totalSen: number }; reposted?: boolean; jeNo?: string }>(
+      `/other-debtors/bills/${billId}`, { method: 'PATCH', body: JSON.stringify(body) },
+    ),
+    onSuccess: () => invalidateDebtors(qc),
+  });
+};
 export const useCancelDebtorBill = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -431,16 +477,19 @@ export const useCancelDebtorBill = () => {
     onSuccess: () => invalidateDebtors(qc),
   });
 };
+/** Raise a debtor receipt; `postNow` books it in the same call (the Receipts
+    page's door, owner 2026-09-08: 用这个方式 — 录入即过账 like a sundry receipt),
+    otherwise it starts at Draft for the Other Debtors page's four layers. */
 export const useCreateDebtorReceipt = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ debtorId, ...body }: {
-      debtorId: string; receiptDate?: string; bankAccountCode: string; notes?: string;
+      debtorId: string; receiptDate?: string; bankAccountCode: string; notes?: string; postNow?: boolean;
       allocations: Array<{ billId: string; amountSen: number }>;
-    }) => authedFetch<{ ok: boolean; receipt: { receiptNumber: string } }>(
+    }) => authedFetch<{ ok: boolean; receipt: { id?: string; receiptNumber: string; totalSen?: number }; posted?: boolean; jeNo?: string }>(
       `/other-debtors/${debtorId}/receipts`, { method: 'POST', body: JSON.stringify(body) },
     ),
-    onSuccess: () => invalidateDebtors(qc),
+    onSuccess: () => { invalidateDebtors(qc); void qc.invalidateQueries({ queryKey: ['receipts'] }); },
   });
 };
 /* One hook, five doors — the receipt's four-layer actions mirror the PV's. */
@@ -465,8 +514,10 @@ export type ReceiptRow = {
   moneyAccount: string; totalSen: number; status: string;
   debtorId?: string; notes?: string | null;
 };
-export const useReceipts = (month?: string) => baseQuery<{ month: string; receipts: ReceiptRow[] }>(
-  ['receipts', month ?? 'current'], `/receipts${month ? `?month=${month}` : ''}`,
+/** No month = every month (owner 2026-09-08: 月份只是筛选); `month` echoes the
+    filter, null when none. */
+export const useReceipts = (month?: string) => baseQuery<{ month: string | null; receipts: ReceiptRow[] }>(
+  ['receipts', month ?? 'all'], `/receipts${month ? `?month=${month}` : ''}`,
 );
 export const useCreateReceipt = () => {
   const qc = useQueryClient();
@@ -485,5 +536,32 @@ export const useVoidReceipt = () => {
   return useMutation({
     mutationFn: (id: string) => authedFetch(`/receipts/${id}/void`, { method: 'POST' }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['receipts'] }); },
+  });
+};
+/* Edit and re-post (owner 2026-09-07: 收钱的日期错了 → 做 b). The detail seeds
+   the form; the PATCH re-posts through the server (old RCT reversed as dated,
+   a fresh one on the new date, the number kept). */
+export type ReceiptDetail = {
+  receipt: { id: string; receipt_number: string; payer_name: string; receipt_date: string; bank_account_code: string; total_sen: number; status: string; notes: string | null };
+  lines: Array<{ id: string; line_no: number; description: string | null; credit_account_code: string; amount_sen: number }>;
+};
+export const useReceiptDetail = (id: string | null) => useQuery({
+  queryKey: ['receipt-detail', id],
+  enabled: !!id,
+  queryFn: () => authedFetch<ReceiptDetail>(`/receipts/${id}`),
+});
+export const useUpdateReceipt = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: {
+      id: string; payerName?: string; receiptDate?: string; bankAccountCode?: string; notes?: string | null;
+      lines?: Array<{ description?: string; creditAccountCode: string; amountSen: number }>;
+    }) => authedFetch<{ ok: boolean; reposted: boolean; jeNo: string; receipt: { receiptNumber: string; totalSen: number; receiptDate: string } }>(
+      `/receipts/${id}`, { method: 'PATCH', body: JSON.stringify(body) },
+    ),
+    onSuccess: (_d, vars) => {
+      void qc.invalidateQueries({ queryKey: ['receipts'] });
+      void qc.invalidateQueries({ queryKey: ['receipt-detail', vars.id] });
+    },
   });
 };

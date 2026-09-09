@@ -31,6 +31,7 @@ import {
   refusalText, payableOf,
 } from './settlement-ui';
 import { BankStatementTab } from './BankStatementTab';
+import { BankMonthTab } from './BankMonthTab';
 import { PayoutAdviceTab } from './PayoutAdviceTab';
 import { DateField } from '../../vendor/scm/components/DateField';
 import grid from './MerchantRecon.module.css';
@@ -44,11 +45,17 @@ import { PageHeader } from '../../components/Layout';
    a credit by hand is the fallback for the day there is no file, not the job. */
 
 export const BankRecon = () => {
-  const [tab, setTab] = useState<'statement' | 'advice' | 'money' | 'transit'>('statement');
+  /* THE MONTH FIRST. Owner, 2026-09-08: 每天我上传bank statement 和 merchant
+     report 测试，但是有办法选这个是几月的？因为我发现好像没有 — he uploads a file
+     a day, so the file list is thirty rows and the question he is asking is
+     about September. The files stay one press away, because a movement is
+     still chased back to the file it came off. */
+  const [tab, setTab] = useState<'month' | 'statement' | 'advice' | 'money' | 'transit'>('month');
   return (
     <div className="space-y-4">
       <PageHeader eyebrow="Finance · step 2 of 2" title="Bank statement reconciliation" />
       <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+        <button type="button" style={btn(tab === 'month')} onClick={() => setTab('month')}>By month</button>
         <button type="button" style={btn(tab === 'statement')} onClick={() => setTab('statement')}>Bank statement</button>
         {/* Public Bank's IBG advice — the payer's own list of which reports one
             credit pays, and what lets the statement above match a payout
@@ -63,6 +70,7 @@ export const BankRecon = () => {
           <ArrowLeft {...ICON} /> Merchant reconciliation
         </Link>
       </div>
+      {tab === 'month' && <BankMonthTab />}
       {tab === 'statement' && <BankStatementTab />}
       {tab === 'advice' && <PayoutAdviceTab />}
       {tab === 'money' && <WaitingForMoney />}
@@ -410,7 +418,7 @@ const InTransitTab = () => {
 
   const exportCsv = () => {
     downloadCSV('paid-not-yet-in-the-bank.csv', toCSV(lines, [
-      { key: 'acq', label: 'Acquirer', getValue: (l) => l.acquirerCode },
+      { key: 'acq', label: 'Acquirer', getValue: (l) => l.acquirerCode ?? '未标' },
       { key: 'doc', label: 'Document', getValue: (l) => l.docNo },
       { key: 'paid', label: 'Customer paid on', getValue: (l) => l.paidOn },
       { key: 'age', label: 'Days', getValue: (l) => l.ageDays },
@@ -498,7 +506,8 @@ const InTransitTab = () => {
           <tbody>
             {lines.map((l) => (
               <tr key={`${l.source}:${l.paymentId}`} style={rowLine}>
-                <td style={cell}><span className={styles.codeChip}>{l.acquirerCode}</span></td>
+                {/* null = keyed in without a bank; listed once (docs/bugs/0688). */}
+                <td style={cell}><span className={styles.codeChip}>{l.acquirerCode ?? '未标'}</span></td>
                 <td style={cell}>{l.docNo}</td>
                 <td style={cell}>{l.paidOn}</td>
                 <td style={{ ...num, color: l.ageDays > 14 ? danger : undefined, fontWeight: l.ageDays > 14 ? 700 : undefined }}>{l.ageDays}</td>

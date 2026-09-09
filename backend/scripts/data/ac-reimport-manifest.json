@@ -1,20 +1,26 @@
 {
-  "exported_at": "2026-08-30 02:32:01.297447",
+  "exported_at": "2026-09-08 08:00:18.159482",
   "source": "AED_HOUZS live (read-only)",
   "round": "reimport-v3 2026-08-28",
   "files": {
-    "ac-outstanding-so.json.gz": 13846,
+    "ac-outstanding-so.json.gz": 14041,
     "ac-so-iv-excluded.json.gz": 2,
-    "ac-so-dates.json.gz": 13846,
-    "ac-outstanding-po.json.gz": 471,
-    "ac-so-linked-pos.json.gz": 695,
-    "ac-partial-dos.json.gz": 316,
-    "ac-stock-balance.json.gz": 2686,
+    "ac-so-dates.json.gz": 14041,
+    "ac-outstanding-po.json.gz": 501,
+    "ac-so-linked-pos.json.gz": 696,
+    "ac-partial-dos.json.gz": 369,
+    "ac-stock-balance.json.gz": 2692,
     "ac-utd-stock-cost.json.gz": 1352,
     "ac-item-costs.json.gz": 181,
-    "ac-gr-refs.json.gz": 1025,
-    "ac-po-fromsodtlkey.json.gz": 696,
+    "ac-gr-refs.json.gz": 1019,
+    "ac-po-fromsodtlkey.json.gz": 697,
     "ac-outstanding-now.json.gz": 4,
-    "ac-so-remarks.json.gz": 2750
+    "ac-so-remarks.json.gz": 2789
+  },
+  "last_run": {
+    "at": "2026-09-08 08:02:23.745345",
+    "sections": [
+      "hdr"
+    ]
   }
 }

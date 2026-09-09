@@ -9,6 +9,10 @@
 //
 //   1. COMPARTMENT    sofa: the line carries a real minted compartment SKU and
 //                     the build's compartments still match the AutoCount Desc2.
+//                     A line that fell back to the bare 1S placeholder is
+//                     reported APART from a line that is genuinely one seat —
+//                     see the bare-1S census (owner 2026-09-04). Both are a
+//                     "-1S" code; only the first is work.
 //                     bedframe: a bedframe has no compartments — its equivalent
 //                     is SIZE. Standard sizes live in the item-code suffix
 //                     (S/SS/Q/K/SK); anything else is (SP) and MUST carry its
@@ -42,6 +46,9 @@ import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-mat
 import { K, mapPhrase as mapSofaPhrase, skey } from "./lib/sofa-special-map.mjs";
 import { mapSpecial as mapBedframeSpecial } from "./lib/bedframe-special-map.mjs";
 import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
+/* "the book itself says one seat" — both halves of that question, and the two
+   production lines that prove each half is needed, live in the module. */
+import { isSingleSeatBuild } from "./lib/sofa-single-seat.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -219,11 +226,27 @@ async function main() {
          none needed - STOOL IS its compartment. Only a line that fell back to
          the bare 1S placeholder is genuinely undecoded. */
       const undecoded = b.filter((r) => /SOFA UNPARSED/.test(r.remark || "") && /^1S$/i.test(compartmentOf(r.code)));
+      const ps = parseSofa(f.d2, model, reclOf(model));
       if (undecoded.length) {
+        /* THE SPLIT (owner 2026-09-04). Two different things arrive here as one
+           number, and reading them together inflates the backlog he plans from:
+           "we could not read the build, so the line fell back to one seat" and
+           "the book says a single seater and the ERP holds a single seater".
+           The second is CORRECT and is not a failure to decode.
+
+           They are separated by asking the DECODER what the Desc2 says, never by
+           the remark. The remark is free text — it is what put the line in this
+           branch in the first place, and other work rewrites it — so a line whose
+           Desc2 reads as exactly 1S and whose document holds exactly that is
+           counted as agreeing, whatever the remark still says. The census below
+           prints the TOTAL beside the split so nothing disappears. */
+        if (isSingleSeatBuild(f.d2, ps) && !multisetDiff(b.map((r) => compartmentOf(r.code)), ps.pieces)) {
+          note(c, 'bare "1S" — the book says a single seater and the document agrees, though the remark still says UNPARSED', b.length);
+          continue;
+        }
         for (const r of undecoded) buildIssue.set(r.id, "COMPARTMENT: the build collapsed to a bare 1S placeholder, never decoded");
         continue;
       }
-      const ps = parseSofa(f.d2, model, reclOf(model));
       if (ps.conf === "low" || !ps.pieces.length) {
         // Desc2 cannot answer it. That is a photo job, not a data defect, and
         // it is counted on its own rather than folded into "incomplete".
@@ -257,6 +280,30 @@ async function main() {
         reasons.push(`no size on the code ("${r.code}" carries neither (S|SS|Q|K|SK) nor (SP))`);
       }
       score(cb, r, reasons);
+    }
+
+    /* THE BARE-1S CENSUS (owner 2026-09-04). Every line whose code ends in -1S,
+       split by WHY it is a one-seater, with the total printed first so nothing
+       disappears from the number he plans against. Counted by hand off the item
+       code, the backlog and the correct lines came to one figure — 26 on the
+       proceeded sales orders — and only the last row of this census is work. */
+    const bare1S = rows.filter((r) => r.grp === "sofa" && /^1S$/i.test(compartmentOf(r.code)));
+    if (bare1S.length) {
+      let agree = 0, cannotRead = 0, otherFinding = 0, inLongerBuild = 0;
+      for (const r of bare1S) {
+        const m = modelOf(r.code);
+        const says1S = isSingleSeatBuild(r.d2, parseSofa(r.d2, m, reclOf(m)));
+        const finding = buildIssue.get(r.id) || "";
+        if (/collapsed to a bare 1S placeholder/.test(finding)) cannotRead++;
+        else if (finding) otherFinding++;
+        else if (says1S) agree++;
+        else inLongerBuild++;
+      }
+      note(c, 'bare "1S" lines, all told', bare1S.length);
+      note(c, 'bare "1S" — the book says a single seater and we agree', agree);
+      note(c, 'bare "1S" — WE COULD NOT READ THE BUILD (the real backlog)', cannotRead);
+      if (inLongerBuild) note(c, 'bare "1S" — one piece of a longer build the decoder reads', inLongerBuild);
+      if (otherFinding) note(c, 'bare "1S" — carries a different compartment finding', otherFinding);
     }
   }
 

@@ -5,6 +5,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   planSoLineRelink,
+  soLineVariantSig,
   applySoLineRelink,
   type SoLineIdentity,
   type SoLinkRow,
@@ -163,5 +164,86 @@ describe('applySoLineRelink', () => {
       if (err) throw new Error(`${label}: ${err.message}`);
     })).rejects.toThrow(/boom/);
     expect(seen).toHaveLength(1);
+  });
+});
+
+/* docs/bugs/0672 SITE 11 — the bucket was the ITEM CODE alone.
+ *
+ * `SoLineIdentity` carried `{ id, itemCode, lineNo }` and nothing else, so two
+ * lines of the SAME model in different fabrics — the ordinary sofa case, and
+ * exactly what a TBC sofa exchange produces — fell into one bucket and were
+ * paired by ORDINAL. If the exchange reorders them, the purchase order dedicated
+ * to the BLUE two-seater is re-pointed at the GREY one. The link is valid, the
+ * SKU matches, nothing dangles, and the floor is told the wrong sofa is covered.
+ *
+ * The fix is to make the bucket the identity: code AND the variant signature.
+ * A line whose (code, variant) pair has no counterpart is DROPPED, which this
+ * module already does for an unmatched SKU and already reports out loud — a
+ * missing link is recoverable, a wrong one is not.
+ */
+describe('planSoLineRelink — the bucket is (code, variant), not code alone', () => {
+  const v = (id: string, itemCode: string, colour: string, lineNo?: number): SoLineIdentity =>
+    ({ id, itemCode, lineNo, variantSig: colour });
+
+  test('pairs same-SKU lines by COLOUR, not by position', () => {
+    /* The new build lists the two fabrics in the opposite order. Bucketed by
+       code alone the ordinal zip swaps them; bucketed by identity it does not. */
+    const plan = planSoLineRelink(
+      [v('O-BLUE', 'PC151-2S', 'BLUE', 1), v('O-GREY', 'PC151-2S', 'GREY', 2)],
+      [v('N-GREY', 'PC151-2S', 'GREY', 1), v('N-BLUE', 'PC151-2S', 'BLUE', 2)],
+      [poLink('P-BLUE', 'O-BLUE'), poLink('P-GREY', 'O-GREY')],
+    );
+    const got = new Map(plan.restore.map((r) => [r.rowId, r.soItemId]));
+    expect(got.get('P-BLUE')).toBe('N-BLUE');
+    expect(got.get('P-GREY')).toBe('N-GREY');
+    expect(plan.dropped).toHaveLength(0);
+  });
+
+  test('DROPS rather than guesses when the colour has no counterpart', () => {
+    const plan = planSoLineRelink(
+      [v('O-BLUE', 'PC151-2S', 'BLUE')],
+      [v('N-GREY', 'PC151-2S', 'GREY')],
+      [poLink('P-BLUE', 'O-BLUE')],
+    );
+    expect(plan.restore).toHaveLength(0);
+    expect(plan.dropped).toHaveLength(1);
+    expect(plan.dropped[0].oldSoItemId).toBe('O-BLUE');
+  });
+
+  test('still pairs ordinally within one (code, variant) bucket', () => {
+    const plan = planSoLineRelink(
+      [v('O1', 'PC151-2S', 'BLUE', 1), v('O2', 'PC151-2S', 'BLUE', 2)],
+      [v('N1', 'PC151-2S', 'BLUE', 1), v('N2', 'PC151-2S', 'BLUE', 2)],
+      [poLink('P1', 'O1'), poLink('P2', 'O2')],
+    );
+    const got = new Map(plan.restore.map((r) => [r.rowId, r.soItemId]));
+    expect(got.get('P1')).toBe('N1');
+    expect(got.get('P2')).toBe('N2');
+  });
+
+  test('a line with NO variant on either side behaves as before', () => {
+    const plan = planSoLineRelink(
+      [{ id: 'O1', itemCode: 'MATTRESS', lineNo: 1 }],
+      [{ id: 'N1', itemCode: 'MATTRESS', lineNo: 1 }],
+      [poLink('P1', 'O1')],
+    );
+    expect(plan.restore).toEqual([{ table: 'purchase_order_items', rowId: 'P1', soItemId: 'N1' }]);
+  });
+});
+
+describe('soLineVariantSig', () => {
+  test('reads the colour under any of the keys the importers actually write', () => {
+    expect(soLineVariantSig({ colourId: 'abc' })).toBe(soLineVariantSig({ colourId: 'ABC' }));
+    expect(soLineVariantSig({ colourLabel: 'PC151-01' })).toBe('PC151-01');
+    expect(soLineVariantSig({ colourCode: 'PC151-01' })).toBe('PC151-01');
+  });
+
+  test('is empty when the line carries no colour at all, so non-sofa lines bucket as before', () => {
+    expect(soLineVariantSig(null)).toBe('');
+    expect(soLineVariantSig({})).toBe('');
+  });
+
+  test('prefers the id over the label, so a renamed colour does not re-bucket a line', () => {
+    expect(soLineVariantSig({ colourId: 'id-1', colourLabel: 'Old Name' })).toBe('ID-1');
   });
 });

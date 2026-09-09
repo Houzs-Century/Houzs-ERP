@@ -1,6 +1,14 @@
 ## The PostgREST page ceiling was asserted for weeks and never once observed — it is now measurable from the Worker, and the number is still UNKNOWN [medium]
 
 <!-- area: Database + schema -->
+<!-- status: open -->
+
+> **STILL OPEN, verified 2026-09-08.** The instrument shipped; the number was
+> never obtained. `probe-mrp-read-ceiling.yml` has 4 runs: the last SUCCESS was
+> 31942066593 (2026-08-16), and both runs since - 32264550057 and 32281490702,
+> 2026-08-19 - concluded **failure**. Nothing has run it in the twenty days
+> after. The ceiling every `paginateAll` caller depends on is still UNKNOWN, and
+> this entry is right to say so.
 
 **白话.** 全系统 52 个档案读资料时都靠 `paginateAll` 一页一页拿，每页 1000 行，拿到
 不足 1000 行就当作「读完了」。问题是：PostgREST 到底一次最多给几行？程式码注解写死

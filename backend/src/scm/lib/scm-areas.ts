@@ -81,6 +81,7 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/payment-vouchers/*", "scm.finance.accounting"],
   ["/other-debtors/*", "scm.finance.accounting"],
   ["/receipts/*", "scm.finance.accounting"],
+  ["/ap-invoices/*", "scm.finance.accounting"],
   ["/payment-audit-log/*", "scm.finance.accounting"],
   ["/mrp/*", "scm.procurement.mrp"],
   ["/mrp-lead-times/*", "scm.procurement.mrp"],
@@ -131,6 +132,13 @@ export const SCM_UNGUARDED_PREFIXES: readonly string[] = [
   "/sales-analysis",
   "/state-warehouse-mappings",
   "/entity-audit-log",
+  /* The go-live change log (2026-09-08). No area guard for /autocount-outbox's
+     reason: an L2 area key is a PAGE key and this page belongs to no SCM area —
+     it reads sales orders, deliveries, purchases and receipts at once, so any
+     area key here would be an arbitrary owner. It is READ-ONLY, so the freeze
+     treating it as frozen costs nothing. Authorization is the flat
+     scm.changelog.read / settings.manage keys inside the route. */
+  "/change-log",
   "/autocount-outbox",
   "/currencies",
   "/hr",
@@ -139,6 +147,10 @@ export const SCM_UNGUARDED_PREFIXES: readonly string[] = [
   "/fabric-colours",
   "/document-flow",
   "/po-so-coverage",
+  // The cancellation-request inbox (2026-09-08): spans the sales and procurement
+  // areas, so it rides the coarse scm.access gate only; its writes are per-
+  // document routes behind their own area guards.
+  "/cancel-requests",
   // "/ar" left this list on 2026-08-13 when it gained an area guard. Both halves
   // have to move together: the drift test derives the guarded set and the
   // unguarded set from the SAME source scan, so gating a router without removing

@@ -47,6 +47,12 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
   const upload = useUploadBankStatement();
   const [accountCode, setAccountCode] = useState('');
   const [file, setFile] = useState<{ name: string; content: string } | null>(null);
+  /* Which year and month, for a file whose dates carry no year — the same
+     answer the merchant screen asks for, and the same narrow meaning. It is NOT
+     what files the statement into a month: a movement is put in the month its
+     own date falls in, so a label here could never move it. Saying so is the
+     whole point of the sentence under the field. */
+  const [statementMonth, setStatementMonth] = useState('');
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
 
   const accounts = setup.data?.accounts ?? [];
@@ -63,7 +69,10 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
   const send = () => {
     if (!accountCode || !file) return;
     setResult(null);
-    upload.mutate({ accountCode, fileName: file.name, content: file.content }, {
+    upload.mutate({
+      accountCode, fileName: file.name, content: file.content,
+      statementMonth: statementMonth || null,
+    }, {
       onSuccess: (r) => {
         setFile(null);
         setResult({
@@ -106,6 +115,23 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
           </button>
         </div>
 
+        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+          <label style={{ fontSize: 'var(--fs-13)', fontWeight: 600 }} htmlFor="bank-statement-month">
+            Year and month
+          </label>
+          <input id="bank-statement-month" type="month" value={statementMonth} aria-label="Statement month"
+            onChange={(e) => setStatementMonth(e.target.value)}
+            style={{ padding: '5px 8px', fontSize: 'var(--fs-13)' }} />
+          {/* Said plainly, because the field could otherwise be read as filing
+              the whole file into a month. It does not: every movement lands in
+              the month its own date falls in, and the month view is built from
+              those dates. This only supplies a year the file left out. */}
+          <span style={softText}>
+            Only for a file whose dates carry no year. Where the file prints full dates this changes nothing —
+            each movement belongs to the month of its own date.
+          </span>
+        </div>
+
         {/* A config that cannot read anything must say so BEFORE an upload, not
             as a refusal after one. */}
         {chosen && !chosen.ready && (
@@ -120,7 +146,7 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
         )}
         {accounts.length === 0 && !setup.isLoading && (
           <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
-            No bank account is set up to take a statement in this company yet.
+            No bank account is set up to take a statement in this company yet — add one under Reconciliation setup → Bank statements.
           </div>
         )}
         {result && (
@@ -284,7 +310,7 @@ const Figure = ({ label, sen, tone }: { label: string; sen: number | null; tone?
   </div>
 );
 
-const ReconciliationPanel = ({ r }: { r: Reconciliation }) => {
+export const ReconciliationPanel = ({ r }: { r: Reconciliation }) => {
   /* The inconsistency comes FIRST and replaces the verdict. Publishing a
      difference the numbers cannot account for is worse than publishing
      nothing: it looks like work has been done. */
@@ -353,7 +379,7 @@ const KIND_LABEL: Record<BankLine['kind'], string> = {
   OTHER: 'not card money',
 };
 
-const OpenLine = ({ line }: { line: BankLine }) => {
+export const OpenLine = ({ line }: { line: BankLine }) => {
   const book = useBookBankReceipt();
   const ignore = useIgnoreBankLine();
   /* Seeded from what the MATCHER decided, never from "the first candidate" —
@@ -492,7 +518,7 @@ const OpenLine = ({ line }: { line: BankLine }) => {
   );
 };
 
-const DoneLine = ({ line }: { line: BankLine }) => {
+export const DoneLine = ({ line }: { line: BankLine }) => {
   const undo = useUndoBankLine();
   return (
     <tr>

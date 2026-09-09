@@ -29,8 +29,8 @@ only document in it that leaves the building as a customer's own copy.
 | Surface | File | Notes |
 |---------|------|-------|
 | Desktop list | `frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx` | Server-paginated, `pageSize = 50` (`:777`). Outstanding column / cards / drawer / KPI are all net of the source order's deposit, via `vendor/scm/lib/si-outstanding.ts`; a `dep` marker on the cell and an off-by-default **SO deposit** column say why the figure is smaller. **Mark paid** here opens the detail screen's payment editor rather than writing a status — see the section below. |
-| Desktop detail | `frontend/src/pages/scm-v2/SalesInvoiceDetailV2.tsx` | Header + lines + payments + a separate read-only **Collected on `<SO>`** panel. `outstandingOf` / `effectiveOf` both take the applied order deposit as a REQUIRED argument, so the Outstanding figure and the status pill cannot disagree. **Mark paid** records a receipt — it does not write a status; the rule is `frontend/src/pages/scm-v2/markPaidPlan.ts`, see the section below. |
-| Desktop new | `frontend/src/pages/scm-v2/SalesInvoiceNew.tsx` | Salesperson picker — see the note under this table. |
+| Desktop detail | `frontend/src/pages/scm-v2/SalesInvoiceDetailV2.tsx` | Header + lines + payments + a separate read-only **Collected on `<SO>`** panel. `outstandingOf` / `effectiveOf` both take the applied order deposit as a REQUIRED argument, so the Outstanding figure and the status pill cannot disagree. **Mark paid** records a receipt — it does not write a status; the rule is `frontend/src/pages/scm-v2/markPaidPlan.ts`, see the section below. Persisted payment rows carry an Official-Receipt printer button (GL redesign 9b): the page hands `receiptFor={{ source: 'SIPAY', persistedIds }}` to the shared `PaymentsTable`, because its rows ride DRAFT mode (`uid` = API row id) and the component cannot otherwise tell a saved payment from a typed one — see `docs/modules/accounting.md` §Official Receipts. |
+| Desktop new | `frontend/src/pages/scm-v2/SalesInvoiceNew.tsx` | Salesperson picker — see the note under this table. Passes `seedSofaLegDefault={false}` to `SoLineCard`: an invoice bills what was sold and must not add a sofa Leg Height the sales order never carried, because that attribute is part of the stock bucket (`docs/bugs/0722-a-delivery-order-invented-the-sofa-s-leg-height-so-the-stock.md`). |
 | Desktop from-DO | `frontend/src/pages/scm-v2/SalesInvoiceFromDo.tsx` | Line-level picker over `/invoiceable-do-lines`. |
 | Desktop report | `frontend/src/pages/scm-v2/SalesInvoiceDetailListing.tsx` | Detail-listing report. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS["sales-invoices"]` (`:1113-1152`). Balance is `balanceSen`, which since 2026-08-23 also subtracts the source order's deposit through `vendor/scm/lib/si-outstanding.ts`. Shared with purchase invoices, whose rows carry no such key, so PI is untouched. |
@@ -668,6 +668,27 @@ NOT blocked: a payment an operator records against a migrated invoice behaves
 normally, and cancelling it still turns the paid amount into credit — that money
 moved in THIS book and is ours to account for.
 
+### A SHORT DELIVERY ORDER IS A MISSING INVOICE, and it is silent (2026-09-08)
+
+`src/scm/lib/migrated-chain.ts` rule 4 writes a migrated invoice only when its
+total equals AutoCount's **to the sen**. That is right — a plausible wrong number
+is silent forever — but it means the invoice's absence is a symptom of the
+DELIVERY ORDER, and nothing on the invoice screens says so. The reconcile reports
+it as `IV absent`, which reads as an invoice problem and is not one.
+
+Measured on the dry run, run `34199062827` (2026-09-08 15:23 +08): of the six
+in-scope sales invoices the ERP does not hold, **four** are refused by that gate
+or by `nothing_to_invoice`, and every one of the four is a delivery order missing
+a line or a price the book states — `DO-001604` short RM 150.00, `DO-000097`
+short RM 50.00, `DO-001953` with nothing to bill, `DO-003699` at RM 0.00. Repair
+the delivery note and the invoice writes itself; there is nothing to fix on the
+invoice side.
+
+**When an absent migrated invoice is reported, run that dry run first.** It names
+the source document and the reason per invoice, in one line each, and it writes
+nothing. The whole classification is
+`docs/cutover-gr-iv-pi-remainder-2026-09-08.md`.
+
 ## 6. What locks and when
 
 The governing rule is in the file header (`:16-27`) and implemented as
@@ -862,3 +883,67 @@ and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
 answers. `coverage` is a required prop on the shared drill-down; the rule, the
 five surfaces that fetch separately, and how to add a sixth are in
 `docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).
+
+## Customer credits and the Customer Refund voucher (2026-09-07)
+
+`backend/src/scm/lib/customer-credits.ts` gains two source types for the
+refund voucher (payment-voucher.md §14): `CUSTOMER_REFUND` — a negative row
+written when a `CUSTOMER_REFUND` payment voucher POSTS against a document
+whose customer carries a debtor code, so the credit paid out in cash cannot
+be spent on the next invoice as well — and `CUSTOMER_REFUND_REVERSAL`, the
+positive row a cancel writes back. Both key `source_doc_no` to the voucher
+number. A document with no debtor code (2990's orders) writes no row: its
+credit never lived in this ledger. The invoice side is unchanged: a refund
+is allowed only on a CANCELLED invoice (its revenue already reversed by
+`reverseSiRevenue`); a live invoice is refused with the reason, because the
+paper for that is the credit note.
+
+## The source line must be the SAME PRODUCT — 409 `link_material_mismatch`
+
+Added 2026-09-08, `docs/bugs/0682`; bug class `docs/bugs/0672` site 15.
+
+Every write path here that accepts a **Delivery Order line (`do_item_id`) or Sales Order line (`so_item_id`)** id from the request body proved
+three things about it — the source line's COMPANY, its parent document's STATUS,
+and that the QUANTITY fits. It never proved the two rows name the same product.
+A line for product B naming a source line for product A therefore passed
+everything: the foreign key is valid, nothing dangles, no constraint breaks, and
+no coverage count drops.
+
+That matters because the quantity ledgers are addressed BY THE LINK
+(`recomputePoReceived`, `recomputeGrnInvoiced`, `adjustGrnReturnedQty` and
+`doLineRemaining` all key on it), so a wrong link draws down the WRONG source
+line and leaves the right one open to be invoiced a second time.
+
+**The rule** is `backend/src/scm/lib/line-link-item-identity.ts` — one home,
+reached three ways depending on what the path already has in hand:
+`assertSourceLinesInCompany(..., { lines, linkField, source })` where the company
+read is already happening, `lineLinkItemMismatch(...)` where the source rows are
+already held, `assertLinkedLineItemsMatch(...)` otherwise. Codes are compared
+trimmed, upper-cased and with inner whitespace collapsed — the same
+normalisation as `soLinkTargetRefusal` and `normItemCode`.
+
+**Two refusals worth knowing before you debug one:**
+
+- A source row that **cannot be read back** is refused, not skipped. An id that
+  resolved to nothing cannot be asserted equal to anything.
+- A **failed read** answers 503 `link_identity_unavailable`, never a pass. "We
+  could not check" must not be spelled the same way as "we checked and it was
+  fine".
+
+Identity is asserted **before** the quantity cap wherever both run: a ceiling
+computed against the wrong line is a number about the wrong thing, and reporting
+it sends the operator to fix a quantity when the real fault is the source they
+picked.
+
+**The EDIT door on a line that is ALREADY linked (2026-09-08, second pass).**
+The paragraph above is about BINDING a link. A link bound correctly can still be
+edited out of identity afterwards, and `unlinkedEditRefusal` beside it does not
+see that: it is scoped to a STORED link of `null`. So a line already carrying a
+`do_item_id` could have its `item_code` rewritten to anything, and
+`doLineRemaining` would then spend that delivery line's allowance on a different
+product. `PATCH /:id/items/:itemId` now re-asserts identity through
+`assertLinkedLineItemsMatch` — the same rule, the same home — on the EFFECTIVE
+POST-PATCH code, because a patch that omits `itemCode` still leaves the stored
+code sitting next to the link. The purchase chain closes the identical door in
+`purchase-invoices.ts`; the enumeration of both is
+`backend/tests/keyWithoutIdentityGuards.test.mjs`.

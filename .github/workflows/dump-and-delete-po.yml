@@ -1,0 +1,108 @@
+name: Purchase order — dump to JSON, then delete (DUMP-ONLY by default)
+
+# Manual. The owner's standing rule is CANCEL, never delete. This workflow
+# exists for the one document he ruled the other way on —「真的删掉」—
+# HC-PO-009944, whose AutoCount original was hard-deleted in the book: the PO
+# DtlKey sequence skips 905144 and 905146 and the ERP row holds exactly those
+# two. A cancelled row would keep claiming an AutoCount number the book does
+# not have, so the reconcile would count it as a phantom forever.
+#
+# THE DUMP COMES FIRST AND IT IS A PRECONDITION. mode=dump writes nothing to
+# the database; it writes a restorable JSON file, uploads it as an artifact,
+# AND prints it in full to the log, because an artifact expires and a log line
+# does not. mode=delete re-runs that dump, re-reads it off disk, and refuses to
+# delete if it did not parse.
+#
+# It also refuses when anything points at the document (discovered from
+# pg_constraint, so a table nobody remembers still blocks it), when total_sen
+# is not 0, or when any line has received_qty > 0.
+on:
+  workflow_dispatch:
+    inputs:
+      po_number:
+        description: "ERP purchase order number, e.g. HC-PO-009944"
+        required: true
+        type: string
+      mode:
+        description: "dump writes only the JSON; delete dumps AND deletes"
+        required: true
+        default: "dump"
+        type: choice
+        options: [dump, delete]
+      confirm:
+        description: 'For mode=delete, type: DELETE <po_number>'
+        required: false
+        default: ""
+        type: string
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company_id:
+        description: "ERP company (AED_HOUZS is 1)"
+        required: false
+        default: "1"
+        type: string
+
+# Its own group: a one-document repair must never queue behind, or displace, a
+# release.
+concurrency:
+  group: dump-and-delete-po-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/dump-and-delete-po.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          PO_NUMBER: ${{ inputs.po_number }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          OUT: ${{ github.workspace }}/po-dump/${{ inputs.po_number }}.json
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: po-dump-${{ inputs.po_number }}
+          path: po-dump/
+          if-no-files-found: warn
+          retention-days: 90
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/dump-and-delete-po.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PO_NUMBER: ${{ inputs.po_number }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          OUT: ${{ github.workspace }}/po-dump/${{ inputs.po_number }}.json
+          # GitHub-hosted runners have no IPv6 egress.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: po-dump-${{ inputs.po_number }}
+          path: po-dump/
+          if-no-files-found: warn
+          retention-days: 90

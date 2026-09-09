@@ -27,8 +27,9 @@ const ROW: SettlementRow = {
   bucket: 'NEEDS_CONFIRM', match_reason: 'amount+date', confirmed_at: null,
   posted_je_no: null, notes: null, linked: [],
   candidates: [
-    { source: 'SOPAY', id: 'p1', docNo: 'SO-2608-001', paidOn: '2026-08-01', amountSen: 60000, approvalCode: 'A1' },
-    { source: 'SOPAY', id: 'p2', docNo: 'SO-2608-002', paidOn: '2026-08-02', amountSen: 40000, approvalCode: null },
+    /* p1 is a migration-era payment: no merchant tag. p2 was tagged at the till. */
+    { source: 'SOPAY', id: 'p1', docNo: 'SO-2608-001', paidOn: '2026-08-01', amountSen: 60000, approvalCode: 'A1', merchantProvider: null },
+    { source: 'SOPAY', id: 'p2', docNo: 'SO-2608-002', paidOn: '2026-08-02', amountSen: 40000, approvalCode: null, merchantProvider: 'MBB' },
   ],
   comboHints: [['p1', 'p2']],
   clue: 'No single payment matches; 1 pair(s) of payments add up to this amount',
@@ -105,6 +106,8 @@ vi.mock('./settlement-queries', () => ({
   useIgnoreSettlementRow: () => ({ mutate: vi.fn(), isPending: false }),
   useSettlementWatchlist: () => ({ data: { from: '2026-05-18', to: '2026-08-16', clean: false, arrivedNotRecorded: [], recordedNotArrived: [
     { source: 'SOPAY', id: 'w1', acquirerCode: 'MBB', docNo: 'SO-2607-088', paidOn: '2026-07-18', amountSen: 35000, approvalCode: 'A0900', ageDays: 29 },
+    /* Keyed in without a bank — the server lists it once, under no acquirer (docs/bugs/0688). */
+    { source: 'SOPAY', id: 'w2', acquirerCode: null, docNo: 'SO-2606-013', paidOn: '2026-06-14', amountSen: 336500, approvalCode: '009577', ageDays: 63 },
   ] }, isLoading: false }),
 }));
 
@@ -208,9 +211,20 @@ describe('the reconcile tab', () => {
     /* Lines already decided are not work, so they are not on the work list. */
     expect(screen.queryByText('JE-2608-0011')).toBeNull();
     // and the payments the sales team keyed in that no report has reported
-    expect(screen.getByText('Card payments no merchant report has reported yet (1)')).toBeTruthy();
+    expect(screen.getByText('Card payments no merchant report has reported yet (2)')).toBeTruthy();
     expect(screen.getByText('SO-2607-088')).toBeTruthy();
     expect(screen.getByText('A0900')).toBeTruthy();
+  });
+
+  /* docs/bugs/0688 — the owner, the morning per-bank clearing went live: the
+     same instalment under GHL, HLB, MBB and PBB, and the header counting it
+     four times. It is one payment: one row, marked 未标, counted once. */
+  test('a payment keyed in without a bank is one row, marked 未标, and counted once', () => {
+    draw();
+    expect(screen.getByText('未标')).toBeTruthy();
+    expect(screen.getByText('SO-2606-013')).toBeTruthy();
+    expect(screen.getByText(/RM 3,715\.00 in total/)).toBeTruthy();
+    expect(screen.getByText(/1 keyed in without a bank/)).toBeTruthy();
   });
 
   /* Only Hong Leong writes its dates without a year. Showing everyone else a
@@ -279,6 +293,20 @@ describe('the reconcile tab', () => {
        the server's own refusals (money already received) come back verbatim. */
     fireEvent.click(screen.getByTitle(/Take this line back out of the ledger/));
     expect(unconfirmMutate).toHaveBeenCalledWith(8, expect.anything());
+  });
+
+  /* A migration-era payment carries no merchant tag; the operator claiming it
+     should see that where he ticks it. Strictly null-only: SUGGESTED_ROW's
+     candidate omits the field entirely (an older response shape) and must NOT
+     be called untagged. */
+  test('an untagged payment says so where it is claimed', () => {
+    draw();
+    fireEvent.click(screen.getByText('Reconcile'));
+    expect(screen.getAllByText('未标 merchant')).toHaveLength(1);
+    const cell = screen.getByText(/SO-2608-001/).closest('td') as HTMLElement;
+    expect(cell.textContent).toContain('未标 merchant');
+    const tagged = screen.getByText(/SO-2608-002/).closest('td') as HTMLElement;
+    expect(tagged.textContent).not.toContain('未标 merchant');
   });
 
   /* The approval code may be mistyped, so the system falls back to amount+date

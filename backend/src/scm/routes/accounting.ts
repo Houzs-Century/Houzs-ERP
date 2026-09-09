@@ -32,6 +32,7 @@ import { backfillSoPayments, unbookedPayments } from '../../acc/payments';
 import { computeDailyBank } from '../../acc/daily-bank';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
+import { classifyJournal } from '../../acc/journal-class';
 import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched, settlementRowUnconfirm,
@@ -44,11 +45,22 @@ import {
   bankRulesList, bankRuleCreate, bankRuleUpdate,
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
 } from './accounting-bank';
+import { bankMonths, bankMonthDetail } from './accounting-bank-months';
+import { bankLocks, bankMonthLock, bankMonthUnlock } from './accounting-bank-locks';
+import { bankConfigList, bankConfigSave } from './accounting-bank-config';
 import { payoutUpload, payoutList } from './accounting-payouts';
 import {
   chartUnionHandler, chartTickHandler, chartImportHandler,
   chartRenameHandler, chartUpdateHandler, chartDeleteHandler, chartCreateHandler,
 } from './accounting-chart';
+import { itemGroupsList, itemGroupCreate, itemGroupBind, itemGroupPatch } from './accounting-item-groups';
+import { piPeriodicBackfill } from './accounting-pi-backfill';
+import { stockCloseStatus, stockCloseRun } from './accounting-stock-close';
+import { pnlReport, balanceSheetReport } from './accounting-reports';
+import { receiptsPaymentsReport } from './accounting-rp';
+import { numberingGet, numberingPut } from './accounting-numbering';
+import { receiptsList, receiptEnsure, receiptFormalise } from './accounting-receipts';
+import { ACCOUNT_SECTIONS, defaultSectionFor } from '../lib/account-sections';
 import { dateOrNull } from '../lib/date-coerce';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -116,6 +128,35 @@ accounting.get('/settlement/payouts', payoutList);
 accounting.get('/bank/setup', bankSetup);
 /* The chart maintenance surface (roadmap A) — union + per-company ticks +
    the accountant's import. Handlers in accounting-chart.ts. */
+/* The product-group ↔ account registry (GL redesign item 1) — the rules that
+   decide WHICH purchase/sales account a document line posts to. Handlers in
+   accounting-item-groups.ts. */
+accounting.get('/item-groups', itemGroupsList);
+/* One-shot ledger repair (GL redesign item 3): every posted PI reaches the
+   periodic shape — missing journals posted, Dr-330 journals reversed and
+   re-posted — through the SAME functions live documents use. dryRun first. */
+accounting.post('/backfill/pi-periodic', piPeriodicBackfill);
+/* Month-end stock close (GL redesign item 4): the run log + live value, and
+   the manual run — the nightly close itself fires from the cron. */
+accounting.get('/stock-close', stockCloseStatus);
+accounting.post('/stock-close/run', stockCloseRun);
+/* The standard statements (GL redesign item 6) — one source (v_gl_entries),
+   AutoCount arithmetic; handlers in accounting-reports.ts. */
+accounting.get('/reports/pnl', pnlReport);
+accounting.get('/reports/receipts-payments', receiptsPaymentsReport);
+accounting.get('/reports/balance-sheet', balanceSheetReport);
+/* Voucher numbering — the owner's own levers (GL redesign item 8a): per-bank
+   letters + suffix width. Handlers in accounting-numbering.ts. */
+accounting.get('/numbering', numberingGet);
+accounting.put('/numbering', numberingPut);
+/* Official Receipts (GL redesign item 9): list / fetch-or-heal / the manual
+   money-confirmed button. Handlers in accounting-receipts.ts. */
+accounting.get('/receipts', receiptsList);
+accounting.post('/receipts/ensure', receiptEnsure);
+accounting.post('/receipts/:id/formalise', receiptFormalise);
+accounting.post('/item-groups', itemGroupCreate);
+accounting.put('/item-groups/:code/accounts', itemGroupBind);
+accounting.patch('/item-groups/:code', itemGroupPatch);
 accounting.get('/chart', chartUnionHandler);
 accounting.put('/chart/tick', chartTickHandler);
 accounting.post('/chart/import', chartImportHandler);
@@ -123,12 +164,26 @@ accounting.put('/chart/rename', chartRenameHandler);
 accounting.put('/chart/update', chartUpdateHandler);
 accounting.post('/chart/account', chartCreateHandler);
 accounting.delete('/chart/account', chartDeleteHandler);
+accounting.get('/bank/config', bankConfigList);
+accounting.post('/bank/config', bankConfigSave);
 accounting.get('/bank/rules', bankRulesList);
 accounting.post('/bank/rules', bankRuleCreate);
 accounting.patch('/bank/rules/:id', bankRuleUpdate);
 accounting.post('/bank/statements', bankUpload);
 accounting.get('/bank/statements', bankStatements);
 accounting.get('/bank/statements/:id', bankStatementDetail);
+/* The same reconciliation asked of a MONTH rather than a file — registered
+   BEFORE nothing and after the file doors deliberately: `/bank/months` cannot
+   collide with `/bank/statements/:id`, and keeping the two families apart is
+   what lets a month be assembled out of however many files fed it. */
+accounting.get('/bank/months', bankMonths);
+accounting.get('/bank/months/:accountCode/:month', bankMonthDetail);
+/* Closing a reconciled month, and reopening one (owner: 还有lock 起来不可以随便
+   碰). The unlock asks a SECOND permission key inside its handler — reopening
+   undoes a document somebody filed. */
+accounting.get('/bank/locks', bankLocks);
+accounting.post('/bank/months/:accountCode/:month/lock', bankMonthLock);
+accounting.post('/bank/months/:accountCode/:month/unlock', bankMonthUnlock);
 accounting.post('/bank/lines/:id/receipt', bankLineReceipt);
 accounting.post('/bank/lines/:id/match', bankLineMatch);
 accounting.post('/bank/lines/:id/ignore', bankLineIgnore);
@@ -163,11 +218,14 @@ accounting.get('/accounts', async (c) => {
        flag rides along so screens don't hardcode code ranges. special_type is
        the AutoCount special column (0347) — pickers hide the SDC/SCC/SBS
        control accounts by it. */
-    .select('account_code, account_name, account_type, parent_code, is_active, acc_money, special_type');
+    .select('account_code, account_name, account_type, parent_code, is_active, acc_money, special_type, section');
   q = scopeToCompany(q, c);
   const { data, error } = await q.order('account_code');
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ accounts: data ?? [] });
+  /* `sections` = the AutoCount section vocabulary in render order, so a
+     picker can group its options under the same headers the chart page
+     shows (lib/account-sections.ts, the one home). */
+  return c.json({ accounts: data ?? [], sections: ACCOUNT_SECTIONS });
 });
 
 /* ── Account roles — which account plays which part ─────────────────────────
@@ -224,7 +282,7 @@ accounting.put('/roles/BANK_DEFAULT', accountRolesPutBankDefault);
    Journal Entries
    ════════════════════════════════════════════════════════════════════════ */
 
-accounting.get('/journal-entries', async (c) => {
+export const journalEntriesList = async (c: any): Promise<Response> => {
   const sb = c.get('supabase');
   const sourceType = c.req.query('sourceType');
   const sourceDocNo = c.req.query('sourceDocNo');
@@ -247,8 +305,38 @@ accounting.get('/journal-entries', async (c) => {
 
   const { data, error } = await q.limit(500);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ journalEntries: data ?? [] });
-});
+
+  /* THE FIVE JOURNALS (GL redesign item 7) — each entry labelled the
+     AutoCount way (SALES/PURCHASE/BANK/CASH/GENERAL), derived per request
+     from its source type and, for the money-side documents, from which money
+     account its lines actually touch (acc/journal-class.ts). One lines read
+     for the whole page, never one per entry. */
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  const jeIds = rows.map((r) => r.id);
+  const codesByJe = new Map<unknown, string[]>();
+  if (jeIds.length > 0) {
+    const { data: lineRows, error: lnErr } = await sb
+      .from('journal_entry_lines')
+      .select('journal_entry_id, account_code')
+      .in('journal_entry_id', jeIds);
+    if (lnErr) return c.json({ error: 'load_failed', reason: lnErr.message }, 500);
+    for (const l of (lineRows ?? []) as Array<{ journal_entry_id: unknown; account_code: string }>) {
+      const list = codesByJe.get(l.journal_entry_id) ?? [];
+      list.push(l.account_code);
+      codesByJe.set(l.journal_entry_id, list);
+    }
+  }
+  const roles = await resolveRoles(sb, activeCompanyId(c) ?? null);
+  const classed = rows.map((r) => ({
+    ...r,
+    journal_class: classifyJournal(String(r.source_type ?? ''), codesByJe.get(r.id) ?? [], roles.CASH),
+  }));
+  const journal = String(c.req.query('journal') ?? '').trim().toUpperCase();
+  return c.json({
+    journalEntries: journal ? classed.filter((r) => r.journal_class === journal) : classed,
+  });
+};
+accounting.get('/journal-entries', journalEntriesList);
 
 accounting.get('/journal-entries/:id', async (c) => {
   const id = c.req.param('id');
@@ -451,7 +539,10 @@ accounting.post('/post/si/:invoiceNumber', async (c) => {
 });
 
 /* ── postPiAccounting (extracted 2026-06-01) — idempotent PI → GL post ──────
-   Writes Dr INVENTORY / Cr AP for the PI total, by ROLE. Shared by
+   Writes Dr <each group's purchase account> / Cr AP for the PI total (the
+   AutoCount periodic shape, GL redesign item 2 — Dr INVENTORY until
+   2026-09-05; stock value now reaches the GL only as the month-end
+   adjustment). Shared by
    the manual POST /post/pi route AND resyncPiAccounting (void+repost on a
    post-issue line edit). Mirrors postSiRevenue: keyed on an ACTIVE (non-reversed)
    PI JE, so a reversed original never blocks a fresh re-post. */
@@ -462,7 +553,10 @@ export type PostPiResult =
      below. It is `ok: true` so the confirm handler does not write its
      "AP/GL post FAILED" audit row for a thing that was never meant to post. */
   | { ok: true; status: 'migrated_source' }
-  | { ok: false; status: 'invoice_not_found' | 'zero_total' | 'je_insert_failed' | 'lines_insert_failed' | 'post_failed'; reason?: string };
+  | { ok: false; status: 'invoice_not_found' | 'zero_total' | 'je_insert_failed' | 'lines_insert_failed' | 'post_failed'
+      /* The periodic-shape refusals (GL redesign item 2): fixable by the
+         operator, mapped to 400 at the manual endpoint. */
+      | 'group_unbound' | 'no_lines' | 'line_ungrouped'; reason?: string };
 
 export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<PostPiResult> {
   const { data: piRaw, error } = await sb
@@ -511,6 +605,69 @@ export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<
   // Multi-company (mig 0061): the JE + its lines belong to the PI's company.
   const companyId = pi.company_id ?? null;
 
+  /* WHICH PURCHASE ACCOUNT each ringgit belongs to (GL redesign item 2,
+     owner 2026-09-05): the invoice's lines carry their product group, the
+     registry carries the group's account, and the entry debits one line per
+     group. An invoice whose group is not bound REFUSES by name — the owner's
+     own rule (挡下来提醒我去绑) — because a payable silently landed on the
+     wrong account is exactly the mis-classification this registry exists to
+     end. */
+  const { data: itemsRaw, error: itemsErr } = await sb
+    .from('purchase_invoice_items')
+    .select('item_group, line_total_sen')
+    .eq('purchase_invoice_id', pi.id);
+  if (itemsErr) return { ok: false, status: 'post_failed', reason: `PI lines: ${itemsErr.message}` };
+  const items = (itemsRaw ?? []) as Array<{ item_group: string | null; line_total_sen: number | null }>;
+  if (items.length === 0) {
+    return { ok: false, status: 'no_lines', reason: `${pi.invoice_number} has no lines — a purchase cannot be classified without them.` };
+  }
+
+  /* Group sums in the PI's OWN currency; FX once per group below, so the sen
+     conversion happens exactly the way the header's did. The registry stores
+     upper-case codes; the sales panels write lower-case — one case-fold here,
+     never two vocabularies. */
+  const foreignByGroup = new Map<string, number>();
+  for (const it of items) {
+    const g = String(it.item_group ?? '').trim().toUpperCase();
+    if (!g) {
+      return { ok: false, status: 'line_ungrouped', reason: `${pi.invoice_number} has a line with no product group — fix the line, then post.` };
+    }
+    foreignByGroup.set(g, (foreignByGroup.get(g) ?? 0) + Number(it.line_total_sen ?? 0));
+  }
+
+  const groupCodes = [...foreignByGroup.keys()];
+  const { data: bindsRaw, error: bindsErr } = await sb
+    .from('acc_item_group_accounts')
+    .select('group_code, purchase_account')
+    .eq('company_id', companyId)
+    .in('group_code', groupCodes);
+  if (bindsErr) return { ok: false, status: 'post_failed', reason: `group bindings: ${bindsErr.message}` };
+  const accountOf = new Map(((bindsRaw ?? []) as Array<{ group_code: string; purchase_account: string }>)
+    .map((b) => [b.group_code, b.purchase_account]));
+  const unbound = groupCodes.filter((g) => !accountOf.get(g));
+  if (unbound.length > 0) {
+    return {
+      ok: false,
+      status: 'group_unbound',
+      reason: `${unbound.join(', ')} ${unbound.length === 1 ? 'is' : 'are'} not bound to a purchase account for this company — bind ${unbound.length === 1 ? 'it' : 'them'} on Accounting → Item Groups, then post again.`,
+    };
+  }
+
+  /* MYR per group, and the header total is the LAW: per-group rounding must
+     sum to exactly what the invoice posts, so the remainder (a sen or two of
+     float, only ever on a foreign PI) lands on the largest group — same rule
+     the settlement fee spread uses. */
+  const groupDebits = groupCodes.map((g) => ({
+    groupCode: g,
+    accountCode: accountOf.get(g) as string,
+    myrSen: toMyrSen(foreignByGroup.get(g) ?? 0, pi.exchange_rate),
+  }));
+  const drift = totalSen - groupDebits.reduce((s, g) => s + g.myrSen, 0);
+  if (drift !== 0) {
+    const biggest = groupDebits.reduce((a, b) => (b.myrSen > a.myrSen ? b : a));
+    biggest.myrSen += drift;
+  }
+
   /* Through the ONE gate (acc/engine). The engine owns the idempotency guard
      (fails closed on a read blip — a blip must never book a SECOND payable),
      the je_no mint, and the write sequence; this function owns the PI
@@ -522,7 +679,7 @@ export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<
     sourceType: 'PI',
     sourceDocNo: pi.invoice_number,
     narration: `Purchase invoice ${pi.invoice_number} — ${supplier.name ?? ''}`,
-    lines: piLines(roles, pi, supplier, totalSen),
+    lines: piLines(roles, pi, supplier, groupDebits),
   });
   if (r.ok) {
     if (r.status === 'already_posted') return { ok: true, status: 'already_posted', jeNo: r.jeNo, jeId: r.jeId };
@@ -576,13 +733,19 @@ accounting.post('/post/pi/:invoiceNumber', async (c) => {
   if (r.ok) return c.json({ ok: true, jeNo: r.jeNo, jeId: r.jeId, totalSen: r.totalSen });
   if (r.status === 'invoice_not_found') return c.json({ error: 'invoice_not_found' }, 404);
   if (r.status === 'zero_total') return c.json({ error: 'zero_total' }, 400);
+  /* The operator can FIX these (bind the group / repair the line) — a 400
+     with the sentence, not a 500 that reads as "the system broke". */
+  if (r.status === 'group_unbound' || r.status === 'no_lines' || r.status === 'line_ungrouped') {
+    return c.json({ error: r.status, message: r.reason }, 400);
+  }
   return c.json({ error: r.status, reason: r.reason }, 500);
 });
 
 /* ════════════════════════════════════════════════════════════════════════
    PI accounting reversal (bug #5) — mirror of reverseSiRevenue
    ────────────────────────────────────────────────────────────────────────
-   PI posting writes Dr INVENTORY / Cr AP (by role). On PI cancel we
+   PI posting writes Dr <group purchase accounts> / Cr AP (Dr INVENTORY in
+   entries posted before 2026-09-05). On PI cancel we
    must trace that back ("取消 PI 要追溯回去") with a contra JE that nets the
    original to zero + flags the original `reversed = true`, so payables +
    inventory value stop being overstated. The balance views only count
@@ -596,6 +759,15 @@ accounting.post('/post/pi/:invoiceNumber', async (c) => {
 export async function reversePiAccounting(
   sb: any,
   invoiceNumber: string,
+  opts: {
+    /** The contra's entry_date. A CANCEL leaves it out — a void happens when
+        it happens (today, MYT). A RESHAPE (the periodic backfill re-posting
+        an old-shape entry) passes the original's own date, so the month the
+        invoice lives in cancels within itself: the owner's 照理应该根据 PI 的
+        日期 (2026-09-06, bug 0647 — 19 contras had landed in September and
+        left July/August's stock and AP over-stated until then). */
+    entryDate?: string;
+  } = {},
 ): Promise<{ ok: boolean; status: string; jeNo?: string; jeId?: string; reason?: string }> {
   /* Through the ONE gate (acc/engine): find the ACTIVE PI JE, write a faithful
      contra (same accounts + parties, sides swapped), post it, flag the
@@ -607,7 +779,7 @@ export async function reversePiAccounting(
     sourceType: 'PI',
     sourceDocNo: invoiceNumber,
     narration: (orig) => `Reversal of ${orig.je_no} — Purchase invoice ${invoiceNumber} cancelled`,
-    entryDate: todayMyt(),
+    entryDate: opts.entryDate ?? todayMyt(),
     fallbackLines: (totalSen) => [
       { accountCode: DEFAULT_ROLE_CODES.AP, debitSen: totalSen, creditSen: 0, notes: `Reverse AP ${invoiceNumber}` },
       { accountCode: DEFAULT_ROLE_CODES.INVENTORY, debitSen: 0, creditSen: totalSen, notes: `Reverse inventory ${invoiceNumber}` },
@@ -778,7 +950,13 @@ accounting.post('/accounts', async (c) => {
   if (dup) return c.json({ error: 'code_exists' }, 409);
 
   const { data: created, error } = await sb.from('accounts')
-    .insert({ company_id: co.companyId, account_code: code, account_name: name, account_type: type, parent_code: parent, is_active: true })
+    .insert({
+      company_id: co.companyId, account_code: code, account_name: name, account_type: type, parent_code: parent, is_active: true,
+      /* The per-company door names no section: the type's default shelf,
+         the same rule the migration seeded with. The chart page's own door
+         (accounting-chart.ts) takes the section explicitly. */
+      section: defaultSectionFor(type, code),
+    })
     .select('account_code, account_name, account_type, parent_code, is_active')
     .single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
@@ -991,6 +1169,45 @@ export const controlCheckHandler = async (c: any) => {
       drift.push({ docNo, docTotalSen: 0, jeTotalSen: je.jeTotal, diffSen: je.jeTotal, note: 'journal active but document not found' });
     }
 
+    /* AP INVOICES (the non-stock supplier bills, 2026-09-06) — source API, on
+       either creditor control by the supplier's code. The AP arm walks them
+       once, the same shape as the PIs above (docs/bugs/0654: they were not
+       walked at all, and their journals read as foreign lines below). */
+    if (role === 'AP') {
+      const { data: apiJes, error: apiJesErr } = await sb.from('journal_entries')
+        .select('id, je_no, source_doc_no, total_debit_sen')
+        .eq('company_id', companyId).eq('source_type', 'API')
+        .eq('posted', true).eq('reversed', false);
+      if (apiJesErr) return { role, accountCode, error: apiJesErr.message };
+      const apiByDoc = new Map<string, number>();
+      for (const j of (apiJes ?? []) as Array<{ source_doc_no: string | null; total_debit_sen: number }>) {
+        if (j.source_doc_no) apiByDoc.set(j.source_doc_no, Number(j.total_debit_sen ?? 0));
+      }
+      const { data: bills, error: billsErr } = await sb.from('ap_invoices')
+        .select('invoice_number, total_sen, status')
+        .eq('company_id', companyId);
+      if (billsErr) return { role, accountCode, error: billsErr.message };
+      for (const b of (bills ?? []) as Array<{ invoice_number: string; total_sen: number; status: string | null }>) {
+        const s = (b.status ?? '').toUpperCase();
+        const jeTotal = apiByDoc.get(b.invoice_number);
+        if (s === 'DRAFT' || s === 'CANCELLED') {
+          if (jeTotal != null) drift.push({ docNo: b.invoice_number, docTotalSen: 0, jeTotalSen: jeTotal, diffSen: jeTotal, note: `journal active but document is ${s}` });
+          apiByDoc.delete(b.invoice_number);
+          continue;
+        }
+        const docTotal = Number(b.total_sen ?? 0);
+        if (jeTotal == null) {
+          if (docTotal > 0) drift.push({ docNo: b.invoice_number, docTotalSen: docTotal, jeTotalSen: 0, diffSen: -docTotal, note: 'document has no active journal' });
+          continue;
+        }
+        if (jeTotal !== docTotal) drift.push({ docNo: b.invoice_number, docTotalSen: docTotal, jeTotalSen: jeTotal, diffSen: jeTotal - docTotal, note: 'journal total differs from document total' });
+        apiByDoc.delete(b.invoice_number);
+      }
+      for (const [docNo, jeTotal] of apiByDoc) {
+        drift.push({ docNo, docTotalSen: 0, jeTotalSen: jeTotal, diffSen: jeTotal, note: 'journal active but document not found' });
+      }
+    }
+
     const { data: lines, error: linesErr } = await paginateAll<Record<string, unknown>>((from, to) =>
       sb.from('v_gl_entries').select('*').eq('company_id', companyId).eq('account_code', accountCode).order('line_id').range(from, to));
     if (linesErr) return { role, accountCode, error: linesErr.message };
@@ -1005,7 +1222,10 @@ export const controlCheckHandler = async (c: any) => {
       ? new Set(['SI', 'SI_REVERSAL', 'SOPAY', 'SOPAY_REVERSAL', 'SIPAY', 'SIPAY_REVERSAL'])
       : role === 'AR_OTHER'
         ? new Set(['ODB', 'ODB_REVERSAL', 'ODR', 'ODR_REVERSAL'])
-        : new Set(['PI', 'PI_REVERSAL', 'PV', 'PV_REVERSAL']);
+        /* API = the AP invoice (docs/bugs/0654): it credits 400 or 405 by the
+           supplier's code, exactly as a PI does, and its edit re-post writes
+           the reversal. Both were read as foreign until this line. */
+        : new Set(['PI', 'PI_REVERSAL', 'PV', 'PV_REVERSAL', 'API', 'API_REVERSAL']);
     for (const l of (lines ?? []) as Array<{ je_no: string; source_type: string; debit_sen: number; credit_sen: number }>) {
       bal += Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0);
       if (!family.has(l.source_type)) {
@@ -1033,8 +1253,14 @@ export const controlCheckHandler = async (c: any) => {
 
   return c.json({
     checks,
+    /* neverBooked rides along (docs/bugs/0654: it was computed and then
+       dropped here, so the card said "all of them" over 171 unbooked rows). */
     payments: unbooked.ok
-      ? { since: unbooked.since, rows: unbooked.rows, totalSen: unbooked.totalSen, ok: unbooked.rows.length === 0 }
+      ? {
+          since: unbooked.since, rows: unbooked.rows, totalSen: unbooked.totalSen,
+          ok: unbooked.rows.length === 0 && (unbooked.neverBooked?.count ?? 0) === 0,
+          ...(unbooked.neverBooked ? { neverBooked: unbooked.neverBooked } : {}),
+        }
       : { since: null, rows: [], totalSen: 0, ok: false, error: unbooked.reason },
   });
 };
@@ -1069,8 +1295,11 @@ accounting.post('/backfill/customer-payments', async (c) => {
   let body: any = {};
   try { body = await c.req.json(); } catch { body = {}; }
   const limit = Math.max(1, Math.min(500, Number(body.limit ?? 200) || 200));
+  /* dryRun (docs/bugs/0652): every candidate through the gate's checks, each
+     verdict and reason reported, nothing written — the Self-check card's Why?. */
+  const dryRun = body.dryRun === true;
   const sb = c.get('supabase');
-  const r = await backfillSoPayments(sb, limit);
+  const r = await backfillSoPayments(sb, limit, { dryRun });
   if (!r.ok) return c.json({ error: 'backfill_failed', reason: r.reason }, 500);
   return c.json(r);
 });
@@ -1103,6 +1332,13 @@ accounting.get('/daily-bank', async (c) => {
     const existing = transitByAccount.get(a.transit_account_code);
     transitByAccount.set(a.transit_account_code, existing ? `${existing}/${a.code}` : a.code);
   }
+  /* The GENERIC clearing account (role TRANSIT_EDC, 326-0000) stays on the
+     board once the acquirers have their own accounts (owner 2026-09-07: 我想要
+     拆账户): a card payment recorded without a bank still lands there, and
+     money the board cannot see is money nobody chases. Named 未标银行 so the
+     line reads as what it is, not as a machine. */
+  const genericTransit = (await resolveRoles(sb, co.companyId)).TRANSIT_EDC;
+  if (!transitByAccount.has(genericTransit)) transitByAccount.set(genericTransit, '未标银行');
   const transitCodes = [...transitByAccount.keys()];
   const { data: transitNamesRaw, error: tErr } = await sb.from('accounts')
     .select('account_code, account_name')

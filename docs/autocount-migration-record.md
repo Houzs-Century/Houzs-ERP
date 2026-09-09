@@ -1269,6 +1269,7 @@ price is strictly better and is still open.
 | 9 | **The 27 held-back specials lines** keep their instructions as free text with no picker tick, matching his own fallback rule. Accept, or build migrated-immunity in the money path? |
 | 10 | **AutoCount physical negatives** — `AK-SK FX AIRLOFT PIL` KL (-10), `CH-DC` KL (-12), `AK-CS AIRLOFT COMFY PIL` C&C DISP (-6) and a handful more. Recommendation: treat the ERP value as authoritative at go-live and book the difference as a counted stock-take variance |
 | 11 | **Two HELD sofa compartment corrections** — `HC-PO-010056 / HC-SO-012696`, and `HC-PO-000162` where `5526` must first become its own model |
+| 12 | **Three sofa compartment corrections refused because the money would move** — `HC-PO-009597`, `HC-PO-010117` (as `HC-PO-000254`) and `HC-PO-010023` (as `HC-PO-008783`). Each is a migrated PO whose header total is **0** while the sofa line still carries a `unit_price_sen`, so putting the build's price on its first piece would take the document from 0 to 383,200 / 431,700 / 421,500 sen. The refusal is the money guard working, not a matcher miss — the builds themselves now match (`fix/sofa-desc2-matcher`, bug 0637). `HC-PO-009597`'s sales order `HC-SO-012828` DID apply, and its single PO line follows the SO line it is dedicated to, so the PO reads `1A(LHF)` of a five-piece build. **Owner decision:** correct the PO lines to zero-priced pieces (paperwork only, the header total is already 0 and stock came in with the balance snapshot), or leave all three as they are |
 
 ### Needs IT at the office
 

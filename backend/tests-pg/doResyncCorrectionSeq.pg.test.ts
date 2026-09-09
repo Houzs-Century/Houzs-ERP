@@ -87,6 +87,7 @@ async function resetFixture(sql: Sql): Promise<void> {
       product_name text,
       qty integer,
       batch_no text,
+      movement_date date,
       source_doc_type text,
       source_doc_id uuid,
       source_doc_no text,

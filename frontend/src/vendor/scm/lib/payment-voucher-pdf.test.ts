@@ -136,3 +136,19 @@ describe('the payment voucher sheet', () => {
     expect(has(draws, 'Settles invoice')).toBe(false);
   });
 });
+
+describe('the Customer Refund sheet (§14)', () => {
+  test('the paper says what it is — CUSTOMER REFUND, refund to the customer, and the document it refunds', async () => {
+    const draws = await render({ purpose: 'CUSTOMER_REFUND', payee_name: 'Ah Meng', refund_source_type: 'SO', refund_source_doc_no: '2990-SO-2607-001', supplier: null }, []);
+    expect(has(draws, 'CUSTOMER REFUND')).toBe(true);
+    expect(has(draws, 'PAYMENT VOUCHER')).toBe(false);
+    expect(has(draws, 'REFUND TO')).toBe(true);
+    expect(has(draws, 'SO 2990-SO-2607-001')).toBe(true);
+    expect(has(draws, 'Ah Meng')).toBe(true);
+    /* The AR line names the customer beside the account (owner 2026-09-08:
+       看不到是谁 → 可以); an ordinary voucher's lines do not. */
+    expect(has(draws, 'Advertisement · Ah Meng')).toBe(true);
+    const plain = await render({}, []);
+    expect(has(plain, 'Advertisement · ')).toBe(false);
+  });
+});

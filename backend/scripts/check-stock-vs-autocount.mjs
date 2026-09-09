@@ -19,6 +19,14 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+/* SALESLOC / SERVICE_GROUPS / the binding-CSV reader are SHARED with
+   check-golive-parity.mjs — a second copy of a location map is how stock
+   silently moves between branches in one script and not the other. */
+import { SALESLOC, SERVICE_GROUPS, loadAcBinding, serviceErpCodes } from "./lib/ac-stock-compare.mjs";
+/* The sofa fold - owner ruling 2026-09-07: the ERP pieces are folded up into
+   whole sofas FOR THE COMPARISON ONLY. Nothing here changes how sofa stock is
+   stored; the sofa MRP stays hard-bound at piece level. */
+import { sofaModelOf, makeModelMatcher, foldSofaPieces } from "./lib/sofa-piece-fold.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -30,25 +38,7 @@ const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", f))).toString("utf8").replace(/^﻿/, ""));
 
-/* AutoCount location -> ERP warehouse CODE. Taken verbatim from the PO import
-   (import-ac-outstanding-po.mjs SALESLOC), which resolved 100% there, extended
-   with the stock-only locations that appear in vItemBalQty. A location with no
-   confident ERP home stays UNMAPPED and is REPORTED — never guessed, because a
-   wrong guess silently moves stock between branches. */
-const SALESLOC = {
-  KL: "KL WAREHOUSE", PG: "PG WAREHOUSE", SRW: "SRW WAREHOUSE", SBH: "SBH WAREHOUSE",
-  HQ: "HQ", "KL DISP": "KL DISPLAY", "PG DISP": "PG DISPLAY", "SBH DISP": "SBH DISPLAY",
-  "EM DISP": "EM DISPLAY", "C&C DISP": "C&C DISPLAY",
-  "SERV KL": "KL SERVICE", "SERV PG": "PG SERVICE",
-  SUNWAY: "SUNWAY SHOWROOM", "KELANA.J": "KELANA.J SHOWROOM",
-};
 
-/* AutoCount ItemGroups that are NOT physical stock. AutoCount models delivery
-   fees, disposal and storage as stock-controlled items, so they accumulate a
-   large negative balance that no warehouse ever holds. The ERP models the same
-   lines as SERVICE, which carry no inventory at all. Comparing them is a
-   category error, not a discrepancy. */
-const SERVICE_GROUPS = new Set(["OTHER", "TRANS"]);
 
 /* Known-unfixed defect, already traced and pending an owner decision. Labelled
    so it reads as the known case instead of a new finding.
@@ -58,17 +48,19 @@ const SERVICE_GROUPS = new Set(["OTHER", "TRANS"]);
 const KNOWN_DOUBLE_SHIP_MODELS = ["KETTA", "NTYR", "TRION", "XAMMAR"];
 const isKnownDoubleShip = (code) => KNOWN_DOUBLE_SHIP_MODELS.some((m) => code.startsWith(m));
 
-function parseCsvLine(line) {
-  const out = []; let cur = ""; let q = false;
-  for (let i = 0; i < line.length; i++) { const c = line[i];
-    if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
-    else { if (c === '"') q = true; else if (c === ",") { out.push(cur); cur = ""; } else cur += c; } }
-  out.push(cur); return out;
-}
 
 /* Faithful reimplementation of backend/src/scm/lib/so-readiness.ts. Kept in
    step with it deliberately: this script must derive the SAME string the UI
-   shows, or the status comparison measures the script instead of the ERP. */
+   shows, or the status comparison measures the script instead of the ERP.
+
+   IT HAD DRIFTED, and the drift is the thing this comment is for. Between
+   2026-08-16 and 2026-09-07 the ERP counted SERVICE lines into its liveCount so
+   a service-only order reads READY; this copy dropped them, so the same order
+   read "" here. Found by looking for it (docs/bugs/0673) rather than by a
+   failure, which is why a hand-kept copy is a liability: the two files agree
+   only while somebody re-reads both. If this diverges again, the honest fix is
+   to run this script under tsx and IMPORT summariseReadiness, the way
+   scripts/probe-mrp-allocation-rules.mjs imports isHardBoundLine. */
 const MAIN_CATEGORIES = new Set(["SOFA", "BEDFRAME", "MATTRESS"]);
 function normCategory(raw) {
   const g = (raw ?? "").trim().toUpperCase();
@@ -88,10 +80,19 @@ const isServiceLine = (l) =>
   (N(l.item_code).length > 4 && N(l.item_code).startsWith("SVC-"));
 function summariseReadiness(lines) {
   const live = lines.filter((l) => !l.cancelled);
-  let mainCount = 0, mainReady = 0, accCount = 0, accReady = 0;
+  let mainCount = 0, mainReady = 0, accCount = 0, accReady = 0, svcCount = 0;
   const mainByCat = new Map();
   for (const l of live) {
-    if (isServiceLine(l)) continue;
+    /* SERVICE lines are COUNTED, not dropped — this copy dropped them and so
+       could never reproduce the owner's 2026-08-16 ruling that a service-only
+       order is ready on sight (「如果它是 service 的单，也应该直接 ready」).
+       so-readiness.ts counts svcCount into its liveCount for exactly that
+       reason; without it, an order whose every line is a delivery fee scored
+       byte-identically to an order with NO lines, so this checker read "" where
+       the ERP shows READY and reported its own omission as a disagreement with
+       AutoCount. Services carry no inventory, so they still take no part in any
+       ready/short tally. */
+    if (isServiceLine(l)) { svcCount += 1; continue; }
     const cat = normCategory(l.item_group);
     const isReady = l.stock_status === "READY";
     if (MAIN_CATEGORIES.has(cat)) {
@@ -103,8 +104,12 @@ function summariseReadiness(lines) {
     } else { accCount += 1; if (isReady) accReady += 1; }
   }
   const isMainReady = mainCount > 0 ? mainReady === mainCount : true;
-  const isFullyReady = (mainCount + accCount) > 0 && mainReady === mainCount && accReady === accCount;
-  if (mainCount + accCount === 0) return "";
+  /* liveCount, not mainCount + accCount — the ONLY thing that separates "this
+     order has nothing left to wait for" from "this order has nothing on it".
+     Both gates read it, exactly as so-readiness.ts does. */
+  const liveCount = mainCount + accCount + svcCount;
+  const isFullyReady = liveCount > 0 && mainReady === mainCount && accReady === accCount;
+  if (liveCount === 0) return "";
   if (isFullyReady) return "READY";
   /* `mainCount > 0 &&` is load-bearing, and this copy was missing it until
      2026-08-16: isMainReady is VACUOUSLY true when the SO has no main line, so
@@ -130,28 +135,24 @@ async function main() {
   log(`AutoCount export taken ${manifest.exported_at} from ${manifest.source}`);
 
   // ---- binding: AutoCount ItemCode -> ERP product code, plus AC category ----
-  const csv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8").replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
-  csv.shift();
-  const byAc = new Map();
-  for (const ln of csv) { const f = parseCsvLine(ln); if (f[0]) byAc.set(norm(f[0]), (f[1] || "").trim()); }
-  /* Sofa FURNITURE, by the binding CSV's category column — byte-identical to
-     import-ac-stock-balance.mjs:64, and that identity is the point. The
-     exclusion here must be the SAME predicate as the importer's, because the
-     question this check asks is "did the ERP receive what AutoCount holds": an
-     item the importer brought in MUST be compared, or its ERP stock shows up as
-     a hole that AutoCount supposedly does not have.
-     Excluding on the AutoCount ItemGroup instead — which is what this script
-     did until 2026-08-11 — swept out 19 codes / 85 units of pillows, bolsters
-     and stools that AutoCount happens to file under ItemGroup SOFA but the
-     binding CSV correctly calls ACCESSORY. The importer imported them, so the
-     ERP holds them, so they were reported as 85 units of phantom ERP-only
-     stock across 12 cells. 77 of those units were real and present on both
-     sides; only +8 was a genuine delta. Same failure as D7 in
-     docs/stock-reconciliation.md, one layer up: never categorise stock by a
-     field that is not the one the importer used. */
-  const sofaFurniture = new Set(
-    csv.map(parseCsvLine).filter((f) => (f[3] || "").trim().toUpperCase() === "SOFA").map((f) => norm(f[0])),
-  );
+  /* Sofa FURNITURE is decided by the binding CSV's category column — byte-identical
+     to import-ac-stock-balance.mjs:64, and that identity is the point. The exclusion
+     here must be the SAME predicate as the importer's, because the question this check
+     asks is "did the ERP receive what AutoCount holds": an item the importer brought in
+     MUST be compared, or its ERP stock shows up as a hole that AutoCount supposedly does
+     not have.
+     Excluding on the AutoCount ItemGroup instead — which is what this script did until
+     2026-08-11 — swept out 19 codes / 85 units of pillows, bolsters and stools that
+     AutoCount happens to file under ItemGroup SOFA but the binding CSV correctly calls
+     ACCESSORY. The importer imported them, so the ERP holds them, so they were reported
+     as 85 units of phantom ERP-only stock across 12 cells. 77 of those units were real
+     and present on both sides; only +8 was a genuine delta. Same failure as D7 in
+     docs/stock-reconciliation.md, one layer up: never categorise stock by a field that
+     is not the one the importer used.
+     The reader lives in lib/ac-stock-compare.mjs so check-golive-parity.mjs applies
+     the identical predicate. */
+  const { byAc, sofaFurniture } = loadAcBinding(
+    fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8"));
   const item = new Map(gz("ac-live-item-master.json.gz").map((r) => [norm(r.ItemCode), r]));
   const groupOf = (ac) => (item.get(norm(ac))?.ItemGroup ?? "").toUpperCase();
 
@@ -218,15 +219,31 @@ async function main() {
   const erpSofa = erpBal.filter((r) => r.is_sofa);
   const erpSofaUnits = erpSofa.reduce((s, r) => s + Number(r.qty), 0);
   log(`  ERP side, same exclusion: ${erpSofa.length} sofa-compartment cells / ${erpSofaUnits} units held out (AutoCount counts one whole sofa where the ERP counts its compartments — the two are not commensurable, so the balance axis excludes sofa on BOTH sides)`);
-  const erpCell = new Map(erpBal.filter((r) => !r.is_sofa).map((r) => [`${norm(r.item_code)}|${r.warehouse_id}`, Number(r.qty)]));
+  /* The SERVICE exclusion has to be symmetric for exactly the reason the sofa one
+     does, and it was not until 2026-09-07: AutoCount's OTHER / TRANS pseudo-items
+     were dropped above while the ERP's own DISPOSE / TRANSPORTATION CHARGES /
+     STORAGE cells stayed in, so 16 cells and -4,149 units reported as ERP-only
+     stock AutoCount does not have. A hole invented by the filter, not found by
+     it. The ERP codes come from the binding via serviceErpCodes(), never typed. */
+  const svcErp = serviceErpCodes(byAc, (code) => groupOf(code));
+  const erpService = erpBal.filter((r) => !r.is_sofa && svcErp.has(norm(r.item_code)));
+  log(`  ERP side, same exclusion: ${erpService.length} service pseudo-item cells / ${erpService.reduce((s, r) => s + Number(r.qty), 0)} units held out (AutoCount models delivery / disposal / storage as stock-controlled items; the ERP models them as SERVICE, which carries no inventory)`);
+  const erpCell = new Map(erpBal
+    .filter((r) => !r.is_sofa && !svcErp.has(norm(r.item_code)))
+    .map((r) => [`${norm(r.item_code)}|${r.warehouse_id}`, Number(r.qty)]));
   const whName = new Map(whs.map((w) => [String(w.id), w.name]));
 
   /* Did the cutover import actually run? The repo contains a script that
       printed a DONE line while writing nothing, so the movements are counted
       here rather than trusted from a log. */
-  const [cut] = await sql`SELECT COUNT(*)::int n, COALESCE(SUM(qty),0)::int units
+  /* The seeding WINDOW, not just the count. "CUTOVER ADJUSTMENT ONLY" is the
+     largest cause bucket, and it means "the delta was already there when the
+     ERP was seeded" — a claim nobody can weigh without knowing WHEN that was.
+     Read from the rows rather than from a runbook date. */
+  const [cut] = await sql`SELECT COUNT(*)::int n, COALESCE(SUM(qty),0)::int units,
+      MIN(created_at)::text first_at, MAX(created_at)::text last_at
     FROM scm.inventory_movements WHERE source_doc_type = 'AC_CUTOVER'`;
-  log(`cutover adjustment movements present in ERP: ${cut.n} (${cut.units} units)`);
+  log(`cutover adjustment movements present in ERP: ${cut.n} (${cut.units} units), seeded ${cut.first_at ?? "-"} .. ${cut.last_at ?? "-"} UTC`);
 
   /* scm.inventory_balances (migration 0084) sums TRANSFER as +qty with no
      compensating branch, and the FIFO trigger has no TRANSFER case at all. If
@@ -251,21 +268,67 @@ async function main() {
     log(`scm.${t}: ${m.n} rows, ${m.migrated} migrated_no_stock (no movement by design)`);
   }
 
-  // snapshot drift = AutoCount activity AFTER the cutover snapshot
+  /* THE TRAP THE RE-SEED CREATES, ASSERTED RATHER THAN ASSUMED.
+     Once the balance is re-seeded from a snapshot, a migrated document that
+     WRITES an inventory movement double-counts: the snapshot already contains
+     that receipt or that delivery. `migrated_no_stock` is the flag that is
+     supposed to prevent it, and mig 0276 is where the contract is written down —
+     but a flag is a claim about intent and this is the measurement of it. Any
+     reshaping of the migrated goods receipts or delivery notes must keep this
+     line at zero. */
+  const [leak] = await sql`SELECT
+      COUNT(*) FILTER (WHERE mv.source_doc_type::text = 'GRN')::int grn_rows,
+      COUNT(*) FILTER (WHERE mv.source_doc_type::text = 'DO')::int  do_rows,
+      COALESCE(SUM(ABS(mv.qty)),0)::int units
+    FROM scm.inventory_movements mv
+    LEFT JOIN scm.grns g            ON g.id = mv.source_doc_id AND mv.source_doc_type::text = 'GRN'
+    LEFT JOIN scm.delivery_orders d ON d.id = mv.source_doc_id AND mv.source_doc_type::text = 'DO'
+   WHERE mv.company_id = ${CO}
+     AND (g.migrated_no_stock IS TRUE OR d.migrated_no_stock IS TRUE)`;
+  log(`migrated documents that DID write an inventory movement (must be 0 — each one double-counts against the seeded balance): ${leak.grn_rows} goods-receipt rows, ${leak.do_rows} delivery rows, ${leak.units} units absolute`);
+  if (leak.grn_rows || leak.do_rows) log("   -> DOUBLE-COUNT. A migrated document is posting stock the balance snapshot already contains. Find what stopped setting migrated_no_stock, or what started posting despite it, before trusting any number below.");
+
+  /* Drift = AutoCount activity AFTER the ERP's stock was seeded.
+     The baseline MUST be frozen at the seeding moment. It used to be
+     ac-stock-balance.json.gz, which is a working export that
+     export-ac-reimport.py re-cuts every round; it was re-cut on 2026-09-07,
+     after seeding, so it equalled the live book, the drift set collapsed to
+     zero cells, and 175 cells / 1211 units of "AutoCount has moved on since"
+     were reported as "the seeding was wrong". Two causes needing opposite
+     remedies, silently merged by a routine re-export.
+     data/ac-seed-baseline-balance.README.md carries the provenance and the
+     ~22h bias against the ERP's own AC_CUTOVER max(created_at). */
   const snap = new Map();
-  for (const r of gz("ac-stock-balance.json.gz")) {
+  for (const r of gz("ac-seed-baseline-balance.json.gz")) {
     const k = `${norm(r.ItemCode)}|${norm(r.Location)}`;
     snap.set(k, (snap.get(k) ?? 0) + Number(r.BalQty || 0));
   }
+  /* Carried through the SAME binding and warehouse mapping as acCell, so a
+     seeded quantity is comparable to an ERP quantity cell for cell. Mapping the
+     AutoCount side one way and the baseline another is how a filter invents a
+     gap — the lesson D7 in docs/stock-reconciliation.md was bought with. */
+  const seedCell = new Map();
+  for (const r of snap.keys()) {
+    const [ac, loc] = r.split("|");
+    const erp = byAc.get(ac); const wh = resolveWh(loc);
+    if (!erp || !wh) continue;
+    const k = `${norm(erp)}|${wh.id}`;
+    seedCell.set(k, (seedCell.get(k) ?? 0) + snap.get(r));
+  }
   const movedSinceSnapshot = new Set();
+  let driftUnits = 0;
   for (const r of bal) {
     const k = `${norm(r.ItemCode)}|${norm(r.Location)}`;
-    if (Math.abs(Number(r.BalQty || 0) - (snap.get(k) ?? 0)) > 1e-9) {
+    const d = Number(r.BalQty || 0) - (snap.get(k) ?? 0);
+    if (Math.abs(d) > 1e-9) {
       const erp = byAc.get(norm(r.ItemCode));
       const wh = resolveWh(r.Location);
-      if (erp && wh) movedSinceSnapshot.add(`${norm(erp)}|${wh.id}`);
+      if (erp && wh) { movedSinceSnapshot.add(`${norm(erp)}|${wh.id}`); driftUnits += Math.abs(d); }
     }
   }
+  /* Printed, because a cause bucket that reports zero is indistinguishable from
+     a cause bucket that never fires unless the input to it is shown. */
+  log(`AutoCount cells that moved since the seeding baseline: ${movedSinceSnapshot.size} (${Math.round(driftUnits)} units absolute) — the book kept trading after the ERP was seeded`);
 
   const keys = new Set([...acCell.keys(), ...erpCell.keys()]);
   const agree = [], differ = [], acOnly = [], erpOnly = [];
@@ -329,11 +392,34 @@ async function main() {
     WHERE company_id = ${CO} AND source_doc_no IN ('DO-2607-005','DO-2607-017')`;
   const knownCells = new Set(knownDo.map((r) => `${norm(r.item_code)}|${r.warehouse_id}`));
   log(`cells touched by the known double-ship pair (DO-2607-005 / DO-2607-017): ${knownCells.size}`);
+  /* The model-name widening is ONLY admissible while the traced documents are
+     still in the movement ledger. On 2026-09-07 they were not — the re-import
+     re-seeded the ledger and the pair matched zero rows — so the prefix test
+     was labelling 14 cells / 139 units "traced, owner decision pending" on the
+     strength of a product name alone, and pre-empting their real cause: every
+     one of them carries AC_CUTOVER movements and nothing else, which is a
+     seeding delta, not a double-ship. A double-ship IS a DO posting twice; a
+     cell with no DO movement cannot have one. Gate the widening on the
+     evidence so the label comes back by itself if the documents do. */
+  const doubleShipEvidence = knownCells.size > 0;
+  if (!doubleShipEvidence) log("   -> the traced pair matches NO movement rows, so the KETTA/NTYR/TRION/XAMMAR model widening is withheld: those cells are reported under whatever their movements actually show");
 
   const causeOf = (r) => {
-    if (knownCells.has(`${r.code}|${r.whId}`) || isKnownDoubleShip(r.code)) return "KNOWN DOUBLE-SHIP (SO-2606-019, DO-2607-005 + DO-2607-017) — traced, owner decision pending";
+    if (knownCells.has(`${r.code}|${r.whId}`) || (doubleShipEvidence && isKnownDoubleShip(r.code))) return "KNOWN DOUBLE-SHIP (SO-2606-019, DO-2607-005 + DO-2607-017) — traced, owner decision pending";
     if (dupCell.has(`${r.code}|${r.whId}`)) return "DOUBLE-POSTED DOCUMENT — a single-post document type posted this cell more than once";
-    if (movedSinceSnapshot.has(`${r.code}|${r.whId}`)) return "MIGRATION CUT-OFF — AutoCount moved after the cutover snapshot the ERP was seeded from";
+    /* Split the old single MIGRATION CUT-OFF bucket, because the two halves
+       need opposite remedies and only the seed baseline can tell them apart.
+       If the ERP still holds exactly what it was seeded with, the ERP did not
+       go wrong at all — it simply never received what AutoCount posted after
+       seeding, and the remedy is a catch-up sync. If BOTH sides have moved off
+       the baseline, the two systems have been traded independently and the
+       remedy is a count. */
+    if (movedSinceSnapshot.has(`${r.code}|${r.whId}`)) {
+      const seeded = seedCell.get(`${r.code}|${r.whId}`);
+      if (seeded !== undefined && Math.abs((r.erp ?? 0) - seeded) < 1e-9)
+        return "ERP IS BEHIND THE BOOK — the ERP still holds exactly the seeded quantity; AutoCount has traded this cell since seeding and those movements never reached the ERP";
+      return "BOTH MOVED SINCE SEEDING — AutoCount traded this cell after seeding AND the ERP no longer holds the seeded quantity either";
+    }
     const m = mvBy.get(`${r.code}|${r.whId}`);
     if (!m) return "NO ERP MOVEMENT — the cutover adjustment never reached this cell";
     const types = new Set(m.keys());
@@ -402,6 +488,146 @@ async function main() {
     log(`  RM ${r.rm.toFixed(2).padStart(10)}  ${r.code} @ ${r.wh}: AutoCount ${r.ac ?? "-"} vs ERP ${r.erp ?? "-"} (${r.d > 0 ? "+" : ""}${r.d}) :: ${causeOf(r).split(" — ")[0]}`);
   }
 
+  // ================= PART A2 — SOFA, FOLDED INTO WHOLE SOFAS =================
+  /* Sofa has been excluded from the balance axis since this reconcile was
+     written, on BOTH sides, because AutoCount counts one whole sofa where the
+     ERP counts its compartments and the two are not commensurable. The owner
+     lifted that on 2026-09-07 with a specific instruction: 「把我们的件数折回成整
+     张沙发再比」 — fold OUR pieces up, do not decompose THEIRS.
+
+     That direction is the whole point. Decomposing an AutoCount balance row into
+     compartments is impossible without inventing which build it is: a balance
+     row carries a quantity and nothing else, and 0 of 1,337 sofa GRDTL lines in
+     AED_HOUZS carry a serial or a batch. Folding needs no invention, because
+     import-ac-sofa-stock.mjs stamped every compartment lot of one build with the
+     same batch_no = its source PO number (grns.ts resolvePoBatchByItem, mig
+     0120; sofa-set-coverage.ts calls it the batch identity). batch = build.
+
+     THE ERP SIDE CANNOT USE scm.inventory_balances HERE. That view groups by
+     (warehouse, item_code, variant_key, company) and drops batch_no entirely, so
+     it cannot tell one build from another. The query below reproduces the view's
+     OWN sign arithmetic (mig 0307) one grain finer, with batch_no kept —
+     deliberately not a naive SUM(qty), which gets OUT backwards.
+
+     THIS SECTION IS READ-ONLY AND CHANGES NO STORED STOCK. */
+  log("");
+  log("=== PART A2 — SOFA, the ERP's pieces folded back into whole sofas ===");
+
+  const sofaModels = new Map();     // ERP model -> [AutoCount item codes]
+  const sofaNoModel = [];
+  for (const ac of sofaFurniture) {
+    const erp = byAc.get(ac);
+    const model = erp ? sofaModelOf(erp) : null;
+    if (!model) { sofaNoModel.push(`${ac} -> ${erp ?? "(unmapped)"}`); continue; }
+    if (!sofaModels.has(model)) sofaModels.set(model, []);
+    sofaModels.get(model).push(ac);
+  }
+  const acModelOf = new Map();
+  for (const [model, acs] of sofaModels) for (const ac of acs) acModelOf.set(ac, model);
+  log(`sofa models resolved from the binding: ${sofaModels.size} models over ${acModelOf.size} AutoCount item codes`);
+  if (sofaNoModel.length) {
+    log(`  ${sofaNoModel.length} sofa binding row(s) do NOT end in the -1S model target and are REPORTED, never guessed into a model:`);
+    for (const x of sofaNoModel.slice(0, 15)) log(`     NO MODEL ${x}`);
+  }
+
+  /* AutoCount's side: whole sofas per model + warehouse. Several AutoCount codes
+     can share one ERP model, so they sum into the model's cell. */
+  const acSofa = new Map();
+  const sofaUnmappedWh = new Map();
+  for (const r of bal) {
+    if (!r.BalQty) continue;
+    if (!sofaFurniture.has(norm(r.ItemCode))) continue;
+    const model = acModelOf.get(norm(r.ItemCode));
+    if (!model) continue;
+    const wh = resolveWh(r.Location);
+    if (!wh) { sofaUnmappedWh.set(norm(r.Location), (sofaUnmappedWh.get(norm(r.Location)) ?? 0) + Number(r.BalQty)); continue; }
+    const k = `${model}|${wh.id}`;
+    acSofa.set(k, (acSofa.get(k) ?? 0) + Number(r.BalQty));
+  }
+  for (const [l, q] of sofaUnmappedWh) log(`  UNMAPPED LOCATION ${l}: ${q} whole sofas have no ERP warehouse`);
+
+  const sofaMv = await sql`SELECT m.item_code, m.warehouse_id, COALESCE(m.batch_no,'') AS batch_no,
+      SUM(CASE
+            WHEN m.movement_type::text = 'IN'         THEN m.qty
+            WHEN m.movement_type::text = 'OUT'        THEN -m.qty
+            WHEN m.movement_type::text = 'ADJUSTMENT' THEN m.qty
+            WHEN m.movement_type::text = 'TRANSFER'   THEN m.qty
+            ELSE 0 END)::int AS qty
+    FROM scm.inventory_movements m
+    JOIN scm.mfg_products p ON p.code = m.item_code AND p.company_id = ${CO}
+   WHERE m.company_id = ${CO} AND UPPER(COALESCE(p.category::text,'')) = 'SOFA'
+   GROUP BY m.item_code, m.warehouse_id, COALESCE(m.batch_no,'')`;
+  const matchModel = makeModelMatcher(sofaModels.keys());
+  const unmatchedSofa = new Map();
+  const pieceRows = [];
+  for (const r of sofaMv) {
+    const model = matchModel(r.item_code);
+    if (!model) { unmatchedSofa.set(norm(r.item_code), (unmatchedSofa.get(norm(r.item_code)) ?? 0) + Number(r.qty)); continue; }
+    pieceRows.push({ model, warehouseId: String(r.warehouse_id), batchNo: r.batch_no, itemCode: r.item_code, qty: Number(r.qty) });
+  }
+  log(`ERP sofa piece rows (item x warehouse x batch): ${sofaMv.length}; folded: ${pieceRows.length}`);
+  if (unmatchedSofa.size) {
+    log(`  ${unmatchedSofa.size} ERP sofa product code(s) match NO model in the binding — dropped from the fold and listed, because a piece bucketed under the wrong model is worse than a piece nobody counted:`);
+    for (const [c, q] of [...unmatchedSofa.entries()].sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 20)) log(`     NO MODEL MATCH ${c}: ${q} pieces`);
+  }
+  const folded = foldSofaPieces(pieceRows);
+  const foldTotals = [...folded.values()].reduce((a, c) => ({
+    builds: a.builds + c.builds, incomplete: a.incomplete + c.incomplete,
+    noBatch: a.noBatch + c.noBatch, negative: a.negative + c.negative,
+  }), { builds: 0, incomplete: 0, noBatch: 0, negative: 0 });
+  log(`builds (batches) folded: ${foldTotals.builds}; of those, ${foldTotals.incomplete} have pieces standing at different counts (min < max, so the build is NOT a whole sofa), ${foldTotals.noBatch} carry no batch_no at all, ${foldTotals.negative} fold to a negative piece count`);
+
+  const sofaKeys = new Set([...acSofa.keys(), ...folded.keys()]);
+  const sofaAgree = [], sofaDiffer = [];
+  for (const k of sofaKeys) {
+    const a = Math.round(acSofa.get(k) ?? 0);
+    const f = folded.get(k);
+    const e = f ? f.whole : 0;
+    const [model, whId] = k.split("|");
+    const row = { model, whId, wh: whName.get(whId) ?? whId, ac: a, erp: e,
+      ceiling: f ? f.ceiling : 0, builds: f ? f.builds : 0, d: e - a };
+    (a === e ? sofaAgree : sofaDiffer).push(row);
+  }
+  const acSofaUnits = [...acSofa.values()].reduce((s, x) => s + x, 0);
+  const erpSofaWhole = [...folded.values()].reduce((s, c) => s + c.whole, 0);
+  const erpSofaCeiling = [...folded.values()].reduce((s, c) => s + c.ceiling, 0);
+  log("");
+  log(`SOFA cells compared: ${sofaKeys.size} | AGREE: ${sofaAgree.length} | DISAGREE: ${sofaDiffer.length}`);
+  log(`whole sofas — AutoCount ${Math.round(acSofaUnits)} vs ERP ${erpSofaWhole} (net ${erpSofaWhole - Math.round(acSofaUnits) >= 0 ? "+" : ""}${erpSofaWhole - Math.round(acSofaUnits)})`);
+  log(`  the ERP number is COMPLETE sofas — every piece of the build still on the shelf. Counting each build by its BIGGEST surviving piece instead would give ${erpSofaCeiling}; the difference, ${erpSofaCeiling - erpSofaWhole}, is sofas missing at least one piece.`);
+  log("");
+  log(`sofa disagreements (max ${TOP}):`);
+  for (const r of [...sofaDiffer].sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, TOP)) {
+    log(`  ${r.model} @ ${r.wh}: AutoCount ${r.ac} vs ERP ${r.erp} (${r.d > 0 ? "+" : ""}${r.d}) — ${r.builds} build(s) in the ERP, ceiling ${r.ceiling}`);
+  }
+  const sofaPerWh = new Map();
+  for (const r of [...sofaAgree, ...sofaDiffer]) {
+    const c = sofaPerWh.get(r.whId) ?? { wh: r.wh, cells: 0, agree: 0, ac: 0, erp: 0 };
+    c.cells += 1; c.ac += r.ac; c.erp += r.erp; if (r.ac === r.erp) c.agree += 1;
+    sofaPerWh.set(r.whId, c);
+  }
+  log("");
+  log("sofa per-warehouse rollup:");
+  log(`  ${"warehouse".padEnd(20)} ${"cells".padStart(6)} ${"agree".padStart(6)} ${"AutoCount".padStart(10)} ${"ERP".padStart(8)} ${"delta".padStart(8)}`);
+  for (const c of [...sofaPerWh.values()].sort((a, b) => Math.abs(b.erp - b.ac) - Math.abs(a.erp - a.ac))) {
+    log(`  ${String(c.wh).padEnd(20)} ${String(c.cells).padStart(6)} ${String(c.agree).padStart(6)} ${String(c.ac).padStart(10)} ${String(c.erp).padStart(8)} ${String(c.erp - c.ac).padStart(8)}`);
+  }
+  /* Sofa value, on the same cost source PART A uses, so the two money numbers
+     are the same kind of number. Reported separately rather than merged: sofa
+     was never in the RM figure before tonight, and quietly folding it in would
+     make the total look like it had moved when only its definition had. */
+  const sofaCostRm = (model) => {
+    for (const ac of sofaModels.get(model) ?? []) {
+      const erp = byAc.get(ac);
+      const rm = erp ? costByErp.get(norm(erp)) : 0;
+      if (rm > 0) return rm;
+    }
+    return 0;
+  };
+  const sofaValued = sofaDiffer.map((r) => ({ ...r, rm: Math.abs(r.d) * sofaCostRm(r.model) })).filter((r) => r.rm > 0);
+  log("");
+  log(`sofa value at risk across the disagreeing cells: RM ${sofaValued.reduce((s, r) => s + r.rm, 0).toFixed(2)} (costed cells: ${sofaValued.length}/${sofaDiffer.length})`);
+
   // ================= PART B — STATUS / REMARK 2 =================
   log("");
   log("=== PART B — AutoCount SO.Remark2 vs ERP derived stock remark ===");
@@ -409,11 +635,19 @@ async function main() {
   const acRem = new Map();
   for (const r of gz("ac-live-so-remark2.json.gz")) acRem.set(r.DocNo.trim().toUpperCase(), { remark: (r.Remark2 || "").trim().toUpperCase(), outstanding: r.Outstanding });
 
-  /* proceeded_at matters: recomputeSoStockAllocation gates on it. An SO with a
-     NULL processing date has every line FORCED to PENDING and consumes no
-     stock, so the ERP emits "" no matter how much stock is physically there.
-     Without this column a whole class of disagreement looks inexplicable. */
-  const lines = await sql`SELECT h.linked_ac_docno, h.doc_no, h.status, h.proceeded_at,
+  /* The processing date matters: recomputeSoStockAllocation gates on it. An SO
+     with a NULL processing date has every line FORCED to PENDING and consumes
+     no stock, so the ERP emits "" no matter how much stock is physically there.
+     Without this column a whole class of disagreement looks inexplicable.
+
+     THE COLUMN IS `processing_date`, and this read asked for `proceeded_at`.
+     The allocator's gate moved on 2026-08-18 (SO_PROCESSING_DATE_COLUMN in
+     shared/so-processing-date.ts, which is that column's stop-reading step):
+     `proceeded_at` is the same fact in the wrong shape and no shipped client
+     writes it when an operator sets a Processing Date. Reading it here meant
+     the checker's own explanation for a disagreement was derived from a column
+     the engine it is explaining no longer consults. */
+  const lines = await sql`SELECT h.linked_ac_docno, h.doc_no, h.status, h.processing_date,
       i.item_group, i.item_code, i.stock_status, COALESCE(i.cancelled,false) cancelled
     FROM scm.mfg_sales_orders h
     JOIN scm.mfg_sales_order_items i ON i.doc_no = h.doc_no
@@ -421,7 +655,7 @@ async function main() {
   const byOrder = new Map();
   for (const l of lines) {
     const k = String(l.linked_ac_docno).trim().toUpperCase();
-    if (!byOrder.has(k)) byOrder.set(k, { doc_no: l.doc_no, status: l.status, proceeded_at: l.proceeded_at, lines: [] });
+    if (!byOrder.has(k)) byOrder.set(k, { doc_no: l.doc_no, status: l.status, processing_date: l.processing_date, lines: [] });
     byOrder.get(k).lines.push(l);
   }
   log(`ERP orders linked to an AutoCount DocNo: ${byOrder.size}`);
@@ -455,11 +689,11 @@ async function main() {
     matrix.set(key, (matrix.get(key) ?? 0) + 1);
     const sameCanon = canon(ac.remark) === canon(erpRemark);
     if (sameCanon && (ac.remark || "") !== (erpRemark || "")) orderOnly += 1;
-    if (!sameCanon) mismatches.push({ doc, erpDoc: o.doc_no, ac: ac.remark, erp: erpRemark, status: o.status, outstanding: ac.outstanding, proceeded: o.proceeded_at != null });
+    if (!sameCanon) mismatches.push({ doc, erpDoc: o.doc_no, ac: ac.remark, erp: erpRemark, status: o.status, outstanding: ac.outstanding, proceeded: o.processing_date != null });
   }
 
   const statusCause = (m) => {
-    if (!m.proceeded) return "NOT PROCESSED IN ERP — proceeded_at is NULL, so the allocator forces every line PENDING and the ERP cannot report readiness regardless of stock";
+    if (!m.proceeded) return "NOT PROCESSED IN ERP — processing_date is NULL, so the allocator forces every line PENDING and the ERP cannot report readiness regardless of stock";
     if (m.ac && !m.erp) return "AUTOCOUNT AHEAD — staff marked it ready in AutoCount but the ERP allocator found no stock to allocate";
     if (!m.ac && m.erp) return "ERP AHEAD — the ERP allocated stock but nobody typed it back into AutoCount's Remark2";
     return "BOTH SET, DIFFERENT — the two systems disagree on WHICH categories are ready";

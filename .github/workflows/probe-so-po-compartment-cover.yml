@@ -1,0 +1,74 @@
+name: Is the sofa short of a purchase, or only of our grain? (read-only)
+
+# 「你先把SO全部处理」 — the owner, 2026-09-09.
+#
+# lib/so-po-counter-cause.mjs calls six sales-order lines `decomposed_grain` and
+# labels them NOT A DEFECT. That label is a statement about arithmetic; this
+# workflow asks the warehouse question the arithmetic cannot answer — does the
+# purchase order carry ONE row for a sofa we hold as three compartments (our
+# grain, and no purchase is missing), or three rows of which two point at
+# nothing (a link gap, and work)?
+#
+# It exists because a reclassification built on the first reading while the
+# second is true is exactly what docs/bugs/0668 cost 30 documents on go-live
+# eve. The answer decides whether those six documents may leave the DIFFER
+# column, and nothing leaves it before this has been read.
+#
+# READ-ONLY and BOUNDED: SELECTs only, one connection, no DDL, no writes, no
+# transaction, no MODE=apply. Every read is restricted to the documents named in
+# `docs`; there is no table scan and no unbounded read of the book.
+#
+# The AutoCount side is the committed snapshot
+# backend/scripts/data/ac-convert-edges.json.gz — the book is reachable only
+# over ZeroTier from the office network, which a GitHub-hosted runner has no
+# route to. The probe REFUSES on a stale cut rather than answering against an
+# old book.
+on:
+  workflow_dispatch:
+    inputs:
+      docs:
+        description: "AutoCount sales-order numbers, comma separated (e.g. SO-013322,SO-011160)"
+        required: true
+        type: string
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+      max_snapshot_age_days:
+        description: "Refuse if the AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+
+# Its OWN group. A diagnostic must not queue behind — or displace — a release,
+# and several lanes are working this book at once: asking this question must not
+# cancel somebody else's run mid-flight.
+concurrency:
+  group: probe-so-po-compartment-cover
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Read both sides of the sofa
+        run: node scripts/probe-so-po-compartment-cover.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          DOCS: ${{ inputs.docs }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

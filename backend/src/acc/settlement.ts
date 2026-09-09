@@ -29,7 +29,9 @@
 // ----------------------------------------------------------------------------
 
 import { postJournal, reverseJournal } from './engine';
-import { resolveRoles, settlementLines, settlementReceiptLines, statementChargeLines } from './rules';
+import { resolveRoles, settlementLines, settlementReceiptLines, statementChargeLines, clearingMoveLines } from './rules';
+import { formaliseReceiptsForSettlement } from './receipts';
+import { companyCodeById } from '../scm/lib/doc-no';
 import type { PaymentCandidate } from './settlement-match';
 
 export type AcquirerRow = {
@@ -75,15 +77,38 @@ const shiftDays = (date: string, days: number): string =>
   new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 
 /**
- * Every card payment this company recorded for this acquirer in the window —
- * from BOTH sales panels, because the money is one stream even though the ERP
- * records it in two places.
+ * Whether a recorded payment may belong to THIS acquirer's statement.
+ *
+ * Three kinds of yes:
+ *   • a card payment (merchant / installment) TAGGED with this acquirer;
+ *   • a card payment tagged with NOTHING — the salesperson skipped the field;
+ *   • an `imported` payment with no tag. Migration-era rows all look like this:
+ *     AutoCount recorded the sale, but the PAYOUT lands in this system's bank,
+ *     so the statement must still be able to find them (the owner's first real
+ *     uploads, 2026-09: four MBB lines all UNMATCHED while their sales sat in
+ *     mfg_sales_order_payments with method 'imported' and provider NULL).
+ *
+ * A payment tagged with a DIFFERENT acquirer is never a candidate — that is
+ * somebody else's stream — and cash/transfer never settle through one. An
+ * untagged candidate is a QUESTION, not an answer: the matcher only ever
+ * auto-takes on a unique reference, everything else waits for a human, and
+ * confirming stamps the tag on (see confirmSettlementRow).
+ */
+export function couldBeAcquirers(method: string, provider: string | null | undefined, acquirerName: string): boolean {
+  const p = provider == null ? '' : String(provider).trim();
+  if (p !== '' && p !== acquirerName) return false;
+  if (method === 'merchant' || method === 'installment') return true;
+  return method === 'imported';
+}
+
+/**
+ * Every card payment this company recorded that could belong to this acquirer
+ * in the window — from BOTH sales panels, because the money is one stream even
+ * though the ERP records it in two places.
  *
  * The window is widened by the acquirer's own tolerance on each side: a
  * statement line dated the 3rd can legitimately be a swipe from the 1st.
- * `method` is restricted the same way acc/payments.ts books it — merchant and
- * installment are the card methods; cash and transfer never settle through an
- * acquirer, and `imported` is migration-era money AutoCount already owns.
+ * Which payments qualify is couldBeAcquirers' one job, above.
  */
 export async function loadPaymentCandidates(
   sb: any,
@@ -96,42 +121,45 @@ export async function loadPaymentCandidates(
   const hi = `${shiftDays(to, Math.max(0, acquirer.date_tolerance_days))}T23:59:59.999`;
   const name = acquirer.display_name.trim();
 
-  const { data: soRaw, error: soErr } = await sb
+  /* The window is read WHOLE and filtered here, not by `.eq('merchant_provider',
+     name)` in the query — that filter was how a NULL-tagged payment could never
+     be found, however exactly its amount and date agreed with the statement. */
+  const { data: soAll, error: soErr } = await sb
     .from('mfg_sales_order_payments')
     .select('id, so_doc_no, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by')
     .eq('company_id', companyId)
-    .eq('merchant_provider', name)
     .gte('paid_at', lo)
     .lte('paid_at', hi);
   if (soErr) return { ok: false, reason: `SO payments: ${soErr.message}` };
+  const soRaw = ((soAll ?? []) as Array<Record<string, any>>)
+    .filter((r) => couldBeAcquirers(String(r.method), r.merchant_provider as string | null, name));
 
-  const { data: siRaw, error: siErr } = await sb
+  const { data: siAll, error: siErr } = await sb
     .from('sales_invoice_payments')
     .select('id, sales_invoice_id, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by')
     .eq('company_id', companyId)
-    .eq('merchant_provider', name)
     .gte('paid_at', lo)
     .lte('paid_at', hi);
   if (siErr) return { ok: false, reason: `SI payments: ${siErr.message}` };
+  const siRaw = ((siAll ?? []) as Array<Record<string, any>>)
+    .filter((r) => couldBeAcquirers(String(r.method), r.merchant_provider as string | null, name));
 
   /* WHOSE sale it was. The operator is reconciling money against documents,
      and a document number alone does not tell him which customer he is looking
      at (owner, 2026-08-18: 我希望他是显示 transaction detail 和 sales order
      detail, 而不是 document 罢了). Two reads for the whole window, not one per
      line, and a name that cannot be resolved stays null rather than guessed. */
-  const soDocs = [...new Set(((soRaw ?? []) as Array<Record<string, any>>)
-    .map((r) => String(r.so_doc_no ?? '')).filter(Boolean))];
-  const siIds = [...new Set(((siRaw ?? []) as Array<Record<string, any>>)
-    .map((r) => String(r.sales_invoice_id ?? '')).filter(Boolean))];
+  const soDocs = [...new Set(soRaw.map((r) => String(r.so_doc_no ?? '')).filter(Boolean))];
+  const siIds = [...new Set(siRaw.map((r) => String(r.sales_invoice_id ?? '')).filter(Boolean))];
   const customerOf = new Map<string, string>();
   if (soDocs.length > 0) {
     const { data, error } = await sb.from('mfg_sales_orders')
-      .select('doc_no, customer_name').eq('company_id', companyId).in('doc_no', soDocs);
+      .select('doc_no, debtor_name').eq('company_id', companyId).in('doc_no', soDocs); // debtor_name — docs/bugs/0655
     /* Failed is not "nameless": a blank customer column across the whole
        screen reads as data, so the read fails like its siblings above. */
     if (error) return { ok: false, reason: `SO customers: ${error.message}` };
-    for (const r of (data ?? []) as Array<{ doc_no: string; customer_name: string | null }>) {
-      if (r.customer_name) customerOf.set(`SO:${r.doc_no}`, r.customer_name);
+    for (const r of (data ?? []) as Array<{ doc_no: string; debtor_name: string | null }>) {
+      if (r.debtor_name) customerOf.set(`SO:${r.doc_no}`, r.debtor_name);
     }
   }
   if (siIds.length > 0) {
@@ -144,10 +172,14 @@ export async function loadPaymentCandidates(
     }
   }
 
-  const isCard = (m: string) => m === 'merchant' || m === 'installment';
+  /* An empty tag reaches the screen as NULL either way — the marker the
+     operator sees ("未标 merchant") keys off it. */
+  const tagOf = (r: Record<string, any>): string | null => {
+    const p = r.merchant_provider == null ? '' : String(r.merchant_provider).trim();
+    return p === '' ? null : p;
+  };
   const payments: PaymentCandidate[] = [];
-  for (const r of (soRaw ?? []) as Array<Record<string, any>>) {
-    if (!isCard(String(r.method))) continue;
+  for (const r of soRaw) {
     payments.push({
       source: 'SOPAY',
       id: String(r.id),
@@ -157,10 +189,10 @@ export async function loadPaymentCandidates(
       approvalCode: r.approval_code ?? null,
       customerName: customerOf.get(`SO:${String(r.so_doc_no ?? '')}`) ?? null,
       recordedById: (r.collected_by ?? r.created_by ?? null) as string | null,
+      merchantProvider: tagOf(r),
     });
   }
-  for (const r of (siRaw ?? []) as Array<Record<string, any>>) {
-    if (!isCard(String(r.method))) continue;
+  for (const r of siRaw) {
     payments.push({
       source: 'SIPAY',
       id: String(r.id),
@@ -172,9 +204,52 @@ export async function loadPaymentCandidates(
       approvalCode: r.approval_code ?? null,
       customerName: customerOf.get(`SI:${String(r.sales_invoice_id ?? '')}`) ?? null,
       recordedById: (r.collected_by ?? r.created_by ?? null) as string | null,
+      merchantProvider: tagOf(r),
     });
   }
   return { ok: true, payments };
+}
+
+/**
+ * Clear the wreck a half-failed upload leaves behind, so its file can come in
+ * again.
+ *
+ * settlementUpload writes the batch head FIRST and its lines after; a failure
+ * between the two leaves a batch with no lines that still holds the file_hash
+ * — so the operator retries the SAME file and is told "already uploaded" about
+ * an upload that never finished (the owner's PBB statement of 2026-08-01 sat
+ * exactly like this). A batch WITH lines keeps its refusal: that one really
+ * was uploaded, and twice is twice.
+ */
+export async function clearOrphanBatch(
+  sb: any,
+  companyId: number,
+  fileHash: string,
+): Promise<{ ok: true; state: 'clear' | 'cleared_orphan' | 'duplicate' } | { ok: false; reason: string }> {
+  const { data: prior, error: priorErr } = await sb
+    .from('acc_settlement_batches')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('file_hash', fileHash)
+    .maybeSingle();
+  if (priorErr) return { ok: false, reason: priorErr.message };
+  if (!prior) return { ok: true, state: 'clear' };
+
+  const priorId = Number((prior as { id: number }).id);
+  const { count, error: cntErr } = await sb
+    .from('acc_settlement_rows')
+    .select('id', { count: 'exact', head: true })
+    .eq('batch_id', priorId);
+  if (cntErr) return { ok: false, reason: cntErr.message };
+  if ((count ?? 0) > 0) return { ok: true, state: 'duplicate' };
+
+  const { error: delErr } = await sb
+    .from('acc_settlement_batches')
+    .delete()
+    .eq('id', priorId)
+    .eq('company_id', companyId);
+  if (delErr) return { ok: false, reason: delErr.message };
+  return { ok: true, state: 'cleared_orphan' };
 }
 
 /** `${source}:${id}` for every payment a settlement line already claimed. The
@@ -262,8 +337,77 @@ export type ConfirmInput = {
 };
 
 export type ConfirmResult =
-  | { ok: true; status: 'confirmed' | 'already_confirmed'; jeNo?: string }
+  | {
+    ok: true; status: 'confirmed' | 'already_confirmed'; jeNo?: string;
+    /** The entry that moved money keyed in without a bank onto this merchant's
+        own clearing account, and how much (做 2) — absent when nothing moved. */
+    moveJeNo?: string; movedSen?: number;
+  }
   | { ok: false; status: string; reason: string };
+
+/**
+ * 做 2 (owner 2026-09-08: match 了就不见). Money keyed in WITHOUT a bank was
+ * booked to the GENERIC clearing account (role TRANSIT_EDC — 326-0000, 未标银行
+ * on Daily Bank) because nobody could say whose it was; this merchant's
+ * statement has just named it. Move what those payments booked there onto the
+ * merchant's own clearing account, dated by the transaction like the fee, so
+ * the payout clears it from the same account the fee left — and the generic
+ * account reads zero once every untagged payment has been matched.
+ *
+ * Nothing to do when the merchant sits on the generic account itself (CIMB,
+ * AEON, HOUZS), when a payment was booked on the merchant's account already
+ * (tagged at the till), or when it never reached the ledger. Keyed
+ * SETTLEMOVE-<row id>, so a second press books once and the undo can find it.
+ */
+async function moveUntaggedBooking(
+  sb: any,
+  companyId: number,
+  acquirer: { transit_account_code: string },
+  row: { id: number; acquirer_code: string; txn_date: string; ref: string | null },
+  chosen: Array<{ source: 'SOPAY' | 'SIPAY'; id: string; docNo: string | null }>,
+): Promise<{ ok: true; movedSen: number; jeNo: string | null } | { ok: false; status: string; reason: string }> {
+  const nothing = { ok: true as const, movedSen: 0, jeNo: null };
+  const generic = (await resolveRoles(sb, companyId)).TRANSIT_EDC;
+  const own = acquirer.transit_account_code;
+  if (!own || own === generic || chosen.length === 0) return nothing;
+
+  const { data: jeRaw, error: jeErr } = await sb
+    .from('journal_entries')
+    .select('id, source_type, source_doc_no, reversed')
+    .eq('company_id', companyId)
+    .in('source_type', ['SOPAY', 'SIPAY'])
+    .in('source_doc_no', chosen.map((p) => p.id))
+    .eq('posted', true);
+  if (jeErr) return { ok: false, status: 'booking_read_failed', reason: `Could not read the payments' own entries: ${jeErr.message}` };
+  const live = ((jeRaw ?? []) as Array<{ id: string; source_type: string; source_doc_no: string; reversed: boolean | null }>)
+    .filter((e) => e.reversed !== true && chosen.some((p) => p.id === e.source_doc_no && p.source === e.source_type));
+  if (live.length === 0) return nothing;
+
+  const { data: lineRaw, error: lineErr } = await sb
+    .from('journal_entry_lines')
+    .select('journal_entry_id, account_code, debit_sen')
+    .in('journal_entry_id', live.map((e) => e.id))
+    .eq('account_code', generic);
+  if (lineErr) return { ok: false, status: 'booking_read_failed', reason: `Could not read the payments' own entries: ${lineErr.message}` };
+  const movedSen = ((lineRaw ?? []) as Array<{ debit_sen: number | null }>).reduce((s, l) => s + Number(l.debit_sen ?? 0), 0);
+  if (movedSen <= 0) return nothing;
+
+  const txnDate = isoDay(row.txn_date);
+  const docs = chosen.map((p) => p.docNo).filter(Boolean).join(', ') || 'card payments';
+  const posted = await postJournal(sb, {
+    companyId,
+    entryDate: txnDate,
+    sourceType: 'SETTLEMOVE',
+    sourceDocNo: `SETTLEMOVE-${row.id}`,
+    narration: `${row.acquirer_code} settlement ${txnDate}${row.ref ? ` ref ${row.ref}` : ''} — ${docs} keyed in without a bank: moved from ${generic} to ${own}`,
+    lines: clearingMoveLines(
+      { fromCode: generic, toCode: own },
+      { acquirerCode: row.acquirer_code, txnDate, ref: row.ref, amountSen: movedSen },
+    ),
+  });
+  if (!posted.ok) return { ok: false, status: posted.status, reason: posted.reason ?? 'the posting gate refused the move' };
+  return { ok: true, movedSen, jeNo: posted.jeNo };
+}
 
 /**
  * Confirm ONE settlement line: link the payments it covers, post the entry,
@@ -321,6 +465,28 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
 
   const acq = await loadAcquirer(sb, companyId, row.acquirer_code);
   if (!acq.ok) return { ok: false, status: 'acquirer_unavailable', reason: acq.reason };
+
+  /* STAMP THE TAG the payment was recorded without. A migration-era payment
+     (method 'imported') carries no merchant_provider; the human confirming
+     this line has just decided whose money it is, so the answer is written
+     onto the payment — the next statement finds it as a NAMED candidate, and
+     the watchlists can group it. Only NULL is ever written over: a tag someone
+     chose at the till is not this function's to change. Done BEFORE anything
+     posts, so a failure here stops a clean confirm instead of unwinding one;
+     done twice it writes nothing, so a stamp-failed retry is safe. */
+  for (const [table, source] of [['mfg_sales_order_payments', 'SOPAY'], ['sales_invoice_payments', 'SIPAY']] as const) {
+    const ids = chosen.filter((p) => p.source === source).map((p) => p.id);
+    if (ids.length === 0) continue;
+    const { error } = await sb
+      .from(table)
+      .update({ merchant_provider: acq.acquirer.display_name })
+      .in('id', ids)
+      .eq('company_id', companyId)
+      .is('merchant_provider', null);
+    if (error) {
+      return { ok: false, status: 'provider_stamp_failed', reason: `Could not mark the payment as ${acq.acquirer.display_name}'s: ${error.message}` };
+    }
+  }
 
   /* A previous attempt may have linked and posted but failed on the final
      stamp. Resuming must not read its own links as "someone else already
@@ -388,6 +554,15 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
     return { ok: false, status: posted.status, reason: posted.reason ?? 'the entry was refused by the posting gate' };
   }
 
+  /* 做 2: the money this statement has just named leaves the generic clearing
+     account for the merchant's own. After the fee, which is the confirm's
+     truth; a move that fails leaves the fee standing and asks for a second
+     press, which resumes through the gate's idempotency like the stamp below. */
+  const moved = await moveUntaggedBooking(sb, companyId, acq.acquirer, row, chosen);
+  if (!moved.ok) {
+    return { ok: false, status: moved.status, reason: `${moved.reason} (the fee entry ${posted.jeNo ?? '(none — no fee to book)'} DID post — press confirm again to finish)` };
+  }
+
   const { error: upErr } = await sb
     .from('acc_settlement_rows')
     .update({
@@ -405,7 +580,32 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
        Say so loudly — a retry is a no-op through the gate's idempotency. */
     return { ok: false, status: 'stamp_failed', reason: `${upErr.message} (the entry ${posted.jeNo ?? '(none — no fee to book)'} DID post — press confirm again to finish stamping the line)` };
   }
-  return { ok: true, status: 'confirmed', ...(posted.jeNo ? { jeNo: posted.jeNo } : {}) };
+
+  /* 对账确认 = 钱确定到手:the card payments' Official Receipts turn FORMAL
+     on the acquirer's payout bank (GL redesign item 9 — 卡款 merchant recon
+     确认那笔时自动转正). BEST-EFFORT: the confirm's truth is the fee entry
+     above; a receipt hiccup (or an unconfigured bank letter) leaves the OR
+     in draft for the manual confirm button, never unwinds the settlement. */
+  try {
+    const code = await companyCodeById(sb, companyId);
+    if (code) {
+      await formaliseReceiptsForSettlement(
+        sb, companyId, code,
+        chosen.map((p) => ({ source: p.source, id: p.id })),
+        acq.acquirer.bank_account_code ?? null,
+        input.userName,
+      );
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[receipts] settlement formalise skipped:', e);
+  }
+  return {
+    ok: true,
+    status: 'confirmed',
+    ...(posted.jeNo ? { jeNo: posted.jeNo } : {}),
+    ...(moved.jeNo ? { moveJeNo: moved.jeNo, movedSen: moved.movedSen } : {}),
+  };
 }
 
 /**
@@ -509,6 +709,17 @@ export async function unconfirmSettlementRow(
     });
     if (!reversed.ok) return { ok: false, status: reversed.status, reason: reversed.reason ?? 'the reversal was refused' };
   }
+
+  /* The move that put untagged money onto this merchant's own clearing account
+     (做 2) goes back the same way; a line that moved nothing reverses nothing. */
+  const movedBack = await reverseJournal(sb, {
+    sourceType: 'SETTLEMOVE',
+    sourceDocNo: `SETTLEMOVE-${row.id}`,
+    companyId,
+    entryDate: isoDay(row.txn_date),
+    narration: (orig: { je_no: string }) => `Reversal of ${orig.je_no} — the confirmation was taken back`,
+  });
+  if (!movedBack.ok) return { ok: false, status: movedBack.status, reason: movedBack.reason ?? 'the move reversal was refused' };
 
   /* Links go AFTER the reversal held: releasing the payments while the fee
      entry still stands would let the same money confirm twice against one

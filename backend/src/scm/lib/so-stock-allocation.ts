@@ -60,6 +60,7 @@ import { advanceSoGeneration } from './so-generation';
 import { enqueueStockAllocationRecompute } from './stock-allocation-queue';
 import { SO_TERMINAL_STATES_PGREST } from '../shared/so-terminal-states';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
+import { loadNonSellingWarehouses, warehouseCanPromise } from './non-selling-warehouse';
 
 /* Only the variant-bearing categories run bound. Owner 2026-08-10:
    "SOFA 和 BEDFRAME 因为有变体的问题,所以要走 Convert to PO 的那个模式.
@@ -119,6 +120,13 @@ export type AllocationResult = {
      committed; only the derived header status is pending. The caller re-queues
      the job so a later sweep finishes them. */
   deferredDocNos?: string[];
+  /* Doc numbers holding at least one line the non-selling-warehouse rule kept
+     PENDING (owner ruling 2026-09-08). Present only when non-empty, so a caller
+     that logs it prints a list or nothing. This is NOT a failure — the
+     projection is correct and complete. It is the one difference a salesperson
+     can SEE, so the engine names it rather than leaving the change to be
+     discovered on the floor. */
+  nonSellingWarehouseDocNos?: string[];
 };
 
 /**
@@ -396,6 +404,23 @@ async function runSoStockAllocation(
     const { data: catRows, error: categoryError } = await paginateAll<{ code: string; category: string | null }>((from, to) =>
       sb.from('mfg_products').select('code, category').order('code').range(from, to));
     if (categoryError) throw new Error(`allocation product load failed: ${categoryError.message}`);
+
+    /* WHERE the stock stands decides whether it may be PROMISED (owner ruling,
+       2026-09-08 09:30 +08: 「分配时跳过这九个仓」). A showroom / display piece is
+       standing on the floor doing its job and a unit in a SERVICE warehouse is
+       physically away at the supplier being repaired — neither is available to a
+       customer, and until this line existed the engine asked no question at all
+       about the warehouse it drew from (docs/bugs/0682).
+       Loaded ONCE here, before any of the three paths that can light a line, so
+       none of them can be the one that forgot: the pooled walk, BOUND MODE (a
+       line's own received PO, which never touches inventory_balances) and the
+       SOFA dye-lot matcher are all gated off this single set.
+       `loadNonSellingWarehouses` THROWS on a read failure rather than answering
+       with an empty set — the empty set is indistinguishable from "no warehouse
+       is a showroom", and the wrapper's catch turns the throw into a queued
+       retry, which is the honest outcome. */
+    const nonSellingWarehouses = await loadNonSellingWarehouses(sb);
+    const nonSellingIds: ReadonlySet<string> = new Set(nonSellingWarehouses.keys());
     const batchedCodes = new Set<string>();
     /* P1 SO-SKU spec — SERVICE SKUs (delivery fee / dispose / lift) are not
        goods. Collect their codes here (same catalog pull) so the needs walk
@@ -627,6 +652,13 @@ async function runSoStockAllocation(
     if (balanceError) throw new Error(`allocation balance load failed: ${balanceError.message}`);
     const onHandByBucket = new Map<string, number>();
     for (const r of (balRows ?? []) as Array<{ warehouse_id: string; item_code: string; variant_key: string | null; qty: number }>) {
+      /* Display / showroom / service stock never enters the pool. This is the
+         BELT — the decisive gate is per LINE, at the walk below, because BOUND
+         MODE and the sofa matcher never read this map at all. Both are kept:
+         this one guarantees the units are absent from `remaining` no matter how
+         a bucket key is built, which is the failure the per-line gate cannot
+         see. */
+      if (!warehouseCanPromise(r.warehouse_id, nonSellingIds)) continue;
       const v = r.variant_key ?? '';
       const qty = Number(r.qty ?? 0);
       const whKey = `${r.warehouse_id}::${r.item_code}::${v}`;
@@ -703,9 +735,21 @@ async function runSoStockAllocation(
     type TargetState = { status: 'READY' | 'PENDING' | 'PARTIAL'; qtyReady: number };
     const targetById = new Map<string, TargetState>();
     const remaining = new Map(onHandByBucket);
+    /* Lines whose warehouse may not promise, so the counts below and the caller
+       can say WHICH orders the rule touched rather than reporting a silent
+       difference. */
+    const nonSellingBlockedDocs = new Set<string>();
     // Bound lines first, so their units leave the pool before anyone else walks it.
     for (const n of boundNeeds) {
       if (allocGated.has(n.doc_no)) continue;
+      /* BOUND MODE IS NOT AN EXEMPTION. This pass lights off the line's own
+         `purchase_order_items.received_qty` and never consults
+         `inventory_balances`, so gating only the pooled on-hand read would have
+         left the whole bound path open — exactly the half-applied shape this
+         repo keeps shipping. Falling through (rather than stamping PENDING
+         here) hands the line to the pooled walk below, which stamps it once, in
+         one place. */
+      if (!warehouseCanPromise(n.whId, nonSellingIds)) continue;
       const got = dedicatedReady.get(n.id) ?? 0;
       if (got <= 0) continue;
       const fill = Math.min(got, n.need);
@@ -727,6 +771,17 @@ async function runSoStockAllocation(
       if (targetById.has(n.id)) continue; // settled by its dedicated PO above
       if (allocGated.has(n.doc_no)) {
         targetById.set(n.id, { status: 'PENDING', qtyReady: 0 });
+        continue;
+      }
+      /* THE DECISIVE GATE (owner ruling 2026-09-08). A line bound to a display,
+         showroom or service warehouse is never promised — whatever the pool
+         holds and whatever its own purchase order received. Selling the piece
+         is still possible, through a stock transfer into a selling warehouse;
+         the operator is told so on both surfaces (the pill's
+         `non_selling_warehouse` note). */
+      if (!warehouseCanPromise(n.whId, nonSellingIds)) {
+        targetById.set(n.id, { status: 'PENDING', qtyReady: 0 });
+        nonSellingBlockedDocs.add(n.doc_no);
         continue;
       }
       /* HARD BINDING IS EXCLUSIVE for HARD_BOUND_COMPANY_ID: an un-receipted
@@ -794,6 +849,24 @@ async function runSoStockAllocation(
           continue;
         }
         const whId = group[0]!.whId;
+        /* Sofa is gated on the SAME axis as everything else. It reaches READY
+           through `findCoveringBatch` or through hard binding, and NEITHER
+           reads the pooled on-hand map — so the balance filter above does not
+           reach this path and the gate has to be stated again, here, or the
+           rule ships covering two of its three doors.
+           The 26 migrated display sofas happen to be inert already (17 open
+           lots, all with batch_no NULL, so sofa coverage sees 0 units — PROVEN,
+           run 34177208009). That is a property of the migrated data, not of the
+           rule: the first sofa RECEIVED into a display warehouse against its own
+           PO would carry a batch and would have lit. */
+        if (!warehouseCanPromise(whId, nonSellingIds)) {
+          for (const s of group) {
+            batchTargetByLine.set(s.id, null);
+            targetById.set(s.id, { status: 'PENDING', qtyReady: 0 });
+          }
+          nonSellingBlockedDocs.add(group[0]!.doc_no);
+          continue;
+        }
         const lines = group.map((s) => ({ itemCode: s.item_code, variantKey: s.variant_key, need: s.need }));
         const batch = findCoveringBatch(whId, lines, sofaStock);
         if (batch && whId) claimSofaBatch(whId, batch, lines, sofaStock);
@@ -967,8 +1040,7 @@ async function runSoStockAllocation(
       const order = orderByDoc.get(docNo);
       if (!order) continue;
       const docLines = lines.filter((l) => l.doc_no === docNo);
-      /* Re-evaluate readiness using the live target status (lines that weren't
-         in needs are already shipped → treat as READY). B2C semantics: an SO
+      /* Re-evaluate readiness using the live target status. B2C semantics: an SO
          is ship-able when every MAIN product line (sofa/bedframe/mattress) is
          READY — accessories pending don't block ship. (This used to say the
          label for that state was "READY (PARTIAL)". It is not, since
@@ -981,11 +1053,28 @@ async function runSoStockAllocation(
          — isServiceLine's strongest signal, and the pair to the skip at the top
          of that walk: a SERVICE line skipped there but classified as a short
          accessory here would wedge the header exactly as before. */
+      /* SHIPPED LINES ARE MARKED, NOT INFERRED — and the sentence this replaces
+         claimed the opposite of what the code did. It read "lines that weren't
+         in needs are already shipped → treat as READY", but a shipped line is
+         skipped at `remaining <= 0` before `needs` is built, so
+         `targetStatusById` has no entry for it and the `??` fell through to the
+         STALE stored value, which for goods that shipped straight off a
+         purchase order is PENDING. The order then never advanced to
+         READY_TO_SHIP although every line still owing goods was allocated.
+
+         Measured on prod 2026-09-09 (company 1): 60 live orders carry at least
+         one such line, and on 18 of them every still-outstanding line is READY.
+
+         `fulfilled` is the same arithmetic the needs walk uses above, so the
+         two can only ever agree about which lines are finished. */
       const readinessLines = docLines.map((l) => ({
         item_group: l.item_group,
         item_code: l.item_code,
         category: serviceCodes.has(l.item_code) ? 'SERVICE' : null,
         stock_status: targetStatusById.get(l.id) ?? l.stock_status,
+        fulfilled: (Number(l.qty ?? 0)
+          - (deliveredBySoItem.get(l.id) ?? 0)
+          + (returnedBySoItem.get(l.id) ?? 0)) <= 0,
       }));
       const r = summariseReadiness(readinessLines);
       const cur = order.status;
@@ -1059,6 +1148,9 @@ async function runSoStockAllocation(
     return {
       ok: true, linesFlipped, ordersAdvanced, ordersRegressed,
       ...(deferredDocNos.length > 0 ? { deferredDocNos } : {}),
+      ...(nonSellingBlockedDocs.size > 0
+        ? { nonSellingWarehouseDocNos: [...nonSellingBlockedDocs].sort() }
+        : {}),
     };
   } catch (e) {
     // eslint-disable-next-line no-console

@@ -1,6 +1,7 @@
 import { paginateAll } from './paginate-all';
 import { BASE_COMPANY_CODE, docPrefixForCode } from './companyScope';
 import { isMissingRpc, isUnsupportedTransactionRpc } from './rpc-missing';
+import { todayMyt } from './my-time';
 
 /* ────────────────────── Monthly doc numbers ──────────────────────
    `<PREFIX>-YYMM-NNN`. The AUTHORITY is scm.doc_number_counters — see
@@ -41,8 +42,12 @@ export function maxMonthlySuffix(monthPrefix: string, existing: string[]): numbe
   return max;
 }
 
-export function nextMonthlyDocNo(monthPrefix: string, existing: string[]): string {
-  return `${monthPrefix}-${String(maxMonthlySuffix(monthPrefix, existing) + 1).padStart(3, '0')}`;
+export function nextMonthlyDocNo(monthPrefix: string, existing: string[], digits = 3): string {
+  /* `digits` is the SUFFIX WIDTH the owner can set per company (GL redesign
+     item 8: 如果到时我要 2990-MPV-2609-0001 呢). Width is display only —
+     maxMonthlySuffix parses any length, so widening later renumbers nothing
+     and collides with nothing. */
+  return `${monthPrefix}-${String(maxMonthlySuffix(monthPrefix, existing) + 1).padStart(digits, '0')}`;
 }
 
 /* ────────────────── Reading the month (max+1's only input) ──────────────────
@@ -217,6 +222,7 @@ export async function mintMonthlyDocNo(
   table: string,
   col: string,
   monthPrefix: string,
+  digits = 3,
 ): Promise<string> {
   const floor = maxMonthlySuffix(monthPrefix, await fetchMonthlyDocNos(sb, table, col, monthPrefix));
   const n = await claimDocNoSuffix(sb, monthPrefix, floor);
@@ -225,9 +231,9 @@ export async function mintMonthlyDocNo(
     // behaviour, stated out loud rather than reached by accident.
     // eslint-disable-next-line no-console
     console.warn(`[doc-no] ${DOC_NO_COUNTER_RPC} unavailable for ${monthPrefix}; minting from the live max (pre-counter behaviour, re-issue exposure is back until the migration applies)`);
-    return `${monthPrefix}-${String(floor + 1).padStart(3, '0')}`;
+    return `${monthPrefix}-${String(floor + 1).padStart(digits, '0')}`;
   }
-  return `${monthPrefix}-${String(n).padStart(3, '0')}`;
+  return `${monthPrefix}-${String(n).padStart(digits, '0')}`;
 }
 
 /* ─────────────────────── Mint + insert with collision retry ─────────────────
@@ -420,3 +426,19 @@ export const nextJeNo = async (sb: any, date: Date, coPrefix = ''): Promise<stri
   }
   return `${prefix}-${String(n).padStart(4, '0')}`;
 };
+
+/* ─────────────────────────── The month a series takes ───────────────────────
+   A finance document's number carries the month of the DOCUMENT'S OWN DATE —
+   the invoice date, the voucher date, the day the money was paid — never the
+   day the row happened to be keyed (owner 2026-09-07: 要根据文件日期,而不是文件
+   几时 create 的日期; the case in hand was an AP invoice dated 31/03/2026 minted
+   2990-API-2609-001 because it was typed in September). Blank or unparseable
+   falls back to today IN MALAYSIA — the old `new Date()` read the Worker's UTC
+   clock, so a paper keyed before 08:00 on the 1st took the previous month.
+   Editing the date after the save does NOT re-mint: the number is an id, not a
+   date (his rule: 单据存了后改日期号码不要重发). */
+export function docMonthTag(date: string | null | undefined): string {
+  const s = String(date ?? '').trim();
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : todayMyt();
+  return `${d.slice(2, 4)}${d.slice(5, 7)}`;
+}

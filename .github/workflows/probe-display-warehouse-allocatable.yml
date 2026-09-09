@@ -1,0 +1,54 @@
+name: Can showroom stock be sold (read-only)
+
+# The rule question the display-sofa cutover raised and deliberately did NOT
+# answer. 26 showroom sofas came in exactly as the book holds them, with no
+# marking of any kind — the owner refused a flag, because a flag on a migrated
+# row IS a change to the data. So "a showroom piece is not sellable" has to be
+# asked of the RULE layer instead, and asked about EVERY non-selling warehouse
+# and every item group, not just those 26 sofas.
+#
+# It hunts a refutation, not a description: a line already reading READY off
+# showroom stock, and the pooled stock that would let the next one.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction. Manual trigger,
+# own concurrency group, exit 0 for every legitimate answer.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "company id (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+      show:
+        description: "how many rows to name per class"
+        required: false
+        default: "15"
+        type: string
+
+concurrency:
+  group: probe-display-warehouse-allocatable
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: probe (read-only)
+        run: npx tsx scripts/probe-display-warehouse-allocatable.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          SHOW: ${{ inputs.show }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

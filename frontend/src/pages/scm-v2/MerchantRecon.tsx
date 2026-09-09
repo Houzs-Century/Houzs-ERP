@@ -206,6 +206,10 @@ const ReconcileTab = () => {
      "nothing outstanding" when it means "not loaded". */
   const waiting = watchlist.data?.recordedNotArrived ?? [];
   const waitingSen = waiting.reduce((s, p) => s + p.amountSen, 0);
+  /* Keyed in without a bank: the server lists such a payment ONCE here
+     (docs/bugs/0688 — it used to sit under every merchant), and the confirm
+     that stamps its bank is what moves it onto that merchant's list. */
+  const untagged = waiting.filter((p) => p.acquirerCode == null).length;
 
   return (
     <div className="space-y-4">
@@ -342,6 +346,7 @@ const ReconcileTab = () => {
         <b>{`Card payments no merchant report has reported yet (${waiting.length})`}</b>
         <div style={softText}>
           Keyed in by the sales team; the merchant has not put them on a report. {fmt(waitingSen)} in total.
+          {untagged > 0 && ` ${untagged} keyed in without a bank (未标): shown once here, offered to each merchant's report, and named by the one that confirms it.`}
         </div>
         {watchlist.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
         {!watchlist.isLoading && waiting.length === 0 && (
@@ -360,7 +365,7 @@ const ReconcileTab = () => {
             <tbody>
               {waiting.map((p) => (
                 <tr key={`${p.source}:${p.id}`}>
-                  <td><span className={styles.codeChip}>{p.acquirerCode}</span></td>
+                  <td><span className={styles.codeChip}>{p.acquirerCode ?? '未标'}</span></td>
                   <td>{p.docNo}</td>
                   <td>{p.paidOn}</td>
                   <td className={grid.num} style={{ color: p.ageDays > 14 ? danger : undefined, fontWeight: p.ageDays > 14 ? 700 : undefined }}>
@@ -1048,7 +1053,16 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
                     <input type="checkbox" checked={picked.has(key(p))} onChange={() => toggle(p)}
                       aria-label={`Select ${p.docNo}`} />
                   </td>
-                  <td style={cell}>{p.docNo}</td>
+                  <td style={cell}>
+                    {p.docNo}
+                    {/* A migration-era payment carries no merchant tag; say so
+                        where it is being claimed. Confirming writes the tag.
+                        Strictly null: a candidate WITHOUT the field (an older
+                        cached response) is unknown, not untagged. */}
+                    {p.merchantProvider === null && (
+                      <span style={{ marginLeft: 6, fontSize: 'var(--fs-12)', color: 'var(--text-soft, #8a8578)' }}>未标 merchant</span>
+                    )}
+                  </td>
                   <td style={cell}>{p.paidOn}</td>
                   <td style={cell}>{p.approvalCode ?? '—'}</td>
                   <td style={num}>{fmt(p.amountSen)}</td>

@@ -1,0 +1,31 @@
+{
+  "kind": "attach-uploaded-line-photos",
+  "generatedAt": "2026-09-09T00:57:00.757Z",
+  "account": "816e457307d7fa0491c2a08a72ad5dcd",
+  "bucket": "houzs-erp",
+  "company": 1,
+  "count": 2,
+  "ops": [
+    {
+      "arm": "PURCHASE ORDER",
+      "id": "5c2ffe09-330e-43a1-9bbc-df27d40baad2",
+      "doc": "HC-PO-010169",
+      "dtl": "927193",
+      "before": [],
+      "add": [
+        "po-items/HC-PO-010169/5c2ffe09-330e-43a1-9bbc-df27d40baad2/ac-927193-1.jpg"
+      ]
+    },
+    {
+      "arm": "PURCHASE ORDER",
+      "id": "3e7d2d04-6a8c-4bd1-b841-775052973485",
+      "doc": "HC-PO-010170",
+      "dtl": "927196",
+      "before": [],
+      "add": [
+        "po-items/HC-PO-010170/3e7d2d04-6a8c-4bd1-b841-775052973485/ac-927196-1.jpg"
+      ]
+    }
+  ],
+  "digest": "sha256:2c3f2c43584cbc6298043f0d225d3d5063db889f50ddf7bacb7786dd89f50a1d"
+}

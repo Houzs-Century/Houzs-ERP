@@ -34,6 +34,10 @@ export type PvPdfHeader = {
   currency?: string | null; exchange_rate?: string | number | null;
   credit_account_code: string; total_sen?: number | null;
   supplier?: { code: string; name: string } | null;
+  /* A Customer Refund (§14) prints its kind and the document it refunds. */
+  purpose?: string | null;
+  refund_source_type?: string | null;
+  refund_source_doc_no?: string | null;
   /* The four layers — names as recorded by the approval routes. */
   submitted_at?: string | null; submitted_by?: string | null;
   checked_at?: string | null;   checked_by?: string | null;
@@ -106,9 +110,13 @@ export async function renderPaymentVoucherInto(
   const totalSen = Number(header.total_sen ?? 0) || lines.reduce((s, l) => s + Number(l.amount_sen), 0);
 
   /* An AP Payment IS a payment voucher wearing its settlement — the owner's
-     AutoCount vocabulary keeps both under one printed title. */
+     AutoCount vocabulary keeps both under one printed title. An INTERNAL
+     TRANSFER (GL redesign item 10) is the same paper moving our own money,
+     and says so: the payee the transfer form derives is the marker, so the
+     batch printer re-titles without any new parameter. */
   let y = drawHeader(doc, {
-    docTitle: 'PAYMENT VOUCHER',
+    docTitle: header.purpose === 'CUSTOMER_REFUND' ? 'CUSTOMER REFUND'
+      : String(header.payee_name).startsWith('Internal transfer to ') ? 'TRANSFER VOUCHER' : 'PAYMENT VOUCHER',
     rightMeta: [
       { label: 'PV No', value: header.pv_number },
       { label: 'Date',  value: fmtDocDate(header.voucher_date) },
@@ -117,12 +125,18 @@ export async function renderPaymentVoucherInto(
 
   y = drawInfoColumns(doc, y,
     {
-      title: 'PAY TO',
-      rows: [
-        ['Payee', header.payee_name],
-        ['Supplier', header.supplier ? `${header.supplier.code} · ${header.supplier.name}` : null],
-        ['Note', header.notes ?? null],
-      ],
+      title: header.purpose === 'CUSTOMER_REFUND' ? 'REFUND TO' : 'PAY TO',
+      rows: header.purpose === 'CUSTOMER_REFUND'
+        ? [
+          ['Customer', header.payee_name],
+          ['Refunds', header.refund_source_doc_no ? `${header.refund_source_type ?? ''} ${header.refund_source_doc_no}`.trim() : null],
+          ['Note', header.notes ?? null],
+        ]
+        : [
+          ['Payee', header.payee_name],
+          ['Supplier', header.supplier ? `${header.supplier.code} · ${header.supplier.name}` : null],
+          ['Note', header.notes ?? null],
+        ],
     },
     {
       title: 'VOUCHER DETAILS',
@@ -141,10 +155,14 @@ export async function renderPaymentVoucherInto(
 
   /* Column order is the owner's (2026-09-04): the GL address first — code
      and name in their own columns — then what the money was for. */
+  /* A refund's one line debits the AR control: the customer it is for prints
+     beside the account name, as the party rides the journal line (owner
+     2026-09-08: 看不到是谁 → 可以). */
+  const refund = header.purpose === 'CUSTOMER_REFUND' && String(header.payee_name).trim() !== '';
   const rows = lines.map((l, idx) => [
     String(idx + 1),
     l.debit_account_code,
-    accountName(l.debit_account_code) ?? '—',
+    `${accountName(l.debit_account_code) ?? '—'}${refund ? ` · ${header.payee_name}` : ''}`,
     l.description?.trim() ? l.description : '—',
     fmtRm(Number(l.amount_sen), currency),
   ]);

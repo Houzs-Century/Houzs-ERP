@@ -153,7 +153,7 @@ Payment. So the New page is TWO documents on one route:
 - **Payment Voucher** (`/scm/payment-vouchers/new`) — pays expenses. Free-text
   payee, hand-written lines, **no supplier and no Apply-to-PI section**.
   Purpose stored as `OTHER` (the old three-way purpose dropdown is gone; the
-  document type IS the purpose now).
+  document type IS the purpose now). The detail shows it as **Type: AP Payment / Payment Voucher** (owner 2026-09-07: 为什么我一直看到 purpose - other? → the word Purpose and the old Freight choice are gone; `vendor/scm/lib/pv-type-label.ts`).
 - **AP Payment** (`/scm/payment-vouchers/new?type=ap`) — settles a supplier.
   Supplier required; **no hand-written lines at all**: tick an invoice to pay
   it in full, type a figure for a partial, and the voucher total follows the
@@ -182,6 +182,60 @@ can't fit it and above offers more, and caps its height to the side
 actually available. The list itself is NEVER truncated: few visible rows
 must only ever mean few matches.
 
+**Insert and Enter on the line cards (2026-09-06, 刚刚说的功能这普通 payment
+也要有)**: on the plain voucher's lines, **Insert** adds a line and lands on
+its account picker, and **Enter on an amount** hops to the next line's
+account — adding a line when there is none — so a long voucher is typed
+without reaching for the mouse (`PaymentVoucherNew.tsx`, each card carries
+`data-line`; pinned in `PaymentVoucherNew.test.tsx`). The AP invoice's
+round-3 manners carried across, the same day the Other Debtor bill got them
+(accounting.md, "Other Debtors, round 2").
+
+**Account, then description, then amount; F3 saves (2026-09-08, 这个进 pv 时
+我发现不是很顺手 … 像 autocount 按 f3).** The line card on `PaymentVoucherNew.tsx`
+and the edit card on `PaymentVoucherDetail.tsx` read account → description →
+amount, the order the AP invoice and the Other Debtor bill already keep, so Tab
+walks the way the owner types; the detail's lines table shows the same order.
+**F3** (and Ctrl+S / ⌘S) is the save button from any field of the form —
+`useSaveHotkey` in `frontend/src/vendor/scm/lib/use-save-hotkey.ts`, a window
+listener that swallows the browser's own F3/Ctrl+S while the form is open and
+calls the form's own save, so an unfinished voucher gets the button's sentence
+rather than a half save; the hint reads "F3 saves" beside the button. The same
+hook sits on the AP invoice form, the Other Debtor bill and the Receipts form
+(accounting.md). A Customer Refund's one line debits the AR control, and the
+customer it is for now prints beside the account on the detail table and on
+the sheet (`payment-voucher-pdf.ts`: "ACCOUNT RECEIVEABLE · Chan Ka Weng") —
+the party that rides the journal line, made visible (owner: 看不到是谁 → 可以).
+Contracts: `use-save-hotkey.test.tsx`, `PaymentVoucherNew.test.tsx` (the order,
+F3 on a complete and on an empty voucher), `payment-voucher-pdf.test.ts` (the
+refund line's name).
+
+**The batch runs in voucher-date order (2026-09-07, docs/bugs/0653).** Prepare,
+Check and Approve & post stamp the ticked vouchers oldest voucher date first
+(same date: Draft order), never in tick order — the formal number is minted
+the moment a voucher is checked, so a batch that ran in list order once gave
+the 28/04 vouchers `2990-HPV-2604-001/002` ahead of the 21/04 ones. Across
+separate check sessions the number still follows the moment of checking; the
+one-off `.github/workflows/repair-renumber-pv-series.yml`
+(`backend/scripts/repair-renumber-pv-series.mjs`, plan → apply, confirm
+`RENUMBER PV SERIES`) re-orders a month already stamped out of order —
+unposted vouchers only, text mirrors (audit ledger, supplier advances)
+renamed with them. Pinned in `PaymentVouchers.test.tsx`.
+
+**An invoice a saved voucher already applies to leaves the picker (same day:
+payment 已经分配了就不要显示).** An allocation reserves its invoice the moment the
+voucher is saved, but `paid_sen` moves only at Approve — so the AP Payment
+picker subtracts what other UNPOSTED vouchers (Draft, Prepared, Checked) have
+applied: an invoice with nothing left is not listed, a partly reserved one
+offers only the remainder, and a voucher being edited never counts its own
+rows. `GET /payment-vouchers/reservations/list?supplierId=&excludePvId=`
+(`pendingReservations`) is the source, `usePvReservations` the hook; the
+create and edit doors refuse `over_allocation` (409) naming the voucher that
+holds the amount (`allocationHeadroomBreach`). Advance applications settled
+`paid_sen` when they were applied and are not pending. Pinned in
+`tests/pvReservations.test.ts` (RED on the unfixed tree: a second voucher
+could apply the same invoice in full) and `PaymentVoucherNew.test.tsx`.
+
 **Paid From offers only money** (owner: paid from 应该只能选cash 和银行): the
 picker lists `acc_money` accounts, pre-filled from the company's
 `BANK_DEFAULT` role, and the server refuses any non-money credit account
@@ -193,7 +247,8 @@ accounts only, per company). Contracts: `PaymentVoucherNew.test.tsx`
 
 **And lines take only LEAVES** (owner 2026-09-03, 父户不记账): create and
 draft-edit run every debit code through `requireLeafAccount`
-(accounting-chart.ts) — a header with active sub-accounts refuses
+(accounting-chart.ts) — a header with sub-accounts (retired ones included
+since docs/bugs/0693, the same count the GL gate makes) refuses
 `not_a_leaf_account` at typing time, before the GL gate would refuse the
 same header at approval. The same door also refuses CONTROL accounts
 (AutoCount special SDC/SCC/SBS — AR, AP + customer deposits, stock; the
@@ -229,15 +284,84 @@ GRN links, no supplier invoice ref, that paper belongs to the source).
 Contracts: the copy block of `PaymentVoucherNew.test.tsx`, the label pins
 of `row-menus-remaining-lists.test.ts`.
 
+## 0c2. An allocation names a PI or an AP invoice (2026-09-06)
+
+The AP INVOICE (docs/modules/accounting.md, the non-stock supplier bill) is
+paid by THIS document: `buildAllocations` takes `piId` **or** `apInvoiceId`
+per row (both, or neither, refused — `allocation_two_targets` /
+`allocation_pi_required`), the company guard has an AP twin
+(`allocationApInvoicesOutsideCompany`, which also refuses a DRAFT or
+CANCELLED bill), the post settles an AP row through
+`settleApInvoicePaidSen` (the twin clamp) and records `applied_sen` exactly
+as for a PI — the FX-adoption and GRN re-cost branches are PI-only, a rent
+bill carries no stock — cancel unwinds it by what was applied, and the detail
+answers each allocation with `kind` ('PI' | 'API'), `piId` / `apInvoiceId`.
+On the New AP Payment screen the Apply-to-invoice list shows the supplier's
+open AP invoices beside the purchase invoices (an `AP` tag on the row; tick
+= pay in full, type = part) and the payload names `apInvoiceId` for those.
+**The detail screen's Edit of a DRAFT AP Payment is that same form (2026-09-08,
+owner, on a rejected voucher whose bill was an AP invoice: 当我 reject ap
+payment 后, 他的 edit 不是退回去 knock pi? 而是这样? → 做)** — until then it
+showed the plain voucher's line editor (a "Settle 1 invoice(s)" line demanding
+a debit account) over a picker of purchase invoices only, so the AP invoice
+the voucher paid read "no outstanding purchase invoices" and could not be
+re-knocked. Now (`frontend/src/pages/scm-v2/PaymentVoucherDetail.tsx`,
+`apEdit`): no line editor — the one AP-control debit (400 / 405 by the
+supplier's code, `useAccountRoles`) is written on Save from the ticks; the
+"Linked invoices" card lists the supplier's open PIs **and** AP invoices
+(`EditAllocRow`, keyed by the document's id — `allocKeyOf` reads
+`apInvoiceId` or `piId` off each stored allocation), the voucher's own
+allocations prefilled and listed even when they fell off the open list, tick
+= pay in full, type = part, an `AP` tag on the AP rows (an invoice's
+outstanding is its unpaid balance less OTHER unposted vouchers' reservations,
+once — the old picker added this voucher's own allocation back onto a balance
+that already held it, so an invoice already paid in full by this draft showed
+twice its balance); a Prepay (advance)
+box seeded as the stored total's excess over the allocations; the total
+follows ticks + prepay. Save sends `lines: [the AP line]` and both-kind
+`allocations`; the number stays and the voucher walks Check → Approve again.
+Contract: `frontend/src/pages/scm-v2/PaymentVoucherDetail.test.tsx`.
+
 ## 0d. 预付挂在 supplier (2026-09-02)
 
 The owner's design, in his words: 预付就不能直接挂在supplier 那边吗? An AP
 Payment may pay MORE than the invoices it ticks — type the extra in the
-**Prepay (advance)** field under the PI table. The voucher's one GL line
-debits AP for the WHOLE amount, so the supplier's AP subledger simply runs
-ahead; on post the server records the excess in `scm.acc_supplier_advances`
+**Prepay (advance)** field under the PI table. The field is there whether or
+not the supplier has an open invoice: a supplier with NOTHING outstanding
+still gets the box (the empty-list sentence used to swallow it — owner
+2026-09-06, a new other-creditor he wanted to prepay), and a prepay-only
+voucher composes the same single AP line with no allocation. The voucher's
+one GL line debits AP for the WHOLE amount, so the supplier's AP subledger
+simply runs ahead; on post the server records the excess in `scm.acc_supplier_advances`
 (mig 0340 — one row per voucher, `amount_sen` written once, `applied_sen`
 only grows).
+
+**The control lock and the AP-control line (docs/bugs/0649, 2026-09-06).**
+The typing-time door that refuses a header or a control account on a
+voucher line (`requireLeafAccount`, since #2913) judged EVERY debit line —
+including the supplier payment's one line, which debits the AP control the
+system itself chose — so from 2026-09-03 every AP Payment, 400 and 405
+suppliers alike, was refused with `control_account_locked`. Now
+`supplierOwnControl` resolves the supplier's OWN control first (400-0000 or
+405-0000 by `apControlRole`), the lock skips exactly that line on create and
+on edit, and the `wrong_ap_control` door still refuses the other control; an
+expense voucher's lines are judged as before. The posted entry also stamps
+the supplier on that Dr leg (`pvLines` takes `apControlCode`): the payment
+reads Dr 405-0000 · 405-H001 / Cr bank, the way the invoice side's Cr leg
+does, so the GL's Party column nets a supplier's invoices and payments.
+Pinned by `backend/tests/pvApControlGuard.test.ts` (the fixtures now carry
+`special_type: 'SCC'`, the production shape that had never been in a test)
+and `backend/tests/pvSupplierAdvance.test.ts`.
+
+**The advance on the list (same day).** `GET /payment-vouchers`
+(`listPaymentVouchersHandler`) stamps `advance_remaining_sen` on every row
+(`acc_supplier_advances` amount − applied, when > 0); the list paints such
+rows blue, the Status cell wears "预付未冲 MYR x", and an **Advance open**
+chip keeps only them — AutoCount's blue row, plus the number colour alone
+cannot say. The knock-off card on the posted voucher lists the supplier's
+open **AP invoices beside its purchase invoices** (an `AP` tag; the apply
+sends `apInvoiceId` for those and the route settles them through the AP
+invoice's own clamp).
 
 **Spending it posts NOTHING.** Both legs already live in AP, so the
 knock-off (POST `/payment-vouchers/:id/apply-advance`, surfaced as the
@@ -258,8 +382,22 @@ The owner's ask, his words: 我想要把ocr 功能放去payment 那边，还有�
 bill 我也想要用ocr. Two doors, one reader:
 
 - **In the form** — "📷 Scan bill (OCR)" in the New PV Lines card header.
-  Multi-select = the PAGES of one bill; the form prefills payee, date, notes
-  and lines from what was read.
+  Multi-select = the PAGES of one bill; the form prefills payee, notes and
+  lines from what was read. The voucher's DATE stays today (owner
+  2026-09-08: 普通 payment scan bill 可以 default 放今天吗 → 做 — the date is
+  when he records the payment; until then the bill's date overwrote it);
+  the bill's own date rides in the notes ("BILL T0012 · DATED 2026-08-25")
+  so nothing read is lost. The same `applyExtraction` serves the pile's
+  hand-offs, so a bill or a ticked set opened from there lands today-dated
+  too; the AP invoice form keeps the bill's date — there it IS the invoice
+  date. What the reader fills goes UPPER CASE since
+  2026-09-08 (`upperFill`, `frontend/src/vendor/scm/lib/ocr-fill.ts` — the
+  one home the AP invoice form shares; owner: 帮我 fill data 时默认全部大写);
+  the payee keeps the operator's own saved casing, and typed text is left
+  alone (打字不需要先).
+- **The same pile for AP invoices** — `/scm/ap-invoices/scan` is this page
+  with `target="ap"` (accounting.md, "The bill pile for AP invoices"): same
+  reading, same Merge, but every bill opens as its own AP invoice.
 - **The pile** — `/scm/payment-vouchers/scan` ("📷 Scan bills" on the list).
   Many files at once, the owner's three cases, his taxonomy exactly:
   1. 一张bill 几页 — tick the pages, press Merge: ONE bill. The rule that
@@ -270,13 +408,36 @@ bill 我也想要用ocr. Two doors, one reader:
      per bill.
   3. 多个supplier 多个单 — "pay each bill separately" splits a group; each
      bill opens as its own voucher.
+  4. 几张不同的 receipt 开一张 voucher (2026-09-08: 因为我是三个 receipt 开一张
+     voucher 罢了) — petty cash. Read them, tick them across groups (a
+     checkbox on every read bill), "Open ticked as ONE voucher (N lines)":
+     one line per receipt at the receipt's total, described by WHAT WAS
+     BOUGHT — the item descriptions the reader found, joined with " · "
+     (owner, seeing "99 SPEEDMART" where the pile showed the goods: 转去
+     voucher 就变名字了); the shop + number stands in only for a receipt
+     with no readable item. The payee is
+     LEFT for the person (three shops have no one payee, and no shop's
+     vendor memory is borrowed), the voucher dated by the latest receipt,
+     every receipt's pages attached; refused while the ticked receipts are
+     in different currencies. This is NOT the Merge — Merge makes PAGES of
+     one bill (the button now says so: "These N files are pages of ONE bill
+     — merge"); the owner had pressed it for three receipts and the reader,
+     told they were one document, read one.
 
 The pile takes drag-and-drop and pasted screenshots (Ctrl+V) as well as the
 picker, and each read bill renders tidy: number / dates / total on one
 aligned grid, the bill's own line items tabled under it — EVERY printed
 line is read, no line cap (owner 2026-09-02: 别限制最多只能读8行; the
 model's output budget is sized for ~300 lines and a 300-entry runaway
-guard sits in `coerceBillJson`, not in the prompt).
+guard sits in `coerceBillJson`, not in the prompt). A receipt's FOOTER is
+not lines (docs/bugs/0702; owner: 这个 ocr 会显示 sub total): the prompt asks
+for the goods and service rows plus any discount, tax or rounding row —
+the rows that add up to what was paid — and `stripFooterLines` in
+`backend/src/acc/bill-extract.ts` drops, deterministically, whatever the
+model still lists of a restated total (sub/net/grand total, amount due,
+balance), a tender row (cash, card, DuitNow/QR, TNG and the other wallets,
+tendered, paid), the change and an item count, so the voucher pre-fills at
+the receipt's total rather than twice it.
 
 The reading is POST `/payment-vouchers/extract` (perm
 `scm.payment_voucher.create`; 503 when `ANTHROPIC_API_KEY` is unset) →
@@ -337,6 +498,32 @@ correction / extract hand-back + company scope),
 `PaymentVoucherNew.test.tsx` (记忆自动帮我填 pin).
 
 ## 1. Frontend
+
+### 1a. The Customer Refund screens (2026-09-07, §14)
+
+`PaymentVoucherNew.tsx` opens a third kind on `?type=refund` — **New Customer
+Refund**: no payee typed, no lines, no PI section, no currency; a **Refunds**
+card names the document (Sales Order / Sales Invoice toggle + number, read on
+Enter or blur through `useRefundSource` in `payment-voucher-queries.ts`),
+shows the customer read-only in the header, the payments the document
+collected with an *In the ledger* flag (✓ booked / AutoCount era / not
+booked), the refunds already on it (linked), the three figures (booked here,
+already on refund vouchers, refundable) and a **Refund amount** that opens at
+the headroom; the save sends `refundSourceType`, `refundSourceDocNo`,
+`refundAmountSen` and an empty `lines` — the server composes the Dr AR
+line. An ineligible document prints its reason and shuts the amount. The
+list (`PaymentVouchers.tsx`) grows a **New Customer Refund** button and
+copies a refund as a refund; the Type column reads *Customer Refund*
+(`pv-type-label.ts`, `isRefundPurpose`). The detail
+(`PaymentVoucherDetail.tsx`) labels the payee *Customer*, links **Refunds** to
+the order, hides Supplier and the Type select, and edits the ONE amount
+(`refundAmountSen`) instead of lines. The print (`payment-voucher-pdf.ts`)
+titles the sheet **CUSTOMER REFUND**, REFUND TO the customer, with the
+document. On the order side, `RefundsLine.tsx` under the shared
+`PaymentsTable.tsx` (SAVED mode) lists every refund voucher on the order by
+number with the total refunded — nothing when there is none. Pinned in
+`PaymentVoucherNew.test.tsx`, `PaymentVouchers.test.tsx`, `RefundsLine.test.tsx`,
+`pv-type-label.test.ts`, `payment-voucher-pdf.test.ts`.
 
 | Surface | File |
 |---------|------|
@@ -450,7 +637,7 @@ leans on:
 | Lib | Role |
 |---|---|
 | `lib/pv-rate-adoption.ts` | **PURE.** The FX-rate decision table (§6) and the cancel-path retention predicate. No database. |
-| `lib/pi-settlement.ts` | `settlePiPaidCenti` + the pure `computePiSettlement`. The clamp that stops two vouchers over-paying one invoice lives in PL/pgSQL (`scm.settle_pi_paid_sen`, mig 0147) with a legacy optimistic fallback. |
+| `lib/pi-settlement.ts` | `settlePiPaidSen` + the pure `computePiSettlement`. The clamp that stops two vouchers over-paying one invoice lives in PL/pgSQL (`scm.settle_pi_paid_sen`: 0147 → 0305 → `20260908T0900_scm_settle_pi_paid_sen_enum_status.sql`, which writes the status as the enum it is — until then every call failed 42804 and no paid invoice was ever marked paid, docs/bugs/0700) with a legacy optimistic fallback. |
 | `lib/recost.ts` | `recostFromGrn` — the costing cascade the rate adoption triggers. |
 | `lib/fx.ts` | `normalizeCurrency` / `normalizeExchangeRate` / `safeRate` / `toMyrSen` / `masterRateForCurrency`. |
 | `lib/entity-audit.ts` | `recordEntityAudit` + the `assertAuditWritable` pre-flight. |
@@ -670,7 +857,8 @@ because all-MYR is the overwhelming majority of documents in this system.
 |---|---|
 | `backend/src/scm/lib/pv-rate-adoption.test.ts` | the §6 decision table, exhaustively, with no DB (47 cases) |
 | `backend/tests/pvRateFromPayment.test.ts` | the route: the rate is written, the **real** `recostFromGrn` moves the FIFO lot off its 1:1 basis, the audit rows land, a costing failure cannot fail the payment, all-MYR is inert, cancel retains (13 cases). Its supabase stub is hand-rolled, so it must model `.schema()` — the JE-number prefix reads `public.companies` from a client pinned to `scm` (`docs/bugs/0522`), and a stub without it 500s the whole post. |
-| `backend/tests-pg/pvRateAdoption.pg.test.ts` | real Postgres: the PL/pgSQL `settle_pi_paid_sen` clamp composed with the decision, and the `numeric(14,6)` round-trip. Runs in CI's `backend-postgres` job; SKIPS with no local PG |
+| `backend/tests-pg/pvRateAdoption.pg.test.ts` | real Postgres: the PL/pgSQL `settle_pi_paid_sen` clamp composed with the decision, and the `numeric(14,6)` round-trip. Runs in CI's `backend-postgres` job; SKIPS with no local PG. Its fixture declares `status text` — which is why it never saw docs/bugs/0700 |
+| `backend/tests-pg/settlePiPaidSenEnum.pg.test.ts` | real Postgres, with `status` as the ENUM it really is: the NEWEST `settle_pi_paid_sen` definition in the migration tree lands PAID / PARTIALLY_PAID / POSTED (cancel) / the clamp / not_live on that column (docs/bugs/0700). RED on a tree without the fix — the newest body is then 0305's and raises 42804 |
 | `backend/src/scm/lib/fx-guard.test.ts` | both write-path guards (41 cases) |
 | `backend/tests/fulfillmentCosting.test.ts` | `parseAmountCenti` / `buildLines` / `buildAllocations` — negative and fractional amounts are REFUSED, not clamped to 0 |
 | `backend/tests/companyScopeHardening.test.ts` | the cancel cannot reverse another company's GL entry |
@@ -715,9 +903,14 @@ under `pv-files/<company>/<pv>/<uuid>.<ext>`; the index is `scm.acc_pv_files`
 (mig `backend/src/db/migrations-pg/0352_acc_pv_files.sql`): one row per file,
 `file_key UNIQUE`, `pv_id` FK `ON DELETE CASCADE`, and `sort_no` = attach order
 = the order printing will append the files after the voucher page. Routes live
-in `backend/src/scm/routes/pv-files.ts` (handlers exported bare for the vitest
-harness) and are mounted in `backend/src/scm/routes/payment-vouchers.ts`
-**before** `GET /:id`, so `/:id/files` never falls into the detail matcher.
+in `backend/src/scm/routes/pv-files.ts` (the PV spec + the print bundle; the
+four handlers come from `backend/src/scm/lib/doc-files.ts`, the factory the
+AP invoice's `routes/ap-invoice-files.ts` has shared since 2026-09-06 —
+docs/modules/accounting.md "The AP invoice's paper") and are mounted in
+`backend/src/scm/routes/payment-vouchers.ts` **before** `GET /:id`, so
+`/:id/files` never falls into the detail matcher. The detail's Files card is
+the shared `frontend/src/vendor/scm/components/DocFilesCard.tsx`, bound to
+the voucher's hooks and rules by `PvFilesCard`.
 
 **The four-layer rule applies to evidence.** Upload/delete take
 `scm.payment_voucher.write`; a **CANCELLED** voucher takes no more files
@@ -804,7 +997,12 @@ copy across; JPEG/PNG sits centred on its own A4 page; a file that cannot
 embed (corrupt, truly locked, webp — Workers have no canvas) becomes a
 **notice page naming it**, and so does an index row whose R2 object is gone —
 visible failure on paper, never a silently missing bill, never a failed
-print. A part whose voucher cannot load fails the WHOLE request by pv. The
+print. A part whose voucher cannot load fails the WHOLE request by pv. Since
+2026-09-06 (owner: bundle 也带上) the bundle also appends, after the
+voucher's own files, the files of every **AP invoice the voucher pays**
+(`pv_allocations.ap_invoice_id`, allocation order; each named under its
+invoice number so a notice page says whose) — purchase-invoice allocations
+add nothing, and a voucher paying no AP invoice prints exactly as before. The
 client half is `fetchPvPrintBundle` + `pdfBytesToBase64`
 (`frontend/src/vendor/scm/lib/payment-voucher-queries.ts` /
 `payment-voucher-pdf.ts`); the returned blob exits through `deliverPdfBlob`
@@ -850,3 +1048,122 @@ bundle); `frontend/src/pages/scm-v2/PaymentVouchers.test.tsx` pins that
 every row ticks, a POSTED row offers Print and no approval button, and a
 ROW click ticks nothing; `frontend/src/vendor/scm/components/DataGrid.test.tsx`
 pins both sides of `checkboxOnly` (the default row-click tick stays).
+
+## §12 Voucher numbering — the owner's levers (GL redesign item 8a, 2026-09-05)
+
+`scm.acc_bank_letters` (one prefix letter per money account — Maybank M means
+the `{co}-MPV-YYMM-NNN` series; UNIQUE per company+letter, because two banks on
+one letter would share a series) and `scm.acc_numbering` (suffix width 3-5 —
+his 如果到时我要 2990-MPV-2609-0001 呢; width is display-only, the parsers take
+any length, so changing it renumbers nothing). Maintained by the owner on the
+**Voucher numbering** card of /scm/settlement-setup (`GET/PUT
+/accounting/numbering`, handlers in accounting-numbering.ts) — a new bank is a
+letter typed there, never a deploy. `mintMonthlyDocNo` / `nextMonthlyDocNo`
+take the width as a parameter (default 3, callers unchanged). The migration
+also parked the only two existing vouchers (both DRAFT) on the
+`2990-Draft-YYMM-NNN` series — draft 不占正式号; item 8b mints the formal
+per-bank number at CHECKED. The OR channels (item 9) and transfers (item 10)
+read the SAME letter table. Pinned by backend/tests/voucherNumbering.test.ts.
+
+### §12b The Draft → formal flow (item 8b)
+
+A new voucher mints on the Draft series — `{co}Draft-YYMM-NNN`, YYMM being
+the voucher's own `voucher_date` (owner 2026-09-07, 要根据文件日期; the rule
+and the helper live in accounting.md, "Document numbers follow the document
+date") — (`nextPvDraftNo`) — and earns its formal number at **CHECKED**:
+`checkPaymentVoucherHandler` reads the credit account's letter and the
+company width, mints `{co}{letter}PV-YYMM-NNN` — again the voucher date's
+month, never the check day's — (`mintFormalPvNo`,
+collision-retried the way inserts are), records the renumber on the audit
+trail, and answers `pvNumber` so the screen can say so. A bank with no letter
+REFUSES the check (409 `bank_letter_missing`) with the setup card named — a
+voucher must never mint into a series nobody configured. **The cash drawer is
+the one fixed series** (owner 2026-09-05: 我payment 出去by cash 时就会是
+cpv啊): paid from `roles.CASH`, the mint takes `CASH_SERIES_LETTER` straight —
+`{co}CPV-YYMM-NNN` — with no letters row involved; the same C prints COR on
+the receipt side. The numbering card shows the drawer read-only (`fixedCash`
+on the GET), the PUT refuses both a letter FOR it (`letter_fixed`) and C on
+any bank (`letter_reserved`). A voucher already
+carrying a formal number (a reject → re-check round) keeps it: a slot is
+never burned twice for the same paper. Journals cannot see draft numbers by
+construction — posting happens at approve, after the mint. Pinned by
+backend/tests/pvDraftNumbering.test.ts.
+
+## §13 Internal transfers ride the PV (GL redesign item 10)
+
+The owner's call verbatim: 不能直接在 pv 那边开转账就好吗. A transfer is the
+same paper: the New-PV screen (non-AP mode) carries a 付款/内部转账 toggle —
+transfer mode swaps the payee for a "Transfer to" pick of OUR OWN money
+accounts (Paid From excluded) and the lines for one amount box; the payload
+is a normal voucher whose single line debits the destination
+(payee_name = "Internal transfer to <code> <name>", the marker everything
+else keys on). Same Draft→Checked→Approved chain, same per-bank number
+series, same GL door (approve posts Dr destination / Cr Paid From — a money
+move, not an expense); the PRINT re-titles itself TRANSFER VOUCHER off the
+payee marker, batch printing included. The route refuses a line debiting the
+Paid From account itself (`same_account`, create AND edit, the edit checked
+against the EFFECTIVE Paid From) — a transfer into itself is meaningless and
+an expense line on the paying bank is a typo. Cash bank-ins are the same
+document (drawer → bank). Supplier-payment reports stay clean by
+construction: a transfer's debit leg is a money account, not an expense or
+AP control. Pinned by backend/tests/pvTransfer.test.ts + the same_account
+refusals in the route.
+
+## §14 Customer Refund rides the PV (2026-09-07)
+
+The owner's design check, answered and confirmed (按 1、2、3 的顺序做): a
+refund to a customer is the same paper as a payment voucher — money leaves a
+bank or the drawer through Draft → Prepared → Checked → Approved, with
+attachments, print, batch and audit — with the customer where the supplier
+would be. Purpose `CUSTOMER_REFUND`
+(`20260907T1700_pv_purpose_customer_refund.sql`, an enum value alone in its
+file per 0040's rule); `refund_source_type` (SO / SI), `refund_source_doc_no`,
+`customer_id`, `debtor_code` on the header
+(`20260907T1705_pv_customer_refund_columns.sql`, nullable, with a partial
+index by document). Every rule lives in `lib/pv-refund.ts`; the route file
+holds one-line hooks (it sits at its size ceiling).
+
+- **认单为主.** `GET /payment-vouchers/refund-source?type=SO|SI&docNo=` answers
+  with the document's customer (name, phone, customer_id, debtor code), every
+  payment it collected — marked `booked` when an active SOPAY/SIPAY journal
+  exists — the refunds already on it, and the headroom: `refundableSen` =
+  money THIS ledger booked − every non-cancelled refund voucher (draft or
+  posted, the 0653 reservation shape). `imported` rows and migrated invoices
+  are not booked here and never count. `eligible` + `reason` say why not.
+- **SO any time; SI only when CANCELLED.** A deposit is a Cr AR with no
+  revenue against it, so the refund nets it. A live invoice refunded would
+  leave the customer owing again — the paper for that is the credit note,
+  not built yet — so the route refuses with the reason; a cancelled invoice
+  had its revenue reversed and refunds cleanly.
+- **The one line is the system's.** `POST /payment-vouchers` with purpose
+  `CUSTOMER_REFUND`, `refundSourceType`, `refundSourceDocNo`,
+  `refundAmountSen` (and the money account as Paid From): `refundCreateGuard`
+  loads the source, refuses an ineligible document (409 `refund_not_allowed`)
+  or an amount past the headroom (409 `refund_exceeds_booked`, with the three
+  figures), and composes the single Dr line on `roles.AR` itself — the wire's
+  lines are ignored. The payee is the document's customer name. An edit
+  sends `refundAmountSen` (re-guarded, the line re-composed); `lines` on a
+  refund is refused (`refund_lines_fixed`). The typing-time control lock
+  exempts the refund's own AR line the way it exempts a supplier payment's
+  AP line (`refundOwnControl`).
+- **The GL entry** (`customerRefundLines`, acc/rules.ts): Dr AR (party
+  CUSTOMER — debtor code when the document has one, the name always) / Cr
+  the money account, narration `Customer refund {pv} — {customer} ({doc})`.
+  It offsets the Cr AR the customer's payment booked; 2990's customers have
+  no debtor code, so the two meet by name, which the refund copies from the
+  document.
+- **Numbering: RF.** CHECK mints `{co}{letter}RF-YYMM-NNN` from the money
+  account's letter — cash `{co}CRF` — the voucher date's month; the Draft
+  series is shared with every voucher (`mintFormalPvNo` takes the kind).
+- **Customer credits.** When the document carries a debtor code (HOUZS
+  invoices), POST writes a negative `customer_credits` row
+  (`CUSTOMER_REFUND`, keyed to the voucher) so the credit paid out cannot be
+  spent on the next invoice too; cancel writes it back
+  (`CUSTOMER_REFUND_REVERSAL`). No code, no row (2990).
+- **What else moves: nothing.** The SO/SI keeps its status and paid figures
+  (the money was received); the refund is read off the voucher by the
+  source number. Reports: R&P PAYMENTS under Trade Debtors; Daily Bank a
+  payout; bank rules match it like any PV. Print: the PV layout titled
+  Customer Refund with the document number.
+
+Pinned by `backend/tests/pvCustomerRefund.test.ts`.

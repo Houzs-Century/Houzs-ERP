@@ -293,7 +293,59 @@ try {
     if (blocked.length > SHOW) notice(`R4b: … ${blocked.length - SHOW} more not shown.`);
   }
 
-  notice("DONE (read-only). Interpret R1 as the authoritative bug list; R2 as candidates to review; R4 as reachability.");
+  // ── R5: EMPTY SHIPPED DOCUMENTS — line rows gone, evidence broken (2026-09-04)
+  // A delivery order that counts as delivered (every state but DRAFT and
+  // CANCELLED) yet holds ZERO rows in delivery_order_items. Three 2990
+  // documents had this shape from 2026-07-23 to 2026-09-04 (their rows sat
+  // under vanished header ids); syncSoDeliveredFromDo read them as "nothing
+  // delivered" and released three delivered orders back into MRP. ALWAYS a
+  // bug: an empty shipped document is never an answer. Mig 20260904T0800
+  // refuses the state at the database; the hourly do-link-orphan-sentinel
+  // alarms on it; this section is the on-demand census with the header's own
+  // line_count and OUT-movement count beside each, so the reader can see what
+  // the document CLAIMS it shipped.
+  const emptyShipped = await pg`
+    SELECT coalesce(d.company_id::text, '?') AS company_id,
+           d.do_number, d.so_doc_no, d.status::text AS status, d.line_count,
+           (SELECT count(*) FROM scm.inventory_movements m
+             WHERE m.source_doc_type::text = 'DO' AND m.movement_type::text = 'OUT'
+               AND (m.source_doc_no = d.do_number OR m.source_doc_id::text = d.id::text)) AS out_movements
+      FROM scm.delivery_orders d
+     WHERE upper(coalesce(d.status::text, '')) NOT IN ${pg.unsafe(DO_NOT_DELIVERED_SQL_IN)}
+       AND NOT EXISTS (SELECT 1 FROM scm.delivery_order_items i WHERE i.delivery_order_id = d.id)
+     ORDER BY d.company_id, d.do_number`;
+
+  notice(`R5 EMPTY SHIPPED DOCUMENTS — delivered/shipped delivery orders with NO line rows: ${emptyShipped.length}`);
+  if (emptyShipped.length === 0) {
+    notice("R5: none. Every shipped delivery order still holds the rows that say what shipped.");
+  } else {
+    for (const r of emptyShipped.slice(0, SHOW)) {
+      notice(
+        `R5  co#${r.company_id}  ${r.do_number}  from ${r.so_doc_no ?? "-"}  status=${r.status}  ` +
+          `line_count=${r.line_count ?? "?"}  OUT movements=${r.out_movements}`,
+      );
+    }
+    if (emptyShipped.length > SHOW) notice(`R5: … ${emptyShipped.length - SHOW} more not shown.`);
+  }
+
+  // R5b — the rows themselves, wherever they went: line rows whose header does
+  // not exist. The FK is ON DELETE CASCADE, so these are written by a path that
+  // bypassed it. Eight existed until the 2026-09-04 re-parent.
+  const headerless = await pg`
+    SELECT i.delivery_order_id, count(*) AS rows, min(i.created_at) AS first_at,
+           string_agg(DISTINCT coalesce(s.doc_no, '?'), ', ') AS so_docs
+      FROM scm.delivery_order_items i
+      LEFT JOIN scm.delivery_orders d ON d.id = i.delivery_order_id
+      LEFT JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
+     WHERE d.id IS NULL
+     GROUP BY i.delivery_order_id
+     ORDER BY first_at`;
+  notice(`R5b HEADERLESS LINE ROWS — delivery_order_items whose delivery_order_id has no header: ${headerless.length} group(s)`);
+  for (const r of headerless.slice(0, SHOW)) {
+    notice(`R5b  ${r.delivery_order_id}  ${r.rows} row(s)  first ${r.first_at}  SO(s) ${r.so_docs}`);
+  }
+
+  notice("DONE (read-only). Interpret R1 and R5 as the authoritative bug lists; R2 as candidates to review; R4 as reachability.");
 } finally {
   await pg.end({ timeout: 5 });
 }

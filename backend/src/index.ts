@@ -30,6 +30,7 @@ import roles from "./routes/roles";
 import positions from "./routes/positions";
 import positionCapabilities from "./routes/position-capabilities";
 import departments from "./routes/departments";
+import documentRefs from "./routes/documentRefs";
 import companies from "./routes/companies";
 import tableLayouts from "./routes/tableLayouts";
 import notifications from "./routes/notifications";
@@ -94,6 +95,7 @@ import pos from "./routes/pos";
 // Announcements — office posts every logged-in user sees as a top banner with
 // a "Got it" ack. Ported from Hookka (single-tenant + office-only here).
 import announcements from "./routes/announcements";
+import announcementApproval from "./routes/announcementApproval";
 // Agent Console — owner-only fleet console for the HOOKKA-ported agents
 // (Delivery/Document/CS). Skeleton: controls + runs + config proposals +
 // feedback; the engines register themselves in services/agent-scheduler.ts.
@@ -104,10 +106,14 @@ import { supplierTrack } from "./middleware/supplierTrack";
 import { dbInject, withPgDb } from "./middleware/db";
 import { companyContext } from "./middleware/companyContext";
 import { publicDoScan } from "./routes/publicDoScan";
+import { publicContractorCalendar } from "./routes/publicContractorCalendar";
+import { publicBrandCalendar } from "./routes/publicBrandCalendar";
+import { brandShare } from "./routes/brandShare";
 import { drainEmailOutbox } from "./services/email";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
 import { runAssrAlerts, runAssrDailyDigest } from "./services/assrAlerts";
+import { runOverdueEscalation } from "./services/announcementEscalation";
 import { runScheduledLeadTimeActivations } from "./services/assrLeadTime";
 import { runProjectDueReminders } from "./services/projectReminders";
 // Weekly OCR rule-distill (scan-so self-evolution). Run via the daily 02:00
@@ -116,6 +122,7 @@ import { runProjectDueReminders } from "./services/projectReminders";
 import { distillAllSalespersonRules, warmCatalogCacheForCron, processScanQueueMessage } from "./scm/routes/scan-so";
 import { runAgentHeartbeat } from "./services/agent-scheduler";
 import { getSupabaseService } from "./db/supabase";
+import { sweepStockClose } from "./acc/stock-close";
 import { reapOnce } from "./scm/lib/reaper";
 import { getBranding } from "./services/branding";
 // AutoCount inbound SO pull — restored 2026-07-14. Reads SO from the AutoCount
@@ -314,6 +321,18 @@ app.route("/api/scm", publicScmImages);
 // See routes/publicDoScan.ts and backend/tests/publicDoScan*.test.ts.
 app.route("/api/public/do-scan", publicDoScan);
 
+// PUBLIC no-login CONTRACTOR CALENDAR — also mounted BEFORE the `auth` gate: a
+// booth-setup contractor opens their link with no Houzs account. The gate is the
+// unguessable token in the URL (services/contractorShare.ts) plus the revoke
+// kill switch. The route returns ONLY the confirmed schedule (venue + booth +
+// dates) for the ONE contractor the token resolves to — never finance or any
+// other contractor's events. See routes/publicContractorCalendar.ts.
+app.route("/api/public/contractor-calendar", publicContractorCalendar);
+// PUBLIC no-login BRAND CALENDAR — same shape and the same reasons: a brand's
+// own confirmed events, its display floorplan, its own size and total sales,
+// scoped by the token's brand on every read. See routes/publicBrandCalendar.ts.
+app.route("/api/public/brand-calendar", publicBrandCalendar);
+
 app.use("/api/*", auth);
 
 // Multi-company (Phase 0b): resolve the ACTIVE company + allowed companies per
@@ -363,6 +382,9 @@ app.route("/api/roles", roles);
 app.route("/api/positions", positions);
 app.route("/api/position-capabilities", positionCapabilities);
 app.route("/api/departments", departments);
+// Document reference numbers + document types (mig 20260906T1417): the
+// router carries its own /document-refs and /document-types prefixes.
+app.route("/api", documentRefs);
 app.route("/api/companies", companies);
 // Column layouts: this user's own (synced across their machines) + each
 // company's admin-set default. Any signed-in user reads and writes their OWN
@@ -373,6 +395,9 @@ app.route("/api/notifications", notifications);
 app.route("/api/push", pushDevices);
 app.route("/api/presence", presence);
 app.route("/api/projects", projects);
+// The office side of a brand's share link (generate / revoke). Own file because
+// routes/projects.ts is at its size ceiling. See routes/brandShare.ts.
+app.route("/api/brand-share", brandShare);
 app.route("/api/sales", sales);
 app.route("/api/finance", finance);
 app.route("/api/stockitems", stockItems);
@@ -392,6 +417,9 @@ app.route("/api/mail-center", mailCenter);
 // ADMIN verb and no longer gates reading; CRUD/remind/acks-readout stay on
 // announcements.write.
 app.route("/api/announcements", announcements);
+// The approval + attachment-log routes (submit / approve / reject / files) —
+// same prefix, second router (routes/announcements.ts is at its size ceiling).
+app.route("/api/announcements", announcementApproval);
 // Agent Console — owner-only (requirePermission("*") inside the router).
 // Deliberately in the public /api tree, NOT /api/scm (the scm subtree swaps
 // c.get('user') to scm.staff UUIDs — the known staff-UUID bigint trap).
@@ -615,6 +643,17 @@ export default {
       );
       // Lead-time scheduled activations (mig 080). Cheap: one indexed SELECT
       // for pending rows whose scheduled_for is past.
+      // Announcements: a notice that requires acknowledgement and is past the
+      // 48h overdue window gets its supervisors notified once (owner
+      // 2026-09-06). Cheap: one indexed-ish SELECT, work only for due rows.
+      ctx.waitUntil(
+        runOverdueEscalation(env)
+          .then((r) => {
+            if (r.escalated > 0 || r.scanned > 0)
+              console.log(`[cron ann-escalation] ${JSON.stringify(r)}`);
+          })
+          .catch((e) => console.error("[cron ann-escalation]", e))
+      );
       ctx.waitUntil(
         runScheduledLeadTimeActivations(env)
           .then((r) => {
@@ -823,6 +862,28 @@ export default {
           })(),
         );
       }
+    } else if (event.cron === "5 16 * * *") {
+      // 16:05 UTC = 00:05 MYT — the month-end stock close (GL redesign item 4).
+      // On the 1st this POSTS last month's closing-stock pair the night the
+      // month ends (the owner's 抓实时的); every other night it is the cheap
+      // re-check that heals a late-keyed GRN by reversing and re-posting.
+      // Sweeps the two most recent closed months for every company; every
+      // outcome (including the quiet 'unchanged') lands in
+      // scm.acc_stock_close_runs — the visible trail the owner asked for.
+      ctx.waitUntil(
+        (async () => {
+          const sb = getSupabaseService(env);
+          const { data, error } = await sb.schema("public").from("companies").select("id");
+          if (error) throw new Error(`companies: ${error.message}`);
+          const ids = ((data ?? []) as Array<{ id: number }>).map((r) => Number(r.id));
+          const outcomes = await sweepStockClose(sb, ids, "cron");
+          const changed = outcomes.filter((o) => o.action !== "unchanged");
+          console.log(
+            `[cron stock-close] ${outcomes.length} check(s), ${changed.length} change(s)` +
+            (changed.length ? ` — ${changed.map((o) => `${o.companyId}/${o.month}:${o.action}`).join(", ")}` : ""),
+          );
+        })().catch((e) => console.error("[cron stock-close]", e)),
+      );
     }
   },
   // Cloudflare Queue consumer for the background scan-so OCR pipeline (queue

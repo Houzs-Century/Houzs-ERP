@@ -55,6 +55,7 @@ import gzip
 import json
 import os
 import sys
+import time
 
 import pyodbc
 
@@ -130,7 +131,7 @@ def reload_gz(name):
 NOW = datetime.datetime.now().isoformat(sep=" ")
 manifest = {"exported_at": NOW, "source": "%s live (read-only)" % DB, "round": "reimport-v3 2026-08-28", "files": {}}
 
-SECTION_ORDER = ["so", "iv", "dates", "po1", "po2", "dos", "bal", "costs", "grrefs", "links", "ruler", "remarks"]
+SECTION_ORDER = ["so", "iv", "dates", "po1", "po2", "dos", "bal", "costs", "grrefs", "links", "ruler", "remarks", "stamps", "hdr"]
 START_AT = os.environ.get("START_AT", "so")
 if START_AT not in SECTION_ORDER:
     print("unknown START_AT %r" % START_AT, file=sys.stderr)
@@ -150,6 +151,8 @@ if ONLY == "ruler":
     print("ONLY=ruler refused — the ruler is derived; use START_AT=ruler", file=sys.stderr)
     sys.exit(2)
 
+SECTIONS_RUN = []
+
 def want(key):
     if ONLY:
         run = key == ONLY
@@ -157,6 +160,8 @@ def want(key):
         run = SECTION_ORDER.index(key) >= SECTION_ORDER.index(START_AT)
     if not run:
         print("skip %-6s (kept from the earlier invocation)" % key, flush=True)
+    else:
+        SECTIONS_RUN.append(key)
     return run
 
 # ── shared predicates ────────────────────────────────────────────────────────
@@ -182,13 +187,20 @@ SO_OUT_INNER = (
 )
 
 # ── 1. sales orders, whole documents ─────────────────────────────────────────
+# `h.CurrencyCode` joined the SO and both PO lanes on 2026-09-07. Every migration
+# writer used to put the CONSTANT 'MYR' into the ERP's currency column because
+# these cuts carried no currency at all — and the book holds 22 CNY purchase
+# orders out of 9,408, one of them inside the migrated scope. THESE THREE
+# SECTIONS ONLY TAKE EFFECT ON A RE-CUT; the committed .json.gz files predate the
+# column, and lib/ac-currency.mjs says so out loud rather than defaulting in
+# silence.
 if want("so"):
     so = rows_of(f"""
         SELECT h.DocKey, LTRIM(RTRIM(h.DocNo)) AS DocNo, h.DocDate, h.DebtorCode, h.DebtorName,
                h.Attention, h.Ref, h.SalesAgent, h.SalesLocation, h.Phone1,
                h.InvAddr1, h.InvAddr2, h.InvAddr3, h.InvAddr4,
                h.DeliverAddr1, h.DeliverAddr2, h.DeliverAddr3, h.DeliverAddr4,
-               h.DeliverContact, h.DeliverPhone1,
+               h.DeliverContact, h.DeliverPhone1, h.CurrencyCode,
                d.DtlKey, d.ItemCode, d.Description, d.Desc2, d.Qty, d.UnitPrice,
                d.Location, d.DeliveryDate, d.TransferedQty, d.TransferedPOQty,
                h.UDF_BALANCE, h.UDF_BRANDING, d.UDF_BatchNo, h.UDF_PAYEMENT,
@@ -226,7 +238,7 @@ else:
 if want("po1"):
     po1 = rows_of(f"""
         SELECT h.DocKey, LTRIM(RTRIM(h.DocNo)) AS DocNo, h.DocDate, h.CreditorCode,
-               cr.CompanyName AS CreditorName, h.Ref,
+               cr.CompanyName AS CreditorName, h.Ref, h.CurrencyCode,
                d.DtlKey, d.ItemCode, d.Description, d.Desc2, d.Qty, d.TransferedQty,
                d.UnitPrice, d.Location, d.DeliveryDate, d.FromSODocList, d.FromSODtlKey
           FROM PO h JOIN PODTL d ON d.DocKey = h.DocKey
@@ -244,7 +256,7 @@ else:
 if want("po2"):
     po2 = rows_of(f"""
         SELECT LTRIM(RTRIM(h.DocNo)) AS DocNo, h.DocDate, h.CreditorCode,
-               cr.CompanyName AS CreditorName, h.Ref, h.Cancelled,
+               cr.CompanyName AS CreditorName, h.Ref, h.Cancelled, h.CurrencyCode,
                d.DtlKey, d.ItemCode, d.Description, d.Desc2, d.Qty, d.TransferedQty,
                d.UnitPrice, d.Location, d.DeliveryDate, d.FromSODocList, d.FromSODtlKey
           FROM PO h JOIN PODTL d ON d.DocKey = h.DocKey
@@ -321,6 +333,12 @@ if want("grrefs"):
     grrefs = rows_of(f"""
         SELECT LTRIM(RTRIM(po.DocNo)) AS PoNo, pd.DtlKey AS PoDtlKey, g.ItemCode,
                LTRIM(RTRIM(gr.DocNo)) AS GrNo, gr.DocDate AS GrDate, g.Qty AS GrQty,
+               -- THE RECEIPT'S OWN LOCATION. Added 2026-09-08: both migrated-receipt
+               -- writers were DERIVING the receiving warehouse from the purchase
+               -- order because this column was read here and never selected, so the
+               -- book's answer existed and simply never left the server. A migration
+               -- copies; it does not compute.
+               ISNULL(LTRIM(RTRIM(g.Location)),'') AS Location,
                LTRIM(RTRIM(pi.DocNo)) AS PiNo, pi.DocDate AS PiDate
           FROM GRDTL g
           JOIN GR gr ON gr.DocKey = g.DocKey AND gr.Cancelled='F'
@@ -383,8 +401,269 @@ if want("remarks"):
     r2 = sum(1 for r in rem if (r["Remark2"] or "").strip())
     print("   remarks: %d docs, Remark2 filled on %d" % (len(rem), r2), flush=True)
 
+
+# ── 14. document STAMPS + conversion edges: the DELTA lane ───────────────────
+# WHY THIS SECTION EXISTS. Every importer in this directory is INSERT-ONLY
+# (`ON CONFLICT (doc_no) DO NOTHING`), so a re-run brings in NEW documents and
+# silently ignores every already-migrated document that CHANGED in AutoCount
+# since the last cut. Nothing else in this export carries a timestamp, so
+# "which documents moved?" was unanswerable without this.
+#
+# HOW IT IS SHAPED, and why the shape is not negotiable. DESKTOP-TDH50IT\A2006
+# is the LIVE book and the ERP write-back runs against it: on 2026-09-07 an
+# unbounded scan of a picture column made SalesOrder.InternalSave() fail with
+# "The wait operation timed out", and the identical test passed once the scan
+# was stopped. So this section:
+#   * selects HEADER columns only - never Note/FurtherDescription/any picture
+#     column, which is the read that starved it;
+#   * pages by DocKey with an explicit range predicate (keyset, not OFFSET),
+#     so every statement touches a bounded slice of one index;
+#   * sleeps STAMP_PAUSE_MS between pages, leaving the book to other writers;
+#   * runs under a per-statement timeout (STAMP_TIMEOUT_S, default 15s) so a
+#     statement that goes wrong is killed rather than left holding the book.
+#
+# SINCE bounds it to the delta: the boundary is the last import cut, so the
+# whole section is ~1k documents rather than 55k.
+if want("stamps"):
+    SINCE = os.environ.get("SINCE", "2026-08-29")
+    PAGE = int(os.environ.get("STAMP_PAGE", "2000"))
+    PAUSE = float(os.environ.get("STAMP_PAUSE_MS", "250")) / 1000.0
+    cn.timeout = int(os.environ.get("STAMP_TIMEOUT_S", "15"))
+
+    # (type, header table, detail table, the party column, the detail's
+    #  source-document columns).  FromDocType is NULL on PODTL even for real
+    #  production conversions (verified on PO-010163 <- SO-013423 and on a
+    #  fresh test document), so the PO lane reads FromSODtlKey + FromDocNo and
+    #  never filters on FromDocType.  Every other type does carry it.
+    STAMP_TYPES = [
+        ("SO", "SO", "SODTL", "DebtorCode", False),
+        ("PO", "PO", "PODTL", "CreditorCode", False),
+        ("DO", "DO", "DODTL", "DebtorCode", True),
+        ("IV", "IV", "IVDTL", "DebtorCode", True),
+        ("GR", "GR", "GRDTL", "CreditorCode", True),
+        ("PI", "PI", "PIDTL", "CreditorCode", True),
+    ]
+
+    def paged(table, cols, where, order_key="DocKey"):
+        """Keyset-paged read. Bounded slice per statement, pause between."""
+        out, last, pages = [], -1, 0
+        while True:
+            sql = (
+                "SELECT TOP (%d) %s FROM %s WHERE %s AND %s > %d ORDER BY %s"
+                % (PAGE, cols, table, where, order_key, last, order_key)
+            )
+            chunk = rows_of(sql)
+            if not chunk:
+                break
+            out.extend(chunk)
+            last = int(chunk[-1][order_key])
+            pages += 1
+            if len(chunk) < PAGE:
+                break
+            time.sleep(PAUSE)
+        return out, pages
+
+    stamps = {}
+    edges = {}
+    for kind, h, d, party, has_type in STAMP_TYPES:
+        moved = "(h.CreatedTimeStamp >= '%s' OR h.LastModified >= '%s')" % (SINCE, SINCE)
+        hdrs, pages = paged(
+            "%s h" % h,
+            ("h.DocKey, LTRIM(RTRIM(h.DocNo)) AS DocNo, h.DocDate, h.Cancelled, "
+             "h.%s AS PartyCode, h.CreatedTimeStamp AS Created, h.LastModified AS Modified" % party),
+            "%s AND h.DocNo NOT LIKE 'HC-%%' AND h.DocNo NOT LIKE 'ZZ%%'" % moved,
+            order_key="DocKey",
+        )
+        stamps[kind] = hdrs
+        created = sum(1 for r in hdrs if r["Created"] and str(r["Created"]) >= SINCE)
+        print("   %-3s stamps=%-5d (created %-4d edited %-4d) in %d page(s)"
+              % (kind, len(hdrs), created, len(hdrs) - created, pages), flush=True)
+        time.sleep(PAUSE)
+
+        # the conversion edges of exactly those documents, keyed by DtlKey
+        keys = [int(r["DocKey"]) for r in hdrs]
+        rows = []
+        for i in range(0, len(keys), 400):
+            batch = ",".join(str(k) for k in keys[i:i + 400])
+            if not batch:
+                continue
+            frm = ("d.FromDocType, " if has_type else "NULL AS FromDocType, ")
+            sod = ("d.FromSODtlKey, " if kind == "PO" else "NULL AS FromSODtlKey, ")
+            rows.extend(rows_of(
+                "SELECT LTRIM(RTRIM(h.DocNo)) AS DocNo, d.DtlKey, d.ItemCode, d.Qty, "
+                + frm + sod +
+                "LTRIM(RTRIM(d.FromDocNo)) AS FromDocNo "
+                "FROM %s d JOIN %s h ON h.DocKey = d.DocKey "
+                "WHERE d.DocKey IN (%s) ORDER BY d.DtlKey" % (d, h, batch)))
+            time.sleep(PAUSE)
+        edges[kind] = rows
+        linked = sum(1 for r in rows if (r["FromDocNo"] or "").strip())
+        print("   %-3s edges=%-6d (%d carry a source document)" % (kind, len(rows), linked), flush=True)
+
+    # CHAIN CLOSURE. An IV is raised from a DO and a PI from a GR (measured on
+    # this cut: IV.FromDocType is DO on all 63 sources, PI.FromDocType is GR on
+    # all 60) — so "which sales order is this invoice for?" needs one more hop,
+    # and the parent DO/GR is usually OLDER than SINCE and therefore absent from
+    # the stamps above. Without this step 58 of 63 IV sources and 39 of 60 PI
+    # sources report as untraceable. One bounded lookup per 400 parents, header
+    # columns only, same pause.
+    parents = {"DO": set(), "GR": set()}
+    have = {k: {r["DocNo"] for r in stamps.get(k, [])} for k in ("DO", "GR")}
+    for child, parent_type in (("IV", "DO"), ("PI", "GR")):
+        for r in edges.get(child, []):
+            f = (r.get("FromDocNo") or "").strip()
+            if r.get("FromDocType") == parent_type and f and f not in have[parent_type]:
+                parents[parent_type].add(f)
+    closure = {}
+    for kind, dtl in (("DO", "DODTL"), ("GR", "GRDTL")):
+        want_docs = sorted(parents[kind])
+        rows = []
+        for i in range(0, len(want_docs), 400):
+            lit = "','".join(d.replace("'", "''") for d in want_docs[i:i + 400])
+            if not lit:
+                continue
+            rows.extend(rows_of(
+                "SELECT LTRIM(RTRIM(h.DocNo)) AS DocNo, MIN(d.FromDocType) AS FromDocType, "
+                "MIN(LTRIM(RTRIM(d.FromDocNo))) AS FromDocNo "
+                "FROM %s d JOIN %s h ON h.DocKey = d.DocKey "
+                "WHERE LTRIM(RTRIM(h.DocNo)) IN ('%s') AND d.FromDocNo IS NOT NULL "
+                "GROUP BY LTRIM(RTRIM(h.DocNo))" % (dtl, kind, lit)))
+            time.sleep(PAUSE)
+        closure[kind] = rows
+        print("   %-3s chain closure: %d of %d parent(s) resolved one hop further"
+              % (kind, len(rows), len(want_docs)), flush=True)
+
+    # The receipt lives INSIDE the payload (exportedAt / since / source), not in
+    # ac-reimport-manifest.json. ONLY=<section> rewrites that manifest from
+    # whatever this invocation touched, and the ruler and remarks sections have
+    # no reload branch — so recording here would DELETE two other sections'
+    # entries every time the stamps are re-cut alone. sync-ac-delta.mjs reads
+    # the age off the payload and refuses a stale one.
+    # TIMEZONE-AWARE, unlike the manifest's NOW. This stamp is COMPARED — the
+    # planner refuses a stale snapshot — and it is written on a UTC+8 desktop
+    # and read on a UTC runner. `datetime.now()` is naive, so the first prod
+    # dispatch computed the snapshot's age as MINUS 0.32 days and refused a
+    # snapshot cut 20 minutes earlier. A timestamp that is only ever printed can
+    # be naive; one that is subtracted cannot.
+    exported_at = datetime.datetime.now().astimezone().isoformat()
+    write_gz(
+        "ac-doc-stamps.json.gz",
+        {"rows": {"exportedAt": exported_at, "since": SINCE, "source": DB,
+                  "stamps": stamps, "edges": edges, "closure": closure}},
+    )
+
+# ── 15. HEADER MASTER, every document, every field ──────────────────────────
+# WHY THIS SECTION EXISTS. Section 1 exports the SO header JOINED to its lines,
+# and only for the OUTSTANDING population. Two consequences the header lane
+# cannot live with:
+#
+#   * a document that WAS outstanding when we copied it and has since been
+#     fully delivered drops out of that predicate — and the ERP still holds it,
+#     so its header master must still be kept current. Filtering by SO_OUT here
+#     would quietly define "complete" as "still outstanding", which is the exact
+#     substitution the owner ruled out on 2026-09-07.
+#   * the fields no importer read at insert (Attention, the delivery address,
+#     DisplayTerm, UDF_ToPONo, CurrencyCode) are not in any existing cut, so
+#     "the ERP is blank and AutoCount has a value" could not even be counted.
+#
+# COLUMNAR, like ac-reconcile-truth.json.gz: 22,700 headers x ~30 mostly-empty
+# fields as objects would be megabytes of repeated key names.
+#
+# The receipt (exportedAt / source) lives INSIDE the payload, not in
+# ac-reimport-manifest.json — the same reason the stamps section gives: the
+# consumer subtracts this timestamp to refuse a stale snapshot, so it is
+# timezone-aware, unlike the manifest's naive NOW.
+if want("hdr"):
+    SO_HDR_COLS = [
+        "DocNo", "DocDate", "DebtorCode", "DebtorName", "Attention", "Ref",
+        "SalesAgent", "SalesLocation", "Phone1",
+        "InvAddr1", "InvAddr2", "InvAddr3", "InvAddr4",
+        "DeliverAddr1", "DeliverAddr2", "DeliverAddr3", "DeliverAddr4",
+        "DeliverContact", "DeliverPhone1",
+        "CurrencyCode", "DisplayTerm", "Cancelled",
+        "Remark2", "Remark3", "Remark4", "UDF_Note", "SalesExemptionExpiryDate",
+        "UDF_VENUE", "UDF_BRANDING", "UDF_PDate", "UDF_BALANCE", "UDF_PAYEMENT",
+        "UDF_ToPONo", "LastModified",
+    ]
+    PO_HDR_COLS = [
+        "DocNo", "DocDate", "CreditorCode", "CreditorName", "Ref", "Attention",
+        "InvAddr1", "InvAddr2", "InvAddr3", "InvAddr4",
+        "DeliverAddr1", "DeliverAddr2", "DeliverAddr3", "DeliverAddr4",
+        "DeliverContact", "DeliverPhone1",
+        "CurrencyCode", "DisplayTerm", "Cancelled", "LastModified",
+    ]
+
+    # DO header lane — added 2026-09-07. `ac-partial-dos.json.gz` is a LINE
+    # projection with no header of its own, so DO.CurrencyCode had no book value
+    # anywhere in the tree and `ac-field-identity.mjs` had to mark the DO currency
+    # row notExported. THIS FILE IS ONLY REGENERATED BY A RE-CUT: adding the lane
+    # here does not put DO headers into the committed snapshot, it makes the next
+    # cut carry them.
+    DO_HDR_COLS = [
+        "DocNo", "DocDate", "DebtorCode", "DebtorName",
+        "CurrencyCode", "DisplayTerm", "Cancelled", "LastModified",
+    ]
+
+    def hdr_rows(table, cols, name_col_source):
+        # DocNo is trimmed the way every other section trims it; CreditorName is
+        # the one value that comes from a JOIN rather than the header itself.
+        sel = []
+        for c in cols:
+            if c == "DocNo":
+                sel.append("LTRIM(RTRIM(h.DocNo)) AS DocNo")
+            elif c == "CreditorName":
+                sel.append("cr.CompanyName AS CreditorName")
+            else:
+                sel.append("h.%s" % c)
+        join = " LEFT JOIN Creditor cr ON cr.AccNo = h.CreditorCode" if name_col_source else ""
+        # NO Cancelled filter: a cancelled document the ERP migrated still needs
+        # its header read, and `Cancelled` is exported so the consumer can decide.
+        rows = rows_of(
+            "SELECT %s FROM %s h%s WHERE %s ORDER BY h.DocNo"
+            % (", ".join(sel), table, join, TEST_H)
+        )
+        return [[r[c] for c in cols] for r in rows]
+
+    so_hdr = hdr_rows("SO", SO_HDR_COLS, False)
+    po_hdr = hdr_rows("PO", PO_HDR_COLS, True)
+    do_hdr = hdr_rows("DO", DO_HDR_COLS, False)
+    hdr_exported_at = datetime.datetime.now().astimezone().isoformat()
+    # `do_fields` / `do` are APPENDED beside the existing two. Every consumer
+    # reads the sections it names, so an older reader is unaffected and a reader
+    # on an older FILE finds no `do` key and falls back to whatever it did before
+    # — the same additive shape the currency columns took in the truth exporter.
+    write_gz("ac-doc-headers.json.gz", {"rows": {
+        "exportedAt": hdr_exported_at, "source": DB,
+        "so_fields": SO_HDR_COLS, "so": so_hdr,
+        "po_fields": PO_HDR_COLS, "po": po_hdr,
+        "do_fields": DO_HDR_COLS, "do": do_hdr,
+    }})
+    print("   headers: SO=%d PO=%d DO=%d" % (len(so_hdr), len(po_hdr), len(do_hdr)), flush=True)
+
+# The manifest is MERGED, never replaced. `ONLY=<section>` runs one section, and
+# the sections with no reload branch (ruler, remarks, stamps, hdr) contribute
+# nothing to `manifest["files"]` on such a run — so a plain rewrite DELETED
+# their entries every time another section was re-cut alone. Merging keeps every
+# earlier receipt and lets this run's sections overwrite only their own.
+_prev = {}
+try:
+    with open(os.path.join(OUT, "ac-reimport-manifest.json"), "r", encoding="utf-8") as f:
+        _prev = json.load(f)
+except (FileNotFoundError, ValueError):
+    _prev = {}
+_merged = dict(_prev)
+_merged.update({k: v for k, v in manifest.items() if k != "files"})
+# `exported_at` names the cut the manifest's COUNTS came from. A run that
+# re-cut none of them (ONLY=hdr, ONLY=stamps) must not restamp it — that would
+# date every other section to a run that never touched it.
+if _prev.get("exported_at") and not (set(SECTIONS_RUN) & {"so", "iv", "dates", "po1", "po2", "dos", "bal", "costs", "grrefs", "links"}):
+    _merged["exported_at"] = _prev["exported_at"]
+_merged["last_run"] = {"at": NOW, "sections": SECTIONS_RUN}
+_files = dict(_prev.get("files") or {})
+_files.update(manifest["files"])
+_merged["files"] = _files
 with open(os.path.join(OUT, "ac-reimport-manifest.json"), "w", encoding="utf-8") as f:
-    json.dump(manifest, f, ensure_ascii=False, indent=2)
+    json.dump(_merged, f, ensure_ascii=False, indent=2)
 print("\nmanifest written. NOT produced here (separate passes): ac-stock-layers.json.gz,", flush=True)
 print("photo manifests, fidelity truth (run export-ac-fidelity-truth.py), live ruler (export-ac-live.py).", flush=True)
 cn.close()

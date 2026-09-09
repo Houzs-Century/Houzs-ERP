@@ -27,10 +27,16 @@ import { parsePayment } from "./lib/ac-payment-udf.mjs";
 import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { bookCurrency } from "./lib/ac-currency.mjs";
 import postgres from "postgres";
-import { parseBedframe } from "./lib/parse-bedframe.mjs";
+import { bedframeVariants, parseBedframe } from "./lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
+import { SALESLOC, salesLoc } from "./lib/ac-header-fields.mjs";
+/* The free-text line resolver moved to lib/ac-name-resolver.mjs, unchanged.
+   It decides GOODS vs the owner's blank-line rule below, and nothing could ask
+   it WHY it failed without a second copy of the matcher — docs/bugs/0711. */
+import { buildNameResolver } from "./lib/ac-name-resolver.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -68,8 +74,10 @@ const CATG = { MATTRESS: "mattress", BEDFRAME: "bedframe", ACC: "accessory", ACC
 // but company 1's own pick list names delivery "TRANSPORTATION CHARGES".
 const C1_ALIAS = { "SVC-DELIVERY": "TRANSPORTATION CHARGES", "SVC-DELIVERY-ADD": "TRANSPORTATION CHARGES", "SVC-DELIVERY-CROSS": "TRANSPORTATION CHARGES" };
 // AutoCount SalesLocation short code -> ERP full warehouse name (what the picker stores)
-const SALESLOC = { KL: "KL WAREHOUSE", PG: "PG WAREHOUSE", SRW: "SRW WAREHOUSE", SBH: "SBH WAREHOUSE", HQ: "HQ", JB: "KL WAREHOUSE", KUANTAN: "KL WAREHOUSE" };
-const salesLoc = (c) => c ? (SALESLOC[c.trim().toUpperCase()] || c.trim()) : null;
+/* SALESLOC / salesLoc moved to lib/ac-header-fields.mjs (pure move, identical
+   entries). sync-ac-delta.mjs's header lane keeps `sales_location` up to date
+   and has to resolve it the way THIS insert did; a second copy of the map is
+   how the insert and the update stop agreeing. */
 const isSofa = (c) => /SOFA/i.test(c || "");
 const uomOf = (g) => (g === "bedframe" ? "SET" : "UNIT");
 const strip = (s) => norm(s).replace(/[^A-Z0-9]/g, "");
@@ -87,33 +95,6 @@ function stateOf(pc) {
 
 
 // SOFA decomposition lives in scripts/lib/parse-sofa.mjs (shared with the PO import).
-// free-text name resolver against the live pick list
-function buildNameResolver(products) {
-  const byName = new Map(); // normalized name -> code
-  const byNameNoDim = new Map(); // name w/o (dims) -> code
-  const stripDim = (s) => norm(s).replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
-  for (const p of products) { byName.set(norm(p.name), p.code); const k = stripDim(p.name); if (!byNameNoDim.has(k)) byNameNoDim.set(k, p.code); }
-  const SIZE = [[/\b183\s*X\s*190|6\s*FT|\(K\)/i, "(K)"], [/\b152\s*X\s*190|5\s*FT|\(Q\)/i, "(Q)"], [/\b107\s*X\s*190|3\.5\s*FT|\(SS\)/i, "(SS)"], [/\b(?<!1)90\s*X\s*190|3\s*FT|\(S\)/i, "(S)"], [/\b200\s*X\s*200|\(SK\)/i, "(SK)"]];
-  return (desc) => {
-    if (!desc) return null;
-    const n = norm(desc);
-    if (byName.has(n)) return byName.get(n);
-    const k = stripDim(desc);
-    if (byNameNoDim.has(k)) return byNameNoDim.get(k);
-    if (/DELIVERY\s*FEE|DELIVERY\s*CHARGE|TRANSPORT/i.test(desc)) return "TRANSPORTATION CHARGES";
-    // token match: brand/model words + size suffix
-    let size = null; for (const [re, sz] of SIZE) if (re.test(desc)) { size = sz; break; }
-    if (size) {
-      const base = k.replace(/\bB\/?FRAME\b/g, "BEDFRAME").replace(/\bMATTRESS\b/g, "MATT").replace(/^NK-|^NB-|^DL-|^AK-/g, "").trim();
-      const words = base.split(" ").filter((w) => w.length > 2);
-      let best = null, bestScore = 0;
-      for (const p of products) { const pn = stripDim(p.name); if (!p.code.toUpperCase().endsWith(size)) continue; const score = words.filter((w) => pn.includes(w)).length; if (score > bestScore) { bestScore = score; best = p.code; } }
-      if (best && bestScore >= 2) return best;
-    }
-    return null;
-  };
-}
-
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}${LIMIT ? ` LIMIT=${LIMIT}` : ""}`);
 
@@ -243,7 +224,14 @@ async function main() {
       }
       const grp = CATG[cat] || "others";
       if (!codeSet.has(erp.toUpperCase())) notInPickList.add(erp);
-      const qty = Math.round(num(l.Qty)) || 1;
+      /* NO `|| 1` FALLBACK. `0 || 1` is 1 in JavaScript, so a line the book
+         records at Qty 0 used to be imported as ONE unit of goods. Seven
+         migrated lines carried that invented unit on 2026-09-07 - all of them
+         zero-priced annotations (DISPOSE REQUEST, TRANSPORTATION CHARGES, a
+         bare "LEG: FOLLOW DISPLAY" note). `num()` already returns 0 rather than
+         NaN for anything unparseable, so nothing needs a fallback.
+         Ledger: BUG-HISTORY.md, repair-so-qty-from-autocount.mjs. */
+      const qty = Math.round(num(l.Qty));
       const up = centi(l.UnitPrice); const lineTotal = up * qty; total += lineTotal; if (bucket[grp] !== undefined) bucket[grp] += lineTotal;
       let bf = null, variants = null;
       if (grp === "bedframe") {
@@ -252,17 +240,13 @@ async function main() {
         const fcHit = pending ? null : findColour(bf.color);
         if (bf.color && !pending && !fcHit) exceptions.push({ ac: acDoc, code: l.ItemCode, desc: `colour "${bf.color}" not in fabric_colours`, price: 0 });
         else if (fcHit) { const allow = allowedColour.get((erp || "").toUpperCase()); if (allow && !allow.has(norm(fcHit.colour_id))) exceptions.push({ ac: acDoc, code: l.ItemCode, desc: `colour ${fcHit.colour_id} not a configured option for ${erp}`, price: 0 }); }
-        const tot = (Number(bf.gap) || 0) + (Number(bf.divan) || 0) + (Number(bf.leg) || 0);
-        // key names MUST match a real UI-created line exactly (the Fabrics picker
-        // reads fabricCode; totalHeight is shown as "Total height (auto)")
-        variants = {
-          fabricId: fcHit ? fcHit.fabric_id : null, colourId: fcHit ? fcHit.colour_id : null,
-          fabricCode: fcHit ? fcHit.colour_id : null, colourLabel: fcHit ? fcHit.label : null,
-          fabricLabel: fcHit ? fcHit.fabric_id : null,
-          gap: bf.gap != null ? bf.gap + '"' : null, divanHeight: bf.divan != null ? bf.divan + '"' : null,
-          legHeight: bf.leg != null ? bf.leg + '"' : null, totalHeight: tot ? tot + '"' : null,
-          specials: bf.specials || [],
-        };
+        /* The block itself is lib/parse-bedframe.mjs's `bedframeVariants` — it
+           was written out identically here, in import-ac-outstanding-po.mjs and
+           in topup-ac-po-lines.mjs, and a fourth writer was about to add a
+           fourth copy. Key names MUST match a real UI-created line exactly (the
+           Fabrics picker reads fabricCode; totalHeight is shown as "Total
+           height (auto)"), which is exactly why it is stated once. */
+        variants = bedframeVariants(bf, findColour);
       }
       // description MUST be the ERP product name (what a picker-selected item stores),
       // not the AutoCount Description — else list shows item_code but Edit shows the AC text.
@@ -436,7 +420,11 @@ async function main() {
         V(salesLoc(h.SalesLocation)), V(h.Ref || null), V(h.Ref || null), V(h.UDF_VENUE || null), V(o.venue ? o.venue.id : null), V(h.UDF_BRANDING || null),
         V(h.InvAddr1 || null), V(h.InvAddr2 || null), V(h.InvAddr3 || null), V(h.InvAddr4 || null), V(o.postcode || null), V(o.city || null), V(o.cState || null),
         V(h.Phone1 || null), V(o.emergency || null),
-        V("CONFIRMED"), "1", V("MYR"), V(o.total), V(o.bal), V(o.paid), V(o.paid), V(o.items.length),
+        /* THE BOOK'S OWN CURRENCY (lib/ac-currency.mjs), not the constant this
+           slot used to hold. All 13,365 book sales orders are MYR on the
+           2026-09-07 cut, so today this writes the same value — but it writes it
+           because the book says so, not because the script does. */
+        V("CONFIRMED"), "1", V(bookCurrency(h)), V(o.total), V(o.bal), V(o.paid), V(o.paid), V(o.items.length),
         V(o.bucket.mattress + (o.bucket.sofa || 0)), V(o.bucket.bedframe), V(o.bucket.accessory), V(o.bucket.service), V(o.bucket.others),
         V(o.paid > 0 ? "imported" : null), V(o.pay.appr || null), o.paid > 0 ? (h.DocDate ? V(h.DocDate) : V(CUR)) : "NULL",
         o.procDate ? V(o.procDate) : "NULL",

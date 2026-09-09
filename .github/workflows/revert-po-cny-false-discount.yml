@@ -1,0 +1,102 @@
+name: Revert PO-009335 CNY false discount (plan by default)
+
+# HC-PO-009335 (AutoCount PO-009335) is denominated in CHINESE YUAN. The PO
+# line-discount repair (run 34116301278, 2026-09-07) compared the ERP's
+# DOCUMENT-currency figures against the snapshot's LOCAL-currency (MYR) figures,
+# read the exchange rate as a discount, and wrote RM 13,068.55 of discount that
+# AutoCount does not state -- pushing the header from RM 34,334.90 to
+# RM 21,266.35. Read live from AED_HOUZS, all five lines carry DiscountAmt 0.00
+# and SubTotal = Qty x UnitPrice exactly. 34,334.90 x 0.61938 = 21,266.35: the
+# "38.06% discount" the repair reported IS the rate.
+#
+# Ledger: docs/bugs/0663-*.md
+#
+# PLAN IS THE DEFAULT AND WRITES NOTHING. It prints the header now, every line it
+# would put back, and every line it REFUSES.
+#
+# APPLY MOVES MONEY ON A LIVE DOCUMENT. It needs apply=yes AND the confirm phrase
+# typed in full. It writes discount_sen = 0 and line_total_sen = qty x unit price
+# on the five named lines and re-sums the header -- the same three-part shape the
+# repair used, because mfg-purchase-orders.ts:3042 recomputes
+# lineTotal = max(0, qty*unit - discount) on every edit, so a partial revert is
+# undone by the next person who opens the line.
+#
+# It writes nothing unless the post-revert header would equal RM 34,334.90
+# exactly, and it writes all five lines or none of them. Every row is guarded on
+# still holding the exact values run 34116301278 left; a line somebody has edited
+# since is REFUSED, not overwritten.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      apply:
+        description: "yes = WRITE. Anything else = PLAN only, which is the default."
+        required: false
+        default: "no"
+        type: choice
+        options: ["no", "yes"]
+      confirm:
+        description: 'Type I HAVE REVIEWED THE PO-009335 CNY REVERT to arm apply. Ignored when apply=no.'
+        required: false
+        default: ""
+        type: string
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+
+# Its own group, never the deploy's. Not cancel-in-progress: cancelling an APPLY
+# mid-write is the one thing worse than waiting.
+concurrency:
+  group: revert-po-cny-false-discount-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/revert-po-cny-false-discount.mjs
+        env:
+          MODE: ${{ inputs.apply == 'yes' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/revert-po-cny-false-discount.mjs
+        env:
+          MODE: ${{ inputs.apply == 'yes' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

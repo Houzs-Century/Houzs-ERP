@@ -85,6 +85,7 @@ import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/
 import { formatPhone } from "@2990s/shared/phone";
 import { useHoldAction } from "./use-hold-action";
 import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
+import { customerRefOf } from '../../lib/customer-ref';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the full DoRow (see MfgDeliveryOrdersList.tsx for the 40-field
@@ -175,8 +176,7 @@ const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
 
 // Customer's PO / Ref. Same fallback chain as the SO V2 template.
-const refOf = (r: DoRow): string =>
-  r.po_doc_no || r.customer_so_no || r.ref || "—";
+const refOf = (r: DoRow): string => customerRefOf(r) || "—";
 
 // Origin SO number for the "SO Ref" column — the Delivery Order's most useful
 // cross-doc anchor. Falls back to a dash for direct-issue DOs.

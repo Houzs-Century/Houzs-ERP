@@ -1,0 +1,94 @@
+name: Correct SO item code from AutoCount (go-live)
+
+# The owner's ruling, 2026-09-08: follow AutoCount, correct the sales order.
+#
+# Ten migrated sales-order lines name a product that BOTH AutoCount and our own
+# purchase order disagree with. AutoCount's FromSODtlKey edge pairs each of them
+# with a purchase-order line carrying a byte-identical item code, so the book
+# agrees with itself and with our PO; the row that disagrees with its own source
+# is the sales-order line (docs/bugs/0668, 0671, 0677).
+#
+# PLAN is the default and it writes nothing: it prints the measured population,
+# the per-line table (order, customer, what it says, what the book says), every
+# field that will NOT move with the values it holds now, and a restorable JSON
+# dump it re-reads off disk before it will let apply run.
+#
+# apply needs the confirm phrase typed in full, with the count THIS run measured.
+#
+# Its own concurrency group, so it never queues behind or displaces a release.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "yes = write. Anything else = PLAN only."
+        required: false
+        default: "no"
+        type: choice
+        options: ["no", "yes"]
+      confirm:
+        description: 'Type CORRECT <n> SALES ORDER LINES with the count the plan printed. Ignored when apply=no.'
+        required: false
+        default: ""
+        type: string
+      population:
+        description: "edges = only lines AutoCount's own PODTL edge names (the 2026-09-08 ten bedframes). all = every migrated line carrying a DtlKey."
+        required: false
+        default: "edges"
+        type: choice
+        options: [edges, all]
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: correct-so-item-code-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/correct-so-item-code-from-autocount.mjs
+        env:
+          MODE: ${{ inputs.apply == 'yes' && 'apply' || 'plan' }}
+          POPULATION: ${{ inputs.population }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          OUT: ${{ runner.temp }}/so-item-code-dump.json
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/correct-so-item-code-from-autocount.mjs
+        env:
+          MODE: ${{ inputs.apply == 'yes' && 'apply' || 'plan' }}
+          POPULATION: ${{ inputs.population }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          OUT: ${{ runner.temp }}/so-item-code-dump.json
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

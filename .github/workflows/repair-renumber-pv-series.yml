@@ -1,0 +1,64 @@
+name: Repair PV series order (plan/apply)
+
+# Re-orders one month's FORMAL payment-voucher series by voucher date
+# (docs/bugs/0653: batch Check stamped numbers in tick order, so the 28/04
+# vouchers took 2990-HPV-2604-001/002 ahead of the 21/04 ones). Refuses when
+# any voucher on the series is posted or has a journal — only papers nobody
+# has booked against are renumbered. plan is the default and writes nothing.
+# See backend/scripts/repair-renumber-pv-series.mjs.
+#
+# Secrets resolve by ENVIRONMENT (docs/bugs/0629): the job declares the
+# environment the target names, so STAGING_DATABASE_URL is the Staging
+# environment's own and never the repo-scope trap.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options: [staging, prod]
+      series:
+        description: "The formal series to re-order (e.g. 2990-HPV-2604)"
+        required: true
+        type: string
+      mode:
+        description: "plan (report only) or apply (write)"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'apply requires: RENUMBER PV SERIES'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-renumber-pv-series-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target == 'prod' && 'Production' || 'Staging' }}
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Repair PV series order
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          SERIES: ${{ inputs.series }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo "DATABASE_URL missing"; exit 2; fi
+          node scripts/repair-renumber-pv-series.mjs

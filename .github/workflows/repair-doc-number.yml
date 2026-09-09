@@ -1,0 +1,77 @@
+name: Repair document number (plan/apply)
+
+# Moves ONE finance document onto the number it should have carried — the
+# paper issued before numbers followed the document date (owner 2026-09-07:
+# 要根据文件日期; first case 2990-API-2609-001 → 2990-API-2603-001, an AP
+# invoice dated 31/03/2026). Touches the document's number, its journals'
+# source_doc_no, the number as text in narration / line notes / audit, and
+# drops the emptied series counter so the month leaves no hole. plan is the
+# default and writes nothing. See backend/scripts/repair-doc-number.mjs.
+#
+# Secrets resolve by ENVIRONMENT (docs/bugs/0629): the job declares the
+# environment the target names, so STAGING_DATABASE_URL is the Staging
+# environment's own and never the repo-scope trap.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options: [staging, prod]
+      table:
+        description: "Which document table"
+        required: true
+        default: "ap_invoices"
+        type: choice
+        options: [ap_invoices, payment_vouchers, acc_receipts, acc_debtor_bills, acc_debtor_receipts]
+      from_no:
+        description: "The number the document carries now (e.g. 2990-API-2609-001)"
+        required: true
+        type: string
+      to_no:
+        description: "The number it should carry (e.g. 2990-API-2603-001)"
+        required: true
+        type: string
+      mode:
+        description: "plan (report only) or apply (write)"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'apply requires: RENUMBER DOCUMENT'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-doc-number-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target == 'prod' && 'Production' || 'Staging' }}
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Repair document number
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          TABLE: ${{ inputs.table }}
+          FROM_NO: ${{ inputs.from_no }}
+          TO_NO: ${{ inputs.to_no }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo "DATABASE_URL missing"; exit 2; fi
+          node scripts/repair-doc-number.mjs

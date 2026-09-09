@@ -2,10 +2,14 @@
 // Write the owner-approved compartment + seat-size answers onto the live sofa
 // documents.
 //
-// Source of truth: data/sofa-compartment-corrections-2026-08.json — 33 builds,
-// each naming the SO and the PO raised from it (corrected together so the pair
-// cannot drift), the target piece list left to right, the seat depth, and how
-// the answer was reached.
+// Source of truth: EVERY file in data/ named by scripts/lib/sofa-corrections-
+// source.mjs — today sofa-compartment-corrections-2026-08.json (35 builds, the
+// cutover round) and sofa-compartment-corrections-2026-09.json (15 builds, the
+// -1S placeholder round). The 2026-08 file is NOT replaced: it is still the
+// record of the builds already written, and re-running is inert on them only
+// while it is still loaded. Each build names the SO and the PO raised from it
+// (corrected together so the pair cannot drift), the target piece list left to
+// right, the seat depth, and how the answer was reached.
 //
 // ── WHAT THIS TOUCHES, AND WHAT IT REFUSES TO ───────────────────────────────
 // A build is one AutoCount sofa line = several ERP rows, one per compartment.
@@ -18,43 +22,173 @@
 //   dedication that bound-mode readiness reads. repair-leaked-sofa-lines.mjs
 //   set that precedent for exactly this reason.
 //
+//   TWO IDENTICAL LINES ARE TWO SOFAS. A document can carry the same Desc2
+//   twice because the customer ordered two of the same sofa. Both take the
+//   build; dealing them out as if they were two compartments of one build made
+//   one sofa out of two, silently. scripts/lib/sofa-build-plan.mjs splits them
+//   and has the test.
+//
 //   DELETE ONLY GENUINE SURPLUS, AND ONLY IF NOTHING POINTS AT IT. A surplus SO
 //   line with a PO line or a DO line hanging off it, or a surplus PO line with
 //   a GRN line hanging off it, is REFUSED and reported — never silently cut.
 //
-//   THE MONEY DOES NOT MOVE. The importer put the whole build's price on its
-//   first piece and 0 on the rest; this preserves that exactly, so the document
-//   total is the same to the cent before and after. The script asserts it per
-//   build and aborts the build if it would not hold.
+//   REFUSE A BUILD WHOSE DOWNSTREAM ACTUALLY MOVED STOCK. These documents are
+//   migrated paperwork (`migrated_no_stock`), so correcting the code on a GRN
+//   or DO line changes what the paper says and nothing else. A GRN or DO that
+//   is NOT migrated, or any inventory_movements row naming the document, means
+//   real stock moved under the old code and re-labelling it is not a paperwork
+//   fix. Measured on prod 2026-09-04 for the 2026-09 round: every GRN and DO
+//   involved is migrated_no_stock = true and there are zero movements.
 //
-// DRY-RUN by default; APPLY=1 writes. Every build is its own transaction.
-import fs from "node:fs";
+//   THE MONEY DOES NOT MOVE, AND NOTHING IS RECOMPUTED. The importer put the
+//   whole build's price on its first piece and 0 on the rest. The lead piece
+//   keeps the lead row's own unit_price_sen and its own total column verbatim;
+//   every other piece is 0 in both. BOTH columns are asserted per sofa, because
+//   scm.purchase_order_items.line_total_sen is 0 on all 289 company-1 sofa
+//   lines while unit_price_sen carries the price — a check on the total column
+//   alone passed vacuously there AND refused correct work.
+//
+// DRY-RUN by default; APPLY=1 writes, and APPLY=1 additionally needs
+// CONFIRM="I HAVE REVIEWED THE DRY-RUN" — the house gate this script was
+// grandfathered out of (release-discipline-grandfathered.json) and which
+// docs/bugs/0700 records a sibling workflow failing to pass. Every build is its
+// own transaction, and the run ends by re-reading every corrected document on a
+// FRESH connection and asserting the piece MULTISET, not a row count.
+//
+// RE-RUN: inert on a build already written. Rows are MATCHED to target pieces
+// and updated in place, so a second run re-states the same codes, the same
+// money and the same seat on the same row ids; nothing is inserted, nothing is
+// deleted and no downstream row moves. That is what makes it safe to leave the
+// 2026-08 file loaded beside the 2026-09 one. A build whose target piece SKU is
+// not minted, or whose surplus row is referenced downstream, is REFUSED on
+// every run rather than half-applied.
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
+import { selectBuildRows } from "./lib/sofa-desc2-match.mjs";
+import { loadCorrections } from "./lib/sofa-corrections-source.mjs";
+import {
+  K,
+  compartmentOf,
+  moneyOfRows,
+  pairRowsToPieces,
+  planCopyMoney,
+  seatHeightToWrite,
+  splitBuildCopies,
+  supersededBy,
+} from "./lib/sofa-build-plan.mjs";
+
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const APPLY = process.env.APPLY === "1";
+/* A build changes the ROW COUNT of a live sales order and carries the change
+   down onto the purchase order, the receipt, the delivery note and the invoices
+   raised from them. APPLY=1 alone is one character; the phrase has to be typed
+   on purpose. Refused loudly, never downgraded to a dry-run — an operator who
+   asked for a write and got a plan reads the plan as the write. */
+const CONFIRM_PHRASE = "I HAVE REVIEWED THE DRY-RUN";
+if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
+  console.error(`REFUSED: APPLY=1 needs CONFIRM="${CONFIRM_PHRASE}". Nothing was written.`);
+  process.exit(2);
+}
 const CO = Number(process.env.COMPANY || 1);
 const ONLY = (process.env.DOC || "").trim();
+/* Which round to plan. Blank = every file. "2026-09" plans that round alone,
+   which is how a new round is applied without re-opening the previous one. */
+const FILE = (process.env.FILE || "").trim();
 const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
-const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
-const K = (s) => String(s ?? "").trim().toUpperCase();
+const newSql = () => postgres(DST, { ssl: "require", prepare: false, max: 1 });
+const sql = newSql();
 const modelOf = (code) => { const c = K(code); const d = c.indexOf("-"); return d < 0 ? c : c.slice(0, d); };
-const compOf = (code) => { const c = K(code); const d = c.indexOf("-"); return d < 0 ? "" : c.slice(d + 1); };
 
-const DATA = JSON.parse(fs.readFileSync(path.join(here, "data", "sofa-compartment-corrections-2026-08.json"), "utf8"));
+const DATA = loadCorrections(path.join(here, "data"), FILE);
+
+/** Everything downstream that would follow this build, and whether any of it
+ *  moved real stock rather than migrated paperwork. */
+async function downstreamMovedStock(doc, isPo, rowIds) {
+  const reasons = [];
+  const mv = await sql`SELECT count(*)::int n FROM scm.inventory_movements
+                        WHERE company_id = ${CO} AND source_doc_no = ${doc}`;
+  if (mv[0].n) reasons.push(`${mv[0].n} inventory movement(s) name ${doc}`);
+  if (!rowIds.length) return { reasons, grns: 0, dos: 0 };
+
+  const grns = isPo
+    ? await sql`SELECT DISTINCT g.grn_number, g.migrated_no_stock FROM scm.grn_items gi
+                  JOIN scm.grns g ON g.id = gi.grn_id
+                 WHERE gi.purchase_order_item_id = ANY(${rowIds})`
+    : await sql`SELECT DISTINCT g.grn_number, g.migrated_no_stock FROM scm.grn_items gi
+                  JOIN scm.grns g ON g.id = gi.grn_id
+                  JOIN scm.purchase_order_items pi ON pi.id = gi.purchase_order_item_id
+                 WHERE pi.so_item_id = ANY(${rowIds})`;
+  const dos = isPo ? [] : await sql`SELECT DISTINCT d.do_number, d.migrated_no_stock
+                  FROM scm.delivery_order_items di
+                  JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
+                 WHERE di.so_item_id = ANY(${rowIds})`;
+  for (const g of grns) if (g.migrated_no_stock !== true) reasons.push(`${g.grn_number} is not migrated paperwork — it moved stock`);
+  for (const d of dos) if (d.migrated_no_stock !== true) reasons.push(`${d.do_number} is not migrated paperwork — it moved stock`);
+  return { reasons, grns: grns.length, dos: dos.length };
+}
+
+/* The invoice raised from a migrated receipt or delivery note took the SAME
+   snapshot the GRN and DO lines took — create-migrated-invoices.mjs copies
+   `l._row.item_code` and `l._row.variants` straight off the parent row, at :305
+   for a purchase invoice and :345 for a sales one. So it has to follow this
+   correction for exactly the reason they do, and leaving it behind is what put
+   four invoice lines in production on a `-1S` placeholder their parent had
+   already left (docs/bugs/0687).
+
+   A typed invoice is NOT touched. `migrated_no_stock` is the same assertion the
+   GRN and DO carry rest on; an invoice that fails it is somebody's own
+   statement about what was billed, and it is reported by number rather than
+   overwritten. An invoice never moves stock in this ERP, so this is paperwork
+   only — the same standing the block below rests on. */
+async function carryToPurchaseInvoice(grnItemIds, t) {
+  if (!grnItemIds.length) return { moved: 0, held: [] };
+  const held = await sql`SELECT DISTINCT h.invoice_number FROM scm.purchase_invoice_items l
+                           JOIN scm.purchase_invoices h ON h.id = l.purchase_invoice_id
+                          WHERE l.grn_item_id = ANY(${grnItemIds})
+                            AND h.migrated_no_stock IS DISTINCT FROM true`;
+  const moved = await sql`UPDATE scm.purchase_invoice_items l
+                             SET item_code = ${t.code}, variants = ${sql.json(t.v)}
+                            FROM scm.purchase_invoices h
+                           WHERE h.id = l.purchase_invoice_id
+                             AND l.grn_item_id = ANY(${grnItemIds})
+                             AND h.migrated_no_stock = true
+                       RETURNING l.id`;
+  return { moved: moved.length, held: held.map((r) => r.invoice_number) };
+}
+
+async function carryToSalesInvoice(doItemIds, t) {
+  if (!doItemIds.length) return { moved: 0, held: [] };
+  const held = await sql`SELECT DISTINCT h.invoice_number FROM scm.sales_invoice_items l
+                           JOIN scm.sales_invoices h ON h.id = l.sales_invoice_id
+                          WHERE l.do_item_id = ANY(${doItemIds})
+                            AND h.migrated_no_stock IS DISTINCT FROM true`;
+  const moved = await sql`UPDATE scm.sales_invoice_items l
+                             SET item_code = ${t.code}, variants = ${sql.json(t.v)}
+                            FROM scm.sales_invoices h
+                           WHERE h.id = l.sales_invoice_id
+                             AND l.do_item_id = ANY(${doItemIds})
+                             AND h.migrated_no_stock = true
+                       RETURNING l.id`;
+  return { moved: moved.length, held: held.map((r) => r.invoice_number) };
+}
 
 async function main() {
-  log(`mode=${APPLY ? "APPLY" : "DRY-RUN"} company=${CO}${ONLY ? ` DOC=${ONLY}` : ""}`);
+  log(`mode=${APPLY ? "APPLY" : "DRY-RUN"} company=${CO}${ONLY ? ` DOC=${ONLY}` : ""}${FILE ? ` FILE~${FILE}` : ""}`);
+  for (const f of DATA.files) log(`source: ${f}`);
   const prods = await sql`SELECT code FROM scm.mfg_products WHERE company_id = ${CO}`;
   const codeSet = new Set(prods.map((p) => K(p.code)));
 
-  let nBuilds = 0, nUpd = 0, nIns = 0, nDel = 0, nRefused = 0, nMissingSku = 0, nPo = 0, nGr = 0, nDo = 0;
+  let nBuilds = 0, nSofas = 0, nUpd = 0, nIns = 0, nDel = 0, nRefused = 0, nMissingSku = 0;
+  let nPo = 0, nGr = 0, nDo = 0, nAmbiguous = 0, nStock = 0, nNoSeat = 0;
+  let nPi = 0, nSi = 0, nHeldInv = 0, nRel = 0;
+  /** doc -> { isPo, needle, want, copies } — re-checked on a fresh connection. */
+  const verify = [];
 
-  for (const c of DATA.corrections) {
+  for (const c of DATA.builds) {
     const docs = ONLY ? c.docs.filter((d) => d === ONLY) : c.docs;
     if (!docs.length) continue;
 
@@ -90,12 +224,12 @@ async function main() {
       }
       let rows = isPo
         ? await sql`SELECT i.id, i.item_code AS code, i.qty, i.unit_price_sen, i.line_total_sen AS total,
-                           i.variants, i.description2, i.received_qty, i.so_item_id
+                           i.variants, i.description2, i.received_qty, i.so_item_id, i.linked_ac_dtlkey
                       FROM scm.purchase_order_items i
                      WHERE i.purchase_order_id = ${poId} AND i.item_group = 'sofa'
                      ORDER BY i.id`
         : await sql`SELECT i.id, i.item_code AS code, i.qty, i.unit_price_sen, i.total_sen AS total,
-                           i.variants, i.description2, i.line_no
+                           i.variants, i.description2, i.line_no, i.linked_ac_dtlkey
                       FROM scm.mfg_sales_order_items i
                       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
                      WHERE h.company_id = ${CO} AND i.doc_no = ${doc} AND i.item_group = 'sofa'
@@ -104,12 +238,49 @@ async function main() {
          correction is about by its AutoCount text, or a second, perfectly good
          build looks like surplus and the script tries to delete it. Caught on
          HC-SO-011957, which holds a 1R+1NA+1R sofa AND a Stool. */
-      if (c.desc2Match) {
-        const keep = rows.filter((r) => String(r.description2 ?? "").includes(c.desc2Match));
-        if (keep.length && keep.length !== rows.length)
-          log(`  ${doc}: ${rows.length} sofa lines on the document, ${keep.length} belong to this build`);
-        if (!keep.length) { log(`  ${doc}: no line matches "${c.desc2Match}" — skipped, the build is not on this document`); continue; }
-        rows.length = 0; rows.push(...keep);
+      /* The narrowing itself lives in scripts/lib/sofa-desc2-match.mjs, with
+         its own test, because a plain `includes` here silently dropped seven
+         owner-approved builds on 2026-09-02 (run 33657082664): the data file
+         writes a line break as the two characters backslash-n and prod holds a
+         real newline, so identical text did not compare equal. Read that
+         module before widening anything further — and note that it REFUSES an
+         ambiguous match rather than picking, which is the only reason a looser
+         needle is safe on a document that holds two builds. */
+      /* `lineKeys` — the account book's own DtlKey per line — DECIDES when it is
+         given, because text cannot always tell two builds apart. HC-SO-012827's
+         single chair carries a Desc2 that is a SUBSTRING of the three-seater's
+         on the same document, so every possible needle reaches both and is
+         refused as ambiguous, correctly. The key is identity; see the mode's
+         reasoning and its tests in scripts/lib/sofa-desc2-match.mjs.
+
+         `desc2Exclude` is the LAST resort, under the key, for a build whose
+         rows are NOT keyed and whose text is a strict SUFFIX of its
+         neighbour's. HC-SO-012025 is both at once: the book states the same
+         text twice, once with a leading space and once without, and only the
+         two LEAD rows carry a DtlKey — a correction that adds compartments
+         inserts them with none. Rows carrying the exclusion are not this
+         build. */
+      if (c.desc2Match || c.desc2Exclude || (Array.isArray(c.lineKeys) && c.lineKeys.length)) {
+        const pick = selectBuildRows(rows, c.desc2Match, undefined, { lineKeys: c.lineKeys, exclude: c.desc2Exclude });
+        if (pick.verdict === "linekey")
+          log(`  ${doc}: ${pick.how} — the two builds on this document cannot be told apart by their text`);
+        if (pick.verdict === "exclusion-missing") {
+          log(`  ${doc}: REFUSED — ${pick.how}. Writing this build without it would put it on BOTH sofas.`);
+          nAmbiguous++; continue;
+        }
+        if (pick.verdict === "ambiguous") {
+          log(`  ${doc}: REFUSED — "${c.desc2Match}" reaches ${pick.texts.length} DIFFERENT builds on this document, and telling them apart is the whole job of desc2Match: ${pick.texts.map((t) => JSON.stringify(t.slice(0, 56))).join("  vs  ")}`);
+          nAmbiguous++; continue;
+        }
+        if (!pick.rows.length) {
+          log(`  ${doc}: no line matches ${pick.verdict === "none" && Array.isArray(c.lineKeys) && c.lineKeys.length ? `line key(s) ${c.lineKeys.join(", ")}` : `"${c.desc2Match}"`}${c.desc2Exclude ? ` once ${JSON.stringify(c.desc2Exclude)} is excluded` : ""} (${pick.how}) — skipped, the build is not on this document`);
+          continue;
+        }
+        if (pick.verdict === "normalised")
+          log(`  ${doc}: ${pick.how} — the corrections file writes the line break as \\n, the document holds a real one`);
+        if (pick.rows.length !== rows.length)
+          log(`  ${doc}: ${rows.length} sofa lines on the document, ${pick.rows.length} belong to this build`);
+        rows.length = 0; rows.push(...pick.rows);
       }
       if (!rows.length) {
         /* Say WHY, so a missing build is diagnosable instead of a shrug: does
@@ -131,154 +302,416 @@ async function main() {
         nMissingSku++; continue;
       }
 
-      /* Pair by code so an unchanged piece keeps its row - and its id. */
-      const pool = [...rows];
-      const pairs = [];
-      for (const w of want) {
-        const i = pool.findIndex((r) => K(r.code) === w);
-        pairs.push({ want: w, row: i >= 0 ? pool.splice(i, 1)[0] : null });
-      }
-      for (const p of pairs) if (!p.row && pool.length) p.row = pool.shift(); // reuse a surplus row rather than delete+insert
-      const surplus = pool;
+      /* TWO IDENTICAL LINES ARE TWO SOFAS. Split before pairing. */
+      const split = splitBuildCopies(rows, want);
+      if (!split.ok) { log(`  ${doc}: REFUSED — ${split.why}`); nRefused++; continue; }
 
-      const totalBefore = rows.reduce((s, r) => s + Number(r.total ?? 0), 0);
-      const lead = rows.reduce((a, r) => (Number(r.total ?? 0) > Number(a.total ?? 0) ? r : a), rows[0]);
-      const unit = Number(lead.unit_price_sen ?? 0);
-      const qty = Number(lead.qty ?? 1) || 1;
-      const totalAfter = unit * qty;
-      if (totalAfter !== totalBefore) {
-        log(`  ${doc}: REFUSED — money would move (${totalBefore} -> ${totalAfter})`);
-        nRefused++; continue;
+      /* Nothing downstream may have moved real stock under the old code. */
+      const down = await downstreamMovedStock(doc, isPo, rows.map((r) => r.id));
+      if (down.reasons.length) {
+        log(`  ${doc}: REFUSED — ${down.reasons.join("; ")}`);
+        nStock++; continue;
       }
 
-      // nothing may point at a row we are about to delete
-      const blockers = [];
-      for (const r of surplus) {
-        if (isPo) {
-          const [{ n }] = await sql`SELECT COUNT(*)::int n FROM scm.grn_items WHERE purchase_order_item_id = ${r.id}`;
-          if (n) blockers.push(`${r.code}: ${n} GRN line(s)`);
-        } else {
-          const [{ n: a }] = await sql`SELECT COUNT(*)::int n FROM scm.purchase_order_items WHERE so_item_id = ${r.id}`;
-          const [{ n: b }] = await sql`SELECT COUNT(*)::int n FROM scm.delivery_order_items WHERE so_item_id = ${r.id}`;
-          if (a + b) blockers.push(`${r.code}: ${a} PO line(s), ${b} DO line(s)`);
+      const seat = seatHeightToWrite(c.seat);
+      if (c.seat && !seat.write) { log(`  ${doc}: ${seat.why}`); nNoSeat++; }
+
+      /* Plan every sofa of this build before writing any of it: one bad sofa
+         refuses the whole build rather than half-applying it. */
+      const sofas = [];
+      let bad = null;
+      for (const copyRows of split.copies) {
+        const money = planCopyMoney(copyRows);
+        if (!money.ok) { bad = money.why; break; }
+        const { pairs, surplus } = pairRowsToPieces(copyRows, want);
+
+        /* ── A COLLAPSE MAY RELEASE A DEDICATION, AND ONLY A DEDICATION ──────
+           A build that goes from several rows to ONE leaves the dropped rows'
+           purchase dedications pointing at rows that are about to disappear,
+           and the guard below refused the whole build for it. That is
+           HC-SO-011099 and docs/bugs/0719: his answer was never in doubt, our
+           way of writing it was stuck, and writing only the purchase half —
+           which DOES succeed — would have left the factory's document saying
+           `2S` while the customer's still said `1A(LHF)+1A(RHF)`.
+
+           The fix 0719 asks for is that the dedication be dealt with as part of
+           the collapse. It is RELEASED (`so_item_id = NULL`), never re-pointed
+           onto the surviving row: the dedication is one sales line to one
+           purchase line, and pointing a second purchase line at the surviving
+           row would read as two incoming units of one ordered piece — the same
+           reason an inserted PO line never copies `so_item_id`. The released
+           line is then surplus on the purchase side and the PO half of this
+           same entry deletes it, which is why the conditions below refuse
+           unless that half exists and can run.
+
+           FIVE CONDITIONS, ALL OF THEM REFUSALS:
+             1. sales-order side only — a GRN hanging off a PO line is goods,
+                not paperwork, and is not this script's to move;
+             2. the build collapses to ONE piece, so "which surviving row did
+                this purchase line mean" has exactly one answer and needs no
+                guess;
+             3. the surplus row has NO delivery-order line — something already
+                shipped against it, and 「已经出货了的就随便把」 says leave those
+                alone rather than re-file them;
+             4. every purchase line being released is itself free of goods
+                receipts, so the PO half can really delete it;
+             5. this entry NAMES the purchase order, so the half that cleans it
+                up is going to run. Without that the release would leave an
+                unbound purchase line stating the old build — worse than the
+                refusal it replaced. */
+        const releases = [];
+        const blockers = [];
+        for (const r of surplus) {
+          if (isPo) {
+            const [{ n }] = await sql`SELECT COUNT(*)::int n FROM scm.grn_items WHERE purchase_order_item_id = ${r.id}`;
+            if (n) blockers.push(`${r.code}: ${n} GRN line(s)`);
+            continue;
+          }
+          const poLines = await sql`SELECT i.id, i.item_code, p.po_number
+                                      FROM scm.purchase_order_items i
+                                      JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+                                     WHERE i.so_item_id = ${r.id}`;
+          const [{ n: nDo }] = await sql`SELECT COUNT(*)::int n FROM scm.delivery_order_items WHERE so_item_id = ${r.id}`;
+          if (!poLines.length && !nDo) continue;
+          if (nDo) { blockers.push(`${r.code}: ${poLines.length} PO line(s), ${nDo} DO line(s) — something shipped against it`); continue; }
+          if (pairs.length !== 1) {
+            blockers.push(`${r.code}: ${poLines.length} PO line(s), and this build keeps ${pairs.length} pieces — which one the purchase line meant is not written down anywhere`);
+            continue;
+          }
+          const poDocs = new Set(c.docs.filter((d) => /^HC-PO-/.test(d)));
+          const notNamed = poLines.filter((x) => !poDocs.has(x.po_number) && !poDocs.has(`HC-${String(x.po_number).replace(/^HC-/, "")}`));
+          if (notNamed.length) {
+            blockers.push(`${r.code}: ${notNamed.map((x) => x.po_number).join(", ")} holds a line dedicated to it and this correction does not name that purchase order, so nothing would clean the line up`);
+            continue;
+          }
+          let received = null;
+          for (const x of poLines) {
+            const [{ n }] = await sql`SELECT COUNT(*)::int n FROM scm.grn_items WHERE purchase_order_item_id = ${x.id}`;
+            if (n) { received = `${x.po_number} ${x.item_code}: ${n} GRN line(s)`; break; }
+          }
+          if (received) { blockers.push(`${r.code}: the purchase line dedicated to it has received goods — ${received}`); continue; }
+          releases.push({ soItemId: r.id, from: r.code, poLines });
         }
-      }
-      if (blockers.length) {
-        log(`  ${doc}: REFUSED — a surplus line is referenced downstream: ${blockers.join("; ")}`);
-        nRefused++; continue;
-      }
+        if (blockers.length) { bad = `a surplus line is referenced downstream: ${blockers.join("; ")}`; break; }
 
-      const plan = [];
-      pairs.forEach((p, idx) => {
-        const first = idx === 0;
-        const v = { ...(p.row?.variants ?? {}) };
-        if (c.seat) v.seatHeight = String(c.seat);
-        if (c.colour && !v.colourLabel) v.colourLabel = c.colour;
-        const price = first ? unit : 0;
-        const tot = first ? unit * qty : 0;
-        if (p.row) plan.push({ op: "update", id: p.row.id, from: p.row.code, to: p.want, price, tot, v });
-        else plan.push({ op: "insert", to: p.want, price, tot, v, from: null });
-      });
-      for (const r of surplus) plan.push({ op: "delete", id: r.id, from: r.code });
+        const plan = [];
+        pairs.forEach((p, idx) => {
+          const first = idx === 0;
+          const v = { ...(p.row?.variants ?? {}) };
+          if (seat.write) v.seatHeight = seat.value;
+          if (c.colour && !v.colourLabel) v.colourLabel = c.colour;
+          /* NOTHING IS RECOMPUTED: the lead keeps its own numbers, the rest 0. */
+          const price = first ? money.price : 0;
+          const tot = first ? money.total : 0;
+          /* Each piece keeps its own qty — an existing row's, or the row an
+             inserted piece is copied from. `charged` below multiplies by THAT,
+             so a first piece whose qty differs from the lead's is caught by the
+             assertion instead of quietly repricing the line. */
+          const qty = Number((p.row ?? copyRows[0]).qty ?? 1) || 1;
+          if (p.row) plan.push({ op: "update", id: p.row.id, from: p.row.code, to: p.want, price, tot, qty, v });
+          else plan.push({ op: "insert", to: p.want, price, tot, qty, v, from: null });
+        });
+        /* The release goes in FRONT of the delete it exists for: same
+           transaction, and the row cannot be cut from under a live pointer. */
+        for (const rel of releases)
+          plan.push({ op: "release", id: rel.soItemId, from: rel.from, poLines: rel.poLines });
+        for (const r of surplus) plan.push({ op: "delete", id: r.id, from: r.code });
+
+        /* The assertion, restated on the plan itself rather than on intent.
+           Only the ops that LEAVE A PRICED ROW count — a delete removes one and
+           a release touches no money column at all. Naming them positively
+           rather than excluding `delete` is deliberate: the previous spelling
+           would have summed `undefined` the moment a new op appeared and turned
+           the whole assertion into NaN, which compares false against everything
+           and would have refused every build with a money message that is not
+           about money. */
+        const after = plan.filter((p) => p.op === "update" || p.op === "insert")
+          .reduce((s, p) => ({ total: s.total + p.tot, charged: s.charged + p.price * p.qty }), { total: 0, charged: 0 });
+        if (after.total !== money.before.total || after.charged !== money.before.charged) {
+          bad = `money would move (total ${money.before.total} -> ${after.total}, charged ${money.before.charged} -> ${after.charged})`;
+          break;
+        }
+        sofas.push({ plan, src: copyRows[0], rows: copyRows });
+      }
+      if (bad) { log(`  ${doc}: REFUSED — ${bad}`); nRefused++; continue; }
 
       nBuilds++;
-      log(`  ${doc}  ${model}  ${rows.map((r) => compOf(r.code)).join("+")}  ->  ${c.pieces.join("+")}${c.seat ? `  @${c.seat}"` : ""}`);
-      for (const p of plan) {
-        if (p.op === "update" && K(p.from) === K(p.to)) { log(`      keep   ${compOf(p.to)}${c.seat ? ` (seat ${c.seat})` : ""}`); nUpd++; }
-        else if (p.op === "update") { log(`      change ${compOf(p.from)} -> ${compOf(p.to)}`); nUpd++; }
-        else if (p.op === "insert") { log(`      add    ${compOf(p.to)}`); nIns++; }
-        else { log(`      remove ${compOf(p.from)}`); nDel++; }
+      nSofas += sofas.length;
+      const before = moneyOfRows(rows);
+      log(`  ${doc}  [${c.source}]  ${model}  ${rows.map((r) => compartmentOf(r.code)).join("+")}  ->  ${sofas.length > 1 ? `${sofas.length} x ` : ""}${c.pieces.join("+")}${seat.write ? `  @${seat.value}"` : ""}   money total ${before.total}, charged ${before.charged}${down.grns + down.dos ? `   downstream: ${down.grns} GRN, ${down.dos} DO (all migrated paperwork)` : ""}`);
+      if (sofas.length > 1) log(`      ${split.how}`);
+      for (const s of sofas) {
+        if (sofas.length > 1) log(`      -- sofa ${sofas.indexOf(s) + 1} of ${sofas.length}`);
+        for (const p of s.plan) {
+          if (p.op === "update" && K(p.from) === K(p.to)) { log(`      keep   ${compartmentOf(p.to)}${seat.write ? ` (seat ${seat.value})` : ""}`); nUpd++; }
+          else if (p.op === "update") { log(`      change ${compartmentOf(p.from)} -> ${compartmentOf(p.to)}`); nUpd++; }
+          else if (p.op === "insert") { log(`      add    ${compartmentOf(p.to)}`); nIns++; }
+          else if (p.op === "release") {
+            log(`      release ${compartmentOf(p.from)} — ${p.poLines.map((x) => `${x.po_number} ${x.item_code}`).join(", ")} stops being dedicated to a row this collapse removes; the PO half of this entry deletes it`);
+            nRel += p.poLines.length;
+          }
+          else { log(`      remove ${compartmentOf(p.from)}`); nDel++; }
+        }
       }
+      /* THE WHOLE ADDRESS TRAVELS WITH THE BUILD, not half of it. The verifier
+         re-reads the WHOLE document and narrows to this build the same way the
+         writer did; anything left behind here makes it compare one build's
+         target against BOTH builds' rows and both builds' money. Measured
+         twice, on the same defect at two different addressing modes: prod APPLY
+         run 34245004498 wrote HC-SO-012025 correctly and completely - the
+         document came out holding 1A(LHF)+1NA+CNR+1A(RHF) and a separate 1S,
+         exactly the two sofas the owner ruled - and the check still reported
+         `pieces are [1A(LHF) | 1A(RHF) | 1NA | 1S | CNR], expected [1S]` and
+         failed the job, because `desc2Exclude` was not on the verify item. A
+         verifier that narrows differently from the writer is not verifying the
+         write; it is asking a different question. */
+      verify.push({ doc, isPo, poId, needle: c.desc2Match, lineKeys: c.lineKeys, exclude: c.desc2Exclude, want, copies: sofas.length, money: before, source: c.source });
 
       if (!APPLY) continue;
       const touched = [];
-      await sql.begin(async (tx) => {
-        for (const p of plan) {
-          if (p.op === "delete") {
-            if (isPo) await tx`DELETE FROM scm.purchase_order_items WHERE id = ${p.id}`;
-            else await tx`DELETE FROM scm.mfg_sales_order_items WHERE id = ${p.id}`;
-            continue;
+      for (const s of sofas) {
+        await sql.begin(async (tx) => {
+          for (const p of s.plan) {
+            if (p.op === "release") {
+              /* Released, not re-pointed — see the plan-side note. The row it
+                 pointed at is deleted two statements later, in THIS
+                 transaction, so the pointer is never dangling and never
+                 doubled. */
+              await tx`UPDATE scm.purchase_order_items SET so_item_id = NULL WHERE so_item_id = ${p.id}`;
+              continue;
+            }
+            if (p.op === "delete") {
+              if (isPo) await tx`DELETE FROM scm.purchase_order_items WHERE id = ${p.id}`;
+              else await tx`DELETE FROM scm.mfg_sales_order_items WHERE id = ${p.id}`;
+              continue;
+            }
+            const name = (await tx`SELECT name FROM scm.mfg_products WHERE company_id = ${CO} AND upper(code) = ${p.to} LIMIT 1`)[0]?.name ?? p.to;
+            if (p.op === "update") {
+              if (isPo) await tx`UPDATE scm.purchase_order_items SET item_code = ${p.to}, material_name = ${name},
+                                   unit_price_sen = ${p.price}, line_total_sen = ${p.tot}, variants = ${tx.json(p.v)} WHERE id = ${p.id}`;
+              else await tx`UPDATE scm.mfg_sales_order_items SET item_code = ${p.to}, description = ${name},
+                              unit_price_sen = ${p.price}, total_sen = ${p.tot}, balance_sen = ${p.tot},
+                              variants = ${tx.json(p.v)} WHERE id = ${p.id}`;
+              touched.push({ id: p.id, code: p.to, v: p.v });
+            } else {
+              const src = s.src;
+              /* `description` and `delivery_date` are COPIED from the piece
+                 this one is built from, for the same reason `description2` and
+                 `warehouse_id` are. They were omitted, so every compartment
+                 this script ever added carries NULL in both while the book
+                 states a value on the line — the reconcile reads them as
+                 "blank in the ERP where the book states one", and it reads them
+                 on the SO side as filled because the SO branch below has always
+                 set `description`. Both are the SAME book line's values; the
+                 lead already holds them; copying is a copy, not a guess. */
+              /* `linked_ac_dtlkey` IS THE BUILD'S IDENTITY, and it was omitted
+                 here for the same reason `warehouse_id` and `description` were:
+                 a column-by-column INSERT that does not name it. A sofa build is
+                 ONE AutoCount line and one ERP row per compartment, and
+                 src/scm/lib/autocount-line-keys.ts:155 states the invariant —
+                 "Every ERP row behind this AutoCount line gets the SAME key ...
+                 composeEdit later accepts the build only when all of them still
+                 agree on it". A compartment added keyless therefore does not
+                 just lack a key: it takes the WHOLE document's line identity
+                 away, and the operator's next edit is refused with "The ERP
+                 cannot tell which lines AutoCount already has"
+                 (autocount-relink-lines.ts:8). The reconcile compares
+                 compartments per DtlKey too, so a keyless one is invisible to
+                 it — HC-SO-013475 held 1A(LHF)+1NA+1A(RHF) and reconcile run
+                 34199937397 read it as "1A(LHF)+1A(RHF)". Copying the source
+                 row's key is a copy of what the sibling already states, never a
+                 guess; repair-sofa-added-compartment-line-key.mjs is the same
+                 write for the rows earlier rounds already added. */
+              if (isPo) await tx`INSERT INTO scm.purchase_order_items
+                  (purchase_order_id, material_kind, item_code, material_name, item_group, description, description2,
+                   qty, received_qty, unit_price_sen, line_total_sen, variants, warehouse_id, delivery_date, from_mrp, company_id,
+                   linked_ac_dtlkey)
+                  SELECT i.purchase_order_id, 'mfg_product', ${p.to}, ${name}, 'sofa', i.description, ${src.description2 ?? null},
+                         i.qty, 0, ${p.price}, ${p.tot}, ${tx.json(p.v)}, i.warehouse_id, i.delivery_date, false, ${CO},
+                         i.linked_ac_dtlkey
+                    FROM scm.purchase_order_items i WHERE i.id = ${src.id}`;
+              /* so_item_id is deliberately NOT copied onto an inserted PO line.
+                 The dedication is one SO line to one PO line, and pointing a
+                 second PO line at the same SO line would read as two incoming
+                 units of one ordered piece. An added compartment has no SO line
+                 of its own until the SO half of the same build is corrected. */
+              /* warehouse_id IS NOT OPTIONAL HERE, and its absence is silent.
+                 Stock allocation buckets by (warehouse, item, variant), so a line
+                 that lands NULL can never match stock: it stays PENDING forever,
+                 shows no incoming PO, and reads as "the system did not capture
+                 it" even when the goods were received into the right bucket. The
+                 PO branch above already copies `i.warehouse_id`; this branch
+                 omitted the column entirely, and the 2026-08-11 run produced
+                 seven such lines across six orders (repaired 2026-08-18). */
+              /* `linked_ac_dtlkey` — see the note on the PO branch above. Same
+                 omission, same consequence, same fix: the compartment belongs to
+                 the SAME AutoCount line its source row does. */
+              else await tx`INSERT INTO scm.mfg_sales_order_items
+                  (doc_no, line_no, item_group, item_code, description, description2, uom, location, qty,
+                   unit_price_sen, total_sen, balance_sen, company_id, variants, remark, photo_urls,
+                   warehouse_id, linked_ac_dtlkey)
+                  SELECT i.doc_no, (SELECT COALESCE(MAX(line_no),0)+1 FROM scm.mfg_sales_order_items WHERE doc_no = i.doc_no),
+                         'sofa', ${p.to}, ${name}, i.description2, i.uom, i.location, i.qty,
+                         ${p.price}, ${p.tot}, ${p.tot}, ${CO}, ${tx.json(p.v)},
+                         'compartment corrected 2026-09-04', i.photo_urls,
+                         i.warehouse_id, i.linked_ac_dtlkey
+                    FROM scm.mfg_sales_order_items i WHERE i.id = ${src.id}`;
+            }
           }
-          const name = (await tx`SELECT name FROM scm.mfg_products WHERE company_id = ${CO} AND upper(code) = ${p.to} LIMIT 1`)[0]?.name ?? p.to;
-          if (p.op === "update") {
-            if (isPo) await tx`UPDATE scm.purchase_order_items SET item_code = ${p.to}, material_name = ${name},
-                                 unit_price_sen = ${p.price}, line_total_sen = ${p.tot}, variants = ${tx.json(p.v)} WHERE id = ${p.id}`;
-            else await tx`UPDATE scm.mfg_sales_order_items SET item_code = ${p.to}, description = ${name},
-                            unit_price_sen = ${p.price}, total_sen = ${p.tot}, balance_sen = ${p.tot},
-                            variants = ${tx.json(p.v)} WHERE id = ${p.id}`;
-            touched.push({ id: p.id, code: p.to, v: p.v });
-          } else {
-            const src = rows[0];
-            if (isPo) await tx`INSERT INTO scm.purchase_order_items
-                (purchase_order_id, material_kind, item_code, material_name, item_group, description2,
-                 qty, received_qty, unit_price_sen, line_total_sen, variants, warehouse_id, from_mrp, company_id)
-                SELECT i.purchase_order_id, 'mfg_product', ${p.to}, ${name}, 'sofa', ${src.description2 ?? null},
-                       i.qty, 0, ${p.price}, ${p.tot}, ${tx.json(p.v)}, i.warehouse_id, false, ${CO}
-                  FROM scm.purchase_order_items i WHERE i.id = ${src.id}`;
-            /* warehouse_id IS NOT OPTIONAL HERE, and its absence is silent.
-               Stock allocation buckets by (warehouse, item, variant), so a line
-               that lands NULL can never match stock: it stays PENDING forever,
-               shows no incoming PO, and reads as "the system did not capture
-               it" even when the goods were received into the right bucket. The
-               PO branch above already copies `i.warehouse_id`; this branch
-               omitted the column entirely, and the 2026-08-11 run produced
-               seven such lines across six orders (repaired 2026-08-18). */
-            else await tx`INSERT INTO scm.mfg_sales_order_items
-                (doc_no, line_no, item_group, item_code, description, description2, uom, location, qty,
-                 unit_price_sen, total_sen, balance_sen, company_id, variants, remark, photo_urls,
-                 warehouse_id)
-                SELECT i.doc_no, (SELECT COALESCE(MAX(line_no),0)+1 FROM scm.mfg_sales_order_items WHERE doc_no = i.doc_no),
-                       'sofa', ${p.to}, ${name}, i.description2, i.uom, i.location, i.qty,
-                       ${p.price}, ${p.tot}, ${p.tot}, ${CO}, ${tx.json(p.v)},
-                       'compartment corrected 2026-08-10', i.photo_urls,
-                       i.warehouse_id
-                  FROM scm.mfg_sales_order_items i WHERE i.id = ${src.id}`;
-          }
-        }
-      });
+        });
+      }
 
       /* Carry it down the chain. A PO line copies the SO line it is dedicated
          to; a GRN line copies the PO line it received; a DO line copies the SO
          line it delivered. All three took a SNAPSHOT of the code and variants
          when they were created (create-migrated-documents.mjs), so correcting
          the parent alone would leave them stating the old build. These
-         documents carry migrated_no_stock, so this is paperwork only - no
-         movement is written or implied. */
+         documents carry migrated_no_stock — asserted above, not assumed — so
+         this is paperwork only: no movement is written or implied. */
       for (const t of touched) {
         if (isPo) {
           const g = await sql`UPDATE scm.grn_items
             SET item_code = ${t.code}, variants = ${sql.json(t.v)}
             WHERE purchase_order_item_id = ${t.id} RETURNING id`;
-          if (g.length) { nGr += g.length; log(`      -> ${g.length} GRN line(s) follow ${compOf(t.code)}`); }
+          if (g.length) { nGr += g.length; log(`      -> ${g.length} GRN line(s) follow ${compartmentOf(t.code)}`); }
+          const pi = await carryToPurchaseInvoice(g.map((r) => r.id), t);
+          nPi += pi.moved;
+          if (pi.moved) log(`      -> ${pi.moved} purchase invoice line(s) follow ${compartmentOf(t.code)}`);
+          for (const n of pi.held) { nHeldInv++; log(`      HELD ${n} is not migrated paperwork — its item code is left as billed`); }
         } else {
           const po = await sql`UPDATE scm.purchase_order_items
             SET item_code = ${t.code}, variants = ${sql.json(t.v)}
             WHERE so_item_id = ${t.id} RETURNING id`;
           if (po.length) {
             nPo += po.length;
-            log(`      -> ${po.length} PO line(s) follow ${compOf(t.code)}`);
+            log(`      -> ${po.length} PO line(s) follow ${compartmentOf(t.code)}`);
             for (const r of po) {
               const g = await sql`UPDATE scm.grn_items
                 SET item_code = ${t.code}, variants = ${sql.json(t.v)}
                 WHERE purchase_order_item_id = ${r.id} RETURNING id`;
               nGr += g.length;
+              const pi = await carryToPurchaseInvoice(g.map((x) => x.id), t);
+              nPi += pi.moved;
+              for (const n of pi.held) { nHeldInv++; log(`      HELD ${n} is not migrated paperwork — its item code is left as billed`); }
             }
           }
           const d = await sql`UPDATE scm.delivery_order_items
             SET item_code = ${t.code}, variants = ${sql.json(t.v)}
             WHERE so_item_id = ${t.id} RETURNING id`;
-          if (d.length) { nDo += d.length; log(`      -> ${d.length} DO line(s) follow ${compOf(t.code)}`); }
+          if (d.length) { nDo += d.length; log(`      -> ${d.length} DO line(s) follow ${compartmentOf(t.code)}`); }
+          const si = await carryToSalesInvoice(d.map((r) => r.id), t);
+          nSi += si.moved;
+          if (si.moved) log(`      -> ${si.moved} sales invoice line(s) follow ${compartmentOf(t.code)}`);
+          for (const n of si.held) { nHeldInv++; log(`      HELD ${n} is not migrated paperwork — its item code is left as billed`); }
         }
       }
     }
   }
 
   log("");
-  log(`builds touched ${nBuilds} · lines updated ${nUpd} · added ${nIns} · removed ${nDel}`);
+  log(`builds touched ${nBuilds} (${nSofas} sofa${nSofas === 1 ? "" : "s"}) · lines updated ${nUpd} · added ${nIns} · removed ${nDel}`);
   log(`downstream carried: PO lines ${nPo} · GRN lines ${nGr} · DO lines ${nDo}`);
-  log(`refused ${nRefused} (downstream reference or the money would move) · piece SKU not minted ${nMissingSku}`);
-  for (const h of DATA._held ?? []) log(`HELD ${h.docs.join(" / ")} — ${h.why}`);
-  if (!APPLY) log("\nDRY-RUN — set APPLY=1 to write.");
+  if (nRel) log(`purchase dedications RELEASED by a collapse: ${nRel} (each one's line is deleted by the PO half of the same entry — docs/bugs/0719)`);
+  log(`downstream carried onto the invoices raised from them: purchase invoice lines ${nPi} · sales invoice lines ${nSi}${nHeldInv ? ` · ${nHeldInv} invoice(s) HELD because they are not migrated paperwork` : ""}`);
+  log(`refused ${nRefused} (downstream reference, unreadable copies, or the money would move) · piece SKU not minted ${nMissingSku} · refused as ambiguous ${nAmbiguous} · refused for real stock movement ${nStock} · seat not written ${nNoSeat}`);
+  for (const h of DATA.held) log(`HELD ${h.docs.join(" / ")} [${h.source}] — ${h.why}`);
   await sql.end();
+
+  if (!APPLY) { log("\nDRY-RUN — set APPLY=1 to write."); return; }
+  await verifyOnFreshConnection(verify);
 }
+
+/**
+ * Read every corrected document back on a NEW connection and assert the piece
+ * MULTISET — not a row count, which is the check that passed while the pieces
+ * were wrong.
+ *
+ * A LATER ENTRY SUPERSEDES AN EARLIER ONE WHERE THEY TOUCH THE SAME ROWS, and
+ * only the survivor is asserted. `CORRECTION_FILES` is ordered oldest first on
+ * purpose, so two files may rule on one build and the newer ruling is the
+ * answer — `lib/sofa-rulings.mjs` already states that for the LOOKUP path with
+ * `findLast` (docs/bugs/0722). This verify never learned it: it kept one
+ * expectation per ENTRY and asserted every one of them, including the entry the
+ * next file had just overruled.
+ *
+ * Measured, run 34301924900: `HC-SO-012929` was written correctly and reported
+ *   FAIL HC-SO-012929: pieces are [9028-1A(LHF) | 9028-2A(RHF)],
+ *                   expected [9028-1A(LHF) | 9028-1S | 9028-2A(RHF)]
+ * — the 2026-08 entry's target, three lines above the 2026-09 entry's own OK on
+ * the same document. 167 documents were right, and the run still exited 1.
+ *
+ * SUPERSEDING IS DECIDED ON ROW IDS, not on the selector text. The two entries
+ * carry DIFFERENT `desc2Match` strings ("...Barley/Bottom wr" vs "...Barley"),
+ * so any key built from the selector would have called them separate builds and
+ * changed nothing. What makes them one build is that they select the same rows,
+ * which is a fact of the document rather than of the file.
+ */
+async function verifyOnFreshConnection(items) {
+  if (!items.length) return;
+  const v = newSql();
+  const docKey = (it) => (it.isPo ? `PO:${it.poId}` : `SO:${it.doc}`);
+  const nDocs = new Set(items.map(docKey)).size;
+  log(`\nVERIFY — re-reading ${nDocs} document(s) on a fresh connection`);
+
+  /* One read per DOCUMENT, not per entry: the row set is what decides
+     superseding, so every entry on a document has to be measured against the
+     same read. */
+  const rowsOf = new Map();
+  for (const it of items) {
+    const k = docKey(it);
+    if (rowsOf.has(k)) continue;
+    rowsOf.set(k, it.isPo
+      ? await v`SELECT i.id, i.item_code AS code, i.qty, i.unit_price_sen, i.line_total_sen AS total, i.description2, i.linked_ac_dtlkey
+                  FROM scm.purchase_order_items i
+                 WHERE i.purchase_order_id = ${it.poId} AND i.item_group = 'sofa' ORDER BY i.id`
+      : await v`SELECT i.id, i.item_code AS code, i.qty, i.unit_price_sen, i.total_sen AS total, i.description2, i.linked_ac_dtlkey
+                  FROM scm.mfg_sales_order_items i
+                  JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+                 WHERE h.company_id = ${CO} AND i.doc_no = ${it.doc} AND i.item_group = 'sofa' ORDER BY i.line_no`);
+  }
+
+  /* Narrow the SAME way the apply did, line keys and exclusion included —
+     verifying against every sofa row on a document that holds two builds would
+     compare this build's target against both builds' rows and fail a correct
+     write. */
+  const selected = items.map((it) => {
+    const rows = rowsOf.get(docKey(it));
+    const hasKeys = Array.isArray(it.lineKeys) && it.lineKeys.length;
+    return (it.needle || hasKeys || it.exclude)
+      ? selectBuildRows(rows, it.needle, undefined, { lineKeys: it.lineKeys, exclude: it.exclude }).rows
+      : rows;
+  });
+
+  /* A LATER entry on the same document that selects any of the same rows has
+     already rewritten them; this entry's target is the stale one. Reported,
+     never silent — an expectation that stops being asserted must still be
+     visible, or a build could quietly go unverified. */
+  const overruledBy = supersededBy(items.map(docKey), selected.map((rs) => rs.map((r) => r.id)));
+
+  let bad = 0, superseded = 0;
+  for (let n = 0; n < items.length; n++) {
+    const it = items[n];
+    const mine = selected[n];
+    const by = overruledBy[n];
+    if (by >= 0) {
+      superseded++;
+      log(`  SUPERSEDED ${it.doc} [${it.source}] — the same rows are ruled again by [${items[by].source}]; that entry is the one asserted`);
+      continue;
+    }
+    const want = [];
+    for (let i = 0; i < it.copies; i++) want.push(...it.want);
+    const bag = (xs) => xs.map(K).sort().join(" | ");
+    const money = moneyOfRows(mine);
+    const okPieces = bag(mine.map((r) => r.code)) === bag(want);
+    const okMoney = money.total === it.money.total && money.charged === it.money.charged;
+    if (okPieces && okMoney) { log(`  OK  ${it.doc}  ${mine.map((r) => compartmentOf(r.code)).join("+")}  money ${money.total}/${money.charged}`); continue; }
+    bad++;
+    if (!okPieces) log(`  FAIL ${it.doc}: pieces are [${bag(mine.map((r) => r.code))}], expected [${bag(want)}]`);
+    if (!okMoney) log(`  FAIL ${it.doc}: money ${it.money.total}/${it.money.charged} -> ${money.total}/${money.charged}`);
+  }
+  await v.end();
+  if (bad) { console.error(`VERIFY FAILED on ${bad} document(s)`); process.exit(1); }
+  log(`VERIFY OK — ${items.length - superseded} entr${items.length - superseded === 1 ? "y" : "ies"} over ${nDocs} document(s), piece multiset and both money columns${superseded ? ` · ${superseded} superseded by a later ruling` : ""}`);
+}
+
 main().catch((e) => { console.error(e); process.exit(1); });

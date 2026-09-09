@@ -1,0 +1,37 @@
+name: Probe the three sofa model corrections (read-only)
+
+# Manual. Everything the three book-model corrections need decided, measured on
+# the live database: what the sales order and the purchase order actually hold,
+# which purchase-order row is dedicated to which sales-order row, whether the
+# TARGET model's compartment SKUs exist, and - printed rather than predicted -
+# the pairing the applier would perform, so a compartment moving to a different
+# ROW is seen before it is written and not after.
+#
+# Writes nothing. Exit 0 for every legitimate answer; the answer is the output.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+
+# Deliberately NOT the deploy's group: a diagnostic must not queue behind a release.
+concurrency:
+  group: probe-sofa-model-correction
+  cancel-in-progress: false
+
+jobs:
+  run-prod:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-sofa-model-correction.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

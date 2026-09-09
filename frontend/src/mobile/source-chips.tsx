@@ -59,6 +59,34 @@ export function soStockPillMobile(l: {
   return { label: "PENDING", fg: "#5c6357", bg: "#f4f6f3", bd: "#d9ded4" };
 }
 
+/* The non-selling-warehouse refusal, phone shell. Desktop twin: the note under
+   SoStockPill (components/SoSourceChips.tsx) — keep the two in lockstep. The
+   phone has vertical room the 96px desktop Stock column does not, so it shows
+   the SERVER's whole sentence instead of hiding it on a hover the phone has no
+   way to trigger. Same field, same words, different amount of it. */
+export function NonSellingWarehouseNoteMobile({
+  note,
+}: {
+  note?: { code: string | null; name: string | null; type: string | null; notice: string } | null;
+}) {
+  if (!note) return null;
+  return (
+    <div
+      style={{
+        marginTop: 4, padding: "4px 7px", borderRadius: 6,
+        background: "rgba(212,151,40,0.10)", border: "1px solid rgba(212,151,40,0.35)",
+        color: "#8a6116", fontSize: 10.5, lineHeight: 1.35, overflowWrap: "anywhere",
+      }}
+    >
+      <span style={{ fontWeight: 800, letterSpacing: ".3px", textTransform: "uppercase" }}>
+        {note.code ?? note.name ?? "Display"}
+      </span>
+      {" — "}
+      {note.notice}
+    </div>
+  );
+}
+
 export function StockAdjChipMobile() {
   return (
     <span
@@ -172,6 +200,31 @@ export function CommittedBatchRowMobile({ poNo }: { poNo?: string | null }) {
         title={`Committed batch — this line committed to incoming purchase order ${poNo} when the Delivery Order was created (hard from DO). The commitment is stored on the line; a PO cancelled or raised later cannot move it.`}
       >
         {poNo}
+      </span>
+    </div>
+  );
+}
+
+/* DO lines only (mig 20260907T2340): AutoCount shipped an item code the named
+   sales order does not carry — the warehouse substituted the product at
+   dispatch. Amber, and it says WHY rather than only flagging: the row carries no
+   so_item_id on purpose (which ordered line it replaces is a human decision), so
+   the order's outstanding quantity has deliberately NOT moved. Desktop twin: the
+   Badge on DeliveryOrderDetailV2's Item cell — one rule, two surfaces.
+   docs/modules/delivery-order.md, docs/bugs/0674-*. */
+const substitutedChip: CSSProperties = {
+  fontSize: 10, fontWeight: 700, color: "#8a5a00",
+  background: "#fff4d6", border: "1px solid #f0d79a", borderRadius: 5, padding: "1px 6px",
+};
+export function SubstitutedRowMobile({ on }: { on?: boolean }) {
+  if (!on) return null;
+  return (
+    <div style={rowStyle}>
+      <span
+        style={substitutedChip}
+        title="Substituted at dispatch — AutoCount delivered an item code this delivery's sales order does not carry. The code and description are copied from AutoCount verbatim. The line is deliberately not linked to a sales-order line, so the order's outstanding quantity is unchanged until someone decides which ordered item this replaces."
+      >
+        Substituted at dispatch — not on the SO
       </span>
     </div>
   );

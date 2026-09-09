@@ -19,28 +19,38 @@ describe('apControlRole — one home for the 405 prefix', () => {
   });
 });
 
-describe('piLines — the credit lands on the supplier\'s own control', () => {
+describe('piLines — one debit per group, the credit on the supplier\'s own control', () => {
   const pi = { invoice_number: '2990-PI-2608-018' };
+  const ONE_GROUP = [{ groupCode: 'ACCESSORY', accountCode: '601-0004', myrSen: 1_644_000 }];
 
   test('a 405 supplier credits AP_OTHER (405-0000)', () => {
-    const lines = piLines(DEFAULT_ROLE_CODES, pi, { code: '405-Z002', name: 'ZHEJIANG JU MIAO' }, 1_644_000);
+    const lines = piLines(DEFAULT_ROLE_CODES, pi, { code: '405-Z002', name: 'ZHEJIANG JU MIAO' }, ONE_GROUP);
     const credit = lines.find((l) => l.creditSen > 0)!;
     expect(credit.accountCode).toBe('405-0000');
     expect(credit.creditSen).toBe(1_644_000);
     expect(credit.partyCode).toBe('405-Z002');
   });
 
-  test('a trade supplier still credits AP (400-0000), balanced against inventory', () => {
-    const lines = piLines(DEFAULT_ROLE_CODES, pi, { code: '400-T005', name: 'TODERN HOME' }, 255_000);
+  test('a mixed invoice debits each group\'s OWN purchase account, and the credit is their sum — inventory is not touched', () => {
+    const lines = piLines(DEFAULT_ROLE_CODES, pi, { code: '400-T005', name: 'TODERN HOME' }, [
+      { groupCode: 'SOFA', accountCode: '601-0003', myrSen: 155_000 },
+      { groupCode: 'MATTRESS', accountCode: '601-0001', myrSen: 100_000 },
+    ]);
+    const debits = lines.filter((l) => l.debitSen > 0);
+    expect(debits.map((l) => [l.accountCode, l.debitSen])).toEqual([
+      ['601-0003', 155_000],
+      ['601-0001', 100_000],
+    ]);
     const credit = lines.find((l) => l.creditSen > 0)!;
     expect(credit.accountCode).toBe('400-0000');
-    const debit = lines.find((l) => l.debitSen > 0)!;
-    expect(debit.accountCode).toBe('330-0000');
-    expect(debit.debitSen).toBe(credit.creditSen);
+    expect(credit.creditSen).toBe(255_000);
+    expect(lines.some((l) => l.accountCode === '330-0000')).toBe(false);
   });
 
   test('a supplier with NO code stays on AP — fail toward the trade control, never a throw', () => {
-    const lines = piLines(DEFAULT_ROLE_CODES, pi, { code: null, name: null }, 100 );
+    const lines = piLines(DEFAULT_ROLE_CODES, pi, { code: null, name: null }, [
+      { groupCode: 'SOFA', accountCode: '601-0003', myrSen: 100 },
+    ]);
     expect(lines.find((l) => l.creditSen > 0)!.accountCode).toBe('400-0000');
   });
 });

@@ -172,8 +172,26 @@ async function main() {
   }
 
   notice(`canonical result: ok=${result?.ok} linesFlipped=${result?.linesFlipped} ordersAdvanced=${result?.ordersAdvanced} ordersRegressed=${result?.ordersRegressed}${result?.reason ? ` reason=${result.reason}` : ""}${result?.deferredDocNos ? ` deferred=[${result.deferredDocNos.join(", ")}]` : ""}`);
+  /* REFUSED IS NOT "NOTHING TO DO" — docs/bugs/0599, one layer lower.
+     This used to warn and then carry on into the diff sections, which print
+     "(no line changed — the projection already matches the allocator's own
+     answer; idempotent re-run lands here)" and close with "the canonical
+     function ran". Both sentences are FALSE after a refusal: the function
+     aborted at its first read, so nothing was compared to anything. It was not
+     hypothetical — three green production dispatches on 2026-09-07 (runs
+     34099835565, 34127825188, 34132871751) each printed exactly that over
+     `ok=false … pgrest-shim: unsafe identifier "so.status"`, which is the
+     allocator's embedded DO-line read the shim cannot execute.
+     A verdict computed over nothing must never read as a pass, so stop here
+     and exit non-zero — the same refusal shape resync-so-delivered-status uses. */
   if (result?.ok === false) {
     warn(`the canonical function refused (${result?.reason ?? "no reason"}) — ${APPLY ? "transaction ROLLED BACK, nothing committed" : "dry-run rolled back as always"}.`);
+    console.error("REFUSED: the allocator did not run, so NOTHING below would be a comparison —");
+    console.error(`  ${result?.reason ?? "no reason given"}`);
+    console.error("  Not one line was judged. Do not read this run as 'nothing needed changing'.");
+    if (sb.__gaps.length > 0) for (const g of sb.__gaps) console.error(`  ${g}`);
+    await pg.end({ timeout: 5 });
+    process.exit(3);
   }
   notice("");
   notice("================ PER-LINE stock_status old -> new ================");
@@ -206,6 +224,19 @@ async function main() {
   if (sb.__gaps.length > 0) {
     console.error("SHIM GAP during the recompute — the canonical function called a method the shim does not implement; aborting non-zero so a silent skip can never read as success:");
     for (const g of sb.__gaps) console.error(`  ${g}`);
+    process.exit(1);
+  }
+  /* A REFUSAL IS NOT AN ANSWER, AND IT MUST NOT EXIT 0. The __gaps guard above
+     only catches the shim's OWN `gap()` path; a throw from anywhere else inside
+     the canonical function — `pgrest-shim: unsafe identifier "so.status"` is the
+     live one — leaves the gap list empty, so the run printed "(no line changed
+     — the projection already matches the allocator's own answer)" over a
+     function that never executed, and exited green. Run 34127825188 read exactly
+     that way on 2026-09-07 while ok=false. The two lines below are the whole
+     difference between "nothing to do" and "we did not look". */
+  if (result?.ok === false) {
+    console.error(`RECOMPUTE REFUSED: ${result?.reason ?? "no reason given"}`);
+    console.error("Nothing above describes what a recompute would change — the canonical function did not run. Do NOT read the per-line section as evidence.");
     process.exit(1);
   }
   notice(APPLY

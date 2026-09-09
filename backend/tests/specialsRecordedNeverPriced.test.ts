@@ -44,6 +44,28 @@ const ALLOWED = new Set([
   // THE WRITER, and this test.
   'backend/scripts/record-priced-specials-on-migrated-lines.mjs',
   'backend/tests/specialsRecordedNeverPriced.test.ts',
+  /* REPORTING — read-only, and that is the whole reason they are admissible.
+     These four open a connection, SELECT, and print; not one of them writes a
+     line, and none can reach a price. They were added 2026-09-07 because the
+     RECONCILE not knowing about this key was itself a defect (docs/bugs/0668):
+     every line closed by the owner's own 2026-09-03 ruling kept reporting as an
+     outstanding DIFFER, so work he had already decided was being quoted back to
+     him as backlog on go-live day.
+
+     The rule this list encodes is "render the key, do not price it", and a
+     report is a render. What is NOT admissible has not changed by one inch: the
+     third test below still asserts the four pricing modules never mention it,
+     and `variant-reconcile.mjs` keeps `specialsRecorded` OUT of its `carried`
+     array on purpose, so a recorded option is never counted as a ticked one. */
+  'backend/scripts/lib/variant-reconcile.mjs',
+  'backend/scripts/lib/variant-reconcile.test.mjs',
+  'backend/scripts/check-ac-erp-reconcile.mjs',
+  /* The variant table and its legend, LIFTED OUT of check-ac-erp-reconcile.mjs
+     on 2026-09-08 because that file hit its 2,000-line ceiling. It prints the
+     `recorded` column's sentence and nothing else: the same render, in a new
+     file. It computes no price and reads no money. */
+  'backend/scripts/lib/variant-report.mjs',
+  'backend/scripts/plan-priced-specials-money.mjs',
 ]);
 
 const SCAN = ['backend/src', 'backend/scripts', 'frontend/src'];

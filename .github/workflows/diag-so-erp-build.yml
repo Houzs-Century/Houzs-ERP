@@ -1,0 +1,63 @@
+name: What the ERP holds for a sales order (read-only)
+
+# Manual, read-only. Prints OUR OWN side of a sales order — every line, and for
+# a sofa the PIECE LIST we are holding — so that "the book does not say" is
+# never again reported as "there is no source at all".
+#
+# It compares nothing. check-ac-erp-reconcile.mjs is the only comparison in this
+# repo; this prints one side, labelled as one side. There is deliberately no
+# APPLY input and the script opens no write path.
+on:
+  workflow_dispatch:
+    inputs:
+      docs:
+        description: "Comma-separated document numbers (ERP or AutoCount)"
+        required: true
+        type: string
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: diag-so-erp-build-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/diag-so-erp-build.mjs
+        env:
+          DOCS: ${{ inputs.docs }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/diag-so-erp-build.mjs
+        env:
+          DOCS: ${{ inputs.docs }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

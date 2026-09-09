@@ -542,8 +542,13 @@ function positionCanWriteConfig(positionName: string | null): boolean {
 // ahead of the position existing so the owner + Test Admin (position=NULL today,
 // '*' role-only) can be migrated onto it and roles.permissions can eventually
 // retire. Additive only: it can only ever ADD '*', never remove a permission.
+// "Managing Director" joined 2026-09-07 (owner: "managing director 和 super
+// admin 同等级，通权限") — the MD position (prod positions id 25, Management,
+// level 10 like Super Admin) is a full super admin by position, so the money /
+// config carve-outs and every requirePermission door open for it exactly as
+// they do for Super Admin.
 const GOD_POSITIONS: ReadonlySet<string> = new Set(
-  ["Super Admin", "Owner"].map(normalisePosition),
+  ["Super Admin", "Owner", "Managing Director"].map(normalisePosition),
 );
 
 /** True when this POSITION alone confers the '*' wildcard (full super admin).

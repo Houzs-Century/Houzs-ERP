@@ -21,6 +21,8 @@ const conf = (d2: string, model = '8030', recl = false): string =>
   (parseSofa(d2, model, recl) as { conf: string }).conf;
 const specials = (d2: string, model = '8030', recl = false): string[] =>
   (parseSofa(d2, model, recl) as { specials: string[] }).specials;
+const leg = (d2: string, model = '8030', recl = false): number | null =>
+  (parseSofa(d2, model, recl) as { leg: number | null }).leg;
 
 describe('parse-sofa: the single-letter tokens the grammar owns', () => {
   /* The regression this file exists for. C, L, P and R each have their own
@@ -465,23 +467,102 @@ describe('parse-sofa: a leg note written beside the build keeps the build', () =
     expect(pieces('2S+L(28") ADD 2 INCH LEG')).toEqual(['2A(LHF)', 'L(RHF)']);
   });
 
-  test('the leg request is still carried as a special order, never deleted', () => {
+  test('a leg REQUEST that carries no height is still a special order, never deleted', () => {
     expect(specials("2+C+1(35'INCH)FULLY COVER NO LEG/COL:BOOBOO315-1/25")
       .some((s) => /leg/i.test(s))).toBe(true);
+  });
+
+  /* A phrase that states a height AND asks for something keeps the request.
+     Dropping an instruction is the expensive direction — a sofa built wrong —
+     so the height is answered on its axis and the sentence stays a special. */
+  test('a leg height beside an instruction answers the axis AND keeps the special', () => {
+    expect(leg('2S+L(28") ADD 2 INCH LEG')).toBe(2);
     expect(specials('2S+L(28") ADD 2 INCH LEG').some((s) => /leg/i.test(s))).toBe(true);
   });
 
-  /* The shape that already worked keeps working: a leg note in its OWN segment
-     is lifted whole and the build is untouched. */
-  test('a leg note in its own segment is unchanged', () => {
-    expect(pieces('1EL+C+1NA+1ER(28")/ADD 1 INCH LEG/COL:TBC')).toEqual([
-      '1A(LHF)', 'CNR', '1NA', '1A(RHF)',
-    ]);
-    expect(specials('1EL+C+1NA+1ER(28")/ADD 1 INCH LEG/COL:TBC')).toContain('ADD 1 INCH LEG');
+  /* The build is untouched, and the leg note in its OWN segment is now ANSWERED
+     rather than filed as a special order (docs/bugs/0741). It is a leg height,
+     the ERP has a sofa leg picker for it, and reporting it as a special is what
+     made HC-SO-010284 differ on a line where the two systems agreed. */
+  test('a leg note in its own segment becomes the leg axis, not a special', () => {
+    const d2 = '1EL+C+1NA+1ER(28")/ADD 1 INCH LEG/COL:TBC';
+    expect(pieces(d2)).toEqual(['1A(LHF)', 'CNR', '1NA', '1A(RHF)']);
+    expect(leg(d2)).toBe(1);
+    expect(specials(d2).some((s) => /leg/i.test(s))).toBe(false);
   });
 
   /* And a leg segment that OPENS with a '+' is still a leg request, not a build. */
   test('"+2\u201d leg" alone is a leg request, not a piece', () => {
     expect(pieces('Size:28\u201d/Col:CHINO-01/Bottom wrap nylon/+2\u201d leg', '5535')).toEqual([]);
+  });
+});
+
+/* THE SHOP FLOOR'S OWN SHORTHAND (owner readings, 2026-09-04).
+   He read a line the decoder refused — HC-SO-000814 / HC-PO-000254,
+   "[ (1 ELT / T + NA +2ER) (28") / COL: J9883-1-1 PAMA]", whose remark says
+   `token "NA"; token "1ELT"` — and named what the floor meant:
+
+     ELT   is L, the chaise. "1 ELT" at the LEFT of the string is L(LHF).
+     ER    is the end on the RIGHT, so 2ER is 2A(RHF)  (already the grammar's
+           reading; pinned here so a later sweep cannot quietly change it).
+     NA    with no leading digit is 1NA.
+
+   He named ELT and 2ER only. The "T" in that string is NOT explained, and this
+   file does not invent one for it — see the last test in this block. */
+describe('parse-sofa: the shorthand the floor writes (owner 2026-09-04)', () => {
+  test('ELT is the chaise: "1 ELT" written first is L(LHF)', () => {
+    expect(pieces('1 ELT + NA + 2ER (28")', '5526')).toEqual([
+      'L(LHF)', '1NA', '2A(RHF)',
+    ]);
+  });
+
+  test('a bare ELT is the same chaise', () => {
+    expect(pieces('ELT + 1NA + 1ER (28")', '5526')).toEqual([
+      'L(LHF)', '1NA', '1A(RHF)',
+    ]);
+  });
+
+  test('ELT written LAST closes the other end', () => {
+    expect(pieces('1EL + 1NA + 1ELT (28")', '5526')).toEqual([
+      '1A(LHF)', '1NA', 'L(RHF)',
+    ]);
+  });
+
+  test('a bare NA is 1NA', () => {
+    expect(pieces('1EL+NA+1ER(30")')).toEqual(['1A(LHF)', '1NA', '1A(RHF)']);
+  });
+
+  test('two bare NAs are two 1NAs', () => {
+    expect(pieces('1EL+NA+C+NA+1ER(30")')).toEqual([
+      '1A(LHF)', '1NA', 'CNR', '1NA', '1A(RHF)',
+    ]);
+  });
+
+  /* The already-approved precedent this family was confirmed against:
+     sofa-compartment-corrections-2026-08.json's HC-PO-007709 entry reads
+     "1EL + 1NA + C + 1NA + 1ER" as 1A(LHF)+1NA+CNR+1NA+1A(RHF). */
+  test('the approved precedent still decodes the same way', () => {
+    expect(pieces('1EL + 1NA + C + 1NA + 1ER (30")')).toEqual([
+      '1A(LHF)', '1NA', 'CNR', '1NA', '1A(RHF)',
+    ]);
+  });
+
+  test('2ER is 2A(RHF) — the owner’s confirmation, pinned', () => {
+    expect(pieces('1EL+1NA+2ER(28")')).toEqual(['1A(LHF)', '1NA', '2A(RHF)']);
+  });
+
+  /* THE LINE HE ASKED US TO LEAVE ALONE. Its build is written across a slash
+     INSIDE the bracket — "(1 ELT / T + NA +2ER)" — so the segment splitter sees
+     two pieces of one build, and the grammar can only ever read one of them.
+     With ELT and NA taught, the "T + NA +2ER" half now decodes on its own, and
+     shipping that half would be a two-piece sofa with the chaise silently gone,
+     at HIGH confidence — the exact failure the split guard exists to stop. It
+     must stay a placeholder: the "T" is unexplained and the owner has the
+     photograph. */
+  test('HC-SO-000814 stays a placeholder — the build is split and "T" is unexplained', () => {
+    const r = parseSofa('[ (1 ELT / T + NA +2ER) (28") / COL: J9883-1-1 PAMA]', '5526', false);
+    expect(r.pieces).toEqual([]);
+    expect(r.conf).toBe('low');
+    expect((r.why as string[]).some((w) => /structure split across segments/.test(w))).toBe(true);
   });
 });

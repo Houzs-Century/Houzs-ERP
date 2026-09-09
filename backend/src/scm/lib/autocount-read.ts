@@ -53,21 +53,61 @@ export async function readOrThrow<T>(
  * wrote that as a payments-ledger row, so `total - SUM(payments)` reproduces
  * `UDF_BALANCE` for every imported order by construction.
  *
- * A FAILED READ THROWS rather than degrading to zero, and A MISSING TOTAL
- * ANSWERS `null`. Both guard the same trap from opposite sides: zero is not
- * "unknown", it is "this customer owes nothing", and writing it into a live
- * account book declares a real debt settled. `recomputeTotals` fills
- * `total_revenue_sen` on every write, so a row without one is a legacy or
+ * A FAILED READ THROWS rather than degrading to zero, and A TOTAL THAT IS NOT
+ * A POSITIVE NUMBER ANSWERS `null`. Both guard the same trap from opposite
+ * sides: zero is not "unknown", it is "this customer owes nothing", and writing
+ * it into a live account book declares a real debt settled. `recomputeTotals`
+ * fills `total_revenue_sen` on every write, so a row without one is a legacy or
  * half-built order the ERP cannot speak for — the key is omitted and the book
  * keeps whatever it holds. The SO detail page reads the same absence as 0
  * because it is drawing a screen; this is writing a ledger.
+ *
+ * ZERO IS THE CASE THAT ACTUALLY HAPPENS, and until 2026-09-09 only NULL was
+ * refused. `scm.mfg_sales_orders.total_revenue_sen` is `integer DEFAULT 0 NOT
+ * NULL`, so the NULL branch cannot fire against the live schema at all, while
+ * every AutoCount-imported order carries a hard 0 — the cutover importer's
+ * header column list (`HCOLS` in `backend/scripts/import-ac-outstanding-so.mjs`)
+ * writes `local_total_sen` and not this column. 0 is not NULL, so the guard
+ * stood aside and this computed `max(0, 0 - paid) = 0`: on the owner's own
+ * order — total RM 3,200.00, received RM 1,600.00 — the ERP would have told a
+ * LICENSED ACCOUNT BOOK the customer owed nothing. `total_revenue_sen` was 0 on
+ * 2,687 of production's 2,824 live orders when that was measured
+ * (`probe-so-overpay.mjs`, run 31938735652; via docs/bugs/0723-*).
+ *
+ * IT REFUSES RATHER THAN FALLING BACK TO `local_total_sen`, which is what the
+ * SCREEN now does (`soBalanceSen`, PR #3306). Three reasons, in order of weight:
+ *
+ *   1. REFUSING KEEPS A NUMBER KNOWN TO BE RIGHT. The book's own `UDF_BALANCE`
+ *      is where the ERP's figure came from — the import computed
+ *      `paid = total - UDF_BALANCE` from it — so saying nothing leaves the
+ *      account book holding the value this repo treats as the source of truth.
+ *      Asserting anything can only make it worse.
+ *   2. THE ERP'S PAID FIGURE IS KNOWN INCOMPLETE ON EXACTLY THESE ORDERS.
+ *      `lib/migrated-so-lock.ts` records it: payments taken in AutoCount since
+ *      2026-08-28 have never reached the ERP and there is no automatic path.
+ *      `local_total_sen - paid` would therefore OVERSTATE the debt on a
+ *      migrated order — a customer chased for money already received.
+ *   3. A SCREEN AND A LEDGER ARE DIFFERENT ACTS, which is the split
+ *      `so-outstanding.ts` exists to hold: `soOutstandingSen` takes
+ *      `SoPaidInputs` with no `localTotalSen` field precisely so this reader
+ *      cannot quietly acquire the screen's fallback.
+ *
+ * WHAT IT DELIBERATELY DOES NOT REFUSE: a SETTLED order. Its total is a real
+ * positive number and its balance is a real 0, which `acUdfMoney` renders as
+ * "0.00" and both composers send — dropping it would leave every paid order
+ * owing money in the book forever. The guard is on the TOTAL, never on the
+ * answer. Pinned in `autocount-read.test.ts`.
  */
 export async function readSoOutstandingSen(
   sb: Sb,
   h: Record<string, unknown>,
 ): Promise<number | null> {
   const total = Number(h.total_revenue_sen);
-  if (h.total_revenue_sen == null || !Number.isFinite(total)) return null;
+  /* `> 0` subsumes the NULL and non-finite checks this used to make — `Number`
+     turns both into NaN or 0, and neither is greater than zero — and adds the
+     negative, which `max(0, ...)` would otherwise have turned into a confident
+     0. Written as `!(total > 0)` rather than `total <= 0` so NaN refuses. */
+  if (!(total > 0)) return null;
   const rows = await readOrThrow('mfg_sales_order_payments',
     sb.from('mfg_sales_order_payments')
       .select('amount_sen, is_deposit')
@@ -215,9 +255,14 @@ export async function readSoPaymentRefs(
 export async function readPoTransferFacts(
   sb: Sb,
   poId: string,
-): Promise<Array<{ id: string; so_item_id: string | null; allocationCount: number; sourceAcDtlKey: number | null; sourceSoDocNo: string | null; sourceSoInBook: boolean }>> {
+): Promise<Array<{ id: string; so_item_id: string | null; allocationCount: number; sourceAcDtlKey: number | null; sourceSoDocNo: string | null; sourceSoInBook: boolean; itemCode: string | null; sourceItemCode: string | null }>> {
+  /* `item_code` on BOTH sides — docs/bugs/0672 site 13. The transfer decision
+     refused on cardinality and presence and never on the PRODUCT, and the
+     transfer is addressed by DtlKey alone, so a purchase line naming a
+     sales line for a different bed would have transferred the wrong book row.
+     Both selects were already being taken; this adds one column to each. */
   const rows = ((await readOrThrow('purchase_order_items',
-    sb.from('purchase_order_items').select('id, so_item_id').eq('purchase_order_id', poId))) ?? []) as Array<Record<string, unknown>>;
+    sb.from('purchase_order_items').select('id, so_item_id, item_code').eq('purchase_order_id', poId))) ?? []) as Array<Record<string, unknown>>;
   if (!rows.length) return [];
 
   const ids = rows.map((r) => String(r.id));
@@ -234,15 +279,17 @@ export async function readPoTransferFacts(
     .filter((v): v is string => v !== null))];
   const keyOf = new Map<string, number>();
   const docOf = new Map<string, string>();
+  const codeOf = new Map<string, string | null>();
   const inBook = new Set<string>();
   if (soItemIds.length) {
     const soLines = ((await readOrThrow('mfg_sales_order_items',
-      sb.from('mfg_sales_order_items').select('id, linked_ac_dtlkey, doc_no').in('id', soItemIds))) ?? []) as Array<Record<string, unknown>>;
+      sb.from('mfg_sales_order_items').select('id, linked_ac_dtlkey, doc_no, item_code').in('id', soItemIds))) ?? []) as Array<Record<string, unknown>>;
     for (const l of soLines) {
       const k = Number(l.linked_ac_dtlkey);
       if (Number.isFinite(k) && k > 0) keyOf.set(String(l.id), k);
       const dn = String(l.doc_no ?? '').trim();
       if (dn) docOf.set(String(l.id), dn);
+      codeOf.set(String(l.id), l.item_code == null ? null : String(l.item_code));
     }
 
     /* IS THE SALES ORDER IN THE BOOK YET — the fact that tells a MISSING key
@@ -279,6 +326,8 @@ export async function readPoTransferFacts(
       sourceAcDtlKey: soItemId ? (keyOf.get(soItemId) ?? null) : null,
       sourceSoDocNo: soItemId ? (docOf.get(soItemId) ?? null) : null,
       sourceSoInBook: soItemId ? inBook.has(docOf.get(soItemId) ?? '') : false,
+      itemCode: r.item_code == null ? null : String(r.item_code),
+      sourceItemCode: soItemId ? (codeOf.get(soItemId) ?? null) : null,
     };
   });
 }

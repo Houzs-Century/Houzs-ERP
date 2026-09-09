@@ -16,6 +16,8 @@
 import { enqueueEdit } from './autocount-outbox';
 import { recordSoAudit, type FieldChange } from './so-audit';
 import { postSoPayment, reverseSoPayment } from '../../acc/payments';
+import { createReceiptForPayment } from '../../acc/receipts';
+import { companyCodeById } from './doc-no';
 import { recomputeSiPaidForOrder } from './si-order-deposit';
 
 /* Account Sheet auto-fill (Loo 2026-06-07) — "where did the money land".
@@ -80,6 +82,20 @@ export type SoPaymentRowInput = {
   auditNote?: string;
 };
 
+/** Book an SO payment row through the one posting gate, best-effort — the
+    hook the panel path always had, shared with the SO-create inserts since
+    docs/bugs/0652 (they used to write the row and stop). A refusal is logged
+    and never blocks the caller; the Self-check card's dry run and the backfill
+    are the self-heal. */
+export async function bookSoPaymentBestEffort(sb: any, row: Record<string, unknown> | null | undefined, where: string): Promise<void> {
+  if (!row) return;
+  const booked = await postSoPayment(sb, row as never);
+  if (!booked.ok) {
+    /* eslint-disable-next-line no-console */
+    console.error(`[acc] SO ${where} not booked:`, (row as { id?: string }).id, booked.status, booked.reason);
+  }
+}
+
 export async function recordSoPaymentRow(
   sb: any,
   p: SoPaymentRowInput,
@@ -138,6 +154,25 @@ export async function recordSoPaymentRow(
   }).select(PAYMENT_COLS).single();
   if (error) return { payment: null, errorMessage: error.message };
 
+  /* The Official Receipt is born with the payment (GL redesign item 9) —
+     DRAFT for card/transfer, formal at once for cash. BEST-EFFORT: the money
+     is recorded; a receipt hiccup must never un-record it, and
+     ensureReceiptForPayment heals the gap at the next print. */
+  try {
+    const paymentId = String((data as { id?: unknown } | null)?.id ?? '');
+    const code = companyId != null ? await companyCodeById(sb, companyId) : null;
+    if (paymentId && companyId != null && code) {
+      await createReceiptForPayment(sb, {
+        source: 'SOPAY', paymentId, companyId, companyCode: code,
+        docNo: p.docNo, method: p.method, amountSen: p.amountSen,
+        paidAt: String(p.paidAt ?? '').slice(0, 10) || null, createdBy: p.createdBy ?? null,
+      });
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[receipts] draft OR not created for SO payment:', e);
+  }
+
   /* Post-merge stitch — wire ADD_PAYMENT into the PR-D audit ledger.
      Field-changes list mirrors what the user typed so the History panel
      can render a readable diff. Best-effort inside recordSoAudit. */
@@ -187,11 +222,7 @@ export async function recordSoPaymentRow(
      payment through the one posting gate. Best-effort like the enqueue above —
      a booking failure never fails the operator's save; the accounting
      backfill endpoint is the self-heal. */
-  const booked = await postSoPayment(sb, data as never);
-  if (!booked.ok) {
-    /* eslint-disable-next-line no-console */
-    console.error('[acc] SO payment not booked:', (data as { id?: string }).id, booked.status, booked.reason);
-  }
+  await bookSoPaymentBestEffort(sb, data as Record<string, unknown>, 'payment');
 
   /* The invoices raised off this order settle partly out of THIS money
      (lib/si-order-deposit), so their status has to be re-rolled here. Without

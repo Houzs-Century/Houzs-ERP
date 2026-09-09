@@ -21,6 +21,11 @@ import {
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
   bankRulesList, bankRuleCreate, bankRuleUpdate,
 } from '../src/scm/routes/accounting-bank';
+import { bankConfigList, bankConfigSave } from '../src/scm/routes/accounting-bank-config';
+/* Layer 3's own undo is registered on this rig too: it can reverse an entry a
+   closed bank month has already reported, so it is a door into the same room
+   and is guarded by the same lock. */
+import { settlementReceiptUndo } from '../src/scm/routes/accounting-settlement';
 
 const CO = 1;
 const GL_PERM = 'scm.payment_voucher.post';
@@ -121,6 +126,7 @@ function harness(tables: Record<string, Row[]> = {}, perms: readonly string[] = 
   app.get('/bank/rules', bankRulesList as never);
   app.post('/bank/rules', bankRuleCreate as never);
   app.patch('/bank/rules/:id', bankRuleUpdate as never);
+  app.post('/settlement/receipts/:id/undo', settlementReceiptUndo as never);
   return { app, sb };
 }
 
@@ -339,14 +345,17 @@ describe('the setup the screen reads before an upload', () => {
     expect(body.recognises).toEqual(['MBB', 'AEON']);
   });
 
-  /* An acquirer with no recognition rule is one whose money reads as
-     "not a card payout" for ever — the screen has to be able to say so. */
-  test('a config that cannot read anything is not ready', async () => {
+  /* Since 2026-09-08 the reader carries built-in headings for every role
+     (bank-parse.ts DEFAULT_HEADINGS — owner: 别卡死读 column), so a config
+     that names only one heading, or none, still reads a file captioned the
+     way banks caption them; a file it cannot read is refused at upload by
+     name instead. */
+  test('a config naming only one heading is still ready — the reader carries the rest', async () => {
     const { app } = harness({
       acc_bank_statement_config: [{ ...MBB_ACCOUNT, column_map: { date: 'EFFECT DATE' } }],
     });
     const body = await (await app.request('/bank/setup')).json() as any;
-    expect(body.accounts[0].ready).toBe(false);
+    expect(body.accounts[0].ready).toBe(true);
   });
 });
 
@@ -396,6 +405,109 @@ describe('the matcher decision survives the round trip', () => {
    for three trading days — and the shape the owner named on the merchant side:
    顾客可能刷一次卡，但是还两个单. Before this the operator was told his credit was
    too big for the statement he picked, and given no way to do the right thing. */
+/* ── Overlapping uploads (owner 2026-09-08: 可能隔几天我就做一次) ─────────────── */
+describe('uploading overlapping exports of the same account', () => {
+  /* The first file again, plus one movement the bank posted since, plus a
+     SECOND customer transfer identical to the first one's on the same day. */
+  const LONGER = [
+    HEAD,
+    row('20260803', '000000000728448', 'CR', 'CR/CARD SALES MN 32410011 DATED 31072026', '00113107'),
+    row('20260803', '000000000171000', 'CR', 'LAU LEE YEN        *', 'Jaslyn'),
+    row('20260803', '000000000171000', 'CR', 'LAU LEE YEN        *', 'Jaslyn'),
+    row('20260809', '000000000087500', 'CR', 'DR/CARD SALES M/N 2259020 DATED 08082026', 'D90200808'),
+    row('20260809', '000000000000394', 'DR', 'DR/CARD SALES M/N 2259020 DATED 08082026', 'D90200808'),
+    row('20260812', '000000000002500', 'DR', 'SERVICE CHARGE', 'BCHARGE1'),
+    row('20260815', '000000000050000', 'CR', 'TAN AH KOW *', 'Deposit sofa'),
+  ].join('\n');
+
+  test('what an earlier upload already carries is marked recorded and set aside; the twin and the new movement stay open', async () => {
+    const { app, sb } = harness();
+    expect((await upload(app)).status).toBe(200);
+    const res = await upload(app, { fileName: 'aug-longer.csv', content: LONGER });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    /* 6 movements in the longer file (the charge is joined); 4 were on the
+       first upload — one of the two identical transfers is new. */
+    expect(body.lines).toBe(6);
+    expect(body.alreadyRecorded).toBe(4);
+    expect(body.kinds.DUPLICATE).toBe(4);
+
+    const lines = sb.tables.acc_bank_statement_lines.filter((l: Row) => l.statement_id === body.statementId);
+    const byState = lines.reduce<Record<string, number>>((acc, l: Row) => { acc[String(l.state)] = (acc[String(l.state)] ?? 0) + 1; return acc; }, {});
+    expect(byState).toEqual({ IGNORED: 4, OPEN: 2 });
+    const open = lines.filter((l: Row) => l.state === 'OPEN').map((l: Row) => [String(l.booked_on), Number(l.amount_sen)]);
+    expect(open).toEqual([['2026-08-03', 171000], ['2026-08-15', 50000]]);
+    const dup = lines.find((l: Row) => l.state === 'IGNORED') as Row;
+    expect(String(dup.note)).toMatch(/already recorded — statement \d+ \(still open there\)/);
+  });
+});
+
+/* ── Which accounts take a statement, and how each file reads (2026-09-08) ─── */
+describe('setting up a statement account', () => {
+  const MONEY_CHART: Row[] = [
+    { account_code: '310-0020', account_name: 'CASH AT BANK - HLBB', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: CO },
+    { account_code: '930-0000', account_name: 'BANK CHARGES', account_type: 'EXPENSE', parent_code: null, is_active: true, acc_money: false, company_id: CO },
+  ];
+  const configApp = (tables: Record<string, Row[]> = {}, perms: readonly string[] = [GL_PERM]) => {
+    const { app, sb } = harness({ accounts: MONEY_CHART, ...tables }, perms);
+    app.get('/bank/config', bankConfigList as never);
+    app.post('/bank/config', bankConfigSave as never);
+    return { app, sb };
+  };
+
+  test("lists the accounts and the reader's built-in headings; saves one with several headings per role; the upload screen then offers it", async () => {
+    const { app, sb } = configApp();
+    const res = await post(app, '/bank/config', {
+      accountCode: '310-0020', bankCode: 'hlb', accountNo: '23600602788', statementFormat: 'csv',
+      delimiter: '', amountFormat: 'decimal', creditIndicator: 'CR',
+      columnMap: { date: 'Date, Transaction Date', description: ['Transaction Description', 'Remarks'], reference: 'Ref. No., Sender / Receiver Name, Receipient Reference', debit: 'Withdrawal, Payment Amount', credit: 'Deposit, Credit Amount', balance: 'Balance' },
+    });
+    expect(res.status, await res.clone().text()).toBe(200);
+    const saved = sb.tables.acc_bank_statement_config.find((r: Row) => r.account_code === '310-0020') as Row;
+    expect(saved.bank_code).toBe('HLB');
+    expect(saved.delimiter).toBeNull();
+    expect(saved.column_map).toEqual({
+      date: ['Date', 'Transaction Date'], description: ['Transaction Description', 'Remarks'],
+      reference: ['Ref. No.', 'Sender / Receiver Name', 'Receipient Reference'],
+      debit: ['Withdrawal', 'Payment Amount'], credit: ['Deposit', 'Credit Amount'], balance: ['Balance'],
+    });
+
+    const list = await (await app.request('/bank/config')).json() as any;
+    expect(list.configs.map((c: Row) => c.account_code)).toContain('310-0020');
+    expect(list.defaultHeadings.date).toContain('Transaction Date');
+
+    const setup = await (await app.request('/bank/setup')).json() as any;
+    expect(setup.accounts.find((a: Row) => a.account_code === '310-0020')).toMatchObject({ bank_code: 'HLB', account_no: '23600602788', ready: true });
+
+    /* Saving again changes the row rather than adding a second one. */
+    const again = await post(app, '/bank/config', { accountCode: '310-0020', bankCode: 'HLB', accountNo: '23600602788', statementFormat: 'CSV', columnMap: {} });
+    expect(again.status).toBe(200);
+    expect(sb.tables.acc_bank_statement_config.filter((r: Row) => r.account_code === '310-0020')).toHaveLength(1);
+  });
+
+  test('refuses an account that is not money, a format the reader cannot take, an amount named both ways, and a code outside the chart', async () => {
+    const { app } = configApp();
+    const notMoney = await post(app, '/bank/config', { accountCode: '930-0000', bankCode: 'HLB' });
+    expect(notMoney.status).toBe(400);
+    expect((await notMoney.json() as any).error).toBe('not_a_money_account');
+    const pdf = await post(app, '/bank/config', { accountCode: '310-0020', bankCode: 'HLB', statementFormat: 'PDF' });
+    expect(pdf.status).toBe(400);
+    expect((await pdf.json() as any).error).toBe('bad_format');
+    const both = await post(app, '/bank/config', { accountCode: '310-0020', bankCode: 'HLB', columnMap: { amount: 'Amount', debit: 'Withdrawal' } });
+    expect(both.status).toBe(400);
+    expect((await both.json() as any).error).toBe('amount_both_ways');
+    const stranger = await post(app, '/bank/config', { accountCode: '999-0000', bankCode: 'HLB' });
+    expect(stranger.status).toBe(400);
+    expect((await stranger.json() as any).error).toBe('not_in_chart');
+  });
+
+  test('without the GL key both doors refuse', async () => {
+    const { app } = configApp({}, []);
+    expect((await app.request('/bank/config')).status).toBe(403);
+    expect((await post(app, '/bank/config', { accountCode: '310-0020', bankCode: 'HLB' })).status).toBe(403);
+  });
+});
+
 describe('splitting one credit across several statements', () => {
   /* Two reconciled reports owed RM 7,284.48 and RM 871.06; one credit of
      RM 8,155.54 pays both. */
@@ -520,28 +632,35 @@ describe('uploading an overlapping period again', () => {
       allocations: [{ batchId: payout.matched_batch_id, amountSen: payout.amount_sen }],
     });
 
-    /* The same month again, one line longer — a different file, same days. */
+    /* The same month again, one line longer — a different file, same days.
+       Since 2026-09-08 EVERY movement the earlier upload carries is recorded
+       (the owner reconciles every few days: 可能隔几天我就做一次) — the posted
+       credit AND the three still open on the first statement — and only the
+       new deposit is work. */
     const longer = `${STATEMENT}\n${row('20260813', '000000000050000', 'CR', 'CDM CASH DEPOSIT', 'DEP1')}`;
     const again = await (await upload(app, { fileName: 'aug-v2.csv', content: longer })).json() as any;
     expect(again.ok).toBe(true);
-    expect(again.kinds.DUPLICATE).toBe(1);
+    expect(again.kinds.DUPLICATE).toBe(4);
 
-    /* And it arrives SETTLED — the owner: 当我重新上传他应该是 ignore 已经 recon
+    /* And they arrive SETTLED — the owner: 当我重新上传他应该是 ignore 已经 recon
        了的 transaction. Nothing is left to press on a movement whose entry
-       already exists. */
-    expect(again.alreadyRecorded).toBe(1);
+       already exists, and the note says where each one already sits. */
+    expect(again.alreadyRecorded).toBe(4);
 
     const d2 = await (await app.request(`/bank/statements/${again.statementId}`)).json() as any;
     const dup = d2.lines.find((l: any) => l.kind === 'DUPLICATE');
     expect(dup.reference).toBe('00113107');
     expect(dup.state).toBe('IGNORED');
-    expect(dup.note).toMatch(/already recorded/);
+    expect(dup.note).toMatch(/already recorded — /);
+    expect(dup.note).not.toMatch(/still open there/);   // the posted one names its entry
+    const stillOpenElsewhere = d2.lines.find((l: any) => l.kind === 'DUPLICATE' && l.reference === 'Jaslyn');
+    expect(stillOpenElsewhere.note).toMatch(/already recorded — statement \d+ \(still open there\)/);
 
-    /* So it is not in the work, and not in the difference either. */
-    expect(d2.lines.filter((l: any) => l.state === 'OPEN').some((l: any) => l.reference === '00113107')).toBe(false);
+    /* So they are not in the work, and not in the difference either. */
+    expect(d2.lines.filter((l: any) => l.state === 'OPEN').map((l: any) => l.reference)).toEqual(['DEP1']);
     const list = await (await app.request('/bank/statements')).json() as any;
     const listed = list.statements.find((x: any) => x.id === again.statementId);
-    expect(listed.open_count).toBe(d2.lines.length - 1);
+    expect(listed.open_count).toBe(1);
   });
 
   test('the exact same file is refused outright, so nothing is re-checked', async () => {
@@ -664,5 +783,183 @@ describe('bank recognition rules — maintenance', () => {
     });
     expect(blank.status).toBe(400);
     expect(((await blank.json()) as Row).error).toBe('pattern_required');
+  });
+});
+
+/* ── A CLOSED MONTH REFUSES EVERY WRITE ───────────────────────────────────────
+   Owner, 2026-09-08: 还有lock 起来不可以随便碰. The rule table is pinned pure in
+   src/acc/bank-lock.test.ts; what is pinned HERE is that the guard is actually
+   wired to each door — a rule nothing calls is a rule that does not exist, and
+   this is the file where "every handler asks first" can be checked one handler
+   at a time.
+
+   The other thing pinned here: a lock is matched by the MOVEMENT'S OWN DATE.
+   August's lock must not stop an August-dated file's September movements, and
+   September's must stop them — that is bank-month rule 1 reaching the guard. */
+
+/* SNAPSHOTTED AT MODULE LOAD, not inside the helper. The fixtures at the top of
+   this file are shared objects and the fake client mutates rows IN PLACE — by
+   the time a test body runs, the rules tests have switched rule 1 off and added
+   a third, and the booking tests have received the batch. Cloning inside the
+   helper would faithfully clone that damage; cloning here happens before any
+   test body has run, which is the only moment the fixtures are still what they
+   say they are. Without this every credit reads OTHER and the lock under test
+   is proved against nothing. */
+const PRISTINE = {
+  rules: structuredClone(RULES),
+  batch: structuredClone(BATCH),
+  row: structuredClone(CONFIRMED_ROW),
+};
+
+const LOCK = (month: string, over: Row = {}): Row => ({
+  id: 1, company_id: CO, account_code: '330-0000', period_month: `${month}-01`,
+  locked_by: 'Chew', locked_at: '2026-10-02T03:14:00Z', lock_note: null,
+  closing_statement_sen: null, closing_ledger_sen: null, difference_sen: null,
+  statement_count: 3, was_complete: true, released_at: null, ...over,
+});
+
+describe('a month somebody has closed', () => {
+  const openedThen = async (locks: Row[]) => {
+    /* Upload FIRST, with no lock in place, so the movements exist; then close
+       the month and try to work them. That is the real order — a lock always
+       arrives after the month has been reconciled. */
+    /* Every fixture from the module-load snapshot — see PRISTINE. */
+    const rig = harness({
+      acc_bank_recognition_rules: structuredClone(PRISTINE.rules),
+      acc_settlement_batches: [structuredClone(PRISTINE.batch)],
+      acc_settlement_rows: [structuredClone(PRISTINE.row)],
+    });
+    const up = await (await upload(rig.app)).json() as any;
+    const detail = await (await rig.app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    rig.sb.tables.acc_bank_month_locks = locks;
+    return { ...rig, statementId: up.statementId, lines: detail.lines as any[] };
+  };
+
+  test('refuses to book a credit, and says who closed it and when', async () => {
+    const { app, lines } = await openedThen([LOCK('2026-08')]);
+    const payout = lines.find((l) => l.kind === 'PAYOUT');
+    const res = await post(app, `/bank/lines/${payout.id}/receipt`, { batchId: 1 });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as Row;
+    expect(body.error).toBe('month_locked');
+    expect(String(body.message)).toContain('330-0000 2026-08');
+    expect(String(body.message)).toContain('Chew');
+    expect(String(body.message)).toContain('2026-10-02');
+  });
+
+  test('refuses to leave a movement out', async () => {
+    const { app, lines } = await openedThen([LOCK('2026-08')]);
+    const res = await post(app, `/bank/lines/${lines[0].id}/ignore`, { note: 'own transfer' });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as Row).error).toBe('month_locked');
+  });
+
+  test('refuses to undo a movement', async () => {
+    const { app, lines } = await openedThen([LOCK('2026-08')]);
+    const res = await post(app, `/bank/lines/${lines[0].id}/undo`);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as Row).error).toBe('month_locked');
+  });
+
+  test('refuses to match a movement to an entry', async () => {
+    const { app, lines } = await openedThen([LOCK('2026-08')]);
+    const res = await post(app, `/bank/lines/${lines[0].id}/match`, { jeNo: 'JE-2608-0001' });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as Row).error).toBe('month_locked');
+  });
+
+  test('refuses a statement carrying that month, and names the date', async () => {
+    const { app, sb } = harness({ acc_bank_recognition_rules: structuredClone(PRISTINE.rules) });
+    sb.tables.acc_bank_month_locks = [LOCK('2026-08')];
+    const res = await upload(app);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as Row;
+    expect(body.error).toBe('month_locked');
+    /* The date the refusal is about, so it is chaseable to a row in the file. */
+    expect(String(body.message)).toContain('2026-08');
+    /* And nothing was written — a refused upload must not leave half a
+       statement behind. */
+    expect(sb.tables.acc_bank_statements).toHaveLength(0);
+  });
+
+  /* THE DATE, NOT THE FILE. A lock on a month the file does not touch must not
+     refuse it; the guard reads the movements' own dates. */
+  test('a lock on another month does not refuse the work', async () => {
+    const { app, lines } = await openedThen([LOCK('2026-03')]);
+    const payout = lines.find((l) => l.kind === 'PAYOUT');
+    const res = await post(app, `/bank/lines/${payout.id}/receipt`, { batchId: 1 });
+    expect(res.status).toBe(200);
+  });
+
+  /* A RELEASED lock is not a lock. The row stays for ever as the record that
+     the month was closed and reopened; only a live one stops a write. */
+  test('a month that was reopened can be worked again', async () => {
+    const { app, lines } = await openedThen([
+      LOCK('2026-08', { released_at: '2026-10-05T01:00:00Z', released_by: 'Chew', release_note: 'bank re-issued' }),
+    ]);
+    const payout = lines.find((l) => l.kind === 'PAYOUT');
+    const res = await post(app, `/bank/lines/${payout.id}/receipt`, { batchId: 1 });
+    expect(res.status).toBe(200);
+  });
+});
+
+/* ── THE OTHER DOOR INTO THE SAME ROOM ────────────────────────────────────────
+   A credit booked from a bank statement writes a layer-3 receipt carrying
+   `bank_line_id`. Layer 3 has its own undo button, and without a guard there the
+   closed month could be changed simply by pressing the other one — the entry
+   reversed, the reported figure no longer true, and the bank screen's refusal
+   worth nothing. A credit TYPED BY HAND has no bank line and is none of the
+   lock's business, which is why the guard is on the link. */
+
+describe('layer 3 undo cannot reach into a closed bank month', () => {
+  const booked = async () => {
+    const rig = harness({
+      acc_bank_recognition_rules: structuredClone(PRISTINE.rules),
+      acc_settlement_batches: [structuredClone(PRISTINE.batch)],
+      acc_settlement_rows: [structuredClone(PRISTINE.row)],
+    });
+    const up = await (await upload(rig.app)).json() as any;
+    const detail = await (await rig.app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    const payout = (detail.lines as any[]).find((l) => l.kind === 'PAYOUT');
+    const res = await post(rig.app, `/bank/lines/${payout.id}/receipt`, { batchId: 1 });
+    expect(res.status).toBe(200);
+    const receipts = rig.sb.tables.acc_settlement_receipts as Row[];
+    expect(receipts).toHaveLength(1);
+    return { ...rig, receiptId: receipts[0]!.id as number };
+  };
+
+  test('refuses to take back a credit that came off a closed month', async () => {
+    const { app, sb, receiptId } = await booked();
+    sb.tables.acc_bank_month_locks = [LOCK('2026-08')];
+    const res = await post(app, `/settlement/receipts/${receiptId}/undo`);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as Row;
+    expect(body.error).toBe('month_locked');
+    expect(String(body.message)).toContain('taking this credit back');
+    /* And nothing was reversed — a refusal that half-happened is worse than
+       either answer. */
+    expect((sb.tables.acc_settlement_receipts as Row[])).toHaveLength(1);
+  });
+
+  test('allows it while the month is open', async () => {
+    const { app, receiptId } = await booked();
+    const res = await post(app, `/settlement/receipts/${receiptId}/undo`);
+    expect(res.status).toBe(200);
+  });
+
+  /* A credit nobody booked from a statement has no bank line, so no month owns
+     it and the guard must not invent one. */
+  test('a credit with no bank line behind it is not the lock business', async () => {
+    const { app, sb } = harness({
+      acc_settlement_batches: [structuredClone(PRISTINE.batch)],
+      acc_settlement_rows: [structuredClone(PRISTINE.row)],
+      acc_settlement_receipts: [{
+        id: 1, company_id: CO, batch_id: 1, received_on: '2026-08-03',
+        amount_sen: 728448, bank_line_id: null, je_no: 'JE-2608-0001',
+      }],
+    });
+    sb.tables.acc_bank_month_locks = [LOCK('2026-08')];
+    const res = await post(app, '/settlement/receipts/1/undo');
+    expect(res.status).not.toBe(409);
   });
 });

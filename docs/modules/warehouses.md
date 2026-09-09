@@ -127,6 +127,12 @@ PATCH `:267-271`), but the trigger has the last word: a create sent as
 
 Owned by `backend/src/scm/routes/inventory.ts`:
 
+- `GET /inventory/valuation?asOf=YYYY-MM-DD` — the as-of photograph (GL
+  redesign item 5, 2026-09-05; handler in `inventory-valuation.ts`): per-item
+  qty + value replayed on the BUSINESS date (`stockBreakdownAsOf` in
+  acc/stock-close.ts, the same engine the month-end close reads), joined to
+  the product master. Feeds the Inventory page's 选日期 view with category
+  subtotals; deliberately carries none of the live list's planning columns.
 - `GET  /inventory/warehouses?includeInactive=true` — list. Company-scoped via
   `scopeToCompany(...)` (`:42-52`).
 - `POST /inventory/warehouses` — create. Company required (`requireActiveCompanyId`
@@ -177,6 +183,32 @@ key off the older `is_showroom` flag and will migrate to `type` incrementally:
 Rule of thumb when adding a new consumer: if you want "sales point", filter
 `type='showroom'`; if you want "stock location", filter `type='warehouse'`; if
 you want "everything selectable", filter `is_active=true` and skip type.
+
+### The NON-SELLING set — one home, two consumers (2026-09-08)
+
+`{ showroom, display, service }` is the set whose stock **may not be promised to
+a customer**. It lives in `backend/src/scm/lib/non-selling-warehouse.ts` and
+nowhere else:
+
+| consumer | what it does with it |
+|---|---|
+| `routes/inventory.ts` dead-stock (owner, 2026-08-05 「它明明是 showroom 的 display 啊」) | excludes those warehouses from the Dead/Spare badge and the analytics list — standing there IS the job, so "no sale in the window" means nothing |
+| `lib/so-stock-allocation.ts` + `lib/so-line-effective-stock.ts` (owner, 2026-09-08 「分配时跳过这九个仓」) | a line bound to one of them is never READY, on any path |
+
+It had TWO homes for one day — a local `NON_SELLING_WAREHOUSE_TYPES` in
+`inventory.ts` and the new module — and
+`backend/scripts/check-duplicated-decisions.mjs` failed the build rather than
+letting them drift. **Do not re-declare the set; import it.**
+
+Measured on company 1, read-only run **34177208009** (2026-09-08 09:36 +08):
+**9** warehouses carry one of these types, all 9 active, holding **1,897 units**
+(**1,642** in the pooled class). `is_showroom` is true on only **2** of the 9,
+which is why it must never be substituted for `type` here.
+
+**The stock is still THERE and still the owner's money** — it stays in on-hand,
+in valuation and in the aging buckets. What changed is only what may be
+PROMISED. To sell a display piece, transfer it into a selling warehouse
+(`/scm/stock-transfers/new`).
 
 ---
 

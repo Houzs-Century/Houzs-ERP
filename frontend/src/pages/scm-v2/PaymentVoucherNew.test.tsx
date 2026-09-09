@@ -18,9 +18,17 @@ const uploadPvAsync = vi.fn(async (_v: { pvId: string; file: { name: string } })
 /* Set by the copy-as-new test; undefined everywhere else (no ?copyFrom → the
    detail hook is disabled and the page never sees it). */
 let copySourceDetail: { paymentVoucher: Record<string, unknown>; lines: Array<Record<string, unknown>>; allocations: unknown[] } | undefined;
+/* What other unposted vouchers already applied (docs/bugs/0653) — empty
+   everywhere but the reservations test, which sets and restores it. */
+let reservations: { byPi: Record<string, number>; byApInvoice: Record<string, number>; holders: Record<string, string[]> } = { byPi: {}, byApInvoice: {}, holders: {} };
+/* The document a Customer Refund names (§14) — set by the refund test. */
+let refundSource: Record<string, unknown> | undefined;
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useCreatePaymentVoucher: () => ({ mutateAsync, isPending: false }),
+  usePvReservations: () => ({ data: reservations, isLoading: false }),
+  NO_RESERVATIONS: { byPi: {}, byApInvoice: {}, holders: {} },
   usePaymentVoucherDetail: (id: string | null) => ({ data: id ? copySourceDetail : undefined, isLoading: false }),
+  useRefundSource: (_type: string, docNo: string) => ({ data: docNo && refundSource ? { source: refundSource } : undefined, isLoading: false, isError: false, error: null }),
   useExtractBills: () => ({ mutateAsync: extractAsync, isPending: false }),
   useUploadPvFile: () => ({ mutateAsync: uploadPvAsync, isPending: false }),
   fileToBase64: async (f: File) => `b64:${f.name}`,
@@ -29,7 +37,15 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   ], totalRemainingSen: 50000 }, isLoading: false }),
 }));
 vi.mock('../../lib/idempotency', () => ({ useIdempotencyKey: () => 'idem-1' }));
-vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
+/* The AP invoices (non-stock bills) the picker lists BESIDE the PIs. */
+vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
+  useApInvoices: () => ({ data: { rows: [
+    { kind: 'API', id: 'api-1', invoiceNumber: '2990-API-2609-001', supplierId: 'sup-1', supplierCode: 'S001', supplierName: 'Foshan Chairs', supplierInvoiceRef: 'RENT-9', invoiceDate: '2026-09-03', dueDate: null, currency: 'MYR', totalSen: 42000, paidSen: 0, outstandingSen: 42000, status: 'POSTED' },
+  ] }, isLoading: false }),
+}));
+vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
+  /* The real pure helpers stay (postableAccounts — docs/bugs/0693); only the hooks are stubbed. */
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/accounting-queries')>()),
   isControlSpecial: (s: string | null | undefined) => s === 'SDC' || s === 'SCC' || s === 'SBS',
   useAccounts: () => ({ data: { accounts: [
     { account_code: '310-0010', account_name: 'Bank — Maybank', account_type: 'ASSET', is_active: true, acc_money: true },
@@ -38,7 +54,7 @@ vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
     { account_code: '400-0000', account_name: 'Account Payable', account_type: 'LIABILITY', is_active: true, acc_money: false },
     { account_code: '405-0000', account_name: 'Other Creditos', account_type: 'LIABILITY', is_active: true, acc_money: false },
   ] }, isLoading: false }),
-  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '310-0010', AP: '400-0000', AP_OTHER: '405-0000' }, overridden: {} }, isLoading: false }),
+  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '310-0010', AP: '400-0000', AP_OTHER: '405-0000', AR: '300-0000' }, overridden: {} }, isLoading: false }),
   useSaveBankDefault: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock('../../vendor/scm/lib/purchase-invoice-queries', () => ({
@@ -52,6 +68,8 @@ vi.mock('../../vendor/scm/lib/suppliers-queries', () => ({
   useSuppliers: () => ({ data: [
     { id: 'sup-1', code: 'S001', name: 'Foshan Chairs', currency: 'MYR' },
     { id: 'sup-405', code: '405-Z002', name: 'Zhejiang Ju Miao', currency: 'MYR' },
+    /* No invoice anywhere — the prepay-only case. */
+    { id: 'sup-2', code: 'S002', name: 'Empty Hands Sdn Bhd', currency: 'MYR' },
   ], isLoading: false }),
   useSupplierDetail: () => ({ data: { supplier: { id: 'sup-1', currency: 'MYR' } } }),
 }));
@@ -63,6 +81,7 @@ vi.mock('../../vendor/scm/lib/currencies-queries', async (importOriginal) => ({
 
 import { PaymentVoucherNew } from './PaymentVoucherNew';
 import { stashPvFiles, takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
+import { todayMyt } from '../../vendor/scm/lib/dates';
 
 const draw = (url: string) => render(
   <MemoryRouter initialEntries={[url]}><PaymentVoucherNew /></MemoryRouter>,
@@ -136,6 +155,23 @@ describe('the AP Payment (?type=ap)', () => {
   });
 });
 
+describe('an AP invoice beside the purchase invoices (owner 2026-09-06)', () => {
+  test('the supplier\'s open AP invoice lists with an AP tag, ticks like a PI, and the payload names apInvoiceId', async () => {
+    mutateAsync.mockClear();
+    draw('/scm/payment-vouchers/new?type=ap');
+    fireEvent.focus(screen.getByLabelText(/Supplier \*/));
+    fireEvent.mouseDown(screen.getByText('S001 · Foshan Chairs'));
+    expect(screen.getByText('2990-API-2609-001')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Pay 2990-API-2609-001 in full'));
+    expect(screen.getByText(/Applying MYR 420\.00/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Create AP Payment'));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    const payload = mutateAsync.mock.calls[0]![0];
+    expect(payload.allocations).toEqual([{ apInvoiceId: 'api-1', amountSen: 42000 }]);
+    expect(payload.lines).toEqual([expect.objectContaining({ debitAccountCode: '400-0000', amountSen: 42000 })]);
+  });
+});
+
 describe('paying ahead (预付) on the AP Payment', () => {
   test('a prepay figure joins the total, the payload, and the Books line; the old advance is pointed at', async () => {
     mutateAsync.mockClear();
@@ -162,6 +198,27 @@ describe('paying ahead (预付) on the AP Payment', () => {
       expect.objectContaining({ debitAccountCode: '400-0000', amountSen: 60000 + 100000 }),
     ]);
     expect(payload.allocations).toEqual([{ piId: 'pi-2', amountSen: 60000 }]);
+  });
+
+  test('a supplier with NO outstanding invoice still gets the prepay box — the advance is the whole voucher (owner 2026-09-06)', async () => {
+    mutateAsync.mockClear();
+    draw('/scm/payment-vouchers/new?type=ap');
+    fireEvent.focus(screen.getByLabelText(/Supplier \*/));
+    fireEvent.mouseDown(screen.getByText('S002 · Empty Hands Sdn Bhd'));
+    /* The empty-list sentence no longer swallows the box. */
+    expect(screen.getByText(/no outstanding invoices — a prepay below/)).toBeTruthy();
+    const prepay = screen.getByLabelText('Prepay amount') as HTMLInputElement;
+    fireEvent.focus(prepay);
+    fireEvent.change(prepay, { target: { value: '500.00' } });
+    fireEvent.blur(prepay);
+    const save = screen.getByText('Create AP Payment').closest('button') as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    const payload = mutateAsync.mock.calls[0]![0];
+    expect(payload.lines).toEqual([expect.objectContaining({ debitAccountCode: '400-0000', amountSen: 50000 })]);
+    /* Nothing to knock off — the payload carries no allocation at all. */
+    expect(payload.allocations ?? []).toEqual([]);
   });
 });
 
@@ -230,6 +287,30 @@ describe('the plain Payment Voucher (/new)', () => {
     expect((screen.getByLabelText('Account (Debit) *') as HTMLInputElement).value).toBe('900-A002 · Advertisement');
   });
 
+  /* 普通 payment scan bill 可以 default 放今天吗 → 做 (owner 2026-09-08): the
+     bill's date no longer overwrites the voucher's — that stays today, the
+     day he records the payment — and rides in the notes instead. */
+  test('a scanned bill leaves the voucher dated TODAY; the bill\'s own date goes to the notes', () => {
+    render(
+      <MemoryRouter initialEntries={[{
+        pathname: '/scm/payment-vouchers/new',
+        state: { billPrefill: {
+          extraction: {
+            vendorName: '99 SPEEDMART S/B', vendorRegNo: null, documentKind: 'receipt' as const,
+            invoiceNumber: 'T0012', invoiceDate: '2026-08-25', dueDate: '2026-09-15',
+            currency: 'MYR', totalSen: 1910, sstSen: null, lines: [],
+          },
+          memory: null,
+        } },
+      }]}><PaymentVoucherNew /></MemoryRouter>,
+    );
+    const [y, m, d] = todayMyt().split('-');
+    const date = screen.getByLabelText(/Voucher Date/) as HTMLInputElement;
+    expect(date.value).toBe(`${d}/${m}/${y}`);
+    expect(date.value).not.toBe('25/08/2026');
+    expect((screen.getByLabelText('Notes') as HTMLTextAreaElement).value).toBe('BILL T0012 · DATED 2026-08-25 · DUE 2026-09-15');
+  });
+
   test('a scanned bill\'s FILES ride the stash and attach right after the save (print pv include ocr 的文件一起)', async () => {
     mutateAsync.mockClear();
     uploadPvAsync.mockClear();
@@ -265,6 +346,68 @@ describe('the plain Payment Voucher (/new)', () => {
     await waitFor(() => expect(screen.getByText(/2 scanned file\(s\) attached/)).toBeTruthy());
   });
 
+  test('Insert adds a line and lands on its account; Enter on an amount moves down, adding a line at the end (owner 2026-09-06)', () => {
+    draw('/scm/payment-vouchers/new');
+    expect(screen.queryByLabelText('line 2 amount')).toBeNull();
+    fireEvent.keyDown(screen.getByLabelText('line 1 amount'), { key: 'Insert' });
+    const second = screen.getByLabelText('line 2 amount');
+    const landed = document.activeElement as HTMLElement | null;
+    expect(landed?.getAttribute('role')).toBe('combobox');
+    expect(landed?.closest('[data-line]')?.contains(second)).toBe(true);
+
+    fireEvent.keyDown(second, { key: 'Enter' });
+    const third = screen.getByLabelText('line 3 amount');
+    expect((document.activeElement as HTMLElement | null)?.closest('[data-line]')?.contains(third)).toBe(true);
+  });
+
+  /* The owner's typing order (2026-09-08: 可以先 account, 再到 description, 再到
+     amount 吗) — Tab follows the DOM, so the DOM says account, description,
+     amount, as the AP invoice and the Other Debtor bill already do. */
+  test('a line reads account, then description, then amount — in that Tab order', () => {
+    draw('/scm/payment-vouchers/new');
+    const line = screen.getByLabelText('line 1 amount').closest('[data-line]')!;
+    const account = line.querySelector('[role="combobox"]')!;
+    const description = line.querySelector('input[placeholder^="e.g. Sea freight"]')!;
+    const amount = screen.getByLabelText('line 1 amount');
+    const before = (a: Element, b: Element) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(before(account, description)).toBe(true);
+    expect(before(description, amount)).toBe(true);
+  });
+
+  /* 像 autocount 按 f3 (owner 2026-09-08): F3 anywhere on the form is the
+     Create button; Ctrl+S too. An unfinished voucher gets the button's own
+     sentence, not a half save. */
+  test('F3 creates the voucher once it is complete; on an unfinished one it only explains', async () => {
+    mutateAsync.mockClear();
+    const filled = render(
+      <MemoryRouter initialEntries={[{
+        pathname: '/scm/payment-vouchers/new',
+        state: { billPrefill: {
+          extraction: {
+            vendorName: 'TENAGA NASIONAL BERHAD', vendorRegNo: null, documentKind: 'bill' as const,
+            invoiceNumber: 'INV-77', invoiceDate: '2026-09-01', dueDate: null,
+            currency: 'MYR', totalSen: 15000, sstSen: null, lines: [],
+          },
+          memory: { payeeName: 'TNB', debitAccountCode: '900-A002', purpose: 'OTHER', timesSeen: 3 },
+        } },
+      }]}><PaymentVoucherNew /></MemoryRouter>,
+    );
+    expect(screen.getByText('F3 saves')).toBeTruthy();
+    const f3 = new KeyboardEvent('keydown', { key: 'F3', cancelable: true, bubbles: true });
+    window.dispatchEvent(f3);
+    expect(f3.defaultPrevented).toBe(true);
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    /* Off the window before the next page listens, or two forms hear one key. */
+    filled.unmount();
+
+    /* A fresh, empty voucher: F3 says what is missing and saves nothing. */
+    mutateAsync.mockClear();
+    draw('/scm/payment-vouchers/new');
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true, cancelable: true, bubbles: true }));
+    expect(await screen.findByText('Enter a payee')).toBeTruthy();
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
   test('the account search actually narrows — 打关键字眼 finds the account', () => {
     draw('/scm/payment-vouchers/new');
     const paidFrom = screen.getByLabelText(/Paid From/) as HTMLInputElement;
@@ -275,5 +418,94 @@ describe('the plain Payment Voucher (/new)', () => {
     /* Picking writes the VALUE and restores the full label. */
     fireEvent.mouseDown(screen.getByText('320-1000 · Cash in hand'));
     expect(paidFrom.value).toBe('320-1000 · Cash in hand');
+  });
+});
+
+describe('invoices another unapproved voucher already applies stay off the picker (owner 2026-09-07: payment 已经分配了就不要显示)', () => {
+  test('a fully reserved invoice is not offered; a partly reserved one offers only what is left', () => {
+    reservations = {
+      byPi: { 'pi-2': 60000, 'pi-1': 55000 },
+      byApInvoice: { 'api-1': 42000 },
+      holders: { 'pi-2': ['2990-HPV-2609-003'], 'pi-1': ['2990-HPV-2609-004'], 'api-1': ['2990-HPV-2604-006'] },
+    };
+    try {
+      draw('/scm/payment-vouchers/new?type=ap');
+      fireEvent.focus(screen.getByLabelText(/Supplier \*/));
+      fireEvent.mouseDown(screen.getByText('S001 · Foshan Chairs'));
+      /* pi-2: 600.00 outstanding, 600.00 reserved → gone. api-1: 420.00 reserved in full → gone. */
+      expect(screen.queryByText('2990-PI-2609-002')).toBeNull();
+      expect(screen.queryByText('2990-API-2609-001')).toBeNull();
+      /* pi-1: 2,550.00 − 550.00 reserved → 2,000.00 is all that can be applied. */
+      expect(screen.getByText('2990-PI-2609-001')).toBeTruthy();
+      fireEvent.click(screen.getByLabelText('Pay 2990-PI-2609-001 in full'));
+      expect(screen.getByText(/Applying MYR 2,000\.00/)).toBeTruthy();
+    } finally {
+      reservations = { byPi: {}, byApInvoice: {}, holders: {} };
+    }
+  });
+});
+
+describe('the Customer Refund (?type=refund, §14)', () => {
+  test('names the document, reads its customer and payments, and the save carries the source and the amount — no lines, no payee typed', async () => {
+    mutateAsync.mockClear();
+    refundSource = {
+      type: 'SO', docNo: '2990-SO-2607-001', status: 'CANCELLED',
+      customer: { name: 'Ah Meng', phone: '0123', customerId: 'cust-1', debtorCode: null },
+      payments: [
+        { id: 'p1', paidOn: '2026-07-01', method: 'transfer', provider: null, amountSen: 50000, booked: true },
+        { id: 'p2', paidOn: '2026-07-02', method: 'imported', provider: null, amountSen: 30000, booked: false },
+      ],
+      bookedSen: 50000, refunds: [{ id: 'pv-old', pvNumber: '2990-MRF-2607-001', status: 'POSTED', voucherDate: '2026-07-20', totalSen: 20000 }],
+      refundedSen: 20000, refundableSen: 30000, eligible: true, reason: null,
+    };
+    draw('/scm/payment-vouchers/new?type=refund');
+    expect(screen.getByText('New Customer Refund')).toBeTruthy();
+    /* No lines card, no payee box, no transfer toggle — the body is the document. */
+    expect(screen.queryByText('Lines')).toBeNull();
+    expect(screen.queryByText('内部转账 Transfer')).toBeNull();
+    const doc = screen.getByLabelText('Refunded document') as HTMLInputElement;
+    fireEvent.change(doc, { target: { value: ' 2990-SO-2607-001 ' } });
+    fireEvent.keyDown(doc, { key: 'Enter' });
+    await waitFor(() => expect((screen.getByLabelText('Customer') as HTMLInputElement).value).toBe('Ah Meng · 0123'));
+    /* Payments with their ledger flag; the AutoCount-era row says so. */
+    expect(screen.getByText('✓ booked')).toBeTruthy();
+    expect(screen.getByText('AutoCount era')).toBeTruthy();
+    expect(screen.getByText('MYR 300.00 refundable')).toBeTruthy();
+    expect(screen.getByText('2990-MRF-2607-001').closest('a')!.getAttribute('href')).toBe('/scm/payment-vouchers/pv-old');
+    /* The amount opened at the headroom; type a partial. */
+    const amount = screen.getByLabelText('Refund amount') as HTMLInputElement;
+    expect(amount.value).toBe('300.00');
+    fireEvent.focus(amount);
+    fireEvent.change(amount, { target: { value: '120' } });
+    fireEvent.blur(amount);
+    expect(screen.getByText(/Books: Dr 300-0000 Trade Debtors \(Ah Meng\) MYR 120\.00 · Cr 310-0010 MYR 120\.00/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Create Refund'));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    const payload = mutateAsync.mock.calls[0]![0];
+    expect(payload).toMatchObject({
+      purpose: 'CUSTOMER_REFUND', payeeName: 'Ah Meng', supplierId: null, creditAccountCode: '310-0010',
+      refundSourceType: 'SO', refundSourceDocNo: '2990-SO-2607-001', refundAmountSen: 12000, lines: [],
+    });
+    refundSource = undefined;
+  });
+
+  test('an ineligible document says why and the amount stays shut', async () => {
+    mutateAsync.mockClear();
+    refundSource = {
+      type: 'SI', docNo: 'HC-SI-2607-001', status: 'SENT',
+      customer: { name: 'Ali', phone: null, customerId: null, debtorCode: 'D001' },
+      payments: [{ id: 'sp1', paidOn: '2026-07-01', method: 'transfer', provider: null, amountSen: 80000, booked: true }],
+      bookedSen: 80000, refunds: [], refundedSen: 0, refundableSen: 80000, eligible: false,
+      reason: 'HC-SI-2607-001 still stands (SENT) — a refund would leave the customer owing it again.',
+    };
+    draw('/scm/payment-vouchers/new?type=refund');
+    fireEvent.click(screen.getByText('Sales Invoice'));
+    const doc = screen.getByLabelText('Refunded document') as HTMLInputElement;
+    fireEvent.change(doc, { target: { value: 'HC-SI-2607-001' } });
+    fireEvent.blur(doc);
+    await waitFor(() => expect(screen.getByText(/still stands/)).toBeTruthy());
+    expect((screen.getByLabelText('Refund amount') as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByText('Create Refund').closest('button') as HTMLButtonElement).disabled).toBe(true);
+    refundSource = undefined;
   });
 });

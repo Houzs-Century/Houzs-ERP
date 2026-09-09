@@ -23,6 +23,9 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
     { id: 'prep', pv_number: 'PV-2609-002', payee_name: 'Prepared Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 20000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: null, approved_at: null },
     { id: 'chk', pv_number: 'PV-2609-003', payee_name: 'Checked Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 30000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: '2026-09-02T02:00:00Z', approved_at: null },
     { id: 'done', pv_number: 'PV-2609-004', payee_name: 'Posted Co', status: 'POSTED', voucher_date: '2026-09-01', total_sen: 40000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: '2026-09-02T02:00:00Z', approved_at: '2026-09-02T03:00:00Z' },
+    { id: 'adv', pv_number: 'PV-2609-005', payee_name: 'Prepaid Co', status: 'POSTED', voucher_date: '2026-09-01', total_sen: 300000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: '2026-09-02T02:00:00Z', approved_at: '2026-09-02T03:00:00Z', advance_remaining_sen: 214374 },
+    /* Prepared like 'prep' but dated two months EARLIER — the batch-order case (docs/bugs/0653). */
+    { id: 'prep-early', pv_number: '2990-Draft-2607-009', payee_name: 'Earlier Prepared Co', status: 'DRAFT', voucher_date: '2026-07-05', total_sen: 5000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: null, approved_at: null },
   ] }, isLoading: false, error: null }),
   useCancelPaymentVoucher: () => ({ mutate: vi.fn(), isPending: false }),
   useSubmitPaymentVoucher: () => ({ mutateAsync: prepareAsync, isPending: false }),
@@ -47,11 +50,11 @@ describe('批量 tick yes', () => {
   test('EVERY row ticks — a POSTED voucher joins the batch print, and only Print applies to it', () => {
     draw();
     const boxes = screen.getAllByLabelText('Select row') as HTMLInputElement[];
-    expect(boxes).toHaveLength(4);
-    /* Row order mirrors the data: raw / prepared / checked / posted. All
-       tickable since a tick now also means "include in the batch print"
-       (owner 2026-09-03: 可选多张 pv + document). */
-    expect(boxes.map((b) => b.disabled)).toEqual([false, false, false, false]);
+    expect(boxes).toHaveLength(6);
+    /* Row order mirrors the data: raw / prepared / checked / posted / prepaid /
+       earlier prepared. All tickable since a tick now also means "include in
+       the batch print" (owner 2026-09-03: 可选多张 pv + document). */
+    expect(boxes.map((b) => b.disabled)).toEqual([false, false, false, false, false, false]);
 
     fireEvent.click(boxes[3]!); // posted — printable, not approvable
     expect(screen.getByText('Print 1 + files')).toBeTruthy();
@@ -118,5 +121,39 @@ describe('批量 tick yes', () => {
     const said = JSON.stringify(notifyFn.mock.calls[0]![0]);
     expect(said).toMatch(/0 of 1 checked/);
     expect(said).toMatch(/PV-2609-002: This voucher is already checked/);
+  });
+});
+
+describe('an advance not yet knocked off (owner 2026-09-06)', () => {
+  test('the row wears the open amount beside its pill, and the Advance open chip keeps only such rows', () => {
+    render(<MemoryRouter><PaymentVouchers /></MemoryRouter>);
+    expect(screen.getByText(/预付未冲 MYR 2,143\.74/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Advance open'));
+    expect(screen.getByText('PV-2609-005')).toBeTruthy();
+    expect(screen.queryByText('PV-2609-004')).toBeNull();
+    expect(screen.queryByText('PV-2609-001')).toBeNull();
+  });
+});
+
+describe('the batch runs in voucher-date order (docs/bugs/0653)', () => {
+  test('ticked newest-first, Check still stamps the older voucher first — the formal number follows the date, not the mouse', async () => {
+    checkAsync.mockClear(); confirmFn.mockClear(); notifyFn.mockClear();
+    draw();
+    const boxes = screen.getAllByLabelText('Select row') as HTMLInputElement[];
+    fireEvent.click(boxes[1]!); // prepared, dated 2026-09-01 — ticked FIRST
+    fireEvent.click(boxes[5]!); // earlier prepared, dated 2026-07-05 — ticked second
+    expect(screen.getByText('Check 2')).toBeTruthy();
+    fireEvent.click(screen.getByText('Check 2'));
+    await waitFor(() => expect(checkAsync).toHaveBeenCalledTimes(2));
+    expect(checkAsync.mock.calls.map((c) => c[0])).toEqual(['prep-early', 'prep']);
+  });
+});
+
+describe('the third New (§14)', () => {
+  test('New Customer Refund stands beside the other two', () => {
+    draw();
+    expect(screen.getByText('New Customer Refund')).toBeTruthy();
+    expect(screen.getByText('New AP Payment')).toBeTruthy();
+    expect(screen.getByText('New Payment Voucher')).toBeTruthy();
   });
 });

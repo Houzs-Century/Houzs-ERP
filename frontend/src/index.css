@@ -406,3 +406,83 @@ tr.dt-row-cancelled:hover > td.dt-cancel-keep > * {
   text-decoration: line-through;
   text-decoration-thickness: 1px;
 }
+
+/* ------------------------------------------------------------------
+   Announcement rich body — components/AnnouncementRichBody.tsx renders the
+   canonical fragment from lib/announcementRichText.ts inside `.ann-rich`;
+   the composer (components/AnnouncementRichEditor.tsx) edits inside
+   `.ann-rte`, which shares the rules so what you type is what readers see.
+   Tailwind's preflight strips list markers and heading weights, so every
+   tag the grammar allows is styled explicitly here. Sizes are ABSOLUTE
+   (px, not em) on purpose: a size span nested in another must not compound.
+   ------------------------------------------------------------------ */
+.ann-rich p,
+.ann-rte p { margin: 0; min-height: 1.25em; }
+.ann-rich ol,
+.ann-rte ol { list-style: decimal; margin: 0.15em 0; padding-left: 1.6em; }
+.ann-rich ul,
+.ann-rte ul { list-style: disc; margin: 0.15em 0; padding-left: 1.6em; }
+.ann-rich ol ol,
+.ann-rte ol ol { list-style: lower-alpha; }
+.ann-rich ul ul,
+.ann-rte ul ul { list-style: circle; }
+.ann-rich li,
+.ann-rte li { margin: 0.1em 0; }
+.ann-rich b,
+.ann-rte b { font-weight: 700; }
+.ann-rich [data-size="sm"],
+.ann-rte [data-size="sm"] { font-size: 11.5px; }
+.ann-rich [data-size="lg"],
+.ann-rte [data-size="lg"] { font-size: 16px; }
+.ann-rich [data-size="xl"],
+.ann-rte [data-size="xl"] { font-size: 20px; line-height: 1.35; }
+/* 2026-09-06: numeric point sizes (the Size dropdown); sm/lg/xl above are
+   the legacy tokens older notices still carry. */
+.ann-rich [data-size="10"], .ann-rte [data-size="10"] { font-size: 10px; }
+.ann-rich [data-size="11"], .ann-rte [data-size="11"] { font-size: 11px; }
+.ann-rich [data-size="12"], .ann-rte [data-size="12"] { font-size: 12px; }
+.ann-rich [data-size="14"], .ann-rte [data-size="14"] { font-size: 14px; }
+.ann-rich [data-size="16"], .ann-rte [data-size="16"] { font-size: 16px; }
+.ann-rich [data-size="18"], .ann-rte [data-size="18"] { font-size: 18px; line-height: 1.4; }
+.ann-rich [data-size="20"], .ann-rte [data-size="20"] { font-size: 20px; line-height: 1.35; }
+.ann-rich [data-size="24"], .ann-rte [data-size="24"] { font-size: 24px; line-height: 1.3; }
+.ann-rich [data-size="28"], .ann-rte [data-size="28"] { font-size: 28px; line-height: 1.25; }
+.ann-rich [data-size="36"], .ann-rte [data-size="36"] { font-size: 36px; line-height: 1.2; }
+/* 2026-09-05 toolbar follow-up: h1 / h2 / mark / a / table / img. */
+.ann-rich h1,
+.ann-rte h1 { font-size: 18px; font-weight: 680; line-height: 1.3; margin: 0.5em 0 0.2em; color: #1f2a22; }
+.ann-rich h2,
+.ann-rte h2 { font-size: 15px; font-weight: 650; line-height: 1.35; margin: 0.45em 0 0.15em; color: #1f2a22; }
+.ann-rich h1:first-child,
+.ann-rte h1:first-child,
+.ann-rich h2:first-child,
+.ann-rte h2:first-child { margin-top: 0; }
+.ann-rich mark,
+.ann-rte mark { background: #f3ece0; color: inherit; padding: 0 3px; border-radius: 3px; box-decoration-break: clone; }
+.ann-rich a,
+.ann-rte a { color: #2d6a6f; text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
+.ann-rich a:hover { color: #1f4f53; }
+.ann-rich table,
+.ann-rte table { border-collapse: collapse; width: 100%; margin: 0.45em 0; font-size: 12.5px; line-height: 1.45; }
+.ann-rich th,
+.ann-rte th,
+.ann-rich td,
+.ann-rte td { border: 1px solid #d6d9d2; padding: 6px 9px; text-align: left; vertical-align: top; min-width: 48px; }
+.ann-rich th,
+.ann-rte th { background: #f4f6f3; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #5a635b; }
+.ann-rich img,
+.ann-rte img { display: block; max-width: 100%; height: auto; margin: 0.45em 0; border-radius: 6px; border: 1px solid #e3e6e0; }
+.ann-rich img:not([src]),
+.ann-rte img:not([src]),
+.ann-rich img[data-missing] { min-height: 56px; min-width: 96px; background: #f4f6f3; }
+.ann-rte img { cursor: default; }
+.ann-rte { position: relative; outline: none; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ann-rte[data-empty="true"]::before {
+  content: attr(data-placeholder);
+  position: absolute;
+  left: 0.75rem;
+  top: 0.5rem;
+  pointer-events: none;
+  color: #8c968a;
+  opacity: 0.85;
+}

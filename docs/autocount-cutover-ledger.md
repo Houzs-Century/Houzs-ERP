@@ -707,6 +707,7 @@ W4 里有 **45 个 cell** 的 AutoCount 余额比 ERP 少。脚本**没有**去�
 | 补 31 行漏拆的沙发行 | 走旧(非沙发)通道进来的沙发行没拆件 | `repair-leaked-sofa-lines.mjs` / 31354031243 (08-10 03:57) | 修 **31** 行、加 **38** 个件。**在原行上 UPDATE,不删** —— id 保住,PO allocation 不断 |
 | 建 19 个缺的布料色号 | PROC 单用的颜色,库里真的没有(不是比对问题) | `add-missing-sofa-fabrics.mjs` / 31351207634 (08-10 02:57) | `fabric_library` **+6**、`fabric_colours` **+19** |
 | venue 归并 | 导入带进来的是 AutoCount 时代的别名,下拉里选不到 | `fix-imported-so-venues-address.mjs` (31295324294) + `normalize-venue-aliases.mjs` (31348076922) | 文字规范 **1,606** 单 + 别名归并 **43** 单 + 新建 venue **2** 个 |
+| **补 13 行 PO→SO 的指定** | convert 对称检查的 `not linked` 栏里,只有这 13 行是账本自己在**行**这一级讲明的 —— `PODTL.FromSODtlKey` 指到某一条 SO 行,那条行 ERP 里只有一条,而我们的 `so_item_id` 还是空的。9 行是 bedframe,床架是 hard binding,没有这条指定就永远亮不了 READY | `repair-po-so-link-from-book.mjs` / PLAN 34185233130 + APPLY 34185303207 (09-08 03:57) | 写 **13/13**,fresh connection 复查 **0** 行形状不对;`dropped` 13 → **0**(34186141752)。写入当下 allocation 不变(READY 1969),这是预期的:直接 SQL 不会触发重算 |
 
 开件(compartment)本身不是修正,是导入的前置动作,一并记在这里:
 `open-sofa-so-compartments.mjs` 两批 —— run 31326039191(7 个型号,mint 16)+
@@ -772,6 +773,23 @@ BUG-HISTORY 里跟这次割接直接相关的三条(都在文件最上面):GRN p
 | 24 | **48 张迁移 PO 到收盘仍然没有交期** —— 明细行上也没有,**不是补漏了** | 31395645232:`still blank because no LINE carries a date either: 48`(另外 401 张已补,§2B W18) | AutoCount 那边本来就没写。要填只能人工问供应商 |
 
 ---
+
+### 2026-09-08 补记:§5 里有四行已经不成立,而且被照抄过
+
+**不改上面的历史行**(铁律 5),但下面这四行**不要再当成待办**。
+整条链路的现状改看 **`docs/autocount-link-map.md`**(那份是仪表盘,这份是账本)。
+
+| §5 的行 | 当时写的 | 2026-09-08 实测 | 证据 |
+|---|---|---|---|
+| #4 | `backfill-zero-cost-lots` 一次都没跑 | **已 APPLY** | run `33849184319`(08-29 05:32 本地),`mode=APPLY`;264 lots / 2,203 units / RM 841,956.14 |
+| #14 | `import-ac-sofa-stock` 的 apply 一次都没有 | **已 APPLY** | run `34160820055`(09-07),`mode=APPLY` |
+| #2 / §1 坑二 | `scm.purchase_orders.linked_ac_docno` 没有 migration | **已收口** | `migrations-pg/0277_scm_autocount_outbox.sql:89-105` 就是在补它 |
+| §7 附注 | `check-line-supply-trace.yml` 还没合并,`main` 上没有 | **已在 main** | `.github/workflows/check-line-supply-trace.yml` 存在 |
+
+> **§5 的第一张表不能单独读。** 它下面那张「收盘状态」表才是真的状态,
+> 而这四行连那张表都没有更新到。**照着 §5 第一张表去「补跑」,会把已经做过的事再做一遍。**
+> 这是全仓被抄错最多次的一段;下一次动这个档案的人,请把两张表合并掉。
+
 
 ## 6. 快照档案:每一个是什么的快照、什么时候拿的
 
@@ -1078,6 +1096,12 @@ W16 照做了:511 + 49 张改成了 AutoCount 的号。
 
 ## 相关文件
 
+- **`docs/migrated-invoices-2026-09-07.md`** — 割接过来的**采购发票**:192 张在范围内的
+  发票每一张缺在哪里、为什么,以及 2026-09-07 晚上把 21 张缺口补到 5 张的那一轮(单号
+  盖回采购单的程序只比对收货单号,漏写发票单号 —— `docs/bugs/0674-*`)。
+  **里面有一件以后不用再查的事**:AutoCount 的采购单 18,890 条明细里 10,810 条没有单价,
+  价钱是收货的时候才填的,所以我们照采购单抄价钱的收货单是 RM 0.00 —— 那不是我们记错,
+  是那张单本来就没写
 - `docs/modules/autocount-writeback.md` — **反方向**:割接之后 ERP 是 master,每一张单怎么写回 AutoCount(outbox + 下游锁)。跟这份账本是两件事,不要混
 - `docs/sofa-import-handoff.md` — 沙发那一路的语法、开件、管线与未完事项(PR #1831)
 - `docs/2990-cutover/` — 2990(company 2)的割接,跟这一份是两件事

@@ -9,6 +9,8 @@ import {
 } from "../vendor/scm/lib/so-variant-cascade";
 import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
+import { lineWriteFailure, lineWriteSaveMessage, type LineWriteFailure } from "../vendor/scm/lib/line-write-failures";
+import { photoLabel, photoUploadFailure, photoUploadFailureMessage, unmatchedLinePhotos, type PhotoUploadFailure } from "../vendor/scm/lib/photo-upload-failures";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
 import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
 import { uploadSlipFull } from "../vendor/scm/lib/slip";
@@ -19,6 +21,7 @@ import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
+import { addressLineProps } from "../lib/addressLimit";
 import { paymentMethodCodeForValue } from "../vendor/scm/lib/payment-methods";
 import { soDateGuardError, soStockLocationError, soErrorText } from "../vendor/scm/lib/so-form-validate";
 import { useBranding } from "../hooks/useBranding";
@@ -31,7 +34,8 @@ import {
 import { SearchableSelect } from "../vendor/scm/components/SearchableSelect";
 import { diffHeaderPayload, hasHeaderChanges } from "../vendor/scm/lib/so-header-diff";
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER, AMENDMENT_NOTHING_TO_SUBMIT } from "../vendor/scm/lib/so-amendment-submit";
-import { LOCKED_STATUSES, procLockActive } from "../vendor/scm/lib/so-detail-gates";
+import { LOCKED_STATUSES, procLockActive, migratedReadonly as soMigratedReadonly, type SoDetailGateHeader } from "../vendor/scm/lib/so-detail-gates";
+import { MigratedReadonlyBanner } from "../vendor/scm/components/MigratedReadonlyBanner";
 import {
   useSoDropdownOptions,
   optionsOrFallback,
@@ -783,6 +787,7 @@ export function MobileNewSO({
     }
   };
   const [lineLocked, setLineLocked] = useState(false);
+  const [migHeader, setMigHeader] = useState<SoDetailGateHeader | null>(null);
   /* SO-amendment flags captured from the detail GET (Phase 1-C). When
      `amendEligible` the SO is processing-locked but still editable via the
      amendment flow — the edit view stays usable and Save submits an AMENDMENT
@@ -998,6 +1003,7 @@ export function MobileNewSO({
         const st = (detail.salesOrder.status ?? "").toUpperCase();
         setSoStatus(st);
         setLineLocked(LOCKED_STATUSES.includes(st) || Boolean(detail.salesOrder.has_children));
+        setMigHeader(detail.salesOrder);
         /* Amendment gate (server-derived) — the same flags the desktop SO Detail
            routes on. When amendment_eligible the SO is processing-locked but the
            edit view stays usable; Save then submits an amendment (see save()). */
@@ -1158,19 +1164,20 @@ export function MobileNewSO({
      line write on a PO'd SO would break the supplier copy, which is exactly what
      this flow prevents. Uses the server flag; falls back to false when absent so
      older responses keep the old block-everything behaviour. */
-  const amendmentMode = amendEligible && !lineLocked && !hasOpenAmend;
+  const migratedLocked = soMigratedReadonly(migHeader); // no override and no amendment route out of this one
+  const amendmentMode = !migratedLocked && amendEligible && !lineLocked && !hasOpenAmend;
   /* Line editing is blocked when the SO is shipped / has downstream docs
      (lineLocked), OR when the processing date has passed (procLocked) UNLESS the
      order is in amendment mode (then the editor stays open and Save raises an
      amendment). A procLocked SO that already has an open amendment stays
      read-only — a second amendment can't be raised while one is in flight. */
-  const lineEditingBlocked = lineLocked || (procLocked && !amendmentMode);
+  const lineEditingBlocked = migratedLocked || lineLocked || (procLocked && !amendmentMode);
   /* Identity address columns (State/City/Postcode) freeze on the processing
      lock (State drives each line's warehouse → the supplier PO) — EXCEPT in
      amendment mode, where changing them is exactly what an amendment is for, so
      they stay editable and their new values ride the request for approval
      (Owner 2026-07-16: "應該是全部可以 request 啊 然後看有沒有 approval"). */
-  const addressIdentityLocked = procLocked && !amendmentMode;
+  const addressIdentityLocked = migratedLocked || (procLocked && !amendmentMode);
   /* The two schedule dates follow the same rule: frozen on a plain locked SO,
      requestable via the amendment. Delivery Date specifically — owner:
      "delivery date 也要給 amend 也是 subject approval". */
@@ -1179,7 +1186,7 @@ export function MobileNewSO({
      pair to pull a locked SO back out of Proceed, so freezing the inputs here
      would deny the very action the permission grants. Moving (rather than
      clearing) a locked date still 409s server-side — same as desktop. */
-  const scheduleDatesLocked = procLocked && !amendmentMode && !canRemoveProcessingDate;
+  const scheduleDatesLocked = migratedLocked || (procLocked && !amendmentMode && !canRemoveProcessingDate);
   /* Schedule-date floor (desktop parity) — the backend rejects a past
      Processing / Delivery Date (todayMY, UTC+8), so grey out earlier days in
      the picker exactly as SalesOrderNew / SalesOrderDetail do, instead of
@@ -1529,26 +1536,25 @@ export function MobileNewSO({
       if (hit) { claimed.add(hit.id); return hit.id; }
       return null;
     };
-    let failed = 0;
+    /* COLLECTS THE REASONS, not a count: the photo half of the defect #3303
+       fixed for line writes. Wording and the retry/refusal decision are in
+       vendor/scm/lib/photo-upload-failures.ts, with the whole trace. */
+    const failures: PhotoUploadFailure[] = [];
     const uploadUnderLease = async (lease: string) => {
       for (const l of withFiles) {
         const itemId = resolveId(l);
-        if (!itemId) { failed += l.photoFiles.length; continue; }
+        const line = l.itemCode.trim() || l.name.trim();
+        if (!itemId) { failures.push(...unmatchedLinePhotos(line, l.photoFiles)); continue; }
         for (const file of l.photoFiles) {
-          try {
-            await uploadSoItemPhotoWithLease(soDocNo, itemId, file, lease);
-          } catch { failed += 1; }
+          try { await uploadSoItemPhotoWithLease(soDocNo, itemId, file, lease); }
+          catch (e) { failures.push(photoUploadFailure(photoLabel(line, file.name), e)); }
         }
       }
     };
-    if (existingLeaseToken) {
-      await uploadUnderLease(existingLeaseToken);
-    } else {
-      await runSoVersionedMutation(qc, soDocNo, "mobile-new-so-photo-upload", ({ leaseToken }) =>
-        uploadUnderLease(leaseToken));
-    }
-    if (failed > 0) {
-      void notify({ title: "Some photos didn't upload", body: `${failed} line photo(s) failed to upload. Add them again from the SO detail screen.`, tone: "error" });
+    if (existingLeaseToken) { await uploadUnderLease(existingLeaseToken); }
+    else { await runSoVersionedMutation(qc, soDocNo, "mobile-new-so-photo-upload", ({ leaseToken }) => uploadUnderLease(leaseToken)); }
+    if (failures.length > 0) {
+      void notify({ title: "Some photos didn't upload", body: photoUploadFailureMessage(failures), tone: "error" });
     }
   }
 
@@ -1612,15 +1618,18 @@ export function MobileNewSO({
     return false;
   };
 
-  async function applyLineDiff(soDocNo: string, leaseToken: string): Promise<number> {
+  /* RETURNS THE REASONS, not a count: a bare `catch { failed += 1; }` here is
+     what told the owner to "try Save again" against a 409 that never could —
+     the whole trace is in vendor/scm/lib/line-write-failures.ts. */
+  async function applyLineDiff(soDocNo: string, leaseToken: string): Promise<LineWriteFailure[]> {
     const base = `/mfg-sales-orders/${encodeURIComponent(soDocNo)}/items`;
     const leaseHeaders = { "X-SO-Edit-Lease": leaseToken };
-    let failed = 0;
+    const failures: LineWriteFailure[] = [];
     const liveIds = new Set(lines.map((l) => l.itemId).filter(Boolean));
     for (const snap of origItems) {
       if (liveIds.has(snap.id)) continue;
       try { await authedFetch(`${base}/${encodeURIComponent(snap.id)}`, { method: "DELETE", headers: leaseHeaders }); }
-      catch { failed += 1; }
+      catch (e) { failures.push(lineWriteFailure(snap.item_code || "A removed line", e)); }
     }
     const snapById = new Map(origItems.map((s) => [s.id, s]));
     for (const l of lines) {
@@ -1633,16 +1642,16 @@ export function MobileNewSO({
             body: JSON.stringify(itemBody(l)),
           });
         }
-        catch { failed += 1; }
+        catch (e) { failures.push(lineWriteFailure(l.itemCode.trim(), e)); }
         continue;
       }
       const snap = snapById.get(l.itemId);
       if (snap && lineChanged(l, snap)) {
         try { await authedFetch(`${base}/${encodeURIComponent(l.itemId)}`, { method: "PATCH", headers: leaseHeaders, body: JSON.stringify(itemPatchBody(l)) }); }
-        catch { failed += 1; }
+        catch (e) { failures.push(lineWriteFailure(l.itemCode.trim() || (snap.item_code ?? "A line"), e)); }
       }
     }
-    return failed;
+    return failures;
   }
 
   /* ── Amendment line builder (Phase 1-C) ──────────────────────────────────
@@ -2025,10 +2034,8 @@ export function MobileNewSO({
            rejects them 409 so_locked_processing anyway. */
         if (!lineEditingBlocked) {
           if (leaseToken) {
-            const failed = await applyLineDiff(docNo, leaseToken);
-            if (failed > 0) {
-              throw new Error(`${failed} line change(s) did not save. Your edits are still here; try Save again.`);
-            }
+            const failures = await applyLineDiff(docNo, leaseToken);
+            if (failures.length > 0) throw new Error(lineWriteSaveMessage(failures));
           }
           await uploadStagedPhotos(docNo, leaseToken);
         }
@@ -2198,7 +2205,8 @@ export function MobileNewSO({
                 NOT shown in amendment mode — there the lines + frozen fields ARE
                 editable (they ride an amendment), so this banner would contradict
                 the form. The amendment banner on the Items card says it instead. */}
-            {procLocked && !amendmentMode && (
+            <MigratedReadonlyBanner header={migHeader} rounded={12} />
+            {!migratedLocked && procLocked && !amendmentMode && (
               <div style={{ display: "flex", alignItems: "flex-start", gap: 9, marginBottom: 11, padding: "10px 12px", background: "#fbf3e6", border: "1px solid #ecd9b6", borderRadius: 12 }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a16a2e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", marginTop: 1 }}><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
                 <div style={{ fontSize: 11.5, color: "#8a5a22", lineHeight: 1.5 }}>
@@ -2375,7 +2383,6 @@ export function MobileNewSO({
               </div>
             </div>
 
-            {/* ── Delivery address ────────────────────────────────────── */}
             <div className="card" style={{ marginBottom: 11 }}>
               <div className="card-h"><span className="card-t">Delivery address</span></div>
               <div className="card-b" style={{ display: "flex", flexDirection: "column", gap: 9 }}>
@@ -2385,10 +2392,10 @@ export function MobileNewSO({
                   </div>
                 )}
                 <Field label={addressRequired ? "Address Line 1 *" : "Address Line 1"} error={touched && addressRequired && !addr1.trim()} scanned={scanned("addr1", addr1)}>
-                      <input className="fld-i" value={addr1} onChange={(e) => setAddr1(e.target.value)} placeholder="Unit, street, area" />
+                      <input className="fld-i" value={addr1} {...addressLineProps(setAddr1, { value: addr2, set: setAddr2 })} onChange={(e) => setAddr1(e.target.value)} placeholder="Unit, street, area" />
                     </Field>
                     <Field label="Address Line 2">
-                      <input className="fld-i" value={addr2} onChange={(e) => setAddr2(e.target.value)} placeholder="Apt, floor, building (optional)" />
+                      <input className="fld-i" value={addr2} {...addressLineProps(setAddr2, null)} onChange={(e) => setAddr2(e.target.value)} placeholder="Apt, floor, building (optional)" />
                     </Field>
                     {/* FIX A — cascading State → City → Postcode from my_localities
                         (desktop parity). When the dataset is present these are
@@ -2619,8 +2626,8 @@ export function MobileNewSO({
       {!loading && (
         <footer id="nso-footer" className="actbar" style={{ display: "flex", gap: 9 }}>
           {mode === "edit" ? (
-            <button className="btn" disabled={submitting} onClick={() => save(false)} style={{ flex: 1, opacity: submitting ? 0.6 : 1 }}>
-              {submitting ? (amendmentMode ? "Submitting…" : "Saving…") : amendmentMode ? "Submit Amendment" : "Save Changes"}
+            <button className="btn" disabled={submitting || migratedLocked} onClick={() => save(false)} style={{ flex: 1, opacity: submitting || migratedLocked ? 0.6 : 1 }}>
+              {submitting ? (amendmentMode ? "Submitting…" : "Saving…") : migratedLocked ? "View only" : amendmentMode ? "Submit Amendment" : "Save Changes"}
             </button>
           ) : (
             <>

@@ -17,6 +17,7 @@
 
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { AsOfSection } from './InventoryAsOf';
 import {
   Search, ArrowUpRight, ArrowDownLeft, Star, X, Plus,
   Warehouse as WarehouseIcon, ChevronRight, ChevronDown,
@@ -428,6 +429,7 @@ const BalancesTab = ({
   warehouseId: string | null;
   onDrilldown: (code: string, name: string) => void;
 }) => {
+  const [asOf, setAsOf] = useState(''); // 选日期 (GL item 5) — see InventoryAsOf.tsx
   const { requestTerm } = useDebouncedSearchTerm(search);
   const { data, isLoading, isFetching, isPlaceholderData, error } = useInventoryProductTotals({
     search: requestTerm.trim() || undefined,
@@ -479,7 +481,7 @@ const BalancesTab = ({
   const statsPending = isLoading || searching || resultsAreStale || Boolean(error);
 
   return (
-    <>
+    <AsOfSection asOf={asOf} onChange={setAsOf} category={category} search={search}>
       <div className={STAT_GRID}>
         <StatCard label="Own Stock Qty" value={fmtQty(stats.ownQty)} pending={statsPending} />
         <StatCard label="Consignment Qty" value={fmtQty(stats.heldQty)} pending={statsPending} />
@@ -548,7 +550,7 @@ const BalancesTab = ({
           rowKey: (r) => r.item_code,
         }}
       />
-    </>
+    </AsOfSection>
   );
 };
 

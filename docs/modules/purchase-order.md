@@ -268,7 +268,7 @@ with no per-area level consulted.
 | PATCH | `/:id/submit` | `:2904` | Legacy no-op/echo — returns 409 unless already SUBMITTED. Also 409 `purchase_location_id_required` if the PO has no ship-to warehouse (2026-08-02). |
 | PATCH | `/:id/confirm` | `:2998` | **The commit**: DRAFT → SUBMITTED. Blocked 409 `purchase_location_id_required` (via `poWarehouseGap`) if the header `purchase_location_id` is blank AND any line has no `warehouse_id` — a warehouse-less PO can't go live because its GR would receive into the wrong warehouse (owner 2026-08-02). |
 | POST | `/:id/send-to-supplier` | `:3019` | Email the PO PDF. Fail-closed on the `purchase_order` email channel (`:3032`). |
-| PATCH | `/:id/cancel` | `:3182` | → CANCELLED; releases SO quota AND clears the line's mig-0235 allocation sub-lines (a cancelled PO attributes nothing — 2026-08-02). |
+| PATCH | `/:id/cancel` | `:3182` | → CANCELLED; releases SO quota AND clears the line's mig-0235 allocation sub-lines (a cancelled PO attributes nothing — 2026-08-02). **Since 2026-09-08 a non-DRAFT PO reaches this only after a cancellation request with a reason has been approved (one Purchaser signature)** — `cancelApprovalGuard('PO')` at the mount refuses 403 `cancel_approval_required` otherwise (`docs/modules/document-cancel-approval.md`). A DRAFT still cancels directly. |
 | PATCH | `/:id/reopen` | `:3276` | CANCELLED → SUBMITTED; re-claims SO quota. Allocation sub-lines are NOT restored (they were cleared on cancel); the coarse `so_item_id` link remains, re-split via the allocation editor if needed. **Since 2026-08-13 it also runs `poWarehouseGap` and stamps `submitted_at`** — reopen was the third door to SUBMITTED and the only one with no warehouse gate, so cancel-then-reopen turned a warehouse-less DRAFT into a live, GR-receivable PO. |
 | POST | `/bulk-supplier-date` | — | **Was missing from this table until 2026-08-13.** Sets ONE supplier-REVISED delivery-date slot (`slot` 2/3/4 → `supplier_delivery_date_2..4`) across up to 100 POs. It never touches `supplier_id` and never touches `expected_at`. `applyToLines` **defaults to TRUE**, so unless the caller opts out it cascades onto every line's date as well. A downstream-locked or foreign-company PO is reported in `skipped`, never written; each updated PO still gets its own audit row. |
 
@@ -405,7 +405,8 @@ works and is multi-select at line level — but only for a line that is
   stamps `submitted_at`, writes a `POST` audit row, then runs `recomputeSoPicked`
   best-effort (`:2983-2989`). Idempotent on SUBMITTED / PARTIALLY_RECEIVED
   (`:2943`); rejects anything else with 409.
-- **Cancel** (`:3182`). Refuses RECEIVED (`:3200`); idempotent on CANCELLED;
+- **Cancel** (`:3182`). Behind the reason + one-approval request for any non-DRAFT PO
+  (`document-cancel-approval.md`). Refuses RECEIVED (`:3200`); idempotent on CANCELLED;
   then two locks — `poHasDownstream` (`:3208`) and `poHasOutstandingDropshipOut`
   (`:3214`). Releases every converted SO line's quota via `recomputeSoPicked`
   (`:3251-3259`).
@@ -467,6 +468,17 @@ it, but a hand-typed line never could.
   `po_qty_picked` forward. Previously the read carried no company predicate (the
   service-role client bypasses RLS), so a foreign `soItemId` re-parented another
   company's SO line onto this company's PO. `BUG-HISTORY.md` 2026-08-19.
+- **`POST /` also refuses a bind to a DIFFERENT product (2026-09-07).** The
+  company predicate above was only half of what `soLinkTargetRefusal` does, and
+  the comment in the code said it "mirrors" that function — so a New-PO line for
+  product B could be linked to an SO line for product A on the create path while
+  the add-line, patch-line and both allocation paths refused it. The create now
+  reads `item_code` in the same batch SO read and returns the same
+  `409 so_link_material_mismatch` (with `soItemId` alongside `soItemCode` /
+  `itemCode`). It does NOT apply the SPEC gate — that stays where it is, on the
+  allocation paths. Why it matters: `so_item_id` is what makes a hard-bound line
+  read READY (`isHardBoundLine`), so a wrong bind lights the wrong bed. Bug
+  class `docs/bugs/0672-bug-class-key-without-identity-*.md`.
 - **And through `soLineOverConvertRefusal` (2026-08-11)** — `soLinkTargetRefusal`
   proves a bind POINTS somewhere legitimate; it says nothing about HOW MUCH. Both
   line paths take an operator-supplied qty, and until this landed neither capped
@@ -735,7 +747,7 @@ those are what the route actually selects.
 |-------|------|
 | `scm.purchase_orders` | PO header. `po_number` (UNIQUE), `supplier_id`, `status`, `po_date`, `expected_at`, `purchase_location_id` (FK → `warehouses.id`), `currency`, `subtotal_sen` / `tax_sen` / `total_sen`, `submitted_at` / `received_at` / `cancelled_at`, `revision`, `supplier_delivery_date_2..4`, `company_id`. |
 | `scm.purchase_order_items` | PO lines. `binding_id`, `material_kind` / `item_code` / `material_name`, `supplier_sku`, `qty`, `received_qty`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, variant columns (`item_group`, `variants`, `gap_inches`, `divan_*`, `leg_*`, `custom_specials`, `line_suffix`, `special_order_price_sen`), `delivery_date`, `warehouse_id`, `supplier_delivery_date_2..4`, `so_item_id`, `from_mrp`, `photo_urls` (mig 0274 — see *Line photos* below), `linked_ac_dtlkey` (mig 0273 — AutoCount `PODTL.DtlKey`; indexed, NOT unique — one AutoCount sofa line becomes one ERP line per compartment and every one carries the same key). |
-| `scm.purchase_order_items`.`variants` ownership | The jsonb has several writers and no schema. The AutoCount re-parse sweep (`refresh-po-variants.mjs`) owns only `OWNED_VARIANT_KEYS` (`backend/scripts/lib/variant-merge.mjs`) — fabric/colour + gap/divan/leg/total + size — and MERGES them (`variants = variants \|\| patch`); it must never rebuild the object, which deletes every key it has not heard of. `specials` (and the HOOKKA singular `special`) belong to `backfill-specials-into-variants.mjs`, the only writer with the money guard. `custom_specials` on a PO line is neither derived nor script-free: `POST /:id/items` and `PATCH /:id/items` store `it.customSpecials` VERBATIM from the request body with no recompute (`:3044`, `:3176` — unlike the SO / consignment routes), and three repair scripts write the column directly on `scm.purchase_order_items` (`backfill-sofa-special-orders.mjs`, `census-custom-specials-arrays.mjs`, `repair-custom-specials-double-encoded.mjs`). It has no single owner. |
+| `scm.purchase_order_items`.`variants` ownership | The jsonb has several writers and no schema. The AutoCount re-parse sweep (`refresh-po-variants.mjs`) owns only `OWNED_VARIANT_KEYS` (`backend/scripts/lib/variant-merge.mjs`) — fabric/colour + gap/divan/leg/total + size — and MERGES them. `totalHeight` in that patch is `null` whenever `parseBedframe` reports an EXPLICIT `TBC` / `KIV` against the divan, the gap or the leg: nobody knows how tall `Divan: TBC / Gap: 12"` is, and the old expression answered `12"` because `Number(undefined) \|\| 0` counted "not chosen yet" as zero (`docs/bugs/0732`, finished in `docs/bugs/0734`). A component the text merely never MENTIONS is untouched — a divan with no leg mentioned still means no leg (`0`) (`variants = variants \|\| patch`); it must never rebuild the object, which deletes every key it has not heard of. `specials` (and the HOOKKA singular `special`) belong to `backfill-specials-into-variants.mjs`, the only writer with the money guard. `custom_specials` on a PO line is neither derived nor script-free: `POST /:id/items` and `PATCH /:id/items` store `it.customSpecials` VERBATIM from the request body with no recompute (`:3044`, `:3176` — unlike the SO / consignment routes), and three repair scripts write the column directly on `scm.purchase_order_items` (`backfill-sofa-special-orders.mjs`, `census-custom-specials-arrays.mjs`, `repair-custom-specials-double-encoded.mjs`). It has no single owner. |
 | `variants` — the reviewed hand-patch escape hatch | `apply-variant-patch.mjs` is the only writer allowed keys outside `OWNED_VARIANT_KEYS`, because its patch is a human-reviewed artifact submitted per batch through a workflow input (it exists to set things like `seatHeight` that no parser derives). It writes through `mergeReviewedVariantPatch` (`lib/variant-merge.mjs`): merged in the DATABASE, guarded on `jsonb_typeof(...) = 'object'`, counted from `RETURNING`, and re-read on a fresh connection. Geometry uses `COALESCE`, so a patch silent about `gap` leaves `gap_inches` alone — unlike the sweep, which is entitled to restamp all three from the text it just parsed. |
 | `scm.purchase_order_item_allocations` | mig 0235 — sub-line slices of ONE PO line across customers + stock: `company_id` (NOT NULL), `purchase_order_item_id` FK CASCADE, `seq` (1-based dense, UNIQUE per line), `qty` (>0, SUM <= line qty via triggers), `so_item_id` FK SET NULL (NULL = stock), `created_by`, `created_at`. Attribution only — no stock/money/quota. |
 | `scm.po_revisions` | Full header+items snapshot per revision, keyed `(po_id, revision)`. Written by `snapshotPo` / `reviseBoundPo` (`backend/src/scm/lib/so-revision.ts:861`, `:991`). |
@@ -747,6 +759,172 @@ numbering, which does not line up with `backend/src/db/migrations-pg/`. Verified
 matches: `0082_scm_fx_landed_cost.sql`, `0143_scm_do_ship_cost_snapshot.sql`,
 `0154_scm_oversell_retrocost.sql`. Do not trust a bare "migration NNNN" in a
 comment without checking the filename.
+
+### The AutoCount line discount, and the invariant a repair must not break
+
+AutoCount stores `PODTL.UnitPrice` and `PODTL.SubTotal` as separate columns and
+the line discount lives in the gap: `SubTotal` is the discounted amount. Every
+purchase-order importer here computes the line amount from the undiscounted half
+(`import-ac-outstanding-po.mjs:230` / `:379`, `import-ac-so-linked-pos.mjs:403`),
+so a migrated purchase order OVERSTATES what we owe. Measured 2026-09-07: 2,976
+lines across 533 book purchase orders, RM 1,760,189.99; **10 orders / 89 lines /
+RM 42,662.80 inside the migrated scope.** Ledger entries `0662` and `0664`.
+
+**The invariant, and why a line-total-only repair does not hold.** This module
+maintains `line_total_sen = max(0, qty * unit_price_sen - discount_sen)` in three
+places — `POST /:id/items` (`:3042`), `PATCH /:id/items` (`:3169`) and
+`recomputePoTotals`, which writes `subtotal_sen = total_sen = SUM(line_total_sen)`
+(`:2798`). Anything that writes a line total without the matching
+`discount_sen` violates it, and the **next line edit through the UI recomputes
+the total from a discount of zero**, silently restoring the overstated figure.
+Any repair here writes the discount, the line total and the header together.
+
+`backend/scripts/repair-po-line-discount.mjs` +
+`.github/workflows/repair-po-line-discount.yml` do exactly that, plan by default.
+Two things it deliberately leaves alone: `unit_price_sen` (AutoCount's own
+`UnitPrice` is the undiscounted figure and copying it is correct) and stock cost
+(`grns.ts:555` costs a receipt at the UNDISCOUNTED unit price, so inventory
+valuation does not move). A GRN raised AFTER a repair inherits the corrected
+`discount_sen` through `grns.ts:1872`; one raised before keeps its own total.
+
+**⚠ THE POPULATION IS WHAT THE ERP HOLDS, NOT WHAT IS STILL OUTSTANDING —
+corrected 2026-09-08.** The repair used to walk `buildScope(book).PO`, the
+OUTSTANDING purchase orders. That is the right answer to *which documents should
+the ERP have* and the wrong answer to *which documents might the ERP have
+damaged*: a purchase order stops being outstanding the moment its goods arrive,
+and our copy of it, discount dropped, stays exactly where it is. Measured on the
+2026-09-08 08:03 Malaysia cut, the ERP holds **574** migrated purchase orders
+against a scope of **484** — 91 are unreachable by any repair keyed on the scope,
+and `PO-009770` (RM 18,525.00 held against the book's RM 13,893.75, all 15 lines
+at 75%) was one of them, sixteen hours after an APPLY that truthfully reported
+`89 of 89` written. `repairPopulation` in `backend/scripts/lib/po-discount-plan.mjs`
+now takes the UNION of the scope and the `linked_ac_docno` values the ERP holds —
+union, so that *in scope but absent from the ERP* stays reportable. Ledger:
+`docs/bugs/0694-a-one-shot-repair-walks-the-outstanding-scope-so-a-document.md`.
+
+**⚠ CURRENCY IS A REFUSAL, NOT A CONVERSION — and this cost RM 13,068.55 on a
+live document before it was one.** The repair ran against production on
+2026-09-07 (run 34116301278) and got nine of its ten orders right. The tenth,
+`HC-PO-009335`, is denominated in **CHINESE YUAN** at 0.619380:
+
+| side | what it held |
+|---|---|
+| the snapshot | `ISNULL(h.LocalNetTotal, h.NetTotal)` / `ISNULL(d.LocalSubTotal, d.SubTotal)` — the **MYR** figures, RM 21,266.35 |
+| the ERP | the **document-currency** figures, 34,334.90 CNY, with `import-ac-outstanding-po.mjs:401` hard-coding `'MYR'` into `purchase_orders.currency` regardless |
+
+`34,334.90 x 0.61938 = 21,266.35`, so the gap between the two sides was read as a
+"38.06% line discount" and written as one. The book's five lines all carry
+`DiscountAmt = 0.00`. Reverted by
+`backend/scripts/revert-po-cny-false-discount.mjs` +
+`.github/workflows/revert-po-cny-false-discount.yml`. Ledger entry `0665`.
+
+**A discount and an exchange rate are not distinguishable from a total alone**, so
+the repair no longer tries. `scripts/lib/po-discount-plan.mjs` exports
+`currencyVerdict`, and `readBookDiscounts` takes the book's PO headers as a
+REQUIRED argument so no caller can reach the discount rule without the currency
+beside it. Three verdicts, and only `local` lets money move:
+
+| verdict | condition | what happens |
+|---|---|---|
+| `local` | `MYR` at rate 1 | the two sides mean the same thing; the discount rule applies |
+| `foreign` | any other currency, or a rate that is not 1 | the document is REFUSED and listed. Repair it by hand or not at all |
+| `unknown` | the snapshot predates the currency columns | the WHOLE RUN is refused — a script that cannot see the currency cannot claim a document does not have one |
+
+The snapshot carries `currency`, `rate` and `docTotal` per header and
+`docSubTotal` per line since 2026-09-07, APPENDED beside the local-currency
+`netTotal` / `subTotal` rather than replacing them, so a consumer states which of
+the two it means. `decodeSnapshot` indexes by NAME, so an older cut decodes the
+new fields as null — which is what makes the `unknown` refusal possible instead
+of an absent column silently reading as "MYR". Population on the 2026-09-07 book:
+**22 CNY purchase orders out of 9,412, exactly 1 of them in the migrated scope;
+all 13,366 sales orders are MYR.**
+
+**THE LABEL ITSELF WAS REPAIRED ON 2026-09-07 — owner ruling 改成 CNY.** Everything
+above stays true of the money; what changed is that `purchase_orders.currency`
+now says what the book says.
+
+- `scm.currency_code` gained the label `CNY`
+  (`backend/src/db/migrations-pg/20260907T2330_currency_code_cny.sql`). `CNY`
+  and the older `RMB` are one currency under two names, and BOTH are valid: the
+  migration copies the book's code and never translates it. `VALID_CURRENCIES`
+  (`src/scm/lib/purchase-doc-vocab.ts`) and the PO / GRN / PI currency dropdowns
+  carry CNY for the same reason — a stored code the API rejects makes the
+  document uneditable, and one the dropdown omits renders BLANK and is silently
+  rewritten by the next save.
+- The four writers that hard-coded `'MYR'` now import
+  `scripts/lib/ac-currency.mjs`. `export-ac-reimport.py` carries `h.CurrencyCode`
+  on the SO lane and both PO lanes — **which only takes effect on a re-cut**; an
+  older cut has no column and every import defaults to MYR *and says so in its
+  own log*, rather than defaulting in silence.
+- **NO `scm.currencies` ROW WAS SEEDED FOR CNY, deliberately.** `rate_to_myr` is
+  `NOT NULL DEFAULT 1` and `isPositiveFiniteRate(1)` is true, so a seeded row
+  would let `assertForeignRatePostable` pass a yuan receipt costed as ringgit —
+  the exact R2 mis-cost the guard exists to refuse. With no master row the guard
+  reads a null rate and BLOCKS until a real one is entered. (The pre-existing
+  **RMB row carries rate_to_myr = 1.000000** for that same seed reason, which is
+  a latent hazard; nothing in production holds RMB today.)
+- **What the label change reaches.** `scm.purchase_orders` has NO
+  `exchange_rate` column, so nothing already stored is re-interpreted. The FUTURE
+  is what changes: `resolveGrnFx` copies the PO's currency onto a new GRN and the
+  R2 guard then refuses that receipt until a CNY rate exists. Measured before
+  applying: 0 GRNs and 0 purchase invoices exist against `HC-PO-009335`.
+
+Repair: `scripts/repair-migrated-currency.mjs` +
+`.github/workflows/repair-migrated-currency.yml` (plan by default, CONFIRM-gated,
+`RE-RUN: inert`). Ledger entry `0674`.
+
+**The read-only reconcile checker makes the OPPOSITE choice, on purpose.**
+`check-ac-erp-reconcile.mjs` compares the book's DOCUMENT total
+(`h.docTotalSen ?? h.totalSen`) against `purchase_orders.total_sen`, which is
+like for like, and reports a non-MYR document in its own `non-MYR` summary column
+rather than as a money difference — a checker that reports every foreign document
+as broken trains people to ignore the money column. It falls back to the local
+total on a snapshot cut before the currency fields existed, and says so as
+`currencyBlind` instead of reporting a clean money column it cannot vouch for.
+What it flags on such a document is the thing that IS wrong: the ERP's own
+`currency` column reads `MYR`. Ledger entry `0666`.
+
+The split is deliberate. A checker that is wrong costs a reader's attention; a
+repair that is wrong costs money, and this one already cost RM 13,068.55.
+
+### The two AutoCount-mirror header columns (mig `20260907T1026_ac_header_notcarried_columns.sql`)
+
+`scm.purchase_orders.attention` (AutoCount `PO.Attention`, filled on 300 of the
+9,408 book purchase orders) and `scm.purchase_orders.display_term` (`PO.DisplayTerm`,
+filled on all 9,408 and holding one distinct value, `C.O.D.`). Both nullable
+`text`; both are absent from `HEADER_COLS`, so **no route selects them and no
+screen shows them today.** The only writer is `backend/scripts/sync-ac-delta.mjs`
+with `LANES=hdr`, driven by `backend/scripts/lib/ac-header-fields.mjs`.
+
+**Until 2026-09-08 that writer had NO human veto**, and it is worth knowing why
+if you are reading an old plan output. The veto set was built from
+`scm.mfg_so_audit_log` and keyed by SALES-ORDER document number; the
+purchase-order half of the same routine looked itself up in it by `po_number`,
+which can never match. So `po_date` — which staff DO edit, `PATCH
+/api/scm/mfg-purchase-orders/:id` — plus `attention` and `display_term` were
+written back from the book over whatever a person had put there, and the run
+printed no refusal at all. The lane now reads `scm.entity_audit_log`
+(`entity_type = 'PURCHASE_ORDER'`, mig `0139_scm_entity_audit_log.sql`) with the
+shared rule in `backend/scripts/lib/ac-human-edit.mjs`, refuses per (document,
+field), and names the document, both values and who. The veto index is a
+REQUIRED parameter of that routine now, so a third document type cannot inherit
+the wrong one in silence. `docs/bugs/0701-*` has the trace, including what is
+still UNKNOWN — nobody has counted how many purchase orders it already cost.
+
+**The authorship rule inside that routine moved again on the same day**
+(`docs/bugs/0704-*`): it is now `actor_name_snapshot ILIKE 'system%'` and
+nothing else, living in `backend/src/scm/shared/audit-author.ts`, because the
+`actor_id` arm it shipped with matched every human sales-order edit and no
+migration row. `ac-human-edit.mjs` keeps the indexing and the refusal wording
+and delegates the decision. Nothing changes for the purchase-order side in
+practice — `scm.entity_audit_log` never carried a pinned actor — but the two
+document types now answer the question the same way, which is the property that
+was missing.
+
+AutoCount's `PO.DeliverAddr1..4` deliberately got **no** column: on a purchase
+order that is our own receiving address, identical on all 9,408 book documents.
+The delivery-address ruling was about the SALES order, where the address is the
+customer's (`docs/modules/sales-order.md`, same migration).
 
 ### Line photos (mig 0274)
 
@@ -767,6 +945,34 @@ shape-blind — no CHECK constraint, and the signed/proxy routes authorise by
 MEMBERSHIP of the row's `photo_urls`, never by key shape. The importer's append
 (`ARRAY(SELECT DISTINCT unnest(COALESCE(photo_urls,'{}') || <keys>))`) is why
 the column must stay NOT NULL with a `'{}'` default.
+
+**A SOFA BUILD IS ONE PICTURE, ON THE FIRST COMPARTMENT.** One AutoCount line
+becomes one ERP line per compartment, all carrying the same `linked_ac_dtlkey`,
+and the importer hangs the photograph on the first of them only (owner
+2026-08-10). The siblings hold an empty `photo_urls` BY DESIGN, so a per-ROW
+count of "lines with no photo" is not the gap: measured on production 2026-09-08
+(run `34221745956`), 184 purchase-order rows read as missing and **175 of them
+were siblings of a line that already shows one** — the real figure was 7 lines.
+The unit is the AutoCount LINE. `probe-line-photo-gap.mjs` asks it that way; see
+the fuller note in `docs/modules/sales-order.md` §*The AutoCount migration's
+photos*.
+
+**THOSE 7 ARE CLOSED, AND THE WAY THEY CLOSED IS THE PART WORTH KEEPING.** Run
+`34227291924`, prod, 2026-09-08: **240 of 240 photographed purchase-order lines
+in the ERP now show their picture, MISSING 0.** Their objects had never been
+uploaded — an interrupted batch, traceable in the operator machine's own
+done-list — so this needed an UPLOAD and then an attach, not a re-point.
+
+**Do NOT close a gap like that with `import-po-line-photos.mjs APPLY=1`.** It was
+measured before it was trusted and it would have written **25** addresses where
+the gap needed 10. The other 15 sit on lines that already show their picture,
+and R2 holds none of those 15 objects — that is
+`docs/bugs/0625-a-backfill-replayed-the-round-1-photo-key-log-without-asking.md`
+again. The importer cannot know: it runs in Actions and has no R2 token, because
+this repository is PUBLIC. The narrow path is
+`backend/scripts/attach-uploaded-line-photos.mjs` — it asks R2 on the operator
+machine, refuses any address whose object is absent and any line that already
+shows one, and hands the writer a plan file. `docs/bugs/0720-…` has the trace.
 
 **TWO SCREENS OFFER THE CONTROL, AND THEY MUST NOT DRIFT (2026-08-28).** The
 strip is on the PO's TABLE view (`PurchaseOrderDetailV2`, a `Photos` column) AND
@@ -1119,7 +1325,37 @@ A rule change to the PO touches both surfaces. The pairs:
 | SO→PO conversion | `pages/scm-v2/PurchaseOrderFromSo.tsx` | `mobile/MobileConvertWizard.tsx` (`target: "po"`) |
 | Line allocations (mig 0235) | `PurchaseOrderDetailV2.tsx` Allocations column + `components/scm-v2/PoLineAllocationsModal.tsx` (editor) | `mobile/MobileModuleDetail.tsx` `LineItem` chips — DISPLAY-ONLY (the phone PO surface has no per-line editor, same precedent as the SO-link picker) |
 | Cache invalidation after a write | the mutation hooks in `vendor/scm/lib/suppliers-queries.ts` | `mobile/sharedInvalidate.ts:71` |
+| **Line remarks (`notes`)** | text under the item on `PurchaseOrderDetailV2.tsx` + a `defaultHidden` **Remark** column (search / filter / export); an editable **Remarks** box on `PurchaseOrderDetail.tsx` (Edit, via `PoLineCard`'s `showRemarks`) and on `PurchaseOrderNew.tsx` (Create) | text under the item on `mobile/MobileModuleDetail.tsx` — rendered through the shared `mobile/MobileLineRemark.tsx`, DISPLAY-ONLY (the phone PO surface still has no per-line editor) |
 | Line photos (mig 0274) | Photos column on `PurchaseOrderDetailV2.tsx` (read-only strip, since 2026-08-28) | NOT BUILT — the mobile PO detail surface DOES exist (`MobileModuleDetail` config, Submit/Cancel/Reopen actions, a line list already rendering the mig-0235 allocation chips); it renders no photos, and there is no per-line editor to hang an uploader on |
+
+### Line remarks — `purchase_order_items.notes`, surfaced 2026-09-04
+
+Owner, 2026-09-04: 「那个 description 2 也要记录进我们的 remarks 里面」,
+「SO line 和 PO line 的 remarks」. The PO line's free text is `notes` — the twin
+of the SO line's `remark`. It has always been selected by `ITEM_COLS`, persisted
+by the item POST, and patchable through the item PATCH's `['notes','notes']`
+field map; **no screen rendered it until 2026-09-04**, and `PoLineCard` had no
+`notes` or `remark` field of any kind.
+
+That mattered because it is where the AutoCount migration parked the book's own
+`Desc2`. Measured on production 2026-09-04 over the 1,117 migrated company-1 PO
+lines: **923 carry the book's wording in `notes`** (891 byte-identical to
+`description2`, 32 the same text plus a suffix), e.g.
+`col:PC-151-03/m.gap:12inch/divan:8inch+2inchleg`.
+
+**Why `notes` and not `description2`.** `description2` is server-owned on a PO
+line — the item PATCH recomputes it from `buildVariantSummary` on every write —
+and it IS on the AutoCount write-back path. `notes` is neither: `PO_ITEM_COLS`
+(`backend/src/scm/lib/autocount-outbox.ts`) does not select it, and the only
+`notes` the write-back sends is the HEADER's (`purchase_orders.notes` →
+`Description`). So a line remark survives every save and never reaches the book.
+
+**`PoLineCard`'s box is OPT-IN** (`showRemarks`, default off). The same card is
+reused by `PurchaseInvoiceDetail`, `PurchaseInvoiceDetailV2` and
+`PurchaseConsignmentOrderDetail`, and each of those parents enumerates the fields
+it sends on add/update — a box they do not send would accept typing and discard
+it on save. Turn it on in a parent only when that parent also carries `notes` in
+BOTH payloads. Ledger: `docs/bugs/0640-*`; sales-side twin `docs/bugs/0639-*`.
 
 **Line photos render on the desktop V2 detail since 2026-08-28** — a read-only
 Photos column between Supplier SKU and Ordered, tiles opening the shared
@@ -1323,3 +1559,117 @@ at both supplier scopes, so adding one of those codes to a migrated PO line's
 That is why the migrated-line backfill writes `variants.specialsRecorded`
 instead — a key no pricing path reads. Full rule and the surfaces that render it:
 `docs/modules/sales-order.md` §`variants.specialsRecorded`.
+
+## The delta sync writes `so_item_id` too — and until 2026-09-07 it was the one writer that did not check the product
+
+The section above (**"the dedication never crosses products"**) states the rule
+for `repair-migrated-po-lines.mjs`, which takes its candidates through
+`scripts/lib/so-line-dedication.mjs`. There is a SECOND writer of the same
+column: `scripts/sync-ac-delta.mjs` lane `links`, which resolves both ends of
+AutoCount's own `PODTL.FromSODtlKey` pair by `linked_ac_dtlkey` and stamps the
+link. A key pair on both sides is the strongest evidence there is, so it wrote on
+that alone and never compared the two rows' `item_code`.
+
+**It cost nine wrong dedications in production.** Run 34123720786 (2026-09-07
+12:46Z, `mode=apply`) reported `SO->PO dedications written: 10 of 10 intended`;
+the sofa document-chain audit's SO -> PO code mismatch went from 0 (run
+34119014176, 11:54Z) to 9 (run 34130736979, 14:02Z). Each of the nine binds a
+sales-order line to a purchase-order line for a different bed — REGAL (A)-(K) to
+a TRION (A) (HB STR)-(K), CODY-(Q) to a JAGER-(Q), JAGER-(Q) to a JAGER-(SS),
+BEDFRAME KIV to a CELENE (A)-(K).
+
+**AutoCount is not the wrong side.** Decoding the 2026-09-07T09:35Z truth
+snapshot, each of those PO lines resolves through its own `FromSODtlKey` to a
+sales-order line with a byte-identical AutoCount item code, and
+`autocount-erp-mapping-1561.csv` maps that code to what our PURCHASE ORDER says.
+The disagreement is between OUR two rows: the sales-order line is the one that
+does not match its own AutoCount source.
+
+**Why a wrong dedication is not bookkeeping.** A bedframe or sofa line is
+hard-bound (`isHardBoundLine`, `backend/src/scm/lib/so-stock-allocation.ts`) and
+reads READY only through its OWN dedicated purchase order's `received_qty`, never
+through the pooled balance. So the customer's REGAL now goes READY when a TRION
+is received, and the real REGAL line can never light.
+
+The rule now lives in `scripts/lib/ac-po-line.mjs` as `planSoPoDedications()`,
+which returns `{ plan, missing, mismatch }` — a `missing` is an import that has
+not happened yet, a `mismatch` is a disagreement inside the ERP that a person has
+to settle, and only `plan` is written. `backend/tests/soPoDedication.test.mjs`
+drives it over the nine real pairs and over the two properties that matter beside
+the refusal: a refused pair must NOT consume the sales-order line, so the PO line
+that DOES match it can still be dedicated; and case and inner whitespace are
+normalised before two codes are called different.
+
+**The nine already in production are NOT reverted by this rule.** The guard stops
+the tenth; deciding which of the two rows is the faithful copy — did the customer
+change the bed, or did the sales-order import mis-map it? — is the owner's.
+Ledger: `docs/bugs/0671-the-delta-sync-dedicated-9-sales-order-lines-to-purchase-ord.md`.
+
+## A sofa's purchase line and its sales compartments (2026-09-08)
+
+**One book line, one ERP row per compartment — on BOTH sides, or the sofa never
+ships.** `so_item_id` is single-valued, so a decomposed sofa needs one purchase
+row per sales compartment. Where the two sides hold a different NUMBER of rows,
+no dedication can be written at all, `isHardBoundLine` never lights the sales
+line, and every delivery-order entry point answers 409 `sofa_no_batch` — with
+the *"have no live supplier PO linked"* tail, which is the honest message and
+also the one that hides the real cause.
+
+Three tools own this edge and they do not overlap:
+
+| shape | tool | why it refuses the others |
+| --- | --- | --- |
+| ONE purchase row, ONE sales row | `repair-po-so-link-from-book.mjs` | a Map keyed by DtlKey would keep one row of a multi-row side |
+| SEVERAL on both sides, same products | `repair-po-so-link-sofa-compartments.mjs` | the pairing is a copy plus an identity match, not a choice |
+| ONE collapsed purchase row (`{model}-1S`), SEVERAL sales rows | `repair-collapsed-sofa-po-line.mjs` | the other two cannot invent a compartment; this one takes it from the BOOK's own Desc2 and only when the sales side already holds that exact multiset |
+| the same, but the purchase row is filed `others` AND carries a migrated, movement-free goods-receipt line | `repair-mislabelled-sofa-po-lines.mjs` | the row above refuses any build with a receipt line (its gate 6) and leaves the category alone; this one splits the receipt WITH the line (owner 2026-08-11) and writes `item_group = 'sofa'`, because the sofa stock import and `computeVariantKey` both key on it. Measured 2026-09-08: all 14 rows of this shape carry a receipt, so the row above reaches none of them (run 34220188752). `docs/bugs/0714-the-sofa-purchase-line-was-filed-as-others-so-the-sales-orde.md` |
+
+One shape in this family is NOT a purchase-line repair and is listed so nobody
+looks for it here: the same physical sofa holding TWO sets of stock lots. That
+is a lot problem, not a line problem — the sofa stock import keys a cell by
+(item, warehouse, batch, VARIANT KEY), so a build whose document gained or lost a
+special after its lots were opened is opened a second time. The tool is
+`backend/scripts/repair-duplicate-sofa-cutover-lots.mjs`, its workflow is
+**Retire the duplicate sofa cutover lots**, and the importer now REPORTS the
+shape instead of writing it ("RE-KEYED, NOT RE-OPENED").
+`docs/bugs/0721-the-sofa-stock-import-opened-a-second-set-of-lots-for-a-buil.md`
+and `docs/bugs/0723-three-sofa-builds-hold-stock-of-a-model-that-is-on-no-line-o.md`.
+
+All three share ONE pairing vocabulary — `scripts/lib/sofa-po-so-pair.mjs` and
+`scripts/lib/redecode-sofa-plan.mjs`. Two copies of the pairing rule existed for
+twenty minutes on 2026-09-08 and gave opposite answers on production about
+`HC-PO-010040`; do not write a fourth.
+
+**`{model}-1S` is ambiguous and that is the trap.** It is both the importer's
+"could not read the build" placeholder AND a legitimate one-seater. Only the
+`SOFA UNPARSED` remark separates them, and
+`redecode-collapsed-sofa-lines.mjs` requires BOTH (`isPlaceholderLine`). A
+purchase row that decoded to a single `1S` from a text today's parser reads as
+`2A(LHF)+1A(RHF)` carries no marker, so it is invisible to that tool — the class
+`docs/bugs/0715` was written about. Widening the predicate would rewrite live
+one-seaters; the narrow answer is to require the sales side to state the same
+multiset independently.
+
+**And do not key a sofa tool on the PURCHASE row's `item_group` either.** It did
+not survive the SO -> PO hop on this population — measured, run `34218446892`:
+BOTH rows of `HC-PO-009435`, the sofa and its pillows, answer "not a sofa". That
+is the second, independent reason `redecode-collapsed-sofa-lines.mjs` (corpus:
+`WHERE i.item_group = 'sofa'`) cannot see these documents. What makes the line a
+sofa is the SALES side and the piece codes. The category is a real defect —
+`computeVariantKey` reads it, so it changes which stock bucket the row matches —
+and it belongs to the `docs/bugs/0514` lane, not to a link repair.
+`docs/bugs/0716`.
+
+**A link does not recompute readiness** (`docs/bugs/0675`). After any of the
+three, dispatch *Recompute SO stock allocation*, then *Recompute SO
+po_qty_picked* — the SO -> PO ceiling those missing links left reading LOW is a
+symptom of the same gap, not a second defect
+(`docs/bugs/0705-nothing-ever-compared-the-erp-s-transfer-counters-to-autocou.md`).
+
+**The batch guard is never relaxed to make a document pass.** A sofa set must
+ship whole from one dye lot (`src/scm/lib/sofa-batch-guard.ts`). Once the link is
+right the line reaches READY through a covering batch, or through the owner's
+hard-binding rule with `allocated_batch_no` still NULL — in which case the ship
+goes through the drop-ship confirmation, which `buildDropshipOffenders` can only
+offer once every affected line has a bound PO. That is the difference the link
+makes; the guard itself does not move.

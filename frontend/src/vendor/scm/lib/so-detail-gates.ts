@@ -40,6 +40,19 @@ export type SoDetailGateHeader = {
      so the gate degrades to the date rule alone. */
   po_locked?: boolean | null;
   amendment_eligible?: boolean | null;
+  /* Server-computed: this order was carried across from AutoCount at the 2026-08
+     cutover AND the migrated-order lock is currently on for this company
+     (backend/src/scm/lib/migrated-so-lock.ts). It arrives as ALREADY-DECIDED
+     rather than as the raw `linked_ac_docno`, because the answer depends on an
+     app_config switch and on the caller's bypass — neither of which the browser
+     can see. The endpoint that refuses the write computes it with the SAME
+     function, so the button and the API cannot disagree.
+     Absent (a cached pre-deploy payload) reads as false, which is the pre-2026-09
+     behaviour exactly. */
+  migrated_readonly?: boolean | null;
+  /* The sentence to show the operator. Server-authored so it can be changed by
+     an operator through scm.app_config.description without a deploy. */
+  migrated_readonly_reason?: string | null;
   balance_sen?: number | null;
   paid_sen_total?: number | null;
   local_total_sen?: number | null;
@@ -58,6 +71,36 @@ export function isLocked(
   unlockOverride = false,
 ): boolean {
   return (LOCKED_STATUSES.includes(upper(status)) && !unlockOverride) || hasChildren;
+}
+
+/* migratedReadonly — this order came across from AutoCount and the cutover lock
+   is still on, so NOTHING about it may be edited (owner 2026-09-08,
+   「只开新单，旧单暂时不能改」).
+
+   DELIBERATELY NOT FOLDED INTO isLocked(), and this is the whole point of it
+   being a separate predicate: isLocked takes `unlockOverride`, and the desktop
+   editor offers an Override button that sets it (SalesOrderDetail.tsx). A
+   salesperson may override a status lock — that is a judgement about our own
+   paperwork. They may not override this one: the reason a migrated order is shut
+   is that AutoCount payments have not reached us and sync-ac-delta can still
+   overwrite the row, and no amount of local certainty changes either fact.
+
+   Two arms so the reason is never lost: `migratedReadonly` for the gate, and
+   `migratedReadonlyReason` for the sentence beside it. A gate with no sentence
+   is how this repo produced "the button does nothing". */
+export function migratedReadonly(header: SoDetailGateHeader | null | undefined): boolean {
+  return header?.migrated_readonly === true;
+}
+
+/* The sentence to render next to a disabled control. Never empty when
+   migratedReadonly() is true — the server always sends one, and this is the
+   fallback for a payload that somehow arrives without it. */
+export const MIGRATED_READONLY_FALLBACK =
+  'This order came from AutoCount and is view-only for now. New orders save normally.';
+
+export function migratedReadonlyReason(header: SoDetailGateHeader | null | undefined): string {
+  const v = String(header?.migrated_readonly_reason ?? '').trim();
+  return v.length > 0 ? v : MIGRATED_READONLY_FALLBACK;
 }
 
 /* procLockActive — the SO PROCESS lock: once a CONFIRMED-or-later SO's processing
@@ -128,22 +171,34 @@ export function amendmentEligible(header: SoDetailGateHeader, locked: boolean): 
 /* deriveBalance — balance in centi, SIGNED: negative means over-collected
    (owner 2026-08-16). Prefers the server-stamped balance_sen, which GET
    /:docNo computes with soBalanceSen and which is already signed; otherwise
-   total (local_total ?? total_revenue) minus paid (paid_sen_total, falling
+   total (local_total, else total_revenue) minus paid (paid_sen_total, falling
    back to the sum of the payments ledger).
 
-   The floor is gone, but only where a total is KNOWN. A zero total means the
-   header has not been recomputed (true of every AutoCount-imported order,
-   where total_revenue_sen is 0), not that the customer owes nothing — so it
-   still answers 0 rather than painting the whole legacy book red. Same rule,
-   and the same reason, as soBalanceSen on the server. */
+   A SERVER ZERO DOES NOT WIN OVER A TOTAL WE CAN SUBTRACT FROM. `balance_sen`
+   is non-null on every response, so `!= null` handed 0 straight through — and
+   0 is exactly what the server used to answer for an AutoCount-imported order
+   (total_revenue_sen is 0 on those). This function's own fallback was correct
+   the whole time and was never reached, so the mobile SO detail printed Total
+   3,200, Paid 1,600, Balance 0.00. The server half is fixed too; this half is
+   what stops a stale or cached payload doing it again. Trace:
+   `docs/bugs/0723-the-sales-order-detail-showed-a-paid-up-balance-of-0-on-ever.md`
+
+   The floor is gone, but only where a total is KNOWN. NO total in either
+   column means the header has not been recomputed, not that the customer owes
+   nothing — so it still answers 0 rather than painting an order red for money
+   nobody over-collected. Same rule, and the same reason, as soBalanceSen on
+   the server. */
 export function deriveBalance(
   header: SoDetailGateHeader,
   payments?: ReadonlyArray<{ amount_sen?: number | null }>,
 ): number {
-  if (header.balance_sen != null) return header.balance_sen;
-  const total = header.local_total_sen ?? header.total_revenue_sen ?? 0;
+  const total = (header.local_total_sen ?? 0) || (header.total_revenue_sen ?? 0);
+  const computable = total > 0;
+  if (header.balance_sen != null && !(header.balance_sen === 0 && computable)) {
+    return header.balance_sen;
+  }
+  if (!computable) return 0;
   const paid = header.paid_sen_total
     ?? (payments ? payments.reduce((s, p) => s + (p.amount_sen ?? 0), 0) : 0);
-  if (!(total > 0)) return 0;
   return total - paid;
 }
