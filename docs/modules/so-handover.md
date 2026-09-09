@@ -215,7 +215,7 @@ needs the book corrected runs **Hand them to** as well.
 adds both columns, the trigger and the backfill;
 `backend/src/db/migrations-pg/20260909T1001_scm_so_payment_totals_view_carries_collaborators.sql`
 teaches the view to enumerate them, and is a separate file because it is the
-risky half (§8.7).
+risky half (§8.8).
 
 | Column | Role |
 |---|---|
@@ -291,7 +291,39 @@ person already attributed to it is harmless (the derived column de-duplicates),
 and refusing it would fail a bulk grant because one order in the batch happened
 to be theirs.
 
-### 8.6 What each shared order writes
+### 8.6 Where a share is VISIBLE
+
+> Owner 2026-09-09, immediately after the bulk tool shipped: *"SO 详情页也要能
+> 看到共享给了谁"*. Until then a grant existed only on the maintenance panel and
+> in the audit log — **state a user cannot see is state they cannot correct.**
+
+| Surface | What it shows |
+|---|---|
+| SO Detail, desktop (`SalesOrderDetailV2.tsx`) | a **Shared with** `Field` beside Salesperson, names A→Z |
+| SO Detail, mobile (`MobileSODetail.tsx`) | the same, as a `RoField` under the Salesperson row |
+| SO History drawer / mobile timeline | the audit row's field key `collaboratorStaffIds` reads **"Shared with"** (`so-audit-labels.ts`, `mobile/so-history-labels.ts`) — it printed the raw key until this shipped |
+| SO Maintenance | where granting and withdrawing actually happen (§8.1) |
+
+**The field is absent, not blank, on an unshared order.** Most orders are shared
+with nobody, and a field that is empty on almost every order teaches people to
+stop reading it — which defeats the point of showing it at all.
+
+The two screens share the LOGIC and not the rendering:
+`frontend/src/vendor/scm/lib/so-collaborators.ts` (`collaboratorNames`,
+`collaboratorLabel`) resolves ids to names, dedupes, sorts A→Z, and answers
+**"Unknown user"** for an id that resolves to nobody — a grant to somebody since
+removed is information, and a uuid on screen is the defect it replaces
+(`useStaffLookup`'s `actorNameOf` set that convention). Desktop renders a
+`Field`, mobile a `RoField`; neither re-derives which names to show.
+
+> `MobileSODetail.tsx` was AT its file-size ceiling, so this could not be added
+> until something left. `HIST_FIELD_LABEL` / `HIST_MONEY_FIELDS` moved verbatim
+> to `frontend/src/mobile/so-history-labels.ts` — pure constants, no behaviour,
+> and the file's own comment already called the map a duplicate of desktop's.
+> That is the repo's prescribed remedy for a file at its ceiling (a new module,
+> never a bigger number), not an optional tidy-up.
+
+### 8.7 What each shared order writes
 
 | Sink | What lands |
 |---|---|
@@ -299,7 +331,7 @@ to be theirs.
 | `mfg_so_audit_log` | `recordSoAudit` `UPDATE_DETAILS`, field `collaboratorStaffIds` from → to (comma-joined uuids), note `Sales order shared` / `Sales order sharing withdrawn` |
 | AutoCount outbox | **nothing.** There is no field to write. |
 
-### 8.7 The view migration is the risky half — read this before touching it
+### 8.8 The view migration is the risky half — read this before touching it
 
 `20260909T1001` is separate from `20260909T1000` for the same reason 0325 was
 separate from 0324: one is an `ALTER TABLE` that cannot fail, the other touches a

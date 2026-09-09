@@ -11,6 +11,8 @@ import { usePrompt } from "../vendor/scm/components/PromptDialog"; import { Canc
 import { fetchScanSlipImageBlobUrl } from "../vendor/scm/lib/slip";
 import { MobileLinePhotos } from "./MobileLinePhotos";
 import { useStaff, usePickableStaff } from "../vendor/scm/lib/admin-queries";
+import { collaboratorLabel } from "../vendor/scm/lib/so-collaborators";
+import { HIST_FIELD_LABEL, HIST_MONEY_FIELDS } from "./so-history-labels";
 import { statusLabel } from "../vendor/scm/lib/status-pill";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { ACCESS_RANK } from "../types";
@@ -103,6 +105,9 @@ type SoHeader = {
   email: string | null;
   customer_type: string | null;
   salesperson_id: string | number | null;
+  /* Who ELSE may see and edit this order (mig 20260909T1000). Attribution
+     stays salesperson_id above — these people carry none of it. */
+  collaborator_staff_ids: string[] | null;
   sales_location: string | null;
   customer_state: string | null;
   /* Task #121 — country snapshot auto-derived from customer_state (mig 0082).
@@ -362,6 +367,10 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
   const salespersonName = h?.salesperson_id != null
     ? (staffQ.data ?? []).find((s) => String(s.id) === String(h.salesperson_id))?.name ?? null
     : null;
+  /* Who else may see and edit it. Null on an unshared order, which is most of
+     them; granting and withdrawing live on SO Maintenance, desktop-only
+     (docs/modules/so-handover.md §8). */
+  const sharedWith = collaboratorLabel(h, staffQ.data);
 
   /* Status change routes through the SHARED useUpdateMfgSalesOrderStatus so
      mobile gets the same optimistic update + audit-log / status-changes
@@ -993,6 +1002,9 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
               <RoField label="Customer name" value={val(h.debtor_name)} />
               <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Phone" value={formatPhone(h.phone) || val(h.phone)} mono /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Email" value={val(h.email)} /></div></div>
               <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Customer type" value={val(h.customer_type)} /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Salesperson" value={val(salespersonName)} /></div></div>
+              {/* Only when actually shared — a field blank on almost every
+                  order teaches people to stop reading it. */}
+              {sharedWith && <RoField label="Shared with" value={sharedWith} />}
               <RoField label="Customer SO ref" value={val(h.customer_so_no ?? h.ref)} mono />
               {/* Emergency contact — whole row HIDDEN when no phone on file
                   (Build Spec §6 + null-field rule: "hide the row"). Value =
@@ -1474,40 +1486,6 @@ function ScannedThumb({ imageKey, label, onView }: { imageKey: string; label: st
    the accordion opens, so `enabled: Boolean(docNo)` keeps the request unfired.
    Entries arrive newest-first from the backend. */
 
-/* Human labels for the audit `field` keys — subset of desktop's FIELD_LABEL
-   plus the payment / amendment / automation keys the mobile timeline surfaces. */
-const HIST_FIELD_LABEL: Record<string, string> = {
-  debtorName: "Customer", debtorCode: "Customer code", agent: "Agent",
-  phone: "Phone", email: "Email", soDate: "SO date", status: "Status",
-  paymentMethod: "Payment method", depositSen: "Deposit",
-  processingDate: "Processing Date", customerSoNo: "Customer SO ref",
-  customerPo: "Customer PO", customerDeliveryDate: "Delivery Date",
-  amendedDeliveryDate: "Amended delivery date",
-  amendDateFromCustomer: "Amend date (customer)", amendReason: "Amend reason",
-  deliveryState: "Delivery region", possessionDate: "Possession date",
-  houseType: "House type", replacementDisposal: "Replacement / disposal",
-  referral: "Referral", city: "City", postcode: "Postcode",
-  buildingType: "Building type", address1: "Address 1", address2: "Address 2",
-  address3: "Address 3", address4: "Address 4", note: "Note", remark: "Remark",
-  itemCode: "Item", itemGroup: "Group", description: "Description",
-  description2: "Description 2", uom: "UOM", qty: "Qty",
-  unitPriceSen: "Unit price", discountSen: "Discount",
-  unitCostSen: "Unit cost", totalSen: "Line total", lineCount: "Lines",
-  localTotalSen: "Total", amountSen: "Amount", paidAt: "Paid on",
-  method: "Method", merchantProvider: "Bank", installmentMonths: "Installment months",
-  onlineType: "Online type", approvalCode: "Approval code",
-  stockStatus: "Stock status", salespersonId: "Salesperson",
-  customerType: "Customer type", venue: "Venue", venueId: "Venue (master)",
-  salesLocation: "Sales location", customerState: "State", cancelled: "Cancelled",
-  photoAdded: "Photo added", photoRemoved: "Photo removed",
-  tbcVariants: "Variants updated", sofaBuild: "Sofa build",
-  pwpCode: "PWP code", pwpRewardsReverted: "PWP rewards reverted",
-  pwpCodesDeleted: "PWP codes deleted", photosCleaned: "Photos removed",
-};
-const HIST_MONEY_FIELDS = new Set([
-  "unitPriceSen", "discountSen", "totalSen", "depositSen",
-  "localTotalSen", "unitCostSen", "amountSen",
-]);
 const histVal = (field: string, v: unknown): string => {
   if (v === null || v === undefined || v === "") return "—";
   if ((HIST_MONEY_FIELDS.has(field) || /Sen$/.test(field)) && typeof v === "number") return `RM ${rm(v)}`;

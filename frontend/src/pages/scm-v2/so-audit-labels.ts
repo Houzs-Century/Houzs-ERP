@@ -33,6 +33,9 @@ const FIELDS: Record<string, string> = {
   unitCostSen: 'Unit cost', totalSen: 'Line total',
   lineCount: 'Lines', localTotalSen: 'Total', cancelled: 'Cancelled',
   remark: 'Remark', salespersonId: 'Salesperson', customerType: 'Customer type',
+  /* Written by the bulk share / withdraw (2026-09-09). Without it the History
+     drawer printed the raw key beside a real change to who can see the order. */
+  collaboratorStaffIds: 'Shared with',
   emergencyContactName: 'Emergency name', emergencyContactPhone: 'Emergency phone',
   emergencyContactRelationship: 'Emergency relationship',
   targetDate: 'Target date', branding: 'Branding', venue: 'Venue', venueId: 'Venue (master)',
