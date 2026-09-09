@@ -164,8 +164,22 @@ function tokenFor(comp: string, i: number, n: number): string | null {
     case '2B(LHF)': return left ? '2B' : null;
     case '1B(RHF)': return left ? null : '1B';
     case '2B(RHF)': return left ? null : '2B';
-    case 'L(LHF)': return left ? 'L' : null;
-    case 'L(RHF)': return left ? null : 'L';
+    /* A CHAISE ON THE SIDE ITS POSITION DENIES. A bare `L` is sided by
+       POSITION — the book's own convention — so where position already says the
+       right thing it is still written `L` and nothing about the existing corpus
+       moves. Where position would say the OPPOSITE, the explicit `LL` / `LR`
+       says it outright, exactly as `1EL` / `1ER` already do for an armed end.
+
+       That spelling used to be `null`, and three sales orders were refused for
+       it: HC-SO-007399 [2A(RHF), L(LHF)], HC-SO-008460 [L(RHF), 2A(LHF)] and
+       HC-SO-007958 [L(RHF), 1NA, 2A(LHF)].
+
+       The decoder learned `LL` / `LR` in the same change, and it could only be
+       taught safely because the book has never used either: 41,953 committed
+       Desc2 values, not one of them. The fingerprint over all 15,950 SO values
+       is byte-identical before and after. */
+    case 'L(LHF)': return left ? 'L' : 'LL';
+    case 'L(RHF)': return left ? 'LR' : 'L';
     case '1S(R)': return solo ? '1R' : null;
     case '1S(P)': return solo ? '1P' : null;
     case '1A(R)(LHF)': return !solo && left ? 'R' : null;
