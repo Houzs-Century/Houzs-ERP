@@ -49,7 +49,6 @@ import {
 } from "../../components/DetailLayout";
 import {
   usePurchaseOrderDetail,
-  useCancelPurchaseOrder,
   useReopenPurchaseOrder,
   useConfirmPurchaseOrder,
   useSupplierDetail,
@@ -80,6 +79,7 @@ import { PoAmendmentCreateModal } from "../../components/scm-v2/PoAmendmentCreat
 // SI/DR maps: same shared 5-node canvas, chain + clicks from the PO hook.
 import { DocumentRelationshipMapModal, DocumentChoiceDialog } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { usePoRelationshipMap } from "./po-relationship-map";
+import { usePoCancelAction } from "./use-po-cancel-action";
 // Per-line SO allocations (mig 0235) — split a consolidated line across the
 // customers (and stock) it serves; sub-numbered PO-xxxx-yy-01, -02, ...
 import { PoLineAllocationsModal } from "../../components/scm-v2/PoLineAllocationsModal";
@@ -424,7 +424,7 @@ function PurchaseOrderDetailV2ReadOnly() {
 
   const detail = usePurchaseOrderDetail(id ?? null);
   const confirmPo = useConfirmPurchaseOrder();
-  const cancelPo = useCancelPurchaseOrder();
+  const { cancelPo, isPending: cancelling } = usePoCancelAction();
   const reopenPo = useReopenPurchaseOrder();
   const notify = useNotify();
   const confirm = useConfirm();
@@ -674,16 +674,12 @@ function PurchaseOrderDetailV2ReadOnly() {
       confirmPo.mutate(id);
     }
   };
+  /* Owner 2026-09-09 — no approval, but the reason is compulsory: the prompt
+     and the words are in ./use-po-cancel-action.ts, shared with the editor, the
+     list menu and mobile, and the server refuses a cancel that carries none. */
   const doCancel = async () => {
     if (!purchaseOrder) return;
-    if (await confirm({
-      title: `Cancel PO ${purchaseOrder.po_number}?`,
-      body: "Any GRN raised against this PO must be cancelled first.",
-      confirmLabel: "Cancel PO",
-      danger: true,
-    })) {
-      cancelPo.mutate(purchaseOrder.id);
-    }
+    void cancelPo(purchaseOrder.id, purchaseOrder.po_number);
   };
   const doReopen = async () => {
     if (!purchaseOrder) return;
@@ -1208,7 +1204,7 @@ function PurchaseOrderDetailV2ReadOnly() {
               </Button>
             )}
             {canCancel && (
-              <Button variant="danger" icon={<XCircle size={14} />} onClick={doCancel}>
+              <Button variant="danger" icon={<XCircle size={14} />} onClick={doCancel} disabled={cancelling}>
                 Cancel PO
               </Button>
             )}

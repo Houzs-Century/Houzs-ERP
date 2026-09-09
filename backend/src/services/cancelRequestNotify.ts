@@ -35,12 +35,13 @@ const SOURCE = "document_cancel";
 export type CancelNotifyDocType = "SO" | "PO";
 export type CancelNotifyEvent = "raised" | "level1" | "approved" | "rejected";
 
-/** MUST match scm/shared/document-cancel.ts CANCEL_APPROVE_KEY. A Sales Order
- *  takes two signatures, a Purchase Order one (owner 2026-09-08) — so the PO
- *  has no level-2 desk to tell. */
+/** MUST match scm/shared/document-cancel.ts CANCEL_APPROVE_KEY (the test below
+ *  this file's sibling asserts the two agree). A Sales Order takes two
+ *  signatures; a Purchase Order takes NONE since 2026-09-09 — it is cancelled
+ *  on its reason alone — so it has no desk to tell and no entry here. */
 export const CANCEL_APPROVE_PERM: Record<CancelNotifyDocType, Partial<Record<1 | 2, string>>> = {
   SO: { 1: "scm.so_cancel.approve_l1", 2: "scm.so_cancel.approve_l2" },
-  PO: { 1: "scm.po_cancel.approve" },
+  PO: {},
 };
 
 const NOUN: Record<CancelNotifyDocType, string> = { SO: "Sales Order", PO: "Purchase Order" };
