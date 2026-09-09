@@ -57,18 +57,23 @@ try {
   const poNos = DOC_NOS.filter((d) => d.includes('-PO-'));
 
   const soLines = soNos.length
-    ? await pg`SELECT doc_no, line_no, item_code, item_group, variants, description2,
+    /* ORDERED THE WAY THE WRITE-BACK ORDERS LINES — created_at then id, which is
+       what inAcLineOrder does. There is no line_no on this table, and ordering
+       any other way would number the lines differently from the document the
+       reader is looking at. */
+    ? await pg`SELECT doc_no, id, item_code, item_group, variants, description2,
                       qty, unit_price_sen
                  FROM scm.mfg_sales_order_items
                 WHERE doc_no = ANY(${soNos})
-                ORDER BY doc_no, line_no`
+                ORDER BY doc_no, created_at, id`
     : [];
   const poLines = poNos.length
-    ? await pg`SELECT po_number AS doc_no, line_no, item_code, item_group, variants, description2
+    ? await pg`SELECT p.po_number AS doc_no, pi.id, pi.item_code, pi.item_group,
+                      pi.variants, pi.description2, pi.qty, pi.unit_price_sen
                  FROM scm.purchase_order_items pi
                  JOIN scm.purchase_orders p ON p.id = pi.purchase_order_id
                 WHERE p.po_number = ANY(${poNos})
-                ORDER BY po_number, line_no`
+                ORDER BY p.po_number, pi.created_at, pi.id`
     : [];
 
   /* THE ORDINARY LINES FIRST. A stored description2 wins verbatim — that is the
@@ -77,13 +82,19 @@ try {
   console.log('');
   console.log('=== LINES WHOSE DESCRIPTION 2 IS OVER ===');
   let over = 0;
+  /* Position within its own document, 1-based, because that is how a person
+     counts the lines on the screen. The rows arrive in the write-back's own
+     order, so counting them as they come is that order. */
+  const seen = new Map();
   for (const r of [...soLines, ...poLines]) {
+    const pos = (seen.get(r.doc_no) ?? 0) + 1;
+    seen.set(r.doc_no, pos);
     const stored = String(r.description2 ?? '').trim();
     const text = stored || buildVariantSummary(r.item_group ?? '', r.variants ?? null);
     if (text.length <= AC_DESC2_MAX) continue;
     over += 1;
     console.log('');
-    console.log(`${r.doc_no}  line ${r.line_no}  ${r.item_code}`);
+    console.log(`${r.doc_no}  line ${pos}  ${r.item_code}`);
     console.log(`  ${text.length} characters, ${text.length - AC_DESC2_MAX} over:`);
     console.log(`  ${text}`);
   }
