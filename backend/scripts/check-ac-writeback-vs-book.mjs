@@ -165,6 +165,15 @@ const numEq = (a, b) => {
 /* Desc2: the book stores blank as ABSENT (the exporter omits it), so absent and
    "" are the same statement about the document and must not read as a change. */
 const txtEq = (a, b) => String(a ?? "").trim() === String(b ?? "").trim();
+/** YYYY-MM-DD out of whatever a date arrived as; null if it is not a date. */
+const isoDay = (v) => {
+  if (v == null) return null;
+  const t = String(v);
+  const m = t.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (m) return m[1];
+  const d = new Date(t);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+};
 
 const pg = postgres(url, { ssl: "require", prepare: false, max: 1 });
 const say = (s = "") => console.log(s);
@@ -232,9 +241,17 @@ try {
     if (body.Header) {
       for (const k of Object.keys(body.Header)) {
         if (k === "DocDate") {
-          if (bh && !txtEq(String(body.Header[k]).slice(0, 10), bh.docDate)) {
+          /* COMPARED AS A DATE, NOT AS TEXT — this was wrong in the first run
+             and it mattered. The payload carries what the composer's Date
+             serialised to ("Tue Jun 17 2025 00:00:00 GMT+0000") while the book
+             exports "2025-06-17". Slicing ten characters off the first gives
+             "Tue Jun 17", which never equals the second, so EVERY DocDate was
+             reported as a change to the account book when it is the same day.
+             A formatting difference is not a fact about his data. */
+          const sentDay = isoDay(body.Header[k]);
+          if (bh && sentDay && !txtEq(sentDay, bh.docDate)) {
             diffs.push({ doc: r.doc_no, bookDoc, dtlKey: "(header)", field: "DocDate",
-              sent: body.Header[k], book: bh.docDate, sentAt: r.sent_at, by: r.created_by });
+              sent: sentDay, book: bh.docDate, sentAt: r.sent_at, by: r.created_by });
           }
         } else headerNotComparable++;
       }
@@ -270,6 +287,49 @@ try {
   say(`  line retired (a deletion, not a value change): ${retires.length}`);
   say(`  DtlKey not in the snapshot at all: ${missing.length}   (line created after the export, or never in the book)`);
   say(`  header keys with no snapshot counterpart, not compared: ${headerNotComparable}`);
+  say();
+
+  /* ── THE CLASSIFICATION THAT ANSWERS THE OWNER'S QUESTION ─────────────────
+     "Different from the book" is not the same as "we damaged your book", and
+     reporting one number for both would be the wrong answer in the alarming
+     direction. Two splits decide it, and both come from columns, not judgement:
+
+       WHO   created_by. A named user means a PERSON did this in the ERP. For a
+             document a person raised or edited, the ERP is MASTER and pushing
+             the value out is the write-back working — that is the whole reason
+             it is switched on. created_by NULL is the unattributed population
+             the repair bursts sit in.
+       WHAT  whether the account book already had the document. An ERP-created
+             document (the outbox doc_no and the book DocNo are the same string,
+             e.g. HC-PO-2609-001) was ours to write. A MIGRATED one (the book
+             calls it SO-0xxxxx while the ERP calls it HC-SO-0xxxxx) existed in
+             his book before the ERP ever saw it, and changing THAT is what
+             「你不可以有记录再这边啊」 is about.
+
+     The dangerous cell is UNATTRIBUTED x MIGRATED. */
+  const cell = (d) => `${d.by == null ? "unattributed" : "person " + d.by}  |  `
+    + `${d.doc === d.bookDoc ? "ERP-created" : "MIGRATED (book had it)"}`;
+  const byCell = new Map();
+  for (const d of diffs) {
+    const k = cell(d);
+    const c = byCell.get(k) ?? { n: 0, docs: new Set(), fields: new Set() };
+    c.n++; c.docs.add(d.doc); c.fields.add(d.field); byCell.set(k, c);
+  }
+  say("=== THE DIFFERENCES, SPLIT BY WHO AND BY WHOSE DOCUMENT ===");
+  for (const [k, c] of [...byCell.entries()].sort((a, b) => b[1].n - a[1].n)) {
+    say(`  ${k}  —  ${c.n} value(s) over ${c.docs.size} document(s): ${[...c.fields].sort().join(", ")}`);
+  }
+  const dangerous = diffs.filter((d) => d.by == null && d.doc !== d.bookDoc);
+  say();
+  say(`  UNATTRIBUTED changes to a document the book ALREADY HAD: ${dangerous.length}`);
+  if (!dangerous.length) {
+    say("  -> Nothing our repairs did reached a document the account book already held.");
+  } else {
+    say("  -> THESE are the ones to look at. Every one is listed below.");
+    for (const d of dangerous) {
+      say(`     ${d.doc} book=${d.bookDoc} DtlKey=${d.dtlKey} ${d.field}: book=${JSON.stringify(d.book)} sent=${JSON.stringify(d.sent)}`);
+    }
+  }
   say();
 
   if (diffs.length) {
