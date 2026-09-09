@@ -26,7 +26,7 @@ import {
 } from '../shared';
 import { applySoAmendment, reviseBoundPo, ReceivedFloorError } from '../lib/so-revision';
 import { raisePoFollowUps } from '../lib/amendment-po-followup';
-import { hasHouzsPerm, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
+import { hasHouzsPerm, holdsHouzsPermLiterally, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
 import {
   notifySoAmendmentResolved,
@@ -379,10 +379,15 @@ soAmendments.get('/', async (c) => {
    Fails SOFT with 0. A badge is decoration on someone else's screen; a count
    query that errors must not turn the sidebar into an error state. */
 soAmendments.get('/pending-count', async (c) => {
+  /* holdsHouzsPermLiterally, NOT hasHouzsPerm: the `*` wildcard must not put a
+     count on the Owner account's menu (owner 2026-09-09). Same rule the notice
+     audience already applied — a badge that carries every desk's backlog is a
+     badge its reader learns to ignore, and the wildcard holder can still
+     approve anything and still sees every row inside the module. */
   const lanes: string[] = [];
-  if (hasHouzsPerm(c, LANE_APPROVE_KEY.LINES)) lanes.push('LINES');
-  if (hasHouzsPerm(c, LANE_APPROVE_KEY.DELIVERY)) lanes.push('DELIVERY');
-  const legacy = hasHouzsPerm(c, 'scm.amendment.approve_so');
+  if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.LINES)) lanes.push('LINES');
+  if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.DELIVERY)) lanes.push('DELIVERY');
+  const legacy = holdsHouzsPermLiterally(c, 'scm.amendment.approve_so');
   if (lanes.length === 0 && !legacy) return c.json({ count: 0 });
 
   const sb = c.get('supabase');
