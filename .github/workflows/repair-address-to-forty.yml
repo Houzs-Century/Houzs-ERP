@@ -1,0 +1,61 @@
+name: Split addresses wider than the account book's column
+
+# The owner's instruction, 2026-09-09: 「我们超过 40 个字的地址全部拆分成
+# address 1 和 address 2，解决了这个问题。然后再 sync 进去，把我们的 address
+# lock成 40 个字」
+#
+# AutoCount's four InvAddr columns are 40 characters and it refuses the WHOLE
+# document when one is over, so 72 sales orders could not reach the accounts.
+# This fixes the DATA, so the ERP holds what the book holds.
+#
+# PLAN by default. APPLY needs the company id typed back.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "Company id, e.g. 1"
+        required: false
+        default: ""
+        type: string
+      apply:
+        description: "1 to write, anything else is a PLAN"
+        required: false
+        default: "0"
+        type: string
+      confirm_company:
+        description: "Type the company id again to apply"
+        required: false
+        default: ""
+        type: string
+
+# Its own group. A repair must never queue behind — or displace — a deploy.
+concurrency:
+  group: repair-address-to-forty
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # tsx, so the packing is the REAL fitAddressLines from src/ and never a
+      # second copy — a second word-wrap is a second set of line breaks.
+      - run: npx tsx scripts/repair-address-to-forty.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          APPLY: ${{ inputs.apply }}
+          CONFIRM_COMPANY: ${{ inputs.confirm_company }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
