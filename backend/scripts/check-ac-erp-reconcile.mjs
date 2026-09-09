@@ -143,7 +143,7 @@ import {
 import { buildScope, currencyVerdict, decodeSnapshot, isTestDoc, LOCAL_CURRENCY } from "./lib/ac-scope.mjs";
 import {
   splitBookUnpriced, splitDecidedAbsences, splitErpZeroMoney,
-  splitGuessedItemCodePairing, splitMigratedChainLineShape,
+  splitGuessedItemCodePairing, splitMigratedChainLineShape, splitMigratedChainUnpairedBookLine,
 } from "./lib/ac-not-a-difference.mjs";
 import { blankRowArm, isBlankBookRow, splitBlankBookRows } from "./lib/ac-blank-book-row.mjs";
 import { grPairGrain } from "./lib/ac-gr-pair-grain.mjs";
@@ -854,6 +854,13 @@ for (const cfg of TYPES) {
      from a MEASUREMENT, never by pattern-matching the printed string. */
   const itemRows = [];
   const lineCountRows = [];
+  /* The unpaired BOOK lines in the same machine-readable shape, and for the
+     same reason: on a migrated-invoice type that finding is the line COUNT's
+     own shape seen from the other end, and it is split by the SAME `shapeFacts`
+     below. Collected here rather than parsed back out of `F.unmatchedAc`,
+     because a classifier reading a printed string is the failure this file
+     already avoids twice above. */
+  const unpairedBookLineRows = [];
   /* Per document, the evidence those two classifiers need — built here, in the
      loop that already holds both sides, so neither can be computed from a
      narrower read later. See lib/ac-not-a-difference.mjs sections 4 and 5.
@@ -1241,7 +1248,14 @@ for (const cfg of TYPES) {
     for (let i = 0; i < Math.max(freeAc.length, freeErp.length); i++) {
       if (i < freeAc.length && i < freeErp.length) pairs.push([freeAc[i], freeErp[i], false]);
       else if (i < freeAc.length) {
-        F.unmatchedAc.push(`${ac}: AutoCount DtlKey ${freeAc[i].dtlKey} has no ERP line`);
+        const msgAc = `${ac}: AutoCount DtlKey ${freeAc[i].dtlKey} has no ERP line`;
+        F.unmatchedAc.push(msgAc);
+        /* ONE row per DOCUMENT, not per line: the split below reclassifies a
+           document, and pushing a second row for a second unpaired line of the
+           same document would make `preserveTotal` count one document twice. */
+        if (!unpairedBookLineRows.some((r) => r.key === ac)) {
+          unpairedBookLineRows.push({ key: ac, erpNo: d.erp_no, line: msgAc });
+        }
         VERDICT.record(t, ac, d.erp_no, "a book line we do not have",
           `AutoCount DtlKey ${freeAc[i].dtlKey} has no ERP line`);
       } else {
@@ -1399,6 +1413,31 @@ for (const cfg of TYPES) {
     ? splitMigratedChainLineShape({ rows: lineCountRows, facts: shapeFacts.size ? shapeFacts : null })
     : { lineShape: 0, differ: lineCountRows.length, moved: [], impostors: [], applied: false,
         why: "this type is not built by the migrated invoice chain, so a line-count difference is a difference" };
+  /* THE OTHER FACE OF THE SAME SHAPE, split by the SAME facts. On a migrated
+     invoice the book stating a row we do not carry is not a separate finding
+     from the row COUNT differing — it is that fact seen from the other end. The
+     line-count column has been split on this proof since 2026-09-08 and this one
+     never was, so nine sales invoices carried `a book line we do not have` on a
+     run whose own `shapeFacts` had already cleared them. */
+  const UB = cfg.migratedChainLineShape
+    ? splitMigratedChainUnpairedBookLine({ rows: unpairedBookLineRows, facts: shapeFacts.size ? shapeFacts : null })
+    : { lineShape: 0, differ: unpairedBookLineRows.length, moved: [], impostors: [], applied: false,
+        why: "this type is not built by the migrated invoice chain, so a book line we do not have is a difference" };
+  /* THE MEASUREMENT HAS TO REACH THE PER-DOCUMENT VERDICT, not only the summary
+     line below. `splitMigratedChainLineShape` has been printing its count since
+     2026-09-08 and nothing ever called `reclassify`, so the documents it had
+     measured as a shape went on being counted as work — the same failure
+     docs/bugs/0715 records, with the arrow pointing the other way. The caller
+     passes the split's OWN output and no predicate of its own; `reclassify` is a
+     no-op unless that axis really was recorded on that document. */
+  if (LS.applied) {
+    for (const r of LS.moved) VERDICT.reclassify(t, r.key, "line count", "migrated-chain-line-shape", r.line);
+  }
+  if (UB.applied) {
+    for (const r of UB.moved) {
+      VERDICT.reclassify(t, r.key, "a book line we do not have", "migrated-chain-line-shape", r.line);
+    }
+  }
   log(
     `${t} DATA (${bothSides} documents on both sides, ${comparedLines} lines paired) — ` +
       `line-count differs: ${LS.differ}` + (LS.lineShape ? ` (+${LS.lineShape} the same goods and the same money on a different number of rows)` : "") +
@@ -1468,6 +1507,17 @@ for (const cfg of TYPES) {
   if (LS.lineShape) {
     log(`${t} — ${LS.lineShape} line-count difference(s) are a line SHAPE, not a missing line: ${LS.why}`);
     for (const row of first(LS.moved)) plain(`      ${row.line}`);
+  }
+  if (UB.lineShape) {
+    log(`${t} — ${UB.lineShape} document(s) carry a book line we do not have that is the SAME shape: ${UB.why}`);
+    for (const row of first(UB.moved)) plain(`      ${row.line}`);
+  }
+  if (UB.impostors.length) {
+    log(
+      `${t} A BOOK LINE WE DO NOT HAVE — ${UB.impostors.length} document(s) do not reconcile. ` +
+        "Every one stays counted as a difference:",
+    );
+    for (const row of UB.impostors.slice(0, SHOW)) plain(`      ${row.line} — ${row.why}`);
   }
   if (LS.impostors.length) {
     log(

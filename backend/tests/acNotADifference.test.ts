@@ -39,6 +39,7 @@ import {
   splitErpZeroMoney,
   splitGuessedItemCodePairing,
   splitMigratedChainLineShape,
+  splitMigratedChainUnpairedBookLine,
   splitUnmigratedOnwardTransfer,
 } from '../scripts/lib/ac-not-a-difference.mjs';
 
@@ -444,6 +445,71 @@ describe('line count — a shape difference is not a missing line', () => {
     const list = Array.from({ length: 10 }, (_, i) => codeRow(`d${i}`));
     for (let i = 0; i < 10; i++) facts.set(`d${i}`, { totalsEqual: i < 6, perCode: [] });
     const r = splitMigratedChainLineShape({ rows: list, facts });
+    expect(r.lineShape).toBe(6);
+    expect(r.differ).toBe(4);
+    expect(r.lineShape + r.differ).toBe(10);
+  });
+});
+
+/* ── 5b. THE OTHER FACE OF THE SAME SHAPE ─────────────────────────────────
+ *
+ * A migrated invoice's lines come from OUR receipt / delivery, so the book can
+ * state a row we do not carry for exactly the reason the line COUNT differs.
+ * The line-count column was already split on that proof; the unpaired book line
+ * was not, so nine sales invoices carried `a book line we do not have` after
+ * `line count` had been measured as a shape on the same run and the same facts.
+ *
+ * THE PROOF IS THE SAME PROOF, and that is the point: one measurement, two
+ * axes. A document whose total moves, or whose goods do not reconcile per item
+ * code, fails BOTH — it can never be that only one of the two is waved through.
+ */
+
+describe('a book line we do not have — the other face of the migrated-chain shape', () => {
+  test('no facts: NOTHING moves, and the count is preserved', () => {
+    const r = splitMigratedChainUnpairedBookLine({ rows: [codeRow('a')], facts: null });
+    expect(r.applied).toBe(false);
+    expect(r.lineShape).toBe(0);
+    expect(r.differ).toBe(1);
+  });
+
+  test('totals identical and every code reconciles: moves', () => {
+    const facts = new Map([['I-2410-0082', { totalsEqual: true, perCode: [] }]]);
+    const r = splitMigratedChainUnpairedBookLine({ rows: [codeRow('I-2410-0082')], facts });
+    expect(r.lineShape).toBe(1);
+    expect(r.differ).toBe(0);
+  });
+
+  test('THE ONE THAT MATTERS: a document whose TOTAL differs stays counted', () => {
+    const facts = new Map([['I-x', { totalsEqual: false, perCode: [] }]]);
+    const r = splitMigratedChainUnpairedBookLine({ rows: [codeRow('I-x')], facts });
+    expect(r.lineShape).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('money gap');
+  });
+
+  test('THE OTHER ONE THAT MATTERS: a PRICED book line we do not carry stays counted', () => {
+    const facts = new Map([
+      ['I-y', { totalsEqual: true, perCode: [{ code: 'DSL-8050 SOFA', why: 'is in the book at RM 3250.00 and we do not carry it' }] }],
+    ]);
+    const r = splitMigratedChainUnpairedBookLine({ rows: [codeRow('I-y')], facts });
+    expect(r.lineShape).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('the goods do not');
+  });
+
+  test('a document with no measurement at all is UNPROVEN, never waved through', () => {
+    const facts = new Map([['other', { totalsEqual: true, perCode: [] }]]);
+    const r = splitMigratedChainUnpairedBookLine({ rows: [codeRow('I-z')], facts });
+    expect(r.lineShape).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('unproven');
+  });
+
+  test('a partial cover still reports differ: six of ten move, never ten', () => {
+    const facts = new Map<string, { totalsEqual: boolean; perCode: { code: string; why: string }[] }>();
+    const list = Array.from({ length: 10 }, (_, i) => codeRow(`d${i}`));
+    for (let i = 0; i < 10; i++) facts.set(`d${i}`, { totalsEqual: i < 6, perCode: [] });
+    const r = splitMigratedChainUnpairedBookLine({ rows: list, facts });
     expect(r.lineShape).toBe(6);
     expect(r.differ).toBe(4);
     expect(r.lineShape + r.differ).toBe(10);
