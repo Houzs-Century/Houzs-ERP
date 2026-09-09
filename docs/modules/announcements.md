@@ -698,8 +698,24 @@ narrowed by `user_companies` — with two rules worth knowing before you reuse i
   `user_companies` is empty and `companyContext` never consults it; filtering on
   an empty grant set would silence the channel entirely.
 
-The audience then expands UP each approver's `manager_id` chain, the same
-`uplineUserIds` rule `assrNotify` uses.
+The audience then expands UP each approver's `manager_id` chain — but **not all
+the way**. The top `UPLINE_TOP_LEVELS_EXCLUDED` (2) levels of every chain are
+trimmed off (`amendmentNotify.ts`), which is where this differs from
+`assrNotify`, which walks to the root.
+
+**Why the trim exists, in the module's own words.** The wildcard exclusion above
+was meant to keep the owner off every amendment. It did not work: the upline
+expansion put them straight back through the front door, because every
+purchasing and logistics desk chains up through the same two people to the Owner
+account. Six days of prod data (2026-09-03 → 09-09) showed **every** approver
+audience reading `[1, 4, 5, …]` — the channel was on its way to being muted by
+the very people it exists to reach, which is the exact failure this file's own
+header warns about. Owner ruling 2026-09-09: cut the chain two levels below its
+top. The desk still gets it, their manager still gets it, the two above do not.
+
+Trimming is by DEPTH, never by naming ids, so it stays true as the org chart
+moves — and the seed itself is never trimmed: an approver who reports straight
+to the top must still hear about the thing only they can sign.
 
 ---
 
@@ -826,7 +842,7 @@ still 403 for that reader (`:146, 157, 164, 171, 180`).
 | Rich body — rendering | **`components/AnnouncementRichBody.tsx`** — the only place `body_html` reaches `innerHTML`; inbox pane + `AnnouncementBanner.tsx` use it with `annId` so `img[data-att]` streams from `/api/announcements/:id/attachments/:key` (composer preview passes `imageSrc` instead) | `MobileAnnouncements.tsx` `Detail` + `MobileAnnouncementPopup.tsx` use it; `mobileI18n.ts` `localizeAnnouncement()` picks the translated `bodyHtml` |
 | Audience ingredients (backend) | — | — (backend: **`backend/src/lib/announcementAudience.ts`** — division-target parsing, the caller's division, the active roster, company-grant narrowing, pending state; the route keeps `userCanSee`) |
 | Rich body — grammar | **`lib/announcementRichText.ts`** — byte-identical twin of `backend/src/lib/announcementRichText.ts`; the two test files pin the same fixtures | — |
-| Nav visibility | `components/Sidebar.tsx:666-672` | `mobile/MobileApp.tsx:360` (test-pinned) |
+| Nav visibility | `components/Sidebar.tsx:666-672`; since 2026-09-09 the **Memos** row (`/memos`, the department memo register — `docs/modules/memos.md`) sits right under this one, ungated on the same reading, and `App.tsx` mounts `/memos` beside `/announcements` | `mobile/MobileApp.tsx:360` (test-pinned) |
 | Read gate | `frontend/src/App.tsx:481` | — must agree with `backend/src/routes/announcements.ts:530`; the #957 bug was these two disagreeing |
 | Badge | — (none today) | `mobile/MobileApp.tsx:440`+`:805`, `mobile/MobileProfile.tsx:198`+`:345` |
 

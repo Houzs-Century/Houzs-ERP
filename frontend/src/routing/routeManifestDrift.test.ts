@@ -63,7 +63,9 @@ describe("executable route contract", () => {
     // owner opened sales, delivery, purchase and receipt documents to staff.
     // 156 since 2026-09-08: /scm/cancel-requests — the cancellation-approval
     // inbox (SO / PO cancel = a reason + two signatures).
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(156);
+    // 157 since 2026-09-09: /memos — the department memo register (numbered at
+    // creation on the shared <DEPT>-MEMO series; docs/modules/memos.md).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(157);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -95,7 +97,8 @@ describe("executable route contract", () => {
     // 163 since 2026-09-08 — /scm/ap-invoices/scan; see the staff-route count above.
     // 164 since 2026-09-08 — /change-log; see the staff-route count above.
     // 165 since 2026-09-08 — /scm/cancel-requests; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(165);
+    // 166 since 2026-09-09 — /memos; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(166);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

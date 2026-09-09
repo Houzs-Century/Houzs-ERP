@@ -4,6 +4,14 @@
 
    THE OWNER, 2026-09-08: 「SO 和 PO 取消的话需要 approval 2 层 — 已经输入原因」.
 
+   THE SALES ORDER'S, since 2026-09-09. The Purchase Order left this flow when
+   the owner cut its approval (「PO cancelled 不需要审批，只需要 remark 原因取消」);
+   it asks for its reason and cancels on the spot through ./use-po-cancel-action
+   .ts, and raising a PO request is refused by the server (no_approval_needed).
+   The copy below says two approvers have to sign, which is true of the Sales
+   Order alone — do not re-point another document at it without changing that
+   sentence.
+
    ONE COPY OF THE WORDS, NOT SIX. The Sales Order had four Cancel buttons
    (edit page, read page, list menu, mobile) and the Purchase Order two, each
    with its own confirm copy — one said "You can Reopen it later" about a

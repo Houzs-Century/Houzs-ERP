@@ -1,0 +1,62 @@
+name: Probe — the stool and the two dates (READ-ONLY)
+
+# Owner, 2026-09-09, two rulings:
+#   HC-DO-2609-011 / DSL-8051 SOFA — 「这个是stool」
+#   HC-SO-013495                   — 「这个remove掉processing date和delivery date」
+#
+# This workflow WRITES NOTHING. It reads what production actually holds so the
+# apply can be planned against observation rather than against the tree: the
+# full SO header row (every column, so "the rest is unchanged" becomes provable),
+# the line-level delivery mirror, the downstream, whether a STOOL piece SKU is
+# minted for the model the book's own item code states — and pg_trigger with the
+# trigger function bodies, because 「库存先不看」 makes "can this move stock" the
+# gate on the whole write.
+#
+# See backend/scripts/probe-stool-and-clear-dates.mjs.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "company_id (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+      so_doc:
+        description: "the sales order whose two dates are to be cleared"
+        required: false
+        default: "HC-SO-013495"
+        type: string
+      do_doc:
+        description: "the delivery order carrying the stool line"
+        required: false
+        default: "HC-DO-2609-011"
+        type: string
+
+concurrency:
+  group: probe-stool-and-clear-dates
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Read (nothing is written)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          SO_DOC: ${{ inputs.so_doc }}
+          DO_DOC: ${{ inputs.do_doc }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: node scripts/probe-stool-and-clear-dates.mjs

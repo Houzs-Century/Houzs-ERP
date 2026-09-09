@@ -44,7 +44,11 @@ voided_at / void_reason`; the number keeps its place. `findRef(env, refNo)` and
 `findRefForEntity(env, type, id)` resolve either way round.
 
 Minting is not a route: the module that owns the record mints when the
-record reaches the state that deserves a number. **First consumer (2026-09-06,
+record reaches the state that deserves a number. **Second consumer
+(2026-09-09):** the memo register (`docs/modules/memos.md`, `routes/memos.ts`)
+mints `entityType: "memo"`, `typeCode: "MEMO"` AT CREATION — the same
+`<DEPT>-MEMO-<YYMM>` series a memo composed as a notice uses, so the two
+count together. **First consumer (2026-09-06,
 mig `20260906T1509`):** the announcement approval —
 `backend/src/services/announcementApproval.ts` `approveAnnouncement()` mints
 `mintDocumentRef(env, { deptCode: <submitter's department code>, typeCode:

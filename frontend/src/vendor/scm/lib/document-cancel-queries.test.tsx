@@ -35,16 +35,16 @@ describe('display rules', () => {
     expect(pendingLevel('APPROVED')).toBeNull();
     expect(signaturesGiven('so', 'L1_APPROVED')).toBe(1);
     expect(signaturesGiven('so', 'EXECUTED')).toBe(2);
-    expect(signaturesGiven('po', 'APPROVED')).toBe(1);
+    expect(signaturesGiven('po', 'APPROVED')).toBe(0);
     expect(cancelRequestLine(row())).toBe('Waiting for level-1 approval (0 of 2)');
     expect(cancelRequestLine(row({ status: 'L1_APPROVED' }))).toBe('Waiting for level-2 approval (1 of 2)');
     expect(cancelRequestLine(row({ status: 'APPROVED' }))).toContain('2 of 2');
     /* A Purchase Order takes one signature. */
-    expect(cancelRequestLine(row({ doc_type: 'PO' }))).toBe('Waiting for approval (0 of 1)');
-    expect(cancelRequestLine(row({ doc_type: 'PO', status: 'APPROVED' }))).toContain('1 of 1');
+    /* A purchase order signs nothing since 2026-09-09; the only state one of
+       its rows can be in is the cancellation that already ran. */
+    expect(cancelRequestLine(row({ doc_type: 'PO', status: 'EXECUTED' }))).toBe('Cancelled');
     expect(approveLabel('so', 1)).toBe('Approve (level 1)');
     expect(approveLabel('so', 2)).toBe('Approve & cancel (level 2)');
-    expect(approveLabel('po', 1)).toBe('Approve & cancel');
     expect(isFinalLevel('po', 1)).toBe(true);
     expect(isFinalLevel('so', 1)).toBe(false);
     expect(cancelRequestLine(row({ status: 'EXECUTED' }))).toBe('Cancelled');
@@ -58,15 +58,16 @@ describe('display rules', () => {
     const l1Done = row({ status: 'L1_APPROVED', l1_by: 21 });
     expect(viewerCanApprove(l1Done, viewer(21, ['*']))).toBe(false);
     expect(viewerCanApprove(l1Done, viewer(31, ['*']))).toBe(true);
-    expect(viewerCanApprove(row({ doc_type: 'PO' }), viewer(21, ['scm.so_cancel.approve_l1']))).toBe(false);
-    expect(viewerCanApprove(row({ doc_type: 'PO' }), viewer(21, ['scm.po_cancel.approve']))).toBe(true);
+    /* Nobody signs a purchase order's cancellation — it has no key at all. */
+    expect(viewerCanApprove(row({ doc_type: 'PO' }), viewer(21, ['*']))).toBe(false);
+    expect(CANCEL_APPROVE_KEY.po[1]).toBeUndefined();
     expect(CANCEL_APPROVE_KEY.po[2]).toBeUndefined();
     expect(viewerCanApprove(row({ status: 'APPROVED' }), viewer(31, ['*']))).toBe(false);
   });
 
   it('Reject for either desk while pending; Withdraw for the requester or a desk while open', () => {
     expect(viewerCanReject(row(), viewer(31, ['scm.so_cancel.approve_l2']))).toBe(true);
-    expect(viewerCanReject(row({ doc_type: 'PO' }), viewer(31, ['scm.po_cancel.approve']))).toBe(true);
+    expect(viewerCanReject(row({ doc_type: 'PO' }), viewer(31, ['*']))).toBe(false);
     expect(viewerCanReject(row(), viewer(51, []))).toBe(false);
     expect(viewerCanReject(row({ status: 'APPROVED' }), viewer(31, ['*']))).toBe(false);
     expect(viewerCanWithdraw(row(), viewer(11, []))).toBe(true);

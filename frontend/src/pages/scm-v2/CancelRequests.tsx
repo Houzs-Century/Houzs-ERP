@@ -107,7 +107,10 @@ export const CancelRequests = () => {
     if (row.doc_type === 'SO') {
       await cancelSo.mutateAsync({ docNo: row.doc_key, status: 'CANCELLED', expectedStatus: row.doc_status_at_request ?? null });
     } else {
-      await cancelPo.mutateAsync(row.doc_key);
+      /* The row's own words are the reason the cancel now requires (owner
+         2026-09-09). Only a request raised before the PO's approval was cut can
+         still reach this branch — nothing raises a new one. */
+      await cancelPo.mutateAsync({ id: row.doc_key, reason: row.reason });
     }
     void serviceNotify({ title: `${DOC_LABEL[row.doc_type]} ${row.doc_number} cancelled`, body: 'The approval is complete and the cancellation has run.' });
   };

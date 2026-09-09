@@ -424,51 +424,92 @@ export function splitGuessedItemCodePairing({ rows, bags }) {
  * @returns {{lineShape:number,differ:number,moved:object[],impostors:{line:string,why:string}[],
  *            applied:boolean,why:string}}
  */
-export function splitMigratedChainLineShape({ rows, facts }) {
+/**
+ * ONE document's verdict, from the shape facts. Shared by the two axes below
+ * so they cannot answer differently about the same document on the same run.
+ *
+ * @param {{totalsEqual:boolean,perCode:{code:string,why:string}[]}|undefined} f
+ * @param {string} key
+ * @returns {{ok:true}|{ok:false,why:string}}
+ */
+function migratedChainShapeVerdict(f, key) {
+  if (!f) return { ok: false, why: `no line-shape measurement for ${key} — unproven, counted as a difference` };
+  if (!f.totalsEqual) {
+    return { ok: false, why: `${key} differs in line COUNT and the document TOTAL is not identical — this is a money gap, not a shape` };
+  }
+  if (f.perCode.length) {
+    return { ok: false, why: `${key} totals agree but the goods do not: ${f.perCode.map((p) => `${p.code} ${p.why}`).join("; ")}` };
+  }
+  return { ok: true };
+}
+
+/** The two axes' shared walk. `what` names the split for `preserveTotal`. */
+function splitOnChainShape({ rows, facts }, what, why, unprovenWhy) {
   const total = rows.length;
   if (!facts) {
-    preserveTotal("line count (not applied)", total, { lineShape: 0, differ: total });
-    return {
-      lineShape: 0,
-      differ: total,
-      moved: [],
-      impostors: [],
-      applied: false,
-      why:
-        "the per-document totals and per-item-code sums could not be read, so nothing proves a line-count " +
-        "difference is only a shape difference. Nothing is reclassified.",
-    };
+    preserveTotal(`${what} (not applied)`, total, { lineShape: 0, differ: total });
+    return { lineShape: 0, differ: total, moved: [], impostors: [], applied: false, why: unprovenWhy };
   }
   const moved = [];
   const impostors = [];
   for (const r of rows) {
-    const f = facts.get(r.key);
-    if (!f) {
-      impostors.push({ line: r.line, why: `no line-shape measurement for ${r.key} — unproven, counted as a difference` });
-      continue;
-    }
-    if (!f.totalsEqual) {
-      impostors.push({ line: r.line, why: `${r.key} differs in line COUNT and the document TOTAL is not identical — this is a money gap, not a shape` });
-      continue;
-    }
-    if (f.perCode.length) {
-      impostors.push({ line: r.line, why: `${r.key} totals agree but the goods do not: ${f.perCode.map((p) => `${p.code} ${p.why}`).join("; ")}` });
-      continue;
-    }
-    moved.push(r);
+    const v = migratedChainShapeVerdict(facts.get(r.key), r.key);
+    if (v.ok) moved.push(r);
+    else impostors.push({ line: r.line, why: v.why });
   }
   const parts = { lineShape: moved.length, differ: total - moved.length };
-  preserveTotal("line count", total, parts);
-  return {
-    ...parts,
-    moved,
-    impostors,
-    applied: true,
-    why:
-      "the invoice is built from OUR receipt / delivery by design and its total equals AutoCount's to the " +
+  preserveTotal(what, total, parts);
+  return { ...parts, moved, impostors, applied: true, why };
+}
+
+const CHAIN_SHAPE_UNPROVEN =
+  "the per-document totals and per-item-code sums could not be read, so nothing proves the difference is only " +
+  "a shape difference. Nothing is reclassified.";
+
+export function splitMigratedChainLineShape({ rows, facts }) {
+  return splitOnChainShape(
+    { rows, facts },
+    "line count",
+    "the invoice is built from OUR receipt / delivery by design and its total equals AutoCount's to the " +
       "sen, and every item code agrees on quantity and money — the only book lines we do not carry are " +
       "priced at RM 0.00. Same goods, same money, a different number of rows.",
-  };
+    CHAIN_SHAPE_UNPROVEN,
+  );
+}
+
+/* ── 5b. THE OTHER FACE OF THE SAME SHAPE ─────────────────────────────────── */
+
+/**
+ * Split `a book line we do not have` on a migrated-chain type by the SAME proof
+ * the line COUNT is split by.
+ *
+ * WHY IT IS THE SAME QUESTION. A migrated invoice's rows come from OUR receipt
+ * or delivery, so the book stating a row we do not carry is not a separate
+ * finding from the row COUNT differing — it is the same fact seen from the
+ * other end, and 5's proof settles both. Measured 2026-09-09 (run 34310423039):
+ * nine sales invoices carried `a book line we do not have` on the same run and
+ * the same `facts` that had already measured their `line count` as a shape, and
+ * the axis had no split, so they stayed counted.
+ *
+ * IT IS NOT AN AMNESTY, and the tests pin it: a document whose TOTAL moves, or
+ * one carrying a book line with MONEY in it, fails the same two gates and stays
+ * a difference — reported louder, as an impostor. And a document with no
+ * measurement at all is UNPROVEN, never waved through.
+ *
+ * @param {{rows:{key:string,erpNo:string,line:string}[],
+ *          facts:Map<string,{totalsEqual:boolean,perCode:{code:string,why:string}[]}>|null}} args
+ * @returns {{lineShape:number,differ:number,moved:object[],impostors:{line:string,why:string}[],
+ *            applied:boolean,why:string}}
+ */
+export function splitMigratedChainUnpairedBookLine({ rows, facts }) {
+  return splitOnChainShape(
+    { rows, facts },
+    "a book line we do not have",
+    "the invoice is built from OUR receipt / delivery by design, so a book row we do not carry is the same " +
+      "shape the line COUNT reports: the document total equals AutoCount's to the sen and every item code " +
+      "agrees on quantity and money, so the book line we do not carry is priced at RM 0.00.",
+    CHAIN_SHAPE_UNPROVEN,
+  );
 }
 
 /* ── 6. THE ONWARD TRANSFER NOBODY MIGRATED ──────────────────────────────── */

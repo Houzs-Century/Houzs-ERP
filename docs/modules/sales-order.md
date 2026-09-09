@@ -2414,6 +2414,35 @@ than restating it), `lib/ac-transfer-chain-run.mjs` (the reads; it may only
 write onto a document the run already compared, and it FAILS SOFT) and
 `lib/ac-transfer-chain-report.mjs` (the printing).
 
+### The migrated invoice chain's line SHAPE is a declared class (since 2026-09-09)
+
+A sales or purchase INVOICE in the ERP is built from OUR delivery order / goods
+receipt, not copied from AutoCount's `IVDTL` / `PIDTL` — the types declared
+`migratedChainLineShape` in `backend/scripts/lib/ac-reconcile-erp-sql.mjs`. So the
+NUMBER of rows on it is ours and what must agree is the money, and two of the
+reconcile's axes are the same fact seen from two ends: `line count`, and
+`a book line we do not have`.
+
+`splitMigratedChainLineShape` had measured that since 2026-09-08 and printed it in
+the SUMMARY only — nothing called `VERDICT.reclassify`, so nine sales invoices the
+run had already cleared were reported to the owner as work. The unpaired-book-line
+half had no classifier at all. Both are now split by ONE shared verdict
+(`migratedChainShapeVerdict` in `lib/ac-not-a-difference.mjs`) and reclassified into
+the declared class **`migrated-chain-line-shape`**, which carries its own sentence
+in `DECLARED_LABEL` (`lib/so-tally-verdict.mjs`) and prints under 「WHAT THIS VERDICT
+EXCLUDED, AND UNDER WHOSE RULING」 like every other declaration.
+
+The two gates are what stop it being an amnesty, and they are unchanged: the
+document TOTAL must be identical to the sen, and every item code must agree on
+quantity and money — so the only book lines it may not carry are the RM 0.00 ones.
+A document that fails either is printed LOUDER as an impostor and stays counted; one
+with no measurement at all is UNPROVEN, never waved through. `docs/bugs/0746`,
+pinned by `backend/tests/acNotADifference.test.ts` and
+`backend/tests/migratedChainShapeWiring.test.ts`.
+
+**SALES ORDERS are not a `migratedChainLineShape` type**, so no sales-order figure
+moves on this: a book line a sales order does not have is still a difference.
+
 **Nothing on the sales-order side of this moved.** `check-so-tally.mjs` is not
 modified by that lane, `VERDICT_OUT` still receives SALES ORDERS and nothing
 else, and `publish-so-reconcile-verdict.mjs` and the migrated-sales-order lock
@@ -3932,6 +3961,21 @@ only for codes the line does not already carry. Ticking the same code in the
 picker makes it a normal, charged pick — `addedNow` excludes anything already in
 `variants.specials`, so a human's choice is never quietly made free.
 
+**It reaches four line tables since 2026-09-09, not two.** It ran over sales
+orders and purchase orders only, and the reconcile compares a DELIVERY ORDER's and
+a SALES INVOICE's own line against the book like any other — so `HC-DO-010104`,
+`HC-DO-011371` and `HC-I-2605-0294` sat on the `specials` axis (「the book asks for
+Nylon Fabric and the line does not carry it」) while the sales orders they were
+converted from were clean, for the one reason that this run had never reached
+their tables. `scm.delivery_order_items` and `scm.sales_invoice_items` are now in
+`TABLES`, and `TABLE_OF` drives the trigger and generated-column census, so a
+table added there cannot be left out of the proof that no write here turns into
+money. Neither of the two new tables has a re-price at all — a delivery order's
+and an invoice's line money is COPIED from the document it was converted from,
+never re-derived from `variants` — so the exposure a plain stamp into
+`variants.specials` would arm is structurally absent there rather than merely
+small. `docs/bugs/0748`.
+
 **Its line count is a DENOMINATOR, not a remaining balance.** The selection reads
 `variants.specials`, which that script never writes, so a PLAN re-run after a
 successful apply reports the same total as before it. Read as backlog it says the
@@ -5068,7 +5112,7 @@ SO-specific:
 
 | Event | Told | Where |
 |---|---|---|
-| raised | the LANE's approvers + each one's `manager_id` upline; **separately** the SO's `salesperson_id` | `lib/amendment-raised-effects.ts`, called from `POST /:docNo/amendments` |
+| raised | the LANE's approvers + each one's `manager_id` upline **minus the top two levels** (owner 2026-09-09 — see [`announcements.md`](./announcements.md) for why); **separately** the SO's `salesperson_id` | `lib/amendment-raised-effects.ts`, called from `POST /:docNo/amendments` |
 | approved | `requested_by` + the salesperson | `routes/so-amendments.ts` `approveSoCommandHandler`, deferred to after commit |
 | rejected | same pair, carrying the rejection reason | `routes/so-amendments.ts` `PATCH /:id/reject` |
 | PO follow-up auto-raised by an approved LINES lane | the purchasing desk | same handler, same deferred block |
