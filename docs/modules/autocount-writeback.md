@@ -510,6 +510,34 @@ gives every purchase-invoice gap a name. A diagnostic that computed "what we
 would bill" its own way would explain its own copy rather than the converter, so
 there is one statement of it and two callers.
 
+**`ALLOW_TOTAL_MISMATCH=1` writes the invoice from the RECEIPT'S OWN LINES.**
+*Added 2026-09-09.* By default the converter refuses a receipt whose line value
+does not equal what AutoCount's purchase invoice billed
+(`migrated-chain.ts:279`), and that refusal was blocking **288 of 473** migrated
+receipts. The equality is not a law of the data: **one AutoCount purchase invoice
+can span several receipts** — this same converter reports *"folds AutoCount
+receipts A + B into one ERP receipt"* — so a per-receipt comparison must differ
+whenever the book grouped two receipts onto one invoice.
+
+The owner's rule, 2026-09-09: 「我们有几张 GR 就要 convert 成几张 invoice。可是它的
+invoice 不需要提取总价钱，你就拿 line item 就可以了」, sharpened to 「就是每一个
+line item 都要跟 autocall 一样啊」 — every LINE ITEM matches the book; only the
+TOTAL is not required to. And the business reason: 「你从 AutoCount 来的 GR 都一定
+要转成 Purchase Invoice，要不然它就会永远挂成一个 Outstanding 了」.
+
+The lines already satisfy that: the receipts were reconciled to the book line by
+line, and the PO/GR tally reads 400 with one accepted difference
+(`docs/bugs/0762`). **Opt-in per run, never the default, and printed in the run's
+first line** — the total equality was also the proxy that caught a wrongly
+recovered price (483 of 496 migrated GRN lines carry none and the price is read
+back off the order line), and a proxy that is usually redundant is not one that is
+never needed. `docs/bugs/0764`.
+
+**And `scm.write_freeze` does NOT gate this script.** The freeze is HTTP-layer
+middleware (`src/scm/index.ts:127`); this converter opens Postgres directly and
+never reads the row (`grep`: zero hits). A frozen module is a statement about the
+floor, never about a repair run.
+
 That diagnostic answers in TWO lanes, because "the ERP holds this invoice" means
 two different things with different remedies. The POINTER lane is
 `scm.purchase_orders.linked_ac_pinv_docnos` — a cross-reference written by
