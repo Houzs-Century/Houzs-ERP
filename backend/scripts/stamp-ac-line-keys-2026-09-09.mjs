@@ -41,10 +41,14 @@
  *           quantity AND price. Four delivery fees (RM 50 / 150 / 400 / 200) and
  *           two whole documents are this shape.
  *
- * NOT IN THIS SCRIPT, and the owner said so twice: HC-SO-012312. Its book line
- * `BEDFRAME` qty 2 "BEDFRAME KIV" is one line against the ERP's two HILTON (A)-(Q)
- * rows, and the second carries RM 250 the book does not. That is money, and
- * 「SO12312 有人会处理」.
+ * HC-SO-012312 WAS excluded and is now included, which is a change of scope and
+ * not a change of rule. The owner released it the same day — 「这个order开放给人家
+ * edit 他们会处理」 — so the LINE KEY is stamped and the MONEY is not: its book
+ * line `BEDFRAME` qty 2 "BEDFRAME KIV" is one line against the ERP's two
+ * HILTON (A)-(Q) rows, whose quantities sum to the book's 2, and the RM 250 the
+ * second carries is a hand-typed unit price (audit log, ADD_LINE 06:07:24, Chea
+ * Huan) that this script does not touch. Stamping the key is what lets staff
+ * open the document and settle that themselves.
  *
  * A KEY IS IDENTITY, NOT VALUE. This writes one column, `linked_ac_dtlkey`, and
  * nothing else. No quantity, no price, no status, no stock — 「库存先不看」 is
@@ -121,6 +125,17 @@ const MANIFEST = [
   ['HC-SO-2609-011', 3, 'DL-MP(Q)', 1, 0, 927738, 'ONE'],
   ['HC-SO-2609-011', 4, 'HB109NL', 1, 0, 927735, 'ONE'],
   ['HC-SO-2609-011', 5, 'DL-WHITE BOLSTER', 1, 0, 927737, 'ONE'],
+
+  /* Added 2026-09-09 after the owner released it: 「这个order开放给人家edit 他们会
+     处理」. The book's line 844077 is `BEDFRAME` qty 2 "BEDFRAME KIV" — one line
+     for two unspecified frames. Chea Huan resolved it at 05:58-06:07 that
+     morning: he set the existing row's qty 2 -> 1 and named it HILTON (A)-(Q),
+     then ADDed the second frame as its own row. Both rows are that one book
+     line and together they carry its qty 2, which is the same shape a sofa has.
+     The RM 250 the added row carries is a hand-typed unit price (audit log,
+     ADD_LINE 06:07:24) that the book does not have; it is NOT settled here and
+     is exactly what the owner opened the document for. */
+  ['HC-SO-012312', 10, 'HILTON (A)-(Q)', 1, 25000, 844077, 'ONE'],
 ];
 
 /* What each stamped book line must hold AFTERWARDS, as a sorted multiset of item

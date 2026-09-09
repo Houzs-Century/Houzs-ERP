@@ -111,7 +111,7 @@ export function sameText(a, b) {
  * allowed to do that only when the purchase text, read by the same decoder,
  * says the same pieces in the same order (or is the same text byte for byte).
  */
-export function planMislabelledBuild({ po, so, grns, doLines, decoded, codeSet, canonical, allowDelivered }) {
+export function planMislabelledBuild({ po, so, grns, doLines, decoded, codeSet, canonical, allowDelivered, followSalesOrder }) {
   const refuse = (why) => ({ kind: 'refuse', why });
   if (!so) return refuse('the book names a sales line the ERP does not hold (no line carries that AutoCount key)');
   if (so.cancelled) return refuse(`the sales order ${so.doc} is cancelled`);
@@ -146,13 +146,32 @@ export function planMislabelledBuild({ po, so, grns, doLines, decoded, codeSet, 
 
   const readable = decoded && Array.isArray(decoded.pieces) && decoded.pieces.length > 0 && decoded.conf !== 'low';
   let poCodes;
+  /* Set only when followSalesOrder actually CHANGED the answer, so the runner can
+     print it. A switch that silently does something must not exist here. */
+  let overrode = null;
   if (readable) {
     poCodes = pieceCodes(po.model, decoded.pieces).map((c) => (canonical ? canonical(c) : c));
     /* ORDER MATTERS here, on top of the multiset the shared judge compares: the
        piece list is the sofa read left to right, so the mirrored build is a
        different sofa and needs the drawing (redecode-sofa-plan's sameBuild). */
     if (!sameBuild(poCodes, soCodes)) {
-      return refuse(`the purchase text decodes to ${poCodes.join('+')} where ${so.doc} holds ${soCodes.join('+')}`);
+      /* THE TWO DOCUMENTS DESCRIBE DIFFERENT SOFAS. Refusing is the default and
+         stays the default — writing one side's build onto the other on a guess
+         is how a build lands on the wrong line.
+
+         `followSalesOrder` is the owner's standing rule made explicit, per
+         document: 「如果你的答案不准，那你就跟 sales order」 (2026-09-09), and
+         again on HC-PO-009587 the same day, shown the drawing:「销售单的对」.
+         It is NOT a general licence — a sales order can itself be wrong, and one
+         was: HC-SO-010955 held the exact mirror of his own answer
+         (docs/bugs/0736). So it is required, never inherited by silence, and
+         meant to be paired with DOC= so it reaches the document it was decided
+         for and no other. */
+      if (!followSalesOrder) {
+        return refuse(`the purchase text decodes to ${poCodes.join('+')} where ${so.doc} holds ${soCodes.join('+')}`);
+      }
+      overrode = `the purchase text decodes to ${poCodes.join('+')}; taking ${so.doc}'s ${soCodes.join('+')} — FOLLOW_SALES_ORDER=1`;
+      poCodes = soCodes;
     }
   } else if (sameText(po.d2, live[0].d2)) {
     poCodes = soCodes;
@@ -169,6 +188,7 @@ export function planMislabelledBuild({ po, so, grns, doLines, decoded, codeSet, 
 
   return {
     kind: 'expand',
+    overrode,
     target: verdict.pairs.map(({ po: p, so: s }) => ({ code: String(p.item_code).trim(), soItemId: s.id, variants: s.variants ?? null })),
   };
 }
