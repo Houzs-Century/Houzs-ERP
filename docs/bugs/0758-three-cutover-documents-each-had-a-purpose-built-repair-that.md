@@ -49,4 +49,9 @@ money on both the line and the header. The swap is applied in ONE transaction �
 half a swap is worse than neither half — and both receipts are asserted
 `migrated_no_stock` with zero movements inside it.
 
+**FOLLOW-UP.** A ran and verified on the first apply
+(`OK HC-PO-006690: 1 line(s) at RM 0.00, header RM 0.00`). B and C refused,
+because this script asked for the row SHAPE it expected rather than the shape the
+data has — traced and fixed in `docs/bugs/0759`.
+
 **Ref.** PR for `fix/cutover-last-three-to-book`, 2026-09-09.
