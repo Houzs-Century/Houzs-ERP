@@ -53,6 +53,10 @@ refusal is a finding rather than a gap:
 - **HC-SO-009373 DtlKey 640588 item code** — the book's CODE says plain
   `TRION (A)-(K)` (`HOK-2009(A) (K)`) while the book's own Desc2 says
   "HB straight", which is the HB-STR product the ERP holds; `HOK-2008(A)` is the
-  book's own code for TRION (A) (HB STR). The book contradicts itself and only
-  the owner can settle which it meant — the same shape as HC-SO-000870 in
+  book's own code for TRION (A) (HB STR). The book contradicts itself, and the
+  owner settled it on 2026-09-09: **「跟说明 → 保持现在的 TRION (A) (HB STR)-(K)」**
+  — the book's CODE is the wrong half, and the ERP keeps what it has. This is now
+  an ACCEPTED DIVERGENCE: the tally will report this document on `item code`
+  forever and that is not a defect to re-fix. Same shape, same answer, as
+  HC-SO-000870 in
   `docs/bugs/0757-both-purchase-lines-landed-on-one-sales-line-because-the-boo.md`.

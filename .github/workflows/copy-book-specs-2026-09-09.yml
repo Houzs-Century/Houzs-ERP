@@ -32,8 +32,10 @@ name: Copy the book's leg/seat height and HB special (2026-09-09)
 #                 parser cannot read. Ours is the same statement, recorded.
 #   HC-SO-009373  DtlKey 640588 item code: the book's CODE says plain TRION (A)
 #                 while its own Desc2 says "HB straight", which is the HB-STR
-#                 product the ERP holds. The book contradicts itself; only the
-#                 owner settles that (same shape as HC-SO-000870, docs/bugs/0757).
+#                 product the ERP holds. The owner settled it 2026-09-09 — 「跟说明」,
+#                 the book's CODE is the wrong half — so the ERP keeps what it has
+#                 and this becomes an ACCEPTED DIVERGENCE the tally will report
+#                 forever. Same shape and same answer as HC-SO-000870.
 #
 # DEFAULT IS PLAN. Every UPDATE carries a predicate that the field is currently
 # blank (or that specials do not already contain the value), so a row somebody
