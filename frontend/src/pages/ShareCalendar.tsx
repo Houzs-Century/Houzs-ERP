@@ -12,8 +12,11 @@
 //   contractor  tap an event → its UNFILLED floorplan, view + download;
 //               export = Date, Venue, State, Organizer, Brand, Type, Booth, Size
 //   brand       tap an event → its DISPLAY floorplan, Size and Total Sales;
-//               export = the same columns + Total Sales, with a Confidential
-//               footer naming the brand and the generation time
+//               Export is a menu: "Event List" = the same columns + Total
+//               Sales, with a Confidential footer naming the brand and the
+//               generation time; "Display Floorplan" = a PDF, one page per
+//               floorplan image, headed by the event and its dates (owner
+//               2026-09-09, brand links ONLY — contractors keep Excel only)
 //
 // Owner 2026-09-08. Viewers navigate month by month (the owner removed the
 // month/week toggle on 2026-09-09); there is no filter, no search, nothing
@@ -24,7 +27,7 @@
 // Deliberately self-contained: its own tiny grid, no import from the giant
 // Projects.tsx calendar, so the public bundle stays small.
 // ----------------------------------------------------------------------------
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { correlatedFetch } from "../lib/requestCorrelation";
 import { fmtDate, fmtDateTime, fmtRM } from "../vendor/shared/format";
@@ -44,7 +47,8 @@ type ShareEvent = {
 };
 type ShareData = { contractor?: string; brand?: string; events: ShareEvent[] };
 type ShareFile = { fileId: string; fileName: string; contentType: string | null; sizeBytes: number | null };
-type ShareFigures = { sizeSqm: number | null; totalSales: number | null };
+/** A brand gets both; a contractor's route answers size only (owner 2026-09-09). */
+type ShareFigures = { sizeSqm: number | null; totalSales?: number | null };
 type ExportRow = {
   startDate: string | null;
   endDate: string | null;
@@ -58,6 +62,20 @@ type ExportRow = {
   totalSales?: number | null;
 };
 type ExportBody = { contractor?: string; brand?: string; generatedAt: string; rows: ExportRow[] };
+type PlanEvent = {
+  eventId: number;
+  name: string | null;
+  venue: string | null;
+  boothNo: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  files: ShareFile[];
+};
+type PlanManifest = { brand: string; generatedAt: string; events: PlanEvent[] };
+/** One page of the floorplan PDF: the event, the image and its pixel size. */
+type PlanPage = { ev: PlanEvent; format: "JPEG" | "PNG" | "WEBP"; buf: ArrayBuffer; size: { w: number; h: number } | null };
+
+const EXPORT_FAIL = "Could not prepare the export just now. Please try again in a moment.";
 
 const apiBase = (): string =>
   (import.meta.env.VITE_API_URL as string) ||
@@ -161,6 +179,59 @@ function fmtSpan(start: string | null, end: string | null): string {
   return e && e !== s ? `${s} – ${e}` : s;
 }
 
+/** The jsPDF image format for a floorplan file, or null when it is not an image
+ *  jsPDF can place (a PDF upload, say) — such a file is skipped, not guessed. */
+function pdfImageFormat(f: ShareFile): PlanPage["format"] | null {
+  const t = (f.contentType ?? "").toLowerCase();
+  if (t === "image/jpeg" || t === "image/jpg" || /\.jpe?g$/i.test(f.fileName)) return "JPEG";
+  if (t === "image/png" || /\.png$/i.test(f.fileName)) return "PNG";
+  if (t === "image/webp" || /\.webp$/i.test(f.fileName)) return "WEBP";
+  return null;
+}
+
+/** Pixel size, so the page can take the image's orientation and keep its
+ *  aspect; null where the browser cannot decode it (the page then assumes 4:3). */
+async function imageSize(buf: ArrayBuffer, contentType: string): Promise<{ w: number; h: number } | null> {
+  try {
+    if (typeof createImageBitmap !== "function") return null;
+    const bmp = await createImageBitmap(new Blob([buf], { type: contentType }));
+    const size = { w: bmp.width, h: bmp.height };
+    bmp.close();
+    return size;
+  } catch {
+    return null;
+  }
+}
+
+/** One PDF page: event title and dates on top, the floorplan large below,
+ *  aspect kept, centred in what is left of the page. */
+function drawPlanPage(doc: import("jspdf").jsPDF, p: PlanPage): void {
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
+  const margin = 12;
+  const title = p.ev.name ?? p.ev.venue ?? "Event";
+  const sub = [fmtSpan(p.ev.startDate, p.ev.endDate), p.ev.name ? p.ev.venue : null, p.ev.boothNo ? `Booth ${p.ev.boothNo}` : null]
+    .filter((s): s is string => !!s)
+    .join("  ·  ");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(15);
+  doc.text(title, margin, margin + 6, { maxWidth: W - margin * 2 });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.text(sub, margin, margin + 13, { maxWidth: W - margin * 2 });
+  const top = margin + 20;
+  const boxW = W - margin * 2;
+  const boxH = H - top - margin;
+  const ratio = p.size ? p.size.w / p.size.h : 4 / 3;
+  let w = boxW;
+  let h = w / ratio;
+  if (h > boxH) {
+    h = boxH;
+    w = h * ratio;
+  }
+  doc.addImage(new Uint8Array(p.buf), p.format, margin + (boxW - w) / 2, top + (boxH - h) / 2, w, h);
+}
+
 export function ShareCalendar({ mode }: { mode: ShareMode }) {
   // Read from the location — this surface is chosen before any <Routes> exists.
   const token = window.location.pathname.split("/")[2] || "";
@@ -180,6 +251,17 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
   const [panelError, setPanelError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  // The brand link's Export menu (Event List / Display Floorplan).
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [menuOpen]);
 
   // `silent` = the minute poll: never flash the loading screen or wipe the grid
   // over a blip; a failed poll keeps the last good schedule on screen.
@@ -234,12 +316,9 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
     void (async () => {
       try {
         const eventUrl = `${base}/events/${open.eventId}`;
-        const [filesRes, figuresRes] = await Promise.all([
-          correlatedFetch(`${eventUrl}/floorplan`),
-          mode === "brand" ? correlatedFetch(eventUrl) : Promise.resolve(null),
-        ]);
+        const [filesRes, figuresRes] = await Promise.all([correlatedFetch(`${eventUrl}/floorplan`), correlatedFetch(eventUrl)]);
         const filesBody = filesRes.ok ? ((await filesRes.json()) as { files: ShareFile[] }) : null;
-        const figuresBody = figuresRes && figuresRes.ok ? ((await figuresRes.json()) as ShareFigures) : null;
+        const figuresBody = figuresRes.ok ? ((await figuresRes.json()) as ShareFigures) : null;
         if (!live.current) return;
         if (!filesBody) {
           setPanelError("Could not load this event just now. Please try again in a moment.");
@@ -301,14 +380,16 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
   // Excel: the rows come from the server already scoped to this link AND to the
   // month on screen (owner 2026-09-09: "when chose september then click export
   // will export event on september only"); the browser only lays them out.
+  const monthParam = () => `${cursor.y}-${String(cursor.m + 1).padStart(2, "0")}`;
+  const fileStem = (party: string) => party.replace(/[\\/:*?"<>|]+/g, " ").trim() || "schedule";
+
   async function exportExcel() {
     setExporting(true);
     setExportError(null);
     try {
-      const month = `${cursor.y}-${String(cursor.m + 1).padStart(2, "0")}`;
-      const res = await correlatedFetch(`${base}/export?month=${month}`);
+      const res = await correlatedFetch(`${base}/export?month=${monthParam()}`);
       if (!res.ok) {
-        setExportError("Could not prepare the export just now. Please try again in a moment.");
+        setExportError(EXPORT_FAIL);
         return;
       }
       const body = (await res.json()) as ExportBody;
@@ -338,10 +419,53 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
       const ws = XLSX.utils.aoa_to_sheet(aoa);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Schedule");
-      const stem = party.replace(/[\\/:*?"<>|]+/g, " ").trim() || "schedule";
-      XLSX.writeFileXLSX(wb, `${stem} schedule ${monthLabel}.xlsx`);
+      XLSX.writeFileXLSX(wb, `${fileStem(party)} schedule ${monthLabel}.xlsx`);
     } catch {
-      setExportError("Could not prepare the export just now. Please try again in a moment.");
+      setExportError(EXPORT_FAIL);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  // PDF (brand links only): the server lists the month's display floorplans,
+  // already scoped to this brand; the browser fetches each image through the
+  // same per-event route the panel's View button uses and lays one per page,
+  // oldest event first. Nothing from the event list goes in here.
+  async function exportFloorplanPdf() {
+    setExporting(true);
+    setExportError(null);
+    try {
+      const res = await correlatedFetch(`${base}/floorplans?month=${monthParam()}`);
+      if (!res.ok) {
+        setExportError(EXPORT_FAIL);
+        return;
+      }
+      const manifest = (await res.json()) as PlanManifest;
+      const pages: PlanPage[] = [];
+      for (const ev of manifest.events) {
+        for (const f of ev.files) {
+          const format = pdfImageFormat(f);
+          if (!format) continue;
+          const r = await correlatedFetch(`${base}/events/${ev.eventId}/floorplan/${encodeURIComponent(f.fileId)}`);
+          if (!r.ok) continue;
+          const buf = await r.arrayBuffer();
+          pages.push({ ev, format, buf, size: await imageSize(buf, f.contentType ?? "") });
+        }
+      }
+      if (!pages.length) {
+        setExportError(`No display floorplan is uploaded for the events in ${monthLabel}.`);
+        return;
+      }
+      const orient = (p: PlanPage) => (p.size && p.size.h > p.size.w ? "portrait" : "landscape");
+      const { jsPDF } = await import("jspdf");
+      const doc = new jsPDF({ unit: "mm", format: "a4", orientation: orient(pages[0]) });
+      pages.forEach((p, i) => {
+        if (i > 0) doc.addPage("a4", orient(p));
+        drawPlanPage(doc, p);
+      });
+      doc.save(`${fileStem(manifest.brand)} display floorplans ${monthLabel}.pdf`);
+    } catch {
+      setExportError(EXPORT_FAIL);
     } finally {
       setExporting(false);
     }
@@ -368,6 +492,10 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
   const party = data ? (data.contractor ?? data.brand ?? "") : "";
   const eventCount = data ? data.events.length : 0;
   const navBtn = "h-9 rounded-md border border-gray-200 bg-white text-gray-600 hover:border-[#0F766E]";
+  // Owner 2026-09-09: "export button color change to white" — same family as
+  // the navigation buttons, not the teal of the event bars.
+  const exportBtn = "h-9 rounded-md border border-gray-300 bg-white px-3 text-[12px] font-semibold text-gray-800 hover:border-[#0F766E] disabled:opacity-60";
+  const menuItem = "block w-full px-3 py-2 text-[12px] hover:bg-gray-50";
 
   return (
     <div className="min-h-screen bg-[#0F766E]/5 text-gray-900">
@@ -388,14 +516,42 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
           <button type="button" onClick={goToday} className={`${navBtn} px-3 text-[12px] font-semibold`}>Today</button>
           <div className="ml-1 text-[15px] font-bold text-gray-900">{monthLabel}</div>
           <div className="ml-auto text-right">
-            <button
-              type="button"
-              onClick={() => void exportExcel()}
-              disabled={exporting}
-              className="h-9 rounded-md bg-[#0F766E] px-3 text-[12px] font-semibold text-white hover:bg-[#0c5f59] disabled:opacity-60"
-            >
-              {exporting ? "Preparing…" : "Export to Excel"}
-            </button>
+            {mode === "brand" ? (
+              // Owner 2026-09-09: brand links choose the FILE — Event List is
+              // always Excel, Display Floorplan is always PDF. Contractor links
+              // keep the single Excel button below.
+              <div ref={menuRef} className="relative inline-block text-left">
+                <button
+                  type="button"
+                  onClick={() => setMenuOpen((o) => !o)}
+                  disabled={exporting}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  className={`${exportBtn} inline-flex items-center gap-1.5`}
+                >
+                  {exporting ? "Preparing…" : "Export"}
+                  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" className="text-gray-500">
+                    <path d="M1 3l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+                {menuOpen ? (
+                  <div role="menu" className="absolute right-0 z-10 mt-1 w-60 overflow-hidden rounded-md border border-gray-200 bg-white text-left shadow-lg">
+                    <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); void exportExcel(); }} className={menuItem}>
+                      <span className="block font-semibold text-gray-900">Event List</span>
+                      <span className="block text-[11px] text-gray-500">Excel (.xlsx)</span>
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); void exportFloorplanPdf(); }} className={`${menuItem} border-t border-gray-100`}>
+                      <span className="block font-semibold text-gray-900">Display Floorplan</span>
+                      <span className="block text-[11px] text-gray-500">PDF, one page per floorplan</span>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <button type="button" onClick={() => void exportExcel()} disabled={exporting} className={exportBtn}>
+                {exporting ? "Preparing…" : "Export to Excel"}
+              </button>
+            )}
             {exportError ? <p className="mt-1 text-[12px] text-red-700">{exportError}</p> : null}
           </div>
         </div>
@@ -518,18 +674,21 @@ function EventPanel({
           <button type="button" onClick={onClose} className="h-8 w-8 shrink-0 rounded-md border border-gray-200 text-gray-600 hover:border-accent" aria-label="Close">×</button>
         </div>
 
-        {mode === "brand" ? (
-          <dl className="grid grid-cols-2 gap-3 border-b border-slate-200 px-4 py-3 text-[13px]">
-            <div>
-              <dt className="text-[11px] uppercase tracking-wide text-gray-500">Size</dt>
-              <dd className="font-semibold text-gray-900">{figures?.sizeSqm != null ? `${figures.sizeSqm} sqm` : "—"}</dd>
-            </div>
+        {/* Size for both parties (owner 2026-09-09: "size not in here. please
+            add also"); money for the brand only, and the contractor's route
+            never sends it. */}
+        <dl className="grid grid-cols-2 gap-3 border-b border-slate-200 px-4 py-3 text-[13px]">
+          <div>
+            <dt className="text-[11px] uppercase tracking-wide text-gray-500">Size</dt>
+            <dd className="font-semibold text-gray-900">{figures?.sizeSqm != null ? `${figures.sizeSqm} sqm` : "—"}</dd>
+          </div>
+          {mode === "brand" ? (
             <div>
               <dt className="text-[11px] uppercase tracking-wide text-gray-500">Total sales</dt>
               <dd className="font-semibold text-gray-900">{figures?.totalSales != null ? fmtRM(figures.totalSales) : "—"}</dd>
             </div>
-          </dl>
-        ) : null}
+          ) : null}
+        </dl>
 
         <div className="px-4 py-3">
           {error ? (

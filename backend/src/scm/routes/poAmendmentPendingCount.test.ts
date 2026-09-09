@@ -64,6 +64,11 @@ describe('GET /po-amendments/pending-count', () => {
     expect(await countFor(['scm.po_amendment.approve'])).toBe(3);
   });
 
+  it('answers 0 for the WILDCARD holder — same rule as the SO twin', async () => {
+    expect(await countFor(['*'])).toBe(0);
+    expect(await countFor(['*', 'scm.po_amendment.approve'])).toBe(3);
+  });
+
   it('answers 0 for someone who can only RAISE one', async () => {
     // Raising is not confirming. A number on a menu the reader cannot act on
     // never goes down for them, whatever they do.

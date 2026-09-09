@@ -100,6 +100,78 @@ export function parseHandoverBody(
   return { ok: true, req: { fromStaffId, toStaffId, docNos } };
 }
 
+/* ── SHARING, WHICH IS NOT HANDOVER ──────────────────────────────────────────
+   Owner 2026-09-09: "接手的 sales person 可以选择 multiple 吗？可以让接手的几位
+   sales person 都有权限". Asked who the account book should then name, he ruled
+   全部平等，不设主 — equal access, no primary among them.
+
+   So this is a SECOND operation, not a flag on the first, and the split is the
+   owner's ruling made structural:
+
+     /apply — moves attribution. One person, writes salesperson_id + agent,
+              enqueues the AutoCount edit. Unchanged.
+     /share — grants ACCESS. Any number of people, writes collaborator_staff_ids
+              and nothing else. No attribution, no agent, no AutoCount: there is
+              no column on the AutoCount side a co-owner could map to, and
+              commission is booked off the DO / SI snapshots either way.
+
+   Folding sharing into /apply as a "multiple recipients" flag would have had to
+   answer "so whose name is on it?" implicitly, by picking the first — which is
+   the primary the owner said not to have.                                     */
+
+/** A sane ceiling on people-per-order. Not a technical limit — an array of 50
+ *  uuids would query fine. Sharing one order with fifty salespeople is a
+ *  mis-click, and a bulk tool should refuse it rather than apply it to 25
+ *  orders. */
+export const SHARE_STAFF_MAX = 10;
+
+export type ShareRequest = {
+  staffIds: string[];
+  docNos: string[];
+  mode: 'add' | 'remove';
+};
+
+/* Same shape and the same testability as parseHandoverBody. */
+export function parseShareBody(
+  body: Record<string, unknown>,
+): { ok: true; req: ShareRequest }
+  | { ok: false; status: 400; payload: { error: string; reason: string } } {
+  const list = (v: unknown) => (Array.isArray(v)
+    ? [...new Set(v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim()))]
+    : []);
+
+  const staffIds = list(body.staffIds);
+  if (staffIds.length === 0) {
+    return { ok: false, status: 400, payload: { error: 'missing_staff', reason: 'Pick at least one salesperson to share with.' } };
+  }
+  if (staffIds.length > SHARE_STAFF_MAX) {
+    return { ok: false, status: 400, payload: { error: 'too_many_staff', reason: `Up to ${SHARE_STAFF_MAX} salespeople per order — you sent ${staffIds.length}.` } };
+  }
+
+  const docNos = list(body.docNos);
+  if (docNos.length === 0) {
+    return { ok: false, status: 400, payload: { error: 'no_orders', reason: 'Pick at least one sales order.' } };
+  }
+  if (docNos.length > HANDOVER_BATCH_MAX) {
+    return {
+      ok: false,
+      status: 400,
+      payload: {
+        error: 'too_many_orders',
+        reason: `Up to ${HANDOVER_BATCH_MAX} sales orders per batch — you sent ${docNos.length}.`,
+      },
+    };
+  }
+
+  /* ADD is the default and REPLACE is deliberately not offered. The operator is
+     acting on up to 25 orders they cannot see the current collaborators of, so a
+     replace would silently drop a grant somebody else made — the bulk-tool
+     version of losing data. Removal is explicit and equally bulk. */
+  const mode = body.mode === 'remove' ? 'remove' : 'add';
+
+  return { ok: true, req: { staffIds, docNos, mode } };
+}
+
 /* GET /preview?from=<staffId> — every order currently attributed to that
    salesperson, in this company. `total` is what the operator is committing to;
    `truncated` says the list is not all of it. */
@@ -239,4 +311,94 @@ soHandover.post('/apply', async (c) => {
   }
 
   return c.json({ fromStaffId, toStaffId, moved, skipped });
+});
+
+/* POST /share — grant (or withdraw) ACCESS on a batch, without touching who the
+   order is attributed to. Per-order reporting for the same reason /apply has it.
+
+   THE MIGRATED-SO LOCK IS DELIBERATELY NOT ASKED HERE, and that is the one
+   decision in this handler worth arguing with. The lock exists because an
+   order whose ERP copy already differs from the AutoCount book must not be
+   edited further in ways that widen the gap (docs/migrated-so-lock.md).
+   `collaborator_staff_ids` has no counterpart in the account book at all — it
+   is an ERP access-control column, nothing syncs it, and no verdict can ever
+   disagree about it. Asking the lock here would instead mean the 2,676 migrated
+   open orders could never be shared, which is most of the book and exactly the
+   population a resignation leaves stranded. /apply still asks, because /apply
+   writes `agent`, which IS an AutoCount field. */
+soHandover.post('/share', async (c) => {
+  if (!hasHouzsPerm(c, 'scm.so.attribute_other')) return c.json({ error: 'forbidden' }, 403);
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
+
+  const parsed = parseShareBody(body);
+  if (!parsed.ok) return c.json(parsed.payload, parsed.status);
+  const { staffIds, docNos, mode } = parsed.req;
+
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+
+  /* Every id must resolve to a real staff row before anything is written. These
+     come from a picker, so an id that does not resolve is a bug or a stale tab —
+     and a uuid silently written into the array would grant access to nobody
+     while reading, on the panel, as though it had worked. */
+  const { data: staffRows, error: staffError } = await sb.from('staff').select('id').in('id', staffIds);
+  if (staffError) return c.json({ error: 'load_failed', reason: staffError.message }, 500);
+  /* Cast BEFORE defaulting, not after: a PostgREST read really can answer
+     `data: null`, and `(rows ?? []) as T[]` hides that behind a shape the linter
+     then calls a redundant guard. */
+  const known = new Set(((staffRows as Array<{ id?: string }> | null) ?? []).map((r) => r.id));
+  const unknown = staffIds.filter((id) => !known.has(id));
+  if (unknown.length > 0) {
+    return c.json({ error: 'unknown_staff', reason: `Not a salesperson in this system: ${unknown.join(', ')}.` }, 400);
+  }
+
+  const user = c.get('user') as { id?: string; user_metadata?: { name?: string } } | undefined;
+  const changed: Array<{ docNo: string }> = [];
+  const skipped: Array<{ docNo: string; reason: string }> = [];
+
+  for (const docNo of docNos) {
+    const { data: beforeRow, error: readError } = await scopeToCompanyId(
+      sb.from('mfg_sales_orders').select('doc_no, status, collaborator_staff_ids').eq('doc_no', docNo),
+      co.companyId,
+    ).maybeSingle();
+    /* A failed read and an order that is genuinely not here are different facts,
+       and only one of them is the operator's to act on — same rule as /apply. */
+    if (readError) { skipped.push({ docNo, reason: `Could not be read: ${readError.message}` }); continue; }
+    if (!beforeRow) { skipped.push({ docNo, reason: 'Not found in this company.' }); continue; }
+    const before = beforeRow as unknown as Record<string, unknown>;
+
+    const current = ((before.collaborator_staff_ids as string[] | null) ?? []).filter((x) => !!x);
+    const next = mode === 'remove'
+      ? current.filter((id) => !staffIds.includes(id))
+      : [...new Set([...current, ...staffIds])];
+
+    /* Nothing to do is reported, not silently counted as done: an operator who
+       ran the same grant twice should see that the second run changed nothing
+       rather than believing it re-applied. */
+    if (next.length === current.length && next.every((id) => current.includes(id))) {
+      skipped.push({ docNo, reason: mode === 'remove' ? 'None of those people had access.' : 'Already shared with all of them.' });
+      continue;
+    }
+
+    const { error } = await scopeToCompanyId(
+      sb.from('mfg_sales_orders').update({ collaborator_staff_ids: next }).eq('doc_no', docNo),
+      co.companyId,
+    );
+    if (error) { skipped.push({ docNo, reason: error.message }); continue; }
+
+    await recordSoAudit(sb, {
+      docNo,
+      action: 'UPDATE_DETAILS',
+      actorId: user?.id ?? null,
+      actorName: user?.user_metadata?.name ?? null,
+      fieldChanges: [{ field: 'collaboratorStaffIds', from: current.join(', ') || null, to: next.join(', ') || null }],
+      statusSnapshot: (before.status as string | null) ?? null,
+      note: mode === 'remove' ? 'Sales order sharing withdrawn' : 'Sales order shared',
+    });
+    changed.push({ docNo });
+  }
+
+  return c.json({ staffIds, mode, changed, skipped });
 });

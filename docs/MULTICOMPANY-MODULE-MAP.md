@@ -84,8 +84,20 @@ Ranked by how often, and NONE of the top four is a company branch in code:
 |---|---|
 | 1 | **One declaration per concept**, mirrored rather than re-typed, pinned by `check-shared-mirrors.mjs --strict`. A literal cannot drift from a constant it does not contain. This is the real defence and the only one that would have caught the reported bug. |
 | 2, 3 | Nothing automated. A query, run by a person. Say so rather than implying coverage. |
-| 4 | `check-company-scope.mjs --strict`, plus the rule that an empty read may never claim the work is done (`check-empty-state-claims.mjs`). |
+| 4 | `check-company-scope.mjs --strict`, plus the rule that an empty read may never claim the work is done (`check-empty-state-claims.mjs`). **Run `--check` too — it is the RATCHET CI gates on, and it answers a different question from `--strict`** (`--strict` asks whether the tree is clean, `--check` whether this branch added a violation the baseline does not carry). A branch can pass one and fail the other. |
 | 5 | `check-company-divergence.mjs --strict` — a reviewed allowlist over every line that NAMES a company, each with a reason and **whose decision it was**. A new one fails the build. |
+
+> **A NEW scope-guard function has to be REGISTERED, or the checker reports the
+> handlers that use it as newly unscoped.** Added 2026-09-09, after
+> `soDocOutOfScope` (the SO-only twin of `salesDocOutOfScope`, shared Sales
+> Orders) replaced its predecessor at six gates and the ratchet called
+> `so-amendments.ts GET /:id` a NEW unscoped handler. The guard was still there
+> and still correct; only its NAME was unknown to
+> `DELEGATION_GUARDS` in `backend/scripts/check-company-scope.mjs`. The fix is to
+> add the name there with a note on why the body is equivalent — **never** to add
+> the handler to `backend/scripts/company-scope-baseline.json`, which may only
+> shrink. Nothing catches this before CI today: the list is hand-maintained, and
+> a helper that is renamed or twinned is exactly when it goes stale.
 
 `backend/scripts/data/company-divergence-allowlist.json` is therefore the
 canonical list of per-company differences that somebody has deliberately

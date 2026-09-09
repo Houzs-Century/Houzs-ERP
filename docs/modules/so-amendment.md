@@ -67,7 +67,7 @@ on `/api/scm/so-amendments`.
 | `POST /mfg-sales-orders/:docNo/amendments` | `scm.amendment.create`, OR a salesperson on their OWN order, OR a lane approver | Splits by lane, one insert per lane |
 | `GET /so-amendments` | read | Row-scoped like the SO list (own + downline for a scoped rep) |
 | `GET /so-amendments/:id` | read | |
-| `GET /so-amendments/pending-count` | — | **Per-signer** count of `REQUESTED` rows in the lanes THIS caller can sign; 0 for everyone else. Feeds the sidebar badge (§5). Registered BEFORE `/:id` — Hono matches in order |
+| `GET /so-amendments/pending-count` | lane keys, asked LITERALLY (`*` excluded) | **Per-signer** count of `REQUESTED` rows in the lanes THIS caller can sign; 0 for everyone else, the Owner account included. Feeds the sidebar badge (§5). Registered BEFORE `/:id` — Hono matches in order |
 | `PATCH /so-amendments/:id/approve-so` | the row's lane key (legacy: `approve_so`) | Applies the SO revision; LINES also raises PO follow-ups |
 | `PATCH /so-amendments/:id/reject` | the row's lane key (legacy: `approve_po`) | **Reason required** |
 | `PATCH /so-amendments/:id/withdraw` | the requester, or anyone who could reject it | Lands on `REJECTED` with `resolution='WITHDRAWN'` |
@@ -101,6 +101,10 @@ permission-derived audience and why the `*` wildcard is excluded, is in
 | Event | Told |
 |---|---|
 | raised (one notice **per lane**) | the lane's approvers + their upline **minus the top two levels**; separately the SO's salesperson |
+
+Approvers are LITERAL key holders (`permissionHolders.ts`), so a role carrying
+only `*` is not on the list — and from 2026-09-09 the Owner role carries the
+three real keys precisely so its account IS (see §5).
 | approved | the requester + the salesperson |
 | rejected | same pair, carrying the rejection reason |
 | PO follow-up auto-raised | the purchasing desk |
@@ -124,13 +128,30 @@ Amendment** entry (and, by the same mechanism, on **PO Amendments**). A nav entr
 declares `badge: "amendment-approvals"`; the count comes from
 `frontend/src/hooks/useAmendmentApprovals.ts`.
 
-Three decisions worth keeping:
+Four decisions worth keeping:
 
 - **The server decides whose work it is.** `GET /pending-count` counts only the
   lanes the caller can sign, from the same `LANE_APPROVE_KEY` table the approval
   gate reads — so the badge and the button can never disagree. A count that
   included other desks' backlog would never go down for the reader no matter
   what they approved, and a number like that stops being read.
+- **The `*` wildcard does NOT put a count on your menu.** The endpoints ask
+  `holdsHouzsPermLiterally`, not `hasHouzsPerm` — the one place in the SCM routes
+  that deliberately does not honour the wildcard. Owner ruling 2026-09-09, after
+  the two surfaces disagreed in production: the notice audience already excluded
+  wildcard holders, so the Owner account was silent in the bell while carrying
+  every desk's backlog on its menu. One rule now. A wildcard holder can still
+  approve anything and still sees every row inside the module; they are simply
+  not told it is theirs.
+
+  **How the owner gets it back — a ROLE change, not a code exception**
+  (mig `20260909T1000_owner_role_amendment_approver_keys.sql`). The owner signs
+  in as the shared `HOUZS CENTURY` account and covers approvals when a desk is
+  away, so he needs both the count and the notice. The instrument is the
+  narrow one: grant that ONE role the three literal keys, rather than widen the
+  badge to every `*` holder — which would also have shown it to four Super
+  Admins who are not covering anything. If someone else later needs the same,
+  grant the keys; do not reintroduce a wildcard exception here.
 - **There is no second visibility rule in the frontend.** "在需要审批人员账号显示"
   is enforced by the count itself: a non-approver gets 0, and the badge renders
   nothing at 0 — which is also what a failed poll produces, so the chrome says

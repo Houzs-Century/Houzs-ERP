@@ -188,8 +188,11 @@ only thing on screen that says they arrived.
 
 `GET /api/scm/po-amendments/pending-count`
 (`backend/src/scm/routes/po-amendments.ts`) answers it: `REQUESTED` rows for the
-active company, gated on `scm.po_amendment.approve`. Someone who can only RAISE
-one gets 0 and the badge never renders.
+active company, gated on `scm.po_amendment.approve` — asked LITERALLY, so the
+`*` wildcard does not put a count on the Owner account's menu (owner 2026-09-09;
+the reasoning, and why this is the one place in the SCM routes that ignores the
+wildcard, is in [`so-amendment.md`](./so-amendment.md) §5). Someone who can only
+RAISE one gets 0 and the badge never renders.
 
 **Deliberately simpler than its SO twin.** A PO amendment has ONE approver key
 and no lanes, so there is nothing to split. If the two endpoints are ever

@@ -35,6 +35,21 @@ vi.mock("../../hooks/useBreadcrumbs", () => ({ useSetBreadcrumbs: () => undefine
 vi.mock("../../hooks/useStaffLookup", () => ({
   useStaffLookup: () => ({ nameOf: () => "Kris" }),
 }));
+/* The "Shared with" field (2026-09-09) reads the staff roster to turn
+   collaborator uuids into names. It is a real useQuery, so without this stub it
+   throws for want of a QueryClientProvider and takes the whole page down —
+   these tests mount the page with every other data hook faked for the same
+   reason. Empty roster: none of the three assertions is about sharing, and an
+   unshared order is what they were written against. */
+vi.mock("../../vendor/scm/lib/admin-queries", () => ({
+  useStaff: () => ({
+    data: [
+      { id: "s-1", name: "Stanley" },
+      { id: "s-2", name: "alicia" },
+    ],
+    isLoading: false,
+  }),
+}));
 vi.mock("../../vendor/scm/components/NotifyDialog", () => ({ useNotify: () => vi.fn() }));
 /* The 2026-08-25 native-confirm sweep gave the page a useConfirm() (Cancel and
    the unsaved-payments Back gate); like useNotify it throws outside its
@@ -104,8 +119,8 @@ function LocationProbe() {
   return <div data-testid="loc">{`${loc.pathname}${loc.search}`}</div>;
 }
 
-const mountPage = () => {
-  detail.mockReturnValue(loaded({ salesOrder: header, items: [] }));
+const mountPage = (so: Record<string, unknown> = header) => {
+  detail.mockReturnValue(loaded({ salesOrder: so, items: [] }));
   payments.mockReturnValue(loaded([]));
   updateStatus.mockReturnValue({ mutate: vi.fn(), isPending: false });
   return render(
@@ -157,5 +172,30 @@ describe("SO V2 Recent activity", () => {
     /* Losing the card entirely is a worse answer than a dateless one. */
     expect(screen.getByText(/^Created$/)).toBeTruthy();
     expect(screen.queryByRole("dialog", { name: /sales order history/i })).toBeNull();
+  });
+});
+
+/* "Shared with" (owner 2026-09-09: "SO 详情页也要能看到共享给了谁"). An order can
+   be shared with several salespeople, and until this shipped the grants were
+   visible only on the maintenance panel and in the audit log — state a user
+   cannot see is state they cannot correct. */
+describe("SO V2 shared-with", () => {
+  it("names the people the order is shared with, never their uuids", () => {
+    auditLog.mockReturnValue(loaded([]));
+    mountPage({ ...header, collaborator_staff_ids: ["s-1", "s-2"] });
+
+    expect(screen.getByText("Shared with")).toBeTruthy();
+    /* A→Z, and resolved to names — a uuid on screen is the defect this
+       replaces, so assert the id is absent as well as the name present. */
+    expect(screen.getByText("alicia, Stanley")).toBeTruthy();
+    expect(screen.queryByText(/s-1/)).toBeNull();
+  });
+
+  /* Most orders are shared with nobody. A field that is blank on almost every
+     order teaches people to stop reading it, so it is absent, not empty. */
+  it("renders no field at all when the order is shared with nobody", () => {
+    auditLog.mockReturnValue(loaded([]));
+    mountPage({ ...header, collaborator_staff_ids: [] });
+    expect(screen.queryByText("Shared with")).toBeNull();
   });
 });
