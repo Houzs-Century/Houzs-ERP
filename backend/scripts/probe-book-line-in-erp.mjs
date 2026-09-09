@@ -79,7 +79,7 @@ const TABLES = [
     name: "scm.grn_items",
     rows: () => sql`SELECT i.linked_ac_dtlkey::text AS dtlkey, h.grn_number AS doc, i.id::text,
         i.item_code, i.qty_accepted::float8 AS qty, i.unit_price_sen, i.line_total_sen,
-        i.po_item_id::text AS po_item_id, i.invoiced_qty::float8 AS invoiced_qty,
+        i.purchase_order_item_id::text AS po_item_id, i.invoiced_qty::float8 AS invoiced_qty,
         h.purchase_order_id::text AS po_id, h.linked_ac_gr_docno,
         COALESCE(h.migrated_no_stock, false) AS migrated_no_stock, i.description2
       FROM scm.grn_items i JOIN scm.grns h ON h.id = i.grn_id
