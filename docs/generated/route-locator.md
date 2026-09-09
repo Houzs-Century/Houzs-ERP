@@ -646,19 +646,19 @@ Total: 1208 route registrations across 156 files.
 - L1843  DELETE /:id/items/:itemId
 
 ## backend/src/routes/announcements.ts  (13)
-- L567  GET    /
-- L631  GET    /banner
-- L813  GET    /:id/acks
-- L910  GET    /ack-summary
-- L970  GET    /ack-trend
-- L1033  GET    /team-pending
-- L1106  POST   /:id/escalate
-- L1172  POST   /
-- L1400  PATCH  /:id
-- L1660  POST   /:id/remind
-- L1737  DELETE /:id
-- L1776  POST   /:id/ack
-- L1889  GET    /:id/attachments/:key{.+}
+- L571  GET    /
+- L635  GET    /banner
+- L817  GET    /:id/acks
+- L914  GET    /ack-summary
+- L974  GET    /ack-trend
+- L1037  GET    /team-pending
+- L1110  POST   /:id/escalate
+- L1176  POST   /
+- L1411  PATCH  /:id
+- L1682  POST   /:id/remind
+- L1759  DELETE /:id
+- L1798  POST   /:id/ack
+- L1911  GET    /:id/attachments/:key{.+}
 
 ## backend/src/routes/auth.ts  (13)
 - L53  GET    /status
@@ -1097,11 +1097,11 @@ Total: 1208 route registrations across 156 files.
 - L314  POST   /save
 
 ## backend/src/routes/announcementApproval.ts  (5)
-- L65  GET    /:id/files
-- L83  POST   /:id/submit
-- L100  POST   /:id/approve
-- L109  POST   /:id/void
-- L123  POST   /:id/reject
+- L66  GET    /:id/files
+- L84  POST   /:id/submit
+- L101  POST   /:id/approve
+- L110  POST   /:id/void
+- L124  POST   /:id/reject
 
 ## backend/src/routes/branding.ts  (5)
 - L56  GET    /

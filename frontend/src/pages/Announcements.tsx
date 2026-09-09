@@ -20,6 +20,7 @@ import {
   isApproved,
   isVoided,
   receiptsCsv,
+  type DocumentTypeOption,
   type AnnouncementFile,
   type AckSummary,
   type AcksData,
@@ -181,7 +182,7 @@ export function Announcements() {
   // The attachment policy for the ANN type (Settings → Documents): the
   // composer disables Submit while a required file is missing. The server
   // enforces it regardless.
-  const docTypesQ = useQuery<{ data: Array<{ code: string; attachmentRequired: boolean }> }>(
+  const docTypesQ = useQuery<{ data: DocumentTypeOption[] }>(
     "/api/document-types",
     () => api.get("/api/document-types"),
     [],
@@ -441,6 +442,7 @@ export function Announcements() {
           salesDirOnly={salesDirOnly}
           currentUserId={currentUserId}
           attachmentRequired={attachmentRequired}
+          docTypes={docTypesQ.data?.data ?? []}
           onClose={() => setComposerOpen(false)}
           onPosted={() => {
             listQ.reload();

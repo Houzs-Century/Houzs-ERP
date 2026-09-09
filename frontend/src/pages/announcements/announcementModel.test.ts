@@ -9,6 +9,8 @@ import {
   companyScopeLabel,
   docNo,
   filterManageRows,
+  docTypeOf,
+  docTypeTag,
   isApproved,
   isArchived,
   isVoided,
@@ -194,6 +196,13 @@ describe("approval workflow (mig 20260906T1509)", () => {
     expect(docNo(legacy)).toBe("ANN-OLD");
     expect(docNo(ann({ id: "ann-new", refNo: "OPS-ANN-2609-0001" }))).toBe("OPS-ANN-2609-0001");
     expect(docNo(ann({ id: "ann-new", refNo: "  " }))).toBe("ANN-NEW");
+  });
+
+  test("document type: absent = ANN, the tag shows only for a non-ANN type", () => {
+    expect(docTypeOf(ann({ id: "a" }))).toBe("ANN");
+    expect(docTypeTag(ann({ id: "a" }))).toBeNull();
+    expect(docTypeOf(ann({ id: "b", docType: "memo" }))).toBe("MEMO");
+    expect(docTypeTag(ann({ id: "b", docType: "MEMO" }))).toBe("MEMO");
   });
 
   test("a void outranks everything and reads as archived", () => {

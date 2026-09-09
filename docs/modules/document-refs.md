@@ -70,7 +70,14 @@ submit" rule reads. Since 2026-09-07 it is EDITED under Settings → Documents
 Required / Optional switch, Active, New type) and ENFORCED for the ANN type by
 `backend/src/services/announcementFiles.ts` on the two doors into the
 announcement approval queue (docs/modules/announcements.md §3 "Attachments").
-Other families pick it up as they join the scheme.
+Other families pick it up as they join the scheme. **Since 2026-09-08 the
+registry is also the composer's Type row**: every ACTIVE type is offered when
+composing a notice (`docType` on POST /api/announcements; mig
+`20260908T0300` seeds `MEMO` beside `ANN`), the pick becomes the [TYPE]
+segment when the approval mints (`OPS-MEMO-2609-0001`, its own sequence per
+department and month) and the type's own `attachment_required` is what the
+submit gate reads. Adding a type here is therefore a real change to what a
+department can number — see docs/modules/announcements.md §3 "Document type".
 
 ## 4. Database — mig `backend/src/db/migrations-pg/20260906T1417_departments_code_document_refs.sql`
 

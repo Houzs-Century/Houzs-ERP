@@ -106,6 +106,8 @@ type Announcement = {
   /** Void (mig 20260907T1030). */
   voidedAt?: string | null;
   voidReason?: string | null;
+  /** Document type (mig 20260908T0300): ANN or e.g. MEMO. */
+  docType?: string | null;
 };
 
 const APPROVAL_CHIP: Record<"DRAFT" | "PENDING_APPROVAL" | "REJECTED", { label: string; bg: string; fg: string }> = {
@@ -1073,6 +1075,7 @@ function Detail({
       <div className="scroll hz-scroll" style={{ padding: 14, paddingBottom: 40 }}>
         <div id="ann-d-meta" style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
           <CatChip ann={ann} />
+          {ann.docType && ann.docType !== "ANN" && <span className="spill" style={{ background: "#eceee9", color: "#4b5046" }}>{ann.docType}</span>}
           {(canManage || canApprove) && <ApprovalChip ann={ann} />}
           {canManage && approval === "APPROVED" && <StatusChip ann={ann} />}
           <CompanyChip ann={ann} companies={companies} />
@@ -1240,6 +1243,15 @@ function Compose({
 
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState(CATEGORY_OPTIONS[0].value);
+  // Document type (mig 20260908T0300): the registry's active types; ANN unless
+  // the writer picks Memo. The [TYPE] segment of the number.
+  const [docType, setDocType] = useState("ANN");
+  const docTypesQ = useQuery({
+    queryKey: ["document-types"],
+    queryFn: () => api.get<{ data: Array<{ code: string; label: string; attachmentRequired: boolean }> }>("/api/document-types"),
+    staleTime: 300_000,
+  });
+  const docTypeOptions = docTypesQ.data?.data ?? [];
   const [bucket, setBucket] = useState<Bucket>(salesDirOnly ? "DEPT" : "ALL");
   // Company target: "ALL" = every company (Both — sends no target, NULL = all);
   // a company id = that company only. Default "ALL". Only shown when >1 company.
@@ -1346,6 +1358,7 @@ function Compose({
         title: t,
         body: richTextToPlain(body),
         bodyHtml: body,
+        docType,
         category,
         clientKey,
       };
@@ -1417,6 +1430,14 @@ function Compose({
           </div>
         </div>
 
+        {docTypeOptions.length > 1 && (
+          <label className="fld" style={{ marginBottom: 12 }}>
+            <span className="fld-l">Document type</span>
+            <select className="fld-i" value={docType} onChange={(e) => setDocType(e.target.value)} aria-label="Document type">
+              {docTypeOptions.map((t) => <option key={t.code} value={t.code}>{t.label} ({t.code})</option>)}
+            </select>
+          </label>
+        )}
         <label className="fld" style={{ marginBottom: 12 }}>
           <span className="fld-l">Category</span>
           <select className="fld-i" value={category} onChange={(e) => setCategory(e.target.value)}>

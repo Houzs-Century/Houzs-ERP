@@ -36,6 +36,7 @@ vi.mock("../../vendor/scm/components/DateTimeField", () => ({
 }));
 
 const base: Omit<ComposerDraft, "savedAt"> = {
+  docType: "ANN",
   category: "WARNING",
   requireAck: true,
   title: "Shipping marks",
@@ -196,7 +197,7 @@ describe("ComposerModal (rendered)", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  function mount(extra: { attachmentRequired?: boolean } = {}) {
+  function mount(extra: { attachmentRequired?: boolean; docTypes?: Array<{ code: string; label: string; attachmentRequired: boolean }> } = {}) {
     const onPosted = vi.fn();
     const onClose = vi.fn();
     render(
@@ -207,12 +208,38 @@ describe("ComposerModal (rendered)", () => {
         salesDirOnly={false}
         currentUserId={9}
         attachmentRequired={extra.attachmentRequired}
+        docTypes={extra.docTypes}
         onClose={onClose}
         onPosted={onPosted}
       />,
     );
     return { onPosted, onClose };
   }
+
+  it("with more than one registered type the composer offers a Type row; Memo is sent as docType and carries its own attachment policy (mig 20260908T0300)", async () => {
+    apiPost.mockResolvedValue({ success: true });
+    const { onPosted } = mount({
+      docTypes: [
+        { code: "ANN", label: "Announcement", attachmentRequired: false },
+        { code: "MEMO", label: "Memo", attachmentRequired: true },
+      ],
+    });
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Memo one" } });
+    fireEvent.click(screen.getByRole("button", { name: /Warehouse/ }));
+    // ANN by default: no file needed, Submit open.
+    expect(screen.queryByTestId("attachment-required-hint")).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: /Memo/ }));
+    // MEMO demands a file: the hint appears and Submit is held.
+    expect(screen.getByTestId("attachment-required-hint")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Submit for approval" }) as HTMLButtonElement).disabled).toBe(true);
+    // Save draft still goes, with the type.
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(onPosted).toHaveBeenCalled());
+    expect(apiPost).toHaveBeenCalledWith(
+      "/api/announcements",
+      expect.objectContaining({ title: "Memo one", docType: "MEMO", draft: true }),
+    );
+  });
 
   it("with the attachment policy on, Submit waits for a file while Save draft stays open (mig 20260907T0715)", () => {
     mount({ attachmentRequired: true });
