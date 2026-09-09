@@ -79,6 +79,7 @@ import { cn } from "../../lib/utils";
 import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { transferFromColumnLabel } from "../../lib/convertScope";
+import { customerRefOf } from '../../lib/customer-ref';
 
 // ─── Row shapes (subset — see DeliveryReturnDetail.tsx for full 40-field
 // header) ────────────────────────────────────────────────────────────────
@@ -170,9 +171,8 @@ type DrItem = {
    the literal "MYR NaN"; the shared helper renders "—" instead. */
 const fmtMoney = fmtMoneySen;
 
-// Ref chain matches the DR list V2 — customer SO no > free-text ref.
-const refOf = (h: DrHeader): string =>
-  h.customer_so_no || h.ref || "—";
+// Ref chain matches the DR list V2 — the ONE rule in lib/customer-ref.ts.
+const refOf = (h: DrHeader): string => customerRefOf(h) || "—";
 
 const doOf = (h: DrHeader): string => {
   if (h.do_doc_no) return h.do_doc_no;
@@ -602,6 +602,7 @@ export function DeliveryReturnDetailV2() {
             return_number: deliveryReturn.return_number,
             do_doc_no: deliveryReturn.do_doc_no,
             customer_so_no: deliveryReturn.customer_so_no,
+            ref: deliveryReturn.ref,
           }
         : null,
     [deliveryReturn],

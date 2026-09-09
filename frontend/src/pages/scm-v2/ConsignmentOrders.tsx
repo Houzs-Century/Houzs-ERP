@@ -63,6 +63,7 @@ import { StatCard } from '../../components/StatCard';
 import soDetailStyles from './SalesOrderDetail.module.css';
 import { retryUnlessClientError } from '../../lib/retryPolicy';
 import { transferToColumnLabel } from "../../lib/convertScope";
+import { customerRefOf } from '../../lib/customer-ref';
 
 /* Local payments hook — lazy-loaded per expanded SO row alongside the detail
    query. Kept local to this page (not exported to flow-queries.ts) because
@@ -620,10 +621,10 @@ const ExpandedSoLines = ({ docNo, canFinance }: { docNo: string; canFinance: boo
      panel). Houzs drill-down only shows live lines. */
   const items = allItems.filter((it) => !it.cancelled);
   /* Customer-side SO ref (HC10883 etc.) — used as the second token in the
-     Houzs payment ref string `(approval/HCref)`. Falls back to the
-     header's `ref` text when customer_so_no is empty. */
+     Houzs payment ref string `(approval/HCref)`. Resolution order is the ONE
+     rule in lib/customer-ref.ts. */
   const soHeader = (q.data?.salesOrder ?? null) as { customer_so_no?: string | null; ref?: string | null } | null;
-  const customerSoRef = soHeader?.customer_so_no || soHeader?.ref || '';
+  const customerSoRef = customerRefOf(soHeader);
   /* Houzs joins payment refs as `(approval/HCref)(approval/HCref)…` —
      newest-first per the API's order(paid_at desc). Empty when no payments. */
   const payments = (pq.data?.payments ?? []) as SoPaymentRow[];

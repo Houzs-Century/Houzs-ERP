@@ -18,7 +18,7 @@
 // state, venue, booth, dates — plus, per event, the UNFILLED floorplan (owner
 // 2026-09-08: "only appear unfilled floorplan inside, others hide from
 // contractor, and allowed them to view and download"), and an Excel export of
-// Date / Venue / Organizer / Booth / Size. No finance, no sales, no cost, no
+// Date / Venue / State / Organizer / Brand / Type / Booth / Size. No finance, no sales, no cost, no
 // checklist, no notes, no other file: this route never reads project_finance.
 // RLS is disabled prod-wide, so the WHERE clause IS the boundary.
 //
@@ -112,7 +112,8 @@ publicContractorCalendar.get("/:token/events/:eventId/floorplan/:fileId", async 
   return res ?? c.json({ error: "not_found" }, 404);
 });
 
-// Export rows — Date / Venue / Organizer / Booth / Size, NEVER sales — scoped
+// Export rows — Date / Venue / State / Organizer / Brand / Type / Booth / Size,
+// NEVER sales — scoped
 // server-side to the token's contractor; the browser builds the .xlsx. Logged
 // like the brand export so the office can see who pulled what, when.
 publicContractorCalendar.get("/:token/export", async (c) => {

@@ -21,6 +21,7 @@ import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
+import { addressLineProps } from "../lib/addressLimit";
 import { paymentMethodCodeForValue } from "../vendor/scm/lib/payment-methods";
 import { soDateGuardError, soStockLocationError, soErrorText } from "../vendor/scm/lib/so-form-validate";
 import { useBranding } from "../hooks/useBranding";
@@ -2382,7 +2383,6 @@ export function MobileNewSO({
               </div>
             </div>
 
-            {/* ── Delivery address ────────────────────────────────────── */}
             <div className="card" style={{ marginBottom: 11 }}>
               <div className="card-h"><span className="card-t">Delivery address</span></div>
               <div className="card-b" style={{ display: "flex", flexDirection: "column", gap: 9 }}>
@@ -2392,10 +2392,10 @@ export function MobileNewSO({
                   </div>
                 )}
                 <Field label={addressRequired ? "Address Line 1 *" : "Address Line 1"} error={touched && addressRequired && !addr1.trim()} scanned={scanned("addr1", addr1)}>
-                      <input className="fld-i" value={addr1} onChange={(e) => setAddr1(e.target.value)} placeholder="Unit, street, area" />
+                      <input className="fld-i" value={addr1} {...addressLineProps(setAddr1, { value: addr2, set: setAddr2 })} onChange={(e) => setAddr1(e.target.value)} placeholder="Unit, street, area" />
                     </Field>
                     <Field label="Address Line 2">
-                      <input className="fld-i" value={addr2} onChange={(e) => setAddr2(e.target.value)} placeholder="Apt, floor, building (optional)" />
+                      <input className="fld-i" value={addr2} {...addressLineProps(setAddr2, null)} onChange={(e) => setAddr2(e.target.value)} placeholder="Apt, floor, building (optional)" />
                     </Field>
                     {/* FIX A — cascading State → City → Postcode from my_localities
                         (desktop parity). When the dataset is present these are

@@ -216,10 +216,15 @@ for (const p of plan) {
   await sql.begin(async (tx) => {
     for (const r of p.rows) {
       if (!r.changed) continue;
+      /* NO `updated_at`. scm.grn_items does not carry one — the apply run
+         34305708536 died on `42703 undefined column` at the first statement,
+         inside its transaction, so nothing was written. Every sibling repair of
+         this table (repair-migrated-grn-item-codes.mjs:285,
+         repair-grn-variant-snapshot.mjs:140) sets no such column either; only
+         scm.grns has it. */
       await tx`UPDATE scm.grn_items
-                  SET unit_price_sen = ${r.unit}, discount_sen = ${r.disc}, line_total_sen = ${r.total},
-                      updated_at = NOW()
-                WHERE id = ${r.item.id} AND grn_id = ${p.g.id}::uuid`;
+                  SET unit_price_sen = ${r.unit}, discount_sen = ${r.disc}, line_total_sen = ${r.total}
+                WHERE id = ${r.item.id}::uuid AND grn_id = ${p.g.id}::uuid`;
     }
     await tx`UPDATE scm.grns SET subtotal_sen = ${p.wantTotal}, total_sen = ${p.wantTotal}, updated_at = NOW()
               WHERE id = ${p.g.id}::uuid AND company_id = ${CO}`;
