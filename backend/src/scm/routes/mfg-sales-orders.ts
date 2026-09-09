@@ -5041,14 +5041,9 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        to, resolved above via the active-fair resolver. NULL when the salesperson
        has no active fair; never blocks creation. */
     project_id: projectIdToStamp,
-    /* Fitted to the book's 40-character columns on the way IN — see
-       scm/lib/so-address-on-save.ts for why, and docs/bugs/0738. */
-    ...fitSoAddress([
-      (body.address1 as string) ?? null,
-      (body.address2 as string) ?? null,
-      (body.address3 as string) ?? null,
-      (body.address4 as string) ?? null,
-    ]),
+    /* Fitted to the book's 40-char columns on save — scm/lib/so-address-on-save.ts, docs/bugs/0738. */
+    ...fitSoAddress([(body.address1 as string) ?? null, (body.address2 as string) ?? null,
+      (body.address3 as string) ?? null, (body.address4 as string) ?? null]),
     /* Task #91 — defensively normalize to E.164 storage form. The UI does this
        on blur via <PhoneInput>, but a misbehaving client could still POST a
        raw "+60 12 345 6789" — normalize once on the server so the DB never
@@ -6612,7 +6607,6 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     ['debtorCode', 'debtor_code'], ['debtorName', 'debtor_name'], ['agent', 'agent'],
     ['salesLocation', 'sales_location'], ['ref', 'ref'],
     ['venue', 'venue'], ['venueId', 'venue_id'], ['branding', 'branding'], ['transferTo', 'transfer_to'],
-    /* Re-fitted together by fitAddressIfTouched below, never per line. */
     ['address1', 'address1'], ['address2', 'address2'], ['address3', 'address3'],
     ['address4', 'address4'], ['phone', 'phone'], ['note', 'note'],
     ['remark2', 'remark2'], ['remark3', 'remark3'], ['remark4', 'remark4'],
