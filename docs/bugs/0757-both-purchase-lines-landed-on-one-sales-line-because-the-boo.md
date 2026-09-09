@@ -22,7 +22,7 @@ On the book's own `SO-000870`, 60699 and 60702 are CODY bedframes and **60700 is
 a MYLATEX LUMBARIA mattress**. So the book points a bedframe purchase at a
 mattress line while an unclaimed bedframe line sits on the same order. The
 migration could not copy that edge — it would put one product's purchase on
-another product's line, which is what `docs/bugs/0671-a-key-pair-is-not-an-identity-match-two-thirds-of-the-deleg.md`
+another product's line, which is what `docs/bugs/0671-the-delta-sync-dedicated-9-sales-order-lines-to-purchase-ord.md`
 cost — so the line fell back onto the row it could match and doubled up.
 
 `lib/so-po-counter-cause.mjs` already classifies this as
