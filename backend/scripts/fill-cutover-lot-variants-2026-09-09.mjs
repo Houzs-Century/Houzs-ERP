@@ -29,8 +29,20 @@
  * lots were relayered out of AutoCount's receipt history
  * (`import-ac-stock-layers.mjs`), and each one's movement note records the
  * source document verbatim — `AC GR GR-004679 2026-05-28`. That number is an
- * exact link from one lot to one receipt. Measured on the 2,339 relayered
- * cells: 2,316 (99.0%) resolve to their receipt in the export.
+ * exact link from one lot to one receipt. Measured over the 2,339 relayered
+ * cells IN THE BOOK'S OWN CODE SPACE, 2,316 (99.0%) find their receipt in the
+ * export. How many of the LOTS resolve is what the plan run reports — that
+ * number is not known until it has run, because it also depends on the code
+ * translation below.
+ *
+ * ── THE BOOK'S ITEM CODE IS NOT OURS ──────────────────────────────────────
+ * `HOK-1007 (K)` in AutoCount is `CODY-(K)` in this system, and 815 of the 949
+ * mapped receipt items differ that way. Indexing the book's receipts under the
+ * book's own code would have matched almost nothing while failing silently —
+ * the run would report "no receipt for this item" and look like a data gap.
+ * `data/autocount-erp-mapping-1561.csv` is the translation, read through the
+ * shared RFC4180 reader (`lib/ac-mapping-csv.mjs`) because three mattress names
+ * contain a quoted inch mark that a naive `split(",")` cuts in half.
  *
  * A lot with no such note falls back ONLY when the item leaves no room for a
  * guess — every spec-bearing receipt for that code decodes to the SAME key.
@@ -79,6 +91,7 @@ import postgres from 'postgres';
 import { parseBedframe, bedframeVariants } from './lib/parse-bedframe.mjs';
 import { parseSofa, SOFA_MODEL_ALIAS } from './lib/parse-sofa.mjs';
 import { buildFabricColourIndex, isPendingColour } from './lib/fabric-colour-match.mjs';
+import { readMappingCsv, normCode } from './lib/ac-mapping-csv.mjs';
 import { computeVariantKey } from '../src/scm/shared/variant-key.ts';
 
 const MODE = (process.env.MODE ?? 'plan').toLowerCase();
@@ -103,16 +116,26 @@ if (!fs.existsSync(SNAP)) {
   process.exit(1);
 }
 const snap = JSON.parse(zlib.gunzipSync(fs.readFileSync(SNAP)).toString('utf8').replace(/^﻿/, ''));
-const norm = (s) => String(s ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
+const norm = normCode;
 
-/** Receipts indexed by (document number, item code) — the exact link. */
+/* THE BOOK'S ITEM CODE IS NOT OURS, and assuming it is would have made this
+   whole script a silent no-op. `HOK-1007 (K)` in AutoCount is `CODY-(K)` here;
+   measured on the sheet, 815 of the 949 mapped receipt items carry a different
+   ERP code. Receipts are therefore indexed under the ERP code, which is what
+   `inventory_lots.item_code` holds. The seven unmapped codes are already
+   ERP-shaped sofa compartments, so they index as themselves. */
+const MAP = path.join(here, 'data', 'autocount-erp-mapping-1561.csv');
+const acToErp = readMappingCsv(fs.readFileSync(MAP, 'utf8'));
+const erpCodeOf = (acCode) => norm(acToErp.get(norm(acCode))?.erp || acCode);
+
+/** Receipts indexed by (document number, ERP item code) — the exact link. */
 const byDoc = new Map();
-/** Every spec-bearing receipt per item code, for the unambiguous fallback. */
+/** Every spec-bearing receipt per ERP item code, for the unambiguous fallback. */
 const byItem = new Map();
 for (const r of snap.receipts) {
   if (!r.desc2 || !r.item) continue;
-  if (r.doc_no) byDoc.set(`${norm(r.doc_no)} ${norm(r.item)}`, r);
-  const k = norm(r.item);
+  const k = erpCodeOf(r.item);
+  if (r.doc_no) byDoc.set(`${norm(r.doc_no)} ${k}`, r);
   if (!byItem.has(k)) byItem.set(k, []);
   byItem.get(k).push(r);
 }
