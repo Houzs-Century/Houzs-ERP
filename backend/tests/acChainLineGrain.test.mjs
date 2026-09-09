@@ -265,7 +265,16 @@ describe('the committed AutoCount snapshot — the nine, worked', () => {
       const own = chain.receiptTotalSen.get(gr) ?? 0;
       if (drew !== own) off.push(`${gr}: billed ${drew}, holds ${own}`);
     }
-    expect(checked).toBe(189);
+    /* NOT a pinned count. The book trades: an order that finishes delivery
+       leaves the outstanding scope and takes its purchase orders and receipts
+       with it. Measured on a one-day re-cut, 2026-09-08 08:03 -> 2026-09-09
+       08:18 MYT: 13 sales orders left scope, and with them 10 purchase orders
+       (484 -> 474) and 3 receipts (214 -> 211), every one of them already
+       fully received and none cancelled. Pinning the exact figure made an
+       ordinary day's trading fail CI and blocked the snapshot refresh.
+       The floor still defends the property this test exists for: a run that
+       compared almost nothing must never read as a pass. */
+    expect(checked).toBeGreaterThan(150);
     expect(off).toEqual([]);
   });
 
