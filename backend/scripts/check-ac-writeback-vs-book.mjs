@@ -97,7 +97,12 @@ const hIdx = Object.fromEntries(snap.header_fields.map((f, i) => [f, i]));
 const lIdx = Object.fromEntries(snap.line_fields.map((f, i) => [f, i]));
 const dIdx = Object.fromEntries(snap.desc2_fields.map((f, i) => [f, i]));
 
-/** dtlKey -> { itemKey, qty, unitPrice, docNo }, and dtlKey -> desc2. */
+/* KEYED BY DtlKey ALONE, across all six document types, which is only safe if
+   DtlKey is globally unique. MEASURED on this snapshot rather than assumed:
+   62769 + 18890 + 21746 + 48822 + 45950 + 22633 = 220,810 line rows in, and the
+   map ends with exactly 220,810 entries — zero collisions. If a future export
+   ever collides, the assertion below fails loudly instead of silently comparing
+   a sales-order line against a purchase-order one. */
 const bookLine = new Map();
 const bookDesc2 = new Map();
 const bookHeader = new Map();
@@ -114,6 +119,17 @@ for (const t of Object.keys(snap.types)) {
     });
   }
   for (const r of snap.types[t].desc2) bookDesc2.set(String(r[dIdx.dtlKey]), r[dIdx.desc2]);
+}
+{
+  const rows = Object.keys(snap.types).reduce((n, t) => n + snap.types[t].lines.length, 0);
+  if (bookLine.size !== rows) {
+    console.error(
+      `DtlKey is NOT unique in this snapshot: ${rows} line rows collapsed to ${bookLine.size} keys. `
+      + 'Comparing by DtlKey alone would match a line of one document against a line of another. '
+      + 'Refusing to report rather than report something wrong.',
+    );
+    process.exit(1);
+  }
 }
 
 /* Money and quantity come off two systems as differently-formatted strings
