@@ -183,33 +183,51 @@ async function main() {
          WHERE pii.id = ANY(${ids}::uuid[])
          ORDER BY g.grn_number`;
       const byNo = new Map(facts.map((f) => [f.line_id, f]));
-      let derivable = 0;
-      let native = 0;
-      let unclear = 0;
-      say("");
-      say(`   ${"ERP receipt".padEnd(22)} ${"invoice".padEnd(16)} ${"book wants".padEnd(22)} ${"PO".padEnd(12)} ${"verdict".padEnd(12)} migrated moves created`);
-      for (const [lineId, g] of [...grnDocGaps].slice(0, SHOW)) {
+      /* CLASSIFY EVERY LINE FIRST, then print at most SHOW of them. These used
+         to be one loop over `.slice(0, SHOW)`, so the three counters below
+         described only the rows that fitted on screen while the denominator
+         beside them (`grnDocGaps.size`) described all of them. On 2026-09-09
+         the same tree answered "59 lines · 40 derivable · 0 NOT-ON-PO · 0
+         NO-ROW" at SHOW=40 and "59 · 59 · 0 · 0" at SHOW=300 — the first reads
+         as 19 lines nobody can account for, and it is a display setting.
+         A verdict must never depend on how much of it was printed. */
+      const classified = [...grnDocGaps].map(([lineId, g]) => {
         const f = byNo.get(lineId);
-        const erpNo = f?.grn_number ?? "(no receipt row)";
-        const wants = [...g.wants].join(",");
-        const onPo = (f?.po_named_receipts ?? []).map(up);
-        const wantedOnPo = [...g.wants].some((w) => onPo.includes(up(w)));
         /* THE EVIDENCE THAT SEPARATES THE TWO WORLDS. stamp-ac-grn-refs.mjs put
            the book's receipt numbers on the purchase order; if the receipt the
            book's invoice names is one of THEM, the receipt is the book's and the
            only thing missing is the stamp. If it is not, we are looking at a
            receipt the book never raised against this order. */
+        const onPo = (f?.po_named_receipts ?? []).map(up);
+        const wantedOnPo = [...g.wants].some((w) => onPo.includes(up(w)));
         const verdict = wantedOnPo
           ? (f?.migrated_no_stock ? "DERIVABLE" : "DERIVABLE?")
           : (f ? "NOT-ON-PO" : "NO-ROW");
-        if (verdict.startsWith("DERIVABLE")) derivable += 1;
-        else if (verdict === "NOT-ON-PO") native += 1;
-        else unclear += 1;
+        return { g, f, verdict };
+      });
+      const derivable = classified.filter((c) => c.verdict.startsWith("DERIVABLE")).length;
+      const native = classified.filter((c) => c.verdict === "NOT-ON-PO").length;
+      const unclear = classified.filter((c) => c.verdict === "NO-ROW").length;
+      /* The three buckets are the whole set or the classifier grew a fourth
+         answer nobody counted. Refusing beats printing a summary that does not
+         add up. */
+      if (derivable + native + unclear !== classified.length) {
+        bad(`cause B: ${classified.length} line(s) classified but the buckets hold `
+          + `${derivable + native + unclear} — a verdict is going uncounted.`);
+      }
+      say("");
+      say(`   ${"ERP receipt".padEnd(22)} ${"invoice".padEnd(16)} ${"book wants".padEnd(22)} ${"PO".padEnd(12)} ${"verdict".padEnd(12)} migrated moves created`);
+      for (const { g, f, verdict } of classified.slice(0, SHOW)) {
+        const erpNo = f?.grn_number ?? "(no receipt row)";
+        const wants = [...g.wants].join(",");
         say(`   ${String(erpNo).padEnd(22)} ${String(g.invoice).padEnd(16)} ${wants.slice(0, 21).padEnd(22)} ${String(f?.po_doc ?? "?").padEnd(12)} ` +
             `${verdict.padEnd(12)} ${String(f?.migrated_no_stock ?? "?").padEnd(8)} ${String(f?.movements ?? "?").padEnd(5)} ` +
             `${f?.created_at ? new Date(f.created_at).toISOString().slice(0, 10) : "?"}`);
       }
-      if (grnDocGaps.size > SHOW) say(`   … and ${grnDocGaps.size - SHOW} more (raise SHOW)`);
+      if (grnDocGaps.size > SHOW) {
+        say(`   … and ${grnDocGaps.size - SHOW} more NOT PRINTED (raise SHOW). `
+          + "The counts below cover every line, printed or not.");
+      }
       say(`\n   invoice lines on cause B: ${grnDocGaps.size} · the book's receipt IS stamped on their PO: ${derivable} ` +
           `· NOT on the PO: ${native} · no receipt row read: ${unclear}`);
       /* A line whose book side names SEVERAL receipts cannot be settled by
