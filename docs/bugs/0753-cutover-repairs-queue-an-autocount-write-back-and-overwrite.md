@@ -149,13 +149,13 @@ no-op the earlier paragraph made it out to be.
 
 ---
 
-## ANSWERED 2026-09-09, against production (runs `34338645467`, `34338928192`)
+### ANSWERED 2026-09-09, against production (runs `34338645467`, `34338928192`)
 
 **Yes — the account book was changed to values it did not already hold. 161
 values across 60 sales orders the book already had.** Everything below is
 measured, not inferred.
 
-### The two structural facts, settled
+#### The two structural facts, settled
 
 - **No database trigger writes to the outbox.** `pg_trigger` asked directly:
   *"none — no trigger writes to the outbox, so every row came from application
@@ -173,7 +173,7 @@ measured, not inferred.
   which the write-back is supposed to honour. Said plainly rather than left for
   someone to discover.
 
-### What actually changed in the book
+#### What actually changed in the book
 
 7,039 field values compared against the 00:18:49Z snapshot; **6,825 identical**
 (we echoed his own value back, harmless); **214 different**. Split by who did it
@@ -218,13 +218,13 @@ The 60 documents: HC-SO-000559, 000624, 001162, 001639, 003188, 003190, 003191,
 011093, 011095, 011096, 011838, 012008, 012393, 012805, 012913, 012948, 012954,
 012964, 012994, 013401.
 
-### Nothing was cancelled, because there was nothing left
+#### Nothing was cancelled, because there was nothing left
 
 `=== PENDING ROWS (0) ===`. The queue drained completely while this was being
 built — sent edits went 73 (05:32) -> 316 (08:0x) -> 469 (09:36) -> 492. The
 cancel tool shipped and was never needed for this incident.
 
-### A defect in the first version of this check, recorded
+#### A defect in the first version of this check, recorded
 
 The first run reported **217** differences. Three of them were mine: the DocDate
 comparison sliced ten characters off `"Tue Jun 17 2025 00:00:00 GMT+0000"`,
