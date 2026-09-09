@@ -1266,14 +1266,23 @@ mfgSalesOrders.get('/', async (c) => {
     else if (status) { const vals = soStatusesForTab(status); q = status === 'OTHER' ? q.or(otherStatusOr) : (vals.length === 1 ? q.eq('status', vals[0]) : q.in('status', vals)); }
     /* free-text search replaces the legacy `debtor` param in this branch.
        One term matches customer NAME (debtor_name), PHONE, or the SO
-       REFERENCE (ref) — plus doc_no / debtor_code / agent / location /
-       branding it already covered. */
+       REFERENCE — plus doc_no / debtor_code / agent / location / branding it
+       already covered. The reference the list DISPLAYS is `customerRefOf`
+       (`ref || customer_so_no || po_doc_no`, frontend/src/lib/customer-ref.ts),
+       so the search MUST cover the same fields or a shown reference is
+       unsearchable. `ref` was the only one here: an order whose reference lives
+       only in `customer_so_no` (native create path leaves `ref` null — 21 live
+       Houzs orders on 2026-09-09) rendered its ref yet never matched it. Adding
+       `customer_so_no` closes that. `po_doc_no` is a 0%-filled dead column that
+       is not even projected onto this list, so it is intentionally NOT searched
+       here. See BUG-HISTORY 2026-09-09. */
     const search = c.req.query('q');
     if (search) {
       const s = escapeForOr(search);
       if (s) q = q.or([
         `doc_no.ilike.%${s}%`, `debtor_name.ilike.%${s}%`, `debtor_code.ilike.%${s}%`,
-        `agent.ilike.%${s}%`, `sales_location.ilike.%${s}%`, `ref.ilike.%${s}%`, `branding.ilike.%${s}%`,
+        `agent.ilike.%${s}%`, `sales_location.ilike.%${s}%`, `ref.ilike.%${s}%`,
+        `customer_so_no.ilike.%${s}%`, `branding.ilike.%${s}%`,
         ...phoneSearchOrParts(s, search, normalizePhone),
       ].join(','));
     }
@@ -1350,7 +1359,7 @@ mfgSalesOrders.get('/', async (c) => {
       else if (status) { const vals = soStatusesForTab(status); moneyQ = status === 'OTHER' ? moneyQ.or(otherStatusOr) : (vals.length === 1 ? moneyQ.eq('status', vals[0]) : moneyQ.in('status', vals)); }
       if (search) {
         const ms = escapeForOr(search);
-        if (ms) moneyQ = moneyQ.or(`doc_no.ilike.%${ms}%,debtor_name.ilike.%${ms}%,debtor_code.ilike.%${ms}%,agent.ilike.%${ms}%,sales_location.ilike.%${ms}%,ref.ilike.%${ms}%,branding.ilike.%${ms}%`);
+        if (ms) moneyQ = moneyQ.or(`doc_no.ilike.%${ms}%,debtor_name.ilike.%${ms}%,debtor_code.ilike.%${ms}%,agent.ilike.%${ms}%,sales_location.ilike.%${ms}%,ref.ilike.%${ms}%,customer_so_no.ilike.%${ms}%,branding.ilike.%${ms}%`);
       }
       if (from) moneyQ = moneyQ.gte('so_date', from);
       if (to) moneyQ = moneyQ.lte('so_date', to);
