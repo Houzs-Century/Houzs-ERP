@@ -94,3 +94,32 @@ describe('more than one arrival', () => {
     expect(arrivals.size).toBe(0);
   });
 });
+
+describe('a SKIP the account book has since answered', () => {
+  /* The half the first version of this rule left out (docs/bugs/0743 covered
+     `failed` only), and the half that kept telling an operator to backfill a
+     key that was already there — HC-SO-001180, HC-SO-001463, HC-SO-001473. */
+  const REFUSED_AT = '2026-09-01T02:00:00.000Z';
+  const ARRIVED_AT = '2026-09-08T05:00:00.000Z';
+
+  it('is discounted by the same rule and the same function as a failure', () => {
+    const arrivals = newestArrivalByDoc([{ doc_type: 'SO', doc_no: 'HC-SO-001180', arrived_at: ARRIVED_AT }]);
+    const keys = supersededFailureKeys(
+      [{ doc_type: 'SO', doc_no: 'HC-SO-001180', created_at: REFUSED_AT }],
+      arrivals,
+    );
+    expect([...keys]).toEqual(['SO:HC-SO-001180']);
+  });
+
+  it('is NOT discounted when the arrivals map never learned that document', () => {
+    /* The bug this test exists for: the arrivals were read for the FAILED
+       documents only, so every skip looked un-arrived and the widened rule
+       would have changed nothing while looking correct. An empty map must
+       therefore discount NOTHING, loudly and by construction. */
+    const keys = supersededFailureKeys(
+      [{ doc_type: 'SO', doc_no: 'HC-SO-001463', created_at: REFUSED_AT }],
+      newestArrivalByDoc([]),
+    );
+    expect(keys.size).toBe(0);
+  });
+});
