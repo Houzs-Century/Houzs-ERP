@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-175 route modules (47 in `backend/src/routes`, 128 in `backend/src/scm/routes`), 1217 endpoint registrations.
+177 route modules (49 in `backend/src/routes`, 128 in `backend/src/scm/routes`), 1225 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -29,6 +29,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/assr_print.ts` | 1 | 1218 |
 | `backend/src/routes/audit.ts` | 1 | 74 |
 | `backend/src/routes/auth.ts` | 13 | 862 |
+| `backend/src/routes/brandShare.ts` | 2 | 53 |
 | `backend/src/routes/branding.ts` | 5 | 294 |
 | `backend/src/routes/clientErrors.ts` | 2 | 232 |
 | `backend/src/routes/companies.ts` | 1 | 48 |
@@ -50,7 +51,8 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/presence.ts` | 2 | 201 |
 | `backend/src/routes/projects.ts` | 114 | 5140 |
 | `backend/src/routes/projects_print.ts` | 1 | 1320 |
-| `backend/src/routes/publicContractorCalendar.ts` | 3 | 300 |
+| `backend/src/routes/publicBrandCalendar.ts` | 5 | 117 |
+| `backend/src/routes/publicContractorCalendar.ts` | 4 | 124 |
 | `backend/src/routes/publicDoScan.ts` | 4 | 926 |
 | `backend/src/routes/push.ts` | 2 | 71 |
 | `backend/src/routes/roles.ts` | 8 | 376 |
@@ -106,7 +108,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
 | `backend/src/scm/routes/delivery-returns.ts` | 11 | 1879 |
 | `backend/src/scm/routes/delivery-zones.ts` | 9 | 789 |
-| `backend/src/scm/routes/document-cancel-routes.ts` | 11 | 532 |
+| `backend/src/scm/routes/document-cancel-routes.ts` | 11 | 570 |
 | `backend/src/scm/routes/document-flow.ts` | 2 | 1065 |
 | `backend/src/scm/routes/document-hold-routes.ts` | 0 | 96 |
 | `backend/src/scm/routes/dp-orders.ts` | 5 | 653 |
@@ -204,13 +206,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 152 | `153_sessions_stay_signed_in.sql` (153) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 384 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 386 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2050 files, 715392 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2063 files, 718041 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -228,7 +230,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/mobile/MobilePMS.tsx` | 4483 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4334 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4205 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3747 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3749 |
 | `backend/src/scm/routes/grns.ts` | 3564 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3376 |
@@ -406,7 +408,7 @@ Page files by directory:
 
 | directory | *.tsx |
 |---|---|
-| `frontend/src/pages` | 37 |
+| `frontend/src/pages` | 38 |
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 4 |
 | `frontend/src/pages/scm-v2` | 147 |
@@ -451,7 +453,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
 | `frontend/src/mobile/MobileNewProject.tsx` | 196 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3747 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3749 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4483 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
