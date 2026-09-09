@@ -533,6 +533,79 @@ recovered price (483 of 496 migrated GRN lines carry none and the price is read
 back off the order line), and a proxy that is usually redundant is not one that is
 never needed. `docs/bugs/0764`.
 
+**Since 2026-09-09 the PURCHASE invoice's LINES are the account book's own, not
+our receipt's.** The owner sharpened the rule the same day: 「total amount不需要
+可是line amount一定一样」 — the invoice TOTAL need not equal AutoCount's, every
+LINE AMOUNT must, and 「如果 25% 的折扣，那你也要跟着 25%」. Our receipt's lines
+cannot satisfy that, for two reasons read out of the book itself:
+
+- **the book SPLITS one receipt line across two invoices** — `GR-003813` line
+  706719 is `HOK-2008(A) (K)` qty 2 @ 850.00, and `PI-006011` bills 1 of it while
+  `PI-006012` bills the other 1. One ERP row cannot become two lines on two
+  invoices;
+- **AutoCount rounds an amount-shaped discount differently on its own two
+  documents** — `GR-001910` line 410660 is 3 x 32.94, the RECEIPT says 84.00 and
+  `PI-002949` line 410782 says 83.99. Neither equals qty x unit, so nothing
+  derived from a unit price reproduces them.
+
+So every purchase-invoice line is now COPIED from `PIDTL` — item, quantity, unit
+price and amount — with `discount_sen` derived so the ERP's three columns
+reconcile to the book's amount, and `linked_ac_dtlkey` carrying the book's own
+line key.
+
+**The tie is `scm.grn_items.linked_ac_dtlkey`, and the item code is NOT a
+fallback for it.** Our receipt row carries the HOUZS code and the book carries
+the SUPPLIER's model — `CASUAL-(K)` here is `NB-KHJ57(SS)` there — so a code
+match across the two systems matched 2 of 657 lines when it was tried (dry run
+34364714219). The pairing is two halves instead:
+
+1. our row -> the book's receipt line, by the key
+   `backfill-ac-downstream-line-keys.mjs` stamps (run 34355496796, APPLY,
+   2026-09-09: 576 of 812 company-1 receipt rows carry one). **A row with no key
+   is refused and named, and the remedy is to run that backfill first**;
+2. the book's receipt line -> the book's invoice line(s), on item code,
+   quantity, unit price and amount — both sides are AutoCount's own figures
+   there, the one comparison `lib/ac-forced-line-pairing.mjs` calls trustworthy.
+   Never by position (`docs/bugs/0690`).
+
+`backend/scripts/lib/ac-pi-book-lines.mjs` holds half 2
+(`backend/tests/acPiBookLines.test.mjs`). What the book bills off a receipt that
+we do not hold is reported as SURPLUS and left alone — the cutover carried the
+outstanding part of a receipt and the book's invoice bills the whole of it.
+
+**A sofa is ONE line in the book and one row per compartment here**, and the
+backfill gives every compartment the same key by design. The invoice gets ONE
+line; its `grn_item_id` is left NULL rather than pointed at whichever
+compartment sorts first, and `linked_ac_dtlkey` carries the identity. Every one
+of that line's compartment rows has its `invoiced_qty` consumed when it is
+invoiced, so the receipt actually closes.
+
+Three surface changes follow, and they are the ones to know before reading a run:
+
+| what changed | why |
+|---|---|
+| `ambiguous_autocount_invoices` can no longer arise on the purchase path | the book's LINE states which invoice it is on, so a receipt billed across several invoices is SPLIT into one ERP invoice per book invoice instead of refused. `src/scm/lib/migrated-chain.ts` still carries the rule for any other caller |
+| a new refusal, `book_invoice_bills_none_of_our_lines` | decided in the converter, not the planner: the receipt exists in the book but none of OUR lines appears on any of its invoices |
+| a new refusal, `no_book_line_key_on_our_receipt` | not one row of the receipt carries `linked_ac_dtlkey`, so nothing on it can be read against the book. **Not waiting on the backfill** — that ran to exhaustion on the same book cut (run 34355496796, APPLY, "0 to stamp ... 576 already keyed; 73 NOT stamped") and REFUSED these: two lines of one item it cannot tell apart, an uneven sofa fold, or an item the book has no matching line for |
+| a FOREIGN-currency purchase invoice is refused | the book states a line in MYR and in the document's currency, and the migrated purchase order was written with a hard-coded MYR — mixing them books an exchange rate as a discount (`docs/bugs/0665`). 20 of 5,283 are foreign; none in scope today |
+
+**What it produces, measured — prod dry run 34365807410, read-only, 2026-09-09.**
+Of 473 migrated goods receipts, 412 had something left to invoice and carried
+657 lines. **506 of those 657 carry the book's line key** (459 distinct book
+receipt lines; the gap is sofa compartments sharing one), the book's invoices
+bill **362** of those 459, and the run would write **141 invoices** made of
+**362 lines, every one copied from PIDTL**. 31 of the 362 stand for several of
+our rows (a sofa) and point at one while consuming all. Refused: 72 receipts where
+no row carries a book line key, 61 with nothing left to invoice, 57 the book's
+invoices bill none of. Before this change the same run wrote 159 invoices from
+our own receipt rows, whose line amounts were not the book's.
+
+The purchase half no longer opens `ac-invoice-refs.json.gz` at all — invoice,
+lines, date and cancellation all come from `ac-reconcile-truth.json.gz`, so one
+plan cannot describe two vintages. That file's 2-day freshness gate now applies
+only when the SALES half runs, which is the half that still reads it. The book
+snapshot has a gate of its own, same limit. `docs/bugs/0766`.
+
 **And `scm.write_freeze` does NOT gate this script.** The freeze is HTTP-layer
 middleware (`src/scm/index.ts:127`); this converter opens Postgres directly and
 never reads the row (`grep`: zero hits). A frozen module is a statement about the
