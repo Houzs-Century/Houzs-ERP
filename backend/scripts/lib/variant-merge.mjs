@@ -69,8 +69,23 @@ export const OWNED_VARIANT_KEYS = Object.freeze([
   "size",
 ]);
 
-/* The keys the SOFA backfill owns. A sofa has no divan, leg or gap, so those
+/* The keys the SOFA backfill owns. A sofa has no divan and no gap, so those
    must never appear in a sofa patch — its dimensional axis is the seat.
+
+   ── `legHeight` IS A REAL SOFA AXIS, AND IT IS LEFT OUT ON PURPOSE ──────────
+   This comment used to say "a sofa has no divan, leg or gap", and the leg third
+   of that is false: `src/scm/shared/so-variant-rule.ts` gives the SOFA group a
+   Leg Height picker (aliases `legHeight` / `sofaLegHeight`, required false),
+   `scripts/backfill-sofa-leg-default.mjs` fills it, and HC-SO-010284 carries
+   `legHeight: "1\""` on every compartment of its build. A reader that believed
+   this sentence is how the leg ended up with nowhere to go and was filed as a
+   special order instead (`docs/bugs/0741`).
+
+   It stays out of the OWNED list all the same, and that is a different
+   statement: this is the FABRIC-LIBRARY sweep, it exists to re-resolve colours
+   and the seat, and a leg is not its business. The leg is now READ and COMPARED
+   by lib/variant-reconcile.mjs; nothing in this lane writes one. Adding it here
+   would make a colour sweep start writing heights.
 
    `seatHeight` is here and in no other owned list because until now NOTHING
    swept sofa at all: `refresh-po-variants.mjs` and `refresh-so-variants.mjs`

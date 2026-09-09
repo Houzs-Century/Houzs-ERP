@@ -56,7 +56,12 @@ function run(sql: string, args: unknown[]): Row[] {
     if (byId) {
       return projects.filter((p) => p.id === args[0] && p.contractor === args[1] && live(p));
     }
-    return projects.filter((p) => p.contractor === args[0] && live(p));
+    const mine = projects.filter((p) => p.contractor === args[0] && live(p));
+    // The export's month window: binds are [contractor, last day, first day].
+    if (/substr\(p\.start_date, 1, 10\) <= \?/.test(sql)) {
+      return mine.filter((p) => String(p.start_date).slice(0, 10) <= String(args[1]) && String(p.end_date ?? p.start_date).slice(0, 10) >= String(args[2]));
+    }
+    return mine;
   }
   if (table === "share_export_log") {
     exportLog.push({ kind: args[0], subject: args[1], token: args[2], ip: args[3], row_count: args[4] });
@@ -197,7 +202,7 @@ describe("public contractor calendar — unfilled floorplan", () => {
   });
 
   test("export carries Date/Venue/State/Organizer/Brand/Type/Booth/Size, never sales, never reads project_finance, and is logged", async () => {
-    const res = await get(`/${TOKEN}/export`);
+    const res = await get(`/${TOKEN}/export?month=2026-09`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { contractor: string; rows: Array<Record<string, unknown>> };
     expect(body.contractor).toBe(MINE);
@@ -207,6 +212,35 @@ describe("public contractor calendar — unfilled floorplan", () => {
     expect(Object.keys(body.rows[0])).not.toContain("totalSales");
     expect(touched).not.toContain("project_finance");
     expect(exportLog).toEqual([{ kind: "contractor", subject: MINE, token: TOKEN, ip: "unknown", row_count: 1 }]);
+  });
+
+  test("export covers ONLY the month asked for; no month = the whole schedule (an old tab); a malformed month is refused", async () => {
+    // The September show is not an October export.
+    const oct = await get(`/${TOKEN}/export?month=2026-10`);
+    expect(oct.status).toBe(200);
+    expect((await oct.json() as { rows: unknown[] }).rows).toEqual([]);
+    expect(exportLog).toEqual([{ kind: "contractor", subject: MINE, token: TOKEN, ip: "unknown", row_count: 0 }]);
+    // A show straddling the month end is in BOTH months.
+    projects[0].start_date = "2026-08-30";
+    projects[0].end_date = "2026-09-02";
+    for (const m of ["2026-08", "2026-09"]) {
+      const r = await get(`/${TOKEN}/export?month=${m}`);
+      expect((await r.json() as { rows: unknown[] }).rows.length).toBe(1);
+    }
+    // No month at all: the page from before 2026-09-09 still asks this way until
+    // it reloads, and it must keep getting the whole schedule.
+    exportLog = [];
+    const all = await get(`/${TOKEN}/export`);
+    expect(all.status).toBe(200);
+    expect((await all.json() as { rows: unknown[] }).rows.length).toBe(1);
+    expect(exportLog).toEqual([{ kind: "contractor", subject: MINE, token: TOKEN, ip: "unknown", row_count: 1 }]);
+    // A month that is present but malformed: refused, nothing logged.
+    exportLog = [];
+    for (const q of ["?month=2026", "?month=2026-13", "?month=all"]) {
+      const r = await get(`/${TOKEN}/export${q}`);
+      expect(r.status).toBe(400);
+    }
+    expect(exportLog).toEqual([]);
   });
 
   test("an unknown or revoked token gets the same 404 on every route", async () => {

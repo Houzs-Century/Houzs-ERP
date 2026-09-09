@@ -698,8 +698,24 @@ narrowed by `user_companies` — with two rules worth knowing before you reuse i
   `user_companies` is empty and `companyContext` never consults it; filtering on
   an empty grant set would silence the channel entirely.
 
-The audience then expands UP each approver's `manager_id` chain, the same
-`uplineUserIds` rule `assrNotify` uses.
+The audience then expands UP each approver's `manager_id` chain — but **not all
+the way**. The top `UPLINE_TOP_LEVELS_EXCLUDED` (2) levels of every chain are
+trimmed off (`amendmentNotify.ts`), which is where this differs from
+`assrNotify`, which walks to the root.
+
+**Why the trim exists, in the module's own words.** The wildcard exclusion above
+was meant to keep the owner off every amendment. It did not work: the upline
+expansion put them straight back through the front door, because every
+purchasing and logistics desk chains up through the same two people to the Owner
+account. Six days of prod data (2026-09-03 → 09-09) showed **every** approver
+audience reading `[1, 4, 5, …]` — the channel was on its way to being muted by
+the very people it exists to reach, which is the exact failure this file's own
+header warns about. Owner ruling 2026-09-09: cut the chain two levels below its
+top. The desk still gets it, their manager still gets it, the two above do not.
+
+Trimming is by DEPTH, never by naming ids, so it stays true as the org chart
+moves — and the seed itself is never trimmed: an approver who reports straight
+to the top must still hear about the thing only they can sign.
 
 ---
 

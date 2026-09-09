@@ -52,9 +52,13 @@ function run(sql: string, args: unknown[]): Row[] {
   if (table === "projects") {
     if (!/\bbrand = \?/.test(sql)) throw new Error("a projects read without the brand predicate: " + sql);
     const byId = /WHERE (p\.)?id = \?/.test(sql);
-    const rows = byId
+    let rows = byId
       ? projects.filter((p) => p.id === args[0] && p.brand === args[1] && live(p))
       : projects.filter((p) => p.brand === args[0] && live(p));
+    // The export's month window: binds are [brand, last day, first day].
+    if (/substr\(p\.start_date, 1, 10\) <= \?/.test(sql)) {
+      rows = rows.filter((p) => String(p.start_date).slice(0, 10) <= String(args[1]) && String(p.end_date ?? p.start_date).slice(0, 10) >= String(args[2]));
+    }
     if (/project_finance/.test(sql)) {
       return rows.map((p) => ({ ...p, size_sqm: p.size_sqm, total_sales: finance.find((f) => f.project_id === p.id)?.total_sales ?? null }));
     }
@@ -182,7 +186,7 @@ describe("public brand calendar", () => {
   });
 
   test("export is brand-scoped, carries total sales, and is logged once", async () => {
-    const res = await get(`/${TOKEN}/export`);
+    const res = await get(`/${TOKEN}/export?month=2026-09`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { brand: string; generatedAt: string; rows: Array<Record<string, unknown>> };
     expect(body.brand).toBe(AKEMI);

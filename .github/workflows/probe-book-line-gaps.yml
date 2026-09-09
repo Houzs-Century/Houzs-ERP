@@ -1,0 +1,71 @@
+name: What do WE hold on these documents (read-only)
+
+# `diag-doc-differ-cause.yml` prints the reconcile's finding and the ACCOUNT
+# BOOK's lines, and deliberately opens no database connection — so every plan to
+# repair one of those documents had to be written against a GUESS about our own
+# side: which row carries which AutoCount key, what quantity it states, what its
+# money is, whether it moved stock. Guessing that is how a dry run once came to
+# plan copying one sofa's price three times.
+#
+# This one prints OUR side beside the book's. It compares nothing: there is no
+# equality test in the script and its output is two listings, not a verdict.
+# `check-ac-erp-reconcile.mjs` stays the only thing in this repo that decides
+# whether a book value and an ERP value differ.
+#
+# READ-ONLY: every statement is a SELECT, there is no mode input, no apply path,
+# no transaction and no write of any kind.
+#
+# Manual trigger only, and it REFUSES without a document list — it is a probe of
+# named documents, never a sweep.
+on:
+  workflow_dispatch:
+    inputs:
+      type:
+        description: "Document type (SI is spelled IV, the book's own name)"
+        required: true
+        default: "DO"
+        type: choice
+        options: [SO, PO, GR, DO, IV, PI]
+      docs:
+        description: "ERP document numbers, comma separated (e.g. HC-DO-010332,HC-DO-011465). Required."
+        required: true
+        default: ""
+        type: string
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+
+# Its OWN group, and NOT cancel-in-progress: several lanes are reading this book
+# at once and asking a question must never cancel somebody else's answer.
+concurrency:
+  group: probe-book-line-gaps
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Both sides
+        run: node scripts/probe-book-line-gaps.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TYPE: ${{ inputs.type }}
+          DOCS: ${{ inputs.docs }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
