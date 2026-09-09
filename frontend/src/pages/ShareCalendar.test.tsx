@@ -60,7 +60,7 @@ const event = {
 
 /** A fake of both public routes, keyed on the URL's tail. */
 function serve(url: string): Promise<Response> {
-  if (url.endsWith("/export")) {
+  if (/\/export\?month=\d{4}-\d{2}$/.test(url)) {
     const brand = url.includes("/brand-calendar/");
     return json({
       ...(brand ? { brand: "AKEMI" } : { contractor: "DREAM ART (M) SDN BHD" }),
@@ -104,13 +104,18 @@ describe("ShareCalendar", () => {
     expect(urls.every((u) => u.includes("/brand-calendar/"))).toBe(true);
   });
 
-  it("export: contractor gets eight columns; brand adds Total Sales and a Confidential footer", async () => {
+  it("export: asks for the month on screen; contractor gets eight columns; brand adds Total Sales and a Confidential footer", async () => {
     window.history.pushState({}, "", `/c/${TOKEN}`);
     fetchMock.mockImplementation((input: RequestInfo | URL) => serve(String(input)));
     const { unmount } = render(<ShareCalendar mode="contractor" />);
     await screen.findByText(/Booth 3053-3055/);
     fireEvent.click(screen.getByText("Export to Excel"));
     await waitFor(() => expect(written.length).toBe(1));
+    const d = new Date();
+    const thisMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    expect(fetchMock.mock.calls.map((c) => String(c[0])).filter((u) => u.includes("/export"))).toEqual([
+      expect.stringMatching(new RegExp(`/contractor-calendar/.*/export\\?month=${thisMonth}$`)),
+    ]);
     expect(sheets[0][0]).toEqual(["Date", "Venue", "State", "Organizer", "Brand", "Type", "Booth", "Size (sqm)"]);
     expect(sheets[0][1]).toEqual(["11/09/2026 – 13/09/2026", "MID VALLEY", "SELANGOR", "HOMELOVE", "AKEMI", "ROADSHOW", "3053", 72]);
     expect(sheets[0].flat()).not.toContain("Confidential");
