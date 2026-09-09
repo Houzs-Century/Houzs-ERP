@@ -78,7 +78,7 @@ const READERS = {
   },
   DO: {
     acOf: (d) => d.replace(/^HC-(DO-)/, "$1"),
-    header: (d) => sql`SELECT do_number AS doc_no, linked_ac_docno, status, local_total_sen, so_number
+    header: (d) => sql`SELECT do_number AS doc_no, linked_ac_docno, status, local_total_sen, so_doc_no
       FROM scm.delivery_orders WHERE company_id = ${CO} AND do_number = ${d}`,
     lines: (d) => sql`SELECT i.id::text, i.line_no, i.item_code, i.item_group, i.line_suffix, i.qty::float8 AS qty,
         i.unit_price_sen, i.linked_ac_dtlkey::text AS dtlkey, i.description2, i.variants, i.custom_specials,
