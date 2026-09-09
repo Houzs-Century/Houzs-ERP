@@ -148,6 +148,14 @@ try {
   for (const p of planned) {
     console.log('');
     console.log(`${p.row.doc_no}  ${p.row.item_code}`);
+    /* BOTH FIELDS, because the SPECIAL segment is their concatenation —
+       variant-summary.ts: `[...picked, ...recordedRaw]` over `variants.specials`
+       and `variants.specialsRecorded`. The first plan changed only the former
+       and the rendering barely moved; printing one field while the reader is
+       looking at the sum of two is how that happened. */
+    const cur = p.row.variants ?? {};
+    console.log(`  variants.specials         ${JSON.stringify(cur.specials ?? cur.special ?? null)}`);
+    console.log(`  variants.specialsRecorded ${JSON.stringify(cur.specialsRecorded ?? null)}`);
     console.log(`  before ${String(p.edit.wasRendered.length).padStart(3)}  ${p.edit.wasRendered}`);
     console.log(`  after  ${String(p.after.length).padStart(3)}  ${p.after}`);
     if (p.after.length > AC_DESC2_MAX) console.log('  STILL OVER — this edit does not solve it');
