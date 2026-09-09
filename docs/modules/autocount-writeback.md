@@ -5768,3 +5768,39 @@ that, along with the identity case and the never-truncates case.
 rule can shorten. Those two still need the owner or a shorter note. The other
 four fix themselves: `HC-SO-012312` x3 and `HC-PO-2609-017` need the document
 SAVED once, and no repair script at all, because the shortening happens on send.
+## A re-queue sends ONE rebuild per document, not one per refusal (2026-09-09)
+
+New SURFACE on `backend/src/scm/lib/autocount-requeue.ts`: `editRebuildVerdict`
+can now answer `already-queued`, and `requeueSkipped` collapses a sweep to one
+re-queue per document. Nothing else about the ladder moved.
+
+**Why a sweep could count wrong.** A document refused N times carries N rows —
+`HC-SO-012312` has twenty-one, one per save made while its Description 2 was over
+the account book's 100 characters. The sweep climbed the ladder for each of them
+and answered `would-requeue 21` for ONE sales order, measured in DRY RUN against
+production (run `34393385833`).
+
+**Why that mattered more than tidiness.** A rebuild clears the document's details
+in the live book and lays the ERP's lines down again, reissuing every `DtlKey`.
+Twenty-one of those is twenty-one `InternalSave` calls over the tunnel to the
+office PC, on a document that needed one.
+
+**Why collapsing is correct and not a shortcut.** A rebuild is not a delta. It
+writes the ERP's lines AS THEY STAND, so the first one already carries what all
+twenty-one saves added up to; rows two to twenty-one have nothing left to say.
+This is the same reasoning the ladder already applies to `row-pending`.
+
+**Two guards, because one cannot answer in a dry run.**
+
+- `pendingRowForDocument` reads the queue: a PENDING row for this document, of
+  any op, refuses the rebuild. **Pending only, never `sent`** — a document the
+  write-back has succeeded on carries a `sent` edit row for every save it has
+  ever made, and vetoing on those would refuse every document that works.
+- `REQUEUE_PUTS_IT_ON_ITS_WAY` plus a per-document set inside `requeueSkipped`'s
+  loop, so the DRY RUN predicts the one send APPLY will make. A dry run writes no
+  pending row, so the first guard is blind to it, and this module's promise is
+  that a dry run can only disagree with APPLY about whether the row lands.
+
+The CREATE path already had this (`existingCreateRow`); only the edit path was
+missing it. Trace and the red-first proof in
+`docs/bugs/0771-a-re-queue-sweep-would-have-rebuilt-one-sales-order-twenty-o.md`.
