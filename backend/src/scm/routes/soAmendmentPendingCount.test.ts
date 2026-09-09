@@ -84,6 +84,19 @@ describe('GET /so-amendments/pending-count', () => {
     ).toBe(3);
   });
 
+  it('answers 0 for the WILDCARD holder — the Owner account carries no badge', async () => {
+    /* Owner ruling 2026-09-09, after the notice and the badge disagreed in
+       production: `*` opens every gate, so hasHouzsPerm says yes and the Owner
+       account was carrying every desk's backlog on its menu while the bell —
+       which already excluded the wildcard — said nothing. One rule now. The
+       wildcard holder can still approve anything and still sees every row
+       inside the module; they are simply not told it is theirs. */
+    expect(await countFor(['*'])).toBe(0);
+    // …and a literal key alongside the wildcard still counts, because that
+    // person IS on the rota.
+    expect(await countFor(['*', 'scm.amendment.approve_lines'])).toBe(2);
+  });
+
   it('answers 0 for someone who cannot approve — the badge never renders', async () => {
     // Raising an amendment is not signing one. A salesperson who can create
     // must not carry a number they can do nothing about.
