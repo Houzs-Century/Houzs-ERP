@@ -268,7 +268,7 @@ with no per-area level consulted.
 | PATCH | `/:id/submit` | `:2904` | Legacy no-op/echo — returns 409 unless already SUBMITTED. Also 409 `purchase_location_id_required` if the PO has no ship-to warehouse (2026-08-02). |
 | PATCH | `/:id/confirm` | `:2998` | **The commit**: DRAFT → SUBMITTED. Blocked 409 `purchase_location_id_required` (via `poWarehouseGap`) if the header `purchase_location_id` is blank AND any line has no `warehouse_id` — a warehouse-less PO can't go live because its GR would receive into the wrong warehouse (owner 2026-08-02). |
 | POST | `/:id/send-to-supplier` | `:3019` | Email the PO PDF. Fail-closed on the `purchase_order` email channel (`:3032`). |
-| PATCH | `/:id/cancel` | `:3182` | → CANCELLED; releases SO quota AND clears the line's mig-0235 allocation sub-lines (a cancelled PO attributes nothing — 2026-08-02). |
+| PATCH | `/:id/cancel` | `:3182` | → CANCELLED; releases SO quota AND clears the line's mig-0235 allocation sub-lines (a cancelled PO attributes nothing — 2026-08-02). **Since 2026-09-08 a non-DRAFT PO reaches this only after a cancellation request with a reason has been approved (one Purchaser signature)** — `cancelApprovalGuard('PO')` at the mount refuses 403 `cancel_approval_required` otherwise (`docs/modules/document-cancel-approval.md`). A DRAFT still cancels directly. |
 | PATCH | `/:id/reopen` | `:3276` | CANCELLED → SUBMITTED; re-claims SO quota. Allocation sub-lines are NOT restored (they were cleared on cancel); the coarse `so_item_id` link remains, re-split via the allocation editor if needed. **Since 2026-08-13 it also runs `poWarehouseGap` and stamps `submitted_at`** — reopen was the third door to SUBMITTED and the only one with no warehouse gate, so cancel-then-reopen turned a warehouse-less DRAFT into a live, GR-receivable PO. |
 | POST | `/bulk-supplier-date` | — | **Was missing from this table until 2026-08-13.** Sets ONE supplier-REVISED delivery-date slot (`slot` 2/3/4 → `supplier_delivery_date_2..4`) across up to 100 POs. It never touches `supplier_id` and never touches `expected_at`. `applyToLines` **defaults to TRUE**, so unless the caller opts out it cascades onto every line's date as well. A downstream-locked or foreign-company PO is reported in `skipped`, never written; each updated PO still gets its own audit row. |
 
@@ -405,7 +405,8 @@ works and is multi-select at line level — but only for a line that is
   stamps `submitted_at`, writes a `POST` audit row, then runs `recomputeSoPicked`
   best-effort (`:2983-2989`). Idempotent on SUBMITTED / PARTIALLY_RECEIVED
   (`:2943`); rejects anything else with 409.
-- **Cancel** (`:3182`). Refuses RECEIVED (`:3200`); idempotent on CANCELLED;
+- **Cancel** (`:3182`). Behind the reason + one-approval request for any non-DRAFT PO
+  (`document-cancel-approval.md`). Refuses RECEIVED (`:3200`); idempotent on CANCELLED;
   then two locks — `poHasDownstream` (`:3208`) and `poHasOutstandingDropshipOut`
   (`:3214`). Releases every converted SO line's quota via `recomputeSoPicked`
   (`:3251-3259`).
@@ -746,7 +747,7 @@ those are what the route actually selects.
 |-------|------|
 | `scm.purchase_orders` | PO header. `po_number` (UNIQUE), `supplier_id`, `status`, `po_date`, `expected_at`, `purchase_location_id` (FK → `warehouses.id`), `currency`, `subtotal_sen` / `tax_sen` / `total_sen`, `submitted_at` / `received_at` / `cancelled_at`, `revision`, `supplier_delivery_date_2..4`, `company_id`. |
 | `scm.purchase_order_items` | PO lines. `binding_id`, `material_kind` / `item_code` / `material_name`, `supplier_sku`, `qty`, `received_qty`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, variant columns (`item_group`, `variants`, `gap_inches`, `divan_*`, `leg_*`, `custom_specials`, `line_suffix`, `special_order_price_sen`), `delivery_date`, `warehouse_id`, `supplier_delivery_date_2..4`, `so_item_id`, `from_mrp`, `photo_urls` (mig 0274 — see *Line photos* below), `linked_ac_dtlkey` (mig 0273 — AutoCount `PODTL.DtlKey`; indexed, NOT unique — one AutoCount sofa line becomes one ERP line per compartment and every one carries the same key). |
-| `scm.purchase_order_items`.`variants` ownership | The jsonb has several writers and no schema. The AutoCount re-parse sweep (`refresh-po-variants.mjs`) owns only `OWNED_VARIANT_KEYS` (`backend/scripts/lib/variant-merge.mjs`) — fabric/colour + gap/divan/leg/total + size — and MERGES them (`variants = variants \|\| patch`); it must never rebuild the object, which deletes every key it has not heard of. `specials` (and the HOOKKA singular `special`) belong to `backfill-specials-into-variants.mjs`, the only writer with the money guard. `custom_specials` on a PO line is neither derived nor script-free: `POST /:id/items` and `PATCH /:id/items` store `it.customSpecials` VERBATIM from the request body with no recompute (`:3044`, `:3176` — unlike the SO / consignment routes), and three repair scripts write the column directly on `scm.purchase_order_items` (`backfill-sofa-special-orders.mjs`, `census-custom-specials-arrays.mjs`, `repair-custom-specials-double-encoded.mjs`). It has no single owner. |
+| `scm.purchase_order_items`.`variants` ownership | The jsonb has several writers and no schema. The AutoCount re-parse sweep (`refresh-po-variants.mjs`) owns only `OWNED_VARIANT_KEYS` (`backend/scripts/lib/variant-merge.mjs`) — fabric/colour + gap/divan/leg/total + size — and MERGES them. `totalHeight` in that patch is `null` whenever `parseBedframe` reports an EXPLICIT `TBC` / `KIV` against the divan, the gap or the leg: nobody knows how tall `Divan: TBC / Gap: 12"` is, and the old expression answered `12"` because `Number(undefined) \|\| 0` counted "not chosen yet" as zero (`docs/bugs/0732`, finished in `docs/bugs/0734`). A component the text merely never MENTIONS is untouched — a divan with no leg mentioned still means no leg (`0`) (`variants = variants \|\| patch`); it must never rebuild the object, which deletes every key it has not heard of. `specials` (and the HOOKKA singular `special`) belong to `backfill-specials-into-variants.mjs`, the only writer with the money guard. `custom_specials` on a PO line is neither derived nor script-free: `POST /:id/items` and `PATCH /:id/items` store `it.customSpecials` VERBATIM from the request body with no recompute (`:3044`, `:3176` — unlike the SO / consignment routes), and three repair scripts write the column directly on `scm.purchase_order_items` (`backfill-sofa-special-orders.mjs`, `census-custom-specials-arrays.mjs`, `repair-custom-specials-double-encoded.mjs`). It has no single owner. |
 | `variants` — the reviewed hand-patch escape hatch | `apply-variant-patch.mjs` is the only writer allowed keys outside `OWNED_VARIANT_KEYS`, because its patch is a human-reviewed artifact submitted per batch through a workflow input (it exists to set things like `seatHeight` that no parser derives). It writes through `mergeReviewedVariantPatch` (`lib/variant-merge.mjs`): merged in the DATABASE, guarded on `jsonb_typeof(...) = 'object'`, counted from `RETURNING`, and re-read on a fresh connection. Geometry uses `COALESCE`, so a patch silent about `gap` leaves `gap_inches` alone — unlike the sweep, which is entitled to restamp all three from the text it just parsed. |
 | `scm.purchase_order_item_allocations` | mig 0235 — sub-line slices of ONE PO line across customers + stock: `company_id` (NOT NULL), `purchase_order_item_id` FK CASCADE, `seq` (1-based dense, UNIQUE per line), `qty` (>0, SUM <= line qty via triggers), `so_item_id` FK SET NULL (NULL = stock), `created_by`, `created_at`. Attribution only — no stock/money/quota. |
 | `scm.po_revisions` | Full header+items snapshot per revision, keyed `(po_id, revision)`. Written by `snapshotPo` / `reviseBoundPo` (`backend/src/scm/lib/so-revision.ts:861`, `:991`). |
@@ -944,6 +945,34 @@ shape-blind — no CHECK constraint, and the signed/proxy routes authorise by
 MEMBERSHIP of the row's `photo_urls`, never by key shape. The importer's append
 (`ARRAY(SELECT DISTINCT unnest(COALESCE(photo_urls,'{}') || <keys>))`) is why
 the column must stay NOT NULL with a `'{}'` default.
+
+**A SOFA BUILD IS ONE PICTURE, ON THE FIRST COMPARTMENT.** One AutoCount line
+becomes one ERP line per compartment, all carrying the same `linked_ac_dtlkey`,
+and the importer hangs the photograph on the first of them only (owner
+2026-08-10). The siblings hold an empty `photo_urls` BY DESIGN, so a per-ROW
+count of "lines with no photo" is not the gap: measured on production 2026-09-08
+(run `34221745956`), 184 purchase-order rows read as missing and **175 of them
+were siblings of a line that already shows one** — the real figure was 7 lines.
+The unit is the AutoCount LINE. `probe-line-photo-gap.mjs` asks it that way; see
+the fuller note in `docs/modules/sales-order.md` §*The AutoCount migration's
+photos*.
+
+**THOSE 7 ARE CLOSED, AND THE WAY THEY CLOSED IS THE PART WORTH KEEPING.** Run
+`34227291924`, prod, 2026-09-08: **240 of 240 photographed purchase-order lines
+in the ERP now show their picture, MISSING 0.** Their objects had never been
+uploaded — an interrupted batch, traceable in the operator machine's own
+done-list — so this needed an UPLOAD and then an attach, not a re-point.
+
+**Do NOT close a gap like that with `import-po-line-photos.mjs APPLY=1`.** It was
+measured before it was trusted and it would have written **25** addresses where
+the gap needed 10. The other 15 sit on lines that already show their picture,
+and R2 holds none of those 15 objects — that is
+`docs/bugs/0625-a-backfill-replayed-the-round-1-photo-key-log-without-asking.md`
+again. The importer cannot know: it runs in Actions and has no R2 token, because
+this repository is PUBLIC. The narrow path is
+`backend/scripts/attach-uploaded-line-photos.mjs` — it asks R2 on the operator
+machine, refuses any address whose object is absent and any line that already
+shows one, and hands the writer a plan file. `docs/bugs/0720-…` has the trace.
 
 **TWO SCREENS OFFER THE CONTROL, AND THEY MUST NOT DRIFT (2026-08-28).** The
 strip is on the PO's TABLE view (`PurchaseOrderDetailV2`, a `Photos` column) AND
@@ -1575,3 +1604,72 @@ normalised before two codes are called different.
 the tenth; deciding which of the two rows is the faithful copy — did the customer
 change the bed, or did the sales-order import mis-map it? — is the owner's.
 Ledger: `docs/bugs/0671-the-delta-sync-dedicated-9-sales-order-lines-to-purchase-ord.md`.
+
+## A sofa's purchase line and its sales compartments (2026-09-08)
+
+**One book line, one ERP row per compartment — on BOTH sides, or the sofa never
+ships.** `so_item_id` is single-valued, so a decomposed sofa needs one purchase
+row per sales compartment. Where the two sides hold a different NUMBER of rows,
+no dedication can be written at all, `isHardBoundLine` never lights the sales
+line, and every delivery-order entry point answers 409 `sofa_no_batch` — with
+the *"have no live supplier PO linked"* tail, which is the honest message and
+also the one that hides the real cause.
+
+Three tools own this edge and they do not overlap:
+
+| shape | tool | why it refuses the others |
+| --- | --- | --- |
+| ONE purchase row, ONE sales row | `repair-po-so-link-from-book.mjs` | a Map keyed by DtlKey would keep one row of a multi-row side |
+| SEVERAL on both sides, same products | `repair-po-so-link-sofa-compartments.mjs` | the pairing is a copy plus an identity match, not a choice |
+| ONE collapsed purchase row (`{model}-1S`), SEVERAL sales rows | `repair-collapsed-sofa-po-line.mjs` | the other two cannot invent a compartment; this one takes it from the BOOK's own Desc2 and only when the sales side already holds that exact multiset |
+| the same, but the purchase row is filed `others` AND carries a migrated, movement-free goods-receipt line | `repair-mislabelled-sofa-po-lines.mjs` | the row above refuses any build with a receipt line (its gate 6) and leaves the category alone; this one splits the receipt WITH the line (owner 2026-08-11) and writes `item_group = 'sofa'`, because the sofa stock import and `computeVariantKey` both key on it. Measured 2026-09-08: all 14 rows of this shape carry a receipt, so the row above reaches none of them (run 34220188752). `docs/bugs/0714-the-sofa-purchase-line-was-filed-as-others-so-the-sales-orde.md` |
+
+One shape in this family is NOT a purchase-line repair and is listed so nobody
+looks for it here: the same physical sofa holding TWO sets of stock lots. That
+is a lot problem, not a line problem — the sofa stock import keys a cell by
+(item, warehouse, batch, VARIANT KEY), so a build whose document gained or lost a
+special after its lots were opened is opened a second time. The tool is
+`backend/scripts/repair-duplicate-sofa-cutover-lots.mjs`, its workflow is
+**Retire the duplicate sofa cutover lots**, and the importer now REPORTS the
+shape instead of writing it ("RE-KEYED, NOT RE-OPENED").
+`docs/bugs/0721-the-sofa-stock-import-opened-a-second-set-of-lots-for-a-buil.md`
+and `docs/bugs/0723-three-sofa-builds-hold-stock-of-a-model-that-is-on-no-line-o.md`.
+
+All three share ONE pairing vocabulary — `scripts/lib/sofa-po-so-pair.mjs` and
+`scripts/lib/redecode-sofa-plan.mjs`. Two copies of the pairing rule existed for
+twenty minutes on 2026-09-08 and gave opposite answers on production about
+`HC-PO-010040`; do not write a fourth.
+
+**`{model}-1S` is ambiguous and that is the trap.** It is both the importer's
+"could not read the build" placeholder AND a legitimate one-seater. Only the
+`SOFA UNPARSED` remark separates them, and
+`redecode-collapsed-sofa-lines.mjs` requires BOTH (`isPlaceholderLine`). A
+purchase row that decoded to a single `1S` from a text today's parser reads as
+`2A(LHF)+1A(RHF)` carries no marker, so it is invisible to that tool — the class
+`docs/bugs/0715` was written about. Widening the predicate would rewrite live
+one-seaters; the narrow answer is to require the sales side to state the same
+multiset independently.
+
+**And do not key a sofa tool on the PURCHASE row's `item_group` either.** It did
+not survive the SO -> PO hop on this population — measured, run `34218446892`:
+BOTH rows of `HC-PO-009435`, the sofa and its pillows, answer "not a sofa". That
+is the second, independent reason `redecode-collapsed-sofa-lines.mjs` (corpus:
+`WHERE i.item_group = 'sofa'`) cannot see these documents. What makes the line a
+sofa is the SALES side and the piece codes. The category is a real defect —
+`computeVariantKey` reads it, so it changes which stock bucket the row matches —
+and it belongs to the `docs/bugs/0514` lane, not to a link repair.
+`docs/bugs/0716`.
+
+**A link does not recompute readiness** (`docs/bugs/0675`). After any of the
+three, dispatch *Recompute SO stock allocation*, then *Recompute SO
+po_qty_picked* — the SO -> PO ceiling those missing links left reading LOW is a
+symptom of the same gap, not a second defect
+(`docs/bugs/0705-nothing-ever-compared-the-erp-s-transfer-counters-to-autocou.md`).
+
+**The batch guard is never relaxed to make a document pass.** A sofa set must
+ship whole from one dye lot (`src/scm/lib/sofa-batch-guard.ts`). Once the link is
+right the line reaches READY through a covering batch, or through the owner's
+hard-binding rule with `allocated_batch_no` still NULL — in which case the ship
+goes through the drop-ship confirmation, which `buildDropshipOffenders` can only
+offer once every affected line has a bound PO. That is the difference the link
+makes; the guard itself does not move.

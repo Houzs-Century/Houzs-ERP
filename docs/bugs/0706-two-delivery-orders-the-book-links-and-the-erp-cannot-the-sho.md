@@ -81,6 +81,29 @@ documents is among the **40**. The reconcile compares line COUNT, item code,
 quantity and money per document; a LINK is none of those. Both delivery orders
 pass every one of its axes and are invisible to it by construction.
 
+**The ERP side, proved on a fresh connection.** `ac-transfer-counter-check` run
+[`34203192972`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34203192972),
+section 5, with `docs=DO-001800,DO-005583`:
+
+```
+    --- DO-001800
+        ERP delivery order HC-DO-001800 (linked_ac_docno = DO-001800) - 2 row(s)
+          row 579ed745... HB109NL    qty 3 | so_item_id NULL | key 223063
+          row c6b3b0d8... HB109M-CC  qty 3 | so_item_id NULL | key 223065
+          its lines resolve to sales order(s): NONE
+
+    --- DO-005583
+        ERP delivery order HC-DO-005583 (linked_ac_docno = DO-005583) - 1 row(s)
+          row 4152d5a3... AK-SK FX AIRLOFT PIL qty 2 | so_item_id NULL | key 506367
+          its lines resolve to sales order(s): NONE
+```
+
+Both delivery orders DO carry AutoCount's own line keys — `223063`, `223065`,
+`506367`, matching the book exactly — so this is not a keying gap. The line key
+is present and the sales-order link is absent, which is precisely the shape that
+proves the importer stopped where it should have: it knew which book line each
+row is, and still had no sales-order line to point at.
+
 **Ref.** PR pending, 2026-09-08.
 
 Module guide: `docs/modules/document-conversion.md` §10.4 G2.

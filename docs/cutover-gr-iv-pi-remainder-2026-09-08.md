@@ -226,6 +226,23 @@ invoice problems at all.
   `docs/cutover-so-do-remainder-2026-09-08.md` and belong to the delivery-order
   lane. **Repair those two delivery notes and `I-2410-0192` and `I-2411-0323`
   resolve themselves.** Nothing in this document touches them.
+
+  > **CONFIRMED 2026-09-08 18:12, and it was a prediction until then.** Both
+  > delivery notes are now repaired — `HC-DO-001604` by section G at 16:19,
+  > `HC-DO-001953` by `docs/bugs/0713` at 18:08 — and a DRY-RUN taken afterwards
+  > (run `34213920643`) reads
+  > `WOULD CREATE HC-I-2411-0323 ... from HC-DO-001953` and
+  > `WOULD CREATE HC-I-2410-0192 ... from HC-DO-001604`. `I-2411-0323` read
+  > `nothing_to_invoice` before that repair, so the sentence above is now
+  > measured rather than reasoned.
+  >
+  > **NEITHER HAS BEEN WRITTEN. UNTESTED as applied.** One dispatch of *Migrated
+  > invoices* (`mode=apply kind=si target=prod`, confirm `I HAVE REVIEWED THE
+  > DRY-RUN`) takes IV absent **4 -> 2**. It was not run by the delivery-order
+  > lane because this tool takes no per-document narrowing, so one apply writes
+  > both — and `HC-I-2410-0192` carries RM 6,688.00 on a document that lane never
+  > touched. **This is the cheapest remaining item on the reconcile and it is
+  > this document's lane, not that one's.**
 * `DO-000097`'s RM 50.00 does not surface on the reconcile at all — a migrated
   delivery order carries no money to compare — so it is only visible through this
   gate. `docs/bugs/0669`.
@@ -276,12 +293,30 @@ exclusion testing only `line_suffix` printed 40 decompositions as wrong products
 and it is recorded here rather than quietly deleted because the numbers from that
 run are cited above.
 
-Fixed by folding both sides through `lib/keyless-multiset.mjs`'s `comparisonKey`
-— the SAME canonicalisation the reconcile's own keyless verdict uses, rather than
-a second opinion — with one trap worth knowing: the fold reads the book's
-UNTRANSLATED code, because the book names a sofa `AMN-SF2379 SOFA` and the
-mapping sheet turns that into `2379-1S`, which contains no "SOFA" at all. Passing
-the translated string turns the fold off on exactly the rows it exists for.
+**The first fix was not enough, and that is the more useful half.** Folding both
+sides through `comparisonKey` cleared the two invoice rows and left the four
+receipts printing `book: SOFA 9058 x1` against `ours: SOFA 9058 x5` (run
+`34203599150`) — folding the CODE is not folding the QUANTITY, and five
+compartment rows are one sofa. Writing that division here would have been the
+third opinion about a sofa that caused the bug. The probe now calls
+`bagOf` + `compareBags` from `lib/keyless-multiset.mjs`, which folds our
+compartments by the BOOK's own build text and DIVIDES. One trap worth carrying
+away: the fold reads the book's UNTRANSLATED code, because the book names a sofa
+`AMN-SF2379 SOFA` and the mapping sheet turns that into `2379-1S`, which contains
+no "SOFA" at all — passing the translated string turns the fold off on exactly
+the rows it exists for. `docs/bugs/0707`.
+
+**RUN — `34206144168`, 16:44:** six false rows before, one after.
+`28 PROVEN identical, 1 carry a real difference, 0 genuinely undecidable` across
+the 29 partially-unkeyed receipts; PI reports the one real extra row and IV
+reports none. The survivor is a different defect and is recorded as one:
+`GR-000997|PO-001696`, where the book's own code for that sofa is `2379-1S` and
+says nothing about being a sofa, so `comparisonKey`'s BOOK branch does not fold
+it while our compartment code does — `docs/bugs/0709`. The reconcile does not
+count that document at all; it classifies it through `classifyItemCode`'s
+decomposition arm, which folds on the MODEL. Two modules, two definitions of
+"this is a sofa", which agree on every other row the probe compared and disagree
+on this one.
 
 **Nothing in sections A to D depended on the six**: the item-code verdict comes
 from `GR item code — 0 line(s) where the ERP row and the book line carry the SAME

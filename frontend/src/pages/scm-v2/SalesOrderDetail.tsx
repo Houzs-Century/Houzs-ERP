@@ -75,6 +75,7 @@ import { diffHeaderPayload, hasHeaderChanges } from '../../vendor/scm/lib/so-hea
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER,
   AMENDMENT_NOTHING_TO_SUBMIT } from '../../vendor/scm/lib/so-amendment-submit';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { addressLineProps } from '../../lib/addressLimit';
 /* lib/utils formatDate (NOT the vendored fmtDate) for the amendment's header
    dates: these are bare YYYY-MM-DD strings, and fmtDate's `new Date(d)` parses
    those as UTC midnight then renders in the DEVICE zone — the documented
@@ -147,6 +148,7 @@ import { RevisionsTab } from './so-revisions-tab';
 import styles from './SalesOrderDetail.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { HoldChip } from "../../vendor/scm/components/HoldChip";
+import { CancelRequestPanel } from "../../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "./use-cancel-request-action";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -485,6 +487,7 @@ export const SalesOrderDetail = () => {
   const detail = useMfgSalesOrderDetail(docNo ?? null);
   const updateHeader = useUpdateMfgSalesOrderHeader();
   const updateStatus = useUpdateMfgSalesOrderStatus();
+  const requestCancel = useCancelRequestAction('so');
   const deleteDraft = useDeleteMfgSalesOrder();
   const askConfirm = useConfirm();
   const askPrompt = usePrompt();
@@ -1709,14 +1712,10 @@ export const SalesOrderDetail = () => {
     setPayEditing((v) => !v);
   };
 
-  const handleCancelSo = async () => {
-    if (!(await askConfirm({
-      title: `Cancel ${header.doc_no}?`,
-      body: "The SO will stop proceeding — it won't appear in MRP / PO / DO conversion, and line edits lock. You can Reopen it later.",
-      confirmLabel: 'Cancel SO', danger: true,
-    }))) return;
-    updateStatus.mutate({ docNo: header.doc_no, status: 'CANCELLED', expectedStatus: header.status });
-  };
+  /* Cancel is a REQUEST now (owner 2026-09-08): a reason, then two approvals,
+     then the cancel itself — run by CancelRequestPanel on the second signature. */
+  const handleCancelSo = () => void requestCancel(header.doc_no, header.doc_no);
+  const executeCancel = () => updateStatus.mutate({ docNo: header.doc_no, status: 'CANCELLED', expectedStatus: header.status });
   /* Discard draft (owner 2026-07-20) — hard-delete a junk DRAFT (esp. a bad
      scan/OCR draft) instead of burning a doc number on confirm→cancel. Behind the
      house confirm dialog (no naked destructive action); the backend refuses
@@ -1913,13 +1912,13 @@ export const SalesOrderDetail = () => {
               ]}
               {...print.handlers}
             />
-            {/* Cancel SO (Commander 2026-05-29) — stops proceeding; final. */}
+            {/* Request cancellation (owner 2026-09-08) — a reason + two approvals; final once it runs. */}
             {!isCancelled && canCancel && !isEditing ? (
               <Button variant="ghost"
                 onClick={handleCancelSo} disabled={updateStatus.isPending}
                 style={{ color: 'var(--c-festive-b, #B8331F)' }}>
                 <Ban {...ICON} />
-                <span>Cancel SO</span>
+                <span>Request cancellation</span>
               </Button>
             ) : null}
             {/* PR-A — Page-level Edit/Save/Cancel.
@@ -2116,6 +2115,7 @@ export const SalesOrderDetail = () => {
           An amendment is in flight. Show its status pill + the gate actions,
           gated by permission AND the amendment's current state, plus a "view
           changes" link opening the before/after diff. */}
+      <CancelRequestPanel docType="so" docKey={header.doc_no} docNumber={header.doc_no} onExecute={executeCancel} executing={updateStatus.isPending} />
       {openAmendments.map((oa) => (
         <div key={oa.id} style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -2302,7 +2302,7 @@ export const SalesOrderDetail = () => {
                        (matches this page's Save gate + the backend), so the ` *`
                        marker + red ring stay off on a no-date draft (owner
                        2026-07-14). */
-                    variantsRequired={requireVariants}
+                    variantsRequired={requireVariants} seedSofaLegDefault={true}
                   />
                 </div>
               );
@@ -2327,7 +2327,7 @@ export const SalesOrderDetail = () => {
                     onChange={cb?.onChange ?? ((patch) => patchAddingDraft(staged.key, patch))}
                     onRemove={cb?.onRemove ?? (() => cancelAddLine(staged.key))}
                     canRemove={true}
-                    variantsRequired={requireVariants}
+                    variantsRequired={requireVariants} seedSofaLegDefault={true}
                   />
                 </div>
               );
@@ -3580,7 +3580,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <input className={styles.fieldInput} value={form.address1}
                 placeholder="Unit, street, area"
                 autoComplete="houzs-no-autofill"
-                disabled={inputsDisabled}
+                disabled={inputsDisabled} {...addressLineProps((v) => set('address1', v), { value: form.address2, set: (v) => set('address2', v) })}
                 onChange={(e) => set('address1', e.target.value)} />
             </label>
             <label className={`${styles.field}`} style={{ gridColumn: 'span 4' }}>
@@ -3588,7 +3588,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <input className={styles.fieldInput} value={form.address2}
                 placeholder="Apt, floor, building (optional)"
                 autoComplete="houzs-no-autofill"
-                disabled={inputsDisabled}
+                disabled={inputsDisabled} {...addressLineProps((v) => set('address2', v), null)}
                 onChange={(e) => set('address2', e.target.value)} />
             </label>
             {/* Owner spec 2026-07-23 — StatePicker (MY-default, click Others for CN/SG, Search). Same shared component as Warehouse / Supplier / Venue / MobileNewSO / SalesOrderNew. No `(legacy)` sneak-through, no free-text fallback. */}

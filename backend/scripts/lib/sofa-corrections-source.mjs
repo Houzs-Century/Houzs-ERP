@@ -26,10 +26,33 @@
 import fs from "node:fs";
 import path from "node:path";
 
-/** The files, oldest first. Order is the order the operator sees them applied. */
+/** The files, oldest first. Order is the order the operator sees them applied.
+ *
+ * ── WHY THE THIRD AND FOURTH FILES ARE NOT DATED ────────────────────────────
+ * `FILE=` is a SUBSTRING filter, so a file called `...-2026-09-08.json` would
+ * make `FILE=2026-09` select TWO rounds at once — which is why HC-SO-013475
+ * went into the 2026-09 file rather than a file of its own, and the test below
+ * pins that. These two are named by their SOURCE instead, which is the thing an
+ * operator actually needs to choose between:
+ *
+ *   `-book-aligned`   the ACCOUNT BOOK's own decoded text. No drawing was read.
+ *                     `FILE=book` plans that round alone.
+ *   `-drawings`       builds read off the ORDER SLIP's drawing. `FILE=drawings`.
+ *
+ * The distinction is not cosmetic. `lib/sofa-rulings.mjs` feeds every build in
+ * these files to the reconcile as `deps.sofaRuling`, and a RULED verdict means
+ * "the ERP differs from the book BY THE OWNER'S DECISION". A book-aligned build
+ * can never produce one — its target IS the book, so the multiset agrees and
+ * the ruling is never reached — but the `why` on every entry says which it is
+ * anyway, because the next person to read a build's provenance should not have
+ * to re-derive it from the verdict it happens to produce.
+ */
 export const CORRECTION_FILES = [
   "sofa-compartment-corrections-2026-08.json",
   "sofa-compartment-corrections-2026-09.json",
+  "sofa-compartment-corrections-book-aligned.json",
+  "sofa-compartment-corrections-drawings.json",
+  "sofa-compartment-corrections-purchase-side.json",
 ];
 
 /**

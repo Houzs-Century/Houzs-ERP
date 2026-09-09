@@ -20,6 +20,21 @@
 // ----------------------------------------------------------------------------
 
 import type { SoLineDraft } from '../../vendor/scm/components/SoLineCard';
+/* THE FAILURE VOCABULARY MOVED, it did not fork. `LineWriteFailure`, the
+   capture and the naming half of the message now live in
+   vendor/scm/lib/line-write-failures.ts so the PHONE editor can share them —
+   MobileNewSO.applyLineDiff was throwing every server refusal away and
+   rebuilding a sentence out of the count, which is how an AutoCount-locked
+   order told the owner to "try Save again" forever. Desktop's behaviour is
+   unchanged except that several lines refused by ONE cause now say that cause
+   once instead of once per line. */
+import {
+  lineWriteFailure,
+  namedFailures,
+  type LineWriteFailure,
+} from '../../vendor/scm/lib/line-write-failures';
+
+export type { LineWriteFailure };
 
 /** One new line the operator has staged but not yet saved. */
 export type StagedAddLine = {
@@ -101,8 +116,6 @@ export function firstBlankStagedAdd(list: StagedAddLine[]): number | null {
    was shown one message that named nothing — a refused price edit read as
    "failed to save" while the new line it aborted was never mentioned. */
 
-export type LineWriteFailure = { label: string; message: string };
-
 export type SettledLineWrites<T> = { done: T[]; failures: LineWriteFailure[] };
 
 export type LineWriteJob<T> = {
@@ -111,9 +124,6 @@ export type LineWriteJob<T> = {
   value: T;
   run: () => Promise<unknown>;
 };
-
-const messageOf = (e: unknown): string =>
-  e instanceof Error && e.message ? e.message : 'Something went wrong.';
 
 /** Independent rows (existing-line PATCHes, deletes) — still fired together,
  *  but SETTLED, so every one of them has finished before the caller decides
@@ -127,7 +137,7 @@ export async function settleParallelLineWrites<T>(
   settled.forEach((res, i) => {
     const job = jobs[i]!;
     if (res.status === 'fulfilled') done.push(job.value);
-    else failures.push({ label: job.label, message: messageOf(res.reason) });
+    else failures.push(lineWriteFailure(job.label, res.reason));
   });
   return { done, failures };
 }
@@ -156,7 +166,7 @@ export async function settleSequentialLineWrites<T>(
       await job.run();
       done.push(job.value);
     } catch (e) {
-      failures.push({ label: job.label, message: messageOf(e) });
+      failures.push(lineWriteFailure(job.label, e));
     }
   }
   return { done, failures };
@@ -197,10 +207,7 @@ export function lineWriteErrorMessage(
   failures: LineWriteFailure[],
   stillStaged: number,
 ): string {
-  const listed = failures.map((f) => `${f.label}: ${f.message}`).join(' · ');
-  const head = failures.length === 1
-    ? `Could not save ${listed}`
-    : `${failures.length} lines could not be saved — ${listed}`;
+  const head = namedFailures(failures);
   if (stillStaged <= 0) return `${head}.`;
   const noun = stillStaged === 1 ? 'new line is' : 'new lines are';
   return `${head}. Your ${stillStaged} ${noun} still on screen and not saved yet.`;

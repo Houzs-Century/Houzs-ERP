@@ -36,7 +36,7 @@ import { parseBedframe } from "./parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./parse-sofa.mjs";
 import { isPendingColour } from "./fabric-colour-match.mjs";
 import {
-  AGREE, BOOK_BLANK, DIFFER, ERP_BLANK, PENDING, RECORDED, UNREADABLE,
+  AGREE, BOOK_BLANK, DIFFER, ERP_BLANK, PENDING, RECORDED, RULED, UNREADABLE,
   compareLine, decodeBook, inches, multisetDiff, runSelfTest,
 } from "./variant-reconcile.mjs";
 
@@ -64,10 +64,11 @@ const DEPS = {
 
 const line = (over = {}) => ({ item_code: "CODY-(SS)", item_group: "bedframe", variants: {}, custom_specials: null, proceeded: true, ...over });
 
-const compare = (desc2, erpLines, proceeded = true) => {
+const compare = (desc2, erpLines, proceeded = true, extra = {}) => {
   const lead = erpLines[0];
-  const book = decodeBook(DEPS, { desc2, itemGroup: lead.item_group, itemCode: lead.item_code });
-  return compareLine(DEPS, { book, erpLines, proceeded }).axes;
+  const deps = extra.sofaRuling ? { ...DEPS, sofaRuling: extra.sofaRuling } : DEPS;
+  const book = decodeBook(deps, { desc2, itemGroup: lead.item_group, itemCode: lead.item_code });
+  return compareLine(deps, { book, erpLines, proceeded, erpNo: extra.erpNo ?? null }).axes;
 };
 
 test("the decoders behind the checker still decode — the startup self-test itself", () => {
@@ -147,9 +148,131 @@ test("sofa compartments compare as a MULTISET, never by position", () => {
   assert.match(short.compartments.detail, /MISSING 1A\(RHF\)/);
 });
 
+/* THE OWNER'S OWN RULINGS. 「一律跟账本。除了sofa compartment而已啊」 — the book
+   decides every axis EXCEPT the sofa build, which is his, so a ruled build is
+   SUPPOSED to differ from the book's words. docs/bugs/0714. */
+const RULING = { pieces: ["1A(LHF)", "2A(RHF)", "1B(RHF)"], source: "sofa-compartment-corrections-2026-09.json" };
+const ruledRows = (codes) =>
+  codes.map((c) => line({ item_code: `8069-${c}`, item_group: "sofa", variants: { seatHeight: '24"' } }));
+
+test("a build the owner ruled, and the ERP holds, is RULED and not DIFFER", () => {
+  const axes = compare("1S/24\"", ruledRows(["1A(LHF)", "2A(RHF)", "1B(RHF)"]), true, {
+    erpNo: "HC-SO-013327",
+    sofaRuling: () => RULING,
+  });
+  assert.equal(axes.compartments.verdict, RULED);
+  assert.ok(axes.compartments.detail.includes("the owner ruled this build 1A(LHF)+2A(RHF)+1B(RHF)"), axes.compartments.detail);
+  assert.match(axes.compartments.detail, /BY DECISION/);
+});
+
+test("RULED is NOT folded into AGREE — the ERP really does differ from the book", () => {
+  const axes = compare("1S/24\"", ruledRows(["1A(LHF)", "2A(RHF)", "1B(RHF)"]), true, {
+    erpNo: "HC-SO-013327",
+    sofaRuling: () => RULING,
+  });
+  assert.notEqual(axes.compartments.verdict, AGREE,
+    "folding it into agree would remove the only signal that catches a ruling applied to the WRONG document");
+  assert.equal(axes.compartments.book, "1S", "the book's own reading is still reported");
+});
+
+test("a ruling the ERP has NOT been moved to stays DIFFER, and names the answer it is missing", () => {
+  /* This is the exact state HC-SO-013327 was in on 2026-09-08: he had ruled
+     1B(RHF) and the ERP still held 1NA. It must never read as decided. */
+  const axes = compare("1S/24\"", ruledRows(["1A(LHF)", "2A(RHF)", "1NA"]), true, {
+    erpNo: "HC-SO-013327",
+    sofaRuling: () => RULING,
+  });
+  assert.equal(axes.compartments.verdict, DIFFER);
+  assert.ok(axes.compartments.detail.includes("the owner ruled 1A(LHF)+2A(RHF)+1B(RHF) and the ERP does NOT hold it"), axes.compartments.detail);
+});
+
+test("no ruling means nothing changes — the verdict is the book comparison alone", () => {
+  const axes = compare("1S/24\"", ruledRows(["1A(LHF)", "2A(RHF)", "1NA"]), true, {
+    erpNo: "HC-SO-999999",
+    sofaRuling: () => null,
+  });
+  assert.equal(axes.compartments.verdict, DIFFER);
+  assert.doesNotMatch(axes.compartments.detail, /owner ruled/);
+});
+
+test("a ruling can never rescue an ERP that carries no compartments at all", () => {
+  const axes = compare("1EL+1NA+1ER/24\"", [line({ item_code: "8069", item_group: "sofa", variants: {} })], true, {
+    erpNo: "HC-SO-013327",
+    sofaRuling: () => RULING,
+  });
+  assert.equal(axes.compartments.verdict, ERP_BLANK,
+    "the ruling is consulted only on a difference that is otherwise real");
+});
+
 test("a build the decoder cannot read is UNREADABLE, never a data defect", () => {
   const axes = compare("(1 ELT / T + NA +2ER)", [line({ item_code: "5526-1S", item_group: "sofa", variants: {} })]);
   assert.equal(axes.compartments.verdict, UNREADABLE);
+});
+
+/* ── THE OWNER'S RULING ON A BOOK TEXT THAT DOES NOT DECODE ─────────────────
+ * This is the case where his drawing is the ONLY source, so it is the case
+ * where his ruling matters MOST — and it was the one branch that never asked
+ * for it. A sofa he had personally read and answered kept reporting as
+ * "CANNOT BE COMPARED — your drawing decides these" on every single run, which
+ * is the report handing him back work he had already done:
+ * 「这个很多我刚刚都给过你答案了啊」 / 「你不是会解析照片了吗？为什么还需要我呢」.
+ *
+ * The rule is the SAME one the DIFFER branch already applies — same lookup,
+ * same strictness, same refusal to bless a ruling the ERP has not been moved
+ * to. It is a narrowing of "we could not tell", not a widening of "it matches":
+ * the drawing DID tell, and the ERP holds exactly what it said. */
+const UNREADABLE_DESC2 = "(1 ELT / T + NA +2ER)";
+const unreadableRuling = { pieces: ["1A(LHF)", "1NA", "1A(RHF)"], source: "sofa-compartment-corrections-2026-09.json" };
+const unreadableRows = (codes) =>
+  codes.map((c) => line({ item_code: `5526-${c}`, item_group: "sofa", variants: { seatHeight: '24"' } }));
+
+test("the book's text does not decode, but the OWNER ruled it and the ERP holds his answer — RULED, not UNREADABLE", () => {
+  const axes = compare(UNREADABLE_DESC2, unreadableRows(["1A(LHF)", "1NA", "1A(RHF)"]), true, {
+    erpNo: "HC-SO-000814",
+    sofaRuling: () => unreadableRuling,
+  });
+  assert.equal(
+    axes.compartments.verdict,
+    RULED,
+    "his drawing DID decide this build and the ERP holds it exactly — reporting it as 'cannot be compared' hands him back a question he already answered",
+  );
+  assert.ok(
+    axes.compartments.detail.includes("the owner ruled this build 1A(LHF)+1NA+1A(RHF)"),
+    axes.compartments.detail,
+  );
+});
+
+test("an owner ruling the ERP has NOT been moved to leaves an undecodable book UNREADABLE, and says so", () => {
+  /* The permissive answer must stay unreachable. The book still states nothing,
+     so this is not a DIFFER against the book — but it is emphatically not
+     decided either, and the detail has to name the answer it is failing to
+     match or nobody can act on it. */
+  const axes = compare(UNREADABLE_DESC2, unreadableRows(["1A(LHF)", "1NA", "L(RHF)"]), true, {
+    erpNo: "HC-SO-000814",
+    sofaRuling: () => unreadableRuling,
+  });
+  assert.equal(axes.compartments.verdict, UNREADABLE);
+  assert.ok(
+    axes.compartments.detail.includes("the owner ruled 1A(LHF)+1NA+1A(RHF) and the ERP does NOT hold it"),
+    axes.compartments.detail,
+  );
+});
+
+test("no ruling on an undecodable book text is still UNREADABLE — nothing was widened", () => {
+  const axes = compare(UNREADABLE_DESC2, unreadableRows(["1A(LHF)", "1NA", "1A(RHF)"]), true, {
+    erpNo: "HC-SO-999999",
+    sofaRuling: () => null,
+  });
+  assert.equal(axes.compartments.verdict, UNREADABLE);
+  assert.doesNotMatch(axes.compartments.detail ?? "", /owner ruled/);
+});
+
+test("a ruling cannot rescue an undecodable book text when the ERP carries no compartments at all", () => {
+  const axes = compare(UNREADABLE_DESC2, [line({ item_code: "5526", item_group: "sofa", variants: {} })], true, {
+    erpNo: "HC-SO-000814",
+    sofaRuling: () => unreadableRuling,
+  });
+  assert.equal(axes.compartments.verdict, UNREADABLE, "an ERP holding nothing has not been moved to his answer");
 });
 
 test("specials are read from variants.specials, the field the picker actually binds to", () => {

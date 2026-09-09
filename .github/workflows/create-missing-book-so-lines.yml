@@ -1,0 +1,73 @@
+name: Create the sales-order lines the book states and we do not hold
+
+# Manual. Creates a sales-order line the ACCOUNT BOOK states and the ERP does
+# not hold. Every writer in this repo UPDATES lines; none of them creates one,
+# so a book line we simply do not have had no route into the ERP and sat in the
+# reconcile's "AutoCount line with no ERP line" column run after run.
+#
+# The allow-list is backend/scripts/data/missing-book-so-lines.json — one entry
+# per AutoCount line, named by DocNo and DtlKey, with the reason it is allowed.
+# Nothing about the line is written there: the item, the quantity, the money and
+# the text all come from the committed snapshot ac-reconcile-truth.json.gz, the
+# same snapshot the reconcile compares against.
+#
+# PLAN unless mode=apply, and apply additionally needs the confirm phrase. An
+# apply run ends by re-reading every touched document on a FRESH connection and
+# asserting the SHAPE: the line's item, quantity, money and key, the document's
+# total unchanged, and the inventory-movement count unchanged. 「库存先不看」 —
+# a sales-order line is demand, not stock, and the run proves it moved none.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+      doc:
+        description: "one document (e.g. HC-SO-012128), or blank for every entry"
+        required: false
+        default: ""
+        type: string
+      mode:
+        description: "plan (default) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'type exactly: I HAVE REVIEWED THE PLAN (only needed when mode=apply)'
+        required: false
+        default: ""
+        type: string
+
+# Its OWN group, never the deploy's, and never another lane's.
+concurrency:
+  group: create-missing-book-so-lines
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/create-missing-book-so-lines.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          DOC: ${{ inputs.doc }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

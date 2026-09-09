@@ -61,7 +61,9 @@ describe("executable route contract", () => {
     // invoices, one AP invoice per bill (the voucher's pile page, target="ap").
     // 155 since 2026-09-08: /change-log — who changed which document since the
     // owner opened sales, delivery, purchase and receipt documents to staff.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(155);
+    // 156 since 2026-09-08: /scm/cancel-requests — the cancellation-approval
+    // inbox (SO / PO cancel = a reason + two signatures).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(156);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -92,7 +94,8 @@ describe("executable route contract", () => {
     // 162 since 2026-09-06 — /scm/ap-invoices; see the staff-route count above.
     // 163 since 2026-09-08 — /scm/ap-invoices/scan; see the staff-route count above.
     // 164 since 2026-09-08 — /change-log; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(164);
+    // 165 since 2026-09-08 — /scm/cancel-requests; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(165);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

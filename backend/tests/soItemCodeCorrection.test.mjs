@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { itemGroupForCategory, planSoItemCodeCorrections } from '../scripts/lib/so-item-code-correction.mjs';
+import { makeModelOverrideIndex } from '../scripts/lib/ac-model-override.mjs';
 
 const edge = (over = {}) => ({ DocNo: 'PO-010095', DtlKey: 917739, FromDocNo: 'SO-002558', FromSODtlKey: 165874, ...over });
 const bookLine = (over = {}) => ({ docNo: 'SO-002558', dtlKey: 165874, itemKey: 'HOK-2008(A) (K)', qty: '1.0000', unitPrice: '0.0000', subTotal: '0.00', ...over });
@@ -25,12 +26,13 @@ const erpLine = (over = {}) => ({
   debtor_name: 'A Customer', ...over,
 });
 
-const world = ({ book = bookLine(), erp = [erpLine()], products = [{ code: 'TRION (A) (HB STR)-(K)', name: 'Trion (A) HB Straight King' }] } = {}) => ({
+const world = ({ book = bookLine(), erp = [erpLine()], products = [{ code: 'TRION (A) (HB STR)-(K)', name: 'Trion (A) HB Straight King' }], overrideIndex = null } = {}) => ({
   edges: [edge()],
   bookSoByDtl: new Map([['165874', book]]),
   acMapByCode: new Map([['HOK-2008(A) (K)', { erp: 'TRION (A) (HB STR)-(K)', cat: 'BEDFRAME' }]]),
   erpRowsByDtl: new Map(erp.length ? [['165874', erp]] : []),
   productByCode: new Map(products.map((p) => [p.code.toUpperCase(), p])),
+  overrideIndex,
 });
 
 describe('the sales-order item-code correction rule', () => {
@@ -137,5 +139,42 @@ describe('the sales-order item-code correction rule', () => {
     expect(itemGroupForCategory('TRANS')).toBe('service');
     expect(itemGroupForCategory('')).toBe('others');
     expect(itemGroupForCategory(undefined)).toBe('others');
+  });
+
+  /* ── THE OWNER'S OWN DECISION IS NOT A DEFECT ─────────────────────────────
+     Measured on prod run 34258437955: with POPULATION=all this planner named
+     exactly TWO corrections and one of them was HC-SO-011657, where the ERP
+     holds model 8030 against the book's TNS-9838 DB because he ruled
+     「那就放8030 daybed把」. Applying it would have silently undone his ruling. */
+  it('leaves a DECLARED owner decision alone instead of undoing it', () => {
+    const overrideIndex = makeModelOverrideIndex([
+      { docs: ['HC-SO-002558'], model: '9999', modelOverride: { book: 'HOK-2008(A) (K)', by: 'owner', on: '2026-09-08' } },
+    ]);
+    const { plan, refused, counts } = planSoItemCodeCorrections(world({
+      erp: [erpLine({ item_code: '9999-STOOL' })],
+      overrideIndex,
+    }));
+    expect(plan).toHaveLength(0);
+    expect(counts.ownerDecided).toBe(1);
+    expect(refused[0].why).toBe('ownerDecided');
+    expect(refused[0].detail).toContain("OWNER'S OWN DECISION");
+  });
+
+  it('THE EXPIRY — a declaration whose book model no longer matches does NOT protect the row', () => {
+    const overrideIndex = makeModelOverrideIndex([
+      { docs: ['HC-SO-002558'], model: '9999', modelOverride: { book: 'HOK-7777 (K)', by: 'owner', on: '2026-09-08' } },
+    ]);
+    const { plan, counts } = planSoItemCodeCorrections(world({
+      erp: [erpLine({ item_code: '9999-STOOL' })],
+      overrideIndex,
+    }));
+    expect(counts.ownerDecided).toBe(0);
+    expect(plan).toHaveLength(1);
+  });
+
+  it('an OMITTED overrideIndex throws — a deciding parameter is never optional', () => {
+    const w = world();
+    delete w.overrideIndex;
+    expect(() => planSoItemCodeCorrections(w)).toThrow(/overrideIndex/);
   });
 });

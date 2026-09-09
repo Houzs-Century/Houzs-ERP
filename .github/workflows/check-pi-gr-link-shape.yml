@@ -1,0 +1,72 @@
+name: Purchase invoices — name the wrong invoice-line links, and take them back
+
+# Run 34275605452 applied 26 links and its own read-back then refused the batch:
+#
+#   verify (fresh connection): linked 26/26 · dangling 0 · wrong company 0 · wrong item 1
+#   VERIFY FAILED: a link points at another company's receipt or at another item.
+#
+# The guard did its job. But it reported a COUNT, so the run ended knowing one
+# of 26 links is wrong and not WHICH — 26 suspects and no way to act. This names
+# them, and with an explicit confirm takes back ONLY the failing ones.
+#
+# report IS THE DEFAULT AND WRITES NOTHING.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "report (writes nothing) or revert (NULLs grn_item_id on the failing links only)"
+        required: true
+        default: "report"
+        type: choice
+        options: ["report", "revert"]
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+      remeasure:
+        description: "After the run, re-measure the purchase-invoice causes (read-only)"
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: repair-pi-gr-links
+  cancel-in-progress: false
+
+jobs:
+  shape:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+
+      - name: Name the links whose shape is wrong
+        run: node scripts/check-pi-gr-link-shape.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          # Only honoured when MODE=revert; the script refuses to write without it.
+          CONFIRM: TAKE BACK THE WRONG LINKS
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+      # The number the whole lane exists to move, read from the database in the
+      # same job as the write. It runs even if the step above failed, because a
+      # failed revert still leaves a state somebody has to see.
+      - name: Re-measure the purchase-invoice causes (READ-ONLY)
+        if: ${{ inputs.remeasure && !cancelled() }}
+        run: node scripts/diag-pi-gr-links.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          SHOW: "60"
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -19,6 +19,14 @@
 // PURE CONFIG: it builds tagged-template thunks and runs nothing. The caller
 // owns the connection and decides which types to read.
 //
+// `bornAt` IS READ SEPARATELY AND MAY FAIL, on purpose. It answers one question
+// only — when did the ERP write this row — and it exists so the reconcile can
+// PROVE that an ERP-native document is newer than the AutoCount snapshot rather
+// than assume it (lib/ac-erp-native.mjs). It is NOT folded into `docs` because a
+// column that turned out to be missing on one of six tables would fail that
+// whole SELECT and take the entire reconcile down with it; as its own thunk the
+// caller catches it per type, reclassifies nothing for that type, and says so.
+//
 // NO SHEBANG: tests import this module (see lib/ac-mapping-csv.mjs for the
 // Windows vitest reason).
 // ---------------------------------------------------------------------------
@@ -39,8 +47,9 @@ export function erpReconcileTypes({ sql, CO, PDATE }) {
     t: "SO",
     label: "Sales Order",
     absenceIs: "GAP",
+    bornAt: () => sql`SELECT doc_no AS erp_no, created_at FROM scm.mfg_sales_orders WHERE company_id = ${CO}`,
     docs: () => sql`SELECT doc_no AS erp_no, linked_ac_docno AS ac_no,
-        COALESCE(local_total_sen, subtotal_sen) AS total_sen
+        COALESCE(local_total_sen, subtotal_sen) AS total_sen, currency::text AS currency
       FROM scm.mfg_sales_orders WHERE company_id = ${CO}`,
     lines: () => sql`SELECT h.linked_ac_docno AS ac_no, i.item_code, i.qty::float8 AS qty,
         i.unit_price_sen, i.linked_ac_dtlkey AS ac_dtlkey, i.line_suffix,
@@ -55,7 +64,9 @@ export function erpReconcileTypes({ sql, CO, PDATE }) {
     t: "PO",
     label: "Purchase Order",
     absenceIs: "GAP",
-    docs: () => sql`SELECT po_number AS erp_no, linked_ac_docno AS ac_no, total_sen
+    bornAt: () => sql`SELECT po_number AS erp_no, created_at FROM scm.purchase_orders WHERE company_id = ${CO}`,
+    docs: () => sql`SELECT po_number AS erp_no, linked_ac_docno AS ac_no, total_sen,
+        currency::text AS currency
       FROM scm.purchase_orders WHERE company_id = ${CO}`,
     lines: () => sql`SELECT h.linked_ac_docno AS ac_no, i.item_code, i.qty::float8 AS qty,
         i.unit_price_sen, i.linked_ac_dtlkey AS ac_dtlkey, i.line_suffix,
@@ -101,6 +112,7 @@ export function erpReconcileTypes({ sql, CO, PDATE }) {
        the part of it raised against another purchase order — a shortfall the ERP
        is structurally incapable of not having. The pair is the finest grain both
        sides can state, and at that grain the comparison is like-for-like. */
+    bornAt: () => sql`SELECT grn_number AS erp_no, created_at FROM scm.grns WHERE company_id = ${CO}`,
     pairGrain: true,
     sofaAware: true,
     /* The MULTISET verdict on this type's keyless documents compares item and
@@ -138,7 +150,7 @@ export function erpReconcileTypes({ sql, CO, PDATE }) {
       "reshape-migrated-grns.mjs copies the book's item, quantity and date, and leaves price to the order",
     docs: () => sql`SELECT g.grn_number AS erp_no,
         g.linked_ac_gr_docno || '|' || p.linked_ac_docno AS ac_no,
-        COALESCE(g.total_sen, 0) AS total_sen
+        COALESCE(g.total_sen, 0) AS total_sen, g.currency::text AS currency
       FROM scm.grns g JOIN scm.purchase_orders p ON p.id = g.purchase_order_id
       WHERE g.company_id = ${CO} AND g.status <> 'CANCELLED'
         AND g.linked_ac_gr_docno IS NOT NULL AND p.linked_ac_docno IS NOT NULL`,
@@ -187,6 +199,7 @@ export function erpReconcileTypes({ sql, CO, PDATE }) {
        The invariant below now refuses the label over a non-empty scope, so the
        constant and `ac-scope.mjs` cannot drift apart again. */
     absenceIs: "GAP",
+    bornAt: () => sql`SELECT do_number AS erp_no, created_at FROM scm.delivery_orders WHERE company_id = ${CO}`,
     sofaAware: true,
     /* A migrated delivery order carries no money at all — the reconcile counts
        that as a POPULATION property, not per-document drift — so the multiset
@@ -217,6 +230,7 @@ export function erpReconcileTypes({ sql, CO, PDATE }) {
        population; this constant went on saying DECISION, so all 7 absentees
        printed as "owner-declined". */
     absenceIs: "GAP",
+    bornAt: () => sql`SELECT invoice_number AS erp_no, created_at FROM scm.sales_invoices WHERE company_id = ${CO}`,
     sofaAware: true,
     docs: () => sql`SELECT invoice_number AS erp_no, linked_ac_docno AS ac_no,
         COALESCE(total_sen, local_total_sen) AS total_sen
@@ -240,6 +254,7 @@ export function erpReconcileTypes({ sql, CO, PDATE }) {
        create-migrated-invoices.mjs, not the absence of a source to convert
        from; see docs/autocount-cutover-ledger.md. */
     absenceIs: "GAP",
+    bornAt: () => sql`SELECT invoice_number AS erp_no, created_at FROM scm.purchase_invoices WHERE company_id = ${CO}`,
     docs: () => sql`SELECT invoice_number AS erp_no, linked_ac_docno AS ac_no, total_sen
       FROM scm.purchase_invoices WHERE company_id = ${CO}`,
     lines: () => sql`SELECT h.linked_ac_docno AS ac_no, i.item_code, i.qty::float8 AS qty,

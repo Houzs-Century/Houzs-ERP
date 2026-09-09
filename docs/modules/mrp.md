@@ -404,6 +404,40 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   promotion gate (`so-line-effective-stock.ts`) refuses to promote bound lines
   on MRP's say-so; see sales-order.md §0.3 for the company-split table and the
   `check-bound-exclusivity.mjs` census that re-measures the rule.
+- **A SOFA'S BINDING CAN BE UNWRITABLE, and that is a separate failure from an
+  absent purchase order.** The book records the SO -> PO edge at LINE grain in
+  `PODTL.FromSODtlKey`, and `backend/scripts/repair-po-so-link-from-book.mjs`
+  copies it — refusing whenever either key resolves to more than one ERP row,
+  because a Map keyed by DtlKey would keep one of them. **Every sofa is in that
+  bucket by construction**: one book line is one ERP row per compartment. So the
+  whole sofa population was unrepairable by that tool, and a sofa piece whose
+  purchase order exists in the book sat PENDING for ever while MRP told
+  purchasing to raise a second one.
+
+  `backend/scripts/repair-po-so-link-sofa-compartments.mjs` is the tool at the
+  other grain: inside ONE pair of book lines, if every item code appears exactly
+  once on each side then each purchase compartment has exactly one sales
+  compartment of the same product to be, and the pairing is a copy rather than a
+  choice. Anything else is refused — notably a MIRRORED build (`1A(LHF)+2A(RHF)`
+  on the purchase side against `2A(LHF)+1A(RHF)` on the sales side), which is a
+  build disagreement needing the drawing, not a link one.
+
+  **The pairing rule lives in ONE place**, `backend/scripts/lib/sofa-po-so-pair.mjs`
+  (`judgeCompartmentPair`), imported by the repair and by
+  `backend/scripts/probe-staff-reported-flow.mjs`. Its contract matters and is
+  easy to get wrong: **pass every ERP purchase row carrying the key, LINKED ROWS
+  INCLUDED.** A compartment somebody already dedicated still occupies its sales
+  row, so a tally over the unlinked rows alone under-counts the purchase side and
+  hides the collision the guard exists to catch — which is exactly how two copies
+  of this rule gave opposite answers on production about `HC-PO-010040 <- SO-012277`
+  (`docs/bugs/0708-two-tools-answered-the-same-pairing-question-differently-twe.md`).
+
+  **Size the two apart before quoting either.** Probe run `34202130553`
+  (`probe-staff-reported-flow.mjs`): 2,842 live hard-bound sales lines carry no
+  dedicated purchase line, and for **2,717 of them the book has no purchase
+  order either** — the absence is CORRECT and quoting 2,842 as a backlog is
+  alarming and wrong. Seven, on four orders, are the ones the book names and we
+  do not hold. `docs/bugs/0707-a-sofa-s-purchase-line-could-never-be-linked-to-its-sales-li.md`.
 - **AND SO DOES THIS ENGINE, since 2026-08-31** (owner's option 甲, company 1
   only). This bullet used to end "MRP's own pooled view knows none of this",
   and that gap was not academic: the migrated stock snapshot carries no variant,
@@ -412,11 +446,26 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   (`docs/bugs/0581-mrp-told-the-owner-to-buy-bedframes-his-own-received-purchas.md`).
   Both sides now honour the binding — a bound PO line is DEDICATED and leaves the
   pool; a bound demand line does not read pooled STOCK, and covers from its own
-  PO (received, then outstanding) before the pooled PO queue. **The rule is drawn
-  at stock and only at stock**: stock is a claim on goods that exist, a purchase
-  order is a plan, and withholding the pooled PO queue as well made
-  `po-so-coverage` report that an unlinked PO serves nobody. It does NOT
-  decrement the bucket either: here the pool IS the bucket,
+  PO, received then outstanding.
+- **AND SINCE 2026-09-09 IT COVERS FROM ITS OWN PO AND NOTHING ELSE** (owner:
+  *「修,但只能动 Houzs Century」*;
+  `docs/bugs/0736-mrp-let-a-pooled-purchase-order-cover-a-hard-bound-line-the-r.md`).
+  The dedicated queue used to be followed by the POOLED queue, so a purchase
+  order belonging to nobody could report a bound line as covered while the stored
+  allocator — which accepts only that line's OWN purchase order — left it PENDING
+  for ever. The buyer read "already on order" and the order never moved: the
+  mirror of 0572 on the other screen, **10 of the 126** proceeded company-1
+  bedframe/sofa lines with no dedicated PO, measured on prod.
+  This bullet used to end by saying the rule was *"drawn at stock and only at
+  stock"* because withholding the pooled PO queue as well made `po-so-coverage`
+  report that an unlinked PO serves nobody. That was right about the mechanism
+  and never sized: the whole population is **5 lines on 2 purchase orders**
+  (`HC-PO-009024`, `HC-PO-010085`), both already owed a real link to the sales
+  order they were raised for. Pooled supply is still **reported** —
+  `poOutstanding` counts it — it just may no longer be named as a bound line's
+  cover, so the line reads as the shortage it is.
+- The bound branch does NOT decrement the bucket either: here the pool IS the
+  bucket,
   every line in a company-1 bedframe bucket is bound, so nothing else can draw
   it, and leaving the units visible is what keeps the on-hand figure honest.
   **SOFA is excluded at this call site** — sofa demand never enters section 7

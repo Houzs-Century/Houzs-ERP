@@ -80,6 +80,7 @@ import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/
 import { formatPhone } from "@2990s/shared/phone";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { salesInvoicePrintChain } from "../../lib/printChain";
+import { customerRefOf } from '../../lib/customer-ref';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the full SiRow (see SalesInvoicesList.tsx for the 40-field shape).
@@ -172,8 +173,7 @@ const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
 
 // Customer's PO / Ref — same fallback chain as SO/DO V2.
-const refOf = (r: SiRow): string =>
-  r.po_doc_no || r.customer_so_no || r.ref || "—";
+const refOf = (r: SiRow): string => customerRefOf(r) || "—";
 
 const soOf = (r: SiRow): string => r.so_doc_no || "—";
 // Prefer the readable DO number (server-resolved); the raw UUID is not useful

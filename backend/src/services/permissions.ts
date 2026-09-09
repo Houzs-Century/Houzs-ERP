@@ -124,6 +124,20 @@ export const PERMISSIONS: PermissionDef[] = [
   // positions via the Team > Positions matrix. po_amendment.approve also gates reject.
   { key: "scm.po_amendment.create",  resource: "Supply Chain", verb: "manage", label: "Raise PO amendment",   description: "Raise an amendment request against a Purchase Order (opens the single-approver PO revision flow)" },
   { key: "scm.po_amendment.approve", resource: "Supply Chain", verb: "manage", label: "Approve/reject PO amendment", description: "Approve a Purchase Order amendment — snapshots the prior version, applies the line + header diffs, bumps the PO revision (REQUESTED -> APPROVED) — or reject it (-> REJECTED)" },
+  // Document cancellation approval (owner 2026-09-08, 「SO 和 PO 取消的话需要
+  // approval 2 层 — 已经输入原因」, then 「只有 SO 需要 sales director approval,
+  // PO 不需要 … PO 只要 Purchaser 一个审批」). Cancelling is a REQUEST with a
+  // mandatory reason, then the document's signatures — a Sales Order takes TWO
+  // (level 1 = Sales Director, level 2 = Purchaser; two different people,
+  // neither the requester), a Purchase Order takes ONE (Purchaser) — before the
+  // document's own cancel route is allowed to run (scm/shared/document-cancel.ts
+  // APPROVAL_LEVELS). Approve keys also gate reject. Owner + IT Admin +
+  // Managing Director pass via "*" but still cannot sign both SO levels.
+  // `scm.po_cancel.approve_l1` / `_l2` existed for a few hours on 2026-09-08 and
+  // were never granted to a role that shipped; the PO key is the level-less one.
+  { key: "scm.so_cancel.approve_l1", resource: "Supply Chain", verb: "approve", label: "Approve SO cancellation — level 1", description: "Give the FIRST of two approvals (or reject) a request to cancel a Sales Order. The order is not cancelled until level 2 also approves" },
+  { key: "scm.so_cancel.approve_l2", resource: "Supply Chain", verb: "approve", label: "Approve SO cancellation — level 2", description: "Give the SECOND and final approval (or reject) a request to cancel a Sales Order. Must be a different person from the level-1 approver and from the requester; the cancel runs on this signature" },
+  { key: "scm.po_cancel.approve",    resource: "Supply Chain", verb: "approve", label: "Approve PO cancellation",           description: "Give the single approval (or reject) a request to cancel a Purchase Order. Cannot be the person who raised it; the cancel runs on this signature" },
 
   // Payment Vouchers — standalone AP cash-out document (port of 2990 0189/0202,
   // Phase 1-B MYR). A PV pays a vendor that is NOT a goods invoice (freight

@@ -298,10 +298,29 @@ bill carries no stock — cancel unwinds it by what was applied, and the detail
 answers each allocation with `kind` ('PI' | 'API'), `piId` / `apInvoiceId`.
 On the New AP Payment screen the Apply-to-invoice list shows the supplier's
 open AP invoices beside the purchase invoices (an `AP` tag on the row; tick
-= pay in full, type = part) and the payload names `apInvoiceId` for those;
-the detail screen's edit path lists purchase invoices only and passes the
-voucher's existing AP-invoice allocations through unchanged, so an edit
-never silently drops them.
+= pay in full, type = part) and the payload names `apInvoiceId` for those.
+**The detail screen's Edit of a DRAFT AP Payment is that same form (2026-09-08,
+owner, on a rejected voucher whose bill was an AP invoice: 当我 reject ap
+payment 后, 他的 edit 不是退回去 knock pi? 而是这样? → 做)** — until then it
+showed the plain voucher's line editor (a "Settle 1 invoice(s)" line demanding
+a debit account) over a picker of purchase invoices only, so the AP invoice
+the voucher paid read "no outstanding purchase invoices" and could not be
+re-knocked. Now (`frontend/src/pages/scm-v2/PaymentVoucherDetail.tsx`,
+`apEdit`): no line editor — the one AP-control debit (400 / 405 by the
+supplier's code, `useAccountRoles`) is written on Save from the ticks; the
+"Linked invoices" card lists the supplier's open PIs **and** AP invoices
+(`EditAllocRow`, keyed by the document's id — `allocKeyOf` reads
+`apInvoiceId` or `piId` off each stored allocation), the voucher's own
+allocations prefilled and listed even when they fell off the open list, tick
+= pay in full, type = part, an `AP` tag on the AP rows (an invoice's
+outstanding is its unpaid balance less OTHER unposted vouchers' reservations,
+once — the old picker added this voucher's own allocation back onto a balance
+that already held it, so an invoice already paid in full by this draft showed
+twice its balance); a Prepay (advance)
+box seeded as the stored total's excess over the allocations; the total
+follows ticks + prepay. Save sends `lines: [the AP line]` and both-kind
+`allocations`; the number stays and the voucher walks Check → Approve again.
+Contract: `frontend/src/pages/scm-v2/PaymentVoucherDetail.test.tsx`.
 
 ## 0d. 预付挂在 supplier (2026-09-02)
 
@@ -363,8 +382,15 @@ The owner's ask, his words: 我想要把ocr 功能放去payment 那边，还有�
 bill 我也想要用ocr. Two doors, one reader:
 
 - **In the form** — "📷 Scan bill (OCR)" in the New PV Lines card header.
-  Multi-select = the PAGES of one bill; the form prefills payee, date, notes
-  and lines from what was read. What the reader fills goes UPPER CASE since
+  Multi-select = the PAGES of one bill; the form prefills payee, notes and
+  lines from what was read. The voucher's DATE stays today (owner
+  2026-09-08: 普通 payment scan bill 可以 default 放今天吗 → 做 — the date is
+  when he records the payment; until then the bill's date overwrote it);
+  the bill's own date rides in the notes ("BILL T0012 · DATED 2026-08-25")
+  so nothing read is lost. The same `applyExtraction` serves the pile's
+  hand-offs, so a bill or a ticked set opened from there lands today-dated
+  too; the AP invoice form keeps the bill's date — there it IS the invoice
+  date. What the reader fills goes UPPER CASE since
   2026-09-08 (`upperFill`, `frontend/src/vendor/scm/lib/ocr-fill.ts` — the
   one home the AP invoice form shares; owner: 帮我 fill data 时默认全部大写);
   the payee keeps the operator's own saved casing, and typed text is left
@@ -385,7 +411,11 @@ bill 我也想要用ocr. Two doors, one reader:
   4. 几张不同的 receipt 开一张 voucher (2026-09-08: 因为我是三个 receipt 开一张
      voucher 罢了) — petty cash. Read them, tick them across groups (a
      checkbox on every read bill), "Open ticked as ONE voucher (N lines)":
-     one line per receipt (shop + number, the receipt's total), the payee
+     one line per receipt at the receipt's total, described by WHAT WAS
+     BOUGHT — the item descriptions the reader found, joined with " · "
+     (owner, seeing "99 SPEEDMART" where the pile showed the goods: 转去
+     voucher 就变名字了); the shop + number stands in only for a receipt
+     with no readable item. The payee is
      LEFT for the person (three shops have no one payee, and no shop's
      vendor memory is borrowed), the voucher dated by the latest receipt,
      every receipt's pages attached; refused while the ticked receipts are

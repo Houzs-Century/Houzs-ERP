@@ -42,7 +42,7 @@ import postgres from "postgres";
 import { buildScope, decodeSnapshot } from "./lib/ac-scope.mjs";
 import { grPairGrain } from "./lib/ac-gr-pair-grain.mjs";
 import { readMappingCsv, normCode } from "./lib/ac-mapping-csv.mjs";
-import { comparisonKey } from "./lib/keyless-multiset.mjs";
+import { bagOf, compareBags, comparisonKey, printableBag } from "./lib/keyless-multiset.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("REFUSED: DATABASE_URL not set."); process.exit(2); }
@@ -74,32 +74,26 @@ if (MAPPING.size < 100) {
 const sql = postgres(DSN, { ssl: "require", prepare: false, max: 1, connect_timeout: 30 });
 
 /* THE SOFA FOLD IS NOT OPTIONAL, and leaving it out INVENTS findings — this
-   probe's own first run proved it. A sofa is ONE book line (`2379-1S`,
-   `9058-1S`) and ONE ERP ROW PER COMPARTMENT, so a raw bag can never be equal
-   on a sofa document: run 34202080707 printed four goods receipts as "BAGS
-   DIFFER" and two invoice rows as goods the book does not have, and every one
-   of the six was a decomposition. Same shape as docs/bugs/0694, where a sofa
-   exclusion that tested only `line_suffix` printed 40 decompositions as wrong
-   products. So both sides go through `lib/keyless-multiset.mjs`'s
-   `comparisonKey` — the SAME canonicalisation the reconcile's keyless verdict
-   uses, model-folded through SOFA_MODEL_ALIAS — rather than a second opinion
-   written here. */
-/* `rawCode` is the BOOK's own untranslated code and it is load-bearing: the book
-   names a sofa `AMN-SF2379 SOFA` and the sheet translates that to `2379-1S`,
-   which contains no "SOFA" at all. Handing the TRANSLATED string in as rawCode
+   probe's own first run proved it. A sofa is ONE book line (`DSL-8030 SOFA`,
+   translated to `8030-1S`) and ONE ERP ROW PER COMPARTMENT, so an unfolded
+   comparison can never be equal on a sofa document: run 34202080707 printed
+   four goods receipts as differing bags and two invoice rows as goods the book
+   does not have, and every one of the six was a decomposition. Same shape as
+   docs/bugs/0694, where a sofa exclusion testing only `line_suffix` printed 40
+   decompositions as wrong products. docs/bugs/0707 is this one.
+
+   So nothing here writes its own opinion about a sofa code. Both sides go
+   through `lib/keyless-multiset.mjs` — `bagOf` + `compareBags` where a WHOLE
+   document is compared, because counting sofas needs the book's build text
+   divided rather than compartment quantities summed, and `comparisonKey` alone
+   where only a code has to be canonicalised.
+
+   `rawCode` is the BOOK's own UNTRANSLATED code and it is load-bearing: the book
+   names a sofa `AMN-SF2379 SOFA` and the sheet turns that into `2379-1S`, which
+   contains no "SOFA" at all. Handing the translated string in as `rawCode`
    silently turns the fold off on exactly the rows it exists for. */
 const canon = ({ code, rawCode, side, suffixed = false }) =>
   comparisonKey({ code: normCode(code), rawCode: rawCode ?? code, side, suffixed }).key;
-
-const bagText = (rows) => {
-  const m = new Map();
-  for (const r of rows) {
-    const k = canon(r);
-    if (!k) continue;
-    m.set(k, (m.get(k) ?? 0) + Number(r.qty || 0));
-  }
-  return [...m.entries()].sort((a, b) => (a[0] > b[0] ? 1 : -1)).map(([c, q]) => `${c} x${q}`).join(" | ");
-};
 
 async function main() {
   say(`AutoCount cut exported_at=${snap.exported_at}  company=${CO}  READ-ONLY`);
@@ -117,7 +111,7 @@ async function main() {
       i.id::text AS id, i.item_code, i.qty_accepted::float8 AS qty,
       COALESCE(i.unit_price_sen, 0)::bigint AS unit_price_sen,
       COALESCE(i.line_total_sen, 0)::bigint AS line_total_sen,
-      i.line_suffix, i.linked_ac_dtlkey::text AS ac_dtlkey,
+      i.line_suffix, i.linked_ac_dtlkey::text AS ac_dtlkey, i.description2,
       i.purchase_order_item_id::text AS poi_id
     FROM scm.grn_items i
     JOIN scm.grns g ON g.id = i.grn_id
@@ -153,20 +147,49 @@ async function main() {
       if (b !== e) codeDefects.push({ pair, erpNo: erp.erp_no, key: k, book: b, erp: e, id: el.id, poi: el.poi_id });
     }
     /* The other half: our rows with NO key at all. Their pairing is the
-       checker's guess, so the only honest question is the multiset. */
+       checker's guess, so the only honest question is the multiset — and it is
+       asked by `lib/keyless-multiset.mjs`, never by arithmetic written here. A
+       raw bag CANNOT answer it: a sofa is one book line and one ERP row per
+       compartment, so summing our quantities reports `SOFA 9058 x1` against
+       `SOFA 9058 x5` on a document holding exactly one sofa. That module folds
+       our compartments by the BOOK's own build text and DIVIDES, which is the
+       only reduction that gets it right (its header carries the two ways `MIN`
+       gets it wrong). docs/bugs/0707 is this probe printing four such
+       decompositions as differences before it called the module. */
     const unkeyed = erp.lines.filter((l) => l.ac_dtlkey == null);
     if (unkeyed.length) {
-      const bBag = bagText(bookLines.map((l) => ({ code: translate(l.itemKey), rawCode: l.itemKey, qty: l.qty ?? 0, side: "book" })));
-      const eBag = bagText(erp.lines.map((l) => ({ code: l.item_code, qty: l.qty ?? 0, side: "erp", suffixed: l.line_suffix != null })));
-      codeGuessed.push({ pair, erpNo: erp.erp_no, unkeyed: unkeyed.length, of: erp.lines.length, same: bBag === eBag, bBag, eBag });
+      const kv = compareBags({
+        book: bagOf(bookLines.map((l) => ({
+          code: translate(l.itemKey), rawCode: l.itemKey, qty: l.qty ?? 0, sen: l.subTotalSen ?? 0,
+        })), "book"),
+        erp: bagOf(erp.lines.map((l) => ({
+          code: l.item_code, qty: l.qty ?? 0, sen: 0,
+          suffixed: l.line_suffix != null, desc2: l.description2,
+        })), "erp"),
+        /* A migrated receipt's price comes from the purchase ORDER by design, so
+           a book-vs-ERP money comparison here would measure our own derivation.
+           The money axis is section 2, against the header, where it is real. */
+        compareMoney: false,
+      });
+      codeGuessed.push({
+        pair, erpNo: erp.erp_no, unkeyed: unkeyed.length, of: erp.lines.length,
+        verdict: kv.verdict, notes: [...kv.differences, ...kv.ambiguities],
+        bBag: printableBag(bagOf(bookLines.map((l) => ({
+          code: translate(l.itemKey), rawCode: l.itemKey, qty: l.qty ?? 0, sen: l.subTotalSen ?? 0,
+        })), "book")),
+        eBag: printableBag(bagOf(erp.lines.map((l) => ({
+          code: l.item_code, qty: l.qty ?? 0, sen: 0,
+          suffixed: l.line_suffix != null, desc2: l.description2,
+        })), "erp")),
+      });
     }
   }
   log(`GR item code — ${codeDefects.length} line(s) where the ERP row and the book line carry the SAME AutoCount key and DIFFERENT products. Those are defects; the book decides them.`);
   for (const d of codeDefects) say(`     DEFECT ${d.pair} (ERP ${d.erpNo}) DtlKey ${d.key}: book "${d.book}" vs ours "${d.erp}"  [grn_items.id ${d.id}, po_item ${d.poi ?? "none"}]`);
-  const guessedSame = codeGuessed.filter((g) => g.same).length;
-  log(`GR unkeyed rows — ${codeGuessed.length} pair(s) still carry at least one ERP row with NO AutoCount key; ${guessedSame} of them hold the SAME item-code multiset as the book (so only the correspondence is unknown) and ${codeGuessed.length - guessedSame} do NOT.`);
-  for (const g of codeGuessed.filter((x) => !x.same)) {
-    say(`     BAGS DIFFER ${g.pair} (ERP ${g.erpNo}) — ${g.unkeyed} of ${g.of} rows unkeyed`);
+  const c = (v) => codeGuessed.filter((g) => g.verdict === v).length;
+  log(`GR unkeyed rows — ${codeGuessed.length} pair(s) still carry at least one ERP row with NO AutoCount key. Compared as MULTISETS (sofa builds folded by the book's own build text): ${c("IDENTICAL")} PROVEN identical, ${c("DIFFERS")} carry a real difference, ${c("AMBIGUOUS")} genuinely undecidable.`);
+  for (const g of codeGuessed.filter((x) => x.verdict !== "IDENTICAL")) {
+    say(`     ${g.verdict} ${g.pair} (ERP ${g.erpNo}) — ${g.unkeyed} of ${g.of} rows unkeyed: ${g.notes.join(" ; ")}`);
     say(`        book: ${g.bBag}`);
     say(`        ours: ${g.eBag}`);
   }

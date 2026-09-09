@@ -597,29 +597,148 @@ export async function readConvertSourceKeys(
     if (sErr || !src) return {};
     const srcRows = src as unknown as Array<Record<string, unknown>>;
 
+    /* ── ONE BOOK LINE IS OFTEN SEVERAL ERP LINES, AND THE SOFA IS WHY ───────
+       AutoCount holds a sofa as ONE line. The ERP decomposes it into a line per
+       piece, and every piece correctly carries that ONE line's DtlKey. Building
+       the key list per ERP line therefore sends the same key twice, and the host
+       counts what the book returned against what it was handed:
+
+         of 3 line key(s) given, only 2 exist on a SO
+
+       which reads as "a key is missing" and is not: all three are real and two
+       are the same one. HC-DO-2609-004 and -009 spent their whole attempt budget
+       on that sentence, and both parents are a sofa plus a pillow — measured in
+       the book 2026-09-08: SO-013224 holds 901830 HOK-5535 SOFA and 901831
+       HOK-LONG PILLOW, while the ERP holds three lines keyed 901830, 901830,
+       901831.
+
+       So the merge is by KEY, in first-seen order, and the accumulator carries
+       how many ERP lines claimed each one — that count is what decides the
+       quantity rules below. */
     const keys: number[] = [];
     const missing: string[] = [];
-    const perKey: AcTransferQty[] = [];
-    let partialQty = false;
+    const byKey = new Map<number, { took: number; had: number; erpLines: number }>();
     let qtyReadable = true;
     for (const id of sourceIds) {
       const row = srcRows.find((r) => String(r.id) === id);
       const k = row?.linked_ac_dtlkey;
       const n = k == null ? NaN : Number(k);
-      if (Number.isFinite(n) && n > 0) {
-        keys.push(n as number);
-        const took = taken.get(id);
-        const had = Number(row?.[spec.sourceQtyCol]);
-        if (took == null || !Number.isFinite(took) || !Number.isFinite(had) || took <= 0) {
-          qtyReadable = false;
-        } else {
-          perKey.push({ DtlKey: n as number, Qty: took });
-          /* EPSILON, because these are decimals out of PostgREST. A hair under
-             is not a partial shipment. */
-          if (took < had - 1e-9) partialQty = true;
-        }
-      } else missing.push(id);
+      if (!Number.isFinite(n) || n <= 0) { missing.push(id); continue; }
+      const key = n as number;
+      if (!byKey.has(key)) { keys.push(key); byKey.set(key, { took: 0, had: 0, erpLines: 0 }); }
+      const acc = byKey.get(key) as { took: number; had: number; erpLines: number };
+      acc.erpLines += 1;
+      const took = taken.get(id);
+      const had = Number(row?.[spec.sourceQtyCol]);
+      if (took == null || !Number.isFinite(took) || !Number.isFinite(had) || took <= 0) {
+        qtyReadable = false;
+      } else {
+        acc.took += took;
+        acc.had += had;
+      }
     }
+    /* EPSILON, because these are decimals out of PostgREST. A hair under is not
+       a partial shipment. */
+    const keyIsPartial = (key: number): boolean => {
+      const a = byKey.get(key);
+      return !!a && a.took < a.had - 1e-9;
+    };
+    /* ── HOW MANY ERP LINES THAT BOOK LINE REALLY HAS ────────────────────────
+       `srcRows` above holds only the lines this conversion TOOK, so counting
+       shares there answers a different question: a delivery that ships one of a
+       sofa's two pieces sees the key once and looks 1:1. The sibling it left
+       behind is exactly what makes it partial, so it has to be read.
+
+       No parent predicate is needed and none is wanted: a DtlKey identifies ONE
+       line of ONE document in the book, so every ERP row carrying it belongs to
+       that same book line by construction. Measured 2026-09-08, key 901830 is
+       held by 2 rows and 856404 by 2 - both sofas.
+
+       A FAILURE HERE IS NOT BEST-EFFORT, and it is the one read in this function
+       that cannot degrade quietly. The others fall back BEFORE any key is known,
+       where the fallback is "send no DtlKeys". This one runs after, and falling
+       back to the taken set would merge a PART-shipped sofa into one key and
+       send it as whole — the service would then move the book's entire sofa
+       while one piece is still in the warehouse. Before this change that shape
+       was saved by accident: the duplicate key made the host refuse. Merging
+       removes that accident, so the refusal has to become deliberate. */
+    const siblings = new Map<number, { lines: number; qty: number; ids: string[] }>();
+    if (keys.length) {
+      const { data: sib, error: sibErr } = await sb.from(spec.sourceItemTable)
+        .select(`id, linked_ac_dtlkey, ${spec.sourceQtyCol}`).in('linked_ac_dtlkey', keys);
+      /* ON A READ FAILURE, FALL BACK TO WHAT WAS TAKEN — deliberately, and the
+         error is read rather than discarded so that decision is visible.
+
+         The first version of this REFUSED here, on the reasoning that a merge
+         could otherwise send a part-shipped sofa as whole. That reasoning was
+         wrong about which case is new. A delivery taking ONE of two pieces
+         carries the key ONCE, so the merge changes nothing about it — that
+         shape sent `[901830, 901831]` before this branch too, and the host
+         accepted it. The sibling read is what DETECTS it for the first time;
+         losing the read puts the document back exactly where it was this
+         morning, not somewhere worse. Refusing instead turned every path whose
+         client cannot serve this filter into a blocked shipment, which is the
+         module's standing rule violated in the other direction: a conversion
+         must never be lost to a diagnostic read. */
+      for (const r of (sibErr ? [] : (sib ?? []) as unknown as Array<Record<string, unknown>>)) {
+        const n = Number(r.linked_ac_dtlkey);
+        if (!Number.isFinite(n)) continue;
+        const acc = siblings.get(n) ?? { lines: 0, qty: 0, ids: [] };
+        acc.lines += 1;
+        if (typeof r.id === 'string' && r.id) acc.ids.push(r.id);
+        const q = Number(r[spec.sourceQtyCol]);
+        if (Number.isFinite(q)) acc.qty += q;
+        siblings.set(n, acc);
+      }
+    }
+    /* SHARED means the BOOK line has more than one ERP line, whether or not this
+       document took them all. */
+    const shared = keys.filter((key) => Math.max(
+      byKey.get(key)?.erpLines ?? 0, siblings.get(key)?.lines ?? 0,
+    ) > 1);
+    /* ── WHEN DOES A SHARED LINE GO? THE OWNER'S ANSWER IS "WHEN IT IS WHOLE" ──
+       Option C, chosen 2026-09-08: the shared line — a sofa — WAITS for the
+       delivery that completes it, while every other line on the document goes on
+       time. 「C 除了accessories 不看 就看sofa」: completeness is judged on the
+       sofa's OWN pieces, so a pillow still in the warehouse never holds it back.
+       Keying the decision on the shared DtlKey gives exactly that for free — a
+       pillow has its own key and is a different question.
+
+       AND IT IS COUNTED ACROSS EVERY DELIVERY, not just this one. A sofa shipped
+       in two trips has each trip taking ONE piece, so "did THIS document take
+       them all" answers no on the trip that completes it — the sofa would wait
+       for ever. What decides it is whether every ERP line sharing that key has
+       now been taken by SOME downstream document. The delivery that covers the
+       last piece is the one that carries the sofa into the book.
+
+       Best-effort like the sibling read above: unreadable coverage leaves the
+       key in `waiting`, which holds the line back rather than sending it early.
+       Holding is recoverable; a sofa in the book that is still in the warehouse
+       is not. */
+    const covered = new Set<string>();
+    const sibIds = [...new Set(shared.flatMap((key) => siblings.get(key)?.ids ?? []))];
+    if (sibIds.length) {
+      /* THROUGH inAcLineOrder, and this read does not need the order — it
+         becomes a Set. `acLineOrderWiring` cannot tell a coverage read from a
+         payload read and should not have to: the rule is that EVERY selecting
+         read of a line table goes through the one helper, and an exception list
+         is how that rule stops being checkable. Ordering a read whose result is
+         unordered costs nothing and keeps the guard whole. */
+      const { data: cov, error: covErr } = await inAcLineOrder(sb.from(spec.itemTable)
+        .select(`id, ${spec.sourceFk}`).in(spec.sourceFk, sibIds));
+      for (const r of (covErr ? [] : (cov ?? []) as unknown as Array<Record<string, unknown>>)) {
+        const src = r[spec.sourceFk];
+        if (typeof src === 'string' && src) covered.add(src);
+      }
+    }
+    /* Whole = every sibling line taken by SOME downstream document, and this
+       document taking the whole of what its own share holds. */
+    const sharedIsWhole = (key: number): boolean => {
+      const all = siblings.get(key);
+      if (!all || !all.ids.length) return !keyIsPartial(key);
+      if (!all.ids.every((id) => covered.has(id))) return false;
+      return true;
+    };
     if (!missing.length) {
       /* PARTIAL BY QUANTITY — "3 of 5 on this line" — is the ONE shape DtlKeys
          alone cannot express, and getting it wrong is silent: the service's
@@ -638,8 +757,48 @@ export async function readConvertSourceKeys(
          ledger is neither. Measured 2026-08-11 on the book: 10 of 60,939 sales
          order lines were ever partly transferred, so this branch is rare by
          construction and must not become the common path. */
-      if (partialQty && qtyReadable && perKey.length === keys.length) {
-        return { keys, details: perKey };
+      /* ── A SHARED KEY MAY NEVER CARRY A QUANTITY ─────────────────────────
+         The two sides count in different units. AutoCount's sofa line is ONE
+         sofa; the ERP's pieces are two or three lines that each say 1. Summing
+         them gives 2 against a book line of 1, which is an OVER-TRANSFER of a
+         licensed account book — the exact class of silent damage this function
+         was written to prevent.
+
+         Whole, it does not arise: no quantity is sent at all and the service
+         moves each named line's outstanding, so the book's one sofa moves once.
+         PARTLY shipped, it cannot be expressed and is REFUSED rather than
+         approximated — "two of the three pieces" has no shape in a document
+         that holds one line of one unit.
+
+         THE OWNER CHOSE THE ANSWER ON 2026-09-08 — option C, and it is BUILT
+         now: the shared line WAITS for the delivery that completes it while
+         every other line on the document goes on time. The whole document used
+         to be refused for it, which held a pillow hostage to a sofa. */
+      if (shared.length) {
+        const waiting = shared.filter((key) => !sharedIsWhole(key));
+        if (waiting.length) {
+          const ready = keys.filter((key) => !waiting.includes(key));
+          /* NOTHING LEFT TO SEND is not a transfer with no lines — the service
+             would fall back to every outstanding line on the source, which is
+             the exact defect this function exists to prevent. It is a refusal,
+             and the document goes when a later delivery completes the set. */
+          if (!ready.length) {
+            return {
+              refuse:
+                `every line on this ${op.replace('_to_', ' -> ').toUpperCase()} belongs to a line AutoCount holds `
+                + 'as ONE — a sofa, which the ERP splits into a piece per line — and not all of its pieces have '
+                + 'been delivered yet. The account book has no shape for part of a sofa, so it waits for the '
+                + 'delivery that completes it and goes then. Nothing is lost and nothing needs doing.',
+            };
+          }
+          /* THE REST GOES. A quantity is never sent alongside a shared key (the
+             units differ), so this is the plain by-line shape. */
+          return { keys: ready };
+        }
+        return { keys };
+      }
+      if (qtyReadable && keys.some(keyIsPartial)) {
+        return { keys, details: keys.map((key) => ({ DtlKey: key, Qty: (byKey.get(key) as { took: number }).took })) };
       }
       return { keys };
     }

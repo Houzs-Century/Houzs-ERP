@@ -9,6 +9,8 @@ import {
 } from "../vendor/scm/lib/so-variant-cascade";
 import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
+import { lineWriteFailure, lineWriteSaveMessage, type LineWriteFailure } from "../vendor/scm/lib/line-write-failures";
+import { photoLabel, photoUploadFailure, photoUploadFailureMessage, unmatchedLinePhotos, type PhotoUploadFailure } from "../vendor/scm/lib/photo-upload-failures";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
 import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
 import { uploadSlipFull } from "../vendor/scm/lib/slip";
@@ -19,6 +21,7 @@ import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
+import { addressLineProps } from "../lib/addressLimit";
 import { paymentMethodCodeForValue } from "../vendor/scm/lib/payment-methods";
 import { soDateGuardError, soStockLocationError, soErrorText } from "../vendor/scm/lib/so-form-validate";
 import { useBranding } from "../hooks/useBranding";
@@ -1533,26 +1536,25 @@ export function MobileNewSO({
       if (hit) { claimed.add(hit.id); return hit.id; }
       return null;
     };
-    let failed = 0;
+    /* COLLECTS THE REASONS, not a count: the photo half of the defect #3303
+       fixed for line writes. Wording and the retry/refusal decision are in
+       vendor/scm/lib/photo-upload-failures.ts, with the whole trace. */
+    const failures: PhotoUploadFailure[] = [];
     const uploadUnderLease = async (lease: string) => {
       for (const l of withFiles) {
         const itemId = resolveId(l);
-        if (!itemId) { failed += l.photoFiles.length; continue; }
+        const line = l.itemCode.trim() || l.name.trim();
+        if (!itemId) { failures.push(...unmatchedLinePhotos(line, l.photoFiles)); continue; }
         for (const file of l.photoFiles) {
-          try {
-            await uploadSoItemPhotoWithLease(soDocNo, itemId, file, lease);
-          } catch { failed += 1; }
+          try { await uploadSoItemPhotoWithLease(soDocNo, itemId, file, lease); }
+          catch (e) { failures.push(photoUploadFailure(photoLabel(line, file.name), e)); }
         }
       }
     };
-    if (existingLeaseToken) {
-      await uploadUnderLease(existingLeaseToken);
-    } else {
-      await runSoVersionedMutation(qc, soDocNo, "mobile-new-so-photo-upload", ({ leaseToken }) =>
-        uploadUnderLease(leaseToken));
-    }
-    if (failed > 0) {
-      void notify({ title: "Some photos didn't upload", body: `${failed} line photo(s) failed to upload. Add them again from the SO detail screen.`, tone: "error" });
+    if (existingLeaseToken) { await uploadUnderLease(existingLeaseToken); }
+    else { await runSoVersionedMutation(qc, soDocNo, "mobile-new-so-photo-upload", ({ leaseToken }) => uploadUnderLease(leaseToken)); }
+    if (failures.length > 0) {
+      void notify({ title: "Some photos didn't upload", body: photoUploadFailureMessage(failures), tone: "error" });
     }
   }
 
@@ -1616,15 +1618,18 @@ export function MobileNewSO({
     return false;
   };
 
-  async function applyLineDiff(soDocNo: string, leaseToken: string): Promise<number> {
+  /* RETURNS THE REASONS, not a count: a bare `catch { failed += 1; }` here is
+     what told the owner to "try Save again" against a 409 that never could —
+     the whole trace is in vendor/scm/lib/line-write-failures.ts. */
+  async function applyLineDiff(soDocNo: string, leaseToken: string): Promise<LineWriteFailure[]> {
     const base = `/mfg-sales-orders/${encodeURIComponent(soDocNo)}/items`;
     const leaseHeaders = { "X-SO-Edit-Lease": leaseToken };
-    let failed = 0;
+    const failures: LineWriteFailure[] = [];
     const liveIds = new Set(lines.map((l) => l.itemId).filter(Boolean));
     for (const snap of origItems) {
       if (liveIds.has(snap.id)) continue;
       try { await authedFetch(`${base}/${encodeURIComponent(snap.id)}`, { method: "DELETE", headers: leaseHeaders }); }
-      catch { failed += 1; }
+      catch (e) { failures.push(lineWriteFailure(snap.item_code || "A removed line", e)); }
     }
     const snapById = new Map(origItems.map((s) => [s.id, s]));
     for (const l of lines) {
@@ -1637,16 +1642,16 @@ export function MobileNewSO({
             body: JSON.stringify(itemBody(l)),
           });
         }
-        catch { failed += 1; }
+        catch (e) { failures.push(lineWriteFailure(l.itemCode.trim(), e)); }
         continue;
       }
       const snap = snapById.get(l.itemId);
       if (snap && lineChanged(l, snap)) {
         try { await authedFetch(`${base}/${encodeURIComponent(l.itemId)}`, { method: "PATCH", headers: leaseHeaders, body: JSON.stringify(itemPatchBody(l)) }); }
-        catch { failed += 1; }
+        catch (e) { failures.push(lineWriteFailure(l.itemCode.trim() || (snap.item_code ?? "A line"), e)); }
       }
     }
-    return failed;
+    return failures;
   }
 
   /* ── Amendment line builder (Phase 1-C) ──────────────────────────────────
@@ -2029,10 +2034,8 @@ export function MobileNewSO({
            rejects them 409 so_locked_processing anyway. */
         if (!lineEditingBlocked) {
           if (leaseToken) {
-            const failed = await applyLineDiff(docNo, leaseToken);
-            if (failed > 0) {
-              throw new Error(`${failed} line change(s) did not save. Your edits are still here; try Save again.`);
-            }
+            const failures = await applyLineDiff(docNo, leaseToken);
+            if (failures.length > 0) throw new Error(lineWriteSaveMessage(failures));
           }
           await uploadStagedPhotos(docNo, leaseToken);
         }
@@ -2380,7 +2383,6 @@ export function MobileNewSO({
               </div>
             </div>
 
-            {/* ── Delivery address ────────────────────────────────────── */}
             <div className="card" style={{ marginBottom: 11 }}>
               <div className="card-h"><span className="card-t">Delivery address</span></div>
               <div className="card-b" style={{ display: "flex", flexDirection: "column", gap: 9 }}>
@@ -2390,10 +2392,10 @@ export function MobileNewSO({
                   </div>
                 )}
                 <Field label={addressRequired ? "Address Line 1 *" : "Address Line 1"} error={touched && addressRequired && !addr1.trim()} scanned={scanned("addr1", addr1)}>
-                      <input className="fld-i" value={addr1} onChange={(e) => setAddr1(e.target.value)} placeholder="Unit, street, area" />
+                      <input className="fld-i" value={addr1} {...addressLineProps(setAddr1, { value: addr2, set: setAddr2 })} onChange={(e) => setAddr1(e.target.value)} placeholder="Unit, street, area" />
                     </Field>
                     <Field label="Address Line 2">
-                      <input className="fld-i" value={addr2} onChange={(e) => setAddr2(e.target.value)} placeholder="Apt, floor, building (optional)" />
+                      <input className="fld-i" value={addr2} {...addressLineProps(setAddr2, null)} onChange={(e) => setAddr2(e.target.value)} placeholder="Apt, floor, building (optional)" />
                     </Field>
                     {/* FIX A — cascading State → City → Postcode from my_localities
                         (desktop parity). When the dataset is present these are

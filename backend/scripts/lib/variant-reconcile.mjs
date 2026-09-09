@@ -48,6 +48,21 @@
  *   UNREADABLE   the decoder cannot read this Desc2 (parse-sofa returns
  *                conf "low", or the guard that keeps "(1 ELT / T + NA +2ER)" a
  *                placeholder fires).  A photograph job, never a data defect.
+ *   RULED        sofa compartments only.  The owner read the slip HIMSELF and
+ *                set the build against the book's own words, and the ERP holds
+ *                exactly what he ruled.  「一律跟账本。除了sofa compartment而已啊」
+ *                — the book decides everything EXCEPT the sofa build, which is
+ *                his.  So the ERP is SUPPOSED to differ from the text here.
+ *                It is NOT folded into AGREE, for the same reason RECORDED is
+ *                not: the line genuinely does differ from the book, and hiding
+ *                that would remove the only signal that would catch a ruling
+ *                applied to the WRONG document.
+ *                A ruling that has NOT been written stays DIFFER — that is the
+ *                whole safety property.  On 2026-09-08 the owner ruled three
+ *                builds, was shown a report still displaying the old values and
+ *                said 「这个很多我刚刚都给过你答案了啊」.  Had this column existed,
+ *                the two he had already been given would have read RULED and
+ *                the one still unwritten would have stood out as the only work.
  *   RECORDED     specials only.  The book asks for a PRICED option, the line
  *                does not tick it, and `variants.specialsRecorded` carries it.
  *                That is the owner's ruling 甲 of 2026-09-03 already applied —
@@ -107,6 +122,23 @@ export const pickAxis = (variants, keys) => {
 export const inches = (v) => {
   const s = txt(v);
   if (!s) return null;
+  /* ── THE ERP'S OWN WORD FOR ZERO LEGS ────────────────────────────────────
+     "No Leg" is not a typo to tolerate. It is a first-class choice on the
+     bedframe form, stored as that literal string: src/scm/shared/variant-summary
+     matches /^NO\s*LEG$/ when it composes the Desc2, and normalizeInchValue
+     returns it unchanged. Our write-back then sends AutoCount `NO LEG`, which
+     parseBedframe reads back as 0 — so the two systems agreed and only this
+     reader could not see it, reporting ERP_BLANK on a line that matched.
+
+     THE MIGRATION WRITER NEVER PRODUCES IT, which is why it went unseen:
+     bedframeVariants writes `bf.leg + '"'`, so a migrated zero leg is stored
+     as `0"` and always read fine. Only a line entered or edited through the
+     ERP's own form carries this string.
+
+     ABSENT IS STILL NOT ZERO. TBC, KIV and blank keep answering null — a
+     component nobody has picked stays unknown (docs/bugs/0732). This reads a
+     DECISION that was made, not a silence. */
+  if (/^no\s*legs?$/i.test(s)) return 0;
   const m = /^(\d+(?:\.\d+)?)/.exec(s.replace(/^[^\d]+/, ""));
   return m ? Number(m[1]) : null;
 };
@@ -191,7 +223,19 @@ export const DIFFER = "DIFFER";
 export const PENDING = "PENDING";
 export const UNREADABLE = "UNREADABLE";
 export const RECORDED = "RECORDED";
-export const VERDICTS = [AGREE, ERP_BLANK, BOOK_BLANK, DIFFER, PENDING, UNREADABLE, RECORDED];
+/* The owner's per-document sofa ruling, already applied. Its evidence lives in
+   backend/scripts/data/sofa-compartment-corrections-*.json — the SAME files
+   apply-sofa-compartment-corrections.mjs writes from, so the reporter and the
+   writer can never disagree about what he ruled. A build held back in _held is
+   deliberately absent from that set: it is a ruling we have NOT written, and it
+   must keep reading DIFFER. */
+export const RULED = "RULED";
+/* NO_LINE_KEY — both sides state the SAME set of values for this axis on this
+   document, and which of OUR rows answers which of the book's was the checker's
+   own guess.  See foldGuessedPairing below for why that is a third state and
+   not a difference. */
+export const NO_LINE_KEY = "NO_LINE_KEY";
+export const VERDICTS = [AGREE, ERP_BLANK, BOOK_BLANK, DIFFER, PENDING, UNREADABLE, RECORDED, RULED, NO_LINE_KEY];
 
 /** The generic two-value comparison every scalar axis uses. */
 export function verdictOf(bookVal, erpVal, same) {
@@ -282,9 +326,29 @@ export function decodeBook(deps, { desc2, itemGroup, itemCode }) {
     out.leg = bf.leg ?? null;
     /* The SAME expression buildBedframeVariantPatch uses, so this compares
        against what the writer would have written and not against a second
-       opinion about what a total height is. */
+       opinion about what a total height is.
+
+       ── AN UNDECIDED COMPONENT MAKES THE TOTAL UNKNOWN, NOT SMALLER ────────
+       THE THIRD OF THE THREE COPIES of that rule, and the last one owed.
+       `docs/bugs/0732` fixed lib/parse-bedframe.mjs and named this file and
+       lib/variant-merge.mjs as still carrying the defect. Both are now fixed
+       together, which is the only way this expression can go on being "the same
+       expression the writer uses" — the whole reason it is spelled out here
+       rather than imported.
+
+       WHAT IT DOES TO THE VERDICT, and it is not a new difference: `verdictOf`
+       returns BOOK_BLANK when the book states nothing and the ERP holds a
+       value, so an affected line moves from AGREE to BOOK_BLANK — "the ERP
+       carries a value the book never stated", which is what the book genuinely
+       does for a bed whose divan nobody has picked. It stops the axis asserting
+       agreement on a height nobody chose. It locks nothing and it writes
+       nothing: BOOK_BLANK is a declared class, never a gap.
+
+       A merely ABSENT component is untouched, and SELF_TEST's own case
+       'Col: /Div:8"/M.GAP:14"' -> 22" is the pin that says so. */
     const tot = (Number(bf.gap) || 0) + (Number(bf.divan) || 0) + (Number(bf.leg) || 0);
-    out.totalHeight = tot || null;
+    const heightPending = bf.divanPending === true || bf.gapPending === true || bf.legPending === true;
+    out.totalHeight = heightPending ? null : tot || null;
     out.specials = Array.isArray(bf.specials) ? bf.specials : [];
     return out;
   }
@@ -319,7 +383,7 @@ export function decodeBook(deps, { desc2, itemGroup, itemCode }) {
  *
  * Returns { axes: { <key>: { verdict, book, erp, detail } }, proceeded }.
  */
-export function compareLine(deps, { book, erpLines, proceeded }) {
+export function compareLine(deps, { book, erpLines, proceeded, erpNo = null }) {
   const lead = erpLines[0] || {};
   const group = book.group;
   const axes = {};
@@ -327,7 +391,13 @@ export function compareLine(deps, { book, erpLines, proceeded }) {
 
   for (const a of AXES) {
     if (!applies(a)) continue;
-    axes[a.key] = { verdict: AGREE, book: "", erp: "", detail: "" };
+    /* `bookId` / `erpId` are the CANONICAL forms the verdict was decided on —
+       a colour as its library row, a height as its number — carried beside the
+       display strings so foldGuessedPairing can compare two lines' values
+       without re-deciding what "the same" means. They are set only on the
+       SCALAR axes; compartments and specials are multisets already and are
+       deliberately never folded (see foldGuessedPairing). */
+    axes[a.key] = { verdict: AGREE, book: "", erp: "", detail: "", bookId: null, erpId: null };
   }
   if (!VARIANT_GROUPS.has(group)) return { axes, proceeded };
 
@@ -344,6 +414,11 @@ export function compareLine(deps, { book, erpLines, proceeded }) {
     } else {
       const bId = bookRaw ? deps.colourIdentity(bookRaw) : null;
       const eId = erpRaw ? deps.colourIdentity(erpRaw) : null;
+      /* The same fallback the equality below uses: a colour the library cannot
+         resolve is still comparable to itself by its spelling, so two rows that
+         name one unlisted fabric are not called different. */
+      cell.bookId = bookRaw ? bId ?? `raw:${norm(bookRaw)}` : null;
+      cell.erpId = erpRaw ? eId ?? `raw:${norm(erpRaw)}` : null;
       cell.verdict = verdictOf(bookRaw || null, erpRaw || null, () =>
         bId && eId ? bId === eId : norm(bookRaw) === norm(erpRaw),
       );
@@ -369,6 +444,8 @@ export function compareLine(deps, { book, erpLines, proceeded }) {
     const erpVal = inches(pickAxis(lead.variants, AXIS[key].erpKeys));
     cell.book = bookVal === null || bookVal === undefined ? "" : `${bookVal}"`;
     cell.erp = erpVal === null ? "" : `${erpVal}"`;
+    cell.bookId = bookVal === null || bookVal === undefined || Number.isNaN(bookVal) ? null : String(Number(bookVal));
+    cell.erpId = erpVal === null ? null : String(Number(erpVal));
     cell.verdict = verdictOf(
       bookVal === null || bookVal === undefined || Number.isNaN(bookVal) ? null : bookVal,
       erpVal,
@@ -384,6 +461,39 @@ export function compareLine(deps, { book, erpLines, proceeded }) {
       cell.verdict = UNREADABLE;
       cell.book = "(cannot be read from Desc2)";
       cell.detail = book.why.join("; ");
+      /* ── HIS DRAWING IS THE ONLY SOURCE HERE, SO ASK FOR IT ────────────────
+         The book's text does not state the build, which is EXACTLY the case
+         the owner's standing rule reserves for himself —
+         「一律跟账本。除了sofa compartment而已啊」 — and so exactly the case where
+         a ruling he has already given must be honoured. Until this branch
+         asked, it never did: the ruling was consulted only where the book
+         DECODED and the multiset differed, so every sofa he had personally
+         read and answered whose text does not decode kept reporting as
+         "CANNOT BE COMPARED — your drawing decides these", run after run.
+         That is the report handing him back work he had already done, which he
+         objected to three times on 2026-09-08:
+         「这个很多我刚刚都给过你答案了啊」/「你不是会解析照片了吗？为什么还需要我呢」.
+
+         THIS IS A NARROWING OF "WE COULD NOT TELL", NOT A WIDENING OF "IT
+         MATCHES". Same lookup, same strictness as the DIFFER branch below:
+         RULED requires the ERP to hold his answer as an EXACT multiset, a
+         ruling in the corrections files' `_held` list is excluded by
+         makeSofaRulingLookup, and a ruling the ERP has NOT been moved to
+         leaves the cell UNREADABLE — still locking — while naming the answer
+         it is failing to match, so nobody can act on it as if it were done.
+         The permissive answer stays unreachable for a build nothing decided. */
+      const ruling = erpNo && deps.sofaRuling ? deps.sofaRuling(erpNo, erpLines) : null;
+      if (ruling && Array.isArray(ruling.pieces) && ruling.pieces.length && have.length) {
+        if (!multisetDiff(have, ruling.pieces)) {
+          cell.verdict = RULED;
+          cell.detail = "the owner ruled this build " + ruling.pieces.join("+") +
+            " from the drawing" + (ruling.source ? " (" + ruling.source + ")" : "") +
+            " and the ERP holds it, so the book's silence is answered BY DECISION";
+        } else {
+          cell.detail += " | the owner ruled " + ruling.pieces.join("+") +
+            " and the ERP does NOT hold it";
+        }
+      }
     } else {
       cell.book = book.compartments.join("+");
       const d = multisetDiff(have, book.compartments);
@@ -395,6 +505,27 @@ export function compareLine(deps, { book, erpLines, proceeded }) {
           (d.miss.length ? `MISSING ${d.miss.join(", ")}` : "") +
           (d.miss.length && d.extra.length ? " | " : "") +
           (d.extra.length ? `EXTRA ${d.extra.join(", ")}` : "");
+        /* THE OWNER MAY HAVE ALREADY ANSWERED THIS ONE. Consulted ONLY on a
+           difference that is otherwise real: a ruling can never turn an AGREE
+           or an ERP_BLANK into something else, and it is asked AFTER the
+           multiset has spoken, so the book comparison is never skipped.
+           RULED requires the ERP to hold his answer EXACTLY. A ruling that has
+           not been written, or written onto the WRONG document, still reads
+           DIFFER — and now names whose answer it is failing to match, which is
+           the line that would have caught HC-SO-013327 holding 1NA while his
+           ruling said 1B(RHF). */
+        const ruling = erpNo && deps.sofaRuling ? deps.sofaRuling(erpNo, erpLines) : null;
+        if (ruling && Array.isArray(ruling.pieces) && ruling.pieces.length) {
+          if (!multisetDiff(have, ruling.pieces)) {
+            cell.verdict = RULED;
+            cell.detail = "the owner ruled this build " + ruling.pieces.join("+") +
+              " from the drawing" + (ruling.source ? " (" + ruling.source + ")" : "") +
+              " and the ERP holds it, so it differs from the book's words BY DECISION";
+          } else {
+            cell.detail += " | the owner ruled " + ruling.pieces.join("+") +
+              " and the ERP does NOT hold it";
+          }
+        }
       }
     }
   }
@@ -451,6 +582,95 @@ export function compareLine(deps, { book, erpLines, proceeded }) {
   }
 
   return { axes, proceeded };
+}
+
+/* ── the pairing the checker had to GUESS ──────────────────────────────────── */
+
+/** The scalar axes a guessed pairing can transpose. Compartments and specials
+ *  are deliberately absent: each is already a MULTISET over one line, so
+ *  folding a second multiset over a bucket of lines would compare two things
+ *  that are not the same shape, and the compartment axis has its own, stricter
+ *  rule (an unkeyed sofa is UNREADABLE, never AGREE). */
+export const FOLDABLE_AXES = ["colour", "divan", "gap", "leg", "totalHeight", "seat"];
+
+/**
+ * Reclassify the DIFFERs that only an ARBITRARY pairing could have produced.
+ *
+ * ── WHY THIS EXISTS ───────────────────────────────────────────────────────
+ * `check-ac-erp-reconcile.mjs` pairs a book line to an ERP row on
+ * `linked_ac_dtlkey` where the ERP carries one, and otherwise GUESSES: it falls
+ * back to (quantity, unit price) and then to document order. A migrated
+ * delivery order carries no money at all, so two rows of one product at one
+ * quantity are indistinguishable and the assignment is decided by an ordering
+ * the two systems do not share — the book's `Seq`, ours `(line_no, created_at,
+ * id)`. Two values into two slots by an unshared ordering: a "swap" is what
+ * that looks like half the time, and this repo has now been shown six of them
+ * and five were phantoms (docs/bugs/0672, 0688, 0689, 0695, 0696, 0709).
+ *
+ * The document-level reconcile ALREADY declares this class on the item-code
+ * axis, in the owner's own table, as `same-goods`: "we hold NO AutoCount line
+ * number on these rows, so which of our lines answers which of the book's was
+ * the checker's own guess." The variant axes trusted a pairing the axis above
+ * them had publicly declared untrustworthy. This is that declaration, applied
+ * one section down.
+ *
+ * ── THE RULE, AND WHY EACH CLAUSE IS THERE ────────────────────────────────
+ * Per (document bucket, axis), a DIFFER becomes NO_LINE_KEY only when ALL of:
+ *
+ *   1. at least TWO of the bucket's rows carry no AutoCount line key.
+ *      ONE unkeyed row among keyed ones is not a guess — the keyed rows are
+ *      fixed and the last one is forced by elimination.
+ *   2. the bucket holds more than one row. A single row cannot be transposed
+ *      with anything.
+ *   3. the two sides' value MULTISETS for that axis are EQUAL. This is the
+ *      whole guarantee and it needs no pairing: a bag is order-independent, so
+ *      no ordering can fake it and none can hide a real difference behind it.
+ *      A bucket whose bags differ keeps every one of its DIFFERs — a PARTIAL
+ *      cover is not a cover (the lesson of docs/bugs/0668, where a hand-typed
+ *      label printed 30 real gaps as owner decisions).
+ *
+ * NO_LINE_KEY is NOT folded into AGREE, for the same reason RECORDED was not:
+ * the row genuinely does not state what the book's row states, and pretending
+ * otherwise is the same dishonesty pointing the other way. What is proven is
+ * that the DOCUMENT ships the right values; which of our rows is which is
+ * unknown, and is printed as unknown.
+ *
+ * PURE: cells in, cells mutated in place, nothing else. No I/O, no clock.
+ *
+ * @param {Array<{bucket: string, keyed: boolean, axes: Record<string, {verdict: string, bookId: ?string, erpId: ?string}>}>} entries
+ * @returns {{folded: number, buckets: number}} what it changed, for the report
+ */
+export function foldGuessedPairing(entries) {
+  const byBucket = new Map();
+  for (const e of entries) {
+    if (!byBucket.has(e.bucket)) byBucket.set(e.bucket, []);
+    byBucket.get(e.bucket).push(e);
+  }
+  let folded = 0;
+  const touched = new Set();
+  for (const [bucket, es] of byBucket) {
+    if (es.length < 2) continue;
+    if (es.filter((e) => !e.keyed).length < 2) continue;
+    for (const axis of FOLDABLE_AXES) {
+      const cells = es.map((e) => e.axes[axis]).filter(Boolean);
+      if (cells.length !== es.length) continue; // the axis does not apply to every row here
+      if (!cells.some((c) => c.verdict === DIFFER)) continue;
+      const bookBag = cells.map((c) => c.bookId ?? "(blank)").sort();
+      const erpBag = cells.map((c) => c.erpId ?? "(blank)").sort();
+      if (bookBag.join("") !== erpBag.join("")) continue;
+      for (const c of cells) {
+        if (c.verdict !== DIFFER) continue;
+        c.verdict = NO_LINE_KEY;
+        c.detail =
+          `${c.detail ? `${c.detail}; ` : ""}this document's rows of this item carry NO AutoCount line key, so which of ` +
+          `ours answers which of the book's is the checker's own guess — and both sides state the SAME set ` +
+          `(${bookBag.join(", ")}), which no ordering can fake`;
+        folded += 1;
+        touched.add(bucket);
+      }
+    }
+  }
+  return { folded, buckets: touched.size };
 }
 
 /* ── the self-test ─────────────────────────────────────────────────────────── */

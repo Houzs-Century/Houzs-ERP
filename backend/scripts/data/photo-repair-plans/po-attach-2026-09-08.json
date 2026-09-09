@@ -1,0 +1,84 @@
+{
+  "kind": "attach-uploaded-line-photos",
+  "generatedAt": "2026-09-08T12:37:41.480Z",
+  "account": "816e457307d7fa0491c2a08a72ad5dcd",
+  "bucket": "houzs-erp",
+  "company": 1,
+  "count": 7,
+  "ops": [
+    {
+      "arm": "PURCHASE ORDER",
+      "id": "4e9c9919-018a-45dd-a1eb-53f50ac81a13",
+      "doc": "HC-PO-010085",
+      "dtl": "917329",
+      "before": [],
+      "add": [
+        "po-items/HC-PO-010085/4e9c9919-018a-45dd-a1eb-53f50ac81a13/ac-917329-1.jpg",
+        "po-items/HC-PO-010085/4e9c9919-018a-45dd-a1eb-53f50ac81a13/ac-917329-2.jpg"
+      ]
+    },
+    {
+      "arm": "PURCHASE ORDER",
+      "id": "0dd18192-2531-4569-8eeb-7d4690df7c4d",
+      "doc": "HC-PO-010086",
+      "dtl": "917334",
+      "before": [],
+      "add": [
+        "po-items/HC-PO-010086/0dd18192-2531-4569-8eeb-7d4690df7c4d/ac-917334-1.jpg",
+        "po-items/HC-PO-010086/0dd18192-2531-4569-8eeb-7d4690df7c4d/ac-917334-2.jpg"
+      ]
+    },
+    {
+      "arm": "PURCHASE ORDER",
+      "id": "cf2a5160-37ce-4386-93b1-2528b3abf58e",
+      "doc": "HC-PO-010146",
+      "dtl": "924289",
+      "before": [],
+      "add": [
+        "po-items/HC-PO-010146/cf2a5160-37ce-4386-93b1-2528b3abf58e/ac-924289-1.jpg"
+      ]
+    },
+    {
+      "arm": "PURCHASE ORDER",
+      "id": "1f8abd7c-3c21-4dfc-9c8d-fbc6b18d1c56",
+      "doc": "HC-PO-010150",
+      "dtl": "924305",
+      "before": [],
+      "add": [
+        "po-items/HC-PO-010150/1f8abd7c-3c21-4dfc-9c8d-fbc6b18d1c56/ac-924305-1.jpg",
+        "po-items/HC-PO-010150/1f8abd7c-3c21-4dfc-9c8d-fbc6b18d1c56/ac-924305-2.jpg"
+      ]
+    },
+    {
+      "arm": "PURCHASE ORDER",
+      "id": "0714e2ac-6781-4741-bdf7-020134ad739d",
+      "doc": "HC-PO-010151",
+      "dtl": "924316",
+      "before": [],
+      "add": [
+        "po-items/HC-PO-010151/0714e2ac-6781-4741-bdf7-020134ad739d/ac-924316-1.jpg"
+      ]
+    },
+    {
+      "arm": "PURCHASE ORDER",
+      "id": "842418ab-1019-4461-8380-5df6010d70e6",
+      "doc": "HC-PO-010160",
+      "dtl": "924538",
+      "before": [],
+      "add": [
+        "po-items/HC-PO-010160/842418ab-1019-4461-8380-5df6010d70e6/ac-924538-1.jpg"
+      ]
+    },
+    {
+      "arm": "PURCHASE ORDER",
+      "id": "9e63c2f3-8477-45ea-887a-50418fd25b0e",
+      "doc": "HC-PO-010161",
+      "dtl": "924543",
+      "before": [],
+      "add": [
+        "po-items/HC-PO-010161/9e63c2f3-8477-45ea-887a-50418fd25b0e/ac-924543-1.jpg"
+      ]
+    }
+  ],
+  "digest": "sha256:c219d36f5a1aa2dd7e977cd656642654670d333f37908e02d25ea3a82ac9c8bc"
+}

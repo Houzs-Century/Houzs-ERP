@@ -1,4 +1,4 @@
-// Delivery Order — the Theme C template (owner handoff 2026-08-07).
+// Delivery Order — the dot-matrix template (owner 2026-09-08; Theme C before).
 //
 // The DO is drawn by jsPDF, so "does it match the design" is not something a
 // test can assert. What IS worth pinning are the properties that make the sheet
@@ -6,9 +6,10 @@
 //
 //   · the letterhead's two columns must not overlap (2990's long address ran
 //     under the date on a real prod DO);
-//   · nothing on the page may be a dark fill — the owner's standing rule from
-//     the same day, which the redesign had to honour while introducing pale
-//     panels of its own;
+//   · the sheet is black on white, one face, nothing under 9pt, on a Letter
+//     page — it is printed on an Epson LQ-310 onto 9.5 x 11 2-ply continuous
+//     paper, where grey text and tinted fills dither into dots and small
+//     courier was unreadable (owner 2026-09-08);
 //   · the TOTAL label must not wrap ("TOT / AL" — caught in review, because the
 //     row-number column is 5% wide and the label was dropped into it);
 //   · a DO that spills onto a second page must repeat the column header, close
@@ -97,24 +98,61 @@ const itemAt = (i: number) => ({
 
 type Span = { text: string; left: number; right: number; y: number; page: number };
 type Fill = { rgb: [number, number, number]; y: number };
+type Rgb = [number, number, number];
+
+/** jsPDF's colour setters take (grey), (r, g, b) or ('#rrggbb'); autoTable
+ *  applies styles through the same setters. Normalised so a test can compare. */
+function rgbOf(args: unknown[]): Rgb {
+  if (args.length >= 3) return [Number(args[0]), Number(args[1]), Number(args[2])];
+  const a = args[0];
+  if (typeof a === 'number') return [a, a, a];
+  if (typeof a === 'string' && /^#[0-9a-f]{6}$/i.test(a)) {
+    return [parseInt(a.slice(1, 3), 16), parseInt(a.slice(3, 5), 16), parseInt(a.slice(5, 7), 16)];
+  }
+  throw new Error(`unrecognised colour ${JSON.stringify(args)}`);
+}
 
 /** Text spans with the horizontal extent they occupied, plus every filled
- *  rectangle and the colour it was painted with. Widths and colours are read
- *  INSIDE the spies, while the font / fill state that produced them is still
- *  in effect — reading afterwards would report whatever was set last. */
-function capture(doc: JsPdf): { spans: Span[]; fills: Fill[] } {
+ *  rectangle and the colour it was painted with, plus every ink, face and size
+ *  the document was ever set to. Widths and colours are read INSIDE the spies,
+ *  while the font / fill state that produced them is still in effect — reading
+ *  afterwards would report whatever was set last. */
+function capture(doc: JsPdf): {
+  spans: Span[];
+  fills: Fill[];
+  inks: Rgb[];
+  faces: string[];
+  sizes: number[];
+} {
   const spans: Span[] = [];
   const fills: Fill[] = [];
+  const inks: Rgb[] = [];
+  const faces: string[] = [];
+  const sizes: number[] = [];
   let fill: [number, number, number] = [255, 255, 255];
   const page = () => (doc as unknown as { internal: { getCurrentPageInfo: () => { pageNumber: number } } })
     .internal.getCurrentPageInfo().pageNumber;
 
   const setFillColor = doc.setFillColor.bind(doc);
   vi.spyOn(doc, 'setFillColor').mockImplementation(((...args: unknown[]) => {
-    if (args.length >= 3) fill = [Number(args[0]), Number(args[1]), Number(args[2])];
-    else if (typeof args[0] === 'number') fill = [args[0], args[0], args[0]];
+    fill = rgbOf(args);
     return (setFillColor as (...a: unknown[]) => unknown)(...args);
   }) as typeof doc.setFillColor);
+  const setTextColor = doc.setTextColor.bind(doc);
+  vi.spyOn(doc, 'setTextColor').mockImplementation(((...args: unknown[]) => {
+    inks.push(rgbOf(args));
+    return (setTextColor as (...a: unknown[]) => unknown)(...args);
+  }) as typeof doc.setTextColor);
+  const setFont = doc.setFont.bind(doc);
+  vi.spyOn(doc, 'setFont').mockImplementation(((...args: unknown[]) => {
+    faces.push(String(args[0]));
+    return (setFont as (...a: unknown[]) => unknown)(...args);
+  }) as typeof doc.setFont);
+  const setFontSize = doc.setFontSize.bind(doc);
+  vi.spyOn(doc, 'setFontSize').mockImplementation(((...args: unknown[]) => {
+    sizes.push(Number(args[0]));
+    return (setFontSize as (...a: unknown[]) => unknown)(...args);
+  }) as typeof doc.setFontSize);
 
   const record = (style: unknown, y: unknown) => {
     // jsPDF paints on 'F' / 'FD' / 'DF'; 'S' (or nothing) only strokes, so the
@@ -153,24 +191,20 @@ function capture(doc: JsPdf): { spans: Span[]; fills: Fill[] } {
     return text(...args);
   }) as typeof doc.text);
 
-  return { spans, fills };
+  return { spans, fills, inks, faces, sizes };
 }
 
 async function renderDo(items: ReturnType<typeof itemAt>[], header: typeof HEADER = HEADER) {
-  const [{ jsPDF }, { default: autoTable }, { renderDeliveryOrderInto }] = await Promise.all([
+  const [{ jsPDF }, { default: autoTable }, { renderDeliveryOrderInto, DO_PAGE_FORMAT }] = await Promise.all([
     import('jspdf'),
     import('jspdf-autotable'),
     import('./delivery-order-pdf'),
   ]);
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ unit: 'mm', format: DO_PAGE_FORMAT });
   const captured = capture(doc);
   await renderDeliveryOrderInto(doc, autoTable, header as never, items as never, { logo: LOGO });
   return { doc, ...captured };
 }
-
-/** Perceived lightness, 0 (black) → 1 (white). */
-const luminance = ([r, g, b]: [number, number, number]): number =>
-  (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
 
 afterEach(() => {
   setBrandingCache({ ...DEFAULT_BRANDING }, 'HOUZS');
@@ -183,12 +217,12 @@ describe('Delivery Order — Theme C template', () => {
     setBrandingCache({ ...BRANDING_2990 }, '2990');
     const { spans } = await renderDo([itemAt(1)]);
 
-    // The right column: the two title words, the doc-number chip, "Issued" and
-    // the date — everything drawn above the petrol rule at the right edge.
+    // The right column: the two title words, the doc number and the issued
+    // date — everything drawn above the header rule at the right edge.
     const meta = spans.filter(
-      (s) => ['DELIVERY', 'ORDER', HEADER.do_number, 'Issued', '06/08/2026'].includes(s.text) && s.y < 50,
+      (s) => ['DELIVERY', 'ORDER', HEADER.do_number, 'Issued 06/08/2026'].includes(s.text) && s.y < 50,
     );
-    expect(meta.length).toBeGreaterThanOrEqual(5);
+    expect(meta.length).toBeGreaterThanOrEqual(4);
     const metaLeft = Math.min(...meta.map((s) => s.left));
 
     const company = spans.filter(
@@ -257,20 +291,64 @@ describe('Delivery Order — Theme C template', () => {
     expect(code!.left).toBeGreaterThan(name!.right);
   });
 
-  test('nothing on the page is a dark fill', async () => {
-    /* The owner's rule from the morning of the same day: no black band, no grey
-       striping. Theme C brings fills back — a paper panel, a brass doc-number
-       chip, a teal status chip — so the rule survives as a LIGHTNESS bound
-       rather than a count. The old near-black band (#221f20, luminance 0.12)
-       fails this; every Theme C fill is above 0.85. */
+  /* The sheet goes through an Epson LQ-310 (24-pin, black ribbon) onto 9.5 x 11
+     2-ply continuous paper (owner 2026-09-08). On that printer the Theme C
+     sheet was unreadable for three separate reasons, and each is pinned as its
+     own property so a regression names the one it broke. Every one of these
+     is measured off the DRAWN output: autoTable applies its cell styles through
+     the same setters, so its cells are in the population too. */
+  test('the sheet is black on white: no fill of any colour, every ink pure black', async () => {
+    /* A pale fill — the old paper panel, the brass doc-number pill, the teal
+       status pill, the rounded header band — has no grey ribbon to print with:
+       the driver dithers it into a field of dots UNDER the text. Grey text
+       dithers the same way, and the second carbonless ply gets a fainter copy.
+       So: NO fills at all (the QR's white backing and black modules are the
+       only exception, and this fixture carries no scan token), and every
+       setTextColor call is [0, 0, 0]. */
     setBrandingCache({ ...BRANDING_2990 }, '2990');
-    const { fills } = await renderDo([itemAt(1), itemAt(2), itemAt(3)]);
+    const { fills, inks, spans } = await renderDo([itemAt(1), itemAt(2), itemAt(3)]);
 
-    expect(fills.length).toBeGreaterThan(0); // the spy is live
-    const darkest = fills.reduce((a, b) => (luminance(a.rgb) <= luminance(b.rgb) ? a : b));
-    expect({ rgb: darkest.rgb, luminance: Number(luminance(darkest.rgb).toFixed(3)) })
-      .toMatchObject({ luminance: expect.any(Number) });
-    expect(luminance(darkest.rgb)).toBeGreaterThan(0.8);
+    expect(spans.length).toBeGreaterThan(20); // the spies are live
+    expect(fills).toEqual([]);
+    expect(inks.length).toBeGreaterThan(0);
+    const notBlack = inks.filter((rgb) => rgb.some((c) => c !== 0));
+    expect(notBlack).toEqual([]);
+  });
+
+  test('one face, and nothing under the 9pt floor', async () => {
+    /* 字体统一 (owner): the courier / helvetica mix is gone. Helvetica is also
+       the family ensurePdfCjkFont redirects onto the CJK subset, so this is
+       what lets a Chinese address paint in EVERY cell. And 24 pins at 180dpi
+       cannot form a 7.5pt glyph — the floor is the theme's DO_SIZE.min, and a
+       size added under it fails here rather than smudging on the second ply. */
+    const { DO_SIZE, SANS } = await import('./delivery-order-theme');
+    setBrandingCache({ ...BRANDING_2990, csPhone: '+60 11-1110 8855', csEmail: 'ops@2990shome.com' }, '2990');
+    const { faces, sizes } = await renderDo(
+      Array.from({ length: 30 }, (_, i) => itemAt(i + 1)),
+      { ...HEADER, driver_name: 'Ah Seng', vehicle: 'WXY 1234', notes: 'Call the guardhouse.' } as typeof HEADER,
+    );
+
+    expect(faces.length).toBeGreaterThan(0);
+    expect(new Set(faces)).toEqual(new Set([SANS]));
+    expect(sizes.length).toBeGreaterThan(0);
+    expect(Math.min(...sizes)).toBeGreaterThanOrEqual(DO_SIZE.min);
+  });
+
+  test('the page is Letter — the 9.5 x 11 continuous form between its perforations', async () => {
+    /* 9.5 x 11 continuous paper is 8.5 in wide once the tractor strips are
+       torn off and 11 in tall: exactly Letter. A4 is 18mm taller, so a print
+       dialog set to fit was shrinking every sheet, and the type with it. */
+    const { doc } = await renderDo([itemAt(1)]);
+    const size = doc.internal.pageSize;
+    expect(size.getWidth()).toBeCloseTo(215.9, 0);
+    expect(size.getHeight()).toBeCloseTo(279.4, 0);
+    // And the layout was laid out for that sheet, not for A4: the footer sits
+    // inside the bottom padding of THIS page, not 18mm past its edge.
+    const { spans } = await renderDo([itemAt(1)]);
+    const footer = spans.find((s) => s.text.startsWith('By signing above'));
+    expect(footer).toBeDefined();
+    expect(footer!.y).toBeLessThan(279.4 - 8);
+    expect(footer!.y).toBeGreaterThan(279.4 - 20);
   });
 
   test('the TOTAL label prints as one word, not wrapped into the number rail', async () => {
@@ -329,7 +407,7 @@ describe('Delivery Order — Theme C template', () => {
       import('jspdf-autotable'),
       import('./delivery-order-pdf'),
     ]);
-    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const doc = new jsPDF({ unit: 'mm', format: 'letter' });
     const { spans } = capture(doc);
 
     await renderDeliveryOrderInto(doc, autoTable, HEADER as never, [itemAt(1)] as never, { logo: LOGO });
@@ -434,7 +512,7 @@ describe('Delivery Order — Theme C template', () => {
     ]);
 
     const measure = async (width: number, height: number) => {
-      const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+      const doc = new jsPDF({ unit: 'mm', format: 'letter' });
       const addImage = doc.addImage.bind(doc);
       vi.spyOn(doc, 'addImage').mockImplementation(((...args: unknown[]) => {
         drawn.push({ w: Number(args[4]), h: Number(args[5]) });
@@ -533,7 +611,7 @@ describe('Delivery Order — Theme C template', () => {
       import('jspdf-autotable'),
       import('./delivery-order-pdf'),
     ]);
-    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const doc = new jsPDF({ unit: 'mm', format: 'letter' });
     const { spans } = capture(doc);
     await renderDeliveryOrderInto(doc, autoTable, HEADER as never, [itemAt(1)] as never, {
       docTitle: 'CONSIGNMENT NOTE',

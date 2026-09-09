@@ -66,6 +66,7 @@ const ResetPassword = lazy(() => import("./pages/ResetPassword").then((m) => ({ 
 const AcceptInviteScreen = lazy(() => import("./auth/AuthScreens").then((m) => ({ default: m.AcceptInviteScreen })));
 const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy").then((m) => ({ default: m.PrivacyPolicy })));
 const ContractorCalendar = lazy(() => import("./pages/ContractorCalendar").then((m) => ({ default: m.ContractorCalendar })));
+const BrandCalendar = lazy(() => import("./pages/ContractorCalendar").then((m) => ({ default: m.BrandCalendar })));
 
 function PublicFallback() {
   return <div className="flex min-h-screen items-center justify-center text-sm text-ink-muted">Loading</div>;
@@ -202,6 +203,14 @@ function RootApp() {
     return (
       <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
         <ContractorCalendar />
+      </LazySlot>
+    );
+  }
+  if (surface === "brand") {
+    /* A brand's own confirmed schedule — same no-login token rule as /c/. */
+    return (
+      <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
+        <BrandCalendar />
       </LazySlot>
     );
   }

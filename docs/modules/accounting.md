@@ -255,11 +255,38 @@ date). Three shared components moved for this round and for every page
 that uses them: `frontend/src/vendor/scm/components/SearchCombo.tsx` scrolls
 the highlighted option into view as ↓ moves and opens ON the first option;
 `frontend/src/vendor/scm/components/DateField.tsx` selects a pre-filled date
-on focus and masks typed digits (31032026 → 31/03/2026, `maskDmy`);
+on focus and masks typed digits (31032026 → 31/03/2026, `maskDmy`) — but only
+while every `/` on screen is one the mask itself placed (`separatorsAreMaskOwn`);
+a separator the operator typed is left alone and read by `parseDmy`, so
+`7/9/2026` no longer collapses to `79/20/26`. On blur, text that does not parse
+STAYS on screen with `aria-invalid` and a `role="alert"` message rather than
+reverting in silence. **On a coarse pointer the field is SPLIT: the calendar
+icon is a real `<input type="date">`, the rest is the text box** —
+`useCoarsePointer` swaps the native input from a 20px strip (`.nativeHidden`) to
+a transparent 44 by 44 target pinned to the right-hand end (`.nativeIconTarget`,
+`pointer-events: auto`, `z-index: 3`, marked `data-touch-target` in the DOM), so
+a finger tap on the icon opens the OS picker with no script involved, while a
+tap anywhere else focuses the masked text box and raises the keyboard. Both
+entry methods work on a phone: pick a date, or type one. The day-first masked
+text stays visible underneath, so the display is still ours. `showPicker()` is
+the MOUSE path only, reached from the calendar button, which keeps its 44px hit
+area; the 44px target overflows the ~30px field vertically rather than growing
+it, so no form row re-flows (measured 30px on both pointers, before and after).
+Typing also stays on every fine pointer (`pointer: coarse` is the PRIMARY
+pointer, so a keyboard-case iPad and a touchscreen laptop both keep the text
+box) and on any hardware keyboard. Two earlier spellings are recorded and should
+not be re-tried: a `showPicker()` call fired from the text box's `onClick`,
+which worked on Chrome and did nothing at all on iOS
+(`docs/bugs/0725-the-touch-date-picker-called-showpicker-on-an-untappable-inp.md`),
+and a full-field `inset: 0` overlay, which reached the picker but covered the
+text box so a phone could not type at all — the owner asked for typing back the
+next day, 「可以保留手打」
+(`docs/bugs/0726-pr-3311-took-hand-typing-away-on-a-phone-the-date-input-cove.md`).
 `frontend/src/vendor/scm/components/MoneyInput.tsx` rests as 1,800.00
 (`fmtMoneyAtRest`) and edits plain. Pinned by `backend/tests/apInvoiceEdit.test.ts`,
 ApInvoices.test.tsx (pop-out, Edit, Copy, Insert / Enter, amounts),
-`SearchCombo.keys.test.tsx`, `DateField.mask.test.tsx`, `MoneyInput.test.tsx`.
+`SearchCombo.keys.test.tsx`, `DateField.mask.test.tsx`,
+`DateField.touch.test.tsx`, `MoneyInput.test.tsx`.
 
 **The AutoCount sections (2026-09-06).** Every account carries a `section`
 (`scm.accounts.section`, migration 20260906T0900) — the top node the
@@ -450,7 +477,33 @@ month" (`listReceiptsHandler`, `backend/src/scm/routes/receipts.ts`;
 `useReceipts` in `frontend/src/vendor/scm/lib/accounting-queries.ts`; the
 page keeps an "All months" button beside the picker,
 `frontend/src/pages/scm-v2/Receipts.tsx`). F3 or Ctrl+S posts the open
-receipt form once it is complete (`useSaveHotkey`, payment-voucher.md). Contracts:
+receipt form once it is complete (`useSaveHotkey`, payment-voucher.md). Since
+2026-09-08 the list is the voucher list's grid (owner, pointing at that
+header: Filter 我要这样的 filter function) — `DataGrid`
+(`frontend/src/vendor/scm/components/DataGrid.tsx`): every column sorts and
+funnels (Kind / Status by value, No. type-to-find, Date by preset or range,
+Amount by min/max), the search box finds a number, a payer or a bank, Export
+Excel; the month picker, the count and the total ride in its toolbar and the
+total follows what is filtered. New / Edit open in the pop-out over the list
+(`Modal`, the AP invoice's) — the form used to be pushed in above the table,
+which sent the operator to the top of a long list (如果我在下面我要滑到很上面).
+**The same New receipt takes an Other Debtor's money (2026-09-08, owner:
+不可能链接起来吗? 想 pv 也可以付 AP invoice, expense — receipt 页我也希望这样 →
+用这个方式).** A kind switch — Sundry income / Other Debtor — and in the
+debtor kind the registry (active debtors, what each owes), the debtor's open
+bills with tick-in-full or a typed partial (the Other Debtors page's own
+picker), Received into, date; Post raises the ODR through
+`POST /other-debtors/:id/receipts` with `postNow: true`
+(`createDebtorReceiptHandler`, `backend/src/scm/routes/other-debtors.ts`),
+which stamps the three marks with the one hand that keyed it and books the
+identical entry the fourth layer's Approve writes — `postDebtorReceipt`, Dr
+bank / Cr 305, bills knocked off — in the same call (录入即过账; no four layers
+on this door; the Other Debtors page's own raise still starts at Draft). The
+bill itself is still raised on Other Debtors. Contracts:
+`backend/tests/otherDebtors.test.ts` ("postNow books the receipt in the same
+call", "without postNow nothing changes"), `Receipts.test.tsx` ("an Other
+Debtor's money is received here").
+Contracts:
 `backend/tests/receipts.test.ts` ("no month asked for lists every month"),
 `Receipts.test.tsx` ("opens on every month").
 Handlers in `receipts.ts` (mounted beside other-debtors in
@@ -914,6 +967,48 @@ two days:
   money accounts — the chart is already maintained centrally (0297), which is the
   owner's own answer to where banks are defined ("chart of account 我也是会做成总
   维护不是？").
+
+**Reading the bank's file — headings, never positions (2026-09-08; owner, on
+the eight Hong Leong files for 2990's 310-0020 / account 23600602788: 别卡死
+读 column, 我怕未来 bank 可能换 format … 可能隔几天我就做一次).**
+`backend/src/acc/bank-parse.ts` finds every column by its heading text
+(case, spaces and punctuation folded): the names the config teaches first,
+then `DEFAULT_HEADINGS` — the captions banks are known to print for each
+role (Date / Transaction Date / Txn Date…, Deposit / Credit Amount…,
+Withdrawal / Payment Amount…) — so a re-captioned or reordered export still
+reads, and a file matching none of them is refused with its own headings
+quoted. A column map's values are one heading or SEVERAL (JSON arrays); the
+`reference` role JOINS every present heading (Hong Leong's any-day export
+splits the narrative into sender name, reference and "other details"). It
+strips Excel's `="…"` guard from every cell, reads the opening balance from
+the statement's own row ("Balance from previous statement", "Prior Day
+Balance :") instead of deriving it from a day's single printed balance, and
+hands lines back in DATE ORDER whichever way the bank printed them (the
+any-day export runs newest first), closing = the newest printed balance.
+Uploads overlap by design: `movementFingerprint` (day + amount + the
+narrative's WORDS in any order, a split word glued back — "MERCHAN T") keys
+what this account already carries on ANY earlier statement, counted, so a
+longer export marks what it repeats DUPLICATE/IGNORED (naming the entry or
+the statement it sits on) and adds only the movements beyond that count —
+two identical transfers on one day stay two
+(`bankUpload`, `backend/src/scm/routes/accounting-bank.ts`). Setup lives on
+Reconciliation setup's **Bank statements** card
+(`frontend/src/pages/scm-v2/SettlementSetup.tsx`, hooks in
+`frontend/src/pages/scm-v2/bank-queries.ts`): per company, the account, the
+bank, the account number the file must mention, format, delimiter, amount
+style, and each heading role as a comma-separated list, a blank role falling
+back to the built-in names — `GET/POST /accounting/bank/config`
+(`backend/src/scm/routes/accounting-bank-config.ts`; money accounts of this
+company's chart only, CSV/TXT only, an amount named one way only; the
+`ready` flag on `/bank/setup` is now always true for that reason).
+`backend/src/db/migrations-pg/20260908T2100_acc_bank_statement_hlb_2990.sql`
+seeds 2990's HLB account (both layouts' captions), adds the GHL recognition
+rule ("/GHL/<merchant> … (FOR GHL)" on an interbank GIRO credit) and loosens
+the HLB rule to the split word. Contracts: `backend/src/acc/bank-parse.test.ts`
+(both Hong Leong layouts on synthetic rows, the built-in headings, the
+fingerprint), `backend/src/acc/bank-match.test.ts` (GHL, HLB whole and
+split), `backend/tests/bankRoutes.test.ts` ("uploading overlapping exports",
+"setting up a statement account"), `SettlementSetup.test.tsx` (the card).
 
 On both reconciliation screens, working a statement REPLACES the list rather than stacking under it —
 the owner on the version that stacked: 就感觉很多东西挤在一页. Each page links to

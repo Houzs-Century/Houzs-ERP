@@ -136,8 +136,8 @@ import { mapSpecial as mapBedframeSpecial } from "./lib/bedframe-special-map.mjs
 import { K as SK, mapPhrase as mapSofaPhrase, skey } from "./lib/sofa-special-map.mjs";
 import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 import {
-  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, PENDING, RECORDED, UNREADABLE, VARIANT_GROUPS, VERDICTS,
-  compareLine, decodeBook, runSelfTest,
+  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, NO_LINE_KEY, PENDING, RECORDED, UNREADABLE, VARIANT_GROUPS,
+  VERDICTS, compareLine, decodeBook, foldGuessedPairing, runSelfTest,
 } from "./lib/variant-reconcile.mjs";
 
 import { buildScope, currencyVerdict, decodeSnapshot, isTestDoc, LOCAL_CURRENCY } from "./lib/ac-scope.mjs";
@@ -145,17 +145,23 @@ import {
   splitBookUnpriced, splitDecidedAbsences, splitErpZeroMoney,
   splitGuessedItemCodePairing, splitMigratedChainLineShape,
 } from "./lib/ac-not-a-difference.mjs";
-import { isBlankBookRow, splitBlankBookRows } from "./lib/ac-blank-book-row.mjs";
+import { blankRowArm, isBlankBookRow, splitBlankBookRows } from "./lib/ac-blank-book-row.mjs";
 import { grPairGrain } from "./lib/ac-gr-pair-grain.mjs";
 import { erpReconcileTypes } from "./lib/ac-reconcile-erp-sql.mjs";
+import { UNPROVEN, isErpNativeShape, splitErpNative } from "./lib/ac-erp-native.mjs";
 import { bagOf, compareBags } from "./lib/keyless-multiset.mjs";
+import { reportVariants } from "./lib/variant-report.mjs";
 import { FIELD_MAP } from "./lib/ac-field-identity.mjs";
 import {
   compareType, loadAcFieldSide, loadErpFieldSide, measurePoDiscount,
   runSelfTest as runFieldSelfTest,
 } from "./lib/ac-field-identity-run.mjs";
 import { printFieldTable, printPoDiscount } from "./lib/ac-field-identity-report.mjs";
-import { buildVerdictRows, makeVerdictRecorder, summariseVerdict } from "./lib/so-verdict-derive.mjs";
+import { makeVerdictRecorder } from "./lib/so-verdict-derive.mjs";
+import { transferChainAxis } from "./lib/ac-transfer-chain-report.mjs";
+import { emitVerdicts } from "./lib/ac-verdict-emit.mjs";
+import { makeSofaRulingLookup } from "./lib/sofa-rulings.mjs";
+import { applyOwnerModelOverride } from "./lib/ac-model-override-apply.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -179,6 +185,22 @@ const SHOW = Math.max(1, Number(process.env.SHOW || 20));
    never be a second opinion about "different". */
 const VERDICT = makeVerdictRecorder();
 const VERDICT_OUT = String(process.env.VERDICT_OUT || "").trim();
+/* THE SAME VERDICT, FOR THE OTHER DOCUMENT TYPES. 2026-09-08, the owner:
+   「然后把PO GR也tally掉」.
+
+   A DIRECTORY and not a second path, because the recorder above has ALWAYS been
+   keyed by document type — every `VERDICT.record(t, ...)` call site below passes
+   the type it is looping over — so purchase-order and goods-receipt findings
+   were already being collected and simply never written out. This emits what is
+   already there; it adds no comparison, and it must never be allowed to. The
+   file `VERDICT_OUT` still receives SALES ORDERS and nothing else, so
+   publish-so-reconcile-verdict.mjs and the migrated-sales-order lock see a byte
+   for byte unchanged payload. */
+const VERDICT_DIR = String(process.env.VERDICT_DIR || "").trim();
+const VERDICT_TYPES = String(process.env.VERDICT_TYPES || "SO,PO,GR")
+  .split(",")
+  .map((s) => s.trim().toUpperCase())
+  .filter(Boolean);
 
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const plain = (m) => console.log(m);
@@ -352,6 +374,40 @@ try {
   await refuse(`the ERP database could not be read: ${e.message}`);
 }
 
+/* WHEN THE ERP WROTE EACH ROW. It answers ONE question — is this document newer
+   than the AutoCount snapshot it is being compared against — and it is read
+   per type, in its own try, FAILING SOFT for the same reason `zeroMoneyProof`
+   below does. If a table's `created_at` cannot be read, the honest outcome is
+   that NOTHING is reclassified for that type and the run says why, not that the
+   whole reconcile refuses to answer the twelve questions it can still answer.
+   Nothing is reclassified means the document stays counted — see
+   lib/ac-erp-native.mjs, which fails closed in both directions. */
+const bornAt = {};
+const bornAtFailed = [];
+for (const cfg of TYPES) {
+  if (!cfg.bornAt) {
+    bornAt[cfg.t] = null;
+    continue;
+  }
+  try {
+    const m = new Map();
+    for (const r of await cfg.bornAt()) {
+      if (r.erp_no) m.set(String(r.erp_no).trim(), r.created_at ?? null);
+    }
+    bornAt[cfg.t] = m;
+  } catch (e) {
+    bornAt[cfg.t] = null;
+    bornAtFailed.push(`${cfg.t} (${e.message})`);
+  }
+}
+if (bornAtFailed.length) {
+  log(
+    `CREATION DATES UNREADABLE for ${bornAtFailed.join(", ")}. No document of those types can be shown to ` +
+      "be newer than the AutoCount snapshot, so none is reclassified: any the ERP originated stay counted as " +
+      "differences. Fix the read rather than trusting this run's zero.",
+  );
+}
+
 /* The proof behind the owner's zero-money decision, loaded SEPARATELY and
    FAILING SOFT on purpose. If those columns cannot be read — renamed, dropped,
    a permission — the honest outcome is that nothing is reclassified and the run
@@ -431,21 +487,32 @@ for (const cfg of TYPES) {
   }
   /* The BLANK-ROW declaration is proved against the book itself, in BOTH
      directions, because a declaration that swallows too much reads as a clean
-     run. `SO-001473`'s key 98858 is empty in every column and must be declared;
-     `SO-011384`'s key 783795 has NO item code and QUANTITY 4 and must NOT be.
-     Both are real rows on the 2026-09-08 cut; if the exporter ever stops
-     carrying one, that is a snapshot problem and this says so rather than
-     reporting a clean run over a rule it could not exercise. */
-  for (const [dn, key, want] of [["SO-001473", "98858", true], ["SO-011384", "783795", false]]) {
+     run. Three real rows on the 2026-09-08 cut, one per arm and one per
+     boundary; if the exporter ever stops carrying one, that is a snapshot
+     problem and this says so rather than reporting a clean run over a rule it
+     could not exercise.
+
+       SO-001473 / 98858   arm 1 — empty in every column. DECLARED.
+       SO-011384 / 783795  arm 2 — no item code, no description, no Desc2, no
+                           money, QUANTITY 4. DECLARED since the owner's ruling
+                           of 2026-09-08 (「删掉啊 没写的也删掉」); it answered
+                           false until then, and the case is kept, flipped,
+                           rather than deleted so the change is visible here.
+       SO-000102 / 15971   THE MONEY BOUNDARY, which the ruling does not move.
+                           "DELIVERY FEE ", no item code, RM 50.00. It must
+                           STILL be a finding, or the ruling has been widened
+                           into "code-less rows do not count". */
+  for (const [dn, key, want, why] of [
+    ["SO-001473", "98858", true, "an empty AutoCount row would be counted as a missing line again"],
+    ["SO-011384", "783795", true, "the owner's 2026-09-08 ruling on a row the book describes nothing in would not be applied"],
+    ["SO-000102", "15971", false, "a code-less row carrying RM 50.00 of real money would be declared away"],
+  ]) {
     const l = (book.SO.lines.get(dn) ?? []).find((x) => String(x.dtlKey) === key);
     if (!l) {
       problems.push(`the blank-row rule cannot be self-tested: ${dn} DtlKey ${key} is not in this snapshot`);
-    } else if (isBlankBookRow(l) !== want) {
+    } else if (isBlankBookRow(l, book.SO.desc2.get(l.dtlKey)) !== want) {
       problems.push(
-        `the blank-row rule answered ${!want} for ${dn} DtlKey ${key} and must answer ${want} — ` +
-          (want
-            ? "an empty AutoCount row would be counted as a missing line again"
-            : "a row the book orders 4 of would be declared away"),
+        `the blank-row rule answered ${!want} for ${dn} DtlKey ${key} and must answer ${want} — ${why}`,
       );
     }
   }
@@ -497,6 +564,11 @@ try {
     const h = findColour(c);
     return h ? h.colour_id : null;
   };
+  /* His own sofa builds, so a document he has already ruled on is never
+     handed back to him as an open question (docs/bugs/0714). The lookup, the
+     _held exclusion and the desc2Match selection live in lib/sofa-rulings.mjs. */
+  const sofaRuling = makeSofaRulingLookup(DATA, (m) =>
+    log(`SOFA RULINGS could not be read (${m}) — ruled builds will report as DIFFER`));
   V = {
     parseBedframe,
     parseSofa,
@@ -504,6 +576,7 @@ try {
     modelAlias: SOFA_MODEL_ALIAS,
     knownColour,
     reclOf: (m) => RECL.some((s) => prodCodes.has(`${m}${s}`.toUpperCase())),
+    sofaRuling,
     /* A colour is compared as the library row it names, never as a spelling. */
     colourIdentity: (text) => {
       const h = findColour(text);
@@ -563,179 +636,14 @@ try {
 const rm = (s) => (s == null ? "null" : (Number(s) / 100).toFixed(2));
 const first = (a) => a.slice(0, SHOW);
 const summary = [];
+/* type -> that type's summary row, by REFERENCE, so the verdict file and the
+   printed table can never state different numbers. */
+const summaryByType = new Map();
+/* Every document that leaves the difference column, by NAME. A count alone
+   would be a reclassification nobody could audit; the reconciliation printed
+   under the summary table names all of them. */
+const nativeMoved = [];
 const variantTotals = [];
-const SHOW_BOOK_BLANK = 5; // the direction that is NOT work; enough to see it exists
-
-/* axis key -> the label the table prints, so the sentence a salesperson reads
-   and the column the owner reads are the SAME WORD. Built from AXES rather than
-   typed, so a new axis cannot arrive with no name here. */
-const AXIS_LABEL = Object.fromEntries(AXES.map((a) => [a.key, a.label]));
-
-/**
- * The variant reconcile for one document type.
- *
- * `rows` is one entry per AutoCount line that reached the ERP, carrying the ERP
- * lines it became — the sofa split means that is often more than one.  `desc2`
- * is the book's own build text by DtlKey; a line absent from it is a line the
- * book said nothing about, which is BOOK-BLANK on every axis and NOT unknown.
- *
- * Every count is split PROCEEDED / not proceeded, because the owner's rule is
- * that an unconfirmed order may legitimately be blank and quoting the combined
- * figure as the backlog has already cost him time twice.
- */
-function reportVariants(t, label, rows, desc2) {
-  const tally = {};
-  for (const a of AXES) tally[a.key] = { yes: {}, no: {} };
-  for (const a of AXES) for (const half of ["yes", "no"]) for (const v of VERDICTS) tally[a.key][half][v] = 0;
-  const offenders = {};
-  const bookBlanks = {};
-  for (const a of AXES) {
-    offenders[a.key] = [];
-    bookBlanks[a.key] = [];
-  }
-  const pop = { total: rows.length, modelled: 0, bedframe: 0, sofa: 0, other: 0, withDesc2: 0, proceeded: 0 };
-  let unkeyedSofa = 0;
-
-  for (const r of rows) {
-    const lead = r.erpLines[0] || {};
-    const group = String(lead.item_group ?? "").toLowerCase();
-    if (!VARIANT_GROUPS.has(group)) {
-      pop.other++;
-      continue;
-    }
-    pop.modelled++;
-    pop[group]++;
-    const text = desc2.get(r.acLine.dtlKey) || "";
-    if (text) pop.withDesc2++;
-    /* `proceeded` is a per-line fact carried from the ERP query, not inferred
-       here: an order with a Processing Date is what the factory is building. */
-    const proceeded = lead.proceeded === true;
-    if (proceeded) pop.proceeded++;
-    const book = decodeBook(V, { desc2: text, itemGroup: group, itemCode: lead.item_code });
-    const { axes } = compareLine(V, { book, erpLines: r.erpLines, proceeded });
-    /* THE COMPARTMENT AXIS NEEDS THE WHOLE BUILD, AND ONLY THE LINE KEY CAN
-       REGROUP IT. One AutoCount sofa line becomes one ERP line per piece; the
-       pieces are recognisable as one build because they share
-       linked_ac_dtlkey. Where the ERP lines carry no key the pairing above
-       falls back to value and then to document order, which returns ONE ERP
-       line per AutoCount line — so a five-piece build would be compared against
-       one piece and reported as four missing compartments that are not missing
-       at all. Say the axis is unanswerable instead of answering it wrongly. */
-    if (axes.compartments && !r.erpLines.every((l) => l.ac_dtlkey != null)) {
-      axes.compartments.verdict = UNREADABLE;
-      axes.compartments.book = axes.compartments.book || "(not regroupable)";
-      axes.compartments.detail =
-        "the ERP lines of this document carry no AutoCount line key, so the pieces of one build cannot be regrouped";
-      unkeyedSofa++;
-    }
-    const half = proceeded ? "yes" : "no";
-    for (const [key, cell] of Object.entries(axes)) {
-      tally[key][half][cell.verdict]++;
-      const where = `${r.ac} DtlKey ${r.acLine.dtlKey} (ERP ${r.erpNo} ${lead.item_code ?? "?"})`;
-      const both = `AutoCount "${cell.book || "(blank)"}" vs ERP "${cell.erp || "(blank)"}"` +
-        (cell.detail ? ` — ${cell.detail}` : "");
-      if (cell.verdict === DIFFER || (cell.verdict === ERP_BLANK && proceeded)) {
-        offenders[key].push({
-          differ: cell.verdict === DIFFER,
-          proceeded,
-          line: `${where}: ${both}${proceeded ? "" : "  [NOT PROCEEDED]"}`,
-        });
-        /* THE VERDICT LOCKS ON BOTH ARMS, and on an order that is not yet
-           proceeded too. DIFFER is two sides stating different things, which
-           the owner's 「还没proceed还没确认的就可以直接放空的」 does NOT excuse —
-           that ruling is about a BLANK. ERP_BLANK is only counted when the
-           order IS proceeded, which is the same line the table calls "the only
-           column that is WORK". BOOK_BLANK, PENDING and RECORDED fall to the
-           branches below and never lock. */
-        VERDICT.record(t, r.ac, r.erpNo, AXIS_LABEL[key] ?? key, `${where}: ${both}`);
-      } else if (cell.verdict === UNREADABLE) {
-        /* WE COULD NOT ANSWER THIS AXIS. A sofa whose ERP lines carry no
-           AutoCount line key cannot have its compartments regrouped, so the
-           reconcile says so rather than agreeing — and "could not tell" is not
-           "it matches". It locks on its own named axis so the person reading
-           the refusal is not sent looking for a difference that was never
-           measured. */
-        VERDICT.record(t, r.ac, r.erpNo, "sofa build not verifiable", `${where}: ${cell.detail || "not comparable"}`);
-      } else if (cell.verdict === BOOK_BLANK) {
-        bookBlanks[key].push(`${where}: ${both}`);
-      }
-    }
-  }
-
-  plain("");
-  plain(`─────────── ${t} — ${label}: THE VARIANTS INSIDE THE LINE ───────────`);
-  if (!pop.total) {
-    log(`${t} VARIANTS — no AutoCount line of this type paired to an ERP line, so nothing was compared. NOT a clean run.`);
-    return { t, pop, tally, comparable: false };
-  }
-  plain(
-    `${pop.total} AutoCount lines paired to an ERP line; ${pop.modelled} carry a variant-bearing item group ` +
-      `(${pop.bedframe} bedframe, ${pop.sofa} sofa) and ${pop.other} do not (accessory, mattress, service — no axes to compare). ` +
-      `${pop.withDesc2} of the ${pop.modelled} have a build text in the book; ${pop.proceeded} are on a PROCEEDED order.`,
-  );
-  if (!pop.modelled) {
-    log(`${t} VARIANTS — no bedframe or sofa line on this document type. Nothing to compare; NOT a clean run.`);
-    return { t, pop, tally, comparable: false };
-  }
-
-  plain("axis                 |                 PROCEEDED (the backlog)                  |             not proceeded (blank is OK)");
-  plain("                     |  agree  ERPblank  bookblank  differ  pend  unread  recorded |  agree  ERPblank  bookblank  differ  pend  unread  recorded");
-  for (const a of AXES) {
-    const y = tally[a.key].yes;
-    const n = tally[a.key].no;
-    const seen = VERDICTS.reduce((s2, v) => s2 + y[v] + n[v], 0);
-    if (!seen) continue;
-    const cells = (h) => [h[AGREE], h[ERP_BLANK], h[BOOK_BLANK], h[DIFFER], h[PENDING], h[UNREADABLE], h[RECORDED]]
-      .map((x, i) => String(x).padStart([6, 9, 10, 7, 5, 7, 10][i]));
-    plain(`${a.label.padEnd(20)} | ${cells(y).join(" ")} | ${cells(n).join(" ")}`);
-  }
-  plain(
-    "ERPblank on a PROCEEDED order is the only column that is WORK. bookblank is the ERP holding a value the " +
-      "book never stated — an operator filled it in, which is allowed. pend = the book says TBC/KIV.",
-  );
-  plain(
-    "recorded = the book asks for a PRICED special the line does not tick, and variants.specialsRecorded already " +
-      "carries it: the owner's 2026-09-03 ruling 甲 applied — the factory sees the option and the document's money " +
-      "did not move. DECIDED work, not backlog, and it is broken out so it can never be summed into the DIFFER column again.",
-  );
-  if (unkeyedSofa) {
-    plain(
-      `   of the ${pop.sofa} sofa lines, ${unkeyedSofa} sit on a document whose ERP lines carry no AutoCount ` +
-        "line key, so their COMPARTMENTS are unanswerable rather than agreeing. Their colour, seat size and " +
-        "specials are still compared - those are per-line values and do not need the build regrouped.",
-    );
-  }
-
-  for (const a of AXES) {
-    const list = offenders[a.key];
-    if (!list.length) continue;
-    /* Differences first: both sides state something and they disagree, which is
-       the only shape that needs a human to adjudicate rather than a fill. */
-    list.sort((x, y) => Number(y.differ) - Number(x.differ));
-    /* SPLIT THE DIFFER COUNT BY PROCEEDED, in the ANNOTATION and not only in the
-       table above. This headline is the line that gets quoted into briefs and
-       status notes, and it was summing the two halves the table had just been at
-       pains to separate: sofa compartments read "32 DIFFER" on 2026-09-07 when
-       ONE of the 32 sat on a proceeded order and 31 did not. The owner's rule
-       「还没proceed还没确认的就可以直接放空的」 has already been broken twice by a
-       lumped number, and both times the lump came from a line like this one. */
-    const dif = list.filter((x) => x.differ);
-    const difYes = dif.filter((x) => x.proceeded).length;
-    log(
-      `${t} VARIANT ${a.label} — ${difYes} DIFFER on a PROCEEDED order` +
-        (dif.length - difYes ? ` (+${dif.length - difYes} on orders not yet proceeded)` : "") +
-        `, ${list.filter((x) => !x.differ).length} ERP blank on a proceeded order`,
-    );
-    for (const row of list.slice(0, SHOW)) plain(`      ${row.line}`);
-    if (list.length > SHOW) plain(`      ... ${list.length - SHOW} more`);
-    const bb = bookBlanks[a.key];
-    if (bb.length) {
-      plain(`   ${a.label} — AutoCount blank, ERP carries one: ${bb.length} (first ${Math.min(SHOW_BOOK_BLANK, bb.length)}, NOT work)`);
-      for (const row of bb.slice(0, SHOW_BOOK_BLANK)) plain(`      ${row}`);
-    }
-  }
-  return { t, pop, tally, comparable: true };
-}
 
 for (const cfg of TYPES) {
   const t = cfg.t;
@@ -781,7 +689,8 @@ for (const cfg of TYPES) {
   plain(
     `ERP: ${erp[t].docs.length} documents (company ${CO}); ${erpByAc.size} mirror an AutoCount document; ` +
       `${pointerByAc.size} more are referenced by a pointer on a purchase order; ` +
-      `${erpBorn} are ERP-born and claim no AutoCount number`,
+      `${erpBorn} are ERP-born and claim no AutoCount number (ERP-native too — they have never been to the ` +
+      "book, so there is nothing to compare and they were never in any count here)",
   );
 
   /* 1. document level, both directions */
@@ -791,12 +700,46 @@ for (const cfg of TYPES) {
     if (claimed.has(docNo)) continue;
     (scope.has(docNo) ? missingInScope : absentOutOfScope).push(docNo);
   }
-  const phantom = [];
+  /* THE ERP'S OWN DOCUMENTS ARE NOT PHANTOMS. A document the ERP ORIGINATED —
+     `HC-DO-2609-003`, raised by staff at 17:41 on 2026-09-08 — is not a
+     difference against a book snapshot cut at 00:03 that morning; it is simply
+     newer than the snapshot. Counting it made this number RISE every time
+     somebody did their job. `lib/ac-erp-native.mjs` carries the rule (it is
+     `src/scm/lib/so-is-migrated.ts`, imported, never restated) and the proof
+     that each one really is newer. The owner, 2026-09-08:
+     「差异 0」= 搬进来的资料全部对上账本. */
+  const phantomCandidates = [];
   const outOfScopeMirrored = [];
+  const nativeInBook = [];
   for (const ac of claimed) {
-    if (!B.headers.has(ac)) phantom.push(`${ac} (ERP ${(erpByAc.get(ac) || pointerByAc.get(ac)).erp_no})`);
-    else if (!scope.has(ac)) outOfScopeMirrored.push(ac);
+    const d = erpByAc.get(ac) || pointerByAc.get(ac);
+    if (!B.headers.has(ac)) {
+      phantomCandidates.push({ ac, erpNo: String(d.erp_no ?? "").trim() });
+      continue;
+    }
+    if (!scope.has(ac)) outOfScopeMirrored.push(ac);
+    /* The OTHER direction, reported rather than acted on: an ERP-native document
+       whose number the book DOES state. Its comparison is untouched by this
+       change — it stays in every count below — and it is printed so a reader can
+       see that the narrowing did not silently reach it. */
+    if (isErpNativeShape(d.erp_no, ac)) nativeInBook.push(`${ac} (ERP ${d.erp_no})`);
   }
+  const NAT = splitErpNative({
+    candidates: phantomCandidates,
+    bornAt: bornAt[t],
+    snapshotCut: snap.exported_at,
+  });
+  /* Strings, as before, because this array is what gets printed and counted.
+     An UNPROVEN entry says so in its own text: ERP-native by number shape but
+     NOT shown to postdate the snapshot, which is a real finding — the write-back
+     says the book has it and the book, read afterwards, does not. */
+  const phantom = [...NAT.phantom, ...NAT.unproven].map(
+    (r) =>
+      `${r.ac} (ERP ${r.erpNo})` +
+      (r.verdict === UNPROVEN
+        ? " [the ERP made this number, but it was NOT created after the snapshot cut, so it is not explained by the snapshot's age]"
+        : ""),
+  );
 
   /* "owner-declined" IS A CLAIM ABOUT AN EMPTY POPULATION, and it may only be
      printed when the population is in fact empty. A DECISION means the owner
@@ -828,6 +771,14 @@ for (const cfg of TYPES) {
      an entry is honoured only while its stated REASON still measures true
      against the book, which is the 0668 lesson at document grain. */
   const AB = splitDecidedAbsences({ t, missing: missingInScope, linesOf: (d) => B.lines.get(d) || [] });
+  /* THE DOCUMENT AXIS, named per document rather than counted. A document that
+     is absent or phantom never reaches VERDICT.seen() — there is nothing to
+     compare — so without this the report could only say how many documents were
+     COMPARED, and "no phantom, no absent" would be an assertion nobody could
+     check against the run that made it. */
+  for (const docNo of AB.absentDocs) VERDICT.presence(t, "absent", docNo);
+  for (const e of AB.decidedRows) VERDICT.presence(t, "decided", e.docNo);
+  for (const p of phantom) VERDICT.presence(t, "phantom", p);
   log(
     `${t} DOCUMENTS — in-scope AutoCount documents absent from the ERP: ${AB.absent} (${absenceWord})` +
       (AB.decided ? `, plus ${AB.decided} the owner has already ruled on (listed below)` : "") +
@@ -859,6 +810,19 @@ for (const cfg of TYPES) {
   }
   if (AB.absent) plain(`   absent (first ${SHOW}): ${first(AB.absentDocs).join(", ")}`);
   if (phantom.length) plain(`   phantom (first ${SHOW}): ${first(phantom).join(", ")}`);
+  if (NAT.native.length) {
+    log(
+      `${t} — ${NAT.native.length} document(s) are NEW SINCE THE CUTOVER: the ERP made them, and the account-book ` +
+        `snapshot was cut at ${snap.exported_at}, before they existed. Not a difference — nothing was carried ` +
+        "over wrongly. They are named here, and counted in the `native` column, never inside `phantom`.",
+    );
+    for (const r of NAT.native) plain(`      ${r.ac} (ERP ${r.erpNo}) — created ${new Date(r.createdAt).toISOString()}`);
+    for (const r of NAT.native) nativeMoved.push(`${t} ${r.ac}`);
+  }
+  plain(
+    `   ERP documents the book DOES state that the ERP itself originated: ${nativeInBook.length}` +
+      (nativeInBook.length ? ` (${first(nativeInBook).join(", ")}) — compared exactly as before, and counted above` : ""),
+  );
   if (dupes.length) plain(`   duplicate (first ${SHOW}): ${first(dupes).join(" | ")}`);
 
   if (cfg.linesNotComparable) {
@@ -866,7 +830,7 @@ for (const cfg of TYPES) {
     summary.push({
       t, acDocs: B.headers.size, scope: scope.size, erpLinked: claimed.size,
       missing: AB.absent, decided: AB.decided, absenceIs: decisionHolds ? "DECISION" : "GAP", phantom: phantom.length,
-      bothSides: 0, lineCount: "-", item: "-", qty: "-", price: "-", noPrice: "-", money: "-", erpZeroMoney: "-",
+      bothSides: 0, lineCount: "-", item: "-", qty: "-", price: "-", noPrice: "-", money: "-", erpZeroMoney: "-", native: NAT.native.length,
       gaps: AB.absent * (countsAsGap ? 1 : 0) + phantom.length,
     });
     continue;
@@ -884,7 +848,7 @@ for (const cfg of TYPES) {
     lineCount: [], money: [], item: [], qty: [], price: [],
     keyOrphan: [], unmatchedErp: [], unmatchedAc: [],
   };
-  const D = { lineCount: 0, item: 0, price: 0, blankRows: 0, blankRowDocs: new Set() }; // declared, not gaps
+  const D = { lineCount: 0, item: 0, price: 0, blankRows: 0, blankRowsStatesNothing: 0, blankRowDocs: new Set() }; // declared, not gaps
   /* The item-code and line-count findings in a machine-readable shape, for the
      same reason `moneyRows` exists below: a classifier must decide a column
      from a MEASUREMENT, never by pattern-matching the printed string. */
@@ -956,13 +920,23 @@ for (const cfg of TYPES) {
       (B.lines.get(ac) || [])
         .slice()
         .sort((a, b) => a.seq - b.seq || (a.dtlKey > b.dtlKey ? 1 : -1)),
+      B.desc2,
     );
     if (acBlank.length) {
       D.blankRows += acBlank.length;
       D.blankRowDocs.add(ac);
       for (const l of acBlank) {
+        /* WHICH ARM declared it, named per row. Arm 2 is an owner ruling and a
+           reader must be able to see every row it swept up without re-deriving
+           the rule — that is the difference between a declaration and a
+           suppression. */
+        const arm = blankRowArm(l, B.desc2.get(l.dtlKey));
+        if (arm === "states-nothing") D.blankRowsStatesNothing += 1;
         blankRowRows.push(
-          `${ac}: DtlKey ${l.dtlKey} — AutoCount states no item code, no quantity and no money (ERP ${d.erp_no})`,
+          arm === "states-nothing"
+            ? `${ac}: DtlKey ${l.dtlKey} — AutoCount states no item code, no description, no build text and no ` +
+              `money, at quantity ${l.qty ?? 0} (ERP ${d.erp_no}) [owner ruling 2026-09-08]`
+            : `${ac}: DtlKey ${l.dtlKey} — AutoCount states no item code, no quantity and no money (ERP ${d.erp_no})`,
         );
       }
     }
@@ -1093,19 +1067,37 @@ for (const cfg of TYPES) {
       VERDICT.record(t, ac, d.erp_no, "currency", "this snapshot does not state the document's currency");
     }
     if (cur.kind === "foreign") {
-      /* NOT a money difference. The ERP's `currency` column saying MYR on a
-         foreign document is a real defect, but it is a CURRENCY defect, and
-         counting it in the money column is what made an exchange rate look like
-         a discount in the first place. */
+      /* ── READ THE ERP'S OWN CURRENCY. DO NOT ASSERT IT. ──────────────────
+         This block used to record a `currency` difference for EVERY foreign
+         book document and print "tagged 'MYR'" — a sentence about a column
+         nothing had selected. `HC-PO-009335` was repaired to CNY on 2026-09-07
+         (repair-migrated-currency.mjs, run 34143840216, MODE=apply, which
+         printed `verified HC-PO-009335 currency = 'CNY'`), and this checker
+         went on reporting it as MYR the next day. That is docs/bugs/0715's
+         failure wearing the opposite hat: there, a comparison that never ran
+         was counted as a difference; here, a comparison that never ran was
+         counted as a difference about the ERP side specifically.
+
+         `currency` is now on the docs() SELECT for the types this compares. A
+         type whose query does NOT carry it still records — "we did not read it"
+         must never resolve to "it agrees". */
+      const erpCur = d.currency == null ? null : String(d.currency).trim().toUpperCase();
+      const agrees = erpCur !== null && erpCur === cur.code;
+      /* NOT a money difference either way. Counting a foreign document in the
+         money column is what made an exchange rate look like a discount in the
+         first place (docs/bugs/0665), so it stays out of `money` whether the
+         currency agrees or not. */
       foreignDocs.push(
         `${ac}: ${cur.why} — document RM ${rm(h.docTotalSen)}, local RM ${rm(h.totalSen)}, ` +
-          `ERP RM ${rm(erpTotal)} tagged '${LOCAL_CURRENCY}' (ERP ${d.erp_no})`,
+          `ERP RM ${rm(erpTotal)} tagged '${erpCur ?? "not read for this type"}' (ERP ${d.erp_no})` +
+          (agrees ? " — the ERP AGREES with the book on the currency" : ""),
       );
-      /* NOT a money difference — and still a difference. The reconcile's own
-         words: "a real defect, but a CURRENCY defect". An order whose currency
-         we hold wrongly is not one to proceed, so it locks on its own axis
-         rather than being counted as money it is not. */
-      VERDICT.record(t, ac, d.erp_no, "currency", cur.why);
+      if (!agrees) {
+        /* An order whose currency we hold wrongly is not one to proceed, so it
+           locks on its own axis rather than being counted as money it is not. */
+        VERDICT.record(t, ac, d.erp_no, "currency",
+          `${cur.why}; the ERP holds '${erpCur ?? "unknown — this type's query does not select currency"}'`);
+      }
     }
     if (bookTotal !== erpTotal) {
       /* An ERP side that is zero while the book is not is a POPULATION
@@ -1315,7 +1307,7 @@ for (const cfg of TYPES) {
              not, and since the 2026-09-08 14:22 backfill one document holds
              both kinds — so the question belongs to the line, not the
              document. lib/ac-not-a-difference.mjs reads it. */
-          itemRows.push({ key: ac, erpNo: d.erp_no, line, erpKeyed: el.ac_dtlkey != null });
+          itemRows.push({ key: ac, erpNo: d.erp_no, line, erpKeyed: el.ac_dtlkey != null, acCode: al.itemKey, erpCode: el.item_code });
           VERDICT.record(t, ac, d.erp_no, "item code", line);
         }
       }
@@ -1377,6 +1369,21 @@ for (const cfg of TYPES) {
     decision: cfg.zeroMoneyDecision ?? null,
     proof: zeroMoneyProof[t] ?? null,
   });
+  /* THE OWNER'S RULING HAS TO REACH THE PER-DOCUMENT VERDICT TOO, not only the
+     SUMMARY table. `document total` was recorded honestly in the loop above —
+     the proof that 「GR 0 没关系」 covers a given receipt is a separate read,
+     classified only once the whole type has been walked. Applying it here, from
+     the split's OWN output, is what stops 100 receipts the owner has already
+     ruled on from being counted as 100 documents of work.
+
+     `MZ.moved` is exactly the proved set: migrated paperwork, zero inventory
+     movements, ERP zero against a non-zero book. `impostors` are deliberately
+     NOT moved and stay recorded as differences. */
+  if (MZ.applied) {
+    for (const r of MZ.moved) {
+      VERDICT.reclassify(t, r.key, "document total", "erp-zero-money", r.line);
+    }
+  }
   /* THE TWO PAIRING-INDEPENDENT SPLITS. Both answer the same question about a
      column this checker cannot always compute honestly: is the finding a
      property of the DATA, or of the correspondence the checker had to invent
@@ -1386,7 +1393,8 @@ for (const cfg of TYPES) {
      (tests/acNotADifference.test.ts): a document whose item-code MULTISETS
      differ, or whose TOTAL differs, or which carries a priced line we do not
      have, stays counted and is reported LOUDER as an impostor. */
-  const IC = splitGuessedItemCodePairing({ rows: itemRows, bags: bags.size ? bags : null });
+  const MO = applyOwnerModelOverride({ rows: itemRows, dataDir: DATA, recorder: VERDICT, t }, { log, plain, show: SHOW });
+  const IC = splitGuessedItemCodePairing({ rows: MO.differ, bags: bags.size ? bags : null });
   const LS = cfg.migratedChainLineShape
     ? splitMigratedChainLineShape({ rows: lineCountRows, facts: shapeFacts.size ? shapeFacts : null })
     : { lineShape: 0, differ: lineCountRows.length, moved: [], impostors: [], applied: false,
@@ -1401,6 +1409,7 @@ for (const cfg of TYPES) {
          below: three different lanes reclassified three different counts on the
          same day, and a number that shrinks without a reason attached is the
          thing the owner has to come back and ask about. */
+      (MO.moved.length ? ` (+${MO.moved.length} the ERP names another product BY YOUR DECISION)` : "") +
       (C.itemTranslation + C.itemDecomposition
         ? ` (of ${F.item.length + C.itemTranslation + C.itemDecomposition} raw code differences: ` +
           `${C.itemTranslation} are the same product written another way, ` +
@@ -1511,10 +1520,13 @@ for (const cfg of TYPES) {
   );
   if (D.blankRows) {
     log(
-      `${t} — ${D.blankRows} AutoCount row(s) across ${D.blankRowDocs.size} document(s) carry NO item code, NO ` +
-        "quantity and NO money. AutoCount lets a salesperson leave a row empty; the ERP cannot hold one (a line " +
-        "needs a product), so the two sides AGREE about them. DECLARED, not counted in the line-count column — " +
-        "and a row with a quantity, or with money, is NOT in this class and stays a finding.",
+      `${t} — ${D.blankRows} AutoCount row(s) across ${D.blankRowDocs.size} document(s) state NOTHING the ERP can ` +
+        "hold. AutoCount lets a salesperson leave a row empty; the ERP cannot hold one (a line needs a product), " +
+        "so the two sides AGREE about them. DECLARED, not counted in the line-count column. Two arms: a row with " +
+        "no item code, no quantity and no money, and — since the owner's ruling of 2026-09-08 " +
+        `(「删掉啊 没写的也删掉」) — ${D.blankRowsStatesNothing} row(s) that carry a QUANTITY and still ` +
+        "state no item code, no description, no build text and no money. MONEY IS THE BOUNDARY THE RULING DID NOT " +
+        "MOVE: a row carrying money is never in this class, whatever else is blank.",
     );
     for (const row of first(blankRowRows)) plain(`      ${row}`);
     if (blankRowRows.length > SHOW) plain(`      ... and ${blankRowRows.length - SHOW} more`);
@@ -1572,7 +1584,7 @@ for (const cfg of TYPES) {
   }
 
   /* ── 4. THE VARIANTS INSIDE THE LINE ──────────────────────────────────── */
-  const vt = reportVariants(t, cfg.label, variantRows, B.desc2);
+  const vt = reportVariants({ t, label: cfg.label, rows: variantRows, desc2: B.desc2, deps: V, VERDICT, SHOW, log, plain });
   variantTotals.push(vt);
 
   summary.push({
@@ -1589,6 +1601,9 @@ for (const cfg of TYPES) {
     decided: AB.decided,
     absenceIs: decisionHolds ? "DECISION" : "GAP",
     phantom: phantom.length,
+    /* NOT a difference, and it has to be visible or nobody re-checks it: a
+       document the ERP originated after the book snapshot was cut. */
+    native: NAT.native.length,
     bothSides,
     unpairable: keyless.DIFFERS + keyless.AMBIGUOUS,
     lineCount: LS.differ,
@@ -1601,10 +1616,25 @@ for (const cfg of TYPES) {
     money: MZ.differ,
     erpZeroMoney: MZ.erpZero,
     foreign: foreignDocs.length,
+    /* Not printed in the summary table — carried for the machine-readable
+       verdict so check-so-tally.mjs can name the declared classes it excluded
+       without re-deriving any of them. */
+    outOfScopeAbsent: absentOutOfScope.length,
+    sofaDocs,
+    comparedLines,
+    acLinesPaired: variantRows.length,
+    declaredSofaDecomposition: { lineCount: D.lineCount, unitPrice: D.price, itemCode: D.item },
+    declaredBlankBookRows: { rows: D.blankRows, docs: D.blankRowDocs.size },
     gaps:
       (countsAsGap ? AB.absent : 0) +
       phantom.length + LS.differ + IC.differ + F.qty.length + PX.differ + MZ.differ,
   });
+  /* THE SUMMARY ROW ITSELF, keyed by type, for the verdict file. It is the
+     SAME OBJECT the table above prints from — not a copy re-derived from a
+     narrower read — which is what makes "the report's document, line, SKU,
+     quantity, price and money numbers are the reconcile's own" a fact about the
+     code rather than a claim about two runs agreeing. */
+  summaryByType.set(t, summary[summary.length - 1]);
 }
 
 /* ── the DO rule, stated so nobody "fixes" it ────────────────────────────── */
@@ -1661,6 +1691,7 @@ plain("═══════════ VARIANTS INSIDE THE LINE — ALL TYPES 
     let differ = 0;
     let orderWork = 0;
     let orderDiffer = 0;
+    let noKey = 0;
     for (const a of AXES) {
       const y = add[a.key];
       const b = build[a.key];
@@ -1668,6 +1699,7 @@ plain("═══════════ VARIANTS INSIDE THE LINE — ALL TYPES 
       if (!seen) continue;
       work += y.yes[ERP_BLANK];
       differ += y.yes[DIFFER] + y.no[DIFFER];
+      noKey += y.yes[NO_LINE_KEY] + y.no[NO_LINE_KEY];
       orderWork += b.yes[ERP_BLANK];
       orderDiffer += b.yes[DIFFER] + b.no[DIFFER];
       plain(
@@ -1684,6 +1716,14 @@ plain("═══════════ VARIANTS INSIDE THE LINE — ALL TYPES 
         "is not work anyone asked for. An unconfirmed order's blank is not counted either: " +
         "还没proceed还没确认的就可以直接放空的.",
     );
+    if (noKey) {
+      log(
+        `VARIANTS — a further ${noKey} axis value(s) are NOT counted above and are NOT work: two or more of our rows ` +
+          "of one item at one quantity on one document carry no AutoCount line number, so which of ours answers which " +
+          "of the book's was the checker's own guess, and both sides state the SAME set of values. Listed by name in " +
+          "each type's section as `no-key`; docs/bugs/0709 and 0712 have the trace.",
+      );
+    }
   }
 }
 
@@ -1788,7 +1828,10 @@ plain("═══════════ SUMMARY ══════════�
    that silently disappears: the owner asked for these cells at zero, and the
    honest way to reach zero is to say what each count IS, not to stop counting
    it.  Each has a sentence under the table in his own terms. */
-plain("        <-------------------- DIFFERENCES (the work) --------------------->  <----- NOT differences ----->");
+/* MOVED BELOW SUMMARY_COLUMNS and BUILT FROM IT, 2026-09-08. It was a literal,
+   so adding `native` between `money` and `decided` would have left both block
+   labels pointing at the wrong cells — the run 34187812364 failure one level
+   up, where a heading promised what the rows did not carry. */
 /* ONE LIST FOR THE HEADER AND THE ROW, so they cannot drift apart.
    They were two independent literals, and on run 34187812364 the header
    announced `same-goods` and `same-money` while every row printed 16 cells
@@ -1810,6 +1853,11 @@ const SUMMARY_COLUMNS = [
   { label: "qty", width: 6, get: (s) => s.qty },
   { label: "price", width: 6, get: (s) => s.price },
   { label: "money", width: 6, get: (s) => s.money },
+  /* The ERP made this document AFTER the book snapshot was cut, so it cannot be
+     a difference against that snapshot — it is simply newer. Its own column
+     because the alternative was `phantom`, which made the headline RISE every
+     time staff raised a delivery order. lib/ac-erp-native.mjs. */
+  { label: "native", width: 7, get: (s) => s.native ?? 0 },
   /* An absence the owner has already ruled on, named in full in its own
      section above with the action still owed. */
   { label: "decided", width: 8, get: (s) => s.decided ?? 0 },
@@ -1835,6 +1883,16 @@ const SUMMARY_COLUMNS = [
   { label: "no-key-open", width: 12, get: (s) => s.unpairable ?? 0 },
 ];
 const cell = (v, w) => (w < 0 ? String(v).padEnd(-w) : String(v).padStart(w));
+const colAt = (i) => SUMMARY_COLUMNS.slice(0, i).reduce((a, c) => a + Math.abs(c.width) + 1, 0);
+const band = (i, j, label) => {
+  const pad = Math.max(0, colAt(j + 1) - colAt(i) - 1 - label.length - 4);
+  return `<${"-".repeat(pad - (pad >> 1))} ${label} ${"-".repeat(pad >> 1)}>`;
+};
+const iNative = SUMMARY_COLUMNS.findIndex((c) => c.label === "native");
+plain(
+  " ".repeat(colAt(1)) + band(1, iNative - 1, "DIFFERENCES (the work)") +
+    " " + band(iNative, SUMMARY_COLUMNS.length - 1, "NOT differences"),
+);
 plain(SUMMARY_COLUMNS.map((c) => cell(c.label, c.width)).join(" "));
 for (const s of summary) {
   const cells = SUMMARY_COLUMNS.map((c) => cell(c.get(s), c.width));
@@ -1849,6 +1907,9 @@ for (const s of summary) {
 }
 plain("");
 plain("absent   = in the expected population and NOT in the ERP. A real gap: somebody has to carry the document over.");
+plain("native   = a document the ERP MADE, not one the migration carried. The account book was photographed before it");
+plain("           existed, so it cannot disagree with that photograph. Every one is named above with the minute it was");
+plain("           created. 「差异 0」= 搬进来的资料全部对上账本 — this column is what keeps that zero reachable while the shop trades.");
 plain("decided  = absent, but you have already said what to do with it. Listed by name above with the ruling and what is still owed;");
 plain("           it stays here until it is done, and it is NOT counted as an unexplained gap.");
 plain("no-price = AutoCount states NO price on the line (0.00 unit price AND a 0.00 line subtotal) while the ERP holds one.");
@@ -1869,8 +1930,19 @@ plain("           every item code agrees on quantity and money; only the number 
 plain("           free gift as its own RM 0.00 line and sometimes splits one product across two. Nothing is owed here.");
 const totalGaps = summary.reduce((a, s) => a + s.gaps, 0);
 const n = (v) => (typeof v === "number" ? v : 0);
+const totalNative = summary.reduce((a, s) => a + n(s.native), 0);
 const notWork = summary.reduce((a, s) => a + n(s.decided) + n(s.noPrice) + n(s.erpZeroMoney) + n(s.foreign) + n(s.guessedPairing) + n(s.lineShape), 0);
 plain("");
+/* THE ARITHMETIC, in the same run that measured it, so the narrowing can never
+   be taken on trust: what this run would have reported before 2026-09-08, what
+   it reports now, and the documents that account for the whole difference. */
+log(
+  `POPULATION — the count below measures 搬进来的资料 only: the documents the cutover carried and their ` +
+    `downstream documents. This run would have reported ${totalGaps + totalNative} under the old population; ` +
+    `${totalNative} of those are documents the ERP made after the book snapshot was cut, so the count is ` +
+    `${totalGaps}. ${totalGaps + totalNative} = ${totalGaps} + ${totalNative}` +
+    (nativeMoved.length ? `. New since the cutover: ${nativeMoved.join(", ")}` : "") + ".",
+);
 log(
   totalGaps === 0
     ? "CLEAN — every in-scope AutoCount document is in the ERP and every comparable field agrees."
@@ -1895,48 +1967,33 @@ if (notWork) {
   );
 }
 
-/* ── THE PER-DOCUMENT SALES-ORDER VERDICT ──────────────────────────────────
-   Written out ONLY when asked for (VERDICT_OUT), so the read-only check the
-   owner dispatches stays exactly what it was. publish-so-reconcile-verdict.mjs
-   is what puts these rows in the database; this file never writes one, which
-   keeps the CLAUDE.md rule that a read-only check is read-only.
+/* ── THE PER-DOCUMENT VERDICT ───────────────────────────────────────────────
+   Written out ONLY when asked for, so the read-only check the owner dispatches
+   stays exactly what it was. This file never writes one to the DATABASE:
+   publish-so-reconcile-verdict.mjs does that, which keeps the CLAUDE.md rule
+   that a read-only check is read-only.
 
-   The verdict is keyed on the ERP document number and covers SALES ORDERS only:
-   it feeds the migrated-sales-order lock, and no other document type has one. */
-if (VERDICT_OUT) {
-  const measuredAt = new Date().toISOString();
-  const runId = crypto.randomUUID();
-  const rows = buildVerdictRows({ recorder: VERDICT, type: "SO", companyId: CO, measuredAt, runId });
-  const sum = summariseVerdict(rows);
-  plain("");
-  plain("═══════════ PER-DOCUMENT VERDICT — SALES ORDERS ═══════════");
-  log(
-    `SO VERDICT — ${sum.docCount} migrated sales orders compared against the book: ` +
-      `${sum.cleanCount} match it exactly and would OPEN; ${sum.differCount} still differ and stay LOCKED.`,
-  );
-  for (const [axis, docs] of sum.perAxis) plain(`   ${axis}: ${docs} document(s)`);
-  for (const r of rows.filter((x) => !x.clean).slice(0, SHOW)) {
-    plain(`   LOCKED ${r.doc_no} (${r.ac_doc_no}) — ${r.axes.join(", ")}`);
-  }
-  const differ = sum.differCount;
-  if (differ > SHOW) plain(`   ... and ${differ - SHOW} more`);
-  fs.writeFileSync(
-    VERDICT_OUT,
-    JSON.stringify({
-      version: 1,
-      type: "SO",
-      company_id: CO,
-      measured_at: measuredAt,
-      run_id: runId,
-      snapshot_exported_at: snap.exported_at ?? null,
-      source: process.env.GITHUB_SERVER_URL && process.env.GITHUB_RUN_ID
-        ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
-        : "local",
-      summary: sum,
-      rows,
-    }, null, 0),
-  );
-  plain(`   verdict written to ${VERDICT_OUT} (${rows.length} rows)`);
-}
-
+   `VERDICT_OUT` is SALES ORDERS and nothing else — it feeds the
+   migrated-sales-order lock. `VERDICT_DIR` is the newer per-type path the owner
+   asked for on 2026-09-08 (「然后把PO GR也tally掉」). The serialising lives in
+   lib/ac-verdict-emit.mjs; it DECIDES nothing, and it must not. */
+/* 「然后transfer from和transfer to？」 (owner, 2026-09-08). LAST, because it may
+   only write onto documents this run already COMPARED — `record()` creates an
+   entry it has never seen, and that would move the population
+   lib/tally-crosscheck.mjs sets the two instruments against. It decides nothing
+   and FAILS SOFT: see lib/ac-transfer-chain-run.mjs. */
+await transferChainAxis({ sql, CO, PDATE, types: TYPES.map((c) => c.t), recorder: VERDICT, maxAgeDays: MAX_AGE_DAYS },
+  { plain, log, show: SHOW });
+emitVerdicts({
+  recorder: VERDICT,
+  companyId: CO,
+  snapshotExportedAt: snap.exported_at ?? null,
+  summaryByType,
+  verdictOut: VERDICT_OUT,
+  verdictDir: VERDICT_DIR,
+  verdictTypes: VERDICT_TYPES,
+  show: SHOW,
+  plain,
+  log,
+});
 await sql.end({ timeout: 5 });

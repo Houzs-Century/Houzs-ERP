@@ -40,6 +40,15 @@ vi.mock("../../vendor/scm/components/NotifyDialog", () => ({ useNotify: () => vi
    the unsaved-payments Back gate); like useNotify it throws outside its
    provider, and like useNotify these tests never reach a confirm. */
 vi.mock("../../vendor/scm/components/ConfirmDialog", () => ({ useConfirm: () => vi.fn() }));
+/* The cancel-request card (2026-09-08) reads the prompt provider and its own
+   query; neither is under test here, so both stand in. */
+vi.mock("../../vendor/scm/components/PromptDialog", () => ({ usePrompt: () => vi.fn() }));
+vi.mock("../../vendor/scm/lib/document-cancel-queries", async (orig) => ({
+  ...(await orig<typeof import("../../vendor/scm/lib/document-cancel-queries")>()),
+  useCancelRequest: () => ({ data: undefined }),
+  useRaiseCancelRequest: () => ({ mutateAsync: vi.fn() }),
+}));
+vi.mock("../../vendor/scm/components/CancelRequestPanel", () => ({ CancelRequestPanel: () => null }));
 vi.mock("./so-relationship-map", () => ({ useSoRelationshipMap: () => ({ nodes: [], edges: [] }) }));
 vi.mock("../../components/scm-v2/PrintPreviewModal", () => ({
   PrintPreviewModal: () => null,

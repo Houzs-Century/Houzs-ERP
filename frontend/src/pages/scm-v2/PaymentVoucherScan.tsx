@@ -23,7 +23,7 @@
 // Case 4 (owner 2026-09-08: 因为我是三个 receipt 开一张 voucher 罢了): DIFFERENT
 // receipts — different shops — on ONE petty-cash voucher. Read them first,
 // tick them across groups, "Open ticked as ONE voucher": one line per receipt
-// (shop + number, the receipt's total), the payee LEFT for the person (three
+// (what was bought as read, at the receipt's total), the payee LEFT for the person (three
 // shops have no one payee, and no vendor memory is borrowed), every receipt's
 // pages attached. Not the Merge — Merge makes PAGES of one bill; this makes
 // LINES of one voucher. He pressed Merge for it and the reader, told those
@@ -192,10 +192,21 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
   const tickedCurrencies = new Set(tickedBills.map((b) => b.extraction.currency));
   const openTickedAsOne = () => {
     if (tickedBills.length < 2 || tickedCurrencies.size > 1) return;
-    const lines = tickedBills.map((b) => ({
-      description: [labelOf(b), b.extraction.invoiceNumber].filter(Boolean).join(' '),
-      amountSen: b.extraction.totalSen,
-    }));
+    /* One line per receipt, at the receipt's total, described by WHAT WAS
+       BOUGHT — the item descriptions the reader found, joined — not by the
+       shop (owner 2026-09-08, seeing "99 SPEEDMART" where the pile had shown
+       "EVEREADY SHD AAA…": 他 detect 的 description 是对的, 但是转去 voucher 就变
+       名字了). The shop + number is the fallback for a receipt with no
+       readable item; the shop is always on the attached page. */
+    const lines = tickedBills.map((b) => {
+      const bought = b.extraction.lines
+        .filter((l) => l.description && l.amountSen != null && l.amountSen > 0)
+        .map((l) => l.description!.trim()).filter(Boolean).join(' · ');
+      return {
+        description: bought ? bought.slice(0, 200) : [labelOf(b), b.extraction.invoiceNumber].filter(Boolean).join(' '),
+        amountSen: b.extraction.totalSen,
+      };
+    });
     const first = tickedBills[0]!;
     const dates = tickedBills.map((b) => b.extraction.invoiceDate).filter((d): d is string => !!d).sort();
     openVoucher(

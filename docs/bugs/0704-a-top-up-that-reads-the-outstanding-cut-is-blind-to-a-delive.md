@@ -57,9 +57,11 @@ the workflow passes that phrase through (the failure `docs/bugs/0700` records).
   inconsistent is NAMED, the treatment that script gives `HC-SO-000021`.
 - The DO lane is a NAMED list (`DO_TARGETS`), not a rule, and each entry is
   asserted against the book and against the ERP before anything is written. Why
-  it cannot be general, and the two declared choices in that write
-  (`item_code`, and `linked_ac_dtlkey` deliberately left NULL), are in
-  `docs/modules/delivery-order.md`.
+  it cannot be general, and the declared choice of `item_code` on a row the book
+  gives no code for, are in `docs/modules/delivery-order.md`. (This bullet said
+  `linked_ac_dtlkey` was deliberately left NULL. It is stamped — the premise was
+  refuted between the two dispatches and the correction is
+  `docs/bugs/0705-the-plan-predicted-a-header-the-apply-would-not-write-on-the.md`.)
 - Bedframe lines are decoded by IMPORTING `lib/parse-bedframe.mjs`. The
   ten-key variants block that `import-ac-outstanding-so.mjs`,
   `import-ac-outstanding-po.mjs` and `topup-ac-po-lines.mjs` each spelled out —
@@ -90,6 +92,17 @@ item code and quantity 4 — refused, because inventing a product is forbidden);
 `DO-001953` / `DO-004903` (the gap is in the book itself, and the owner has
 accepted them).
 
-**Ref.** fix/book-line-remainder, 2026-09-08. The plan and apply run ids, the
-before/after reconcile and the four control checks are in the PR; this entry
-records the defect and the tool, not a claim that the repair has run.
+**IT HAS RUN.** Apply run `34204421089`, 2026-09-08 16:19 +08:
+`APPLIED — 11 sales-order line(s) on 9 document(s); 1 delivery-order line(s) on 1
+document(s)`, then `VERIFIED ON A FRESH CONNECTION — 11 of 11 ... 1 of 1 ... the
+same`, zero `WRONG SHAPE` rows. The whole AutoCount reconcile went **36 -> 23**
+(`34204316650` before, `34204590904` after); SO line-count 11 -> 2, SO document
+total 5 -> 2, DO document total 1 -> 0, and PO / GR / IV / PI are identical in
+both runs. Stock is unmoved on every axis (`996 cells / 0 disagreeing`, `whole
+sofas 107 vs 107`, `0 movement rows behind 646 migrated documents`). Readiness
+moved by exactly the demand added: PENDING 1368 -> 1377, READY unchanged at 1725.
+The full before/after and the three documents whose balance now trails their
+total by RM 150.00 are in
+`docs/cutover-so-do-remainder-2026-09-08.md`.
+
+**Ref.** fix/book-line-remainder, 2026-09-08.

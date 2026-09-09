@@ -321,7 +321,55 @@ surface (own month grid, no import from `Projects.tsx`), routed by
 It renders each event as ONE Houzs-teal bar SPANNING its days (label shown once,
 lane-packed per week — a multi-day event does not repeat per day), on a teal
 frame/header/grid (owner 2026-09-04: the plain version read as empty and the
-per-day repetition confused contractors).
+per-day repetition confused contractors; header and frame went dark slate on
+2026-09-08 so the bars are the only green — the owner tried the brass `accent`
+token the same day and chose slate).
+**Tapping an event opens ONLY its unfilled floorplan (owner 2026-09-08).** The
+list now carries `eventId` (the project id; it opens nothing on its own), and two
+more public routes in the same file sit behind the same token gate + limiter:
+`GET /api/public/contractor-calendar/:token/events/:eventId/floorplan` lists the
+files and `.../floorplan/:fileId` streams one (`?download=1` = attachment
+disposition). Both re-check `id = ? AND contractor = <token's contractor> AND
+confirmed AND not archived` per call. "Unfilled floorplan" is the same rule as
+the mobile Floor Plans card's Unfilled tile: live attachments on the
+`Blank Floorplan` checklist task, else the legacy project-level
+`project_attachments` row with category `floorplan`. The Display Floor Plan, the
+Filled Floorplan and every other file stay server-side; the file id is
+`t<attachment id>` / `l<legacy id>` and the R2 key never reaches the browser.
+Pinned by `backend/tests/publicContractorCalendarFloorplan.test.ts` (light
+project) and the panel test in `ContractorCalendar.test.tsx`.
+
+**Brand share links + Excel export (owner 2026-09-08, second half).** The same
+page now serves two modes — `frontend/src/pages/ShareCalendar.tsx` is the page,
+`ContractorCalendar.tsx` only exports `ContractorCalendar` (`/c/`) and
+`BrandCalendar` (`/b/`, `appSurface.ts` → `brand`). Both modes: confirmed events
+only, booth on the bar, month view only (the owner removed the month/week toggle on 2026-09-09), prev /
+next / Today, a re-read every 60s (polling, the ERP's cadence), no filter, no
+search, nothing editable. The reads live once in
+`backend/src/services/shareCalendar.ts` and take a SCOPE — `{column:
+"contractor"|"brand", value}` off the token row — re-applied on every statement;
+which floorplan task and whether money is read is decided by the ROUTE, never
+by a flag from the browser:
+
+| | contractor `/c/` | brand `/b/` |
+| --- | --- | --- |
+| token table / service | `contractor_share_tokens` / `services/contractorShare.ts` | `brand_share_tokens` (mig `20260908T1500_brand_share_tokens.sql`) / `services/brandShare.ts` |
+| office side | `POST`/`DELETE /api/projects/contractors/:id/share-link` | `POST`/`DELETE /api/brand-share/:id/share-link` (`routes/brandShare.ts`, own file: `routes/projects.ts` is at its size ceiling); both wired through `pages/project-maintenance/shareLinks.ts` from the row menus in `ProjectMaintenance.tsx` |
+| public routes | `routes/publicContractorCalendar.ts` | `routes/publicBrandCalendar.ts`, mounted before `auth` beside it |
+| tap an event | `Blank Floorplan` task files (legacy fallback) | `Display Floor Plan` task files (no legacy fallback) + `GET .../events/:eventId` → `{ sizeSqm, totalSales }` from the `size_sqm` column of `projects` and `total_sales` of `project_finance` |
+| export `GET .../export` | rows Date / Venue / State / Organizer / Brand / Type / Booth / Size (Type = `project_event_types.name`; owner 2026-09-09 "tambah state brand type") — `project_finance` is never read | the same + `totalSales`; the sheet ends with `Brand: X`, `Generated: <time>`, `Confidential` |
+| export log | both write one `share_export_log` row (mig `20260908T1501_share_export_log.sql`): kind, party, token, ip, row count | |
+
+The `.xlsx` is built in the browser (`lib/xlsx-runtime.ts`) from rows the server
+already scoped and logged — the backend has no Excel writer. Spec contradiction
+recorded, not bridged: the owner's text says the contractor "does NOT see size"
+and lists Size in the contractor export columns; the export follows the column
+list, the on-screen contractor panel shows no size. Pinned by
+`backend/tests/publicBrandCalendar.test.ts` (the AKEMI token never sees a
+ZANOTTI event, the blank task's file id is 404 under a brand link, the export is
+logged), the export test in `publicContractorCalendarFloorplan.test.ts` (never
+touches `project_finance`), and `ShareCalendar.test.tsx` (contractor panel never
+fetches figures; brand export has the footer, contractor export does not).
 **The role BADGE is the second half of the checklist-tick gate, and the UI must
 ask it too.** A caller holding `projects.checklist.tick` but **not**
 `projects.write` may attach, edit, delete and status-change only on tasks whose

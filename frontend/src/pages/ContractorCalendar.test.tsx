@@ -6,7 +6,7 @@
  * REAL page and assert what the contractor SEES — and that an invalid link says
  * so rather than leaking that it once worked.
  */
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ContractorCalendar } from "./ContractorCalendar";
@@ -48,6 +48,7 @@ describe("ContractorCalendar (public, no-login)", () => {
         contractor: "DREAM ART (M) SDN BHD",
         events: [
           {
+            eventId: 1,
             brand: "AKEMI",
             organizer: "HOMELOVE",
             state: "Kuala Lumpur",
@@ -63,6 +64,43 @@ describe("ContractorCalendar (public, no-login)", () => {
     render(<ContractorCalendar />);
     expect(await screen.findByText("DREAM ART (M) SDN BHD")).toBeTruthy();
     expect(await screen.findByText(/Booth 3053-3055/)).toBeTruthy();
+  });
+
+  it("tapping an event opens ONLY its unfilled floorplan, with View and Download", async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/events/7/floorplan")) {
+        return json({
+          files: [{ fileId: "t700", fileName: "MV blank.pdf", contentType: "application/pdf", sizeBytes: 2048 }],
+        });
+      }
+      return json({
+        contractor: "DREAM ART (M) SDN BHD",
+        events: [
+          {
+            eventId: 7,
+            brand: "AKEMI",
+            organizer: null,
+            state: null,
+            venue: "MID VALLEY",
+            boothNo: "3053-3055",
+            startDate: todayIso(),
+            endDate: todayIso(),
+            name: null,
+          },
+        ],
+      });
+    });
+    render(<ContractorCalendar />);
+    fireEvent.click(await screen.findByText(/Booth 3053-3055/));
+    expect(await screen.findByText("MV blank.pdf")).toBeTruthy();
+    const download = screen.getByText("Download").closest("a");
+    expect(download?.getAttribute("href")).toMatch(/\/events\/7\/floorplan\/t700\?download=1$/);
+    const view = screen.getByText("View").closest("a");
+    expect(view?.getAttribute("href")).toMatch(/\/events\/7\/floorplan\/t700$/);
+    // The panel never asks the server for anything but the floorplan.
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(urls.filter((u) => u.includes("/events/"))).toEqual([expect.stringMatching(/\/events\/7\/floorplan$/)]);
   });
 
   it("shows a friendly message for an invalid or revoked link", async () => {

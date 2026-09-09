@@ -82,7 +82,7 @@ whole point of this doc is to record which one answers which question.
 
 | # | Linkage | Where it lives | Semantics | Survives delivery? |
 |---|---------|----------------|-----------|--------------------|
-| A | **Floating MRP coverage** | `mrp.ts` `computeMrp()` → `mrpLineCoverage()` | Which outstanding PO currently covers which SO line, greedy by delivery date over a POOLED supply. `MrpLine.poNumber` is the forward map (SO line → PO). | **No** — computes over OUTSTANDING demand only; a delivered line is subtracted out (`effQtyOf` / `soDeliverableRemaining`) and `SO_DONE` statuses are excluded. The coverage evaporates the moment the line ships. |
+| A | **Floating MRP coverage** | `mrp.ts` `computeMrp()` → `mrpLineCoverage()` | Which outstanding PO currently covers which SO line, greedy by delivery date over a POOLED supply. `MrpLine.poNumber` is the forward map (SO line → PO). **Except a company-1 HARD-BOUND line** (bedframe / sofa / `(SP)` mattress): since 2026-09-09 it is covered by its OWN dedicated PO and never by the pool, because the readiness engine accepts only that PO — a pooled cover was a promise nothing could keep (`docs/bugs/0736`). So layer (c) of `po-so-coverage` has no floating answer for an UNLINKED PO line on such a SKU. | **No** — computes over OUTSTANDING demand only; a delivered line is subtracted out (`effQtyOf` / `soDeliverableRemaining`) and `SO_DONE` statuses are excluded. The coverage evaporates the moment the line ships. |
 | B | **Stored raise-link + document relationship** | `document-flow.ts` (`/document-flow/:type/:id`) | The SAP-B1 relationship graph. Real stored FKs: `purchase_order_items.so_item_id` (the SO line a PO line was RAISED from, 2026-07-09 onward), the PO provenance note (pre-MRP shared buys), `grns.purchase_order_id`, `purchase_invoices.grn_id`, `delivery_orders.so_doc_no`, `sales_invoices.*`. | **Yes** — they survive delivery, which floating coverage does not. But they are RECORDED, not ENFORCED: every one is nullable (an ad-hoc DO line is written with `so_item_id ?? null` straight from the client payload, `delivery-orders-mfg.ts:3752`), and several have been rewritten by repair scripts (`backfill-po-so-item-links.mjs`, `repair-2990-doc-refs.mjs`) — so they are not immutable either. |
 | C | **Physical batch/lot trail** | `soLineShippedSourcePos()` (`delivery-orders-mfg.ts`) | `batch_no = source PO number` (stamped by the GRN, mig 0120, copied onto the FIFO lot by the trigger). Recovers, for a SHIPPED SO line, the PO(s) its goods physically came from, via DO OUT movements ∪ `inventory_lot_consumptions` → `inventory_lots.batch_no`. | **Yes, but only for BATCHED stock** — plain-FIFO un-batched stock carries no batch, so the trail is best-effort and incomplete. |
 
@@ -929,7 +929,20 @@ all three, mirroring `so-relationship-map.ts`.
 > call `customerRefOf(header)` from `frontend/src/lib/customer-ref.ts`, which
 > resolves `ref || customer_so_no || po_doc_no`. Owner ruling: `ref` is the
 > customer-reference field; `customer_so_no` is a retired near-duplicate and
-> `po_doc_no`/`customer_po*` are dead columns dropped in a later migration. Each hook
+> `po_doc_no`/`customer_po*` are dead columns dropped in a later migration.
+>
+> **That rule was inert until 2026-09-09 (`docs/bugs/0726`).** The three
+> `*RelationshipHeader` types were written independently of it and listed only
+> `so_doc_no` / `po_doc_no` / `customer_so_no` — no `ref` — so the pages never
+> put `ref` into `relMapHeader` and the cell fell through to two columns that
+> are empty on live data. 174 of 246 delivery orders carry their reference in
+> `ref` and NOTHING else, and every one of them read "Not linked". The types are
+> now `CustomerRefHeader & { … }`, defined in terms of the rule's own input, so a
+> column the rule reads cannot again be missing from a type that feeds it.
+> Nothing warned: the pages build the header in a `useMemo`, so what reaches the
+> hook is a variable, not an object literal, and TypeScript's excess-property
+> check never fires. **If you add a fourth document type here, extend
+> `CustomerRefHeader` — do not re-list the columns.** Each hook
 (`useDoRelationshipMap` / `useSiRelationshipMap` / `useDrRelationshipMap`) reads
 `useDocumentFlow(type, id)` — linkage **B**, the same company-scoped graph the
 SO map, the vendor `DocumentFlowModal` and the purchase-side maps use — and a

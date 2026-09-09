@@ -52,15 +52,24 @@
  *     that module, and all four callers read it.
  *
  * DO lane — NOT general, and that is the finding, not a shortcut.
- *   `delivery_order_items.linked_ac_dtlkey` is NULL on all 173 migrated
- *   delivery orders, so NO delivery note can be compared line by line: every
- *   verdict there rests on the reconcile's value-then-order fallback. A tool
- *   that added "the missing line" to a delivery order by that fallback would be
- *   writing on a guess. So this lane repairs only the documents NAMED in
- *   DO_TARGETS below, and each target is asserted against the book — document,
- *   DtlKey, quantity, unit price, line subtotal and the absence of an ERP row
- *   already carrying it — before anything is written. Today that list is one
- *   line: section G of the remainder doc.
+ *   The delivery-order side has no rule that can find a missing line on its own.
+ *   `delivery_order_items.linked_ac_dtlkey` was NULL on every migrated delivery
+ *   order until `backfill-ac-downstream-line-keys.mjs` began stamping it, and
+ *   that stamping is PARTIAL and moving — this lane COUNTS and prints how many
+ *   rows of the target document carry a key on each run rather than asserting a
+ *   state that changes under it. A tool that decided "the missing line" from the
+ *   reconcile's own value-then-order fallback would be writing on a guess. So
+ *   this lane repairs only the documents NAMED in DO_TARGETS below, and each
+ *   target is asserted against the book — document, DtlKey, quantity, unit
+ *   price, line subtotal — and against the ERP — no row already answering it —
+ *   before anything is written. Today that list is five lines: section G of the
+ *   remainder doc, plus the four lines on DO-001953 / DO-004903 whose item code
+ *   was changed on the delivery order AFTER it was converted from its sales
+ *   order (docs/bugs/0711). Those four are written in the SUBSTITUTED shape
+ *   docs/modules/delivery-order.md declares — `ac_substituted = true`,
+ *   `so_item_id` NULL, `item_group` blank — never linked to an ordered line,
+ *   because which ordered line each answers is a human judgement the book does
+ *   not record.
  *
  * ── WHAT IT NEVER TOUCHES ──────────────────────────────────────────────────
  *   `paid_sen` and the header `balance_sen`. What a customer paid is a fact
@@ -86,9 +95,10 @@
  * RE-RUN: idempotent. Every SO line it writes carries its AutoCount DtlKey, so
  * a second run finds the key already present and plans nothing; the apply path
  * re-reads that document's live keys INSIDE the transaction as well, so two
- * runs racing cannot double a line. The DO line carries no DtlKey by design
- * (see the DO lane above); it is claimed instead by its own marker in
- * `notes`, re-read inside the transaction for the same reason.
+ * runs racing cannot double a line. The DO line carries its DtlKey too, plus a
+ * marker in `notes`, and a re-run claims it by EITHER — the key is the identity
+ * AcSyncService addresses a detail row by (mig 0280), and the marker survives a
+ * tool that later rewrites keys.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -190,6 +200,17 @@ const keyOf = (v) => {
  * `TRANSPORTATION CHARGES` line reads TransferedQty 0 in the book, so there is
  * no sales-order line to link and `so_item_id` is NULL — which is legal
  * (nullable since the table was created) and honest.
+ *
+ * `linked_ac_dtlkey` IS stamped, and that is a CORRECTION of the decision this
+ * script was first written with. It was left NULL on the reasoning that every
+ * migrated delivery order is keyless, so keying one row would flip that document
+ * out of the reconcile's keyless-multiset comparison into keyed pairing — a
+ * wider change than adding a line. Plan run `34201640955` read the live rows and
+ * refuted it: HC-DO-001604's three sofa compartments ALREADY carry DtlKey
+ * 199269. The document is keyed today, so there is no comparison left to flip,
+ * and the honest value for this row is its own key. A WRONG key is worse than
+ * NULL (mig 0280 — NULL means "create"), which is why the target asserts the
+ * book's row before the key is used.
  */
 const DO_TARGETS = [
   {
@@ -201,6 +222,73 @@ const DO_TARGETS = [
        book row has moved is REFUSED, never adjusted to fit. */
     expect: { hasCode: false, qty: 1, unitSen: 15000, subTotalSen: 15000 },
     why: "docs/cutover-so-do-remainder-2026-09-08.md section G — a text-only line carrying real money, explicitly NOT in the blank-row class of docs/bugs/0695",
+  },
+  /* ── THE FOUR LINES WHOSE CODE WAS CHANGED AFTER THE CONVERSION ───────────
+   * `substituted: true` is the shape docs/modules/delivery-order.md declares for
+   * a delivery line whose code the ordering document does not carry: the book's
+   * code verbatim, `so_item_id` NULL, `item_group` / `variants` blank, and
+   * `ac_substituted` true so both surfaces badge it. It is the SAME shape
+   * lib/migrated-do-writer.mjs wrote for HC-DO-001800 and HC-DO-005583; those
+   * two notes were CREATED by that writer because every line of them was a
+   * substitution, while these two notes already existed, and
+   * create-migrated-documents.mjs filters its plan by
+   * `!done.has(d.doNo)` (lib/migrated-do-writer.mjs:293) — a document already in
+   * the ERP is skipped whole, so the substitution ruling could never reach a
+   * line INSIDE one. That is why these four rows are still missing and the two
+   * sibling documents are complete.
+   *
+   * `description` is the book's own LineDesc, read from
+   * data/ac-partial-dos.json.gz — the same cut migrated-do-writer.mjs read when
+   * it wrote HC-DO-001800's two rows, so the four rows here read identically to
+   * their siblings. It is a DECLARED literal because the reconcile snapshot
+   * carries no LineDesc column; `expect` still asserts every value that decides
+   * the write against the book itself.
+   *
+   * `so_item_id` stays NULL and that is the whole point: SO-003186 transferred
+   * 4 of `NTYR-CS LTX PIL + CSC` and 4 of `AK- LTX CLS PIL`, and the note ships
+   * 4 pillows and 4 covers. {4,4} answers {4,4} as a multiset and the book
+   * cannot say which answers which — `FromDocDtlKey` is empty on all 48,772 DO
+   * lines in this book. docs/bugs/0706 ruled on exactly that shape.
+   */
+  {
+    acDoc: "DO-001953",
+    dtlKey: "234488",
+    erpCode: "HB109M-CC",
+    group: null,
+    substituted: true,
+    description: "COOL SILK LATEX PILLOW COVER",
+    expect: { hasCode: true, qty: 4, unitSen: 0, subTotalSen: 0 },
+    why: "docs/bugs/0713 — the book's delivery note carries this code and SO-003186 does not; the ERP note was created before the 2026-09-07 substitution ruling and dropped it",
+  },
+  {
+    acDoc: "DO-001953",
+    dtlKey: "234490",
+    erpCode: "HB109NL",
+    group: null,
+    substituted: true,
+    description: "LATEX PILLOW",
+    expect: { hasCode: true, qty: 4, unitSen: 0, subTotalSen: 0 },
+    why: "docs/bugs/0713 — same document, the other dropped line",
+  },
+  {
+    acDoc: "DO-004903",
+    dtlKey: "465251",
+    erpCode: "HB109NL",
+    group: null,
+    substituted: true,
+    description: "LATEX PILLOW",
+    expect: { hasCode: true, qty: 1, unitSen: 0, subTotalSen: 0 },
+    why: "docs/bugs/0713 — the book's delivery note carries this code and SO-006438 does not",
+  },
+  {
+    acDoc: "DO-004903",
+    dtlKey: "465254",
+    erpCode: "HB109M-CC",
+    group: null,
+    substituted: true,
+    description: "COOL SILK LATEX PILLOW COVER",
+    expect: { hasCode: true, qty: 1, unitSen: 0, subTotalSen: 0 },
+    why: "docs/bugs/0713 — same document, the other dropped line",
   },
 ];
 const DO_MARK = (dtlKey) => `topped up from AutoCount DtlKey ${dtlKey}`;
@@ -329,10 +417,19 @@ async function main() {
 /* ── SO lane ──────────────────────────────────────────────────────────────── */
 
 async function planSo({ book, scope, mapping, prodByCode, whId, findColour }) {
-  const heldDocs = await sql`SELECT doc_no, linked_ac_docno, status, line_count,
-        local_total_sen::bigint AS hdr_total, paid_sen::bigint AS paid, balance_sen::bigint AS hdr_balance
-      FROM scm.mfg_sales_orders
-     WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`;
+  /* `lines_sum` is read BECAUSE THE APPLY RE-SUMS FROM THE LINES, not from the
+     header. A migrated header can already disagree with its own rows — SO-012842
+     is the live one — and a plan that predicts `header + what I add` would then
+     print a number the apply does not produce. That is the "check that answers a
+     different question" trap in CLAUDE.md, and it showed up in the first plan
+     run of this script (34201640955) predicting RM 5,188.00 on a document the
+     apply would leave at RM 4,888.00. */
+  const heldDocs = await sql`SELECT h.doc_no, h.linked_ac_docno, h.status, h.line_count,
+        h.local_total_sen::bigint AS hdr_total, h.paid_sen::bigint AS paid,
+        h.balance_sen::bigint AS hdr_balance,
+        (SELECT COALESCE(SUM(x.total_sen),0)::bigint FROM scm.mfg_sales_order_items x WHERE x.doc_no = h.doc_no) AS lines_sum
+      FROM scm.mfg_sales_orders h
+     WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`;
   const items = await sql`SELECT i.doc_no, i.linked_ac_dtlkey, i.line_no, i.item_code, i.item_group,
         i.qty::float8 AS qty, i.unit_price_sen::bigint AS unit_price_sen, i.total_sen::bigint AS total_sen
       FROM scm.mfg_sales_order_items i
@@ -395,7 +492,8 @@ async function planSo({ book, scope, mapping, prodByCode, whId, findColour }) {
     const addSen = rows.reduce((s, r) => s + r.lineTotal, 0);
     docs.push({
       docNo: d.doc_no, acNo: ac, status: d.status, inScope: scope.SO.has(ac),
-      erpHdr: Number(d.hdr_total ?? 0), bookHdr: h.totalSen, add: addSen,
+      erpHdr: Number(d.hdr_total ?? 0), linesSum: Number(d.lines_sum ?? 0),
+      bookHdr: h.totalSen, add: addSen,
       paid: Number(d.paid ?? 0), hdrBalance: Number(d.hdr_balance ?? 0),
       erpRows: g.rows, bookRows: bookLines.length, lines: rows,
     });
@@ -412,14 +510,19 @@ async function planSo({ book, scope, mapping, prodByCode, whId, findColour }) {
       if (w.desc2) plain(`         book build text: "${String(w.desc2).replace(/\s+/g, " ").slice(0, 90)}"`);
       if (w.variants) plain(`         decoded: colour ${w.variants.colourId ?? "(none)"} gap ${w.variants.gap ?? "-"} divan ${w.variants.divanHeight ?? "-"} leg ${w.variants.legHeight ?? "-"} total ${w.variants.totalHeight ?? "-"} specials ${(w.variants.specials || []).join(" / ") || "-"}`);
     }
-    const after = t.erpHdr + t.add;
-    plain(`     header now ${rm(t.erpHdr)}  +${rm(t.add)}  ->  ${rm(after)}   the book says ${rm(t.bookHdr)}${after === t.bookHdr ? "  = MATCHES THE BOOK" : "  <-- STILL DIFFERS, and that remainder is not this script's business"}`);
-    if (t.add === 0 && t.erpHdr !== t.bookHdr) {
-      plain("     NOTE: every line added is RM 0.00, so the header does not move; the money difference on this document has another cause.");
+    /* The APPLY writes Sigma of the lines. So does this. */
+    const after = t.linesSum + t.add;
+    if (t.linesSum !== t.erpHdr) {
+      plain(`     PRE-EXISTING: the header reads ${rm(t.erpHdr)} while its own lines sum to ${rm(t.linesSum)} — a difference of ${rm(t.erpHdr - t.linesSum)} that was there before this script. The re-sum below CORRECTS it, because the header is DEFINED as the sum of its lines.`);
     }
-    if (t.add !== 0) {
+    plain(`     lines sum ${rm(t.linesSum)}  +${rm(t.add)}  ->  header becomes ${rm(after)} (was ${rm(t.erpHdr)})   the book says ${rm(t.bookHdr)}${after === t.bookHdr ? "  = MATCHES THE BOOK" : "  <-- STILL DIFFERS, and that remainder is not this script's business"}`);
+    if (t.add === 0 && after !== t.bookHdr) {
+      plain("     NOTE: every line added is RM 0.00, so the money on this document does not move; its difference has another cause.");
+    }
+    if (after !== t.erpHdr) {
       const wasConsistent = t.erpHdr === t.paid + t.hdrBalance;
       const nowConsistent = after === t.paid + t.hdrBalance;
+
       plain(`     PAID ${rm(t.paid)} + header balance ${rm(t.hdrBalance)} = ${rm(t.paid + t.hdrBalance)} — NOT touched (payment columns are the owner's call).` +
         ` Before: ${wasConsistent ? "equalled the total" : "did NOT equal the total"}. After: ${nowConsistent ? "equals the total" : "does NOT equal the total — NAMED for the owner"}.`);
     }
@@ -500,7 +603,14 @@ async function planDo({ book, prodByCode }) {
   const writes = []; const refusals = [];
   plain("");
   plain("═══════════════════════ DO — THE NAMED DELIVERY-NOTE LINES ═══════════════════════");
-  plain("No migrated delivery order carries a line key, so this lane is a NAMED list, not a rule.");
+  /* This banner used to ASSERT "no migrated delivery order carries a line key",
+     and apply run 34204421089 printed it directly above a document whose three
+     rows all carry DtlKey 199269 — a stale fact stated beside the measurement
+     that refutes it. `backfill-ac-downstream-line-keys.mjs` is filling that
+     column and the state moves between two dispatches, so the banner states the
+     RULE and the per-document line states the MEASUREMENT. */
+  plain("A delivery note's line keys are being backfilled and the state moves, so this lane is a NAMED list, not a rule.");
+  plain("Each target prints how many of its ERP rows carry an AutoCount line key at the moment of this run.");
   for (const t of DO_TARGETS) {
     const l = (book.DO.lines.get(t.acDoc) || []).find((x) => keyOf(x.dtlKey) === t.dtlKey);
     if (!l) { refusals.push(`${t.acDoc} DtlKey ${t.dtlKey}: that line is not in this snapshot — REFUSED`); continue; }
@@ -524,20 +634,25 @@ async function planDo({ book, prodByCode }) {
           unit_price_sen::bigint AS unit_price_sen, line_total_sen::bigint AS line_total_sen,
           linked_ac_dtlkey, notes
         FROM scm.delivery_order_items WHERE delivery_order_id = ${hdr.id}`;
+    /* The book's own words for the row. A text-only line HAS no code, so its
+       itemKey IS its text; a coded line's text is the book's LineDesc, which
+       this snapshot does not carry and the target declares. */
+    const text = t.description ?? l.itemKey;
     const already = rows.some((r) => String(r.notes ?? "").includes(DO_MARK(t.dtlKey))
       || keyOf(r.linked_ac_dtlkey) === t.dtlKey
       || (norm(r.item_code) === norm(t.erpCode) && Number(r.unit_price_sen) === e.unitSen && Math.round(Number(r.qty)) === e.qty));
+    const keyed = rows.filter((r) => keyOf(r.linked_ac_dtlkey) !== null).length;
     plain("");
-    plain(`${hdr.do_number} (${t.acDoc})  status ${hdr.status}  ${rows.length} ERP row(s), header ${rm(hdr.hdr_total)}; the book says ${rm(h.totalSen)}`);
+    plain(`${hdr.do_number} (${t.acDoc})  status ${hdr.status}  ${rows.length} ERP row(s) (${keyed} carry an AutoCount line key), header ${rm(hdr.hdr_total)}; the book says ${rm(h.totalSen)}`);
     for (const r of rows) plain(`     have  ${String(r.item_code).slice(0, 34).padEnd(34)} x${r.qty} @ ${rm(r.unit_price_sen)} = ${rm(r.line_total_sen)}  key ${keyOf(r.linked_ac_dtlkey) ?? "(none)"}`);
     if (already) { refusals.push(`${hdr.do_number}: a row answering DtlKey ${t.dtlKey} is already there — nothing to do (this is what a re-run looks like)`); continue; }
     const lineTotal = e.unitSen * e.qty;
     const after = Number(hdr.hdr_total) + lineTotal;
-    plain(`     + "${l.itemKey}" x${e.qty} @ ${rm(e.unitSen)} = ${rm(lineTotal)}  [${t.group}] as ERP product ${t.erpCode}`);
+    plain(`     + "${text}" x${e.qty} @ ${rm(e.unitSen)} = ${rm(lineTotal)}  [${t.group ?? "no item group"}] as ERP product ${t.erpCode}${t.substituted ? "  SUBSTITUTED (so_item_id stays NULL)" : ""}`);
     plain(`       ${t.why}`);
     plain(`     header ${rm(hdr.hdr_total)} + ${rm(lineTotal)} -> ${rm(after)}   the book says ${rm(h.totalSen)}${after === h.totalSen ? "  = MATCHES THE BOOK" : "  <-- STILL DIFFERS"}`);
     writes.push({
-      target: t, doId: hdr.id, doNo: hdr.do_number, text: l.itemKey,
+      target: t, doId: hdr.id, doNo: hdr.do_number, text,
       qty: e.qty, unitSen: e.unitSen, lineTotal, bookHdr: h.totalSen, erpHdr: Number(hdr.hdr_total),
     });
   }
@@ -551,30 +666,41 @@ async function planDo({ book, prodByCode }) {
 
 async function applyDo(plan) {
   if (!plan.writes.length) return { lines: 0, docs: 0 };
-  let lines = 0; let docs = 0;
+  let lines = 0;
+  /* DISTINCT documents. Two targets on one delivery note are two writes and ONE
+     document; counting a write per document read "4 line(s) on 4 document(s)"
+     on apply run 34213756311, which is two. A count nobody can check is the
+     shape that gets believed. */
+  const touched = new Set();
   for (const w of plan.writes) {
     if (ONLY_DOCS.size && !ONLY_DOCS.has(w.target.acDoc.toUpperCase())) continue;
     await sql.begin(async (tx) => {
-      const live = await tx`SELECT item_code, qty::float8 AS qty, unit_price_sen::bigint AS unit_price_sen, notes
+      const live = await tx`SELECT item_code, qty::float8 AS qty, unit_price_sen::bigint AS unit_price_sen,
+            linked_ac_dtlkey, notes
           FROM scm.delivery_order_items WHERE delivery_order_id = ${w.doId}`;
-      if (live.some((r) => String(r.notes ?? "").includes(DO_MARK(w.target.dtlKey)))) return;
+      if (live.some((r) => String(r.notes ?? "").includes(DO_MARK(w.target.dtlKey))
+        || keyOf(r.linked_ac_dtlkey) === w.target.dtlKey)) return;
       await tx`INSERT INTO scm.delivery_order_items
           (delivery_order_id, so_item_id, item_code, description, uom, qty, company_id,
            item_group, description2, unit_price_sen, discount_sen, line_total_sen,
-           unit_cost_sen, line_cost_sen, ac_substituted, notes)
+           unit_cost_sen, line_cost_sen, ac_substituted, linked_ac_dtlkey, notes)
         VALUES (${w.doId}, NULL, ${w.target.erpCode}, ${w.text}, 'UNIT', ${w.qty}, ${CO},
            ${w.target.group}, NULL, ${w.unitSen}, 0, ${w.lineTotal},
-           0, 0, false,
-           ${DO_MARK(w.target.dtlKey) + " on " + w.target.acDoc + " — the book carries this line and the migrated note did not"})`;
+           0, 0, ${w.target.substituted === true}, ${w.target.dtlKey},
+           ${DO_MARK(w.target.dtlKey) + " on " + w.target.acDoc + " — the book carries this line and the migrated note did not"
+             + (w.target.substituted === true
+               ? ". SUBSTITUTED AT DISPATCH: the account book's delivery note ships this code and its own sales order does not carry it,"
+                 + " so this row is deliberately NOT linked to a sales-order line — which ordered item it answers is a human decision."
+               : "")})`;
       /* Sigma line_total_sen, the same rule lib/migrated-do-writer.mjs:375 and
          delivery-orders-mfg.ts:461 keep. */
       const rows = await tx`SELECT line_total_sen::bigint t FROM scm.delivery_order_items WHERE delivery_order_id = ${w.doId}`;
       const total = rows.reduce((s, r) => s + Number(r.t), 0);
       await tx`UPDATE scm.delivery_orders SET local_total_sen = ${total}, line_count = ${rows.length} WHERE id = ${w.doId}`;
-      lines += 1; docs += 1;
+      lines += 1; touched.add(w.doId);
     });
   }
-  return { lines, docs };
+  return { lines, docs: touched.size };
 }
 
 /* ── verification, on a FRESH connection, asserting the SHAPE ─────────────── */
@@ -637,7 +763,8 @@ async function verify(soPlan, doPlan, book) {
         FROM scm.delivery_order_items i JOIN scm.delivery_orders h ON h.id = i.delivery_order_id
        WHERE i.delivery_order_id = ${w.doId}`;
     const [mine] = await fresh`SELECT item_code, qty::float8 q, unit_price_sen::bigint up,
-          line_total_sen::bigint lt, description
+          line_total_sen::bigint lt, description, linked_ac_dtlkey::text key,
+          ac_substituted, so_item_id::text so_item_id, item_group
         FROM scm.delivery_order_items
        WHERE delivery_order_id = ${w.doId} AND notes LIKE ${"%" + DO_MARK(w.target.dtlKey) + "%"}`;
     const f = [];
@@ -648,6 +775,15 @@ async function verify(soPlan, doPlan, book) {
       if (Number(mine.up) !== w.unitSen) f.push(`unit_price_sen ${mine.up} != the book's ${w.unitSen}`);
       if (Number(mine.lt) !== w.lineTotal) f.push(`line_total_sen ${mine.lt} != ${w.lineTotal}`);
       if (String(mine.description ?? "") !== String(w.text)) f.push(`description "${mine.description}" is not the book's own text "${w.text}"`);
+      if (keyOf(mine.key) !== w.target.dtlKey) f.push(`linked_ac_dtlkey ${mine.key ?? "NULL"} != the book's ${w.target.dtlKey}`);
+      /* THE SHAPE the substituted class is DEFINED by, asserted rather than
+         assumed: the badge both surfaces render is driven by ac_substituted,
+         and a link to an ordered line is the one thing this row must not have.
+         docs/modules/delivery-order.md, "A delivery line can carry a
+         SUBSTITUTED item code". */
+      if (Boolean(mine.ac_substituted) !== (w.target.substituted === true)) f.push(`ac_substituted ${mine.ac_substituted} != ${w.target.substituted === true}`);
+      if (mine.so_item_id !== null) f.push(`so_item_id ${mine.so_item_id} is set — a substituted line must carry NO link to an ordered line`);
+      if ((mine.item_group ?? null) !== (w.target.group ?? null)) f.push(`item_group ${mine.item_group ?? "NULL"} != ${w.target.group ?? "NULL"}`);
     }
     if (r) {
       if (Number(r.hdr) !== Number(r.lines_sum)) f.push(`header ${r.hdr} != the sum of its lines ${r.lines_sum}`);
