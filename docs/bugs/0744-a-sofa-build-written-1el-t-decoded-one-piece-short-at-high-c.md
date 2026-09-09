@@ -66,3 +66,39 @@ After: `4 files, 122 passed (122)` across the new suite, `parseSofaGrammar`,
 
 **Ref.** fix/sofa-clr-leg-reader, 2026-09-09. Related: `docs/bugs/0740`,
 `docs/bugs/0741`.
+
+---
+
+**MEASURED AFTER THE FIX, and it changes what this entry is FOR.** All 48 rows
+this touches sit on documents that are **outside the reconcile's outstanding
+scope** — every one is a 2024/2025 order long since delivered and invoiced.
+Checked against the read-only run
+[34310423039](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34310423039):
+`SO-000234`, `SO-000285`, `SO-000294`, `SO-000369`, `SO-001035`, `SO-001444`,
+`SO-001457`, `SO-003951` and `SO-004542` appear **zero** times in it.
+
+So this fix moves **no tally figure today**, and the warning above about the
+compartment axis rising did NOT materialise — the sofa-compartment counts are
+unchanged on all six types. What it does is stop the reader being wrong, which
+matters the moment one of these documents is re-opened, re-invoiced, or used as
+the pattern for a new order.
+
+**The ERP rows themselves are still one piece short**, and that is real data,
+not a reporting artefact. Handed over rather than written, because
+`data/sofa-compartment-corrections-2026-09.json` belongs to another lane:
+
+| the book's text | the ERP holds | the book says |
+| --- | --- | --- |
+| `(2EL+1EL/T) / COL: Y9883-2-CHIC` | `2A(LHF)` + `1A(RHF)` | `2A(LHF)` + `L(RHF)` |
+| `[ 1EL/T (32") + 2ER(28") / COL: HIVE GD 2034 01# PEARL ]` | `2S` | `L(LHF)` + `2A(RHF)` |
+| `[ 1EL/T(32") + 2ER(32") / COL: GD2034-03# STRAW` | `2S` | `L(LHF)` + `2A(RHF)` |
+| `[1EL/T (32'')+2ER (32'') /COL:GD8371-13#]` | `2S` | `L(LHF)` + `2A(RHF)` |
+| `1EL/T+2NA+ C + (+2ER)  COL: GD8371-03# STRAW` | `2NA` + `CNR` + `2A(RHF)` | the same with its leading `L` |
+
+The remaining five texts read as UNREADABLE before and are now readable; they
+were never asserting a wrong build, only refusing to answer.
+
+Documents, so the handover needs nothing from this session: `SO-000234`,
+`SO-000285`, `SO-000294`, `SO-000369`, `SO-001035`, `SO-001444`, `SO-001457`,
+`SO-003951`, `SO-004542` and their PO / GR / DO / IV / PI descendants —
+48 rows in all.
