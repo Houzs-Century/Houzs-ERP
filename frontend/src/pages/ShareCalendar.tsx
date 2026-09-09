@@ -15,8 +15,9 @@
 //               export = the same columns + Total Sales, with a Confidential
 //               footer naming the brand and the generation time
 //
-// Owner 2026-09-08. Viewers can switch month/week and navigate; there is no
-// filter, no search, nothing editable. The list is re-read every minute so a
+// Owner 2026-09-08. Viewers navigate month by month (the owner removed the
+// month/week toggle on 2026-09-09); there is no filter, no search, nothing
+// editable. The list is re-read every minute so a
 // change in the ERP shows up without a reload. A killed link gets the same
 // "not valid" screen an unknown one does.
 //
@@ -48,7 +49,10 @@ type ExportRow = {
   startDate: string | null;
   endDate: string | null;
   venue: string | null;
+  state: string | null;
   organizer: string | null;
+  brand: string | null;
+  eventType: string | null;
   boothNo: string | null;
   sizeSqm: number | null;
   totalSales?: number | null;
@@ -157,18 +161,6 @@ function fmtSpan(start: string | null, end: string | null): string {
   return e && e !== s ? `${s} – ${e}` : s;
 }
 
-type View = "month" | "week";
-// URL is state: the view lives in ?view= so a shared or reloaded link keeps it.
-function readView(): View {
-  return new URLSearchParams(window.location.search).get("view") === "week" ? "week" : "month";
-}
-function writeView(v: View) {
-  const u = new URL(window.location.href);
-  if (v === "week") u.searchParams.set("view", "week");
-  else u.searchParams.delete("view");
-  window.history.replaceState(null, "", u.toString());
-}
-
 export function ShareCalendar({ mode }: { mode: ShareMode }) {
   // Read from the location — this surface is chosen before any <Routes> exists.
   const token = window.location.pathname.split("/")[2] || "";
@@ -180,9 +172,7 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const today = useMemo(() => new Date(), []);
-  const [view, setViewState] = useState<View>(readView);
   const [cursor, setCursor] = useState<{ y: number; m: number }>({ y: today.getFullYear(), m: today.getMonth() });
-  const [weekAnchor, setWeekAnchor] = useState<Date>(today);
   // The event whose panel is open, and what the server said about it.
   const [open, setOpen] = useState<ShareEvent | null>(null);
   const [files, setFiles] = useState<ShareFile[] | null>(null);
@@ -190,11 +180,6 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
   const [panelError, setPanelError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
-
-  const setView = (v: View) => {
-    writeView(v);
-    setViewState(v);
-  };
 
   // `silent` = the minute poll: never flash the loading screen or wipe the grid
   // over a blip; a failed poll keeps the last good schedule on screen.
@@ -292,31 +277,25 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
   }, [data]);
 
   const cells = useMemo(() => monthGrid(cursor.y, cursor.m), [cursor]);
-  const week = useMemo(() => weekOf(weekAnchor), [weekAnchor]);
   const weeks = useMemo<Date[][]>(() => {
-    if (view === "week") return [week];
     const out: Date[][] = [];
     for (let w = 0; w < 6; w++) out.push(cells.slice(w * 7, w * 7 + 7));
     return out;
-  }, [view, week, cells]);
+  }, [cells]);
   const todayKey = dayNum(today);
   // Derived, not literal arrays, so the month/weekday names have one home in the
   // platform instead of a duplicated-decision copy of the ERP's own lists.
   const monthLabel = new Date(cursor.y, cursor.m, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
   const weekdayNames = weeks[0].map((d) => d.toLocaleDateString("en-US", { weekday: "short" }));
-  const rangeLabel = view === "week" ? `${fmtDate(week[0])} – ${fmtDate(week[6])}` : monthLabel;
 
   function prev() {
-    if (view === "week") setWeekAnchor((d) => new Date(d.getFullYear(), d.getMonth(), d.getDate() - 7));
-    else setCursor((c) => (c.m === 0 ? { y: c.y - 1, m: 11 } : { y: c.y, m: c.m - 1 }));
+    setCursor((c) => (c.m === 0 ? { y: c.y - 1, m: 11 } : { y: c.y, m: c.m - 1 }));
   }
   function next() {
-    if (view === "week") setWeekAnchor((d) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7));
-    else setCursor((c) => (c.m === 11 ? { y: c.y + 1, m: 0 } : { y: c.y, m: c.m + 1 }));
+    setCursor((c) => (c.m === 11 ? { y: c.y + 1, m: 0 } : { y: c.y, m: c.m + 1 }));
   }
   function goToday() {
     setCursor({ y: today.getFullYear(), m: today.getMonth() });
-    setWeekAnchor(today);
   }
 
   // Excel: the rows come from the server already scoped to this link (and, for
@@ -332,14 +311,17 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
       }
       const body = (await res.json()) as ExportBody;
       const XLSX = await import("../lib/xlsx-runtime");
-      const header: string[] = ["Date", "Venue", "Organizer", "Booth", "Size (sqm)"];
+      const header: string[] = ["Date", "Venue", "State", "Organizer", "Brand", "Type", "Booth", "Size (sqm)"];
       if (mode === "brand") header.push("Total Sales (RM)");
       const aoa: (string | number)[][] = [header];
       for (const r of body.rows) {
         const row: (string | number)[] = [
           fmtSpan(r.startDate, r.endDate),
           r.venue ?? "",
+          r.state ?? "",
           r.organizer ?? "",
+          r.brand ?? "",
+          r.eventType ?? "",
           r.boothNo ?? "",
           r.sizeSqm ?? "",
         ];
@@ -384,8 +366,6 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
   const party = data ? (data.contractor ?? data.brand ?? "") : "";
   const eventCount = data ? data.events.length : 0;
   const navBtn = "h-9 rounded-md border border-gray-200 bg-white text-gray-600 hover:border-[#0F766E]";
-  const toggleBtn = (active: boolean) =>
-    `h-9 px-3 text-[12px] font-semibold ${active ? "bg-slate-800 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`;
 
   return (
     <div className="min-h-screen bg-[#0F766E]/5 text-gray-900">
@@ -414,33 +394,28 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
         </div>
 
         <div className="mb-2 flex flex-wrap items-center gap-2">
-          <button type="button" onClick={prev} className={`${navBtn} w-9`} aria-label={view === "week" ? "Previous week" : "Previous month"}>‹</button>
-          <button type="button" onClick={next} className={`${navBtn} w-9`} aria-label={view === "week" ? "Next week" : "Next month"}>›</button>
+          <button type="button" onClick={prev} className={`${navBtn} w-9`} aria-label="Previous month">‹</button>
+          <button type="button" onClick={next} className={`${navBtn} w-9`} aria-label="Next month">›</button>
           <button type="button" onClick={goToday} className={`${navBtn} px-3 text-[12px] font-semibold`}>Today</button>
-          <div className="ml-1 text-[15px] font-bold text-gray-900">{rangeLabel}</div>
-          <div className="ml-auto flex overflow-hidden rounded-md border border-gray-200" role="group" aria-label="Calendar view">
-            <button type="button" onClick={() => setView("month")} className={toggleBtn(view === "month")} aria-pressed={view === "month"}>Month</button>
-            <button type="button" onClick={() => setView("week")} className={toggleBtn(view === "week")} aria-pressed={view === "week"}>Week</button>
-          </div>
+          <div className="ml-1 text-[15px] font-bold text-gray-900">{monthLabel}</div>
         </div>
 
         <div className="overflow-hidden rounded-xl border-2 border-slate-400 bg-white shadow-md ring-1 ring-slate-900/5">
           <div className="grid grid-cols-7 border-b-2 border-slate-600 bg-slate-800">
-            {weekdayNames.map((w, i) => (
+            {weekdayNames.map((w) => (
               <div key={w} className="px-2 py-2 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
                 {w}
-                {view === "week" ? <span className="ml-1 font-normal normal-case">{weeks[0][i].getDate()}</span> : null}
               </div>
             ))}
           </div>
           <div>
             {weeks.map((wk, wi) => {
               const { segs, laneCount } = layoutWeek(wk, ranges);
-              const minH = Math.max(view === "week" ? 220 : 76, 24 + laneCount * 20 + 4);
+              const minH = Math.max(76, 24 + laneCount * 20 + 4);
               return (
                 <div key={wi} className="relative grid grid-cols-7" style={{ minHeight: minH }}>
                   {wk.map((cell, ci) => {
-                    const inMonth = view === "week" || cell.getMonth() === cursor.m;
+                    const inMonth = cell.getMonth() === cursor.m;
                     const isToday = dayNum(cell) === todayKey;
                     return (
                       <div key={ci} className={`border-b border-r border-slate-200 p-1 ${inMonth ? "bg-white" : "bg-slate-50"}`}>
