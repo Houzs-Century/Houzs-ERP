@@ -1,17 +1,19 @@
 // Shorten the special-order text on the six lines the account book refuses for
 // being over its 100-character Further Description.
 //
-// THE OWNER APPROVED EACH WORDING, 2026-09-09, on the listing produced by
-// check-too-long-for-the-book.mjs: 「bedframe 你给的三个方案都ok」 and 「这个全部
-// 没问题」. Nothing here is invented — every replacement below is the text he
-// signed off, and two of them are simply DELETING a sentence that repeats what
-// the line already says:
+// THE OWNER WROTE EACH WORDING HIMSELF, 2026-09-09, after being shown every
+// line's exact text and how many characters its SPECIAL segment had left:
 //
-//   HC-SO-007678 · "Customer would like to customize the front divan with one
-//     drawer on the left and one drawer on the right" says exactly what
-//     "Left Drawer + Right Drawer" already says, twice over.
-//   HC-PO-2609-017 · "HB back fully covered" and "HB Fully Cover" are one
-//     instruction written twice.
+//   HC-SO-007678   · `1Drawer L&R, 1 Mid`            -> 91 and 96 characters
+//   HC-SO-012312   · `HB FC + Divan FC + R Drawer`   -> 94
+//   HC-PO-2609-017 · `HB back fully cover + HB F.Cover` -> 98
+//
+// AND HE CORRECTED ME TWICE IN THE PROCESS, which is why none of this was
+// guessed. I had read the long HC-SO-007678 sentence as a duplicate of
+// `Left Drawer + Right Drawer`; his replacement says `1Drawer L&R, 1 Mid` — a
+// MIDDLE drawer as well, so it was never a duplicate. And I had read
+// `HB back fully covered` and `HB Fully Cover` as one instruction written
+// twice; he kept both, so they are two things.
 //
 // DESC2 IS A FACTORY BUILD INSTRUCTION. A wrong one builds wrong goods, so this
 // refuses to touch a line whose CURRENT rendering is not character-for-character
@@ -43,13 +45,13 @@ const EDITS = [
     docNo: 'HC-SO-007678',
     itemCode: 'HILTON (A)-(K)',
     wasRendered: 'KS-16 ICE STEEL / DIVAN 8" + LEG 0" / GAP 12" / T.Heights 20" / SPECIAL: Left Drawer + Right Drawer + Customer would like to customize the front divan with one drawer on the left and one drawer on the right.',
-    specials: ['Left Drawer', 'Right Drawer'],
+    specials: ['1Drawer L&R, 1 Mid'],
   },
   {
     docNo: 'HC-SO-007678',
     itemCode: 'FENRIR-(Q)',
     wasRendered: 'KS-18 GRAPHITE STONE / DIVAN 8" + LEG 0" / GAP 12" / T.Heights 20" / SPECIAL: Left Drawer + Right Drawer + Customer would like to customize the front divan with one drawer on the left and one drawer on the right.',
-    specials: ['L Drawer', 'R Drawer'],
+    specials: ['1Drawer L&R, 1 Mid'],
   },
   {
     docNo: 'HC-SO-012312',
@@ -73,7 +75,7 @@ const EDITS = [
     docNo: 'HC-PO-2609-017',
     itemCode: 'TRION (A) (HB STR)-(K)',
     wasRendered: 'PC151-11 / DIVAN 8" + LEG 0" / GAP 12" / T.Heights 20" / SPECIAL: HB back fully covered + HB Fully Cover',
-    specials: ['HB Fully Cover'],
+    specials: ['HB back fully cover', 'HB F.Cover'],
   },
 ];
 
@@ -138,7 +140,17 @@ try {
       && !claimed.has(r.id));
     if (!hit) { skipped.push(edit); continue; }
     claimed.add(hit.id);
-    const nextVariants = { ...(hit.variants ?? {}), specials: edit.specials };
+    /* BOTH FIELDS, because the SPECIAL segment is their concatenation —
+       variant-summary.ts joins `variants.specials` with `variants.specialsRecorded`.
+       Setting only the first is what the first attempt did, and the rendering
+       barely moved: the sentence the owner cut lives in the second. Cleared
+       here because the wording he approved does not contain it, and the plan
+       prints both fields so that removal is seen before it happens. */
+    const nextVariants = {
+      ...(hit.variants ?? {}),
+      specials: edit.specials,
+      specialsRecorded: [],
+    };
     const after = buildVariantSummary(hit.item_group ?? '', nextVariants);
     planned.push({ row: hit, edit, after, nextVariants });
   }
@@ -148,6 +160,9 @@ try {
   for (const p of planned) {
     console.log('');
     console.log(`${p.row.doc_no}  ${p.row.item_code}`);
+    const cur = p.row.variants ?? {};
+    console.log(`  variants.specials         ${JSON.stringify(cur.specials ?? cur.special ?? null)}`);
+    console.log(`  variants.specialsRecorded ${JSON.stringify(cur.specialsRecorded ?? null)}`);
     console.log(`  before ${String(p.edit.wasRendered.length).padStart(3)}  ${p.edit.wasRendered}`);
     console.log(`  after  ${String(p.after.length).padStart(3)}  ${p.after}`);
     if (p.after.length > AC_DESC2_MAX) console.log('  STILL OVER — this edit does not solve it');
