@@ -11,6 +11,7 @@ import { env } from "cloudflare:test";
 import { Hono } from "hono";
 import { beforeAll, describe, expect, test } from "vitest";
 import announcementRoutes from "../src/routes/announcements";
+import announcementReceiptRoutes from "../src/routes/announcementReceipts";
 
 const state = { user: undefined as unknown };
 const app = new Hono();
@@ -19,6 +20,7 @@ app.use("*", async (c: never, next: never) => {
   await (next as unknown as () => Promise<void>)();
 });
 app.route("/api/announcements", announcementRoutes);
+app.route("/api/announcements", announcementReceiptRoutes);
 
 const MANAGER = {
   id: 900,
