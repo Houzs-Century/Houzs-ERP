@@ -644,7 +644,32 @@ Frontend pair (one logic layer): desktop `pages/scm-v2/Inventory.tsx`
 | `backend/scripts/lib/undated-demand-queries.mjs` | That probe's SQL, in one home so a test can EXECUTE it. No shebang — a test imports it |
 | `backend/tests-pg/probeUndatedDemandSql.pg.test.ts` | Runs every one of those queries against real Postgres in `backend-postgres`. Exists because the probe's first production dispatch died on unexecuted SQL |
 
-## 7b. The page's frozen header (2026-09-09)
+## 7b. The page's frozen header (2026-09-09) — BUILT, THEN DISARMED THE SAME DAY
+
+> **THE FREEZE IS OFF ON THIS PAGE. `Mrp.tsx` calls
+> `useFrozenTableHeader(false)`** — owner 2026-09-09, hours after it shipped:
+> 「先把 MRP 的表头固定关掉」. Everything below still describes the wiring, which
+> is deliberately left in place; only the arming flag changed. What went wrong is
+> geometry, not integration, and the numbers are in `docs/bugs/0768`:
+>
+> ```
+> --page-header-offset  151px      box sticks at    388px
+> scroller max-height   443px      content        5,090px
+> main.scrollHeight       879   === main.clientHeight   -> the page cannot scroll
+> ```
+>
+> The design reserves the strip above the table and spends PAGE SCROLL to carry
+> the composition up. On MRP the capped table is the only thing that made the
+> page taller than the viewport, so capping it removed the very scroll the design
+> needs: 388px reserved permanently, 443px of rows in an 879px window, ~98px of
+> dead space below. **Before flipping the flag back, fix that** — give the
+> composition real runway, or mark a `data-freeze-anchor` below the filter row so
+> only the header strip is reserved — and measure those four numbers on the real
+> page, because `docs/bugs/0753` states plainly that no test asserts the freeze
+> and `#3430` was verified against a harness that had page scroll.
+>
+> `DataTable`'s use of the hook is untouched; every converted table still
+> freezes.
 
 Owner, 2026-09-09: "MRP 需要freeze row title" — the same rule he set on
 2026-07-24 for every table ("每个table的header都要freeze"). MRP kept its own
