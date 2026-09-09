@@ -64,7 +64,14 @@ const SKU = 'BF-100';
    its only possible assignment is the MRP floating one. Without it the merge
    would discard every MRP row (the delivered lock outranks it on SKU one) and
    this file would pass while the engine's answer was thrown away. */
-const SKU_MRP = 'BF-200';
+/* POOLED on purpose (a mattress, not a bedframe). Layer (c) is MRP's FLOATING
+   coverage, and since 2026-09-09 a company-1 bedframe/sofa/(SP) line can only be
+   covered by its OWN purchase order — so an unlinked PO line on a hard-bound SKU
+   correctly floats against nobody and layer (c) has nothing to show. Using a
+   bound SKU here tested layer (c) through the one category that can no longer
+   have it; the layer is unchanged for everything else, which is what this
+   fixture now exercises. The bound case has its own test below. */
+const SKU_MRP = 'MT-200';
 const DD = '2026-12-01';
 
 /* Every table the three read streams touch. Absent tables would default to
@@ -82,7 +89,7 @@ function fixture(): Record<string, Row[]> {
       supplier_delivery_date_3: null, supplier_delivery_date_4: null,
       warehouse_id: 'W1', company_id: CO,
     }, {
-      id: 'poi-2', purchase_order_id: PO_ID, item_code: SKU_MRP, item_group: 'bedframe',
+      id: 'poi-2', purchase_order_id: PO_ID, item_code: SKU_MRP, item_group: 'mattress',
       so_item_id: null, variants: {}, qty: 3, received_qty: 0,
       delivery_date: '2026-11-01', supplier_delivery_date_2: null,
       supplier_delivery_date_3: null, supplier_delivery_date_4: null,
@@ -97,12 +104,12 @@ function fixture(): Record<string, Row[]> {
     mfg_sales_order_items: [
       { id: 'si-stored', doc_no: 'SO-STORED', item_code: SKU, description: 'Baron', item_group: 'bedframe', variants: {}, qty: 1, warehouse_id: 'W1', line_delivery_date: DD, line_no: 1, created_at: '2026-07-01T00:00:00Z', cancelled: false, company_id: CO },
       { id: 'si-float', doc_no: 'SO-FLOAT', item_code: SKU, description: 'Baron', item_group: 'bedframe', variants: {}, qty: 4, warehouse_id: 'W1', line_delivery_date: DD, line_no: 1, created_at: '2026-07-02T00:00:00Z', cancelled: false, company_id: CO },
-      { id: 'si-mrp', doc_no: 'SO-FLOAT', item_code: SKU_MRP, description: 'Baron 200', item_group: 'bedframe', variants: {}, qty: 3, warehouse_id: 'W1', line_delivery_date: DD, line_no: 2, created_at: '2026-07-02T00:01:00Z', cancelled: false, company_id: CO },
+      { id: 'si-mrp', doc_no: 'SO-FLOAT', item_code: SKU_MRP, description: 'Comfort 200', item_group: 'mattress', variants: {}, qty: 3, warehouse_id: 'W1', line_delivery_date: DD, line_no: 2, created_at: '2026-07-02T00:01:00Z', cancelled: false, company_id: CO },
       { id: 'si-shipped', doc_no: 'SO-SHIPPED', item_code: SKU, description: 'Baron', item_group: 'bedframe', variants: {}, qty: 1, warehouse_id: 'W1', line_delivery_date: DD, line_no: 1, created_at: '2026-07-03T00:00:00Z', cancelled: false, company_id: CO },
     ],
     mfg_products: [
       { code: SKU, category: 'bedframe', name: 'Baron Bedframe', company_id: CO },
-      { code: SKU_MRP, category: 'bedframe', name: 'Baron 200 Bedframe', company_id: CO },
+      { code: SKU_MRP, category: 'mattress', name: 'Comfort 200 Mattress', company_id: CO },
     ],
     /* Layer (a): the goods for SO-SHIPPED left on DO-1, drawn from a lot stamped
        with this PO number. That makes SO-SHIPPED a LOCKED assignment, which
@@ -214,6 +221,40 @@ describe('resolvePoSoCoveragePerSkuForPos — the answer, the cost and the overl
     expect(mrpOnly.assignments[0]!.locked).toBe(false);
     expect(mrpOnly.assignments[0]!.source).toBe('mrp');
     expect(mrpOnly.provenance).toEqual([]);
+  });
+
+  it('a hard-bound SKU on an UNLINKED purchase order gets no floating answer (owner 2026-09-09)', async () => {
+    /* The bound half of the rule, pinned on THIS screen and not only inside
+       computeMrp — layer (c) IS the inverted MRP allocation, so a change to what
+       MRP covers changes what this cell says, and that must be deliberate.
+
+       Company 1 buys a bedframe FOR a particular order. A purchase order that
+       names no sales-order line can never become that line's supply (the stored
+       allocator lights a bound line only from its OWN received PO), so there is
+       no floating coverage to invert and the cell is honestly empty. Until
+       2026-09-09 this read "assigned to SO-FLOAT" — a promise the readiness
+       engine would never keep, which is the buyer seeing "already on order" for
+       an order that then sits PENDING for ever.
+
+       Same fixture as the test above with ONLY the category flipped, so a
+       failure here is the rule and cannot be anything else. */
+    const f = fixture();
+    for (const r of f.purchase_order_items!) if (r.item_code === SKU_MRP) r.item_group = 'bedframe';
+    for (const r of f.mfg_sales_order_items!) if (r.item_code === SKU_MRP) r.item_group = 'bedframe';
+    for (const r of f.mfg_products!) if (r.code === SKU_MRP) r.category = 'bedframe';
+
+    const db = makeFakePostgrest(f, RELATIONSHIPS);
+    const inst = instrument(db);
+    const out = await resolvePoSoCoveragePerSkuForPos(inst.sb, ctx(), [PO_ID]);
+
+    const origins = out.get(PO_ID)!;
+    /* Dropping out of the list entirely and surviving with an empty assignment
+       list are both "no floating answer"; pinning which one would pin a
+       rendering decision this test does not own. */
+    expect(origins.find((o) => o.itemCode === SKU_MRP)?.assignments ?? []).toEqual([]);
+    /* The linked SKU is untouched: this narrows ONE layer for ONE category, and
+       a change that also broke the delivered lock would be a different bug. */
+    expect(origins.find((o) => o.itemCode === SKU)!.assignments.map((a) => a.soDocNo)).toEqual(['SO-SHIPPED']);
   });
 
   it('reads each table exactly as many times as it did before the reads were re-ordered', async () => {

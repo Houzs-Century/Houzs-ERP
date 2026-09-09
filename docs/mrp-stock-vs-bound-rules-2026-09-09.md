@@ -125,12 +125,17 @@ not ITS PO. The buyer sees "already on order", the order sits PENDING forever,
 and nobody is told.
 
 This is the exact mirror of bug 0572 (*"他明明都没有 PO,怎么会 ready 呢"*), on the
-other screen. The pooled fallback is deliberate — the comment records that
-removing it made `po-so-coverage` answer that an unlinked PO serves nobody — but
-its side effect on a HARD-BOUND line was not considered: for a bound line a
-pooled PO is never a real answer, because the binding means only its own PO can
-ever satisfy it. **Named here as an owner decision rather than repaired**, since
-the fix trades against a screen the buyer uses.
+other screen.
+
+**RESOLVED 2026-09-09 — the owner ruled 「修,但只能动 Houzs Century」.** A bound
+line is now offered its own dedicated purchase order and nothing else
+(`docs/bugs/0736`). The objection that had kept the fallback — that
+`po-so-coverage` layer (c) would stop naming an SO for an unlinked PO — was
+measured rather than repeated: the whole affected population is **5 lines on 2
+purchase orders** (`HC-PO-009024`, `HC-PO-010085`), both already on the repair
+list below for needing a real link. Pooled supply is still reported in
+`poOutstanding`; it simply may no longer be named as a bound line's cover.
+Company 2 is untouched.
 
 ### And 3 of the 126 are already bought — the link is just missing
 
@@ -165,12 +170,13 @@ a PO already linked to the SAME sales order proves anything.
 | # | item | whose call |
 | --- | --- | --- |
 | 1 | Should the MRP page's gate be the **Processing Date** instead of the delivery date? Today 30 released lines are hidden and 86 unreleased ones are shown | owner |
-| 2 | A pooled PO masks a shortage on 10 hard-bound lines that it can never actually satisfy | owner |
+| 2 | ~~A pooled PO masks a shortage on 10 hard-bound lines~~ — **FIXED**, `docs/bugs/0736` | done |
 | 3 | `HC-SO-012025` / `HC-PO-009024` — 3 sofa lines to link; content already matches | repairable now |
 | 4 | `HC-SO-010287` / `HC-PO-010085` — arms mirrored; owner ruled 2026-09-09 *「全部跟着销售单」* | repair to the SALES ORDER's pieces |
 
-Items 1 and 2 change how a screen plans and are not being changed unasked.
-Items 3 and 4 are specific documents with a customer behind each.
+Item 1 was ruled **keep as is** — the delivery date stays the gate. Item 2 was
+ruled **fix, company 1 only**, and is done. Items 3 and 4 are specific documents
+with a customer behind each.
 
 **Ref.** Measured 2026-09-09 against prod, read-only. Rules read from
 `so-stock-allocation.ts`, `routes/mrp.ts` and `shared/so-processing-date.ts` —
