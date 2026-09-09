@@ -1,5 +1,5 @@
 ## MRP asked the owner to order sofas whose own purchase order was already received [high]
-<!-- area: SCM / MRP -->
+<!-- area: Sofa, fabric, variants -->
 <!-- status: fixed -->
 
 **Symptom.** Owner, 2026-09-09, on the Stock Status Report: *"你确定在 MRP 显示出
