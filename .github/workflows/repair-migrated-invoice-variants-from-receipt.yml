@@ -1,0 +1,99 @@
+name: Copy the receipt line's colour and heights onto the invoice (plan by default)
+
+# 我们的采购发票是照着收货单一行一行抄下来的。有些发票抄的时候,收货单那一行的颜色
+# 和高度还是空的 —— 后来补上了,发票没有跟着补。这里把收货单已经有的那份抄回发票,
+# 只补空的。
+#
+# THE FINDING. diag-pi-line-provenance run 34377138255, over the 40 purchase
+# invoices the tally locks for a reason other than the outstanding-only scope:
+# 137 invoice lines, every one linked to a receipt line, and 18 of them on 11
+# documents hold `variants = null` while the receipt line they point at holds
+# the full object. create-migrated-invoices writePi has copied
+# `l._row.variants` since the file's first commit, so the invoice took a
+# faithful snapshot of a receipt that was EMPTY at the time and was filled
+# afterwards. docs/bugs/0687's class.
+#
+# WHAT IT WRITES — one column, scm.purchase_invoice_items.variants, and only the
+# keys of OWNED_PI_SNAPSHOT_KEYS. `specials` / `special` are deliberately absent
+# and that absence is the money guard: a priced add-on folds into the
+# authoritative unit price, so stamping one onto a historical line reprices the
+# document on its next edit, which the owner ruled out on 2026-08-11. A parent
+# key in neither the owned nor the withheld list makes the row REFUSE.
+#
+# No quantity, no price, no discount, no cost, no item code, no link, no status,
+# no header total, and no description2 — description2 is what the sofa decoder
+# reads, so filling it can move a `sofa build` verdict and that is the owner's
+# lane. The plan lists those blanks and writes none of them.
+#
+# SAFETY. MODE defaults to plan and plan writes nothing. Apply needs the CONFIRM
+# phrase AND the PLAN DIGEST printed by the plan run. The UPDATE itself carries
+# `COALESCE(variants,'{}'::jsonb) = '{}'::jsonb`, so it is a FILL: a line
+# somebody has since given a value keeps it. Verification re-reads on a FRESH
+# connection and asserts the SHAPE — every key holds the receipt's value, the
+# column is still a jsonb object, no withheld key appeared, and item code,
+# quantity and the receipt link are unchanged.
+#
+# RE-RUN is a no-op: the second run finds every line already holding an object
+# and plans nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "apply only — must be exactly: copy the receipt line onto the invoice"
+        required: false
+        type: string
+      plan_digest:
+        description: "apply only — the PLAN DIGEST printed by the plan run"
+        required: false
+        type: string
+      docs:
+        description: "Optional: only these AutoCount purchase invoices, comma separated. Blank = every migrated invoice line of the company in this shape"
+        required: false
+        default: ""
+        type: string
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+
+# Its OWN group, and it does NOT cancel in progress: several lanes are working
+# this book at once and a repair must never kill another lane's run, nor queue
+# behind or displace a release.
+concurrency:
+  group: repair-migrated-invoice-variants-from-receipt
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Plan or apply
+        run: node scripts/repair-migrated-invoice-variants-from-receipt.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          PLAN_DIGEST: ${{ inputs.plan_digest }}
+          DOCS: ${{ inputs.docs }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

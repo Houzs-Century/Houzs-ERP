@@ -140,6 +140,38 @@ export const OWNED_BOOK_CORRECTION_KEYS = Object.freeze([
    those and must not have them nulled. */
 export const OWNED_SIZE_ONLY_KEYS = Object.freeze(["size"]);
 
+/* The keys a MIGRATED PURCHASE-INVOICE line may take back from the goods-receipt
+   line it was copied from — repair-migrated-invoice-variants-from-receipt.mjs.
+
+   ITS OWN LIST, not a widening of anyone else's, for the reason docs/bugs/0755
+   records: merging two owned lists silently arms the writer that did not ask
+   for the key. This writer is a third kind again — its source is not the book
+   and not a re-parse, it is OUR OWN parent row, and it only ever fills a line
+   whose `variants` is absent or empty.
+
+   `specials` and `special` are DELIBERATELY absent, and that absence is the
+   money guard. A picked add-on's selling surcharge folds into the authoritative
+   unit price (mfg-pricing.ts), so stamping a priced code onto a historical line
+   reprices the document on its next edit — the owner ruled that out on
+   2026-08-11, and the two writers that know how to do it safely
+   (`backfill-specials-into-variants.mjs`,
+   `record-priced-specials-on-migrated-lines.mjs`) reach only the sales-order
+   and purchase-order tables. Withholding the key here means a parent that
+   carries one cannot leak it through this copy. */
+export const OWNED_PI_SNAPSHOT_KEYS = Object.freeze([
+  "fabricId",
+  "colourId",
+  "fabricCode",
+  "colourLabel",
+  "fabricLabel",
+  "seatHeight",
+  "legHeight",
+  "divanHeight",
+  "gap",
+  "totalHeight",
+  "size",
+]);
+
 const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
 /** Throw unless every key of `patch` is one this writer declared it owns. */
@@ -222,9 +254,14 @@ export function buildSizeOnlyVariantPatch(bf) {
   return assertOnlyOwnedKeys({ size: bf.size || null }, OWNED_SIZE_ONLY_KEYS, "size-only variant patch");
 }
 
-/* The two line tables a refresh sweep writes. Enumerated rather than
-   interpolated: a table name is never taken from data here. */
-export const MERGE_TABLES = Object.freeze(["mfg_sales_order_items", "purchase_order_items"]);
+/* The line tables this merger writes. Enumerated rather than interpolated: a
+   table name is never taken from data here. The first two are what a refresh
+   SWEEP writes; `purchase_invoice_items` is written only by the reviewed
+   receipt-snapshot repair, which is why it takes its own owned-key list
+   (OWNED_PI_SNAPSHOT_KEYS) and never the sweeps'. */
+export const MERGE_TABLES = Object.freeze([
+  "mfg_sales_order_items", "purchase_order_items", "purchase_invoice_items",
+]);
 
 /**
  * Merge `patch` into one row's `variants`, and optionally restamp the three
@@ -261,6 +298,18 @@ export async function mergeVariantPatch(db, { table, id, patch, geometry = null,
                  WHERE id = ${id}
                    AND jsonb_typeof(COALESCE(variants, '{}'::jsonb)) = 'object'
                  RETURNING id`;
+  } else if (table === "purchase_invoice_items") {
+    /* An invoice line is PAPERWORK: it mirrors no geometry decision of its own,
+       and the one writer here only ever FILLS a line that has nothing. The
+       `variants = '{}'` half of the predicate is what makes it a fill rather
+       than a merge — a line somebody has since given a value keeps it. */
+    if (geometry) throw new Error("mergeVariantPatch: purchase_invoice_items takes no geometry columns");
+    rows = await db`UPDATE scm.purchase_invoice_items SET
+                      variants = COALESCE(variants, '{}'::jsonb) || ${json}
+                    WHERE id = ${id}
+                      AND jsonb_typeof(COALESCE(variants, '{}'::jsonb)) = 'object'
+                      AND COALESCE(variants, '{}'::jsonb) = '{}'::jsonb
+                    RETURNING id`;
   } else {
     rows = geometry
       ? await db`UPDATE scm.purchase_order_items SET

@@ -3976,6 +3976,17 @@ price and reading no money. (The move also brought a `no-key` column beside
 `differ` on the SCALAR axes — `docs/bugs/0712`, and
 `docs/modules/delivery-order.md` for what it means.)
 
+**A FOURTH allow-list entry, 2026-09-09, and it is the first WRITER on it.**
+`backend/scripts/repair-migrated-invoice-variants-from-receipt.mjs` copies a
+goods-receipt line's `variants` onto the migrated purchase-invoice line raised
+from it, where that copy came out empty. It names `specialsRecorded` only to
+WITHHOLD it: its `WITHHELD` map lists every key it refuses to carry across, with
+the reason, beside `specials`, `special` and `customSpecials`. Mentioning a key
+in order not to write it is the opposite of pricing it, and the failure mode is
+the safe one — a parent key in neither its owned list
+(`OWNED_PI_SNAPSHOT_KEYS`) nor the withheld map makes the row REFUSE rather than
+be copied in part.
+
 Those readers are on the allow-list because they are READ-ONLY: they SELECT and
 print, none writes a line, and none can reach a price. The rule stays "render the
 key, do not price it" — a report is a render — and the test's assertion that the
