@@ -1346,7 +1346,8 @@ if (SKIP_ERP) {
       PO: { line: "purchase_order_items", head: "purchase_orders", fk: "purchase_order_id", pk: "id" },
     })) {
       const dups = await pg.unsafe(`
-        SELECT c.linked_ac_dtlkey::text AS k, count(*)::int AS n, sum(c.qty)::numeric AS erp_qty
+        SELECT c.linked_ac_dtlkey::text AS k, count(*)::int AS n, sum(c.qty)::numeric AS erp_qty,
+               string_agg(DISTINCT coalesce(c.description,''), ' | ') AS erp_desc
           FROM scm.${spec.line} c
           JOIN scm.${spec.head} h ON h.${spec.pk} = c.${spec.fk} AND h.company_id = ${CO}
          WHERE c.linked_ac_dtlkey IS NOT NULL
@@ -1370,6 +1371,18 @@ if (SKIP_ERP) {
         const bookQty = bookLine.qty / 10000;
         const erpQty = Number(d.erp_qty);
         if (onSofaDoc) { sofaDoc++; continue; }
+        /* THE BOOK'S ItemCode IS ALSO THE WRONG PLACE TO LOOK when the sofa HAS
+           one. The two tests above only ever fire on a CODE-LESS book line,
+           because the exporter substitutes Description for an empty ItemCode and
+           that Description begins "SOFA ..."; a sofa that carries a real code
+           (`THL-2379`, `HOK-5530 SOFA` notwithstanding) never matches, so its
+           compartment rows were reported as "nothing benign to explain it".
+           Measured 2026-09-09: all 19 SO keys in that bucket were sofas -
+           `THL-2379` -> `2379-1A(RHF)` + `2379-2A(LHF)`, every ERP row described
+           "SOFA 2379 ...". Ask the ERP rows that actually carry the key: they
+           are the side that holds the decomposition, so they are the side that
+           can say it happened. */
+        if (SOFA_RE.test(d.erp_desc || "")) { sofa++; continue; }
         notSofa.push(`${bookLine.docNo} key ${d.k} ${bookLine.itemKey} (${d.n} ERP rows, ERP qty ${erpQty} vs book ${bookQty})`);
       }
       out(`        ${t}: ${dups.length} DtlKey(s) carried by more than one ERP row`);
