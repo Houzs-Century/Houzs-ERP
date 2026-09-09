@@ -83,6 +83,10 @@ export async function askActionReason(
     validate: (v: string) => (v.trim().length < p.minChars ? "Say why in a few words — this is what the next person reads." : null),
   });
   if (reason == null) return null;
-  /* Merged, not replaced: an action can carry both a body and a reason. */
-  return { ...action, request: { ...action.request, body: { ...((action.request.body as Record<string, unknown>) ?? {}), reason: reason.trim() } } };
+  /* Merged, not replaced: an action can carry both a body and a reason. The
+     body is typed `unknown` — narrow it rather than casting, so a shape that is
+     not an object cannot spread garbage into the request. */
+  const body = action.request.body;
+  const carried = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+  return { ...action, request: { ...action.request, body: { ...carried, reason: reason.trim() } } };
 }

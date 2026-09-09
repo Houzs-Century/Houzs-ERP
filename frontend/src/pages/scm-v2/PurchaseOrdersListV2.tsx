@@ -65,7 +65,6 @@ import {
 } from "../../vendor/scm/lib/suppliers-queries";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
-import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
@@ -731,7 +730,6 @@ export function PurchaseOrdersListV2() {
   const queryClient = useQueryClient();
   const notify = useNotify();
   const askChoice = useChoice();
-  const askConfirm = useConfirm();
   const warehousesQ = useWarehouses({ includeInactive: true });
 
   const status = (params.get("status") ?? "all") as StatusTab;
