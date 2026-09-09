@@ -61,6 +61,7 @@ import {
   Map,
   MapPinned,
   Megaphone,
+  FileSignature,
   History,
   Wand2,
   CalendarOff,
@@ -73,6 +74,10 @@ import { CompanyMark } from "./CompanyMark";
 import { PresencePanel } from "./PresencePanel";
 import { GlobalSearchTrigger } from "./GlobalSearch";
 import { NotificationBell } from "./NotificationBell";
+import {
+  useApprovalBadgeCounts,
+  type ApprovalBadgeSource,
+} from "../hooks/useAmendmentApprovals";
 
 /* Hover prefetch, behind a dynamic import. The route map in lib/prefetch-routes
    holds an import() per route, so importing it statically drags the whole table
@@ -185,6 +190,14 @@ export interface NavTab {
    *  survives for a rep (its only surviving child is the rep Sales-Orders leaf)
    *  no matter what SCM page-access the rep's position happens to hold. */
   showForSalesRep?: boolean;
+  /** Live red count rendered on this entry. The only source today is
+   *  amendments waiting for THIS user's signature, SO or PO (owner 2026-09-09).
+   *  Named rather than passed as a number so the nav tree
+   *  stays a static description: the tree is built in a dozen branches, and a
+   *  count threaded through all of them would have to be fetched whether or not
+   *  the entry survives the visibility filter. Renders nothing at 0, which is
+   *  also what a non-approver and a failed poll both produce. */
+  badge?: ApprovalBadgeSource;
   /** Positions (exact, lowercased) that must NOT see this entry. Checked before
    *  every `showFor*` bypass, so a show-flag cannot re-open it. The backend is
    *  still the control — this only avoids offering a tap that 403s. */
@@ -471,7 +484,7 @@ export const NAV_TABS: NavTab[] = [
           // rep-only leaf above instead, so this carries hideForSalesRep like its
           // DO / SI siblings — belt-and-braces against the parent's flag being
           // removed, which would otherwise render the row TWICE for a rep.
-          { to: "/scm/amendments", label: "Sales Order Amendment", icon: History, anyPerm: ["*", "scm.access", "scm.amendment.create", "scm.amendment.supplier_confirm", "scm.amendment.approve_so", "scm.amendment.approve_po"], anyAccess: ["scm.sales.orders"], hideForSalesRep: true },
+          { to: "/scm/amendments", label: "Sales Order Amendment", icon: History, anyPerm: ["*", "scm.access", "scm.amendment.create", "scm.amendment.supplier_confirm", "scm.amendment.approve_so", "scm.amendment.approve_po"], anyAccess: ["scm.sales.orders"], hideForSalesRep: true, badge: "amendment-approvals" },
           { to: "/scm/delivery-orders", label: "Delivery Orders", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.delivery"], hideForSalesRep: true },
           { to: "/scm/sales-invoices", label: "Sales Invoices", icon: FileText, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.invoices"], hideForSalesRep: true },
           { to: "/scm/delivery-returns", label: "Delivery Returns", icon: RotateCcw, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.returns"], hideForSales: true },
@@ -507,8 +520,8 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/suppliers", label: "Suppliers", icon: Truck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.suppliers"], hideForSalesRep: true },
           { to: "/scm/mrp", label: "MRP · Stock Status", icon: Calculator, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.mrp"], hideForSalesRep: true },
           { to: "/scm/purchase-orders", label: "Purchase Orders", icon: ClipboardList, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.po"], hideForSalesRep: true },
-          { to: "/scm/po-amendments", label: "PO Amendments", icon: History, anyPerm: ["*", "scm.access", "scm.po_amendment.create", "scm.po_amendment.approve"], anyAccess: ["scm.procurement.po"], hideForSalesRep: true },
-          { to: "/scm/cancel-requests", label: "Cancellation Requests", icon: ClipboardCheck, anyPerm: ["*", "scm.access", "scm.so_cancel.approve_l1", "scm.so_cancel.approve_l2", "scm.po_cancel.approve"], anyAccess: ["scm.procurement.po", "scm.sales.orders"], hideForSalesRep: true },
+          { to: "/scm/po-amendments", label: "PO Amendments", icon: History, anyPerm: ["*", "scm.access", "scm.po_amendment.create", "scm.po_amendment.approve"], anyAccess: ["scm.procurement.po"], hideForSalesRep: true, badge: "po-amendment-approvals" },
+          { to: "/scm/cancel-requests", label: "Cancellation Requests", icon: ClipboardCheck, anyPerm: ["*", "scm.access", "scm.so_cancel.approve_l1", "scm.so_cancel.approve_l2"], anyAccess: ["scm.procurement.po", "scm.sales.orders"], hideForSalesRep: true },
           { to: "/scm/grns", label: "Goods Receipt", icon: PackageCheck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.grn"], hideForSalesRep: true },
           { to: "/scm/purchase-invoices", label: "Purchase Invoices", icon: ReceiptText, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.pi"], hideForSalesRep: true },
           { to: "/scm/purchase-returns", label: "Purchase Returns", icon: Undo2, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.pr"], hideForSalesRep: true },
@@ -758,6 +771,15 @@ export const NAV_TABS: NavTab[] = [
     label: "Announcements",
     icon: Megaphone,
   },
+  // ── Memos — the department memo register (docs/modules/memos.md). Ungated
+  // like Announcements: the register is read by any signed-in user and a
+  // department registers its own memos; memos.manage widens it.
+  {
+    section: "operations",
+    to: "/memos",
+    label: "Memos",
+    icon: FileSignature,
+  },
 
   // Fleet Health moved into SCM > Transportation (2026-07-26) so the fleet-wide
   // compliance/health board sits with the other daily fleet views instead of
@@ -880,6 +902,11 @@ const SECTION_ORDER = ["workspace", "operations", "system"] as const;
 
 export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Props) {
   const { user, can, pageAccess, logout } = useAuth();
+  /* One poll per source for the whole rail, read by renderTab's closure. The
+     server answers 0 for anyone who cannot sign, so this is also the "在需要
+     审批人员账号显示" gate — there is no second visibility rule here to keep in
+     step with the backend's. */
+  const badgeCounts = useApprovalBadgeCounts();
   const location = useLocation();
   // On mobile the drawer is always full-width — collapsed state is
   // a desktop-only concept.
@@ -1066,6 +1093,13 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
         end={tab.end}
         onClick={markOpenIntentOnPlainClick}
         onMouseEnter={() => prefetchRoute(to)}
+        title={
+          tab.badge && badgeCounts[tab.badge] > 0
+            ? `${tab.label} · ${badgeCounts[tab.badge]} awaiting your approval`
+            : collapsed
+              ? tab.label
+              : undefined
+        }
         // We compute active state ourselves so query strings match.
         className={() =>
           cn(
@@ -1085,7 +1119,24 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
           strokeWidth={active ? 2.4 : 2}
           className={active ? "text-primary" : ""}
         />
-        {!collapsed && <span>{tab.label}</span>}
+        {!collapsed && <span className="flex-1">{tab.label}</span>}
+        {tab.badge && badgeCounts[tab.badge] > 0 && (
+          /* Red, because it is work that has stopped moving until this person
+             acts — the same `bg-err` the notification bell's count uses, so the
+             two red numbers on screen mean the same kind of thing. Collapsed,
+             the rail has no room for a label, so the count rides the icon as a
+             corner pip and the title attribute carries the words. */
+          <span
+            className={cn(
+              "flex items-center justify-center rounded-full bg-err font-mono text-[9px] font-bold text-white shadow-sm",
+              collapsed
+                ? "absolute right-1 top-1 h-4 min-w-[16px] px-1"
+                : "h-4 min-w-[18px] px-1"
+            )}
+          >
+            {badgeCounts[tab.badge] > 99 ? "99+" : badgeCounts[tab.badge]}
+          </span>
+        )}
       </NavLink>
     );
   }

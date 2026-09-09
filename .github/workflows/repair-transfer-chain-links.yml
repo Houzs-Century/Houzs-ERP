@@ -1,0 +1,106 @@
+name: Point each line at the line the account book names (plan by default)
+
+# 「你知道了差在哪里就直接对齐了 不需要等我」 and 「autocount怎么写我们就怎么写」
+# — the owner, 2026-09-09.
+#
+# THE ACCOUNT BOOK DOES SAY WHICH LINE. Every checker in this repo was built on
+# the opposite sentence, and it was measured honestly on the wrong table: the six
+# `FromDocDtlKey` columns ARE null on all ~220,000 detail rows. AutoCount keeps
+# the line graph in `DocTransfer` instead — 134,501 rows, both line keys set on
+# every one, exactly one source per child. So this repair copies the book's own
+# answer rather than inferring one.
+#
+# WHAT IT WRITES — four provenance pointers and nothing else:
+#   scm.purchase_order_items.so_item_id
+#   scm.grn_items.purchase_order_item_id
+#   scm.delivery_order_items.so_item_id
+#   scm.purchase_invoice_items.grn_item_id
+# No quantity, no price, no cost, no status, no stock. 「库存先不看」 holds by
+# construction, and the triggers were READ on production rather than assumed:
+# `delivery_order_items` fires only on DELETE or `UPDATE OF delivery_order_id`,
+# `mfg_sales_order_items` only on DELETE, `purchase_order_items` only on
+# `UPDATE OF qty`, and `grn_items` / `grns` / `purchase_invoice_items` carry no
+# user trigger at all.
+#
+# SAFETY. MODE defaults to plan and plan writes nothing. Apply needs the CONFIRM
+# phrase AND the PLAN DIGEST printed by the plan run, so a book or a database
+# that moved in between refuses rather than writing a stale plan. Every UPDATE
+# names one row by id and re-asserts the pointer it was planned against, so a
+# link somebody else wrote in between is left alone. Verification re-reads on a
+# FRESH connection and asserts the SHAPE — that each row now points at the line
+# carrying the book's own line key, on a document the book names for it.
+#
+# RE-RUN is a no-op: the second run classifies every planned row
+# `already_correct` and writes nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "apply only — must be exactly: align the transfer chain to the book"
+        required: false
+        type: string
+      plan_digest:
+        description: "apply only — the PLAN DIGEST printed by the plan run"
+        required: false
+        type: string
+      types:
+        description: "Child types to repair, comma separated"
+        required: false
+        default: "PO,GR,DO,PI"
+        type: string
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+      max_snapshot_age_days:
+        description: "Refuse if either AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+      show:
+        description: "Rows to list per section"
+        required: false
+        default: "400"
+
+# Its OWN group, and it does NOT cancel in progress: several lanes are working
+# this book at once and a repair must never kill another lane's run, nor queue
+# behind or displace a release.
+concurrency:
+  group: repair-transfer-chain-links
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Plan or apply
+        run: node scripts/repair-transfer-chain-links.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          PLAN_DIGEST: ${{ inputs.plan_digest }}
+          TYPES: ${{ inputs.types }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          SHOW: ${{ inputs.show }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

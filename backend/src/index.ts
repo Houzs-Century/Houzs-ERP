@@ -96,6 +96,7 @@ import pos from "./routes/pos";
 // a "Got it" ack. Ported from Hookka (single-tenant + office-only here).
 import announcements from "./routes/announcements";
 import announcementApproval from "./routes/announcementApproval";
+import memos from "./routes/memos";
 // Agent Console — owner-only fleet console for the HOOKKA-ported agents
 // (Delivery/Document/CS). Skeleton: controls + runs + config proposals +
 // feedback; the engines register themselves in services/agent-scheduler.ts.
@@ -420,6 +421,9 @@ app.route("/api/announcements", announcements);
 // The approval + attachment-log routes (submit / approve / reject / files) —
 // same prefix, second router (routes/announcements.ts is at its size ceiling).
 app.route("/api/announcements", announcementApproval);
+// The department memo register (mig 20260909T0500): numbered at creation on
+// the same <DEPT>-MEMO-<YYMM> series the notices use.
+app.route("/api/memos", memos);
 // Agent Console — owner-only (requirePermission("*") inside the router).
 // Deliberately in the public /api tree, NOT /api/scm (the scm subtree swaps
 // c.get('user') to scm.staff UUIDs — the known staff-UUID bigint trap).

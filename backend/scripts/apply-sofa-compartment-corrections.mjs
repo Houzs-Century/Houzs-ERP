@@ -68,6 +68,7 @@ import postgres from "postgres";
 
 import { selectBuildRows } from "./lib/sofa-desc2-match.mjs";
 import { loadCorrections } from "./lib/sofa-corrections-source.mjs";
+import { planDownstreamParity } from "./lib/sofa-downstream-parity.mjs";
 import {
   K,
   compartmentOf,
@@ -176,13 +177,356 @@ async function carryToSalesInvoice(doItemIds, t) {
   return { moved: moved.length, held: held.map((r) => r.invoice_number) };
 }
 
+/* ── THE DOWNSTREAM DOCUMENTS, AND WHY THEY ARE NAMED IN AN ENTRY ────────────
+   A build's rows are UPDATED on the receipt, the delivery note and the invoices
+   by the carry block at the bottom of the loop — and that carry can only move
+   rows that already exist. The pieces a correction ADDS have no row there, so a
+   sofa the order states in three lines stays one line on the receipt that
+   received it. Measured on prod, probe run 34316985562: HC-SO-000814's sofa is
+   3 rows on the order and 3 on the purchase order, and ONE row on HC-GR-000287,
+   HC-DO-000542 and HC-I-000745 each.
+
+   Naming those documents in the entry's `docs` brings them to the same shape in
+   the SAME run, which is what this file's own rule already asks for: a build
+   written on one side and not the other leaves the rest holding the lead piece
+   alone (docs/bugs/0719). It is also what makes the reconcile able to answer
+   them — `lib/sofa-rulings.mjs` looks a ruling up by DOCUMENT NUMBER of any
+   type, and RULED requires the ERP to hold the owner's answer as an exact
+   multiset.
+
+   THE STOCK QUESTION IS ANSWERED BY MEASUREMENT, NOT BY THE HEADER FLAG.
+   「库存先不看」. Every document here is asserted `migrated_no_stock` and free of
+   inventory movements before anything is written, and `pg_trigger` on
+   production was read before this code existed (same probe run): scm.grn_items,
+   scm.sales_invoice_items and scm.purchase_invoice_items carry ZERO non-internal
+   triggers, and scm.delivery_order_items carries exactly one —
+   `trg_do_line_integrity_lock`, `AFTER DELETE OR UPDATE OF delivery_order_id`,
+   which an INSERT does not fire. So an added compartment row reaches no
+   inventory path at all. The guard below re-checks the trigger set on every run
+   and REFUSES on anything it has not been shown, because "no trigger" is a fact
+   about the database on the day it was read. */
+const DOWNSTREAM = {
+  GR: {
+    what: "goods receipt",
+    table: "scm.grn_items",
+    owner: "grn_id",
+    head: (doc) => sql`SELECT g.id, COALESCE(g.migrated_no_stock, false) AS migrated
+                         FROM scm.grns g WHERE g.company_id = ${CO} AND g.grn_number = ${doc}`,
+    rows: (id, conn = sql) => conn`SELECT i.id, i.item_code AS code, i.variants, i.description2, i.linked_ac_dtlkey,
+                             i.purchase_order_item_id AS parent_id
+                        FROM scm.grn_items i WHERE i.grn_id = ${id} ORDER BY i.id`,
+    link: "purchase_order_item_id",
+    /* The parent row for a piece: the SAME purchase order, the SAME account-book
+       line, the piece's own code. Resolved, never guessed — 0 or 2 candidates
+       leaves the link NULL and says so, which is `reshape-migrated-grns.mjs`'s
+       ruling 「跟 autocount 一样」 for an attribution the book does not record. */
+    parentOf: (templateParentId, code) => sql`
+      SELECT i.id FROM scm.purchase_order_items i
+       WHERE i.purchase_order_id = (SELECT p.purchase_order_id FROM scm.purchase_order_items p WHERE p.id = ${templateParentId})
+         AND i.linked_ac_dtlkey IS NOT DISTINCT FROM (SELECT p.linked_ac_dtlkey FROM scm.purchase_order_items p WHERE p.id = ${templateParentId})
+         AND upper(i.item_code) = ${code}`,
+  },
+  DO: {
+    what: "delivery order",
+    table: "scm.delivery_order_items",
+    owner: "delivery_order_id",
+    head: (doc) => sql`SELECT d.id, COALESCE(d.migrated_no_stock, false) AS migrated
+                         FROM scm.delivery_orders d WHERE d.company_id = ${CO} AND d.do_number = ${doc}`,
+    rows: (id, conn = sql) => conn`SELECT i.id, i.item_code AS code, i.variants, i.description2, i.linked_ac_dtlkey,
+                             i.so_item_id AS parent_id
+                        FROM scm.delivery_order_items i WHERE i.delivery_order_id = ${id} ORDER BY i.line_no NULLS FIRST, i.id`,
+    link: "so_item_id",
+    parentOf: (templateParentId, code) => sql`
+      SELECT i.id FROM scm.mfg_sales_order_items i
+       WHERE i.doc_no = (SELECT s.doc_no FROM scm.mfg_sales_order_items s WHERE s.id = ${templateParentId})
+         AND i.linked_ac_dtlkey IS NOT DISTINCT FROM (SELECT s.linked_ac_dtlkey FROM scm.mfg_sales_order_items s WHERE s.id = ${templateParentId})
+         AND upper(i.item_code) = ${code}`,
+  },
+  SI: {
+    what: "sales invoice",
+    table: "scm.sales_invoice_items",
+    owner: "sales_invoice_id",
+    head: (doc) => sql`SELECT h.id, COALESCE(h.migrated_no_stock, false) AS migrated
+                         FROM scm.sales_invoices h WHERE h.company_id = ${CO} AND h.invoice_number = ${doc}`,
+    rows: (id, conn = sql) => conn`SELECT i.id, i.item_code AS code, i.variants, i.description2, i.linked_ac_dtlkey,
+                             i.do_item_id AS parent_id
+                        FROM scm.sales_invoice_items i WHERE i.sales_invoice_id = ${id} ORDER BY i.line_no NULLS FIRST, i.id`,
+    link: "do_item_id",
+    parentOf: (templateParentId, code) => sql`
+      SELECT i.id FROM scm.delivery_order_items i
+       WHERE i.delivery_order_id = (SELECT d.delivery_order_id FROM scm.delivery_order_items d WHERE d.id = ${templateParentId})
+         AND i.linked_ac_dtlkey IS NOT DISTINCT FROM (SELECT d.linked_ac_dtlkey FROM scm.delivery_order_items d WHERE d.id = ${templateParentId})
+         AND upper(i.item_code) = ${code}`,
+  },
+  PI: {
+    what: "purchase invoice",
+    table: "scm.purchase_invoice_items",
+    owner: "purchase_invoice_id",
+    head: (doc) => sql`SELECT h.id, COALESCE(h.migrated_no_stock, false) AS migrated
+                         FROM scm.purchase_invoices h WHERE h.company_id = ${CO} AND h.invoice_number = ${doc}`,
+    rows: (id, conn = sql) => conn`SELECT i.id, i.item_code AS code, i.variants, i.description2, i.linked_ac_dtlkey,
+                             i.grn_item_id AS parent_id
+                        FROM scm.purchase_invoice_items i WHERE i.purchase_invoice_id = ${id} ORDER BY i.id`,
+    link: "grn_item_id",
+    parentOf: (templateParentId, code) => sql`
+      SELECT i.id FROM scm.grn_items i
+       WHERE i.grn_id = (SELECT g.grn_id FROM scm.grn_items g WHERE g.id = ${templateParentId})
+         AND i.linked_ac_dtlkey IS NOT DISTINCT FROM (SELECT g.linked_ac_dtlkey FROM scm.grn_items g WHERE g.id = ${templateParentId})
+         AND upper(i.item_code) = ${code}`,
+  },
+};
+
+/** Which kind of document a number names. `HC-PI-` is tested before `HC-I-`
+ *  because the shorter prefix is a substring of neither but the sales-invoice
+ *  test is written as "starts with HC-I-" and a purchase invoice must not fall
+ *  into it. Anything else is a sales order, which is the pre-existing default. */
+function kindOf(doc) {
+  if (/^HC-PO-/.test(doc)) return "PO";
+  if (/^HC-GR-/.test(doc)) return "GR";
+  if (/^HC-DO-/.test(doc)) return "DO";
+  if (/^HC-PI-/.test(doc)) return "PI";
+  if (/^HC-(SI|I)-/.test(doc)) return "SI";
+  return "SO";
+}
+
+/* The triggers this code was written against, read from production before it
+   existed. A trigger this list does not name STOPS the run: an INSERT that
+   reaches an inventory path is precisely what 「库存先不看」 forbids, and the way
+   to be sure is to look, every time, rather than to remember. */
+const KNOWN_TRIGGERS = {
+  "scm.grn_items": [],
+  "scm.delivery_order_items": ["trg_do_line_integrity_lock"],
+  "scm.sales_invoice_items": [],
+  "scm.purchase_invoice_items": [],
+};
+
+/** Every non-internal trigger on the four downstream line tables, now. */
+async function unknownDownstreamTriggers() {
+  const names = Object.keys(KNOWN_TRIGGERS).map((t) => t.split(".")[1]);
+  const rows = await sql`SELECT c.relname::text AS tbl, t.tgname::text AS trg
+                           FROM pg_trigger t
+                           JOIN pg_class c ON c.oid = t.tgrelid
+                           JOIN pg_namespace n ON n.oid = c.relnamespace
+                          WHERE NOT t.tgisinternal AND n.nspname = 'scm' AND c.relname = ANY(${names})`;
+  return rows
+    .filter((r) => !(KNOWN_TRIGGERS[`scm.${r.tbl}`] ?? []).includes(r.trg))
+    .map((r) => `scm.${r.tbl}.${r.trg}`);
+}
+
+/** A quoted SQL identifier, refusing anything that is not one. */
+function ident(name) {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(String(name))) throw new Error(`refusing to build SQL around identifier ${JSON.stringify(name)}`);
+  return `"${name}"`;
+}
+
+/**
+ * CLONE a row of `table` and override the named columns.
+ *
+ * The column list is read from `information_schema` rather than typed out.
+ * `split-collapsed-sofa-lines.mjs` states the reason and this repository has
+ * paid for it: "enumerating columns would silently drop whatever this script
+ * has not heard of — and these tables carry columns no migration in this
+ * repository declares". A hand-written list is a list that goes stale in
+ * silence; a cloned row carries the document's warehouse, unit, dates, notes
+ * and account-book line key whether or not anyone here knew about them.
+ *
+ * Identifiers come from `information_schema` and from the fixed `DOWNSTREAM`
+ * map, never from a caller, and every VALUE is a bound parameter. `::text::jsonb`
+ * on a jsonb override is load-bearing — without it postgres.js stringifies an
+ * already-stringified value and the row lands as a jsonb STRING that reads as
+ * empty to every consumer (docs/jsonb-double-encoding-coe.md).
+ */
+async function cloneRow(tx, table, srcId, overrides, jsonCols) {
+  const [schema, name] = table.split(".");
+  const cols = await tx`SELECT column_name FROM information_schema.columns
+                         WHERE table_schema = ${schema} AND table_name = ${name}
+                           AND is_generated = 'NEVER' AND is_identity = 'NO'
+                         ORDER BY ordinal_position`;
+  const names = cols.map((c) => c.column_name).filter((c) => c !== "id");
+  if (!names.length) throw new Error(`${table} has no writable columns — information_schema returned nothing`);
+  const params = [srcId];
+  const select = names.map((c) => {
+    if (!Object.prototype.hasOwnProperty.call(overrides, c)) return `x.${ident(c)}`;
+    params.push(overrides[c]);
+    return jsonCols.includes(c) ? `$${params.length}::text::jsonb` : `$${params.length}`;
+  });
+  const q = `INSERT INTO ${schema}.${ident(name)} (${names.map(ident).join(", ")})
+             SELECT ${select.join(", ")} FROM ${schema}.${ident(name)} x WHERE x.id = $1 RETURNING id`;
+  return tx.unsafe(q, params);
+}
+
+/** Every money column of a table — the ones an added piece is zero in. */
+async function moneyColumns(table) {
+  const [schema, name] = table.split(".");
+  const cols = await sql`SELECT column_name FROM information_schema.columns
+                          WHERE table_schema = ${schema} AND table_name = ${name}
+                            AND column_name LIKE '%\\_sen' ORDER BY ordinal_position`;
+  return cols.map((c) => c.column_name);
+}
+
+/** The minted piece SKUs of this company, filled once by main() and read by both
+ *  the parent path and the downstream one so neither can target a code the other
+ *  would refuse. */
+let codeSet = new Set();
+
+/** The piece SKUs this correction needs, fully qualified. Shared by the parent
+ *  path and the downstream one so they cannot target different codes. */
+function targetPieces(c, fallbackCode) {
+  const model = K(c.model || modelOf(fallbackCode));
+  return { model, want: c.pieces.map((p) => (K(p).startsWith(model + "-") ? K(p) : `${model}-${K(p)}`)) };
+}
+
+/**
+ * Bring ONE downstream document to the shape of the build.
+ *
+ * Everything here is a refusal or a copy. It decides no code, no price and no
+ * quantity: the codes come from the correction, the money is zero on every
+ * added piece by construction, and every other column is cloned off the row the
+ * document already holds for this build.
+ */
+async function applyDownstreamDoc(doc, kind, c, verify) {
+  const spec = DOWNSTREAM[kind];
+  const none = { touched: false, keep: 0, add: 0, refused: false };
+  const refuse = (why) => { log(`  ${doc}: REFUSED — ${why}`); return { ...none, refused: true }; };
+
+  const [head] = await spec.head(doc);
+  if (!head) { log(`  ${doc}: the ERP holds no such ${spec.what} — skipped`); return none; }
+
+  /* 「库存先不看」, checked three ways before anything is written. */
+  if (head.migrated !== true)
+    return refuse(`this ${spec.what} is NOT migrated paperwork — it is somebody's own statement about goods that moved, and re-shaping it is not this script's to do`);
+  const [{ n: moves }] = await sql`SELECT COUNT(*)::int n FROM scm.inventory_movements WHERE company_id = ${CO} AND source_doc_no = ${doc}`;
+  if (moves) return refuse(`${moves} inventory movement(s) name ${doc} — real stock moved under the old code and re-labelling it is not a paperwork fix`);
+  const strange = await unknownDownstreamTriggers();
+  if (strange.length) return refuse(`a trigger this script has not been shown guards the downstream tables: ${strange.join(", ")}. An INSERT could reach an inventory path, and 「库存先不看」 makes that a stop rather than a risk`);
+
+  const all = await spec.rows(head.id);
+  const pick = (c.desc2Match || c.desc2Exclude || (Array.isArray(c.lineKeys) && c.lineKeys.length))
+    ? selectBuildRows(all, c.desc2Match, undefined, { lineKeys: c.lineKeys, exclude: c.desc2Exclude })
+    : { rows: all, verdict: "all", how: "the whole document" };
+  if (pick.verdict === "ambiguous" || pick.verdict === "exclusion-missing")
+    return refuse(`${pick.how || "the needle reaches more than one build on this document"} — writing this build without telling them apart would put it on both`);
+  if (!pick.rows.length) { log(`  ${doc}: the build is not on this ${spec.what} — skipped`); return none; }
+
+  const { want } = targetPieces(c, pick.rows[0].code);
+  const missing = want.filter((w) => !codeSet.has(w));
+  if (missing.length) return refuse(`piece SKU not minted: ${missing.join(", ")}`);
+
+  const plan = planDownstreamParity(pick.rows, want);
+  if (!plan.ok) return refuse(plan.why);
+
+  const money = await moneyColumns(spec.table);
+  if (!money.length) return refuse(`${spec.table} exposes no *_sen column, so "the money does not move" cannot be asserted on it`);
+
+  log(`  ${doc}  [${c.source}]  ${spec.what}  ${pick.rows.map((r) => compartmentOf(r.code)).join("+") || "(no compartment)"}  ->  ${c.pieces.join("+")}   ${plan.how}`);
+  for (const k of plan.keep) log(`      ${K(k.from) === K(k.to) ? "keep  " : "change"} ${compartmentOf(k.from) || k.from} -> ${compartmentOf(k.to)}`);
+  for (const a of plan.add) log(`      add    ${compartmentOf(a.to)}  (cloned from this document's own row, zero in ${money.length} money column(s))`);
+
+  const before = await sumMoney(sql, spec.table, pick.rows.map((r) => r.id), money);
+  log(`      money now: ${money.map((m) => `${m}=${before[m]}`).join(" ")} — every added piece is 0 in all of them`);
+  verify.push({ doc, kind, headId: head.id, needle: c.desc2Match, lineKeys: c.lineKeys, exclude: c.desc2Exclude,
+    want, copies: 1, source: c.source, money: before, moneyCols: money });
+
+  if (!APPLY) return { touched: true, keep: plan.keep.length, add: plan.add.length, refused: false };
+
+  const seat = seatHeightToWrite(c.seat);
+  const linkNotes = [];
+  await sql.begin(async (tx) => {
+    for (const k of plan.keep) {
+      const src = pick.rows.find((r) => String(r.id) === String(k.id));
+      const v = { ...(src?.variants ?? {}) };
+      if (seat.write) v.seatHeight = seat.value;
+      const name = (await tx`SELECT name FROM scm.mfg_products WHERE company_id = ${CO} AND upper(code) = ${k.to} LIMIT 1`)[0]?.name ?? k.to;
+      /* `material_name` / `description` is the row's own label for the code, and
+         only some of these tables carry one. Which column exists is READ from
+         the table rather than assumed, and where there is none the label is
+         simply not written — never swallowed as a failed statement. */
+      const label = await labelColumnName(spec.table);
+      await tx.unsafe(
+        `UPDATE ${spec.table} SET item_code = $1, variants = $2::text::jsonb${label ? `, ${ident(label)} = $4` : ""} WHERE id = $3`,
+        label ? [k.to, JSON.stringify(v), k.id, name] : [k.to, JSON.stringify(v), k.id]);
+    }
+    for (const a of plan.add) {
+      const v = { ...(plan.template?.variants ?? {}) };
+      if (seat.write) v.seatHeight = seat.value;
+      const name = (await tx`SELECT name FROM scm.mfg_products WHERE company_id = ${CO} AND upper(code) = ${a.to} LIMIT 1`)[0]?.name ?? a.to;
+      const over = { item_code: a.to, variants: JSON.stringify(v) };
+      for (const m of money) over[m] = 0;
+      /* THE LINK IS RESOLVED OR LEFT NULL — never guessed. */
+      if (plan.template?.parent_id) {
+        const hits = await spec.parentOf(plan.template.parent_id, a.to);
+        if (hits.length === 1) over[spec.link] = hits[0].id;
+        else { over[spec.link] = null; linkNotes.push(`${compartmentOf(a.to)}: ${hits.length} candidate parent line(s), so ${spec.link} is left unset rather than guessed`); }
+      }
+      const label = await labelColumnName(spec.table);
+      if (label) over[label] = name;
+      const lineNo = await nextLineNo(tx, spec, head.id);
+      if (lineNo !== null) over.line_no = lineNo;
+      await cloneRow(tx, spec.table, plan.template.id, over, ["variants"]);
+    }
+  });
+  for (const n of linkNotes) log(`      NOTE ${n}`);
+
+  const after = await sumMoney(sql, spec.table, null, money, { spec, headId: head.id, needle: c.desc2Match, lineKeys: c.lineKeys, exclude: c.desc2Exclude });
+  const moved = money.filter((m) => Number(before[m] ?? 0) !== Number(after[m] ?? 0));
+  if (moved.length) {
+    console.error(`  ${doc}: MONEY MOVED on ${moved.map((m) => `${m} ${before[m]} -> ${after[m]}`).join(", ")}`);
+    process.exit(1);
+  }
+  log(`      money unchanged on all ${money.length} column(s): ${money.map((m) => `${m}=${after[m]}`).join(" ")}`);
+  return { touched: true, keep: plan.keep.length, add: plan.add.length, refused: false };
+}
+
+/** `material_name` on the receipt tables, `description` on the rest; null when
+ *  the table carries neither. Read from the table, never assumed. */
+async function labelColumnName(table) {
+  const [schema, name] = table.split(".");
+  const cols = await sql`SELECT column_name FROM information_schema.columns
+                          WHERE table_schema = ${schema} AND table_name = ${name}
+                            AND column_name IN ('material_name', 'description')`;
+  const have = cols.map((c) => c.column_name);
+  return have.includes("material_name") ? "material_name" : (have.includes("description") ? "description" : null);
+}
+
+/** The next free `line_no` on this document, or null where the table has none
+ *  or holds none. A clone would otherwise repeat the template's own number and
+ *  two rows would share a position. */
+async function nextLineNo(tx, spec, headId) {
+  const [schema, name] = spec.table.split(".");
+  const [col] = await tx`SELECT column_name FROM information_schema.columns
+                          WHERE table_schema = ${schema} AND table_name = ${name} AND column_name = 'line_no'`;
+  if (!col) return null;
+  const [row] = await tx.unsafe(
+    `SELECT MAX(line_no) AS m FROM ${schema}.${ident(name)} WHERE ${ident(spec.owner)} = $1`, [headId]);
+  return row?.m == null ? null : Number(row.m) + 1;
+}
+
+/** Every money column summed over a set of rows, or over the build if `where`
+ *  is given — the same narrowing the writer used, so the two cannot disagree. */
+async function sumMoney(conn, table, ids, cols, where = null) {
+  const [schema, name] = table.split(".");
+  let rowIds = ids;
+  if (!rowIds) {
+    const all = await where.spec.rows(where.headId, conn);
+    const pick = (where.needle || where.exclude || (Array.isArray(where.lineKeys) && where.lineKeys.length))
+      ? selectBuildRows(all, where.needle, undefined, { lineKeys: where.lineKeys, exclude: where.exclude })
+      : { rows: all };
+    rowIds = pick.rows.map((r) => r.id);
+  }
+  if (!rowIds.length) return Object.fromEntries(cols.map((c) => [c, 0]));
+  const sums = cols.map((c) => `COALESCE(SUM(${ident(c)}), 0)::bigint AS ${ident(c)}`).join(", ");
+  const [row] = await conn.unsafe(`SELECT ${sums} FROM ${schema}.${ident(name)} WHERE id = ANY($1)`, [rowIds]);
+  return row;
+}
+
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"} company=${CO}${ONLY ? ` DOC=${ONLY}` : ""}${FILE ? ` FILE~${FILE}` : ""}`);
   for (const f of DATA.files) log(`source: ${f}`);
   const prods = await sql`SELECT code FROM scm.mfg_products WHERE company_id = ${CO}`;
-  const codeSet = new Set(prods.map((p) => K(p.code)));
+  codeSet = new Set(prods.map((p) => K(p.code)));
 
   let nBuilds = 0, nSofas = 0, nUpd = 0, nIns = 0, nDel = 0, nRefused = 0, nMissingSku = 0;
+  let nDsDoc = 0, nDsKeep = 0, nDsAdd = 0, nDsRefused = 0;
   let nPo = 0, nGr = 0, nDo = 0, nAmbiguous = 0, nStock = 0, nNoSeat = 0;
   let nPi = 0, nSi = 0, nHeldInv = 0, nRel = 0;
   /** doc -> { isPo, needle, want, copies } — re-checked on a fresh connection. */
@@ -193,7 +537,14 @@ async function main() {
     if (!docs.length) continue;
 
     for (const doc of docs) {
-      const isPo = /^HC-PO-/.test(doc);
+      const kind = kindOf(doc);
+      if (DOWNSTREAM[kind]) {
+        const r = await applyDownstreamDoc(doc, kind, c, verify);
+        nDsDoc += r.touched ? 1 : 0;
+        nDsKeep += r.keep; nDsAdd += r.add; nDsRefused += r.refused ? 1 : 0;
+        continue;
+      }
+      const isPo = kind === "PO";
       /* Another session is renumbering the migrated POs so every number follows
          AutoCount (#1875), which stranded the po_numbers written into this data
          file. Resolve a PO by its number OR by the AutoCount document it links
@@ -294,8 +645,7 @@ async function main() {
         continue;
       }
 
-      const model = K(c.model || modelOf(rows[0].code));
-      const want = c.pieces.map((p) => (K(p).startsWith(model + "-") ? K(p) : `${model}-${K(p)}`));
+      const { model, want } = targetPieces(c, rows[0].code);
       const missing = want.filter((w) => !codeSet.has(w));
       if (missing.length) {
         log(`  ${doc}: REFUSED — piece SKU not minted: ${missing.join(", ")}`);
@@ -613,8 +963,12 @@ async function main() {
   log(`downstream carried: PO lines ${nPo} · GRN lines ${nGr} · DO lines ${nDo}`);
   if (nRel) log(`purchase dedications RELEASED by a collapse: ${nRel} (each one's line is deleted by the PO half of the same entry — docs/bugs/0719)`);
   log(`downstream carried onto the invoices raised from them: purchase invoice lines ${nPi} · sales invoice lines ${nSi}${nHeldInv ? ` · ${nHeldInv} invoice(s) HELD because they are not migrated paperwork` : ""}`);
+  log(`downstream documents NAMED by an entry and brought to the build's own shape: ${nDsDoc} document(s) · ${nDsKeep} row(s) already stood for a piece · ${nDsAdd} row(s) added · ${nDsRefused} refused`);
   log(`refused ${nRefused} (downstream reference, unreadable copies, or the money would move) · piece SKU not minted ${nMissingSku} · refused as ambiguous ${nAmbiguous} · refused for real stock movement ${nStock} · seat not written ${nNoSeat}`);
-  for (const h of DATA.held) log(`HELD ${h.docs.join(" / ")} [${h.source}] — ${h.why}`);
+  /* `heldWhy` is the reason it is held; `why` is the owner's answer. The log
+     printed only the answer, so a held build read as a build nobody had read —
+     the opposite of the truth for every entry in the list. Both, always. */
+  for (const h of DATA.held) log(`HELD ${h.docs.join(" / ")} [${h.source}] — ${h.why}${h.heldWhy ? `  ||  HELD BECAUSE: ${h.heldWhy}` : ""}`);
   await sql.end();
 
   if (!APPLY) { log("\nDRY-RUN — set APPLY=1 to write."); return; }
@@ -649,7 +1003,11 @@ async function main() {
 async function verifyOnFreshConnection(items) {
   if (!items.length) return;
   const v = newSql();
-  const docKey = (it) => (it.isPo ? `PO:${it.poId}` : `SO:${it.doc}`);
+  /* A downstream document is keyed by its own kind and header id. It has no
+     `poId` and it is not a sales order, so the two-way key would have collapsed
+     a receipt and a delivery note onto the same bucket the moment their numbers
+     matched. */
+  const docKey = (it) => (it.kind ? `${it.kind}:${it.headId}` : it.isPo ? `PO:${it.poId}` : `SO:${it.doc}`);
   const nDocs = new Set(items.map(docKey)).size;
   log(`\nVERIFY — re-reading ${nDocs} document(s) on a fresh connection`);
 
@@ -660,6 +1018,7 @@ async function verifyOnFreshConnection(items) {
   for (const it of items) {
     const k = docKey(it);
     if (rowsOf.has(k)) continue;
+    if (it.kind) { rowsOf.set(k, await DOWNSTREAM[it.kind].rows(it.headId, v)); continue; }
     rowsOf.set(k, it.isPo
       ? await v`SELECT i.id, i.item_code AS code, i.qty, i.unit_price_sen, i.line_total_sen AS total, i.description2, i.linked_ac_dtlkey
                   FROM scm.purchase_order_items i
@@ -701,8 +1060,28 @@ async function verifyOnFreshConnection(items) {
     const want = [];
     for (let i = 0; i < it.copies; i++) want.push(...it.want);
     const bag = (xs) => xs.map(K).sort().join(" | ");
-    const money = moneyOfRows(mine);
     const okPieces = bag(mine.map((r) => r.code)) === bag(want);
+
+    /* A downstream document's money is asserted over EVERY `*_sen` column the
+       table carries, not over two named ones. The receipt, the delivery note and
+       the invoices do not agree on which column holds a line's total — a check
+       on one of them passes vacuously where the other is the live column, which
+       is the failure the parent path's own comment records for
+       `line_total_sen`. Summing all of them cannot be vacuous. */
+    if (it.kind) {
+      const now = await sumMoney(v, DOWNSTREAM[it.kind].table, mine.map((r) => r.id), it.moneyCols);
+      const moved = it.moneyCols.filter((m) => Number(it.money[m] ?? 0) !== Number(now[m] ?? 0));
+      if (okPieces && !moved.length) {
+        log(`  OK  ${it.doc}  ${mine.map((r) => compartmentOf(r.code)).join("+")}  money unchanged on ${it.moneyCols.length} column(s): ${it.moneyCols.map((m) => `${m}=${now[m]}`).join(" ")}`);
+        continue;
+      }
+      bad++;
+      if (!okPieces) log(`  FAIL ${it.doc}: pieces are [${bag(mine.map((r) => r.code))}], expected [${bag(want)}]`);
+      for (const m of moved) log(`  FAIL ${it.doc}: ${m} ${it.money[m]} -> ${now[m]}`);
+      continue;
+    }
+
+    const money = moneyOfRows(mine);
     const okMoney = money.total === it.money.total && money.charged === it.money.charged;
     if (okPieces && okMoney) { log(`  OK  ${it.doc}  ${mine.map((r) => compartmentOf(r.code)).join("+")}  money ${money.total}/${money.charged}`); continue; }
     bad++;

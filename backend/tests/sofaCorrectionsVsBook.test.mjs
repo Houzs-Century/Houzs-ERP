@@ -204,8 +204,15 @@ describe('the corrections files that ship, against the book cut that ships', () 
       zlib.gunzipSync(fs.readFileSync(path.join(DATA, 'ac-reconcile-truth.json.gz'))).toString('utf8'),
     );
     const F = Object.fromEntries(truth.line_fields.map((n, i) => [n, i]));
+    /* ALL SIX TYPES, not two. A correction entry now names the receipt, the
+       delivery note and the invoices of a build beside its order, so that the
+       whole chain is corrected in one operation. With only SO and PO loaded,
+       `GR-000287` was looked up in the PURCHASE ORDER book, found absent, and
+       silently contributed nothing to the grade — a document the grader claims
+       to check and does not. Loading every type means a wrong model on a receipt
+       line is a DIFFER like any other. */
     const byType = {};
-    for (const type of ['SO', 'PO']) {
+    for (const type of ['SO', 'PO', 'GR', 'DO', 'IV', 'PI']) {
       const t = truth.types[type];
       const d2 = new Map(t.desc2.map((r) => [String(r[0]), r[1]]));
       const byDoc = new Map();
@@ -220,10 +227,19 @@ describe('the corrections files that ship, against the book cut that ships', () 
     const { builds } = loadCorrections(DATA);
     return gradeCorrectionsAgainstBook({
       builds,
+      /* The ERP number says which book to open. `PI-` is tested before `I-`,
+         and `I-` maps to the book's own name for a sales invoice, `IV`. */
       bookLines: (doc) => {
         const key = String(doc).replace(/^HC-/, '');
-        const byDoc = byType[key.startsWith('SO') ? 'SO' : 'PO'];
-        return { present: byDoc.has(key), lines: byDoc.get(key) ?? [] };
+        const type = key.startsWith('SO-') ? 'SO'
+          : key.startsWith('GR-') ? 'GR'
+            : key.startsWith('DO-') ? 'DO'
+              : key.startsWith('PI-') ? 'PI'
+                : key.startsWith('I-') || key.startsWith('SI-') ? 'IV'
+                  : 'PO';
+        const bookKey = type === 'IV' ? key.replace(/^SI-/, 'I-') : key;
+        const byDoc = byType[type];
+        return { present: byDoc.has(bookKey), lines: byDoc.get(bookKey) ?? [] };
       },
       erpCodeFor: (ac) => mapping.get(normCode(ac))?.erp || null,
       desc2Contains,
