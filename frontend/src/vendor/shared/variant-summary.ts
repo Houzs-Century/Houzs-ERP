@@ -191,7 +191,9 @@ export function buildVariantSummary(
   const liveColour = (v: string): string => {
     const m = SUPERSEDED_NOTE.exec(v);
     if (!m) return v;
-    const successor = String(m[1] ?? '').trim();
+    /* The group always participates when the pattern matches — it is not
+       optional — so a `??` here is dead and the linter is right to say so. */
+    const successor = m[1].trim();
     return successor || v.replace(SUPERSEDED_NOTE, '').trim();
   };
   const fabricCodeRaw = liveColour(str(variants.fabricCode));
