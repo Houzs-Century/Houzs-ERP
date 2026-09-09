@@ -22,6 +22,10 @@ import {
   bankRulesList, bankRuleCreate, bankRuleUpdate,
 } from '../src/scm/routes/accounting-bank';
 import { bankConfigList, bankConfigSave } from '../src/scm/routes/accounting-bank-config';
+/* Layer 3's own undo is registered on this rig too: it can reverse an entry a
+   closed bank month has already reported, so it is a door into the same room
+   and is guarded by the same lock. */
+import { settlementReceiptUndo } from '../src/scm/routes/accounting-settlement';
 
 const CO = 1;
 const GL_PERM = 'scm.payment_voucher.post';
@@ -122,6 +126,7 @@ function harness(tables: Record<string, Row[]> = {}, perms: readonly string[] = 
   app.get('/bank/rules', bankRulesList as never);
   app.post('/bank/rules', bankRuleCreate as never);
   app.patch('/bank/rules/:id', bankRuleUpdate as never);
+  app.post('/settlement/receipts/:id/undo', settlementReceiptUndo as never);
   return { app, sb };
 }
 
@@ -895,5 +900,66 @@ describe('a month somebody has closed', () => {
     const payout = lines.find((l) => l.kind === 'PAYOUT');
     const res = await post(app, `/bank/lines/${payout.id}/receipt`, { batchId: 1 });
     expect(res.status).toBe(200);
+  });
+});
+
+/* ── THE OTHER DOOR INTO THE SAME ROOM ────────────────────────────────────────
+   A credit booked from a bank statement writes a layer-3 receipt carrying
+   `bank_line_id`. Layer 3 has its own undo button, and without a guard there the
+   closed month could be changed simply by pressing the other one — the entry
+   reversed, the reported figure no longer true, and the bank screen's refusal
+   worth nothing. A credit TYPED BY HAND has no bank line and is none of the
+   lock's business, which is why the guard is on the link. */
+
+describe('layer 3 undo cannot reach into a closed bank month', () => {
+  const booked = async () => {
+    const rig = harness({
+      acc_bank_recognition_rules: structuredClone(PRISTINE.rules),
+      acc_settlement_batches: [structuredClone(PRISTINE.batch)],
+      acc_settlement_rows: [structuredClone(PRISTINE.row)],
+    });
+    const up = await (await upload(rig.app)).json() as any;
+    const detail = await (await rig.app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    const payout = (detail.lines as any[]).find((l) => l.kind === 'PAYOUT');
+    const res = await post(rig.app, `/bank/lines/${payout.id}/receipt`, { batchId: 1 });
+    expect(res.status).toBe(200);
+    const receipts = rig.sb.tables.acc_settlement_receipts as Row[];
+    expect(receipts).toHaveLength(1);
+    return { ...rig, receiptId: receipts[0]!.id as number };
+  };
+
+  test('refuses to take back a credit that came off a closed month', async () => {
+    const { app, sb, receiptId } = await booked();
+    sb.tables.acc_bank_month_locks = [LOCK('2026-08')];
+    const res = await post(app, `/settlement/receipts/${receiptId}/undo`);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as Row;
+    expect(body.error).toBe('month_locked');
+    expect(String(body.message)).toContain('taking this credit back');
+    /* And nothing was reversed — a refusal that half-happened is worse than
+       either answer. */
+    expect((sb.tables.acc_settlement_receipts as Row[])).toHaveLength(1);
+  });
+
+  test('allows it while the month is open', async () => {
+    const { app, receiptId } = await booked();
+    const res = await post(app, `/settlement/receipts/${receiptId}/undo`);
+    expect(res.status).toBe(200);
+  });
+
+  /* A credit nobody booked from a statement has no bank line, so no month owns
+     it and the guard must not invent one. */
+  test('a credit with no bank line behind it is not the lock business', async () => {
+    const { app, sb } = harness({
+      acc_settlement_batches: [structuredClone(PRISTINE.batch)],
+      acc_settlement_rows: [structuredClone(PRISTINE.row)],
+      acc_settlement_receipts: [{
+        id: 1, company_id: CO, batch_id: 1, received_on: '2026-08-03',
+        amount_sen: 728448, bank_line_id: null, je_no: 'JE-2608-0001',
+      }],
+    });
+    sb.tables.acc_bank_month_locks = [LOCK('2026-08')];
+    const res = await post(app, '/settlement/receipts/1/undo');
+    expect(res.status).not.toBe(409);
   });
 });
