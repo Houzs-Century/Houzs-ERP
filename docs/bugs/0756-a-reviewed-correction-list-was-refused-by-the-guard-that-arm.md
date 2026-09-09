@@ -10,7 +10,20 @@ Error: purchase_order_items variant patch carries keys this writer does not own:
 Process completed with exit code 1.
 ```
 
-**Nothing was written.** The guard threw before the statement.
+**CORRECTED — two of the four lines WERE written.** This entry first said
+"nothing was written", and that was wrong. The guard throws inside the WRITE
+loop, not before it: the two `seat` entries come earlier in the list and were
+merged, and the `leg` entry then threw. Re-running after the fix proved it —
+
+```
+-- PO-009034 DtlKey 831373 (8050-1A(RHF), seat): the ERP now holds "24",
+   the list expected "" — ALREADY the book's value, nothing to do — skipped
+```
+
+— the ERP holding `24` is the earlier run's work, caught by the stale-list guard
+doing exactly its job. **A run that exits non-zero is not a run that wrote
+nothing**; the only way to know is to read what it did before it threw, or to
+re-plan and let `erp_now` tell you.
 
 **Root cause (traced, not guessed).** `assertOnlyOwnedKeys` refuses a patch
 carrying a key the caller has not declared, and this caller passed
