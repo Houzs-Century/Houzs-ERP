@@ -95,6 +95,60 @@ export async function salesDocOutOfScope(
   return salespersonId == null || !ids.includes(String(salespersonId));
 }
 
+/* ── SALES ORDERS ONLY: shared orders ───────────────────────────────────────
+   Owner 2026-09-09: a Sales Order can be shared with several salespeople, who
+   all see and edit it equally ("接手的几位 sales person 都有权限"). Migration
+   20260909T1000 added `collaborator_staff_ids` (what was granted) and the
+   trigger-maintained `access_staff_ids` (salesperson_id + collaborators), and
+   the two helpers below are the ONLY place a scoped SO read should express the
+   rule. Everything else on the sales side — DO, SI, delivery returns,
+   consignment, quotes, reports, AR reconciliation — deliberately keeps
+   `.in('salesperson_id', …)`: those documents snapshot the rep who sold the
+   order, which is what commission is booked from. See docs/modules/
+   so-handover.md §"Reach".                                                    */
+
+/**
+ * Apply the caller's row-level scope to a query over `mfg_sales_orders` or its
+ * payment-totals VIEW. Replaces `.in('salesperson_id', scopeIds)` one-for-one:
+ * a null scope is unrestricted, and the match-nothing sentinel still matches
+ * nothing (no order carries the all-zeros uuid).
+ *
+ * `access_staff_ids` is empty for an order with a NULL salesperson_id, so such
+ * rows stay invisible to a scoped caller exactly as they are today.
+ */
+export function applySoScope<T>(q: T, scopeIds: string[] | null): T {
+  if (!scopeIds) return q;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped throughout this module.
+  return (q as any).overlaps("access_staff_ids", scopeIds) as T;
+}
+
+/**
+ * The single-document form, for SO detail / print / mutation gates that answer
+ * 404 rather than 403. Pass the row's `access_staff_ids` — the caller is in
+ * scope if ANY of their staff uuids appears in it.
+ *
+ * `accessStaffIds` absent or empty falls back to the `salespersonId` test, so a
+ * gate whose read has not been given the column keeps TODAY's behaviour rather
+ * than opening up: a collaborator would be refused, never a stranger admitted.
+ */
+export async function soDocOutOfScope(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped throughout this module (see the four functions around it); typing it here alone would describe a contract the rest of the file does not keep.
+  sb: any,
+  env: Env,
+  houzsUserId: number | null | undefined,
+  canViewAll: boolean,
+  doc: {
+    salespersonId?: number | string | null;
+    accessStaffIds?: readonly (string | null)[] | null;
+  },
+): Promise<boolean> {
+  const ids = await resolveSalesScopeIds(sb, env, houzsUserId, canViewAll);
+  if (ids === null) return false; // unrestricted
+  const access = (doc.accessStaffIds ?? []).filter((x): x is string => !!x);
+  if (access.length > 0) return !access.some((a) => ids.includes(String(a)));
+  return doc.salespersonId == null || !ids.includes(String(doc.salespersonId));
+}
+
 /**
  * The caller's OWN scm.staff uuid (mig 0066 deterministic row, linked by
  * staff.user_id), or null when the sync row is missing. Used for

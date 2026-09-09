@@ -169,6 +169,14 @@ const newAgainst = (keys, baseSet) => keys.filter((k) => !baseSet.has(k));
 const DELEGATION_GUARDS = [
   "selfScopedSalesBlocked",   // mfg-sales-orders.ts:806  - 18 /:docNo handlers
   "salesDocOutOfScope",       // lib/salesScope.ts
+  /* lib/salesScope.ts — the SO-only twin of the line above, added 2026-09-09
+     with shared Sales Orders. Same body: it calls resolveSalesScopeIds and
+     fails closed on an unreadable scope, and only the membership test differs
+     (the row's access_staff_ids as well as its salesperson_id). Listed because
+     the SO detail / items / amendment-create gates now call THIS one, and a
+     guard that is equivalent but unnamed reads to this checker as a handler
+     that lost its scoping. */
+  "soDocOutOfScope",          // lib/salesScope.ts
   "requireScmCompany",
   "loadAmendmentForWrite",    // so-amendments.ts:122     - all 6 mutation gates
   "resolveAllocationParent",  // mfg-purchase-orders.ts:3354
