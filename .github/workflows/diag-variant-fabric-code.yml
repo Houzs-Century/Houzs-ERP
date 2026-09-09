@@ -11,6 +11,11 @@ name: Which fabric code does our variant key carry (read-only)
 
 on:
   workflow_dispatch:
+    inputs:
+      doc:
+        description: "Sales order to dump line by line"
+        required: false
+        default: "HC-SO-010120"
 
 concurrency:
   group: diag-variant-fabric-code
@@ -31,7 +36,10 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: node scripts/diag-variant-fabric-code.mjs
+      # tsx: a document line stores `variants` and its key is COMPUTED, so the
+      # real computeVariantKey must be imported rather than re-implemented
+      - run: npx tsx scripts/diag-variant-fabric-code.mjs
         env:
+          DOC: ${{ github.event.inputs.doc }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NODE_OPTIONS: --dns-result-order=ipv4first
