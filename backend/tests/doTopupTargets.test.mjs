@@ -27,6 +27,8 @@ import { describe, expect, test } from 'vitest';
 
 // @ts-expect-error - plain .mjs, extracted from the runnable script so this test can read it
 import { DO_TARGETS } from '../scripts/lib/do-topup-targets.mjs';
+// @ts-expect-error - plain .mjs, the same reader the importers use
+import { readMappingCsv, normCode } from '../scripts/lib/ac-mapping-csv.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TRUTH = path.join(HERE, '..', 'scripts', 'data', 'ac-reconcile-truth.json.gz');
@@ -42,6 +44,11 @@ const BOOK = new Map(
   snap.types.DO.lines.map(lineOf).map((l) => [`${l.docNo}|${String(l.dtlKey)}`, l]),
 );
 const DESC2 = new Map(snap.types.DO.desc2.map((r) => [String(r[0]), r[1]]));
+
+/** AutoCount code -> ERP code, the sheet every importer reads. */
+const MAPPING = readMappingCsv(
+  fs.readFileSync(path.join(HERE, '..', 'scripts', 'data', 'autocount-erp-mapping-1561.csv'), 'utf8'),
+);
 
 const sen = (v) => Math.round(Number(v) * 100);
 
@@ -74,13 +81,22 @@ describe('the named delivery-note top-up targets', () => {
   );
 
   test.each(DO_TARGETS.map((t) => [`${t.acDoc} DtlKey ${t.dtlKey}`, t]))(
-    '%s names the item code the book names',
+    '%s names the ERP code the mapping sheet gives for the book code',
     (_name, t) => {
       const l = BOOK.get(`${t.acDoc}|${t.dtlKey}`);
       // A CODED line's itemKey IS the book's ItemCode. A text-only line has no
       // code and its itemKey is the text, so only coded targets are compared —
       // and DO-001604 is deliberately the text-only one.
-      if (t.expect.hasCode) expect(String(l.itemKey).trim()).toBe(t.erpCode);
+      if (!t.expect.hasCode) return;
+      // NOT an equality check. The two sides spell accessories differently —
+      // the book says `HOK-SQUARE PILLOW`, the ERP says `SQUARE PILLOW` — and
+      // `planDo` looks the target's code up in `scm.mfg_products` VERBATIM, so
+      // declaring the book's spelling is refused at plan time. The mapping
+      // sheet is the one place that states the pair, and it is what the
+      // importers read, so it is what this resolves through.
+      const row = MAPPING.get(normCode(String(l.itemKey).trim()));
+      expect(row, `${l.itemKey} is in no row of autocount-erp-mapping-1561.csv`).toBeDefined();
+      expect(row.erp).toBe(t.erpCode);
     },
   );
 

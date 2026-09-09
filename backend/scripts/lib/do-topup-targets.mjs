@@ -103,7 +103,16 @@ export const DO_TARGETS = [
   {
     acDoc: "DO-011465",
     dtlKey: "924550",
-    erpCode: "HOK-SQUARE PILLOW",
+    /* The ERP code, NOT the book's. The book names `HOK-SQUARE PILLOW`; this
+       ERP drops the brand prefix on accessories, and
+       data/autocount-erp-mapping-1561.csv states the pair on one row:
+       `HOK-SQUARE PILLOW,SQUARE PILLOW,NEW,ACCESSORY,400-O002`. Declaring the
+       book's code here would have been refused at plan time as "not in
+       scm.mfg_products" — the four targets that came before happen to be codes
+       AutoCount and the ERP spell identically, so this never came up. The test
+       now resolves every coded target THROUGH that mapping rather than
+       expecting the two spellings to match. */
+    erpCode: "SQUARE PILLOW",
     group: null,
     /* NO `description` is declared, deliberately. The book's LineDesc for this
        line is in no cut this repo holds — `ac-partial-dos.json.gz` and
