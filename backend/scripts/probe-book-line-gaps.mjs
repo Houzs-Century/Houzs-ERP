@@ -106,7 +106,8 @@ const READERS = {
       WHERE g.company_id = ${CO} AND g.grn_number = ${d}`,
     lines: (d) => sql`SELECT i.id::text, i.item_code, i.qty_accepted::float8 AS qty,
         i.qty_received::float8 AS qty_received, i.unit_price_sen, i.discount_sen, i.line_total_sen,
-        i.linked_ac_dtlkey::text AS dtlkey, i.description2, i.po_item_id::text AS po_item_id, i.invoiced_qty
+        i.linked_ac_dtlkey::text AS dtlkey, i.description2, i.variants,
+        i.purchase_order_item_id::text AS po_item_id, i.invoiced_qty
       FROM scm.grn_items i JOIN scm.grns g ON g.id = i.grn_id
       WHERE g.company_id = ${CO} AND g.grn_number = ${d} ORDER BY i.id`,
     moves: (d) => sql`SELECT count(*)::int n FROM scm.inventory_movements WHERE company_id = ${CO} AND source_doc_no = ${d}`,

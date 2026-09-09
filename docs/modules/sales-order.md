@@ -2414,6 +2414,35 @@ than restating it), `lib/ac-transfer-chain-run.mjs` (the reads; it may only
 write onto a document the run already compared, and it FAILS SOFT) and
 `lib/ac-transfer-chain-report.mjs` (the printing).
 
+### The migrated invoice chain's line SHAPE is a declared class (since 2026-09-09)
+
+A sales or purchase INVOICE in the ERP is built from OUR delivery order / goods
+receipt, not copied from AutoCount's `IVDTL` / `PIDTL` — the types declared
+`migratedChainLineShape` in `backend/scripts/lib/ac-reconcile-erp-sql.mjs`. So the
+NUMBER of rows on it is ours and what must agree is the money, and two of the
+reconcile's axes are the same fact seen from two ends: `line count`, and
+`a book line we do not have`.
+
+`splitMigratedChainLineShape` had measured that since 2026-09-08 and printed it in
+the SUMMARY only — nothing called `VERDICT.reclassify`, so nine sales invoices the
+run had already cleared were reported to the owner as work. The unpaired-book-line
+half had no classifier at all. Both are now split by ONE shared verdict
+(`migratedChainShapeVerdict` in `lib/ac-not-a-difference.mjs`) and reclassified into
+the declared class **`migrated-chain-line-shape`**, which carries its own sentence
+in `DECLARED_LABEL` (`lib/so-tally-verdict.mjs`) and prints under 「WHAT THIS VERDICT
+EXCLUDED, AND UNDER WHOSE RULING」 like every other declaration.
+
+The two gates are what stop it being an amnesty, and they are unchanged: the
+document TOTAL must be identical to the sen, and every item code must agree on
+quantity and money — so the only book lines it may not carry are the RM 0.00 ones.
+A document that fails either is printed LOUDER as an impostor and stays counted; one
+with no measurement at all is UNPROVEN, never waved through. `docs/bugs/0746`,
+pinned by `backend/tests/acNotADifference.test.ts` and
+`backend/tests/migratedChainShapeWiring.test.ts`.
+
+**SALES ORDERS are not a `migratedChainLineShape` type**, so no sales-order figure
+moves on this: a book line a sales order does not have is still a difference.
+
 **Nothing on the sales-order side of this moved.** `check-so-tally.mjs` is not
 modified by that lane, `VERDICT_OUT` still receives SALES ORDERS and nothing
 else, and `publish-so-reconcile-verdict.mjs` and the migrated-sales-order lock
