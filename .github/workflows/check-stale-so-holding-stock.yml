@@ -1,0 +1,87 @@
+name: Stale sales orders still holding stock (read-only)
+
+# 「因为我看到一些 SO 已经 expire 很久了 可是还没出货？我看到 MRP 还在 assign
+# stocks 给那些 order」 — the owner, 2026-09-09.
+#
+# HE IS RIGHT, AND THERE IS NOTHING TO FIX IN THE ALLOCATOR — THERE IS A RULE
+# MISSING. src/scm/lib/so-stock-allocation.ts:238 states its own priority:
+# EFFECTIVE delivery date ASC, then created_at, and the only rows it drops are
+# the terminal statuses. Nothing reads how OLD a date is, so an order whose
+# delivery date passed a year ago outranks every live order for the same scarce
+# item, permanently, until a person cancels it.
+#
+# This workflow MEASURES that population and the units it is holding. It
+# proposes nothing and writes nothing: how long is too long, and whether a stale
+# order should leave the queue or go to the back of it, is the owner's call.
+#
+# Read-only. SELECTs only, one connection, no DDL, no writes, no transaction.
+# Manual trigger only — a production read on a schedule becomes CI noise nobody
+# reads. Exits 0 for every legitimate answer including "none"; a red job would
+# read as "the check broke".
+#
+# No `tee` (docs/bugs/0687): a pipeline whose left side dies still reports the
+# exit status of `tee` unless `pipefail` is set.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      days:
+        description: "How many days past the effective delivery date counts as stale"
+        required: false
+        default: "30"
+        type: string
+      company_id:
+        description: "Company id (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+      show:
+        description: "How many offenders to list"
+        required: false
+        default: "25"
+        type: string
+
+# Its own group: a diagnostic must never queue behind, or displace, a release.
+concurrency:
+  group: check-stale-so-holding-stock-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-stale-so-holding-stock.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          DAYS: ${{ inputs.days }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          SHOW: ${{ inputs.show }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-stale-so-holding-stock.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DAYS: ${{ inputs.days }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          SHOW: ${{ inputs.show }}
