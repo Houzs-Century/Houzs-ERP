@@ -27,11 +27,18 @@ receipt lane" — was available and wrong.
 other than the cutover's outstanding-only scope:
 
 ```
-137 invoice lines, every one linked to a receipt line
- 18 lines on 11 documents hold variants = null while the RECEIPT LINE holds the full object
- 59 are blank on both sides
- 60 already carry values
+137 invoice lines, of which 110 are linked to a receipt line and 27 carry no link at all
+ 12 of the linked lines, on 9 documents, hold variants = null while the RECEIPT LINE holds the full object
 ```
+
+*(A first pass at this count said "137 lines, every one linked" and "18 on 11
+documents". That was a parsing mistake of mine, not a fact: the diagnostic prints
+`receipt line: NONE (grn_item_id is null)` for an unlinked row, which my ad-hoc
+reader matched as a link. The repair's own plan run, which reads the database
+rather than a log, is the number above — and the six lines that fall out of the
+larger figure are exactly the unlinked ones, where there is nothing to copy
+FROM: `PI-007761` x3, `PI-007894` x2 and `HC-PI-007875`'s extra
+`CELENE 2.0 (A)(F)-(Q)`.)*
 
 `HC-PI-006244` again, with the receipt beside it:
 
@@ -77,6 +84,46 @@ list nor the withheld map makes the row REFUSE rather than be copied in part.
 No quantity, price, discount, cost, item code, link, status or header total.
 `description2` is REPORTED and never written — the sofa decoder reads it, so
 filling it can move a `sofa build` verdict, and that is the owner's lane.
+
+**Measured against production.** Plan run
+[34379677063](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34379677063):
+`PLAN: 12 invoice line(s) on 9 document(s) would take their receipt line's colour
+and heights`, `PLAN DIGEST: f2c6f29cc76610c2`. The withholding fired on four of
+them and is in the log — `WITHHELD from the copy: specials` on `PI-007703` and
+`PI-007910`, `specialsRecorded` on `PI-007811` and `PI-007875`. Apply run
+[34379825762](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34379825762):
+
+```
+APPLIED: 12 of 12 invoice line(s) filled.
+VERIFIED on a fresh connection: 12 invoice line(s) hold the receipt's own values,
+every one still a jsonb OBJECT, and item code, quantity and receipt link
+unchanged on all of them.
+```
+
+**What it moved, on the instrument that reported it.** `diag-doc-differ-cause
+TYPE=PI` before (34373997010) and after (34379924920, scoped re-read
+34380127934):
+
+```
+before   IDENTICAL 35 · DIFFER 159 · CANNOT COMPARE 2   of 196 compared
+after    IDENTICAL 39 · DIFFER 155 · CANNOT COMPARE 2
+```
+
+Four documents left the DIFFER column outright — `HC-PI-003230`, `HC-PI-006244`,
+`HC-PI-007555`, `HC-PI-007797` — and the specification axes closed on two more
+that still differ for an unrelated reason: `HC-PI-007811` went from
+`T.Heights, colour / fabric, divan height, gap, leg height, specials` to
+`specials`, and `HC-PI-007875` from the same five plus `line count, specials` to
+`line count, specials`.
+
+**Where it did NOT reach, and why.** `HC-PI-007761` (3 lines), `HC-PI-007894`
+(2 lines) and `HC-PI-007875`'s extra `CELENE 2.0 (A)(F)-(Q)` carry no
+`grn_item_id` at all — there is no receipt line to copy from, so they still read
+`(blank)` and this repair is not the answer for them. `HC-PI-007702`,
+`HC-PI-007893`'s fourth line and `HC-PI-007917` point at a receipt line whose
+own `variants` is empty as well; those are the 59 blank-on-both-sides lines, and
+filling them would mean parsing the BOOK's Desc2 onto an invoice, which is a
+different and riskier writer.
 
 **Proved RED.** `backend/tests/variantRefreshOwnedKeys.test.ts` asserts the fill
 predicate sits on the purchase-invoice statement and on NO other statement in
