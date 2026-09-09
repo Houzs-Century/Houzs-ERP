@@ -105,6 +105,28 @@ describe('the refusals — every one a stop, never a fallback', () => {
   test('the purchase line orders more than one build', () => expect(why({ po: po({ qty: 2 }) })).toMatch(/orders 2/));
   test('the purchase line is dedicated somewhere else already', () => expect(why({ po: po({ soItemId: 'other' }) })).toMatch(/dedicated/));
   test('a delivery order already states the build', () => expect(why({ doLines: 1 })).toMatch(/delivery-order/));
+  test('...and SILENCE still refuses it - the switch is never inherited', () =>
+    expect(why({ doLines: 1, allowDelivered: undefined })).toMatch(/delivery-order/));
+  test('...and an explicit false refuses it', () =>
+    expect(why({ doLines: 1, allowDelivered: false })).toMatch(/delivery-order/));
+
+  /* THE OWNER'S 2026-09-09 DECISION, pinned. Five purchase orders whose goods had
+     already shipped were refused by this gate; told exactly what correcting them
+     does and does not touch - no money, no stock, no delivery line moves - he
+     said the one word. allowDelivered carries that, and ONLY that. */
+  test('allowDelivered lets a DELIVERED build through, and changes nothing else', () => {
+    const p = planMislabelledBuild(base({ doLines: 2, allowDelivered: true }));
+    expect(p.kind).toBe('expand');
+    expect(p.target.map((t) => t.code)).toEqual(['8030-2A(LHF)', '8030-1A(RHF)']);
+  });
+  test('allowDelivered opens NO other gate', () => {
+    const p = planMislabelledBuild(base({ doLines: 2, allowDelivered: true, so: so({ cancelled: true }) }));
+    expect(p.kind).toBe('refuse');
+    expect(p.why).toMatch(/cancelled/);
+    const q = planMislabelledBuild(base({ doLines: 2, allowDelivered: true, codeSet: new Set() }));
+    expect(q.kind).toBe('refuse');
+    expect(q.why).toMatch(/not minted/);
+  });
   test('a goods receipt that really moved stock', () => {
     expect(why({ grns: [{ doc: 'HC-GR-1', migrated: false, movements: 0 }] })).toMatch(/really moved stock/);
     expect(why({ grns: [{ doc: 'HC-GR-1', migrated: true, movements: 2 }] })).toMatch(/really moved stock/);

@@ -103,6 +103,13 @@ const APPLY = (process.env.MODE || 'plan').toLowerCase() === 'apply';
 const CONFIRM_PHRASE = 'I HAVE REVIEWED THE DRY-RUN';
 const CO = Number(process.env.COMPANY || 1);
 const ONLY = (process.env.DOC || '').trim().toUpperCase().replace(/^HC-/, '');
+/* Correcting a build whose goods already shipped is a change to HISTORY, so it
+   is never inherited by silence: unset, every delivered build is refused, which
+   is what this script did from the day it was written. The owner turned it on
+   for five named purchase orders on 2026-09-09 (see the gate's own comment in
+   lib/mislabelled-sofa-po-plan.mjs). Pair it with DOC= so it applies to the
+   document you meant and not to every delivered build in the company. */
+const ALLOW_DELIVERED = process.env.ALLOW_DELIVERED === '1';
 const STAMP = new Date().toISOString().slice(0, 10);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m = '') => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -225,6 +232,7 @@ async function main() {
     const plan = planMislabelledBuild({
       po: { doc: r.doc, code: r.code, qty: r.qty, soItemId: r.so_item_id, d2: r.d2, model },
       so, grns: grns.map((g) => ({ doc: g.doc, migrated: g.migrated, movements: g.movements })), doLines, decoded, codeSet, canonical,
+      allowDelivered: ALLOW_DELIVERED,
     });
     if (plan.kind === 'refuse') { refuse(plan.why); continue; }
     builds.push({ label, row: r, so, grns, target: plan.target, model, acItem: acSofaItemOfSku(r.supplier_sku, sofaFurniture) });
