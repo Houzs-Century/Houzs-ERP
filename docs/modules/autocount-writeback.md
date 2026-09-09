@@ -5442,3 +5442,68 @@ unreadable: it is a subprocess's stdout printed at the end of a 1,300-line log
 and GitHub truncates the step before reaching it (runs 34255914713 and
 34258038309, cut off both times). Read-only — SELECTs, one connection, no DDL,
 no transaction, no apply path.
+
+## A correction may name the DOWNSTREAM documents, and it brings them to the build's shape (2026-09-09)
+
+New SURFACE on `backend/scripts/apply-sofa-compartment-corrections.mjs`: a
+corrections entry's `docs` may now name a goods receipt, a delivery order, a
+sales invoice or a purchase invoice, and the run prints and writes them.
+
+**The defect it closes.** The downstream carry at the bottom of the loop is four
+`UPDATE`s, and an `UPDATE` only moves a row that exists. A correction's whole
+effect is to turn ONE placeholder row into N compartment rows, so the lead is
+re-coded and the pieces it ADDED reach nothing. Measured on prod, probe
+[run 34316985562](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34316985562):
+`HC-SO-000814` and `HC-PO-000254` hold `L(LHF)+1NA+2A(RHF)`; `HC-GR-000287`,
+`HC-DO-000542` and `HC-I-000745` hold ONE row each. The receipt, the delivery
+note and the invoice all say a chaise on its own. `docs/bugs/0748`.
+
+**What an operator now sees.** A named downstream document prints its own block:
+
+```
+  HC-GR-000287  [sofa-compartment-corrections-2026-09.json]  goods receipt  L(LHF)  ->  L(LHF)+1NA+2A(RHF)   1 row(s) already stand for a piece, 2 piece(s) have none
+      keep   L(LHF) -> L(LHF)
+      add    1NA  (cloned from this document's own row, zero in N money column(s))
+      add    2A(RHF)
+      money now: unit_price_sen=431700 line_total_sen=431700 — every added piece is 0 in all of them
+```
+
+and the summary gains a line: `downstream documents NAMED by an entry and brought
+to the build's own shape: N document(s) · N row(s) already stood for a piece · N
+row(s) added · N refused`.
+
+**Six refusals, each a stop.** The document is not `migrated_no_stock`; an
+`inventory_movements` row names it; `pg_trigger` carries a trigger the script has
+not been shown; the document holds more rows than the build has pieces (nothing
+here deletes a receipt, delivery or invoice line — 「不可以删只可以 cancel」); a
+money column would move; a piece SKU is not minted. The parent link
+(`purchase_order_item_id` / `so_item_id` / `do_item_id` / `grn_item_id`) is set
+only when exactly one candidate exists and is otherwise left NULL **and named in
+the log**, which is `reshape-migrated-grns.mjs`'s ruling 「跟 autocount 一样」 for
+an attribution the book does not record.
+
+**「库存先不看」 is answered by measurement, and re-answered every run.**
+`pg_trigger` was read on production before this code existed: `scm.grn_items`,
+`scm.sales_invoice_items` and `scm.purchase_invoice_items` carry **zero**
+non-internal triggers, and `scm.delivery_order_items` carries exactly one —
+`trg_do_line_integrity_lock`, `AFTER DELETE OR UPDATE OF delivery_order_id`,
+which an INSERT does not fire. `KNOWN_TRIGGERS` in the script is that reading,
+and a trigger it does not name STOPS the run rather than being reasoned about.
+
+**The row is CLONED, and the column list is read from `information_schema`.**
+`split-collapsed-sofa-lines.mjs` states the reason and this repository has paid
+for it: enumerating columns silently drops whatever the script has not heard of,
+and these tables carry columns no migration in this repository declares. Only
+`item_code`, `variants`, the money columns, `line_no` and the parent link are
+overridden; everything else — the warehouse, the unit, the dates, the notes and
+the AutoCount line key — comes off the row the document already holds.
+
+**The money assertion is over EVERY `*_sen` column**, not two named ones. The
+receipt, the delivery note and the invoices do not agree about which column holds
+a line's total, so a check on one of them passes vacuously where the other is the
+live column. Summed before and after inside the run, and re-summed on the FRESH
+connection in `VERIFY`.
+
+The decision is pure and tested: `scripts/lib/sofa-downstream-parity.mjs` with
+`sofa-downstream-parity.test.mjs`; the guards are pinned at the write site by
+`tests/sofaDownstreamParityGuards.test.mjs`.
