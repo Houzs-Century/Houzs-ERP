@@ -12,6 +12,7 @@
 //   • the month reuses the file screen's own rows, so a movement has one set of
 //     buttons wherever it is looked at.
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import type { BankLine, BankMonth, BankMonthAssembly, Reconciliation } from './bank-queries';
@@ -107,8 +108,18 @@ const setUp = (over: {
   state.statements = over.statements ?? STATEMENTS;
 };
 
+/* The print dialog this screen mounts reads the company branding through
+   react-query, so the tree needs a client — the same wrapper NotificationBell's
+   test uses. Retries off: a test that waits out a retry is a slow test that
+   still fails. */
+const show = () => render(
+  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <BankMonthTab />
+  </QueryClientProvider>,
+);
+
 const openMonth = () => {
-  render(<BankMonthTab />);
+  show();
   fireEvent.click(screen.getByText('Reconcile'));
 };
 
@@ -122,7 +133,7 @@ describe('the list of months', () => {
 
   test('says how many files built it and how much is still undecided', () => {
     setUp();
-    render(<BankMonthTab />);
+    show();
     expect(screen.getByText('09/2026')).toBeTruthy();
     expect(screen.getByText('3 files')).toBeTruthy();
     expect(screen.getByText('2 of 12 · 1 card payout(s)')).toBeTruthy();
@@ -130,20 +141,20 @@ describe('the list of months', () => {
 
   test('says whether the month can be trusted before it is opened', () => {
     setUp();
-    render(<BankMonthTab />);
+    show();
     expect(screen.getByText('covered end to end')).toBeTruthy();
   });
 
   test('marks a month that is missing something', () => {
     setUp({ months: [{ ...MONTH, complete: false, gapCount: 2 }] });
-    render(<BankMonthTab />);
+    show();
     expect(screen.getByText('2 things missing')).toBeTruthy();
     expect(screen.queryByText('covered end to end')).toBeNull();
   });
 
   test('says nothing about months when none came back', () => {
     setUp({ months: [] });
-    render(<BankMonthTab />);
+    show();
     expect(screen.getByText(/No bank statement has been uploaded yet/)).toBeTruthy();
   });
 });
@@ -221,6 +232,31 @@ describe('a file that straddles the month end', () => {
     openMonth();
     expect(screen.getByText('aug28-sep03.csv')).toBeTruthy();
     expect(screen.getByText(/crosses the month edge/)).toBeTruthy();
+  });
+});
+
+describe('the reconciliation statement', () => {
+  /* Owner: match 完了我要report. The door has to be on the month, and the
+     dialog has to say whether the month behind the paper is whole — printing
+     an incomplete month is a decision, not a discovery made on the sheet. */
+  test('offers the statement from the month view', () => {
+    setUp();
+    openMonth();
+    expect(screen.getByText('Reconciliation statement')).toBeTruthy();
+  });
+
+  test('the dialog says the month is whole before anything is printed', () => {
+    setUp();
+    openMonth();
+    fireEvent.click(screen.getByText('Reconciliation statement'));
+    expect(screen.getByText('covered end to end')).toBeTruthy();
+  });
+
+  test('and says so when it is not', () => {
+    setUp({ assembly: { ...ASSEMBLY, complete: false, gaps: ['a day is missing'] } });
+    openMonth();
+    fireEvent.click(screen.getByText('Reconciliation statement'));
+    expect(screen.getByText(/not covered end to end — 1 thing\(s\) missing/)).toBeTruthy();
   });
 });
 

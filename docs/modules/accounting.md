@@ -1010,6 +1010,57 @@ fingerprint), `backend/src/acc/bank-match.test.ts` (GHL, HLB whole and
 split), `backend/tests/bankRoutes.test.ts` ("uploading overlapping exports",
 "setting up a statement account"), `SettlementSetup.test.tsx` (the card).
 
+**A MONTH, not a file at a time (2026-09-09; owner, uploading one a day: 每天我
+上传bank statement 和 merchant report 测试，但是有办法选这个是几月的？因为我发现
+好像没有).** Layer 4 reconciled one FILE, which is the right unit for a monthly
+statement and the wrong one for Hong Leong's any-day export — a file per day made
+September thirty separate answers and none of them the answer to "did September
+agree". `backend/src/acc/bank-month.ts` assembles the month by three rules and
+hands it to the SAME `reconcileBankStatement`, so nothing new judges money:
+(1) a MOVEMENT belongs to the month its own date falls in, never to the file it
+arrived in — a date cannot lie about its month, a filing label can, so a file
+straddling a month end feeds both and daily/monthly/both uploads build the same
+September; (2) a BALANCE speaks for a month only when its file lies wholly
+inside it — the opening on a 28 Aug–3 Sep file is August's, and using it as
+September's is wrong by four days of movement while looking authoritative, so
+such a file is listed and LABELLED rather than dropped; (3) the files are
+CHAINED and the chain is CHECKED — Hong Leong prints the prior day's balance, so
+each file should open where the previous closed, and a break is reported with
+both file names, both dates and the amount that moved between them (an
+overlapping longer export is NOT a break). The reconciliation window follows the
+days actually uploaded, not the calendar, so ten days of bank are never set
+against thirty of ledger. Doors: `GET /accounting/bank/months` (every account ×
+month, with whether it is covered end to end) and
+`GET /accounting/bank/months/:accountCode/:month`
+(`backend/src/scm/routes/accounting-bank-months.ts`, guarded by the same
+`bankGuard` exported from `accounting-bank.ts`). **By month** is the first tab of
+`/scm/bank-recon`; the per-file view stays one press away
+(`frontend/src/pages/scm-v2/BankMonthTab.tsx`, reusing the file screen's own
+reconciliation panel and movement rows so one movement has one set of buttons).
+What is MISSING prints above the verdict — a difference computed over a month
+short of four days is an answer about a different month.
+
+**The reconciliation statement on paper (2026-09-09; owner: 然后就是match 完了我
+要report).** `frontend/src/vendor/scm/lib/bank-reconciliation-pdf.ts` walks
+balance per bank statement − on the bank not in the books + in the books not on
+the bank − difference brought forward = balance per the books, which is the
+identity `acc/bank-reconcile` checks, written as lines. It TIES BY CONSTRUCTION
+and is then checked against the ledger balance the server sent; three refusals
+keep it from being filed when it should not be — the walk arriving anywhere but
+the ledger, the server having already found the figures inconsistent (no walk is
+drawn at all, because a tidy one would launder the error), and no file printing a
+closing balance (a zero is not an absence). Every step names the count behind it
+and every count has its list: unposted movements with the file they came off,
+ledger entries the bank never showed, movements POSTED, and — printed whether or
+not the month reconciles — everything LEFT OUT with the reason given, which is
+the only record that decision will ever have. Reached through the house's one
+print dialog (`PrintPreviewModal`) from the month view. Contracts:
+`backend/src/acc/bank-month.test.ts` (leap February, a missing day, an
+overlapping export that is not a break, a straddling file speaking only for its
+movements), `frontend/src/pages/scm-v2/BankMonthTab.test.tsx`,
+`frontend/src/vendor/scm/lib/bank-reconciliation-pdf.test.ts` (the walk ties, or
+it is not drawn).
+
 On both reconciliation screens, working a statement REPLACES the list rather than stacking under it —
 the owner on the version that stacked: 就感觉很多东西挤在一页. Each page links to
 the other where the work hands over. What they share is presentation only

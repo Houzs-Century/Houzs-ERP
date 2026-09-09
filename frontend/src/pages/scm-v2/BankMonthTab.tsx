@@ -29,13 +29,14 @@
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
-import { AlertTriangle, ArrowLeft, CalendarDays } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, CalendarDays, Printer } from 'lucide-react';
 import {
   useBankMonths, useBankMonth,
   type BankMonth, type BankMonthAssembly, type BankLine,
 } from './bank-queries';
 import { ICON, fmt, btn, softText, danger, panel } from './settlement-ui';
 import { ReconciliationPanel, OpenLine, DoneLine } from './BankStatementTab';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
 
@@ -143,6 +144,25 @@ const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) =
   const q = useBankMonth(picked.accountCode, picked.month);
   const [showDone, setShowDone] = useState(false);
 
+  /* THE REPORT. Owner, 2026-09-08: 然后就是match 完了我要report.
+     Built from exactly what is on the screen — the same assembly, the same
+     reconciliation, the same lines — so the paper and the screen cannot
+     disagree. The document refuses to call itself filable when its own walk
+     does not arrive; that judgement is in the report, not here. */
+  const data = q.data;
+  const print = usePrintPreview(async (action) => {
+    if (!data) return;
+    const { generateBankReconciliationPdf } = await import('../../vendor/scm/lib/bank-reconciliation-pdf');
+    await generateBankReconciliationPdf({
+      accountCode: data.accountCode,
+      month: data.month,
+      assembly: data.assembly,
+      reconciliation: data.reconciliation,
+      lines: data.lines,
+      unmatchedEntries: data.unmatchedEntries,
+    }, { action });
+  });
+
   const lines = q.data?.lines ?? [];
   const open = lines.filter((l) => l.state === 'OPEN');
   const done = lines.filter((l) => l.state !== 'OPEN');
@@ -166,7 +186,40 @@ const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) =
             {' · '}{q.data.statements.length} file{q.data.statements.length === 1 ? '' : 's'}
           </span>
         )}
+        <span style={{ flex: 1 }} />
+        <button type="button" style={btn(true, !q.data)} disabled={!q.data} onClick={print.openPreview}>
+          <Printer {...ICON} /> Reconciliation statement
+        </button>
       </div>
+
+      {q.data && (
+        <PrintPreviewModal
+          open={print.open}
+          onClose={print.close}
+          docTitle="Bank Reconciliation Statement"
+          docNo={`${q.data.accountCode} · ${monthLabel(q.data.month)}`}
+          rows={[
+            { label: 'Days covered', value: `${q.data.assembly.periodFrom} → ${q.data.assembly.periodTo}` },
+            {
+              label: 'Bank statement closes at',
+              value: q.data.assembly.statementClosingSen == null
+                ? 'not stated by any file — the statement cannot be drawn'
+                : fmt(q.data.assembly.statementClosingSen),
+            },
+            { label: 'Per the books', value: fmt(q.data.reconciliation.closingLedgerSen) },
+            {
+              /* Said in the dialog, before the paper exists: printing a month
+                 that is short a day is a decision, and it should be one the
+                 operator makes knowingly rather than discovers on the sheet. */
+              label: 'The month itself',
+              value: q.data.assembly.complete
+                ? 'covered end to end'
+                : `not covered end to end — ${q.data.assembly.gaps.length} thing(s) missing, printed on the report`,
+            },
+          ]}
+          {...print.handlers}
+        />
+      )}
 
       {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Assembling the month…</div>}
 
