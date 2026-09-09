@@ -446,11 +446,26 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   (`docs/bugs/0581-mrp-told-the-owner-to-buy-bedframes-his-own-received-purchas.md`).
   Both sides now honour the binding — a bound PO line is DEDICATED and leaves the
   pool; a bound demand line does not read pooled STOCK, and covers from its own
-  PO (received, then outstanding) before the pooled PO queue. **The rule is drawn
-  at stock and only at stock**: stock is a claim on goods that exist, a purchase
-  order is a plan, and withholding the pooled PO queue as well made
-  `po-so-coverage` report that an unlinked PO serves nobody. It does NOT
-  decrement the bucket either: here the pool IS the bucket,
+  PO, received then outstanding.
+- **AND SINCE 2026-09-09 IT COVERS FROM ITS OWN PO AND NOTHING ELSE** (owner:
+  *「修,但只能动 Houzs Century」*;
+  `docs/bugs/0736-mrp-let-a-pooled-purchase-order-cover-a-hard-bound-line-the-r.md`).
+  The dedicated queue used to be followed by the POOLED queue, so a purchase
+  order belonging to nobody could report a bound line as covered while the stored
+  allocator — which accepts only that line's OWN purchase order — left it PENDING
+  for ever. The buyer read "already on order" and the order never moved: the
+  mirror of 0572 on the other screen, **10 of the 126** proceeded company-1
+  bedframe/sofa lines with no dedicated PO, measured on prod.
+  This bullet used to end by saying the rule was *"drawn at stock and only at
+  stock"* because withholding the pooled PO queue as well made `po-so-coverage`
+  report that an unlinked PO serves nobody. That was right about the mechanism
+  and never sized: the whole population is **5 lines on 2 purchase orders**
+  (`HC-PO-009024`, `HC-PO-010085`), both already owed a real link to the sales
+  order they were raised for. Pooled supply is still **reported** —
+  `poOutstanding` counts it — it just may no longer be named as a bound line's
+  cover, so the line reads as the shortage it is.
+- The bound branch does NOT decrement the bucket either: here the pool IS the
+  bucket,
   every line in a company-1 bedframe bucket is bound, so nothing else can draw
   it, and leaving the units visible is what keeps the on-hand figure honest.
   **SOFA is excluded at this call site** — sofa demand never enters section 7
