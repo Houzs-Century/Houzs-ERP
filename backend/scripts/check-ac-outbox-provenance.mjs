@@ -81,6 +81,32 @@ try {
   if (!flags.length) say("  (neither row present)");
   say();
 
+  /* ── IS THERE A TRIGGER NOBODY KNOWS ABOUT? ────────────────────────────────
+     No migration in this repo creates a trigger that writes to the outbox, so
+     the enqueue "must" be application code. That reasoning is exactly the kind
+     this repo has paid for before — "the unique index does not exist" was
+     wrong about four indexes ported by hand and present in no file here. The
+     repair scripts write DIRECT SQL and never call enqueueAcOp, so if outbox
+     rows appeared while only a repair was running, either the pull path is
+     enqueueing or a trigger exists that the tree does not show. Asked here
+     rather than assumed. */
+  const triggers = await pg`
+    SELECT c.relname AS on_table, t.tgname, p.proname AS fn, n.nspname AS schema
+    FROM pg_trigger t
+    JOIN pg_class c   ON c.oid = t.tgrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_proc p    ON p.oid = t.tgfoid
+    WHERE NOT t.tgisinternal
+      AND (c.relname = 'autocount_outbox'
+           OR pg_get_functiondef(p.oid) ILIKE '%autocount_outbox%')
+    ORDER BY n.nspname, c.relname, t.tgname`;
+  say("=== TRIGGERS THAT TOUCH scm.autocount_outbox ===");
+  if (!triggers.length) {
+    say("  none — no trigger writes to the outbox, so every row came from application code");
+  }
+  for (const t of triggers) say(`  ${t.schema}.${t.on_table}  ${t.tgname} -> ${t.fn}()`);
+  say();
+
   // ── totals over the whole table ──────────────────────────────────────────
   const totals = await pg`
     SELECT status, op, count(*)::int AS n
