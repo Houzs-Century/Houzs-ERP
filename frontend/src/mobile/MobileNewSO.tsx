@@ -21,7 +21,7 @@ import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
-import { addressLineProps } from "../lib/addressLimit";
+import { addressLineProps } from "../lib/acColumnWidths";
 import { paymentMethodCodeForValue } from "../vendor/scm/lib/payment-methods";
 import { soDateGuardError, soStockLocationError, soErrorText } from "../vendor/scm/lib/so-form-validate";
 import { useBranding } from "../hooks/useBranding";

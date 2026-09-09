@@ -3,7 +3,7 @@
 // guard that compares them is frontend/scripts/check-address-line-max.mjs.
 import { describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { ADDRESS_LINE_MAX, addressLineProps, onAddressPaste, splitAddressAtLimit } from './addressLimit';
+import { ADDRESS_LINE_MAX, addressLineProps, onAddressPaste, splitAddressAtLimit } from './acColumnWidths';
 
 describe('the input limit is the account book\'s own column width', () => {
   test('it matches the backend constant, read from the backend source', () => {

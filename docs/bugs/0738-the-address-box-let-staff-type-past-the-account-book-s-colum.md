@@ -45,12 +45,12 @@ The owner's instruction, 2026-09-09: 「我们超过 40 个字的地址全部拆
   that repeated the card title rendered on the very next line.
 * **The number is one number.** `ADDRESS_LINE_MAX` (frontend) is a copy of
   `AC_ADDRESS_LINE_MAX` (backend, measured on AED_HOUZS); the frontend cannot
-  import from the backend, so `frontend/scripts/check-address-line-max.mjs` reads
+  import from the backend, so `frontend/scripts/check-ac-column-widths.mjs` reads
   both files and fails if they disagree.
 
 **Verified.**
 
-* `frontend/src/lib/addressLimit.test.ts` — **13 tests**: the two constants
+* `frontend/src/lib/acColumnWidths.test.ts` — **13 tests**: the two constants
   agree (read out of the backend source, and a missing match FAILS rather than
   passing quietly); a break lands on a space with line 1 inside the column; a
   90-character single word is broken, not dropped; putting head and tail back
@@ -58,7 +58,7 @@ The owner's instruction, 2026-09-09: 「我们超过 40 个字的地址全部拆
   paste over a SELECTION replaces only what was selected; the LAST line keeps an
   over-long paste uncut; and the bundle carries both the width and a working
   spill.
-* `frontend/src/lib/addressLimit.dom.test.tsx` — **4 tests, in a real DOM**,
+* `frontend/src/lib/acColumnWidths.dom.test.tsx` — **4 tests, in a real DOM**,
   because this is a UI change and the rule here is to observe it: both boxes
   render `maxLength` 40; typing a 46-character street line through `user-event`
   leaves exactly 40 in the box; a pasted 73-character address ends up split
