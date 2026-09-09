@@ -60,5 +60,5 @@ and the typecheck/build gates are the regression net for the wiring; **no test
 asserts the freeze in either direction**, for the reason `0753` gives.
 
 **Ref.** `fix/mrp-unfreeze-header`, 2026-09-09. Supersedes the MRP half of
-`docs/bugs/0753`; see `docs/mrp-migration-and-shortage-audit-2026-09-09.md` §2
-for the full measurement in context.
+`docs/bugs/0753`; the full measurement in context is the cutover audit
+landing in PR #3476 (three owner questions, measured), section 2.
