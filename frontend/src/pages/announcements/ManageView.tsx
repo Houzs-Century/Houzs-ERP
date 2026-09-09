@@ -15,6 +15,7 @@ import {
   categoryOf,
   deptKey,
   docNo,
+  docTypeTag,
   filterManageRows,
   isPendingForMe,
   manageStats,
@@ -303,6 +304,11 @@ function ManageRow({
         >
           {meta.label}
         </span>
+        {docTypeTag(a) && (
+          <span className="ml-1 inline-flex rounded-full border border-border px-1.5 py-[1px] font-mono text-[9.5px] font-bold text-ink-muted">
+            {docTypeTag(a)}
+          </span>
+        )}
       </td>
       <td className="px-2.5 py-[11px]">
         <div className="flex flex-col gap-0.5">

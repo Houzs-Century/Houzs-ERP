@@ -76,7 +76,7 @@ describe("announcement create — client key", () => {
          target_divisions TEXT, excluded_user_ids TEXT, escalated_at TEXT,
          approval_status TEXT, submitted_by INTEGER, submitted_at TEXT, reviewed_by INTEGER,
          reviewed_at TEXT, reject_reason TEXT, ref_no TEXT,
-         client_key TEXT)`,
+         client_key TEXT, doc_type TEXT)`,
     ).run();
     await env.DB.prepare(
       `CREATE UNIQUE INDEX IF NOT EXISTS announcements_client_key_uq

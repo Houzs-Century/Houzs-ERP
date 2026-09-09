@@ -114,7 +114,24 @@ export type Announcement = {
   voidedBy?: number | null;
   voidedAt?: string | null;
   voidReason?: string | null;
+  /** Document type (mig 20260908T0300): ANN or a registered code such as MEMO
+   *  — the [TYPE] segment of the reference number. Absent = ANN. */
+  docType?: string | null;
 };
+
+/** A registered document type (GET /api/document-types). */
+export type DocumentTypeOption = { code: string; label: string; attachmentRequired: boolean };
+
+export function docTypeOf(a: Pick<Announcement, "docType">): string {
+  const v = (a.docType ?? "").trim().toUpperCase();
+  return v || "ANN";
+}
+/** The pill shown beside the category when the notice is not a plain
+ *  announcement — the type code, e.g. MEMO. Null for ANN. */
+export function docTypeTag(a: Pick<Announcement, "docType">): string | null {
+  const t = docTypeOf(a);
+  return t === "ANN" ? null : t;
+}
 
 export function isVoided(a: Pick<Announcement, "voidedAt">): boolean {
   return a.voidedAt != null;

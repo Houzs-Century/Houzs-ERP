@@ -31,6 +31,7 @@ import type { Env } from "../types";
 import {
   isVoided,
   readApprovalStatus,
+  readDocType,
   type AnnouncementRow,
   type ApprovalStatus,
 } from "../lib/announcementAudience";
@@ -43,6 +44,7 @@ import { postPersonalNotice } from "./personalNotice";
 export const APPROVE_PERMISSION = "announcements.approve";
 /** document_refs.entity_type for a notice; the type code is the seeded ANN. */
 export const ANNOUNCEMENT_ENTITY = "announcement";
+/** The default type; a row's own doc_type (mig 20260908T0300) wins. */
 export const ANNOUNCEMENT_TYPE_CODE = "ANN";
 /** `source` on the system notices this flow posts (bell slice only). */
 export const APPROVAL_NOTICE_SOURCE = "announcement_approval";
@@ -216,7 +218,7 @@ export async function approveAnnouncement(
   }
   const ref = await mintDocumentRef(env, {
     deptCode: dept.code,
-    typeCode: ANNOUNCEMENT_TYPE_CODE,
+    typeCode: readDocType(row),
     entityType: ANNOUNCEMENT_ENTITY,
     entityId: String(row.id),
     createdBy: actor.id,
