@@ -52,6 +52,17 @@ on:
         description: "Refuse if the AutoCount snapshot is older than this many days"
         required: false
         default: "2"
+      before_ref:
+        # AFTER THIS LANE MERGES, the merge base of main with itself is HEAD, the
+        # restore would change nothing, and the job would refuse — correctly, but
+        # uselessly. Naming the commit explicitly is how the same measurement is
+        # re-run later: pass the commit immediately BEFORE the merge.
+        # A workflow_dispatch workflow is not dispatchable at all until its file
+        # is on the default branch, so the first honest run of this one happens
+        # after the merge and this input is what makes that run possible.
+        description: "Commit to take the BEFORE reader from. Empty = the merge base with origin/main."
+        required: false
+        default: ""
 
 # Its OWN group. Not the deploy's, not the reconcile's, and not either tally
 # lane's — several lanes are working this book at once and asking this question
@@ -78,13 +89,20 @@ jobs:
       - run: npm ci
         working-directory: backend
 
-      - name: Name the merge base the BEFORE pass will be restored from
+      - name: Name the commit the BEFORE pass will be restored from
+        env:
+          BEFORE_REF: ${{ inputs.before_ref }}
         run: |
           set -euo pipefail
           git fetch --no-tags origin main
-          BASE="$(git merge-base origin/main HEAD)"
+          if [ -n "$BEFORE_REF" ]; then
+            BASE="$(git rev-parse --verify "$BEFORE_REF^{commit}")"
+            echo "BEFORE reader taken from the commit you named: $BASE"
+          else
+            BASE="$(git merge-base origin/main HEAD)"
+            echo "BEFORE reader taken from the merge base with origin/main: $BASE"
+          fi
           echo "BASE=$BASE" >> "$GITHUB_ENV"
-          echo "Merge base with origin/main: $BASE"
           git --no-pager log -1 --oneline "$BASE"
 
       - name: AFTER — the reconcile with this branch's reader
