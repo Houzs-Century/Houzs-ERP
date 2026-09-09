@@ -824,15 +824,38 @@ delivery order by that fallback would be writing on a guess.
 
 So `backend/scripts/topup-ac-lines-from-truth.mjs` has two lanes and they are not
 symmetrical. Its SO lane is a general rule keyed on DtlKey. Its **DO lane is a
-NAMED list** — `DO_TARGETS` in that file, one entry per line it may add, each
-asserted against the book (document, DtlKey, quantity, unit price, line
-subtotal) and against the ERP (no row already answering it) before anything is
-written. A target whose book row has moved is REFUSED, never adjusted to fit.
-Today the list holds one line: `DO-001604`, whose book row is
-`* DISPOSE 3S L SHAPE SOFA + CONSOLE TABLE`, no item code, quantity 1,
-**RM 150.00** — a text-only line carrying real money, explicitly NOT in the
+NAMED list** — `DO_TARGETS`, which since 2026-09-09 lives in
+`backend/scripts/lib/do-topup-targets.mjs` so a test can read it. One entry per
+line it may add, each asserted against the book (document, DtlKey, quantity,
+unit price, line subtotal) and against the ERP (no row already answering it)
+before anything is written. A target whose book row has moved is REFUSED, never
+adjusted to fit.
+
+**As of 2026-09-09 the list holds seven lines.** The first is `DO-001604`, whose
+book row is `* DISPOSE 3S L SHAPE SOFA + CONSOLE TABLE`, no item code, quantity
+1, **RM 150.00** — a text-only line carrying real money, explicitly NOT in the
 blank-row class of `docs/bugs/0695` (section G of
-`docs/cutover-so-do-remainder-2026-09-08.md`).
+`docs/cutover-so-do-remainder-2026-09-08.md`). Four more are the substituted
+lines of `DO-001953` / `DO-004903` (`docs/bugs/0711`, described below). The last
+two are **free lines the book gives away**, added by the alignment lane:
+`DO-011465`'s four `HOK-SQUARE PILLOW` at RM 0.00 (the book's own Desc2:
+*for conpesantion wrong item delivery.*) and `DO-010332`'s second
+`DSL-8050 SOFA` at RM 0.00. Being RM 0.00, neither moves a header total, which
+is why the line-count comparison was the only thing that could find them
+(`docs/bugs/0752-the-book-s-two-free-delivery-lines-were-never-written-and-a.md`).
+
+**Two properties of this lane changed with them, and both are load-bearing.**
+
+- **The insert carries the book's own `Desc2` into `description2`.** It used to
+  write a hard-coded `NULL`, so every line the lane had ever topped up landed
+  with no build text on a note whose other rows all carried theirs. The value
+  comes from `book.DO.desc2` — the account book — never from a target.
+- **Every target is resolved against the committed book snapshot on every PR**,
+  by `backend/tests/doTopupTargets.test.mjs`. That is why `DO_TARGETS` moved to
+  `scripts/lib/`. A named list is hand-typed assertions about a book nobody
+  re-reads, and the script's own drift check runs only when someone dispatches
+  it against production — the worst moment to find a typo. The test also plants
+  four typo shapes and asserts each is rejected.
 
 Two deliberate choices in that write, both recorded because neither is obvious:
 
