@@ -84,4 +84,32 @@ Closing it needs one of two things this lane may not do:
 
 `HC-SO-009735` therefore stays in DIFFER, named, with what would move it.
 
+**AND THEN IT LEFT, AND NOT BECAUSE OF THIS FIX. SAY SO.** Run
+[34297150727](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34297150727),
+half an hour after this merged, no longer lists `HC-SO-009735` at all. The
+reason is in the book, not in the reader: the cut re-taken at
+`2026-09-09T00:18:49Z` (`data/ac-reconcile-truth.json.gz`, PR #3342) carries a
+different Desc2 for that same line —
+
+```
+before  Col:TBC/divan:8inch TBC/gap:12inch
+after   PC151-02 / DIVAN 8" + LEG 1" / GAP 12" / T.Heights 21" / SPECIAL: HB Fully Cover
+```
+
+Somebody filled the line in, and the book now states the `1"` leg and the `21"`
+total the ERP was already holding. **This fix did not close it and must not be
+credited with closing it** — the two axes it differed on were `leg height` and
+`T.Heights`, neither of which was pending in the old text. What this fix does is
+measured separately and stated in the paragraph above.
+
+**What this fix ACTUALLY moved, and what cannot be attributed to it.** By
+construction it turns an affected `T.Heights` from AGREE into BOOK_BLANK. Across
+that same run the sales-order book-gap column went `60 -> 151`, the purchase
+orders `12 -> 13`, the goods receipts `4 -> 5` and the delivery orders `0 -> 4`.
+That run ALSO carried a fresh book cut and two other merges (#3342, #3346), so
+the whole delta is NOT claimed for this change; the unit test is the evidence
+for the rule, and this paragraph is the evidence for the direction. **No
+document type's DIFFER count moved because of it**: PO `13 -> 13`, GR `11 -> 11`,
+IV `16 -> 16`, PI `48 -> 48`.
+
 **Ref.** fix/so-tally-zero, 2026-09-09.

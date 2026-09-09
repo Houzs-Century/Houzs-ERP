@@ -129,4 +129,32 @@ to the documents named in `DOCS`. It moves no stock, and 「库存先不看」 i
 respected by construction — `po_qty_picked` is a purchasing ceiling and an MRP
 input, not an on-hand figure, and nothing here writes it either.
 
+**Re-measured after all of the above, on a FRESH book cut.** Run
+[34297150727](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34297150727)
+(`2026-09-09T00:57Z`, book cut `2026-09-09T00:18:49Z`):
+
+```
+SALES ORDERS — 2,888 documents, 14,509 book lines paired.
+  IDENTICAL 2689 · DIFFER 18 · CANNOT BE COMPARED 30 · book-gap 151
+```
+
+**The same fourteen are still there, unchanged and unmoved**, which is the
+control this entry exists to keep: nothing was reclassified. `16 -> 18` is four
+separate movements and none of them is a bucket:
+
+| document | axis | what it is |
+| --- | --- | --- |
+| `HC-SO-009735` | **left** | the BOOK was filled in — see `docs/bugs/0734` |
+| `HC-SO-010284` | specials | new on this cut |
+| `HC-SO-2609-002` | item code | an ERP-NATIVE order raised today |
+| `HC-SO-2609-005` | leg height | an ERP-NATIVE order raised today |
+
+`HC-SO-007293` is unchanged and already decided: the `Clr:` reader gap of
+`docs/bugs/0722`, where the ERP is RIGHT and the report is wrong, deliberately
+deferred because fixing two characters re-reads 119 other sofa lines including
+one the owner ruled on by drawing that morning.
+
+**Nothing else moved.** PO `13 -> 13`, GR `11 -> 11`, IV `16 -> 16`,
+PI `48 -> 48`.
+
 **Ref.** fix/so-tally-zero, 2026-09-09.
