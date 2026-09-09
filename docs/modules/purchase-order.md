@@ -439,6 +439,28 @@ works and is multi-select at line level — but only for a line that is
   PURCHASE ORDER'S OWN `CLOSED` is a separate question and is not built; see
   `docs/modules/document-status-vocabulary.md` §1b.
 
+### The SO-drift note, and what may NOT trip it
+
+`computeSoDrift` (`backend/src/scm/lib/so-po-drift.ts`, called once per line by
+the detail read) stamps `so_drift` on a line whose source SO line no longer
+matches what the PO snapshotted. Three arms: **item swap** (different SKU — redo
+the PO), **spec drift** (the variant summary moved), **warehouse** (the SO line's
+EFFECTIVE ship-from warehouse moved; a NULL line warehouse inherits the header
+and has NOT moved). Both surfaces render it — the desktop detail / list red note
+and banner, and the mobile detail's warning line — from this ONE server-side
+computation, so there is no second copy of the rule to keep in step.
+
+**The spec arm compares SPEC, never display.** Variants carry keys a READ path
+stamps for presentation only — today `fabricSupplierCode`, the supplier's own
+code for our fabric, which makes a line read `EZ-010 Silver (M2402-17)`. Those
+keys are listed in `DISPLAY_ONLY_VARIANT_KEYS` and stripped from BOTH sides
+before either summary is built. They have to be: an editor Save round-trips the
+enriched line back through the write path, so one side of a PO↔SO pair can carry
+the stamp while the other does not, and the raw compare then told the purchaser
+to re-send a PO whose spec nobody had touched (`docs/bugs/0742`). Anything else
+that becomes a read-side stamp on `variants` belongs in that list on the same
+day it is added.
+
 ### Binding a PO line to its source SO line (`so_item_id`)
 
 `so_item_id` is what lets a shipment resolve its incoming PO: `dropship-batch.ts`
