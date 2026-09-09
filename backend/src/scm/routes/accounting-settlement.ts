@@ -487,7 +487,10 @@ export const settlementUpload = guard(async (c) => {
   };
 
   const [candidates, settled] = await Promise.all([
-    loadPaymentCandidates(sb, co.companyId, acq.acquirer, parsed.periodFrom, parsed.periodTo),
+    /* The file's own references travel with the request: a payment carrying an
+       exact reference must be found whatever its date (docs/bugs/0760). */
+    loadPaymentCandidates(sb, co.companyId, acq.acquirer, parsed.periodFrom, parsed.periodTo,
+      parsed.rows.map((r) => r.ref).filter((r): r is string => typeof r === 'string' && r !== '')),
     loadSettledKeys(sb, co.companyId),
   ]);
   if (!candidates.ok) { await abandonBatch(); return c.json({ error: 'load_failed', reason: candidates.reason }, 500); }
@@ -521,6 +524,22 @@ export const settlementUpload = guard(async (c) => {
      between the read above and now) drops its line to NEEDS_CONFIRM rather
      than clearing the same money twice. */
   const idByLine = new Map(((writtenRaw ?? []) as Array<{ id: number; line_no: number }>).map((r) => [r.line_no, r.id]));
+  /* THE INSERT SUCCEEDED AND TOLD US NOTHING BACK.
+     On prod, nine reference-matched lines were stored MATCHED and NOT ONE link
+     row was written, with no error anywhere: the rows insert reported no error,
+     its returning-select came back empty, so this map was empty, so every link
+     below hit its `continue` and was skipped in silence (docs/bugs/0760).
+     A count that cannot be reconciled to the decisions is the one thing that
+     would have said so, so it is checked here rather than trusted. */
+  if (idByLine.size !== decisions.length) {
+    await abandonBatch();
+    return c.json({
+      error: 'save_failed',
+      reason: `wrote ${decisions.length} line(s) but got ${idByLine.size} id(s) back`,
+      message: 'The statement\'s lines saved but did not report their ids, so their payments could not be'
+        + ' linked. Nothing was kept — upload the file again.',
+    }, 500);
+  }
   let autoMatched = 0;
   for (const d of decisions) {
     if (d.bucket !== 'MATCHED' || d.matched.length === 0) continue;
@@ -678,7 +697,12 @@ export const settlementBatchDetail = guard(async (c) => {
   const acq = await loadAcquirer(sb, co.companyId, b.acquirer_code);
   if (!acq.ok) return c.json({ error: 'acquirer_unavailable', message: acq.reason }, 400);
   const [candidates, settled] = await Promise.all([
-    loadPaymentCandidates(sb, co.companyId, acq.acquirer, b.period_from, b.period_to),
+    /* The stored lines' own references travel with the request, so a payment
+       carrying an exact reference is found whatever its date — the four PBB
+       lines that read "No payment recorded near …" while their payment sat in
+       the ERP, keyed a week late (docs/bugs/0760). */
+    loadPaymentCandidates(sb, co.companyId, acq.acquirer, b.period_from, b.period_to,
+      stored.map((r) => r.ref).filter((r): r is string => typeof r === 'string' && r !== '')),
     loadSettledKeys(sb, co.companyId),
   ]);
   if (!candidates.ok) return c.json({ error: 'load_failed', reason: candidates.reason }, 500);
@@ -738,11 +762,25 @@ export const settlementBatchDetail = guard(async (c) => {
           approval_code: p?.approvalCode ?? null,
         };
       }),
-      candidates: s?.candidates ?? [],
+      /* A REF-MATCHED LINE CARRIES ITS PAYMENT IN `matched`, NOT `candidates`.
+         matchStatement empties candidates/suggested for that bucket on purpose
+         — there is nothing to choose, it is decided — and this map used to read
+         only the two empty fields. So a line the matcher had answered arrived
+         with no payment at all, and when its link had not persisted either the
+         screen ran the last branch it has: "No payment in the ERP explains this
+         money", directly under the clue naming the very sale it matched. The
+         owner saw both sentences at once (2026-09-09), and pressing Confirm
+         sent an empty selection, which the server rightly refused.
+
+         Falling back to `matched` costs nothing when the link IS there — a
+         linked line is not recomputed at all — and is the whole answer when it
+         is not. Pre-ticked, still his to confirm: nothing posts until he
+         presses. */
+      candidates: (s?.candidates.length ? s.candidates : s?.matched) ?? [],
       comboHints: s?.comboHints ?? [],
       /* The system's own best answer, pre-ticked on screen. A suggestion, never
          a decision — nothing posts until he confirms. */
-      suggested: s?.suggested ?? [],
+      suggested: (s?.suggested.length ? s.suggested : s?.matched) ?? [],
       clue: s?.clue ?? r.notes,
     };
   });
