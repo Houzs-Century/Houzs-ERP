@@ -4,6 +4,7 @@ import {
   cascadeMasterVariants,
   seedFollowerVariants,
   seedableMasterVariants,
+  CASCADE_CATEGORIES,
   FABRIC_IDENTITY_KEYS,
   type MasterVariantSnapshot,
 } from "../vendor/scm/lib/so-variant-cascade";
@@ -22,6 +23,7 @@ import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import { addressLineProps } from "../lib/addressLimit";
+import { deriveProcessingDate } from "../lib/processingDate";
 import { paymentMethodCodeForValue } from "../vendor/scm/lib/payment-methods";
 import { soDateGuardError, soStockLocationError, soErrorText } from "../vendor/scm/lib/so-form-validate";
 import { useBranding } from "../hooks/useBranding";
@@ -317,9 +319,6 @@ const fmt = (n: number) => n.toLocaleString("en-MY", { minimumFractionDigits: 2,
    the compartments of one sofa. */
 const FABRIC_SYNC_KEYS: readonly string[] = FABRIC_IDENTITY_KEYS;
 
-/* Mobile renders variant panels for sofa + bedframe only, so the cascade is
-   scoped to those. Desktop passes null (every category). */
-const MOBILE_CASCADE_CATEGORIES: ReadonlySet<string> = new Set(["sofa", "bedframe"]);
 
 function newLine(): LineItem {
   return {
@@ -1339,9 +1338,10 @@ export function MobileNewSO({
     const { variants, masters } = cascadeMasterVariants(
       cascadeLines,
       masterSnapshotRef.current,
-      /* Mobile only shows variant panels for sofa + bedframe, so only those
-         cascade here. Passed explicitly because desktop answers differently. */
-      MOBILE_CASCADE_CATEGORIES,
+      /* The ONE set, shared with desktop (owner 2026-09-09: cascade is for sofa
+         only). This used to be a mobile-local ["sofa","bedframe"] while desktop
+         passed null for every category. */
+      CASCADE_CATEGORIES,
     );
     masterSnapshotRef.current = masters;
     setLines((prev) => {
@@ -2359,7 +2359,21 @@ export function MobileNewSO({
                     value={delivDate}
                     disabled={scheduleDatesLocked}
                     min={today}
-                    onChange={(iso) => setDelivDate(iso)}
+                    /* Picking a Delivery date DERIVES the Processing date, the
+                       same rule desktop has always had (Delivery − 6 weeks,
+                       never in the past). Mobile left it blank and the rep
+                       typed it by hand — reported 2026-09-09: 「proceed date
+                       之前是有 auto detect 的，现在的需要自己填」.
+                       Only fills a BLANK field: a date already on the order (or
+                       one the rep just typed) is theirs, not ours to overwrite.
+                       Clearing Delivery leaves Processing alone — the Clear
+                       control beside it is the way to empty it, and the
+                       both-or-neither rule is a save gate that names the
+                       problem. */
+                    onChange={(iso) => {
+                      setDelivDate(iso);
+                      if (iso && !procDate) setProcDate(deriveProcessingDate(iso));
+                    }}
                   />
                 </Field>
                 <div style={{ fontSize: 10, color: "#9aa093", marginTop: -3 }}>

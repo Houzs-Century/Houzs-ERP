@@ -62,6 +62,27 @@ export const FABRIC_IDENTITY_KEYS: readonly string[] = [
  *  it before this module existed. */
 export const NEVER_INHERITED_KEYS: readonly string[] = ['remark', 'buildKey'];
 
+/** The categories a master's variants may travel across AT ALL — owner ruling
+ *  2026-09-09: 「主行改一次，全部跟着改 … 这个只限于 sofa item」.
+ *
+ *  A SOFA is one physical thing assembled from several lines: its modules share
+ *  a fabric, a leg height and a seat depth by construction, so changing the
+ *  master once and having the rest follow is the whole point.
+ *
+ *  A BEDFRAME is not. Three bedframes on one order are three beds, routinely
+ *  different sizes with different add-ons, and the cascade's first rule is that
+ *  the master's latest change FORCES the follower — so a rep who removed a
+ *  drawer from beds 2 and 3 got it written back the next time she touched bed 1,
+ *  and had to remove it once per master edit. Reported 2026-09-09 against
+ *  HC-SO-012312: 「刚刚我改了两次 about 第二三不需要 drawer，结果还是有，remove
+ *  三次才没有」.
+ *
+ *  BOTH surfaces import this. Mobile used to declare `["sofa","bedframe"]` and
+ *  desktop passed `null` meaning EVERY category (a mattress line's specials
+ *  included) — one rule with two different answers, which is the shape
+ *  `audit:duplicated-decisions` exists to catch. */
+export const CASCADE_CATEGORIES: ReadonlySet<string> = new Set(['sofa']);
+
 /** One line, reduced to what the cascade decides on. `category` is '' for a
  *  line with no SKU picked yet — it neither masters nor follows. */
 export type CascadeLine = {
@@ -118,6 +139,11 @@ export function seedableMasterVariants(
   const out: Record<string, Record<string, unknown>> = {};
   for (const l of lines) {
     if (!l.category) continue;
+    /* Gated by the SAME set as the live cascade. Without this a new bedframe
+       line still arrives pre-filled from bed 1 — the follower would simply
+       never be re-forced afterwards, which fixes the second removal and not
+       the first. The seed IS the "自动 duplicate" the rep reported. */
+    if (!CASCADE_CATEGORIES.has(l.category)) continue;
     if (l.category in out) continue;
     if (Object.keys(l.variants).length > 0) out[l.category] = l.variants;
   }
