@@ -5,12 +5,16 @@
 //
 //   contractor  POST/DELETE /api/projects/contractors/:id/share-link  →  /c/<token>
 //   brand       POST/DELETE /api/brand-share/:id/share-link           →  /b/<token>
+import { Ban, CalendarDays, Link2 } from "lucide-react";
 import { api } from "../../api/client";
+import type { MenuItem } from "../../components/RowActionsMenu";
 import type { useDialog } from "../../hooks/useDialog";
 import type { useToast } from "../../hooks/useToast";
 
 export type ShareKind = "contractor" | "brand";
+export type ExportScope = "month" | "year";
 type Row = { id: number; name: string };
+type ContractorRow = Row & { share_export_scope: ExportScope };
 type Toast = ReturnType<typeof useToast>;
 type Dialog = ReturnType<typeof useDialog>;
 
@@ -38,7 +42,7 @@ export async function copyShareLink(kind: ShareKind, row: Row, toast: Toast): Pr
 /** What one press of Export on a CONTRACTOR's link covers: the month on screen
  *  or the whole year (owner 2026-09-09: three contractors export the year, the
  *  rest the month). Brands always export the month. */
-export async function setShareExportScope(row: Row, scope: "month" | "year", toast: Toast, reload: () => void): Promise<void> {
+export async function setShareExportScope(row: Row, scope: ExportScope, toast: Toast, reload: () => void): Promise<void> {
   try {
     await api.patch(`/api/projects/contractors/${row.id}`, { share_export_scope: scope });
     reload();
@@ -66,4 +70,33 @@ export async function revokeShareLink(kind: ShareKind, row: Row, toast: Toast, d
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "Could not revoke the share link.");
   }
+}
+
+/** The share-link entries of a row's action menu. A contractor row carries
+ *  the export-scope toggle as well, and needs `reload` so the chip reflects
+ *  the saved value; a brand row has no such setting, so the shape makes the
+ *  kind decide rather than an optional argument. */
+export function shareLinkMenuItems(
+  target: { kind: "contractor"; row: ContractorRow; reload: () => void } | { kind: "brand"; row: Row },
+  toast: Toast,
+  dialog: Dialog,
+): MenuItem[] {
+  const { kind, row } = target;
+  const scope: MenuItem[] =
+    target.kind === "contractor"
+      ? [
+          {
+            type: "toggle",
+            icon: CalendarDays,
+            label: "Export whole year",
+            active: target.row.share_export_scope === "year",
+            onClick: () => void setShareExportScope(row, target.row.share_export_scope === "year" ? "month" : "year", toast, target.reload),
+          },
+        ]
+      : [];
+  return [
+    ...scope,
+    { type: "action", icon: Link2, label: "Copy share link", onClick: () => void copyShareLink(kind, row, toast) },
+    { type: "action", icon: Ban, label: "Revoke share link", danger: true, onClick: () => void revokeShareLink(kind, row, toast, dialog) },
+  ];
 }
