@@ -404,6 +404,29 @@ Column: `scm.mfg_sales_order_items.stock_status`. **Three values**, not two:
 `summariseReadiness` treats `PARTIAL` as **not ready** — `isReady` is strictly
 `stock_status === 'READY'`.
 
+**A DELIVERED LINE IS EXEMPT FROM THAT TALLY (2026-09-09,
+`docs/bugs/0738-a-delivered-line-kept-its-stale-pending-and-held-18-orders-ou.md`).**
+`recomputeSoStockAllocation` skips a line at `remaining <= 0`, so a shipped
+line's `stock_status` is FROZEN at whatever it last was — and
+`so-delivery-sync.ts` is the only writer that lands it on READY. Anything that
+creates a shipped line WITHOUT going through a DO mutation leaves that stamp
+unset: on prod, **190 company-1 lines** are stale this way and **187 of them sit
+on a MIGRATED delivery order**, which the cutover wrote straight into the
+database.
+
+So the roll-up no longer trusts the column for a line that has nothing left to
+deliver. `ReadinessLine.fulfilled` is **counted like a SERVICE line and gates
+nothing** — counted, because dropping it would make an order whose every line has
+shipped indistinguishable from an order with no lines and the empty-husk gate
+would then refuse a finished order. The flag is OPTIONAL and its absence is the
+STRICTER direction (the line keeps gating), which is why adding it did not have
+to walk eight call sites that hold no delivery quantities.
+
+**Before this, 18 live orders sat at `IN_PRODUCTION` with every still-outstanding
+line already READY.** The per-line PILL was never wrong — `soLineStockPill` and
+`soStockPillMobile` both render `DELIVERED` off `delivered_qty` / `remaining_qty`
+— only the roll-up was.
+
 **The two allocation mechanisms are COMPANY-SPLIT (2026-08-30, owner ruling —
 bug `docs/bugs/0572-a-company-1-bound-line-with-no-receipt-fell-through-to-the-p.md`).**
 `HARD_BOUND_COMPANY_ID = 1` in `so-stock-allocation.ts`:
