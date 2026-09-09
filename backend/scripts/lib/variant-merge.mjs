@@ -108,6 +108,20 @@ export function assertOnlyOwnedKeys(patch, owned = OWNED_VARIANT_KEYS, who = "va
 /** The bedframe patch: exactly the keys a Desc2 re-parse is entitled to move. */
 export function buildBedframeVariantPatch(bf, fc) {
   const tot = (Number(bf.gap) || 0) + (Number(bf.divan) || 0) + (Number(bf.leg) || 0);
+  /* ── AN UNDECIDED COMPONENT MAKES THE TOTAL UNKNOWN, NOT SMALLER ─────────
+     THE SECOND OF THE THREE COPIES of this rule. `docs/bugs/0732` fixed
+     lib/parse-bedframe.mjs's `bedframeVariants` and named this file and
+     lib/variant-reconcile.mjs as still carrying the defect; this is that entry
+     being finished. `Number(undefined) || 0` counted a component the book wrote
+     TBC/KIV as ZERO, so a sweep re-deriving `Divan: TBC / Gap: 12"` wrote a bed
+     twelve inches tall when nobody has picked the divan under it.
+
+     The rule is READ from `parseBedframe`, never re-decided: `divanPending`,
+     `gapPending` and `legPending` are its facts, set only by an EXPLICIT
+     TBC/KIV against that keyword. A merely ABSENT component is untouched — a
+     divan with no leg mentioned still means no leg (0) per the owner's model,
+     and tests/bedframePendingHeightAllReaders.test.ts pins both halves. */
+  const heightPending = bf.divanPending === true || bf.gapPending === true || bf.legPending === true;
   return assertOnlyOwnedKeys({
     fabricId: fc ? fc.fabric_id : null,
     colourId: fc ? fc.colour_id : null,
@@ -117,7 +131,7 @@ export function buildBedframeVariantPatch(bf, fc) {
     gap: bf.gap != null ? bf.gap + '"' : null,
     divanHeight: bf.divan != null ? bf.divan + '"' : null,
     legHeight: bf.leg != null ? bf.leg + '"' : null,
-    totalHeight: tot ? tot + '"' : null,
+    totalHeight: heightPending || !tot ? null : tot + '"',
     size: bf.size || null,
   }, OWNED_VARIANT_KEYS, "bedframe variant patch");
 }
