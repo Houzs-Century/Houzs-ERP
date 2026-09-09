@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { GripVertical, ChevronUp, ChevronDown, Plus, Pencil, Trash2, ShieldCheck, Eye, EyeOff, Upload, Image as ImageIcon, Link2, Ban } from "lucide-react";
+import { GripVertical, ChevronUp, ChevronDown, Plus, Pencil, Trash2, ShieldCheck, Eye, EyeOff, Upload, Image as ImageIcon, Link2, Ban, CalendarDays } from "lucide-react";
 import { useReorderable } from "../hooks/useReorderable";
 import { PageHeader } from "../components/Layout";
 import { Button } from "../components/Button";
@@ -12,7 +12,7 @@ import { Skeleton } from "../components/Skeleton";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
 import { clearBrandLogoCache } from "../lib/branding";
-import { copyShareLink, revokeShareLink } from "./project-maintenance/shareLinks";
+import { copyShareLink, revokeShareLink, setShareExportScope } from "./project-maintenance/shareLinks";
 import {
   useLocalities,
   distinctCountries,
@@ -36,6 +36,7 @@ interface ContractorRow {
   name: string;
   notes: string | null;
   active: number;
+  share_export_scope: "month" | "year";
 }
 interface VenueRow {
   id: number;
@@ -409,6 +410,13 @@ function ContractorManager() {
             <span className="flex-1 text-[13px] font-medium text-ink">{o.name}</span>
             <RowActionsMenu
               items={[
+                {
+                  type: "toggle",
+                  icon: CalendarDays,
+                  label: "Export whole year",
+                  active: o.share_export_scope === "year",
+                  onClick: () => void setShareExportScope(o, o.share_export_scope === "year" ? "month" : "year", toast, () => q.reload()),
+                },
                 {
                   type: "action",
                   icon: Link2,

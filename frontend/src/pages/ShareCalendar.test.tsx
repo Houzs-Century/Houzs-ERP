@@ -15,6 +15,8 @@ const TOKEN = "abcdefghijklmnopqrstuvwx012345_-";
 const fetchMock = vi.fn();
 const sheets: (string | number)[][][] = [];
 const written: string[] = [];
+// What the contractor's server says one press of Export covers.
+let contractorScope: "month" | "year" = "month";
 // The floorplan PDF: what jsPDF was told to draw and what it was asked to save as.
 const pdf = vi.hoisted(() => ({ pages: [] as { orientation: string; texts: string[]; images: string[] }[], saved: [] as string[] }));
 
@@ -49,6 +51,7 @@ beforeEach(() => {
   vi.stubGlobal("createImageBitmap", async () => ({ width: 600, height: 900, close() {} }));
   sheets.length = 0;
   written.length = 0;
+  contractorScope = "month";
   pdf.pages.length = 0;
   pdf.saved.length = 0;
 });
@@ -80,7 +83,7 @@ const event = {
 
 /** A fake of both public routes, keyed on the URL's tail. */
 function serve(url: string): Promise<Response> {
-  if (/\/export\?month=\d{4}-\d{2}$/.test(url)) {
+  if (/\/export\?(month=\d{4}-\d{2}|year=\d{4})$/.test(url)) {
     const brand = url.includes("/brand-calendar/");
     return json({
       ...(brand ? { brand: "AKEMI" } : { contractor: "DREAM ART (M) SDN BHD" }),
@@ -107,7 +110,7 @@ function serve(url: string): Promise<Response> {
   }
   if (url.endsWith("/events/7")) return json(url.includes("/brand-calendar/") ? { sizeSqm: 72, totalSales: 125000 } : { sizeSqm: 72 });
   if (url.includes("/brand-calendar/")) return json({ brand: "AKEMI", events: [event] });
-  return json({ contractor: "DREAM ART (M) SDN BHD", events: [event] });
+  return json({ contractor: "DREAM ART (M) SDN BHD", exportScope: contractorScope, events: [event] });
 }
 
 describe("ShareCalendar", () => {
@@ -119,6 +122,8 @@ describe("ShareCalendar", () => {
     expect(await screen.findByText("MV plan.pdf")).toBeTruthy();
     expect(screen.getByText("Unfilled floorplan")).toBeTruthy();
     expect(await screen.findByText("72 sqm")).toBeTruthy();
+    expect(screen.getByText("Booth")).toBeTruthy();
+    expect(screen.getByText("3053-3055")).toBeTruthy();
     expect(screen.queryByText("Total sales")).toBeNull();
     const urls = fetchMock.mock.calls.map((c) => String(c[0]));
     expect(urls.every((u) => u.includes("/contractor-calendar/"))).toBe(true);
@@ -194,6 +199,21 @@ describe("ShareCalendar", () => {
     expect(fetched.map((u) => u.slice(u.lastIndexOf("/") + 1))).toEqual(["t702", "t901"]);
     // Nothing from the event list went into the PDF.
     expect(pdf.pages.flatMap((p) => p.texts).join(" ")).not.toContain("Total");
+  });
+
+  it("contractor marked 'whole year': one press exports the year on screen, named after the year", async () => {
+    contractorScope = "year";
+    window.history.pushState({}, "", `/c/${TOKEN}`);
+    fetchMock.mockImplementation((input: RequestInfo | URL) => serve(String(input)));
+    render(<ShareCalendar mode="contractor" />);
+    await screen.findByText(/Booth 3053-3055/);
+    fireEvent.click(screen.getByText("Export to Excel"));
+    await waitFor(() => expect(written.length).toBe(1));
+    const y = String(new Date().getFullYear());
+    expect(fetchMock.mock.calls.map((c) => String(c[0])).filter((u) => u.includes("/export"))).toEqual([
+      expect.stringMatching(new RegExp(`/contractor-calendar/.*/export\\?year=${y}$`)),
+    ]);
+    expect(written[0]).toBe(`DREAM ART (M) SDN BHD schedule ${y}.xlsx`);
   });
 
   it("contractor: no Display Floorplan option — the export is Excel only", async () => {

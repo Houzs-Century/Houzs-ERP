@@ -35,6 +35,19 @@ export async function copyShareLink(kind: ShareKind, row: Row, toast: Toast): Pr
   }
 }
 
+/** What one press of Export on a CONTRACTOR's link covers: the month on screen
+ *  or the whole year (owner 2026-09-09: three contractors export the year, the
+ *  rest the month). Brands always export the month. */
+export async function setShareExportScope(row: Row, scope: "month" | "year", toast: Toast, reload: () => void): Promise<void> {
+  try {
+    await api.patch(`/api/projects/contractors/${row.id}`, { share_export_scope: scope });
+    reload();
+    toast.success(scope === "year" ? `${row.name}'s link now exports the whole year` : `${row.name}'s link now exports the month on screen`);
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "Could not update the export setting.");
+  }
+}
+
 /** Kill the current link (leaked, or the wrong party). A fresh one can be
  *  generated any time by copying again. */
 export async function revokeShareLink(kind: ShareKind, row: Row, toast: Toast, dialog: Dialog): Promise<void> {

@@ -25,8 +25,8 @@ import type { Env } from "../types";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
 import { resolveBrandShareToken } from "../services/brandShare";
 import {
-  MONTH_RE,
   TOKEN_RE,
+  exportWindowFromQuery,
   listDisplayPlanManifest,
   listPlanFiles,
   listShareEvents,
@@ -115,9 +115,9 @@ publicBrandCalendar.get("/:token/events/:eventId/floorplan/:fileId", async (c) =
 publicBrandCalendar.get("/:token/export", async (c) => {
   const g = await gate(c);
   if (g instanceof Response) return g;
-  const month = monthParam(c);
-  if (month instanceof Response) return month;
-  const rows = await listShareExportRows(c.env, g.scope, true, month);
+  const w = exportWindowFromQuery(c.req.query("month"), c.req.query("year"));
+  if ("error" in w) return c.json({ error: "bad_window", message: w.error }, 400);
+  const rows = await listShareExportRows(c.env, g.scope, true, w.window);
   await logShareExport(c.env, "brand", g.scope.value, g.token, clientIp(c), rows.length);
   return c.json({ brand: g.scope.value, generatedAt: new Date().toISOString(), rows });
 });
@@ -130,18 +130,9 @@ publicBrandCalendar.get("/:token/export", async (c) => {
 publicBrandCalendar.get("/:token/floorplans", async (c) => {
   const g = await gate(c);
   if (g instanceof Response) return g;
-  const month = monthParam(c);
-  if (month instanceof Response) return month;
-  const events = await listDisplayPlanManifest(c.env, g.scope, month);
+  const w = exportWindowFromQuery(c.req.query("month"), c.req.query("year"));
+  if ("error" in w) return c.json({ error: "bad_window", message: w.error }, 400);
+  const events = await listDisplayPlanManifest(c.env, g.scope, w.window);
   await logShareExport(c.env, "brand_floorplans", g.scope.value, g.token, clientIp(c), events.length);
   return c.json({ brand: g.scope.value, generatedAt: new Date().toISOString(), events });
 });
-
-// No month = the whole schedule: a page loaded before the month rule shipped
-// still asks that way until it reloads. A month that is PRESENT but malformed
-// is a bad request, never silently the whole schedule.
-function monthParam(c: Ctx): string | null | Response {
-  const raw = (c.req.query("month") ?? "").trim();
-  if (raw && !MONTH_RE.test(raw)) return c.json({ error: "bad_month", message: "Month must look like 2026-09." }, 400);
-  return raw || null;
-}
