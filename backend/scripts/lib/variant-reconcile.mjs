@@ -309,9 +309,29 @@ export function decodeBook(deps, { desc2, itemGroup, itemCode }) {
     out.leg = bf.leg ?? null;
     /* The SAME expression buildBedframeVariantPatch uses, so this compares
        against what the writer would have written and not against a second
-       opinion about what a total height is. */
+       opinion about what a total height is.
+
+       ── AN UNDECIDED COMPONENT MAKES THE TOTAL UNKNOWN, NOT SMALLER ────────
+       THE THIRD OF THE THREE COPIES of that rule, and the last one owed.
+       `docs/bugs/0732` fixed lib/parse-bedframe.mjs and named this file and
+       lib/variant-merge.mjs as still carrying the defect. Both are now fixed
+       together, which is the only way this expression can go on being "the same
+       expression the writer uses" — the whole reason it is spelled out here
+       rather than imported.
+
+       WHAT IT DOES TO THE VERDICT, and it is not a new difference: `verdictOf`
+       returns BOOK_BLANK when the book states nothing and the ERP holds a
+       value, so an affected line moves from AGREE to BOOK_BLANK — "the ERP
+       carries a value the book never stated", which is what the book genuinely
+       does for a bed whose divan nobody has picked. It stops the axis asserting
+       agreement on a height nobody chose. It locks nothing and it writes
+       nothing: BOOK_BLANK is a declared class, never a gap.
+
+       A merely ABSENT component is untouched, and SELF_TEST's own case
+       'Col: /Div:8"/M.GAP:14"' -> 22" is the pin that says so. */
     const tot = (Number(bf.gap) || 0) + (Number(bf.divan) || 0) + (Number(bf.leg) || 0);
-    out.totalHeight = tot || null;
+    const heightPending = bf.divanPending === true || bf.gapPending === true || bf.legPending === true;
+    out.totalHeight = heightPending ? null : tot || null;
     out.specials = Array.isArray(bf.specials) ? bf.specials : [];
     return out;
   }
