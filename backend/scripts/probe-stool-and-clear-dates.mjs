@@ -26,6 +26,8 @@
 // ---------------------------------------------------------------------------
 import postgres from "postgres";
 
+import { HEADER_CHANGED_COLUMNS, stableDigest, planClear } from "./lib/so-date-clear-plan.mjs";
+
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("need DATABASE_URL"); process.exit(2); }
 const CO = Number(process.env.COMPANY || 1);
@@ -267,6 +269,28 @@ try {
     }
     });
   }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  h1("PART 4 — the digest the apply will be gated on");
+  /* clear-so-dates.mjs refuses at MODE=apply unless the live row still hashes
+     to the digest committed in data/clear-so-dates-plan.json — so the row that
+     gets written is the row somebody reviewed. That digest has to be OBSERVED
+     before it can be committed, and the clear-so-dates workflow is not on the
+     default branch yet, so it is computed here instead: same library, same
+     function, read-only. Paste it into the plan file's `headerDigest`. */
+  await section(`stableDigest for ${SO_DOC}`, async () => {
+    const h = (await sql`SELECT * FROM scm.mfg_sales_orders
+                          WHERE doc_no = ${SO_DOC} AND company_id = ${CO}`)[0] ?? null;
+    const l = await sql`SELECT * FROM scm.mfg_sales_order_items
+                         WHERE doc_no = ${SO_DOC} AND company_id = ${CO}`;
+    const p = planClear({ docNo: SO_DOC, companyId: CO, header: h, lines: l });
+    log(`  refusal        ${p.refusal ?? "(none)"}`);
+    log(`  alreadyClear   ${p.alreadyClear}`);
+    log(`  headerSets     ${JSON.stringify(p.headerSets)}`);
+    log(`  skipped cols   ${HEADER_CHANGED_COLUMNS.join(", ")}`);
+    log(`  headerDigest   ${p.digest}`);
+    log(`  (cross-check)  ${stableDigest(h, HEADER_CHANGED_COLUMNS)}`);
+  });
 
   h1("DONE — nothing was written.");
 } finally {
