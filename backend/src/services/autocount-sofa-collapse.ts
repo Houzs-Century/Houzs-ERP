@@ -144,12 +144,28 @@ function tokenFor(comp: string, i: number, n: number): string | null {
   switch (c) {
     /* A BARE DIGIT IS NOT A SOLO SEAT. Measured against the decoder: "1 (28\")"
        and "2 (28\")" both decode to NOTHING at all, so the bare-digit spelling
-       was a guaranteed refusal for every single-seat build. "1S" and "2S" decode
-       back to exactly themselves. A solo 3S has no spelling at all — "3"
-       decodes to nothing and "3S" decodes to the TWO-piece build
-       [2A(LHF), 1A(RHF)], which is the one outcome that must never be written. */
-    case '1S': return solo ? '1S' : null;
-    case '2S': return solo ? '2S' : null;
+       was a guaranteed refusal for every single-seat build.
+
+       3S STILL HAS NO SPELLING, and that refusal is load-bearing: "3S (28\")"
+       decodes to the TWO-piece build [2A(LHF), 1A(RHF)] — re-measured 2026-09-09
+       over the ten models these refusals name and both mechanism settings, wrong
+       in all twenty. Writing it would put a different sofa in a licensed ledger.
+       Anything containing it goes the same way: "3S + 1S + 2S (28\")" decodes to
+       [2A(LHF), 1A(RHF), 1S, 2S].
+
+       THE `solo` GUARD ON 1S AND 2S IS GONE, and only that. Measured the same
+       way and in the same shape — WITH the size suffix a real build carries,
+       which is what a first pass without it got wrong — "1S (28\")",
+       "2S (28\")" and "1S + 2S (28\")" decode back to exactly themselves, 20 of
+       20 each. So a plain-seat pair had no spelling for no reason, and
+       HC-SO-003189 [1S, 2S] is refused by that and nothing else.
+
+       PROPOSING A SPELLING IS SAFE BY CONSTRUCTION: `composeSofaDesc2` hands
+       every composed string to `decodesTo`, and a build whose text does not
+       decode back to exactly itself is REFUSED rather than written. A wrong
+       proposal costs a refusal; a missing one costs a document. */
+    case '1S': return '1S';
+    case '2S': return '2S';
     case '3S': return null;
     case '1NA': return '1NA';
     case '2NA': return '2NA';
@@ -164,8 +180,22 @@ function tokenFor(comp: string, i: number, n: number): string | null {
     case '2B(LHF)': return left ? '2B' : null;
     case '1B(RHF)': return left ? null : '1B';
     case '2B(RHF)': return left ? null : '2B';
-    case 'L(LHF)': return left ? 'L' : null;
-    case 'L(RHF)': return left ? null : 'L';
+    /* A CHAISE ON THE SIDE ITS POSITION DENIES. A bare `L` is sided by
+       POSITION — the book's own convention — so where position already says the
+       right thing it is still written `L` and nothing about the existing corpus
+       moves. Where position would say the OPPOSITE, the explicit `LL` / `LR`
+       says it outright, exactly as `1EL` / `1ER` already do for an armed end.
+
+       That spelling used to be `null`, and three sales orders were refused for
+       it: HC-SO-007399 [2A(RHF), L(LHF)], HC-SO-008460 [L(RHF), 2A(LHF)] and
+       HC-SO-007958 [L(RHF), 1NA, 2A(LHF)].
+
+       The decoder learned `LL` / `LR` in the same change, and it could only be
+       taught safely because the book has never used either: 41,953 committed
+       Desc2 values, not one of them. The fingerprint over all 15,950 SO values
+       is byte-identical before and after. */
+    case 'L(LHF)': return left ? 'L' : 'LL';
+    case 'L(RHF)': return left ? 'LR' : 'L';
     case '1S(R)': return solo ? '1R' : null;
     case '1S(P)': return solo ? '1P' : null;
     case '1A(R)(LHF)': return !solo && left ? 'R' : null;

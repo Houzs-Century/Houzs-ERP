@@ -192,7 +192,9 @@ try {
          FROM scm.autocount_outbox
         WHERE status = 'failed'
           AND (last_error IS NULL OR last_error NOT LIKE ${`${REQUEUE_NOTE_PREFIX}%`})`,
-    pg`SELECT doc_type, doc_no, op, coalesce(last_error, '') AS last_error
+    /* created_at, because a skip is discounted by the same ORDER the failures
+       are: a document that arrived AFTER this refusal is history. */
+    pg`SELECT doc_type, doc_no, op, created_at, coalesce(last_error, '') AS last_error
          FROM scm.autocount_outbox
         WHERE status = 'skipped'
         ORDER BY created_at DESC`,
@@ -265,7 +267,16 @@ try {
 
      Read by doc_no and matched on BOTH parts in JS: one document number is
      enough of a predicate to keep the read small, and the key is the pair. */
-  const failedDocNos = [...new Set(failedAll.map((r) => r.doc_no))];
+  /* BOTH POPULATIONS, or the rule is half a rule again. The arrivals are read
+     for every document that carries an outstanding refusal of ANY kind — a
+     failure or a skip — because both are discounted by the same order. Reading
+     only the failures' documents would leave `arrivedAt.get()` undefined for
+     every skip, and `acRefusalPredatesArrival` answers false on an undefined
+     arrival, so nothing would be discounted and the code would look right. */
+  const failedDocNos = [...new Set([
+    ...failedAll.map((r) => r.doc_no),
+    ...skipped.map((r) => r.doc_no),
+  ])];
   const arrivals = failedDocNos.length
     ? await pg`SELECT doc_type, doc_no, max(created_at) AS arrived_at
                  FROM scm.autocount_outbox
@@ -314,7 +325,21 @@ try {
      still true that nothing was ever sent for it (or that it failed); what
      changed is that it is no longer the open question. */
   const settled = skipped.filter((r) => r.last_error.startsWith(REQUEUE_NOTE_PREFIX));
-  const outstanding = skipped.filter((r) => !r.last_error.startsWith(REQUEUE_NOTE_PREFIX));
+  /* AND THE SAME RULE THE FAILURES GET. A skip is a refusal like any other, and
+     one the account book has since answered is history — the document arrived
+     after it. The first version of this rule (docs/bugs/0743) covered `failed`
+     and stopped there, so three documents whose keys were long since backfilled
+     — HC-SO-001180, HC-SO-001463, HC-SO-001473 — kept telling an operator to go
+     and backfill a key that is already there. Half a rule reads exactly like a
+     finding. */
+  const skipArrivedKeys = supersededFailureKeys(
+    skipped.filter((r) => !r.last_error.startsWith(REQUEUE_NOTE_PREFIX)),
+    arrivedAt,
+  );
+  const answered = skipped.filter((r) => !r.last_error.startsWith(REQUEUE_NOTE_PREFIX)
+    && skipArrivedKeys.has(acDocKeyOf(r)));
+  const outstanding = skipped.filter((r) => !r.last_error.startsWith(REQUEUE_NOTE_PREFIX)
+    && !skipArrivedKeys.has(acDocKeyOf(r)));
 
   if (total === 0) {
     notice("QUEUE EMPTY — zero rows of any status.");
@@ -481,6 +506,17 @@ try {
     }
   } else {
     notice(`SKIPPED: 0 outstanding${settled.length ? ` (${settled.length} re-queued, below)` : ""}`);
+  }
+  /* ITS OWN HEADING, like the failures' — printed because the row is still the
+     record of a refusal, and not counted because there is nothing left to do. */
+  if (answered.length) {
+    notice(
+      `SKIPPED — ARRIVED SINCE: ${answered.length}. The document reached AutoCount AFTER this ` +
+        'refusal, so the row is the record of an attempt and not something to act on. Nothing to do.',
+    );
+    for (const r of answered) {
+      notice(`  ${r.doc_type} ${r.doc_no} (${r.op}): in the account book since ${arrivedAt.get(acDocKeyOf(r))}`);
+    }
   }
 
   const requeuedAll = [...requeuedFailed, ...settled];

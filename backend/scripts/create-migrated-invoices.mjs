@@ -59,6 +59,11 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
 /* Invoice numbers this run actually created, for the fresh-connection check. */
 const created = [];
 const KIND = (process.env.KIND || "both").toLowerCase();
+/* Write the invoice from the RECEIPT'S OWN LINES instead of requiring it to
+   equal what AutoCount billed. Owner decision 2026-09-09; opt-in per run,
+   never the default, because the total equality is what proves a recovered
+   price right. */
+const ALLOW_TOTAL_MISMATCH = process.env.ALLOW_TOTAL_MISMATCH === "1";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
@@ -366,7 +371,23 @@ async function run(kind) {
   const already = await existingMirrors(kind === "PI" ? "purchase_invoices" : "sales_invoices");
   const lineIndex = new Map(sources.map((s) => [s.docNo, s.lines.filter((l) => l.qty > 0)]));
   const headIndex = new Map(sources.map((s) => [s.docNo, s._head]));
-  const { plans, blocked } = planMigratedInvoices(sources, acTotals);
+  /* THE TOTAL GATE, AND WHY IT CAN BE TURNED OFF FOR THE PURCHASE SIDE.
+     By default an ERP invoice is written only when what we would bill equals
+     what AutoCount billed, and that equality is also what independently proves
+     a recovered price right (see the note on so_unit_price_sen above).
+
+     The owner, 2026-09-09: 「我们现在有的 GR 基本上都是要 convert 成 invoice 的。
+     我们有几张 GR 就要 convert 成几张 invoice。可是它的 invoice 不需要提取总价钱，
+     你就拿 line item 就可以了」 — every receipt we hold becomes an invoice, and
+     the invoice takes the RECEIPT'S OWN LINES rather than matching the book's
+     invoice total. That is coherent: one AutoCount purchase invoice can span
+     several receipts, so the two totals differ for a reason that is the book's
+     business and not ours.
+
+     WHAT IS GIVEN UP, said plainly: with the gate off, a recovered price that
+     is wrong is no longer caught by anything here. The gate was the proof.
+     So this is opt-in, per run, never the default. */
+  const { plans, blocked } = planMigratedInvoices(sources, acTotals, { allowTotalMismatch: ALLOW_TOTAL_MISMATCH });
   /* A null here means migration 0294 has not run. Planning and reporting are
      still meaningful (that is the review the dry-run exists for); WRITING is
      not, because the columns that mark a row migrated do not exist yet. */
@@ -394,6 +415,7 @@ async function run(kind) {
 }
 
 async function main() {
+  if (ALLOW_TOTAL_MISMATCH) log("ALLOW_TOTAL_MISMATCH=1 — the invoice takes the RECEIPT'S OWN LINES; the book's invoice total is NOT required to match.");
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"} kind=${KIND}  (AutoCount map exported ${REFS._exportedAt ?? "?"})`);
   let total = 0;
   if (KIND === "pi" || KIND === "both") total += await run("PI");
