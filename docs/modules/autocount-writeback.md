@@ -5718,3 +5718,53 @@ block, which touches `tx` only, and
 `tests/sofaDownstreamParityGuards.test.mjs` brace-matches the block and pins it.
 `docs/bugs/0749` states the rule for every script here: **inside `sql.begin`,
 only `tx` exists.**
+
+## Description 2 is ABBREVIATED on the way out, and never in the data (2026-09-09)
+
+New SURFACE on `composeDescription2` in
+`backend/src/services/autocount-writeback.ts`: the string it returns is now passed
+through `abbreviateDesc2` from `backend/src/services/autocount-desc2-abbrev.ts`
+before it leaves. Nothing else about the composer moved.
+
+**What it is for.** AutoCount's `SODTL.Desc2` / `PODTL.Desc2` is
+`nvarchar(100)`, and one over-long value refuses the WHOLE document — not the
+line. Six lines across `HC-SO-007678`, `HC-SO-012312` and `HC-PO-2609-017` were
+over, so three documents could not reach the account book at all.
+
+**Why not the obvious fix.** Shortening what the ERP STORES was built first
+(`backend/scripts/shorten-specials-to-the-book.mjs`), planned against production,
+and abandoned when the plan showed what it touches: the text lives in
+`variants.specials`, and a special is priced BY NAME —
+`findOption(pool, p)` in `backend/src/scm/shared/mfg-pricing.ts`, whose own comment reads
+"Unknown picks contribute 0". Renaming `HB Fully Cover` to `HB FC` unmatches the
+option, its surcharge becomes zero, and `recomputeOneLine` runs when the document
+is next saved. **Shortening the stored text is a PRICE CHANGE on a live sales
+order.** Full trace in `docs/bugs/0770-shortening-the-stored-text-to-fit-autocount-would-have-repri.md`.
+
+**Three properties, and the first is what makes it safe to ship.**
+
+1. A string that already fits is returned UNCHANGED, by identity. Nothing that
+   reaches the book today reaches it differently tomorrow.
+2. The abbreviations are applied IN ORDER and it STOPS the moment it fits, so a
+   line that only needs `Right Drawer` shortened does not also lose `Fully
+   Cover`. The least abbreviation that works is the one that is sent.
+3. It NEVER truncates. A string still over the column after every abbreviation is
+   refused by the caller exactly as it is today. Half a specification is a wrong
+   instruction, not a short one.
+
+**The abbreviations are the OWNER'S, not invented here** — he wrote them on
+2026-09-09 while cutting these lines by hand. Adding one is a decision about what
+the workshop will still recognise, so it belongs to him.
+
+**Every rule names a WHOLE PHRASE somebody picked, and that is the property that
+matters.** A bare `Drawer` -> `Dwr` rule was written and removed the same hour:
+the abbreviations run over the whole string, so it reached into an add-on's PROSE
+as well as a picker's name, and `HC-SO-007678`'s note came out as "one Dwr on the
+left and one Dwr on the right". `backend/src/services/desc2AbbreviatedOnTheWayOut.test.ts` pins
+that, along with the identity case and the never-truncates case.
+
+**What this does NOT fix.** `HC-SO-007678`'s two lines are over because of a
+106-character `extraAddonNote` — free prose on a paid add-on, which no phrase
+rule can shorten. Those two still need the owner or a shorter note. The other
+four fix themselves: `HC-SO-012312` x3 and `HC-PO-2609-017` need the document
+SAVED once, and no repair script at all, because the shortening happens on send.
