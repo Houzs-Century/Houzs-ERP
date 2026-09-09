@@ -1294,6 +1294,43 @@ the State picker's own handler would clear the cascade and wipe that value.
 Full rules, the ambiguity contract and the surfaces that deliberately opt out:
 `docs/modules/address-cascade.md`.
 
+#### Address lines 1 and 2 STOP AT 40 CHARACTERS, and a long paste spills (2026-09-09)
+
+AutoCount's four `InvAddr` columns are 40 characters and it refuses the **whole
+document** when one is over, so an over-long street line kept a sales order out
+of the accounts entirely (`docs/bugs/0728`). The write-back has fitted the
+address on its way out since then; the **input** now stops it being typed in the
+first place, which is where the person filling the form can see it. The owner's
+instruction, 2026-09-09: 「把我们的 address lock成 40 个字」.
+
+**ONE BUNDLE, because the two halves are not separable.** Every sales-order
+address input spreads `{...addressLineProps(setLine, spill)}` from
+`frontend/src/lib/addressLimit.ts`, which is the cap and the paste handler
+together. `maxLength` alone would be a REGRESSION, not
+a lock: a browser truncates an over-long PASTE to fit and the tail is gone, where
+the write-back re-flows the same text across four lines and loses no word. The
+handler breaks the paste at a word boundary and hands the remainder to the next
+line — the other half of the same instruction (拆分成 address 1 和 address 2).
+`spill` is `{ value, set }` for line 1 and `null` for the last line, meaning
+"there is nowhere after me: keep the whole paste and let the write-back re-flow
+it".
+
+**The number lives in two files and is checked as one.** `ADDRESS_LINE_MAX`
+(frontend) is a copy of `AC_ADDRESS_LINE_MAX` (backend, measured on AED_HOUZS);
+the frontend cannot import from the backend, so
+`frontend/scripts/check-address-line-max.mjs` reads both and fails if they
+disagree. It also fails a sales-order address input that does not go through the bundle,
+and it runs in BOTH required jobs — `frontend-checks` for a form edit and
+`backend-typecheck` for a change to the width itself, which a backend-only PR
+would otherwise make without `frontend-checks` ever running.
+
+**Scope is DERIVED, not a hand-list**: a form is in scope when it binds an input
+to an address line and calls the sales-order endpoint. The consignment, delivery
+-order and invoice address forms are deliberately OUT — measured 2026-09-09, the
+write-back composes only from `mfg_sales_orders` (zero consignment references in
+`autocount-outbox.ts`, `autocount-writeback.ts`, `so-edit-header.ts`), so those
+addresses never meet AutoCount's column.
+
 #### On a MIGRATED order the City is DERIVED, and it can be legitimately blank (2026-09-08)
 
 **AutoCount has no city column.** The book's header carries `InvAddr1..4`, and

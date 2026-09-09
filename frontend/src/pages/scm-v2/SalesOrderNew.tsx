@@ -71,6 +71,7 @@ import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRet
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { resolveSelfStaff } from '../../vendor/scm/lib/self-staff';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { addressLineProps } from '../../lib/addressLimit';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { deriveProcessingDate } from '../../lib/processingDate';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
@@ -2101,6 +2102,7 @@ export const SalesOrderNew = () => {
               <input
                 className={`${styles.fieldInput} ${editedClass('address1', address1)}`}
                 value={address1}
+                {...addressLineProps(setAddress1, { value: address2, set: setAddress2 })}
                 onChange={(e) => setAddress1(e.target.value)}
                 placeholder="Unit, street, area"
               />
@@ -2117,6 +2119,7 @@ export const SalesOrderNew = () => {
               <input
                 className={styles.fieldInput}
                 value={address2}
+                {...addressLineProps(setAddress2, null)}
                 onChange={(e) => setAddress2(e.target.value)}
                 placeholder="Apt, floor, building (optional)"
               />
