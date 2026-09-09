@@ -15,9 +15,24 @@
 // AutoCount enqueue per order), so this loops batches and reports progress. A
 // batch that fails stops the run with what has moved so far still reported —
 // half-applied and SAID SO beats half-applied in silence.
+//
+// TWO ACTIONS ON ONE LIST, since 2026-09-09. The owner asked whether the orders
+// could go to SEVERAL people at once — "可以让接手的几位 sales person 都有权限" —
+// and, asked whose name the account book should then carry, ruled 全部平等，
+// 不设主. So the panel offers the two operations separately rather than turning
+// the handover into a multi-select whose first entry silently becomes primary:
+//
+//   Hand them to    → one person, MOVES attribution (salesperson_id + agent +
+//                     the AutoCount edit). What a resignation needs.
+//   Also give access to → any number of people, GRANTS access and nothing else.
+//                     Nobody's name changes and the account book is untouched.
+//
+// Both act on the same previewed list, so the operator can do one, the other, or
+// both — and each button is enabled only by its own field, so neither can fire
+// by accident while the operator was filling in the other.
 // ----------------------------------------------------------------------------
 import { useState } from "react";
-import { ArrowRight, Loader2, UserCog } from "lucide-react";
+import { ArrowRight, Loader2, UserCog, UserPlus, X } from "lucide-react";
 import { Button } from "../../components/Button";
 import { SearchableSelect } from "../../vendor/scm/components/SearchableSelect";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
@@ -40,6 +55,19 @@ type ApplyResult = {
   moved: Array<{ docNo: string }>;
   skipped: Array<{ docNo: string; reason: string }>;
 };
+type ShareResult = {
+  changed: Array<{ docNo: string }>;
+  skipped: Array<{ docNo: string; reason: string }>;
+};
+/* Both runs report the same two lists, so one result box renders either. `verb`
+   is what the operator did, because "12 orders" alone does not say whether they
+   were moved or shared — and those are very different things to have just done
+   to a live order book. */
+type BatchResult = {
+  verb: string;
+  done: Array<{ docNo: string }>;
+  skipped: Array<{ docNo: string; reason: string }>;
+};
 
 const selectCls =
   "h-10 w-full rounded-md border border-border bg-surface px-3 text-[13px] text-ink outline-none focus:border-primary disabled:opacity-60";
@@ -60,10 +88,11 @@ export function SalespersonHandover() {
 
   const [fromId, setFromId] = useState("");
   const [toId, setToId] = useState("");
+  const [shareIds, setShareIds] = useState<string[]>([]);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const [result, setResult] = useState<ApplyResult | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number; action: "move" | "share" } | null>(null);
+  const [result, setResult] = useState<BatchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const nameOf = (id: string) => roster.find((s) => s.id === id)?.name || "—";
@@ -91,7 +120,7 @@ export function SalespersonHandover() {
     const size = preview.batchMax || 25;
     setBusy(true);
     setError(null);
-    setProgress({ done: 0, total: docNos.length });
+    setProgress({ done: 0, total: docNos.length, action: "move" });
     const moved: ApplyResult["moved"] = [];
     const skipped: ApplyResult["skipped"] = [];
     try {
@@ -107,7 +136,7 @@ export function SalespersonHandover() {
         });
         moved.push(...(res.moved ?? []));
         skipped.push(...(res.skipped ?? []));
-        setProgress({ done: Math.min(i + size, docNos.length), total: docNos.length });
+        setProgress({ done: Math.min(i + size, docNos.length), total: docNos.length, action: "move" });
       }
     } catch (e) {
       setError(
@@ -117,11 +146,54 @@ export function SalespersonHandover() {
     } finally {
       setBusy(false);
       setProgress(null);
-      setResult({ moved, skipped });
+      setResult({ verb: "Moved", done: moved, skipped });
       /* The moved orders now belong to someone else, so the preview on screen
          is stale by definition — reload it rather than leave a list that would
          re-submit no-ops. */
       void loadPreviewSilently(fromId);
+    }
+  }
+
+  /* Grant or withdraw ACCESS on the same previewed list. Batched and reported
+     exactly like apply(); deliberately does NOT refresh the preview afterwards,
+     because sharing does not change who the orders are attributed to — the list
+     on screen is still true, and blanking it would suggest something moved. */
+  async function share(mode: "add" | "remove") {
+    if (!preview || shareIds.length === 0) return;
+    const docNos = preview.orders.map((o) => o.docNo);
+    const size = preview.batchMax || 25;
+    setBusy(true);
+    setError(null);
+    setProgress({ done: 0, total: docNos.length, action: "share" });
+    const changed: BatchResult["done"] = [];
+    const skipped: BatchResult["skipped"] = [];
+    try {
+      for (let i = 0; i < docNos.length; i += size) {
+        const batch = docNos.slice(i, i + size);
+        /* Partial for the same reason apply()'s is: this is the wire, and the
+           `?? []` is what stops one odd payload abandoning the batches behind
+           it. */
+        const res = await authedFetch<Partial<ShareResult>>("/so-handover/share", {
+          method: "POST",
+          body: JSON.stringify({ staffIds: shareIds, docNos: batch, mode }),
+        });
+        changed.push(...(res.changed ?? []));
+        skipped.push(...(res.skipped ?? []));
+        setProgress({ done: Math.min(i + size, docNos.length), total: docNos.length, action: "share" });
+      }
+    } catch (e) {
+      setError(
+        `${e instanceof Error ? e.message : "Sharing failed."} `
+        + `${changed.length} of ${docNos.length} order(s) had already been updated.`,
+      );
+    } finally {
+      setBusy(false);
+      setProgress(null);
+      setResult({
+        verb: mode === "remove" ? "Withdrew access on" : "Shared",
+        done: changed,
+        skipped,
+      });
     }
   }
 
@@ -145,10 +217,13 @@ export function SalespersonHandover() {
   return (
     <div className="space-y-4">
       <p className="text-[12px] text-ink-secondary">
-        Moves every listed Sales Order to another salesperson — who can then see and
-        edit them. Delivered and invoiced orders move too; their Delivery Orders and
-        Sales Invoices keep the rep who sold them, so nothing about commission or
-        the account book's figures changes.
+        Two things you can do to every listed Sales Order. <strong>Hand them to</strong>{" "}
+        moves them to one salesperson, who becomes the rep the order and the account
+        book name. <strong>Also give access to</strong> lets any number of salespeople
+        see and edit them without changing whose orders they are — use it when several
+        people share the follow-up. Either way, delivered and invoiced orders are
+        included; their Delivery Orders and Sales Invoices keep the rep who sold them,
+        so nothing about commission or the account book's figures changes.
       </p>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -190,6 +265,50 @@ export function SalespersonHandover() {
         </label>
       </div>
 
+      {/* The picker stays a single SearchableSelect and ADDS to a chip list,
+          rather than a second multi-select control nobody else in this codebase
+          uses. It reads back to "" after each pick so the same control can add
+          the next person. */}
+      <label className="block">
+        <span className="mb-1 block font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">
+          Also give access to
+        </span>
+        <SearchableSelect
+          className={selectCls}
+          ariaLabel="Also give access to"
+          placeholder="— Add a salesperson who should also see these —"
+          disabled={busy || pickableQ.isLoading}
+          value=""
+          onChange={(v) => {
+            if (v) setShareIds((prev) => (prev.includes(v) ? prev : [...prev, v]));
+          }}
+          options={pickable
+            .filter((s) => !shareIds.includes(s.id))
+            .map((s) => ({ value: s.id, label: s.name }))}
+        />
+        {shareIds.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {shareIds.map((id) => (
+              <span
+                key={id}
+                className="inline-flex items-center gap-1 rounded-full border border-border bg-surface py-0.5 pl-2.5 pr-1 text-[11px] text-ink"
+              >
+                {nameOf(id)}
+                <button
+                  type="button"
+                  aria-label={`Remove ${nameOf(id)}`}
+                  disabled={busy}
+                  onClick={() => setShareIds((prev) => prev.filter((x) => x !== id))}
+                  className="rounded-full p-0.5 text-ink-muted hover:bg-bg hover:text-ink disabled:opacity-50"
+                >
+                  <X size={11} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+      </label>
+
       {error && (
         <div className="rounded-md border border-err/30 bg-err/5 px-3 py-2 text-[12px] text-err">
           {error}
@@ -208,16 +327,43 @@ export function SalespersonHandover() {
                 </span>
               )}
             </span>
-            <Button
-              variant="primary"
-              disabled={busy || !toId || preview.orders.length === 0}
-              onClick={() => void apply()}
-              icon={busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} />}
-            >
-              {progress
-                ? `Moving ${progress.done}/${progress.total}…`
-                : `Move to ${toId ? nameOf(toId) : "…"}`}
-            </Button>
+            {/* Each button is gated by its OWN field, so the one the operator
+                has not filled in cannot fire. `progress` carries the action that
+                owns it, so a running handover cannot make the Share button count
+                orders it is not touching. */}
+            <div className="flex flex-wrap items-center gap-2">
+              {shareIds.length > 0 && (
+                <>
+                  <Button
+                    variant="secondary"
+                    disabled={busy || preview.orders.length === 0}
+                    onClick={() => void share("remove")}
+                  >
+                    Withdraw
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    disabled={busy || preview.orders.length === 0}
+                    onClick={() => void share("add")}
+                    icon={busy ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
+                  >
+                    {progress?.action === "share"
+                      ? `Sharing ${progress.done}/${progress.total}…`
+                      : `Share with ${shareIds.length}`}
+                  </Button>
+                </>
+              )}
+              <Button
+                variant="primary"
+                disabled={busy || !toId || preview.orders.length === 0}
+                onClick={() => void apply()}
+                icon={busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} />}
+              >
+                {progress?.action === "move"
+                  ? `Moving ${progress.done}/${progress.total}…`
+                  : `Move to ${toId ? nameOf(toId) : "…"}`}
+              </Button>
+            </div>
           </div>
           <div className="max-h-64 overflow-y-auto">
             {preview.orders.length === 0 ? (
@@ -248,7 +394,7 @@ export function SalespersonHandover() {
         <div className="rounded-md border border-border bg-surface px-3 py-2 text-[12px]">
           <div className="flex items-center gap-1.5 font-semibold text-ink">
             <UserCog size={13} />
-            Moved {result.moved.length} order{result.moved.length === 1 ? "" : "s"}
+            {result.verb} {result.done.length} order{result.done.length === 1 ? "" : "s"}
             {result.skipped.length > 0 && ` · skipped ${result.skipped.length}`}
           </div>
           {result.skipped.length > 0 && (

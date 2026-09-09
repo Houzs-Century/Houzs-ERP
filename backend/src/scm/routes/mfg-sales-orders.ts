@@ -141,7 +141,7 @@ import { hasHouzsPerm, canViewAllSales, isSalesCaller, canViewScmFinance } from 
 import { SESSION_ORIGIN_POS } from '../../services/auth';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import { SO_FINANCE_KEYS, SO_ITEM_FINANCE_KEYS, stripAuditFinance } from '../lib/finance-keys';
-import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
+import { resolveSalesScopeIds, applySoScope, soDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { recordAmendmentRequested, notifyAmendmentsRaised } from '../lib/amendment-raised-effects';
 import {
   resolveVenueBinding,
@@ -680,9 +680,9 @@ async function isPriceOverrideCaller(c: any): Promise<boolean> {
 
 /* Write-side own/downline guard (Audit 2026-07, go-live review #2) — the SO
    READ paths scope a rep to their OWN + reporting-downline orders via
-   salesDocOutOfScope, but the MUTATION routes were a no-op stub (returned
+   soDocOutOfScope, but the MUTATION routes were a no-op stub (returned
    false), so a scoped salesperson could PATCH / delete / repay / reassign ANY
-   SO by enumerable doc_no. This mirrors salesDocOutOfScope exactly: load the
+   SO by enumerable doc_no. This mirrors soDocOutOfScope exactly: load the
    target SO's salesperson_id by doc_no, then defer to the shared scope helper
    (view-all callers — `scm.so.view_all` / director / office via
    canViewAllSales — bypass; everyone else is held to self + full reporting
@@ -717,12 +717,12 @@ async function selfScopedSalesBlocked(c: any, docNo: string): Promise<boolean> {
   if (canViewAllSales(c)) return false; // view-all tier (director / office / *)
   const { data, error } = await sb
     .from('mfg_sales_orders')
-    .select('salesperson_id')
+    .select('salesperson_id, access_staff_ids')
     .eq('doc_no', docNo)
     .maybeSingle();
   if (error || !data) return true; // fail closed - unknown/unreadable doc is out of scope
-  const sp = (data as { salesperson_id?: number | string | null }).salesperson_id;
-  return salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, false, sp);
+  const r = data as { salesperson_id?: number | string | null; access_staff_ids?: string[] | null };
+  return soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, false, { salespersonId: r.salesperson_id, accessStaffIds: r.access_staff_ids });
 }
 
 /* THE venue_id coercion — every writer of mfg_sales_orders.venue_id goes
@@ -1169,7 +1169,7 @@ mfgSalesOrders.get('/', async (c) => {
       .neq('status', 'DRAFT')
       .order('so_date', { ascending: false })
       .limit(500);
-    if (scopeIds) sq = sq.in('salesperson_id', scopeIds);
+    sq = applySoScope(sq, scopeIds);
     sq = scopeToCompany(sq, c); // multi-company: isolate to the active company
     const { data, error } = await sq;
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -1226,7 +1226,7 @@ mfgSalesOrders.get('/', async (c) => {
   if (!paginate) {
     /* --- LEGACY PATH (unchanged) --- */
     let q = sb.from('mfg_sales_orders_with_payment_totals').select(LIST_COLS).order('so_date', { ascending: false }).limit(500);
-    if (scopeIds) q = q.in('salesperson_id', scopeIds);
+    q = applySoScope(q, scopeIds);
     q = scopeToCompany(q, c); // multi-company: isolate to the active company
     const status = effectiveStatusFilter(c.req.query('status'));
     /* A tab may cover more than one status — SHIPPED folds into DELIVERED
@@ -1254,7 +1254,7 @@ mfgSalesOrders.get('/', async (c) => {
     let q = sb.from('mfg_sales_orders_with_payment_totals').select(LIST_COLS, { count: 'exact' }).order(sortCol, { ascending: sortAsc });
     /* unique tiebreaker so range paging can't skip/repeat rows sharing the sort key */
     if (sortCol !== 'doc_no') q = q.order('doc_no', { ascending: sortAsc });
-    if (scopeIds) q = q.in('salesperson_id', scopeIds);
+    q = applySoScope(q, scopeIds);
     q = scopeToCompany(q, c); // multi-company: isolate to the active company
     /* status=OTHER → rows whose status is OUTSIDE the known vocabulary (legacy
        spellings / blanks). It exists so the list's "Other" pill — shown only
@@ -1297,7 +1297,7 @@ mfgSalesOrders.get('/', async (c) => {
        `all`, which is their SUM — served 0 beside a full page of orders. That is
        a 500 now, as on the other five SCM lists (scm/lib/status-counts.ts). */
     const scopedCountQ = (q0: any): any =>
-      scopeToCompany(scopeIds ? q0.in('salesperson_id', scopeIds) : q0, c);
+      scopeToCompany(applySoScope(q0, scopeIds), c);
     /* The held count is its own head-only read because the marker is a COLUMN,
        not a status, so the grouped status aggregate above cannot produce it.
        Same scope + company predicates, no status filter, no search, no paging —
@@ -1344,7 +1344,7 @@ mfgSalesOrders.get('/', async (c) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the shared closure is applied to both the aggregate `.select('...sum()')` builder and the paged builder; the aggregate select defeats supabase-js's column-type inference (same reason as outstanding.ts /summary)
     const applyMoneyFilters = (moneyQ0: any): any => {
       let moneyQ = moneyQ0;
-      if (scopeIds) moneyQ = moneyQ.in('salesperson_id', scopeIds);
+      moneyQ = applySoScope(moneyQ, scopeIds);
       moneyQ = scopeToCompany(moneyQ, c);
       if (status === 'ON_HOLD') moneyQ = moneyQ.or(HELD_OR_TERM);
       else if (status) { const vals = soStatusesForTab(status); moneyQ = status === 'OTHER' ? moneyQ.or(otherStatusOr) : (vals.length === 1 ? moneyQ.eq('status', vals[0]) : moneyQ.in('status', vals)); }
@@ -1944,7 +1944,7 @@ mfgSalesOrders.get('/customers', async (c) => {
       .from('mfg_sales_orders')
       .select('doc_no, status, on_hold, debtor_name, phone, local_total_sen, created_at, so_date, line_count')
       .order('so_date', { ascending: false });
-    if (scopeIds) q = q.in('salesperson_id', scopeIds);
+    q = applySoScope(q, scopeIds);
     q = scopeToCompany(q, c); // multi-company: isolate to the active company
     return q.range(from, to);
   });
@@ -2595,7 +2595,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        LIST route reads that view, so the base-table detail read is the only
        place they are valid. (`proceeded_at` was appended here until 2026-08-18,
        feeding a "Proceed Date" the desktop deleted on 2026-06-05.) */
-    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno`).eq('doc_no', docNo), c).maybeSingle(),
+    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno, collaborator_staff_ids, access_staff_ids`).eq('doc_no', docNo), c).maybeSingle(),
     /* line_no = the persisted listing order (0165); NULLS LAST so pre-0165
        docs fall back to created_at + the rule re-derive below. */
     sb.from('mfg_sales_order_items').select(ITEM).eq('doc_no', docNo)
@@ -2614,8 +2614,8 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     // Same tiering as the list (lib/salesScope.ts): view-all roles pass; POS
     // sellers pass only their own; other reps are held to their subtree. An
     // out-of-scope doc_no answers 404 — indistinguishable from a missing one.
-    const sp = (h.data as { salesperson_id?: number | string | null }).salesperson_id;
-    if (await salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), sp)) {
+    const d = h.data as { salesperson_id?: number | string | null; access_staff_ids?: string[] | null };
+    if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: d.salesperson_id, accessStaffIds: d.access_staff_ids })) {
       return c.json({ error: 'not_found' }, 404);
     }
   }
@@ -2964,7 +2964,7 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
     // Header read is company-scoped + minimal — we only need it to exist,
     // resolve salesperson_id for the same self-scoped-sales gate the detail
     // uses, and carry processing_date for the promotion gate below.
-    scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id, processing_date').eq('doc_no', docNo), c).maybeSingle(),
+    scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id, access_staff_ids, processing_date').eq('doc_no', docNo), c).maybeSingle(),
     // Same ITEM select + line_no ordering as the detail (nulls last → pre-0165
     // fallback to created_at, then the rule re-order below).
     sb.from('mfg_sales_order_items').select(ITEM).eq('doc_no', docNo)
@@ -2977,8 +2977,8 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
      sellers pass only their own; other reps are held to their subtree. An
      out-of-scope doc_no answers 404 — indistinguishable from a missing one. */
   {
-    const sp = (h.data as { salesperson_id?: number | string | null }).salesperson_id;
-    if (await salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), sp)) {
+    const d = h.data as { salesperson_id?: number | string | null; access_staff_ids?: string[] | null };
+    if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: d.salesperson_id, accessStaffIds: d.access_staff_ids })) {
       return c.json({ error: 'not_found' }, 404);
     }
   }
@@ -11568,7 +11568,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId/stock-status', async (c) => {
    row). Owner + IT Admin pass via `*`. ADDITIVELY, any salesperson (isSalesCaller,
    keyed off STABLE ORG FIELDS) may submit an amendment on their OWN locked SO:
    the gate below OR-s in isSalesCaller, and the ownership check further down
-   (salesDocOutOfScope) confines a rep to their own + downline Sales Orders while
+   (soDocOutOfScope) confines a rep to their own + downline Sales Orders while
    view-all roles (directors / office) stay unrestricted. The approve-so /
    approve-po / supplier-confirm gates are UNCHANGED — those remain office-only
    (scm.amendment.approve_so / approve_po). */
@@ -11613,7 +11613,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   // salesperson_id for the ownership scope check below, plus the amendable
   // header columns for the header-change snapshot / date checks.
   const { data: soRow } = await scopeToCompany(sb.from('mfg_sales_orders')
-    .select('doc_no, status, revision, processing_date, salesperson_id, ' +
+    .select('doc_no, status, revision, processing_date, salesperson_id, access_staff_ids, ' +
       'customer_delivery_date, customer_state, postcode')
     .eq('doc_no', docNo), c).maybeSingle();
   if (!soRow) return c.json({ error: 'not_found' }, 404);
@@ -11624,8 +11624,8 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   // their own + downline subtree. An out-of-scope doc_no answers 404 —
   // indistinguishable from a nonexistent one, exactly like the detail route.
   {
-    const sp = (soRow as { salesperson_id?: number | string | null }).salesperson_id;
-    if (await salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), sp)) {
+    const d = soRow as { salesperson_id?: number | string | null; access_staff_ids?: string[] | null };
+    if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: d.salesperson_id, accessStaffIds: d.access_staff_ids })) {
       return c.json({ error: 'not_found' }, 404);
     }
   }
