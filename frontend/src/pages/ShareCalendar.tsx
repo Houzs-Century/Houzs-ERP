@@ -10,7 +10,7 @@
 // mode talks to, never by this file hiding a field:
 //
 //   contractor  tap an event → its UNFILLED floorplan, view + download;
-//               export = Date, Venue, State, Organizer, Brand, Type, Booth, Size
+//               export = Start, End, Venue, State, Organizer, Brand, Type, Booth, Size
 //   brand       tap an event → its DISPLAY floorplan, Size and Total Sales;
 //               Export is a menu: "Event List" = the same columns + Total
 //               Sales, with a Confidential footer naming the brand and the
@@ -172,6 +172,11 @@ function fileKind(f: ShareFile): "image" | "pdf" | "other" {
   if (t.includes("pdf") || /\.pdf$/i.test(f.fileName)) return "pdf";
   if (/\.(png|jpe?g|gif|webp)$/i.test(f.fileName)) return "image";
   return "other";
+}
+
+/** The bare "YYYY-MM-DD" of a stored date, as the ERP's project export writes it. */
+function isoDay(s: string | null): string {
+  return s ? s.slice(0, 10) : "";
 }
 
 /** "16/08/2026" or "16/08/2026 – 18/08/2026". */
@@ -400,12 +405,16 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
       }
       const body = (await res.json()) as ExportBody;
       const XLSX = await import("../lib/xlsx-runtime");
-      const header: string[] = ["Date", "Venue", "State", "Organizer", "Brand", "Type", "Booth", "Size (sqm)"];
+      // Start and End are two columns holding the bare date, exactly as the
+      // ERP's own project export writes them, so a filter on either works in
+      // Excel (owner 2026-09-09: "easy to they filter on excel").
+      const header: string[] = ["Start", "End", "Venue", "State", "Organizer", "Brand", "Type", "Booth", "Size (sqm)"];
       if (mode === "brand") header.push("Total Sales (RM)");
       const aoa: (string | number)[][] = [header];
       for (const r of body.rows) {
         const row: (string | number)[] = [
-          fmtSpan(r.startDate, r.endDate),
+          isoDay(r.startDate),
+          isoDay(r.endDate ?? r.startDate),
           r.venue ?? "",
           r.state ?? "",
           r.organizer ?? "",
