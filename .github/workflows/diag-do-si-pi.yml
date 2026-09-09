@@ -113,6 +113,24 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NODE_OPTIONS: --dns-result-order=ipv4first
 
+      # Four in-scope sales invoices are ABSENT from the ERP (I-000213,
+      # I-2410-0192, I-2411-0275, I-2411-0323) and they are 4 of the 16 this
+      # lane owes. This is the tool that would create them, and its DRY-RUN
+      # names the refusal per source document — which is the answer to "why are
+      # they absent" without guessing at it from the source.
+      #
+      # APPLY is NOT set, so it writes nothing: without APPLY=1 and the confirm
+      # phrase the script plans and prints. Creating an invoice moves no stock
+      # in either direction by construction (PI is AP-only, SI is AR-only), so
+      # this is the one absence on this lane that 「库存先不看」 does not gate.
+      - name: Why the absent invoices were never created (DRY-RUN, writes nothing)
+        if: always()
+        run: npx tsx scripts/create-migrated-invoices.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          KIND: both
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
       - name: Keep the machine-readable verdicts
         if: always()
         uses: actions/upload-artifact@v4
