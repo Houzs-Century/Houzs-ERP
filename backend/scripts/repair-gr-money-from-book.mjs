@@ -281,10 +281,20 @@ for (const p of plan) {
       COALESCE(i.line_total_sen,0) AS line_total_sen
     FROM scm.grn_items i WHERE i.grn_id = ${p.g.id}::uuid ORDER BY i.id`;
   if (!h) { bad.push(`${p.g.grn_number}: the receipt is gone`); continue; }
-  /* Grouped by the book's line, in the same row order the plan grouped them. */
+  /* Grouped by the BOOK's line, in the same row order the plan grouped them.
+     A row's own `linked_ac_dtlkey` is the key where it has one; a row the
+     keyless arm priced has none, and the book row it was FORCED to is on the
+     plan as `bookDtlKey`. Reading the ERP key alone put every keyless row of a
+     receipt into one group under "" and then reported the receipt as unverified
+     while the write was correct — the 0738 shape exactly, and this file already
+     records why an apply that exits non-zero on a correct write is the worse of
+     the two ways round. The lookup below is still the BOOK's, so this verifies
+     against the account book and not against the plan's own arithmetic. */
+  const bookKeyOf = new Map((p.rows ?? []).map((r) => [String(r.item.id), String(r.bookDtlKey ?? "")]));
   const groups = new Map();
   for (const i of items) {
-    const k = String(i.key ?? "").trim();
+    const own = String(i.key ?? "").trim();
+    const k = own || bookKeyOf.get(String(i.id)) || "";
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(i);
   }

@@ -353,7 +353,26 @@ test("the keyless arm never stamps a line key — it writes money and nothing el
   for (const r of got.rows) {
     assert.ok(!Object.hasOwn(r, "acDtlKey"), "a planned row may not carry a key to stamp");
     assert.ok(!Object.hasOwn(r, "dtlKey"), "a planned row may not carry a key to stamp");
+    /* `bookDtlKey` is the BOOK's key, on the PLAN, so the verifier can re-derive
+       from the account book instead of trusting the plan's arithmetic. It is not
+       `linked_ac_dtlkey` and nothing writes it to a line — the writer's SET list
+       is unit_price_sen / discount_sen / line_total_sen only. */
+    assert.equal(typeof r.bookDtlKey, "string");
+    assert.ok(r.bookDtlKey.length > 0, "every planned row names the book row it took its money from");
   }
+});
+
+test("every keyless row names a DIFFERENT book row, so the verifier can group them apart", () => {
+  const got = planReceiptMoney({
+    header: hdr("GR-005363", 470000), items: gr5363Erp(), bookLine, localCurrency: true,
+    keylessMoney: keyless5363(),
+  });
+  const keys = got.rows.map((r) => r.bookDtlKey);
+  assert.equal(new Set(keys).size, keys.length, "two rows sharing one book key would double-count that line");
+  /* And each one is a real row of THIS receipt. Reading the ERP key alone put
+     every keyless row into one group under "" and reported a correct write as
+     unverified (run 34318963216). */
+  for (const k of keys) assert.equal(String(bookLine(k)?.docNo ?? "").trim(), "GR-005363");
 });
 
 test("stock still refuses the keyless arm too: 「库存先不看」 is not bypassed by it", () => {
