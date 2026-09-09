@@ -1040,8 +1040,7 @@ async function runSoStockAllocation(
       const order = orderByDoc.get(docNo);
       if (!order) continue;
       const docLines = lines.filter((l) => l.doc_no === docNo);
-      /* Re-evaluate readiness using the live target status (lines that weren't
-         in needs are already shipped → treat as READY). B2C semantics: an SO
+      /* Re-evaluate readiness using the live target status. B2C semantics: an SO
          is ship-able when every MAIN product line (sofa/bedframe/mattress) is
          READY — accessories pending don't block ship. (This used to say the
          label for that state was "READY (PARTIAL)". It is not, since
@@ -1054,11 +1053,28 @@ async function runSoStockAllocation(
          — isServiceLine's strongest signal, and the pair to the skip at the top
          of that walk: a SERVICE line skipped there but classified as a short
          accessory here would wedge the header exactly as before. */
+      /* SHIPPED LINES ARE MARKED, NOT INFERRED — and the sentence this replaces
+         claimed the opposite of what the code did. It read "lines that weren't
+         in needs are already shipped → treat as READY", but a shipped line is
+         skipped at `remaining <= 0` before `needs` is built, so
+         `targetStatusById` has no entry for it and the `??` fell through to the
+         STALE stored value, which for goods that shipped straight off a
+         purchase order is PENDING. The order then never advanced to
+         READY_TO_SHIP although every line still owing goods was allocated.
+
+         Measured on prod 2026-09-09 (company 1): 60 live orders carry at least
+         one such line, and on 18 of them every still-outstanding line is READY.
+
+         `fulfilled` is the same arithmetic the needs walk uses above, so the
+         two can only ever agree about which lines are finished. */
       const readinessLines = docLines.map((l) => ({
         item_group: l.item_group,
         item_code: l.item_code,
         category: serviceCodes.has(l.item_code) ? 'SERVICE' : null,
         stock_status: targetStatusById.get(l.id) ?? l.stock_status,
+        fulfilled: (Number(l.qty ?? 0)
+          - (deliveredBySoItem.get(l.id) ?? 0)
+          + (returnedBySoItem.get(l.id) ?? 0)) <= 0,
       }));
       const r = summariseReadiness(readinessLines);
       const cur = order.status;
