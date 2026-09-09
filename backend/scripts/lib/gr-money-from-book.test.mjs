@@ -162,3 +162,57 @@ test("GR-005326 x PO-009953: the book's own pair total is RM 1,055.00", () => {
      discount, which is what tells this one apart from the three above. */
   for (const l of lines) assert.equal(Math.round(l.qty * l.unitPriceSen), Math.round(l.subTotalSen));
 });
+
+/* ── ONE SOFA IS ONE BOOK LINE AND N ERP ROWS ───────────────────────────────
+ * The first version of this module gave every row sharing a line key that
+ * line's whole SubTotal. The production plan run 34302355074 printed the
+ * consequence on the first document it reached — `HC-GR-000815 RM 2,867.43 ->
+ * RM 8,602.29`, one sofa's price three times — across 105 receipts and
+ * RM 199,232.36 of money that does not exist in the book. Nothing was written;
+ * the plan is what caught it. This is that document's shape, so the defect
+ * cannot come back quietly.
+ *
+ * The book's OWN figure is the fixture: GR-000815 line 209355 is read out of
+ * the committed cut rather than typed, so if the book changes the test changes
+ * with it. */
+test("three compartment rows of ONE sofa take the book's price ONCE, on the lead", () => {
+  const bl = bookLine("209355");
+  assert.ok(bl, "GR-000815 line 209355 is in the committed cut");
+  assert.equal(Math.round(bl.subTotalSen), 286743, "the book prices that sofa at RM 2,867.43");
+
+  /* Three ERP compartment rows, all carrying that one book line's key — the
+     shape mig 0273/0280 creates and the shape prod actually holds. */
+  const items = ["5527-Console", "5527-1A(LHF)", "5527-1A(RHF)"].map((code, n) => ({
+    id: `row-${n}`, itemCode: code, acDtlKey: "209355",
+    unitPriceSen: 0, discountSen: 0, lineTotalSen: 0,
+  }));
+  const got = planReceiptMoney({
+    header: hdr("GR-000815", 286743), items, bookLine, localCurrency: true,
+  });
+
+  assert.equal(got.wantTotal, 286743,
+    "the DOCUMENT total counts the book LINE once — three times over is RM 8,602.29, which is the bug");
+  assert.equal(got.rows.length, 3, "every row is still planned, so none is left stale");
+  const [lead, ...rest] = got.rows;
+  assert.equal(lead.total, 286743, "the price rides the LEAD piece");
+  assert.equal(lead.unit, Math.round(bl.unitPriceSen));
+  for (const r of rest) {
+    assert.equal(r.total, 0, "every other compartment is zero in both columns");
+    assert.equal(r.unit, 0);
+    assert.equal(r.disc, 0);
+  }
+  assert.equal(got.rows.reduce((s, r) => s + r.total, 0), got.wantTotal,
+    "the lines still sum to the header, which is what the apply's own verify asserts");
+});
+
+test("a receipt whose sofa already carries the book's money on its lead plans nothing", () => {
+  const bl = bookLine("209355");
+  const items = ["5527-Console", "5527-1A(LHF)", "5527-1A(RHF)"].map((code, n) => ({
+    id: `row-${n}`, itemCode: code, acDtlKey: "209355",
+    unitPriceSen: n === 0 ? Math.round(bl.unitPriceSen) : 0,
+    lineTotalSen: n === 0 ? Math.round(bl.subTotalSen) : 0,
+    discountSen: n === 0 ? Math.max(0, Math.round(bl.qty * bl.unitPriceSen) - Math.round(bl.subTotalSen)) : 0,
+  }));
+  const got = planReceiptMoney({ header: hdr("GR-000815", 286743), items, bookLine, localCurrency: true });
+  assert.equal(got.verdict, "agree", got.why);
+});

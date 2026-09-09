@@ -87,6 +87,50 @@ foreign-currency receipt is refused rather than converted, because an exchange
 rate looks exactly like a discount and mistaking one wrote RM 13,068.55 of fake
 discount onto a CNY purchase order (`docs/bugs/0721`).
 
+**AND THE FIRST VERSION OF THIS REPAIR HAD ITS OWN DEFECT, WHICH THE PLAN
+CAUGHT.** A sofa is ONE line in the account book and one ERP row per
+COMPARTMENT, and the module gave every row sharing a line key that line's whole
+`SubTotal`. Plan run
+[34302355074](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34302355074)
+printed it on the first document it reached:
+
+```
+HC-GR-000815 (GR-000815): RM 2867.43 -> RM 8602.29  (RM 5734.86)
+    5527-Console  unit RM 0.00 -> RM 3373.45   line RM 0.00 -> RM 2867.43
+    5527-1A(LHF)  unit RM 0.00 -> RM 3373.45   line RM 0.00 -> RM 2867.43
+...
+money: RM 87595.43 -> RM 286827.79  (RM 199232.36)
+```
+
+One sofa's price three times over, across 105 receipts and **RM 199,232.36 of
+money that does not exist in the book**. Nothing was written — `MODE=plan` is the
+default and the plan is what caught it, which is the whole reason the gate
+exists. The rows are now GROUPED by the book's line key and the figure lands on
+the group's LEAD row with every other row zeroed, which is this repo's own sofa
+convention (`apply-sofa-compartment-corrections.mjs`: *"the lead piece keeps the
+lead row's own unit_price_sen and its own total column verbatim; every other
+piece is 0 in both"*), and the document total is summed over DISTINCT book lines
+rather than over rows. Pinned by two tests built from `GR-000815`'s real book
+line, proved RED against the defect before the fix:
+
+```
+✖ three compartment rows of ONE sofa take the book's price ONCE, on the lead
+  AssertionError: every other compartment is zero in both columns
+    actual: 286743, expected: 0
+✖ a receipt whose sofa already carries the book's money on its lead plans nothing
+  AssertionError: the book prices this receipt and the ERP does not hold that figure
+    actual: 'write'
+```
+
+**What the same plan run also settled.** `HC-GR-005326-PO-009953` is planned
+correctly at `RM 1,000.00 -> RM 1,055.00` — the RM 55.00 the owner said to copy
+without chasing the cause. The other three he ruled on —
+`HC-GR-005363`, `-005367`, `-005368` — are **REFUSED**, every one for the same
+reason: *"2 of 2 line(s) carry no AutoCount line key, so they cannot be paired to
+a book line"*. `backfill-ac-downstream-line-keys.mjs` has to run on those
+receipts before this repair can reach them, and the refusal names it. 29
+receipts are refused that way; 0 are refused for real stock movement.
+
 **The stopgap / root distinction, said plainly.** This repairs the DATA. The
 importer's price precedence is still order-first, so a future re-run of
 `reshape-migrated-grns.mjs` would re-introduce it on any receipt it rewrites.

@@ -10,6 +10,21 @@
  * line carry, and may it be written at all. It opens nothing, reads no file and
  * knows no SQL.
  *
+ * ── ONE BOOK LINE IS ONE SOFA, AND THE ERP HOLDS IT AS N COMPARTMENT ROWS ──
+ * The first version of this module gave EVERY ERP row sharing a book line key
+ * that line's whole SubTotal, and the plan run against production
+ * (34302355074) printed the consequence in one line: `HC-GR-000815
+ * RM 2,867.43 -> RM 8,602.29`, the same sofa's price three times over, across
+ * 105 receipts and RM 199,232.36 of invented money. Nothing was written; the
+ * plan is what caught it.
+ *
+ * So the rows are GROUPED by the book's line key, and the book's figure lands
+ * on the group's LEAD row with every other row set to zero — this repo's own
+ * sofa convention, stated by apply-sofa-compartment-corrections.mjs: "the lead
+ * piece keeps the lead row's own unit_price_sen and its own total column
+ * verbatim; every other piece is 0 in both". The document's total is then the
+ * sum over DISTINCT book lines, never over rows.
+ *
  * ── THE MONEY IS COPIED, NOT COMPUTED ───────────────────────────────────────
  * `SubTotal` becomes `line_total_sen` and `UnitPrice` becomes `unit_price_sen`,
  * both unchanged. `discount_sen` is the gap the BOOK states between them —
@@ -83,16 +98,34 @@ export function planReceiptMoney({ header, items, bookLine, localCurrency }) {
   if (foreign.length)
     return out("foreign-key", `${foreign.length} line key(s) name no line of ${header.acGr}: ${foreign.map((i) => key(i.acDtlKey)).join(", ")}`);
 
-  const rows = paired.map(({ i, bl }) => {
+  /* GROUPED BY THE BOOK'S LINE, IN DOCUMENT ORDER. `paired` preserves the order
+     the caller read the rows in, so the group's LEAD is the first ERP row of
+     that book line — the same row the importer put the money on. */
+  const groups = new Map();
+  for (const pr of paired) {
+    const k = key(pr.i.acDtlKey);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(pr);
+  }
+
+  const rows = [];
+  let wantTotal = 0;
+  for (const [, members] of groups) {
+    const bl = members[0].bl;
     const unit = Math.round(n0(bl.unitPriceSen));
     const total = Math.round(n0(bl.subTotalSen));
     const disc = Math.max(0, Math.round(n0(bl.qty) * unit) - total);
-    return {
-      item: i, unit, total, disc,
-      changed: unit !== n0(i.unitPriceSen) || total !== n0(i.lineTotalSen) || disc !== n0(i.discountSen),
-    };
-  });
-  const wantTotal = rows.reduce((s, r) => s + r.total, 0);
+    /* The document's total counts each BOOK LINE once, never each row. */
+    wantTotal += total;
+    members.forEach(({ i }, n) => {
+      const lead = n === 0;
+      const u = lead ? unit : 0, t = lead ? total : 0, d = lead ? disc : 0;
+      rows.push({
+        item: i, unit: u, total: t, disc: d, lead, siblings: members.length,
+        changed: u !== n0(i.unitPriceSen) || t !== n0(i.lineTotalSen) || d !== n0(i.discountSen),
+      });
+    });
+  }
   const moved = rows.some((r) => r.changed)
     || wantTotal !== n0(header.totalSen)
     || wantTotal !== n0(header.subtotalSen);
