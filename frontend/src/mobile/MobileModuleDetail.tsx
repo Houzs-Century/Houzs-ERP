@@ -16,6 +16,7 @@ import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
+import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { MODULE_CONFIGS } from "./MobileModuleList";
 import { invalidateModuleShared } from "./sharedInvalidate";
@@ -952,6 +953,13 @@ type DocAction = {
   request: { path: string; method: "PATCH" | "POST" | "DELETE"; body?: unknown };
   /** In-app danger confirm before firing (Cancel / Void). */
   confirm?: { title: string; body?: string; confirmLabel: string };
+  /** Ask for a mandatory REASON and send it as `reason` in the body. Used by
+   *  the Purchase Order cancel (owner 2026-09-09:「PO cancelled 不需要审批，只需要
+   *  remark 原因取消」) — the server refuses a PO cancel that carries none, so a
+   *  phone that only confirmed would get a 400 the operator cannot act on.
+   *  Replaces `confirm`: the prompt IS the confirmation, and asking twice for
+   *  one decision is the thing the desktop copy was cut down to avoid. */
+  reasonPrompt?: { title: string; body: string; placeholder: string; confirmLabel: string; minChars: number };
   /** When true, the record no longer exists after this action → navigate back
    *  to the list instead of staying on a now-deleted detail.
    *
@@ -1007,6 +1015,17 @@ function useMayOperateDoc(moduleKey: string): boolean {
 /** Build the valid status actions for a doc from its CURRENT status. Empty when
  *  the doc is terminal, the module has no status route, or the caller may only
  *  view it (`mayOperate` false → the footer renders nothing at all). */
+/** The PO cancel's words. MUST stay the sentence the desktop shows
+ *  (pages/scm-v2/use-po-cancel-action.ts poCancelPrompt): one document, one
+ *  rule, and the buyer reads it on whichever screen is in their hand. */
+const PO_CANCEL_PROMPT = {
+  title: "Cancel this purchase order?",
+  body: "Say why. It is cancelled as soon as you confirm — no approval is needed — and this reason is kept on the PO. Its sales-order lines go back to the picker.",
+  placeholder: "e.g. supplier cannot meet the delivery date",
+  confirmLabel: "Cancel PO",
+  minChars: 5,
+} as const;
+
 function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate: boolean): DocAction[] {
   if (!mayOperate) return [];
   const st = s(header?.status).toUpperCase();
@@ -1072,7 +1091,7 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
       if (st === "RECEIVED") return out;
       if (st === "DRAFT") {
         out.push({ key: "submit", label: "Submit", variant: "solid", request: { path: `/mfg-purchase-orders/${enc}/confirm`, method: "PATCH" } });
-        out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/mfg-purchase-orders/${enc}/cancel`, method: "PATCH" }, confirm: { title: "Cancel this purchase order?", body: "This voids the PO and releases its SO lines back to the picker.", confirmLabel: "Cancel PO" } });
+        out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/mfg-purchase-orders/${enc}/cancel`, method: "PATCH" }, reasonPrompt: PO_CANCEL_PROMPT });
         return out;
       }
       if (st === "CANCELLED") {
@@ -1083,7 +1102,7 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
         return out;
       }
       // SUBMITTED / PARTIALLY_RECEIVED
-      out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/mfg-purchase-orders/${enc}/cancel`, method: "PATCH" }, confirm: { title: "Cancel this purchase order?", body: "This voids the PO and releases its SO lines back to the picker.", confirmLabel: "Cancel PO" } });
+      out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/mfg-purchase-orders/${enc}/cancel`, method: "PATCH" }, reasonPrompt: PO_CANCEL_PROMPT });
       return out;
     }
 
@@ -1288,6 +1307,7 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
   onDeleted?: () => void;
 }) {
   const qc = useQueryClient();
+  const prompt = usePrompt();
   const confirm = useConfirm();
   const notify = useNotify();
   const [error, setError] = useState<string | null>(null);
@@ -1352,8 +1372,23 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
     if (mutation.isPending) return;
     setError(null);
     if (action.confirm && !(await confirm({ title: action.confirm.title, body: action.confirm.body, confirmLabel: action.confirm.confirmLabel, danger: true }))) return;
+    let fired = action;
+    if (action.reasonPrompt) {
+      const p = action.reasonPrompt;
+      const reason = await prompt({
+        title: p.title,
+        body: p.body,
+        placeholder: p.placeholder,
+        confirmLabel: p.confirmLabel,
+        multiline: true,
+        validate: (v: string) => (v.trim().length < p.minChars ? "Say why in a few words — this is what the next person reads." : null),
+      });
+      if (reason == null) return;
+      /* Merged, not replaced: an action can carry both a body and a reason. */
+      fired = { ...action, request: { ...action.request, body: { ...(action.request.body as Record<string, unknown> ?? {}), reason: reason.trim() } } };
+    }
     setRunningKey(action.key);
-    mutation.mutate(action);
+    mutation.mutate(fired);
   };
 
   /* ── THE DELIVERY ORDER'S NEXT STEP, SAID OUT LOUD ───────────────────────

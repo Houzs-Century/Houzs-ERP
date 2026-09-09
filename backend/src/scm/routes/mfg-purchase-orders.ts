@@ -4340,6 +4340,12 @@ export const cancelPurchaseOrderHandler = async (c: any) => {
       fieldChanges: compactChanges([
         ...statusChange(curStatus, 'CANCELLED'),
         fieldChange('totalSen', null, Number(po.total_sen ?? 0)),
+        /* Owner 2026-09-09 — a PO cancel needs no approval but it does need a
+           reason, validated and stashed by cancelApprovalGuard before this
+           handler ran (routes/document-cancel-routes.ts). Recorded here so the
+           History drawer answers WHY beside the status change; the ledger row
+           in scm.document_cancel_requests is the record. */
+        fieldChange('cancelReason', null, c.get('cancelReason') ?? null),
       ]),
     });
   }

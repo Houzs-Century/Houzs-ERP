@@ -7,18 +7,26 @@
 > npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
 > ```
 
-Cancelling a **Sales Order** or a **Purchase Order** is a request with a
-mandatory reason, followed by the document's signatures, before the document's
-own cancel route is allowed to run:
+Cancelling a **Sales Order** or a **Purchase Order** always costs a written
+reason. What that reason then waits for differs per document:
 
-| document | signatures | who (prod appointment, owner 2026-09-08) |
+| document | what the cancel needs | who (prod appointment) |
 |---|---|---|
-| Sales Order | **two** — level 1, then level 2, two different people, neither the requester | level 1 = Sales Director, level 2 = Purchaser |
-| Purchase Order | **one** — not the requester | Purchaser |
+| Sales Order | a request + **two signatures** — level 1, then level 2, two different people, neither the requester | level 1 = Sales Director, level 2 = Purchaser |
+| Purchase Order | **the reason, and nothing else** — no request, no approver, cancelled on the spot | the buyer doing it |
 
 Owner, 2026-09-08: 「SO 和 PO 取消的话需要 approval 2 层 — 已经输入原因」, then the
 same day 「只有 SO 需要 sales director approval, PO 不需要 … PO 只要 Purchaser
-一个审批」 and 「需要先给 sales director 审批才到 purchaser 审批」.
+一个审批」 and 「需要先给 sales director 审批才到 purchaser 审批」. Then on
+**2026-09-09**: 「PO cancelled 不需要审批，只需要 remark 原因取消」 — the Purchase
+Order's one signature is gone; its reason is not.
+
+**The PO is a REASON-ONLY document** (`isReasonOnly` in
+`shared/document-cancel.ts`, `APPROVAL_LEVELS.PO = 0`). The reason rides the
+cancel's own body, the guard refuses the cancel without it, and the cancellation
+is written to the same ledger the Sales Order's approvals use — as an `EXECUTED`
+row with no signatures. Nothing about a PO cancel is optional except who else
+has to agree.
 
 > Read this before touching the cancellation code. If your change alters the
 > surface (an endpoint, a permission, a status, the depth for a document, who
@@ -54,9 +62,9 @@ could not remember a refused request beside the next one.
 |---|---|
 | `doc_type` / `doc_key` | `SO` + `mfg_sales_orders.doc_no`, or `PO` + `purchase_orders.id` — each document's own route key |
 | `doc_number` | what a person calls it (inbox, notices) |
-| `status` | `REQUESTED` → (`L1_APPROVED`, Sales Order only) → `APPROVED` → `EXECUTED`; or `REJECTED` (an approver refused) / `WITHDRAWN` (the requester pulled it back) |
+| `status` | Sales Order: `REQUESTED` → `L1_APPROVED` → `APPROVED` → `EXECUTED`; or `REJECTED` (an approver refused) / `WITHDRAWN` (the requester pulled it back). Purchase Order: `EXECUTED` on arrival — the row is written by the guard AFTER the cancel succeeded, so a PO row is a record, never a queue item |
 | `reason` | the requester's words — `NOT NULL`, 5–1000 chars after whitespace collapse |
-| `requested_by`, `l1_by`, `l2_by`, `rejected_by`, `executed_by` | `public.users.id` of the REAL Houzs caller, each with a `*_name` snapshot beside it. On a Purchase Order the single signature lands in `l1_by` and `l2_by` stays null |
+| `requested_by`, `l1_by`, `l2_by`, `rejected_by`, `executed_by` | `public.users.id` of the REAL Houzs caller, each with a `*_name` snapshot beside it. On a Purchase Order the buyer is both `requested_by` and `executed_by`, and `l1_by` / `l2_by` stay null — nobody signed, and the row must not pretend otherwise |
 | `reject_reason` | the approver's words on a rejection (mandatory) |
 
 **One open request per document** — the partial unique index
@@ -84,7 +92,7 @@ lock (`migratedSoReadonly`), so a migrated order cannot be asked about.
 | POST | `.../cancel-request/approve` | signs whatever level is pending → `{ request, execute }`; `execute` is true after the document's FINAL signature (level 2 on an SO, the only one on a PO) |
 | POST | `.../cancel-request/reject` | `{ reason }` (mandatory) → `REJECTED`; any approver desk of that document, while a signature is pending |
 | POST | `.../cancel-request/withdraw` | → `WITHDRAWN`; the requester (at any open point) or an approver. Silent — nobody is notified |
-| same five | `/mfg-purchase-orders/:id/cancel-request…` | the Purchase Order set |
+| same five | `/mfg-purchase-orders/:id/cancel-request…` | the Purchase Order set. Since 2026-09-09 only the **GET** does anything: raising is refused `409 no_approval_needed` (there is no approval to ask for) and approve / reject / withdraw find nothing signable. The GET is what a screen reads to show WHY a PO was cancelled |
 | GET | `/cancel-requests?scope=open\|all` | the inbox — both documents, this company, newest first. Coarse `scm.access` only: an inbox spanning two areas cannot pick one — so the prefix is listed in `SCM_UNGUARDED_PREFIXES` (`backend/src/scm/lib/scm-areas.ts`), which the write-freeze drift test pins against the mounts |
 
 Every step writes an audit row on the document's own history — the SO's
@@ -99,11 +107,11 @@ the real caller as actor.
 and wakes only when the body says `CANCELLED`; `cancelApprovalGuard('PO')` on
 `PATCH /mfg-purchase-orders/:id/cancel`. Each:
 
-1. passes a **DRAFT** straight through — a draft is discarded, never approved
-   (the SO deletes it; a draft PO committed nothing to anyone);
+1. passes a **DRAFT** straight through on a document that takes signatures — a
+   draft is discarded, never approved (the SO deletes it);
 2. refuses with **403 `cancel_approval_required`** unless the document carries
    an `APPROVED` request (the message says how many of the document's
-   signatures are on it — "0 of 2", or "0 of 1" on a PO);
+   signatures are on it — "0 of 2", "1 of 2");
 3. when the request IS approved and the caller holds one of the document's
    approve keys, sets `cancelExecutionAdmitted` on the context — the area
    guard's `writeBypass` (`cancelExecutionBypass`) honours it, so the approver
@@ -117,6 +125,29 @@ and wakes only when the body says `CANCELLED`; `cancelApprovalGuard('PO')` on
    (downstream lock, version CAS, PWP vouchers, customer credit, AutoCount
    outbox);
 5. on a 2xx, stamps the request `EXECUTED` with `executed_by` / `executed_at`.
+
+**On the Purchase Order the guard is a different shape** (`reasonOnlyCancel`),
+because there is no request to wait for and the reason is the whole rule:
+
+1. reads `{ reason }` off the cancel's own PATCH body and validates it with the
+   SAME `readReason` an SO request uses — 5-1000 characters, whitespace
+   collapsed — refusing **400 `reason_required`** before the handler is reached.
+   A DRAFT is asked too: one rule, whatever the status;
+2. refuses **403 `caller_unknown`** if the Houzs caller cannot be identified —
+   `requested_by` is `NOT NULL`, and naming the wrong person is worse than
+   refusing;
+3. puts the reason on the context (`Variables.cancelReason`) so the cancel
+   handler's own audit row carries it as `cancelReason` beside the status
+   change — the History drawer then answers "why" where the reader already is;
+4. lets the handler run, then writes the `EXECUTED` ledger row **only on a
+   2xx**. A cancel the handler refused (a GRN on the PO, a drop-ship DO already
+   shipped, an already-received order) leaves no row claiming it happened. That
+   write is best-effort: the PO is cancelled by then, and failing the response
+   would tell the operator the opposite of the truth.
+
+Putting the reason in the guard rather than in the four screens is what makes it
+unskippable: the PO read page, the editor, the list row menu and mobile all
+reach the same PATCH, and so does a script.
 
 The two cancel handlers are **not edited** — `mfg-sales-orders.ts` and
 `mfg-purchase-orders.ts` sit on their size ceilings, and a middleware at the
@@ -132,10 +163,14 @@ Three permission keys in `backend/src/services/permissions.ts`, verb `approve`:
 |---|---|
 | `scm.so_cancel.approve_l1` | level 1 on a Sales Order (also reject) |
 | `scm.so_cancel.approve_l2` | level 2 on a Sales Order (also reject) |
-| `scm.po_cancel.approve` | the single signature on a Purchase Order (also reject) |
 
-(`scm.po_cancel.approve_l1` / `_l2` existed for a few hours on 2026-09-08 while
-the PO was still two-level; no shipped role ever held them.)
+**There is no Purchase Order key, and that is the rule rather than an
+omission.** `scm.po_cancel.approve` was removed on 2026-09-09 with the approval
+itself (and `scm.po_cancel.approve_l1` / `_l2` existed for a few hours on
+2026-09-08 while the PO was briefly two-level). `CANCEL_APPROVE_KEY.PO` is `{}`,
+so `approveKeysFor('PO')` is empty and every approve / reject path on a PO row
+fails closed through that one table — including for a `*` holder. A role row
+still carrying the retired key grants nothing, because nothing reads it.
 
 Owner, IT Admin and the Managing Director pass every key via `*`. The rules a
 wildcard does **not** lift (`approvalRefusal` in `shared/document-cancel.ts`):
@@ -167,9 +202,11 @@ needs the area's `edit`. (docs/bugs/0713.)
 delivery `amendmentNotify` uses (`postPersonalNotice`, bell system slice, red
 unread count). Audience per event:
 
+A **Purchase Order notifies nobody at any step** — there is no desk to tell.
+
 | event | told |
 |---|---|
-| raised | holders of the document's first key (`approve_l1` on an SO, `approve` on a PO) |
+| raised | holders of the document's first key (`approve_l1` on an SO) |
 | level 1 signed (SO only) | holders of `scm.so_cancel.approve_l2` |
 | approved (final signature) | the requester |
 | rejected | the requester, with the approver's reason |
@@ -180,14 +217,22 @@ SCM bundle); `cancelRequestNotify.test.ts` asserts they equal the gate's table.
 
 ## 6. The screens
 
-- **Request**: every former Cancel control now raises a request through
-  `frontend/src/pages/scm-v2/use-cancel-request-action.ts` — one prompt, one
-  copy of the words ("nothing is cancelled yet; the approver(s) will read this
-  reason"). Sites: `SalesOrderDetail.tsx`, `SalesOrderDetailV2.tsx`, the SO list
-  right-click (`row-menus.ts` → `MfgSalesOrdersListV2.tsx`),
-  `PurchaseOrderDetail.tsx`, the PO list right-click (`PurchaseOrdersListV2.tsx`),
-  and `frontend/src/mobile/MobileSODetail.tsx`. A **DRAFT Purchase Order** keeps
-  its direct Cancel behind the confirm — the server exempts it too.
+- **Sales Order — request**: every former SO Cancel control raises a request
+  through `frontend/src/pages/scm-v2/use-cancel-request-action.ts` — one prompt,
+  one copy of the words ("nothing is cancelled yet; the approver(s) will read
+  this reason"). Sites: `SalesOrderDetail.tsx`, `SalesOrderDetailV2.tsx`, the SO
+  list right-click (`row-menus.ts` → `MfgSalesOrdersListV2.tsx`) and
+  `frontend/src/mobile/MobileSODetail.tsx`.
+- **Purchase Order — ask why, then cancel**:
+  `frontend/src/pages/scm-v2/use-po-cancel-action.ts` holds the one prompt and
+  the one sentence ("it is cancelled as soon as you confirm — no approval is
+  needed — and this reason is kept on the PO"), used by
+  `PurchaseOrderDetailV2.tsx` (the read page), `PurchaseOrderDetail.tsx` (the
+  editor) and the PO list right-click (`PurchaseOrdersListV2.tsx`). Mobile says
+  the same thing through `MobileModuleDetail.tsx`'s `reasonPrompt` action field
+  (`PO_CANCEL_PROMPT` there is the mirror that must not drift). All four end at
+  the same `PATCH /mfg-purchase-orders/:id/cancel` with `{ reason }`, which is
+  why the server holds the rule.
 - **The card on the document**:
   `frontend/src/vendor/scm/components/CancelRequestPanel.tsx`, above the header
   on both detail pages and the mobile SO detail. Shows the reason, who raised
@@ -196,8 +241,10 @@ SCM bundle); `cancelRequestNotify.test.ts` asserts they equal the gate's table.
   `frontend/src/vendor/scm/lib/document-cancel-queries.ts` mirror the server
   rules, and `APPROVAL_LEVELS` there mirrors the depth; the server's answer is
   the gate). The button says "Approve (level 1)" / "Approve & cancel (level 2)"
-  on a Sales Order and plainly "Approve & cancel" on a Purchase Order
-  (`approveLabel`). **The final approve runs the page's own cancel mutation** —
+  on a Sales Order (`approveLabel`); the Purchase Order has no such card any
+  more — it was removed from `PurchaseOrderDetail.tsx` with the approval, and a
+  PO can no longer have an open request to show. **The final approve runs the
+  page's own cancel mutation** —
   the same one the Cancel button always ran. If that is refused, the request
   stays `APPROVED` and **Cancel now** retries it.
 - **The inbox**: `frontend/src/pages/scm-v2/CancelRequests.tsx` at
@@ -206,11 +253,17 @@ SCM bundle); `cancelRequestNotify.test.ts` asserts they equal the gate's table.
   the route count; sidebar entry Procurement → Cancellation Requests in
   `frontend/src/components/Sidebar.tsx`, shown to holders of any of the three
   keys; tab label in `frontend/src/lib/routeLabels.ts`). Both documents, Open /
-  All, the same actions on the row; double-click opens the document.
+  All, the same actions on the row; double-click opens the document. A PO row
+  is always `EXECUTED` (the record of a cancellation, visible under **All**),
+  so it carries no buttons; a legacy `APPROVED` PO request raised before
+  2026-09-09 can still be finished with **Cancel now**, which sends the row's
+  OWN reason to the cancel.
 
 ## 7. What did NOT change
 
-- The cancel handlers, their guards and their side effects.
+- The cancel handlers, their guards and their side effects. (The PO handler
+  gained ONE line on 2026-09-09: its audit row now carries `cancelReason` from
+  the context.)
 - `PATCH /mfg-purchase-orders/:id/reopen` — a cancelled PO can still be
   reopened; a later cancel needs a fresh request.
 - Draft discard on the SO (`DELETE /mfg-sales-orders/:docNo`).
@@ -219,16 +272,22 @@ SCM bundle); `cancelRequestNotify.test.ts` asserts they equal the gate's table.
 
 ## 8. Tests
 
-- `backend/src/scm/shared/document-cancel.test.ts` — the rules, both depths.
+- `backend/src/scm/shared/document-cancel.test.ts` — the rules, both shapes:
+  the SO's two signatures, and that the PO signs nothing (no key, no level, no
+  request to raise, and `executionRefusal` never holding it up).
 - `backend/src/scm/routes/document-cancel-routes.test.ts` — the routes and the
   guard over the PostgREST fake: request, two signatures by two people on an
-  SO, ONE on a PO, the requester and the double-signer refused, reject /
-  withdraw, the guard refusing 0-of-2 / 1-of-2 / 0-of-1 and stamping
-  `EXECUTED` once, the approver area bypass.
+  SO, the requester and the double-signer refused, reject / withdraw, the guard
+  refusing 0-of-2 / 1-of-2 and stamping `EXECUTED` once, the approver area
+  bypass; and for the PO, that a cancel with no reason (or a 2-character one) is
+  400 and never reaches the handler, that a good one writes the EXECUTED row
+  with the whitespace collapsed and no signatures, that a DRAFT is asked too,
+  and that a cancel the handler REFUSED writes no row.
 - `backend/src/services/cancelRequestNotify.test.ts` — audiences per document,
   and the key-table referee.
 - Frontend: `document-cancel-queries.test.tsx`, `use-cancel-request-action.test.tsx`,
-  `CancelRequestPanel.test.tsx`, `CancelRequests.test.tsx`.
+  `use-po-cancel-action.test.tsx` (the reason is the gate: a dismissed prompt
+  cancels nothing), `CancelRequestPanel.test.tsx`, `CancelRequests.test.tsx`.
 - Staging, 2026-09-08: the whole SO chain and the PO chain driven end to end
   over the API (31 checks) before the depth change; the PO single-signature
   path is pinned by the route suite.
