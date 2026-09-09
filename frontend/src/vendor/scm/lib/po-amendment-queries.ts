@@ -18,6 +18,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { idempotentInit } from '../../../lib/idempotency';
+import { PO_AMENDMENT_APPROVALS_KEY } from '../../../hooks/useAmendmentApprovals';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import type { AmendmentFieldKind } from './amendment-routing';
 
@@ -137,6 +138,14 @@ const invalidatePoAmendmentSideEffects = (
   else qc.invalidateQueries({ queryKey: ['mfg-purchase-order-detail'] });
   /* The PO revisions tab reads po_revisions; an approve snapshots one. */
   qc.invalidateQueries({ queryKey: ['po-revisions'] });
+  /* The sidebar's red count of PO amendments awaiting THIS user's confirmation
+     (hooks/useAmendmentApprovals). Every gate that resolves one passes through
+     here, so the invalidation lives at this one point rather than on each
+     screen: the owner's ask was "审批后就根据目前需要的单号改变", and a screen
+     that forgot to call it would look exactly like the 60s poll being slow. The
+     key is IMPORTED, not respelled — a second copy would drift silently and
+     show as a badge that just never updates. */
+  void qc.invalidateQueries({ queryKey: PO_AMENDMENT_APPROVALS_KEY });
 };
 
 /* ── List ──────────────────────────────────────────────────────────────── */

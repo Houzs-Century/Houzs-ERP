@@ -18,6 +18,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { idempotentInit } from '../../../lib/idempotency';
+import { AMENDMENT_APPROVALS_KEY } from '../../../hooks/useAmendmentApprovals';
 import { invalidateSoLists } from './sales-order-queries';
 import type { SoAmendmentHeaderChanges } from './so-amendment-header';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
@@ -151,6 +152,14 @@ const invalidateAmendmentSideEffects = (
      view reads the SO audit log — refetch it so the new decision shows at once
      (broad key: the gate carries the amendment id, not the SO doc_no here). */
   qc.invalidateQueries({ queryKey: ['mfg-sales-order-audit-log'] });
+  /* The sidebar's red count of amendments awaiting THIS user's signature
+     (hooks/useAmendmentApprovals). Every gate that resolves an amendment passes
+     through here, which is why the invalidation lives at this one point rather
+     than on each approve/reject screen: the owner's ask was "审批后就根据目前
+     需要的单号改变", and a screen that forgot to call it would look exactly like
+     the 60s poll being slow. The key is IMPORTED, not respelled — a second copy
+     of it would drift silently and show as a badge that just never updates. */
+  void qc.invalidateQueries({ queryKey: AMENDMENT_APPROVALS_KEY });
 };
 
 /* ── List ──────────────────────────────────────────────────────────────── */
