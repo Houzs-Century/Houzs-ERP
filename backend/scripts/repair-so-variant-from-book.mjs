@@ -51,7 +51,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { buildFabricColourIndex } from "./lib/fabric-colour-match.mjs";
-import { mergeVariantPatch, OWNED_SOFA_KEYS } from "./lib/variant-merge.mjs";
+import { mergeVariantPatch, OWNED_BOOK_CORRECTION_KEYS } from "./lib/variant-merge.mjs";
 import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const DST = process.env.DATABASE_URL;
@@ -211,7 +211,7 @@ async function main() {
   let written = 0, rowsWritten = 0;
   for (const w of writable) {
     let n = 0;
-    for (const r of w.rows) n += await mergeVariantPatch(sql, { table: w.table, id: r.id, patch: w.patch, owned: OWNED_SOFA_KEYS });
+    for (const r of w.rows) n += await mergeVariantPatch(sql, { table: w.table, id: r.id, patch: w.patch, owned: OWNED_BOOK_CORRECTION_KEYS });
     if (n !== w.rows.length) { plain(`  !! ${w.e.ac_doc}: merged ${n} of ${w.rows.length} piece(s) — a row vanished or its variants is not an object`); }
     if (n) { written++; rowsWritten += n; }
   }

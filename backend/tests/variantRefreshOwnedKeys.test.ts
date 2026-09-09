@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it, test } from 'vitest';
 // @ts-expect-error - plain .mjs, shared by both refresh sweeps
 import {
   OWNED_VARIANT_KEYS,
@@ -6,6 +6,8 @@ import {
   assertOnlyOwnedKeys,
   buildBedframeVariantPatch,
   buildSizeOnlyVariantPatch,
+  OWNED_SOFA_KEYS,
+  OWNED_BOOK_CORRECTION_KEYS,
 } from '../scripts/lib/variant-merge.mjs';
 import mergeLibSource from '../scripts/lib/variant-merge.mjs?raw';
 import soRefreshSource from '../scripts/refresh-so-variants.mjs?raw';
@@ -235,5 +237,36 @@ describe('variant refresh: the WRITE is a merge, in the source', () => {
     for (const [name, src] of [sources[1], sources[2]])
       expect(`${name} writes custom_specials: ${/custom_specials\s*=/.test(src)}`)
         .toBe(`${name} writes custom_specials: false`);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * OWNED_BOOK_CORRECTION_KEYS — the reviewed-list writer, not a sweep.
+ *
+ * `repair-so-variant-from-book.mjs` may own a key the refresh sweeps must not,
+ * because it writes a HUMAN-REVIEWED list guarded by `erp_now`, while a sweep
+ * recomputes from Desc2 and overwrites every owned key on every run. Keeping
+ * them as two lists is the point; merging them would silently arm the sweeps.
+ * ------------------------------------------------------------------------ */
+describe('OWNED_BOOK_CORRECTION_KEYS', () => {
+  it('owns the leg, which the sofa SWEEP list deliberately does not', () => {
+    expect(OWNED_BOOK_CORRECTION_KEYS).toContain('legHeight');
+    expect(OWNED_SOFA_KEYS).not.toContain('legHeight');
+  });
+
+  it('is the sofa sweep list plus the leg, and nothing else', () => {
+    expect([...OWNED_BOOK_CORRECTION_KEYS].sort())
+      .toEqual([...OWNED_SOFA_KEYS, 'legHeight'].sort());
+  });
+
+  it('never carries a bedframe-only axis — a sofa has no divan and no gap', () => {
+    for (const k of ['divanHeight', 'gap', 'totalHeight']) {
+      expect(OWNED_BOOK_CORRECTION_KEYS).not.toContain(k);
+    }
+  });
+
+  it('never carries specials, which are money and belong to their own backfill', () => {
+    expect(OWNED_BOOK_CORRECTION_KEYS).not.toContain('specials');
+    expect(OWNED_BOOK_CORRECTION_KEYS).not.toContain('special');
   });
 });
