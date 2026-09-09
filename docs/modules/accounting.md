@@ -1093,6 +1093,32 @@ month, not a journal entry posted into those dates from elsewhere. Contracts:
 `backend/src/acc/bank-lock.test.ts` (an unfinished month refuses even with a
 reason; each unclean month refuses without one and closes with one).
 
+**"This movement is already in the books" (2026-09-09; owner, on a RM 3,000
+transfer sitting beside the RM 3,000 receipt that posted it: the only button was
+"Not ours to reconcile", which is not true).** `POST /bank/lines/:id/match` has
+existed since layer 4 shipped and had NO user interface, so everything on a
+statement that is not card money — a customer's transfer, a bank charge, a
+deposit — had no correct action. `entryCandidatesFor`
+(`backend/src/acc/bank-match.ts`) now ranks the posted entries a movement could
+be, and both `/bank/statements/:id` and `/bank/months/...` return them per line
+as `entryCandidates` (open lines only). Deliberately narrow, because the
+operator is agreeing that two records are ONE FACT: the amount must agree **to
+the sen and in the same direction** (a tolerance would let RM 3,000.00 reconcile
+against RM 3,000.50 and lose the fifty sen for ever), the entry must be within
+`ENTRY_MATCH_WINDOW_DAYS` (7 — a cheque banked on Friday clears on Monday), and
+an entry another movement already claims is not offered at all rather than
+refused after choosing. Ranked closest-day first with a deterministic tie-break;
+**proposed, never auto-applied**. The row shows the entry number, its date, how
+many days apart it is, and the document behind it; nothing is pre-selected and
+the button will not fire until a choice is made.
+
+**Where a reconciliation is "saved" (same day, same question: 我也没有看到哪里可
+以save 这个recon).** There is no Save because there is no draft — every decision
+writes when pressed, and the reconciliation is recomputed from the ledger on
+every read (§2.3, no caches). What records one is **closing its month** (above).
+The file view now says both, and names the month its own dates fall in, because
+the difference between finding that and hunting for it is one sentence.
+
 On both reconciliation screens, working a statement REPLACES the list rather than stacking under it —
 the owner on the version that stacked: 就感觉很多东西挤在一页. Each page links to
 the other where the work hands over. What they share is presentation only

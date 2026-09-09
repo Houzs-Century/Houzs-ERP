@@ -24,6 +24,7 @@ import type { Env, Variables } from '../env';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { assembleMonth, monthOf, monthWindow, type MonthStatement } from '../../acc/bank-month';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
+import { entryCandidatesFor } from '../../acc/bank-match';
 import { loadPayableBatches, loadAccountLedger, loadLiveMonthLock } from '../../acc/bank';
 import { bankGuard } from './accounting-bank';
 
@@ -402,6 +403,16 @@ export const bankMonthDetail = bankGuard(async (c) => {
            batch paid since the upload must not still be offered. */
         candidates: String(l.kind).startsWith('PAYOUT')
           ? batches.batches.filter((b) => b.acquirerCode === acquirer)
+          : [],
+        /* And which LEDGER ENTRY it could be — the answer for everything on a
+           statement that is not card money, which is most of it. Same ranking
+           as the single-file view, from the same function. */
+        entryCandidates: String(l.state) === 'OPEN'
+          ? entryCandidatesFor(
+            { bookedOn: dayOf(l.booked_on) ?? '', amountSen: Number(l.amount_sen ?? 0) },
+            ledger.movements,
+            claimed as ReadonlySet<string>,
+          )
           : [],
       };
     }),

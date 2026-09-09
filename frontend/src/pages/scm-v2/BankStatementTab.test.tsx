@@ -18,6 +18,7 @@ import { describe, expect, test, vi } from 'vitest';
 import type { BankLine, Reconciliation } from './bank-queries';
 
 const bookMutate = vi.fn();
+const matchMutate = vi.fn();
 const ignoreMutate = vi.fn();
 
 const LINE: BankLine = {
@@ -25,7 +26,7 @@ const LINE: BankLine = {
   description: 'CR/CARD SALES MN 32409997 DATED 14082026', reference: '99970814',
   amount_sen: 227700, charge_sen: 0, kind: 'PAYOUT',
   acquirer_code: 'MBB', trading_date: '2026-08-14', merchant_no: '32409997',
-  matched_batch_id: 7, split: null, state: 'OPEN', posted_je_no: null, note: null, matches: [],
+  matched_batch_id: 7, split: null, state: 'OPEN', posted_je_no: null, note: null, matches: [], entryCandidates: [],
   candidates: [
     { id: 3, acquirerCode: 'MBB', fileName: 'other.csv', periodFrom: '2026-08-01', periodTo: '2026-08-01', payableSen: 374304, outstandingSen: 374304 },
     { id: 7, acquirerCode: 'MBB', fileName: 'mbb-credit.csv', periodFrom: '2026-08-14', periodTo: '2026-08-14', payableSen: 227700, outstandingSen: 227700 },
@@ -75,7 +76,7 @@ vi.mock('./bank-queries', () => ({
   }),
   useUploadBankStatement: () => ({ mutate: vi.fn(), isPending: false }),
   useBookBankReceipt: () => ({ mutate: bookMutate, isPending: false, isError: false, error: null }),
-  useMatchBankLine: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
+  useMatchBankLine: () => ({ mutate: matchMutate, isPending: false, isError: false, error: null }),
   useIgnoreBankLine: () => ({ mutate: ignoreMutate, isPending: false, isError: false, error: null }),
   useUndoBankLine: () => ({ mutate: vi.fn(), isPending: false }),
 }));
@@ -268,6 +269,136 @@ describe('what is in the books and not on the statement', () => {
     fireEvent.click(screen.getByText('Reconcile'));
     /* With none, the section stays off the screen rather than showing a zero. */
     expect(screen.queryByText(/In the books, not on this statement/)).toBeNull();
+    lines = [LINE, SPLIT, OTHER];
+  });
+});
+
+/* ── "THIS MOVEMENT IS ALREADY IN THE BOOKS" ──────────────────────────────────
+   Owner, 2026-09-09, looking at a RM 3,000 transfer with the RM 3,000 receipt
+   that posted it sitting one section below: the only button on the row was
+   "Not ours to reconcile", which is not true. It IS ours; it is already booked.
+
+   What is pinned here is the shape of the choice, because the operator is
+   agreeing that two records are ONE FACT: nothing is pre-selected for him, the
+   entry is named well enough to recognise (number, date, and the document
+   behind it), and the button cannot fire until he has actually chosen. Which
+   entries are offered at all is the server's decision and is pinned in
+   backend/src/acc/bank-entry-match.test.ts. */
+
+const IN_BOOKS: BankLine = {
+  ...OTHER, id: 4, line_no: 4, amount_sen: 300000,
+  description: 'DEPO OPEN HLBB BANK HPV-2602-028 HOUZS CENTURY SDN. BHD.',
+  reference: 'Fund Transfer at DIO',
+  entryCandidates: [
+    {
+      jeNo: '2990-JE-2602-0002', entryDate: '2026-02-07',
+      sourceType: 'RCT', sourceDocNo: '2990-OR-2609-001',
+      debitSen: 300000, creditSen: 0, amountSen: 300000, daysApart: 0,
+    },
+    {
+      jeNo: '2990-JE-2602-0011', entryDate: '2026-02-09',
+      sourceType: 'PV', sourceDocNo: '2990-HPV-2602-028',
+      debitSen: 300000, creditSen: 0, amountSen: 300000, daysApart: 2,
+    },
+  ],
+};
+
+describe('a movement that is already in the books', () => {
+  const openWith = (l: BankLine) => {
+    lines = [l];
+    openStatement();
+  };
+
+  test('offers the entries it could be, named by number, date and document', () => {
+    openWith(IN_BOOKS);
+    expect(screen.getByText('2990-JE-2602-0002')).toBeTruthy();
+    expect(screen.getByText(/RCT · 2990-OR-2609-001/)).toBeTruthy();
+    expect(screen.getByText('This is that entry')).toBeTruthy();
+    lines = [LINE, SPLIT, OTHER];
+  });
+
+  /* An entry a few days off is offered — a cheque banked on Friday clears on
+     Monday — but the distance is SHOWN, because that is the thing the operator
+     has to weigh. */
+  test('says how far off a candidate is, and says nothing when it is the same day', () => {
+    openWith(IN_BOOKS);
+    expect(screen.getByText(/2d apart/)).toBeTruthy();
+    expect(screen.queryByText(/0d apart/)).toBeNull();
+    lines = [LINE, SPLIT, OTHER];
+  });
+
+  /* THE ONE THAT MATTERS. Two records being one fact is a judgement; a
+     pre-ticked answer would make it for him. */
+  test('pre-selects nothing, and will not fire until he chooses', () => {
+    openWith(IN_BOOKS);
+    const go = screen.getByText('This is that entry').closest('button')!;
+    expect(go.disabled).toBe(true);
+
+    fireEvent.click(screen.getByLabelText('Entry 2990-JE-2602-0002 for line 4'));
+    expect(screen.getByText('This is that entry').closest('button')!.disabled).toBe(false);
+    lines = [LINE, SPLIT, OTHER];
+  });
+
+  test('sends the entry he chose, not the first one offered', () => {
+    matchMutate.mockClear();
+    openWith(IN_BOOKS);
+    fireEvent.click(screen.getByLabelText('Entry 2990-JE-2602-0011 for line 4'));
+    fireEvent.click(screen.getByText('This is that entry'));
+    expect(matchMutate).toHaveBeenCalledWith({ lineId: 4, jeNo: '2990-JE-2602-0011' });
+    lines = [LINE, SPLIT, OTHER];
+  });
+
+  /* Leaving it out stays available — some movements really are none of our
+     business — but it is no longer the only thing on offer. */
+  test('still offers to leave it out', () => {
+    openWith(IN_BOOKS);
+    expect(screen.getByText('Not ours to reconcile')).toBeTruthy();
+    lines = [LINE, SPLIT, OTHER];
+  });
+
+  test('a movement the books hold nothing like gets no such list', () => {
+    openWith({ ...IN_BOOKS, id: 5, line_no: 5, entryCandidates: [] });
+    expect(screen.queryByText('This is that entry')).toBeNull();
+    expect(screen.getByText('Not ours to reconcile')).toBeTruthy();
+    lines = [LINE, SPLIT, OTHER];
+  });
+});
+
+/* ── WHERE THE RECONCILIATION IS SAVED ────────────────────────────────────────
+   Owner, 2026-09-09: 我也没有看到哪里可以save 这个recon. There is no Save because
+   there is no draft — so the screen has to say that, and then point at the
+   thing he is actually looking for, which is closing the MONTH. */
+
+describe('where a reconciliation is saved', () => {
+  test('says there is nothing to save, because each decision writes itself', () => {
+    openStatement();
+    expect(screen.getByText(/Nothing here needs saving/)).toBeTruthy();
+  });
+
+  test('points at closing the month while there is still work', () => {
+    openStatement();
+    expect(screen.getByText(/recorded/)).toBeTruthy();
+    expect(screen.getByText(/By month/)).toBeTruthy();
+  });
+
+  /* When the file is finished, name the month by number so the person is not
+     translating a date range in his head. */
+  /* Spoken only over movements that were READ and counted. A failed read hands
+     back an empty list, which is indistinguishable from a finished statement —
+     so an absence must never be reported as completion. */
+  test('says nothing about being finished when no movement came back', () => {
+    lines = [];
+    openStatement();
+    expect(screen.queryByText(/movements read on this file are decided/)).toBeNull();
+    expect(screen.getByText(/Nothing here needs saving/)).toBeTruthy();
+    lines = [LINE, SPLIT, OTHER];
+  });
+
+  test('names the month once every movement is decided', () => {
+    lines = [{ ...OTHER, state: 'IGNORED', note: 'own transfer' }];
+    openStatement();
+    expect(screen.getByText(/movements read on this file are decided/)).toBeTruthy();
+    expect(screen.getByText(/08\/2026/)).toBeTruthy();
     lines = [LINE, SPLIT, OTHER];
   });
 });

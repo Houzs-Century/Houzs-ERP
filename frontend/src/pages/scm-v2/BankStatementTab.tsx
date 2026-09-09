@@ -23,10 +23,10 @@
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
-import { AlertTriangle, ArrowLeft, CheckCheck, Landmark, Undo2, Upload } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, CheckCheck, Landmark, Link2, Undo2, Upload } from 'lucide-react';
 import {
   useBankSetup, useBankStatements, useBankStatement, useUploadBankStatement,
-  useBookBankReceipt, useIgnoreBankLine, useUndoBankLine,
+  useBookBankReceipt, useMatchBankLine, useIgnoreBankLine, useUndoBankLine,
   type BankLine, type BankStatement, type Reconciliation,
 } from './bank-queries';
 import { ICON, fmt, btn, softText, danger, good, panel, refusalText } from './settlement-ui';
@@ -227,6 +227,7 @@ const StatementView = ({ id, onBack }: { id: number; onBack: () => void }) => {
 
       {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Reading the statement…</div>}
       {q.data && <ReconciliationPanel r={q.data.reconciliation} />}
+      {statement && <WhereItIsSaved statement={statement} openCount={open.length} lineCount={lines.length} />}
 
       {open.length > 0 && (
         <section className="space-y-2">
@@ -293,6 +294,60 @@ const StatementView = ({ id, onBack }: { id: number; onBack: () => void }) => {
         </section>
       )}
     </section>
+  );
+};
+
+/* ── Where a reconciliation is saved ──────────────────────────────────────────
+   Owner, 2026-09-09: 我也没有看到哪里可以save 这个recon.
+
+   There is no Save because there is no draft: every decision on this screen
+   writes when it is pressed, and the reconciliation itself is recomputed from
+   the ledger each time it is asked for, never stored. A Save button would have
+   nothing to do, and the honest answer to a person looking for one is to say
+   that and then point at the thing he is actually looking for.
+
+   Which is CLOSING THE MONTH. A file is not the unit a reconciliation is
+   recorded at — the month is (a bank can export a file a day), so the screen
+   that records and locks one is the month view. Saying so here, on the file, is
+   the difference between a person finding that and a person hunting for it. */
+
+const WhereItIsSaved = ({ statement, openCount, lineCount }: {
+  statement: BankStatement;
+  openCount: number;
+  /** How many movements were actually READ. A failed read gives an empty list,
+     which is indistinguishable from a finished statement — so the completion
+     sentence below is spoken over counted rows, never over an absence. */
+  lineCount: number;
+}) => {
+  /* The month this file's own dates put it in. Where it straddles a month end
+     both are named, because closing one of them does not close the other. */
+  const months = [...new Set(
+    [statement.period_from, statement.period_to]
+      .filter((d): d is string => typeof d === 'string' && d.length >= 7)
+      .map((d) => `${d.slice(5, 7)}/${d.slice(0, 4)}`),
+  )];
+  const which = months.length === 0 ? null : months.join(' and ');
+
+  return (
+    <div style={{ ...softText, display: 'grid', gap: 2 }}>
+      <span>
+        Nothing here needs saving — every decision is written the moment you press it, and the
+        reconciliation above is recomputed from the ledger each time it is read.
+      </span>
+      <span>
+        {/* The completion half is spoken ONLY over movements that were read and
+            counted. A failed read hands back an empty list, which is
+            indistinguishable from a finished statement — so lineCount === 0
+            falls to the neutral sentence rather than claiming the work is
+            done. */}
+        {openCount > 0 || lineCount === 0
+          ? <>A reconciliation is <b>recorded</b> by closing its month, on the <b>By month</b> tab.</>
+          : <>
+              {lineCount} of {lineCount} movements read on this file are decided. A reconciliation is{' '}
+              <b>recorded</b> by closing its month{which ? <> — open <b>By month</b> and close {which}</> : null}.
+            </>}
+      </span>
+    </div>
   );
 };
 
@@ -381,6 +436,7 @@ const KIND_LABEL: Record<BankLine['kind'], string> = {
 
 export const OpenLine = ({ line }: { line: BankLine }) => {
   const book = useBookBankReceipt();
+  const match = useMatchBankLine();
   const ignore = useIgnoreBankLine();
   /* Seeded from what the MATCHER decided, never from "the first candidate" —
      the two are different answers, and the wrong one books money against the
@@ -411,7 +467,13 @@ export const OpenLine = ({ line }: { line: BankLine }) => {
   const shortSen = line.amount_sen - allocatedSen;
   const [note, setNote] = useState('');
   const [asking, setAsking] = useState(false);
-  const failed = book.isError ? book.error : ignore.isError ? ignore.error : null;
+  /* Which ledger entry the operator says this movement is. Nothing is
+     pre-selected: he is agreeing that two records are one fact, and a
+     pre-ticked answer to that is a decision made for him. */
+  const [entry, setEntry] = useState<string | null>(null);
+  const failed = book.isError ? book.error
+    : match.isError ? match.error
+      : ignore.isError ? ignore.error : null;
 
   return (
     <tr>
@@ -489,6 +551,42 @@ export const OpenLine = ({ line }: { line: BankLine }) => {
             </button>
           </div>
         )}
+        {/* THIS MOVEMENT IS ALREADY IN THE BOOKS.
+            Owner, 2026-09-09, on a RM 3,000 transfer sitting beside the RM 3,000
+            receipt that posted it: the only button was "Not ours to reconcile",
+            which is not true — it IS ours, it is simply already booked. Saying
+            which entry it is has always been possible on the server and never
+            had a way to choose.
+
+            Offered for the whole statement, not only the parts that are not card
+            money: a payout the matcher could not place may still have been
+            booked by hand, and refusing to show the entry because of what the
+            movement LOOKS like would be the screen second-guessing the person
+            holding the statement. */}
+        {line.entryCandidates.length > 0 && !asking && (
+          <div style={{ display: 'grid', gap: 4, marginTop: 4 }}>
+            {line.entryCandidates.map((e) => (
+              <label key={e.jeNo} style={{ display: 'flex', gap: 6, alignItems: 'baseline', fontSize: 'var(--fs-12)' }}>
+                <input type="radio" name={`entry-${line.id}`} checked={entry === e.jeNo}
+                  onChange={() => setEntry(e.jeNo)}
+                  aria-label={`Entry ${e.jeNo} for line ${line.line_no}`} />
+                <span>
+                  <b>{e.jeNo}</b> · {e.entryDate}
+                  {e.daysApart > 0 && <span className={grid.sub}> ({e.daysApart}d apart)</span>}
+                  {(e.sourceType ?? e.sourceDocNo) && (
+                    <div className={grid.sub}>{[e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ')}</div>
+                  )}
+                </span>
+              </label>
+            ))}
+            <button type="button" style={btn(true, entry === null || match.isPending)}
+              disabled={entry === null || match.isPending}
+              onClick={() => { if (entry) match.mutate({ lineId: line.id, jeNo: entry }); }}>
+              <Link2 {...ICON} /> {match.isPending ? 'Matching…' : 'This is that entry'}
+            </button>
+          </div>
+        )}
+
         {!asking && (
           <button type="button" style={{ ...btn(), marginTop: 4, padding: '2px 8px' }} onClick={() => setAsking(true)}>
             Not ours to reconcile
