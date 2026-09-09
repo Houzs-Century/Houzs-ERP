@@ -765,3 +765,90 @@ describe('maintenance — the clearing account per merchant', () => {
     expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ transit_account_code: '326-0000' });
   });
 });
+
+/* ── WHAT THE OWNER SAW ON 2026-09-09 ────────────────────────────────────────
+   Nine PBB lines stood MATCHED, each carrying the clue "Reference 034766
+   matches 2990-SO-2606-046", and every one of them ALSO said "No payment in the
+   ERP explains this money". Pressing "Confirm all 9 matched" posted nothing.
+
+   Three separate faults produced that one screen, and each gets a test here:
+     • the detail read `candidates`/`suggested`, which matchStatement empties on
+       purpose for a ref match — the payment lives in `matched`;
+     • the link insert was skipped in silence when the rows insert returned no
+       ids, leaving nine MATCHED lines and zero links;
+     • a payment carrying the exact reference was never LOADED when it fell
+       outside the date window, so four other lines read "No payment recorded
+       near …" with the payment sitting in the ERP. */
+
+describe('a reference-matched line always arrives carrying its payment', () => {
+  test('the detail offers the matched payment, pre-ticked, even with no link stored', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+
+    /* Reproduce the prod state exactly: the line stands MATCHED and its link
+       row is gone. Before the fix this rendered "No payment in the ERP explains
+       this money" under a clue naming the sale. */
+    sb.tables.acc_settlement_matches = [];
+
+    const body = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as {
+      rows: Array<{ bucket: string; clue: string | null; candidates: Array<{ id: string }>; suggested: Array<{ id: string }>; linked: unknown[] }>;
+    };
+    const matched = body.rows.find((r) => r.bucket === 'MATCHED')!;
+    expect(matched.linked).toHaveLength(0);
+    expect(matched.candidates.map((p) => p.id)).toEqual(['p1']);
+    expect(matched.suggested.map((p) => p.id)).toEqual(['p1']);
+    /* The two sentences can no longer contradict each other. */
+    expect(matched.clue).toMatch(/Reference A1 matches SO-2608-001/);
+  });
+});
+
+describe('the link insert cannot fail in silence', () => {
+  /* On prod the rows insert reported no error and returned no ids, so every
+     link hit its `continue` and nine MATCHED lines kept zero links. A count
+     that cannot be reconciled to the decisions is the only thing that says so. */
+  test('an upload whose lines report no ids is refused, and keeps nothing', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const realFrom = sb.from.bind(sb);
+    sb.from = ((table: string) => {
+      const q = realFrom(table);
+      if (table !== 'acc_settlement_rows') return q;
+      const realInsert = q.insert.bind(q);
+      /* The shape of the failure: the write happens, the representation does
+         not come back. */
+      q.insert = (rows: unknown) => {
+        const ins = realInsert(rows);
+        ins.select = () => Promise.resolve({ data: [], error: null });
+        return ins;
+      };
+      return q;
+    }) as typeof sb.from;
+
+    const res = await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as Row;
+    expect(String(body.message)).toMatch(/could not be linked/);
+    /* Nothing kept: the batch is cleaned up so the file can come in again. */
+    expect(sb.tables.acc_settlement_batches).toHaveLength(0);
+  });
+});
+
+describe('an exact reference is not hidden by the date window', () => {
+  /* The owner's four PBB lines: same reference, same amount, keyed eleven days
+     late because the sale was written up late. MBB's tolerance here is 3. */
+  test('a payment keyed long after the swipe is found and offered', async () => {
+    const { app } = harness({
+      mfg_sales_order_payments: [soPayment({ paid_at: '2026-08-12T10:00:00' })],
+    });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    const body = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as {
+      rows: Array<{ ref: string | null; bucket: string; clue: string | null; suggested: Array<{ id: string }> }>;
+    };
+    const line = body.rows.find((r) => r.ref === 'A1')!;
+    /* Offered, not taken — a reference across eleven days is also the shape of
+       a mis-keyed code, and this is the path that books money. */
+    expect(line.bucket).toBe('NEEDS_CONFIRM');
+    expect(line.suggested.map((p) => p.id)).toEqual(['p1']);
+    expect(line.clue).toMatch(/outside the 3-day window/);
+    expect(line.clue).not.toMatch(/No payment recorded/);
+  });
+});
