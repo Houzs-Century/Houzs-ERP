@@ -122,6 +122,23 @@ export const pickAxis = (variants, keys) => {
 export const inches = (v) => {
   const s = txt(v);
   if (!s) return null;
+  /* ── THE ERP'S OWN WORD FOR ZERO LEGS ────────────────────────────────────
+     "No Leg" is not a typo to tolerate. It is a first-class choice on the
+     bedframe form, stored as that literal string: src/scm/shared/variant-summary
+     matches /^NO\s*LEG$/ when it composes the Desc2, and normalizeInchValue
+     returns it unchanged. Our write-back then sends AutoCount `NO LEG`, which
+     parseBedframe reads back as 0 — so the two systems agreed and only this
+     reader could not see it, reporting ERP_BLANK on a line that matched.
+
+     THE MIGRATION WRITER NEVER PRODUCES IT, which is why it went unseen:
+     bedframeVariants writes `bf.leg + '"'`, so a migrated zero leg is stored
+     as `0"` and always read fine. Only a line entered or edited through the
+     ERP's own form carries this string.
+
+     ABSENT IS STILL NOT ZERO. TBC, KIV and blank keep answering null — a
+     component nobody has picked stays unknown (docs/bugs/0732). This reads a
+     DECISION that was made, not a silence. */
+  if (/^no\s*legs?$/i.test(s)) return 0;
   const m = /^(\d+(?:\.\d+)?)/.exec(s.replace(/^[^\d]+/, ""));
   return m ? Number(m[1]) : null;
 };

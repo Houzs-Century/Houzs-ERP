@@ -269,7 +269,10 @@ export type ShareExportRow = {
   startDate: string | null;
   endDate: string | null;
   venue: string | null;
+  state: string | null;
   organizer: string | null;
+  brand: string | null;
+  eventType: string | null;
   boothNo: string | null;
   sizeSqm: number | null;
   totalSales?: number | null;
@@ -279,6 +282,9 @@ type ExportRowDb = {
   start_date: string | null;
   end_date: string | null;
   venue: string | null;
+  state: string | null;
+  brand: string | null;
+  event_type: string | null;
   organizer: string | null;
   booth_no: string | null;
   size_sqm: number | null;
@@ -286,28 +292,36 @@ type ExportRowDb = {
 };
 
 /** The party's confirmed events as export rows. The money column is only
- *  SELECTed when `withSales` — a contractor export never reads project_finance. */
+ *  SELECTed when `withSales` — a contractor export never reads project_finance.
+ *  Owner 2026-09-09 ("tambah state brand type"): State, Brand and the event
+ *  TYPE (project_event_types.name, the project's own type picker) ride along. */
 export async function listShareExportRows(env: Env, scope: ShareScope, withSales: boolean): Promise<ShareExportRow[]> {
   // company-scope: intentionally cross-company — see listShareEvents.
+  const cols = `p.start_date, p.end_date, p.venue, p.state, p.organizer, p.brand, et.name AS event_type, p.booth_no, p.size_sqm`;
   const sql = withSales
-    ? `SELECT p.start_date, p.end_date, p.venue, p.organizer, p.booth_no, p.size_sqm, pf.total_sales
+    ? `SELECT ${cols}, pf.total_sales
          FROM projects p
+         LEFT JOIN project_event_types et ON et.id = p.event_type_id
          LEFT JOIN project_finance pf ON pf.project_id = p.id
         WHERE p.${scope.column} = ?
           AND lower(p.status) = 'confirmed' AND p.archived_at IS NULL
         ORDER BY p.start_date`
-    : `SELECT start_date, end_date, venue, organizer, booth_no, size_sqm
-         FROM projects
-        WHERE ${scope.column} = ?
-          AND ${LIVE}
-        ORDER BY start_date`;
+    : `SELECT ${cols}
+         FROM projects p
+         LEFT JOIN project_event_types et ON et.id = p.event_type_id
+        WHERE p.${scope.column} = ?
+          AND lower(p.status) = 'confirmed' AND p.archived_at IS NULL
+        ORDER BY p.start_date`;
   const rows = await env.DB.prepare(sql).bind(scope.value).all<ExportRowDb>();
   return rows.results.map((r) => {
     const out: ShareExportRow = {
       startDate: r.start_date,
       endDate: r.end_date,
       venue: r.venue,
+      state: r.state,
       organizer: r.organizer,
+      brand: r.brand,
+      eventType: r.event_type,
       boothNo: r.booth_no,
       sizeSqm: r.size_sqm,
     };

@@ -112,7 +112,7 @@ beforeEach(() => {
   bucketGets = [];
   exportLog = [];
   projects = [
-    { id: 7, brand: AKEMI, contractor: "DREAM ART", status: "Confirmed", archived_at: null, organizer: "HOMELOVE", state: null, venue: "MID VALLEY", booth_no: "3053", start_date: "2026-09-11", end_date: "2026-09-13", name: null, size_sqm: 72 },
+    { id: 7, brand: AKEMI, contractor: "DREAM ART", status: "Confirmed", archived_at: null, organizer: "HOMELOVE", state: "SELANGOR", event_type: "ROADSHOW", venue: "MID VALLEY", booth_no: "3053", start_date: "2026-09-11", end_date: "2026-09-13", name: null, size_sqm: 72 },
     { id: 8, brand: ZANOTTI, contractor: "DREAM ART", status: "Confirmed", archived_at: null, organizer: null, state: null, venue: "IOI", booth_no: "1", start_date: "2026-09-11", end_date: "2026-09-13", name: null, size_sqm: 18 },
     { id: 9, brand: AKEMI, contractor: "DREAM ART", status: "Pending", archived_at: null, organizer: null, state: null, venue: "PENDING VENUE", booth_no: "x", start_date: "2026-10-01", end_date: "2026-10-02", name: null, size_sqm: 9 },
   ];
@@ -187,7 +187,7 @@ describe("public brand calendar", () => {
     const body = (await res.json()) as { brand: string; generatedAt: string; rows: Array<Record<string, unknown>> };
     expect(body.brand).toBe(AKEMI);
     expect(body.rows).toEqual([
-      { startDate: "2026-09-11", endDate: "2026-09-13", venue: "MID VALLEY", organizer: "HOMELOVE", boothNo: "3053", sizeSqm: 72, totalSales: 125000 },
+      { startDate: "2026-09-11", endDate: "2026-09-13", venue: "MID VALLEY", state: "SELANGOR", organizer: "HOMELOVE", brand: AKEMI, eventType: "ROADSHOW", boothNo: "3053", sizeSqm: 72, totalSales: 125000 },
     ]);
     expect(exportLog).toEqual([{ kind: "brand", subject: AKEMI, token: TOKEN, ip: "203.0.113.9", row_count: 1 }]);
   });

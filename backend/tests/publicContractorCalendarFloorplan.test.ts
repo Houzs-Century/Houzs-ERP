@@ -119,7 +119,7 @@ beforeEach(() => {
   bucketGets = [];
   exportLog = [];
   projects = [
-    { id: 7, contractor: MINE, status: "Confirmed", archived_at: null, brand: "AKEMI", organizer: "HOMELOVE", state: null, venue: "MID VALLEY", booth_no: "3053", start_date: "2026-09-11", end_date: "2026-09-13", name: null, size_sqm: 72 },
+    { id: 7, contractor: MINE, status: "Confirmed", archived_at: null, brand: "AKEMI", organizer: "HOMELOVE", state: "SELANGOR", event_type: "ROADSHOW", venue: "MID VALLEY", booth_no: "3053", start_date: "2026-09-11", end_date: "2026-09-13", name: null, size_sqm: 72 },
     { id: 8, contractor: THEIRS, status: "Confirmed", archived_at: null, brand: "ZANOTTI", organizer: null, state: null, venue: "IOI", booth_no: "1", start_date: "2026-09-11", end_date: "2026-09-13", name: null },
   ];
   checklist = [
@@ -196,13 +196,13 @@ describe("public contractor calendar — unfilled floorplan", () => {
     expect(bucketGets).toEqual([]);
   });
 
-  test("export carries Date/Venue/Organizer/Booth/Size, never sales, never reads project_finance, and is logged", async () => {
+  test("export carries Date/Venue/State/Organizer/Brand/Type/Booth/Size, never sales, never reads project_finance, and is logged", async () => {
     const res = await get(`/${TOKEN}/export`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { contractor: string; rows: Array<Record<string, unknown>> };
     expect(body.contractor).toBe(MINE);
     expect(body.rows).toEqual([
-      { startDate: "2026-09-11", endDate: "2026-09-13", venue: "MID VALLEY", organizer: "HOMELOVE", boothNo: "3053", sizeSqm: 72 },
+      { startDate: "2026-09-11", endDate: "2026-09-13", venue: "MID VALLEY", state: "SELANGOR", organizer: "HOMELOVE", brand: "AKEMI", eventType: "ROADSHOW", boothNo: "3053", sizeSqm: 72 },
     ]);
     expect(Object.keys(body.rows[0])).not.toContain("totalSales");
     expect(touched).not.toContain("project_finance");
