@@ -161,6 +161,23 @@ permission the API enforces.
 - **From** reads the FULL roster (`useStaff`) — the person handing over is usually
   deactivated already, and an active-only list would hide the exact case this
   tool exists for. Inactive people are labelled.
+
+> **"FULL roster" IS COMPANY-SCOPED, AND THAT HIDES RESIGNED REPS.** *Found
+> 2026-09-09: three resigned salespeople could not be selected at all.*
+> `GET /staff` runs `scopeStaffRowsToActiveCompany`, and
+> `staffCompanyIds` (`scm/lib/staffCompanyScope.ts`) buckets a staff row with
+> **no linked ERP user** to the **2990 mirror** company. Somebody imported from
+> AutoCount who never had an ERP login — the normal shape for a long-resigned
+> rep — is therefore invisible while HOUZS is active, which is precisely the
+> person this panel exists to hand over. **Switching company is the workaround.**
+>
+> The real fix is that this picker asks the wrong question: it lists the staff
+> ROSTER when the operator's question is "who holds this company's orders". A
+> holder list cannot omit a holder by construction. Not done — it is a change to
+> the panel's data source, and the diagnostic came first:
+> `backend/scripts/check-so-holders.mjs` + the **SO holders check (read-only)**
+> workflow print, per company, every salesperson_id holding a non-cancelled
+> order with a `PICKER` column saying whether the panel can select them.
 - **To** reads `usePickableStaff` (company-scoped, active only), so an order can
   never land on a departed or cross-company rep.
 - **Also give access to** (2026-09-09) reads the same pickable list and ADDS to a
