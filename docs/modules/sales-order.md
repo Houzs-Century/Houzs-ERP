@@ -5068,7 +5068,7 @@ SO-specific:
 
 | Event | Told | Where |
 |---|---|---|
-| raised | the LANE's approvers + each one's `manager_id` upline; **separately** the SO's `salesperson_id` | `lib/amendment-raised-effects.ts`, called from `POST /:docNo/amendments` |
+| raised | the LANE's approvers + each one's `manager_id` upline **minus the top two levels** (owner 2026-09-09 — see [`announcements.md`](./announcements.md) for why); **separately** the SO's `salesperson_id` | `lib/amendment-raised-effects.ts`, called from `POST /:docNo/amendments` |
 | approved | `requested_by` + the salesperson | `routes/so-amendments.ts` `approveSoCommandHandler`, deferred to after commit |
 | rejected | same pair, carrying the rejection reason | `routes/so-amendments.ts` `PATCH /:id/reject` |
 | PO follow-up auto-raised by an approved LINES lane | the purchasing desk | same handler, same deferred block |

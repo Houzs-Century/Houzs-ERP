@@ -121,9 +121,12 @@ publicContractorCalendar.get("/:token/events/:eventId/floorplan/:fileId", async 
 publicContractorCalendar.get("/:token/export", async (c) => {
   const g = await gate(c);
   if (g instanceof Response) return g;
-  const month = (c.req.query("month") ?? "").trim();
-  if (!MONTH_RE.test(month)) return c.json({ error: "month_required", message: "Pick a month first." }, 400);
-  const rows = await listShareExportRows(c.env, g.scope, false, month);
+  // No month = the whole schedule: a page loaded before the month rule shipped
+  // still asks that way until it reloads. A month that is PRESENT but malformed
+  // is a bad request, never silently the whole schedule.
+  const raw = (c.req.query("month") ?? "").trim();
+  if (raw && !MONTH_RE.test(raw)) return c.json({ error: "bad_month", message: "Month must look like 2026-09." }, 400);
+  const rows = await listShareExportRows(c.env, g.scope, false, raw || null);
   await logShareExport(c.env, "contractor", g.scope.value, g.token, clientIp(c), rows.length);
   return c.json({ contractor: g.scope.value, generatedAt: new Date().toISOString(), rows });
 });

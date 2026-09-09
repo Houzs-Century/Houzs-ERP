@@ -214,7 +214,7 @@ describe("public contractor calendar — unfilled floorplan", () => {
     expect(exportLog).toEqual([{ kind: "contractor", subject: MINE, token: TOKEN, ip: "unknown", row_count: 1 }]);
   });
 
-  test("export covers ONLY the month asked for, and refuses without one", async () => {
+  test("export covers ONLY the month asked for; no month = the whole schedule (an old tab); a malformed month is refused", async () => {
     // The September show is not an October export.
     const oct = await get(`/${TOKEN}/export?month=2026-10`);
     expect(oct.status).toBe(200);
@@ -227,9 +227,16 @@ describe("public contractor calendar — unfilled floorplan", () => {
       const r = await get(`/${TOKEN}/export?month=${m}`);
       expect((await r.json() as { rows: unknown[] }).rows.length).toBe(1);
     }
-    // No month, or a malformed one: nothing leaves and nothing is logged.
+    // No month at all: the page from before 2026-09-09 still asks this way until
+    // it reloads, and it must keep getting the whole schedule.
     exportLog = [];
-    for (const q of ["", "?month=2026", "?month=2026-13", "?month=all"]) {
+    const all = await get(`/${TOKEN}/export`);
+    expect(all.status).toBe(200);
+    expect((await all.json() as { rows: unknown[] }).rows.length).toBe(1);
+    expect(exportLog).toEqual([{ kind: "contractor", subject: MINE, token: TOKEN, ip: "unknown", row_count: 1 }]);
+    // A month that is present but malformed: refused, nothing logged.
+    exportLog = [];
+    for (const q of ["?month=2026", "?month=2026-13", "?month=all"]) {
       const r = await get(`/${TOKEN}/export${q}`);
       expect(r.status).toBe(400);
     }
