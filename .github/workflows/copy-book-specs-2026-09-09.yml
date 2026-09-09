@@ -1,0 +1,96 @@
+name: Copy the book's leg/seat height and HB special (2026-09-09)
+
+# 「一律跟账本」 — where the account book states a value and the ERP holds nothing,
+# copy the book. Nine sales-order rows across five documents are that shape.
+# Every write is a FILL: no value is overwritten, none is invented, and nothing
+# the ERP already holds is touched.
+#
+# The findings are the reconcile's own words (so-tally-verdict run 34344456950,
+# reconcile log printed), not a re-derivation:
+#
+#   SO-012442 DtlKey 848371: AutoCount "1""  vs ERP "(blank)"       leg height
+#   SO-013310 DtlKey 908744: AutoCount "2""  vs ERP "(blank)"       leg height
+#   SO-012049 DtlKey 830097: AutoCount "24"" vs ERP "(blank)"       seat height
+#   SO-012049 DtlKey 830098: AutoCount "24"" vs ERP "(blank)"       seat height
+#   SO-009373 DtlKey 640588: AutoCount "HB straight" vs ERP "(blank)"
+#   SO-010298 DtlKey 701159: AutoCount "HB Straight" vs ERP "(blank)"
+#
+# A book line is ONE sofa and SEVERAL ERP rows, so the value lands on every row
+# behind the book line — the manifest is keyed by (doc_no, linked_ac_dtlkey),
+# never by line number.
+#
+# LEFT ALONE ON PURPOSE, each for a stated reason:
+#   HC-SO-007678  the book says "Front Drawer"; the line carries "Left Drawer" +
+#                 "Right Drawer" and a customer note asking for exactly that.
+#                 Same request, two vocabularies — a third special would
+#                 double-count a drawer the factory is already building.
+#   HC-SO-011725  the ERP says RITZ LUXURY because Sim approved "exchange to Ritz
+#                 Luxury SS" at 07:38 on 2026-09-09. The ERP is AHEAD of the book;
+#                 copying the book would undo a change a person made today.
+#   HC-SO-009373  DtlKey 640590: the book is blank and the ERP holds 0", because
+#                 the book's Desc2 reads "Divan:8 inch+No inch leg" — a typo the
+#                 parser cannot read. Ours is the same statement, recorded.
+#   HC-SO-009373  DtlKey 640588 item code: the book's CODE says plain TRION (A)
+#                 while its own Desc2 says "HB straight", which is the HB-STR
+#                 product the ERP holds. The owner settled it 2026-09-09 — 「跟说明」,
+#                 the book's CODE is the wrong half — so the ERP keeps what it has
+#                 and this becomes an ACCEPTED DIVERGENCE the tally will report
+#                 forever. Same shape and same answer as HC-SO-000870.
+#
+# DEFAULT IS PLAN. Every UPDATE carries a predicate that the field is currently
+# blank (or that specials do not already contain the value), so a row somebody
+# has filled since this was measured is SKIPPED, not overwritten; and the run
+# refuses outright if a book line no longer holds the rows it was measured
+# against.
+#
+# REVERSAL — every touched key was absent or null before, so removing it restores
+# the row exactly:
+#   UPDATE scm.mfg_sales_order_items SET variants = variants - 'legHeight'
+#    WHERE doc_no IN ('HC-SO-012442','HC-SO-013310') AND linked_ac_dtlkey IN (848371,908744);
+#   UPDATE scm.mfg_sales_order_items SET variants = jsonb_set(variants,'{seatHeight}','null'::jsonb)
+#    WHERE doc_no = 'HC-SO-012049' AND linked_ac_dtlkey IN (830097,830098);
+#   UPDATE scm.mfg_sales_order_items
+#      SET variants = jsonb_set(variants,'{specials}',
+#            (SELECT coalesce(jsonb_agg(x),'[]'::jsonb) FROM jsonb_array_elements(variants->'specials') x
+#              WHERE x <> '"HB Straight"'::jsonb))
+#    WHERE doc_no IN ('HC-SO-009373','HC-SO-010298') AND linked_ac_dtlkey IN (640588,701159);
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "Required for apply: copy book specs 2026-09-09"
+        required: false
+        default: ""
+
+concurrency:
+  group: copy-book-specs-2026-09-09
+  cancel-in-progress: false
+
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/copy-book-specs-2026-09-09.mjs
+        env:
+          MODE: ${{ github.event.inputs.mode }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
