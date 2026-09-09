@@ -32,12 +32,17 @@ import { postBatchReceipt, undoBatchReceipt } from '../../acc/settlement';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
-const guard = (handler: (c: Ctx) => Promise<Response>) => async (c: Ctx): Promise<Response> => {
+/* Exported so the month view (accounting-bank-months) guards on exactly this
+   and not on a copy of it: two spellings of one permission rule are one
+   refactor away from being two different rules. */
+export const bankGuard = (handler: (c: Ctx) => Promise<Response>) => async (c: Ctx): Promise<Response> => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) {
     return c.json({ error: "You don't have permission to reconcile bank statements." }, 403);
   }
   return handler(c);
 };
+
+const guard = bankGuard;
 
 /** The same fingerprint layer 3 uses: one file is one statement, and a second
     upload of it loses to the UNIQUE rather than doubling the movements. */

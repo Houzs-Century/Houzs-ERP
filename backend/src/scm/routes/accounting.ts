@@ -45,6 +45,7 @@ import {
   bankRulesList, bankRuleCreate, bankRuleUpdate,
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
 } from './accounting-bank';
+import { bankMonths, bankMonthDetail } from './accounting-bank-months';
 import { bankConfigList, bankConfigSave } from './accounting-bank-config';
 import { payoutUpload, payoutList } from './accounting-payouts';
 import {
@@ -170,6 +171,12 @@ accounting.patch('/bank/rules/:id', bankRuleUpdate);
 accounting.post('/bank/statements', bankUpload);
 accounting.get('/bank/statements', bankStatements);
 accounting.get('/bank/statements/:id', bankStatementDetail);
+/* The same reconciliation asked of a MONTH rather than a file — registered
+   BEFORE nothing and after the file doors deliberately: `/bank/months` cannot
+   collide with `/bank/statements/:id`, and keeping the two families apart is
+   what lets a month be assembled out of however many files fed it. */
+accounting.get('/bank/months', bankMonths);
+accounting.get('/bank/months/:accountCode/:month', bankMonthDetail);
 accounting.post('/bank/lines/:id/receipt', bankLineReceipt);
 accounting.post('/bank/lines/:id/match', bankLineMatch);
 accounting.post('/bank/lines/:id/ignore', bankLineIgnore);

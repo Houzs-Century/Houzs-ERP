@@ -1,0 +1,309 @@
+// ----------------------------------------------------------------------------
+// /accounting/bank/months — the same reconciliation, asked of a MONTH.
+//
+// Owner, 2026-09-08: 每天我上传bank statement 和 merchant report 测试，但是有办法
+// 选这个是几月的？因为我发现好像没有.
+//
+// Layer 4 reconciled one FILE. That is right for a monthly statement and wrong
+// for the way he works — Hong Leong's any-day export is a file per day, so a
+// month was thirty separate answers and none of them was the answer to "did
+// September agree".
+//
+// These two doors are that answer. Neither of them decides anything: the month
+// is assembled by acc/bank-month (which month a movement is in, which file may
+// speak for a balance, where the chain of files breaks) and judged by
+// acc/bank-reconcile (the identity that makes a difference falsifiable). This
+// file fetches, groups, and hands over.
+//
+// Registered one handler at a time in routes/accounting.ts, like the rest of
+// layer 4, so the route-capability audit can see them.
+// ----------------------------------------------------------------------------
+
+import type { Context } from 'hono';
+import type { Env, Variables } from '../env';
+import { requireActiveCompanyId } from '../lib/companyScope';
+import { assembleMonth, monthOf, monthWindow, type MonthStatement } from '../../acc/bank-month';
+import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
+import { loadPayableBatches, loadAccountLedger } from '../../acc/bank';
+import { bankGuard } from './accounting-bank';
+
+type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
+
+/** A row as it comes back: keys known, values not. Read through the helpers
+    below rather than trusted, so a column that changes shape fails here and
+    not three screens later. */
+type Row = Record<string, unknown>;
+
+/** Whatever came back, as rows. Null, undefined and a non-array are all "no
+    rows" — the alternative is a read that half-succeeds and is counted. */
+const rowsOf = (data: unknown): Row[] => (Array.isArray(data) ? (data as Row[]) : []);
+const textOf = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
+const dayOf = (v: unknown): string | null => {
+  const s = textOf(v);
+  return s === null ? null : s.slice(0, 10);
+};
+
+const STATEMENT_FIELDS =
+  'id, account_code, file_name, period_from, period_to, line_count, in_sen, out_sen,'
+  + ' opening_balance_sen, closing_balance_sen, status, uploaded_by, created_at';
+
+const LINE_FIELDS =
+  'id, statement_id, line_no, booked_on, description, reference, amount_sen, charge_sen,'
+  + ' kind, state, posted_je_no, note, acquirer_code, trading_date, merchant_no,'
+  + ' matched_batch_id, split';
+
+/** The statement shape acc/bank-month wants, off a database row. */
+const asMonthStatement = (s: Row): MonthStatement => ({
+  id: Number(s.id),
+  fileName: textOf(s.file_name) ?? '',
+  periodFrom: dayOf(s.period_from),
+  periodTo: dayOf(s.period_to),
+  openingBalanceSen: s.opening_balance_sen == null ? null : Number(s.opening_balance_sen),
+  closingBalanceSen: s.closing_balance_sen == null ? null : Number(s.closing_balance_sen),
+});
+
+/** The movement shape the reconciliation wants, off a line row. */
+const asMovement = (l: Row, jeNo: string | null): StatementMovement => ({
+  id: Number(l.id),
+  bookedOn: dayOf(l.booked_on) ?? '',
+  description: textOf(l.description) ?? '',
+  reference: textOf(l.reference),
+  amountSen: Number(l.amount_sen ?? 0),
+  state: String(l.state) as StatementMovement['state'],
+  jeNo,
+});
+
+/* ── GET /bank/months — every account × month that has anything in it ─────── */
+
+export const bankMonths = bankGuard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+
+  const stmtRes = await sb.from('acc_bank_statements')
+    .select(STATEMENT_FIELDS).eq('company_id', co.companyId);
+  if (stmtRes.error) return c.json({ error: 'load_failed', reason: stmtRes.error.message }, 500);
+  const statements = rowsOf(stmtRes.data);
+  if (statements.length === 0) return c.json({ months: [] });
+
+  const lineRes = await sb.from('acc_bank_statement_lines')
+    .select('id, statement_id, booked_on, amount_sen, state, kind')
+    .eq('company_id', co.companyId);
+  if (lineRes.error) return c.json({ error: 'load_failed', reason: lineRes.error.message }, 500);
+
+  const byId = new Map<number, Row>(statements.map((s) => [Number(s.id), s]));
+
+  /* A month is a bucket of LINES (rule 1: a movement belongs to the month its
+     own date falls in), and the files that fed it come out of which lines
+     landed there — not out of a label on the file. */
+  type Bucket = {
+    accountCode: string;
+    month: string;
+    statementIds: Set<number>;
+    lines: number;
+    openCount: number;
+    openSen: number;
+    openPayouts: number;
+    inSen: number;
+    outSen: number;
+    movements: StatementMovement[];
+  };
+  const buckets = new Map<string, Bucket>();
+
+  for (const l of rowsOf(lineRes.data)) {
+    const stmt = byId.get(Number(l.statement_id));
+    if (!stmt) continue;
+    const bookedOn = dayOf(l.booked_on);
+    if (bookedOn === null || bookedOn.length !== 10) continue;
+    const accountCode = textOf(stmt.account_code) ?? '';
+    const month = monthOf(bookedOn);
+    const key = `${accountCode}|${month}`;
+    const at = buckets.get(key) ?? {
+      accountCode,
+      month,
+      statementIds: new Set<number>(),
+      lines: 0,
+      openCount: 0,
+      openSen: 0,
+      openPayouts: 0,
+      inSen: 0,
+      outSen: 0,
+      movements: [],
+    };
+    const amount = Number(l.amount_sen ?? 0);
+    const state = String(l.state);
+    at.statementIds.add(Number(stmt.id));
+    at.lines += 1;
+    /* IGNORED is out of both sides — a movement somebody has declared none of
+       our business, most often a repeat of one already recorded. */
+    if (state !== 'IGNORED') {
+      if (amount >= 0) at.inSen += amount; else at.outSen += -amount;
+    }
+    if (state === 'OPEN') {
+      at.openCount += 1;
+      at.openSen += amount;
+      if (String(l.kind).startsWith('PAYOUT')) at.openPayouts += 1;
+    }
+    at.movements.push(asMovement(l, null));
+    buckets.set(key, at);
+  }
+
+  /* Newest first — the month he is working is the one he just uploaded into. */
+  const months = [...buckets.values()]
+    .sort((a, b) => b.month.localeCompare(a.month) || a.accountCode.localeCompare(b.accountCode))
+    .map((b) => {
+      const fed: MonthStatement[] = [];
+      for (const id of b.statementIds) {
+        const row = byId.get(id);
+        if (row) fed.push(asMonthStatement(row));
+      }
+      const assembly = assembleMonth(b.month, fed, b.movements);
+      return {
+        accountCode: b.accountCode,
+        month: b.month,
+        statementCount: b.statementIds.size,
+        lineCount: b.lines,
+        openCount: b.openCount,
+        openSen: b.openSen,
+        openPayoutCount: b.openPayouts,
+        inSen: b.inSen,
+        outSen: b.outSen,
+        /* Enough for the list to say whether a month can be trusted, without
+           making it fetch every month's full reconciliation. */
+        periodFrom: assembly?.periodFrom ?? null,
+        periodTo: assembly?.periodTo ?? null,
+        openingBalanceSen: assembly?.statementOpeningSen ?? null,
+        closingBalanceSen: assembly?.statementClosingSen ?? null,
+        complete: assembly?.complete ?? false,
+        gapCount: assembly?.gaps.length ?? 0,
+      };
+    });
+
+  return c.json({ months });
+});
+
+/* ── GET /bank/months/:accountCode/:month — one month, reconciled ─────────── */
+
+export const bankMonthDetail = bankGuard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const accountCode = String(c.req.param('accountCode') ?? '').trim();
+  const month = String(c.req.param('month') ?? '').trim();
+  if (!accountCode) return c.json({ error: 'no_account' }, 400);
+  const window = monthWindow(month);
+  if (!window) {
+    return c.json({ error: 'bad_month', message: `${month} is not a month. Use YYYY-MM.` }, 400);
+  }
+  const sb = c.get('supabase');
+
+  const stmtRes = await sb.from('acc_bank_statements')
+    .select(STATEMENT_FIELDS)
+    .eq('company_id', co.companyId)
+    .eq('account_code', accountCode);
+  if (stmtRes.error) return c.json({ error: 'load_failed', reason: stmtRes.error.message }, 500);
+  const allStatements = rowsOf(stmtRes.data);
+  const ids = allStatements.map((s) => Number(s.id));
+
+  /* An account with no statements still gets a reconciliation: the books may
+     hold entries the bank has never been asked about, and saying so is the
+     point. So this is an empty read, not an early return. */
+  const linesP = ids.length === 0
+    ? Promise.resolve({ data: [], error: null })
+    : sb.from('acc_bank_statement_lines')
+      .select(LINE_FIELDS)
+      .eq('company_id', co.companyId)
+      .in('statement_id', ids)
+      /* By the day, then by where it sat in its file: the reader is holding a
+         month and reads it downwards. */
+      .order('booked_on').order('line_no');
+
+  const matchP = sb.from('acc_bank_statement_matches')
+    .select('bank_line_id, je_no, amount_sen, match_reason').eq('company_id', co.companyId);
+
+  const [linesRes, matchRes, batches] = await Promise.all([
+    linesP, matchP, loadPayableBatches(sb, co.companyId),
+  ]);
+  if (linesRes.error) return c.json({ error: 'load_failed', reason: linesRes.error.message }, 500);
+  if (matchRes.error) return c.json({ error: 'load_failed', reason: matchRes.error.message }, 500);
+  if (!batches.ok) return c.json({ error: 'load_failed', reason: batches.reason }, 500);
+
+  const matchesByLine = new Map<number, Row[]>();
+  for (const m of rowsOf(matchRes.data)) {
+    const key = Number(m.bank_line_id);
+    const at = matchesByLine.get(key);
+    if (at) at.push(m); else matchesByLine.set(key, [m]);
+  }
+
+  /* Rule 1: the month takes the lines whose own date is in it, from whichever
+     file they arrived in. */
+  const lines = rowsOf(linesRes.data).filter((l) => {
+    const on = dayOf(l.booked_on);
+    return on !== null && on >= window.from && on <= window.to;
+  });
+
+  /* The entry a movement claims: its own first, and the match table only where
+     it has none. Two sources for one fact, in a fixed order, so the answer
+     cannot depend on which read came back first. */
+  const jeOf = (l: Row): string | null =>
+    textOf(l.posted_je_no) ?? textOf(matchesByLine.get(Number(l.id))?.[0]?.je_no);
+
+  const movements = lines.map((l) => asMovement(l, jeOf(l)));
+
+  /* The files that fed this month — the ones a line came from, and no others.
+     A file uploaded against this account whose every movement is in another
+     month has no business speaking for this one's balances. */
+  const fedIds = new Set(lines.map((l) => Number(l.statement_id)));
+  const fed = allStatements.filter((s) => fedIds.has(Number(s.id)));
+  const assembly = assembleMonth(month, fed.map(asMonthStatement), movements);
+  if (!assembly) return c.json({ error: 'bad_month' }, 400);
+
+  const ledger = await loadAccountLedger(sb, co.companyId, accountCode, assembly.periodTo);
+  if (!ledger.ok) return c.json({ error: 'load_failed', reason: ledger.reason }, 500);
+
+  const reconciliation = reconcileBankStatement({
+    periodFrom: assembly.periodFrom,
+    periodTo: assembly.periodTo,
+    statementOpeningSen: assembly.statementOpeningSen,
+    statementClosingSen: assembly.statementClosingSen,
+    movements,
+    ledger: ledger.movements,
+  });
+
+  const claimed = new Set(movements.map((m) => m.jeNo).filter(Boolean));
+  const unmatchedEntries = ledger.movements
+    .filter((l) => l.entryDate >= assembly.periodFrom && l.entryDate <= assembly.periodTo)
+    .filter((l) => !claimed.has(l.jeNo));
+
+  const fileNameOf = (statementId: number): string | null => {
+    const s = allStatements.find((x) => Number(x.id) === statementId);
+    return s === undefined ? null : textOf(s.file_name);
+  };
+
+  return c.json({
+    accountCode,
+    month,
+    assembly,
+    reconciliation,
+    /* Named, in the order they cover the month, so a break can be chased to the
+       two files it is between. */
+    statements: [...fed]
+      .sort((a, b) => String(a.period_from).localeCompare(String(b.period_from)))
+      .map((s) => ({ ...s, spanning: assembly.spanningIds.includes(Number(s.id)) })),
+    lines: lines.map((l) => {
+      const acquirer = textOf(l.acquirer_code);
+      return {
+        ...l,
+        /* Which file this movement came off — a month mixes them, and "line 12"
+           means nothing until you know of what. */
+        file_name: fileNameOf(Number(l.statement_id)),
+        matches: matchesByLine.get(Number(l.id)) ?? [],
+        /* Recomputed live, exactly as the single-statement view does it: a
+           batch paid since the upload must not still be offered. */
+        candidates: String(l.kind).startsWith('PAYOUT')
+          ? batches.batches.filter((b) => b.acquirerCode === acquirer)
+          : [],
+      };
+    }),
+    unmatchedEntries,
+  });
+});

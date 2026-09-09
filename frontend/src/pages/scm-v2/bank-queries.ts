@@ -142,6 +142,12 @@ export const useBankStatement = (id: number | null) => useQuery({
 const invalidateAfterBankPosting = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['bank-statement'] });
   void qc.invalidateQueries({ queryKey: ['bank-statements'] });
+  /* The month is the same movements counted a second way, so a decision on one
+     of them is a decision about its month too — and the month view is where
+     the owner works. Missing these leaves a line settled on one screen and
+     still waiting on the other. */
+  void qc.invalidateQueries({ queryKey: ['bank-month'] });
+  void qc.invalidateQueries({ queryKey: ['bank-months'] });
   void qc.invalidateQueries({ queryKey: ['settlement-batch'] });
   void qc.invalidateQueries({ queryKey: ['settlement-batches'] });
   void qc.invalidateQueries({ queryKey: ['settlement-in-transit'] });
@@ -300,3 +306,76 @@ export const useCreateBankRule = () => {
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['bank-rules'] }); },
   });
 };
+
+/* ── A MONTH of one account, however many files fed it ─────────────────────
+   Owner, 2026-09-08: 每天我上传bank statement 和 merchant report 测试，但是有办法
+   选这个是几月的？因为我发现好像没有. Layer 4 reconciled one FILE, which is a
+   file a day for Hong Leong's any-day export — thirty answers and none of them
+   the answer to "did September agree". The server assembles the month
+   (acc/bank-month) and judges it with the same reconciliation; these are
+   transport only, like everything else in this file. */
+
+export type BankMonth = {
+  accountCode: string;
+  month: string;
+  statementCount: number;
+  lineCount: number;
+  openCount: number;
+  openSen: number;
+  openPayoutCount: number;
+  inSen: number;
+  outSen: number;
+  periodFrom: string | null;
+  periodTo: string | null;
+  openingBalanceSen: number | null;
+  closingBalanceSen: number | null;
+  /** Opening known, closing known, and no break between the files. */
+  complete: boolean;
+  gapCount: number;
+};
+
+/** Two files that should have met and did not — a day nobody uploaded. */
+export type BankChainBreak = {
+  beforeId: number; beforeFile: string; beforeTo: string; beforeClosingSen: number;
+  afterId: number; afterFile: string; afterFrom: string; afterOpeningSen: number;
+  gapSen: number;
+};
+
+export type BankMonthAssembly = {
+  month: string;
+  monthFrom: string;
+  monthTo: string;
+  periodFrom: string;
+  periodTo: string;
+  statementOpeningSen: number | null;
+  openingFrom: { statementId: number; fileName: string; on: string } | null;
+  statementClosingSen: number | null;
+  closingFrom: { statementId: number; fileName: string; on: string } | null;
+  spanningIds: number[];
+  breaks: BankChainBreak[];
+  gaps: string[];
+  complete: boolean;
+};
+
+export const useBankMonths = () => useQuery({
+  queryKey: ['bank-months'],
+  queryFn: () => authedFetch<{ months: BankMonth[] }>('/accounting/bank/months'),
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+export const useBankMonth = (accountCode: string | null, month: string | null) => useQuery({
+  queryKey: ['bank-month', accountCode, month],
+  queryFn: () => authedFetch<{
+    accountCode: string;
+    month: string;
+    assembly: BankMonthAssembly;
+    reconciliation: Reconciliation;
+    statements: Array<BankStatement & { spanning: boolean }>;
+    lines: Array<BankLine & { file_name: string | null }>;
+    unmatchedEntries: LedgerEntry[];
+  }>(`/accounting/bank/months/${encodeURIComponent(accountCode!)}/${encodeURIComponent(month!)}`),
+  enabled: accountCode != null && month != null,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
