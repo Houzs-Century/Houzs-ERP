@@ -95,6 +95,7 @@ import pos from "./routes/pos";
 // Announcements — office posts every logged-in user sees as a top banner with
 // a "Got it" ack. Ported from Hookka (single-tenant + office-only here).
 import announcements from "./routes/announcements";
+import announcementReceipts from "./routes/announcementReceipts";
 import announcementApproval from "./routes/announcementApproval";
 import memos from "./routes/memos";
 // Agent Console — owner-only fleet console for the HOOKKA-ported agents
@@ -420,6 +421,8 @@ app.route("/api/mail-center", mailCenter);
 app.route("/api/announcements", announcements);
 // The approval + attachment-log routes (submit / approve / reject / files) —
 // same prefix, second router (routes/announcements.ts is at its size ceiling).
+// Read receipts + ack analytics (2026-09-09 split; no path overlaps the router above).
+app.route("/api/announcements", announcementReceipts);
 app.route("/api/announcements", announcementApproval);
 // The department memo register (mig 20260909T0500): numbered at creation on
 // the same <DEPT>-MEMO-<YYMM> series the notices use.

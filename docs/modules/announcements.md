@@ -355,10 +355,10 @@ source line) see
 | GET | `/api/announcements/banner` | `:584` | **none** — explicit 401 (`:585-588`) |
 | POST | `/api/announcements/:id/ack` | `:1194` | **none** — explicit 401 (`:1195-1198`) |
 | GET | `/api/announcements/:id/attachments/:key{.+}` | `:1308` | none as middleware; audience checked in-handler (`:1325-1333`) |
-| GET | `/api/announcements/:id/acks` | `:698` | `announcements.write` (or Sales Director) — since 2026-09-05 also `byDepartment[]`, each person's `departmentId/Name`, `positionName`, `managerId`, and each pending person's `state` (`pending` / `reminded` / `overdue`, window `overdueAfterHours` = 48) |
-| GET | `/api/announcements/ack-summary` | — | `announcements.write` (or Sales Director) — `{ id → { total, acked } }` for every human post the caller may manage, ONE round trip for the Manage table (2026-09-05) |
-| GET | `/api/announcements/team-pending` | — | **none** — explicit 401; scoped to the caller's DIRECT REPORTS (`users.manager_id = caller`): their unacked mandatory notices with the same `state` (2026-09-05, feeds the dashboard "My team's pending" card) |
-| POST | `/api/announcements/:id/escalate` | — | `announcements.write` (or Sales Director) — body `{ departmentId? }`; posts ONE system notice (`source 'ack_escalation'`) per supervisor of the pending people, via `postPersonalNotice` (2026-09-05, the drawer's "Notify their supervisors") |
+| GET | `/api/announcements/:id/acks` | `routes/announcementReceipts.ts` | `announcements.write` (or Sales Director) — since 2026-09-05 also `byDepartment[]`, each person's `departmentId/Name`, `positionName`, `managerId`, and each pending person's `state` (`pending` / `reminded` / `overdue`, window `overdueAfterHours` = 48) |
+| GET | `/api/announcements/ack-summary` | `routes/announcementReceipts.ts` | `announcements.write` (or Sales Director) — `{ id → { total, acked } }` for every human post the caller may manage, ONE round trip for the Manage table (2026-09-05) |
+| GET | `/api/announcements/team-pending` | `routes/announcementReceipts.ts` | **none** — explicit 401; scoped to the caller's DIRECT REPORTS (`users.manager_id = caller`): their unacked mandatory notices with the same `state` (2026-09-05, feeds the dashboard "My team's pending" card) |
+| POST | `/api/announcements/:id/escalate` | `routes/announcementReceipts.ts` | `announcements.write` (or Sales Director) — body `{ departmentId? }`; posts ONE system notice (`source 'ack_escalation'`) per supervisor of the pending people, via `postPersonalNotice` (2026-09-05, the drawer's "Notify their supervisors") |
 | POST | `/api/announcements` | `:785` | `announcements.write` (or Sales Director) — since 2026-09-06 the row is created PENDING_APPROVAL (or DRAFT with body `draft: true`); the answer's `approvalStatus` says which. Since 2026-09-08 body `docType` (ANN by default; any ACTIVE code in `document_types`, e.g. MEMO; an unknown / inactive code → 400) picks the [TYPE] segment of the number and the attachment policy row; `PATCH /:id` accepts `docType` until the notice is approved (409 after) |
 | POST | `/api/announcements/:id/submit` | — | `announcements.write` (or Sales Director on their own post) — DRAFT / REJECTED → PENDING_APPROVAL; rings the approvers' bell (2026-09-06). Since 2026-09-07 refused 400 while the ANN type requires an attachment and the notice has none (same rule as POST without `draft`) |
 | POST | `/api/announcements/:id/void` | — | `announcements.write` (or Sales Director on their own post) — body `{ reason }` (required); any SUBMITTED notice (pending / approved / rejected) → voided: `voided_by/at`, `void_reason`, the registry number marked VOID, banner cache bumped, `announcement.void` audited, the submitter told (WARNING bell). A draft answers 409 (discard it). Idempotent (2026-09-07) |
@@ -366,7 +366,7 @@ source line) see
 | POST | `/api/announcements/:id/approve` | — | `announcements.approve` — PENDING_APPROVAL → APPROVED; mints `ref_no` from the submitter's department code (409 with the fix when the department has none); answers the public row incl. `refNo` (2026-09-06) |
 | POST | `/api/announcements/:id/reject` | — | `announcements.approve` — body `{ reason }` (required, 400 when blank); PENDING_APPROVAL → REJECTED; the submitter gets a WARNING bell notice with the reason (2026-09-06) |
 | PATCH | `/api/announcements/:id` | `:920` | `announcements.write` (or Sales Director) |
-| GET | `/api/announcements/ack-trend` | — | `announcements.write` (or Sales Director) — `{ days: 30, buckets[6]: { start, end, label, notices, total, acked, pct\|null }, summary }`: the human notices POSTED in each 5-day bucket of the last 30 days, their summed audience and acknowledgements, from the same `noticeAckTotals()` as `/ack-summary` (2026-09-06, the dashboard chart) |
+| GET | `/api/announcements/ack-trend` | `routes/announcementReceipts.ts` | `announcements.write` (or Sales Director) — `{ days: 30, buckets[6]: { start, end, label, notices, total, acked, pct\|null }, summary }`: the human notices POSTED in each 5-day bucket of the last 30 days, their summed audience and acknowledgements, from the same `noticeAckTotals()` as `/ack-summary` (2026-09-06, the dashboard chart) |
 | POST | `/api/announcements/:id/remind` | `:1104` | `announcements.write` (or Sales Director) — body `{ scope: "unacked" \| "all", departmentId? }`. Since 2026-09-06 a reminder is per PERSON (`announcement_reminders`, one upserted row per pending member of the audience — or of `departmentId` only, the drawer's "Remind <Dept> pending"); a whole-notice reminder also sets `reminded_at`; `scope:"all"` (phone) clears the receipts and sets the notice-level stamp only. `pendingCount` is the audience's pending (not every active user, as before) |
 | DELETE | `/api/announcements/:id` | `:1164` | `announcements.write` (or Sales Director) — since 2026-09-07 DRAFTS ONLY: a submitted notice answers 409 "voided, not deleted"; the trigger `trg_announcements_no_hard_delete` refuses the same at the database |
 | PUT | `…/:id/attachments/upload` · `…/upload-thumb` | `:1231`, `:1274` | `announcements.write` (or Sales Director) |
@@ -402,8 +402,18 @@ see §6.
 
 ## 3. Backend
 
-`backend/src/routes/announcements.ts` (about 1,940 lines — at the repo's file-size
-ceiling, so it may not grow) plus, since 2026-09-07,
+`backend/src/routes/announcements.ts` (about 1,680 lines since the 2026-09-09
+split — it sat at the repo's 2,000-line ceiling before it) plus TWO sibling
+routers on the SAME `/api/announcements` prefix. **Since 2026-09-09,
+`backend/src/routes/announcementReceipts.ts`:** the read-receipt and
+ack-analytics routes — `GET /:id/acks`, `GET /ack-summary`, `GET /ack-trend`,
+`GET /team-pending`, `POST /:id/escalate` — moved verbatim (gates, ownership
+rule, `noticeAckTotals()` arithmetic all unchanged), mounted right after the
+main router in `backend/src/index.ts`; it imports the main router's exported
+`companyCanSee`, `getScopedAnnouncement`, `salesDirectorScope` and
+`sdBlockedFromRow`, so the three files cannot disagree on who sees what. A
+suite that hits those routes mounts BOTH routers (the four that do already
+do). And since 2026-09-07,
 `backend/src/routes/announcementApproval.ts`: the `POST /:id/submit`,
 `/:id/approve`, `/:id/reject` and `GET /:id/files` routes, a second Hono router
 mounted on the SAME `/api/announcements` prefix right after the main one in
