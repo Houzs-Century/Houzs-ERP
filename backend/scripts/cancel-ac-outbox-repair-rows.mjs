@@ -83,6 +83,18 @@ try {
     say("APPLY refused: ONLY_IDS is empty. This script cancels the rows you name and nothing else.");
     process.exit(0);
   }
+  /* Shape-check the ids HERE rather than letting Postgres reject the cast. A
+     mistyped id would otherwise come back through the catch below as "Database
+     unreachable or query failed", which is a false statement about production
+     and would send the next person to look at the network. */
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const malformed = ONLY_IDS.filter((id) => !UUID.test(id));
+  if (malformed.length) {
+    say("APPLY refused: these ONLY_IDS entries are not outbox row ids (uuid):");
+    for (const m of malformed) say(`  - ${JSON.stringify(m)}`);
+    say("Copy the id column from the plan above. Nothing was written.");
+    process.exit(0);
+  }
 
   // ── the plan: every pending row, with the evidence for who caused it ──────
   const pending = await pg`

@@ -89,27 +89,62 @@ known.
    what it already held" from "we overwrote it". Rows sent BEFORE the export are
    reported UNDECIDABLE rather than harmless.
 
-**A CONTRADICTION, NOT BRIDGED.** Part 1 hardens the class, but it does **not**
-explain today's rows, and saying otherwise would be the tidy answer rather than
-the true one. Measured on this branch:
+**IT IS THREE BURSTS, NOT ONE, AND NO ACTIONS RUN PRODUCED THEM.** Read out of
+run `34331486258` ("Why is there no outbox row"), which prints every row's
+`created_at`. All three are `edit`/`SO`, sweeping ASCENDING doc_no at a fixed
+sub-second cadence:
 
-```
-$ grep -c enqueue backend/scripts/recompute-so-allocation.mjs       backend/scripts/repair-so-delivered-from-imported-dos.mjs       backend/scripts/restamp-do-actual-cost.mjs       backend/scripts/backfill-zero-line-costs.ts
-0  (all four)
-```
+| burst | window (UTC) | rows | cadence |
+| --- | --- | --- | --- |
+| C | 08:09:51.97 -> 08:12:08.14 | ~185 | ~0.67 s |
+| A | 08:42:30.67 -> 08:43:19.69 | 132 | ~0.33 s |
+| B | 08:48:11.73 -> 08:48:25.09 | 46 | ~0.29 s |
 
-Every repair script that now gets a suppressed client **never reached an
-enqueue in the first place**, and neither does the SO allocator they drive. So
-the suppression changes nothing about today's four scripts: it is a guard
-against a class, not a repair of an observed path. The five tools that DO
-enqueue are the deliberate push tools, and they keep working by design.
+Burst B is the "36 rows at 08:48" above. Corroborated by the totals: run
+`34315268339` (05:32) `queue: 133 row(s) — pending 0 / sent 110`, `edit SENT 73
+(of 79)`; run `34331766799` (08:55) `queue: 616 row(s)`, `edit SENT 316 (of
+533)`. **+454 edit rows between 05:32 and 08:55.**
 
-It follows that the path which queued ~36 migrated-SO edits at 08:48 is **still
-UNKNOWN**. The remaining candidates are a production trigger absent from this
-repo, or a route on the ERP's own API (`so-amendments.ts:952`,
-`so-handover.ts:303`, `po-amendments.ts:494`, `so-payment-row.ts:211` all call
-`enqueueEdit`), which would leave a `created_by`. `check-ac-outbox-provenance.mjs`
-asks both questions — `pg_trigger` directly, and `created_by` per row — and its
-production run is what closes this.
+**No GitHub Actions run accounts for any of them**, and this is measured, not
+assumed:
+
+- Burst A falls in a hole in the dispatch timeline — nothing ran between
+  08:24:10 and 08:45:37. Deploy `34330181129`'s only production-DB step
+  (`pg-migrate.mjs`) started 08:44:07, after A ended at 08:43:19.
+- Both top-up runs bracket burst B without touching it: `34331065557` was
+  `MODE: plan` (`PLAN ONLY — nothing written`) and ended 08:48:11;
+  `34331161147` was `MODE: apply` but `LANES: do`, `ONLY_DOCS: DO-011465`,
+  `MAX_WRITES: 1`, and started 08:48:32 — after B ended at 08:48:25.
+- Burst C runs continuously THROUGH the gaps between the four "Re-file the
+  mislabelled sofa purchase lines" runs — rows land at 08:11:09, :10, :11 …
+  :27 while no run was executing. One process, not four runs.
+- Every enqueue-capable workflow last ran before the window (`sync-ac-delta`
+  02:42, `requeue-autocount-skipped` 01:59, `rebuild-ac-document` 09-03).
+
+**So the producer is UNKNOWN and it is OUTSIDE GitHub Actions.** One round trip
+per document, strict ascending doc_no, 0.29-0.67 s apart is a Node client
+looping — not SQL, and not the `*/5` cron (no burst starts on a 5-minute
+boundary). The two remaining candidates are a script run from someone's own
+machine against production, or the Worker serving a bulk loop over its own API.
+`scm.autocount_outbox.created_by` discriminates them and no run log prints it,
+which is what `check-ac-outbox-provenance.mjs` exists to read.
+
+**A CORRECTION TO MY OWN CHECK, recorded because it was wrong in the direction
+that flatters the fix.** An earlier revision of this entry said all four newly
+suppressed scripts "contain zero enqueue calls", from `grep -c enqueue` over
+those files. That grep was too narrow: it sees a direct call and not an
+IMPORTED one. Two genuine incidental paths do exist and the guard does close
+them:
+
+- `restamp-do-actual-cost.mjs` — `pgrestShim(pg, "scm")` plus
+  `await import("../src/scm/routes/delivery-orders-mfg.ts")`, and that module
+  holds `enqueueConvert` / `enqueueCancel` / `enqueueEdit`. Last run 2026-08-05.
+- `backfill-zero-line-costs.ts` — `pgrestShim(sql)` plus `recomputeTotals` from
+  `mfg-sales-orders.ts`, which wraps `enqueueEdit` in `queueAcSoEdit`. Whether
+  the call sites sit inside `recomputeTotals`' own body is **UNKNOWN**. Never
+  run.
+
+Neither ran today, so neither explains the 454 rows. But the fix is not the
+no-op the earlier paragraph made it out to be.
 
 **Ref.** `fix/ac-writeback-suppress-repairs`, 2026-09-09.
