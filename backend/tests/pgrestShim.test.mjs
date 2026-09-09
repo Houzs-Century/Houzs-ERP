@@ -254,3 +254,35 @@ test("a select with no embed emits exactly the SQL it always did", async () => {
   assert.equal(text, 'SELECT "id", "doc_no" FROM "scm"."mfg_sales_order_items" WHERE "cancelled" = $1 ORDER BY "id" ASC LIMIT 10 OFFSET 0');
   assert.deepEqual(params, [false]);
 });
+
+// ── The repair mark ─────────────────────────────────────────────────────────
+// A cutover repair reaches the database through this shim, and a repair must
+// never queue a write-back: it COPIES a value out of the account book, so
+// sending it back is pointless where the two agree and overwrites the owner's
+// source of truth where they do not. Owner, 2026-09-09: 「正常来说你的这批更改
+// 不应该是syncback autocount啊 应该remain啊」.
+const REPAIR_CLIENT = Symbol.for("houzs.ac.repairClient");
+
+test("the default is SUPPRESSED — a script that says nothing cannot write back", () => {
+  const sb = pgrestShim(fakeSql(), "scm");
+  assert.equal(sb[REPAIR_CLIENT], true);
+});
+
+test('writeback:"enqueue" opts a deliberate push tool back in', () => {
+  const sb = pgrestShim(fakeSql(), "scm", { writeback: "enqueue" });
+  assert.equal(sb[REPAIR_CLIENT], undefined);
+});
+
+test("the mark is not enumerable, so it cannot leak into a payload", () => {
+  const sb = pgrestShim(fakeSql(), "scm");
+  assert.equal(Object.keys(sb).includes("repairClient"), false);
+  assert.equal(JSON.parse(JSON.stringify(sb))[REPAIR_CLIENT], undefined);
+});
+
+test("a typo in writeback is refused rather than silently pushing", () => {
+  // "enqueu", "on", "true" must never be read as permission to write to a live
+  // account book. Anything but the two known words throws.
+  for (const bad of ["enqueu", "on", "true", "yes", ""]) {
+    assert.throws(() => pgrestShim(fakeSql(), "scm", { writeback: bad }), /writeback must be/);
+  }
+});

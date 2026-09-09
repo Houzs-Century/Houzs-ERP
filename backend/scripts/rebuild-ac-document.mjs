@@ -115,7 +115,9 @@ async function main() {
   /* THE DRY RUN COMPOSES FOR REAL and throws the write away, so a refusal here
      is the composer's own and not this script's opinion of one. */
   const captured = [];
-  const probe = pgrestShim(pg, "scm");
+  /* PUSHING IS THIS TOOL'S PURPOSE — see pgrest-shim.mjs. A rebuild exists to
+     re-send one document, so it opts out of repair suppression by name. */
+  const probe = pgrestShim(pg, "scm", { writeback: "enqueue" });
   const realFrom = probe.from.bind(probe);
   probe.from = (table) => {
     const q = realFrom(table);
@@ -145,7 +147,7 @@ async function main() {
     return blank === 0 ? 0 : 0;
   }
 
-  const sb = pgrestShim(pg, "scm");
+  const sb = pgrestShim(pg, "scm", { writeback: "enqueue" });
   const queued = await enqueueEdit(sb, opts);
   if (!queued) {
     warn("the enqueue declined. Read the newest autocount_outbox row for this document — the composer "
