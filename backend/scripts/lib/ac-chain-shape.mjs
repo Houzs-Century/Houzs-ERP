@@ -34,16 +34,55 @@
 // ---------------------------------------------------------------------------
 
 import {
+  UNMIGRATED_SOURCE,
   splitMigratedChainLineShape,
   splitMigratedChainUnpairedBookLine,
   splitUnmigratedSourceLine,
 } from "./ac-not-a-difference.mjs";
+import { bookSourceOf, sourceCoverage } from "./ac-source-hop.mjs";
+
+/**
+ * The second pass's three arguments, resolved together.
+ *
+ * They are ONE decision wearing three fields — the TYPE's declaration, the
+ * coverage that proves it, and the resolver that finds a line's source — and a
+ * caller that assembles them by hand can pair a declaration with the wrong
+ * coverage without anything noticing. `UNMIGRATED_SOURCE` decides eligibility,
+ * so no type letter is written at the call site.
+ */
+export function sourceDecisionFor(erp, book, t) {
+  const sourceDecision = UNMIGRATED_SOURCE[t] ?? null;
+  return {
+    sourceDecision,
+    sourceCoverage: sourceDecision ? sourceCoverage(erp, sourceDecision.sourceType) : null,
+    sourceOf: bookSourceOf(book, t),
+  };
+}
 
 /** The declared class both axes are reclassified into. Named once. */
 export const NOTE_CHAIN_SHAPE = "migrated-chain-line-shape";
 
 /** The declared class of the SECOND pass over `a book line we do not have`. */
 export const NOTE_SOURCE_NOT_MIGRATED = "chain-source-not-migrated";
+
+/**
+ * Record one unpaired BOOK line on the `a book line we do not have` axis.
+ *
+ * TWO INVARIANTS, and they pull in opposite directions, which is why they live
+ * together here rather than inline in the reconcile's pairing loop:
+ *
+ *  - ONE row per DOCUMENT, or `preserveTotal` counts one document twice;
+ *  - EVERY line key kept on that row, because the second pass below judges the
+ *    document by ALL of them. Keeping only the first would amnesty a document
+ *    whose later line is a real defect.
+ *
+ * @param {{key:string,bookDtlKeys:string[]}[]} rows  mutated in place
+ */
+export function recordUnpairedBookLine(rows, { key, erpNo, dtlKey, line }) {
+  const already = rows.find((r) => r.key === key);
+  if (already) already.bookDtlKeys.push(dtlKey);
+  else rows.push({ key, erpNo, bookDocNo: key, bookDtlKeys: [dtlKey], line });
+}
 
 const inert = (rows, why) => ({
   lineShape: 0, differ: rows.length, moved: [], impostors: [], refused: rows, applied: false, why,

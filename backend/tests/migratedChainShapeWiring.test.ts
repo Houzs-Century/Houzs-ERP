@@ -18,6 +18,7 @@ import { describe, expect, test } from 'vitest';
 import reconcileRaw from '../scripts/check-ac-erp-reconcile.mjs?raw';
 import splitsRaw from '../scripts/lib/ac-not-a-difference.mjs?raw';
 import chainRaw from '../scripts/lib/ac-chain-shape.mjs?raw';
+import hopRaw from '../scripts/lib/ac-source-hop.mjs?raw';
 import { NOTE_CHAIN_SHAPE, NOTE_SOURCE_NOT_MIGRATED } from '../scripts/lib/ac-chain-shape.mjs';
 import { NOTE_CLASSES } from '../scripts/lib/so-verdict-derive.mjs';
 import { DECLARED_LABEL } from '../scripts/lib/so-tally-verdict.mjs';
@@ -28,15 +29,16 @@ const n = (s: string) => s.replace(/\r\n/g, '\n');
 const reconcile = n(reconcileRaw);
 const splits = n(splitsRaw);
 const chain = n(chainRaw);
+const hop = n(hopRaw);
 
 /** The one class name. If this string moves, every assertion below moves. */
 const KLASS = 'migrated-chain-line-shape';
 
 describe('the migrated-chain shape reaches the per-document verdict', () => {
   test('the reconcile CALLS the module, on both halves, with the recorder', () => {
-    expect(reconcile).toContain('import { applyChainShape, reportChainShape }');
+    expect(reconcile).toContain('import { applyChainShape, recordUnpairedBookLine, reportChainShape, sourceDecisionFor }');
     expect(reconcile).toContain('const { LS, UB, SRC } = applyChainShape({');
-    expect(reconcile).toContain('recorder: VERDICT,');
+    expect(reconcile).toContain('recorder: VERDICT, ...sourceDecisionFor(erp, book, t) });');
     expect(reconcile).toContain('reportChainShape({ t, LS, UB, SRC, log, plain, first, show: SHOW });');
   });
 
@@ -62,17 +64,17 @@ describe('the migrated-chain shape reaches the per-document verdict', () => {
     // A classifier that pattern-matches a human-readable line is the failure the
     // reconcile already avoids for `itemRows` and `moneyRows`.
     expect(reconcile).toContain('const unpairedBookLineRows = [];');
-    expect(reconcile).toContain('key: ac, erpNo: d.erp_no, bookDocNo: ac, bookDtlKeys: [freeAc[i].dtlKey], line: msgAc,');
+    expect(reconcile).toContain('recordUnpairedBookLine(unpairedBookLineRows,');
   });
 
   test('one row per DOCUMENT, or the count-preserving check would count one document twice', () => {
-    expect(reconcile).toContain('const already = unpairedBookLineRows.find((r) => r.key === ac);');
+    expect(chain).toContain('const already = rows.find((r) => r.key === key);');
   });
 
   test('EVERY unpaired book line key is kept, not just the first', () => {
     // The second pass judges the document by all of them. Keeping only the
     // first would amnesty a document whose later line is a real defect.
-    expect(reconcile).toContain('if (already) already.bookDtlKeys.push(freeAc[i].dtlKey);');
+    expect(chain).toContain('if (already) already.bookDtlKeys.push(dtlKey);');
   });
 });
 
@@ -92,16 +94,33 @@ describe('the unmigrated source order reaches the per-document verdict', () => {
   });
 
   test('the coverage is MEASURED off the ERP rows, never taken from the scope', () => {
-    expect(reconcile).toContain('const rows = erp[sourceType]?.docs;');
-    expect(reconcile).toContain('if (!Array.isArray(rows) || !rows.length) return null;');
+    expect(hop).toContain('const rows = erp?.[sourceType]?.docs;');
+    expect(hop).toContain('if (!Array.isArray(rows) || !rows.length) return null;');
     // SCOPE states the population the migration was DEFINED to carry. Reading
     // it as what we HOLD is how a gap gets read out as a decision (bugs 0668).
+    // The word appears in the header, saying why it is NOT used. What must
+    // be absent is a READ of it.
+    expect(hop).not.toMatch(/SCOPE[.[]/);
     expect(reconcile).not.toContain('sourceCoverage: SCOPE');
   });
 
   test('the type declares it — no type letter is written into the wiring', () => {
-    expect(reconcile).toContain('const srcDecision = UNMIGRATED_SOURCE[t] ?? null;');
+    expect(chain).toContain('const sourceDecision = UNMIGRATED_SOURCE[t] ?? null;');
+    expect(reconcile).toContain('...sourceDecisionFor(erp, book, t)');
     expect(chain).not.toMatch(/["'](IV|PI)["']/);
+  });
+
+  test('the three arguments are resolved TOGETHER, not assembled at the call site', () => {
+    // They are one decision wearing three fields; a caller that pairs them by
+    // hand can pair a declaration with the wrong coverage and nothing notices.
+    expect(chain).toContain('export function sourceDecisionFor(erp, book, t) {');
+  });
+
+  test('an unresolvable hop returns NOTHING, never a bare source', () => {
+    // `[]` must read as "unproven". Returning the receipt as the source would
+    // answer a different question and the rule would believe it.
+    expect(hop).toContain('if (!receiptLines) return [];');
+    expect(hop).toContain('if (!ft || !fd) return [];');
   });
 
   test('the class is declared, and says what still counts as a difference', () => {
