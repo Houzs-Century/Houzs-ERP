@@ -11,15 +11,20 @@ vi.mock("../../vendor/scm/lib/authed-fetch", () => ({
   authedFetch: (...args: unknown[]) => authedFetch(...args),
   API_URL: "",
 }));
-vi.mock("../../vendor/scm/lib/admin-queries", () => ({
-  useStaff: () => ({
+/* The From picker lists ORDER HOLDERS, not the staff roster — the roster is
+   scoped by a person's company link and hid the resigned reps the panel exists
+   for. `alicia` is the resigned holder: inactive, and NOT in the pickable
+   roster below, so a test that passes with her selectable is proving the fix. */
+vi.mock("../../vendor/scm/lib/sales-order-queries", () => ({
+  useSoHandoverHolders: () => ({
     data: [
-      { id: "s-3", name: "Sim", active: true },
-      { id: "s-1", name: "alicia", active: false },
-      { id: "s-2", name: "Bernard", active: true },
+      { staffId: "s-1", name: "alicia", staffCode: "ACIMP-ALI", active: false, orders: 30 },
+      { staffId: "s-3", name: "Sim", staffCode: "EMP-3", active: true, orders: 2 },
     ],
     isLoading: false,
   }),
+}));
+vi.mock("../../vendor/scm/lib/admin-queries", () => ({
   usePickableStaff: () => ({
     data: [
       { id: "s-2", name: "Bernard", active: true },
@@ -58,17 +63,21 @@ const pickFrom = (optionText: string | RegExp) =>
   pick("Orders currently with", optionText);
 
 describe("SalespersonHandover", () => {
-  it("lists the full roster A→Z and marks who is no longer active", () => {
+  /* The list is ORDER HOLDERS, biggest book first, with the count in the label
+     — not the staff roster A→Z. `alicia` is inactive AND absent from the
+     pickable roster, so her being here at all is the regression this pins:
+     under the old source she was unselectable and her 30 orders unreachable. */
+  it("lists who holds orders, most first, with the count", () => {
     render(<SalespersonHandover />);
     fireEvent.focus(screen.getByRole("textbox", { name: "Orders currently with" }));
     const rows = [...document.querySelectorAll("li")].map((li) => li.textContent);
-    expect(rows).toEqual(["alicia (inactive)", "Bernard", "Sim"]);
+    expect(rows).toEqual(["alicia (inactive) — 30", "Sim — 2"]);
   });
 
   it("shows the orders that would move before anything is written", async () => {
     authedFetch.mockResolvedValueOnce(preview(2));
     render(<SalespersonHandover />);
-    pickFrom("alicia (inactive)");
+    pickFrom("alicia (inactive) — 30");
     await waitFor(() => expect(screen.getByText("HC-SO-1")).toBeTruthy());
     expect(screen.getByText("2")).toBeTruthy();          // the count
     expect(screen.getByText("HC-SO-2")).toBeTruthy();
@@ -80,7 +89,7 @@ describe("SalespersonHandover", () => {
   it("chunks the apply into batches of the API's cap", async () => {
     authedFetch.mockResolvedValueOnce(preview(30));
     render(<SalespersonHandover />);
-    pickFrom("alicia (inactive)");
+    pickFrom("alicia (inactive) — 30");
     await waitFor(() => expect(screen.getByText("HC-SO-1")).toBeTruthy());
 
     pick("Hand them to", "Bernard");
@@ -106,7 +115,7 @@ describe("SalespersonHandover", () => {
   it("reports what was skipped instead of claiming a clean run", async () => {
     authedFetch.mockResolvedValueOnce(preview(1));
     render(<SalespersonHandover />);
-    pickFrom("alicia (inactive)");
+    pickFrom("alicia (inactive) — 30");
     await waitFor(() => expect(screen.getByText("HC-SO-1")).toBeTruthy());
 
     pick("Hand them to", "Bernard");
@@ -139,7 +148,7 @@ describe("SalespersonHandover — sharing", () => {
   it("collects several people and posts them to /share, moving nothing", async () => {
     authedFetch.mockResolvedValueOnce(preview(2));
     render(<SalespersonHandover />);
-    pickFrom("alicia (inactive)");
+    pickFrom("alicia (inactive) — 30");
     await waitFor(() => expect(screen.getByText("HC-SO-1")).toBeTruthy());
 
     share("Bernard");
@@ -163,7 +172,7 @@ describe("SalespersonHandover — sharing", () => {
   it("sends mode=remove for a withdrawal, on the same list", async () => {
     authedFetch.mockResolvedValueOnce(preview(1));
     render(<SalespersonHandover />);
-    pickFrom("alicia (inactive)");
+    pickFrom("alicia (inactive) — 30");
     await waitFor(() => expect(screen.getByText("HC-SO-1")).toBeTruthy());
 
     share("Bernard");
@@ -180,7 +189,7 @@ describe("SalespersonHandover — sharing", () => {
   it("keeps the two actions independent — no share picked, no Share button", async () => {
     authedFetch.mockResolvedValueOnce(preview(1));
     render(<SalespersonHandover />);
-    pickFrom("alicia (inactive)");
+    pickFrom("alicia (inactive) — 30");
     await waitFor(() => expect(screen.getByText("HC-SO-1")).toBeTruthy());
 
     expect(screen.queryByRole("button", { name: /Share with/ })).toBeNull();

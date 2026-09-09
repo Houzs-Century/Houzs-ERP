@@ -1407,6 +1407,12 @@ Ledger: `docs/bugs/0715-subtracting-the-state-from-the-city-deleted-the-city-whe
   - `queryFn` → `authedFetch('/mfg-sales-orders?status=…')`
   - `staleTime: 30_000`, `placeholderData: prev` (keep old rows while a tab switch loads).
 - `useMfgSalesOrderDetail(docNo)` — `['mfg-sales-order-detail', docNo]`, `enabled: !!docNo`.
+- `useSoHandoverHolders()` — `['so-handover-holders']`, `GET /so-handover/holders`:
+  the salespeople who HOLD this company's orders, most first. It lives in this
+  file because it reads Sales Orders, but the rule it serves belongs to
+  **`so-handover.md` §6** — it exists because the staff ROSTER is scoped by a
+  person's company link and hid 22 holders / 339 orders from the handover
+  picker. Read that section before changing it.
 - Mutations (`create/patch/proceed/cancel/…`) each call
   `qc.invalidateQueries({ queryKey: ['mfg-sales-orders'] })` on success, so the list
   reflects a write immediately (same tab) and cross-tab via the MutationCache broadcast.

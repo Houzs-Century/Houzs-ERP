@@ -1181,3 +1181,38 @@ export async function loadSofaCompartmentPhotos(
   }));
   return out;
 }
+
+/** One salesperson who holds Sales Orders in the ACTIVE company. */
+export type SoHandoverHolder = {
+  staffId: string;
+  name: string | null;
+  staffCode: string | null;
+  active: boolean | null;
+  orders: number;
+};
+
+/**
+ * WHO holds this company's Sales Orders, most first.
+ *
+ * The Salesperson Handover panel's "Orders currently with" picker. It reads
+ * this and NOT the staff roster: `/staff` is scoped by a person's company LINK
+ * (`scm/lib/staffCompanyScope.ts`), which buckets an AutoCount-imported rep with
+ * no ERP login to the other company — so the roster hid 22 holders / 339
+ * non-cancelled orders in HOUZS, every one of them the kind of resigned rep the
+ * panel exists to hand over (production run 34336422828, 2026-09-09). Switching
+ * company does not rescue it: their ORDERS are in HOUZS while their staff rows
+ * answer to 2990.
+ *
+ * A list derived from the orders cannot omit somebody who holds one.
+ */
+export const useSoHandoverHolders = () => useQuery({
+  queryKey: ['so-handover-holders'],
+  /* `holders?` is OPTIONAL because this is the WIRE, not a local object, and
+     the `?? []` is the guard that keeps one odd payload from rendering a picker
+     that throws instead of one that is empty. Declaring it always-present would
+     make that guard read as dead code — which is exactly what the linter said
+     when it was typed that way. */
+  queryFn: () => authedFetch<{ holders?: SoHandoverHolder[] }>('/so-handover/holders')
+    .then((r) => r.holders ?? []),
+  staleTime: 60_000,
+});

@@ -29,6 +29,7 @@
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { requireActiveCompanyId, scopeToCompanyId } from '../lib/companyScope';
+import { paginateAll } from '../lib/paginate-all';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { readStaffAgentName } from '../lib/so-agent';
@@ -175,6 +176,88 @@ export function parseShareBody(
 /* GET /preview?from=<staffId> — every order currently attributed to that
    salesperson, in this company. `total` is what the operator is committing to;
    `truncated` says the list is not all of it. */
+/* GET /holders — WHO holds this company's Sales Orders.
+ *
+ * The panel's "Orders currently with" picker used to read GET /staff, and that
+ * is the wrong question. `/staff` is company-scoped by the caller's LINK
+ * (scm/lib/staffCompanyScope.ts `staffCompanyIds`): a staff row with no ERP
+ * login is bucketed to the 2990 mirror, which is the normal shape for an
+ * AutoCount-imported rep who resigned years ago — exactly the person this panel
+ * exists to hand over. Measured on production 2026-09-09 (run 34336422828):
+ * 22 holders / 339 non-cancelled orders in HOUZS were unselectable, including
+ * all three reps the owner came to move. Switching company does not rescue it —
+ * their ORDERS are in HOUZS while their staff rows answer to 2990, so neither
+ * company can complete the handover.
+ *
+ * A holder list cannot omit a holder: it is derived from the orders themselves.
+ *
+ * Counted the SAME way `/preview` lists — company-scoped, no status filter — so
+ * the number on the picker and the number on the list that follows it cannot
+ * disagree. (A cancelled order is still attributed to somebody; `/apply` is what
+ * decides per order whether it may move.)
+ *
+ * Gated on `scm.so.attribute_other` like the rest of this router: it enumerates
+ * the company's order book by salesperson.
+ */
+soHandover.get('/holders', async (c) => {
+  if (!hasHouzsPerm(c, 'scm.so.attribute_other')) return c.json({ error: 'forbidden' }, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+
+  /* Every attributed order's salesperson, reduced in JS. The alternative is a
+     grouped PostgREST aggregate, which this codebase already keeps a JS
+     fallback for (lib/status-counts.ts) because aggregates can be disabled on
+     the instance — one path that always works beats two that disagree. */
+  const { data, error } = await paginateAll<{ salesperson_id: string | null }>(
+    (from, to) => scopeToCompanyId(
+      sb.from('mfg_sales_orders')
+        .select('salesperson_id')
+        .not('salesperson_id', 'is', null)
+        .order('doc_no', { ascending: true })
+        .range(from, to),
+      co.companyId,
+    ),
+  );
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+
+  const counts = new Map<string, number>();
+  for (const r of data ?? []) {
+    const id = r.salesperson_id;
+    if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  const ids = [...counts.keys()];
+  if (ids.length === 0) return c.json({ holders: [] });
+
+  /* Names by id — deliberately NOT the scoped roster. These ids came out of
+     this company's own orders, so resolving them leaks nothing the caller
+     cannot already enumerate, and a name that fails to resolve must still be
+     selectable (it is somebody's order book). */
+  const { data: staffRows, error: staffError } = await sb
+    .from('staff').select('id, name, staff_code, active').in('id', ids);
+  if (staffError) return c.json({ error: 'load_failed', reason: staffError.message }, 500);
+  const byId = new Map(
+    ((staffRows as Array<Record<string, unknown>> | null) ?? []).map((s) => [String(s.id), s]),
+  );
+
+  const holders = ids.map((id) => {
+    const s = byId.get(id);
+    return {
+      staffId: id,
+      name: (s?.name as string | null) ?? null,
+      staffCode: (s?.staff_code as string | null) ?? null,
+      active: (s?.active as boolean | null) ?? null,
+      orders: counts.get(id) ?? 0,
+    };
+  });
+  /* Most orders first — the person with fifty is the one being handed over, and
+     an alphabetical list buries them among people with one. */
+  holders.sort((a, b) => b.orders - a.orders
+    || (a.name ?? '').localeCompare(b.name ?? '', undefined, { sensitivity: 'base' }));
+
+  return c.json({ holders });
+});
+
 soHandover.get('/preview', async (c) => {
   if (!hasHouzsPerm(c, 'scm.so.attribute_other')) return c.json({ error: 'forbidden' }, 403);
   const from = (c.req.query('from') ?? '').trim();
