@@ -130,7 +130,12 @@ async function main() {
       FROM scm.mfg_sales_orders h
       JOIN scm.mfg_sales_order_items i ON i.doc_no = h.doc_no
      WHERE h.company_id = ${CO}
-       AND upper(h.status) <> ALL(${TERMINAL})
+       -- status is the ENUM scm.mfg_so_status, not text: upper() has no overload
+       -- for it and the statement dies "function upper(scm.mfg_so_status) does not
+       -- exist". The preflight above proves a column EXISTS and says nothing about
+       -- its TYPE, which is the next thing to check when a column-shaped error
+       -- survives it. (No backticks in here: this is inside a tagged template.)
+       AND upper(h.status::text) <> ALL(${TERMINAL})
        AND COALESCE(h.amended_delivery_date, h.customer_delivery_date) IS NOT NULL
        AND COALESCE(h.amended_delivery_date, h.customer_delivery_date)::date
            < ((now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date - ${DAYS}::int)
@@ -146,7 +151,12 @@ async function main() {
       FROM scm.mfg_sales_orders h
       JOIN scm.mfg_sales_order_items i ON i.doc_no = h.doc_no
      WHERE h.company_id = ${CO}
-       AND upper(h.status) <> ALL(${TERMINAL})
+       -- status is the ENUM scm.mfg_so_status, not text: upper() has no overload
+       -- for it and the statement dies "function upper(scm.mfg_so_status) does not
+       -- exist". The preflight above proves a column EXISTS and says nothing about
+       -- its TYPE, which is the next thing to check when a column-shaped error
+       -- survives it. (No backticks in here: this is inside a tagged template.)
+       AND upper(h.status::text) <> ALL(${TERMINAL})
        AND i.cancelled = false
        AND COALESCE(i.stock_qty_ready, 0) > 0`;
 

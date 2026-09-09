@@ -81,11 +81,19 @@ test("BOTH real files load, and the 2026-08 round is still there", () => {
      that are NOT "we have no answer" - two documents cannot yet be addressed at
      the grain his answer needs, and one asks him a question only he can close.
      The held count is asserted beside the build count because a held build that
-     quietly became a written one would otherwise move neither number. */
+     quietly became a written one would otherwise move neither number.
+     held 3 -> 4 on 2026-09-09: the SECOND sofa the account book's GR-000287
+     carries. The owner answered it — 「2s 就是2s啊 你不会吗?」 — and it is held
+     for the one reason that is not about the answer: the ERP holds no row to
+     write it onto. Its five other documents (SO-000566, PO-000164, DO-000541,
+     I-000768, PI-000946) are not in the ERP at all, and every book line key of
+     that chain returns zero rows across the six tables carrying
+     `linked_ac_dtlkey` (probe runs 34316985562 and 34317127596). A missing book
+     line, not an unread compartment. */
   assert.equal(bySource.get("sofa-compartment-corrections-2026-09.json"), 37);
   const heldBySource = new Map();
   for (const h of both.held) heldBySource.set(h.source, (heldBySource.get(h.source) ?? 0) + 1);
-  assert.equal(heldBySource.get("sofa-compartment-corrections-2026-09.json"), 3);
+  assert.equal(heldBySource.get("sofa-compartment-corrections-2026-09.json"), 4);
 });
 
 /* ── AN ANSWERED BUILD MAY NOT SIT IN `_held` ───────────────────────────────
