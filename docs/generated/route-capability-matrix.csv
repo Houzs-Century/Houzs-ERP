@@ -392,7 +392,9 @@ GET,/api/public/brand-calendar/:token/events/:eventId,NO_STATIC_AUTH_GATE,NO_GLO
 GET,/api/public/brand-calendar/:token/events/:eventId/floorplan,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/publicBrandCalendar.ts
 GET,/api/public/brand-calendar/:token/events/:eventId/floorplan/:fileId,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/publicBrandCalendar.ts
 GET,/api/public/brand-calendar/:token/export,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/publicBrandCalendar.ts
+GET,/api/public/brand-calendar/:token/floorplans,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/publicBrandCalendar.ts
 GET,/api/public/contractor-calendar/:token,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/publicContractorCalendar.ts
+GET,/api/public/contractor-calendar/:token/events/:eventId,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/publicContractorCalendar.ts
 GET,/api/public/contractor-calendar/:token/events/:eventId/floorplan,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/publicContractorCalendar.ts
 GET,/api/public/contractor-calendar/:token/events/:eventId/floorplan/:fileId,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/publicContractorCalendar.ts
 GET,/api/public/contractor-calendar/:token/export,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/publicContractorCalendar.ts

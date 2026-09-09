@@ -51,6 +51,23 @@ function run(sql: string, args: unknown[]): Row[] {
   }
   if (table === "projects") {
     if (!/\bbrand = \?/.test(sql)) throw new Error("a projects read without the brand predicate: " + sql);
+    if (/project_checklist_attachments/.test(sql)) {
+      // The display-floorplan manifest: binds are [brand, task-title LIKE, last day, first day].
+      const like = String(args[1]).replace("%", "");
+      const windowed = /substr\(p\.start_date, 1, 10\) <= \?/.test(sql);
+      const evs = projects
+        .filter((p) => p.brand === args[0] && live(p))
+        .filter((p) => !windowed || (String(p.start_date).slice(0, 10) <= String(args[2]) && String(p.end_date ?? p.start_date).slice(0, 10) >= String(args[3])))
+        .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)) || Number(a.id) - Number(b.id));
+      const out: Row[] = [];
+      for (const p of evs) {
+        const items = checklist.filter((it) => it.project_id === p.id && String(it.title).toLowerCase().replace(/ /g, "").startsWith(like));
+        for (const a of taskAtts.filter((a) => items.some((it) => it.id === a.item_id) && a.archived_at == null)) {
+          out.push({ id: p.id, name: p.name, venue: p.venue, booth_no: p.booth_no, start_date: p.start_date, end_date: p.end_date, file_id: a.id, file_name: a.file_name, content_type: a.content_type, size_bytes: a.size_bytes });
+        }
+      }
+      return out;
+    }
     const byId = /WHERE (p\.)?id = \?/.test(sql);
     let rows = byId
       ? projects.filter((p) => p.id === args[0] && p.brand === args[1] && live(p))
@@ -198,12 +215,33 @@ describe("public brand calendar", () => {
 
   test("an unknown token gets the same 404 on every route and never reaches projects", async () => {
     const bad = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
-    for (const p of [`/${bad}`, `/${bad}/events/7`, `/${bad}/events/7/floorplan`, `/${bad}/export`]) {
+    for (const p of [`/${bad}`, `/${bad}/events/7`, `/${bad}/events/7/floorplan`, `/${bad}/export`, `/${bad}/floorplans`]) {
       const res = await get(p);
       expect(res.status).toBe(404);
       expect(((await res.json()) as { error: string }).error).toBe("unknown_link");
     }
     expect(touched).not.toContain("projects");
     expect(exportLog).toEqual([]);
+  });
+
+  test("floorplans manifest: the month's events that HAVE a display floorplan, this brand only, logged once", async () => {
+    const res = await get(`/${TOKEN}/floorplans?month=2026-09`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { brand: string; events: { eventId: number; venue: string; files: { fileId: string }[] }[] };
+    expect(body.brand).toBe(AKEMI);
+    // Event 7 (AKEMI, September) with ONLY its Display Floor Plan file — never the
+    // blank (t700) or filled (t702) one; event 8 is ZANOTTI's and absent; event 9 is
+    // pending and absent.
+    expect(body.events.map((e) => ({ eventId: e.eventId, venue: e.venue, files: e.files.map((f) => f.fileId) }))).toEqual([
+      { eventId: 7, venue: "MID VALLEY", files: ["t701"] },
+    ]);
+    expect(exportLog).toEqual([{ kind: "brand_floorplans", subject: AKEMI, token: TOKEN, ip: "203.0.113.9", row_count: 1 }]);
+    // October: the same brand, nothing in the month — an empty manifest, logged as 0.
+    const oct = await get(`/${TOKEN}/floorplans?month=2026-10`);
+    expect((await oct.json() as { events: unknown[] }).events).toEqual([]);
+    // An event whose display floorplan is gone is simply not listed.
+    taskAtts = taskAtts.filter((a) => a.id !== 701);
+    const none = await get(`/${TOKEN}/floorplans?month=2026-09`);
+    expect((await none.json() as { events: unknown[] }).events).toEqual([]);
   });
 });
