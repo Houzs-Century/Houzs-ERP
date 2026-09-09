@@ -29,6 +29,7 @@ import {
   categoryRequiresAck,
   type AnnouncementCategory,
   type Attachment,
+  type DocumentTypeOption,
   type Company,
 } from "./announcementModel";
 
@@ -50,6 +51,8 @@ import {
 
 export type ComposerDraft = {
   savedAt: number;
+  /** Document type code (mig 20260908T0300): ANN or e.g. MEMO. */
+  docType: string;
   category: AnnouncementCategory;
   requireAck: boolean;
   title: string;
@@ -83,6 +86,7 @@ export function readDraft(key: string): ComposerDraft | null {
     if (typeof d.savedAt !== "number") return null;
     return {
       savedAt: d.savedAt,
+      docType: typeof d.docType === "string" && /^[A-Z]{2,4}$/.test(d.docType) ? d.docType : "ANN",
       category: CATEGORY_ORDER.includes(d.category as AnnouncementCategory)
         ? (d.category as AnnouncementCategory)
         : "WARNING",
@@ -140,6 +144,7 @@ export function buildPostBody(
     title,
     body: richTextToPlain(d.html),
     bodyHtml: d.html,
+    docType: d.docType,
     category: d.category,
     requireAck: d.requireAck,
     attachments: d.attachments,
@@ -184,8 +189,14 @@ export type ComposerModalProps = {
   currentUserId: number | null;
   /** Settings → Documents says the ANN type needs a file before submit
    *  (mig 20260907T0715). Submit is held until one is attached; Save draft is
-   *  not. The server enforces the same rule. */
+   *  not. The server enforces the same rule. Superseded per type by
+   *  `docTypes` when that is given. */
   attachmentRequired?: boolean;
+  /** The registered document types (GET /api/document-types, active only).
+   *  With more than one, the composer offers a Type row — Announcement / Memo
+   *  — and the pick is the [TYPE] segment of the reference number (mig
+   *  20260908T0300). Each type carries its own attachment policy. */
+  docTypes?: DocumentTypeOption[];
   onClose: () => void;
   onPosted: () => void;
 };
@@ -207,6 +218,7 @@ export function ComposerModal(p: ComposerModalProps) {
   const storageKey = draftStorageKey(p.currentUserId);
   const restored = useMemo(() => readDraft(storageKey), [storageKey]);
 
+  const [docType, setDocType] = useState<string>(restored?.docType ?? "ANN");
   const [category, setCategory] = useState<AnnouncementCategory>(restored?.category ?? "WARNING");
   const [requireAck, setRequireAck] = useState<boolean>(restored?.requireAck ?? true);
   const [title, setTitle] = useState(restored?.title ?? "");
@@ -251,6 +263,7 @@ export function ComposerModal(p: ComposerModalProps) {
   // closed composer never leaves an empty draft behind.
   const draft = useMemo<Omit<ComposerDraft, "savedAt">>(
     () => ({
+      docType,
       category,
       requireAck,
       title,
@@ -263,7 +276,7 @@ export function ComposerModal(p: ComposerModalProps) {
       videoLayout,
       clientKey,
     }),
-    [category, requireAck, title, html, attachments, scheduledAt, expiresAt, audience, photoLayout, videoLayout, clientKey],
+    [docType, category, requireAck, title, html, attachments, scheduledAt, expiresAt, audience, photoLayout, videoLayout, clientKey],
   );
   const firstRender = useRef(true);
   useEffect(() => {
@@ -428,7 +441,10 @@ export function ComposerModal(p: ComposerModalProps) {
   const hasPhotos = attachments.some((a) => a.mime.startsWith("image/"));
   const hasVideos = attachments.some((a) => a.mime.startsWith("video/"));
   const canPost = !posting && !uploading && title.trim().length > 0;
-  const missingAttachment = p.attachmentRequired === true && attachments.length === 0;
+  const typeOptions = p.docTypes ?? [];
+  const pickedType = typeOptions.find((t) => t.code === docType);
+  const typeNeedsFile = pickedType ? pickedType.attachmentRequired : p.attachmentRequired === true;
+  const missingAttachment = typeNeedsFile && attachments.length === 0;
   const canSubmit = canPost && !missingAttachment;
   const meta = CATEGORY_META[category];
 
@@ -466,6 +482,30 @@ export function ComposerModal(p: ComposerModalProps) {
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_520px]">
           {/* ── Editor column ─────────────────────────────────────────── */}
           <div className="flex min-h-0 flex-col gap-3.5 overflow-auto border-r border-border px-[18px] py-4">
+            {typeOptions.length > 1 && (
+              <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Document type">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">Type</span>
+                {typeOptions.map((t) => {
+                  const on = t.code === docType;
+                  return (
+                    <button
+                      key={t.code}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      onClick={() => setDocType(t.code)}
+                      className={cn(
+                        "rounded-full border px-3 py-[5px] text-[11.5px] font-[650]",
+                        on ? "border-transparent bg-ink text-white" : "border-border bg-surface text-ink-secondary hover:bg-surface-dim",
+                      )}
+                    >
+                      {t.label}
+                      <span className="ml-1 font-mono text-[10px] opacity-70">{t.code}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-2">
               {CATEGORY_ORDER.map((c) => {
                 const m = CATEGORY_META[c];

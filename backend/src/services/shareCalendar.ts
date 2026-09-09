@@ -291,13 +291,36 @@ type ExportRowDb = {
   total_sales?: number | null;
 };
 
-/** The party's confirmed events as export rows. The money column is only
- *  SELECTed when `withSales` — a contractor export never reads project_finance.
- *  Owner 2026-09-09 ("tambah state brand type"): State, Brand and the event
- *  TYPE (project_event_types.name, the project's own type picker) ride along. */
-export async function listShareExportRows(env: Env, scope: ShareScope, withSales: boolean): Promise<ShareExportRow[]> {
+/** `YYYY-MM` — the one month an export covers (owner 2026-09-09: "when chose
+ *  september then click export will export event on september only"). */
+export const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/** First and last calendar day of a `YYYY-MM` month, as 'YYYY-MM-DD'. */
+export function monthBounds(month: string): { first: string; last: string } {
+  const y = Number(month.slice(0, 4));
+  const m = Number(month.slice(5, 7));
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return { first: `${month}-01`, last: `${month}-${String(lastDay).padStart(2, "0")}` };
+}
+
+/** The party's confirmed events that touch `month`, as export rows. An event
+ *  counts when any of its days fall in the month (a 30 Aug – 2 Sep show is in
+ *  both months' exports). `month: null` means the whole schedule — what a page
+ *  loaded BEFORE 2026-09-09's deploy still asks for; a tab that is open across
+ *  a deploy keeps its old JavaScript until it reloads, and refusing it made the
+ *  export fail for the owner within minutes of shipping. The money column is
+ *  only SELECTed when `withSales` —
+ *  a contractor export never reads project_finance. Owner 2026-09-09 ("tambah
+ *  state brand type"): State, Brand and the event TYPE (project_event_types.name,
+ *  the project's own type picker) ride along. */
+export async function listShareExportRows(env: Env, scope: ShareScope, withSales: boolean, month: string | null): Promise<ShareExportRow[]> {
   // company-scope: intentionally cross-company — see listShareEvents.
   const cols = `p.start_date, p.end_date, p.venue, p.state, p.organizer, p.brand, et.name AS event_type, p.booth_no, p.size_sqm`;
+  // Dates are 'YYYY-MM-DD[...]' text; the first ten characters compare as days.
+  const inMonth = month
+    ? `substr(p.start_date, 1, 10) <= ? AND substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?`
+    : `1 = 1`;
+  const window = month ? [monthBounds(month).last, monthBounds(month).first] : [];
   const sql = withSales
     ? `SELECT ${cols}, pf.total_sales
          FROM projects p
@@ -305,14 +328,16 @@ export async function listShareExportRows(env: Env, scope: ShareScope, withSales
          LEFT JOIN project_finance pf ON pf.project_id = p.id
         WHERE p.${scope.column} = ?
           AND lower(p.status) = 'confirmed' AND p.archived_at IS NULL
+          AND ${inMonth}
         ORDER BY p.start_date`
     : `SELECT ${cols}
          FROM projects p
          LEFT JOIN project_event_types et ON et.id = p.event_type_id
         WHERE p.${scope.column} = ?
           AND lower(p.status) = 'confirmed' AND p.archived_at IS NULL
+          AND ${inMonth}
         ORDER BY p.start_date`;
-  const rows = await env.DB.prepare(sql).bind(scope.value).all<ExportRowDb>();
+  const rows = await env.DB.prepare(sql).bind(scope.value, ...window).all<ExportRowDb>();
   return rows.results.map((r) => {
     const out: ShareExportRow = {
       startDate: r.start_date,

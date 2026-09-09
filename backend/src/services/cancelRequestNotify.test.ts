@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../types';
 
 const holders = vi.fn(async (_env: unknown, perm: string) => {
-  if (perm.endsWith('approve_l1') || perm === 'scm.po_cancel.approve') return [21, 22];
+  if (perm.endsWith('approve_l1')) return [21, 22];
   if (perm.endsWith('approve_l2')) return [31];
   return [];
 });
@@ -40,7 +40,7 @@ describe('cancelRequestNotify', () => {
     expect(call.source).toBe('document_cancel');
   });
 
-  it('level1 → the level-2 desk on a Sales Order; a Purchase Order has no level 2 to tell', async () => {
+  it('level1 → the level-2 desk on a Sales Order; a Purchase Order has no desk to tell', async () => {
     await notifyCancelRequest(env, 'level1', { ...base, actorUserId: 21, actorName: 'Ben' });
     expect(holders).toHaveBeenCalledWith(env, 'scm.so_cancel.approve_l2', { companyId: 1 });
     const call = posted.mock.calls[0]![1] as { userIds: number[]; title: string; body: string };
@@ -54,12 +54,15 @@ describe('cancelRequestNotify', () => {
     expect(posted).not.toHaveBeenCalled();
   });
 
-  it('raised on a Purchase Order → the Purchaser desk, with no level in the words', async () => {
-    await notifyCancelRequest(env, 'raised', { ...base, docType: 'PO', docNumber: 'PO-7', actorUserId: 11 });
-    expect(holders).toHaveBeenCalledWith(env, 'scm.po_cancel.approve', { companyId: 1 });
-    const call = posted.mock.calls[0]![1] as { title: string; body: string };
-    expect(call.title).toBe('Purchase Order PO-7 — cancellation needs approval');
-    expect(call.body).not.toContain('level');
+  /* Owner 2026-09-09 — a Purchase Order cancel needs no approval, so there is
+     no desk to notify at any step. The cancellation is still recorded with its
+     reason; nobody is asked to act on it. */
+  it('a Purchase Order tells nobody, at any step', async () => {
+    for (const event of ['raised', 'level1', 'approved'] as const) {
+      await notifyCancelRequest(env, event, { ...base, docType: 'PO', docNumber: 'PO-7', actorUserId: 11 });
+    }
+    expect(holders).not.toHaveBeenCalled();
+    expect(posted).not.toHaveBeenCalled();
   });
 
   it('approved / rejected → the requester only, never about their own action', async () => {

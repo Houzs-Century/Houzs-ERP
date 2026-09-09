@@ -5,7 +5,7 @@
 //   GET /api/public/contractor-calendar/:token
 //   GET /api/public/contractor-calendar/:token/events/:eventId/floorplan
 //   GET /api/public/contractor-calendar/:token/events/:eventId/floorplan/:fileId
-//   GET /api/public/contractor-calendar/:token/export
+//   GET /api/public/contractor-calendar/:token/export?month=YYYY-MM
 //
 // The unguessable token IS the credential (pattern: routes/publicDoScan.ts and
 // mig 0126's kill switch). The contractor the link belongs to is read off the
@@ -32,6 +32,7 @@ import type { Env } from "../types";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
 import { resolveShareToken } from "../services/contractorShare";
 import {
+  MONTH_RE,
   TOKEN_RE,
   listPlanFiles,
   listShareEvents,
@@ -113,13 +114,19 @@ publicContractorCalendar.get("/:token/events/:eventId/floorplan/:fileId", async 
 });
 
 // Export rows — Date / Venue / State / Organizer / Brand / Type / Booth / Size,
-// NEVER sales — scoped
-// server-side to the token's contractor; the browser builds the .xlsx. Logged
-// like the brand export so the office can see who pulled what, when.
+// NEVER sales — scoped server-side to the token's contractor AND to the one
+// month asked for (owner 2026-09-09: the export follows the month on screen);
+// the browser builds the .xlsx. Logged like the brand export so the office can
+// see who pulled what, when.
 publicContractorCalendar.get("/:token/export", async (c) => {
   const g = await gate(c);
   if (g instanceof Response) return g;
-  const rows = await listShareExportRows(c.env, g.scope, false);
+  // No month = the whole schedule: a page loaded before the month rule shipped
+  // still asks that way until it reloads. A month that is PRESENT but malformed
+  // is a bad request, never silently the whole schedule.
+  const raw = (c.req.query("month") ?? "").trim();
+  if (raw && !MONTH_RE.test(raw)) return c.json({ error: "bad_month", message: "Month must look like 2026-09." }, 400);
+  const rows = await listShareExportRows(c.env, g.scope, false, raw || null);
   await logShareExport(c.env, "contractor", g.scope.value, g.token, clientIp(c), rows.length);
   return c.json({ contractor: g.scope.value, generatedAt: new Date().toISOString(), rows });
 });

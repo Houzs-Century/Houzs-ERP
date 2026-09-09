@@ -1,0 +1,92 @@
+name: The transfer chain — both sides, line by line, with the candidates (read-only)
+
+# 「你知道了差在哪里就直接对齐了 不需要等我」 — the owner, and this is the
+# looking that has to come first.
+#
+# The tally (po-gr-tally-verdict.yml) names 56 documents on the `transfer from`
+# / `transfer to` axes and prints the AXIS. It does not print the two candidate
+# lines a reader needs to CHECK a pairing claim, and this class is decided by
+# exactly that: one line of the item code on the source document is that line;
+# two or more are separated by the build text and only when exactly one matches;
+# everything else REFUSES and is named. A blank beats a wrong link
+# (docs/bugs/0690 — a position-based test failed 6 of 8 on PO-009081, where two
+# identical bedframes went to two receipts and position paired them backwards).
+#
+# READ-ONLY AND BOUNDED. scripts/diag-transfer-chain-56.mjs runs SELECTs only,
+# on one connection, with no DDL, no transaction and no APPLY switch. Every read
+# is restricted to the documents named in the inputs and to the documents the
+# BOOK names as their source; there is no table scan.
+#
+# The AutoCount side is the committed snapshot
+# backend/scripts/data/ac-convert-edges.json.gz — the book is reachable only
+# over ZeroTier from the office network, which a GitHub-hosted runner has no
+# route to. It REFUSES on a stale cut rather than answering against an old book.
+on:
+  workflow_dispatch:
+    inputs:
+      so_docs:
+        description: "AutoCount sales orders, comma separated (blank = the tally's list)"
+        required: false
+        type: string
+      po_docs:
+        description: "AutoCount purchase orders, comma separated"
+        required: false
+        type: string
+      gr_docs:
+        description: "AutoCount receipt|order PAIRS, comma separated (GR-005278|PO-009920)"
+        required: false
+        type: string
+      do_docs:
+        description: "AutoCount delivery orders, comma separated"
+        required: false
+        type: string
+      pi_docs:
+        description: "AutoCount purchase invoices, comma separated"
+        required: false
+        type: string
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+      max_snapshot_age_days:
+        description: "Refuse if the AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+
+# Its OWN group, and it does NOT cancel in progress. Several lanes are working
+# this book at once; asking a question must not displace a release and must not
+# kill somebody else's run mid-flight.
+concurrency:
+  group: diag-transfer-chain-56
+  cancel-in-progress: false
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Both sides, line by line
+        run: node scripts/diag-transfer-chain-56.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          SO_DOCS: ${{ inputs.so_docs }}
+          PO_DOCS: ${{ inputs.po_docs }}
+          GR_DOCS: ${{ inputs.gr_docs }}
+          DO_DOCS: ${{ inputs.do_docs }}
+          PI_DOCS: ${{ inputs.pi_docs }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

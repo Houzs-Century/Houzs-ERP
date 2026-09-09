@@ -37,6 +37,8 @@ import {
   postBatchReceipt, loadBatchReceipts, undoBatchReceipt, unconfirmSettlementRow, clearOrphanBatch,
 } from '../../acc/settlement';
 import { resolveRoles } from '../../acc/rules';
+import { loadLineMonth, loadLiveMonthLock } from '../../acc/bank';
+import { lockedRefusal } from '../../acc/bank-lock';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -934,7 +936,55 @@ export const settlementReceiptUndo = guard(async (c) => {
   const receiptId = Number(c.req.param('id'));
   if (!Number.isInteger(receiptId)) return c.json({ error: 'bad_id' }, 400);
 
-  const r = await undoBatchReceipt(c.get('supabase'), co.companyId, receiptId);
+  const sb = c.get('supabase');
+
+  /* THE BACK DOOR INTO A CLOSED MONTH, shut here (owner, 2026-09-08: 还有lock
+     起来不可以随便碰).
+
+     A credit booked FROM a bank statement carries `bank_line_id`, and reversing
+     it from this side would undo an entry that a closed bank month has already
+     counted and reported — the bank screen's own undo refuses, and without this
+     the same act would simply be done through the other door. A credit typed by
+     hand has no bank line and is none of the lock's business, which is why this
+     is a guard on the LINK rather than on the receipt. */
+  const { data: receiptRow, error: rErr } = await sb.from('acc_settlement_receipts')
+    .select('bank_line_id').eq('id', receiptId).eq('company_id', co.companyId).maybeSingle();
+  if (rErr) {
+    return c.json({
+      error: 'lock_check_failed',
+      reason: rErr.message,
+      message: 'Whether this credit belongs to a closed month could not be checked, so nothing was'
+        + ' changed. Try again.',
+    }, 500);
+  }
+  const bankLineId = (receiptRow as { bank_line_id?: number | null } | null)?.bank_line_id ?? null;
+  if (bankLineId != null) {
+    const where = await loadLineMonth(sb, co.companyId, Number(bankLineId));
+    if (!where.ok) {
+      return c.json({
+        error: 'lock_check_failed',
+        reason: where.reason,
+        message: 'Whether this credit belongs to a closed month could not be checked, so nothing was'
+          + ' changed. Try again.',
+      }, 500);
+    }
+    if (where.found) {
+      const held = await loadLiveMonthLock(sb, co.companyId, where.accountCode, where.month);
+      if (!held.ok) {
+        return c.json({
+          error: 'lock_check_failed',
+          reason: held.reason,
+          message: 'Whether this credit belongs to a closed month could not be checked, so nothing was'
+            + ' changed. Try again.',
+        }, 500);
+      }
+      if (held.lock) {
+        return c.json(lockedRefusal(held.lock, 'taking this credit back'), 409);
+      }
+    }
+  }
+
+  const r = await undoBatchReceipt(sb, co.companyId, receiptId);
   if (!r.ok) return c.json({ error: r.status, message: r.reason }, r.status === 'not_found' ? 404 : 500);
   return c.json(r);
 });

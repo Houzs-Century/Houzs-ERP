@@ -298,13 +298,15 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
     setCursor({ y: today.getFullYear(), m: today.getMonth() });
   }
 
-  // Excel: the rows come from the server already scoped to this link (and, for
-  // a brand, already logged there); the browser only lays them out.
+  // Excel: the rows come from the server already scoped to this link AND to the
+  // month on screen (owner 2026-09-09: "when chose september then click export
+  // will export event on september only"); the browser only lays them out.
   async function exportExcel() {
     setExporting(true);
     setExportError(null);
     try {
-      const res = await correlatedFetch(`${base}/export`);
+      const month = `${cursor.y}-${String(cursor.m + 1).padStart(2, "0")}`;
+      const res = await correlatedFetch(`${base}/export?month=${month}`);
       if (!res.ok) {
         setExportError("Could not prepare the export just now. Please try again in a moment.");
         return;
@@ -337,7 +339,7 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Schedule");
       const stem = party.replace(/[\\/:*?"<>|]+/g, " ").trim() || "schedule";
-      XLSX.writeFileXLSX(wb, `${stem} schedule ${fmtDate(new Date())}.xlsx`);
+      XLSX.writeFileXLSX(wb, `${stem} schedule ${monthLabel}.xlsx`);
     } catch {
       setExportError("Could not prepare the export just now. Please try again in a moment.");
     } finally {

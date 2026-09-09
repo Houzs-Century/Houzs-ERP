@@ -239,3 +239,41 @@ export function pairRowsToPieces(rows, want, codeOf = (r) => r.code) {
   for (const p of pairs) if (!p.row && pool.length) p.row = pool.shift();
   return { pairs, surplus: pool };
 }
+
+/**
+ * WHICH VERIFY ENTRIES A LATER RULING HAS ALREADY OVERRULED.
+ *
+ * `CORRECTION_FILES` is ordered oldest first on purpose, so two files may rule
+ * on one build and the NEWER ruling is the answer. `lib/sofa-rulings.mjs`
+ * states that for the lookup path with `findLast` (docs/bugs/0722); this is the
+ * same rule for the applier's own verification, which kept one expectation per
+ * ENTRY and asserted every one of them — including the entry the next file had
+ * just overruled.
+ *
+ * SUPERSEDING IS DECIDED ON ROW IDS, NOT ON THE SELECTOR TEXT. The pair that
+ * bought this (`HC-SO-012929`, run 34301924900) carries two different
+ * `desc2Match` strings — "...Barley/Bottom wr" and "...Barley" — so any key
+ * built from the selector calls them separate builds and changes nothing. What
+ * makes them one build is that they select the same rows.
+ *
+ * An entry that selects NO rows is never superseded and never supersedes: an
+ * empty set intersects nothing, and a build whose rows vanished is a finding
+ * that must still be asserted rather than explained away.
+ *
+ * @param {string[]} docKeys one per entry, in file order; entries are only
+ *        compared within the same key
+ * @param {Array<Array<string|number>>} idSets the row ids each entry selects
+ * @returns {number[]} for each entry, the index of the LATER entry that
+ *        overrules it, or -1
+ */
+export function supersededBy(docKeys, idSets) {
+  const sets = idSets.map((ids) => new Set(ids.map((x) => String(x))));
+  return docKeys.map((key, n) => {
+    if (!sets[n].size) return -1;
+    for (let m = n + 1; m < docKeys.length; m++) {
+      if (docKeys[m] !== key) continue;
+      for (const id of sets[m]) if (sets[n].has(id)) return m;
+    }
+    return -1;
+  });
+}

@@ -2,13 +2,21 @@
 //
 // THE OWNER, 2026-09-08: 「SO 和 PO 取消的话需要 approval 2 层 — 已经输入原因」,
 // then the same day: 「只有 SO 需要 sales director approval, PO 不需要 … PO 只要
-// Purchaser 一个审批」. So the depth is PER DOCUMENT:
+// Purchaser 一个审批」, and on 2026-09-09: 「PO cancelled 不需要审批，只需要 remark
+// 原因取消」. So the depth is PER DOCUMENT:
 //
 //   Sales Order      reason → level 1 (Sales Director) → level 2 (Purchaser) → cancel
-//   Purchase Order   reason → one signature (Purchaser)                      → cancel
+//   Purchase Order   reason → cancel                        (NO signature at all)
 //
-// Whatever the depth, the signer is never the requester, and on the Sales
-// Order the two signers are two different people. Only then may the
+// A Purchase Order is therefore a REASON-ONLY document: the cancel runs on the
+// spot, and what the flow still guarantees is that it cannot run without the
+// buyer saying why. That reason is no weaker for having no approver — it is
+// mandatory on the cancel call itself (the guard in
+// routes/document-cancel-routes.ts), so no surface can skip it, and it is
+// recorded in the same ledger the Sales Order's approvals write to.
+//
+// Where signatures ARE required, the signer is never the requester, and on the
+// Sales Order the two signers are two different people. Only then may the
 // document's existing cancel route run.
 //
 // This file is the RULES and nothing else — no DB, no I/O — so the route
@@ -43,18 +51,30 @@ export const isOpenCancelStatus = (s: string | null | undefined): boolean =>
 
 export type ApprovalLevel = 1 | 2;
 
-/** How many signatures each document needs (owner 2026-09-08). */
-export const APPROVAL_LEVELS: Record<CancelDocType, ApprovalLevel> = { SO: 2, PO: 1 };
+/** How many signatures each document needs. ZERO is a real answer: the Purchase
+ *  Order takes none (owner 2026-09-09) and is gated on its reason alone. Kept
+ *  separate from ApprovalLevel, which is the level a signature SIGNS and can
+ *  never be 0. */
+export type RequiredSignatures = 0 | 1 | 2;
 
-export const levelsFor = (docType: CancelDocType): ApprovalLevel => APPROVAL_LEVELS[docType];
+export const APPROVAL_LEVELS: Record<CancelDocType, RequiredSignatures> = { SO: 2, PO: 0 };
+
+export const levelsFor = (docType: CancelDocType): RequiredSignatures => APPROVAL_LEVELS[docType];
+
+/** True when cancelling this document needs no signature — only its reason. The
+ *  caller that matters is the cancel guard: a reason-only document takes its
+ *  reason on the cancel call instead of waiting for a request to be signed. */
+export const isReasonOnly = (docType: CancelDocType): boolean => levelsFor(docType) === 0;
 
 /** The permission key that signs each level, per document. Declared in
  *  services/permissions.ts; Owner + IT Admin + Managing Director pass via `*`,
- *  everyone else through the Roles matrix. The Purchase Order has ONE level,
- *  so it has one key. */
+ *  everyone else through the Roles matrix. The Purchase Order signs nothing, so
+ *  it has NO key — `approveKeysFor('PO')` is empty, and every approve / reject
+ *  path on a PO row fails closed through that rather than through a second
+ *  rule that could disagree with APPROVAL_LEVELS. */
 export const CANCEL_APPROVE_KEY: Record<CancelDocType, Partial<Record<ApprovalLevel, string>>> = {
   SO: { 1: 'scm.so_cancel.approve_l1', 2: 'scm.so_cancel.approve_l2' },
-  PO: { 1: 'scm.po_cancel.approve' },
+  PO: {},
 };
 
 /** The key for a level, or null when that document has no such level (or
@@ -117,25 +137,30 @@ export function readReason(v: unknown): { ok: true; reason: string } | { ok: fal
 /* ── Can this document be asked about at all? ────────────────────────────── */
 
 /** A DRAFT is discarded, not cancelled (the SO deletes it; the PO's draft cancel
- *  commits nothing to anyone) — so a draft needs no approval and no request.
- *  Everything else that is not already terminal needs its signatures. */
+ *  commits nothing to anyone) — so a draft needs no approval and no request. A
+ *  reason-only document needs none at any status. Everything else that is not
+ *  already terminal needs its signatures. */
 export function cancelNeedsApproval(docType: CancelDocType, docStatus: string | null | undefined): boolean {
+  if (isReasonOnly(docType)) return false;
   const s = String(docStatus ?? '').toUpperCase();
   if (s === 'DRAFT') return false;
   return true;
 }
 
-/** Why a request cannot be raised against this document right now. */
+/** Why a request cannot be raised against this document right now. A reason-only
+ *  document has no request to raise at all — its cancel carries the reason — so
+ *  it refuses first, whatever the status. */
 export function cancelRequestRefusal(docType: CancelDocType, docStatus: string | null | undefined): Refusal | null {
-  const s = String(docStatus ?? '').toUpperCase();
   const noun = docType === 'SO' ? 'sales order' : 'purchase order';
+  if (isReasonOnly(docType)) {
+    return { error: 'no_approval_needed', message: `A ${noun} is cancelled directly — give the reason on the cancel itself.` };
+  }
+  const s = String(docStatus ?? '').toUpperCase();
   if (s === 'CANCELLED') return { error: 'already_cancelled', message: `This ${noun} is already cancelled.` };
   if (s === 'CLOSED') return { error: 'closed', message: `A closed ${noun} cannot be cancelled.` };
   if (s === 'RECEIVED') return { error: 'cannot_cancel', message: 'A fully received purchase order cannot be cancelled.' };
   if (s === 'DRAFT') {
-    return docType === 'SO'
-      ? { error: 'draft_is_discarded', message: 'A draft sales order is discarded, not cancelled — use Discard draft.' }
-      : { error: 'draft_needs_no_approval', message: 'A draft purchase order can be cancelled directly — it needs no approval.' };
+    return { error: 'draft_is_discarded', message: 'A draft sales order is discarded, not cancelled — use Discard draft.' };
   }
   return null;
 }
@@ -220,8 +245,11 @@ export function holdsAnyApproveKey(docType: string, signer: Pick<Signer, 'holds'
 /* ── The gate in front of the cancel itself ──────────────────────────────── */
 
 /** Why the existing cancel route may not run yet. `open` is the document's open
- *  request, or null when there is none. Null answer = the cancel may proceed. */
+ *  request, or null when there is none. Null answer = the cancel may proceed.
+ *  Only for a document that takes signatures — a reason-only one is gated on
+ *  `readReason` at the cancel call and never reaches here. */
 export function executionRefusal(docType: CancelDocType, open: { status: string } | null | undefined): Refusal | null {
+  if (isReasonOnly(docType)) return null;
   const total = levelsFor(docType);
   const noun = total > 1 ? 'two approvals' : 'an approval';
   if (!open) {

@@ -242,6 +242,17 @@ is the `optional-param-noop` trap CLAUDE.md names, and the other ~15
   `DO_NOT_DELIVERED_STATES` never counts as delivered.
   `so-stock-allocation.ts` step 3 follows the same rule (aligned 2026-08-01,
   audit D5).
+  **AND THE ALLOCATOR'S HEADER ROLL-UP NOW FOLLOWS IT TOO (2026-09-09,
+  `docs/bugs/0738-a-delivered-line-kept-its-stale-pending-and-held-18-orders-ou.md`).**
+  Step 3 skipping a fully-delivered line means the allocator never writes that
+  line's `stock_status` again, so it is FROZEN — usually at `PENDING` for goods
+  that shipped straight off a purchase order. The roll-up read that frozen value
+  and counted the line as short, holding the order out of `READY_TO_SHIP`. It now
+  passes `ReadinessLine.fulfilled` (the same `qty - delivered + returned`
+  arithmetic step 3 uses), and `summariseReadiness` counts such a line the way it
+  counts a SERVICE line: present, so a finished order is not mistaken for an
+  empty husk, but gating nothing. Measured before the fix: 18 live company-1
+  orders sat at `IN_PRODUCTION` with every still-outstanding line already READY.
   **That set gained LOADED on 2026-08-20**, and until then this line read "DRAFT
   and CANCELLED". LOADED is a PRE-SHIP state — the inventory OUT fires only on
   ENTRY to a shipped state — so a delivery still on the lorry was shrinking MRP

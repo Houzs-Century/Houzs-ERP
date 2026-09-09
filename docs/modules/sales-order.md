@@ -404,6 +404,29 @@ Column: `scm.mfg_sales_order_items.stock_status`. **Three values**, not two:
 `summariseReadiness` treats `PARTIAL` as **not ready** — `isReady` is strictly
 `stock_status === 'READY'`.
 
+**A DELIVERED LINE IS EXEMPT FROM THAT TALLY (2026-09-09,
+`docs/bugs/0738-a-delivered-line-kept-its-stale-pending-and-held-18-orders-ou.md`).**
+`recomputeSoStockAllocation` skips a line at `remaining <= 0`, so a shipped
+line's `stock_status` is FROZEN at whatever it last was — and
+`so-delivery-sync.ts` is the only writer that lands it on READY. Anything that
+creates a shipped line WITHOUT going through a DO mutation leaves that stamp
+unset: on prod, **190 company-1 lines** are stale this way and **187 of them sit
+on a MIGRATED delivery order**, which the cutover wrote straight into the
+database.
+
+So the roll-up no longer trusts the column for a line that has nothing left to
+deliver. `ReadinessLine.fulfilled` is **counted like a SERVICE line and gates
+nothing** — counted, because dropping it would make an order whose every line has
+shipped indistinguishable from an order with no lines and the empty-husk gate
+would then refuse a finished order. The flag is OPTIONAL and its absence is the
+STRICTER direction (the line keeps gating), which is why adding it did not have
+to walk eight call sites that hold no delivery quantities.
+
+**Before this, 18 live orders sat at `IN_PRODUCTION` with every still-outstanding
+line already READY.** The per-line PILL was never wrong — `soLineStockPill` and
+`soStockPillMobile` both render `DELIVERED` off `delivered_qty` / `remaining_qty`
+— only the roll-up was.
+
 **The two allocation mechanisms are COMPANY-SPLIT (2026-08-30, owner ruling —
 bug `docs/bugs/0572-a-company-1-bound-line-with-no-receipt-fell-through-to-the-p.md`).**
 `HARD_BOUND_COMPANY_ID = 1` in `so-stock-allocation.ts`:
@@ -2410,6 +2433,35 @@ than restating it), `lib/ac-transfer-chain-run.mjs` (the reads; it may only
 write onto a document the run already compared, and it FAILS SOFT) and
 `lib/ac-transfer-chain-report.mjs` (the printing).
 
+### The migrated invoice chain's line SHAPE is a declared class (since 2026-09-09)
+
+A sales or purchase INVOICE in the ERP is built from OUR delivery order / goods
+receipt, not copied from AutoCount's `IVDTL` / `PIDTL` — the types declared
+`migratedChainLineShape` in `backend/scripts/lib/ac-reconcile-erp-sql.mjs`. So the
+NUMBER of rows on it is ours and what must agree is the money, and two of the
+reconcile's axes are the same fact seen from two ends: `line count`, and
+`a book line we do not have`.
+
+`splitMigratedChainLineShape` had measured that since 2026-09-08 and printed it in
+the SUMMARY only — nothing called `VERDICT.reclassify`, so nine sales invoices the
+run had already cleared were reported to the owner as work. The unpaired-book-line
+half had no classifier at all. Both are now split by ONE shared verdict
+(`migratedChainShapeVerdict` in `lib/ac-not-a-difference.mjs`) and reclassified into
+the declared class **`migrated-chain-line-shape`**, which carries its own sentence
+in `DECLARED_LABEL` (`lib/so-tally-verdict.mjs`) and prints under 「WHAT THIS VERDICT
+EXCLUDED, AND UNDER WHOSE RULING」 like every other declaration.
+
+The two gates are what stop it being an amnesty, and they are unchanged: the
+document TOTAL must be identical to the sen, and every item code must agree on
+quantity and money — so the only book lines it may not carry are the RM 0.00 ones.
+A document that fails either is printed LOUDER as an impostor and stays counted; one
+with no measurement at all is UNPROVEN, never waved through. `docs/bugs/0746`,
+pinned by `backend/tests/acNotADifference.test.ts` and
+`backend/tests/migratedChainShapeWiring.test.ts`.
+
+**SALES ORDERS are not a `migratedChainLineShape` type**, so no sales-order figure
+moves on this: a book line a sales order does not have is still a difference.
+
 **Nothing on the sales-order side of this moved.** `check-so-tally.mjs` is not
 modified by that lane, `VERDICT_OUT` still receives SALES ORDERS and nothing
 else, and `publish-so-reconcile-verdict.mjs` and the migrated-sales-order lock
@@ -4019,6 +4071,75 @@ Two things worth carrying forward:
   PHOTO before writing a compartment — `probe-sofa-absent-pieces.mjs` puts the
   build, its purchase order, the drawing and the decode on one screen.
 
+#### The sofa reader's axes, and the two the book writes that it could not read
+
+`backend/scripts/lib/parse-sofa.mjs` answers `pieces`, `size`, `color`,
+`perPieceColor`, `specials` and — since 2026-09-09 — **`leg`**.
+`lib/variant-reconcile.mjs`'s `decodeBook` copies each onto the BOOK side, and
+`AXES` decides which item group asks for which.
+
+**`leg` is a SOFA axis, not only a bedframe one.**
+`src/scm/shared/so-variant-rule.ts` gives the sofa group a Leg Height picker
+(aliases `legHeight` / `sofaLegHeight`), and `backfill-sofa-leg-default.mjs`
+fills it — skipping, on purpose, the lines whose own text names a leg so a human
+can pick those. Until 2026-09-09 the reconcile's `leg` axis was
+`groups: ["bedframe"]`, so a sofa's leg had nowhere to be compared and
+`parse-sofa` filed it under `specials`: `HC-SO-010284` reported a specials
+difference on a PROCEEDED order where the book says `LEG 1"`, the ERP holds
+`legHeight: "1\""` and its specials list is correctly empty
+(`docs/bugs/0741`, `docs/bugs/0745`).
+
+Three rules govern what the leg reader will answer, and each is a guard:
+
+- **the UNIT is the whole test.** `LEG 8030` is a MODEL number, not a height.
+- **an instruction is not a measurement.** `USE IRON LEG`, `LEG REFER PHOTOS`,
+  `*LEG MUST USE 5527*` answer `null`.
+- **a phrase that states a height AND asks for something keeps the request.**
+  `3"LEG (WITHOUT RECLINER)` answers the axis and stays a special; dropping an
+  instruction is the expensive direction. Only a phrase that is nothing but the
+  height stops being a special.
+- **ABSENT IS NOT ZERO** (`docs/bugs/0732`). A bare `NO LEG` is deliberately NOT
+  read as 0 — 46 rows in the committed cut, almost all inside a covering
+  instruction whose leg is a consequence rather than a pick.
+
+**The colour label has FOUR spellings, and they live in one constant.**
+`COLOUR_LABEL` in `parse-sofa.mjs` is `COL` / `COLOUR` / `COLOR` / `CLR`, and
+all four regexes are built from it. It was three spellings in four separate
+places until 2026-09-09, and an unmatched label is not skipped — it stays in the
+text and the structure pass glues it to the token in FRONT of it, so `2S+L Clr:`
+lost its chaise to an invented special `LCLR` (`docs/bugs/0740`). **Census the
+token before adding a fifth**: the whole vocabulary of this book was counted
+across all 9,029 sofa Desc2 on all six document types — COL 5,613, COLOUR 705,
+COLOR 153, CLR 59, and nothing else.
+
+**Where a labelled colour ENDS is the other half of that rule and is the fragile
+one.** The cut is POSITIVE — it fires only where what FOLLOWS identifies itself
+as a build, a size or an instruction — and at a SINGLE space it is narrower
+still, because a shade name is full of things that look like the end of one:
+
+- a dash ends the colour only when a LETTER follows it immediately
+  (`-Wrap bottom to nylon`). A shade CONTINUES after its own dash with a space
+  or a digit — `ninja - 02,03,07,09`, `M2402 -18 LIGHT GREY`, `Cove -03`.
+- a size ends the colour only when no `+` follows it, because a size with a
+  build still to come is a PER-PIECE size inside that build.
+
+Both guards were bought by measurement: without them five shades lost their
+number and two builds lost a piece.
+
+**`1EL/T` is `1ELT`, the chaise.** The slash-splitter used to cut it in two, and
+the half holding the `+` decoded on its own as a whole sofa with the chaise
+gone — 42 rows across all six document types reading one piece short at HIGH
+confidence (`docs/bugs/0744`). `1ER/T` is deliberately untouched: the owner
+named `ELT` and `2ER` and no `ERT` arm is invented.
+
+**Measuring a reader change:** `.github/workflows/sofa-reader-before-after.yml`
+runs the reconcile TWICE in one job — once with the branch's reader, once with
+the reader restored from a named commit — and
+`backend/scripts/compare-tally-verdicts.mjs` prints all six types' `compared`,
+`differ` and `cannot compare` side by side. It prints `compared` beside `differ`
+on purpose: a `differ` that falls WHILE `compared` falls with it is a comparison
+that stopped happening, not a fix.
+
 A compartment difference on a PROCEEDED order also has a second innocent cause:
 the owner may have RULED on that build from the drawing, in which case the ERP
 is meant to differ from the text. The reconcile does not read
@@ -4995,7 +5116,7 @@ SO-specific:
 
 | Event | Told | Where |
 |---|---|---|
-| raised | the LANE's approvers + each one's `manager_id` upline; **separately** the SO's `salesperson_id` | `lib/amendment-raised-effects.ts`, called from `POST /:docNo/amendments` |
+| raised | the LANE's approvers + each one's `manager_id` upline **minus the top two levels** (owner 2026-09-09 — see [`announcements.md`](./announcements.md) for why); **separately** the SO's `salesperson_id` | `lib/amendment-raised-effects.ts`, called from `POST /:docNo/amendments` |
 | approved | `requested_by` + the salesperson | `routes/so-amendments.ts` `approveSoCommandHandler`, deferred to after commit |
 | rejected | same pair, carrying the rejection reason | `routes/so-amendments.ts` `PATCH /:id/reject` |
 | PO follow-up auto-raised by an approved LINES lane | the purchasing desk | same handler, same deferred block |

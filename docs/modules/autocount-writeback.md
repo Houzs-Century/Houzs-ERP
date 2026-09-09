@@ -949,6 +949,35 @@ INSERT that clones a sibling row omits whatever nobody remembered, silently. If
 a repair adds a row beside an existing one, the columns that carry IDENTITY —
 `linked_ac_dtlkey`, `warehouse_id` — are not optional extras.
 
+### Two files may rule on one build, and the LATER one is the answer
+
+*Added 2026-09-09.* `CORRECTION_FILES`
+(`scripts/lib/sofa-corrections-source.mjs`) is ordered oldest first on purpose,
+so a round may revise an earlier round's build. The VERIFY step above therefore
+asserts only the SURVIVING entry per build: `supersededBy()` in
+`scripts/lib/sofa-build-plan.mjs` overrules an entry when a LATER entry on the
+same document selects any of the same row ids, and the overruled one prints
+`SUPERSEDED <doc> [<file>]` rather than disappearing.
+
+**The test is ROW IDS, not the selector text**, and that is the whole point. The
+pair that bought the rule — `HC-SO-012929`, run `34301924900` — carries two
+different `desc2Match` strings for one build (`"...Barley/Bottom wr"` and
+`"...Barley"`), so a key built from document + model + selector calls them two
+builds and asserts both. Before this, that run wrote 168 builds correctly and
+exited 1, because the 2026-08 target was still checked against a document the
+2026-09 entry had just rewritten — a `FAIL` and an `OK` on the same document,
+three lines apart.
+
+This is the same rule `makeSofaRulingLookup` already followed with `findLast`
+(`docs/bugs/0722`), which the applier's own verification did not know. One rule,
+two homes; keep them together.
+
+**Still open** (`docs/bugs/0742`): the APPLY half runs both entries, adding the
+superseded piece and then deleting it. The end state is correct only while the
+file order is — reorder `CORRECTION_FILES` and the OLD ruling is written last,
+with a verify that now agrees with it. The fix is the same `supersededBy` at
+PLAN time.
+
 ### The defect this section exists for
 
 `/edit` used to fall through to `doc.AddDetail()` for a line with no key —
@@ -5278,6 +5307,23 @@ document is exactly how the badge came to disagree with the chip beside it.
 a refusal IS in the account book AND does need attention; both chips are right
 about it and nothing there changes. Only the other order — refused, then
 accepted — is history.
+
+**The HEALTH REPORT reads the same rule, since 2026-09-09 — and until that day it
+did not.** `check-autocount-outbox-health.mjs` is the second reader of this table
+and was left behind when the page learned the rule, so `HC-DO-2609-004` and
+`HC-DO-2609-009` were IN AUTOCOUNT on the screen and FAILED in the workflow log
+on the same morning (`docs/bugs/0743`). It now imports
+`acRefusalPredatesArrival` through `scripts/lib/ac-failed-superseded.mjs` rather
+than carrying a third copy, and for that it runs under **`npx tsx`**, not `node`
+— the canonical test's line about this script being unable to import TypeScript
+described how it was invoked, not what it can do.
+
+The report prints those rows under **`FAILED — ARRIVED SINCE`**, with the time
+the document reached the book, beside the existing `FAILED — DOCUMENT DELETED
+SINCE`. Both are printed and neither is counted: the row is the record of an
+attempt, and discounting it does not unsay it. The two discounts are now taken
+over EVERY outstanding failure rather than over the 25 the log prints, which was
+correct only while there were fewer than 25.
 
 **This has now been fixed three times at the trigger and once at the shape.**
 Twice the trigger was the re-queue marker (#2220, then the counts block); the

@@ -242,6 +242,11 @@ GET,/api/mail-center/threads,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO
 GET,/api/mail-center/threads/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-center.ts
 PATCH,/api/mail-center/threads/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-center.ts
 POST,/api/mail-center/threads/:id/reply,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-center.ts
+GET,/api/memos,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/memos.ts
+POST,/api/memos,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/memos.ts
+GET,/api/memos/:id/file,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/memos.ts
+POST,/api/memos/:id/void,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/memos.ts
+PUT,/api/memos/upload,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/memos.ts
 GET,/api/notifications,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/notifications.ts
 GET,/api/portal/case,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,caseTrack,,,,NO,INHERITED_ONLY,backend/src/routes/portal.ts
 PUT,/api/portal/case/attachments,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,caseTrack,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/portal.ts
@@ -438,6 +443,11 @@ POST,/api/scm/accounting/bank/lines/:id/ignore,AUTHENTICATED_MIDDLEWARE,COMPANY_
 POST,/api/scm/accounting/bank/lines/:id/match,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 POST,/api/scm/accounting/bank/lines/:id/receipt,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 POST,/api/scm/accounting/bank/lines/:id/undo,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
+GET,/api/scm/accounting/bank/locks,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
+GET,/api/scm/accounting/bank/months,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
+GET,/api/scm/accounting/bank/months/:accountCode/:month,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
+POST,/api/scm/accounting/bank/months/:accountCode/:month/lock,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
+POST,/api/scm/accounting/bank/months/:accountCode/:month/unlock,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 GET,/api/scm/accounting/bank/rules,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 POST,/api/scm/accounting/bank/rules,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 PATCH,/api/scm/accounting/bank/rules/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts

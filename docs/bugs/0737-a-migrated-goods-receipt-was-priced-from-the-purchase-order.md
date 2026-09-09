@@ -131,6 +131,53 @@ a book line"*. `backfill-ac-downstream-line-keys.mjs` has to run on those
 receipts before this repair can reach them, and the refusal names it. 29
 receipts are refused that way; 0 are refused for real stock movement.
 
+**APPLIED, AND MEASURED.** Run
+[34307013844](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34307013844)
+wrote it:
+
+```
+agree already 291 · would change 77 · refused for real stock movement 0 · refused for a missing line key 29 · refused as foreign currency 0
+money: RM 25369.43 -> RM 84865.93  (RM 59496.50)
+```
+
+**77 goods receipts now carry the account book's own money, RM 59,496.50 of it
+that we had never copied.** Every one of the 77 is migrated paperwork with zero
+inventory movements — `refused for real stock movement 0` is that gate reporting
+it had nothing to refuse — so 「库存先不看」 was never engaged.
+
+That run exited 3 on a verify that was itself wrong (`docs/bugs/0742`), so the
+write was proved a different way, on a fresh connection, by re-planning
+immediately afterwards — run
+[34307484738](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34307484738):
+
+```
+agree already 368 · would change 0
+money: RM 0.00 -> RM 0.00  (RM 0.00)
+```
+
+291 + 77 = 368. The repair is idempotent and the data now matches the book.
+
+**The effect on the tally**, run
+[34307767004](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34307767004):
+`HC-GR-005326-PO-009953` left the `document total` axis — the RM 55.00 the owner
+said to copy — and goods receipts went from 11 differing to 10. The other 65
+receipts the exemption was excusing now hold the book's figure and are clean on
+their own merits rather than by a ruling.
+
+**The three the owner also ruled on are still open, for a reason the run
+names.** `HC-GR-005363`, `-005367` and `-005368` are REFUSED: *"2 of 2 line(s)
+carry no AutoCount line key"*. And `backfill-ac-downstream-line-keys.mjs` cannot
+supply them — plan run
+[34305097913](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34305097913)
+returns `0 to stamp` for the whole goods-receipt side and names these documents
+explicitly: *"the book has 2 lines of this item at this quantity and they are NOT
+identical (2 distinct price/location/Desc2 combinations), and the build texts do
+not match one-to-one either, so which is which is unknowable"*. The two candidate
+book lines differ only by the roadshow VENUE written in their Desc2 and carry the
+SAME `UnitPrice` and `SubTotal`, so the money is identical whichever way they
+pair — but proving that is a new matching rule, and inventing a pairing is the
+class `docs/bugs/0690` cost this project real money on.
+
 **The stopgap / root distinction, said plainly.** This repairs the DATA. The
 importer's price precedence is still order-first, so a future re-run of
 `reshape-migrated-grns.mjs` would re-introduce it on any receipt it rewrites.

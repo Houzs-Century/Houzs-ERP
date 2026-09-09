@@ -23,6 +23,41 @@ PO-0097xx received, batch HC-PO-0097xx`, so they were written by
 `backend/scripts/import-ac-sofa-stock.mjs` — run 34160820055, the display-sofa +
 binding-category release.
 
+> **Correction 2026-09-09 — the note text above does NOT find these lots.**
+> A later session followed `AutoCount sofa opening:` as the handle and got zero
+> rows, which reads as "the lots are gone" rather than "the filter is wrong".
+> Read live on production the same day:
+>
+> | probe | rows |
+> | --- | --- |
+> | `notes ilike '%AutoCount sofa opening%'` | **0** |
+> | `notes is not null` (whole table) | 35 of 2680 |
+> | `source_doc_no ilike 'HC-PO-0097%'` | **0** |
+> | `source_doc_no = 'AC-BAL-SOFA-2026-08-10'` | **238** |
+>
+> The lane's note is not persisted on the lot row, and the purchase order is not
+> the lot's `source_doc_no` — the whole sofa opening lands under one cutover
+> document, and the PO travels in `batch_no`. **The handle is the pair:**
+>
+> ```sql
+> select batch_no, split_part(item_code,'-',1) as model, count(*) lots, sum(qty_remaining) pieces
+> from scm.inventory_lots
+> where source_doc_no = 'AC-BAL-SOFA-2026-08-10'
+>   and batch_no in ('HC-PO-009712','HC-PO-009017','HC-PO-009550')
+> group by 1,2 order by batch_no, model;
+> ```
+>
+> **The nine pieces are still there and still mismatched** (same query, 2026-09-09):
+>
+> | batch | its own model | also holds | pieces astray |
+> | --- | --- | --- | --- |
+> | HC-PO-009017 | `9058-*` (3) | `8030-*` | 3 |
+> | HC-PO-009550 | `8030-*` (3) | `9058-*` | 3 |
+> | HC-PO-009712 | `5535-*` (6) | `8030-*` | 3 |
+>
+> So the finding above stands unchanged; only its "how to find them" was wrong.
+> Nothing here re-opens the root cause, which is still UNKNOWN.
+
 **Root cause: UNKNOWN, and two stories are already dead.** This is recorded
 rather than explained, because both explanations that fit the shape were checked
 and refuted:

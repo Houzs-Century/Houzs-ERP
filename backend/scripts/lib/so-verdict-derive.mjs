@@ -193,6 +193,14 @@ export const NOTE_CLASSES = Object.freeze([
      document the book raised off this one is absent from ours. A receipt whose
      invoice we DO hold stays counted as a difference. */
   'chain-onward-not-migrated',
+  /* A MIGRATED INVOICE'S ROWS COME FROM OUR OWN RECEIPT / DELIVERY, so its line
+     COUNT and any book row we do not carry are one shape, not two findings.
+     PROVED per document by lib/ac-not-a-difference.mjs: the document total is
+     identical to the sen AND every item code agrees on quantity and money, so
+     the book lines we do not carry are the RM 0.00 ones. A document whose total
+     moves, or that is short a PRICED line, fails both gates and stays counted.
+     Applies only to the types declared `migratedChainLineShape`. */
+  'migrated-chain-line-shape',
   /* THE ERP NAMES A PRODUCT THE BOOK DOES NOT, BY THE OWNER'S OWN DECISION.
      Declared with the book model it overrides and who decided it, so it EXPIRES
      the moment the book stops saying that — which is what tells his decision

@@ -233,9 +233,22 @@ for (const p of plan) {
 await sql.end();
 
 /* ── VERIFY ON A FRESH CONNECTION, AND ASSERT THE SHAPE ─────────────────────
-   Not a row count. The shape is: every repaired receipt's lines each equal the
-   book's SubTotal for their own key, and the header equals their sum. A count
-   of updated rows would have been 7 of 7 while the rows were being corrupted. */
+   Not a row count: a count of updated rows would have been 7 of 7 while the rows
+   were being corrupted.
+
+   THE SHAPE IS GROUPED, and this assertion did not say so until run
+   34307013844. It asserted that EVERY line equals the book's SubTotal for its
+   own key — the pre-grouping rule — and so reported 24 failures, every one of
+   them a non-lead compartment row correctly holding RM 0.00. The write was
+   right and the assertion was wrong, which is the worse of the two ways round:
+   an apply that exits 3 on a correct write teaches its next reader to ignore
+   the exit code. Proved by re-planning on a fresh connection immediately after
+   (run 34307484738): `agree already 368 · would change 0`.
+
+   So the shape asserted now is the one the write actually makes: within one
+   book line, the LEAD row carries the book's UnitPrice and SubTotal and every
+   sibling is zero in both, and the header equals the sum over DISTINCT book
+   lines. */
 const v = postgres(process.env.DATABASE_URL, { max: 1, prepare: false, ssl: "require" });
 const bad = [];
 for (const p of plan) {
@@ -246,18 +259,31 @@ for (const p of plan) {
       COALESCE(i.line_total_sen,0) AS line_total_sen
     FROM scm.grn_items i WHERE i.grn_id = ${p.g.id}::uuid ORDER BY i.id`;
   if (!h) { bad.push(`${p.g.grn_number}: the receipt is gone`); continue; }
-  let sum = 0;
+  /* Grouped by the book's line, in the same row order the plan grouped them. */
+  const groups = new Map();
   for (const i of items) {
-    const bl = bookLine(i.key);
-    if (!bl) { bad.push(`${p.g.grn_number}: line ${i.item_code} key ${i.key} names no book line`); continue; }
+    const k = String(i.key ?? "").trim();
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(i);
+  }
+  let sum = 0;
+  for (const [k, members] of groups) {
+    const bl = bookLine(k);
+    if (!bl) { bad.push(`${p.g.grn_number}: line ${members[0].item_code} key ${k} names no book line`); continue; }
     const wantUnit = Math.round(n0(bl.unitPriceSen));
     const wantTotal = Math.round(n0(bl.subTotalSen));
-    if (n0(i.unit_price_sen) !== wantUnit || n0(i.line_total_sen) !== wantTotal)
-      bad.push(`${p.g.grn_number}: line ${i.item_code} holds ${rm(i.unit_price_sen)}/${rm(i.line_total_sen)}, the book states ${rm(wantUnit)}/${rm(wantTotal)}`);
-    sum += n0(i.line_total_sen);
+    /* The book's figure exactly ONCE per book line, on the group's lead. */
+    const lead = members[0];
+    if (n0(lead.unit_price_sen) !== wantUnit || n0(lead.line_total_sen) !== wantTotal)
+      bad.push(`${p.g.grn_number}: lead line ${lead.item_code} holds ${rm(lead.unit_price_sen)}/${rm(lead.line_total_sen)}, the book states ${rm(wantUnit)}/${rm(wantTotal)}`);
+    /* And nowhere else. A sibling holding it is the multiplication of 0738. */
+    for (const i of members.slice(1))
+      if (n0(i.unit_price_sen) !== 0 || n0(i.line_total_sen) !== 0 || n0(i.discount_sen) !== 0)
+        bad.push(`${p.g.grn_number}: compartment ${i.item_code} of book line ${k} holds ${rm(i.unit_price_sen)}/${rm(i.line_total_sen)} — every row but the lead must be zero, or one sofa's price is counted twice`);
+    sum += wantTotal;
   }
   if (n0(h.total_sen) !== sum || n0(h.subtotal_sen) !== sum)
-    bad.push(`${p.g.grn_number}: header ${rm(h.total_sen)} against lines summing ${rm(sum)}`);
+    bad.push(`${p.g.grn_number}: header ${rm(h.total_sen)} against the book's own lines summing ${rm(sum)}`);
 }
 await v.end();
 
@@ -266,4 +292,4 @@ if (bad.length) {
   for (const b of bad) console.error(`   ${b}`);
   process.exit(3);
 }
-log(`APPLIED — ${plan.length} goods receipt(s) now carry the account book's own money: ${rm(senBefore)} -> ${rm(senAfter)} (${rm(senAfter - senBefore)}). Verified on a fresh connection: every line equals the book's SubTotal for its own key and every header equals its lines.`);
+log(`APPLIED — ${plan.length} goods receipt(s) now carry the account book's own money: ${rm(senBefore)} -> ${rm(senAfter)} (${rm(senAfter - senBefore)}). Verified on a fresh connection: within each book line the LEAD row carries the book's own UnitPrice and SubTotal and every sibling is zero, and each header equals the sum over DISTINCT book lines.`);

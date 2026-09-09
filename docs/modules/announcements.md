@@ -96,6 +96,13 @@ screen down to the database. Same structure as
 > `DELETE /:id` discards a DRAFT only, and the database trigger in mig
 > `backend/src/db/migrations-pg/20260907T1030_announcement_void_no_hard_delete.sql`
 > refuses any other delete underneath the app. §3 "Void", §2, §4 and §5.
+> **2026-09-08 (document type — memos, owner: 每个部门自动生成 memo reference
+> number):** a notice carries a document type, ANN or MEMO (`doc_type`, mig
+> `backend/src/db/migrations-pg/20260908T0300_announcement_doc_type.sql`);
+> the composer offers a Type row when the registry holds more than one active
+> type, the approval mints the number with it (`OPS-MEMO-2609-0001` runs its
+> own sequence beside `OPS-ANN-2609-0001`, per department and month), and the
+> attachment policy is read per type. §3 "Document type", §2 and §4.
 > **2026-09-06 (font sizes, owner: "像 Word 那样选字号数字"):** the editor's
 > S / M / L / XL buttons became a **Size dropdown** of point sizes (10–36
 > px, stored as `span[data-size="16"]`); with nothing selected the size
@@ -351,7 +358,7 @@ source line) see
 | GET | `/api/announcements/ack-summary` | — | `announcements.write` (or Sales Director) — `{ id → { total, acked } }` for every human post the caller may manage, ONE round trip for the Manage table (2026-09-05) |
 | GET | `/api/announcements/team-pending` | — | **none** — explicit 401; scoped to the caller's DIRECT REPORTS (`users.manager_id = caller`): their unacked mandatory notices with the same `state` (2026-09-05, feeds the dashboard "My team's pending" card) |
 | POST | `/api/announcements/:id/escalate` | — | `announcements.write` (or Sales Director) — body `{ departmentId? }`; posts ONE system notice (`source 'ack_escalation'`) per supervisor of the pending people, via `postPersonalNotice` (2026-09-05, the drawer's "Notify their supervisors") |
-| POST | `/api/announcements` | `:785` | `announcements.write` (or Sales Director) — since 2026-09-06 the row is created PENDING_APPROVAL (or DRAFT with body `draft: true`); the answer's `approvalStatus` says which |
+| POST | `/api/announcements` | `:785` | `announcements.write` (or Sales Director) — since 2026-09-06 the row is created PENDING_APPROVAL (or DRAFT with body `draft: true`); the answer's `approvalStatus` says which. Since 2026-09-08 body `docType` (ANN by default; any ACTIVE code in `document_types`, e.g. MEMO; an unknown / inactive code → 400) picks the [TYPE] segment of the number and the attachment policy row; `PATCH /:id` accepts `docType` until the notice is approved (409 after) |
 | POST | `/api/announcements/:id/submit` | — | `announcements.write` (or Sales Director on their own post) — DRAFT / REJECTED → PENDING_APPROVAL; rings the approvers' bell (2026-09-06). Since 2026-09-07 refused 400 while the ANN type requires an attachment and the notice has none (same rule as POST without `draft`) |
 | POST | `/api/announcements/:id/void` | — | `announcements.write` (or Sales Director on their own post) — body `{ reason }` (required); any SUBMITTED notice (pending / approved / rejected) → voided: `voided_by/at`, `void_reason`, the registry number marked VOID, banner cache bumped, `announcement.void` audited, the submitter told (WARNING bell). A draft answers 409 (discard it). Idempotent (2026-09-07) |
 | GET | `/api/announcements/:id/files` | — | `announcements.write` / `announcements.approve` / `*` (or a Sales Director on their own post) — the attachment log (mig `20260907T0715`): `[{ id, r2Key, name, mime, size, uploadedBy, uploadedByName, uploadedAt, removedBy, removedByName, removedAt }]`, oldest first, removed lines kept (2026-09-07) |
@@ -489,6 +496,23 @@ all filtering happens in JS in the Worker (`:543-547`, `:628-630`).
   table (or `document_types`) being absent — absent policy = not required,
   absent log = nothing logged — so the older D1 mirrors need no column.
   Regression suite: `backend/tests/announcementsAttachmentPolicy.test.ts`.
+- **Document type — memos (2026-09-08, mig `20260908T0300`)** — the owner's
+  "每个部门自动生成 memo reference number": a memo is the same document as a
+  notice (composed, approved, numbered, attached, voided) with the MEMO type
+  in its number. `announcements.doc_type` (NOT NULL DEFAULT 'ANN') is the
+  [TYPE] segment; `readDocType(row)` (`lib/announcementAudience.ts`) reads it
+  (absent / malformed → ANN). `resolveDocType()` in
+  `services/announcementFiles.ts` validates a requested code against the
+  registry (ACTIVE rows of `document_types`; the table absent → the shape
+  alone), and `attachmentRequiredForType(env, code)` replaces the ANN-only
+  reader — POST, `/:id/submit` and the composer read the policy of the type
+  the notice carries. `approveAnnouncement()` mints with
+  `typeCode: readDocType(row)`, so each department's memos count on their own
+  series (`OPS-MEMO-2609`) beside their notices (`OPS-ANN-2609`). The
+  migration seeds `MEMO` (Memo, attachment optional, active) into the
+  registry; Settings → Documents can add more types or flip their policies,
+  and the composer lists whatever is active. Regression suite:
+  `backend/tests/announcementsDocType.test.ts`.
 - **Void, not delete (2026-09-07, mig `20260907T1030`)** — the owner's
   document rule (`docs/hard-delete-inventory.md`: 不可以删只可以 cancel) reaches
   the announcements. `voidAnnouncement()` in `services/announcementApproval.ts`:
@@ -674,8 +698,24 @@ narrowed by `user_companies` — with two rules worth knowing before you reuse i
   `user_companies` is empty and `companyContext` never consults it; filtering on
   an empty grant set would silence the channel entirely.
 
-The audience then expands UP each approver's `manager_id` chain, the same
-`uplineUserIds` rule `assrNotify` uses.
+The audience then expands UP each approver's `manager_id` chain — but **not all
+the way**. The top `UPLINE_TOP_LEVELS_EXCLUDED` (2) levels of every chain are
+trimmed off (`amendmentNotify.ts`), which is where this differs from
+`assrNotify`, which walks to the root.
+
+**Why the trim exists, in the module's own words.** The wildcard exclusion above
+was meant to keep the owner off every amendment. It did not work: the upline
+expansion put them straight back through the front door, because every
+purchasing and logistics desk chains up through the same two people to the Owner
+account. Six days of prod data (2026-09-03 → 09-09) showed **every** approver
+audience reading `[1, 4, 5, …]` — the channel was on its way to being muted by
+the very people it exists to reach, which is the exact failure this file's own
+header warns about. Owner ruling 2026-09-09: cut the chain two levels below its
+top. The desk still gets it, their manager still gets it, the two above do not.
+
+Trimming is by DEPTH, never by naming ids, so it stays true as the org chart
+moves — and the seed itself is never trimmed: an approver who reports straight
+to the top must still hear about the thing only they can sign.
 
 ---
 
@@ -688,6 +728,7 @@ There is also no announcements migration in the D1 tree.
 | Migration | Effect |
 |---|---|
 | `0058_announcements.sql` | creates `announcements` + `announcement_acks` + 2 indexes |
+| `backend/src/db/migrations-pg/20260908T0300_announcement_doc_type.sql` | adds `doc_type` (NOT NULL DEFAULT 'ANN') and seeds `MEMO` into `document_types` — a notice's document type / the number's [TYPE] segment (owner 2026-09-08 memos) |
 | `backend/src/db/migrations-pg/20260907T1030_announcement_void_no_hard_delete.sql` | adds `voided_by/at`, `void_reason` and the BEFORE DELETE trigger `trg_announcements_no_hard_delete` (`announcements_no_hard_delete()`: refuses unless `approval_status = 'DRAFT'`) — void, not delete (owner 2026-09-06) |
 | `backend/src/db/migrations-pg/20260907T0715_announcement_files.sql` | creates `announcement_files` (`id`, `announcement_id`, `r2_key`, `name`, `mime`, `size`, `uploaded_by/at`, `removed_by/at`; unique on the pair, index on `announcement_id`) — the attachment log (owner 2026-09-06 操作日志). The manifest column stays the source of what is attached; this is who / when |
 | `backend/src/db/migrations-pg/20260906T1509_announcement_approval.sql` | adds `approval_status` (NOT NULL DEFAULT 'APPROVED' — every existing row stays published), `submitted_by/at`, `reviewed_by/at`, `reject_reason`, `ref_no` (unique partial index) and the open-queue partial index — the approval workflow (owner 2026-09-06) |
@@ -725,6 +766,7 @@ Columns that matter:
 | `approval_status` | text NOT NULL DEFAULT 'APPROVED' | `DRAFT` / `PENDING_APPROVAL` / `APPROVED` / `REJECTED` (mig `20260906T1509_announcement_approval.sql`). Only APPROVED is ever delivered (`deliverableNow`). Partial index `idx_announcements_approval_open` on the non-approved rows. `toPublic` emits `approvalStatus` (absent column → `"APPROVED"`) |
 | `submitted_by`, `submitted_at` | integer, text | who put it in the queue and when (POST without `draft`, or `/submit`) |
 | `reviewed_by`, `reviewed_at`, `reject_reason` | integer, text, text | the approver's decision on the row itself; `reject_reason` is cleared on approve and on re-submit (audit_events keeps the history) |
+| `doc_type` | text NOT NULL DEFAULT 'ANN' | the document type code (ANN / MEMO / any registered type) — the [TYPE] segment the approval mints with and the attachment-policy row (mig `20260908T0300`). `toPublic` emits `docType` |
 | `ref_no` | text, unique where set | `[DEPT]-ANN-[YYMM]-[NNNN]`, minted on approval by `services/documentRefs.ts` (registry `document_refs`, entity_type `announcement`); NULL until approved. `docNo()` on both shells shows it in place of the row id |
 
 `announcement_acks`: `(announcement_id, user_id)` composite **primary key** — the
@@ -790,6 +832,7 @@ still 403 for that reader (`:146, 157, 164, 171, 180`).
 | Pop-up markup / CTA wording | `components/AnnouncementBanner.tsx` | `mobile/MobileAnnouncementPopup.tsx` |
 | Composer (audience picker, media layout, company target, **expiry**, **schedule**, **require ack**) | `pages/announcements/ComposerModal.tsx` + `AudiencePicker.tsx` | `mobile/MobileAnnouncements.tsx` `Compose` (still positions + plain expiry; requireAck / scheduledAt default server-side) |
 | Live / Hidden / Expired badge | **`lib/announcementStatus.ts`** — the shared rule; both surfaces import it, neither re-derives it | — |
+| Document type (2026-09-08) | `ComposerModal.tsx` Type row (`docTypes` prop — the page's `/api/document-types` read; the pick is persisted with the draft and sent as `docType`; the attachment hint follows the picked type); `docTypeTag()` in `announcementModel.ts` puts the code beside the category pill in the Manage table, the drawer and the inbox for anything but ANN | `mobile/MobileAnnouncements.tsx` Compose: a "Document type" select (same registry read), `docType` in the payload; the detail shows the code chip |
 | Void, not delete (2026-09-07) | `ManageView.tsx` drawer: Void… (submitted) / Discard draft (draft), the Voided pill + reason, no actions once voided; the page's `voidNotice` asks the reason via `useDialog().prompt`; `announcementModel.ts` `isVoided` / `manageStatus` "voided" / `isArchived` | `mobile/MobileAnnouncements.tsx` `Detail`: the same button voids (vendored `usePrompt`) or discards a draft; `ApprovalChip` shows Voided |
 | Attachment policy + log (2026-09-07) | `pages/announcements/ComposerModal.tsx` (`attachmentRequired` prop from the page's `/api/document-types` read: hint + Submit held) and the `ManageView.tsx` drawer's "Attachments" block (`files` prop from `GET /:id/files`); the policy itself is edited under Settings → Documents (`pages/settings/DocumentTypesTab.tsx`) | the phone composer relies on the server's 400 (surfaced in its error line); no log view on the phone |
 | Approval actions (submit / approve / reject, the state pill, the reject reason, the ref no in place of the row id) | `pages/announcements/ManageView.tsx` drawer (`canWrite` / `canApprove` props; the page's `approveNotice` / `rejectNotice` (reason via `useDialog().prompt`) / `submitNotice`); the "Pending approval" filter is `MANAGE_ONLY_FILTERS` in `announcementModel.ts` so the inbox never offers it; the composer's primary is "Submit for approval" + a "Save draft" secondary | `mobile/MobileAnnouncements.tsx` `Detail` (`canApprove` prop, `ApprovalChip`, reason via the vendored `usePrompt`); the ledger is read for `canCreate \|\| canApprove` |
@@ -799,7 +842,7 @@ still 403 for that reader (`:146, 157, 164, 171, 180`).
 | Rich body — rendering | **`components/AnnouncementRichBody.tsx`** — the only place `body_html` reaches `innerHTML`; inbox pane + `AnnouncementBanner.tsx` use it with `annId` so `img[data-att]` streams from `/api/announcements/:id/attachments/:key` (composer preview passes `imageSrc` instead) | `MobileAnnouncements.tsx` `Detail` + `MobileAnnouncementPopup.tsx` use it; `mobileI18n.ts` `localizeAnnouncement()` picks the translated `bodyHtml` |
 | Audience ingredients (backend) | — | — (backend: **`backend/src/lib/announcementAudience.ts`** — division-target parsing, the caller's division, the active roster, company-grant narrowing, pending state; the route keeps `userCanSee`) |
 | Rich body — grammar | **`lib/announcementRichText.ts`** — byte-identical twin of `backend/src/lib/announcementRichText.ts`; the two test files pin the same fixtures | — |
-| Nav visibility | `components/Sidebar.tsx:666-672` | `mobile/MobileApp.tsx:360` (test-pinned) |
+| Nav visibility | `components/Sidebar.tsx:666-672`; since 2026-09-09 the **Memos** row (`/memos`, the department memo register — `docs/modules/memos.md`) sits right under this one, ungated on the same reading, and `App.tsx` mounts `/memos` beside `/announcements` | `mobile/MobileApp.tsx:360` (test-pinned) |
 | Read gate | `frontend/src/App.tsx:481` | — must agree with `backend/src/routes/announcements.ts:530`; the #957 bug was these two disagreeing |
 | Badge | — (none today) | `mobile/MobileApp.tsx:440`+`:805`, `mobile/MobileProfile.tsx:198`+`:345` |
 

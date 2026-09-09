@@ -16,6 +16,8 @@ import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
+import { usePrompt } from "../vendor/scm/components/PromptDialog";
+import { askActionReason, PO_CANCEL_PROMPT, type ActVariant, type DocAction } from "./doc-actions";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { MODULE_CONFIGS } from "./MobileModuleList";
 import { invalidateModuleShared } from "./sharedInvalidate";
@@ -941,29 +943,6 @@ function docId(row: any): string {
 // Destructive actions (Cancel / Void) go through the in-app confirm (danger).
 // ---------------------------------------------------------------------------
 
-type ActVariant = "solid" | "outline" | "danger";
-
-/** One footer action button descriptor. */
-type DocAction = {
-  key: string;
-  label: string;
-  variant: ActVariant;
-  /** POST/PATCH/DELETE request, relative to /api/scm. */
-  request: { path: string; method: "PATCH" | "POST" | "DELETE"; body?: unknown };
-  /** In-app danger confirm before firing (Cancel / Void). */
-  confirm?: { title: string; body?: string; confirmLabel: string };
-  /** When true, the record no longer exists after this action → navigate back
-   *  to the list instead of staying on a now-deleted detail.
-   *
-   *  NO action sets this today. The last one that did was the mobile Delete PO
-   *  (removed 2026-08-11 with its endpoint — owner rule 不可以删只可以 cancel).
-   *  Kept because a legitimate `removes` action can still exist — discarding a
-   *  DRAFT that was never confirmed, the shape SO `DELETE /:docNo` has. It is
-   *  NOT the hook for re-adding a document delete; see
-   *  docs/hard-delete-inventory.md. */
-  removes?: boolean;
-};
-
 /** true when total − paid still leaves a balance (Record Payment worth offering). */
 function hasBalance(h: any): boolean {
   const total = Number(h?.total_sen ?? h?.local_total_sen ?? 0);
@@ -1072,7 +1051,7 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
       if (st === "RECEIVED") return out;
       if (st === "DRAFT") {
         out.push({ key: "submit", label: "Submit", variant: "solid", request: { path: `/mfg-purchase-orders/${enc}/confirm`, method: "PATCH" } });
-        out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/mfg-purchase-orders/${enc}/cancel`, method: "PATCH" }, confirm: { title: "Cancel this purchase order?", body: "This voids the PO and releases its SO lines back to the picker.", confirmLabel: "Cancel PO" } });
+        out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/mfg-purchase-orders/${enc}/cancel`, method: "PATCH" }, reasonPrompt: PO_CANCEL_PROMPT });
         return out;
       }
       if (st === "CANCELLED") {
@@ -1083,7 +1062,7 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
         return out;
       }
       // SUBMITTED / PARTIALLY_RECEIVED
-      out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/mfg-purchase-orders/${enc}/cancel`, method: "PATCH" }, confirm: { title: "Cancel this purchase order?", body: "This voids the PO and releases its SO lines back to the picker.", confirmLabel: "Cancel PO" } });
+      out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/mfg-purchase-orders/${enc}/cancel`, method: "PATCH" }, reasonPrompt: PO_CANCEL_PROMPT });
       return out;
     }
 
@@ -1288,6 +1267,7 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
   onDeleted?: () => void;
 }) {
   const qc = useQueryClient();
+  const prompt = usePrompt();
   const confirm = useConfirm();
   const notify = useNotify();
   const [error, setError] = useState<string | null>(null);
@@ -1352,8 +1332,10 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
     if (mutation.isPending) return;
     setError(null);
     if (action.confirm && !(await confirm({ title: action.confirm.title, body: action.confirm.body, confirmLabel: action.confirm.confirmLabel, danger: true }))) return;
+    const fired = await askActionReason(action, prompt);
+    if (!fired) return; // the reason IS the confirmation — dismissed means no
     setRunningKey(action.key);
-    mutation.mutate(action);
+    mutation.mutate(fired);
   };
 
   /* ── THE DELIVERY ORDER'S NEXT STEP, SAID OUT LOUD ───────────────────────

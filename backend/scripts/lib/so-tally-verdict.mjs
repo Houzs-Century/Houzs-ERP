@@ -124,8 +124,12 @@ export const AXIS_GROUPS = Object.freeze([
     axes: ["transfer from", "transfer to", "transfer chain not verifiable"],
   },
   {
+    /* `leg height` is the one axis here that is NOT bedframe-only. A sofa has a
+       Leg Height picker too, and since `docs/bugs/0741` the reconcile compares
+       it, so a row printed under this heading may be a sofa. The label says so
+       rather than telling the owner a sofa's leg is a bedframe problem. */
     key: "bedframe-build",
-    label: "bedframe build (divan / gap / leg / total height)",
+    label: "build heights (divan / gap / total height — bedframe; leg — bedframe AND sofa)",
     axes: ["divan height", "gap", "leg height", "T.Heights"],
   },
 ]);
@@ -352,6 +356,11 @@ export const DECLARED_LABEL = Object.freeze({
     "imported. So we record 0 transferred: not a wrong number, an ABSENT one, and your decision rather than a " +
     "defect. PROVED per document (every onward document the book raised off this one is absent from ours); a " +
     "line whose onward document we DO hold is still counted as a difference",
+  "migrated-chain-line-shape":
+    "the invoice is built from OUR delivery order / goods receipt, so the NUMBER of rows on it is ours and " +
+    "what has to agree is the money — and it does, to the sen, with every item code agreeing on quantity and " +
+    "money too. The book rows we do not carry are the RM 0.00 ones AutoCount bills a free gift on. PROVED per " +
+    "document; an invoice whose total moves, or that is short a PRICED line, is still counted as a difference",
   "owner-model-override":
     "the ERP names a different product from the account book because YOU decided it — 「那就放8030 daybed把」. " +
     "The decision is written down with the book's own model beside it, so if the book ever stops saying that, " +

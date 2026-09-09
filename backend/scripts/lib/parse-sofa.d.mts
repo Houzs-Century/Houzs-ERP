@@ -12,6 +12,8 @@ export interface SofaParse {
   /** Seat size in inches, as written. */
   size: string | null;
   color: string | null;
+  /** Leg height in inches where the book states one, else null (docs/bugs/0741). */
+  leg: number | null;
   perPieceColor: Record<string, string>;
   specials: string[];
   conf: 'high' | 'medium' | 'low';

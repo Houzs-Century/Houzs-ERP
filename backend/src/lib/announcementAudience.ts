@@ -455,6 +455,10 @@ export type AnnouncementRow = {
   voidedAt?: string | null;
   void_reason?: string | null;
   voidReason?: string | null;
+  // Document type (mig 20260908T0300): the [TYPE] segment of the reference
+  // number — ANN (the DEFAULT) or MEMO, a code in document_types.
+  doc_type?: string | null;
+  docType?: string | null;
   category?: string | null;
   source?: string | null;
   company_id?: number | null;
@@ -507,6 +511,13 @@ const APPROVAL_STATUSES: ReadonlySet<string> = new Set(["DRAFT", "PENDING_APPROV
 export function readApprovalStatus(r: Pick<AnnouncementRow, "approval_status" | "approvalStatus">): ApprovalStatus {
   const v = String(r.approvalStatus ?? r.approval_status ?? "").trim().toUpperCase();
   return APPROVAL_STATUSES.has(v) ? (v as ApprovalStatus) : "APPROVED";
+}
+
+/** The notice's document type code (mig 20260908T0300). NULL / absent /
+ *  malformed reads as ANN — the column's DEFAULT and every pre-migration row. */
+export function readDocType(r: Pick<AnnouncementRow, "doc_type" | "docType">): string {
+  const v = String(r.docType ?? r.doc_type ?? "").trim().toUpperCase();
+  return /^[A-Z]{2,4}$/.test(v) ? v : "ANN";
 }
 
 /** True once the notice was voided (mig 20260907T1030). */
