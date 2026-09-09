@@ -15,6 +15,7 @@ import {
   categoryOf,
   companyScopeLabel,
   docNo,
+  docTypeTag,
   isPendingForMe,
   type Announcement,
   type Company,
@@ -408,6 +409,7 @@ function PinnedRow({
       <div className="flex flex-col gap-[5px] px-3.5 py-[11px]">
         <div className="flex items-center gap-1.5">
           <span className={cn(PILL, meta.pillCls)}>{meta.label}</span>
+          {docTypeTag(a) && <span className={cn(PILL, "border border-border font-mono text-ink-muted")}>{docTypeTag(a)}</span>}
           <span className="ml-auto font-mono text-[10px] text-ink-muted">
             {relativeTime(a.createdAt)}
           </span>
@@ -566,6 +568,7 @@ function ReadingPane({
                 )}
               >
                 {meta.label}
+                {docTypeTag(a) && ` · ${docTypeTag(a)}`}
                 {pending && " · must acknowledge"}
               </span>
               <span className="rounded-full border border-border bg-surface-dim px-[9px] py-[3px] font-mono text-[10.5px] text-ink-secondary">

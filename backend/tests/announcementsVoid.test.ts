@@ -84,7 +84,7 @@ describe("announcements — void, not delete", () => {
          target_divisions TEXT, excluded_user_ids TEXT, escalated_at TEXT,
          approval_status TEXT, submitted_by INTEGER, submitted_at TEXT, reviewed_by INTEGER,
          reviewed_at TEXT, reject_reason TEXT, ref_no TEXT,
-         voided_by INTEGER, voided_at TEXT, void_reason TEXT)`,
+         voided_by INTEGER, voided_at TEXT, void_reason TEXT, doc_type TEXT)`,
     ).run();
     for (const [col, type] of [["voided_by", "INTEGER"], ["voided_at", "TEXT"], ["void_reason", "TEXT"]]) {
       await env.DB.prepare(`ALTER TABLE announcements ADD COLUMN ${col} ${type}`).run().catch(() => undefined);

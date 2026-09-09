@@ -131,3 +131,61 @@ describe('buildDrChainNodes (audit R8 — DR shows real SO + SI, not "Upstream �
     expect(nodes).toHaveLength(5);
   });
 });
+
+/* THE REGRESSION (docs/bugs/0909). customerRefOf reads `ref` FIRST, but the
+   three header types omitted the column, so the pages never passed it and the
+   Customer PO node fell through to "Not linked". On live data `ref` is the ONLY
+   filled reference on 174 of 246 delivery orders (po_doc_no is 0%-filled and
+   customer_so_no carries a value on just 13), so the node read "Not linked" for
+   the overwhelming majority of orders that DO carry a customer reference —
+   e.g. HC-DO-011555, whose ref is HC10995. */
+describe('Customer PO node resolves off `ref` — the only filled column on live data', () => {
+  it('DO: renders the customer reference when ONLY ref is set', () => {
+    const nodes = buildDoChainNodes(
+      { id: 'do-1', do_number: 'HC-DO-011555', ref: 'HC10995' },
+      [],
+      [],
+      [],
+      true,
+    );
+    const po = cell(nodes, 'Customer PO');
+    expect(po.doc).toBe('HC10995'); // NOT "Not linked"
+    expect(po.meta).toBe("Customer's own doc");
+  });
+
+  it('SI: renders the customer reference when ONLY ref is set', () => {
+    const nodes = buildSiChainNodes(
+      { id: 'si-1', invoice_number: 'INV-1', ref: 'HC10995' },
+      [],
+      [],
+      [],
+    );
+    expect(cell(nodes, 'Customer PO').doc).toBe('HC10995');
+  });
+
+  it('DR: renders the customer reference when ONLY ref is set', () => {
+    const nodes = buildDrChainNodes(
+      { id: 'dr-1', return_number: 'DR-1', ref: 'HC10995' },
+      [],
+      [],
+      [],
+    );
+    expect(cell(nodes, 'Customer PO').doc).toBe('HC10995');
+  });
+
+  it('still reads "Not linked" when the order carries no reference at all', () => {
+    const nodes = buildDoChainNodes({ id: 'do-2', do_number: 'DO-2' }, [], [], [], true);
+    expect(cell(nodes, 'Customer PO').doc).toBe('Not linked');
+  });
+
+  it('ref outranks the legacy columns, matching every other surface', () => {
+    const nodes = buildDoChainNodes(
+      { id: 'do-3', do_number: 'DO-3', ref: 'HC10995', customer_so_no: 'SRC-SO', po_doc_no: 'LEGACY' },
+      [],
+      [],
+      [],
+      true,
+    );
+    expect(cell(nodes, 'Customer PO').doc).toBe('HC10995');
+  });
+});

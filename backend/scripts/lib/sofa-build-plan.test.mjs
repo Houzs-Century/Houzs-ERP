@@ -8,6 +8,7 @@ import {
   planCopyMoney,
   seatHeightToWrite,
   splitBuildCopies,
+  supersededBy,
 } from "./sofa-build-plan.mjs";
 
 /* Every fixture below is a row as it stands on prod (company 1, 2026-09-04),
@@ -250,4 +251,49 @@ test("a real placeholder still falls through to the positional fallback", () => 
   const rows = [{ id: "p", code: "8030-1S", total: 419000, unit_price_sen: 419000, qty: 1 }];
   const { pairs } = pairRowsToPieces(rows, ["5535-1A(LHF)", "5535-CNR", "5535-2A(RHF)"]);
   assert.deepEqual(pairs.map((p) => p.row?.id ?? null), ["p", null, null]);
+});
+
+/* ---------------------------------------------------------------------------
+ * supersededBy — the newest ruling for a build is the one the verify asserts.
+ *
+ * Bought by run 34301924900: 168 documents were written correctly and the run
+ * still exited 1, because the 2026-08 entry for HC-SO-012929 was asserted after
+ * the 2026-09 entry had overruled it on the same rows.
+ * ------------------------------------------------------------------------ */
+test("a later entry on the same document overrules an earlier one that shares rows", () => {
+  /* HC-SO-012929, verbatim from the two correction files: 2026-08 targets
+     1S+1A(LHF)+2A(RHF), 2026-09 targets 1A(LHF)+2A(RHF). Both select the
+     26-inch rows; only the second is the owner's current answer. */
+  const doc = ["SO:HC-SO-012929", "SO:HC-SO-012929"];
+  assert.deepEqual(supersededBy(doc, [["r1", "r2", "r3"], ["r1", "r2"]]), [1, -1]);
+});
+
+test("the selector TEXT differing does not make them separate builds", () => {
+  /* The real entries carry different desc2Match strings — "...Barley/Bottom wr"
+     and "...Barley". Any key built from the selector would call these two
+     builds and assert both. Row ids are what decide it. */
+  const doc = ["SO:X", "SO:X"];
+  assert.equal(supersededBy(doc, [["a"], ["a"]])[0], 1);
+});
+
+test("two real builds on one document are both asserted", () => {
+  /* HC-PO-009024 holds a 4-piece build AND a separate 1S. They share no row, so
+     neither may silence the other — collapsing them would leave a build
+     unverified. */
+  assert.deepEqual(supersededBy(["PO:1", "PO:1"], [["a", "b", "c", "d"], ["e"]]), [-1, -1]);
+});
+
+test("entries on different documents never interact", () => {
+  assert.deepEqual(supersededBy(["SO:A", "SO:B"], [["r1"], ["r1"]]), [-1, -1]);
+});
+
+test("an entry that selects no rows is asserted, not explained away", () => {
+  /* A build whose rows vanished must still FAIL. An empty set intersects
+     nothing, so it can neither supersede nor be superseded. */
+  assert.deepEqual(supersededBy(["SO:A", "SO:A"], [[], ["r1"]]), [-1, -1]);
+});
+
+test("the LAST ruling wins when three files touch one build", () => {
+  const doc = ["SO:A", "SO:A", "SO:A"];
+  assert.deepEqual(supersededBy(doc, [["r1"], ["r1"], ["r1"]]), [1, 2, -1]);
 });

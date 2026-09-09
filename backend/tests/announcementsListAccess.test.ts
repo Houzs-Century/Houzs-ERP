@@ -73,7 +73,7 @@ describe("GET /api/announcements — open to every authed user, audience-filtere
          source TEXT, company_id INTEGER, require_ack INTEGER, scheduled_at TEXT,
          target_divisions TEXT, excluded_user_ids TEXT, escalated_at TEXT,
          approval_status TEXT, submitted_by INTEGER, submitted_at TEXT, reviewed_by INTEGER,
-         reviewed_at TEXT, reject_reason TEXT, ref_no TEXT)`,
+         reviewed_at TEXT, reject_reason TEXT, ref_no TEXT, doc_type TEXT)`,
     ).run();
 
     const now = new Date().toISOString();

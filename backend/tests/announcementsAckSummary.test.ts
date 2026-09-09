@@ -75,7 +75,7 @@ describe("announcements — ack aggregation, team pending, escalation, require_a
          source TEXT, company_id INTEGER, require_ack INTEGER, scheduled_at TEXT,
          target_divisions TEXT, excluded_user_ids TEXT, escalated_at TEXT,
          approval_status TEXT, submitted_by INTEGER, submitted_at TEXT, reviewed_by INTEGER,
-         reviewed_at TEXT, reject_reason TEXT, ref_no TEXT)`,
+         reviewed_at TEXT, reject_reason TEXT, ref_no TEXT, doc_type TEXT)`,
     ).run();
     await env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS announcement_acks (

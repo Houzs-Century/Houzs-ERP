@@ -76,6 +76,7 @@ import {
   planCopyMoney,
   seatHeightToWrite,
   splitBuildCopies,
+  supersededBy,
 } from "./lib/sofa-build-plan.mjs";
 
 const DST = process.env.DATABASE_URL;
@@ -624,29 +625,79 @@ async function main() {
  * Read every corrected document back on a NEW connection and assert the piece
  * MULTISET — not a row count, which is the check that passed while the pieces
  * were wrong.
+ *
+ * A LATER ENTRY SUPERSEDES AN EARLIER ONE WHERE THEY TOUCH THE SAME ROWS, and
+ * only the survivor is asserted. `CORRECTION_FILES` is ordered oldest first on
+ * purpose, so two files may rule on one build and the newer ruling is the
+ * answer — `lib/sofa-rulings.mjs` already states that for the LOOKUP path with
+ * `findLast` (docs/bugs/0722). This verify never learned it: it kept one
+ * expectation per ENTRY and asserted every one of them, including the entry the
+ * next file had just overruled.
+ *
+ * Measured, run 34301924900: `HC-SO-012929` was written correctly and reported
+ *   FAIL HC-SO-012929: pieces are [9028-1A(LHF) | 9028-2A(RHF)],
+ *                   expected [9028-1A(LHF) | 9028-1S | 9028-2A(RHF)]
+ * — the 2026-08 entry's target, three lines above the 2026-09 entry's own OK on
+ * the same document. 167 documents were right, and the run still exited 1.
+ *
+ * SUPERSEDING IS DECIDED ON ROW IDS, not on the selector text. The two entries
+ * carry DIFFERENT `desc2Match` strings ("...Barley/Bottom wr" vs "...Barley"),
+ * so any key built from the selector would have called them separate builds and
+ * changed nothing. What makes them one build is that they select the same rows,
+ * which is a fact of the document rather than of the file.
  */
 async function verifyOnFreshConnection(items) {
   if (!items.length) return;
   const v = newSql();
-  log(`\nVERIFY — re-reading ${items.length} document(s) on a fresh connection`);
-  let bad = 0;
+  const docKey = (it) => (it.isPo ? `PO:${it.poId}` : `SO:${it.doc}`);
+  const nDocs = new Set(items.map(docKey)).size;
+  log(`\nVERIFY — re-reading ${nDocs} document(s) on a fresh connection`);
+
+  /* One read per DOCUMENT, not per entry: the row set is what decides
+     superseding, so every entry on a document has to be measured against the
+     same read. */
+  const rowsOf = new Map();
   for (const it of items) {
-    const rows = it.isPo
-      ? await v`SELECT i.item_code AS code, i.qty, i.unit_price_sen, i.line_total_sen AS total, i.description2, i.linked_ac_dtlkey
+    const k = docKey(it);
+    if (rowsOf.has(k)) continue;
+    rowsOf.set(k, it.isPo
+      ? await v`SELECT i.id, i.item_code AS code, i.qty, i.unit_price_sen, i.line_total_sen AS total, i.description2, i.linked_ac_dtlkey
                   FROM scm.purchase_order_items i
                  WHERE i.purchase_order_id = ${it.poId} AND i.item_group = 'sofa' ORDER BY i.id`
-      : await v`SELECT i.item_code AS code, i.qty, i.unit_price_sen, i.total_sen AS total, i.description2, i.linked_ac_dtlkey
+      : await v`SELECT i.id, i.item_code AS code, i.qty, i.unit_price_sen, i.total_sen AS total, i.description2, i.linked_ac_dtlkey
                   FROM scm.mfg_sales_order_items i
                   JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-                 WHERE h.company_id = ${CO} AND i.doc_no = ${it.doc} AND i.item_group = 'sofa' ORDER BY i.line_no`;
-    /* Narrow the SAME way the apply did, line keys and exclusion included —
-       verifying against every sofa row on a document that holds two builds
-       would compare this build's target against both builds' rows and fail a
-       correct write. */
+                 WHERE h.company_id = ${CO} AND i.doc_no = ${it.doc} AND i.item_group = 'sofa' ORDER BY i.line_no`);
+  }
+
+  /* Narrow the SAME way the apply did, line keys and exclusion included —
+     verifying against every sofa row on a document that holds two builds would
+     compare this build's target against both builds' rows and fail a correct
+     write. */
+  const selected = items.map((it) => {
+    const rows = rowsOf.get(docKey(it));
     const hasKeys = Array.isArray(it.lineKeys) && it.lineKeys.length;
-    const mine = (it.needle || hasKeys || it.exclude)
+    return (it.needle || hasKeys || it.exclude)
       ? selectBuildRows(rows, it.needle, undefined, { lineKeys: it.lineKeys, exclude: it.exclude }).rows
       : rows;
+  });
+
+  /* A LATER entry on the same document that selects any of the same rows has
+     already rewritten them; this entry's target is the stale one. Reported,
+     never silent — an expectation that stops being asserted must still be
+     visible, or a build could quietly go unverified. */
+  const overruledBy = supersededBy(items.map(docKey), selected.map((rs) => rs.map((r) => r.id)));
+
+  let bad = 0, superseded = 0;
+  for (let n = 0; n < items.length; n++) {
+    const it = items[n];
+    const mine = selected[n];
+    const by = overruledBy[n];
+    if (by >= 0) {
+      superseded++;
+      log(`  SUPERSEDED ${it.doc} [${it.source}] — the same rows are ruled again by [${items[by].source}]; that entry is the one asserted`);
+      continue;
+    }
     const want = [];
     for (let i = 0; i < it.copies; i++) want.push(...it.want);
     const bag = (xs) => xs.map(K).sort().join(" | ");
@@ -660,7 +711,7 @@ async function verifyOnFreshConnection(items) {
   }
   await v.end();
   if (bad) { console.error(`VERIFY FAILED on ${bad} document(s)`); process.exit(1); }
-  log(`VERIFY OK — ${items.length} document(s), piece multiset and both money columns`);
+  log(`VERIFY OK — ${items.length - superseded} entr${items.length - superseded === 1 ? "y" : "ies"} over ${nDocs} document(s), piece multiset and both money columns${superseded ? ` · ${superseded} superseded by a later ruling` : ""}`);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

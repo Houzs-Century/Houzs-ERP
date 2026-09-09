@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-177 route modules (49 in `backend/src/routes`, 128 in `backend/src/scm/routes`), 1225 endpoint registrations.
+179 route modules (49 in `backend/src/routes`, 130 in `backend/src/scm/routes`), 1230 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -52,7 +52,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/projects.ts` | 114 | 5140 |
 | `backend/src/routes/projects_print.ts` | 1 | 1320 |
 | `backend/src/routes/publicBrandCalendar.ts` | 5 | 117 |
-| `backend/src/routes/publicContractorCalendar.ts` | 4 | 124 |
+| `backend/src/routes/publicContractorCalendar.ts` | 4 | 125 |
 | `backend/src/routes/publicDoScan.ts` | 4 | 926 |
 | `backend/src/routes/push.ts` | 2 | 71 |
 | `backend/src/routes/roles.ts` | 8 | 376 |
@@ -69,7 +69,9 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/udf.ts` | 4 | 251 |
 | `backend/src/routes/users.ts` | 22 | 2331 |
 | `backend/src/scm/routes/accounting-bank-config.ts` | 0 | 126 |
-| `backend/src/scm/routes/accounting-bank.ts` | 0 | 798 |
+| `backend/src/scm/routes/accounting-bank-locks.ts` | 0 | 224 |
+| `backend/src/scm/routes/accounting-bank-months.ts` | 0 | 410 |
+| `backend/src/scm/routes/accounting-bank.ts` | 0 | 909 |
 | `backend/src/scm/routes/accounting-chart.ts` | 0 | 787 |
 | `backend/src/scm/routes/accounting-item-groups.ts` | 0 | 259 |
 | `backend/src/scm/routes/accounting-numbering.ts` | 0 | 134 |
@@ -78,16 +80,16 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-receipts.ts` | 0 | 88 |
 | `backend/src/scm/routes/accounting-reports.ts` | 0 | 186 |
 | `backend/src/scm/routes/accounting-rp.ts` | 0 | 319 |
-| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1280 |
+| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1330 |
 | `backend/src/scm/routes/accounting-stock-close.ts` | 0 | 53 |
-| `backend/src/scm/routes/accounting.ts` | 77 | 1509 |
+| `backend/src/scm/routes/accounting.ts` | 82 | 1523 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ap-invoice-files.ts` | 0 | 50 |
 | `backend/src/scm/routes/ap-invoices.ts` | 10 | 425 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
 | `backend/src/scm/routes/autocount-line-sweep.ts` | 0 | 202 |
-| `backend/src/scm/routes/autocount-outbox.ts` | 10 | 1273 |
+| `backend/src/scm/routes/autocount-outbox.ts` | 10 | 1319 |
 | `backend/src/scm/routes/autocount-relink.ts` | 0 | 179 |
 | `backend/src/scm/routes/categories.ts` | 10 | 509 |
 | `backend/src/scm/routes/change-log.ts` | 1 | 345 |
@@ -141,7 +143,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11945 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 147 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
-| `backend/src/scm/routes/mrp.ts` | 2 | 1763 |
+| `backend/src/scm/routes/mrp.ts` | 2 | 1790 |
 | `backend/src/scm/routes/other-debtors.ts` | 13 | 676 |
 | `backend/src/scm/routes/outstanding.ts` | 2 | 321 |
 | `backend/src/scm/routes/payment-vouchers.ts` | 21 | 1989 |
@@ -206,13 +208,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 152 | `153_sessions_stay_signed_in.sql` (153) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 386 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 387 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2063 files, 718041 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2081 files, 722759 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -229,7 +231,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4538 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4483 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4334 |
-| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4205 |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4206 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3749 |
 | `backend/src/scm/routes/grns.ts` | 3564 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
@@ -411,7 +413,7 @@ Page files by directory:
 | `frontend/src/pages` | 38 |
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 4 |
-| `frontend/src/pages/scm-v2` | 147 |
+| `frontend/src/pages/scm-v2` | 148 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 10 |

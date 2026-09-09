@@ -50,7 +50,8 @@ import { escalatePending } from "../services/announcementEscalation";
 import { APPROVE_PERMISSION, recordSubmission, type Actor } from "../services/announcementApproval";
 import {
   ATTACHMENT_REQUIRED_MESSAGE,
-  attachmentRequiredForAnnouncements,
+  attachmentRequiredForType,
+  resolveDocType,
   syncAttachmentLog,
 } from "../services/announcementFiles";
 import {
@@ -63,6 +64,7 @@ import {
   divisionEq,
   isVoided,
   readApprovalStatus,
+  readDocType,
   inTargetCompanies,
   isActiveFlag,
   laterOf,
@@ -312,6 +314,8 @@ export function toPublic(r: AnnouncementRow) {
     voidedBy: r.voidedBy ?? r.voided_by ?? null,
     voidedAt: r.voidedAt ?? r.voided_at ?? null,
     voidReason: r.voidReason ?? r.void_reason ?? null,
+    // Document type (mig 20260908T0300): ANN or a registered code (MEMO).
+    docType: readDocType(r),
     // System-notice tag ('scan' for background slip-scan results). Lets the
     // client suppress the read-receipt roster on private per-user notices.
     source: (r.source ?? null) as string | null,
@@ -1300,10 +1304,16 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
   // until an approver acts (deliverableNow requires APPROVED).
   const asDraft = body.draft === true;
   const initialStatus = asDraft ? "DRAFT" : "PENDING_APPROVAL";
+  // Document type (mig 20260908T0300): ANN unless the composer picked a
+  // registered type (MEMO) — the [TYPE] segment of the number and the key
+  // the attachment policy is read by.
+  const docTypeRes = await resolveDocType(c.env, body.docType);
+  if ("error" in docTypeRes) return c.json({ success: false, error: docTypeRes.error }, 400);
+  const docType = docTypeRes.code;
   // Attachment policy (mig 20260907T0715, Settings → Documents): a notice
-  // may not enter the queue without a file when the ANN type demands one.
+  // may not enter the queue without a file when its type demands one.
   // A draft is always allowed — the gate is on submission.
-  if (!asDraft && attachments.length === 0 && (await attachmentRequiredForAnnouncements(c.env))) {
+  if (!asDraft && attachments.length === 0 && (await attachmentRequiredForType(c.env, docType))) {
     return c.json({ success: false, error: ATTACHMENT_REQUIRED_MESSAGE }, 400);
   }
 
@@ -1318,8 +1328,8 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
         target_dept_ids, target_position_ids, target_user_ids,
         target_company_ids, category, require_ack, scheduled_at,
         target_divisions, excluded_user_ids,
-        approval_status, submitted_by, submitted_at${stampCo ? ", company_id" : ""}${stampKey ? ", client_key" : ""})
-     VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""}${stampKey ? ", ?" : ""})`,
+        approval_status, submitted_by, submitted_at, doc_type${stampCo ? ", company_id" : ""}${stampKey ? ", client_key" : ""})
+     VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""}${stampKey ? ", ?" : ""})`,
   )
     .bind(
       id,
@@ -1345,6 +1355,7 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
       initialStatus,
       asDraft ? null : user?.id ?? null,
       asDraft ? null : nowIso,
+      docType,
       ...(stampCo ? [companyId] : []),
       ...(stampKey ? [clientKey] : []),
     );
@@ -1575,6 +1586,17 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
     }
     sets.push("target_company_ids = ?");
     binds.push(nextCompanies.length ? JSON.stringify(nextCompanies) : null);
+  }
+  // Document type (mig 20260908T0300): editable until the notice is
+  // approved — the number is minted with it, so a published notice keeps it.
+  if ("docType" in body) {
+    if (readApprovalStatus(existing) === "APPROVED") {
+      return c.json({ success: false, error: "The document type of a published notice cannot change." }, 409);
+    }
+    const res = await resolveDocType(c.env, body.docType);
+    if ("error" in res) return c.json({ success: false, error: res.error }, 400);
+    sets.push("doc_type = ?");
+    binds.push(res.code);
   }
   if ("category" in body) {
     sets.push("category = ?");
