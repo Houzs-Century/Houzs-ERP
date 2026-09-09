@@ -328,25 +328,6 @@ export function hasPermission(
   return set.has("*") || set.has(required);
 }
 
-/**
- * Holds `required` LITERALLY — the `*` wildcard does NOT satisfy this.
- *
- * The wildcard exists so Owner and IT Admin can DO anything, and every access
- * gate must keep using `hasPermission` for exactly that reason. This answers the
- * other question — whose desk a piece of work sits on — for the surfaces that
- * address work rather than permit it: the amendment notice audience and the
- * sidebar's pending counts. Lives here, beside its wildcard-honouring twin, so
- * the two readings of a permission set cannot drift into two files.
- */
-export function hasPermissionLiterally(
-  granted: ReadonlyArray<string> | ReadonlySet<string>,
-  required: string,
-): boolean {
-  if (Array.isArray(granted)) return granted.includes(required);
-  const set = granted as ReadonlySet<string>;
-  return set.has(required);
-}
-
 export function parsePermissions(json: string | null | undefined): string[] {
   if (!json) return [];
   try {

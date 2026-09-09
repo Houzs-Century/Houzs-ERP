@@ -64,9 +64,10 @@ describe('GET /po-amendments/pending-count', () => {
     expect(await countFor(['scm.po_amendment.approve'])).toBe(3);
   });
 
-  it('answers 0 for the WILDCARD holder — same rule as the SO twin', async () => {
-    expect(await countFor(['*'])).toBe(0);
-    expect(await countFor(['*', 'scm.po_amendment.approve'])).toBe(3);
+  it('DOES count for the `*` wildcard holder — same rule as the SO twin', async () => {
+    // See the SO suite for why the badge honours the wildcard and the notice
+    // does not. Owner ruling 2026-09-09, after a same-day round trip.
+    expect(await countFor(['*'])).toBe(3);
   });
 
   it('answers 0 for someone who can only RAISE one', async () => {

@@ -200,18 +200,6 @@ Tables: `roles` (`permissions` is a JSON string array), `users.role_id`,
    so a wildcard caller passes every gate and can never reproduce a
    missing-catalogue-entry bug. `service_cases.approve` went unnoticed for weeks
    for exactly this reason.
-
-   There is now a second reading of the same permission set —
-   **`hasPermissionLiterally`**, which does NOT honour `*` — and the line between
-   them is worth holding: `hasPermission` answers *may this caller DO it*, and
-   every access gate must keep using it. `hasPermissionLiterally` answers *is
-   this person's desk the one this work sits on*, and only two surfaces ask it:
-   the amendment notice audience (`services/permissionHolders.ts` applies the
-   same exclusion when resolving holders from the roles table) and the sidebar's
-   pending-approval counts. Owner ruling 2026-09-09, after the two disagreed in
-   production — the bell was silent for the Owner account while its menu carried
-   every desk's backlog. Reach for it ONLY when addressing work, never when
-   permitting it.
 4. **The ledger is a ratchet.** A key that later gains a real gate must be
    DECLARED and REMOVED from the ledger in the same change; the drift test fails
    on a ledger entry that is also in `PERMISSIONS[]`.

@@ -84,17 +84,16 @@ describe('GET /so-amendments/pending-count', () => {
     ).toBe(3);
   });
 
-  it('answers 0 for the WILDCARD holder — the Owner account carries no badge', async () => {
-    /* Owner ruling 2026-09-09, after the notice and the badge disagreed in
-       production: `*` opens every gate, so hasHouzsPerm says yes and the Owner
-       account was carrying every desk's backlog on its menu while the bell —
-       which already excluded the wildcard — said nothing. One rule now. The
-       wildcard holder can still approve anything and still sees every row
-       inside the module; they are simply not told it is theirs. */
-    expect(await countFor(['*'])).toBe(0);
-    // …and a literal key alongside the wildcard still counts, because that
-    // person IS on the rota.
-    expect(await countFor(['*', 'scm.amendment.approve_lines'])).toBe(2);
+  it('DOES count for the `*` wildcard holder — the owner covers an absent desk', async () => {
+    /* Deliberate, and reverted once already. On 2026-09-09 the wildcard was
+       excluded here to match the notice audience; it was put back the same day
+       when the owner said why: he signs in as the shared HOUZS CENTURY account
+       and steps in when the approver is away or something blows up. The badge
+       is what makes that possible — a glance, not a ping. The NOTICE still
+       excludes the wildcard (permissionHolders.ts), and the two differing is
+       the design, not a bug: notice = whose desk is this on, badge = what could
+       I pick up. */
+    expect(await countFor(['*'])).toBe(4);   // both lanes + the legacy row
   });
 
   it('answers 0 for someone who cannot approve — the badge never renders', async () => {

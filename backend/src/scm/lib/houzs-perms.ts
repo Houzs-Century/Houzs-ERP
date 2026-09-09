@@ -13,7 +13,7 @@
 // ----------------------------------------------------------------------------
 
 import type { MiddlewareHandler } from 'hono';
-import { hasPermission, hasPermissionLiterally } from '../../services/permissions';
+import { hasPermission } from '../../services/permissions';
 import {
   isDirectorUser,
   isSalesUser,
@@ -50,28 +50,6 @@ function grantedFor(c: HouzsUserSource): ReadonlyArray<string> | ReadonlySet<str
 /** Inline check — true when the caller holds `perm` (or the `*` wildcard). */
 export function hasHouzsPerm(c: HouzsUserSource, perm: string): boolean {
   return hasPermission(grantedFor(c), perm);
-}
-
-/**
- * LITERAL holder of `perm` — the `*` wildcard does NOT satisfy this.
- *
- * Not a gate. Every ACCESS decision must keep using `hasHouzsPerm`, where the
- * wildcard is the whole point: Owner and IT Admin can do anything.
- *
- * This answers a different question — "is this person's desk the one this work
- * sits on?" — for the two places that address WORK rather than permit it: the
- * amendment notice audience (services/permissionHolders.ts applies the same rule
- * when resolving it from the roles table) and the sidebar's pending counts.
- *
- * Owner ruling 2026-09-09, after the two disagreed in production: the notice
- * already excluded the wildcard, the badge did not, so the Owner account was
- * silent in the bell and carrying every desk's backlog on its menu. One rule
- * now, both surfaces. A wildcard holder can still approve anything and still
- * sees every amendment inside the module itself; they are simply not told it is
- * theirs.
- */
-export function holdsHouzsPermLiterally(c: HouzsUserSource, perm: string): boolean {
-  return hasPermissionLiterally(grantedFor(c), perm);
 }
 
 /**

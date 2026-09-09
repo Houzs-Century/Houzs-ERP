@@ -67,7 +67,7 @@ on `/api/scm/so-amendments`.
 | `POST /mfg-sales-orders/:docNo/amendments` | `scm.amendment.create`, OR a salesperson on their OWN order, OR a lane approver | Splits by lane, one insert per lane |
 | `GET /so-amendments` | read | Row-scoped like the SO list (own + downline for a scoped rep) |
 | `GET /so-amendments/:id` | read | |
-| `GET /so-amendments/pending-count` | lane keys, asked LITERALLY (`*` excluded) | **Per-signer** count of `REQUESTED` rows in the lanes THIS caller can sign; 0 for everyone else, the Owner account included. Feeds the sidebar badge (§5). Registered BEFORE `/:id` — Hono matches in order |
+| `GET /so-amendments/pending-count` | — | **Per-signer** count of `REQUESTED` rows in the lanes THIS caller can sign; 0 for everyone else. Feeds the sidebar badge (§5). Registered BEFORE `/:id` — Hono matches in order |
 | `PATCH /so-amendments/:id/approve-so` | the row's lane key (legacy: `approve_so`) | Applies the SO revision; LINES also raises PO follow-ups |
 | `PATCH /so-amendments/:id/reject` | the row's lane key (legacy: `approve_po`) | **Reason required** |
 | `PATCH /so-amendments/:id/withdraw` | the requester, or anyone who could reject it | Lands on `REJECTED` with `resolution='WITHDRAWN'` |
@@ -131,14 +131,19 @@ Four decisions worth keeping:
   gate reads — so the badge and the button can never disagree. A count that
   included other desks' backlog would never go down for the reader no matter
   what they approved, and a number like that stops being read.
-- **The `*` wildcard does NOT put a count on your menu.** The endpoints ask
-  `holdsHouzsPermLiterally`, not `hasHouzsPerm` — the one place in the SCM routes
-  that deliberately does not honour the wildcard. Owner ruling 2026-09-09, after
-  the two surfaces disagreed in production: the notice audience already excluded
-  wildcard holders, so the Owner account was silent in the bell while carrying
-  every desk's backlog on its menu. One rule now. A wildcard holder can still
-  approve anything and still sees every row inside the module; they are simply
-  not told it is theirs.
+- **The badge HONOURS the `*` wildcard; the notice does NOT. This asymmetry is
+  deliberate — do not "fix" it.** It was fixed once, on 2026-09-09, and reverted
+  the same day when the owner said why he needs it: *"我是用 owner 账号登录 需要
+  及时处理如果当审批人不在或者突发状况"* — he signs in as the shared `HOUZS
+  CENTURY` account and covers approvals when the desk is away or something blows
+  up. A badge he can glance at is exactly the right instrument for that; being
+  pinged about every amendment is not. So the two surfaces answer two different
+  questions on purpose:
+  **notice = whose desk is this on** (`permissionHolders.ts` drops wildcard
+  roles, or the owner is on every card ever posted);
+  **badge = what could I pick up** (`hasHouzsPerm`, wildcard honoured).
+  The cost, accepted knowingly: every Super Admin sees the count, not just the
+  owner.
 - **There is no second visibility rule in the frontend.** "在需要审批人员账号显示"
   is enforced by the count itself: a non-approver gets 0, and the badge renders
   nothing at 0 — which is also what a failed poll produces, so the chrome says

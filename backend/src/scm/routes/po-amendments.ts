@@ -36,7 +36,7 @@ import { planStockRelease, type AllocationRow } from '../lib/po-allocations';
    class), so the one imported above already covers both engines. */
 import { reviseBoundPo } from '../lib/so-revision';
 import { enqueueEdit } from '../lib/autocount-outbox';
-import { hasHouzsPerm, holdsHouzsPermLiterally } from '../lib/houzs-perms';
+import { hasHouzsPerm } from '../lib/houzs-perms';
 import { resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
 import {
   notifyPoAmendmentRaised,
@@ -130,9 +130,7 @@ poAmendments.get('/', async (c) => {
 
    Registered BEFORE `/:id` (Hono matches in order) and fails SOFT with 0. */
 poAmendments.get('/pending-count', async (c) => {
-  /* Literal holder only — see the SO twin. The `*` wildcard opens every gate but
-     does not make the work yours (owner 2026-09-09). */
-  if (!holdsHouzsPermLiterally(c, 'scm.po_amendment.approve')) return c.json({ count: 0 });
+  if (!hasHouzsPerm(c, 'scm.po_amendment.approve')) return c.json({ count: 0 });
   const sb = c.get('supabase');
   try {
     const { data, error } = await scopeToCompany(
