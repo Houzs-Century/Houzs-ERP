@@ -17,6 +17,8 @@
 import { describe, expect, test } from 'vitest';
 import reconcileRaw from '../scripts/check-ac-erp-reconcile.mjs?raw';
 import splitsRaw from '../scripts/lib/ac-not-a-difference.mjs?raw';
+import chainRaw from '../scripts/lib/ac-chain-shape.mjs?raw';
+import { NOTE_CHAIN_SHAPE } from '../scripts/lib/ac-chain-shape.mjs';
 import { NOTE_CLASSES } from '../scripts/lib/so-verdict-derive.mjs';
 import { DECLARED_LABEL } from '../scripts/lib/so-tally-verdict.mjs';
 
@@ -25,28 +27,35 @@ import { DECLARED_LABEL } from '../scripts/lib/so-tally-verdict.mjs';
 const n = (s: string) => s.replace(/\r\n/g, '\n');
 const reconcile = n(reconcileRaw);
 const splits = n(splitsRaw);
+const chain = n(chainRaw);
 
 /** The one class name. If this string moves, every assertion below moves. */
 const KLASS = 'migrated-chain-line-shape';
 
 describe('the migrated-chain shape reaches the per-document verdict', () => {
-  test('the reconcile reclassifies the LINE COUNT the split cleared', () => {
-    expect(reconcile).toContain(
-      `for (const r of LS.moved) VERDICT.reclassify(t, r.key, "line count", "${KLASS}", r.line);`,
-    );
+  test('the reconcile CALLS the module, on both halves, with the recorder', () => {
+    expect(reconcile).toContain('import { applyChainShape, reportChainShape }');
+    expect(reconcile).toContain('const { LS, UB } = applyChainShape({');
+    expect(reconcile).toContain('recorder: VERDICT }');
+    expect(reconcile).toContain('reportChainShape({ t, LS, UB, log, plain, first, show: SHOW });');
   });
 
-  test('the reconcile reclassifies the UNPAIRED BOOK LINE the split cleared', () => {
-    expect(reconcile).toContain('splitMigratedChainUnpairedBookLine({ rows: unpairedBookLineRows');
-    expect(reconcile).toContain(`VERDICT.reclassify(t, r.key, "a book line we do not have", "${KLASS}", r.line);`);
+  test('the module reclassifies the LINE COUNT the split cleared', () => {
+    expect(NOTE_CHAIN_SHAPE).toBe(KLASS);
+    expect(chain).toContain('recorder.reclassify(t, r.key, "line count", NOTE_CHAIN_SHAPE, r.line)');
+  });
+
+  test('the module reclassifies the UNPAIRED BOOK LINE the split cleared', () => {
+    expect(chain).toContain('splitMigratedChainUnpairedBookLine({ rows: unpairedBookLineRows, facts })');
+    expect(chain).toContain('recorder.reclassify(t, r.key, "a book line we do not have", NOTE_CHAIN_SHAPE, r.line)');
   });
 
   test('both reclassifications are fenced behind the split having APPLIED', () => {
     // A split that could not read its facts reclassifies nothing. Without the
     // guard, `moved` is empty anyway — but the guard is what says so out loud,
     // and it is what a reader checks instead of reasoning about the empty array.
-    expect(reconcile).toContain('if (LS.applied) {');
-    expect(reconcile).toContain('if (UB.applied) {');
+    expect(chain).toContain('if (LS.applied)');
+    expect(chain).toContain('if (UB.applied) {');
   });
 
   test('the unpaired-book-line rows are COLLECTED, never parsed back out of the printed string', () => {
@@ -78,6 +87,7 @@ describe('the migrated-chain shape reaches the per-document verdict', () => {
   test('only the types DECLARED as the migrated chain are eligible', () => {
     // The eligibility is `cfg.migratedChainLineShape`, which lives on the type
     // config in lib/ac-reconcile-erp-sql.mjs — not a list of type letters here.
-    expect(reconcile).toContain('const UB = cfg.migratedChainLineShape');
+    expect(reconcile).toContain('eligible: Boolean(cfg.migratedChainLineShape)');
+    expect(chain).not.toMatch(/["'](IV|PI)["']/);
   });
 });
