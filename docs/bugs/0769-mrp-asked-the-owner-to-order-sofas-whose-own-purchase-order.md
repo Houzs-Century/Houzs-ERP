@@ -105,5 +105,5 @@ in the frontend adapter). Both are display-level and neither changes an
 allocation.
 
 **Ref.** `fix/mrp-sofa-dedicated-po`, 2026-09-09. Extends `docs/bugs/0736`; the
-measurement in context is `docs/mrp-migration-and-shortage-audit-2026-09-09.md`
-§3.
+measurement in context is the cutover audit landing in PR #3476 (three owner
+questions, measured), section 3.
