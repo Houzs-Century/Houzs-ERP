@@ -48,9 +48,30 @@
 // ── WHAT IS COMPARED ───────────────────────────────────────────────────────
 //
 // Per line, keyed by AutoCount DtlKey, which is the identity both sides carry:
-// ItemCode, Qty, UnitPrice and Desc2. Those are the four an /edit actually
-// writes. A `Retire: true` line is counted separately — it is a deletion, not a
-// value change, and lumping it in with the value diffs would overstate both.
+// ItemCode, Qty, UnitPrice and Desc2. A `Retire: true` line is counted
+// separately — it is a deletion, not a value change, and lumping it in with the
+// value diffs would overstate both.
+//
+// WHAT A KEYED EDIT ACTUALLY SENDS, read out of composeEdit (autocount-
+// writeback.ts:1436) rather than assumed, because it decides how to read this
+// report:
+//
+//   ItemCode     STRIPPED on a normal edit — `const { ItemCode: acItemCode,
+//                ...rest } = d` — and put back only on a REBUILD. Owner
+//                2026-08-13: an edit changes a line's Description 2, never its
+//                SKU. So ItemCode is `undefined` on nearly every row here and
+//                is SKIPPED, not counted as a match. A comparison that scored
+//                it as "identical" would inflate the harmless column with
+//                fields we never sent.
+//   Qty          SENT.
+//   UnitPrice    SENT.
+//   Desc2        SENT — and this is the one that matters. Desc2 is where a
+//                sofa's build text lives, which is the single thing the owner
+//                carved out of 「一律跟账本」 with 「除了sofa compartment而已啊」.
+//
+// So these edits are NOT no-ops by construction: they rewrite quantity, price
+// and specification on lines the account book already holds. Whether that
+// rewrote anything is the whole question below.
 //
 // Header comparison is DELIBERATELY LIMITED to DocDate. The other header keys
 // an edit sends (addresses, agent, UDFs) have no counterpart in the snapshot's
