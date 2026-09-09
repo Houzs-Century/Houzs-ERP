@@ -49,33 +49,9 @@ money on both the line and the header. The swap is applied in ONE transaction �
 half a swap is worse than neither half — and both receipts are asserted
 `migrated_no_stock` with zero movements inside it.
 
-### Two of the three refused on the FIRST plan, and both refusals were mine
+**FOLLOW-UP.** A ran and verified on the first apply
+(`OK HC-PO-006690: 1 line(s) at RM 0.00, header RM 0.00`). B and C refused,
+because this script asked for the row SHAPE it expected rather than the shape the
+data has — traced and fixed in `docs/bugs/0759`.
 
-A ran and verified — `OK HC-PO-006690: 1 line(s) at RM 0.00, header RM 0.00`.
-B and C did not, and neither was a data problem:
-
-```
-HC-GR-005334: expected 2 keyed line(s), found 0 — REFUSED
-HC-GR-005256-PO-009652: expected 1 line on DtlKey 906540, found 2 — REFUSED
-```
-
-**B looked the rows up by our DOCUMENT NUMBER.** A migrated receipt's ERP number
-is not always the book's number with a prefix — several in this very batch carry
-a `-PO-NNNNNN` suffix, `HC-GR-005256-PO-009652` among them. The book's line KEY
-is the identity; the number is a label. It now finds the rows by key, prints
-which document they landed on, and refuses if the two keys are not on the same
-one.
-
-**C asked for exactly one row on a DtlKey.** A sofa is one line in the book and
-one ERP row PER COMPARTMENT, every one carrying the same key — this repo's own
-documented shape, in the module guide, in the words *"indexed, NOT unique"*. It
-now reads every piece, refuses if they disagree with each other, and writes the
-leg to all of them, which is the rule the sibling repair already states: a scalar
-axis is written identically to every piece of a build.
-
-Both are the same error twice: **asserting the shape I expected instead of asking
-what shape the data has.** The gates turned two wrong assumptions into two
-refusals and no writes, which is what they are for.
-
-**Ref.** PRs for `fix/cutover-last-three-to-book` and `fix/last-three-bc-lookup`,
-2026-09-09.
+**Ref.** PR for `fix/cutover-last-three-to-book`, 2026-09-09.
