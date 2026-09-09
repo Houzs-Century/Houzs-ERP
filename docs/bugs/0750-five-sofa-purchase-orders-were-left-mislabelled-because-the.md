@@ -71,38 +71,9 @@ purchase row stops saying "one single seater" and says the four pieces the sales
 order already says — he answered 「那就修」. His standing rule is why:
 「已经出货了的单金额不用追，可是还是要确保 transaction flow 的数据是一样的」.
 
-## The switch was HALF applied, and the transaction caught it
+**FOLLOW-UP, the same day.** The apply wrote nothing on any of the five: the
+delivery rule is enforced in TWO places and `ALLOW_DELIVERED` was wired to one,
+so every build planned cleanly, entered the transaction and rolled back. Traced
+and fixed in `docs/bugs/0753`.
 
-*Added the same day, after the apply.* `ALLOW_DELIVERED` opened the gate in
-`planMislabelledBuild` and **not** the identical re-check inside the write
-transaction. All five planned cleanly, entered the transaction, and were rolled
-back one at a time:
-
-```
-=== APPLYING 1 BUILD(S) ===
-ROLLED BACK HC-PO-009467 (PO-009467) 9028-1S <- HOK-5530 SOFA
-            — HC-SO-012128 now carries 2 delivery-order line(s)
-=== VERIFIED ON A FRESH CONNECTION ===
-  builds applied 0 of 1; shapes verified 0
-```
-
-**Nothing was written**, on any of the five (runs 34327433537, 34327518796,
-34327602216, 34327685367, 34327763573). That is the transaction working, and it
-is the reason a half-applied switch cost a re-run rather than a repair.
-
-**The second check is not redundant and is not weakened.** The plan reads a
-snapshot; this one re-reads inside the transaction, so it still catches a
-delivery raised between the two. What it must not do is enforce a rule the
-operator has already been asked about and answered — so it now reads the SAME
-switch, and prints `proceeding on <doc> despite N delivery-order line(s)` when it
-does.
-
-**The lesson, and it is not "grep harder".** The counter line said
-`purchase lines re-coded 1 · inserted 1` — the PLAN's numbers — three lines above
-`builds applied 0 of 1`. Read to the verdict, not to the number that looks like
-one: this script prints what it INTENDED before it prints what it DID, and only
-the second is evidence.
-
-**Ref.** PRs for `fix/mislabelled-sofa-po-allow-delivered` and
-`...-allow-delivered-2`, 2026-09-09.
-
+**Ref.** PR for `fix/mislabelled-sofa-po-allow-delivered`, 2026-09-09.
