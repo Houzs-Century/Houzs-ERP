@@ -236,6 +236,7 @@ describe("ComposerModal (rendered)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Warehouse/ }));
     // ANN by default: no file needed, Submit open.
     expect(screen.queryByTestId("attachment-required-hint")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Change type" }));
     fireEvent.click(screen.getByRole("radio", { name: /Memo/ }));
     await waitFor(() => expect(screen.getByTestId("ref-no-preview").textContent).toContain("OPS-MEMO-2609-0003"));
     // Numbered under another department: the preview asks for that code and the pick rides the POST.
@@ -250,6 +251,42 @@ describe("ComposerModal (rendered)", () => {
     expect(apiPost).toHaveBeenCalledWith(
       "/api/announcements",
       expect.objectContaining({ title: "Memo one", docType: "MEMO", numberDeptId: 2, draft: true }),
+    );
+  });
+
+  it("the type follows the category until the writer picks one by hand (owner 2026-09-09); a hand-picked type sticks", async () => {
+    apiPost.mockResolvedValue({ success: true });
+    apiGet.mockResolvedValue({ data: { refNo: "OPS-ANY-2609-0001" } });
+    const { onPosted } = mount({
+      docTypes: [
+        { code: "ANN", label: "Announcement", attachmentRequired: false },
+        { code: "MEMO", label: "Memo", attachmentRequired: false },
+        { code: "SOP", label: "Standard operating procedure", attachmentRequired: false },
+        { code: "WARN", label: "Warning", attachmentRequired: false },
+        { code: "NTC", label: "Notice", attachmentRequired: false },
+      ],
+    });
+    // Warning is the default category → WARN; the radios stay folded away.
+    expect(screen.getByTestId("numbering-type").textContent).toContain("WARN");
+    expect(screen.queryByRole("radio", { name: /Memo/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "SOP" }));
+    expect(screen.getByTestId("numbering-type").textContent).toContain("SOP");
+    fireEvent.click(screen.getByRole("button", { name: "Notice" }));
+    expect(screen.getByTestId("numbering-type").textContent).toContain("NTC");
+    fireEvent.click(screen.getByRole("button", { name: "Learning" }));
+    expect(screen.getByTestId("numbering-type").textContent).toContain("ANN");
+    // Picked by hand: the category no longer moves it.
+    fireEvent.click(screen.getByRole("button", { name: "Change type" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Memo/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Warning" }));
+    expect(screen.getByTestId("numbering-type").textContent).toContain("MEMO");
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Sticky type" } });
+    fireEvent.click(screen.getByRole("button", { name: /Warehouse/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(onPosted).toHaveBeenCalled());
+    expect(apiPost).toHaveBeenCalledWith(
+      "/api/announcements",
+      expect.objectContaining({ docType: "MEMO", category: "WARNING", draft: true }),
     );
   });
 

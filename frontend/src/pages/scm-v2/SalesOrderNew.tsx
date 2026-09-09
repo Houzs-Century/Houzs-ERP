@@ -72,7 +72,7 @@ import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRet
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { resolveSelfStaff } from '../../vendor/scm/lib/self-staff';
 import { todayMyt } from '../../vendor/scm/lib/dates';
-import { addressLineProps } from '../../lib/addressLimit';
+import { addressLineProps } from '../../lib/acColumnWidths';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { deriveProcessingDate } from '../../lib/processingDate';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';

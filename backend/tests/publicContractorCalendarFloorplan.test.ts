@@ -37,6 +37,8 @@ let legacyAtts: Row[] = [];
 let touched: string[] = [];
 let bucketGets: string[] = [];
 let exportLog: Row[] = [];
+// The contractor picker row's setting: what one press of Export covers.
+let exportScope: "month" | "year" = "month";
 
 function tableOf(sql: string): string {
   const m = /(?:FROM|INTO)\s+([a-z_]+)/i.exec(sql);
@@ -66,6 +68,9 @@ function run(sql: string, args: unknown[]): Row[] {
   if (table === "share_export_log") {
     exportLog.push({ kind: args[0], subject: args[1], token: args[2], ip: args[3], row_count: args[4] });
     return [];
+  }
+  if (table === "project_contractors") {
+    return args[0] === MINE ? [{ share_export_scope: exportScope }] : [];
   }
   if (table === "project_checklist_attachments") {
     // The task-title pattern is a bind now; the contractor route must ask for the BLANK task.
@@ -123,6 +128,7 @@ beforeEach(() => {
   touched = [];
   bucketGets = [];
   exportLog = [];
+  exportScope = "month";
   projects = [
     { id: 7, contractor: MINE, status: "Confirmed", archived_at: null, brand: "AKEMI", organizer: "HOMELOVE", state: "SELANGOR", event_type: "ROADSHOW", venue: "MID VALLEY", booth_no: "3053", start_date: "2026-09-11", end_date: "2026-09-13", name: null, size_sqm: 72 },
     { id: 8, contractor: THEIRS, status: "Confirmed", archived_at: null, brand: "ZANOTTI", organizer: null, state: null, venue: "IOI", booth_no: "1", start_date: "2026-09-11", end_date: "2026-09-13", name: null },
@@ -265,5 +271,28 @@ describe("public contractor calendar — unfilled floorplan", () => {
     expect(await res.json()).toEqual({ sizeSqm: 72 });
     expect(touched).not.toContain("project_finance");
     expect((await get(`/${TOKEN}/events/8`)).status).toBe(404);
+  });
+
+  test("the list says what one press of Export covers, and ?year= exports the whole year (owner: three contractors)", async () => {
+    // Default: the month on screen.
+    let res = await get(`/${TOKEN}`);
+    expect((await res.json() as { exportScope: string }).exportScope).toBe("month");
+    // The office flipped this contractor's row.
+    exportScope = "year";
+    res = await get(`/${TOKEN}`);
+    expect((await res.json() as { exportScope: string }).exportScope).toBe("year");
+    // The year window: the September show is in 2026's export and not 2025's.
+    const y26 = await get(`/${TOKEN}/export?year=2026`);
+    expect(y26.status).toBe(200);
+    expect((await y26.json() as { rows: unknown[] }).rows.length).toBe(1);
+    const y25 = await get(`/${TOKEN}/export?year=2025`);
+    expect((await y25.json() as { rows: unknown[] }).rows).toEqual([]);
+    expect(exportLog.map((l) => l.row_count)).toEqual([1, 0]);
+    // Month AND year, or a malformed year: refused, nothing logged.
+    exportLog = [];
+    for (const q of ["?month=2026-09&year=2026", "?year=26", "?year=all"]) {
+      expect((await get(`/${TOKEN}/export${q}`)).status).toBe(400);
+    }
+    expect(exportLog).toEqual([]);
   });
 });
