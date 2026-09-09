@@ -46,7 +46,6 @@ const Sales = lazy(() => import("./pages/Sales").then((m) => ({ default: m.Sales
 const Profile = lazy(() => import("./pages/Profile").then((m) => ({ default: m.Profile })));
 const Notifications = lazy(() => import("./pages/Notifications").then((m) => ({ default: m.Notifications })));
 const Announcements = lazy(() => import("./pages/Announcements").then((m) => ({ default: m.Announcements })));
-const Memos = lazy(() => import("./pages/Memos").then((m) => ({ default: m.Memos })));
 const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
 const Team = lazy(() => import("./pages/Team").then((m) => ({ default: m.Team })));
 const SystemHealth = lazy(() => import("./pages/SystemHealth").then((m) => ({ default: m.SystemHealth })));
@@ -603,11 +602,6 @@ export default function App() {
             keys off `canWrite` = announcements.write / Sales Director, which the
             backend re-checks. ── */}
         <Route path="/announcements" element={<Announcements />} />
-        {/* Memos — the department memo register (docs/modules/memos.md). Ungated
-            like Announcements: any signed-in user reads the register and
-            registers for their own department; memos.manage widens that, and
-            the backend re-checks. */}
-        <Route path="/memos" element={<Memos />} />
         {/* Fleet Health — Fleet Maintenance & Compliance Phase 1 dashboard.
             Gated on the flat fleet.read permission; fleet.write covers the
             mutations (backend re-checks). Desktop ops screen. */}

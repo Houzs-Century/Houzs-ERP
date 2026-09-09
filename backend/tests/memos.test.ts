@@ -61,7 +61,7 @@ describe("memo register", () => {
     await env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS memos (
          id TEXT PRIMARY KEY, title TEXT NOT NULL, department_id INTEGER NOT NULL, dept_code TEXT NOT NULL,
-         memo_date TEXT NOT NULL, notes TEXT, file_key TEXT, file_name TEXT, file_mime TEXT, file_size INTEGER,
+         doc_type TEXT NOT NULL DEFAULT 'MEMO', memo_date TEXT NOT NULL, notes TEXT, file_key TEXT, file_name TEXT, file_mime TEXT, file_size INTEGER,
          ref_no TEXT UNIQUE, created_by INTEGER, created_at TEXT NOT NULL,
          voided_by INTEGER, voided_at TEXT, void_reason TEXT)`,
     ).run();
@@ -111,9 +111,10 @@ describe("memo register", () => {
     await env.DB.prepare("DELETE FROM document_refs WHERE entity_type = 'memo'").run();
     await env.DB.prepare("DELETE FROM document_types").run();
     await env.DB.prepare(
-      "INSERT INTO document_types (code, label, attachment_required, is_active, created_at) VALUES ('ANN', 'Announcement', 0, 1, '2026-09-06T00:00:00.000Z'), ('MEMO', 'Memo', 0, 1, '2026-09-08T00:00:00.000Z')",
+      "INSERT INTO document_types (code, label, attachment_required, is_active, created_at) VALUES ('ANN', 'Announcement', 0, 1, '2026-09-06T00:00:00.000Z'), ('MEMO', 'Memo', 0, 1, '2026-09-08T00:00:00.000Z'), ('SOP', 'Standard operating procedure', 0, 1, '2026-09-09T00:00:00.000Z'), ('WARN', 'Warning', 0, 1, '2026-09-09T00:00:00.000Z'), ('NTC', 'Notice', 0, 1, '2026-09-09T00:00:00.000Z'), ('OLD', 'Retired', 0, 0, '2026-09-09T00:00:00.000Z')",
     ).run();
   });
+
 
   test("registering mints <DEPT>-MEMO-YYMM-NNNN at creation, per department", async () => {
     const a = await call(OPS, "POST", "", { title: "Forklift keys", memoDate: "2026-09-09", file: FILE });
@@ -191,5 +192,30 @@ describe("memo register", () => {
     expect(next.data.refNo).not.toBe(m.data.refNo);
     // No delete door.
     expect((await call(MANAGER, "DELETE", `/${id}`)).status).toBe(404);
+  });
+
+  test("a registration names its family: any ACTIVE registry type numbers on its own department series; ANN, an inactive and an unknown type are refused", async () => {
+    const sop = await call(OPS, "POST", "", { title: "Forklift SOP", docType: "sop", file: FILE });
+    expect(sop.status).toBe(201);
+    expect(sop.data.refNo).toMatch(/^OPS-SOP-\d{4}-0001$/);
+    expect(sop.data.docType).toBe("SOP");
+    const warn = await call(OPS, "POST", "", { title: "Late again", docType: "WARN" });
+    expect(warn.data.refNo).toMatch(/^OPS-WARN-\d{4}-0001$/);
+    const ntc = await call(HR, "POST", "", { title: "Office closure", departmentId: 8, docType: "NTC" });
+    expect(ntc.data.refNo).toMatch(/^HR-NTC-\d{4}-0001$/);
+    // Omitted → MEMO, as before this column existed.
+    const plain = await call(OPS, "POST", "", { title: "Plain" });
+    expect(plain.data.docType).toBe("MEMO");
+    expect(plain.data.refNo).toMatch(/^OPS-MEMO-/);
+    const ann = await call(OPS, "POST", "", { title: "Composed elsewhere", docType: "ANN" });
+    expect(ann.status).toBe(400);
+    expect(ann.error).toMatch(/composed in Announcements/);
+    expect((await call(OPS, "POST", "", { title: "Retired", docType: "OLD" })).status).toBe(400);
+    expect((await call(OPS, "POST", "", { title: "Unknown", docType: "XYZ" })).status).toBe(400);
+    // The registry carries the type; the list filters on it.
+    const reg = await env.DB.prepare("SELECT type_code FROM document_refs WHERE ref_no = ?").bind(sop.data.refNo).first<{ type_code: string }>();
+    expect(reg?.type_code).toBe("SOP");
+    const list = await call(OPS, "GET", "?docType=sop");
+    expect(list.data.map((m: { refNo: string }) => m.refNo)).toEqual([sop.data.refNo]);
   });
 });

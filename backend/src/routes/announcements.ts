@@ -47,7 +47,7 @@ import {
 } from "../lib/announcementRichText";
 import { postPersonalNotice } from "../services/personalNotice";
 import { escalatePending } from "../services/announcementEscalation";
-import { APPROVE_PERMISSION, recordSubmission, type Actor } from "../services/announcementApproval";
+import {resolveNumberDept,  APPROVE_PERMISSION, recordSubmission, type Actor } from "../services/announcementApproval";
 import {
   ATTACHMENT_REQUIRED_MESSAGE,
   attachmentRequiredForType,
@@ -64,7 +64,7 @@ import {
   divisionEq,
   isVoided,
   readApprovalStatus,
-  readDocType,
+  readNumberDept, readDocType,
   inTargetCompanies,
   isActiveFlag,
   laterOf,
@@ -316,6 +316,7 @@ export function toPublic(r: AnnouncementRow) {
     voidReason: r.voidReason ?? r.void_reason ?? null,
     // Document type (mig 20260908T0300): ANN or a registered code (MEMO).
     docType: readDocType(r),
+    numberDeptId: readNumberDept(r),
     // System-notice tag ('scan' for background slip-scan results). Lets the
     // client suppress the read-receipt roster on private per-user notices.
     source: (r.source ?? null) as string | null,
@@ -1310,6 +1311,9 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
   const docTypeRes = await resolveDocType(c.env, body.docType);
   if ("error" in docTypeRes) return c.json({ success: false, error: docTypeRes.error }, 400);
   const docType = docTypeRes.code;
+  // Numbered under (mig 20260909T0900): the composer's pick, else the submitter's own.
+  const numberDept = await resolveNumberDept(c.env, body.numberDeptId);
+  if ("error" in numberDept) return c.json({ success: false, error: numberDept.error }, 400);
   // Attachment policy (mig 20260907T0715, Settings → Documents): a notice
   // may not enter the queue without a file when its type demands one.
   // A draft is always allowed — the gate is on submission.
@@ -1370,6 +1374,10 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
       if (dup) return c.json({ success: true, data: toPublic(dup), duplicate: true }, 201);
     }
     throw e;
+  }
+  if (numberDept.id != null) {
+    // company-scope: the row just inserted, by primary key. A separate UPDATE so an older mirror without the column is untouched by a plain post.
+    await c.env.DB.prepare("UPDATE announcements SET number_dept_id = ? WHERE id = ?").bind(numberDept.id, id).run();
   }
 
   const row = await c.env.DB.prepare(
@@ -1597,6 +1605,15 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
     if ("error" in res) return c.json({ success: false, error: res.error }, 400);
     sets.push("doc_type = ?");
     binds.push(res.code);
+  }
+  if ("numberDeptId" in body) {
+    if (readApprovalStatus(existing) === "APPROVED") {
+      return c.json({ success: false, error: "The numbering department of a published notice cannot change." }, 409);
+    }
+    const nd = await resolveNumberDept(c.env, body.numberDeptId);
+    if ("error" in nd) return c.json({ success: false, error: nd.error }, 400);
+    sets.push("number_dept_id = ?");
+    binds.push(nd.id);
   }
   if ("category" in body) {
     sets.push("category = ?");
