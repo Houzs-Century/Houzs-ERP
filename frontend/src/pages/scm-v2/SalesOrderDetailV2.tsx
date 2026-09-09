@@ -91,6 +91,7 @@ import {
   migratedReadonlyReason as soMigratedReadonlyReason,
 } from "../../vendor/scm/lib/so-detail-gates";
 import { MigratedReadonlyBanner } from "../../vendor/scm/components/MigratedReadonlyBanner";
+import { customerRefOf } from '../../lib/customer-ref';
 
 // ─── Row types (subset — see MfgSalesOrdersList.tsx for the full SoRow) ────
 
@@ -215,8 +216,7 @@ type SoItem = {
    shared helper renders "—" for a number the ERP does not have. */
 const fmtMoney = fmtMoneySen;
 
-const refOf = (h: SoHeader): string =>
-  h.po_doc_no || h.customer_so_no || h.ref || "—";
+const refOf = (h: SoHeader): string => customerRefOf(h) || "—";
 
 /* HEADER FIRST, then the SAME shared rule the SO list falls back to — byte-for-
    byte the list's brandOf. Owner 2026-08-18: "我要表头啊", so a filled header

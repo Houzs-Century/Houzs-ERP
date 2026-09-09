@@ -93,6 +93,7 @@ import { useAuth } from "../../auth/AuthContext";
 import { canOperateDeliveryOrders, canRevertDelivery } from "../../auth/salesAccess";
 import { DO_SHIPPED_STATES } from '../../vendor/shared/do-shipped-states';
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
+import { customerRefOf } from '../../lib/customer-ref';
 
 // ─── Header + item shapes (subset — full 40-field row lives in the list V2) ─
 
@@ -210,8 +211,7 @@ type DoItem = {
 // (fmtMoneySen) that fed the finance-gated Totals·Margin card is gone with
 // that card (owner 2026-07-17) — the DO detail renders no money figures.
 
-const refOf = (h: DoHeader): string =>
-  h.po_doc_no || h.customer_so_no || h.ref || "—";
+const refOf = (h: DoHeader): string => customerRefOf(h) || "—";
 
 const soOf = (h: DoHeader): string => h.so_doc_no || "—";
 
@@ -793,6 +793,7 @@ export function DeliveryOrderDetailV2() {
             so_doc_no: deliveryOrder.so_doc_no,
             po_doc_no: deliveryOrder.po_doc_no,
             customer_so_no: deliveryOrder.customer_so_no,
+            ref: deliveryOrder.ref,
           }
         : null,
     [deliveryOrder],
