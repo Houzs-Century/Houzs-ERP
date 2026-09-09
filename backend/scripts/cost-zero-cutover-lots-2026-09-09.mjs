@@ -97,10 +97,44 @@
  *   exactly what was written. A row count alone would pass on a run that costed
  *   the wrong lots.
  *
- * RE-RUN: idempotent — a second run finds them costed and reports 0 to write.
+ * ── THE DATE BUG THIS FILE WAS REPAIRED FOR, 2026-09-09 ───────────────────
+ * The first apply (run 34374384637) costed 34 of 277 lots and left 184 sofa
+ * lots whose model the book DOES price and whose compartment DOES have a
+ * weight. That was not a data gap. `l.received_at::date` arrives from
+ * postgres.js as a JS Date, and `String(date).slice(0, 10)` is "Mon Sep 0" —
+ * which parses to NaN, not to null. Every comparison against NaN is false, so
+ * `sofaBookCost` never beat its `Infinity` starting gap and returned null for
+ * every sofa, while `nearestReceipt` fell through to its initial candidate and
+ * returned the OLDEST priced receipt for everything else.
+ *
+ * So the 34 lots that WERE costed carry a real receipt cost that is not the one
+ * this script's log claimed. That is the CLAUDE.md trap by name: a
+ * successful-looking result that answers a different question. `dayOf` now
+ * accepts a Date and the SQL returns text; the diagnosis is
+ * `diag-zero-cost-lots-remaining.mjs`, whose production run 34382805936 is what
+ * separated "the book has no price" from "this script could not read a date".
+ *
+ * A `-1S` / `-2S` code is now costed from the item's OWN priced receipt before
+ * the compartment split is tried. The mapping folds `AMN-SF9058 SOFA` onto
+ * `9058-1S`, so a whole-sofa code IS priced in the book directly and has no
+ * compartment weight to split by — 32 such lots were reported as uncostable
+ * while the book priced them all along.
+ *
+ * ── RECOST=1 REPAIRS THIS SCRIPT'S OWN MISPICKS, AND NOTHING ELSE ─────────
+ * Every other write here refuses to touch a non-zero cost, and that refusal is
+ * what keeps a settled COGS settled. The repair is therefore a separate switch
+ * with a fingerprint predicate: a row is corrected only when its stored cost is
+ * EXACTLY the oldest priced receipt of its item — the value the broken
+ * comparison produced — AND the corrected rule gives a different one. A cost
+ * somebody set deliberately satisfies neither, and the UPDATE names the exact
+ * wrong value so a row that has moved since it was measured matches nothing.
+ *
+ * RE-RUN: idempotent. A second run finds the lots costed and reports 0 to
+ * write; with RECOST=1 it finds no row still carrying the mispicked value and
+ * reports 0 to correct.
  *
  * Env:  DATABASE_URL (required)   MODE=plan|apply   CONFIRM (on apply)
- *       COMPANY_ID (default 1)
+ *       COMPANY_ID (default 1)   RECOST=1 (also repair this script's mispicks)
  */
 import fs from 'node:fs';
 import zlib from 'node:zlib';
@@ -113,6 +147,10 @@ const MODE = (process.env.MODE ?? 'plan').toLowerCase();
 const CONFIRM_PHRASE = 'cost zero cutover lots 2026-09-09';
 const APPLY = MODE === 'apply';
 const CO = Number(process.env.COMPANY_ID || 1);
+/* RECOST repairs the rows THIS SCRIPT'S OWN BUG wrote, and nothing else. It is a
+   separate switch because every other write here refuses to touch a non-zero
+   cost, and that refusal is the guard that keeps a settled COGS settled. */
+const RECOST = process.env.RECOST === '1';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SNAP = path.join(here, 'data', 'ac-stock-receipts-2026-09-09.json.gz');
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -156,7 +194,26 @@ for (const r of snap.receipts) {
 for (const v of pricedByItem.values()) v.sort((a, b) => (a.date < b.date ? -1 : 1));
 
 const NOTE_RE = /^AC\s+(\w+)\s+(\S+)\s+(\d{4}-\d{2}-\d{2})\s*$/i;
-const dayOf = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).getTime() : null);
+/* A DATE, not a string that looks like one. `l.received_at::date` arrives from
+   postgres.js as a JS Date, and `String(date).slice(0,10)` is "Mon Sep 0" —
+   which parses to NaN, not to null. Every comparison against NaN is false, so
+   the nearest-receipt search silently found NOTHING for sofas and quietly
+   returned the OLDEST receipt for everything else. That is the exact shape
+   CLAUDE.md warns about: a successful-looking result that answers a different
+   question. The SQL now returns text and this accepts both. */
+const dayOf = (d) => {
+  if (d === null || d === undefined || d === '') return null;
+  const iso = d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
+  const t = Date.parse(`${iso}T00:00:00Z`);
+  return Number.isNaN(t) ? null : t;
+};
+
+/** The OLDEST priced receipt of `code` — what the broken date comparison
+ *  actually returned, and therefore the fingerprint of a mispicked row. */
+function oldestReceipt(code) {
+  const rs = pricedByItem.get(code);
+  return rs && rs.length ? rs[0] : null;
+}
 
 /** The book's priced receipt of `code` closest in time to `when`. */
 function nearestReceipt(code, when) {
@@ -278,16 +335,21 @@ try {
 
   const lots = await sql`
     SELECT l.id, l.item_code, l.qty_remaining::numeric AS qty,
-           l.received_at::date AS at, m.notes
+           coalesce(l.unit_cost_sen, 0)::int AS cost_now,
+           to_char(l.received_at, 'YYYY-MM-DD') AS at, m.notes
       FROM scm.inventory_lots l
       LEFT JOIN scm.inventory_movements m ON m.id = l.movement_id
      WHERE l.company_id = ${CO} AND l.qty_remaining > 0
-       AND coalesce(l.unit_cost_sen, 0) = 0
+       AND (coalesce(l.unit_cost_sen, 0) = 0 OR ${RECOST})
      ORDER BY l.item_code, l.received_at`;
-  log(`lots on hand with no cost: ${lots.length}`);
+  log(`lots read: ${lots.length}` + (RECOST
+    ? ' (RECOST: every lot on hand, so the mispicked ones can be corrected)'
+    : ' — those on hand with no cost'));
 
   const plan = [];
+  const repair = [];
   const left = new Map();
+  let untouched = 0;
   for (const l of lots) {
     const up = norm(l.item_code);
     const isSofa = /^[0-9]{4}-/.test(l.item_code);
@@ -299,7 +361,11 @@ try {
       const r = byDoc.get(`${norm(m[2])} ${up}`);
       if (r) { sen = r.cost_sen; why = `its own receipt in the book (${r.doc_no} ${r.date})`; }
     }
-    if (!sen && !isSofa) {
+    /* The item's own nearest priced receipt. This runs for SOFA too, because a
+       `-1S` / `-2S` code IS the whole sofa in the book — the mapping folds
+       `AMN-SF9058 SOFA` onto `9058-1S` — so it is priced directly and must
+       never be sent through the compartment split, which has no weight for it. */
+    if (!sen) {
       const r = nearestReceipt(up, l.at);
       if (r) { sen = r.cost_sen; why = `the book's nearest receipt of this item (${r.doc_no ?? r.doc_type} ${r.date})`; }
     }
@@ -316,6 +382,21 @@ try {
     if (!sen && !isSofa && poPrice.has(up)) {
       sen = poPrice.get(up);
       why = 'what we paid (purchase order)';
+    }
+    if (Number(l.cost_now) > 0) {
+      /* RECOST only. This row already carries a cost, so the ONLY reason to
+         touch it is that this script's own bug wrote it: the value it holds is
+         exactly the OLDEST priced receipt of the item, and the corrected rule
+         gives a different one. Both conditions, or it is left alone — a cost
+         somebody set deliberately can coincide with neither. */
+      const old = oldestReceipt(up);
+      if (!old || Number(l.cost_now) !== old.cost_sen || !sen || sen === Number(l.cost_now)) {
+        untouched += 1;
+        continue;
+      }
+      repair.push({ id: l.id, code: l.item_code, qty: Number(l.qty),
+        from: Number(l.cost_now), sen, why });
+      continue;
     }
     if (!sen || sen <= 0) {
       const k = isSofa
@@ -338,6 +419,20 @@ try {
   const units = plan.reduce((a, p) => a + p.qty, 0);
   const value = plan.reduce((a, p) => a + p.qty * p.sen, 0);
   log(`\n  ${plan.length} lot(s), ${units} unit(s), inventory value +RM ${(value / 100).toFixed(2)}`);
+  if (RECOST) {
+    const rq = repair.reduce((a, r) => a + r.qty, 0);
+    const delta = repair.reduce((a, r) => a + r.qty * (r.sen - r.from), 0);
+    log(`\n=== WOULD CORRECT (RECOST): ${repair.length} lot(s), ${rq} unit(s), `
+      + `inventory value ${delta >= 0 ? '+' : ''}RM ${(delta / 100).toFixed(2)} ===`);
+    log('  These carry EXACTLY the oldest priced receipt of their item — the value the');
+    log('  broken date comparison produced — and the corrected rule gives a different one.');
+    for (const r of repair) {
+      log(`  ${r.code.padEnd(30)} ${String(r.qty).padStart(3)}u  RM ${(r.from / 100).toFixed(2)} -> RM ${(r.sen / 100).toFixed(2)}`);
+      log(`      ${r.why}`);
+    }
+    log(`  left alone because their cost is not this bug's fingerprint: ${untouched} lot(s)`);
+  }
+
   log('\n  LEFT AT ZERO, reported not guessed:');
   for (const [k, d] of left) {
     log(`    ${String(d.units).padStart(4)} unit(s), ${d.codes.size} code(s) — ${k}`);
@@ -364,7 +459,17 @@ try {
       RETURNING id`;
     wrote += done.length;
   }
-  log(`\nAPPLIED: ${wrote} lot(s) costed.`);
+  let fixed = 0;
+  for (const r of repair) {
+    /* The predicate names the exact wrong value. If anything has moved this row
+       since it was measured, the update matches nothing and says so. */
+    const done = await sql`
+      UPDATE scm.inventory_lots SET unit_cost_sen = ${r.sen}
+       WHERE id = ${r.id} AND coalesce(unit_cost_sen, 0) = ${r.from}
+      RETURNING id`;
+    fixed += done.length;
+  }
+  log(`\nAPPLIED: ${wrote} lot(s) costed` + (RECOST ? `, ${fixed} lot(s) corrected.` : '.'));
   await sql.end();
 
   const check = postgres(process.env.DATABASE_URL, { ssl: 'require', max: 1, prepare: false });
@@ -379,6 +484,12 @@ try {
   const [stillZero] = await check`
     SELECT count(*)::int AS n FROM scm.inventory_lots
      WHERE id = ANY(${plan.map((p) => p.id)}) AND coalesce(unit_cost_sen, 0) = 0`;
+  let repairsLanded = 0;
+  for (const r of repair) {
+    const [row] = await check`
+      SELECT coalesce(unit_cost_sen, 0)::int AS c FROM scm.inventory_lots WHERE id = ${r.id}`;
+    if (row && row.c === r.sen) repairsLanded += 1;
+  }
   await check.end();
 
   const ok = {
@@ -388,6 +499,7 @@ try {
     'lot count unchanged': after.lots === before.lots,
     'quantities unchanged': String(after.qty) === String(before.qty),
     'costed lots rose by exactly what was written': after.costed === before.costed + wrote,
+    'every lot marked for correction now holds the corrected cost': repairsLanded === repair.length,
   };
   log('\n=== VERIFY (fresh connection) ===');
   let bad = 0;

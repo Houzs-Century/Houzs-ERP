@@ -45,6 +45,10 @@ on:
         description: "Required for apply: cost zero cutover lots 2026-09-09"
         required: false
         default: ""
+      recost:
+        description: "Also correct the lots this script's own date bug mispriced (1 = yes)"
+        required: false
+        default: ""
 
 concurrency:
   group: cost-zero-cutover-lots-2026-09-09
@@ -69,5 +73,6 @@ jobs:
         env:
           MODE: ${{ github.event.inputs.mode }}
           CONFIRM: ${{ github.event.inputs.confirm }}
+          RECOST: ${{ github.event.inputs.recost }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NODE_OPTIONS: --dns-result-order=ipv4first
