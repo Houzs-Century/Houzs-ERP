@@ -1,5 +1,10 @@
 // ----------------------------------------------------------------------------
-// How wide an address line may be, on the screen where it is typed.
+// How wide the account book's columns are, on the screen where they are typed.
+//
+// AutoCount's columns are FIXED WIDTH and it refuses the WHOLE document when one
+// is over — not the field, the document. Every width the ERP can overrun belongs
+// here, next to its own enforcement, and each one is checked against the backend
+// constant it copies by frontend/scripts/check-ac-column-widths.mjs.
 //
 // AutoCount's four address columns are 40 characters and it refuses the WHOLE
 // document when one is over — an over-long line kept a sales order out of the
@@ -18,6 +23,28 @@
 
 /** The widest an address line may be. Keep in step with the backend constant. */
 export const ADDRESS_LINE_MAX = 40;
+
+/**
+ * The widest a line's Further Description may be — `SODTL.Desc2` / `PODTL.Desc2`,
+ * `nvarchar(100)`.
+ *
+ * A COPY of `AC_DESC2_MAX` in backend/src/services/autocount-sofa-collapse.ts,
+ * checked against it by the same gate as the address.
+ *
+ * NOT A FIELD SOMEBODY TYPES, which is why there is no `maxLength` for it. The
+ * text is BUILT — `buildVariantSummary` folds the line's colour, divan, gap, leg,
+ * seat and special orders into one string, so the length is the length of the
+ * whole line's specification and no single input owns it. Measured 2026-09-09: a
+ * plain bedframe renders 46 characters and two special-order notes take it to
+ * 110. The screen therefore SHOWS the overrun where the line is read
+ * (VariantDescription) instead of stopping anybody typing.
+ *
+ * AND IT IS NEVER CUT. Desc2 is the specification the factory builds from; half
+ * a specification is a wrong instruction, not a short one. The write-back
+ * refuses rather than truncating (Desc2TooLongError) and this is the warning
+ * that lets somebody fix it before it gets that far.
+ */
+export const AC_DESC2_MAX = 100;
 
 /**
  * WHERE LINE 1 ENDS when what was typed or pasted is wider than the column.

@@ -144,7 +144,7 @@ describe("ShareCalendar", () => {
     expect(urls.every((u) => u.includes("/brand-calendar/"))).toBe(true);
   });
 
-  it("export: asks for the month on screen; contractor gets eight columns; brand adds Total Sales and a Confidential footer", async () => {
+  it("export: asks for the month on screen; contractor gets nine columns (Start and End split); brand adds Total Sales and a Confidential footer", async () => {
     window.history.pushState({}, "", `/c/${TOKEN}`);
     fetchMock.mockImplementation((input: RequestInfo | URL) => serve(String(input)));
     const { unmount } = render(<ShareCalendar mode="contractor" />);
@@ -156,8 +156,8 @@ describe("ShareCalendar", () => {
     expect(fetchMock.mock.calls.map((c) => String(c[0])).filter((u) => u.includes("/export"))).toEqual([
       expect.stringMatching(new RegExp(`/contractor-calendar/.*/export\\?month=${thisMonth}$`)),
     ]);
-    expect(sheets[0][0]).toEqual(["Date", "Venue", "State", "Organizer", "Brand", "Type", "Booth", "Size (sqm)"]);
-    expect(sheets[0][1]).toEqual(["11/09/2026 – 13/09/2026", "MID VALLEY", "SELANGOR", "HOMELOVE", "AKEMI", "ROADSHOW", "3053", 72]);
+    expect(sheets[0][0]).toEqual(["Start", "End", "Venue", "State", "Organizer", "Brand", "Type", "Booth", "Size (sqm)"]);
+    expect(sheets[0][1]).toEqual(["2026-09-11", "2026-09-13", "MID VALLEY", "SELANGOR", "HOMELOVE", "AKEMI", "ROADSHOW", "3053", 72]);
     expect(sheets[0].flat()).not.toContain("Confidential");
     expect(written[0]).toMatch(/^DREAM ART \(M\) SDN BHD schedule .*\.xlsx$/);
     unmount();
@@ -171,8 +171,8 @@ describe("ShareCalendar", () => {
     fireEvent.click(screen.getByText("Event List"));
     await waitFor(() => expect(written.length).toBe(2));
     const brandSheet = sheets[1];
-    expect(brandSheet[0]).toEqual(["Date", "Venue", "State", "Organizer", "Brand", "Type", "Booth", "Size (sqm)", "Total Sales (RM)"]);
-    expect(brandSheet[1][8]).toBe(125000);
+    expect(brandSheet[0]).toEqual(["Start", "End", "Venue", "State", "Organizer", "Brand", "Type", "Booth", "Size (sqm)", "Total Sales (RM)"]);
+    expect(brandSheet[1][9]).toBe(125000);
     expect(brandSheet.slice(-3).map((r) => String(r[0]))).toEqual([
       "Brand: AKEMI",
       expect.stringMatching(/^Generated: /),

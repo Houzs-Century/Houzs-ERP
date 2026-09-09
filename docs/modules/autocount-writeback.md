@@ -5308,6 +5308,36 @@ a refusal IS in the account book AND does need attention; both chips are right
 about it and nothing there changes. Only the other order — refused, then
 accepted — is history.
 
+### A Description 2 the book cannot store is now VISIBLE (2026-09-09)
+
+`SODTL.Desc2` / `PODTL.Desc2` are `nvarchar(100)` and `Desc2TooLongError` has
+always refused rather than truncating — correctly, because Desc2 is the
+specification the factory builds from. What was missing is that **no screen
+showed the length**, so three documents sat outside the accounts for four
+characters each and the only trace was a line in a workflow log
+(`docs/bugs/0753`).
+
+`VariantDescription` now renders `NNN/100 — too long for AutoCount` beside the
+specification when it overruns. It is placed there rather than on each page for
+the same reason the `Description 2` label is: twelve screens render that one
+component. It is a **warning and not a block** — the ERP stays usable on a line
+the accounts cannot yet take, and nothing is ever truncated.
+
+**There is no `maxLength` for it, and that is not an oversight.** Desc2 is BUILT
+by `buildVariantSummary` from the line's colour, divan, gap, leg, seat and
+special orders, so the length belongs to the whole line and no input owns it.
+Measured 2026-09-09: a plain bedframe renders 46 characters and two long
+special-order notes take it to 104, while the owner's own shortening of the same
+specification is 93. **The wording of the special order is what decides it, not
+the renderer** — and the renderer must not be shortened to save characters,
+because `autocount-line-keys.ts` matches its output against the book's stored
+Desc2 to tell one line from another.
+
+`AC_DESC2_MAX` lives in `frontend/src/lib/acColumnWidths.ts` as a copy of the
+backend constant in `autocount-sofa-collapse.ts`, and
+`frontend/scripts/check-ac-column-widths.mjs` fails the build if the two
+disagree — the same treatment the address width already has.
+
 **The HEALTH REPORT reads the same rule, since 2026-09-09 — and until that day it
 did not.** `check-autocount-outbox-health.mjs` is the second reader of this table
 and was left behind when the page learned the rule, so `HC-DO-2609-004` and

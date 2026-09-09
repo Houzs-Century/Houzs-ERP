@@ -75,7 +75,7 @@ import { diffHeaderPayload, hasHeaderChanges } from '../../vendor/scm/lib/so-hea
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER,
   AMENDMENT_NOTHING_TO_SUBMIT } from '../../vendor/scm/lib/so-amendment-submit';
 import { todayMyt } from '../../vendor/scm/lib/dates';
-import { addressLineProps } from '../../lib/addressLimit';
+import { addressLineProps } from '../../lib/acColumnWidths';
 /* lib/utils formatDate (NOT the vendored fmtDate) for the amendment's header
    dates: these are bare YYYY-MM-DD strings, and fmtDate's `new Date(d)` parses
    those as UTC midnight then renders in the DEVICE zone — the documented

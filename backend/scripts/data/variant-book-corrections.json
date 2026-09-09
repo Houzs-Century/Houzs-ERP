@@ -79,6 +79,54 @@
       "book": "28",
       "desc2": "TBC/28\"/1R+1R",
       "why": "the middle segment is the seat size. NOT PROCEEDED. Its lead ERP row is a Console, which variant-axes.mjs exempts from NEEDING a seat height — an exemption from being required is not a licence to hold a wrong one, and the seat value is written to every piece of a build."
+    },
+    {
+      "type": "PO",
+      "ac_doc": "PO-009034",
+      "erp_doc": "HC-PO-009034",
+      "ac_dtlkey": 831373,
+      "item_code": "8050-1A(RHF)",
+      "axis": "seat",
+      "erp_now": "",
+      "book": "24",
+      "desc2": "(read from the book by check-ac-erp-reconcile; the seat axis reports AutoCount \"24\\\"\" vs ERP \"(blank)\")",
+      "why": "THE ERP IS BLANK, so nothing of ours is being overwritten - the book states a seat and we never carried one. Owner rule 2026-09-08: 「一律跟账本。除了sofa compartment而已啊」. Found by the PO tally 2026-09-09 (run 34336722458), which is also where erp_now=\"\" comes from."
+    },
+    {
+      "type": "PO",
+      "ac_doc": "PO-009034",
+      "erp_doc": "HC-PO-009034",
+      "ac_dtlkey": 831375,
+      "item_code": "8050-1A(R)(RHF)",
+      "axis": "seat",
+      "erp_now": "",
+      "book": "24",
+      "desc2": "(second sofa line of the same document; same axis, its own DtlKey)",
+      "why": "The document holds TWO sofa lines and both are blank on seat. They are separate builds with separate line keys, so they are separate entries - one entry cannot address two DtlKeys."
+    },
+    {
+      "type": "PO",
+      "ac_doc": "PO-009652",
+      "erp_doc": "HC-PO-009652",
+      "ac_dtlkey": 877019,
+      "item_code": "5535-1A(RHF)",
+      "axis": "leg",
+      "erp_now": "",
+      "book": "1",
+      "desc2": "2R+1R/Size:30\"/Col:KN390-2/Bottom wrap nylon/After push back align to seat/add 1inch leg",
+      "why": "The book's own text says 'add 1inch leg' and the leg axis reports AutoCount \"1\\\"\" vs ERP \"(blank)\". First use of the leg axis; the ERP key is legHeight, taken from variant-reconcile.mjs:278 rather than guessed."
+    },
+    {
+      "type": "PO",
+      "ac_doc": "PO-010146",
+      "erp_doc": "HC-PO-010146",
+      "ac_dtlkey": 924289,
+      "item_code": "5535-2A(LHF)",
+      "axis": "leg",
+      "erp_now": "",
+      "book": "2",
+      "desc2": "Size:30\"/Col:CHINO-01/Bottom wrap nylon/+2\" leg",
+      "why": "The book's own text says '+2\\\" leg' and the leg axis reports AutoCount \"2\\\"\" vs ERP \"(blank)\". The other two lines of this document are pillows and carry no leg."
     }
   ]
 }
