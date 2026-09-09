@@ -86,6 +86,32 @@ describe('a compartment row added to a receipt, delivery note or invoice is guar
     expect(V).toMatch(/it\.moneyCols/);
   });
 
+  /* ── THE TRANSACTION HOLDS THE ONLY CONNECTION ────────────────────────────
+     `newSql()` builds the pool with `max: 1`. Anything inside `sql.begin` that
+     reaches for the module-level `sql` waits for a connection the block itself
+     is holding, and the process HANGS — no error, no rollback, a stopped job
+     that looks exactly like a slow query. It cost prod apply run 34320397321,
+     which had to be cancelled. docs/bugs/0749. */
+  it('the downstream transaction touches only `tx` — a bare `sql` inside it deadlocks the pool', () => {
+    const open = FN.indexOf('await sql.begin(async (tx) => {');
+    expect(open).toBeGreaterThan(-1);
+    /* Brace-match from the arrow body so the slice is the block itself. */
+    let i = FN.indexOf('{', open + 'await sql.begin(async (tx) => '.length);
+    let depth = 0, end = -1;
+    for (let n = i; n < FN.length; n++) {
+      if (FN[n] === '{') depth++;
+      else if (FN[n] === '}') { depth--; if (depth === 0) { end = n; break; } }
+    }
+    expect(end).toBeGreaterThan(i);
+    const body = FN.slice(i, end);
+    expect(body.length).toBeGreaterThan(200);
+    expect(body).not.toMatch(/[^.\w]sql[`.(]/);
+    /* And the reads it needs really are hoisted above it. */
+    const before = FN.slice(0, open);
+    expect(before).toMatch(/const label = await labelColumnName\(/);
+    expect(before).toMatch(/spec\.parentOf\(/);
+  });
+
   it('the run says how many downstream rows it added, so a run that added none is visible', () => {
     expect(SRC).toMatch(/nDsAdd/);
     expect(SRC).toMatch(/row\(s\) added/);

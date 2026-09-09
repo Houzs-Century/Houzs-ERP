@@ -3,6 +3,7 @@
 // WITHOUT A LOGIN.
 //
 //   GET /api/public/contractor-calendar/:token
+//   GET /api/public/contractor-calendar/:token/events/:eventId
 //   GET /api/public/contractor-calendar/:token/events/:eventId/floorplan
 //   GET /api/public/contractor-calendar/:token/events/:eventId/floorplan/:fileId
 //   GET /api/public/contractor-calendar/:token/export?month=YYYY-MM
@@ -38,6 +39,7 @@ import {
   listShareEvents,
   listShareExportRows,
   logShareExport,
+  readShareEventSize,
   resolveShareEvent,
   streamPlanFile,
   type ShareScope,
@@ -92,6 +94,16 @@ publicContractorCalendar.get("/:token", async (c) => {
   if (g instanceof Response) return g;
   const events = await listShareEvents(c.env, g.scope);
   return c.json({ contractor: g.scope.value, events });
+});
+
+// The event's SIZE, and nothing else — no money, ever, on this route (owner
+// 2026-09-09: "size not in here. please add also").
+publicContractorCalendar.get("/:token/events/:eventId", async (c) => {
+  const g = await gateEvent(c);
+  if (g instanceof Response) return g;
+  const size = await readShareEventSize(c.env, g.scope, g.projectId);
+  if (!size) return unknownEvent(c);
+  return c.json(size);
 });
 
 // The UNFILLED floorplan files for one event on this contractor's schedule —

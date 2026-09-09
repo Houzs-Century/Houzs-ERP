@@ -34,10 +34,19 @@ completely healthy.
 
 **Proved RED first, and on the real database rather than in the abstract.** The
 run above is the RED: the DO section printed the header banner and then threw
-42703, and not one ERP line. **The GREEN is UNTESTED at the time of writing** —
-the fixed probe cannot be dispatched until it is on the default branch, so the
-run id goes in the pull request that merges it and in this entry immediately
-after, rather than being predicted here.
+42703, and not one ERP line.
+
+**GREEN, measured after the fix merged** —
+[run 34316985562](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34316985562),
+conclusion `success`. `HC-DO-000542` printed its header, and the column that
+threw is in it:
+
+```
+ERP header: {"doc_no":"HC-DO-000542","linked_ac_docno":"DO-000542",
+             "status":"DELIVERED","local_total_sen":930000,"so_doc_no":"HC-SO-000814"}
+ERP lines: 1
+inventory movements naming HC-DO-000542: 0
+```
 
 **What it cost.** The chain repair that found it needed the delivery order's own
 rows before it could plan anything, and got a stack trace. Nothing was written
