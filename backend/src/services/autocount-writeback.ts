@@ -40,6 +40,7 @@ import {
   SO_PROCESSING_DATE_COLUMN,
 } from '../scm/shared/so-processing-date';
 import { buildVariantSummary } from '../scm/shared/variant-summary';
+import { abbreviateDesc2 } from './autocount-desc2-abbrev';
 
 /** Fixed AutoCount debtor account; the customer's real name is written over it. */
 export const AC_DEBTOR_CODE = '300-C002';
@@ -949,8 +950,18 @@ export class Desc2TooLongError extends Error {
  * when it is not). Re-deriving either from variants would be lossy.
  */
 export function composeDescription2(line: ErpLine): string | null {
-  if (line.description2 && line.description2.trim()) return line.description2.trim();
-  return buildVariantSummary(line.item_group ?? null, line.variants ?? null) || null;
+  const stored = line.description2 && line.description2.trim();
+  const text = stored || buildVariantSummary(line.item_group ?? null, line.variants ?? null);
+  if (!text) return null;
+  /* ABBREVIATED ON THE WAY OUT, and only when it does not otherwise fit.
+     `variants.specials` is priced BY NAME — mfg-pricing.ts's `findOption(pool,
+     p)`, whose own comment says "Unknown picks contribute 0" — and
+     recomputeOneLine runs on save. So shortening the stored text to fit
+     AutoCount's column would drop a surcharge on a live sales order. The data
+     keeps the full words, the screen and the PDF keep them, pricing keeps
+     finding them, and only this string is shortened. A text that already fits
+     comes back unchanged. */
+  return abbreviateDesc2(text, AC_DESC2_MAX);
 }
 
 /**
