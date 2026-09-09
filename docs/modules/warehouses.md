@@ -4,7 +4,7 @@
 > 2. SalesOrderMaintenance.tsx:38-41 dropped useCreateWarehouse/useUpdateWarehouse — that view only READS.
 > 3. The type enum shipped in 0177_scm_warehouse_type_and_unify.sql, not “mig 0171” (0171 is idempotency; the file's internal header was never renumbered).
 > 4. The OR-include at inventory.ts:357-359 reads is_consignment, not is_showroom.
-> 5. POST/PATCH also accept country/state/postcode/city (mig 0180); 0180 + 0186 missing from the migration table. Racks, state-warehouse-mappings, warehouse-label and WH_NONE are undocumented here (coverage gap). — *warehouse-label CLOSED 2026-08-21: see §1, "The display rule has a FRONTEND home now". The other three remain open.*
+> 5. POST/PATCH also accept country/state/postcode/city (mig 0180); 0180 + 0186 missing from the migration table. Racks, state-warehouse-mappings, warehouse-label and WH_NONE are undocumented here (coverage gap). — *warehouse-label CLOSED 2026-08-21: see §1, "The display rule has a FRONTEND home now". Racks PARTLY closed 2026-09-09: §3b documents the rack endpoints and the SEED label shapes; the rack CONTENTS side (stock-in / stock-out / transfer / movements) is still undocumented. state-warehouse-mappings and WH_NONE remain open.*
 
 # Module: Warehouses (SCM master)
 
@@ -149,6 +149,47 @@ Owned by `backend/src/scm/routes/inventory.ts`:
   `inventory_movements` / `lots` / `cogs`; UI should suggest deactivate instead.
 
 ---
+
+## 3b. Racks — `/warehouse/racks` (partial: the create surface)
+
+`scm.warehouse_racks`, unique on `(warehouse_id, rack)`. `rack` is the WHOLE
+label as displayed — the grid renders `{rack.rack}` verbatim, there is no
+prefix added at render time. KL WAREHOUSE's rows therefore read literally
+"Rack L1.1", "Rack L1.2", …
+
+| Method | Path | Effect |
+|---|---|---|
+| POST | `/warehouse/racks` | Create one rack (`{ rack }`) **or** seed many (`{ count, prefix, series?, levels? }`). |
+| PATCH | `/warehouse/racks/:id` | Edit label / position / notes, toggle `reserved`. |
+| DELETE | `/warehouse/racks/:id` | Remove an empty rack. |
+
+**Scope fans out.** Every create takes a `RackScope`: `warehouseId` (one),
+`warehouseIds` (a chosen set), or `allWarehouses: true`. The label is inserted
+once per target, and a target that already carries it is SKIPPED rather than
+aborting the batch — one collision never costs the rest.
+
+**The seed label shapes live in `scm/shared/rack-labels.ts`**, mirrored to
+`frontend/src/vendor/shared/` and refereed by
+`rack-labels.canonical.test.ts` (byte comparison). Edit both copies or neither:
+the Seed Racks modal PREVIEWS the labels from the frontend copy and the server
+writes them from the backend one, so a drift makes the modal state, in writing,
+a shape the database will not receive.
+
+Two shapes, one function:
+
+| inputs | labels |
+|---|---|
+| `count: 3` (levels defaults to 1) | `Rack 1`, `Rack 2`, `Rack 3` — the historic flat shape, unchanged |
+| `series: 'L', count: 21, levels: 2` | `Rack L1.1`, `Rack L1.2`, … `Rack L21.2` (42) |
+
+`levels: 1` reproducing the flat shape exactly is a CONTRACT, not an accident:
+every seed run made before 2026-09-09 must stay reproducible from its own
+inputs. The cap (`MAX_SEED_RACKS`, 200) counts LABELS, not aisles — 150 aisles
+x 2 levels stops at 200, not 300.
+
+Owner 2026-09-09: KL WAREHOUSE's real numbering is `L1.1 … L21.2` plus
+`R1.1 … R17.2` — 76 racks. Before the grid shape existed, the seed could only
+produce `Rack 1..N`, so that warehouse had to be typed in one label at a time.
 
 ## 4. Downstream reads
 
