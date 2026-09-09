@@ -52,6 +52,22 @@ export type BankCandidate = {
   outstandingSen: number;
 };
 
+/** A posted ledger entry this movement could BE — the answer for everything on
+    a statement that is not card money. Ranked by the server (acc/bank-match):
+    the amount agrees to the sen and in the same direction, the entry is inside
+    a few days, and nothing else has claimed it. */
+export type BankEntryCandidate = {
+  jeNo: string;
+  entryDate: string;
+  sourceType: string | null;
+  sourceDocNo: string | null;
+  debitSen: number;
+  creditSen: number;
+  /** Signed the way the statement signs it: positive is money in. */
+  amountSen: number;
+  daysApart: number;
+};
+
 export type BankLine = {
   id: number;
   line_no: number;
@@ -78,6 +94,7 @@ export type BankLine = {
   note: string | null;
   matches: Array<{ je_no: string; amount_sen: number; match_reason: string | null }>;
   candidates: BankCandidate[];
+  entryCandidates: BankEntryCandidate[];
 };
 
 export type Reconciliation = {

@@ -22,7 +22,7 @@ import type { Env, Variables } from '../env';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { parseBankStatement, movementFingerprint } from '../../acc/bank-parse';
-import { groupBankMovements, matchBankMovements } from '../../acc/bank-match';
+import { groupBankMovements, matchBankMovements, entryCandidatesFor } from '../../acc/bank-match';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
 import {
   loadBankConfigs, loadBankConfig, parseConfigFrom,
@@ -496,6 +496,20 @@ export const bankStatementDetail = guard(async (c) => {
          was paid since the upload must not still be offered. */
       candidates: String(l.kind).startsWith('PAYOUT')
         ? batches.batches.filter((b) => b.acquirerCode === l.acquirer_code)
+        : [],
+      /* And which LEDGER ENTRY it could be — the answer for the rest of the
+         statement, which is most of it. Offered only while the movement is
+         still open; a posted one already has its entry. Ranked and filtered by
+         acc/bank-match, and drawn from the WHOLE period's ledger rather than
+         the unmatched list above, because that list is windowed to the
+         statement and an entry posted two days after it ends is exactly the
+         cheque this is for. */
+      entryCandidates: String(l.state) === 'OPEN'
+        ? entryCandidatesFor(
+          { bookedOn: String(l.booked_on).slice(0, 10), amountSen: Number(l.amount_sen ?? 0) },
+          ledger.movements,
+          claimed as ReadonlySet<string>,
+        )
         : [],
     })),
     unmatchedEntries,
