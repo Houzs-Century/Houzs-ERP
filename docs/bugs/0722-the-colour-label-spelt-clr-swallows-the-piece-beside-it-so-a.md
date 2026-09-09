@@ -85,5 +85,43 @@ above are known to need a drawing, not a regex. The measurement harness is three
 lines: decode every sofa-category Desc2 in `ac-reconcile-truth.json.gz` with the
 old and new decoder and diff the results.
 
+**RE-MEASURED 2026-09-09, and the blast radius is now known PER DOCUMENT TYPE —
+which is what decides who may ship it.** The measurement above said "120 lines
+decode differently" without saying on which documents. Re-run against the
+current decoder and the 2026-09-09 book cut
+(`ac-reconcile-truth.json.gz`, `exported_at=2026-09-09T00:18:49.235Z`), over
+every sofa line of every one of the six types, with `Clr` added to BOTH colour
+regexes at `scripts/lib/parse-sofa.mjs:279` and `:283`:
+
+```
+target old: []
+target new: ["2A(LHF)","L(RHF)"]          <- HC-SO-007293 is fixed by the change
+scanned 30893 sofa lines with a Desc2 across all six types
+lines whose decode CHANGES: 1362
+by document type: {"SO":299,"PO":224,"GR":230,"DO":215,"IV":171,"PI":223}
+of those, the COMPARTMENTS change on: 96 (the rest are colour only)
+compartment changes by type: {"SO":20,"PO":16,"GR":16,"DO":16,"IV":12,"PI":16}
+```
+
+**So the two-character regex moves 44 lines on DELIVERY ORDERS, SALES INVOICES
+and PURCHASE INVOICES.** The sales-order / purchase-order / goods-receipt lane
+that re-measured this is under a standing control that no other document type's
+figures may move on its merges, so it cannot be the lane that ships this — not
+because the fix is wrong, but because it is not that lane's number to move. It
+needs a change that owns all six types at once and can re-measure each of the 96
+against a drawing, exactly as the paragraph above asks.
+
+**A ruling file cannot stand in for it either, and the reason is worth writing
+down.** Recording `2A(LHF)+L(RHF)` for `HC-SO-007293` in
+`sofa-compartment-corrections-*.json` WOULD take the document out of the differ
+column — but the reconcile prints a matched ruling as *"the owner read the slip
+HIMSELF and set the sofa build against the book's own words"*
+(`lib/variant-report.mjs`). He did not; our reader has a gap. Buying a clean
+number with a sentence that puts a decision in his mouth is the wrong trade, and
+this line exists so nobody makes it later.
+
+**Still true, and still the point:** the ERP is right, the book is right, no row
+on `HC-SO-007293` is to be touched, and the order is NOT PROCEEDED.
+
 **Ref.** `fix/so-last-6-and-gr-transpose`, 2026-09-08. Measured against the
 committed snapshot; no production read was needed to establish any of it.
