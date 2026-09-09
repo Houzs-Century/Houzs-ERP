@@ -5,8 +5,11 @@ not have`. The owner reads that column as work owed, and it is the last thing
 standing between the purchasing lane and a clean tally.
 
 **Root cause, traced one level up from where the first hypothesis put it.**
-`docs/bugs/0767` records the refuted attempt: *the source RECEIPT is out of
-scope* explained 17 of 189, not 121. The cause is the receipt's PARENTS. Only
+`docs/bugs/0767-the-purchase-invoices-differ-because-a-receipt-spans-purchas.md`
+records the refuted attempt — cited by FILENAME because `0767` is taken twice in
+the ledger, so a bare number now names two different entries. *The source RECEIPT
+is out of scope* explained 17 of 189, not 121. The cause is the receipt's
+PARENTS. Only
 OUTSTANDING purchase orders were migrated — the book holds 9,416 and 474 came
 over — while **one AutoCount goods receipt serves many purchase orders**.
 Measured on the committed cut: 124 of the 211 in-scope receipts carry lines
@@ -62,5 +65,36 @@ gate was mutation-checked: disabling any one of the six makes a test fail
 `tests/migratedChainShapeWiring.test.ts` pins the wiring so a refactor cannot
 unhook it, which is the failure `docs/bugs/0746` recorded.
 
-**Ref.** `feat/pi-source-po-not-migrated`, 2026-09-10. Related: `docs/bugs/0767`
+**MEASURED, not predicted.** Read-only run **34377446020** against production,
+company 1, on this branch. Of the purchase invoices reported under `a book line
+we do not have`:
+
+```
+14  the line SHAPE (the money reconciles; the book row we lack is priced RM 0.00)
+43  the unmigrated source purchase order — THIS rule
+78  refuse, and stay counted as differences
+```
+
+**The 78 are the guard working, not a gap in it.** They divide into two
+sentences the report now prints per document: *we DO hold the purchase order
+that line was raised from* — a line we may genuinely have failed to import — and
+*the book names no source document for that line*, which nothing explains. Both
+are possible real defects and neither is waved through.
+
+**Two defects in this change were found by RUNNING it, not by reading it**, and
+the first run is why:
+
+1. all 78 refusals printed as `undefined: …`. The message read `r.ac`, a field
+   the reconcile's rows do not carry — they carry `key`. The unit-test rows had
+   carried BOTH, so no test could see it. They now carry the reconcile's own
+   shape and a test asserts every refusal begins with its own key.
+2. the same 78 documents were printed TWICE, once per pass, which reads as 156
+   documents' worth of work. Now one block with both reasons on the one line.
+
+That is this repo's rule 3 in miniature: the code was correct enough to compile,
+typecheck and pass 64 tests, and the only thing that caught either was executing
+it against the real book.
+
+**Ref.** `feat/pi-source-po-not-migrated`, 2026-09-10. Related:
+`docs/bugs/0767-the-purchase-invoices-differ-because-a-receipt-spans-purchas.md`
 (the refuted document-grain hypothesis), `docs/bugs/0668`, `docs/bugs/0690`.

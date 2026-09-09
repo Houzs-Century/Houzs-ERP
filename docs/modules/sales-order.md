@@ -2498,7 +2498,17 @@ a LIST: the book names no purchase order on a purchase-invoice line at all
 (`FromDocType` is `GR` on every one), so the order is a hop further up, and of the
 1,349 lines on the 189 in-scope invoices **493 resolve to more than one order**.
 Picking one would be the checker inventing a correspondence (`docs/bugs/0690`).
-`docs/bugs/0768`, pinned by the same two test files as the lane above.
+
+**MEASURED**, read-only run 34377446020 against production, company 1, on the
+branch that added it — **re-run before quoting it**: of the purchase invoices on
+this axis, **14 are the line SHAPE, 43 are the unmigrated source order, and 78
+refuse and stay counted**. The 78 divide into *we DO hold the purchase order that
+line was raised from* and *the book names no source for that line* — both
+possible real defects, neither waved through.
+
+`docs/bugs/0768-the-121-purchase-invoices-the-book-bills-lines-we-never-had.md`
+(cited by FILENAME — `0768` is taken three times in the ledger), pinned by the
+same two test files as the lane above.
 
 **Nothing on the sales-order side of this moved.** `check-so-tally.mjs` is not
 modified by that lane, `VERDICT_OUT` still receives SALES ORDERS and nothing

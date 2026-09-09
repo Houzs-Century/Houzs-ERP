@@ -685,7 +685,9 @@ export function splitUnmigratedOnwardTransfer({ rows, decision, coverage, onward
  * any rule written at document grain answers the wrong question. The first
  * hypothesis tried here WAS document grain ("the source receipt is out of
  * scope") and explained 17 of 189 invoices; this one explains them because it
- * asks about the line (docs/bugs/0767).
+ * asks about the line
+ * (docs/bugs/0767-the-purchase-invoices-differ-because-a-receipt-spans-purchas.md —
+ * cited by FILENAME because `0767` is taken twice in the ledger).
  *
  * WHAT MAKES IT SAFE is section 6's design, unchanged: the sentence is not the
  * proof. A book line we do not carry ALSO describes a line we simply failed to
