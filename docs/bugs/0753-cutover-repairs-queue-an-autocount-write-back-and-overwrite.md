@@ -55,8 +55,38 @@ assuming. The dispatched run of that report is what closes this section; until
 then the cause is **UNKNOWN** and is deliberately not written as though it were
 known.
 
-**Fix.** Pending — see the branch. Nothing has been cancelled: cancelling a
-queued row is irreversible (it only returns if the document is saved again), so
-the list comes first.
+**Fix.** Three parts.
+
+1. **A repair can no longer queue a write-back.** Every client
+   `scripts/lib/pgrest-shim.mjs` builds is now marked a repair client
+   (`src/scm/lib/ac-repair-suppression.ts`), and every enqueue gate in
+   `src/scm/lib/autocount-outbox.ts` refuses one. The mark is on the TRANSPORT,
+   not in each caller's options, because an option is something ~40 repair
+   scripts have to remember and forgetting is silent. It is a `Symbol`, so a
+   request body — which can only produce string keys — can never set it.
+   Suppressed is the DEFAULT; five tools whose purpose is to push opt back in by
+   name, pinned by `tests/acWritebackPushAllowlist.test.mjs` so a sixth cannot
+   join by copying a neighbour.
+
+   **Proved RED first.** With the module present and the guard not yet wired in:
+   `Tests 5 failed | 6 passed (11)` — the 5 being exactly the suppression cases,
+   the 6 being "a request client still queues" and "the mark cannot arrive from
+   a request". After wiring: `Tests 11 passed (11)`. `tests/pgrestShim.test.mjs`
+   20 passed; backend typecheck clean.
+
+2. **The queued repair rows** — `scripts/cancel-ac-outbox-repair-rows.mjs`.
+   Cancel means `status = 'skipped'` with the reason in `last_error`, never a
+   DELETE: migration 0277's own comment says the table is the audit trail. The
+   apply path takes an EXPLICIT list of row ids and touches nothing else, and
+   refuses the whole batch if any named row has stopped being `pending` or
+   carries a `created_by`.
+
+3. **What the sent rows did to the book** —
+   `scripts/check-ac-writeback-vs-book.mjs` compares the sent payloads against
+   `data/ac-reconcile-truth.json.gz` (exported 2026-09-09T00:18:49Z). It does
+   not read the live book, and not only to avoid a lock timeout: the live book
+   holds TODAY's value, so finding our value there cannot separate "we echoed
+   what it already held" from "we overwrote it". Rows sent BEFORE the export are
+   reported UNDECIDABLE rather than harmless.
 
 **Ref.** `fix/ac-writeback-suppress-repairs`, 2026-09-09.

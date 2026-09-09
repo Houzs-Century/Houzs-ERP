@@ -1,0 +1,63 @@
+name: Cancel write-back rows queued by a repair (plan by default)
+
+# A queued row that came from OUR cutover repair, not from a person, should
+# never have existed: a repair copies a value out of the account book, so
+# sending it back overwrites the owner's source of truth. Owner 2026-09-09:
+# 「你不可以有记录再这边啊 这是你import进来的错误」.
+#
+# CANCEL MEANS `skipped`, NOT DELETE. Migration 0277's own table comment says
+# "Never delete rows: this is the audit trail of what the ERP told AutoCount",
+# so a cancelled row stays and carries its reason in last_error.
+#
+# THE APPLY TAKES AN EXPLICIT LIST OF IDS AND TOUCHES NOTHING ELSE. There is no
+# "cancel everything matching a rule" mode: a rule one character wrong cancels a
+# salesperson's order silently, and cancelling is irreversible — the row only
+# comes back if the document is SAVED again. Run the plan, read it, name the ids.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "yes = WRITE. Anything else = PLAN only, which is the default."
+        required: false
+        default: "no"
+        type: choice
+        options: ["no", "yes"]
+      confirm:
+        description: 'Type I HAVE REVIEWED THE OUTBOX CANCEL PLAN to arm apply. Ignored when apply=no.'
+        required: false
+        default: ""
+      only_ids:
+        description: "Outbox row ids to cancel, comma or space separated. REQUIRED for apply."
+        required: false
+        default: ""
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+
+# Not cancel-in-progress: cancelling an APPLY mid-write is worse than waiting.
+concurrency:
+  group: cancel-ac-outbox-repair-rows
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/cancel-ac-outbox-repair-rows.mjs
+        env:
+          MODE: ${{ inputs.apply == 'yes' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.confirm }}
+          ONLY_IDS: ${{ inputs.only_ids }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
