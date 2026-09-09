@@ -3980,6 +3980,21 @@ only for codes the line does not already carry. Ticking the same code in the
 picker makes it a normal, charged pick — `addedNow` excludes anything already in
 `variants.specials`, so a human's choice is never quietly made free.
 
+**It reaches four line tables since 2026-09-09, not two.** It ran over sales
+orders and purchase orders only, and the reconcile compares a DELIVERY ORDER's and
+a SALES INVOICE's own line against the book like any other — so `HC-DO-010104`,
+`HC-DO-011371` and `HC-I-2605-0294` sat on the `specials` axis (「the book asks for
+Nylon Fabric and the line does not carry it」) while the sales orders they were
+converted from were clean, for the one reason that this run had never reached
+their tables. `scm.delivery_order_items` and `scm.sales_invoice_items` are now in
+`TABLES`, and `TABLE_OF` drives the trigger and generated-column census, so a
+table added there cannot be left out of the proof that no write here turns into
+money. Neither of the two new tables has a re-price at all — a delivery order's
+and an invoice's line money is COPIED from the document it was converted from,
+never re-derived from `variants` — so the exposure a plain stamp into
+`variants.specials` would arm is structurally absent there rather than merely
+small. `docs/bugs/0748`.
+
 **Its line count is a DENOMINATOR, not a remaining balance.** The selection reads
 `variants.specials`, which that script never writes, so a PLAN re-run after a
 successful apply reports the same total as before it. Read as backlog it says the

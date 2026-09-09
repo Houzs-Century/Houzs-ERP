@@ -11,12 +11,13 @@ import { ComposerModal, buildPostBody, draftStorageKey, readDraft, type Composer
    → require-acknowledgement default and its guard against posting to nobody.
    ──────────────────────────────────────────────────────────────────────────── */
 
-const { apiPost, toastError, toastSuccess } = vi.hoisted(() => ({
+const { apiGet, apiPost, toastError, toastSuccess } = vi.hoisted(() => ({
+  apiGet: vi.fn(),
   apiPost: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
 }));
-vi.mock("../../api/client", () => ({ api: { post: apiPost } }));
+vi.mock("../../api/client", () => ({ api: { post: apiPost, get: apiGet } }));
 vi.mock("../../hooks/useToast", () => ({
   useToast: () => ({ error: toastError, success: toastSuccess }),
 }));
@@ -37,6 +38,7 @@ vi.mock("../../vendor/scm/components/DateTimeField", () => ({
 
 const base: Omit<ComposerDraft, "savedAt"> = {
   docType: "ANN",
+  numberDeptId: null,
   category: "WARNING",
   requireAck: true,
   title: "Shipping marks",
@@ -187,6 +189,7 @@ describe("ComposerModal (rendered)", () => {
   beforeEach(() => {
     values.clear();
     apiPost.mockReset();
+  apiGet.mockReset();
     toastError.mockReset();
     toastSuccess.mockReset();
     vi.stubGlobal("localStorage", {
@@ -203,7 +206,7 @@ describe("ComposerModal (rendered)", () => {
     render(
       <ComposerModal
         users={[]}
-        departments={[{ id: 2, name: "Warehouse" } as Department]}
+        departments={[{ id: 2, name: "Warehouse", code: "WH" } as Department]}
         companies={[]}
         salesDirOnly={false}
         currentUserId={9}
@@ -218,17 +221,26 @@ describe("ComposerModal (rendered)", () => {
 
   it("with more than one registered type the composer offers a Type row; Memo is sent as docType and carries its own attachment policy (mig 20260908T0300)", async () => {
     apiPost.mockResolvedValue({ success: true });
+    // The next-number preview follows the picked type (owner 2026-09-09).
+    apiGet.mockImplementation(async (url: string) => ({
+      data: { refNo: url.includes("typeCode=MEMO") ? "OPS-MEMO-2609-0003" : "OPS-ANN-2609-0012" },
+    }));
     const { onPosted } = mount({
       docTypes: [
         { code: "ANN", label: "Announcement", attachmentRequired: false },
         { code: "MEMO", label: "Memo", attachmentRequired: true },
       ],
     });
+    await waitFor(() => expect(screen.getByTestId("ref-no-preview").textContent).toContain("OPS-ANN-2609-0012"));
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Memo one" } });
     fireEvent.click(screen.getByRole("button", { name: /Warehouse/ }));
     // ANN by default: no file needed, Submit open.
     expect(screen.queryByTestId("attachment-required-hint")).toBeNull();
     fireEvent.click(screen.getByRole("radio", { name: /Memo/ }));
+    await waitFor(() => expect(screen.getByTestId("ref-no-preview").textContent).toContain("OPS-MEMO-2609-0003"));
+    // Numbered under another department: the preview asks for that code and the pick rides the POST.
+    fireEvent.change(screen.getByLabelText("Numbered under"), { target: { value: "2" } });
+    await waitFor(() => expect(apiGet).toHaveBeenCalledWith(expect.stringContaining("deptCode=WH")));
     // MEMO demands a file: the hint appears and Submit is held.
     expect(screen.getByTestId("attachment-required-hint")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Submit for approval" }) as HTMLButtonElement).disabled).toBe(true);
@@ -237,7 +249,7 @@ describe("ComposerModal (rendered)", () => {
     await waitFor(() => expect(onPosted).toHaveBeenCalled());
     expect(apiPost).toHaveBeenCalledWith(
       "/api/announcements",
-      expect.objectContaining({ title: "Memo one", docType: "MEMO", draft: true }),
+      expect.objectContaining({ title: "Memo one", docType: "MEMO", numberDeptId: 2, draft: true }),
     );
   });
 

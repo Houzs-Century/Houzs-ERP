@@ -31,7 +31,7 @@ import type { Env } from "../types";
 import {
   isVoided,
   readApprovalStatus,
-  readDocType,
+  readNumberDept, readDocType,
   type AnnouncementRow,
   type ApprovalStatus,
 } from "../lib/announcementAudience";
@@ -186,10 +186,38 @@ async function submitterDeptCode(env: Env, userId: number | null): Promise<{ cod
   return { code, deptName: row?.deptName ?? row?.dept_name ?? null, hasDept: deptId != null };
 }
 
+/** The department a notice is numbered under: the one the composer chose
+ *  (mig 20260909T0900, owner "需要可以选部门"), else the submitter's own. */
+async function numberingDeptCode(env: Env, row: AnnouncementRow, submitter: number | null): Promise<{ code: string | null; deptName: string | null; hasDept: boolean }> {
+  const chosen = readNumberDept(row);
+  if (chosen == null) return submitterDeptCode(env, submitter);
+  // company-scope: departments are global master data, one row by primary key.
+  const d = await env.DB.prepare("SELECT name, code FROM departments WHERE id = ?").bind(chosen).first<{ name?: string | null; code?: string | null }>();
+  if (!d) return { code: null, deptName: null, hasDept: false };
+  return { code: String(d.code ?? "").trim().toUpperCase() || null, deptName: d.name ?? null, hasDept: true };
+}
+
+/** Validate a composer's "Numbered under" pick: absent / empty → null (the
+ *  submitter's own department); otherwise a department that exists and has a
+ *  code, since the number preview and the approval both need it. */
+export async function resolveNumberDept(env: Env, raw: unknown): Promise<{ id: number | null } | { error: string }> {
+  if (raw == null || raw === "") return { id: null };
+  const id = Number(raw);
+  if (!Number.isFinite(id) || id <= 0) return { error: "numberDeptId must be a department id." };
+  // company-scope: departments are global master data, one row by primary key.
+  const d = await env.DB.prepare("SELECT name, code FROM departments WHERE id = ?").bind(id).first<{ name?: string | null; code?: string | null }>();
+  if (!d) return { error: "That department does not exist." };
+  if (!String(d.code ?? "").trim()) {
+    return { error: `Department "${d.name ?? "?"}" has no code yet, so a notice cannot be numbered under it. Set one under Team → Departments.` };
+  }
+  return { id };
+}
+
 /**
  * PENDING_APPROVAL → APPROVED. Mints the reference number from the
- * submitter's department, flips the status (the audience sees it from the
- * next banner build), audits, and tells the submitter.
+ * numbering department (the composer's pick, else the submitter's own),
+ * flips the status (the audience sees it from the next banner build),
+ * audits, and tells the submitter.
  */
 export async function approveAnnouncement(
   env: Env,
@@ -203,10 +231,10 @@ export async function approveAnnouncement(
     throw new ApprovalError("Only an announcement that is pending approval can be approved. Submit it first.", 409);
   }
   const submitter = submitterOf(row);
-  const dept = await submitterDeptCode(env, submitter);
+  const dept = await numberingDeptCode(env, row, submitter);
   if (!dept.hasDept) {
     throw new ApprovalError(
-      "The submitter has no department, so this notice cannot be numbered. Assign them a department under Team → Members, then approve again.",
+      "The submitter has no department (and none was chosen), so this notice cannot be numbered. Assign them a department under Team → Members, then approve again.",
       409,
     );
   }

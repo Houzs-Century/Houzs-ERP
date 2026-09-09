@@ -1,0 +1,70 @@
+name: Clear an SO's Processing Date and Delivery Date (PLAN by default)
+
+# Owner, 2026-09-09, on HC-SO-013495: 「这个remove掉processing date和delivery
+# date」 and 「我让sales 重新proceed」. The colour is `tbc`, so the factory cannot
+# build it, so it cannot really be in production; sales re-proceeds it once a
+# colour is chosen.
+#
+# THE FIRST TIME A PROCEED DATE HAS BEEN CLEARED HERE, on a live order, so the
+# job is built around "did anything else move?" — answered by a column-by-column
+# shape assertion, not by a row count.
+#
+# WHAT IT TOUCHES: processing_date and customer_delivery_date on the header,
+# `version` (the concurrency token, +1, so a stale browser form cannot put the
+# dates back), and the per-line delivery MIRROR that apply_so_header_cas keeps
+# in step with the header date. Nothing else — no status, no payment column, no
+# item code, no quantity, no money.
+#
+# IT CANNOT MOVE STOCK, and that was read rather than assumed. pg_trigger on
+# production (probe run 34315803944): scm.mfg_sales_orders carries one trigger,
+# BEFORE UPDATE **OF venue**, which this write does not touch; scm.mfg_sales_
+# order_items carries one, AFTER **DELETE**, and this write deletes nothing.
+#
+# DEFAULT IS PLAN, and the plan performs the real write inside a transaction it
+# rolls back — so what you read is what would happen. Applying needs the CONFIRM
+# phrase AND the live row still hashing to the digest committed in
+# backend/scripts/data/clear-so-dates-plan.json.
+#
+# See backend/scripts/clear-so-dates.mjs.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (performs the write, then rolls back) or apply (commits)"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'apply only: type  I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: clear-so-dates
+  cancel-in-progress: false
+
+jobs:
+  clear:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Plan (and, on apply, write) the date clear
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: node scripts/clear-so-dates.mjs

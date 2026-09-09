@@ -189,6 +189,7 @@ POST,/api/departments,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePer
 DELETE,/api/departments/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/departments.ts
 PATCH,/api/departments/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/departments.ts
 GET,/api/document-refs/:refNo,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/documentRefs.ts
+GET,/api/document-refs/next,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/documentRefs.ts
 GET,/api/document-types,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/documentRefs.ts
 POST,/api/document-types,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""settings.manage"")",,YES,DECLARED_GATE,backend/src/routes/documentRefs.ts
 PATCH,/api/document-types/:code,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""settings.manage"")",,YES,DECLARED_GATE,backend/src/routes/documentRefs.ts
@@ -932,6 +933,7 @@ GET,/api/scm/po-amendments/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + 
 PATCH,/api/scm/po-amendments/:id/approve,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.po"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/po-amendments.ts
 PATCH,/api/scm/po-amendments/:id/reject,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.po"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/po-amendments.ts
 PATCH,/api/scm/po-amendments/:id/withdraw,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.po"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/po-amendments.ts
+GET,/api/scm/po-amendments/pending-count,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.po"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/po-amendments.ts
 GET,/api/scm/po-so-coverage/:type/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/po-so-coverage.ts
 GET,/api/scm/pos-cart,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/pos-cart.ts
 PUT,/api/scm/pos-cart,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/pos-cart.ts
@@ -1096,6 +1098,7 @@ PATCH,/api/scm/so-amendments/:id/send,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"
 PATCH,/api/scm/so-amendments/:id/supplier-confirm,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/so-amendments.ts
 PATCH,/api/scm/so-amendments/:id/withdraw,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/so-amendments.ts
 GET,/api/scm/so-amendments/command-diag,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/so-amendments.ts
+GET,/api/scm/so-amendments/pending-count,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/so-amendments.ts
 GET,/api/scm/so-dropdown-options,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/so-dropdown-options.ts
 POST,/api/scm/so-dropdown-options,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/so-dropdown-options.ts
 DELETE,/api/scm/so-dropdown-options/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/so-dropdown-options.ts

@@ -27,10 +27,14 @@ import { Hono } from "hono";
 import type { Env } from "../types";
 import type { AuthUser } from "../services/auth";
 import { hasPermission } from "../services/permissions";
-import { mintDocumentRef, voidDocumentRef } from "../services/documentRefs";
-import { attachmentRequiredForType } from "../services/announcementFiles";
+import { mintDocumentRef, normaliseCode, voidDocumentRef } from "../services/documentRefs";
+import { ANNOUNCEMENT_DOC_TYPE, attachmentRequiredForType, resolveDocType } from "../services/announcementFiles";
 import { writeAudit } from "../services/audit";
 
+// The default family. Since mig 20260909T0800 (owner 2026-09-09: 每个 memo,
+// SOP, warning, notice 都按部门编号) a registration names its type — any ACTIVE
+// registry row but ANN (an announcement is composed, never registered) — and
+// the number is minted on that type's own department series.
 const MEMO_TYPE = "MEMO";
 const MEMO_ENTITY = "memo";
 export const MEMOS_MANAGE = "memos.manage";
@@ -74,6 +78,7 @@ type Row = {
   department_id?: number; departmentId?: number;
   department_name?: string | null; departmentName?: string | null;
   dept_code?: string; deptCode?: string;
+  doc_type?: string; docType?: string;
   memo_date?: string; memoDate?: string;
   notes?: string | null;
   file_key?: string | null; fileKey?: string | null;
@@ -99,6 +104,7 @@ function toPublic(r: Row) {
     departmentId: Number(r.departmentId ?? r.department_id),
     departmentName: r.departmentName ?? r.department_name ?? null,
     deptCode: r.deptCode ?? r.dept_code ?? "",
+    docType: String(r.docType ?? r.doc_type ?? MEMO_TYPE).toUpperCase(),
     memoDate: r.memoDate ?? r.memo_date ?? "",
     notes: r.notes ?? null,
     file: fileKey
@@ -140,6 +146,11 @@ app.get("/", async (c) => {
     binds.push(deptId);
   }
   if (!includeVoided) where.push("m.voided_at IS NULL");
+  const typeFilter = normaliseCode(c.req.query("docType"));
+  if (typeFilter) {
+    where.push("m.doc_type = ?");
+    binds.push(typeFilter);
+  }
   // company-scope: a department document register; departments are global, not per company.
   const res = await c.env.DB.prepare(
     `${SELECT}${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY m.created_at DESC LIMIT 500`,
@@ -172,7 +183,14 @@ app.post("/", async (c) => {
     return c.json({ success: false, error: "Pick a department." }, 400);
   }
   if (!canManage(user) && departmentId !== (user.department_id ?? null)) {
-    return c.json({ success: false, error: "You can register memos for your own department only." }, 403);
+    return c.json({ success: false, error: "You can register documents for your own department only." }, 403);
+  }
+  const typeRaw = body.docType == null || String(body.docType).trim() === "" ? MEMO_TYPE : body.docType;
+  const resolved = await resolveDocType(c.env, typeRaw);
+  if ("error" in resolved) return c.json({ success: false, error: resolved.error }, 400);
+  const docType = resolved.code;
+  if (docType === ANNOUNCEMENT_DOC_TYPE) {
+    return c.json({ success: false, error: "An announcement is composed in Announcements, not registered here." }, 400);
   }
   // company-scope: departments are global master data.
   const dept = await c.env.DB.prepare("SELECT id, name, code FROM departments WHERE id = ?")
@@ -182,7 +200,7 @@ app.post("/", async (c) => {
   const deptCode = String(dept.code ?? "").trim().toUpperCase();
   if (!deptCode) {
     return c.json(
-      { success: false, error: `Department "${dept.name}" has no code yet, so it cannot number memos. Set one under Team → Departments.` },
+      { success: false, error: `Department "${dept.name}" has no code yet, so it cannot number documents. Set one under Team → Departments.` },
       409,
     );
   }
@@ -194,14 +212,14 @@ app.post("/", async (c) => {
   const fileIn = body.file && typeof body.file === "object" ? (body.file as Record<string, unknown>) : null;
   const fileKey = fileIn ? String(fileIn.r2Key ?? "").trim() : "";
   if (fileIn && !fileKey.startsWith("memos/")) return c.json({ success: false, error: "forbidden key" }, 400);
-  if (!fileKey && (await attachmentRequiredForType(c.env, MEMO_TYPE))) {
-    return c.json({ success: false, error: "An attachment is required for a memo. Upload the file first." }, 400);
+  if (!fileKey && (await attachmentRequiredForType(c.env, docType))) {
+    return c.json({ success: false, error: `An attachment is required for a ${docType} document (Settings → Documents). Upload the file first.` }, 400);
   }
   const id = genId();
   const now = Date.now();
   const ref = await mintDocumentRef(c.env, {
     deptCode,
-    typeCode: MEMO_TYPE,
+    typeCode: docType,
     entityType: MEMO_ENTITY,
     entityId: id,
     createdBy: user.id,
@@ -210,14 +228,15 @@ app.post("/", async (c) => {
   // company-scope: a department document register; departments are global, not per company.
   await c.env.DB.prepare(
     `INSERT INTO memos
-       (id, title, department_id, dept_code, memo_date, notes, file_key, file_name, file_mime, file_size, ref_no, created_by, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, title, department_id, dept_code, doc_type, memo_date, notes, file_key, file_name, file_mime, file_size, ref_no, created_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       id,
       title,
       departmentId,
       deptCode,
+      docType,
       memoDate,
       notes,
       fileKey || null,
@@ -233,8 +252,8 @@ app.post("/", async (c) => {
     action: "memo.create",
     entityType: MEMO_ENTITY,
     entityId: id,
-    summary: `Registered memo ${ref.refNo}: ${title}`,
-    meta: { refNo: ref.refNo, departmentId, memoDate, file: fileKey || null },
+    summary: `Registered ${docType} ${ref.refNo}: ${title}`,
+    meta: { refNo: ref.refNo, docType, departmentId, memoDate, file: fileKey || null },
     actorId: user.id,
     actorEmail: user.email,
   });

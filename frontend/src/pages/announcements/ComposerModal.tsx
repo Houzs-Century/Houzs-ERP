@@ -53,6 +53,9 @@ export type ComposerDraft = {
   savedAt: number;
   /** Document type code (mig 20260908T0300): ANN or e.g. MEMO. */
   docType: string;
+  /** Numbered under (mig 20260909T0900): the department whose series the
+   *  number is minted on; null = the submitter's own. */
+  numberDeptId: number | null;
   category: AnnouncementCategory;
   requireAck: boolean;
   title: string;
@@ -87,6 +90,7 @@ export function readDraft(key: string): ComposerDraft | null {
     return {
       savedAt: d.savedAt,
       docType: typeof d.docType === "string" && /^[A-Z]{2,4}$/.test(d.docType) ? d.docType : "ANN",
+      numberDeptId: typeof d.numberDeptId === "number" && d.numberDeptId > 0 ? d.numberDeptId : null,
       category: CATEGORY_ORDER.includes(d.category as AnnouncementCategory)
         ? (d.category as AnnouncementCategory)
         : "WARNING",
@@ -145,6 +149,7 @@ export function buildPostBody(
     body: richTextToPlain(d.html),
     bodyHtml: d.html,
     docType: d.docType,
+    numberDeptId: d.numberDeptId,
     category: d.category,
     requireAck: d.requireAck,
     attachments: d.attachments,
@@ -219,6 +224,38 @@ export function ComposerModal(p: ComposerModalProps) {
   const restored = useMemo(() => readDraft(storageKey), [storageKey]);
 
   const [docType, setDocType] = useState<string>(restored?.docType ?? "ANN");
+  // Numbered under (owner 2026-09-09: 需要可以选部门): the department whose
+  // series the number is minted on — a director composing on a department's
+  // behalf picks it; empty = the submitter's own department.
+  const [numberDeptId, setNumberDeptId] = useState<number | null>(restored?.numberDeptId ?? null);
+  const numberDept = numberDeptId == null ? null : (p.departments.find((d) => d.id === numberDeptId) ?? null);
+  const numberDeptCode = numberDept?.code ?? null;
+  // The number this notice gets on approval — the next on the submitter's
+  // department series for the picked type (owner 2026-09-09: 需要显示目前档案
+  // 号码), whether it goes to one department or all staff. A preview from
+  // GET /api/document-refs/next: nothing is claimed by looking, so two
+  // composers see the same number until one is approved.
+  const [nextRef, setNextRef] = useState<{ refNo: string | null; reason: string | null }>({ refNo: null, reason: null });
+  useEffect(() => {
+    if (numberDeptId != null && !numberDeptCode) {
+      setNextRef({ refNo: null, reason: `${numberDept?.name ?? "That department"} has no department code yet, so a notice cannot be numbered under it. Set one under Team → Departments.` });
+      return;
+    }
+    const gone = new AbortController();
+    void (async () => {
+      try {
+        const r = await api.get<{ data?: { refNo?: string } | null; reason?: string }>(
+          `/api/document-refs/next?typeCode=${encodeURIComponent(docType)}${numberDeptCode ? `&deptCode=${encodeURIComponent(numberDeptCode)}` : ""}`,
+        );
+        if (gone.signal.aborted) return;
+        const refNo = r.data?.refNo ?? null;
+        setNextRef({ refNo, reason: refNo ? null : (r.reason ?? null) });
+      } catch {
+        if (!gone.signal.aborted) setNextRef({ refNo: null, reason: null });
+      }
+    })();
+    return () => gone.abort();
+  }, [docType, numberDeptId, numberDeptCode, numberDept?.name]);
   const [category, setCategory] = useState<AnnouncementCategory>(restored?.category ?? "WARNING");
   const [requireAck, setRequireAck] = useState<boolean>(restored?.requireAck ?? true);
   const [title, setTitle] = useState(restored?.title ?? "");
@@ -264,6 +301,7 @@ export function ComposerModal(p: ComposerModalProps) {
   const draft = useMemo<Omit<ComposerDraft, "savedAt">>(
     () => ({
       docType,
+      numberDeptId,
       category,
       requireAck,
       title,
@@ -276,7 +314,7 @@ export function ComposerModal(p: ComposerModalProps) {
       videoLayout,
       clientKey,
     }),
-    [docType, category, requireAck, title, html, attachments, scheduledAt, expiresAt, audience, photoLayout, videoLayout, clientKey],
+    [docType, numberDeptId, category, requireAck, title, html, attachments, scheduledAt, expiresAt, audience, photoLayout, videoLayout, clientKey],
   );
   const firstRender = useRef(true);
   useEffect(() => {
@@ -505,6 +543,37 @@ export function ComposerModal(p: ComposerModalProps) {
                   );
                 })}
               </div>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <label htmlFor="composer-number-dept" className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
+                Numbered under
+              </label>
+              <select
+                id="composer-number-dept"
+                aria-label="Numbered under"
+                className={cn(FIELD_CLS, "min-w-[240px]")}
+                value={numberDeptId ?? ""}
+                onChange={(e) => setNumberDeptId(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">My department</option>
+                {p.departments.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                    {d.code ? ` (${d.code})` : " — no code"}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {(nextRef.refNo || nextRef.reason) && (
+              <p className="text-[11.5px] text-ink-secondary" data-testid="ref-no-preview">
+                {nextRef.refNo ? (
+                  <>
+                    Number on approval: <span className="font-mono font-semibold text-ink">{nextRef.refNo}</span> · the next on {numberDept ? `${numberDept.name}'s` : "your department's"} {docType} series this month
+                  </>
+                ) : (
+                  nextRef.reason
+                )}
+              </p>
             )}
             <div className="flex flex-wrap items-center gap-2">
               {CATEGORY_ORDER.map((c) => {

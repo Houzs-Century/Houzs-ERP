@@ -40,6 +40,34 @@
  * costed layers hanging off its price, so re-pricing it moves an on-hand VALUE,
  * and this returns the figure rather than writing it.
  *
+ * -- THE KEYLESS ARM WRITES MONEY, NEVER IDENTITY --------------------------
+ * `keyless` used to refuse a receipt outright, and for the three receipts the
+ * owner ruled on that refusal was permanent: `HC-GR-005363` holds two
+ * `AKEMI BASTION MATT (Q)` rows with no line key, no Desc2 and no purchase-order
+ * line, against two book rows that differ ONLY in their venue text (measured on
+ * production 2026-09-09, probe run 34314996219). `lib/ac-forced-line-pairing.mjs`
+ * is right to refuse to STAMP a key there - a wrong key makes AcSyncService edit
+ * somebody else's line in the live book (migration 0273) - but identity is not
+ * what this module writes.
+ *
+ * It writes MONEY, and money can be forced where identity cannot: when every
+ * unclaimed book row of one item code states the SAME quantity, the SAME
+ * UnitPrice and the SAME SubTotal, then whichever ERP row is whichever book row,
+ * the figure written is the same. That is the ONLY claim the arm makes, and it
+ * stamps no key. Where the candidates differ on any of those three, or the two
+ * sides do not hold the same NUMBER of rows for a code, the whole receipt is
+ * refused exactly as before.
+ *
+ * An unclaimed book row that no ERP row answers is allowed through only when it
+ * is priced at RM 0.00 - AutoCount bills a free gift as its own line, and the
+ * reconcile already states that rule (`check-ac-erp-reconcile.mjs`, "the free
+ * line we do not carry"). A PRICED one is a missing line and refuses the receipt.
+ *
+ * `keylessMoney` is OPTIONAL and its absence is the STRICTER direction: without
+ * it the old whole-receipt refusal stands, so a caller that says nothing cannot
+ * loosen anything. That is the one shape CLAUDE.md's required-parameter rule
+ * allows, and it is why it is written this way.
+ *
  * NO SHEBANG: tests import this module (see lib/ac-mapping-csv.mjs for the
  * Windows vitest reason).
  */
@@ -61,9 +89,15 @@ const key = (v) => String(v ?? "").trim();
  * @param {(k: string) => ({ docNo: string, qty: number, unitPriceSen: number, subTotalSen: number }|null|undefined)} a.bookLine
  *   the ACCOUNT BOOK's GRDTL row for a line key, or nullish when it holds none
  * @param {boolean} a.localCurrency  the book's own verdict on this receipt's currency
+ * @param {{ bookLines: Array<{dtlKey: unknown, code: string, qty: number,
+ *           unitPriceSen: number, subTotalSen: number}>,
+ *           codeKey: (c: string) => string }|null} [a.keylessMoney]
+ *   the book's OWN rows of this receipt, plus the caller's item-code translation
+ *   (this module never guesses one). ABSENT = the stricter direction: a receipt
+ *   with any keyless line is refused whole, as it was before this arm existed.
  * @returns {{ verdict: GrMoneyVerdict, rows: Array<object>, wantTotal: number, deltaSen: number, why: string }}
  */
-export function planReceiptMoney({ header, items, bookLine, localCurrency }) {
+export function planReceiptMoney({ header, items, bookLine, localCurrency, keylessMoney = null }) {
   const out = (verdict, why, rows = [], wantTotal = 0) => ({
     verdict, why, rows, wantTotal,
     deltaSen: wantTotal - n0(header.totalSen),
@@ -85,12 +119,17 @@ export function planReceiptMoney({ header, items, bookLine, localCurrency }) {
      it priced from the book and half left on the order's figure is a document
      whose total means nothing. */
   const keyless = items.filter((i) => !key(i.acDtlKey));
-  if (keyless.length)
-    return out("keyless", `${keyless.length} of ${items.length} line(s) carry no AutoCount line key, so they cannot be paired to a book line`);
+  let forced = null;
+  if (keyless.length) {
+    const f = forceKeylessMoney({ items, keyless, keylessMoney });
+    if (!f.ok) return out("keyless", f.why);
+    forced = f.byRow;
+  }
 
   const paired = [];
   const foreign = [];
   for (const i of items) {
+    if (!key(i.acDtlKey)) { paired.push({ i, bl: forced.get(i), forced: true }); continue; }
     const bl = bookLine(key(i.acDtlKey));
     if (!bl || key(bl.docNo) !== key(header.acGr)) { foreign.push(i); continue; }
     paired.push({ i, bl });
@@ -103,7 +142,11 @@ export function planReceiptMoney({ header, items, bookLine, localCurrency }) {
      that book line — the same row the importer put the money on. */
   const groups = new Map();
   for (const pr of paired) {
-    const k = key(pr.i.acDtlKey);
+    /* A forced row stands alone: the arm above only ever forces a bucket where
+       the two sides hold the SAME NUMBER of rows, so one ERP row is one book
+       line and there is no lead to split money across. Keying the group on the
+       row itself keeps that true without a second rule. */
+    const k = pr.forced ? pr.i : key(pr.i.acDtlKey);
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(pr);
   }
@@ -122,6 +165,12 @@ export function planReceiptMoney({ header, items, bookLine, localCurrency }) {
       const u = lead ? unit : 0, t = lead ? total : 0, d = lead ? disc : 0;
       rows.push({
         item: i, unit: u, total: t, disc: d, lead, siblings: members.length,
+        /* WHICH BOOK ROW this figure came from. The verifier re-derives from the
+           BOOK rather than trusting these three numbers, and a keyless row has
+           no key of its own to look one up with — so the row it was FORCED to
+           carries it here. It is the book's key, never stamped onto the ERP row:
+           `bookDtlKey` on a plan is not `linked_ac_dtlkey` on a line. */
+        bookDtlKey: String(bl.dtlKey ?? ""),
         changed: u !== n0(i.unitPriceSen) || t !== n0(i.lineTotalSen) || d !== n0(i.discountSen),
       });
     });
@@ -143,4 +192,71 @@ export function planReceiptMoney({ header, items, bookLine, localCurrency }) {
     );
 
   return out("write", "the book prices this receipt and the ERP does not hold that figure", rows, wantTotal);
+}
+
+/**
+ * Which book row's MONEY each keyless ERP row must take - or why the receipt
+ * cannot be answered at all.
+ *
+ * Bucketed on the canonical ITEM CODE alone. Within a bucket, every unclaimed
+ * book row must be mutually identical on quantity, UnitPrice and SubTotal, and
+ * the two sides must hold the same NUMBER of rows; then the assignment is
+ * irrelevant to the figure and the money is FORCED. Anything else refuses the
+ * whole receipt, because half of it priced from the book and half left on the
+ * order's figure is a document whose total means nothing.
+ *
+ * @returns {{ok: true, byRow: Map<object, object>}|{ok: false, why: string}}
+ */
+function forceKeylessMoney({ items, keyless, keylessMoney }) {
+  const no = (why) => ({ ok: false, why });
+  if (!keylessMoney || !Array.isArray(keylessMoney.bookLines) || typeof keylessMoney.codeKey !== "function") {
+    return no(`${keyless.length} of ${items.length} line(s) carry no AutoCount line key, so they cannot be paired to a book line`);
+  }
+  const { bookLines, codeKey } = keylessMoney;
+  const claimed = new Set(items.map((i) => key(i.acDtlKey)).filter(Boolean));
+  const unclaimed = bookLines.filter((b) => !claimed.has(key(b.dtlKey)));
+
+  const bucket = (m, k, v) => { if (!m.has(k)) m.set(k, []); m.get(k).push(v); return m; };
+  const erpBy = keyless.reduce((m, i) => bucket(m, codeKey(i.itemCode), i), new Map());
+  const bookBy = unclaimed.reduce((m, b) => bucket(m, codeKey(b.code), b), new Map());
+
+  const byRow = new Map();
+  for (const [code, rows] of erpBy) {
+    const cand = bookBy.get(code) ?? [];
+    if (cand.length !== rows.length) {
+      return no(
+        `${rows.length} keyless line(s) of ${JSON.stringify(code)} against ${cand.length} book row(s) the ` +
+          "keys do not already claim, so which is which is not forced",
+      );
+    }
+    const same = (a, b) => n0(a.qty) === n0(b.qty)
+      && Math.round(n0(a.unitPriceSen)) === Math.round(n0(b.unitPriceSen))
+      && Math.round(n0(a.subTotalSen)) === Math.round(n0(b.subTotalSen));
+    if (!cand.every((b) => same(b, cand[0]))) {
+      return no(
+        `the ${cand.length} book row(s) of ${JSON.stringify(code)} do not state the same money, so which of our ` +
+          "keyless lines is which decides the figure - and nothing here can decide it",
+      );
+    }
+    /* PAIRED ONE-TO-ONE, not all onto `cand[0]`. The money is identical either
+       way — that is what made the bucket forced — but a book row claimed twice
+       makes the verifier group two ERP rows under one book line, where one of
+       them must then be zero. Giving each row its own candidate keeps the
+       assignment ARBITRARY and the accounting exact. */
+    rows.forEach((r, n) => byRow.set(r, cand[n]));
+    bookBy.delete(code);
+  }
+  /* WHAT IS LEFT OVER. AutoCount bills a free gift as its own RM 0.00 line and
+     the ERP legitimately holds no row for it - the reconcile states that rule as
+     "the free line we do not carry". A PRICED book row nothing answers is a
+     missing LINE, and this arm will not price around one. */
+  for (const [code, rows] of bookBy) {
+    const priced = rows.filter((b) => Math.round(n0(b.subTotalSen)) !== 0);
+    if (priced.length) {
+      return no(
+        `${priced.length} book row(s) of ${JSON.stringify(code)} carry money and no line of ours answers them`,
+      );
+    }
+  }
+  return { ok: true, byRow };
 }

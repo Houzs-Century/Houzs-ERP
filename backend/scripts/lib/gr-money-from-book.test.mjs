@@ -216,3 +216,169 @@ test("a receipt whose sofa already carries the book's money on its lead plans no
   const got = planReceiptMoney({ header: hdr("GR-000815", 286743), items, bookLine, localCurrency: true });
   assert.equal(got.verdict, "agree", got.why);
 });
+
+/* ── THE KEYLESS MONEY ARM ──────────────────────────────────────────────────
+ * The three receipts the owner ruled on are REFUSED today, and the refusal is
+ * real: `HC-GR-005363` holds two `AKEMI BASTION MATT (Q)` rows carrying no line
+ * key, no Desc2 and no purchase-order line, against two book rows that differ
+ * ONLY in their venue text. Measured on production 2026-09-09, probe run
+ * 34314996219. `lib/ac-forced-line-pairing.mjs` is right to refuse to stamp a
+ * key there — a wrong key makes the write-back edit somebody else's line — but
+ * IDENTITY is not what this module writes. It writes MONEY, and when every
+ * candidate book row in a bucket states the same UnitPrice and the same
+ * SubTotal, the money is the same whichever row is which. That is FORCED, and
+ * it is the only thing this arm claims.
+ *
+ * Absence of `keylessMoney` is the STRICTER direction — the old whole-receipt
+ * refusal — so the parameter is safe to leave off and every test above does.
+ */
+
+/** The book's own rows of one receipt, in the shape the caller hands over. */
+const bookRowsOf = (acGr) =>
+  [...book.GR.byDtlKey.values()]
+    .filter((l) => String(l.docNo).trim() === acGr)
+    .map((l) => ({
+      dtlKey: String(l.dtlKey), code: l.itemKey, qty: Number(l.qty || 0),
+      unitPriceSen: Math.round(Number(l.unitPriceSen || 0)),
+      subTotalSen: Math.round(Number(l.subTotalSen || 0)),
+    }));
+
+/* The ERP's real rows for GR-005363: two keyed, two keyless BASTION. */
+const gr5363Erp = () => [
+  { id: "bastion-a", itemCode: "AKEMI BASTION MATT (Q)", acDtlKey: null, unitPriceSen: 105000, discountSen: 0, lineTotalSen: 105000 },
+  { id: "ultimate", itemCode: "AKEMI ULTIMATE MATT (Q)", acDtlKey: "926913", unitPriceSen: 130000, discountSen: 0, lineTotalSen: 130000 },
+  { id: "immortal", itemCode: "AKEMI IMMORTAL MATT (Q)", acDtlKey: "926911", unitPriceSen: 130000, discountSen: 0, lineTotalSen: 130000 },
+  { id: "bastion-b", itemCode: "AKEMI BASTION MATT (Q)", acDtlKey: null, unitPriceSen: 105000, discountSen: 0, lineTotalSen: 105000 },
+];
+/* The importer's own sheet maps `AK-BASTION MATT (Q)` to `AKEMI BASTION MATT
+   (Q)`. The caller supplies that translation; the module never guesses one. */
+const CODE = {
+  "AK-BASTION MATT (Q)": "AKEMI BASTION MATT (Q)",
+  "AK-IMMORTAL MATT (Q)": "AKEMI IMMORTAL MATT (Q)",
+  "AK-ULTIMATE MATT (Q)": "AKEMI ULTIMATE MATT (Q)",
+  "AK-NOBILITY MATT (Q)": "AKEMI NOBILITY MATT (Q)",
+  "AK-SOLITUDE MATT (Q)": "HAPPI SLEEP SOLITUDE MATT (Q)",
+};
+const codeKey = (c) => String(CODE[String(c).trim()] ?? c).trim().toUpperCase();
+const keyless5363 = () => ({ bookLines: bookRowsOf("GR-005363"), codeKey });
+
+test("keyless: WITHOUT the parameter the whole-receipt refusal is unchanged", () => {
+  const got = planReceiptMoney({
+    header: hdr("GR-005363", 470000), items: gr5363Erp(), bookLine, localCurrency: true,
+  });
+  assert.equal(got.verdict, "keyless");
+  assert.equal(got.rows.length, 0);
+});
+
+test("keyless: two INTERCHANGEABLE book rows force the money, and it is written", () => {
+  const got = planReceiptMoney({
+    header: hdr("GR-005363", 470000), items: gr5363Erp(), bookLine, localCurrency: true,
+    keylessMoney: keyless5363(),
+  });
+  assert.equal(got.verdict, "write");
+  /* 787.50 + 787.50 + 975.00 + 975.00 — the book's own netTotal for GR-005363.
+     Its fifth row, the RM 0.00 free pillow, is not in the ERP and adds nothing. */
+  assert.equal(got.wantTotal, 352500);
+  const bastion = got.rows.filter((r) => r.item.id.startsWith("bastion"));
+  assert.equal(bastion.length, 2);
+  for (const r of bastion) {
+    assert.equal(r.unit, 105000);
+    assert.equal(r.total, 78750, "the BOOK's SubTotal, not qty x price");
+    assert.equal(r.disc, 26250, "the gap the book itself states");
+  }
+});
+
+test("THE ONE THAT MATTERS: book rows that state DIFFERENT money are not forced, and the receipt is still refused", () => {
+  const rows = bookRowsOf("GR-005363").map((r) =>
+    r.dtlKey === "926909" ? { ...r, subTotalSen: 80000 } : r);
+  const got = planReceiptMoney({
+    header: hdr("GR-005363", 470000), items: gr5363Erp(), bookLine, localCurrency: true,
+    keylessMoney: { bookLines: rows, codeKey },
+  });
+  assert.equal(got.verdict, "keyless");
+  assert.match(got.why, /do not state the same money/);
+});
+
+test("a keyless row with no unclaimed book row of its own is refused, never priced at zero", () => {
+  const items = gr5363Erp();
+  items.push({ id: "extra", itemCode: "AKEMI BASTION MATT (Q)", acDtlKey: null, unitPriceSen: 105000, discountSen: 0, lineTotalSen: 105000 });
+  const got = planReceiptMoney({
+    header: hdr("GR-005363", 470000), items, bookLine, localCurrency: true, keylessMoney: keyless5363(),
+  });
+  assert.equal(got.verdict, "keyless");
+});
+
+test("an unclaimed book row nothing answers is refused — we do not silently drop a book line", () => {
+  const items = gr5363Erp().filter((i) => i.id !== "bastion-b");
+  const got = planReceiptMoney({
+    header: hdr("GR-005363", 470000), items, bookLine, localCurrency: true, keylessMoney: keyless5363(),
+  });
+  assert.equal(got.verdict, "keyless");
+});
+
+test("a keyless row whose QUANTITY no book row matches is refused", () => {
+  const items = gr5363Erp().map((i) => (i.id === "bastion-a" ? { ...i, qty: 2 } : i));
+  items[0].qty = 2;
+  const got = planReceiptMoney({
+    header: hdr("GR-005363", 470000), items, bookLine, localCurrency: true,
+    keylessMoney: { bookLines: bookRowsOf("GR-005363").map((r) => (r.dtlKey === "926907" ? { ...r, qty: 3 } : r)), codeKey },
+  });
+  assert.equal(got.verdict, "keyless");
+});
+
+for (const [acGr, erpSen, wantSen, code, unit, sub] of [
+  ["GR-005367", 210000, 157500, "AKEMI NOBILITY MATT (Q)", 105000, 78750],
+  ["GR-005368", 167800, 125850, "HAPPI SLEEP SOLITUDE MATT (Q)", 83900, 62925],
+]) {
+  test(`${acGr}: both rows keyless, both book rows the same money — forced`, () => {
+    const items = [0, 1].map((n) => ({
+      id: `row-${n}`, itemCode: code, acDtlKey: null,
+      unitPriceSen: unit, discountSen: 0, lineTotalSen: unit,
+    }));
+    const got = planReceiptMoney({
+      header: hdr(acGr, erpSen), items, bookLine, localCurrency: true,
+      keylessMoney: { bookLines: bookRowsOf(acGr), codeKey },
+    });
+    assert.equal(got.verdict, "write");
+    assert.equal(got.wantTotal, wantSen);
+    for (const r of got.rows) assert.equal(r.total, sub);
+  });
+}
+
+test("the keyless arm never stamps a line key — it writes money and nothing else", () => {
+  const got = planReceiptMoney({
+    header: hdr("GR-005363", 470000), items: gr5363Erp(), bookLine, localCurrency: true,
+    keylessMoney: keyless5363(),
+  });
+  for (const r of got.rows) {
+    assert.ok(!Object.hasOwn(r, "acDtlKey"), "a planned row may not carry a key to stamp");
+    assert.ok(!Object.hasOwn(r, "dtlKey"), "a planned row may not carry a key to stamp");
+    /* `bookDtlKey` is the BOOK's key, on the PLAN, so the verifier can re-derive
+       from the account book instead of trusting the plan's arithmetic. It is not
+       `linked_ac_dtlkey` and nothing writes it to a line — the writer's SET list
+       is unit_price_sen / discount_sen / line_total_sen only. */
+    assert.equal(typeof r.bookDtlKey, "string");
+    assert.ok(r.bookDtlKey.length > 0, "every planned row names the book row it took its money from");
+  }
+});
+
+test("every keyless row names a DIFFERENT book row, so the verifier can group them apart", () => {
+  const got = planReceiptMoney({
+    header: hdr("GR-005363", 470000), items: gr5363Erp(), bookLine, localCurrency: true,
+    keylessMoney: keyless5363(),
+  });
+  const keys = got.rows.map((r) => r.bookDtlKey);
+  assert.equal(new Set(keys).size, keys.length, "two rows sharing one book key would double-count that line");
+  /* And each one is a real row of THIS receipt. Reading the ERP key alone put
+     every keyless row into one group under "" and reported a correct write as
+     unverified (run 34318963216). */
+  for (const k of keys) assert.equal(String(bookLine(k)?.docNo ?? "").trim(), "GR-005363");
+});
+
+test("stock still refuses the keyless arm too: 「库存先不看」 is not bypassed by it", () => {
+  const got = planReceiptMoney({
+    header: hdr("GR-005363", 470000, { movements: 3 }), items: gr5363Erp(), bookLine, localCurrency: true,
+    keylessMoney: keyless5363(),
+  });
+  assert.equal(got.verdict, "moved-stock");
+});

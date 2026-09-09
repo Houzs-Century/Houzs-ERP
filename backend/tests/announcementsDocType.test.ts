@@ -83,9 +83,9 @@ describe("announcements — document type (ANN / MEMO)", () => {
          target_divisions TEXT, excluded_user_ids TEXT, escalated_at TEXT,
          approval_status TEXT, submitted_by INTEGER, submitted_at TEXT, reviewed_by INTEGER,
          reviewed_at TEXT, reject_reason TEXT, ref_no TEXT,
-         voided_by INTEGER, voided_at TEXT, void_reason TEXT, doc_type TEXT)`,
+         voided_by INTEGER, voided_at TEXT, void_reason TEXT, doc_type TEXT, number_dept_id INTEGER)`,
     ).run();
-    for (const [col, type] of [["voided_by", "INTEGER"], ["voided_at", "TEXT"], ["void_reason", "TEXT"], ["doc_type", "TEXT"]]) {
+    for (const [col, type] of [["voided_by", "INTEGER"], ["voided_at", "TEXT"], ["void_reason", "TEXT"], ["doc_type", "TEXT"], ["number_dept_id", "INTEGER"]]) {
       await env.DB.prepare(`ALTER TABLE announcements ADD COLUMN ${col} ${type}`).run().catch(() => undefined);
     }
     await env.DB.prepare(
@@ -188,6 +188,25 @@ describe("announcements — document type (ANN / MEMO)", () => {
     const ok = await call(APPROVER, "POST", `/${d.data.id}/approve`);
     expect(ok.status).toBe(200);
     const locked = await call(OPS, "PATCH", `/${d.data.id}`, { docType: "MEMO" });
+    expect(locked.status).toBe(409);
+  });
+
+  test("numbered under a chosen department (mig 20260909T0900): the number takes THAT department's code; an unknown or code-less pick is refused; locked once approved", async () => {
+    const r = await call(OPS, "POST", "", { title: "For HR", numberDeptId: 8 });
+    expect(r.status).toBe(201);
+    expect(r.data.numberDeptId).toBe(8);
+    expect((await call(OPS, "POST", "", { title: "Nowhere", numberDeptId: 999 })).status).toBe(400);
+    await env.DB.prepare("INSERT OR IGNORE INTO departments (id, name, code) VALUES (9, 'Canteen', NULL)").run();
+    const noCode = await call(OPS, "POST", "", { title: "Canteen", numberDeptId: 9 });
+    expect(noCode.status).toBe(400);
+    expect(noCode.error).toMatch(/Canteen.*no code/);
+    // Absent → the submitter's own department, as before.
+    const own = await call(OPS, "POST", "", { title: "Own" });
+    expect(own.data.numberDeptId).toBeNull();
+    const a = await call(APPROVER, "POST", `/${r.data.id}/approve`);
+    expect(a.status).toBe(200);
+    expect(a.data.refNo).toMatch(/^HR-ANN-\d{4}-\d{4}$/);
+    const locked = await call(OPS, "PATCH", `/${r.data.id}`, { numberDeptId: 7 });
     expect(locked.status).toBe(409);
   });
 });
