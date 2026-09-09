@@ -193,6 +193,31 @@ try {
   say(`  no sent_at recorded    : ${noTime.length}`);
   say();
 
+  /* ── WHAT SHAPE ARE THESE PAYLOADS, ACTUALLY? ─────────────────────────────
+     Printed before the comparison, and deliberately not skipped when the
+     comparison succeeds. This script maps payload keys onto snapshot columns
+     from READING composeEdit; if that mapping is wrong, every count below is
+     wrong in a way that still looks like a clean report — zero differences
+     reads as "nothing was overwritten" whether it is true or whether we simply
+     compared nothing. This census is what tells those two apart, and it costs
+     one pass over rows already in memory. */
+  const shape = new Map();
+  for (const r of rows) {
+    const b = r.payload?.body ?? {};
+    const arr = Array.isArray(b.Lines) ? "Lines" : Array.isArray(b.Details) ? "Details" : "none";
+    const n = arr === "none" ? 0 : b[arr].length;
+    const first = n ? Object.keys(b[arr][0]).sort().join("+") : "(no lines)";
+    const k = `${r.op} | ${arr} | ${first}`;
+    const cur = shape.get(k) ?? { rows: 0, lines: 0 };
+    cur.rows++; cur.lines += n; shape.set(k, cur);
+  }
+  say("=== PAYLOAD SHAPES AMONG THE SENT ROWS ===");
+  say("  op | line array | keys on the first line          rows / lines");
+  for (const [k, v] of [...shape.entries()].sort((a, b) => b[1].rows - a[1].rows)) {
+    say(`  ${k}   ${v.rows} / ${v.lines}`);
+  }
+  say();
+
   const diffs = [], matches = [], missing = [], retires = [];
   let linesCompared = 0, headerNotComparable = 0;
 
