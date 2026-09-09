@@ -133,17 +133,35 @@ export function reportChainShape({ t, LS, UB, SRC, log, plain, first, show }) {
     plain(`      PROVED per document, not assumed: EVERY unpaired book line on it names a source purchase order we do not hold.`);
     for (const row of first(SRC.moved)) plain(`      ${row.line}`);
   }
+  /* ONE BLOCK FOR THE ONES THAT STAY, NOT TWO. The first production run
+     (34376960030) printed the same 78 purchase invoices twice — once as "do not
+     reconcile" with the shape reason, once as "SOURCE-ORDER DECISION REFUSED"
+     with the source reason — because when the second pass refuses a row it
+     refuses exactly the rows the first one did. Two counts of 78 for 78
+     documents reads as 156 documents' worth of work. The two reasons belong on
+     ONE line, and BOTH are printed: the shape reason says the money does not
+     reconcile, the source reason says the migration decision does not cover it,
+     and whoever works the document needs both. */
   const answered = new Set(SRC.applied ? SRC.moved.map((r) => r.key) : []);
+  const srcWhy = new Map(SRC.impostors.map((i) => [i.key, i.why]));
   const stillCounted = UB.impostors.filter((i) => !answered.has(i.key));
   if (stillCounted.length) {
-    log(`${t} A BOOK LINE WE DO NOT HAVE — ${stillCounted.length} document(s) do not reconcile. Every one stays counted as a difference:`);
-    for (const row of stillCounted.slice(0, show)) plain(`      ${row.line} — ${row.why}`);
-  }
-  if (SRC.impostors.length) {
     log(
-      `${t} SOURCE-ORDER DECISION REFUSED for ${SRC.impostors.length} document(s) — they look like the ` +
-        `${SRC.notMigrated} above and are NOT. Every one is counted as a difference:`,
+      `${t} A BOOK LINE WE DO NOT HAVE — ${stillCounted.length} document(s) do not reconcile` +
+        (SRC.applied ? ", and the unmigrated-source-order decision does not cover them either" : "") +
+        ". Every one stays counted as a difference:",
     );
-    for (const row of SRC.impostors.slice(0, show)) plain(`      ${row.line} — ${row.why}`);
+    for (const row of stillCounted.slice(0, show)) {
+      const extra = srcWhy.get(row.key);
+      plain(`      ${row.line} — ${row.why}${extra ? ` — ${extra}` : ""}`);
+    }
+  }
+  /* A row the SECOND pass refused that the FIRST pass never saw cannot happen
+     today — it only ever runs on the first pass's refusals — but if that ever
+     changes, the count must not vanish silently. */
+  const orphaned = SRC.impostors.filter((i) => !stillCounted.some((s) => s.key === i.key));
+  if (orphaned.length) {
+    log(`${t} SOURCE-ORDER DECISION REFUSED for ${orphaned.length} further document(s). Every one is counted as a difference:`);
+    for (const row of orphaned.slice(0, show)) plain(`      ${row.line} — ${row.why}`);
   }
 }

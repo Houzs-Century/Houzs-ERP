@@ -665,8 +665,12 @@ describe('onward transfer — the downstream document type was never migrated', 
  * that order must be ABSENT from ours.
  */
 describe('source line — the purchase order the line was raised from was never migrated', () => {
+  /* `key` IS the AutoCount document number, exactly as the reconcile pushes it
+     (`key: ac`). The row carries no separate `ac` field, and naming one that
+     does not exist is how the first production run printed 78 refusals all
+     beginning `undefined:`. */
   const toRow = (ac: string, bookDocNo: string, ...bookDtlKeys: string[]) => ({
-    key: `k-${ac}`, ac, erpNo: `HC-${ac}`, bookDocNo, bookDtlKeys,
+    key: ac, erpNo: `HC-${ac}`, bookDocNo, bookDtlKeys,
     line: `${ac}: the book bills ${bookDtlKeys.length} line(s) we do not carry`,
   });
   const DECISION = {
@@ -823,6 +827,40 @@ describe('source line — the purchase order the line was raised from was never 
     expect(r.notMigrated).toBe(1);
     expect(r.differ).toBe(3);
     expect(r.impostors).toHaveLength(3);
+  });
+
+  test('EVERY refusal NAMES the document and carries its key', () => {
+    /* The first production run printed all 78 refusals as `undefined: ...`
+       because the message read a field the reconcile's rows do not carry. A
+       sentence that names no document is not a finding anyone can work, and the
+       report pairs the two passes' reasons BY KEY. */
+    const r = splitUnmigratedSourceLine({
+      rows: [
+        toRow('PI-a', 'PI-1', '12'),   // a PO we hold
+        toRow('PI-b', 'PI-1', '13'),   // wrong source type
+        toRow('PI-c', 'PI-1', '14'),   // no source named
+        toRow('PI-d', 'PI-1'),         // no line key at all
+      ],
+      decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.impostors).toHaveLength(4);
+    for (const i of r.impostors) {
+      expect(i.key).toBeTruthy();
+      expect(i.why.startsWith(`${i.key}:`)).toBe(true);
+      expect(i.why).not.toContain('undefined');
+    }
+  });
+
+  test('a refusal says whether the held order is CERTAIN or one of several', () => {
+    const one = splitUnmigratedSourceLine({
+      rows: [toRow('PI-a', 'PI-1', '12')], decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(one.impostors[0].why).toContain('was raised from');
+    const many = splitUnmigratedSourceLine({
+      rows: [toRow('PI-b', 'PI-1', '16')], decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(many.impostors[0].why).toContain('may have been raised from');
+    expect(many.impostors[0].why).toContain('2 orders');
   });
 
   test('THE COUNT IS NEVER LOST, on every path', () => {

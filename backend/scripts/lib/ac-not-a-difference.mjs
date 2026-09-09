@@ -747,7 +747,12 @@ export const UNMIGRATED_SOURCE = Object.freeze({
  * One row is one DOCUMENT, carrying every book line on it that found no ERP
  * line. The document moves only when all of them are explained.
  *
- * @param {{rows:{key:string,ac:string,erpNo:string,bookDocNo:string,bookDtlKeys:string[],line:string}[],
+ * `key` is the AutoCount document number and is what every refusal NAMES. It
+ * used to read `r.ac`, a field the reconcile's rows do not carry, so the first
+ * production run printed 78 refusals all beginning `undefined:` — a sentence
+ * that names no document is not a finding anyone can work.
+ *
+ * @param {{rows:{key:string,erpNo:string,bookDocNo:string,bookDtlKeys:string[],line:string}[],
  *          decision:{label:string,sourceType:string,ruling:string,consequence:string}|null,
  *          coverage:Set<string>|null,
  *          sourceOf:(bookDocNo:string,bookDtlKey:string)=>{type:string,docNo:string}[]}} args
@@ -780,22 +785,31 @@ export function splitUnmigratedSourceLine({ rows, decision, coverage, sourceOf }
     const cand = (sourceOf(r.bookDocNo, dtlKey) || []).filter((s) => s && s.docNo);
     /* (b) THE BOOK MUST NAME A SOURCE for the line. */
     if (!cand.length) {
-      return { why: `${r.ac}: the book names no source document for line ${dtlKey}, so nothing explains why we ` +
+      return { why: `${r.key}: the book names no source document for line ${dtlKey}, so nothing explains why we ` +
         "do not carry it — unproven, counted as a difference" };
     }
     /* (c) AND EVERY CANDIDATE MUST BE THE DECLARED TYPE. A line raised from
        something else is not what this decision is about. */
     const wrong = cand.find((s) => String(s.type ?? "").toUpperCase() !== decision.sourceType);
     if (wrong) {
-      return { why: `${r.ac}: line ${dtlKey} is raised from ${wrong.type || "(no type)"} ${wrong.docNo}, not ` +
+      return { why: `${r.key}: line ${dtlKey} is raised from ${wrong.type || "(no type)"} ${wrong.docNo}, not ` +
         `from a ${decision.sourceType} — this decision does not cover it` };
     }
     /* (d) AND WE MUST HOLD NONE OF THEM. One we DO hold means the line could be
-       one we failed to import, which is the defect this must never swallow. */
+       one we failed to import, which is the defect this must never swallow.
+       CERTAIN and AMBIGUOUS are said differently, because they are different
+       findings for whoever works them: one order names the line, several mean
+       the checker cannot tell which — and only the second is a candidate for a
+       sharper hop later. */
     const held = cand.find((s) => coverage.has(s.docNo));
     if (held) {
-      return { why: `${r.ac}: we DO hold ${decision.sourceType} ${held.docNo}, which line ${dtlKey} may have ` +
-        "been raised from — the migration decision does not cover this one and a missing line here is a real defect" };
+      const certain = cand.length === 1;
+      return { why: `${r.key}: we DO hold ${decision.sourceType} ${held.docNo}, which line ${dtlKey} ` +
+        (certain
+          ? "was raised from"
+          : `may have been raised from (the receipt names ${cand.length} orders for that item and the book ` +
+            "does not say which)") +
+        " — the migration decision does not cover this one and a missing line here is a real defect" };
     }
     return { cand };
   };
@@ -808,8 +822,9 @@ export function splitUnmigratedSourceLine({ rows, decision, coverage, sourceOf }
        anything. It cannot be proven and it does not move. */
     if (!keys.length) {
       impostors.push({
+        key: r.key,
         line: r.line,
-        why: `${r.ac}: no unpaired book line key was recorded for this document, so there is nothing to ` +
+        why: `${r.key}: no unpaired book line key was recorded for this document, so there is nothing to ` +
           "attribute to a source purchase order — unproven, counted as a difference",
       });
       continue;
@@ -821,7 +836,7 @@ export function splitUnmigratedSourceLine({ rows, decision, coverage, sourceOf }
       if (v.why) { why = v.why; break; }
       sources.push(...v.cand);
     }
-    if (why) impostors.push({ line: r.line, why });
+    if (why) impostors.push({ key: r.key, line: r.line, why });
     else moved.push({ ...r, sources });
   }
 

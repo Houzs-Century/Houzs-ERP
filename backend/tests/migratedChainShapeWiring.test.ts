@@ -115,6 +115,14 @@ describe('the unmigrated source order reaches the per-document verdict', () => {
     expect(chain).toContain('const stillCounted = UB.impostors.filter((i) => !answered.has(i.key));');
   });
 
+  test('a document that stays is printed ONCE, with both reasons on it', () => {
+    // Run 34376960030 printed the same 78 purchase invoices twice — once per
+    // pass — which reads as 156 documents' worth of work.
+    expect(chain).toContain('const srcWhy = new Map(SRC.impostors.map((i) => [i.key, i.why]));');
+    expect(chain).toContain('const extra = srcWhy.get(row.key);');
+    expect(chain).toContain('${row.why}${extra ? ` — ${extra}` : ""}');
+  });
+
   test('the two axes are split by ONE verdict function, so they cannot disagree about a document', () => {
     expect(splits).toContain('function migratedChainShapeVerdict(f, key) {');
     expect(splits).toContain('function splitOnChainShape({ rows, facts }, what, why, unprovenWhy) {');
