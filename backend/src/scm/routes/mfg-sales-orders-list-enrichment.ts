@@ -32,7 +32,7 @@ import { Hono } from 'hono';
 import type { Env, Variables } from '../env';
 import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
-import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
+import { resolveSalesScopeIds, applySoScope, soDocOutOfScope } from '../lib/salesScope';
 import { canViewAllSales } from '../lib/houzs-perms';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import { computeMrp, mrpLineCoverage, type MrpResult } from './mrp';
@@ -98,7 +98,7 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
       let q = sb.from('mfg_sales_orders')
         .select('doc_no, status, delivery_state, amended_delivery_date, customer_delivery_date, processing_date')
         .in('doc_no', batch);
-      if (scopeIds) q = q.in('salesperson_id', scopeIds);
+      q = applySoScope(q, scopeIds);
       return scopeToCompany(q, c).order('doc_no').range(from, to);
     });
     if (error) return c.json({ error: 'enrichment_failed', reason: error.message }, 500);
@@ -235,7 +235,7 @@ mfgSalesOrdersListEnrichment.get('/:docNo/coverage', async (c) => {
   const [h, i, nonSellingWh] = await Promise.all([
     // Header read is company-scoped + minimal — exist check, salesperson_id for
     // the same self-scoped-sales gate, and processing_date for the promotion gate.
-    scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id, processing_date').eq('doc_no', docNo), c).maybeSingle(),
+    scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id, access_staff_ids, processing_date').eq('doc_no', docNo), c).maybeSingle(),
     // Only the columns the MRP per-line rule needs, in line_no order (nulls last
     // → pre-0165 fallback to created_at). `warehouse_id` joined the list on
     // 2026-09-08: the non-selling-warehouse rule decides per line, so the line
@@ -255,8 +255,8 @@ mfgSalesOrdersListEnrichment.get('/:docNo/coverage', async (c) => {
      sellers pass only their own; other reps are held to their subtree. An
      out-of-scope doc_no answers 404 — indistinguishable from a missing one. */
   {
-    const sp = (h.data as { salesperson_id?: number | string | null }).salesperson_id;
-    if (await salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), sp)) {
+    const d = h.data as { salesperson_id?: number | string | null; access_staff_ids?: string[] | null };
+    if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: d.salesperson_id, accessStaffIds: d.access_staff_ids })) {
       return c.json({ error: 'not_found' }, 404);
     }
   }

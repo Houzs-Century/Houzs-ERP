@@ -27,7 +27,7 @@ import {
 import { applySoAmendment, reviseBoundPo, ReceivedFloorError } from '../lib/so-revision';
 import { raisePoFollowUps } from '../lib/amendment-po-followup';
 import { hasHouzsPerm, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
-import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
+import { resolveSalesScopeIds, applySoScope, soDocOutOfScope, resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
 import {
   notifySoAmendmentResolved,
   notifyPoAmendmentRaised,
@@ -154,7 +154,7 @@ type AmendmentWriteLoad =
    so the unscoped load handed one company's user a financial rewrite of the
    other's document. Scope the mutation the way the reads are scoped, and 404
    rather than 403 so an out-of-company id is indistinguishable from a
-   nonexistent one (the convention salesDocOutOfScope already set).
+   nonexistent one (the convention soDocOutOfScope already set).
 
    Second axis: a MIRRORED (2990-) amendment is NOT applied here. Houzs is not
    the writer of 2990's records — applySoAmendment would rewrite a mirrored SO
@@ -298,12 +298,12 @@ soAmendments.get('/', async (c) => {
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
   if (scopeIds && rows.length > 0) {
     // Resolve which of the listed amendments' SOs the caller may see — a single
-    // bounded query over the ≤500 doc_nos on the page (salesperson_id ∈ scope).
+    // bounded query over the ≤500 doc_nos on the page (access_staff_ids ∩ scope,
+    // so an order SHARED with the caller lists its amendments too).
     const docNos = [...new Set(rows.map((r) => r.so_doc_no).filter((x): x is string => !!x))];
-    const { data: soRows } = await scopeToCompany(sb.from('mfg_sales_orders')
+    const { data: soRows } = await scopeToCompany(applySoScope(sb.from('mfg_sales_orders')
       .select('doc_no')
-      .in('doc_no', docNos)
-      .in('salesperson_id', scopeIds), c);
+      .in('doc_no', docNos), scopeIds), c);
     const allowed = new Set(((soRows ?? []) as Array<{ doc_no: string }>).map((r) => r.doc_no));
     rows = rows.filter((r) => r.so_doc_no != null && allowed.has(r.so_doc_no));
   }
@@ -431,16 +431,16 @@ soAmendments.get('/:id', async (c) => {
   // SO header summary — doc_no, status, revision (+ salesperson_id for the scope
   // check below).
   const { data: soRow } = await sb.from('mfg_sales_orders')
-    .select('doc_no, status, revision, salesperson_id')
+    .select('doc_no, status, revision, salesperson_id, access_staff_ids')
     .eq('doc_no', amendment.so_doc_no).maybeSingle();
   const salesOrder = (soRow ?? null) as
-    { doc_no: string; status: string; revision: number; salesperson_id?: number | string | null } | null;
+    { doc_no: string; status: string; revision: number; salesperson_id?: number | string | null; access_staff_ids?: string[] | null } | null;
 
   /* Row-level scope (Owner 2026-07-16) — a scoped salesperson may open only an
      amendment for a Sales Order in their own+downline scope; anything else 404s
      (indistinguishable from a nonexistent id), mirroring the SO detail read.
      View-all callers pass. */
-  if (await salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), salesOrder?.salesperson_id)) {
+  if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: salesOrder?.salesperson_id, accessStaffIds: salesOrder?.access_staff_ids })) {
     return c.json({ error: 'not_found' }, 404);
   }
 
