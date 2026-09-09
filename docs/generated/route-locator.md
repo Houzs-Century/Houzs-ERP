@@ -1207,7 +1207,7 @@ Total: 1213 route registrations across 156 files.
 - L89  GET    /:token
 - L99  GET    /:token/events/:eventId/floorplan
 - L108  GET    /:token/events/:eventId/floorplan/:fileId
-- L118  GET    /:token/export
+- L119  GET    /:token/export
 
 ## backend/src/routes/publicDoScan.ts  (4)
 - L523  POST   /batch/lookup

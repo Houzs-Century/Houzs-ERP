@@ -52,7 +52,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/projects.ts` | 114 | 5140 |
 | `backend/src/routes/projects_print.ts` | 1 | 1320 |
 | `backend/src/routes/publicBrandCalendar.ts` | 5 | 117 |
-| `backend/src/routes/publicContractorCalendar.ts` | 4 | 124 |
+| `backend/src/routes/publicContractorCalendar.ts` | 4 | 125 |
 | `backend/src/routes/publicDoScan.ts` | 4 | 926 |
 | `backend/src/routes/push.ts` | 2 | 71 |
 | `backend/src/routes/roles.ts` | 8 | 376 |
@@ -80,7 +80,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-receipts.ts` | 0 | 88 |
 | `backend/src/scm/routes/accounting-reports.ts` | 0 | 186 |
 | `backend/src/scm/routes/accounting-rp.ts` | 0 | 319 |
-| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1280 |
+| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1330 |
 | `backend/src/scm/routes/accounting-stock-close.ts` | 0 | 53 |
 | `backend/src/scm/routes/accounting.ts` | 82 | 1523 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
@@ -214,7 +214,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2078 files, 722368 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2081 files, 722759 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -231,7 +231,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4538 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4483 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4334 |
-| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4205 |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4206 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3749 |
 | `backend/src/scm/routes/grns.ts` | 3564 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
