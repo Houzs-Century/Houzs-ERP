@@ -107,7 +107,7 @@ const REFS = gz("ac-invoice-refs.json.gz");
 
    CHECKED ONLY WHEN THE HALF THAT READS IT RUNS. Since 2026-09-09 the PURCHASE
    half reads its invoices, its lines, its dates and its cancellations out of
-   ac-reconcile-truth.json.gz instead (see readBookPi below), so refusing a
+   ac-reconcile-truth.json.gz instead (see readBook below), so refusing a
    KIND=pi run because a file it never opens is three days old would be a gate
    protecting nothing. The SALES half still reads this map for everything, and
    is still refused. */
@@ -127,7 +127,7 @@ const acTotals = {};
 for (const [doc, m] of Object.entries({ ...REFS.piMeta, ...REFS.ivMeta })) {
   acTotals[doc] = Math.round(Number(m.netTotal) * 100);
 }
-/* Set by run("PI") from readBookPi, so writePi can date the invoice from the
+/* Set by run("PI") from readBook, so writePi can date the invoice from the
    same snapshot its lines came from. Null on a KIND=si run, where it is unused. */
 let bookPiHeaders = null;
 const cancelled = new Set(
@@ -135,7 +135,7 @@ const cancelled = new Set(
 const liveInvoices = (list) => (list ?? []).filter((x) => !cancelled.has(x));
 const deadInvoices = (list) => (list ?? []).filter((x) => cancelled.has(x));
 
-/* ── THE BOOK'S OWN PURCHASE-INVOICE LINES ─────────────────────────────────
+/* ── THE BOOK'S OWN PURCHASE-INVOICE LINES ────────────────────────
    Owner 2026-09-09: 「total amount不需要 可是line amount一定一样」 — every LINE
    of the invoice we write must equal AutoCount's. The receipt's lines cannot
    satisfy that (the book SPLITS a receipt line across two invoices, and it
@@ -147,8 +147,17 @@ const deadInvoices = (list) => (list ?? []).filter((x) => cancelled.has(x));
    invoice, which lines, what each line was worth, the invoice's date, whether
    AutoCount cancelled it — comes from this single file. ac-invoice-refs was
    exported on a different day, and reading the relationship from one file and
-   the lines from another is how a plan comes to describe two different worlds. */
-function readBookPi() {
+   the lines from another is how a plan comes to describe two different worlds.
+
+   THE PAIRING IS DONE BOOK-AGAINST-BOOK, and that is the whole reason it can be
+   done on item code and quantity at all. Our receipt row's item code is the
+   HOUZS code and the book's is the SUPPLIER's model — `CASUAL-(K)` here is
+   `NB-KHJ57(SS)` there — so matching our rows to the book's lines by code is
+   not merely unreliable, it matches nothing (dry run 34364714219: 2 of 657
+   lines). Both sides of the pairing below are the BOOK's own, where the code is
+   one vocabulary; our row reaches the book through `grn_items.linked_ac_dtlkey`,
+   the key `backfill-ac-downstream-line-keys.mjs` stamps. */
+function readBook() {
   const snap = gz("ac-reconcile-truth.json.gz");
   const ageDays = (Date.now() - Date.parse(snap.exported_at)) / 86400000;
   if (!(ageDays <= MAX_SNAPSHOT_AGE_DAYS)) {
@@ -169,7 +178,6 @@ function readBookPi() {
      5,283 purchase invoices are foreign and none of them is in scope today, so
      this costs nothing and closes the hole for the day one is. */
   const skipped = { cancelled: 0, foreign: 0 };
-  const byGr = new Map();
   const headers = new Map();
   for (const [docNo, h] of book.PI.headers) {
     if (h.cancelled) { skipped.cancelled++; continue; }
@@ -177,19 +185,21 @@ function readBookPi() {
     if (cur.kind !== "local") { skipped.foreign++; continue; }
     headers.set(docNo, h);
   }
-  let usable = 0;
+
+  /* Invoice lines, bucketed by the goods receipt each was raised from. PIDTL
+     names a receipt on most lines and a purchase ORDER on the rest; only a
+     receipt line can be tied to one of ours, so an order-sourced line is left
+     out and counted, never guessed into the receipt that happens to sit under
+     that order (the same refusal lib/ac-pi-gr-line-match.mjs makes). */
+  const piByGr = new Map();
+  let piLines = 0;
   for (const [docNo, lines] of book.PI.lines) {
     if (!headers.has(docNo)) continue;
     for (const l of lines) {
-      /* PIDTL names a goods receipt on most lines and a purchase order on the
-         rest. Only a receipt line can be tied to one of ours; a line raised
-         straight off an order is left out and counted, never guessed into the
-         receipt that happens to sit under that order (the same refusal
-         lib/ac-pi-gr-line-match.mjs makes, for the same reason). */
       if (l.fromDocType !== "GR" || !l.fromDocNo) continue;
       const gr = String(l.fromDocNo).trim();
-      if (!byGr.has(gr)) byGr.set(gr, []);
-      byGr.get(gr).push({
+      if (!piByGr.has(gr)) piByGr.set(gr, []);
+      piByGr.get(gr).push({
         docNo: l.docNo, dtlKey: String(l.dtlKey), seq: l.seq, itemKey: l.itemKey,
         qty: n(l.qty), unitPriceSen: n(l.unitPriceSen),
         /* MYR at rate 1 by the gate above, so the document figure and the local
@@ -197,12 +207,44 @@ function readBookPi() {
            before 2026-09-07 and the local column is then the only one there. */
         amountSen: n(l.docSubTotalSen ?? l.subTotalSen),
       });
-      usable++;
+      piLines++;
     }
   }
+
+  /* THE BOOK'S RECEIPT LINE -> THE BOOK'S INVOICE LINE(S) THAT BILL IT.
+     Both sides are AutoCount's, so item code and quantity mean the same thing
+     on both, and the pairing refuses rather than guesses (see
+     lib/ac-pi-book-lines.mjs). A receipt line can answer SEVERAL invoice lines:
+     that is the split GR-003813 shows. */
+  const grToPi = new Map();
+  const stats = { grLines: 0, paired: 0, unbilledBookLines: 0, surplusPiLines: 0 };
+  for (const [grDocNo, piLinesForGr] of piByGr) {
+    const grLines = book.GR.lines.get(grDocNo) ?? [];
+    stats.grLines += grLines.length;
+    const { assigned, unbilled, surplus } = assignBookInvoiceLines({
+      /* The price and the amount travel with the receipt line so the pairing
+         can use them. Both sides here are the BOOK's own figures, which is the
+         one comparison ac-forced-line-pairing.mjs says is trustworthy. */
+      ourLines: grLines.map((l) => ({
+        lineId: String(l.dtlKey), itemCode: l.itemKey, qty: n(l.qty),
+        unitPriceSen: n(l.unitPriceSen), amountSen: n(l.docSubTotalSen ?? l.subTotalSen),
+      })),
+      bookLines: piLinesForGr,
+    });
+    for (const a of assigned) {
+      if (!grToPi.has(a.lineId)) grToPi.set(a.lineId, []);
+      grToPi.get(a.lineId).push(a.book);
+      stats.paired++;
+    }
+    stats.unbilledBookLines += unbilled.length;
+    stats.surplusPiLines += surplus.length;
+  }
+
   log(`book purchase invoices: ${headers.size} usable, ${skipped.cancelled} cancelled, ${skipped.foreign} foreign (refused); `
-    + `${usable} invoice line(s) raised from a goods receipt, across ${byGr.size} receipt(s)`);
-  return { headers, byGr };
+    + `${piLines} invoice line(s) raised from a goods receipt, across ${piByGr.size} receipt(s)`);
+  log(`book receipt lines on those receipts: ${stats.grLines}; ${stats.paired} paired to an invoice line, `
+    + `${stats.unbilledBookLines} the book never invoiced, ${stats.surplusPiLines} invoice line(s) that pair to no receipt line`);
+  return { headers, grToPi };
 }
 
 /* ── Sources ──────────────────────────────────────────────────────────────── */
@@ -213,36 +255,55 @@ async function loadGrnSources() {
   });
 }
 
-/* ── OUR RECEIPT LINES -> THE BOOK'S INVOICE LINES ─────────────────────────
+/* -- OUR RECEIPT LINES -> THE BOOK'S INVOICE LINES ------------------------
    Takes the migrated goods receipts as they come out of the database and hands
    the planner back documents whose LINES are the account book's own purchase
    invoice lines, one sub-document per AutoCount invoice.
+
+   THE ONLY TIE BETWEEN OUR ROW AND THE BOOK'S LINE IS THE STAMPED KEY.
+   `grn_items.linked_ac_dtlkey` is the book's own GRDTL.DtlKey, written by
+   backfill-ac-downstream-line-keys.mjs (run 34355496796, APPLY, 2026-09-09:
+   576 of 812 company-1 receipt rows carry one). Item code cannot stand in for
+   it -- ours is the Houzs code and the book's the supplier's model, so
+   `CASUAL-(K)` here is `NB-KHJ57(SS)` there, and matching on it produced 2 of
+   657 lines on dry run 34364714219. Position is refused everywhere in this repo
+   for the reason docs/bugs/0690 records. A row with NO key is REPORTED, never
+   guessed: the remedy is to run that backfill, not to loosen this.
+
+   ONE BOOK LINE IS ONE INVOICE LINE, EVEN WHEN WE HOLD SEVERAL ROWS FOR IT.
+   A sofa is one line in the book and one row per compartment here, and the
+   backfill gives every compartment the SAME key by design. The invoice
+   therefore gets ONE line, and `grn_item_id` is left NULL on it rather than
+   pointed at whichever compartment sorts first -- the line's identity is
+   carried by `linked_ac_dtlkey`, which is the book's own and is not a choice.
 
    WHY ONE SUB-DOCUMENT PER INVOICE. The book decides which invoice billed which
    line, and it does not always put one receipt on one invoice: GR-003813's
    `2 x 850` is billed 1 on PI-006011 and 1 on PI-006012. The old code could not
    express that at all and refused the whole receipt as
-   `ambiguous_autocount_invoices` — "invoiced across several AutoCount invoices
-   and there is no line key to split by". There is no line KEY, but the line
-   itself says which invoice it is on, so the split is read rather than guessed
-   and the refusal is no longer needed on this path.
+   `ambiguous_autocount_invoices`. There is no line KEY on PIDTL, but the line
+   itself says which invoice it is on, so the split is read rather than guessed.
 
    THE PLANNER IS UNTOUCHED. Its five rules still decide eligibility; it simply
    receives documents that already carry the book's lines and name exactly one
    invoice each, so `acs.length > 1` can no longer arise here. */
-function splitGrnSourcesByBookLines(sources, bookPi) {
+function splitGrnSourcesByBookLines(sources, book) {
   const out = [];
   const preBlocked = [];
   const stats = {
-    receipts: 0, ourLines: 0, billedLines: 0, unbilledLines: 0,
-    surplusLines: 0, surplusSen: 0, splitReceipts: 0, splitAcrossInvoices: 0,
-    fromFold: 0, nonReconciling: 0, receiptsBookBillsNothingOf: 0,
+    receipts: 0, ourLines: 0, ourLinesNoKey: 0, keys: 0, keysBilled: 0,
+    invoiceLines: 0, foldedRows: 0, unlinkedInvoiceLines: 0,
+    splitKeys: 0, splitAcrossInvoices: 0, nonReconciling: 0,
+    receiptsBookBillsNothingOf: 0, receiptsWithNoKeyAtAll: 0,
   };
+  const noKeyExamples = [];
   const unbilledExamples = [];
   const splitExamples = [];
-  /* Shared across every receipt so a book line is billed exactly once — see
-     lib/ac-pi-book-lines.mjs on why two receipts can reach the same line. */
-  const taken = new Set();
+  /* A book invoice line is billed ONCE across the whole run. Two of our
+     receipts can carry the same stamped key only if the backfill made a
+     mistake, but billing something twice is the expensive direction, so it is
+     made impossible here rather than assumed away. */
+  const usedPiLines = new Set();
 
   for (const s of [...sources].sort((a, b) => a.docNo.localeCompare(b.docNo))) {
     const invoiceable = s.lines.filter((l) => l.qty > 0);
@@ -253,35 +314,82 @@ function splitGrnSourcesByBookLines(sources, bookPi) {
     stats.receipts++;
     stats.ourLines += invoiceable.length;
 
-    const own = bookPi.byGr.get(s.acDocNo) ?? [];
-    const folded = (s._acGrsAll ?? []).filter((x) => x && x !== s.acDocNo)
-      .flatMap((gr) => bookPi.byGr.get(gr) ?? []);
-    const ours = invoiceable.map((l) => ({ lineId: l.lineId, itemCode: l.itemCode, qty: l.qty }));
-    const byId = new Map(invoiceable.map((l) => [l.lineId, l]));
-
-    /* THE RECEIPT'S OWN AUTOCOUNT NUMBER IS TRIED FIRST, then the receipts it
-       folds. Not an optimisation: the fold list belongs to the purchase order,
-       so both ERP receipts under one order list both AutoCount receipts, and
-       without an order of preference which of them got a shared line would be
-       decided by sort order — position matching wearing a link's clothes
-       (docs/bugs/0690). A receipt's OWN number is evidence; its neighbour's is
-       not. */
-    const roundA = assignBookInvoiceLines({ ourLines: ours, bookLines: own, taken });
-    const roundB = folded.length
-      ? assignBookInvoiceLines({
-        ourLines: roundA.unbilled.map((u) => ({ lineId: u.lineId, itemCode: u.itemCode, qty: u.qty })),
-        bookLines: folded, taken,
-      })
-      : { assigned: [], unbilled: roundA.unbilled, surplus: [] };
-    const assigned = [...roundA.assigned, ...roundB.assigned];
-    stats.fromFold += roundB.assigned.length;
-    for (const u of roundB.unbilled) {
-      stats.unbilledLines++;
-      if (unbilledExamples.length < 15) unbilledExamples.push(`${s.docNo} (AutoCount ${s.acDocNo}) ${u.itemCode} x${u.qty} — ${u.why}`);
+    /* Group OUR rows by the book line they are, so a sofa's compartments ask
+       the book once and receive one invoice line between them. */
+    const byKey = new Map();
+    for (const l of invoiceable) {
+      if (!l.acLineKey) {
+        stats.ourLinesNoKey++;
+        if (noKeyExamples.length < 15) noKeyExamples.push(`${s.docNo} (AutoCount ${s.acDocNo}) ${l.itemCode} x${l.qty}`);
+        continue;
+      }
+      if (!byKey.has(l.acLineKey)) byKey.set(l.acLineKey, []);
+      byKey.get(l.acLineKey).push(l);
     }
-    for (const sp of [...roundA.surplus, ...roundB.surplus]) { stats.surplusLines++; stats.surplusSen += sp.amountSen; }
+    if (byKey.size === 0) {
+      stats.receiptsWithNoKeyAtAll++;
+      preBlocked.push({
+        docNo: s.docNo, acDocNo: s.acDocNo, acInvoiceNos: s.acInvoiceNos,
+        reason: "no_book_line_key_on_our_receipt",
+        lineCount: invoiceable.length, unpricedLines: 0,
+      });
+      continue;
+    }
+    stats.keys += byKey.size;
 
-    if (assigned.length === 0) {
+    const byInvoice = new Map();
+    for (const [key, rows] of byKey) {
+      const piLines = (book.grToPi.get(key) ?? []).filter((b) => !usedPiLines.has(b.dtlKey));
+      if (piLines.length === 0) {
+        if (unbilledExamples.length < 15) {
+          unbilledExamples.push(`${s.docNo} (AutoCount ${s.acDocNo}) ${rows[0].itemCode} x${rows[0].qty} `
+            + `- the book's purchase invoices bill nothing against its receipt line ${key}`);
+        }
+        continue;
+      }
+      stats.keysBilled++;
+      if (rows.length > 1) stats.foldedRows += rows.length - 1;
+      if (piLines.length > 1) {
+        stats.splitKeys++;
+        if (new Set(piLines.map((b) => b.docNo)).size > 1) {
+          stats.splitAcrossInvoices++;
+          if (splitExamples.length < 10) {
+            splitExamples.push(`${s.docNo} ${rows[0].itemCode} x${rows[0].qty} -> `
+              + piLines.map((b) => `${b.docNo} ${b.qty} @ ${rm(b.amountSen)}`).join(" + "));
+          }
+        }
+      }
+      piLines.forEach((b, i) => {
+        usedPiLines.add(b.dtlKey);
+        const d = discountForBookAmount({ qty: b.qty, unitPriceSen: b.unitPriceSen, amountSen: b.amountSen });
+        if (!d.reconciles) stats.nonReconciling++;
+        if (rows.length > 1) stats.unlinkedInvoiceLines++;
+        stats.invoiceLines++;
+        const line = {
+          lineId: `${key}:${b.dtlKey}`,
+          itemCode: rows[0].itemCode,
+          qty: b.qty,
+          unitPriceSen: b.unitPriceSen,
+          discountSen: d.discountSen,
+          /* Rule 3 of the planner (the same order line on two rows of one
+             document) still has to catch a genuinely duplicated migrated row.
+             Only the FIRST invoice line of a split carries the order-line key,
+             because a split is one receipt line seen twice, not two of them. */
+          sourceLineKey: i === 0 ? rows[0].sourceLineKey : null,
+          _row: rows[0]._row,
+          /* Every one of our rows this book line stands for. One when the
+             shapes agree; several for a sofa, whose compartments share the key. */
+          _grnItemIds: rows.map((r) => r._row.id),
+          _book: b,
+          _bookAmountSen: b.amountSen,
+          _bookReconciles: d.reconciles,
+        };
+        if (!byInvoice.has(b.docNo)) byInvoice.set(b.docNo, []);
+        byInvoice.get(b.docNo).push(line);
+      });
+    }
+
+    if (byInvoice.size === 0) {
       stats.receiptsBookBillsNothingOf++;
       preBlocked.push({
         docNo: s.docNo, acDocNo: s.acDocNo, acInvoiceNos: s.acInvoiceNos,
@@ -289,50 +397,6 @@ function splitGrnSourcesByBookLines(sources, bookPi) {
         lineCount: invoiceable.length, unpricedLines: 0,
       });
       continue;
-    }
-    stats.billedLines += assigned.length;
-
-    /* One of our receipt lines answered by several book lines is the book's own
-       split. The FIRST of them keeps the order-line key so the planner's rule 3
-       (the same order line on two rows of one document) still catches a
-       genuinely duplicated migrated row; the rest carry none, because they are
-       one receipt line seen twice and not two receipt lines. */
-    const perOurLine = new Map();
-    for (const a of assigned) {
-      if (!perOurLine.has(a.lineId)) perOurLine.set(a.lineId, []);
-      perOurLine.get(a.lineId).push(a);
-    }
-    const byInvoice = new Map();
-    for (const [lineId, group] of perOurLine) {
-      const src = byId.get(lineId);
-      if (group.length > 1) {
-        stats.splitReceipts++;
-        if (new Set(group.map((a) => a.acInvoiceNo)).size > 1) {
-          stats.splitAcrossInvoices++;
-          if (splitExamples.length < 10) {
-            splitExamples.push(`${s.docNo} ${src.itemCode} x${src.qty} -> `
-              + group.map((a) => `${a.acInvoiceNo} ${a.book.qty} @ ${rm(a.book.amountSen)}`).join(" + "));
-          }
-        }
-      }
-      group.forEach((a, i) => {
-        const d = discountForBookAmount({ qty: a.book.qty, unitPriceSen: a.book.unitPriceSen, amountSen: a.book.amountSen });
-        if (!d.reconciles) stats.nonReconciling++;
-        const line = {
-          lineId: `${src.lineId}:${a.book.dtlKey}`,
-          itemCode: src.itemCode,
-          qty: a.book.qty,
-          unitPriceSen: a.book.unitPriceSen,
-          discountSen: d.discountSen,
-          sourceLineKey: i === 0 ? src.sourceLineKey : null,
-          _row: src._row,
-          _book: a.book,
-          _bookAmountSen: a.book.amountSen,
-          _bookReconciles: d.reconciles,
-        };
-        if (!byInvoice.has(a.acInvoiceNo)) byInvoice.set(a.acInvoiceNo, []);
-        byInvoice.get(a.acInvoiceNo).push(line);
-      });
     }
 
     const many = byInvoice.size > 1;
@@ -343,14 +407,13 @@ function splitGrnSourcesByBookLines(sources, bookPi) {
            must not collide in the converter's docNo-keyed indexes. The suffix
            is stripped again for display. */
         docNo: many ? `${s.docNo}#${acInvoiceNo}` : s.docNo,
-        _displayDocNo: s.docNo,
         acInvoiceNos: [acInvoiceNo],
         acCancelledInvoiceNos: [],
         lines: lines.sort((a, b) => (a._book.seq ?? 0) - (b._book.seq ?? 0)),
       });
     }
   }
-  return { sources: out, preBlocked, stats, unbilledExamples, splitExamples };
+  return { sources: out, preBlocked, stats, noKeyExamples, unbilledExamples, splitExamples };
 }
 
 async function loadDoSources() {
@@ -418,24 +481,32 @@ async function loadDoSources() {
 /* ── Report ───────────────────────────────────────────────────────────────── */
 
 /* What reading the book's lines actually produced, printed BEFORE the plan so a
-   reader sees the input to it. Every number here is a count of rows the run
-   itself just matched, not a figure copied out of a doc. */
-function reportBookLines({ stats, unbilledExamples, splitExamples }) {
+   reader sees the input to it. Every number here is a count of rows this run
+   just matched, not a figure copied out of a doc. */
+function reportBookLines({ stats, noKeyExamples, unbilledExamples, splitExamples }) {
   log("");
   log("=== THE BOOK'S OWN INVOICE LINES (every line copied from PIDTL) ===");
   log(`receipts read against the book: ${stats.receipts}`);
   log(`  our receipt lines: ${stats.ourLines}`);
-  log(`  billed by the book's invoices, and copied: ${stats.billedLines} line(s)`
-    + (stats.fromFold ? ` (${stats.fromFold} matched off a receipt this ERP receipt FOLDS, not the one it is named after)` : ""));
-  log(`  receipt lines the book's invoices do not bill: ${stats.unbilledLines}`);
+  log(`  carrying the book's line key, so they can be read against it: ${stats.ourLines - stats.ourLinesNoKey} `
+    + `(${stats.keys} distinct book receipt line(s); the gap is sofa compartments, which share one)`);
+  log(`  carrying NO book line key — not readable, and NOT guessed: ${stats.ourLinesNoKey}`);
+  for (const e of noKeyExamples) log(`     ${e}`);
+  if (stats.ourLinesNoKey > noKeyExamples.length) log(`     ... and ${stats.ourLinesNoKey - noKeyExamples.length} more`);
+  if (stats.ourLinesNoKey) {
+    log("     REMEDY: run backfill-ac-downstream-line-keys.mjs (workflow: Backfill AutoCount line keys) "
+      + "and re-run this. UNTESTED here — this run did not execute it.");
+  }
+  log(`  book receipt lines of ours the book's invoices bill: ${stats.keysBilled} of ${stats.keys}`);
   for (const e of unbilledExamples) log(`     ${e}`);
-  if (stats.unbilledLines > unbilledExamples.length) log(`     ... and ${stats.unbilledLines - unbilledExamples.length} more`);
-  log(`  receipt lines the BOOK SPLIT into several invoice lines: ${stats.splitReceipts}`
+  log(`  INVOICE LINES this run would write, all copied from PIDTL: ${stats.invoiceLines}`);
+  log(`  of those, ${stats.unlinkedInvoiceLines} stand for SEVERAL of our rows (a sofa build) and carry no single `
+    + `grn_item_id; the book's line key identifies them instead. ${stats.foldedRows} of our rows fold that way.`);
+  log(`  receipt lines the BOOK SPLIT into several invoice lines: ${stats.splitKeys}`
     + `, of which ${stats.splitAcrossInvoices} across MORE THAN ONE invoice`);
   for (const e of splitExamples) log(`     ${e}`);
-  log(`  book invoice lines left over — goods the cutover never carried, so nothing here bills them: `
-    + `${stats.surplusLines} line(s), ${rm(stats.surplusSen)}`);
-  log(`  receipts none of whose lines the book's invoices bill: ${stats.receiptsBookBillsNothingOf}`);
+  log(`  receipts refused because NONE of our rows carries a book line key: ${stats.receiptsWithNoKeyAtAll}`);
+  log(`  receipts refused because the book's invoices bill none of our lines: ${stats.receiptsBookBillsNothingOf}`);
   if (stats.nonReconciling) {
     log(`  WARNING: ${stats.nonReconciling} book line(s) bill MORE than quantity x unit price. `
       + "The book's amount is still what is written; the ERP has no surcharge column, so its discount reads 0.");
@@ -563,7 +634,7 @@ async function existingMirrors(table) {
 
 async function writePi(plan, lineIndex, headIndex) {
   /* The DATE comes from the same snapshot the lines came from; ac-invoice-refs
-     is only the fallback for a run made before readBookPi existed. */
+     is only the fallback for a run made before readBook existed. */
   const meta = REFS.piMeta[plan.acInvoiceNo] ?? {};
   const bookHead = bookPiHeaders?.get(plan.acInvoiceNo) ?? null;
   const lines = plan.sourceDocNos.flatMap((d) => lineIndex.get(d) ?? []);
@@ -582,7 +653,13 @@ async function writePi(plan, lineIndex, headIndex) {
               ${`Carried over from AutoCount ${plan.acInvoiceNo}`}, true, ${plan.acInvoiceNo})
       RETURNING id`;
     const rows = lines.map((l) => ({
-      purchase_invoice_id: h.id, grn_item_id: l._row.id, company_id: CO,
+      purchase_invoice_id: h.id,
+      /* NULL when the book's one line stands for several of our rows (a sofa's
+         compartments). Pointing at whichever compartment sorts first would be a
+         choice nothing in either document supports; `linked_ac_dtlkey` below
+         carries the identity instead. */
+      grn_item_id: (l._grnItemIds && l._grnItemIds.length === 1) ? l._grnItemIds[0] : (l._grnItemIds ? null : l._row.id),
+      company_id: CO,
       material_kind: l._row.material_kind, item_code: l._row.item_code,
       material_name: l._row.material_name, item_group: l._row.item_group,
       description: l._row.description, description2: l._row.description2,
@@ -607,9 +684,14 @@ async function writePi(plan, lineIndex, headIndex) {
     }));
     await tx`INSERT INTO scm.purchase_invoice_items ${tx(rows)}`;
     /* Consume the receipt lines so they drop out of the outstanding picker —
-       the same bookkeeping the route's recomputeGrnInvoiced does. */
+       the same bookkeeping the route's recomputeGrnInvoiced does. EVERY row the
+       book's line stands for is consumed, not just one: a sofa is invoiced as a
+       whole, and leaving two of its three compartments outstanding is exactly
+       the 「永远挂成一个 Outstanding」 the owner asked to end. */
     for (const l of lines) {
-      await tx`UPDATE scm.grn_items SET invoiced_qty = COALESCE(invoiced_qty,0) + ${l.qty} WHERE id = ${l._row.id}`;
+      for (const id of (l._grnItemIds ?? [l._row.id])) {
+        await tx`UPDATE scm.grn_items SET invoiced_qty = COALESCE(invoiced_qty,0) + ${l.qty} WHERE id = ${id}`;
+      }
     }
   });
 }
@@ -657,7 +739,7 @@ async function run(kind) {
   let preBlocked = [];
   let bookTotals = null;
   if (kind === "PI") {
-    const bookPi = readBookPi();
+    const bookPi = readBook();
     log(`migrated goods receipts read from the ERP: ${sources.length}`);
     const split = splitGrnSourcesByBookLines(sources, bookPi);
     sources = split.sources;
@@ -666,7 +748,7 @@ async function run(kind) {
     /* The invoice total to compare against comes from the SAME snapshot the
        lines came from, not from ac-invoice-refs, which was exported on another
        day. `netTotal` is the book's LOCAL figure and every invoice that
-       survived readBookPi is MYR at rate 1, so the two mean the same thing. */
+       survived readBook is MYR at rate 1, so the two mean the same thing. */
     bookTotals = {};
     for (const [docNo, h] of bookPi.headers) bookTotals[docNo] = h.totalSen ?? -1;
     bookPiHeaders = bookPi.headers;

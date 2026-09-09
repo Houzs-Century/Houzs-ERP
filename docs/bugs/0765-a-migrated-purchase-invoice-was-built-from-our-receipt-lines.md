@@ -33,16 +33,35 @@ unable to equal `PIDTL`, whatever price is put on it. Both were read out of
 **Fix.** The purchase invoice is now built from `PIDTL` and nothing else — item,
 quantity, unit price and amount all copied, with the ERP's `discount_sen`
 derived so its three columns reconcile to the book's amount, and
-`linked_ac_dtlkey` carrying the book's own line key. Each line is tied to the
-goods-receipt line it bills by item code and quantity inside the one receipt the
-book names, in two passes (exact, then the split above), never by position —
-`scripts/lib/ac-pi-book-lines.mjs`, whose rules are `lib/ac-pi-gr-line-match.mjs`'s
-and `lib/ac-gr-po-line-match.mjs`'s, taken for the reason `docs/bugs/0690` and
-`docs/bugs/0730` record. Because the book's line states which invoice it is on,
-a receipt billed across several invoices is now SPLIT into one ERP invoice per
-book invoice instead of refused; `ambiguous_autocount_invoices` cannot arise on
-this path any more. `src/scm/lib/migrated-chain.ts` is untouched — it receives
-documents that already carry the book's lines.
+`linked_ac_dtlkey` carrying the book's own line key.
+
+**The tie is the STAMPED key, not the item code — and that correction was bought
+by running it.** The first cut of this fix matched our receipt row to the book's
+invoice line on item code and quantity. Dry run 34364714219 (prod, read-only)
+matched **2 of 657** lines: our row's code is the HOUZS code and the book's is
+the SUPPLIER's model, so `CASUAL-(K)` here is `NB-KHJ57(SS)` there. The pairing
+is therefore done in two halves, each on evidence that exists:
+
+- **our row -> the book's receipt line** by `scm.grn_items.linked_ac_dtlkey`,
+  stamped by `backfill-ac-downstream-line-keys.mjs` (run 34355496796, APPLY,
+  2026-09-09: **576 of 812** company-1 receipt rows carry one). A row without
+  one is reported and refused, never guessed;
+- **the book's receipt line -> the book's invoice line(s)** on item code,
+  quantity, unit price and amount — both sides are AutoCount's own figures
+  there, which is the one comparison `lib/ac-forced-line-pairing.mjs` says is
+  trustworthy. Never by position (`docs/bugs/0690`, `docs/bugs/0730`).
+
+A sofa is ONE line in the book and one row per compartment here, and the
+backfill gives every compartment the same key by design, so the invoice gets ONE
+line and its `grn_item_id` is left NULL rather than pointed at whichever
+compartment sorts first; `linked_ac_dtlkey` carries the identity. All of that
+line's compartment rows are consumed when it is invoiced.
+
+Because the book's line states which invoice it is on, a receipt billed across
+several invoices is now SPLIT into one ERP invoice per book invoice instead of
+refused; `ambiguous_autocount_invoices` cannot arise on this path any more.
+`src/scm/lib/migrated-chain.ts` is untouched — it receives documents that
+already carry the book's lines and name one invoice each.
 
 The purchase half no longer reads `ac-invoice-refs.json.gz` at all: the invoice,
 its lines, its date and its cancellation all come from the one snapshot, so a
@@ -56,8 +75,8 @@ so mixing them books an exchange rate as a discount (`docs/bugs/0665`, RM
 13,068.55). 20 of the book's 5,283 purchase invoices are foreign and none is in
 scope today.
 
-**Proved.** `backend/tests/acPiBookLines.test.mjs`, 11 tests, all built from the
-document numbers above. Both halves were RUN RED against the unfixed rule, not
+**Proved.** `backend/tests/acPiBookLines.test.mjs`, 12 tests, all built from the
+document numbers above. Three halves were RUN RED against the unfixed rule, not
 asserted to be red:
 
 - pass 2 disabled -> `follows the book when it SPLITS one receipt line across two
@@ -67,13 +86,31 @@ asserted to be red:
   `AssertionError: expected { discountSen: +0, reconciles: true } to deeply equal
   { discountSen: 1483, reconciles: true }` — 1483 being the 3 x 32.94 vs 83.99
   gap above.
+- the price ignored in the first pass -> `keeps the price with the right line
+  when one receipt holds the same item at two prices` fails,
+  `AssertionError: expected [ '728225' ] to deeply equal [ '728240' ]` — the
+  920.00 receipt line coming away with an 850.00 amount.
 
-Restored, 11 of 11 pass. Measured over the whole book
-as well — all 1,292 goods-receipt lines of the 163 AutoCount receipts in the
-2026-09-09 plan: **1,287 pair to a book invoice line, and for all 1,287 the
-ERP's `qty x unit_price - discount` reproduces the book's amount to the sen; 0
-do not.** The 5 that do not pair are AutoCount not having invoiced them
-(`GR-004478` holds 4 such lines, `GR-004747` bills 1 of a 2-unit line).
+Restored, 12 of 12 pass.
+
+**Measured over the whole book**, every AutoCount goods receipt an invoice was
+raised from (21,458 receipt lines across 5,251 receipts, 5,259 usable invoices
+after 4 cancelled and 20 foreign are removed):
+
+| | |
+|---|---|
+| book receipt lines paired to an invoice line | **21,432** |
+| receipt lines AutoCount never invoiced | 30 |
+| invoice lines pairing to no receipt line | 1 |
+| receipt lines the book SPLIT across invoice lines | 4, all 4 across more than one invoice |
+| 1:1 pairings whose unit price moved | **0** |
+| lines where `qty x unit_price - discount` reproduces the book's amount to the sen | **21,431 of 21,432** |
+
+The one that does not is `PI-006292` line 763237, `AN-DINING CHAIR` 6 x 112.81 =
+676.86 against the book's **676.88**. It is a SURCHARGE, and the ERP has no
+column for one — so the book's amount is still what `line_total_sen` carries and
+only the arithmetic between the other two columns falls 2 sen short. It is
+counted and printed, not hidden.
 
 **A note that is not about invoices.** `scm.write_freeze` is enforced in the HTTP
 layer (`backend/src/scm/index.ts`). This script opens Postgres directly and never

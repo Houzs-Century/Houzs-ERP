@@ -40,11 +40,24 @@
  * What both sides DO state is the item code and the quantity, so the tie is
  * made on those, inside the one receipt the book names, and in two passes:
  *
- *   pass 1  exact (item code, quantity). One of our lines to one book line.
+ *   pass 1a exact (item code, quantity, UNIT PRICE, AMOUNT).
+ *   pass 1b exact (item code, quantity), for a caller that states no money.
  *   pass 2  the SPLIT of shape 1 above: our line's quantity is reached
  *           EXACTLY by a run of book lines of the same item code, in the
  *           book's own (document, seq) order. All of them bill that one
  *           receipt line, and they may sit on different invoices.
+ *
+ * PASS 1a EXISTS BECAUSE 1b ALONE SHUFFLES MONEY BETWEEN IDENTICAL SHAPES.
+ * `GR-003813` carries `HOK-2008(A) (K)` at qty 1 @ 920.00 (line 706711) AND at
+ * qty 2 @ 850.00 (line 706719). On (code, quantity) alone the qty-1 line took
+ * whichever qty-1 invoice line sorted first, which was the 850.00 one, and the
+ * 920.00 receipt line ended up carrying an 850.00 amount. Every LINE still
+ * equalled the book — the set is the same set — but which of our rows it
+ * belonged to was decided by sort order, which is position matching wearing a
+ * link's clothes (docs/bugs/0690). Comparing the price is safe HERE and only
+ * here because both sides of this pairing are the BOOK's own figures;
+ * `lib/ac-forced-line-pairing.mjs` states the same rule and the same reason for
+ * refusing to compare a price ACROSS the two systems.
  *
  * NEVER BY POSITION, and never by "close enough". A run that overshoots is not
  * taken. Anything left over on either side is COUNTED AND NAMED — an unbilled
@@ -83,8 +96,12 @@ const bookOrder = (a, b) =>
  * invoice lines that bill it.
  *
  * @param {object}   args
- * @param {Array<{lineId: string, itemCode: string, qty: number}>} args.ourLines
- *        our receipt's lines, already net of anything invoiced or returned.
+ * @param {Array<{lineId: string, itemCode: string, qty: number,
+ *                unitPriceSen?: number, amountSen?: number}>} args.ourLines
+ *        the receipt's lines. `unitPriceSen` / `amountSen` are used ONLY when
+ *        they are the BOOK's own figures on both sides — pass them from
+ *        `GRDTL`, never from `scm.grn_items`, whose price is derived from the
+ *        purchase order and would compare our derivation against the book.
  * @param {Array<{docNo: string, dtlKey: string, seq: number, itemKey: string,
  *                qty: number, unitPriceSen: number, amountSen: number}>} args.bookLines
  *        every book PURCHASE-INVOICE line raised from the AutoCount receipt(s)
@@ -120,18 +137,33 @@ export function assignBookInvoiceLines({ ourLines, bookLines, taken: sharedTaken
 
   const ours = [...(ourLines ?? [])];
 
-  /* ── PASS 1: exact (item code, quantity) ──────────────────────────────── */
-  const stillOurs = [];
+  /* ── PASS 1a: exact (item code, quantity, unit price, amount) ─────────── */
+  const claim = (l, hit, how) => {
+    taken.add(hit.dtlKey);
+    assigned.push({ lineId: l.lineId, acInvoiceNo: hit.docNo, book: hit, how });
+  };
+  const priced = (l) => l.unitPriceSen != null && l.amountSen != null;
+  const afterMoney = [];
   for (const l of ours) {
+    const k = code(l.itemCode);
+    const want = qty4(l.qty);
+    const hit = priced(l)
+      ? free(k).find((b) => qty4(b.qty) === want
+        && Math.round(b.unitPriceSen ?? 0) === Math.round(l.unitPriceSen)
+        && Math.round(b.amountSen ?? 0) === Math.round(l.amountSen))
+      : undefined;
+    if (!hit) { afterMoney.push(l); continue; }
+    claim(l, hit, `the book's ${hit.docNo} line ${hit.dtlKey} bills ${want} x ${k} off this receipt at the same price and amount`);
+  }
+
+  /* ── PASS 1b: exact (item code, quantity) ─────────────────────────────── */
+  const stillOurs = [];
+  for (const l of afterMoney) {
     const k = code(l.itemCode);
     const want = qty4(l.qty);
     const hit = free(k).find((b) => qty4(b.qty) === want);
     if (!hit) { stillOurs.push(l); continue; }
-    taken.add(hit.dtlKey);
-    assigned.push({
-      lineId: l.lineId, acInvoiceNo: hit.docNo, book: hit,
-      how: `the book's ${hit.docNo} line ${hit.dtlKey} bills ${want} x ${k} off this receipt`,
-    });
+    claim(l, hit, `the book's ${hit.docNo} line ${hit.dtlKey} bills ${want} x ${k} off this receipt`);
   }
 
   /* ── PASS 2: the book SPLIT this receipt line across several invoice lines ─
