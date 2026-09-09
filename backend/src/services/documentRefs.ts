@@ -106,6 +106,46 @@ async function claimFromCounter(env: Env, series: string, floor: number): Promis
   }
 }
 
+function isMissingRelation(msg: string): boolean {
+  return /no such table|does not exist|42P01/i.test(msg);
+}
+
+export type NextRefPreview = {
+  series: string;
+  deptCode: string;
+  typeCode: string;
+  yymm: string;
+  seq: number;
+  refNo: string;
+};
+
+/** The number the NEXT mint on a series would produce — the composer's
+ *  "Number on approval: OPS-ANN-2609-0004" and the register's "Next number"
+ *  (owner 2026-09-09: 需要显示目前档案号码). A preview, never a claim: nothing is
+ *  consumed, two people looking see the same number until one of them mints.
+ *  The shared counter (what the mint would actually hand out) when it is
+ *  there, the registry's floor otherwise — the higher of the two. */
+export async function peekNextRefNo(env: Env, input: { deptCode: string; typeCode: string; now?: number }): Promise<NextRefPreview> {
+  const deptCode = normaliseCode(input.deptCode);
+  const typeCode = normaliseCode(input.typeCode);
+  if (!deptCode || !typeCode) throw new Error("peekNextRefNo: codes must be 2–4 letters");
+  const yymm = yymmFor(input.now ?? Date.now());
+  const series = `${deptCode}-${typeCode}-${yymm}`;
+  let seq = (await seriesFloor(env, series)) + 1;
+  try {
+    // company-scope: the counter is the same company-wide authority the SCM document numbers use (mig 0316); a read, nothing claimed.
+    const row = await env.DB.prepare("SELECT next_n FROM scm.doc_number_counters WHERE series = ?")
+      .bind(series)
+      .first<{ next_n?: number | null }>();
+    const n = Number(row?.next_n);
+    if (Number.isFinite(n) && n > seq) seq = n;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!isMissingRelation(msg)) throw e;
+  }
+  return { series, deptCode, typeCode, yymm, seq, refNo: formatRefNo(deptCode, typeCode, yymm, seq) };
+}
+
 export type MintInput = {
   deptCode: string;
   typeCode: string;

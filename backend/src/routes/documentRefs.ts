@@ -1,6 +1,10 @@
 // ---------------------------------------------------------------------------
 // Document reference numbers + document types (owner 2026-09-06, plan A).
 //
+//   GET   /api/document-refs/next     — the number the next mint would give
+//                                       (?typeCode=, ?deptCode= — the caller's
+//                                       own department when omitted); a
+//                                       preview, nothing claimed
 //   GET   /api/document-refs/:refNo   — resolve a number to the record it
 //                                       indexes (any signed-in user; the
 //                                       record itself is still behind its own
@@ -26,9 +30,45 @@ import {
   getDocumentType,
   listDocumentTypes,
   normaliseCode,
+  peekNextRefNo,
 } from "../services/documentRefs";
 
 const app = new Hono<{ Bindings: Env }>();
+
+// Before /:refNo — a literal segment must not be swallowed by the param route.
+app.get("/document-refs/next", async (c) => {
+  const typeCode = normaliseCode(c.req.query("typeCode"));
+  if (!typeCode) return c.json({ success: false, error: "typeCode must be 2–4 letters (e.g. ANN, MEMO)." }, 400);
+  const deptGiven = c.req.query("deptCode");
+  let deptCode: string | null;
+  let deptName: string | null = null;
+  if (deptGiven == null || deptGiven === "") {
+    // The submitter's department — the [DEPT] segment an approval would use.
+    const user = c.get("user");
+    // company-scope: one user row by primary key, joined to the global departments table.
+    const row = await c.env.DB.prepare(
+      "SELECT d.name AS name, d.code AS code FROM users u LEFT JOIN departments d ON d.id = u.department_id WHERE u.id = ?",
+    )
+      .bind(user.id)
+      .first<{ name?: string | null; code?: string | null }>();
+    deptName = row?.name ?? null;
+    deptCode = normaliseCode(row?.code ?? "");
+    if (!deptCode) {
+      return c.json({
+        success: true,
+        data: null,
+        reason: deptName
+          ? `${deptName} has no department code yet, so this cannot be numbered. Set one under Team → Departments.`
+          : "You have no department, so this cannot be numbered. Team → Members assigns one.",
+      });
+    }
+  } else {
+    deptCode = normaliseCode(deptGiven);
+    if (!deptCode) return c.json({ success: false, error: "deptCode must be 2–4 letters (e.g. OPS)." }, 400);
+  }
+  const next = await peekNextRefNo(c.env, { deptCode, typeCode });
+  return c.json({ success: true, data: { ...next, deptName } });
+});
 
 app.get("/document-refs/:refNo", async (c) => {
   const ref = await findRef(c.env, c.req.param("refNo"));

@@ -61,7 +61,6 @@ import {
   Map,
   MapPinned,
   Megaphone,
-  FileSignature,
   History,
   Wand2,
   CalendarOff,
@@ -770,15 +769,6 @@ export const NAV_TABS: NavTab[] = [
     to: "/announcements",
     label: "Announcements",
     icon: Megaphone,
-  },
-  // ── Memos — the department memo register (docs/modules/memos.md). Ungated
-  // like Announcements: the register is read by any signed-in user and a
-  // department registers its own memos; memos.manage widens it.
-  {
-    section: "operations",
-    to: "/memos",
-    label: "Memos",
-    icon: FileSignature,
   },
 
   // Fleet Health moved into SCM > Transportation (2026-07-26) so the fleet-wide
