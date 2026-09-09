@@ -62,10 +62,12 @@
  *   this lane repairs only the documents NAMED in DO_TARGETS below, and each
  *   target is asserted against the book — document, DtlKey, quantity, unit
  *   price, line subtotal — and against the ERP — no row already answering it —
- *   before anything is written. Today that list is five lines: section G of the
- *   remainder doc, plus the four lines on DO-001953 / DO-004903 whose item code
- *   was changed on the delivery order AFTER it was converted from its sales
- *   order (docs/bugs/0711). Those four are written in the SUBSTITUTED shape
+ *   before anything is written. As of 2026-09-09 that list is SEVEN lines:
+ *   section G of the remainder doc, the four lines on DO-001953 / DO-004903
+ *   whose item code was changed on the delivery order AFTER it was converted
+ *   from its sales order (docs/bugs/0711), and the two RM 0.00 lines the
+ *   alignment lane found on DO-011465 and DO-010332. Those four are written in
+ *   the SUBSTITUTED shape
  *   docs/modules/delivery-order.md declares — `ac_substituted = true`,
  *   `so_item_id` NULL, `item_group` blank — never linked to an ordered line,
  *   because which ordered line each answers is a human judgement the book does
@@ -110,6 +112,7 @@ import { readMappingCsv, normCode } from "./lib/ac-mapping-csv.mjs";
 import { buildScope, currencyVerdict, decodeSnapshot } from "./lib/ac-scope.mjs";
 import { buildFabricColourIndex } from "./lib/fabric-colour-match.mjs";
 import { bedframeVariants, parseBedframe } from "./lib/parse-bedframe.mjs";
+import { DO_TARGETS } from "./lib/do-topup-targets.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TRUTH = path.join(HERE, "data", "ac-reconcile-truth.json.gz");
@@ -212,85 +215,8 @@ const keyOf = (v) => {
  * NULL (mig 0280 — NULL means "create"), which is why the target asserts the
  * book's row before the key is used.
  */
-const DO_TARGETS = [
-  {
-    acDoc: "DO-001604",
-    dtlKey: "199273",
-    erpCode: "DISPOSE",
-    group: "service",
-    /* Asserted against the book before anything is written. A target whose
-       book row has moved is REFUSED, never adjusted to fit. */
-    expect: { hasCode: false, qty: 1, unitSen: 15000, subTotalSen: 15000 },
-    why: "docs/cutover-so-do-remainder-2026-09-08.md section G — a text-only line carrying real money, explicitly NOT in the blank-row class of docs/bugs/0695",
-  },
-  /* ── THE FOUR LINES WHOSE CODE WAS CHANGED AFTER THE CONVERSION ───────────
-   * `substituted: true` is the shape docs/modules/delivery-order.md declares for
-   * a delivery line whose code the ordering document does not carry: the book's
-   * code verbatim, `so_item_id` NULL, `item_group` / `variants` blank, and
-   * `ac_substituted` true so both surfaces badge it. It is the SAME shape
-   * lib/migrated-do-writer.mjs wrote for HC-DO-001800 and HC-DO-005583; those
-   * two notes were CREATED by that writer because every line of them was a
-   * substitution, while these two notes already existed, and
-   * create-migrated-documents.mjs filters its plan by
-   * `!done.has(d.doNo)` (lib/migrated-do-writer.mjs:293) — a document already in
-   * the ERP is skipped whole, so the substitution ruling could never reach a
-   * line INSIDE one. That is why these four rows are still missing and the two
-   * sibling documents are complete.
-   *
-   * `description` is the book's own LineDesc, read from
-   * data/ac-partial-dos.json.gz — the same cut migrated-do-writer.mjs read when
-   * it wrote HC-DO-001800's two rows, so the four rows here read identically to
-   * their siblings. It is a DECLARED literal because the reconcile snapshot
-   * carries no LineDesc column; `expect` still asserts every value that decides
-   * the write against the book itself.
-   *
-   * `so_item_id` stays NULL and that is the whole point: SO-003186 transferred
-   * 4 of `NTYR-CS LTX PIL + CSC` and 4 of `AK- LTX CLS PIL`, and the note ships
-   * 4 pillows and 4 covers. {4,4} answers {4,4} as a multiset and the book
-   * cannot say which answers which — `FromDocDtlKey` is empty on all 48,772 DO
-   * lines in this book. docs/bugs/0706 ruled on exactly that shape.
-   */
-  {
-    acDoc: "DO-001953",
-    dtlKey: "234488",
-    erpCode: "HB109M-CC",
-    group: null,
-    substituted: true,
-    description: "COOL SILK LATEX PILLOW COVER",
-    expect: { hasCode: true, qty: 4, unitSen: 0, subTotalSen: 0 },
-    why: "docs/bugs/0713 — the book's delivery note carries this code and SO-003186 does not; the ERP note was created before the 2026-09-07 substitution ruling and dropped it",
-  },
-  {
-    acDoc: "DO-001953",
-    dtlKey: "234490",
-    erpCode: "HB109NL",
-    group: null,
-    substituted: true,
-    description: "LATEX PILLOW",
-    expect: { hasCode: true, qty: 4, unitSen: 0, subTotalSen: 0 },
-    why: "docs/bugs/0713 — same document, the other dropped line",
-  },
-  {
-    acDoc: "DO-004903",
-    dtlKey: "465251",
-    erpCode: "HB109NL",
-    group: null,
-    substituted: true,
-    description: "LATEX PILLOW",
-    expect: { hasCode: true, qty: 1, unitSen: 0, subTotalSen: 0 },
-    why: "docs/bugs/0713 — the book's delivery note carries this code and SO-006438 does not",
-  },
-  {
-    acDoc: "DO-004903",
-    dtlKey: "465254",
-    erpCode: "HB109M-CC",
-    group: null,
-    substituted: true,
-    description: "COOL SILK LATEX PILLOW COVER",
-    expect: { hasCode: true, qty: 1, unitSen: 0, subTotalSen: 0 },
-    why: "docs/bugs/0713 — same document, the other dropped line",
-  },
-];
+/* The named delivery-note lines, extracted so a test can resolve every one of
+   them against the book — see lib/do-topup-targets.mjs. */
 const DO_MARK = (dtlKey) => `topped up from AutoCount DtlKey ${dtlKey}`;
 
 const sql = postgres(DSN, { ssl: "require", prepare: false, max: 1 });
@@ -638,6 +564,11 @@ async function planDo({ book, prodByCode }) {
        itemKey IS its text; a coded line's text is the book's LineDesc, which
        this snapshot does not carry and the target declares. */
     const text = t.description ?? l.itemKey;
+    /* The book's OWN Desc2 for this DtlKey, never a value typed into a target.
+       It used to be written as NULL, which left a topped-up row silently
+       missing the build text every other row on the note carries —
+       「autocount怎么写我们就怎么写」. A book line with no Desc2 stays null. */
+    const desc2 = book.DO.desc2.get(l.dtlKey) ?? null;
     const already = rows.some((r) => String(r.notes ?? "").includes(DO_MARK(t.dtlKey))
       || keyOf(r.linked_ac_dtlkey) === t.dtlKey
       || (norm(r.item_code) === norm(t.erpCode) && Number(r.unit_price_sen) === e.unitSen && Math.round(Number(r.qty)) === e.qty));
@@ -649,10 +580,11 @@ async function planDo({ book, prodByCode }) {
     const lineTotal = e.unitSen * e.qty;
     const after = Number(hdr.hdr_total) + lineTotal;
     plain(`     + "${text}" x${e.qty} @ ${rm(e.unitSen)} = ${rm(lineTotal)}  [${t.group ?? "no item group"}] as ERP product ${t.erpCode}${t.substituted ? "  SUBSTITUTED (so_item_id stays NULL)" : ""}`);
+    plain(`       build text (the book's own Desc2): ${desc2 === null ? "(the book states none)" : JSON.stringify(desc2)}`);
     plain(`       ${t.why}`);
     plain(`     header ${rm(hdr.hdr_total)} + ${rm(lineTotal)} -> ${rm(after)}   the book says ${rm(h.totalSen)}${after === h.totalSen ? "  = MATCHES THE BOOK" : "  <-- STILL DIFFERS"}`);
     writes.push({
-      target: t, doId: hdr.id, doNo: hdr.do_number, text,
+      target: t, doId: hdr.id, doNo: hdr.do_number, text, desc2,
       qty: e.qty, unitSen: e.unitSen, lineTotal, bookHdr: h.totalSen, erpHdr: Number(hdr.hdr_total),
     });
   }
@@ -685,7 +617,7 @@ async function applyDo(plan) {
            item_group, description2, unit_price_sen, discount_sen, line_total_sen,
            unit_cost_sen, line_cost_sen, ac_substituted, linked_ac_dtlkey, notes)
         VALUES (${w.doId}, NULL, ${w.target.erpCode}, ${w.text}, 'UNIT', ${w.qty}, ${CO},
-           ${w.target.group}, NULL, ${w.unitSen}, 0, ${w.lineTotal},
+           ${w.target.group}, ${w.desc2}, ${w.unitSen}, 0, ${w.lineTotal},
            0, 0, ${w.target.substituted === true}, ${w.target.dtlKey},
            ${DO_MARK(w.target.dtlKey) + " on " + w.target.acDoc + " — the book carries this line and the migrated note did not"
              + (w.target.substituted === true
