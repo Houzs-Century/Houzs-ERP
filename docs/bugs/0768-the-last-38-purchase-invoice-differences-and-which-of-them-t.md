@@ -1,0 +1,104 @@
+## The last 38 purchase-invoice differences, and which of them the ERP can even answer [medium]
+
+<!-- area: Cutover + migrated data -->
+
+**Symptom.** The purchase-invoice tally reads **196 documents, 159 differ**
+after run 34372044049 created 141 migrated invoices from the book's own invoice
+lines. `diag-doc-differ-cause TYPE=PI` (run **34373997010**) splits those 159 —
+plus the 2 that cannot be compared — into 161 documents by cause. **121** carry
+`a book line we do not have, document total`, which is the cutover's
+outstanding-only scope plus a total the owner has ruled need not match. The
+other **40** are the subject of this entry.
+
+**Root cause (traced).** The 40 are three separate stories and only one of them
+is a defect in the invoice.
+
+**1. `transfer from` — 20 documents, 59 lines. NOT REPAIRABLE, and it is the
+same scope decision as the 121.** `repair-transfer-chain-links.mjs` with
+`TYPES=PI`, plan run **34374001809**:
+
+```
+479 keyed ERP line(s) read; 59 on 20 document(s) are what the tally LOCKS
+     59  parent_line_not_held
+CLOSES 0 document(s) on the transfer-from axis
+0 link(s) to write, over 0 document(s)
+PLAN DIGEST: e3b0c44298fc1c14
+```
+
+Every one of the 59 refuses with *"the book raised it from line NNNNNN and no
+ERP row carries that AutoCount line key"*. That refusal is a GLOBAL statement,
+not a local one: the resolver's `parents(keys)` query for PI scans every
+`scm.grn_items` row of company 1 under a non-cancelled receipt
+(`repair-transfer-chain-links.mjs`, `EDGES.PI.parents`). So there is nowhere in
+our goods receipts for these invoice lines to point.
+
+`diag-transfer-chain-56.mjs` (run **34374232159**) shows why at line grain. On
+18 of the 20 the book's source receipt has no ERP counterpart at all — 21
+receipts across those 18 invoices, every one of them answering
+`CANDIDATES on GR-004991: 0 ERP line(s)` and the same for GR-005068, GR-005081,
+GR-005132, GR-005164, GR-005261, GR-005262, GR-005272, GR-005276, GR-005277,
+GR-005280, GR-005284, GR-005285, GR-005286, GR-005288, GR-005291, GR-005294,
+GR-005295, GR-005296, GR-005298, GR-005318. On the remaining two we hold the
+receipt but not the LINE: `PI-007895` is raised from `GR-005241`, our
+`GR-005241` carries lines 904063 / 904065 and the book's invoice line is raised
+from **904067**, and `PI-007893`'s fourth line is the same shape on `GR-005244`.
+That is the outstanding-only scope showing up at line grain rather than document
+grain. **PR #3392's own plan closed the 12 of these that were closable; the 20
+that remain are what is left after it.**
+
+**2. The specification axes — 9 documents, plus 2 single-axis neighbours.** `T.Heights`, `colour / fabric`,
+`divan height`, `gap` and `leg height` on HC-PI-003230, 006244, 007555, 007761,
+007797, 007702, 007811, 007875 and 007893 — and `colour / fabric` alone on
+HC-PI-007917, `seat size` alone on HC-PI-001793: the book states a value and the
+ERP line is `(blank)` on every axis at once. A migrated invoice line is a COPY —
+`create-migrated-invoices.mjs` `writePi` writes `l._row.variants`,
+`l._row.description2` and `l._row.item_code` straight off the goods-receipt row
+— so an all-axes blank on the invoice is an all-axes blank on the receipt it was
+copied from. `diag-pi-line-provenance.mjs` (this PR) is what prints the receipt
+side beside the invoice side; **until it has been run the receipt's own values
+are UNKNOWN**, and repairing the invoice without knowing them would be repairing
+the copy and leaving the original.
+
+**3. The specials — 7 documents, and NEITHER writer can reach them.** HC-PI-
+007702, 007811, 007824, 007854, 007875, 007894 and 007917 carry the shape *"the book asks for
+Nylon Fabric and the line does not carry it"* — and note that the two Desc2
+strings printed either side of the finding are IDENTICAL. The request text is on
+the line; the resolved CODE is not. `variants.specials` folds into the
+authoritative unit price, and the owner ruled on 2026-08-11 that a historical
+document may not be repriced by stamping a priced code. The two writers that
+know that — `backfill-specials-into-variants.mjs` and
+`record-priced-specials-on-migrated-lines.mjs` — both declare
+`TABLES = [["so", "mfg_sales_order_items"], ["po", "purchase_order_items"]]`
+and **neither touches `scm.purchase_invoice_items`**. So there is no
+money-guarded path to a purchase-invoice line today. Writing one by hand is
+exactly the third writer `repair-so-variant-from-book.mjs` refuses to become.
+
+**Fix.** None yet, deliberately. What lands here is the measurement that was
+missing: `diag-pi-line-provenance.mjs`, read-only, pinned with
+`default_transaction_read_only`, which prints our invoice line, the receipt line
+it was copied from, and the book's own source line with its Desc2 — the three
+sides nobody had put next to each other. It decides nothing:
+`check-ac-erp-reconcile.mjs` remains the only thing here that says two values
+differ (docs/bugs/0689, docs/bugs/0708).
+
+**Owner's, not ours.** `sofa compartments` (HC-PI-007968, 008023, 008024 — the
+book's one sofa line decomposes to two pieces and we hold one) and `sofa build
+not verifiable` (HC-PI-001793, 007114, 007817, 007894, 007917, plus 000946 and
+007251 inside the 121) need his drawing; docs/bugs/0765 records why the
+refusal is right. `lines could not be matched` on HC-PI-005959 and HC-PI-007252
+is the AMBIGUOUS verdict — one book sofa, our side folding to between one and
+two whole sofas — which is docs/bugs/0690's class and must not be forced.
+HC-PI-007918 is not ambiguous but contradictory: the book has `DSL-8030 SOFA`
+qty 1 at RM 3,630.00 and we have `9058` qty 1 at RM 3,630.00, a different MODEL
+at the same money. HC-PI-007928's `item code` finding reads as two swapped pairs
+— DtlKey 915115 `AK-IMMORTAL MATT (K)` against our `AKEMI ULTIMATE MATT (K)`,
+915132 the exact mirror — and **that reading is wrong.** Run 34374232159 dumps
+the document at line grain: **11 of our 12 rows carry `key=NONE`**, only 915112
+is stamped, so the reconcile is pairing IMMORTAL and ULTIMATE by its own
+value-then-order fallback and the "swap" is the fallback's ordering, not a key
+sitting on the wrong row. It is docs/bugs/0690's class exactly, and it is what
+`repair-so-variant-from-book.mjs` already refuses in words — *"this document was
+migrated without line keys ... REPORTED, not guessed"*. Nothing here should be
+written until the rows carry keys.
+
+**Ref.** fix/pi-last-38, 2026-09-09.
