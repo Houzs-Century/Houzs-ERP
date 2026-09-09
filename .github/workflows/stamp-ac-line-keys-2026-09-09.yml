@@ -24,8 +24,11 @@ name: Stamp AutoCount line keys (2026-09-09)
 #   ONE    exactly one unclaimed book line on that document, matching on both
 #          quantity and price.
 #
-# NOT INCLUDED: HC-SO-012312. Its extra HILTON (A)-(Q) carries RM 250 the book
-# does not, which is money, and the owner said twice that somebody else has it.
+# HC-SO-012312 was excluded and is now IN, which is a change of scope and not of
+# rule: the owner released it the same day (「这个order开放给人家edit 他们会处理」).
+# Its LINE KEY is stamped and its money is not — the RM 250 on the added row is a
+# hand-typed unit price the book has no line for, and settling it is what staff
+# open the document to do.
 #
 # IDENTITY, NOT VALUE. One column is written, `linked_ac_dtlkey`. The
 # verification asserts on a FRESH connection that the whole table's rows,
@@ -45,7 +48,7 @@ name: Stamp AutoCount line keys (2026-09-09)
 #
 # REVERSAL. Uniform — every stamped row was NULL:
 #   UPDATE scm.mfg_sales_order_items SET linked_ac_dtlkey = NULL
-#    WHERE (doc_no, line_no) IN (...the 23 pairs in the script's MANIFEST...);
+#    WHERE (doc_no, line_no) IN (...every pair in the script's MANIFEST...);
 # Re-running the script stamps them again, so the undo is safe to try.
 
 on:
