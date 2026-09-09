@@ -1,9 +1,9 @@
 {
-  "exported_at": "2026-09-07T22:21:06",
+  "exported_at": "2026-09-09T10:24:26",
   "source": "AED_HOUZS live (read-only)",
   "post_cutoff_activity": {
     "DO": {
-      "docs": 333,
+      "docs": 350,
       "latest": "2026-09-19"
     },
     "GR": {
@@ -54,6 +54,6 @@
     }
   },
   "balance_cells": 2689,
-  "so_rows": 13366,
-  "items": 1589
+  "so_rows": 13373,
+  "items": 1591
 }
