@@ -33,6 +33,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // shared is what an unreadable value means — see readWritebackScope: the freeze
 // fails closed by freezing everything, this flag fails closed by staying OFF.
 import { parseFreezeValue } from './write-freeze';
+/* THE SECOND QUESTION THIS FUNCTION ANSWERS, added 2026-09-09. See
+   ac-repair-suppression.ts for the whole reasoning. */
+import { isRepairClient } from './ac-repair-suppression';
 
 export const WRITEBACK_KEY = 'scm.autocount_writeback';
 
@@ -89,11 +92,26 @@ export async function readWritebackScope(
   }
 }
 
-/** Is the write-back on for this company? Never throws. */
+/**
+ * May this client write back for this company? NEVER throws.
+ *
+ * TWO questions, and the second one was added 2026-09-09. The flag asks whether
+ * the write-back is ON for the company. `isRepairClient` asks whether a CUTOVER
+ * REPAIR is making the change — and a repair's change must never travel,
+ * because a repair copies a value out of the account book and sending it back
+ * overwrites the owner's source of truth with our version of it.
+ *
+ * They live in one function on purpose. Every enqueue path in autocount-outbox.ts
+ * already gates on this call — including enqueueCancel and enqueueEdit, whose
+ * own UPDATE paths never reach enqueueAcOp's insert — so asking here reaches all
+ * of them and cannot be forgotten at a new call site the way a second, parallel
+ * check could be.
+ */
 export async function isWritebackEnabled(
   sb: SupabaseClient<any, any, any>,
   companyId: number | null | undefined,
 ): Promise<boolean> {
+  if (isRepairClient(sb)) return false;
   const scope = await readWritebackScope(sb);
   if (scope === 'off') return false;
   if (scope === 'all') return true;

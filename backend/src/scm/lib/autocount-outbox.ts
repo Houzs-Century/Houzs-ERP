@@ -45,13 +45,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
-/* The SECOND gate, and a different question from the flag above. The flag asks
-   "is the write-back on for this company"; this asks "did a cutover repair make
-   this change". A repair copies a value OUT of the account book, so sending it
-   back is pointless where they agree and overwrites the owner's source of truth
-   where they do not. See ac-repair-suppression.ts for why the mark lives on the
-   client rather than in each caller's options. */
-import { isRepairClient } from './ac-repair-suppression';
 import { inAcLineOrder } from './ac-line-order'; import { poRaisedFromSo } from './so-po-raised';
 import { claimOutboxRow, releaseExpiredClaims } from './autocount-claim';
 import { splitSofaCode } from '../../services/autocount-sofa-collapse';
@@ -321,12 +314,6 @@ export interface EnqueueInput {
 export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean> {
   try {
     if (input.companyId == null) return false;
-    /* A CUTOVER REPAIR NEVER QUEUES. This is the backstop: every insert into
-       scm.autocount_outbox in this module funnels through here, including the
-       `skipped` rows recordConvertSkipped and noteReadFailure write. A repair
-       leaves NO row at all — not even a skipped one, which would put our import
-       work in front of an operator as though a person had saved something. */
-    if (isRepairClient(sb)) return false;
     if (!(await isWritebackEnabled(sb, input.companyId))) return false;
     const { error } = await sb.from('autocount_outbox').insert({
       company_id: input.companyId,
@@ -567,7 +554,6 @@ export async function enqueueSoCreate(
 ): Promise<AcEnqueueOutcome> {
   try {
     if (opts.companyId == null) return AC_ENQUEUE_SILENT;
-    if (isRepairClient(sb)) return AC_ENQUEUE_SILENT;
     if (!(await isWritebackEnabled(sb, opts.companyId))) return AC_ENQUEUE_SILENT;
     const header = await readOrThrow('mfg_sales_orders header',
       sb.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', opts.docNo).maybeSingle());
@@ -677,7 +663,6 @@ export async function enqueuePoCreate(
   let poNumber = opts.poId;
   try {
     if (opts.companyId == null) return AC_ENQUEUE_SILENT;
-    if (isRepairClient(sb)) return AC_ENQUEUE_SILENT;
     if (!(await isWritebackEnabled(sb, opts.companyId))) return AC_ENQUEUE_SILENT;
     const header = await readPoHeader(sb, opts.poId);
     if (!header) return AC_ENQUEUE_SILENT;
@@ -1140,10 +1125,6 @@ export async function enqueueCancel(
 ): Promise<boolean> {
   try {
     if (opts.companyId == null) return false;
-    /* Before the UPDATE paths below, not only the inserts: enqueueCancel marks a
-       pending row `skipped` and enqueueEdit folds new state into a pending
-       create, and neither goes through enqueueAcOp's backstop. */
-    if (isRepairClient(sb)) return false;
     if (!(await isWritebackEnabled(sb, opts.companyId))) return false;
     const pending = await findPendingOriginatingOp(sb, opts.companyId, opts.docType, opts.docNo, opts.docId ?? null);
     if (pending) {
@@ -1235,10 +1216,6 @@ export async function enqueueEdit(
 ): Promise<boolean> {
   try {
     if (opts.companyId == null) return false;
-    /* Before the UPDATE paths below, not only the inserts: enqueueCancel marks a
-       pending row `skipped` and enqueueEdit folds new state into a pending
-       create, and neither goes through enqueueAcOp's backstop. */
-    if (isRepairClient(sb)) return false;
     if (!(await isWritebackEnabled(sb, opts.companyId))) return false;
 
     const retired = (opts.retire ?? []).filter((r) => Number.isFinite(Number(r.DtlKey)));

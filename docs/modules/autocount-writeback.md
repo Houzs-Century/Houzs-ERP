@@ -321,10 +321,15 @@ pgrestShim(sql, "scm", { writeback: "enqueue" })    -> a deliberate push tool
 
 **Suppressed is the DEFAULT and the polarity is the point.** A repair that
 forgets gets the safe behaviour; pushing has to be typed out, so pushing is what
-a reviewer sees. `src/scm/lib/ac-repair-suppression.ts` holds the mark;
-`isRepairClient` is checked in `enqueueAcOp` (the one insert every path funnels
-through, including the `skipped` rows) and again at the top of `enqueueCancel`
-and `enqueueEdit`, whose own UPDATE paths do not reach that backstop.
+a reviewer sees.
+
+`src/scm/lib/ac-repair-suppression.ts` holds the mark, and **the check lives
+inside `isWritebackEnabled`** (`autocount-writeback-flag.ts`) rather than at each
+enqueue. One function, two questions: is the write-back on for this company, and
+is a repair making the change. Every enqueue path already gates on that call —
+including `enqueueCancel` and `enqueueEdit`, whose own UPDATE paths never reach
+`enqueueAcOp`'s insert — so asking there reaches all of them and cannot be
+forgotten at a new call site the way a second, parallel check could be.
 
 **It is a `Symbol`**, so "cannot be set from a UI request" is structural rather
 than a convention: a request body, query string and header can only produce
