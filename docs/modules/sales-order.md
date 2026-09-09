@@ -3717,6 +3717,23 @@ enforced in code:
 | keys | owner |
 |---|---|
 | `fabricId` / `colourId` / `fabricCode` / `colourLabel` / `fabricLabel` / `gap` / `divanHeight` / `legHeight` / `totalHeight` / `size` | the AutoCount re-parse sweeps — `OWNED_VARIANT_KEYS` in `backend/scripts/lib/variant-merge.mjs` |
+
+**`totalHeight` IS NULL WHEN A COMPONENT IS UNDECIDED, and that is not the same
+as zero.** `buildBedframeVariantPatch` (`lib/variant-merge.mjs`) writes `null`
+whenever `parseBedframe` reports `divanPending`, `gapPending` or `legPending` —
+an EXPLICIT `TBC` / `KIV` against that keyword in the Desc2. Nobody knows how
+tall `Divan: TBC / Gap: 12"` is, and the old expression answered `12"` because
+`Number(undefined) || 0` counted "not chosen yet" as zero
+(`docs/bugs/0732`, finished in `docs/bugs/0734`). The rule is written in THREE
+places — this one, `lib/parse-bedframe.mjs`'s `bedframeVariants` and
+`lib/variant-reconcile.mjs`'s `decodeBook`, the reconcile's BOOK side — and all
+three now READ the same three flags rather than re-deciding it;
+`backend/tests/bedframePendingHeightAllReaders.test.ts` pins two of them against
+the owner's model, hand-written, never against each other.
+
+A component the text merely never MENTIONS is untouched: a divan with no leg
+mentioned still means no leg (`0`), and `Gap: 14"` with a divan still totals
+`22"`. Only an explicit marker makes the total unknown.
 | `specials` (and the HOOKKA singular `special`) | `backend/scripts/backfill-specials-into-variants.mjs`, the only writer with the money guard — a picked add-on's surcharge folds into the authoritative unit price, so stamping a PRICED code reprices a historical document |
 | everything else (POS configurator, line editors) | its own writer |
 
