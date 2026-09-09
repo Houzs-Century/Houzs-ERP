@@ -212,7 +212,7 @@ jobs:
       # a backend-only PR never runs `frontend-checks` (it is gated on
       # `changes.outputs.frontend`). Widening the constant on this side alone
       # would silently leave the input boxes disagreeing with the book.
-      - run: node ../frontend/scripts/check-address-line-max.mjs
+      - run: node ../frontend/scripts/check-ac-column-widths.mjs
       # The AutoCount write-back composes against two GENERATED files: the
       # cutover item map (D10) and the real Desc2 sofa corpus the collapse tests
       # run on (D9). Both are compiled from backend/scripts/data/ because the
@@ -841,7 +841,7 @@ jobs:
       # document (docs/bugs/0728); the owner asked for the limit to be on
       # the input, and a limit kept by remembering is a limit the next address
       # input will not have. Zero dependencies, reads two files and the tsx tree.
-      - run: node scripts/check-address-line-max.mjs
+      - run: node scripts/check-ac-column-widths.mjs
 
   # The typecheck half of what used to be one `frontend-checks` job.
   #
