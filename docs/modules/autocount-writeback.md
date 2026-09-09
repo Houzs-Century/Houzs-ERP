@@ -5507,3 +5507,16 @@ connection in `VERIFY`.
 The decision is pure and tested: `scripts/lib/sofa-downstream-parity.mjs` with
 `sofa-downstream-parity.test.mjs`; the guards are pinned at the write site by
 `tests/sofaDownstreamParityGuards.test.mjs`.
+
+**Every read the downstream write needs happens BEFORE the transaction opens,
+and that is not a style choice.** `newSql()` builds the pool with `max: 1`, so
+`sql.begin` holds the only connection for the whole callback; a helper reaching
+for the module-level `sql` from inside it waits for a connection the block itself
+is holding, and the process HANGS — no error, no rollback, a stopped job whose
+log looks exactly like a slow query. It cost prod apply run `34320397321`, which
+had to be cancelled (nothing was written; the transaction never committed). The
+label column, the product names and every parent link are resolved above the
+block, which touches `tx` only, and
+`tests/sofaDownstreamParityGuards.test.mjs` brace-matches the block and pins it.
+`docs/bugs/0749` states the rule for every script here: **inside `sql.begin`,
+only `tx` exists.**

@@ -431,17 +431,43 @@ async function applyDownstreamDoc(doc, kind, c, verify) {
 
   const seat = seatHeightToWrite(c.seat);
   const linkNotes = [];
+
+  /* ── EVERY READ THIS WRITE NEEDS HAPPENS BEFORE THE TRANSACTION OPENS ──────
+     `newSql()` builds the pool with `max: 1`, so the single connection is HELD
+     for the whole of `sql.begin`. A helper that reaches for the module-level
+     `sql` from inside that block waits for a connection the block itself is
+     holding, and the process hangs — not an error, not a rollback, a stopped
+     job. Measured: prod apply run 34320397321 sat in `node
+     scripts/apply-sofa-compartment-corrections.mjs` with no further output and
+     was cancelled; nothing was written, because the transaction never
+     committed. So the label column and every parent link are resolved HERE, and
+     the block below touches `tx` only. docs/bugs/0749. */
+  const label = await labelColumnName(spec.table);
+  const names = new Map();
+  for (const code of [...plan.keep.map((k) => k.to), ...plan.add.map((a) => a.to)]) {
+    if (names.has(code)) continue;
+    const [row] = await sql`SELECT name FROM scm.mfg_products WHERE company_id = ${CO} AND upper(code) = ${code} LIMIT 1`;
+    names.set(code, row?.name ?? code);
+  }
+  /* THE LINK IS RESOLVED OR LEFT NULL — never guessed. */
+  const links = new Map();
+  if (plan.template?.parent_id) {
+    for (const a of plan.add) {
+      const hits = await spec.parentOf(plan.template.parent_id, a.to);
+      if (hits.length === 1) links.set(a.to, hits[0].id);
+      else {
+        links.set(a.to, null);
+        linkNotes.push(`${compartmentOf(a.to)}: ${hits.length} candidate parent line(s), so ${spec.link} is left unset rather than guessed`);
+      }
+    }
+  }
+
   await sql.begin(async (tx) => {
     for (const k of plan.keep) {
       const src = pick.rows.find((r) => String(r.id) === String(k.id));
       const v = { ...(src?.variants ?? {}) };
       if (seat.write) v.seatHeight = seat.value;
-      const name = (await tx`SELECT name FROM scm.mfg_products WHERE company_id = ${CO} AND upper(code) = ${k.to} LIMIT 1`)[0]?.name ?? k.to;
-      /* `material_name` / `description` is the row's own label for the code, and
-         only some of these tables carry one. Which column exists is READ from
-         the table rather than assumed, and where there is none the label is
-         simply not written — never swallowed as a failed statement. */
-      const label = await labelColumnName(spec.table);
+      const name = names.get(k.to);
       await tx.unsafe(
         `UPDATE ${spec.table} SET item_code = $1, variants = $2::text::jsonb${label ? `, ${ident(label)} = $4` : ""} WHERE id = $3`,
         label ? [k.to, JSON.stringify(v), k.id, name] : [k.to, JSON.stringify(v), k.id]);
@@ -449,17 +475,10 @@ async function applyDownstreamDoc(doc, kind, c, verify) {
     for (const a of plan.add) {
       const v = { ...(plan.template?.variants ?? {}) };
       if (seat.write) v.seatHeight = seat.value;
-      const name = (await tx`SELECT name FROM scm.mfg_products WHERE company_id = ${CO} AND upper(code) = ${a.to} LIMIT 1`)[0]?.name ?? a.to;
       const over = { item_code: a.to, variants: JSON.stringify(v) };
       for (const m of money) over[m] = 0;
-      /* THE LINK IS RESOLVED OR LEFT NULL — never guessed. */
-      if (plan.template?.parent_id) {
-        const hits = await spec.parentOf(plan.template.parent_id, a.to);
-        if (hits.length === 1) over[spec.link] = hits[0].id;
-        else { over[spec.link] = null; linkNotes.push(`${compartmentOf(a.to)}: ${hits.length} candidate parent line(s), so ${spec.link} is left unset rather than guessed`); }
-      }
-      const label = await labelColumnName(spec.table);
-      if (label) over[label] = name;
+      if (links.has(a.to)) over[spec.link] = links.get(a.to);
+      if (label) over[label] = names.get(a.to);
       const lineNo = await nextLineNo(tx, spec, head.id);
       if (lineNo !== null) over.line_no = lineNo;
       await cloneRow(tx, spec.table, plan.template.id, over, ["variants"]);
