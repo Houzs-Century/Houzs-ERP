@@ -24,7 +24,7 @@ import type { Env, Variables } from '../env';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { assembleMonth, monthOf, monthWindow, type MonthStatement } from '../../acc/bank-month';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
-import { loadPayableBatches, loadAccountLedger } from '../../acc/bank';
+import { loadPayableBatches, loadAccountLedger, loadLiveMonthLock } from '../../acc/bank';
 import { bankGuard } from './accounting-bank';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -33,6 +33,12 @@ type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
     below rather than trusted, so a column that changes shape fails here and
     not three screens later. */
 type Row = Record<string, unknown>;
+
+/* The Supabase client this tree passes around is untyped, and acc/bank.ts
+   already declares what it takes. Borrowing that type rather than writing a
+   fresh one keeps the two from drifting and adds no new unchecked surface —
+   it is the same client, named once. */
+type Db = Parameters<typeof loadAccountLedger>[0];
 
 /** Whatever came back, as rows. Null, undefined and a non-array are all "no
     rows" — the alternative is a read that half-succeeds and is counted. */
@@ -90,6 +96,24 @@ export const bankMonths = bankGuard(async (c) => {
     .select('id, statement_id, booked_on, amount_sen, state, kind')
     .eq('company_id', co.companyId);
   if (lineRes.error) return c.json({ error: 'load_failed', reason: lineRes.error.message }, 500);
+
+  /* Which months are already closed. One read for the whole list rather than
+     one per month: the list is the screen that decides whether to offer a
+     Reconcile button at all, and a month that looks workable and is not wastes
+     the press and the trip. */
+  const lockRes = await sb.from('acc_bank_month_locks')
+    .select('account_code, period_month, locked_by, locked_at')
+    .eq('company_id', co.companyId).is('released_at', null);
+  if (lockRes.error) return c.json({ error: 'load_failed', reason: lockRes.error.message }, 500);
+  const lockedMonths = new Map<string, { lockedBy: string | null; lockedAt: string }>();
+  for (const l of rowsOf(lockRes.data)) {
+    const account = textOf(l.account_code) ?? '';
+    const month = String(l.period_month ?? '').slice(0, 7);
+    lockedMonths.set(`${account}|${month}`, {
+      lockedBy: textOf(l.locked_by),
+      lockedAt: String(l.locked_at ?? ''),
+    });
+  }
 
   const byId = new Map<number, Row>(statements.map((s) => [Number(s.id), s]));
 
@@ -176,11 +200,77 @@ export const bankMonths = bankGuard(async (c) => {
         closingBalanceSen: assembly?.statementClosingSen ?? null,
         complete: assembly?.complete ?? false,
         gapCount: assembly?.gaps.length ?? 0,
+        /* Null means open, and the list says WHO closed it — the operator who
+           finds a month he cannot work needs the name, not a padlock. */
+        locked: lockedMonths.get(`${b.accountCode}|${b.month}`) ?? null,
       };
     });
 
   return c.json({ months });
 });
+
+/**
+ * The month as it stands, for the LOCK route to judge.
+ *
+ * The same assembly and the same reconciliation the month screen reads, so what
+ * gets closed is what the operator was looking at. A second, simpler count
+ * written beside the lock route would be a second opinion about whether a month
+ * is finished, and the two would part company on the first change to either.
+ */
+export async function loadMonthForLock(
+  sb: Db, companyId: number, accountCode: string, month: string,
+): Promise<
+  | { ok: true; assembly: NonNullable<ReturnType<typeof assembleMonth>>;
+      reconciliation: ReturnType<typeof reconcileBankStatement>;
+      openCount: number; lineCount: number; statementCount: number }
+  | { ok: false; reason: string }
+> {
+  const window = monthWindow(month);
+  if (!window) return { ok: false, reason: `${month} is not a month` };
+
+  const stmtRes = await sb.from('acc_bank_statements')
+    .select(STATEMENT_FIELDS).eq('company_id', companyId).eq('account_code', accountCode);
+  if (stmtRes.error) return { ok: false, reason: stmtRes.error.message };
+  const allStatements = rowsOf(stmtRes.data);
+  const ids = allStatements.map((s) => Number(s.id));
+
+  const linesRes = ids.length === 0
+    ? { data: [] as Row[], error: null }
+    : await sb.from('acc_bank_statement_lines')
+      .select(LINE_FIELDS).eq('company_id', companyId).in('statement_id', ids)
+      .order('booked_on').order('line_no');
+  if (linesRes.error) return { ok: false, reason: linesRes.error.message };
+
+  const lines = rowsOf(linesRes.data).filter((l) => {
+    const on = dayOf(l.booked_on);
+    return on !== null && on >= window.from && on <= window.to;
+  });
+  const movements = lines.map((l) => asMovement(l, textOf(l.posted_je_no)));
+
+  const fedIds = new Set(lines.map((l) => Number(l.statement_id)));
+  const fed = allStatements.filter((s) => fedIds.has(Number(s.id)));
+  const assembly = assembleMonth(month, fed.map(asMonthStatement), movements);
+  if (!assembly) return { ok: false, reason: `${month} is not a month` };
+
+  const ledger = await loadAccountLedger(sb, companyId, accountCode, assembly.periodTo);
+  if (!ledger.ok) return { ok: false, reason: ledger.reason };
+
+  return {
+    ok: true,
+    assembly,
+    reconciliation: reconcileBankStatement({
+      periodFrom: assembly.periodFrom,
+      periodTo: assembly.periodTo,
+      statementOpeningSen: assembly.statementOpeningSen,
+      statementClosingSen: assembly.statementClosingSen,
+      movements,
+      ledger: ledger.movements,
+    }),
+    openCount: lines.filter((l) => String(l.state) === 'OPEN').length,
+    lineCount: lines.length,
+    statementCount: fed.length,
+  };
+}
 
 /* ── GET /bank/months/:accountCode/:month — one month, reconciled ─────────── */
 
@@ -257,8 +347,16 @@ export const bankMonthDetail = bankGuard(async (c) => {
   const assembly = assembleMonth(month, fed.map(asMonthStatement), movements);
   if (!assembly) return c.json({ error: 'bad_month' }, 400);
 
-  const ledger = await loadAccountLedger(sb, co.companyId, accountCode, assembly.periodTo);
+  const [ledger, held] = await Promise.all([
+    loadAccountLedger(sb, co.companyId, accountCode, assembly.periodTo),
+    loadLiveMonthLock(sb, co.companyId, accountCode, month),
+  ]);
   if (!ledger.ok) return c.json({ error: 'load_failed', reason: ledger.reason }, 500);
+  /* A LOCK THE SCREEN CANNOT READ IS A REFUSAL, not an omission. A month that
+     draws its buttons as though it were open, because the lock read quietly
+     failed, is the one way this can mislead somebody into attempting a write
+     the server will then bounce. */
+  if (!held.ok) return c.json({ error: 'load_failed', reason: held.reason }, 500);
 
   const reconciliation = reconcileBankStatement({
     periodFrom: assembly.periodFrom,
@@ -284,6 +382,9 @@ export const bankMonthDetail = bankGuard(async (c) => {
     month,
     assembly,
     reconciliation,
+    /* Null means open. The screen renders the LOCK rather than inferring one
+       from a disabled button, so a closed month says who closed it and why. */
+    lock: held.lock,
     /* Named, in the order they cover the month, so a break can be chased to the
        two files it is between. */
     statements: [...fed]

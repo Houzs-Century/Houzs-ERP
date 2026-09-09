@@ -780,3 +780,120 @@ describe('bank recognition rules — maintenance', () => {
     expect(((await blank.json()) as Row).error).toBe('pattern_required');
   });
 });
+
+/* ── A CLOSED MONTH REFUSES EVERY WRITE ───────────────────────────────────────
+   Owner, 2026-09-08: 还有lock 起来不可以随便碰. The rule table is pinned pure in
+   src/acc/bank-lock.test.ts; what is pinned HERE is that the guard is actually
+   wired to each door — a rule nothing calls is a rule that does not exist, and
+   this is the file where "every handler asks first" can be checked one handler
+   at a time.
+
+   The other thing pinned here: a lock is matched by the MOVEMENT'S OWN DATE.
+   August's lock must not stop an August-dated file's September movements, and
+   September's must stop them — that is bank-month rule 1 reaching the guard. */
+
+/* SNAPSHOTTED AT MODULE LOAD, not inside the helper. The fixtures at the top of
+   this file are shared objects and the fake client mutates rows IN PLACE — by
+   the time a test body runs, the rules tests have switched rule 1 off and added
+   a third, and the booking tests have received the batch. Cloning inside the
+   helper would faithfully clone that damage; cloning here happens before any
+   test body has run, which is the only moment the fixtures are still what they
+   say they are. Without this every credit reads OTHER and the lock under test
+   is proved against nothing. */
+const PRISTINE = {
+  rules: structuredClone(RULES),
+  batch: structuredClone(BATCH),
+  row: structuredClone(CONFIRMED_ROW),
+};
+
+const LOCK = (month: string, over: Row = {}): Row => ({
+  id: 1, company_id: CO, account_code: '330-0000', period_month: `${month}-01`,
+  locked_by: 'Chew', locked_at: '2026-10-02T03:14:00Z', lock_note: null,
+  closing_statement_sen: null, closing_ledger_sen: null, difference_sen: null,
+  statement_count: 3, was_complete: true, released_at: null, ...over,
+});
+
+describe('a month somebody has closed', () => {
+  const openedThen = async (locks: Row[]) => {
+    /* Upload FIRST, with no lock in place, so the movements exist; then close
+       the month and try to work them. That is the real order — a lock always
+       arrives after the month has been reconciled. */
+    /* Every fixture from the module-load snapshot — see PRISTINE. */
+    const rig = harness({
+      acc_bank_recognition_rules: structuredClone(PRISTINE.rules),
+      acc_settlement_batches: [structuredClone(PRISTINE.batch)],
+      acc_settlement_rows: [structuredClone(PRISTINE.row)],
+    });
+    const up = await (await upload(rig.app)).json() as any;
+    const detail = await (await rig.app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    rig.sb.tables.acc_bank_month_locks = locks;
+    return { ...rig, statementId: up.statementId, lines: detail.lines as any[] };
+  };
+
+  test('refuses to book a credit, and says who closed it and when', async () => {
+    const { app, lines } = await openedThen([LOCK('2026-08')]);
+    const payout = lines.find((l) => l.kind === 'PAYOUT');
+    const res = await post(app, `/bank/lines/${payout.id}/receipt`, { batchId: 1 });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as Row;
+    expect(body.error).toBe('month_locked');
+    expect(String(body.message)).toContain('330-0000 2026-08');
+    expect(String(body.message)).toContain('Chew');
+    expect(String(body.message)).toContain('2026-10-02');
+  });
+
+  test('refuses to leave a movement out', async () => {
+    const { app, lines } = await openedThen([LOCK('2026-08')]);
+    const res = await post(app, `/bank/lines/${lines[0].id}/ignore`, { note: 'own transfer' });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as Row).error).toBe('month_locked');
+  });
+
+  test('refuses to undo a movement', async () => {
+    const { app, lines } = await openedThen([LOCK('2026-08')]);
+    const res = await post(app, `/bank/lines/${lines[0].id}/undo`);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as Row).error).toBe('month_locked');
+  });
+
+  test('refuses to match a movement to an entry', async () => {
+    const { app, lines } = await openedThen([LOCK('2026-08')]);
+    const res = await post(app, `/bank/lines/${lines[0].id}/match`, { jeNo: 'JE-2608-0001' });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as Row).error).toBe('month_locked');
+  });
+
+  test('refuses a statement carrying that month, and names the date', async () => {
+    const { app, sb } = harness({ acc_bank_recognition_rules: structuredClone(PRISTINE.rules) });
+    sb.tables.acc_bank_month_locks = [LOCK('2026-08')];
+    const res = await upload(app);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as Row;
+    expect(body.error).toBe('month_locked');
+    /* The date the refusal is about, so it is chaseable to a row in the file. */
+    expect(String(body.message)).toContain('2026-08');
+    /* And nothing was written — a refused upload must not leave half a
+       statement behind. */
+    expect(sb.tables.acc_bank_statements).toHaveLength(0);
+  });
+
+  /* THE DATE, NOT THE FILE. A lock on a month the file does not touch must not
+     refuse it; the guard reads the movements' own dates. */
+  test('a lock on another month does not refuse the work', async () => {
+    const { app, lines } = await openedThen([LOCK('2026-03')]);
+    const payout = lines.find((l) => l.kind === 'PAYOUT');
+    const res = await post(app, `/bank/lines/${payout.id}/receipt`, { batchId: 1 });
+    expect(res.status).toBe(200);
+  });
+
+  /* A RELEASED lock is not a lock. The row stays for ever as the record that
+     the month was closed and reopened; only a live one stops a write. */
+  test('a month that was reopened can be worked again', async () => {
+    const { app, lines } = await openedThen([
+      LOCK('2026-08', { released_at: '2026-10-05T01:00:00Z', released_by: 'Chew', release_note: 'bank re-issued' }),
+    ]);
+    const payout = lines.find((l) => l.kind === 'PAYOUT');
+    const res = await post(app, `/bank/lines/${payout.id}/receipt`, { batchId: 1 });
+    expect(res.status).toBe(200);
+  });
+});

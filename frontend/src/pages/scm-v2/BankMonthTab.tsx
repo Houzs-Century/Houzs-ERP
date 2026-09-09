@@ -29,12 +29,13 @@
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
-import { AlertTriangle, ArrowLeft, CalendarDays, Printer } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, CalendarDays, Lock, Printer, Unlock } from 'lucide-react';
 import {
-  useBankMonths, useBankMonth,
-  type BankMonth, type BankMonthAssembly, type BankLine,
+  useBankMonths, useBankMonth, useLockBankMonth, useUnlockBankMonth,
+  type BankMonth, type BankMonthAssembly, type BankMonthLock, type BankLine,
+  type Reconciliation,
 } from './bank-queries';
-import { ICON, fmt, btn, softText, danger, panel } from './settlement-ui';
+import { ICON, fmt, btn, softText, danger, panel, refusalText } from './settlement-ui';
 import { ReconciliationPanel, OpenLine, DoneLine } from './BankStatementTab';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import styles from './Suppliers.module.css';
@@ -123,16 +124,23 @@ const MonthRow = ({ m, onOpen }: { m: BankMonth; onOpen: (p: Picked) => void }) 
       {/* Whether the month can be trusted, before he opens it. A month missing
           a day is not a month that is nearly right — its closing figure is
           somebody else's. */}
-      {m.complete
-        ? <span className={grid.good}>covered end to end</span>
-        : <span className={grid.bad}>
-            {m.gapCount} thing{m.gapCount === 1 ? '' : 's'} missing
-          </span>}
+      {/* CLOSED replaces the verdict rather than sitting beside it: a closed
+          month's answer is fixed, so how clean it looks today is no longer the
+          thing to tell somebody about it. */}
+      {m.locked
+        ? <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            <Lock {...ICON} /> closed by {m.locked.lockedBy ?? 'somebody'} on {m.locked.lockedAt.slice(0, 10)}
+          </span>
+        : m.complete
+          ? <span className={grid.good}>covered end to end</span>
+          : <span className={grid.bad}>
+              {m.gapCount} thing{m.gapCount === 1 ? '' : 's'} missing
+            </span>}
     </td>
     <td>
-      <button type="button" style={btn(m.openCount > 0)}
+      <button type="button" style={btn(!m.locked && m.openCount > 0)}
         onClick={() => onOpen({ accountCode: m.accountCode, month: m.month })}>
-        <CalendarDays {...ICON} /> {m.openCount > 0 ? 'Reconcile' : 'Open'}
+        <CalendarDays {...ICON} /> {m.locked ? 'Open' : m.openCount > 0 ? 'Reconcile' : 'Open'}
       </button>
     </td>
   </tr>
@@ -223,6 +231,11 @@ const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) =
 
       {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Assembling the month…</div>}
 
+      {/* CLOSED OR NOT, above everything. A person looking at a month needs to
+          know whether what he is reading can still move before he reads it —
+          and if it cannot, the row that says so has to name who closed it. */}
+      {q.data && <TheLock data={q.data} picked={picked} />}
+
       {/* WHAT THE MONTH IS MISSING, before the verdict. A reconciliation of a
           month with a day missing from it is a reconciliation of a different
           month, and reading the difference first would be reading the wrong
@@ -298,6 +311,109 @@ const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) =
 
       {q.data && q.data.statements.length > 0 && <TheFiles data={q.data} />}
     </section>
+  );
+};
+
+/* ── Closed, or the button that closes it ─────────────────────────────────── */
+
+const TheLock = ({ data, picked }: {
+  data: { lock: BankMonthLock | null; assembly: BankMonthAssembly; reconciliation: Reconciliation };
+  picked: Picked;
+}) => {
+  const lock = useLockBankMonth();
+  const unlock = useUnlockBankMonth();
+  const [note, setNote] = useState('');
+  const [asking, setAsking] = useState(false);
+
+  const held = data.lock;
+
+  if (held) {
+    return (
+      <div style={{ ...panel('good'), display: 'grid', gap: 'var(--space-2)' }}>
+        <b style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <Lock {...ICON} /> Closed by {held.lockedBy ?? 'somebody'} on {held.lockedAt.slice(0, 10)}
+        </b>
+        <div style={{ fontSize: 'var(--fs-13)' }}>
+          {/* THE SNAPSHOT, not today's figures. A lock exists to fix a claim,
+              and showing live numbers here would quietly rewrite it. */}
+          Closed at {fmt(held.closingStatementSen)} per the bank against {fmt(held.closingLedgerSen)} in the
+          books, {held.statementCount} file{held.statementCount === 1 ? '' : 's'},{' '}
+          {held.wasComplete ? 'covered end to end' : 'NOT covered end to end'}.
+          {held.lockNote && <> Reason given: “{held.lockNote}”.</>}
+        </div>
+        <div style={softText}>
+          Nothing in this month can be booked, matched, left out or undone, and no statement carrying its
+          days can be loaded, until it is reopened.
+        </div>
+        {!asking && (
+          <button type="button" style={{ ...btn(), justifySelf: 'start' }} onClick={() => setAsking(true)}>
+            <Unlock {...ICON} /> Reopen this month
+          </button>
+        )}
+        {asking && (
+          <div style={{ display: 'grid', gap: 4, justifyItems: 'start' }}>
+            {/* Required, and the server requires it too. A month that was closed
+                and is open again with no explanation is the one state the lock
+                table exists to make impossible. */}
+            <input value={note} onChange={(e) => setNote(e.target.value)}
+              aria-label="Why this month is being reopened"
+              placeholder="Why? e.g. the bank re-issued 12 Sep with a corrected charge"
+              style={{ padding: '5px 8px', fontSize: 'var(--fs-13)', minWidth: 340 }} />
+            <button type="button" style={btn(false, !note.trim() || unlock.isPending)}
+              disabled={!note.trim() || unlock.isPending}
+              onClick={() => unlock.mutate(
+                { accountCode: picked.accountCode, month: picked.month, note: note.trim() },
+                { onSuccess: () => { setAsking(false); setNote(''); } },
+              )}>
+              <Unlock {...ICON} /> {unlock.isPending ? 'Reopening…' : 'Reopen it'}
+            </button>
+          </div>
+        )}
+        {unlock.isError && (
+          <div style={{ fontSize: 'var(--fs-13)', color: danger, display: 'flex', gap: 6 }}>
+            <AlertTriangle {...ICON} />
+            <span>{refusalText(unlock.error, 'The month was not reopened.')}</span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* OPEN. The button offers itself; whether the month may actually close is the
+     server's judgement, and its refusal is the sentence shown below. */
+  const clean = data.assembly.complete
+    && data.reconciliation.consistent
+    && data.reconciliation.differenceSen === 0;
+
+  return (
+    <div style={{ display: 'grid', gap: 4, justifyItems: 'start' }}>
+      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+        <button type="button" style={btn(false, lock.isPending)} disabled={lock.isPending}
+          onClick={() => lock.mutate({
+            accountCode: picked.accountCode, month: picked.month, note: note.trim() || null,
+          }, { onSuccess: () => setNote('') })}>
+          <Lock {...ICON} /> {lock.isPending ? 'Closing…' : 'Close this month'}
+        </button>
+        {/* Said BEFORE the press when the month is not clean, so the reason box
+            is already there rather than appearing as the answer to a refusal. */}
+        {!clean && (
+          <input value={note} onChange={(e) => setNote(e.target.value)}
+            aria-label="Why this month is being closed anyway"
+            placeholder="This month is not clean — why close it anyway?"
+            style={{ padding: '5px 8px', fontSize: 'var(--fs-13)', minWidth: 320 }} />
+        )}
+      </div>
+      <div style={softText}>
+        Closing fixes what this month says. Nothing in it can be booked, left out or undone afterwards
+        without reopening it.
+      </div>
+      {lock.isError && (
+        <div style={{ fontSize: 'var(--fs-13)', color: danger, display: 'flex', gap: 6 }}>
+          <AlertTriangle {...ICON} />
+          <span>{refusalText(lock.error, 'The month was not closed.')}</span>
+        </div>
+      )}
+    </div>
   );
 };
 

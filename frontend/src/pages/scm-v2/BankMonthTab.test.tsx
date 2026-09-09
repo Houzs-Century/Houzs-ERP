@@ -24,7 +24,7 @@ const MONTH: BankMonth = {
   inSen: 3032963, outSen: 352894,
   periodFrom: '2026-09-01', periodTo: '2026-09-03',
   openingBalanceSen: 1000000, closingBalanceSen: 1090000,
-  complete: true, gapCount: 0,
+  complete: true, gapCount: 0, locked: null,
 };
 
 const ASSEMBLY: BankMonthAssembly = {
@@ -71,6 +71,7 @@ const state = vi.hoisted(() => ({
   recon: null as unknown,
   lines: [] as unknown[],
   statements: [] as unknown[],
+  lock: null as unknown,
 }));
 
 vi.mock('./bank-queries', () => ({
@@ -78,7 +79,7 @@ vi.mock('./bank-queries', () => ({
   useBankMonth: () => ({
     data: {
       accountCode: '310-0020', month: '2026-09',
-      assembly: state.assembly, reconciliation: state.recon,
+      assembly: state.assembly, reconciliation: state.recon, lock: state.lock,
       statements: state.statements, lines: state.lines, unmatchedEntries: [],
     },
     isLoading: false,
@@ -93,19 +94,22 @@ vi.mock('./bank-queries', () => ({
   useMatchBankLine: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useIgnoreBankLine: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useUndoBankLine: () => ({ mutate: vi.fn(), isPending: false }),
+  useLockBankMonth: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
+  useUnlockBankMonth: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
 }));
 
 import { BankMonthTab, monthLabel } from './BankMonthTab';
 
 const setUp = (over: {
   months?: unknown[]; assembly?: BankMonthAssembly; recon?: Reconciliation;
-  lines?: unknown[]; statements?: unknown[];
+  lines?: unknown[]; statements?: unknown[]; lock?: unknown;
 } = {}) => {
   state.months = over.months ?? [MONTH];
   state.assembly = over.assembly ?? ASSEMBLY;
   state.recon = over.recon ?? RECON;
   state.lines = over.lines ?? [LINE];
   state.statements = over.statements ?? STATEMENTS;
+  state.lock = over.lock ?? null;
 };
 
 /* The print dialog this screen mounts reads the company branding through
@@ -232,6 +236,79 @@ describe('a file that straddles the month end', () => {
     openMonth();
     expect(screen.getByText('aug28-sep03.csv')).toBeTruthy();
     expect(screen.getByText(/crosses the month edge/)).toBeTruthy();
+  });
+});
+
+describe('closing a month', () => {
+  const HELD = {
+    accountCode: '310-0020', month: '2026-09',
+    lockedBy: 'Chew', lockedAt: '2026-10-02T03:14:00Z',
+    lockNote: 'known timing difference, agreed with the bank',
+    closingStatementSen: 1090000, closingLedgerSen: 1045000, differenceSen: 45000,
+    statementCount: 12, wasComplete: false,
+  };
+
+  test('an open month offers to close, and says what closing does', () => {
+    setUp();
+    openMonth();
+    expect(screen.getByText('Close this month')).toBeTruthy();
+    expect(screen.getByText(/Nothing in it can be booked, left out or undone afterwards/)).toBeTruthy();
+  });
+
+  /* The reason box is there BEFORE the press when the month is not clean, so it
+     is a question asked up front rather than the answer to a refusal. */
+  test('asks for a reason up front when the month is not clean', () => {
+    setUp({ assembly: { ...ASSEMBLY, complete: false, gaps: ['a day is missing'] } });
+    openMonth();
+    expect(screen.getByLabelText('Why this month is being closed anyway')).toBeTruthy();
+  });
+
+  test('asks for nothing when the month reconciles and is whole', () => {
+    setUp({ recon: { ...RECON, differenceSen: 0, closingLedgerSen: 1090000, bankNotInBooks: { count: 0, sen: 0 }, reconciled: true } });
+    openMonth();
+    expect(screen.queryByLabelText('Why this month is being closed anyway')).toBeNull();
+  });
+
+  /* THE ONE THAT MATTERS ON A CLOSED MONTH: the figures shown are the ones
+     SNAPSHOTTED when it was closed, not today's. A lock exists to fix a claim,
+     and rendering live numbers here would quietly rewrite it. */
+  test('a closed month shows the figures it was closed at, and who closed it', () => {
+    setUp({ lock: HELD });
+    openMonth();
+    expect(screen.getByText(/Closed by Chew on 2026-10-02/)).toBeTruthy();
+    expect(screen.getByText(/RM 10,900\.00 per the bank against RM 10,450\.00 in the books/)).toBeTruthy();
+    expect(screen.getByText(/NOT covered end to end/)).toBeTruthy();
+    expect(screen.getByText(/known timing difference/)).toBeTruthy();
+  });
+
+  test('a closed month offers no way to close it again', () => {
+    setUp({ lock: HELD });
+    openMonth();
+    expect(screen.queryByText('Close this month')).toBeNull();
+    expect(screen.getByText('Reopen this month')).toBeTruthy();
+  });
+
+  /* Reopening demands a reason, and the button stays dead until there is one —
+     the server refuses without it, and a screen that lets the press through
+     just to collect a refusal has wasted the trip. */
+  test('reopening cannot be pressed without a reason', () => {
+    setUp({ lock: HELD });
+    openMonth();
+    fireEvent.click(screen.getByText('Reopen this month'));
+    const go = screen.getByText('Reopen it').closest('button')!;
+    expect(go.disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText('Why this month is being reopened'), {
+      target: { value: 'the bank re-issued 12 Sep' },
+    });
+    expect(screen.getByText('Reopen it').closest('button')!.disabled).toBe(false);
+  });
+
+  test('the list says a month is closed instead of how clean it looks', () => {
+    setUp({ months: [{ ...MONTH, locked: { lockedBy: 'Chew', lockedAt: '2026-10-02T03:14:00Z' } }] });
+    show();
+    expect(screen.getByText(/closed by Chew on 2026-10-02/)).toBeTruthy();
+    expect(screen.queryByText('covered end to end')).toBeNull();
   });
 });
 

@@ -1061,6 +1061,38 @@ movements), `frontend/src/pages/scm-v2/BankMonthTab.test.tsx`,
 `frontend/src/vendor/scm/lib/bank-reconciliation-pdf.test.ts` (the walk ties, or
 it is not drawn).
 
+**Closing a reconciled month (2026-09-09; owner: 还有lock 起来不可以随便碰).**
+Until now every bank movement could be booked, ignored or UNDONE at any time,
+for ever — right while a month is being worked, wrong the moment it has been
+reconciled and its statement printed, because a reconciliation somebody filed is
+a claim and a month that can still move behind the paper makes the paper a lie.
+`backend/src/acc/bank-lock.ts` holds both rules. **May it close:** never while
+movements are still undecided (an unfinished month is not a month with a problem,
+so a reason must NOT buy a way past it) and never when it is empty; freely when
+it reconciles and is covered end to end; WITH A REQUIRED REASON when the bank and
+books still differ, a day was never uploaded, no file printed a closing balance,
+or the figures failed the identity check — businesses do close over known
+differences, and what must not happen is closing silently. **What a closed month
+refuses:** booking, matching, ignoring, undoing, and uploading a statement whose
+movements land inside it — checked by the movement's OWN date (bank-month rule 1)
+so a straddling file cannot smuggle a write into a closed September, and a lock
+read that FAILS is a refusal rather than a pass. The refusal names the month, who
+closed it and when. Doors: `GET /accounting/bank/locks` and
+`POST /accounting/bank/months/:accountCode/:month/lock` | `/unlock`
+(`backend/src/scm/routes/accounting-bank-locks.ts`). Unlock asks a SECOND key —
+`scm.payment_voucher.approve`, because reopening undoes a document somebody filed
+— plus its own required reason. Migration `20260909T0243_acc_bank_month_lock.sql`
+adds `scm.acc_bank_month_locks`: one row per company × account × month, a partial
+unique index keeping one live lock at a time, and the two closing balances, the
+difference, the file count and `was_complete` SNAPSHOTTED at the moment of
+closing — deliberately frozen, because a claim that silently follows today's data
+is not a claim and a later disagreement with the ledger IS the finding. A lock is
+never deleted: releasing sets `released_at` and the row stays. **It is not a GL
+period close** — it stops the bank reconciliation screens from changing a closed
+month, not a journal entry posted into those dates from elsewhere. Contracts:
+`backend/src/acc/bank-lock.test.ts` (an unfinished month refuses even with a
+reason; each unclean month refuses without one and closes with one).
+
 On both reconciliation screens, working a statement REPLACES the list rather than stacking under it —
 the owner on the version that stacked: 就感觉很多东西挤在一页. Each page links to
 the other where the work hands over. What they share is presentation only

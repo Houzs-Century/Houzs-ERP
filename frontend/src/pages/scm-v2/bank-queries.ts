@@ -332,6 +332,9 @@ export type BankMonth = {
   /** Opening known, closing known, and no break between the files. */
   complete: boolean;
   gapCount: number;
+  /** Null means open. Named rather than a bare flag: an operator who finds a
+      month he cannot work needs the name, not a padlock. */
+  locked: { lockedBy: string | null; lockedAt: string } | null;
 };
 
 /** Two files that should have met and did not — a day nobody uploaded. */
@@ -371,6 +374,7 @@ export const useBankMonth = (accountCode: string | null, month: string | null) =
     month: string;
     assembly: BankMonthAssembly;
     reconciliation: Reconciliation;
+    lock: BankMonthLock | null;
     statements: Array<BankStatement & { spanning: boolean }>;
     lines: Array<BankLine & { file_name: string | null }>;
     unmatchedEntries: LedgerEntry[];
@@ -379,3 +383,51 @@ export const useBankMonth = (accountCode: string | null, month: string | null) =
   retry: retryUnlessClientError,
   retryDelay: 800,
 });
+
+/* ── Closing a reconciled month ────────────────────────────────────────────
+   Owner, 2026-09-08: 还有lock 起来不可以随便碰. Every rule about whether a month
+   MAY be closed lives on the server (acc/bank-lock.ts) — these are transport,
+   and the refusals they surface are the server's own sentences. */
+
+export type BankMonthLock = {
+  accountCode: string;
+  month: string;
+  lockedBy: string | null;
+  lockedAt: string;
+  lockNote: string | null;
+  closingStatementSen: number | null;
+  closingLedgerSen: number | null;
+  differenceSen: number | null;
+  statementCount: number;
+  wasComplete: boolean;
+};
+
+export const useLockBankMonth = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ accountCode, month, note }: { accountCode: string; month: string; note?: string | null }) =>
+      authedFetch<{ ok: boolean; lock: BankMonthLock; reasonRecorded: boolean }>(
+        `/accounting/bank/months/${encodeURIComponent(accountCode)}/${encodeURIComponent(month)}/lock`,
+        { method: 'POST', body: JSON.stringify({ note: note ?? null }) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['bank-month'] });
+      void qc.invalidateQueries({ queryKey: ['bank-months'] });
+    },
+  });
+};
+
+export const useUnlockBankMonth = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ accountCode, month, note }: { accountCode: string; month: string; note: string }) =>
+      authedFetch<{ ok: boolean; lock: BankMonthLock }>(
+        `/accounting/bank/months/${encodeURIComponent(accountCode)}/${encodeURIComponent(month)}/unlock`,
+        { method: 'POST', body: JSON.stringify({ note }) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['bank-month'] });
+      void qc.invalidateQueries({ queryKey: ['bank-months'] });
+    },
+  });
+};
