@@ -90,9 +90,15 @@ is the AMBIGUOUS verdict — one book sofa, our side folding to between one and
 two whole sofas — which is docs/bugs/0690's class and must not be forced.
 HC-PI-007918 is not ambiguous but contradictory: the book has `DSL-8030 SOFA`
 qty 1 at RM 3,630.00 and we have `9058` qty 1 at RM 3,630.00, a different MODEL
-at the same money. HC-PI-007928 holds two swapped pairs — the book's DtlKey
-915115 is `AK-IMMORTAL MATT (K)` and our line carrying that key says
-`AKEMI ULTIMATE MATT (K)`, with 915132 the exact mirror, on two lines whose
-Desc2 venue and date are identical.
+at the same money. HC-PI-007928's `item code` finding reads as two swapped pairs
+— DtlKey 915115 `AK-IMMORTAL MATT (K)` against our `AKEMI ULTIMATE MATT (K)`,
+915132 the exact mirror — and **that reading is wrong.** Run 34374232159 dumps
+the document at line grain: **11 of our 12 rows carry `key=NONE`**, only 915112
+is stamped, so the reconcile is pairing IMMORTAL and ULTIMATE by its own
+value-then-order fallback and the "swap" is the fallback's ordering, not a key
+sitting on the wrong row. It is docs/bugs/0690's class exactly, and it is what
+`repair-so-variant-from-book.mjs` already refuses in words — *"this document was
+migrated without line keys ... REPORTED, not guessed"*. Nothing here should be
+written until the rows carry keys.
 
 **Ref.** fix/pi-last-38, 2026-09-09.
