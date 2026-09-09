@@ -18,7 +18,7 @@
 --   away: "我是用 owner 账号登录 需要及时处理如果当审批人不在或者突发状况".
 --   Widening the badge to every '*' holder would have shown it to four Super
 --   Admins as well (Loo, Vivian, Chew, Tan Yong Hong). Granting the real keys
---   to the one role that needs them is the narrower instrument, and it fixes
+--   to the one role that needs them is the narrower instrument, and it settles
 --   the notice at the same time — the owner's account was, until now, not on
 --   any amendment notice at all.
 --
