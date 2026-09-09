@@ -89,16 +89,7 @@ from the line it really belongs to) and `backend/tests/settlementRoutes.test.ts`
 upload whose rows report no ids, and a payment keyed eleven days late).
 `src/acc` and the settlement routes: 363 → 370 passing.
 
-**Follow-up, same bug, found by the owner testing the fix.** The detail screen
-then showed the payment, but *"Confirm all 9 matched"* still answered
-**Posted 0** — `settlementConfirmMatched` reads the LINK TABLE too, and those
-nine lines had no links. The same fallback now applies on the bulk path, with
-one difference that is the whole point: only `matched` is rescued, never
-`suggested`. Nobody reads each line on that path, and the button's promise is
-"post every line the unique reference already matched"; a suggestion needs the
-eyes the detail screen gives it. Confirming writes the link, so the data heals
-as he works. The handler also 404s on a missing batch rather than reporting an
-empty success. Pinned by three more tests, two proved red on the unfixed tree.
+**The bulk button had the same fault on its own path** — see 0761.
 
 **Not fixed here, and worth naming.** A line with genuinely nothing in the
 window still offers no way to reach a payment by hand — three MBB lines on prod
