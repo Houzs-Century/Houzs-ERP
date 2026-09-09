@@ -56,6 +56,7 @@
 
 import { normItemCode, acFromSoDtlKey } from "./ac-po-line.mjs";
 import { classifyItemCode } from "./item-code-class.mjs";
+import { overrideCovers } from "./ac-model-override.mjs";
 
 /** AutoCount mapping-sheet category -> `mfg_sales_order_items.item_group`.
  *  The SAME table import-ac-outstanding-so.mjs:68 uses. One rule, one place. */
@@ -77,10 +78,18 @@ export const itemGroupForCategory = (cat) =>
  * @param {Map}    a.productByCode normalised ERP code -> { code, name }
  * @returns {{plan: Array, refused: Array, counts: Object}}
  */
-export function planSoItemCodeCorrections({ edges, bookSoByDtl, acMapByCode, erpRowsByDtl, productByCode }) {
+export function planSoItemCodeCorrections({ edges, bookSoByDtl, acMapByCode, erpRowsByDtl, productByCode, overrideIndex }) {
+  /* `overrideIndex` DECIDES whether a row is corrected or left alone, so it is
+     REQUIRED and never optional (CLAUDE.md: an optional deciding parameter
+     applies only where somebody remembered it). Pass `null` to mean "no
+     declaration loaded" — which corrects everything, the pre-2026-09-08
+     behaviour — and a Map from lib/ac-model-override-apply.mjs otherwise. */
+  if (overrideIndex === undefined) {
+    throw new Error("planSoItemCodeCorrections needs overrideIndex: a Map of the owner's declared model overrides, or an explicit null");
+  }
   const plan = [];
   const refused = [];
-  const counts = { edges: 0, notInBook: 0, unmapped: 0, notInErp: 0, decomposed: 0, agree: 0, noProduct: 0, translation: 0 };
+  const counts = { edges: 0, notInBook: 0, unmapped: 0, notInErp: 0, decomposed: 0, agree: 0, noProduct: 0, translation: 0, ownerDecided: 0 };
   const seen = new Set();
 
   for (const e of edges ?? []) {
@@ -133,6 +142,27 @@ export function planSoItemCodeCorrections({ edges, bookSoByDtl, acMapByCode, erp
        defect this planner may write. */
     const k = classifyItemCode({ acCode, erpCode: row.item_code, mapping: acMapByCode, groupSize: rows.length });
     if (k.cls !== "different") { counts.translation++; continue; }
+
+    /* THE ONE DIFFERENCE THAT MUST NOT BE CORRECTED: the owner put it there.
+       HC-SO-011657 holds model 8030 where the book holds TNS-9838 DB because he
+       said 「那就放8030 daybed把」, and this planner would quietly UNDO that —
+       measured on prod run 34258437955, which planned exactly 2 corrections and
+       one of them was his ruling. The declaration carries the book model it
+       overrides, so it stops applying the moment the book stops saying that;
+       lib/ac-model-override.mjs owns the rule and this only asks it. */
+    const decl = (overrideIndex?.get(String(row.doc_no ?? "").trim().toUpperCase()) ?? [])
+      .find((d) => overrideCovers(d, { acCode, erpCode: row.item_code }));
+    if (decl) {
+      counts.ownerDecided++;
+      refused.push({
+        why: "ownerDecided",
+        dtlKey: key, acCode, docNo: row.doc_no, ours: row.item_code, wanted: m.erp,
+        debtorName: row.debtor_name ?? null,
+        detail: `the ERP names "${row.item_code}" where the book names "${acCode}" BY ${decl.by.toUpperCase()}'S OWN DECISION`
+          + `${decl.on ? ` on ${decl.on}` : ""} — the declaration overrides book model ${decl.book}. Correcting it would undo his ruling.`,
+      });
+      continue;
+    }
 
     /* Resolve through OUR OWN pick list so the stored string is byte-identical
        to a picker-chosen one. `m.erp` is what the CSV says; `product.code` is

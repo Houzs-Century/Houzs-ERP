@@ -1,0 +1,77 @@
+name: Why does each document differ, by cause (read-only)
+
+# The tally report names a document and its AXIS and stops there
+# — `HC-DO-001604 [PROCEEDED] — transfer from` — so the next step was always the
+# same guess: treat the axis name as the cause and sweep the set. A cause-mixed
+# sweep is how a row that was already right gets overwritten, which is why the
+# split has to come BEFORE any repair.
+#
+# The reconcile already knows. `buildVerdictRows` writes a `detail` string per
+# document holding every finding it recorded, and nothing printed it. This is
+# not a new measurement — it is the one that was being thrown away.
+#
+# READ-ONLY, AND THIS WORKFLOW WRITES NOTHING. It runs
+# check-ac-erp-reconcile.mjs — SELECTs only, one connection, no DDL, no
+# transaction — and prints its verdict beside the account book's own lines from
+# the COMMITTED snapshot data/ac-reconcile-truth.json.gz. There is no
+# MODE=apply, no publish step, and the script opens no write path.
+#
+# Manual trigger only: it is a question, not a gate.
+on:
+  workflow_dispatch:
+    inputs:
+      type:
+        description: "Document type to explain (SI is spelled IV, the book's own name)"
+        required: true
+        default: "DO"
+        type: choice
+        options: [SO, PO, GR, DO, IV, PI]
+      docs:
+        description: "Optional: only these documents, comma separated (AutoCount or ERP numbers). Blank = every one that differs or cannot be compared"
+        required: false
+        default: ""
+        type: string
+      buckets:
+        description: "Which buckets to walk"
+        required: false
+        default: "work,unanswerable"
+        type: string
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+
+# Its OWN group, and NOT cancel-in-progress: several lanes are reading this book
+# at once and asking a question must never cancel somebody else's answer.
+concurrency:
+  group: diag-doc-differ-cause
+  cancel-in-progress: false
+
+jobs:
+  explain:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: The causes
+        run: node scripts/diag-doc-differ-cause.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TYPE: ${{ inputs.type }}
+          DOCS: ${{ inputs.docs }}
+          BUCKETS: ${{ inputs.buckets }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

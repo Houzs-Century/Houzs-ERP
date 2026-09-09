@@ -27,6 +27,12 @@
  *
  * Exit 0 for every legitimate answer. Non-zero only when it cannot answer.
  *
+ * ── DISPATCHED, NOT JUST WRITTEN ───────────────────────────────────────────
+ * CLAUDE.md: a workflow_dispatch workflow is not shipped until it has been
+ * dispatched once and reported success. Runs 34260859286, 34261381499,
+ * 34261651815 and 34261802057, company 1, all exit 0 — and each of the first
+ * three found a defect IN THIS FILE, which is the argument for the rule.
+ *
  * RE-RUN: identical output for an identical database and snapshot. It writes
  * nothing, so a second run costs one connection and changes no row.
  */
@@ -37,6 +43,7 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
 import { sourceDocTokens } from "./lib/transfer-chain-verdict.mjs";
+import { UNMIGRATED_ONWARD, splitUnmigratedOnwardTransfer } from "./lib/ac-not-a-difference.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const CO = Number(process.env.COMPANY_ID || "1");
@@ -56,6 +63,20 @@ if (!fs.existsSync(CHAIN)) {
   process.exit(2);
 }
 const snap = JSON.parse(zlib.gunzipSync(fs.readFileSync(CHAIN)).toString("utf8"));
+
+/* THE MONEY LIVES IN A DIFFERENT SNAPSHOT, and the first cut of this file did
+   not know that. `ac-convert-edges.json.gz` carries the CHAIN columns only —
+   there is no `subTotal` in its `line_fields` — so reading one produced
+   `undefined`, every book total came out 0, every pair was skipped, and the
+   check printed "no priced pair differs from the book" while the tally was
+   reporting four. A verdict computed over nothing must never read as a pass.
+   The money is in `ac-reconcile-truth.json.gz`, which is the snapshot the
+   reconcile itself compares against. */
+const TRUTH = path.join(here, "data", "ac-reconcile-truth.json.gz");
+const truth = fs.existsSync(TRUTH)
+  ? JSON.parse(zlib.gunzipSync(fs.readFileSync(TRUTH)).toString("utf8"))
+  : null;
+const TL = truth ? Object.fromEntries((truth.line_fields || []).map((n, i) => [n, i])) : {};
 const L = Object.fromEntries((snap.line_fields || []).map((n, i) => [n, i]));
 const H = Object.fromEntries((snap.header_fields || []).map((n, i) => [n, i]));
 const Q = (v) => Math.round(Number(v || 0) * 10000);
@@ -104,24 +125,42 @@ try {
       JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
      WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL AND i.linked_ac_dtlkey IS NOT NULL`;
   const bookPo = new Map(bookLines("PO").map((r) => [String(r[L.dtlKey]), r]));
-  let poOpen = 0;
+  /* GROUPED BY BOOK LINE, never per ERP row: a sofa is ONE book DtlKey and
+     several compartment rows here, so printing per row reports the
+     decomposition as several findings. The counter is compared as the FRACTION
+     transferred for exactly that reason. */
+  const poGroups = new Map();
   for (const r of poRows) {
-    const bl = bookPo.get(String(r.key).trim());
-    if (!bl) continue;
+    const k = String(r.key).trim();
+    if (!bookPo.has(k)) continue;
+    let g = poGroups.get(k);
+    if (!g) { g = { key: k, acNo: r.ac_no, erpNo: r.erp_no, eq: 0, got: 0, rows: 0 }; poGroups.set(k, g); }
+    g.eq += Q(r.qty); g.got += Q(r.got); g.rows += 1;
+  }
+  let poOpen = 0;
+  const splitRows = [];
+  for (const r of poGroups.values()) {
+    const bl = bookPo.get(r.key);
     const t = bl[L.transferedQty] === "" ? null : Q(bl[L.transferedQty]);
     if (t == null) continue;
     const bq = Q(bl[L.qty]);
-    const got = Q(r.got);
-    const eq = Q(r.qty);
+    const got = r.got;
+    const eq = r.eq;
     if (bq === 0 || eq === 0) continue;
     if (t * eq === got * bq) continue; /* the same fraction on both sides */
     poOpen += 1;
+    splitRows.push({
+      key: r.key, ac: bl[L.docNo], erpNo: r.erpNo, bookDocNo: bl[L.docNo],
+      verdict: t * eq > got * bq ? "erp_low" : "erp_high",
+      bookTransfered: t, erpCounter: got,
+      line: `${bl[L.docNo]} DtlKey ${r.key}`, proceeded: true,
+    });
     if (poOpen > SHOW) continue;
     const receipts = [...(grOfPo.get(up(bl[L.docNo])) || [])];
     const held = receipts.filter((g) => heldGr.has(g));
     p(
-      `    ${bl[L.docNo]} (ERP ${r.erp_no}) DtlKey ${r.key}: book received ${fmt(t)} of ${fmt(bq)}, ` +
-        `we record ${fmt(got)} of ${fmt(eq)}`,
+      `    ${bl[L.docNo]} (ERP ${r.erpNo}) DtlKey ${r.key}: book received ${fmt(t)} of ${fmt(bq)}, ` +
+        `we record ${fmt(got)} of ${fmt(eq)} over ${r.rows} ERP row(s)`,
     );
     p(
       `        the book's receipts: ${receipts.join(", ") || "(none)"} — ` +
@@ -132,8 +171,26 @@ try {
   }
   log(
     poOpen === 0
-      ? "PURCHASE ORDERS — 0 line(s) disagree with the book on how much has been received."
-      : `PURCHASE ORDERS — ${poOpen} line(s) disagree with the book on how much has been received.`,
+      ? "PURCHASE ORDERS — 0 book line(s) disagree with the book on how much has been received."
+      : `PURCHASE ORDERS — ${poOpen} book line(s) disagree with the book on how much has been received.`,
+  );
+
+  /* THE SAME CLASSIFIER THE RECONCILE CALLS, on the same rows, so this cannot
+     answer differently from the tally. If they ever disagree, one of them is
+     wrong and that disagreement is the finding — not something to reconcile by
+     hand. */
+  const poSplit = splitUnmigratedOnwardTransfer({
+    rows: splitRows,
+    decision: UNMIGRATED_ONWARD.PO,
+    coverage: heldGr,
+    onwardOf: (d) => [...(grOfPo.get(up(d)) || [])],
+  });
+  p("");
+  p(`    the migration decision covers ${poSplit.notMigrated} of these; ${poSplit.differ} remain, and here is why:`);
+  for (const im of poSplit.impostors.slice(0, SHOW)) p(`      ${im.why}`);
+  log(
+    `PURCHASE ORDERS — of the ${splitRows.length} book line(s) above, ${poSplit.notMigrated} are the cutover's own ` +
+      `decision and ${poSplit.differ} are not.`,
   );
 
   /* ── 2. GOODS RECEIPTS: we hold no link to the purchase-order LINE ──────── */
@@ -150,14 +207,6 @@ try {
      WHERE g.company_id = ${CO} AND g.status <> 'CANCELLED'
        AND g.linked_ac_gr_docno IS NOT NULL AND p.linked_ac_docno IS NOT NULL`;
   const bookGr = new Map(bookLines("GR").map((r) => [String(r[L.dtlKey]), r]));
-  /* every purchase-order line we hold, so "could we even point at it" is measured */
-  const poLineOf = new Map(
-    (await sql`SELECT h.linked_ac_docno AS doc, i.linked_ac_dtlkey::text AS key
-                 FROM scm.purchase_order_items i
-                 JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
-                WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL AND i.linked_ac_dtlkey IS NOT NULL`)
-      .map((r) => [`${up(r.doc)}#${String(r.key).trim()}`, true]),
-  );
   const heldPo = new Set(
     (await sql`SELECT DISTINCT linked_ac_docno AS d FROM scm.purchase_orders
                 WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`).map((r) => up(r.d)),
@@ -187,10 +236,13 @@ try {
           : `we hold ${have.join(", ") || "none"} of those orders, so ${srcs.filter((s) => !heldPo.has(s)).join(", ")} would have to be imported first`),
     );
     for (const l of d.lines.slice(0, 3)) {
-      const reachable = l.wanted.some((w) => poLineOf.has(`${w}#${l.key}`));
-      p(
-        `          DtlKey ${l.key} qty ${fmt(l.qty)} — the same key on a purchase-order line we hold: ${reachable ? "YES" : "no"}`,
-      );
+      /* The line's OWN key and its quantity. It deliberately does NOT ask
+         whether a purchase-order line carries the same key: a goods-receipt
+         DtlKey is a GRDTL key and a purchase-order line carries a PODTL one, so
+         that question always answers "no" and reads as a finding. The book
+         states no source LINE on this edge at all (`FromDocDtlKey` is NULL on
+         every detail row), so the document is the finest grain there is. */
+      p(`          GRDTL ${l.key}, quantity ${fmt(l.qty)}`);
     }
   }
   log(
@@ -201,9 +253,15 @@ try {
 
   /* ── 3. GOODS RECEIPTS: the money differs ───────────────────────────────── */
   p("");
-  p("─── 3. GOODS RECEIPT money — both sides priced and they differ ───");
-  p("    a ratio of exactly 4/3 is the DROPPED 25% supplier discount: AutoCount stores PODTL.UnitPrice");
-  p("    undiscounted and PODTL.SubTotal discounted, and the importer took the undiscounted half");
+  p("─── 3. GOODS RECEIPT money — a RATIO PROBE, not a second verdict ───");
+  p("    WHICH documents differ on money is `check-po-gr-tally.mjs`'s answer and only its answer. This");
+  p("    prints the RATIO between our stored line money and the book's line subtotals so the SHAPE of a");
+  p("    difference is visible, and it deliberately does not reimplement the reconcile's document total —");
+  p("    a second implementation of \"different\" is what docs/bugs/0708 cost. Expect it to name a document");
+  p("    or two the tally does not: a sofa is one book line and several compartment rows here, and this");
+  p("    sums rows. Read the SHAPE, take the LIST from the tally.");
+  p("    A ratio of exactly 4/3 is the DROPPED 25% supplier discount: AutoCount stores PODTL.UnitPrice");
+  p("    undiscounted and PODTL.SubTotal discounted, and the importer took the undiscounted half.");
   const money = await sql`
     SELECT g.linked_ac_gr_docno AS gr, p.linked_ac_docno AS po, g.grn_number AS erp_no,
            COALESCE(SUM(i.qty_accepted * i.unit_price_sen), 0)::float8 AS sen
@@ -213,15 +271,28 @@ try {
      WHERE g.company_id = ${CO} AND g.status <> 'CANCELLED'
        AND g.linked_ac_gr_docno IS NOT NULL AND p.linked_ac_docno IS NOT NULL
      GROUP BY 1, 2, 3`;
-  /* the book's money for a (receipt x order) PAIR is the sum of that pair's line subtotals */
+  /* the book's money for a (receipt x order) PAIR is the sum of that pair's line
+     subtotals, read from the TRUTH snapshot — the chain snapshot has no money
+     columns at all, and reading one there is what made this section answer
+     "nothing differs" over an empty measurement. */
   const pairBook = new Map();
-  for (const r of bookLines("GR")) {
-    for (const tok of sourceDocTokens(r[L.fromDocNo])) {
-      const k = `${up(r[L.docNo])}|${tok}`;
-      pairBook.set(k, (pairBook.get(k) || 0) + Math.round(Number(r[L.subTotal] || 0) * 100));
+  const moneyReadable = truth != null && TL.subTotal !== undefined && TL.fromDocNo !== undefined;
+  if (!moneyReadable) {
+    log(
+      "GOODS RECEIPT MONEY — NOT MEASURED: ac-reconcile-truth.json.gz is absent or carries no `subTotal` " +
+        "column, so there is nothing to compare our totals against. This is not a clean result; the money " +
+        "was not checked.",
+    );
+  } else {
+    for (const r of truth.types.GR.lines) {
+      for (const tok of sourceDocTokens(r[TL.fromDocNo])) {
+        const k = `${up(r[TL.docNo])}|${tok}`;
+        pairBook.set(k, (pairBook.get(k) || 0) + Math.round(Number(r[TL.subTotal] || 0) * 100));
+      }
     }
   }
   let m = 0;
+  if (moneyReadable)
   for (const r of money) {
     const k = `${up(r.gr)}|${up(r.po)}`;
     const b = pairBook.get(k);
@@ -237,11 +308,14 @@ try {
         : `ratio ${ratio.toFixed(4)}`;
     p(`    ${k} (ERP ${r.erp_no}): book RM ${(b / 100).toFixed(2)} vs ours RM ${(ours / 100).toFixed(2)} — ${note}`);
   }
-  log(
-    m === 0
-      ? "GOODS RECEIPT MONEY — no priced pair differs from the book."
-      : `GOODS RECEIPT MONEY — ${m} priced (receipt x order) pair(s) differ from the book.`,
-  );
+  if (moneyReadable) {
+    log(
+      m === 0
+        ? "GOODS RECEIPT MONEY — the ratio probe found 0 priced pair(s) unequal, measured against ac-reconcile-truth.json.gz."
+        : `GOODS RECEIPT MONEY — the ratio probe found ${m} priced pair(s) unequal. The TALLY is the authority on ` +
+          "which of them is a difference; this says what SHAPE each one has.",
+    );
+  }
 
   p("");
   p("NOTHING WAS REPAIRED. A transfer-quantity correction moves an on-hand figure and stock is DEFERRED");

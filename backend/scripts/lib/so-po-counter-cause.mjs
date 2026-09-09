@@ -75,6 +75,24 @@ export const IS_LINK_GAP = Object.freeze(new Set(["po_doc_absent", "po_line_abse
    cancelled one bought nothing. */
 export const UNCOUNTED_PO_STATUSES = Object.freeze(new Set(["DRAFT", "CANCELLED"]));
 
+/**
+ * Did we record exactly what the book moved, over a decomposition the book does
+ * not have? Quantities are the scaled integers the counter lane already uses.
+ *
+ * ARITHMETIC, NOT A GUESS ABOUT FURNITURE. A group is only this shape when the
+ * ERP counter EQUALS the book's transferred quantity and the ERP quantity is
+ * exactly the book quantity times the row count. A partial, a different
+ * quantity, or a single row is not this and falls through to the next cause.
+ */
+export function isDecomposedGrain(c) {
+  if (!c) return false;
+  const { rows, bookQty, bookTransfered, erpQty, erpCounter } = c;
+  if (!(rows > 1)) return false;
+  if (!(bookQty > 0) || !(erpQty > 0)) return false;
+  if (erpCounter !== bookTransfered) return false;
+  return erpQty === bookQty * rows;
+}
+
 const norm = (s) => String(s ?? "").trim().toUpperCase();
 const key = (s) => String(s ?? "").trim();
 
@@ -118,7 +136,7 @@ export function causeForChild(c) {
  * @param {Array<object>} children the book purchase-order lines naming this line
  * @returns {{cause: string, children: string[]}}
  */
-export function causeForGroup(children) {
+export function causeForGroup(children, counters = null) {
   const kids = Array.isArray(children) ? children : [];
 
   /* THE BOOK NAMES NO CHILD AT ALL. The book's own counter says a purchase was
@@ -128,6 +146,26 @@ export function causeForGroup(children) {
   if (!kids.length) return { cause: "book_names_no_child", children: [] };
 
   const causes = kids.map(causeForChild);
+
+  /* THE BOOK'S OWN EDGE NAMES A SOURCE LINE FOR A DIFFERENT PRODUCT.
+     Checked FIRST, because it is a fact about the BOOK and no repair of ours can
+     settle it. Measured live 2026-09-08: PO-000290 line 61216 is an NB-KHJ57(K)
+     bedframe whose FromSODtlKey names SO-000870 line 60700, which is a
+     MYLATEX LUMBARIA (K) MATTRESS. Copying that edge would put a bedframe
+     purchase on a customer's mattress line, and a key match is not an identity
+     match - which is exactly what docs/bugs/0671 cost. */
+  if (kids.some((k) => k && k.bookSourceProductDiffers === true)) {
+    return { cause: "book_source_is_another_product", children: causes };
+  }
+
+  /* ONE BOOK LINE, SEVERAL ERP COMPARTMENT ROWS, AND WE RECORDED EXACTLY WHAT
+     THE BOOK MOVED. The book buys one sofa; we hold one row per compartment, so
+     the FRACTION cannot equal the book's however right the link is - our
+     denominator is the compartment count. Recognised on the exact arithmetic,
+     never on "it is a sofa". */
+  if (isDecomposedGrain(counters) && causes.every((v) => IS_COUNTED.has(v))) {
+    return { cause: "decomposed_grain", children: causes };
+  }
 
   /* Every child is one the app's rule counts, so the links are all right and
      the only thing left that can be wrong is the stored number. */
@@ -146,10 +184,22 @@ export function causeForGroup(children) {
 /** Every cause `causeForGroup` can return. */
 export const GROUP_CAUSES = Object.freeze([
   "counter_stale",
+  "decomposed_grain",
+  "book_source_is_another_product",
   ...CHILD_CAUSES.filter((v) => !IS_COUNTED.has(v)),
   "book_names_no_child",
   "mixed",
 ]);
+
+/**
+ * Group causes that are NOT a defect of ours. Reported in their own bucket,
+ * with the reason, and never summed into a defect count.
+ */
+export const IS_NOT_OUR_DEFECT = Object.freeze(new Set([
+  "decomposed_grain",
+  "book_source_is_another_product",
+  "book_names_no_child",
+]));
 
 /** Counts per cause, for a list of disagreeing groups. */
 export function tallyCauses(groups) {
@@ -216,6 +266,27 @@ export function groupSelfTestCases() {
       kids: [{ ...counted, erpFromMrp: true }, { ...counted, erpSoLineKey: null }], want: "mixed" },
     { name: "the book's counter moved and its own purchase-order table names no child",
       kids: [], want: "book_names_no_child" },
+    /* MEASURED SHAPES, both live on production 2026-09-08. */
+    { name: "one book sofa, three ERP compartments, and we moved exactly what the book moved",
+      kids: [counted],
+      counters: { rows: 3, bookQty: 10000, bookTransfered: 10000, erpQty: 30000, erpCounter: 10000 },
+      want: "decomposed_grain" },
+    { name: "a decomposition where we moved LESS than the book is NOT excused as grain",
+      kids: [counted],
+      counters: { rows: 3, bookQty: 10000, bookTransfered: 10000, erpQty: 30000, erpCounter: 0 },
+      want: "counter_stale" },
+    { name: "a single row is never decomposition grain, whatever the numbers",
+      kids: [counted],
+      counters: { rows: 1, bookQty: 10000, bookTransfered: 10000, erpQty: 10000, erpCounter: 10000 },
+      want: "counter_stale" },
+    { name: "the BOOK's own edge names a source line for a different product",
+      kids: [{ ...counted, bookSourceProductDiffers: true }],
+      counters: { rows: 1, bookQty: 20000, bookTransfered: 10000, erpQty: 20000, erpCounter: 0 },
+      want: "book_source_is_another_product" },
+    { name: "the book's wrong product outranks a decomposition that would have excused it",
+      kids: [{ ...counted, bookSourceProductDiffers: true }],
+      counters: { rows: 3, bookQty: 10000, bookTransfered: 10000, erpQty: 30000, erpCounter: 10000 },
+      want: "book_source_is_another_product" },
   ];
 }
 
@@ -226,7 +297,7 @@ export function runSelfTest() {
     if (got !== c.want) failures.push(`${c.name}: wanted ${c.want}, got ${got}`);
   }
   for (const c of groupSelfTestCases()) {
-    const got = causeForGroup(c.kids).cause;
+    const got = causeForGroup(c.kids, c.counters ?? null).cause;
     if (got !== c.want) failures.push(`${c.name}: wanted ${c.want}, got ${got}`);
   }
   /* The three sets must not overlap: a cause that was both by-design and a link
@@ -237,6 +308,9 @@ export function runSelfTest() {
   }
   for (const v of [...IS_COUNTED, ...IS_BY_DESIGN, ...IS_LINK_GAP]) {
     if (!CHILD_CAUSES.includes(v)) failures.push(`${v} is classified but is not a declared cause`);
+  }
+  for (const v of IS_NOT_OUR_DEFECT) {
+    if (!GROUP_CAUSES.includes(v)) failures.push(`${v} is excluded from work but is not a declared group cause`);
   }
   return failures;
 }

@@ -726,6 +726,35 @@ RECEIPT (21 of 21 in the run's sample, 0 naming a receipt), because the receipt
 behind the invoice carries no `linked_ac_gr_docno` — that is the next thing to
 close, and it is a goods-receipt stamping gap, not an invoice one.
 
+### `transfer chain not verifiable` is TWO populations, and it now says which
+
+Added 2026-09-09. The FROM half has three unanswerable verdicts
+(`IS_UNANSWERABLE` in `lib/transfer-chain-verdict.mjs`). One,
+`agree_doc_line_unstated`, is declared and never locks. The other two BOTH
+recorded the single axis `transfer chain not verifiable` and emitted no cause at
+all, so a document unanswerable only for that reason reached the tally's
+`CANNOT BE COMPARED` column named by nothing — `HC-PO-009828` on run
+34257873206.
+
+They are owed opposite things, which is why one label could not carry both:
+
+| verdict | cause key | whose |
+|---|---|---|
+| `line_not_stamped` | `chainLineNotStamped` | **MECHANICAL** — the book names a source line and our row carries no AutoCount line key. `backfill-ac-downstream-line-keys.mjs` fills it; no ruling from anybody |
+| `erp_parent_unstamped` | `chainParentUnstamped` | **ABSENT SOURCE** — our parent carries no AutoCount number at all (an ERP-native parent). The book has nothing to compare against, so nobody can answer it, the owner included. Never a backlog |
+
+`lib/ac-transfer-chain-run.mjs` now notes the cause beside the refusal it
+already records, from the verdict `v` it already holds — the same shape
+`lib/variant-report.mjs` uses for an unreadable sofa, so a cause and its refusal
+cannot disagree. The mapping is a frozen MAP, not a ternary: a fourth
+unanswerable verdict added later would silently inherit whichever arm a ternary
+put last, and that is the defect this table exists to prevent. An unmapped
+verdict falls to `chainUnverifiable`, which the report prints whole.
+
+Vocabulary and ownership live in `backend/scripts/lib/unanswerable-causes.mjs`;
+`docs/bugs/0729-the-cannot-be-compared-cause-table-described-a-different-pop.md`
+has the four measurements that bought it.
+
 The same absence had a second victim outside this module.
 `check-ac-erp-reconcile.mjs` selected `NULL::bigint AS ac_dtlkey` for goods
 receipts — a constant, not the column — so it was structurally forced to pair by
@@ -2684,6 +2713,28 @@ also parsed **`Desc2`** to get the ERP's variants —
 > Not to be confused with `blockFor` in `backend/scripts/lib/po-arm-own-text.mjs`:
 > that one carries `size` and NOT `specials` because it is a COMPARISON
 > projection for a diagnostic, never the block a writer persists.
+
+> **`totalHeight` is NULL when a height is undecided, since 2026-09-09.** If the
+> `Desc2` writes the DIVAN, the mattress GAP or the LEG as `TBC` / `KIV`, the
+> block returns `totalHeight: null` rather than a sum. It used to return the sum
+> of whatever else was stated — `Divan: TBC / Gap: 12"` came back as a bed `12"`
+> tall — because `Number(undefined) || 0` counted "not chosen yet" as ZERO. That
+> is the same owner rule the COLOUR arm of this block already obeyed
+> (`isPendingColour`); the two arms were answering it differently.
+>
+> `parseBedframe` now returns `divanPending` / `gapPending` / `legPending`
+> alongside the heights, because an ABSENT component and an UNDECIDED one are
+> different facts — a divan with no leg mentioned still means no leg (0), and a
+> line that never mentions a divan still totals what it does state. Only an
+> explicit marker suppresses the total.
+>
+> Measured on the 2026-09-08 book cut: the divan is written that way on 55
+> lines, the gap on 38, the leg on 20. The reconcile could not see any of it,
+> because it derives the book's side with this same expression and both sides
+> produced the same wrong number — so the pin is
+> `backend/tests/bedframePendingHeight.test.ts`, which asserts the INTENDED
+> value and never one side of a comparison against the other.
+> Ledger: `docs/bugs/0732-an-undecided-divan-height-was-counted-as-zero-so-the-bed-got.md`.
 
 > **And the FREE-TEXT name resolver moved the same way, 2026-09-08.** A code-less
 > AutoCount sales line names its product only in the Description, and
