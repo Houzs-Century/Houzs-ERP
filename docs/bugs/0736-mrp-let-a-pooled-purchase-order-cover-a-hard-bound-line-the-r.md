@@ -1,6 +1,6 @@
 ## MRP let a pooled purchase order cover a hard-bound line the readiness engine will never light [high]
 
-<!-- area: MRP + planning -->
+<!-- area: Purchase orders + GRN + PI -->
 <!-- status: fixed -->
 
 **Symptom.** A company-1 bedframe or sofa line with no purchase order of its own
