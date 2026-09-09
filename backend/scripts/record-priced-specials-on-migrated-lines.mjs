@@ -91,6 +91,25 @@
 // Listing) and `SpecialOrders.tsx` (a ticked, locked row reading "from AutoCount
 // — already in this document's price, not charged again").
 //
+// ─── THE TWO DOWNSTREAM COPIES, ADDED 2026-09-09 ─────────────────────────────
+// This ran over SALES ORDERS and PURCHASE ORDERS only, and the reconcile compares
+// a DELIVERY ORDER's and a SALES INVOICE's own line against the book like any
+// other. So `HC-DO-010104`, `HC-DO-011371` and `HC-I-2605-0294` sat on the
+// `specials` axis — 「the book asks for Nylon Fabric and the line does not carry
+// it」 — while the sales orders they were converted from were clean, for the one
+// reason that this run had never reached their tables. Measured on production
+// 2026-09-09 (probe run 34313162057): `HC-I-2605-0294`'s line carries
+// `specials: ["Bttm upgrade to umbrella fabric"]`, the slip's own words, and not
+// the owner's code `Nylon Fabric` that the picker binds to.
+//
+// Same key, same ruling 甲, same money proof, and the proof is WIDER rather than
+// assumed: `TABLE_OF` drives the trigger and generated-column census, so a table
+// added to `TABLES` cannot be left out of the measurement that no write here
+// turns into money. And the two new tables have no re-price at all — a delivery
+// order's and an invoice's line money is copied from the document it was
+// converted from, never re-derived from `variants` — so the exposure a plain
+// stamp would arm is structurally absent there rather than merely small.
+//
 // MODE=plan is the default and writes nothing. MODE=apply additionally requires
 // CONFIRM=RECORD-NOT-CHARGE.
 import postgres from "postgres";
@@ -119,8 +138,26 @@ const MONEY_COLS = {
     "unit_cost_sen", "line_cost_sen", "special_order_price_sen", "divan_price_sen", "leg_price_sen"],
   purchase_order_items: ["unit_price_sen", "line_total_sen", "discount_sen",
     "unit_cost_sen", "special_order_price_sen", "divan_price_sen", "leg_price_sen"],
+  /* THE TWO DOWNSTREAM COPIES, added 2026-09-09. A delivery order and a sales
+     invoice carry the same build on their own row, and the reconcile compares
+     that row against the book like any other — so `HC-DO-010104`,
+     `HC-DO-011371` and `HC-I-2605-0294` sat on the `specials` axis while their
+     sales orders were clean, for the one reason that this run had never reached
+     their tables. Same key, same ruling 甲, same money proof; the columns below
+     are read off the tables' own DDL so the proof covers every money column
+     each one actually has. */
+  delivery_order_items: ["unit_price_sen", "line_total_sen", "discount_sen",
+    "special_order_price_sen", "divan_price_sen", "leg_price_sen"],
+  sales_invoice_items: ["unit_price_sen", "line_total_sen", "discount_sen", "tax_sen",
+    "special_order_price_sen", "divan_price_sen", "leg_price_sen"],
 };
-const TABLES = [["so", "mfg_sales_order_items"], ["po", "purchase_order_items"]];
+const TABLES = [
+  ["so", "mfg_sales_order_items"], ["po", "purchase_order_items"],
+  ["do", "delivery_order_items"], ["si", "sales_invoice_items"],
+];
+/* The census reads THIS, so a table added above cannot be left out of the proof
+   that no trigger and no generated column turns a variants write into money. */
+const TABLE_OF = Object.fromEntries(TABLES);
 
 async function moneySums(tx, table, ids) {
   const cols = MONEY_COLS[table];
@@ -155,7 +192,7 @@ async function derivationCensus(db) {
       JOIN pg_class c ON c.oid = t.tgrelid
       JOIN pg_namespace n ON n.oid = c.relnamespace
      WHERE NOT t.tgisinternal AND n.nspname = 'scm'
-       AND c.relname IN ('mfg_sales_order_items', 'purchase_order_items')
+       AND c.relname::text = ANY (${Object.values(TABLE_OF)}::text[])
      ORDER BY c.relname, t.tgname`;
   const gen = await db`
     SELECT c.relname::text AS table_name, a.attname::text AS column_name,
@@ -165,7 +202,7 @@ async function derivationCensus(db) {
       JOIN pg_namespace n ON n.oid = c.relnamespace
      WHERE n.nspname = 'scm' AND a.attnum > 0 AND NOT a.attisdropped
        AND a.attgenerated <> ''
-       AND c.relname IN ('mfg_sales_order_items', 'purchase_order_items')
+       AND c.relname::text = ANY (${Object.values(TABLE_OF)}::text[])
      ORDER BY c.relname, a.attname`;
   for (const r of rows) r.relevant = r.on_update && (r.any_column || r.names_variants);
   return { triggers: rows, generated: gen };
@@ -217,15 +254,26 @@ async function main() {
       i.description2 AS d2, i.variants, i.qty
     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
     WHERE h.company_id = ${CO} AND i.item_group IN ('sofa','bedframe') AND h.linked_ac_docno IS NOT NULL`;
+  /* The same two clauses, on the two downstream copies: a MIGRATED document
+     (`linked_ac_docno IS NOT NULL`) and a line the slip can describe. */
+  const doLines = await sql`SELECT i.id, h.do_number AS doc, i.item_code AS code, i.item_group AS grp,
+      i.description2 AS d2, i.variants, i.qty
+    FROM scm.delivery_order_items i JOIN scm.delivery_orders h ON h.id = i.delivery_order_id
+    WHERE h.company_id = ${CO} AND i.item_group IN ('sofa','bedframe') AND h.linked_ac_docno IS NOT NULL`;
+  const siLines = await sql`SELECT i.id, h.invoice_number AS doc, i.item_code AS code, i.item_group AS grp,
+      i.description2 AS d2, i.variants, i.qty
+    FROM scm.sales_invoice_items i JOIN scm.sales_invoices h ON h.id = i.sales_invoice_id
+    WHERE h.company_id = ${CO} AND i.item_group IN ('sofa','bedframe') AND h.linked_ac_docno IS NOT NULL`;
+  const LINES = { so: soLines, po: poLines, do: doLines, si: siLines };
   log("");
-  log(`migrated lines read: SO ${soLines.length}, PO ${poLines.length}`);
+  log(`migrated lines read: SO ${soLines.length}, PO ${poLines.length}, DO ${doLines.length}, SI ${siLines.length}`);
 
-  const updates = { so: [], po: [] };
+  const updates = Object.fromEntries(TABLES.map(([w]) => [w, []]));
   const byCode = new Map();          // priced code -> lines that would record it
   const zeroRidingAlong = new Map(); // 0/0 code forgone by the earlier split, now landed
   const samples = [];
   const oddVariants = [];
-  const alreadyArmed = { so: 0, po: 0, codes: new Map() }; // lines that ALREADY carry a priced code
+  const alreadyArmed = { ...Object.fromEntries(TABLES.map(([w]) => [w, 0])), codes: new Map() }; // lines that ALREADY carry a priced code
   let safeSetSize = 0;               // what the earlier SKIP_PRICED pass would stamp today
   /* Of the selected lines, how many ALREADY carry the whole record from an
      earlier apply. The selection cannot shrink after a successful run — it is
@@ -233,9 +281,9 @@ async function main() {
      this split a re-run's line count reads as untouched backlog. That exact
      mis-read is what quoted 139 already-decided lines back as outstanding
      (docs/bugs/0668-*). */
-  const cover = { so: { fresh: 0, already: 0 }, po: { fresh: 0, already: 0 } };
+  const cover = Object.fromEntries(TABLES.map(([w]) => [w, { fresh: 0, already: 0 }]));
 
-  for (const [which, rows] of TABLES.map(([w]) => [w, w === "so" ? soLines : poLines])) {
+  for (const [which, rows] of TABLES.map(([w]) => [w, LINES[w]])) {
     for (const r of rows) {
       /* Lines that ALREADY carry a priced code are the population whose next
          edit is armed TODAY, with or without this script. Counting them is what
@@ -302,19 +350,19 @@ async function main() {
   log(`per-line changes (first ${SHOW}):`);
   for (const s of samples) log(s);
   log("");
-  log(`lines this run would RECORD: SO ${updates.so.length}, PO ${updates.po.length} ` +
-      `(total ${updates.so.length + updates.po.length})`);
+  const per = (f) => TABLES.map(([w]) => `${w.toUpperCase()} ${f(w)}`).join(", ");
+  const totalUpdates = TABLES.reduce((t, [w]) => t + updates[w].length, 0);
+  log(`lines this run would RECORD: ${per((w) => updates[w].length)} (total ${totalUpdates})`);
   /* The denominator above NEVER shrinks after a successful apply — the selection
      reads variants.specials, which this script does not write. The split below
      is the part that moves, and it is the honest answer to "how much is left". */
-  const freshTotal = cover.so.fresh + cover.po.fresh;
-  const alreadyTotal = cover.so.already + cover.po.already;
-  log(`   of those, NOT yet recorded (this run adds a code): SO ${cover.so.fresh}, PO ${cover.po.fresh} ` +
-      `(total ${freshTotal})`);
+  const freshTotal = TABLES.reduce((t, [w]) => t + cover[w].fresh, 0);
+  const alreadyTotal = TABLES.reduce((t, [w]) => t + cover[w].already, 0);
+  log(`   of those, NOT yet recorded (this run adds a code): ${per((w) => cover[w].fresh)} (total ${freshTotal})`);
   log(`   of those, ALREADY recorded by an earlier apply (rewrite is a no-change): ` +
-      `SO ${cover.so.already}, PO ${cover.po.already} (total ${alreadyTotal})`);
+      `${per((w) => cover[w].already)} (total ${alreadyTotal})`);
   if (freshTotal === 0)
-    log(`   -> nothing left to record. A re-run reporting ${updates.so.length + updates.po.length} ` +
+    log(`   -> nothing left to record. A re-run reporting ${totalUpdates} ` +
         `lines is the stable denominator, not backlog.`);
   log(`lines the earlier 0/0 pass still owns and this run leaves alone: ${safeSetSize}`);
   log("");
@@ -335,7 +383,7 @@ async function main() {
   }
 
   log("");
-  log(`lines ALREADY carrying a PRICED code today (armed with or without this run): SO ${alreadyArmed.so}, PO ${alreadyArmed.po}`);
+  log(`lines ALREADY carrying a PRICED code today (armed with or without this run): ${per((w) => alreadyArmed[w])}`);
   for (const [c, n] of [...alreadyArmed.codes.entries()].sort((a, b) => b[1] - a[1]))
     log(`   ${String(n).padStart(4)}  ${c}`);
 
@@ -388,6 +436,12 @@ async function main() {
   log(`   SO unit_price_sen (customer price)   +0 sen — already suppressed for a migrated line`);
   log(`                                        (mfg-pricing-recompute.ts:546-547 and :725-730)`);
   log(`   SO unit_cost_sen (per unit)          +${soCost} sen (RM ${(soCost / 100).toFixed(2)}) over ${updates.so.length} lines`);
+  /* THE TWO DOWNSTREAM COPIES HAVE NO RE-PRICE AT ALL. A delivery order's and a
+     sales invoice's line money is copied from the document it was converted
+     from; neither route re-derives it from `variants`. So the exposure a plain
+     stamp would arm on those two is not "small", it is structurally absent —
+     and the money proof below measures that rather than asserting it. */
+  log(`   DO / SI                              +0 sen — neither route re-prices a line from variants`);
   log(`   SO special_order_price_sen           +${soSpecialCol} sen (RM ${(soSpecialCol / 100).toFixed(2)})`);
   log(`   PO unit_price_sen (client re-price)  +${poCostIfPooled} sen from the maintenance pool above`);
 
@@ -476,8 +530,9 @@ async function main() {
     process.exit(1);
   }
   log("");
-  log(`transaction committed — UPDATE touched SO ${touchedBy.so}/${updates.so.length}, ` +
-      `PO ${touchedBy.po}/${updates.po.length}. Money columns identical: ${proved}.`);
+  log(`transaction committed — UPDATE touched ` +
+      `${TABLES.map(([w]) => `${w.toUpperCase()} ${touchedBy[w]}/${updates[w].length}`).join(", ")}` +
+      `. Money columns identical: ${proved}.`);
 
   /* READ-BACK ON A NEW CONNECTION, asserting the SHAPE and not a row count.
      A count of 7 of 7 was true while all 7 were being corrupted
@@ -524,14 +579,14 @@ async function main() {
   log("");
   log(`READ-BACK on a NEW connection (shape + content): ${ok} lines correct, ${bad} not.`);
   for (const s of badSamples) log(s);
-  if (bad || ok !== updates.so.length + updates.po.length) {
+  if (bad || ok !== totalUpdates) {
     log("");
     log(`NOT LANDED — the read-back does not account for every line. Do not treat this run as applied.`);
     await sql.end();
     process.exit(1);
   }
   log("");
-  log(`APPLIED — SO ${updates.so.length} lines, PO ${updates.po.length} lines recorded as NOT chargeable, ` +
+  log(`APPLIED — ${per((w) => `${updates[w].length} lines`)} recorded as NOT chargeable, ` +
       `PROVEN by read-back. variants.specials and custom_specials both untouched.`);
   await sql.end();
 }
