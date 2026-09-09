@@ -479,9 +479,29 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   bucket,
   every line in a company-1 bedframe bucket is bound, so nothing else can draw
   it, and leaving the units visible is what keeps the on-hand figure honest.
-  **SOFA is excluded at this call site** — sofa demand never enters section 7
-  (section 6 skips it) and section 8 has its own supply model; the shared
-  predicate is unchanged.
+- **AND SOFA JOINED THE RULE ON 2026-09-09** — the bullet above used to end
+  *"SOFA is excluded at this call site … section 8 has its own supply model"*,
+  and that sentence read as a design choice while describing work not yet done.
+  Section 8 planned every sofa SET on the pooled bucket key alone, which is
+  survivable for an OUTSTANDING purchase order (it sits in the pool under its own
+  key) and not survivable for a RECEIVED one: `left = qty − received_qty` is 0,
+  the line never enters the pool, and with no `dedicatedReceivedByLine` leg its
+  receipt could only arrive through the STOCK bucket — keyed on
+  `fabricCode|seatHeight|legHeight|specials`, four free-text fields the order and
+  the receipt spell differently far more often than not.
+
+  Measured on the live page 2026-09-09: the sofa tab asked for **70 units on 28
+  orders**; **42** were really missing, **8 of those orders (26 units) had their
+  own purchase order fully received**, and 26 of those lines read READY on the
+  sales-order screen at the same moment. STOCK read **0 on all 136 sofa rows**
+  while **246 units** of company-1 sofa sat in the warehouse. Bedframe, already
+  dedicated, was right to the unit on the same page (50 short, 50 lines with no
+  PO). `docs/bugs/0769`.
+
+  It was MRP catching up with the allocator, not a new rule: `isHardBoundLine`
+  has named sofa bound since 2026-08-10, and on prod **zero** of 1,240 open
+  company-1 sofa lines read READY without their own purchase order. Company 2
+  keeps the pooled sofa model.
 
 ### "If the variants are different, will it still match my goods?" (owner, 2026-08-16)
 
