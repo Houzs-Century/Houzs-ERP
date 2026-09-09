@@ -872,10 +872,37 @@ export const Mrp = () => {
   /* Frozen header — owner 2026-07-24 "每个table的header都要freeze", and again on
      2026-09-09 for this page ("MRP 需要freeze row title"). MRP keeps its own
      hand-built Model -> Variant -> SO tree instead of <DataTable>, so it never
-     inherited the freeze; it now drives the SAME hook rather than a second copy
-     of that geometry. Always armed: the hook disarms itself when the rows do
-     not overflow the cap, so a short list keeps its plain flow. */
-  const freeze = useFrozenTableHeader(true);
+     inherited the freeze; #3430 pointed it at the SAME hook rather than a second
+     copy of that geometry.
+
+     DISARMED THE SAME DAY (owner 2026-09-09, shown the measurement below and
+     asked with a picker: 「先把 MRP 的表头固定关掉」). The geometry is sound but
+     its central assumption does not hold on THIS page: it reserves the strip
+     above the table under the pinned page header and relies on PAGE SCROLL to
+     carry the composition up. Measured live on erp.houzscentury.com/scm/mrp,
+     sofa tab, in a 879px window:
+
+       --page-header-offset      151px
+       box sticks at top         388px   (151 + 244px of title / tabs / filters)
+       scroller max-height       443px   <- the rows the operator can see
+       content height          5,090px
+       main.scrollHeight           879   === main.clientHeight
+
+     The capped table makes the page exactly viewport-height, so there is NO page
+     scroll to spend: the 388px is reserved permanently and the list is half a
+     screen, with ~98px of dead space under it. That is the failure mode the
+     hook's own comments already record from earlier rounds ("看的list就很少了").
+
+     `false` returns the page to plain flow — the hook sets no cap, renders no
+     runway spacer, and `.tableScroll` is inert uncapped (its CSS says so). The
+     wiring below is LEFT IN PLACE deliberately: re-freezing this page is a
+     geometry fix (give the composition real scroll runway, or mark a
+     `data-freeze-anchor` below the filter row so only the header strip is
+     reserved), not a re-integration. Flip this back to `true` in the same PR
+     that fixes it, and measure the four numbers above on the real page before
+     claiming it works — #3430 shipped verified against a HARNESS, and its own
+     bug doc states that no test asserts the freeze. */
+  const freeze = useFrozenTableHeader(false);
 
   return (
     <div className="space-y-4" ref={freeze.rootRef}>
