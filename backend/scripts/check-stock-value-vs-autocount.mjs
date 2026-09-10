@@ -8,16 +8,32 @@
  * by coincidence is worth nothing. This reports the TOTAL and then every item
  * that moves it, largest first.
  *
- * ── THE AUTOCOUNT SIDE, AND THE FILE THAT LOOKS RIGHT AND IS NOT ──────────
- * `data/ac-stock-value-2026-09-10.json.gz` is `StockDTL` grouped by
- * (ItemCode, Location): `SUM(Qty)` is the balance and `SUM(Qty * Cost)` is its
- * value under AutoCount's OWN costing. No average, no re-derivation.
+ * ── THE AUTOCOUNT SIDE: ITS OWN OPEN COST LAYERS ─────────────────────────
+ * `data/ac-stock-balance-2026-09-10.json.gz` is `UTDStockCostDTL` — AutoCount's
+ * own store of the cost layers a balance still holds — joined to
+ * `UTDStockCost` for item and location, beside the `StockDTL` balance quantity
+ * as at 2026-09-10.
  *
- * It is NOT `data/ac-utd-stock-cost.json.gz`, which is already committed and
- * would have been the obvious file to reach for. That one reports 736 units and
- * RM 100,169 across 1,352 rows and leads with `TRANSPORTATION CHARGES` at -373:
- * it is a UTD-cost extract for a different question. Comparing a balance sheet
- * against it produces a confident wrong answer, which is the most expensive kind.
+ * WHICH TABLE WAS NOT DECIDED BY READING. The owner's Stock Balance screenshot
+ * gives 16 cells with their exact Total Cost, and three candidates were tested
+ * against them: `SUM(Qty*Cost)` over StockDTL reproduced 7, `FIFOCost` joined to
+ * StockDTL reproduced 7 (failing on a different set), and `UTDStockCostDTL`
+ * reproduced 13. Whole-book it gives RM 1,602,654 against the screen's
+ * RM 1,707,332.
+ *
+ * THE 6% THAT IS STILL UNEXPLAINED IS FLAGGED, NOT ABSORBED. 112 cells hold
+ * cost layers that do not add up to their own balance — `AERO-MP (K)` KL has one
+ * layer of 245 units against a balance of 38, and the screen values those 38 at
+ * RM 30.0995 each where the layer says RM 30.00. Neither newest-layers-first nor
+ * adding `AdjustedCost` reproduces it. Those cells are reported as UNKNOWN and
+ * excluded from the comparison: calling them our difference would be inventing a
+ * finding. The other 961 cells (7,605 units, RM 1,485,503) are exact.
+ *
+ * It is NOT `data/ac-utd-stock-cost.json.gz`, which is already committed and is
+ * the file anyone would reach for first — 736 units and RM 100,169 across 1,352
+ * rows, led by `TRANSPORTATION CHARGES` at -373. Nor is it the first version of
+ * this export, which summed `Qty*Cost` over every movement and produced
+ * RM 4,130,404 — a number that exists nowhere in AutoCount.
  *
  * ── WHAT IS OUT OF SCOPE, ON THE OWNER'S WORD ─────────────────────────────
  * SERVICE items. Owner, 2026-09-09: 「那个 Service 的东西，AutoCount 那边是不需要
@@ -33,9 +49,12 @@
  *
  *   CONSIGNMENT   the owner's rule (2026-07-25) is that consignment stock shows
  *                 QUANTITY and is excluded from VALUE. AutoCount values it.
- *   NEGATIVE      the book holds 45 cells at a negative balance. That is
- *                 AutoCount's own disagreement with itself; it is reported, and
- *                 never quietly netted off.
+ *   LAYER GAP     112 cells whose cost layers do not add up to their own
+ *                 balance. UNKNOWN, reported, excluded — never called ours.
+ *                 (A NEGATIVE balance is NOT in this list: the owner ruled on
+ *                 2026-09-10 「如果是负库存，你也是要跟着负库存的」, so a negative
+ *                 cell is compared like any other and we are expected to match
+ *                 it.)
  *   ZERO-COST     lots we could not price (the book never priced them either).
  *                 They carry quantity and no value on our side.
  *
@@ -74,7 +93,7 @@ if (!process.env.DATABASE_URL) {
   console.error('DATABASE_URL is required.');
   process.exit(2);
 }
-const SNAP = path.join(here, 'data', 'ac-stock-value-2026-09-10.json.gz');
+const SNAP = path.join(here, 'data', 'ac-stock-balance-2026-09-10.json.gz');
 if (!fs.existsSync(SNAP)) {
   console.error(`REFUSED: ${SNAP} is missing — it is the AutoCount stock valuation and `
     + 'this runner cannot reach the book. Nothing was compared.');
@@ -113,15 +132,24 @@ try {
   /* ── AutoCount side ────────────────────────────────────────────────────── */
   const ac = new Map();
   let acService = { qty: 0, sen: 0, cells: 0 };
-  let acNegative = { qty: 0, sen: 0, cells: 0 };
+  let acGap = { qty: 0, sen: 0, cells: 0, codes: new Set() };
   let acUnmapped = { qty: 0, sen: 0, codes: new Set() };
   for (const c of snap.cells) {
-    if (isService(c.item)) { acService.qty += c.qty; acService.sen += c.value_sen; acService.cells += 1; continue; }
-    if (c.qty < 0) { acNegative.qty += c.qty; acNegative.sen += c.value_sen; acNegative.cells += 1; continue; }
-    if (!mapping.has(norm(c.item))) { acUnmapped.qty += c.qty; acUnmapped.sen += c.value_sen; acUnmapped.codes.add(c.item); }
+    if (isService(c.item)) { acService.qty += c.bal_qty; acService.sen += c.value_sen; acService.cells += 1; continue; }
+    /* A NEGATIVE balance is followed, not set aside. Owner 2026-09-10:
+       「如果是负库存，你也是要跟着负库存的」. */
+    if (c.layer_gap) {
+      /* AutoCount's own cost layers do not add up to its own balance on this
+         cell, so its value here is a number this channel cannot reproduce (see
+         the export header). Counted and named as UNKNOWN -- calling it our
+         difference would be inventing a finding. */
+      acGap.qty += c.bal_qty; acGap.sen += c.value_sen; acGap.cells += 1; acGap.codes.add(c.item);
+      continue;
+    }
+    if (!mapping.has(norm(c.item))) { acUnmapped.qty += c.bal_qty; acUnmapped.sen += c.value_sen; acUnmapped.codes.add(c.item); }
     const k = foldKey(erpCodeOf(c.item));
     const e = ac.get(k) ?? { qty: 0, sen: 0 };
-    e.qty += c.qty; e.sen += c.value_sen; ac.set(k, e);
+    e.qty += c.bal_qty; e.sen += c.value_sen; ac.set(k, e);
   }
   const acTotal = [...ac.values()].reduce((a, e) => a + e.sen, 0);
   const acQty = [...ac.values()].reduce((a, e) => a + e.qty, 0);
@@ -132,7 +160,7 @@ try {
            coalesce(l.unit_cost_sen, 0)::bigint AS cost,
            l.source_doc_type, l.source_doc_no
       FROM scm.inventory_lots l
-     WHERE l.company_id = ${CO} AND l.qty_remaining > 0`;
+     WHERE l.company_id = ${CO} AND l.qty_remaining <> 0`;
   /* The consignment rule, copied from src/scm/lib/inventory-movements.ts:103 so
      the two answers cannot drift on the classification. */
   const isConsignment = (t, n) => {
@@ -168,8 +196,9 @@ try {
   log('  set aside before comparing, each for a stated reason:');
   log(`    AutoCount SERVICE items — the owner's ruling, we do not carry them`);
   log(`        ${String(acService.cells).padStart(5)} cell(s)  ${String(Math.round(acService.qty)).padStart(6)}u   ${rm(acService.sen)}`);
-  log(`    AutoCount cells at a NEGATIVE balance — the book disagreeing with itself`);
-  log(`        ${String(acNegative.cells).padStart(5)} cell(s)  ${String(Math.round(acNegative.qty)).padStart(6)}u   ${rm(acNegative.sen)}`);
+  log(`    AutoCount cells whose own cost layers do not add up to its own balance`);
+  log(`        ${String(acGap.cells).padStart(5)} cell(s)  ${String(Math.round(acGap.qty)).padStart(6)}u   ${rm(acGap.sen)}  — UNKNOWN, not our difference`);
+  log(`        ${[...acGap.codes].slice(0, 8).join(', ')}${acGap.codes.size > 8 ? ' …' : ''}`);
   log(`    our CONSIGNMENT stock — quantity yes, value no (owner rule 2026-07-25)`);
   log(`        ${String(consign.lots).padStart(5)} lot(s)   ${String(Math.round(consign.qty)).padStart(6)}u   ${rm(consign.sen)} of value not counted`);
   log(`    our lots still at ZERO cost — nothing prices them, the book included`);
