@@ -1,0 +1,44 @@
+name: Orphan scan deposit check (read-only)
+
+# Lists scan-origin Sales Orders whose header deposit_sen is not backed by an
+# is_deposit ledger row, so the paid rollup double-counts it (docs/bugs/0785-*:
+# "A receiptless scan draft double-counted its deposit").
+#
+# The answer lives only in production. Owner rule (CLAUDE.md): a production fact
+# is a script + a manual workflow reading secrets.DATABASE_URL, never a SELECT
+# pasted into chat. Actions already holds the DSN for the deploy, so the check
+# runs here and nobody handles the credential.
+#
+# Manual trigger only — a diagnostic read, never a scheduled production DB hit.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and must
+# never queue behind (or displace) a release.
+concurrency:
+  group: orphan-scan-deposit-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-orphan-scan-deposits.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml for
+          # the full Happy-Eyeballs reasoning. Harmless on an IPv4-only host, and
+          # this workflow may be pointed at a pooler hostname later.
+          NODE_OPTIONS: --dns-result-order=ipv4first
