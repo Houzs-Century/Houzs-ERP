@@ -4156,6 +4156,13 @@ Three properties to keep:
   approving one more spec amendment, which carries a price authority
   (`scm.amendment.approve_lines`). No script here may forge that.
 
+And the trap it fell into on its own first dispatch, worth knowing before you
+write any query that spans these two tables: **`scm.mfg_so_audit_log` links to
+its order with `so_doc_no`, `scm.mfg_sales_order_items` with `doc_no`.** Carrying
+one spelling into the other table is the right column name on the wrong table, it
+reads as correct in review, and no gate in this repo catches it because none of
+them opens the database (`docs/bugs/0790-*`).
+
 **A THIRD kind of reader was added on 2026-09-07: the REPORTS.** The AutoCount
 reconcile did not know this key existed, so every line closed by this very ruling
 kept reporting as an outstanding `DIFFER` — the owner's applied decision quoted
