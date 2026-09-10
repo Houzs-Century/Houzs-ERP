@@ -747,6 +747,28 @@ empty selection and was refused. The detail now falls back to `matched` for
 both, and the upload REFUSES when its rows insert returns fewer ids than
 decisions — the silent skip that left nine MATCHED lines with zero links.
 
+**THE MERCHANT FEE ACCOUNT (2026-09-09, docs/bugs/0762).** Every acquirer link
+in both companies had `fee_account_code = '930-0000'`, seeded by migration 0332
+when the chart was the old one. The AutoCount relay (0346) and the 397-account
+seed replaced the chart underneath, and in the new one 930-0000 is
+"MISCELLANEOUS EXPENSES XXX" and **inactive** — so the posting gate refused
+every settlement confirm with *"account 930-0000 is deactivated"*, in both
+companies, and had done since the chart moved. It stayed hidden because nothing
+reads the fee account until a line is CONFIRMED, and confirms were blocked by
+0760/0761. Migration `20260910T0147` repoints the links and the column default
+to **900-T009 TERMINAL INTEREST CHARGES** (the owner's choice), guarded so only
+rows still on the placeholder move and the target must be an EXPENSE, ACTIVE and
+a LEAF in that same company. The route's fallbacks are now one
+`MERCHANT_FEE_ACCOUNT` constant so the code and the column default cannot drift.
+**And the Setup screen can now pick it** (owner: 这个需要). Reconciliation setup
+offers each company its own ACTIVE EXPENSE LEAVES — server-filtered to the same
+properties the posting gate checks, so a code on the list cannot be one the gate
+refuses — and the PATCH re-checks all four by name (in this chart, active, an
+EXPENSE, a leaf) rather than accepting a code that fails later at confirm time.
+A fee account the chart can no longer post to is NAMED on the cell, because that
+silence is how 930-0000 went unnoticed while every confirm in both companies
+refused.
+
 **AND THE BULK BUTTON IS ITS OWN PATH (docs/bugs/0761).** `settlementConfirmMatched`
 ("Confirm all N matched") builds each line's payments from `acc_settlement_matches`
 alone, so the detail fix left it still answering *Posted 0* over lines whose

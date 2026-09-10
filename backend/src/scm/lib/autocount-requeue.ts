@@ -233,6 +233,27 @@ export type RequeueOutcome =
   | 'read-failed';
 
 /**
+ * The outcomes that mean THIS DOCUMENT IS NOW ON ITS WAY — it has been queued,
+ * or a dry run has said it would be.
+ *
+ * Named as a set rather than written as an `||` chain in the sweep's loop
+ * because forgetting one of them is silent: a document put on its way under an
+ * outcome missing from here is simply re-queued a second time, which is the
+ * defect this exists to stop. `requeued-with-parent` is the one that would be
+ * forgotten — it queues TWO documents and reads like a special case.
+ *
+ * `sent-now` is deliberately NOT here. It belongs to the per-row button, which
+ * dispatches one row and never loops, so a set it can never be consulted for
+ * would only invite a reader to think the sweep can produce it.
+ */
+export const REQUEUE_PUTS_IT_ON_ITS_WAY: ReadonlySet<RequeueOutcome> = new Set<RequeueOutcome>([
+  'would-requeue',
+  'requeued',
+  'requeued-as-recorded',
+  'requeued-with-parent',
+]);
+
+/**
  * Every outcome in ONE plain-English sentence, for a reader who did not write
  * the queue.
  *
@@ -532,6 +553,48 @@ async function liveRowOtherThan(
   return { status: String((data as { status?: unknown }).status ?? '') };
 }
 
+/**
+ * Is a row for THIS DOCUMENT already waiting to be sent?
+ *
+ * The create path has asked this since it was written (`existingCreateRow`),
+ * and the edit path never did. That asymmetry is what
+ * `docs/bugs/0771-a-sweep-queued-twenty-one-rebuilds-of-one-document.md` is
+ * about: `HC-SO-012312` carries 21 refused edits, one per save, and a sweep
+ * climbed the ladder 21 times and would have queued 21 REBUILDS of one order —
+ * twenty-one InternalSaves against a live licensed book, each destroying and
+ * reissuing every DtlKey on it.
+ *
+ * A rebuild does not accumulate: it lays down the ERP's lines AS THEY ARE NOW,
+ * so the first one already carries every later save's content, and the other
+ * twenty are the same instruction sent again. That is why collapsing them is
+ * not a shortcut — the second one has nothing left to say.
+ *
+ * PENDING ONLY, and never `sent`. A document that has been edited a hundred
+ * times legitimately has a hundred `sent` edit rows behind it; vetoing on those
+ * would refuse every document the write-back has ever succeeded on. The rung
+ * this mirrors is `row-pending`, whose reasoning is already written above: a
+ * pending row is going out on the next five-minute sweep, so "send it again"
+ * gains nothing and can only duplicate work.
+ *
+ * ANY OP, not just this one. A create that is still queued means the document
+ * is not in the book yet, and an edit rebuild of a document AutoCount has never
+ * seen is not a thing to queue behind it.
+ */
+async function pendingRowForDocument(
+  sb: Sb,
+  row: SkippedRow,
+): Promise<{ op: string } | null> {
+  const { data, error } = await sb.from('autocount_outbox')
+    .select('id, op')
+    .eq('company_id', row.company_id)
+    .eq('doc_type', row.doc_type)
+    .eq('doc_no', row.doc_no)
+    .eq('status', 'pending')
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
+  return { op: String((data as { op?: unknown }).op ?? '') };
+}
 async function existingCreateRow(
   sb: Sb,
   row: SkippedRow,
@@ -649,6 +712,20 @@ async function editRebuildVerdict(
         + 'was converted FROM. A rebuild clears exactly those lines, and the host cannot catch it - its '
         + 'guard reads TransferedQty, which is the ONWARD direction. Only a sales order or a purchase '
         + 'order may be re-sent this way (docs/bugs/0611).',
+    };
+  }
+
+  /* ONE REBUILD PER DOCUMENT. Asked before the composer runs, because the cost
+     this avoids is not the composing — it is the send. See
+     pendingRowForDocument for why twenty of twenty-one rows have nothing left
+     to say. */
+  const queued = await pendingRowForDocument(sb, raw);
+  if (queued) {
+    return {
+      outcome: 'already-queued',
+      detail: `a ${queued.op} row for this document is already queued and the five-minute sweep will `
+        + "send it. A rebuild lays down the ERP's lines as they stand now, so that row already carries "
+        + 'everything this one would have said.',
     };
   }
 
@@ -1112,12 +1189,41 @@ export async function requeueSkipped(sb: Sb, opts: RequeueOptions = {}): Promise
   const { data, error } = await q;
   if (error) throw new Error(`could not read the outbox: ${error.code ?? ''} ${error.message ?? ''}`.trim());
 
+  /* THE DOCUMENTS THIS RUN HAS ALREADY PUT ON THEIR WAY.
+     `pendingRowForDocument` is the real guard and it reads the database, which
+     is exactly why it cannot answer during a DRY RUN: a dry run writes no
+     pending row, so twenty-one refused edits of one order would each be told
+     "the composer accepts it" and the operator would read `would-requeue 21`
+     for a run that APPLY would collapse to one. This file's own promise is that
+     the dry run "can only disagree with APPLY about whether the row lands", and
+     a prediction of 21 sends where 1 will happen breaks it. */
+  const onTheirWay = new Set<string>();
+  const docKey = (r: SkippedRow) => `${String(r.doc_type)}:${String(r.doc_no)}`;
+
   const results: RequeueResult[] = [];
   for (const raw of (data ?? []) as SkippedRow[]) {
-    results.push(await requeueOneRow(sb, raw, {
+    if (onTheirWay.has(docKey(raw))) {
+      results.push({
+        rowId: String(raw.id),
+        companyId: Number(raw.company_id),
+        op: String(raw.op),
+        docType: String(raw.doc_type),
+        docNo: String(raw.doc_no),
+        docId: raw.doc_id == null ? null : String(raw.doc_id),
+        outcome: 'already-queued',
+        detail: 'an earlier row in this same run already put this document back on its way. Re-sending '
+          + 'it again would repeat one instruction, not carry a second one.',
+        originalReason: raw.last_error ?? '',
+        newRowId: null,
+      });
+      continue;
+    }
+    const result = await requeueOneRow(sb, raw, {
       apply,
       resendingThisRow: includeFailed && raw.status === 'failed',
-    }));
+    });
+    if (REQUEUE_PUTS_IT_ON_ITS_WAY.has(result.outcome)) onTheirWay.add(docKey(raw));
+    results.push(result);
   }
   return results;
 }

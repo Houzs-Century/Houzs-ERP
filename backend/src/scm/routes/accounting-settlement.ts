@@ -60,6 +60,19 @@ async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/**
+ * Where a company books an acquirer's merchant fee when nobody has said
+ * otherwise. Matches the column DEFAULT set by migration 20260910T0147; the two
+ * must move together, which is why the code is written once here rather than
+ * spelled into each call site.
+ *
+ * Owner's choice, 2026-09-09: 900-T009 TERMINAL INTEREST CHARGES. It replaced
+ * 930-0000, which his AutoCount chart carries as a DEACTIVATED placeholder
+ * called MISCELLANEOUS EXPENSES XXX — every settlement confirm in both
+ * companies refused with "account 930-0000 is deactivated" until this moved.
+ */
+const MERCHANT_FEE_ACCOUNT = '900-T009';
+
 type StoredRow = {
   id: number; line_no: number; txn_date: string; ref: string | null;
   gross_sen: number; fee_sen: number; net_sen: number;
@@ -145,7 +158,11 @@ export const settlementSetupSave = guard(async (c) => {
   const link: Record<string, unknown> = {};
   if (body.bankAccountCode !== undefined) link.bank_account_code = body.bankAccountCode || null;
   if (body.transitAccountCode !== undefined) link.transit_account_code = String(body.transitAccountCode || '326-0000');
-  if (body.feeAccountCode !== undefined) link.fee_account_code = String(body.feeAccountCode || '930-0000');
+  /* MERCHANT_FEE_ACCOUNT, not a literal repeated twice. 930-0000 was the seed
+     default until 2026-09-09, when the owner's AutoCount chart turned out to
+     have deactivated it — every settlement confirm refused with 'account
+     930-0000 is deactivated' (migration 20260910T0147). */
+  if (body.feeAccountCode !== undefined) link.fee_account_code = String(body.feeAccountCode || MERCHANT_FEE_ACCOUNT);
   if (body.isActive !== undefined) link.is_active = Boolean(body.isActive);
   if (Object.keys(link).length > 0) {
     link.updated_at = new Date().toISOString();
@@ -259,8 +276,37 @@ export const settlementMaintenance = guard(async (c) => {
     clearings[String(Number(r.company_id))]?.push({ account_code: String(r.account_code), account_name: String(r.account_name ?? r.account_code) });
   }
 
+  /* Every company's EXPENSE accounts a merchant fee could be booked to.
+     Offered because it had to be a migration once already: the fee account was
+     seeded at 930-0000, the AutoCount chart deactivated that code, and every
+     settlement confirm in both companies refused — with no way to repoint it
+     from a screen (docs/bugs/0762).
+
+     ACTIVE LEAVES ONLY, the same two properties the posting gate checks, so a
+     code offered here cannot be one the gate will refuse. A header account
+     (one with children) never appears. */
+  const { data: feeRaw, error: fErr } = await sb.from('accounts')
+    .select('company_id, account_code, account_name, parent_code')
+    .in('company_id', ids).eq('account_type', 'EXPENSE').eq('is_active', true)
+    .order('account_code');
+  if (fErr) return c.json({ error: 'load_failed', reason: fErr.message }, 500);
+  const feeRows = (feeRaw ?? []) as Array<Record<string, any>>;
+  const hasChild = new Set(
+    feeRows.filter((r) => r.parent_code).map((r) => `${Number(r.company_id)}:${String(r.parent_code)}`),
+  );
+  const feeAccounts: Record<string, Array<{ account_code: string; account_name: string }>> = {};
+  for (const id of ids) feeAccounts[String(id)] = [];
+  for (const r of feeRows) {
+    const co = Number(r.company_id);
+    if (hasChild.has(`${co}:${String(r.account_code)}`)) continue;
+    feeAccounts[String(co)]?.push({
+      account_code: String(r.account_code),
+      account_name: String(r.account_name ?? r.account_code),
+    });
+  }
+
   const merchants = ((cfgRaw ?? []) as Array<Record<string, any>>).map((g) => {
-    const byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null; transitAccountCode: string | null }> = {};
+    const byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null; transitAccountCode: string | null; feeAccountCode: string | null }> = {};
     for (const id of ids) {
       const link = linkOf.get(`${id}:${String(g.code)}`);
       byCompany[String(id)] = {
@@ -270,6 +316,7 @@ export const settlementMaintenance = guard(async (c) => {
         linked: Boolean(link),
         bankAccountCode: link?.bank_account_code ?? null,
         transitAccountCode: link?.transit_account_code ?? null,
+        feeAccountCode: link?.fee_account_code ?? null,
       };
     }
     return {
@@ -310,7 +357,7 @@ export const settlementMaintenance = guard(async (c) => {
     };
   });
 
-  return c.json({ companies, merchants, banks, clearings });
+  return c.json({ companies, merchants, banks, clearings, feeAccounts });
 });
 
 
@@ -351,12 +398,48 @@ export const settlementMaintenanceMerchant = guard(async (c) => {
     patch.transit_account_code = code;
   }
 
+  /* THE FEE ACCOUNT, which had to be a migration once already (docs/bugs/0762):
+     it was seeded at 930-0000, the AutoCount chart deactivated that code, and
+     every settlement confirm in both companies refused with no way to repoint
+     it from a screen.
+
+     Validated by the SAME three properties the posting gate checks — an EXPENSE,
+     ACTIVE, and a LEAF in this company's own chart. Anything else is refused
+     here, by name, rather than accepted and left to fail at the moment somebody
+     confirms a statement. Blank returns it to the default. */
+  if (body.feeAccountCode !== undefined) {
+    const fee = String(body.feeAccountCode ?? '').trim() || MERCHANT_FEE_ACCOUNT;
+    const { data: acct, error: aErr } = await sb.from('accounts')
+      .select('account_code, account_type, is_active').eq('company_id', companyId).eq('account_code', fee).maybeSingle();
+    if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
+    const a = acct as { account_type?: string; is_active?: boolean } | null;
+    if (!a) {
+      return c.json({ error: 'bad_fee_account', message: `${fee} is not in this company's chart.` }, 400);
+    }
+    if (a.is_active === false) {
+      return c.json({ error: 'bad_fee_account', message: `${fee} is switched off in this company's chart, so nothing could be booked to it.` }, 400);
+    }
+    if (a.account_type !== 'EXPENSE') {
+      return c.json({ error: 'bad_fee_account', message: `${fee} is ${String(a.account_type ?? 'not an expense account')} — a merchant fee is an expense.` }, 400);
+    }
+    const { data: kids, error: kErr } = await sb.from('accounts')
+      .select('account_code').eq('company_id', companyId).eq('parent_code', fee).limit(1);
+    if (kErr) return c.json({ error: 'load_failed', reason: kErr.message }, 500);
+    if ((kids ?? []).length > 0) {
+      return c.json({ error: 'bad_fee_account', message: `${fee} has sub-accounts, so nothing posts to it directly. Pick one of them.` }, 400);
+    }
+    patch.fee_account_code = fee;
+  }
+
   if (!existing) {
     const { error } = await sb.from('acc_company_acquirers').insert({
       company_id: companyId,
       acquirer_code: code,
       transit_account_code: (patch.transit_account_code as string | undefined) ?? '326-0000',
-      fee_account_code: '930-0000',
+      /* A first link takes the fee account the operator PICKED, when he picked
+         one in the same request — the default is what it falls back to, not
+         what it overrides. */
+      fee_account_code: (patch.fee_account_code as string | undefined) ?? MERCHANT_FEE_ACCOUNT,
       bank_account_code: body.bankAccountCode || null,
       is_active: body.enabled === undefined ? true : Boolean(body.enabled),
     });

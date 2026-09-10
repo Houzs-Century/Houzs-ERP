@@ -66,7 +66,7 @@ export const SettlementSetup = () => {
 
       {companies.length > 0 && (
         <>
-          <MerchantMatrix companies={companies} merchants={merchants} banks={banks} clearings={data?.clearings ?? {}} onEdit={setEditing} />
+          <MerchantMatrix companies={companies} merchants={merchants} banks={banks} clearings={data?.clearings ?? {}} feeAccounts={data?.feeAccounts ?? {}} onEdit={setEditing} />
           <BankMatrix companies={companies} banks={banks} />
         </>
       )}
@@ -484,10 +484,11 @@ const DefaultBankCard = () => {
 
 /* ── Merchants down the side, companies across the top ────────────────────── */
 
-const MerchantMatrix = ({ companies, merchants, banks, clearings, onEdit }: {
+const MerchantMatrix = ({ companies, merchants, banks, clearings, feeAccounts, onEdit }: {
   companies: MaintenanceCompany[]; merchants: MaintenanceMerchant[]; banks: MaintenanceBank[];
   /** Each company's clearing accounts (326-/327-) — the picker under the payout bank. */
   clearings: NonNullable<MaintenanceData['clearings']>;
+  feeAccounts: NonNullable<MaintenanceData['feeAccounts']>;
   onEdit: (code: string) => void;
 }) => {
   const save = useSaveMaintenanceMerchant();
@@ -569,6 +570,36 @@ const MerchantMatrix = ({ companies, merchants, banks, clearings, onEdit }: {
                                   <option key={a.account_code} value={a.account_code}>clearing · {a.account_code} {a.account_name}</option>
                                 ))}
                               </select>
+                            )}
+                            {/* WHERE THE FEE GOES. This had to be a migration
+                                once already: the fee account was seeded at
+                                930-0000, the AutoCount chart deactivated that
+                                code, and every settlement confirm in both
+                                companies refused — with nothing on any screen
+                                able to repoint it (docs/bugs/0762). The list is
+                                the company's ACTIVE EXPENSE LEAVES, filtered by
+                                the server to the same properties the posting
+                                gate checks. */}
+                            {(feeAccounts[String(co.id)]?.length ?? 0) > 0 && (
+                              <select className={css.bankPick}
+                                aria-label={`${m.code} fee account for ${co.name}`} value={at.feeAccountCode ?? ''}
+                                onChange={(e) => save.mutate({ companyId: co.id, code: m.code, feeAccountCode: e.target.value })}>
+                                <option value="">fee goes to…</option>
+                                {(feeAccounts[String(co.id)] ?? []).map((a) => (
+                                  <option key={a.account_code} value={a.account_code}>fee · {a.account_code} {a.account_name}</option>
+                                ))}
+                              </select>
+                            )}
+                            {/* A fee account this company's chart no longer
+                                offers is named rather than shown as a blank
+                                select — that silence is exactly how 930-0000
+                                went unnoticed for six days. */}
+                            {at.feeAccountCode
+                              && (feeAccounts[String(co.id)] ?? []).length > 0
+                              && !(feeAccounts[String(co.id)] ?? []).some((a) => a.account_code === at.feeAccountCode) && (
+                              <div className={css.warn}>
+                                fee → {at.feeAccountCode}, which this chart cannot post to
+                              </div>
                             )}
                           </>
                         )}
