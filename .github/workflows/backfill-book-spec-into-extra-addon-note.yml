@@ -41,9 +41,9 @@ on:
         type: choice
         options: [plan, apply]
       categories:
-        description: "comma-separated resolved categories to WRITE (the census still prints every category)"
+        description: "comma-separated resolved categories to WRITE (the census still prints every category). dining is IN by default - plan run 34451047355 found 0 `others` lines and 10 `dining` ones, and the owner named dining explicitly"
         required: false
-        default: "accessory,mattress,others"
+        default: "accessory,mattress,others,dining"
         type: string
       company:
         description: "company id (1 = Houzs Century; a 2990-* document is out of scope)"

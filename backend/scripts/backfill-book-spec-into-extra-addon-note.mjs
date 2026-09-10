@@ -115,7 +115,7 @@
        npx tsx scripts/backfill-book-spec-into-extra-addon-note.mjs
 
    Env: DATABASE_URL (required)  MODE=plan|apply  CONFIRM (on apply)
-        COMPANY (default 1)  CATEGORIES (default accessory,mattress,others)
+        COMPANY (default 1)  CATEGORIES (default accessory,mattress,others,dining)
         SAMPLE (default 12) */
 
 import { readFileSync } from 'node:fs';
@@ -131,7 +131,17 @@ const APPLY = (process.env.MODE || 'plan').toLowerCase() === 'apply';
 const CONFIRM_PHRASE = 'I HAVE REVIEWED THE DRY-RUN';
 const CO = Number(process.env.COMPANY || 1);
 const SAMPLE = Number(process.env.SAMPLE || 12);
-const CATEGORIES = String(process.env.CATEGORIES || 'accessory,mattress,others')
+/* MEASURED, not assumed. The brief for this work said the dining items live
+   under `others`; production plan run 34451047355 says otherwise — company 1
+   has ZERO `others` lines and TEN `dining` ones, and all ten carry a book text.
+   The owner named dining table / dining leg / dining chair explicitly, so
+   `dining` is in the default scope, and `others` stays for the day a line uses
+   it. Worth knowing for whoever does the UI half: specialOrderSurface's
+   STANDALONE set is mattress / accessory / others, so a `dining` line gets no
+   Special Order panel on the Sales Order screen today — the note this backfill
+   writes still prints on the purchase order, which is what was asked for, but
+   nobody can EDIT it there yet. */
+const CATEGORIES = String(process.env.CATEGORIES || 'accessory,mattress,others,dining')
   .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 const LABEL = '账本原文:';
 const AC_DESC2_MAX = 100;
