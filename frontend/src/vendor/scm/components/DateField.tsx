@@ -180,25 +180,29 @@ export function DateField({
   onBlur,
   required = false,
 }: DateFieldProps) {
+  // `editing` is non-null only while the text box has focus; the rest of the
+  // time the display is derived straight from the canonical ISO `value`, so the
+  // field can never drift out of sync with the parent.
+  const [editing, setEditing] = useState<string | null>(null);
+  // Set on blur when the operator's own text does not parse. Before this the
+  // field silently reverted to the previous date and the operator read that as
+  // his own typo — the entry was lost with no border, no message and nothing
+  // announced, because `aria-invalid` came only from the `invalid` PROP.
+  const [draftInvalid, setDraftInvalid] = useState(false);
   const nativeRef = useRef<HTMLInputElement>(null);
   const fallbackId = useId();
   const inputId = id ?? fallbackId;
   const coarse = useCoarsePointer();
 
-  const display = isoToDmy(value);
-  const showInvalid = invalid;
+  const display = editing ?? isoToDmy(value);
+  const showInvalid = invalid || draftInvalid;
+  const errorId = `${inputId}-date-error`;
 
-  /* Owner 2026-09-10: 「remove 掉可以打字 force 只能用 calender」 +
-     「calender 点一下开点一下关 就这样简单」. The field is a click target;
-     anywhere a tap lands opens the OS date picker. The visible text box is
-     read-only display and never receives typing — a picked date closes the
-     picker; a tap outside closes it too. That retires the split-field design
-     the 2026-09-09 「可以保留手打」 ruling asked for. */
   const openPicker = () => {
     const el = nativeRef.current;
     if (!el || disabled) return;
     if (typeof el.showPicker === 'function') {
-      try { el.showPicker(); return; } catch { /* user-gesture context refused */ }
+      try { el.showPicker(); return; } catch { /* not allowed in this context */ }
     }
     el.focus();
     el.click();
@@ -214,27 +218,55 @@ export function DateField({
             ? { ...style, borderColor: 'var(--c-orange)', background: 'var(--c-cream)' }
             : style
       }
-      onClick={openPicker}
     >
       <input
         id={inputId}
         name={name}
         className={styles.textInput}
         type="text"
+        inputMode="numeric"
         autoComplete="off"
         placeholder={placeholder}
         title={title}
         aria-label={ariaLabel}
         aria-invalid={showInvalid || undefined}
+        aria-describedby={draftInvalid ? errorId : undefined}
         disabled={disabled}
         required={required}
-        readOnly
         value={display}
+        onFocus={(e) => { setEditing(isoToDmy(value)); setDraftInvalid(false); e.currentTarget.select(); }}
+        onChange={(e) => {
+          const raw = e.target.value;
+          const digits = raw.replace(/\D/g, '');
+          const maskable = /^[\d/]*$/.test(raw) && digits.length <= 8 && separatorsAreMaskOwn(raw);
+          const t = maskable ? maskDmy(digits) : raw;
+          setEditing(t);
+          setDraftInvalid(false);
+          const trimmed = t.trim();
+          if (trimmed === '') { onChange(''); return; }
+          const iso = parseDmy(trimmed);
+          if (iso) onChange(iso);
+        }}
+        onBlur={() => {
+          const text = (editing ?? '').trim();
+          if (text !== '' && parseDmy(text) === null) {
+            setDraftInvalid(true);
+          } else {
+            setEditing(null);
+            setDraftInvalid(false);
+          }
+          onBlur?.();
+        }}
       />
+      {draftInvalid && (
+        <span id={errorId} className={styles.draftError} role="alert">
+          Not a date — use dd/mm/yyyy
+        </span>
+      )}
       <button
         type="button"
         className={styles.iconBtn}
-        onClick={(e) => { e.stopPropagation(); openPicker(); }}
+        onClick={openPicker}
         disabled={disabled}
         tabIndex={-1}
         aria-label="Open calendar"
