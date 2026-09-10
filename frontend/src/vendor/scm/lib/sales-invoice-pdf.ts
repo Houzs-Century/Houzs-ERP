@@ -51,6 +51,11 @@ type SiHeader = {
   /* The CUSTOMER's own reference — distinct from `so_doc_no`, which is OUR SO
      number. Printed as 'Customer PO', matching the SO PDF's label. */
   po_doc_no?: string | null; customer_so_no?: string | null;
+  /* Header delivery date — carried off the DO on convert. Printed in INVOICE
+     DETAILS; per-line dates live on the form/detail, but a per-line PDF column
+     would overflow the A4 item table, so the header date is what the customer's
+     copy shows. Optional + drawInfoColumns skips it if null. */
+  customer_delivery_date?: string | null;
 };
 type SiItem = {
   item_code: string; description: string | null;
@@ -129,6 +134,7 @@ export async function renderSalesInvoiceInto(
         ['SO Ref', header.so_doc_no],
         ['Customer PO', header.po_doc_no ?? header.customer_so_no],
         ['Date', fmtDocDate(header.invoice_date)],
+        ['Delivery Date', header.customer_delivery_date ? fmtDocDate(header.customer_delivery_date) : null],
         ['Due', header.due_date ? fmtDocDate(header.due_date) : null],
         ['Status', statusText],
       ],

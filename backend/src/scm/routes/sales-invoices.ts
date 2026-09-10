@@ -249,7 +249,7 @@ function gateSiFinance(rows: unknown, showFinance: boolean): void {
 const ITEM =
   'id, sales_invoice_id, so_item_id, do_item_id, item_code, item_group, description, description2, ' +
   'uom, qty, unit_price_sen, discount_sen, tax_sen, line_total_sen, ' +
-  'unit_cost_sen, line_cost_sen, line_margin_sen, variants, notes, created_at';
+  'unit_cost_sen, line_cost_sen, line_margin_sen, variants, line_delivery_date, notes, created_at';
 
 /* KEPT LOCAL, deliberately — do NOT "converge" SI_FINANCE_KEYS onto
    SO_FINANCE_KEYS. It is the finance-shaped subset of THIS file's HEADER select.
@@ -405,6 +405,7 @@ function buildItemRow(salesInvoiceId: string, it: Record<string, unknown>, lineN
     line_cost_sen: lineCost,
     line_margin_sen: lineTotal - lineCost,
     variants,
+    line_delivery_date: (it.lineDeliveryDate as string | null) ?? null,
     /* Migration 0058 — carry the dedicated variant-breakdown columns onto the SI
        line (sales_invoice_items has all 8). Source is the convert payload `it`. */
     gap_inches: (it.gapInches as number | null) ?? null,
@@ -1319,7 +1320,7 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
     discountSen: line.discountSen,
     unitCostSen: line.unitCostSen,
     variants: line.variants,
-    /* Migration 0058 — carry the dedicated variant-breakdown columns onto the SI line. */
+    lineDeliveryDate: line.lineDeliveryDate,
     gapInches: line.gapInches,
     divanHeightInches: line.divanHeightInches,
     divanPriceSen: line.divanPriceSen,
@@ -1482,7 +1483,7 @@ export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
   // LINE-level half of the same source document, under the same predicate.
   const { data: doItems, error: doItemsErr } = await scopeToCompany(sb.from('delivery_order_items').select(
     'id, item_code, item_group, description, description2, uom, qty, ' +
-    'unit_price_sen, discount_sen, unit_cost_sen, variants, notes, ' +
+    'unit_price_sen, discount_sen, unit_cost_sen, variants, notes, line_delivery_date, ' +
     'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
     'custom_specials, line_suffix, special_order_price_sen',
   ).eq('delivery_order_id', doId)
@@ -1523,8 +1524,7 @@ export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
       unitCostSen: it.unit_cost_sen,
       variants: it.variants,
       notes: it.notes,
-      /* Migration 0058 — carry the dedicated variant-breakdown columns (supabase-js
-         returns snake_case; dual-read stays safe either way). */
+      lineDeliveryDate: (it.line_delivery_date as string | null) ?? null,
       gapInches: it.gapInches ?? it.gap_inches ?? null,
       divanHeightInches: it.divanHeightInches ?? it.divan_height_inches ?? null,
       divanPriceSen: it.divanPriceSen ?? it.divan_price_sen ?? 0,

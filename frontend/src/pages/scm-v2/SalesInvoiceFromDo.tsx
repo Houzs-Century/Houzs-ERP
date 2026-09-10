@@ -322,6 +322,7 @@ export const SalesInvoiceFromDo = () => {
           discountSen: r.discountSen,
           unitCostSen: r.unitCostSen,
           variants: r.variants,
+          lineDeliveryDate: r.lineDeliveryDate,
         };
       })
       .filter((s): s is NonNullable<typeof s> => s !== null);
