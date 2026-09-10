@@ -21,6 +21,26 @@
  * column and not in the other. Whichever the factory reads, the other half of
  * the system disagrees with it, and nothing in the ERP says which is right.
  *
+ * ── THE ROOT, FOUND IN THE IMPORTER ────────────────────────────────────────
+ * `import-ac-outstanding-so.mjs:271-274` splits one book line into compartments:
+ *
+ *     const code = `${model}-${comp}`;              // item_code - DECODED
+ *     const pr = prodId.get(code.toUpperCase());    // look that SKU up
+ *     items.push({ erp: code, desc: (pr && pr.name) || code, ... });
+ *
+ * The description is NOT a second decode of the book. It is THE PRODUCT
+ * MASTER'S NAME, fetched with the very code beside it
+ * (`SELECT code, name ... FROM scm.mfg_products`, :136). So the two columns
+ * cannot drift by accident on a document - the description was looked up BY the
+ * code. If they disagree, the row faithfully copied a PRODUCT whose NAME
+ * contradicts its own CODE.
+ *
+ * The owner put it in one line: 「9028 2ARHF=sofa verano 2ARHF 啊？可是你是LHF」.
+ *
+ * That makes scm.mfg_products the root, and the document lines the symptom -
+ * every order ever raised on such a SKU inherited the wrong name, and every
+ * future one will. So SECTION A is the master and SECTION B the documents.
+ *
  * ── WHAT IT COUNTS ─────────────────────────────────────────────────────────
  *   HAND DISAGREES - the code says (LHF) and the description says (RHF), or the
  *   reverse. This is the dangerous one: it is a different physical sofa.
@@ -107,7 +127,50 @@ const SPECS = [
 const sql = postgres(process.env.DATABASE_URL, { ssl: 'require', max: 1, prepare: false });
 
 try {
-  head('SOFA LINES WHOSE CODE AND DESCRIPTION DISAGREE');
+  head('SECTION A - THE PRODUCT MASTER, which is where this starts');
+  line(`   company ${CO}. Every sofa SKU in scm.mfg_products whose NAME states a different`);
+  line('   hand from its own CODE. A document line copies this name, so one wrong master');
+  line('   row mislabels every order ever raised on that SKU, and every future one.');
+
+  const prods = await sql`
+    SELECT p.code, p.name
+      FROM scm.mfg_products p
+     WHERE p.company_id = ${CO}
+       AND (p.code ILIKE '%(LHF)%' OR p.code ILIKE '%(RHF)%'
+            OR p.name ILIKE '%(LHF)%' OR p.name ILIKE '%(RHF)%')
+     ORDER BY p.code`;
+
+  const mBad = []; let mSilent = 0; let mAgree = 0;
+  for (const p of prods) {
+    const hc = handOf(p.code); const hn = handOf(p.name);
+    if (hc && hn && hc !== hn) mBad.push(p);
+    else if (!hc || !hn) mSilent += 1;
+    else mAgree += 1;
+  }
+  line('');
+  line(`   sofa SKUs stating a hand somewhere      ${prods.length}`);
+  line(`   NAME CONTRADICTS THE CODE               ${mBad.length}   <- the root`);
+  line(`   only one side states a hand             ${mSilent}`);
+  line(`   agree                                   ${mAgree}`);
+
+  if (mBad.length) {
+    rule();
+    line('THE MASTER ROWS THAT ARE WRONG, and how many live lines copied each name');
+    rule();
+    for (const p of mBad.slice(0, LIMIT)) {
+      const [u] = await sql`
+        SELECT (SELECT count(*) FROM scm.mfg_sales_order_items x
+                  JOIN scm.mfg_sales_orders h ON h.doc_no = x.doc_no
+                 WHERE h.company_id = ${CO} AND upper(x.item_code) = ${p.code.toUpperCase()})::int AS so,
+               (SELECT count(*) FROM scm.purchase_order_items x
+                  JOIN scm.purchase_orders h ON h.id = x.purchase_order_id
+                 WHERE h.company_id = ${CO} AND upper(x.item_code) = ${p.code.toUpperCase()})::int AS po`;
+      line(`   code ${String(p.code).padEnd(20)} name "${p.name}"   -> ${u.so} SO line(s), ${u.po} PO line(s)`);
+    }
+    if (mBad.length > LIMIT) line(`   ... and ${mBad.length - LIMIT} more`);
+  }
+
+  head('SECTION B - THE DOCUMENT LINES that inherited it');
   line(`   company ${CO}. One reader is used on both columns, so a difference cannot come`);
   line('   from two readers disagreeing. Cancelled lines excluded.');
 
