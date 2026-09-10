@@ -73,6 +73,13 @@ const pg = postgres(url, { ssl: "require", prepare: false, max: 1 });
 try {
   // ONE statement. Per-SO payment aggregates joined to the scan-origin header,
   // filtered to orphan deposits (no is_deposit row backs deposit_sen).
+  //
+  // Tables are SCHEMA-QUALIFIED `scm.*`. The app reaches these through a Supabase
+  // client pinned to `db: { schema: "scm" }` (backend/src/db/supabase.ts), but a
+  // raw `postgres` connection defaults to the `public` search_path — where a
+  // LEGACY `public.mfg_sales_order_payments` still carries the pre-0305
+  // `amount_centi` column and returned `column "amount_sen" does not exist`. The
+  // live tables (renamed centi->sen by migration 0305) live in `scm`.
   const rows = await pg`
     SELECT so.doc_no,
            so.status,
@@ -90,14 +97,14 @@ try {
            -- high-confidence flag: a booked payment equals the header deposit,
            -- i.e. the operator re-entered the SAME money the slip put on the header.
            (COALESCE(p.non_deposit_sum, 0) >= so.deposit_sen)    AS non_deposit_covers_deposit
-    FROM mfg_sales_orders so
+    FROM scm.mfg_sales_orders so
     LEFT JOIN (
       SELECT so_doc_no,
              count(*)                                                             AS row_count,
              sum(amount_sen)                                                      AS total_sum,
              sum(amount_sen) FILTER (WHERE NOT COALESCE(is_deposit, false))       AS non_deposit_sum,
              bool_or(COALESCE(is_deposit, false))                                 AS has_deposit
-      FROM mfg_sales_order_payments
+      FROM scm.mfg_sales_order_payments
       GROUP BY so_doc_no
     ) p ON p.so_doc_no = so.doc_no
     WHERE so.slip_image_key IS NOT NULL           -- scan-origin only
