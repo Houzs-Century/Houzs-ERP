@@ -80,7 +80,7 @@ const BATCH = {
 };
 let batchList: Array<Record<string, unknown>> = [BATCH];
 
-/* A line the window could offer nothing for (docs/bugs/0790). */
+/* A line the window could offer nothing for (docs/bugs/0792). */
 const LONELY_ROW: SettlementRow = {
   id: 11, line_no: 9, txn_date: '2026-06-02', ref: '615318040666',
   gross_sen: 286500, fee_sen: 11460, net_sen: 275040,
@@ -116,7 +116,7 @@ vi.mock('./settlement-queries', () => ({
   useUnconfirmSettlementRow: () => ({ mutate: unconfirmMutate, isPending: false }),
   useConfirmMatched: () => ({ mutate: confirmMatchedMutate, isPending: false, data: null }),
   useIgnoreSettlementRow: () => ({ mutate: vi.fn(), isPending: false }),
-  /* "Find the sale" (docs/bugs/0790): what the server would answer for the
+  /* "Find the sale" (docs/bugs/0792): what the server would answer for the
      lonely line — the sale keyed twelve days late, at the exact gross. */
   useFindPayments: (rowId: number | null, q: string) => ({
     data: rowId == null ? undefined : { q, payments: findResults.filter((p) => q === '' || p.docNo.includes(q) || p.customerName.toLowerCase().includes(q.toLowerCase())) },
@@ -526,7 +526,7 @@ describe('inside one report', () => {
   });
 });
 
-/* ── "Find the sale" — docs/bugs/0790 ────────────────────────────────────────
+/* ── "Find the sale" — docs/bugs/0792 ────────────────────────────────────────
    GHL line RM 2,865.00 of 2026-06-02: the screen said "no sale in the ERP"
    over 2990-SO-2606-011, the same amount, keyed twelve days later with no bank.
    The person knows which sale it is; the screen must let him say so. */

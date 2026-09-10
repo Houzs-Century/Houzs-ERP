@@ -1192,7 +1192,7 @@ export const settlementRowUnconfirm = guard(async (c) => {
    journal, not a checkbox. */
 /* GET /rows/:id/find?q= — "Find the sale": the company's card payments the
    window could not offer, searched by document / customer / approval / amount,
-   the exact gross ranked first (docs/bugs/0790). Reads only; confirming is the
+   the exact gross ranked first (docs/bugs/0792). Reads only; confirming is the
    same POST /rows/:id/confirm, which reads the chosen payments back. */
 export const settlementFindPayments = guard(async (c) => {
   const co = requireActiveCompanyId(c);

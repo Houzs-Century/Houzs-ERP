@@ -365,7 +365,7 @@ describe('confirming is the moment of posting', () => {
 
   /* The RM 1,000.00 payment against the RM 777.00 line — and the screen's own
      figure is not what is compared: the payment's amount in the books is
-     (docs/bugs/0790), so a browser claiming 777.00 changes nothing. */
+     (docs/bugs/0792), so a browser claiming 777.00 changes nothing. */
   test('confirming a line whose selection does not add up is refused with the difference', async () => {
     const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
     await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
@@ -379,7 +379,7 @@ describe('confirming is the moment of posting', () => {
     expect(sb.tables.journal_entries).toHaveLength(0);
   });
 
-  /* docs/bugs/0790 — "Find the sale" lets a person pick ANY card payment, so
+  /* docs/bugs/0792 — "Find the sale" lets a person pick ANY card payment, so
      the confirm reads each one back: not in this company's books, or not a
      card payment, is a refusal the operator can read, not a 500. */
   test('a payment the books do not hold, or a cash one, is refused by name', async () => {

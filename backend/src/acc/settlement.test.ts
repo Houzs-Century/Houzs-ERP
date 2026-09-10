@@ -54,7 +54,7 @@ const world = (over: Record<string, Row[]> = {}) => fakeSb(
     acc_settlement_rows: [{ ...SETTLEMENT_ROW }],
     acc_settlement_matches: [],
     acc_settlement_receipts: [],
-    /* The payments a confirm may claim. Since docs/bugs/0790 the confirm reads
+    /* The payments a confirm may claim. Since docs/bugs/0792 the confirm reads
        each chosen payment back — amount and method from the row, not the
        screen — so the world must hold them. */
     mfg_sales_order_payments: [
@@ -198,7 +198,7 @@ describe('confirmSettlementRow — reconciling the card machine books the FEE, a
   });
 
   /* The payment's OWN amount is what must add up — the screen's figure is
-     ignored (docs/bugs/0790): here the screen claims the full RM 1,000.00 over
+     ignored (docs/bugs/0792): here the screen claims the full RM 1,000.00 over
      a payment the books hold at RM 900.00. */
   it('refuses a selection that does not add up, and names the difference', async () => {
     const sb = world({ mfg_sales_order_payments: [{ id: 'p1', so_doc_no: 'SO-1', company_id: 1, amount_sen: 90000, method: 'merchant', merchant_provider: 'MBB' }] });

@@ -867,6 +867,33 @@ empty selection and was refused. The detail now falls back to `matched` for
 both, and the upload REFUSES when its rows insert returns fewer ids than
 decisions — the silent skip that left nine MATCHED lines with zero links.
 
+**FIND THE SALE — THE WINDOW IS NOT THE ONLY INSTRUMENT (2026-09-10,
+docs/bugs/0792).** A GHL line of RM 2,865.00 read "no sale in the ERP" while
+2990-SO-2606-011 sat in the ERP at exactly that amount, keyed twelve days after
+the swipe with no bank on it: GHL's tolerance is 3 days and it files no unique
+reference, so the loader never reached it and the line's only door was Set
+aside. The window answers "what could plausibly be this money"; a person may
+simply KNOW which sale this is. `findPaymentsForRow` (`backend/src/acc/settlement.ts`)
+lists the company's card / instalment / migration-era payments whatever their
+date, searched by document number, customer, approval code or an amount typed
+as money, leaving out anything another line already claimed; the exact gross is
+marked `possible` and ranked first, the rest offered newest first — never
+withheld (owner: 可以注明 possible，但不能不让我选其他的). Cash and transfer are
+never listed: no merchant report is explained by them. Route
+`GET /accounting/settlement/rows/:id/find?q=` (`accounting-settlement.ts`).
+On screen every undecided line carries **Find the sale** (`FindTheSale` in
+`frontend/src/pages/scm-v2/MerchantRecon.tsx`, `useFindPayments` in
+`settlement-queries.ts`); a found payment joins the line's ticks and the same
+Confirm and post sends it. Because a person may now pick ANY payment,
+`confirmSettlementRow` READS THE CHOSEN PAYMENTS BACK: not in this company's
+books → `payment_not_found`; not a card payment → `not_card_payment`; and the
+amount that must equal the gross is the row's own, not the browser's
+(`amount_mismatch` compares database figures). The same PR names the
+salesperson on the "Card payments no merchant report has reported yet" table
+(`salespersonName`: order → `salesperson_id` → `staff.name`; owner: 我想要看到
+salesman 的名字). Contracts: `settlement-find.test.ts`,
+`backend/tests/settlementRoutes.test.ts`, `MerchantRecon.test.tsx`.
+
 **THE MERCHANT FEE ACCOUNT (2026-09-09, docs/bugs/0762).** Every acquirer link
 in both companies had `fee_account_code = '930-0000'`, seeded by migration 0332
 when the chart was the old one. The AutoCount relay (0346) and the 397-account
@@ -1087,10 +1114,10 @@ deleting it. Layer 4 (bank reconciliation) will write these same rows from the
 bank statement itself, which is why the operator is never asked for a payout
 date at upload time — that is the one moment he cannot know it.
 
-Thirteen endpoints under `/accounting/settlement/*` (setup read/write, upload,
+Fourteen endpoints under `/accounting/settlement/*` (setup read/write, upload,
 batch list/detail, confirm one, confirm-all-matched, received, receipt undo,
-ignore, watchlist, in-transit, CSV export), each carrying its own permission
-check on top of the area guard.
+ignore, watchlist, in-transit, CSV export, find-the-sale), each carrying its own
+permission check on top of the area guard.
 
 **Two pages, named by the owner** (2026-08-17: 就不能分成 merchant
 reconciliation, bank statement reconciliation 吗？) — because it is two jobs on

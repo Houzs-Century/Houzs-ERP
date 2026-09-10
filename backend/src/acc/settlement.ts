@@ -673,7 +673,7 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
   }
   /* READ THE CHOSEN PAYMENTS BACK. The amount the screen sent is what the
      screen believed; the amount that clears in-transit is what the row holds
-     now. A person may pick any card payment of the company (docs/bugs/0790),
+     now. A person may pick any card payment of the company (docs/bugs/0792),
      so this is where a stale list, a payment corrected since, a cash sale, or
      another company's money is refused — by what the database says, not by
      what the browser sent. */

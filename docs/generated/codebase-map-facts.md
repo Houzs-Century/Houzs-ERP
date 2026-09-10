@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-182 route modules (51 in `backend/src/routes`, 131 in `backend/src/scm/routes`), 1246 endpoint registrations.
+182 route modules (51 in `backend/src/routes`, 131 in `backend/src/scm/routes`), 1247 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -83,9 +83,9 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-receipts.ts` | 0 | 88 |
 | `backend/src/scm/routes/accounting-reports.ts` | 0 | 186 |
 | `backend/src/scm/routes/accounting-rp.ts` | 0 | 319 |
-| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1509 |
+| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1547 |
 | `backend/src/scm/routes/accounting-stock-close.ts` | 0 | 53 |
-| `backend/src/scm/routes/accounting.ts` | 85 | 1542 |
+| `backend/src/scm/routes/accounting.ts` | 86 | 1544 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ap-invoice-files.ts` | 0 | 50 |
@@ -211,13 +211,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 152 | `153_sessions_stay_signed_in.sql` (153) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 398 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 399 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2152 files, 738233 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2159 files, 740918 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -416,6 +416,7 @@ Page files by directory:
 | `frontend/src/pages` | 38 |
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 5 |
+| `frontend/src/pages/roles` | 2 |
 | `frontend/src/pages/scm-v2` | 149 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/settings` | 1 |
@@ -423,7 +424,7 @@ Page files by directory:
 
 ## 5. Mobile screen inventory
 
-51 screen/component modules in `frontend/src/mobile`.
+52 screen/component modules in `frontend/src/mobile`.
 
 | file | lines |
 |---|---|
@@ -431,7 +432,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileAnnouncementMedia.tsx` | 171 |
 | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | 152 |
 | `frontend/src/mobile/MobileAnnouncements.tsx` | 1741 |
-| `frontend/src/mobile/MobileApp.tsx` | 1096 |
+| `frontend/src/mobile/MobileApp.tsx` | 1107 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 295 |
 | `frontend/src/mobile/MobileAssrCategoryChips.tsx` | 76 |
 | `frontend/src/mobile/MobileAssrSoField.tsx` | 76 |
@@ -467,6 +468,7 @@ Page files by directory:
 | `frontend/src/mobile/MobilePoAmendments.tsx` | 137 |
 | `frontend/src/mobile/MobileProfile.tsx` | 1002 |
 | `frontend/src/mobile/MobileRelationshipMap.tsx` | 275 |
+| `frontend/src/mobile/MobileRoles.tsx` | 409 |
 | `frontend/src/mobile/MobileSODetail.tsx` | 2096 |
 | `frontend/src/mobile/MobileSalesOrders.tsx` | 847 |
 | `frontend/src/mobile/MobileScan.tsx` | 1467 |
@@ -497,6 +499,7 @@ Rows are derived from `frontend/src/mobile/MobileApp.tsx` and `frontend/src/App.
 | `/mail-center` | Mail Center | `frontend/src/pages/MailCenter/Inbox` | dedicated: mail |
 | `/projects` | Projects | `frontend/src/pages/Projects` | dedicated: pms |
 | `/reports/fair-report` | Sales Report | `frontend/src/pages/scm-v2/FairReport` | dedicated: fair-report |
+| `/roles` | Roles | (redirect) | dedicated: roles |
 | `/scm/accounting` | Chart of Accounts | `frontend/src/pages/scm-v2/Accounting` | generic: MobileModuleList[accounting] |
 | `/scm/amendments` | Sales Order Amendment | `frontend/src/pages/scm-v2/Amendments` | dedicated: amendments |
 | `/scm/consignment-notes` | Consignment Notes | `frontend/src/pages/scm-v2/ConsignmentNotes` | generic: MobileModuleList[consignment-notes] |

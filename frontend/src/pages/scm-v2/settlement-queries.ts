@@ -575,7 +575,7 @@ export const useInTransit = () => useQuery({
   retryDelay: 800,
 });
 
-/* "Find the sale" (docs/bugs/0790): the company's card payments the window
+/* "Find the sale" (docs/bugs/0792): the company's card payments the window
    could not offer, searched by document / customer / approval / amount. Off
    until the operator opens the search on a line. */
 export const useFindPayments = (rowId: number | null, q: string) => useQuery({

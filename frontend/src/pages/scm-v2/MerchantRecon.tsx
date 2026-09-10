@@ -982,7 +982,7 @@ const key = (p: { source: string; id: string }) => `${p.source}:${p.id}`;
 /* ── "Find the sale" ──────────────────────────────────────────────────────────
    The window offers what could plausibly be this line; a person may know which
    sale it IS — keyed twelve days after the swipe, no bank on it, so the matcher
-   never loaded it (docs/bugs/0790; owner: 我要怎样选对应的 SO?). Here every
+   never loaded it (docs/bugs/0792; owner: 我要怎样选对应的 SO?). Here every
    card payment of the company can be searched whatever its date, the exact
    gross marked "possible" and ranked first, and any one of them ticked
    (owner: 可以注明 possible，但不能不让我选其他的). The confirm reads the chosen
