@@ -62,10 +62,20 @@
    not heard of, and binding a pre-serialized string to a jsonb parameter
    stores a jsonb STRING scalar rather than an object
    (docs/jsonb-double-encoding-coe.md — it recurred inside that COE's own
-   repair). So the write is a MERGE — variants || tx.json({extraAddonNote}) —
+   repair). So the write is a MERGE — coalesce(variants,'{}') || tx.json(...) —
    the bind goes through tx.json, and the verification re-reads on a fresh
    connection and asserts that EVERY key the line held before is still there
    with an EQUAL value. A row count is not a shape.
+
+   A SQL-NULL `variants` is an EMPTY BAG and is FILLED, not refused — it is the
+   normal state of a mattress or accessory line (10,651 of the in-scope lines
+   on production, 2026-09-10). The line's stock bucket does not move when it
+   goes from NULL to a bag holding only the note: computeVariantKey reads
+   ATTRS_BY_GROUP, which is `[]` for mattress / accessory / others, plus
+   `specials` — and extraAddonNote is in neither, so both shapes key to ''.
+   A variants that is a jsonb ARRAY or STRING is different: that is the damage
+   the double-encoding COE leaves, and this script refuses it rather than
+   writing through it.
 
    ── WHAT IT WILL NOT DO ──────────────────────────────────────────────────
    ONE key, `variants.extraAddonNote`, on company-1 sales-order lines only. It
@@ -167,8 +177,17 @@ function fromRemarkLabel(remark) {
    rather than the book's. */
 function decide(row, gen, genLabelled, book) {
   if (norm(row.extra_addon_note)) return { action: 'skip', reason: 'the line already carries an extraAddonNote' };
-  if (row.variants_type !== 'object') {
-    return { action: 'skip', reason: `variants is jsonb ${row.variants_type ?? 'null'}, not an object — repair the shape first` };
+  /* A SQL-NULL `variants` is an EMPTY BAG, not damage, and it is the NORMAL
+     state of a mattress or accessory line: measured on production 2026-09-10,
+     10,651 of the in-scope lines hold NULL. `COALESCE(variants,'{}') || patch`
+     writes a proper object, and the key does not move — computeVariantKey reads
+     ATTRS_BY_GROUP, which is `[]` for mattress / accessory / others, plus
+     `specials`; extraAddonNote appears in neither, so an empty bag and a bag
+     holding only the note produce the same key ''.
+     A variants that is jsonb array / string / number IS damage — the shape the
+     double-encoding COE leaves behind — and is refused, not repaired here. */
+  if (!row.variants_is_null && row.variants_type !== 'object') {
+    return { action: 'skip', reason: `variants is a jsonb ${row.variants_type} rather than an object — repair the shape first (docs/jsonb-double-encoding-coe.md)` };
   }
 
   const key = row.linked_ac_dtlkey == null ? null : Number(row.linked_ac_dtlkey);
@@ -232,6 +251,7 @@ async function main() {
     SELECT i.id, i.doc_no, i.line_no, i.item_group, i.item_code,
            i.description2, i.remark, i.variants, i.linked_ac_dtlkey,
            jsonb_typeof(i.variants) AS variants_type,
+           (i.variants IS NULL) AS variants_is_null,
            btrim(coalesce(i.variants->>'extraAddonNote','')) AS extra_addon_note,
            h.status AS so_status,
            lower(coalesce(p.category::text, i.item_group, '')) AS category
@@ -269,13 +289,15 @@ async function main() {
   const skipsInScope = new Map();
   let excludedOurs = 0;
   let notObjectShape = 0;
+  let nullBag = 0;
 
   for (const r of rows) {
     const gen = buildVariantSummary(String(r.item_group ?? ''), r.variants ?? null);
     const genLabelled = buildVariantSummary(String(r.item_group ?? ''), r.variants ?? null, { labelled: true });
     const d = decide(r, gen, genLabelled, book);
     if (d.excludedOurs) excludedOurs += 1;
-    if (r.variants_type && r.variants_type !== 'object') notObjectShape += 1;
+    if (r.variants_is_null) nullBag += 1;
+    else if (r.variants_type !== 'object') notObjectShape += 1;
 
     const cat = r.category || '(no category)';
     if (!perCat.has(cat)) perCat.set(cat, { lines: 0, fillable: 0, alreadyNoted: 0 });
@@ -327,7 +349,8 @@ async function main() {
   note(`  book copies that DISAGREE with each other (first source wins) : ${disagreeing.length}`);
   note('\n=== THE GUARD — a value that is OUR OWN generated summary is not the book\'s ===');
   note(`  lines with at least one candidate EXCLUDED as our own summary : ${excludedOurs}`);
-  note(`  lines whose variants jsonb is not an OBJECT (skipped)         : ${notObjectShape}`);
+  note(`  lines whose variants is SQL NULL (an empty bag — still filled) : ${nullBag}`);
+  note(`  lines whose variants is a jsonb array/string (SKIPPED, damage) : ${notObjectShape}`);
   note('\n=== SKIPPED, in the write-scope categories ===');
   for (const [reason, n] of [...skipsInScope].sort((a, b) => b[1] - a[1])) note(`    ${String(n).padStart(6)}  ${reason}`);
   note('  (whole population, every category)');
@@ -370,10 +393,10 @@ async function main() {
            note somebody typed in between wins over the backfill. */
         const back = await tx`
           UPDATE scm.mfg_sales_order_items
-             SET variants = variants || ${tx.json({ extraAddonNote: p.text })}
+             SET variants = coalesce(variants, '{}'::jsonb) || ${tx.json({ extraAddonNote: p.text })}
            WHERE id = ${p.id}
              AND company_id = ${CO}
-             AND jsonb_typeof(variants) = 'object'
+             AND (variants IS NULL OR jsonb_typeof(variants) = 'object')
              AND coalesce(btrim(variants->>'extraAddonNote'), '') = ''
           RETURNING id`;
         wrote += back.length;
@@ -412,12 +435,16 @@ async function verify(plan, { expectWritten }) {
        WHERE id = ANY(${ids}) AND company_id = ${CO}`;
     const byId = new Map(after.map((r) => [String(r.id), r]));
 
-    let noted = 0, untouched = 0, missing = 0, notObject = 0, keysLost = 0, keysChanged = 0;
+    let noted = 0, untouched = 0, missing = 0, notObject = 0, stillNull = 0, keysLost = 0, keysChanged = 0;
     const problems = [];
     for (const want of plan) {
       const got = byId.get(String(want.id));
       if (!got) { missing += 1; problems.push(`${want.doc_no} line ${want.line_no}: row disappeared`); continue; }
-      if (got.variants_type !== 'object') {
+      /* SQL NULL is the legitimate BEFORE state (an empty bag). After a write
+         it must be an object; after a rollback it may still be NULL. */
+      const isNull = got.variants_type == null;
+      if (isNull) stillNull += 1;
+      if (!isNull && got.variants_type !== 'object') {
         notObject += 1;
         problems.push(`${want.doc_no} line ${want.line_no}: variants is jsonb ${got.variants_type}, not an object`);
         continue;
@@ -441,13 +468,15 @@ async function verify(plan, { expectWritten }) {
     note(`  rows re-read                              : ${after.length} of ${ids.length}`);
     note(`  extraAddonNote reads back byte-for-byte   : ${noted}`);
     note(`  extraAddonNote still empty (untouched)    : ${untouched}`);
-    note(`  variants is still a jsonb OBJECT          : ${after.length - notObject} of ${after.length}`);
+    note(`  variants is a jsonb OBJECT                : ${after.length - notObject - stillNull} of ${after.length}`);
+    note(`  variants is still SQL NULL (empty bag)    : ${stillNull}`);
     note(`  pre-existing variant keys LOST            : ${keysLost}`);
     note(`  pre-existing variant keys CHANGED         : ${keysChanged}`);
     note(`  rows missing                              : ${missing}`);
-    note(`  sample value shape: ${JSON.stringify({ variants: after[0]?.variants_type, extraAddonNote: typeof (after[0]?.variants ?? {}).extraAddonNote })}`);
+    note(`  sample value shape: ${JSON.stringify({ variants: after[0]?.variants_type ?? null, extraAddonNote: typeof (after[0]?.variants ?? {}).extraAddonNote })}`);
 
     if (notObject) bad(`${notObject} row(s) hold a non-object variants — the merge did not land as an object`);
+    if (expectWritten && stillNull) bad(`${stillNull} row(s) still hold a SQL NULL variants after an apply`);
     if (keysLost) bad(`${keysLost} pre-existing variant key(s) were deleted — this script must only MERGE`);
     if (keysChanged) bad(`${keysChanged} pre-existing variant key(s) changed value`);
     for (const p of problems.slice(0, 8)) bad(p);
