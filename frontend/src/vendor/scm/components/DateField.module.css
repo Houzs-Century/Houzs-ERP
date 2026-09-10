@@ -165,7 +165,17 @@
    a 44px-tall child would push .wrap from ~30px to ~52px and re-flow every form
    row on every phone and tablet. The overlay is part of the button, so a tap
    anywhere in it activates the button; the icon keeps its 20px appearance.
-   Desktop (pointer: fine) is untouched. */
+   Desktop (pointer: fine) is untouched.
+
+   ALSO on touch: put the calendar icon on the LEFT of the field so the OS
+   picker anchors from the left edge and opens rightward, into the form. On the
+   default right-anchored layout Chrome/Chromium opens the popup off the right
+   edge of the input — measured on the owner's 344 px responsive-mode window
+   2026-09-10, the September 2026 calendar rendered outside the form and half-
+   under the DevTools sidebar. iOS's wheel picker is a bottom-sheet modal so
+   this only bites the Chromium desktop-mobile emulation and Android Chrome,
+   but that IS how the owner and QA inspect narrow layouts, and a picker they
+   cannot reach reads as "the picker will not open". See docs/bugs/. */
 @media (pointer: coarse) {
   .iconBtn { position: relative; }
   .iconBtn::after {
@@ -176,5 +186,13 @@
     transform: translate(-50%, -50%);
     width: 44px;
     height: 44px;
+  }
+  .wrap {
+    flex-direction: row-reverse;
+    padding: 4px 10px 4px 4px;
+  }
+  .nativeIconTarget {
+    right: auto;
+    left: 0;
   }
 }
