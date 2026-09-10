@@ -172,15 +172,21 @@ export const SalesInvoiceFromDo = () => {
     setPicks((s) => ({ ...s, [r.doItemId]: { picked: true, qty } }));
   };
 
-  // Select / clear all currently-VISIBLE rows. Select-all respects the lock: it
-  // only adds lines of the locked customer (or, if nothing is picked yet, all
-  // lines of the FIRST row's customer so the result is a valid single-customer set).
+  /* Select-all acts on WHAT THE OPERATOR SEES — the post-search rows the grid
+     hands back (onFilteredRowsChange), not the whole loaded dataset. It walked
+     `rows` and seeded the lock from `rows[0]` (the UNFILTERED first row), so a
+     search + Select all ticked the locked customer's lines across ALL loaded rows
+     instead of the few in view. Mirrors DeliveryOrderFromSo's 2026-08-03 fix; still
+     lock-respecting (locked customer, or — when nothing is picked yet — the first
+     VISIBLE row's customer). */
+  const [visibleRows, setVisibleRows] = useState<DoRemainingLine[]>([]);
+
   const selectAll = () => {
     setPicks((s) => {
       const next = { ...s };
-      const key = lockedCustomer ?? (rows[0] ? custKey(rows[0]) : null);
+      const key = lockedCustomer ?? (visibleRows[0] ? custKey(visibleRows[0]) : null);
       if (!key) return next;
-      for (const r of rows) if (custKey(r) === key) next[r.doItemId] = { picked: true, qty: r.remaining };
+      for (const r of visibleRows) if (custKey(r) === key) next[r.doItemId] = { picked: true, qty: r.remaining };
       return next;
     });
   };
@@ -412,6 +418,7 @@ export const SalesInvoiceFromDo = () => {
         rowKey={(r) => r.doItemId}
         searchPlaceholder="Search DO, customer, item…"
         onRowClick={(r) => togglePick(r)}
+        onFilteredRowsChange={setVisibleRows}
         rowStyle={(r) => isRowLocked(r)
           ? { opacity: 0.45, background: 'var(--c-cream)', cursor: 'not-allowed' }
           : undefined}
