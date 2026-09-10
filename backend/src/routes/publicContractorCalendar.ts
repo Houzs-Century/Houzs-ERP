@@ -30,7 +30,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../types";
-import { checkRateLimit, clientIp } from "../middleware/rateLimit";
+import { bumpRateLimit, clientIp, rateLimitExceeded } from "../middleware/rateLimit";
 import { resolveShareToken } from "../services/contractorShare";
 import {
   TOKEN_RE,
@@ -74,11 +74,17 @@ async function gate(c: Ctx): Promise<{ token: string; scope: ShareScope } | Resp
   // Shape gate first — before the limiter and any query.
   if (!TOKEN_RE.test(token)) return unknownLink(c);
 
-  const limited = await checkRateLimit(c, "contractor_share_read", clientIp(c), READ_MAX, WINDOW_SEC);
+  // The cap is a guess counter: a request that carries a VALID link never
+  // counts, or an office's own polling tabs lock its links out (docs/bugs/0757).
+  const ip = clientIp(c);
+  const limited = await rateLimitExceeded(c, "contractor_share_read", ip, READ_MAX, WINDOW_SEC);
   if (limited) return limited;
 
   const contractor = await resolveShareToken(c.env, token);
-  if (!contractor) return unknownLink(c);
+  if (!contractor) {
+    await bumpRateLimit(c, "contractor_share_read", ip, WINDOW_SEC);
+    return unknownLink(c);
+  }
   return { token, scope: { column: "contractor", value: contractor } };
 }
 

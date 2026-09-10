@@ -1076,12 +1076,12 @@ Total: 1226 route registrations across 158 files.
 - L311  POST   /case/attachments/:attId/archive
 
 ## backend/src/routes/publicBrandCalendar.ts  (6)
-- L81  GET    /:token
-- L89  GET    /:token/events/:eventId
-- L98  GET    /:token/events/:eventId/floorplan
-- L105  GET    /:token/events/:eventId/floorplan/:fileId
-- L115  GET    /:token/export
-- L130  GET    /:token/floorplans
+- L87  GET    /:token
+- L95  GET    /:token/events/:eventId
+- L104  GET    /:token/events/:eventId/floorplan
+- L111  GET    /:token/events/:eventId/floorplan/:fileId
+- L121  GET    /:token/export
+- L136  GET    /:token/floorplans
 
 ## backend/src/scm/routes/lorry-service-records.ts  (6)
 - L87  GET    /
@@ -1143,11 +1143,11 @@ Total: 1226 route registrations across 158 files.
 - L282  POST   /:id/void
 
 ## backend/src/routes/publicContractorCalendar.ts  (5)
-- L96  GET    /:token
-- L105  GET    /:token/events/:eventId
-- L116  GET    /:token/events/:eventId/floorplan
-- L125  GET    /:token/events/:eventId/floorplan/:fileId
-- L137  GET    /:token/export
+- L102  GET    /:token
+- L111  GET    /:token/events/:eventId
+- L122  GET    /:token/events/:eventId/floorplan
+- L131  GET    /:token/events/:eventId/floorplan/:fileId
+- L143  GET    /:token/export
 
 ## backend/src/scm/routes/delivery-fees.ts  (5)
 - L49  GET    /

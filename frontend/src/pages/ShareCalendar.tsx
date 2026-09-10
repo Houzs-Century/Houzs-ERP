@@ -285,7 +285,9 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
             setError(
               res.status === 404
                 ? "This link is not valid. Please ask Houzs for a current link."
-                : "Could not load the schedule just now. Please try again in a moment.",
+                : res.status === 429
+                  ? "Too many wrong links were tried from your network. Please wait 15 minutes and try again."
+                  : "Could not load the schedule just now. Please try again in a moment.",
             );
           }
           return;

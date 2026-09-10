@@ -22,7 +22,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../types";
-import { checkRateLimit, clientIp } from "../middleware/rateLimit";
+import { bumpRateLimit, clientIp, rateLimitExceeded } from "../middleware/rateLimit";
 import { resolveBrandShareToken } from "../services/brandShare";
 import {
   TOKEN_RE,
@@ -63,10 +63,16 @@ function unknownEvent(c: Ctx) {
 async function gate(c: Ctx): Promise<{ token: string; scope: ShareScope } | Response> {
   const token = (c.req.param("token") ?? "").trim();
   if (!TOKEN_RE.test(token)) return unknownLink(c);
-  const limited = await checkRateLimit(c, "brand_share_read", clientIp(c), READ_MAX, WINDOW_SEC);
+  // Only a WRONG link counts toward the cap — see the contractor route and
+  // docs/bugs/0757.
+  const ip = clientIp(c);
+  const limited = await rateLimitExceeded(c, "brand_share_read", ip, READ_MAX, WINDOW_SEC);
   if (limited) return limited;
   const brand = await resolveBrandShareToken(c.env, token);
-  if (!brand) return unknownLink(c);
+  if (!brand) {
+    await bumpRateLimit(c, "brand_share_read", ip, WINDOW_SEC);
+    return unknownLink(c);
+  }
   return { token, scope: { column: "brand", value: brand } };
 }
 
