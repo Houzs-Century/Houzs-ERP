@@ -436,6 +436,9 @@ export const settlementMaintenanceMerchant = guard(async (c) => {
       company_id: companyId,
       acquirer_code: code,
       transit_account_code: (patch.transit_account_code as string | undefined) ?? '326-0000',
+      /* A first link takes the fee account the operator PICKED, when he picked
+         one in the same request — the default is what it falls back to, not
+         what it overrides. */
       fee_account_code: (patch.fee_account_code as string | undefined) ?? MERCHANT_FEE_ACCOUNT,
       bank_account_code: body.bankAccountCode || null,
       is_active: body.enabled === undefined ? true : Boolean(body.enabled),
