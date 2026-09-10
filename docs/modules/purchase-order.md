@@ -779,7 +779,7 @@ those are what the route actually selects.
 | Table | Role |
 |-------|------|
 | `scm.purchase_orders` | PO header. `po_number` (UNIQUE), `supplier_id`, `status`, `po_date`, `expected_at`, `purchase_location_id` (FK → `warehouses.id`), `currency`, `subtotal_sen` / `tax_sen` / `total_sen`, `submitted_at` / `received_at` / `cancelled_at`, `revision`, `supplier_delivery_date_2..4`, `company_id`. |
-| `scm.purchase_order_items` | PO lines. `binding_id`, `material_kind` / `item_code` / `material_name`, `supplier_sku`, `qty`, `received_qty`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, variant columns (`item_group`, `variants`, `gap_inches`, `divan_*`, `leg_*`, `custom_specials`, `line_suffix`, `special_order_price_sen`), `delivery_date`, `warehouse_id`, `supplier_delivery_date_2..4`, `so_item_id`, `from_mrp`, `photo_urls` (mig 0274 — see *Line photos* below), `linked_ac_dtlkey` (mig 0273 — AutoCount `PODTL.DtlKey`; indexed, NOT unique — one AutoCount sofa line becomes one ERP line per compartment and every one carries the same key). |
+| `scm.purchase_order_items` | PO lines. `line_no` (mig `20260910T0547_scm_po_item_line_no.sql` — the printed line order; see *A PO line's POSITION on the order* below), `binding_id`, `material_kind` / `item_code` / `material_name`, `supplier_sku`, `qty`, `received_qty`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, variant columns (`item_group`, `variants`, `gap_inches`, `divan_*`, `leg_*`, `custom_specials`, `line_suffix`, `special_order_price_sen`), `delivery_date`, `warehouse_id`, `supplier_delivery_date_2..4`, `so_item_id`, `from_mrp`, `photo_urls` (mig 0274 — see *Line photos* below), `linked_ac_dtlkey` (mig 0273 — AutoCount `PODTL.DtlKey`; indexed, NOT unique — one AutoCount sofa line becomes one ERP line per compartment and every one carries the same key). |
 | `scm.purchase_order_items`.`variants` ownership | The jsonb has several writers and no schema. The AutoCount re-parse sweep (`refresh-po-variants.mjs`) owns only `OWNED_VARIANT_KEYS` (`backend/scripts/lib/variant-merge.mjs`) — fabric/colour + gap/divan/leg/total + size — and MERGES them. `totalHeight` in that patch is `null` whenever `parseBedframe` reports an EXPLICIT `TBC` / `KIV` against the divan, the gap or the leg: nobody knows how tall `Divan: TBC / Gap: 12"` is, and the old expression answered `12"` because `Number(undefined) \|\| 0` counted "not chosen yet" as zero (`docs/bugs/0732`, finished in `docs/bugs/0734`). A component the text merely never MENTIONS is untouched — a divan with no leg mentioned still means no leg (`0`) (`variants = variants \|\| patch`); it must never rebuild the object, which deletes every key it has not heard of. `specials` (and the HOOKKA singular `special`) belong to `backfill-specials-into-variants.mjs`, the only writer with the money guard. `custom_specials` on a PO line is neither derived nor script-free: `POST /:id/items` and `PATCH /:id/items` store `it.customSpecials` VERBATIM from the request body with no recompute (`:3044`, `:3176` — unlike the SO / consignment routes), and three repair scripts write the column directly on `scm.purchase_order_items` (`backfill-sofa-special-orders.mjs`, `census-custom-specials-arrays.mjs`, `repair-custom-specials-double-encoded.mjs`). It has no single owner. |
 | `variants` — the reviewed hand-patch escape hatch | `apply-variant-patch.mjs` is the only writer allowed keys outside `OWNED_VARIANT_KEYS`, because its patch is a human-reviewed artifact submitted per batch through a workflow input (it exists to set things like `seatHeight` that no parser derives). It writes through `mergeReviewedVariantPatch` (`lib/variant-merge.mjs`): merged in the DATABASE, guarded on `jsonb_typeof(...) = 'object'`, counted from `RETURNING`, and re-read on a fresh connection. Geometry uses `COALESCE`, so a patch silent about `gap` leaves `gap_inches` alone — unlike the sweep, which is entitled to restamp all three from the text it just parsed. |
 | `variants` — the reviewed BOOK correction | *Added 2026-09-09.* `repair-so-variant-from-book.mjs` copies a value the ACCOUNT BOOK states onto a migrated line, from `data/variant-book-corrections.json` — entries a human reviewed one at a time, each stating `erp_now` and SKIPPED if the row no longer holds it. It owns `OWNED_BOOK_CORRECTION_KEYS` (`lib/variant-merge.mjs`): the sofa sweep's fabric/colour keys plus `seatHeight` **and `legHeight`**. The leg is deliberately NOT on `OWNED_SOFA_KEYS`, because that list arms the RECOMPUTE sweeps and a key there is overwritten on every run — "adding it here would make a colour sweep start writing heights". A reviewed list is not a sweep, so it gets its own list rather than widening theirs (`docs/bugs/0755`, `docs/bugs/0756`). Axes: `colour`, `seat`, `leg`; anything else is refused by name, because an unrecognised axis used to fall through to the scalar branch and write `seatHeight`. |
@@ -1546,6 +1546,58 @@ Two exclusions are deliberate: an `assigned_sos` entry whose `source` is `'mrp'`
 builds NO entry (a live allocation binds nothing — the 2026-07-29 incident), and
 neither does a PRE-2026-07-31 bare-string GRN chip, which carries a number and
 no address. `document-conversion.md` §8b has both.
+
+## A PO line's POSITION on the order — `line_no` (owner ruling, 2026-09-10)
+
+**The rule, in his words.** 「我们的 Sales Order 都是从 L 到 R（L 在第一，R 在最
+后）」 — a sofa reads left-arm piece first, armless pieces in the middle,
+right-arm piece last — and 「照片是根据 line item 的顺序来的」: the printed PO's
+ITEM PHOTOS block follows the same order as the table, so a scrambled line list
+scrambles the photos with it.
+
+**A purchase order MIRRORS its sales order's line order.** It does not re-derive
+one. Where the SO is out of order, the PO faithfully follows; that is an SO-side
+question, not a PO-side bug.
+
+**The column.** `scm.purchase_order_items.line_no integer`, 1-based and dense
+per PO. NULL means the line predates the column and no source order was
+derivable (73 of 734 POs at migration time).
+
+**The one module that owns it: `backend/src/scm/lib/po-line-order.ts`** — same
+shape as `ac-line-order.ts`, and for the same reason (no unit test of a helper
+can see a caller that forgot to call it). `backend/tests/poLineOrderWiring.test.ts`
+enumerates the write sites and fails when a new one appears.
+
+| | |
+| --- | --- |
+| `inPoLineOrder(q)` | the READ order: `line_no` **NULLS FIRST**, `created_at`, `id`. Used by `GET /mfg-purchase-orders/:id` and by `snapshotPo`. |
+| `nextPoLineNo(sb, poId)` | what the next appended line takes: `max(line_no) + 1`, and **1** when the PO has none — which is why the read is NULLS FIRST, so an appended line lands after lines that predate the column. |
+| `stampPoLineNos(rows, startAt)` | numbers an insert payload in the order it is already in. |
+| `sortBySourceSoLine(lines)` | puts a converted payload into `(SO doc_no, SO line_no)` order first. Stable, so a line with no `line_no` keeps its place. |
+
+**Six write paths number their lines**, and all six are asserted by the wiring
+test: `POST /` (the New PO form — the request array order IS the operator's
+order), `convertSosToPosCore`'s create arm and its `targetPoId` append arm
+(which is also the MRP "Proceed PO" path), `POST /:id/convert-from-so`,
+`POST /:id/items`, the PO amendment ADD (`po-revision.ts`) and the SO
+amendment's added line (`so-revision.ts` step 12c).
+
+**The order is decided where lines are BORN and STORED — a display path never
+recomputes it.** That is the same boundary the owner drew for the sofa
+handedness rule (「只针对新的order生效 旧的就不理了」,
+`backend/tests/sofaOrderForNewLines.test.ts`): re-deriving at read time would
+re-sequence every existing document the next time somebody opened it.
+
+**The PDF re-sorts on it too**, and deliberately: `purchase-order-pdf.ts` builds
+`orderedItems` from `sortLinesByStoredLineNo` (shared, byte-identical in
+`backend/src/scm/shared/so-line-display.ts` and
+`frontend/src/vendor/shared/so-line-display.ts`) before the group-rank and
+sofa-module sorts, because the PDF is handed `items` by whichever page fetched
+them. **That one const drives BOTH the line table and the photo block** — which
+is why the photos scrambled with the lines, and why they must keep reading the
+same const.
+
+Trace: `docs/bugs/0776-a-purchase-order-printed-a-sofa-s-pieces-in-a-random-order-a.md`.
 
 ### The PO PDF's sofa diagram draws REAL compartment photos (2026-08-28)
 
