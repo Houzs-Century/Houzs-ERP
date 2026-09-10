@@ -1,0 +1,82 @@
+name: Repair AC backlog — CELENE zombie + HC-SO-000814 sofa order (DRY-RUN gated)
+
+# Two independent one-shot repairs, dispatched separately by `action`:
+#
+#   celene  — archive the outbox row for `044f73de-c197-4e0d-a3f3-27fa0ab77724`
+#             whose referenced doc was deleted from the ERP. CONFIRM
+#             `ARCHIVE-CELENE-ZOMBIE`.
+#   sofa    — swap `created_at` between the 1NA and 2A(RHF) compartment lines
+#             on HC-SO-000814 so composer emits `[L, 1NA, 2A(RHF)]`. CONFIRM
+#             `SWAP-SOFA-000814`.
+#
+# DRY-RUN by default. Read the plan before you apply.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Which repair'
+        required: true
+        default: 'celene'
+        type: choice
+        options: [celene, sofa]
+      apply:
+        description: '1 to write, anything else DRY-RUN'
+        required: false
+        default: '0'
+        type: string
+      confirm:
+        description: 'For apply ONLY: ARCHIVE-CELENE-ZOMBIE or SWAP-SOFA-000814'
+        required: false
+        default: ''
+        type: string
+
+# Its OWN group. A one-shot repair must not queue behind — or displace — a deploy.
+concurrency:
+  group: repair-ac-backlog-celene-sofa-${{ inputs.action }}
+  cancel-in-progress: false
+
+jobs:
+  celene:
+    if: ${{ inputs.action == 'celene' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-ac-outbox-clear-celene-zombie.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.apply == '1' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  sofa:
+    if: ${{ inputs.action == 'sofa' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-so-000814-sofa-order.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.apply == '1' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
