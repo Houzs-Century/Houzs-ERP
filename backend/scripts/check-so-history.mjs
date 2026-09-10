@@ -73,10 +73,31 @@ const DATE_FIELDS = new Set([
   "customerDeliveryDate", "customer_delivery_date",
 ]);
 
-const short = (v) => {
+/** Fields whose ANSWER lives past the 60th character, so truncating them hides
+ *  the very difference the row was printed for.
+ *
+ *  `buildVariantSummary` puts the SPECIAL segment LAST — "PC151-01 / DIVAN 10\"
+ *  + NO LEG / GAP 14\" / T.Heights 24\" / SPECIAL: ..." — and everything before
+ *  it is fabric and dimensions that rarely move. On HC-SO-012312 the two
+ *  amendments applied on 2026-09-10 printed as
+ *  `line_HILTON (A)-(Q)_spec: PC151-01 / DIVAN 10" + NO LEG / GAP...  ->
+ *   PC151-01 / DIVAN 10" + NO LEG / GAP...`, identical on both sides and
+ *  therefore useless: whether the amendment removed "Right Drawer" is decided
+ *  entirely in the characters that were cut off. A trail that cannot show what
+ *  changed is not a trail.
+ *
+ *  Matched on the field name rather than the value's length so the widening is a
+ *  DECISION about which fields carry a tail, not a blanket "print everything" —
+ *  this goes into a CI log, and a jsonb blob of custom specials or an address
+ *  has no business being dumped whole. */
+const LONG_TAIL_FIELDS = /(^|_)(spec|specs|description2|variantSummary)$/i;
+
+const clip = (s, max) => (s.length > max ? `${s.slice(0, max - 3)}...` : s);
+
+const short = (v, field) => {
   if (v == null) return "(empty)";
   const s = typeof v === "string" ? v : JSON.stringify(v);
-  return s.length > 60 ? `${s.slice(0, 57)}...` : s;
+  return clip(s, field && LONG_TAIL_FIELDS.test(field) ? 400 : 60);
 };
 
 async function main() {
@@ -131,7 +152,7 @@ async function main() {
         const f = String(c?.field ?? "?");
         const isDate = DATE_FIELDS.has(f);
         if (isDate) dateTouchedByAudit += 1;
-        note(`      ${isDate ? ">> " : "   "}${f}: ${short(c?.from)} -> ${short(c?.to)}`);
+        note(`      ${isDate ? ">> " : "   "}${f}: ${short(c?.from, f)} -> ${short(c?.to, f)}`);
       }
     }
 
@@ -154,7 +175,7 @@ async function main() {
         for (const [k, v] of Object.entries(hc)) {
           const isDate = DATE_FIELDS.has(k);
           if (isDate) dateTouchedByAmendment += 1;
-          note(`      ${isDate ? ">> " : "   "}${k}: ${short(v)}`);
+          note(`      ${isDate ? ">> " : "   "}${k}: ${short(v, k)}`);
         }
       } else if (hc != null) {
         note(`      header_changes (unrecognised shape): ${short(hc)}`);

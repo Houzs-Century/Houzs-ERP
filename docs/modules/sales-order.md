@@ -4104,6 +4104,30 @@ The list is COPIED, not imported: the renderer is TypeScript under `src/` and
 the probe is a dependency-free `.mjs` that runs before any build. That copy is
 the drift surface — widen the renderer's key list and this one does not follow.
 
+**Its sibling reads the ORDER'S OWN TRAIL: `backend/scripts/check-so-history.mjs`**
+(Actions -> *SO history check (read-only)*, one `doc_no` input). It prints every
+`scm.mfg_so_audit_log` row and every `scm.so_amendments` row oldest-first, with
+each field's from -> to, and marks the Processing / Delivery date pair with `>>`.
+It was written for HC-SO-012312, where a rep set the Processing Date, saw it come
+back empty and only got it to stick on a second attempt — three explanations had
+been reasoned out and all three refuted, so the trail was what was left. It
+ANSWERED that: the order carries exactly one `UPDATE_DETAILS` row in its life,
+and the three saves before it wrote lines only. A save that persists half a
+document and says nothing is the finding; the probe does not explain the gap and
+must not be read as if it did.
+
+Two properties it has to keep:
+
+- **Long-tail fields print to 400 characters, not 60** (`LONG_TAIL_FIELDS`,
+  `docs/bugs/0788-*`). `buildVariantSummary` emits `SPECIAL:` LAST, so a
+  bedframe's first 60 characters are fabric and dimensions and every spec change
+  printed identical on both sides. The widening is matched on the FIELD NAME, so
+  it stays a decision about which fields carry a tail rather than a blanket dump
+  into a CI log.
+- **No retired vocabulary in its field list.** `audit:vocabulary` refused the
+  pre-rename spelling of the Processing Date, correctly. A row older than that
+  rename is still PRINTED in full; it simply does not get the `>>` marker.
+
 **A THIRD kind of reader was added on 2026-09-07: the REPORTS.** The AutoCount
 reconcile did not know this key existed, so every line closed by this very ruling
 kept reporting as an outstanding `DIFFER` — the owner's applied decision quoted
