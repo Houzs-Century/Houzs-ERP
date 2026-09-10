@@ -1,0 +1,39 @@
+name: Why is each stock lot still at zero cost (read-only)
+
+# The costing pass on 2026-09-09 priced 34 of 277 zero-cost lots and reported the
+# rest as two sentences, each folding several different causes into one line:
+# "the book has no priced receipt for this model, OR the piece has no weight",
+# and "neither the book nor our own purchase history has a price". Neither can be
+# acted on. The owner wants the coverage as complete as it can honestly get, so
+# this separates the causes per lot and says which source WOULD answer -- including
+# how many sofa lots OUR OWN purchase orders could price, with the number.
+#
+# Read-only: SELECTs only, no DDL, no writes, no transaction, manual trigger,
+# own concurrency group.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: diag-zero-cost-lots-remaining
+  cancel-in-progress: false
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/diag-zero-cost-lots-remaining.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

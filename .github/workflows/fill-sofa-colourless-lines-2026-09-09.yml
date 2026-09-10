@@ -1,0 +1,69 @@
+name: Sofas where no module has a colour, read again from the book (2026-09-09)
+
+# The owner found HC-SO-010120 -- a sofa whose first module had the fabric and
+# whose corner and two-seater did not. That shape was 31 sofas and is repaired
+# (run 34377360999, 52 rows). The same plan run reported a bigger set beside it:
+# 209 sofas where NOT ONE module carries a fabric, so there is no sibling to copy
+# from. This is that set, decoded again from the book's own text.
+#
+# WHY RE-READING CAN WIN NOW. The fabric library renumbered itself and the matcher
+# answered the dead row -- that is what left 166 colours unresolvable until they
+# were repaired on 2026-09-02. A colour that could not be looked up then can be
+# looked up now, so this is a lookup against a table that has since been
+# corrected, not a retry in hope. Where it still cannot resolve, the line is left
+# alone and the BOOK'S RAW TEXT IS PRINTED, so the next decision is made on the
+# words rather than on a count.
+#
+# It uses the same decoder and the same colour matcher the cutover importer used,
+# so a line filled here and a line filled at import are byte-identical.
+#
+# SPECIALS AND SEAT HEIGHT ARE NOT TOUCHED -- specials carry money, and this must
+# not change what any order re-prices to. DEFAULT IS PLAN; apply needs the confirm
+# phrase; verification asserts every line price and order total is unchanged.
+#
+# REVERSAL -- every touched row had no fabric before, and the apply log names each
+# id it wrote:
+#   UPDATE scm.mfg_sales_order_items
+#      SET variants = variants - 'fabricId' - 'colourId' - 'fabricCode'
+#                              - 'colourLabel' - 'fabricLabel'
+#    WHERE id IN (<ids from the run log>);
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "Required for apply: fill sofa colourless lines 2026-09-09"
+        required: false
+        default: ""
+
+concurrency:
+  group: fill-sofa-colourless-lines-2026-09-09
+  cancel-in-progress: false
+
+jobs:
+  fill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/fill-sofa-colourless-lines-2026-09-09.mjs
+        env:
+          MODE: ${{ github.event.inputs.mode }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

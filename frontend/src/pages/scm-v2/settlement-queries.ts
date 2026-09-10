@@ -196,7 +196,7 @@ export type MaintenanceMerchant = {
   autoMatchable: boolean;
   /* Keyed by company id, and only for the companies the server answered for —
      so a lookup can miss, and every reader has to say what it does then. */
-  byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null; transitAccountCode?: string | null } | undefined>;
+  byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null; transitAccountCode?: string | null; feeAccountCode?: string | null } | undefined>;
 };
 
 /** One account CODE across every company — the rows of the bank matrix. */
@@ -214,6 +214,10 @@ export type MaintenanceData = {
       machine's card money sits before the payout (owner 2026-09-07: one per
       bank). Keyed by company id; absent on an older server. */
   clearings?: Record<string, Array<{ account_code: string; account_name: string }> | undefined>;
+  /** Active EXPENSE leaves per company — what a merchant fee may be booked to.
+      Server-filtered to the same properties the posting gate checks, so a code
+      offered here cannot be one the gate refuses (docs/bugs/0762). */
+  feeAccounts?: Record<string, Array<{ account_code: string; account_name: string }> | undefined>;
 };
 
 export const useSettlementMaintenance = () => useQuery({
@@ -233,7 +237,7 @@ const invalidateMaintenance = (qc: ReturnType<typeof useQueryClient>) => {
 export const useSaveMaintenanceMerchant = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { companyId: number; code: string; enabled?: boolean; bankAccountCode?: string | null; transitAccountCode?: string }) =>
+    mutationFn: (body: { companyId: number; code: string; enabled?: boolean; bankAccountCode?: string | null; transitAccountCode?: string; feeAccountCode?: string }) =>
       authedFetch<{ ok: boolean; created: boolean }>('/accounting/settlement/maintenance/merchant', {
         method: 'PATCH', body: JSON.stringify(body),
       }),

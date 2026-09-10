@@ -1267,3 +1267,126 @@ describe('company 1: a bound line is planned from its own purchase order only', 
     expect(row.shortage).toBe(0);   // pooled stock still covers it
   });
 });
+
+/* SOFA IS BOUND TOO — the other half of the same ruling (owner 2026-09-09,
+   「修,但只能动 Houzs Century」, extended to sofa on 2026-09-09 after the sofa tab
+   was measured against the book).
+
+   `isHardBoundLine` has named SOFA a bound group since 2026-08-10, and
+   `so-stock-allocation.ts` honours that: on production, of 1,240 open company-1
+   sofa lines, ZERO read READY without their own purchase order and ZERO carry a
+   batch claim without one. MRP did not honour it. `isDedicated` excluded sofa,
+   so section 8 planned every sofa set on the pooled bucket key
+   (fabricCode|seatHeight|legHeight|specials) alone — and a fully received
+   purchase order leaves nothing outstanding, so its receipt was only visible if
+   the STOCK row happened to carry the identical key.
+
+   It rarely does. Measured on the live page 2026-09-09: the sofa tab asked the
+   owner to order 70 units across 28 sales orders; 42 were really missing, 8 of
+   those orders (26 units) had their own purchase order FULLY RECEIVED, and 26 of
+   those very lines read READY on the sales-order screen at the same moment. The
+   STOCK column read 0 on all 136 sofa rows while 246 units of company-1 sofa sat
+   in the warehouse.
+
+   Worked example from prod — HC-SO-011008, HC-PO-009881 received in full:
+     the order asks   fabriccode=modenza-01|seatheight=32|special=nylon fabric
+     the stock says   fabriccode=modenza-06|seatheight=32|special=bottom wrap by nylon fabric,nylon fabric
+   The first test below is that document, reduced. */
+describe('company 1: a sofa set is planned from its own purchase order only', () => {
+  const co1 = { ...opts, companyId: 1 };
+  /* A sofa PO line RAISED FOR one sales-order line — the `so_item_id` is what
+     makes it dedicated, exactly as on the bedframe side. */
+  const boundSofaPo = (
+    poNumber: string, qty: number, receivedQty: number, soItemId: string, variant: Row | null, eta: string,
+  ): Row => ({
+    item_code: 'SF-100', item_group: 'sofa', variants: variant ?? {}, qty, received_qty: receivedQty,
+    delivery_date: eta, supplier_delivery_date_2: null, supplier_delivery_date_3: null, supplier_delivery_date_4: null,
+    warehouse_id: 'W1', so_item_id: soItemId,
+    po: {
+      po_number: poNumber, status: 'SUBMITTED', expected_at: eta,
+      supplier_delivery_date_2: null, supplier_delivery_date_3: null, supplier_delivery_date_4: null,
+      purchase_location_id: 'W1', supplier_id: null,
+    },
+  });
+  const stamp = (co: number) => (rows: Row[]): Row[] => rows.map((r) => ({ company_id: co, ...r }));
+  const world = (tables: Record<string, Row[]>, co = 1) => {
+    const add = stamp(co);
+    return fakeSb(Object.fromEntries(Object.entries({
+      ...BASE_TABLES,
+      warehouses: [{ id: 'W1', code: 'W1', name: 'Main', is_active: true }],
+      ...tables,
+    }).map(([t, rows]) => [t, add(rows as Row[])])));
+  };
+  const set = (res: Awaited<ReturnType<typeof computeMrp>>) => res.sofaSets[0]!;
+
+  test('HC-SO-011008 reduced: its own PO is RECEIVED but the units landed under a different variant key', async () => {
+    /* THE BUG. The receipt is the evidence, not the stock row's spelling. */
+    const sb = world({
+      mfg_sales_order_items: [sofaDemand('si-sofa', 'SO-9', 5, '2026-12-01')],
+      purchase_order_items: [boundSofaPo('PO-OWN', 5, 5, 'si-sofa', { fabricCode: 'RED' }, '2026-10-01')],
+      inventory_balances: [{ item_code: 'SF-100', warehouse_id: 'W1', variant_key: 'fabriccode=maroon', qty: 5 }],
+    });
+
+    const res = await computeMrp(asSb(sb), co1);
+
+    expect(res.sofaSets).toHaveLength(1);
+    expect(set(res).shortageQty).toBe(0);
+    expect(set(res).orderedQty).toBe(5);
+    expect(res.totals.sofaSetShortageCount).toBe(0);
+  });
+
+  test('its own PO is still OUTSTANDING: covered on that PO, and the PO is named', async () => {
+    const sb = world({
+      mfg_sales_order_items: [sofaDemand('si-sofa', 'SO-9', 5, '2026-12-01')],
+      purchase_order_items: [boundSofaPo('PO-OWN', 5, 0, 'si-sofa', { fabricCode: 'RED' }, '2026-10-01')],
+    });
+
+    const res = await computeMrp(asSb(sb), co1);
+
+    expect(set(res).shortageQty).toBe(0);
+    expect(set(res).poNumber).toBe('PO-OWN');
+  });
+
+  test("another line's dedicated sofa PO is not free supply", async () => {
+    /* The exclusivity half. A sofa purchase order raised for somebody else's
+       order leaves the pool entirely — it can never become this set's supply,
+       and the readiness engine would never light this line from it. */
+    const sb = world({
+      mfg_sales_order_items: [sofaDemand('si-sofa', 'SO-9', 5, '2026-12-01')],
+      purchase_order_items: [boundSofaPo('PO-SOMEONE-ELSE', 5, 0, 'si-other', { fabricCode: 'RED' }, '2026-10-01')],
+    });
+
+    const res = await computeMrp(asSb(sb), co1);
+
+    expect(set(res).shortageQty).toBe(5);
+    expect(set(res).poNumber).toBeNull();
+  });
+
+  test('NO purchase order of its own: short, even with an exactly matching set in its bucket', async () => {
+    /* The same answer the bedframe side gives, and the same reason: company 1
+       buys for the order, and unattached stock belongs to nobody until a
+       purchase order says so. Measured on prod 2026-09-09, this changes FOUR
+       company-1 sofa lines from "stock" to "shortage" — every one of which the
+       sales-order screen already refuses to call READY. */
+    const sb = world({
+      mfg_sales_order_items: [sofaDemand('si-sofa', 'SO-9', 5, '2026-12-01')],
+      inventory_balances: [{ item_code: 'SF-100', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty: 5 }],
+    });
+
+    const res = await computeMrp(asSb(sb), co1);
+
+    expect(set(res).shortageQty).toBe(5);
+    expect(set(res).stockQty).toBe(0);
+  });
+
+  test('company 2 keeps the pooled sofa model — the rule is company-1 only', async () => {
+    const sb = world({
+      mfg_sales_order_items: [sofaDemand('si-sofa', 'SO-9', 5, '2026-12-01')],
+      inventory_balances: [{ item_code: 'SF-100', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty: 5 }],
+    }, 2);
+
+    const res = await computeMrp(asSb(sb), { ...opts, companyId: 2 });
+
+    expect(set(res).shortageQty).toBe(0);   // pooled stock still covers it
+  });
+});

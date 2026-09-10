@@ -1,0 +1,82 @@
+name: Update the sales-order scanner's manual rules (2026-09-09)
+
+# Teach the OCR four reading techniques this cutover paid for, and finish the one
+# rule that was written as a principle without its consequence.
+#
+# WHERE IT WRITES: scm.so_scan_rules row __GLOBAL_MANUAL__ — the HAND-WRITTEN
+# layer of the scanner's prompt. scan-so.ts says why that row exists: the
+# distiller learns by diffing extracted JSON against corrected JSON and "can
+# never teach a reading TECHNIQUE". distillGlobalRules never regenerates it. This
+# is DATA, so it needs no deploy and does not bust the 1-hour prompt cache for
+# every rep, which editing the TypeScript prompt would.
+#
+# THE HEADLINE CHANGE. The row already said "'TV' MARKS THE VIEWING DIRECTION.
+# Left and right are as seen facing the sofa from the TV" — the right principle
+# with its consequence left unstated, so a reader still had to derive it. Two of
+# this project's own notes derived it in OPPOSITE directions and contradicted
+# each other for days, because neither recorded where the TV was drawn.
+#
+# Owner 2026-09-09, 主要是看TV的 要看TV在上还是下, confirming the geometry:
+#   TV BELOW the run -> your left IS the drawing's left; arm on the LEFT = (LHF)
+#   TV ABOVE the run -> your left is the drawing's RIGHT; that arm = (RHF)
+# Backwards, every piece on the order is handed the wrong way and looks normal —
+# the set of pieces is identical, only the sides swap.
+#
+# ALSO ADDED, each measured against the live account book:
+#   A  the BUILD itself can be TBC, not just the colour — 21 of the 23 unverifiable
+#      sofa orders carry no drawing and only "tbc"/"kiv". An invented build is a
+#      fabrication that reaches the factory.
+#   B  the book's shorthand: ELT = L, 2ER = 2A(RHF), a bare NA = 1NA
+#   C  "C TABLE" is a console table, not the corner — one real slip carries both
+#      "C TABLE" and a bare "C" in the same string
+#   D  8030 = 5540; 5535 is its OWN model and is never folded; 5537 -> 8030 is
+#      UNCONFIRMED
+#
+# DEFAULT IS PLAN, and plan prints the full new text. The edit is PINNED to the
+# old rule-5 wording VERBATIM, so a row somebody else has rewritten is refused
+# rather than clobbered; the appendix is added only when its marker is absent.
+#
+# REVERSAL — the row is one text column, so the undo is the inverse edit:
+#   restore the old rule-5 paragraph and delete everything from the line
+#   "WHAT THE 2026-09 CUTOVER TAUGHT US" to the end. The pre-edit text is printed
+#   in full by the plan run, and the PR that added this script quotes it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "Required for apply: update so scan manual rules 2026-09-09"
+        required: false
+        default: ""
+
+concurrency:
+  group: update-so-scan-manual-rules
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/update-so-scan-manual-rules-2026-09-09.mjs
+        env:
+          MODE: ${{ github.event.inputs.mode }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

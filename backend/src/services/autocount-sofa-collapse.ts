@@ -38,6 +38,7 @@
 // decoder the cutover importers use — deliberately the same module, because a
 // second copy that drifts would make the gate prove nothing.
 // ----------------------------------------------------------------------------
+import { liveColour } from '../scm/shared/variant-summary';
 import { parseSofa, type SofaParse } from '../../scripts/lib/parse-sofa.mjs';
 
 /**
@@ -144,12 +145,28 @@ function tokenFor(comp: string, i: number, n: number): string | null {
   switch (c) {
     /* A BARE DIGIT IS NOT A SOLO SEAT. Measured against the decoder: "1 (28\")"
        and "2 (28\")" both decode to NOTHING at all, so the bare-digit spelling
-       was a guaranteed refusal for every single-seat build. "1S" and "2S" decode
-       back to exactly themselves. A solo 3S has no spelling at all — "3"
-       decodes to nothing and "3S" decodes to the TWO-piece build
-       [2A(LHF), 1A(RHF)], which is the one outcome that must never be written. */
-    case '1S': return solo ? '1S' : null;
-    case '2S': return solo ? '2S' : null;
+       was a guaranteed refusal for every single-seat build.
+
+       3S STILL HAS NO SPELLING, and that refusal is load-bearing: "3S (28\")"
+       decodes to the TWO-piece build [2A(LHF), 1A(RHF)] — re-measured 2026-09-09
+       over the ten models these refusals name and both mechanism settings, wrong
+       in all twenty. Writing it would put a different sofa in a licensed ledger.
+       Anything containing it goes the same way: "3S + 1S + 2S (28\")" decodes to
+       [2A(LHF), 1A(RHF), 1S, 2S].
+
+       THE `solo` GUARD ON 1S AND 2S IS GONE, and only that. Measured the same
+       way and in the same shape — WITH the size suffix a real build carries,
+       which is what a first pass without it got wrong — "1S (28\")",
+       "2S (28\")" and "1S + 2S (28\")" decode back to exactly themselves, 20 of
+       20 each. So a plain-seat pair had no spelling for no reason, and
+       HC-SO-003189 [1S, 2S] is refused by that and nothing else.
+
+       PROPOSING A SPELLING IS SAFE BY CONSTRUCTION: `composeSofaDesc2` hands
+       every composed string to `decodesTo`, and a build whose text does not
+       decode back to exactly itself is REFUSED rather than written. A wrong
+       proposal costs a refusal; a missing one costs a document. */
+    case '1S': return '1S';
+    case '2S': return '2S';
     case '3S': return null;
     case '1NA': return '1NA';
     case '2NA': return '2NA';
@@ -164,8 +181,22 @@ function tokenFor(comp: string, i: number, n: number): string | null {
     case '2B(LHF)': return left ? '2B' : null;
     case '1B(RHF)': return left ? null : '1B';
     case '2B(RHF)': return left ? null : '2B';
-    case 'L(LHF)': return left ? 'L' : null;
-    case 'L(RHF)': return left ? null : 'L';
+    /* A CHAISE ON THE SIDE ITS POSITION DENIES. A bare `L` is sided by
+       POSITION — the book's own convention — so where position already says the
+       right thing it is still written `L` and nothing about the existing corpus
+       moves. Where position would say the OPPOSITE, the explicit `LL` / `LR`
+       says it outright, exactly as `1EL` / `1ER` already do for an armed end.
+
+       That spelling used to be `null`, and three sales orders were refused for
+       it: HC-SO-007399 [2A(RHF), L(LHF)], HC-SO-008460 [L(RHF), 2A(LHF)] and
+       HC-SO-007958 [L(RHF), 1NA, 2A(LHF)].
+
+       The decoder learned `LL` / `LR` in the same change, and it could only be
+       taught safely because the book has never used either: 41,953 committed
+       Desc2 values, not one of them. The fingerprint over all 15,950 SO values
+       is byte-identical before and after. */
+    case 'L(LHF)': return left ? 'L' : 'LL';
+    case 'L(RHF)': return left ? 'LR' : 'L';
     case '1S(R)': return solo ? '1R' : null;
     case '1S(P)': return solo ? '1P' : null;
     case '1A(R)(LHF)': return !solo && left ? 'R' : null;
@@ -309,12 +340,6 @@ function collapseRun(
   if (!desc2) {
     return { refusal: 'no Desc2 on the compartment lines — nothing to carry the build into AutoCount' };
   }
-  if (desc2.length > AC_DESC2_MAX) {
-    return {
-      refusal: `Desc2 is ${desc2.length} characters and AutoCount's field holds ${AC_DESC2_MAX}; `
-        + 'truncating would silently drop part of the build',
-    };
-  }
 
   const qtys = new Set(run.map((r) => Number(r.line.qty)));
   if (qtys.size !== 1) {
@@ -380,9 +405,26 @@ function collapseRun(
   const v = (run[0].line.variants ?? {}) as Record<string, unknown>;
   const sizeRaw = v.seatHeight != null ? String(v.seatHeight).trim() : (ps.size ?? null);
   const size = sizeRaw ? sizeRaw.replace(/["']+$/, '') : null;
-  const colour = v.colourLabel != null && String(v.colourLabel).trim()
+  /* THE LIVE COLOUR, not the dead row's obituary. The fabric library renumbered
+     itself on 2026-08-11 and left `[superseded by X on 2026-08-11]` written into
+     each old row's own LABEL — 39 characters of bookkeeping in the middle of a
+     build specification. `buildVariantSummary` has stripped it since that day;
+     THIS renderer did not, and it is the one three sofa orders go through, which
+     is why they were still refused after the fix that was supposed to clear
+     them: HC-SO-008460 at 112 characters, HC-SO-012513 at 113, HC-SO-012629 at
+     117, against a field that holds 100.
+
+     It is applied to the EXPECTATION as well as to the text, because `colour` is
+     the one value handed to both composeSofaDesc2 and decodesTo. That is the
+     property that keeps the round-trip honest rather than merely passing: the
+     gate compares the decoded colour against the same live name the text was
+     written with. Two documents were refused on exactly that mismatch —
+     HC-SO-004725 and HC-SO-007958, whose composed text lost the brackets the
+     expectation still carried. */
+  const colourRaw = v.colourLabel != null && String(v.colourLabel).trim()
     ? String(v.colourLabel).trim()
     : (ps.color ?? null);
+  const colour = colourRaw ? liveColour(colourRaw) : null;
   const specials = readSpecials(v).length ? readSpecials(v) : ps.specials;
 
   /* 1. ECHO — the stored text still decodes to exactly what the ERP holds.
@@ -392,7 +434,16 @@ function collapseRun(
      account book with nothing anywhere recording that the edit was dropped.
      Whatever the ERP disagrees with its own imported text about falls through to
      compose, which either spells the current build or refuses it visibly. */
-  if (reps > 0 && decodesTo(desc2, model, build, { size, colour, specials }).ok) {
+  /* The length gate belongs to the text that is actually SENT, and this branch
+     is the only one that sends the STORED text. It used to sit at the top of
+     this function, where it refused a document whose stored line text was long
+     even though the composer was about to replace it with something short:
+     HC-SO-013339's stored Desc2 is 107 characters and the text it would have
+     written is 30. Over-long stored text now falls through to compose, which
+     either spells the build inside the column or refuses it visibly. */
+  if (reps > 0
+    && desc2.length <= AC_DESC2_MAX
+    && decodesTo(desc2, model, build, { size, colour, specials }).ok) {
     const out: CollapsedLine[] = [];
     for (let k = 0; k < reps; k += 1) {
       out.push(mkLine(run.slice(k * build.length, (k + 1) * build.length), desc2, 'echo'));

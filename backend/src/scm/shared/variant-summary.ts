@@ -125,6 +125,46 @@ export function isColourKiv(
 }
 
 /**
+ * The live name of a colour whose fabric row has been superseded.
+ *
+ * MODULE SCOPE AND EXPORTED because the sales-order line is not the only
+ * renderer of a colour. `composeSofaDesc2` builds a sofa's Desc2 by its own
+ * path, and while this helper lived inside buildVariantSummary the sofa path
+ * kept writing the obituary — which is why the three documents this comment
+ * names were still refused after the fix that was supposed to clear them.
+ */
+/* A SUPERSEDED FABRIC ROW CARRIES ITS OWN OBITUARY, and it is not a
+   specification. The fabric library renumbered itself on 2026-08-11 and left
+   each old row in place with `[superseded by X on 2026-08-11]` written into
+   the row's own LABEL — so a line still pointing at the dead row renders 39
+   characters of bookkeeping in the middle of the specification the order is
+   built to, and AutoCount then refuses the whole document for a Desc2 over its
+   nvarchar(100) (HC-SO-012513 at 113, HC-SO-012629 at 117).
+
+   THE SUCCESSOR WINS, which is the owner's ruling of 2026-09-09 (「遇到已被
+   取代的颜色就用新色号」) and also the only reading that keeps the text true:
+   the note names the code that replaced this one.
+
+   SAFE AGAINST THE BOOK, measured rather than assumed: across the committed
+   cutover snapshots — 60,939 SO lines, 18,148 PO lines, 47,329 DO lines —
+   ZERO carry this note. It is ours alone, so removing it can only make our
+   text agree with the book more often. That matters because
+   autocount-line-keys.ts matches this string against the book's own Desc2 to
+   tell one line from another. */
+/* The successor is OPTIONAL in the pattern on purpose: a note that names no
+   replacement is still bookkeeping and still must not travel. It is stripped,
+   leaving the dead code, which is at least a code. */
+const SUPERSEDED_NOTE = /\s*\[\s*superseded\s+by\b\s*([^\]]*?)(?:\s+on\s+\d{4}-\d{2}-\d{2})?\s*\]/i;
+export function liveColour(v: string): string {
+  const m = SUPERSEDED_NOTE.exec(v);
+  if (!m) return v;
+  /* The group always participates when the pattern matches — it is not
+     optional — so a `??` here is dead and the linter is right to say so. */
+  const successor = m[1].trim();
+  return successor || v.replace(SUPERSEDED_NOTE, '').trim();
+}
+
+/**
  * Build a one-line human summary of a line's variants.
  *
  * Format rules (see task spec, Commander 2026-05-28):
@@ -166,7 +206,7 @@ export function buildVariantSummary(
   // read off variants, missing -> old behaviour), so a line with no supplier code
   // is unchanged. Distinct-only: a supplier code equal to the internal code adds
   // no parens.
-  const fabricCodeRaw = str(variants.fabricCode);
+  const fabricCodeRaw = liveColour(str(variants.fabricCode));
   const fabricSupplierCode = str(variants.fabricSupplierCode);
   // Owner format ruling 2026-07-24 (second pass): the supplier code's parens
   // go at the END of the whole fabric segment - "CG-001 Pearl (KN390-1)" -
@@ -174,7 +214,7 @@ export function buildVariantSummary(
   // duplicated mess, and "CG-001 (KN390-1) Pearl" was still the wrong order).
   // So the parts are composed BARE (the original dedupe rules all hold) and
   // the parens are appended to the finished segment below.
-  const fabricParts = [fabricCodeRaw, str(variants.colorCode), str(variants.colourLabel)];
+  const fabricParts = [fabricCodeRaw, str(variants.colorCode), str(variants.colourLabel)].map(liveColour);
   // Dedupe — when the colour label/code is just the fabric code again (e.g.
   // BF-07 whose colour label is also "BF-07"), don't repeat it ("BF-07 BF-07").
   // GRN / PI / PR / Stock-Adjustment editors store the fabric under fabricColor;

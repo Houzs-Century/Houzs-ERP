@@ -1,0 +1,78 @@
+name: Cost the zero-cost cutover stock lots from the book (2026-09-09)
+
+# Owner 2026-09-09: 「Costing 一定要有，因为要不然的话，我开 SCM 就 capture 不到
+# COGS」 — stock that came over from AutoCount with no cost means a sales invoice
+# raised against it books revenue and no cost of goods, so the profit on that
+# sale is overstated by the whole value of the goods.
+#
+# THE NUMBER IS A RECEIPT, NEVER AN AVERAGE. The owner refused the average in
+# five words — 「不是跟着FIFO的嘛？」 — and the book proves him right: AMN-SF9058
+# was received at RM 1,210, RM 1,710 and RM 3,040 inside two weeks. One blended
+# number written onto every lot flattens the layers, so you sell the old cheap
+# stock and the system books the expensive cost. Nothing was ever applied under
+# the average method.
+#
+# Each lot is costed from a real receipt, in this order: its OWN receipt (the
+# document number our relayering recorded in the movement note), then the book's
+# nearest priced receipt of that item to the lot's date, then — for a sofa, which
+# the book prices whole while we hold compartments — that sofa's book cost split
+# by the owner's own compartment price list over the model's real build weight,
+# and finally, for non-sofa only, what we actually paid on our own purchase
+# order. Anything none of those reaches stays at zero and is listed in the log.
+#
+# The book's item code is not ours (HOK-1007 (K) here is CODY-(K)), so receipts
+# are translated through data/autocount-erp-mapping-1561.csv before being
+# indexed. Without that this would silently price nothing.
+#
+# DEFAULT IS PLAN. Apply needs the confirm phrase. Every UPDATE carries
+# `coalesce(unit_cost_sen,0) = 0`, so nothing already costed is touched. This
+# writes ONE column: no journal entry, no stock movement, no quantity.
+#
+# REVERSAL — every touched lot was at zero before, and the apply log names each
+# id it wrote:
+#   UPDATE scm.inventory_lots SET unit_cost_sen = 0 WHERE id IN (<ids from the run log>);
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "Required for apply: cost zero cutover lots 2026-09-09"
+        required: false
+        default: ""
+      recost:
+        description: "Also correct the lots this script's own date bug mispriced (1 = yes)"
+        required: false
+        default: ""
+
+concurrency:
+  group: cost-zero-cutover-lots-2026-09-09
+  cancel-in-progress: false
+
+jobs:
+  cost:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/cost-zero-cutover-lots-2026-09-09.mjs
+        env:
+          MODE: ${{ github.event.inputs.mode }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          RECOST: ${{ github.event.inputs.recost }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -44,6 +44,28 @@ const ALLOWED = new Set([
   // THE WRITER, and this test.
   'backend/scripts/record-priced-specials-on-migrated-lines.mjs',
   'backend/tests/specialsRecordedNeverPriced.test.ts',
+  /* A SECOND WRITER, and it only ever CLEARS — added 2026-09-09 with the reason,
+     because this list is the mechanism for that and not an obstacle to it.
+
+     WHY IT HAS TO TOUCH THE KEY AT ALL. AutoCount refuses a whole document whose
+     Description 2 is over nvarchar(100), and that string is the SUM of
+     `variants.specials` and `variants.specialsRecorded`. On HC-SO-007678 the
+     106-character sentence lives in the RECORDED half, so no value of `specials`
+     brings the line under 100 — the field has to be emptied or the document
+     never reaches the accounts.
+
+     WHY IT IS SAFE UNDER THE RULE THIS TEST ENFORCES. The rule is that the key
+     must never feed a PRICE or a COST, so a historical document's money cannot
+     move on its next edit. This script writes `specialsRecorded: []` and touches
+     no money column at all; it is plan-by-default, refuses to act on any line
+     whose current text is not character-for-character what the owner was shown,
+     and re-reads on a fresh connection to assert the RENDERING afterwards.
+
+     THE OWNER WROTE THE REPLACEMENT WORDINGS HIMSELF on 2026-09-09 — the text he
+     approved does not contain that sentence — and the plan prints both fields
+     before anything is written, so the removal is seen and confirmed rather than
+     inferred. */
+  'backend/scripts/shorten-specials-to-the-book.mjs',
   /* REPORTING — read-only, and that is the whole reason they are admissible.
      These four open a connection, SELECT, and print; not one of them writes a
      line, and none can reach a price. They were added 2026-09-07 because the
@@ -66,6 +88,14 @@ const ALLOWED = new Set([
      file. It computes no price and reads no money. */
   'backend/scripts/lib/variant-report.mjs',
   'backend/scripts/plan-priced-specials-money.mjs',
+  /* The migrated-invoice receipt snapshot names the key only to WITHHOLD it.
+     `repair-migrated-invoice-variants-from-receipt.mjs` copies a goods-receipt
+     line's variants onto the invoice line raised from it, and its `WITHHELD`
+     map lists every key it refuses to carry across with the reason — this one
+     among them. Mentioning a key in order not to write it is the opposite of
+     pricing it, and the refusal is the safer of the two ways to fail: a parent
+     key that is in neither the owned list nor this one makes the row REFUSE. */
+  'backend/scripts/repair-migrated-invoice-variants-from-receipt.mjs',
 ]);
 
 const SCAN = ['backend/src', 'backend/scripts', 'frontend/src'];
