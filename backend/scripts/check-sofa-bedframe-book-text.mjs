@@ -358,8 +358,19 @@ function section3(f) {
     const dom = new Map();
     for (const r of sub) { const d = dominantKind(r); dom.set(d, (dom.get(d) ?? 0) + 1); }
     for (const k of PRIORITY) if (dom.get(k)) log(`    ${pad(dom.get(k))}  ${k}`);
-    log(`    of which the leftover is ONLY "${KIV}": ${sub.filter((r) => r.resS.every((a) => kindOf(a) === KIV)).length}`);
-    log(`    of which the leftover is ONLY "${BUILD}": ${sub.filter((r) => r.resS.every((a) => kindOf(a) === BUILD)).length}`);
+    const onlyKiv = sub.filter((r) => r.resS.every((a) => kindOf(a) === KIV)).length;
+    const onlyBuild = sub.filter((r) => r.resS.every((a) => kindOf(a) === BUILD)).length;
+    const onlyEither = sub.filter((r) => r.resS.every((a) => kindOf(a) === KIV || kindOf(a) === BUILD)).length;
+    log(`    of which the leftover is ONLY "${KIV}": ${onlyKiv}`);
+    log(`    of which the leftover is ONLY "${BUILD}": ${onlyBuild}`);
+    log(`    of which the leftover is ONLY those two, in any mix       : ${onlyEither}`);
+    /* The two classes worth naming separately, because a decision can defensibly
+       skip either: a colour still marked KIV/TBC is a reason NOT to raise a
+       purchase order at all (so-save-problems already blocks the processing date
+       on it), and a sofa build is already on the same document as separate coded
+       piece lines. What is left is the population a note would actually inform
+       somebody about. */
+    log(`    LEAVING, as lines a note would genuinely inform            : ${sub.length - onlyEither}`);
     log('');
   }
 }
