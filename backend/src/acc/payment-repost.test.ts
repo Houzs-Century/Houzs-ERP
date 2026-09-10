@@ -133,6 +133,10 @@ describe('repostSoPaymentEdit — the entry follows the payment', () => {
       after: PAY({ amount_sen: 199_100 }) as unknown as SoPaymentRow,
     });
     expect(out).toMatchObject({ ok: true, status: 'reposted', moved: ['amount'] });
+    /* Both numbers come back, because the audit row will carry them: the
+       contra that voided the old entry and the entry booked in its place. */
+    const contraNo = sb.tables.journal_entries.find((j: Row) => String(j.source_type).endsWith('_REVERSAL'))!.je_no;
+    expect(out).toMatchObject({ reversedJeNo: contraNo, jeNo: active(sb)[0].je_no });
 
     /* Exactly one entry still speaks for this payment, and it says the new
        figure. The old one is reversed, not deleted. */
@@ -210,7 +214,7 @@ describe('repostSoPaymentEdit — the entry follows the payment', () => {
       before: facts(),
       after: PAY({ amount_sen: 199_100 }) as unknown as SoPaymentRow,
     });
-    expect(out).toMatchObject({ ok: true, status: 'reposted', moved: ['amount'] });
+    expect(out).toMatchObject({ ok: true, status: 'reposted', moved: ['amount'], reversedJeNo: null });
     expect(active(sb)).toHaveLength(1);
     expect(sb.tables.journal_entries.filter((j: Row) => j.reversed)).toHaveLength(0);
   });

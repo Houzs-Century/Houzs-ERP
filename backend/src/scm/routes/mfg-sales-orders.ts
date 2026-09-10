@@ -68,6 +68,7 @@ import {
   PAYMENT_WINDOW_CLOSED_ERROR,
 } from '../shared/so-field-policy';
 import { paymentMayChange, SO_PAYMENT_AMEND } from '../../acc/payment-reconciled';
+import { AMEND_SOURCE, ledgerFieldChange, REASON_REQUIRED } from '../../acc/payment-corrections';
 /* SO-SKU spec P2 — every charge is a SKU line. Predicates from P1; the
    fee/addon → SERVICE-line decomposition builders are pure + shared. */
 import {
@@ -10900,6 +10901,11 @@ const paymentPatchSchema = z.object({
   amountSen:       z.number().int().nonnegative().optional(),
   accountSheet:      z.string().optional().nullable(),
   collectedBy:       z.string().uuid().optional().nullable(),
+  /* Why the payment is being corrected — REQUIRED when the amend right is what
+     opened the door (paymentMayChange says via 'amend'), optional otherwise
+     (owner 2026-09-10: 靠权限改的来决定). Lands on the audit row and the
+     Finance corrections report. */
+  reason:            z.string().trim().max(500).optional(),
 });
 
 export type PaymentVersionGuard =
@@ -10954,17 +10960,10 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
   };
   if (before.so_doc_no !== docNo) return c.json({ error: 'payment_doc_mismatch' }, 400);
 
-  /* Same-day lock — a payment recorded TODAY (MYT) can be corrected; after
-     midnight the day's cash-up is settled and it LOCKS. EXEMPT DRAFT SOs: a
-     draft isn't confirmed/settled yet (e.g. an OCR-scanned draft whose payment
-     was mis-read), so its payments must stay freely editable — mirrors the
-     frontend's draftUnlocked (2026-07-13), which was never matched here.
-
-     Owner 2026-07-19 confirmed this same window governs DELETE too, which had
-     no time gate at all. Both routes now go through the shared
-     paymentRowMutable() predicate rather than each spelling the rule out, so
-     they cannot drift — and the deferred bank-reconciliation condition will
-     have exactly one place to land. */
+  /* WHO MAY CHANGE THIS ROW, AND WHY — one predicate for the PATCH, the DELETE
+     and both screens (scm/shared/so-field-policy.ts, paymentRowMutable): DRAFT
+     fluid → RECONCILED shut to everyone → same day fluid → the amend right →
+     shut. paymentMayChange() feeds it the reconciliation the server reads. */
   const { data: soRow } = await sb
     .from('mfg_sales_orders')
     .select('status')
@@ -10991,6 +10990,8 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
   const parsed = paymentPatchSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
   const p = parsed.data;
+  const amended = editWindow.via === 'amend';
+  if (amended && !p.reason) return c.json(REASON_REQUIRED, 400);
   const versionCheck = paymentVersionGuard(p.version, Number(before.version ?? 1), soCasGrace(c));
   if (!versionCheck.ok) return c.json(versionCheck.body, versionCheck.status);
   const expectedPaymentVersion = versionCheck.version;
@@ -11108,12 +11109,19 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     installment_months: nextInstallment, online_type: nextOnline, approval_code: nextApproval,
     account_sheet: nextAccountSheet, collected_by: nextCollectedBy,
   };
+  /* THE LEDGER FOLLOWS THE EDIT (docs/bugs/0778) — this route wrote the row and
+     stopped, so a correction left its entry behind. See acc/payment-repost.
+     BEFORE the audit, so the audit row can carry the two JE numbers. */
+  const ledger = await repostSoPaymentBestEffort(sb, { id, docNo, companyId: co.companyId, before, next });
   await recordSoAudit(sb, {
     docNo,
     action: 'UPDATE_PAYMENT',
     actorId: user.id,
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
-    fieldChanges: soPaymentFieldChanges(before, next),
+    fieldChanges: [...soPaymentFieldChanges(before, next), ...ledgerFieldChange(ledger)],
+    /* A correction made on the amend right is a FINANCE event: it carries the
+       typed reason and is what the corrections report lists (docs/bugs/0785). */
+    ...(amended ? { source: AMEND_SOURCE, note: p.reason } : {}),
   });
 
   /* Same reason as the insert: an edited amount moves the outstanding balance,
@@ -11123,10 +11131,6 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
      costs one queued edit, while deciding here which fields matter would put a
      second opinion about the balance rule next to so-outstanding.ts. */
   await queueAcSoEdit(c, docNo);
-
-  /* THE LEDGER FOLLOWS THE EDIT (docs/bugs/0778) — this route wrote the row and
-     stopped, so a correction left its entry behind. See acc/payment-repost. */
-  await repostSoPaymentBestEffort(sb, { id, docNo, companyId: co.companyId, before, next });
 
   // An edited amount also moves what the invoices off this order have settled.
   await recomputeSiPaidForOrder(sb, docNo, co.companyId);
@@ -11152,31 +11156,14 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
   if (!versionCheck.ok) return c.json(versionCheck.body, versionCheck.status);
   const expectedVersion = versionCheck.version;
 
-  /* SAME-DAY WINDOW (Owner 2026-07-19) — "删除只有在当天才行。正常情况下，他当天
-     key in 的时候，因为还没有 lock 下来，所以当天都可以任意更改." A payment row may
-     be deleted ONLY on the MY calendar day it was keyed in.
-
-     This route previously had NO time gate at all — strictly weaker than the
-     PATCH on the same row, which has carried this window since 2026-07-13. So a
-     months-old payment on a delivered, invoiced SO could be hard-deleted,
-     silently flipping the order from PAID back to owing. This closes that.
-
-     Keyed off created_at (when the row was KEYED IN), never paid_at (the date
-     on the document): keying off paid_at would let someone unlock an old
-     payment's deletion by first editing its date to today, with the edit and
-     the delete authorising each other.
-
-     MYT, not UTC — mytDateOf/todayMyt shift +8h before reading the date, so the
-     window closes at Malaysian midnight rather than 8h late or 8h early.
-
-     Enforced HERE and not only in the UI: the clients also drop the delete
-     control once the window closes, but that is the courtesy — this is the
-     control. The DRAFT exemption mirrors the PATCH route exactly (a draft has
-     nothing locked; the owner was describing a confirmed order).
-
-     THE DEFERRED RULE HAS LANDED (2026-09-10, docs/bugs/0780): FINANCE may
-     remove an older payment, a RECONCILED one is refused to everybody, and
-     paymentMayChange() below asks both. */
+  /* THE SAME GATE AS THE PATCH (owner 2026-07-19: 删除只有在当天才行 — until
+     then this route had NO time gate, so a months-old payment on a delivered,
+     invoiced SO could be hard-deleted and flip it from PAID to owing). Keyed
+     off created_at, never paid_at: keying off the document date would let an
+     edit and a delete authorise each other. MYT, not UTC. Enforced HERE — the
+     missing button in the clients is the courtesy, this is the control. Since
+     2026-09-10 the amend right opens it and a RECONCILED payment shuts it to
+     everyone (docs/bugs/0780); paymentMayChange() below asks both. */
   const { data: soStatusRow } = await sb
     .from('mfg_sales_orders')
     .select('status')
@@ -11207,6 +11194,11 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
       reason: windowCheck.problem,
     }, 409);
   }
+  /* A DELETE carries no body here — version already rides the query, so the
+     reason does too. Required on the amend right, same as the PATCH. */
+  const delAmended = windowCheck.via === 'amend';
+  const delReason = String(c.req.query('reason') ?? '').trim().slice(0, 500);
+  if (delAmended && !delReason) return c.json(REASON_REQUIRED, 400);
 
   const { data: deleted, error } = await scopeToCompanyId(sb.from('mfg_sales_order_payments').delete()
     .eq('id', id)
@@ -11222,7 +11214,7 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
 
   // Void the ledger entry AND re-roll the invoices this deposit was settling
   // (lib/so-payment-row afterSoPaymentRemoved). Best-effort, never blocks.
-  await afterSoPaymentRemoved(sb, { paymentId: id, docNo, companyId: delCo.companyId });
+  const delLedger = await afterSoPaymentRemoved(sb, { paymentId: id, docNo, companyId: delCo.companyId });
 
   /* Post-merge stitch — DELETE_PAYMENT audit row. Carries the typed reason as a
      field change so it renders in AuditHistoryPanel alongside the amount that
@@ -11237,7 +11229,9 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
       { field: 'method',       from: rowTyped.method,        to: null },
       { field: 'amountSen',  from: rowTyped.amount_sen,  to: null },
       ...(rowTyped.approval_code ? [{ field: 'approvalCode', from: rowTyped.approval_code, to: null } satisfies FieldChange] : []),
+      ...ledgerFieldChange(delLedger),
     ],
+    ...(delAmended ? { source: AMEND_SOURCE, note: delReason } : {}),
   });
 
   /* A deleted payment raises the outstanding balance, so the account book has

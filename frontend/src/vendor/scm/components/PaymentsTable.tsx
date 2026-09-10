@@ -41,8 +41,9 @@ import { todayMyt, mytDayOf } from '../lib/dates';
 /* The SHARED payment-window predicate — the same function the server calls, so
    the button and the endpoint cannot disagree about whether the window is open
    (Owner 2026-07-19). */
-import { paymentRowMutable } from '../lib/so-field-policy';
+import { paymentRowMutable, type PaymentChangeVia } from '../lib/so-field-policy';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
+import { usePrompt } from './ConfirmDialog';
 import {
   PAYMENT_METHOD_CODE_TO_VALUE,
   PAYMENT_METHOD_DEFAULT_LABELS,
@@ -472,6 +473,9 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      fact only the server can read, so this side never claims to know it. */
   const { can } = useHouzsAuth();
   const mayAmend = can('scm.so_payment.amend');
+  /* A correction on the amend right owes a reason, asked BEFORE the write and
+     required (owner 2026-09-10: 靠权限改的来决定). A same-day fix asks nothing. */
+  const askReason = usePrompt();
 
   /* ── Official Receipt print (GL redesign 9b) ──────────────────────────
      ensure-then-print: the endpoint fetches the payment's OR (creating one
@@ -750,6 +754,13 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     if (day === null) return false;
     return paymentRowMutable(day, todayMyt(), draftUnlocked, { mayAmend }).mutable;
   };
+  /* WHY a row may change — 'amend' is the one that owes a reason. */
+  const rowVia = (createdAt: string | null | undefined): PaymentChangeVia => {
+    if (!createdAt) return null;
+    const day = mytDayOf(createdAt);
+    if (day === null) return null;
+    return paymentRowMutable(day, todayMyt(), draftUnlocked, { mayAmend }).via;
+  };
 
   /* installment_months (int|null) → the maintenance plan LABEL/value to rehydrate
      the Plan <select> when editing a persisted row. Matches on parsed months;
@@ -789,7 +800,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      as commitDraft's POST (method-scoped sub-fields via draftMethodFields);
      slip is untouched by an edit. On success the draft is dropped and the
      (freshly refetched) persisted row reappears. */
-  const commitEdit = (d: PaymentDraft) => {
+  const commitEdit = async (d: PaymentDraft) => {
     if (!isSaved || !d.editingPersistedId) return;
     const persisted = persistedPayments.find((p) => p.id === d.editingPersistedId);
     if (!persisted) return;
@@ -806,7 +817,16 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       collectedBy:  d.collectedBy  || null,
       ...draftMethodFields(method, d),
     };
-    editPayment.mutate(body, {
+    const reason = rowVia(persisted.created_at) === 'amend'
+      ? await askReason({
+        title: 'Why is this payment being corrected?',
+        body: 'Finance keeps a record of every correction made after the day it was keyed in.',
+        input: { label: 'Reason', placeholder: 'Sales keyed RM 1,990 — receipt shows RM 1,991', required: true },
+        confirmLabel: 'Save changes',
+      })
+      : '';
+    if (reason === null) return;
+    editPayment.mutate({ ...body, ...(reason ? { reason } : {}) }, {
       onSuccess: () => removeDraft(d.uid),
       onError: (e) => {
         // eslint-disable-next-line no-console
@@ -826,7 +846,9 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     if (d.amountSen <= 0) return;
     /* Same-day EDIT (owner 2026-07-13) — an edit draft carries the id of the
        persisted row it amends. Route it through PATCH instead of POST. */
-    if (d.editingPersistedId) { commitEdit(d); return; }
+    /* commitEdit is async since it may ask for a reason; its failures are
+       reported inside it (notify), so nothing is lost by not awaiting here. */
+    if (d.editingPersistedId) { void commitEdit(d); return; }
     /* Cascade guard (spec 1) — block the commit when the chosen method is
        missing a required sub-field (Merchant → Bank + Plan; Online → Sub-Type)
        and tell the operator which one. */
@@ -1309,13 +1331,22 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                           className={paymentsStyles.trashBtn}
                           disabled={deletePayment.isPending}
                           onClick={async () => {
+                            const reason = rowVia(p.created_at) === 'amend'
+                              ? await askReason({
+                                title: 'Why is this payment being removed?',
+                                body: 'Finance keeps a record of every correction made after the day it was keyed in.',
+                                input: { label: 'Reason', placeholder: 'Keyed twice — duplicate of the RM 500 on 29/08', required: true },
+                                confirmLabel: 'Continue', danger: true,
+                              })
+                              : '';
+                            if (reason === null) return;
                             if (await askConfirm({
                               title: `Delete this ${methodDisplay(p)} payment of ${fmtRm(p.amount_sen, currency)}?`,
                               body: 'This removes the payment from the order, so the balance owing goes back up. It cannot be undone.',
                               confirmLabel: 'Delete',
                               danger: true,
                             })) {
-                              deletePayment.mutate({ docNo: (props as SavedModeProps).docNo, id: p.id, version: p.version });
+                              deletePayment.mutate({ docNo: (props as SavedModeProps).docNo, id: p.id, version: p.version, ...(reason ? { reason } : {}) });
                             }
                           }}
                           title="Remove payment (same-day only)"

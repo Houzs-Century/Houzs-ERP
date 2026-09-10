@@ -47,6 +47,7 @@ import {
 } from './accounting-bank';
 import { bankMonths, bankMonthDetail } from './accounting-bank-months';
 import { bankLocks, bankMonthLock, bankMonthUnlock } from './accounting-bank-locks';
+import { paymentCorrections } from './accounting-payment-corrections';
 import { bankConfigList, bankConfigSave } from './accounting-bank-config';
 import { payoutUpload, payoutList } from './accounting-payouts';
 import {
@@ -182,6 +183,9 @@ accounting.get('/bank/months/:accountCode/:month', bankMonthDetail);
    碰). The unlock asks a SECOND permission key inside its handler — reopening
    undoes a document somebody filed. */
 accounting.get('/bank/locks', bankLocks);
+/* The Finance report of payment corrections made on the amend right
+   (docs/bugs/0785) — a filtered read of the SO audit log. */
+accounting.get('/payment-corrections', paymentCorrections);
 accounting.post('/bank/months/:accountCode/:month/lock', bankMonthLock);
 accounting.post('/bank/months/:accountCode/:month/unlock', bankMonthUnlock);
 accounting.post('/bank/lines/:id/receipt', bankLineReceipt);

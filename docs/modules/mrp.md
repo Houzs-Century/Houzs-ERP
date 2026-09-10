@@ -450,6 +450,13 @@ Two consequences worth knowing before you touch this:
   reproduces the bug and reports a clean run. The shared fakes
   (`backend/src/scm/lib/fake-postgrest.ts`, `backend/tests/fakePostgrest.ts`) and
   `backend/scripts/lib/pgrest-shim.mjs` already do.
+- **A test fake's comparison operators must compare by the column's type**,
+  NULL matching nothing — the way `fake-postgrest`'s `gte`/`lte` do, and the
+  way `lt` does since 2026-09-10 (docs/bugs/0785). Before that `lt` was
+  numeric-only with a `?? 0` fold, so the only correct shape for a timestamptz
+  month window — `gte(first) + lt(next-first)` — returned nothing against the
+  fake while the real database returned the rows. A fake that silently drops
+  rows on a string compare reports a clean run for the wrong reason.
 - **The other reads in this tree still use `.in()` on an item code** — 67 of
   them outside these two as of 2026-09-10, counted by the enumeration block in
   the PR — so any of them can lose the same two codes. Unfixed, deliberately;
