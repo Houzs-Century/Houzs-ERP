@@ -4147,7 +4147,12 @@ Three properties to keep:
 - **UNCLEAR is its own outcome**, never folded into REBUILT or STALE. An item
   code does not identify a LINE — HC-SO-012312 carries two `HILTON (A)-(Q)` —
   so the match asks whether ANY line with that code prints the expected value,
-  and "neither" stays "neither".
+  and "neither" stays "neither". It is **listed, not just counted**: each row
+  prints WAS / ASKED FOR / PRINTS NOW, with cancelled lines shown and flagged,
+  because that third string is the whole reason the verdict is unclear. The
+  first version printed the number alone and the owner's first question was to
+  see them — a count of rows nobody can look at reads as a tidy remainder when
+  it is unfinished work.
 - **Approvals after the cutoff are counted separately, and that half is the
   self-check.** A STALE there means the rebuild is not working and refutes the
   premise the census was written on. A probe that can only confirm is not

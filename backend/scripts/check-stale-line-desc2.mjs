@@ -36,7 +36,11 @@
 //   UNCLEAR   neither — something changed it since, or the line is gone.
 //             Reported as its own outcome and NEVER folded into either of the
 //             other two. "I do not know" is an answer; dressing it as one of
-//             the others is what this repo keeps paying for.
+//             the others is what this repo keeps paying for. It is also LISTED,
+//             with what the line prints today beside what the approval asked
+//             for: the first version printed the count alone, and a count of
+//             rows nobody can look at is a count nobody can act on. It reads as
+//             a tidy remainder when it is unfinished work.
 //
 // Two lines of one order can share an item code (HC-SO-012312 has two
 // HILTON (A)-(Q)), so the audit key does not identify a LINE. That ambiguity is
@@ -140,6 +144,7 @@ async function main() {
     };
 
     const staleDocs = [];
+    const unclearDocs = [];
     const nBefore = { REBUILT: 0, STALE: 0, UNCLEAR: 0 };
     const nAfter = { REBUILT: 0, STALE: 0, UNCLEAR: 0 };
 
@@ -157,13 +162,28 @@ async function main() {
          WHERE doc_no = ${docNo}`;
       const live = lines.filter((l) => !l.cancelled);
       const stale = [];
+      const unclear = [];
       for (const ch of entry.before) {
         const v = verdictOf(ch, live);
         nBefore[v] += 1;
         if (v === "STALE") stale.push(ch);
+        /* An UNCLEAR row is carried with what its lines PRINT TODAY, because
+           that third string is the whole reason the verdict is unclear and a
+           reader cannot judge the row without it. Cancelled lines are listed
+           too, flagged: "the line was cancelled" is usually the answer, and
+           hiding them would leave the row looking unexplained. */
+        if (v === "UNCLEAR") {
+          unclear.push({
+            ...ch,
+            now: lines
+              .filter((l) => l.item_code === ch.code)
+              .map((l) => `${l.cancelled ? "[cancelled] " : ""}${txt(l.description2) || "(empty)"}`),
+          });
+        }
       }
       for (const ch of entry.after) nAfter[verdictOf(ch, live)] += 1;
       if (stale.length > 0) staleDocs.push({ docNo, stale });
+      if (unclear.length > 0) unclearDocs.push({ docNo, unclear });
     }
 
     note("---- approvals BEFORE the cutoff (the affected population) ----");
@@ -185,6 +205,30 @@ async function main() {
         note(`      ${ch.code}`);
         note(`        PRINTS NOW: ${clip(ch.from, 300)}`);
         note(`        SHOULD BE : ${clip(ch.to, 300)}`);
+      }
+    }
+
+    /* LISTED, not merely counted. The first version printed a number here and
+       nothing else, and the owner's immediate and correct question was to see
+       them — a count of rows nobody can look at is a count of rows nobody can
+       act on, and it reads as a tidy remainder rather than as unfinished work. */
+    note(`---- rows this cannot judge: ${unclearDocs.length} order(s) ----`);
+    if (unclearDocs.length === 0) {
+      note("  NONE. Every recorded spec change matched one side or the other.");
+    } else {
+      note("  Neither the BEFORE nor the AFTER value is what the line prints today.");
+      note("  Something changed it after the approval, or the line is gone. Read them.");
+    }
+    for (const d of unclearDocs) {
+      note(`  ${d.docNo} — ${d.unclear.length} row(s)`);
+      for (const ch of d.unclear) {
+        note(`      ${ch.code}   (approved ${ch.at})`);
+        note(`        WAS       : ${clip(ch.from, 300)}`);
+        note(`        ASKED FOR : ${clip(ch.to, 300)}`);
+        if (ch.now.length === 0) {
+          note("        PRINTS NOW: no line on this order carries that item code any more");
+        }
+        for (const n of ch.now) note(`        PRINTS NOW: ${clip(n, 300)}`);
       }
     }
 
