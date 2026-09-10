@@ -74,6 +74,71 @@ export type UncostedReceiptLine = {
 
 export const ZERO_COST_RECEIPT_ERROR = 'zero_cost_receipt';
 
+/* ── The owner's ruling, 2026-09-10: a receipt SAVES without a price ────────
+   His words, twice: 「GRN 没有amount 也要可以save」 and 「然后我要GRN 没有amount
+   也可以save」, after a New Goods Receipt refused three bedframe lines.
+
+   It is his standing philosophy applied to this screen — 「尽量放宽,不要有硬墙」 —
+   and the refusal above WAS a hard wall: the receipt could not be saved at all
+   until somebody either typed a price they did not have or ticked a box per
+   line.
+
+   WHAT IS GIVEN UP, said plainly, because the header of this file is the case
+   AGAINST it and every word of that case is still true: a zero that reaches a
+   lot is consumed at RM0 COGS, the margin then reads 100%, and once the unit
+   ships the COGS is settled and must never be rewritten. This company has
+   already paid that bill once — the 2026-09-02 clean-up moved 5,030 units off
+   zero cost and put RM 1,038,168 back into the inventory value.
+
+   WHAT IS KEPT, and it is the half that actually mattered. The old comment says
+   the danger is that a zero is INVISIBLE — "nothing downstream distinguishes
+   'free' from 'we forgot the price'". That is no longer true of these lines. A
+   receipt saved without a price is STAMPED as one, with nobody's name on it:
+
+     zero_cost_ack     = true   -> the post path proceeds
+     zero_cost_ack_by  = NULL   -> NOBODY said this was free
+     zero_cost_reason  = the sentence below
+
+   So `zero_cost_ack = true AND zero_cost_ack_by IS NULL` is exactly the
+   population "received with no price, unclaimed" — findable in one predicate,
+   which is what `backfill-zero-cost-lots.mjs` needs to price them later. A
+   line an operator really ticks still carries their id, and the two can never
+   be confused. */
+export const RECEIVED_WITH_NO_PRICE =
+  'Received with no price on the supplier document (owner ruling 2026-09-10). '
+  + 'Nobody has said this arrived free — price it when the supplier invoice comes in.';
+
+/**
+ * Stamp the lines that would have been refused, so the zero is recorded rather
+ * than either refused or forgotten.
+ *
+ * NEVER THROWS, and never blocks the receipt. The point of the ruling is that
+ * the save succeeds; a failure to write the marker must not undo that. It is
+ * reported to the caller so a route can log it, and the receipt goes on.
+ */
+export async function recordReceivedWithNoPrice(
+  sb: any,
+  lines: ReadonlyArray<{ id: string | null }>,
+  now: string = new Date().toISOString(),
+): Promise<{ stamped: number; failed: number }> {
+  const ids = lines.map((l) => l.id).filter((id): id is string => typeof id === 'string' && id.length > 0);
+  if (ids.length === 0) return { stamped: 0, failed: 0 };
+  try {
+    const { error } = await sb.from('grn_items')
+      .update({
+        zero_cost_ack: true,
+        /* NULL on purpose — see RECEIVED_WITH_NO_PRICE. Nobody claimed it. */
+        zero_cost_ack_by: null,
+        zero_cost_ack_at: now,
+        zero_cost_reason: RECEIVED_WITH_NO_PRICE,
+      })
+      .in('id', ids);
+    return error ? { stamped: 0, failed: ids.length } : { stamped: ids.length, failed: 0 };
+  } catch {
+    return { stamped: 0, failed: ids.length };
+  }
+}
+
 export function normalizeMaterialCode(code: string | null | undefined): string {
   return (code ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
 }

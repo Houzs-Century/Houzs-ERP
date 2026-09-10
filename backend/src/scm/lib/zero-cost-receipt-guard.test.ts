@@ -15,6 +15,8 @@ import {
   zeroCostAckColumns,
   ZERO_COST_RECEIPT_ERROR,
   type ReceiptCostLine,
+  recordReceivedWithNoPrice,
+  RECEIVED_WITH_NO_PRICE,
 } from './zero-cost-receipt-guard';
 
 const line = (over: Partial<ReceiptCostLine> = {}): ReceiptCostLine => ({
@@ -240,5 +242,45 @@ describe('checkReceiptCosts — the chokepoint helper', () => {
 
   test('a read failure does not block the receipt', async () => {
     expect(await checkReceiptCosts(fakeSb(LOTS, { throwOnRead: true }), [line()], 1)).toBeNull();
+  });
+});
+
+describe('the owner\'s ruling: a receipt SAVES without a price (2026-09-10)', () => {
+  const rows = () => {
+    const store: Record<string, unknown>[] = [];
+    return {
+      store,
+      from: () => ({
+        update: (patch: Record<string, unknown>) => ({
+          in: (_col: string, ids: string[]) => {
+            for (const id of ids) store.push({ id, ...patch });
+            return Promise.resolve({ error: null });
+          },
+        }),
+      }),
+    };
+  };
+
+  it('stamps the lines it would have refused, with NOBODY\'s name on them', async () => {
+    const sb = rows();
+    const r = await recordReceivedWithNoPrice(sb as never, [{ id: 'a' }, { id: 'b' }], '2026-09-10T00:00:00.000Z');
+    expect(r).toEqual({ stamped: 2, failed: 0 });
+    expect(sb.store[0]).toMatchObject({
+      id: 'a', zero_cost_ack: true, zero_cost_ack_by: null, zero_cost_reason: RECEIVED_WITH_NO_PRICE,
+    });
+    /* The predicate the repair tooling needs: acknowledged, unclaimed. */
+    expect(sb.store.every((x) => x.zero_cost_ack === true && x.zero_cost_ack_by === null)).toBe(true);
+  });
+
+  it('never throws and never blocks the receipt when the marker cannot be written', async () => {
+    const dead = { from: () => { throw new Error('no'); } };
+    await expect(recordReceivedWithNoPrice(dead as never, [{ id: 'a' }])).resolves
+      .toEqual({ stamped: 0, failed: 1 });
+  });
+
+  it('does nothing when there is no line to stamp', async () => {
+    const sb = rows();
+    expect(await recordReceivedWithNoPrice(sb as never, [{ id: null }])).toEqual({ stamped: 0, failed: 0 });
+    expect(sb.store).toHaveLength(0);
   });
 });

@@ -40,7 +40,7 @@ import { computeGrnFlags } from '../lib/grn-consumption-flags';
 import {
   parsePoIdScope, loadOutstandingPoLines, toOutstandingPoItems,
 } from '../lib/outstanding-po-lines';
-import { checkReceiptCosts, refuseZeroCostReceipt, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
+import { checkReceiptCosts, recordReceivedWithNoPrice, refuseZeroCostReceipt, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
 import { grnInheritedFieldChanges, grnInheritedLockedRefusal, grnHeaderInheritedChanges, grnHeaderInheritedRefusal, type GrnLinePrev, type GrnLinePatch } from '../lib/grn-inherited-lock';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -368,7 +368,16 @@ async function checkGrnZeroCost(
     itemGroup: it.item_group ?? null,
     zeroCostAck: it.zero_cost_ack ?? false,
   }));
-  return checkReceiptCosts(sb, lines, grnHeader?.company_id ?? null);
+  const refusal = await checkReceiptCosts(sb, lines, grnHeader?.company_id ?? null);
+  if (!refusal) return null;
+  /* THE OWNER'S RULING, 2026-09-10: 「GRN 没有amount 也要可以save」. The receipt
+     is no longer refused; the lines that would have been refused are STAMPED as
+     received with no price and the post goes on. The stamp is what keeps the
+     zero findable — `zero_cost_ack = true AND zero_cost_ack_by IS NULL` is
+     exactly "nobody said this arrived free". zero-cost-receipt-guard.ts carries
+     the reasoning and what it costs. */
+  await recordReceivedWithNoPrice(sb, refusal.lines);
+  return null;
 }
 
 /* ── Shared helper: post a GRN, roll up to PO items, write inventory IN ──
