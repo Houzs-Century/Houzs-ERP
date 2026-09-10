@@ -127,19 +127,46 @@ async function main() {
     note("");
     note(`RESULT (${APPLY ? "APPLY" : "DRY-RUN"}): models_touched=${modelsChanged}/${models.length} additions=${JSON.stringify(totals)}`);
 
-    if (APPLY) {
-      const [{ n }] = await tx`SELECT COUNT(*)::int AS n FROM scm.product_models
-        WHERE company_id = ${cid} AND category = 'SOFA' AND active = true
-          AND jsonb_typeof(allowed_options->'fabrics') = 'array'
-          AND jsonb_array_length(allowed_options->'fabrics') >= ${fabricsPool.length}`;
-      note(`shape check: ${n}/${models.length} sofa models now carry >= ${fabricsPool.length} fabrics (the full pool size)`);
-    }
-
     if (!APPLY) throw new Error("DRY-RUN-ROLLBACK");
   }).catch((e) => {
     if (e.message !== "DRY-RUN-ROLLBACK") throw e;
     note(`DRY-RUN complete: transaction rolled back, nothing written. MODE=apply CONFIRM="${CONFIRM_PHRASE}" to write.`);
   });
+
+  /* FRESH-CONNECTION verification (release-discipline rule 3). On APPLY only:
+     open a SEPARATE postgres client so the read is definitely not observing
+     transaction-local state, and assert the SHAPE of every sofa Model —
+     every allowed_options key is a non-empty array covering the pool size
+     it was opened to. A row count is not a shape: a model with a stray
+     wrong-typed value would pass a naive count and the assert would miss
+     it. */
+  if (APPLY) {
+    const verify = postgres(url, { ssl: "require", prepare: false, max: 1 });
+    try {
+      const [co] = await verify`SELECT id FROM public.companies WHERE code = ${"HOUZS"}`;
+      const cid2 = co.id;
+      const rows = await verify`SELECT model_code, allowed_options
+        FROM scm.product_models
+        WHERE company_id = ${cid2} AND category = 'SOFA' AND active = true`;
+      const [poolCounts] = await verify`
+        SELECT
+          (SELECT COUNT(*)::int FROM scm.fabric_library WHERE company_id = ${cid2} AND active) AS fabrics,
+          (SELECT COUNT(*)::int FROM scm.special_addons WHERE company_id = ${cid2} AND active AND ${"SOFA"} = ANY(categories)) AS specials`;
+      const wantFabrics = poolCounts.fabrics;
+      const wantSpecials = poolCounts.specials;
+      const bad = [];
+      for (const r of rows) {
+        const ao = r.allowed_options ?? {};
+        const okFabrics  = wantFabrics  === 0 || (Array.isArray(ao.fabrics)  && ao.fabrics.length  >= wantFabrics);
+        const okSpecials = wantSpecials === 0 || (Array.isArray(ao.specials) && ao.specials.length >= wantSpecials);
+        if (!okFabrics || !okSpecials) bad.push(`${r.model_code}(fabrics=${(ao.fabrics ?? []).length}/${wantFabrics}, specials=${(ao.specials ?? []).length}/${wantSpecials})`);
+      }
+      if (bad.length) throw new Error(`fresh-connection shape check FAILED on ${bad.length} model(s): ${bad.slice(0, 5).join(", ")}${bad.length > 5 ? " …" : ""}`);
+      note(`fresh-connection shape check: ${rows.length}/${rows.length} sofa models cover the full fabrics (${wantFabrics}) and specials (${wantSpecials}) pools.`);
+    } finally {
+      await verify.end({ timeout: 5 });
+    }
+  }
 }
 
 main()
