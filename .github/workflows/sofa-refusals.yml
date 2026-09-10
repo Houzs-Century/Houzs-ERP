@@ -1,0 +1,47 @@
+name: Why a sofa cannot be written, and what WOULD let it through (read-only)
+
+# The owner, 2026-09-10, once the Description-2 class was cleared:
+# 「看下是不是全部都有解决办法了额」 — is there a way out for every one of them.
+#
+# A refusal says what the composer could not do. It does not say whether ANYTHING
+# could. This tries the spellings the composer withholds, hands each to the same
+# `decodesTo` gate the write-back uses, and separates "a spelling would clear
+# this" from "this needs a person".
+#
+# Read-only. Model codes, compartment tokens, seat sizes and counts only — no
+# customer, no colour text, no special-order text, no money.
+on:
+  workflow_dispatch:
+    inputs:
+      doc_nos:
+        description: "Documents, comma separated"
+        required: true
+        default: "HC-SO-000814,HC-SO-001112,HC-SO-001255,HC-SO-001445,HC-SO-001472,HC-SO-001526,HC-SO-001640,HC-SO-002315,HC-SO-004716,HC-SO-008302,HC-SO-012016"
+        type: string
+
+concurrency:
+  group: sofa-refusals
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # tsx: the REAL collapse and the REAL decoder, so a verdict here is the
+      # verdict the write-back would reach.
+      - run: npx tsx scripts/check-sofa-refusals.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DOC_NOS: ${{ inputs.doc_nos }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
