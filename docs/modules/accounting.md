@@ -737,6 +737,28 @@ payment. Pinned by `scm/shared/soPaymentAmendRight.test.ts`,
 refuses) and `tests/soPaymentAmendRoutes.test.ts` (RED against the unfixed
 route file).
 
+**The reason, and the Corrections report (2026-09-10, docs/bugs/0785).** A
+correction made on the amend right owes a reason and is a Finance event; a
+same-day fix by whoever keyed the payment is neither (owner: 靠权限改的来决定).
+`paymentRowMutable` now says WHY a row may change — `via: 'draft' | 'same_day'
+| 'amend' | null` — and both payment routes act on `via === 'amend'`: refuse
+without a reason (`reason_required`), and audit the correction with
+`source = 'amend'`, the reason in `note`, and one extra field change
+`ledger: reversedJeNo → jeNo` (the PATCH re-posts BEFORE it audits so the row
+can carry both numbers; `repostSoPaymentEdit` and `afterSoPaymentRemoved` hand
+them back). No new table: `GET /accounting/payment-corrections?month=` is a
+filtered read of `mfg_so_audit_log` — `source = 'amend'`, the two payment
+actions, this company, this month — shaped by `acc/payment-corrections.ts`
+(newest first, the ledger pair pulled out, the summary added up). The Accounting
+page's **Corrections** tab shows month, a person filter, three cards (count,
+net effect on money received, deleted), the table with the reason and both JE
+numbers, and Print through `payment-corrections-pdf.ts` — built by
+`correctionsDocument`, the same pure-then-draw shape as the bank statement. The
+screens ask through `usePrompt` (an optional text input on the shared
+ConfirmDialog; a required input cannot be confirmed blank). A fake-client trap
+surfaced on the way: its `lt` compared numerically, so a timestamptz month
+window returned nothing against the fake — fixed to match `gte`/`lte`.
+
 **Phase 2B part 1 (2026-08-16): Daily Bank.** GET /accounting/daily-bank?date= answers the owner one question - today, where is the money and how much can actually move - live from the ledger (2.3: no caches): opening/in/out/closing per money account (scm.accounts.acc_money flag, migration 0299), settlement-in-transit balances per acquirer (visible, never counted movable), and — since phase 3 (2026-08-28, mig 0339) — pendingApprovalSen: every DRAFT payment voucher sitting in the approval queue, converted to MYR the way posting will, subtracted from available. Page /scm/daily-bank (Finance menu): date navigation + Get Image (canvas-drawn PNG to clipboard for WhatsApp, download fallback). Board arithmetic pinned in acc/daily-bank.test.ts. 946-0000 Cash Over/Short + OVER_SHORT role seeded for the coming daily cashup.
 
 **Phase 3 (2026-08-28): PV approval — money leaves only after a yes.** The full write-up lives in docs/modules/payment-voucher.md §0b (marker columns per the 0324 lesson, the pure rule table in scm/lib/pv-approval.ts, the post gate, the scm.payment_voucher.approve key, the audit verbs). What belongs to THIS module: the Daily Bank board's available figure now answers "closing minus what is already asked for", which is the question the owner's phase-3 placeholder was holding a seat for.

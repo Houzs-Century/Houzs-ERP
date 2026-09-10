@@ -108,6 +108,36 @@ export type PaymentDrift = {
   error?: string;
 };
 
+/** The Finance report of payment corrections made on the amend right (docs/bugs/0785):
+    a filtered read of the SO audit log, one row per correction, with the reason
+    typed at the time and what it did to the ledger. */
+export type PaymentCorrectionRow = {
+  id: string;
+  at: string;
+  by: string;
+  docNo: string;
+  customer: string | null;
+  kind: 'edited' | 'deleted';
+  changes: Array<{ field: string; from: unknown; to: unknown }>;
+  amountFromSen: number | null;
+  amountToSen: number | null;
+  reason: string;
+  reversedJeNo: string | null;
+  jeNo: string | null;
+};
+export type PaymentCorrections = {
+  month: string;
+  rows: PaymentCorrectionRow[];
+  summary: { corrections: number; edited: number; deleted: number; netMovedSen: number; deletedSen: number };
+};
+export const usePaymentCorrections = (month: string) => useQuery({
+  queryKey: ['payment-corrections', month],
+  queryFn: () => authedFetch<PaymentCorrections>(`/accounting/payment-corrections?month=${encodeURIComponent(month)}`),
+  staleTime: 30_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
 export const useControlCheck = () => useQuery({
   queryKey: ['control-check'],
   queryFn: () => authedFetch<{ checks: ControlCheckRow[]; payments: UnbookedPayments; paymentDrift?: PaymentDrift }>(`/accounting/control-check`),

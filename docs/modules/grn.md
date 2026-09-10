@@ -40,7 +40,7 @@ On POST, qty_received rolls up to PO items"* (`grns.ts:1-2`).
 | Desktop list | `frontend/src/pages/scm-v2/GoodsReceivedListV2.tsx` | Server-paginated, `pageSize = 50` (`:455`). |
 | Desktop detail (read) | `frontend/src/pages/scm-v2/GoodsReceivedDetailV2.tsx` | Read-only shell; `?edit=1` forwards to the legacy editor (`:240-248`), lazily loaded. |
 | Desktop detail (edit) | `frontend/src/pages/scm-v2/GoodsReceivedDetail.tsx` | The inline editor. Lock logic at `:244-248`. **"Add manual item" (Edit + `!isLocked`, owner 2026-09-10)** posts a free line — an item the source PO never ordered, a supplier extra, a sample — via `POST /:id/items` with `purchase_order_item_id` null, mirroring the New-GRN manual line (supplier-binding-aware picker); the primary path stays convert-from-PO ("From Purchase Order"). Refused by the same `unlinked_po_lines` guard (§6) when the material IS on the parent PO, and by the zero-cost gate (§7) — both surfaced inline. Softens the earlier in-code "never by free add-line" note. |
-| Desktop new | `frontend/src/pages/scm-v2/GrnNew.tsx` | Uses `usePurchaseOrders()` (the legacy unpaginated PO hook, `:156`). |
+| Desktop new | `frontend/src/pages/scm-v2/GrnNew.tsx` | Uses `usePurchaseOrders()` (the legacy unpaginated PO hook, `:156`). **"Add another item" now shows in EVERY mode (owner 2026-09-10)** — manual, from-PO-picks and single-PO — gated `canAddManualLine = isManual || !!supplierId`, so an item the PO never ordered can be received in the same create step (previously the button was `isManual`-only, hidden once you arrived from a PO). The extra line carries `purchase_order_item_id` null; the create path's `unlinked_po_lines` guard still refuses a hand-added material that IS on the header PO. |
 | Desktop from-PO | `frontend/src/pages/scm-v2/GrnFromPo.tsx` | Multi-select over `/outstanding-po-items`. Two display rules changed 2026-08-21, both shared and neither local: the Warehouse column reads through `warehouseLabel` (`frontend/src/vendor/scm/lib/warehouse-label.ts` — code first, then name; the picker rows carry FLAT columns, so a one-line adapter wraps them rather than a second rule), and the variant line under each row is now LABELLED `Description 2` by the shared `VariantDescription` component. Neither changes what is read or written. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS.grns` (`:1159-1192`). |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:324`; status actions `:535-542`. |
@@ -93,10 +93,20 @@ It also reads the IN-BAND failure: `PATCH /grns/:id/post` answers **200** with
 `docs/bugs/0495-post-grn-and-post-purchase-invoice-had-no-error-path-and-the.md`.
 
 **The stock-side invalidation rule:** every mutation that can move inventory also
-invalidates `['inventory']` — `usePostGrn` (`:146`) and `useCancelGrn` (`:222`).
-And because a GRN's stock IN changes the PO's `received_qty` and status,
-`useGrnFromPos` invalidates `['mfg-purchase-orders']` too (`:53`) and
-force-refetches the picker key (`:55`).
+invalidates `['inventory']`. That is `usePostGrn` and `useCancelGrn`, and — since
+2026-09-10 — the whole GRN CRUD block, each of which re-syncs stock server-side:
+`useGrnFromPos` (auto-posts a whole-PO convert → IN), `useUpdateGrnHeader`
+(warehouse relocation on a POSTED GRN → OUT+IN), and `useAddGrnItem` /
+`useUpdateGrnItem` / `useDeleteGrnItem` (POSTED GRN → IN / delta OUT+IN /
+reversing OUT). Until then those five invalidated only `['grn-detail']` +
+`['grns']`, so a mounted Stock Card / inventory list showed stale on-hand after a
+posted-GRN line change or a From-PO convert; pinned by
+`frontend/src/vendor/scm/lib/grn-stock-invalidation.test.tsx`, traced in
+`docs/bugs/0780-grn-stock-moving-mutations-did-not-invalidate-the-inventory.md`.
+`useCreateGrn` is NOT in the set: its only caller (`GrnNew.tsx`) follows a
+non-draft create with `usePostGrn`, which carries the invalidation. And because a
+GRN's stock IN changes the PO's `received_qty` and status, `useGrnFromPos`
+invalidates `['mfg-purchase-orders']` too and force-refetches the picker key.
 
 ### Caching / loading behaviour
 Three layers as in `docs/modules/sales-order.md` §1. GRN specifics:

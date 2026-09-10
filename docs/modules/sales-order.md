@@ -4520,6 +4520,20 @@ names a path that exists. Both screens read the key the same way
 pass the fourth argument — dropping it compiles, type-checks, and silently hides
 the control from Finance again.
 
+**A reason is owed on the amend right, and only there (2026-09-10,
+docs/bugs/0785).** The predicate now says WHY a row may change (`via`), and
+both routes act on `via === 'amend'`: the PATCH takes `reason` in its body and
+the DELETE reads `?reason=` beside `?version=`; without one, both refuse with
+`reason_required`. Such a correction is audited with `source = 'amend'`, the
+reason in `note`, and a `ledger` field change carrying the contra and the new
+entry — which is why the PATCH now re-posts BEFORE it writes the audit row. A
+same-day fix by whoever keyed the payment writes the audit row it always did
+(owner: 靠权限改的来决定). Both screens ask through `usePrompt` before the
+write and abandon it when the ask is dismissed; the mobile sheet is told by its
+parent through `reasonRequired`, because the permission and the draft flag live
+with the list. Finance reads the result on the Accounting page's
+**Corrections** tab (docs/modules/accounting.md).
+
 ### The BALANCE a human is shown — which total it subtracts from (2026-09-08)
 
 The order total lives in TWO columns and the balance rule reads whichever one is
