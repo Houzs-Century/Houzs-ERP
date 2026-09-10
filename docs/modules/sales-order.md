@@ -3919,6 +3919,45 @@ with `a.categories.includes(category.toUpperCase())`
 (`SoLineCard.tsx` and `mobile/MobileNewSO.tsx`), so a lowercase token yields a
 row the backfill can map to and no human can ever tick.
 
+### Which lines get the Special Order panel, and which get CHECKBOXES (2026-09-10)
+
+Two different questions, and answering both with one condition is what left the
+owner with nowhere to write an SP mattress's SIZE or a custom pillow's COLOUR:
+「我有一些单一的SKU 好像mattress SP和这个custom 需要选颜色 SP需要写尺寸 这种我可以
+在哪里填写呢？」 The panel used to open only where the catalogue defined a
+tickable add-on for that category — it defines none for mattress and none that
+reach accessories, so those lines showed no panel and with it no free text.
+
+The rule is now ONE module with its own tests,
+`frontend/src/vendor/scm/lib/special-order-surface.ts`, read by BOTH surfaces
+(`SoLineCard.tsx` and `mobile/MobileNewSO.tsx` — the row that opens the sheet
+and the sheet itself):
+
+| line category | Special Order panel | catalogue checkboxes |
+| --- | --- | --- |
+| sofa, bedframe | inside their own configurator, not standalone | yes |
+| mattress | yes | yes |
+| accessory, others | yes | **no** — free text only, unless the line already carries a pick |
+| service | no | no |
+
+**Why the checkboxes stay shut on accessory / others, while the free text does
+not.** `computeVariantKey` (`scm/shared/variant-key.ts`) builds a line's stock
+bucket from the group's own attributes plus `normSpecials(a.specials)`, so
+ticking an add-on appends `special=…` and SPLITS the bucket — which for goods
+that pool by item code across customers stops a line matching its stock and the
+purchase orders raised for it. `extraAddonNote` is read by no branch of that
+function, so free text can never move a line. Describe freely, re-key never.
+
+A line that already carries picks keeps its picker, so those picks render with
+their real labels instead of falling into SpecialOrders' *"retired — untick to
+remove"* branch, which would misdescribe a live add-on as dead.
+
+**The note prints, and that is the half that reaches the supplier.**
+`buildVariantSummary` appends the `SPECIAL:` segment AFTER the per-group
+attribute branch, not inside it, so a category contributing no attributes still
+carries its note — and `description2` on a purchase order is exactly this
+string. Pinned in `backend/src/scm/shared/variantSummarySuperseded.test.ts`.
+
 **What actually landed in production, 2026-08-11.** The `Hydraulic` row was
 created by `seed-hydraulic-special-addon.mjs` (run **31454564942**) at
 `sell=0 cost=0`, `categories=BEDFRAME`, `active=true`, read back on a fresh
