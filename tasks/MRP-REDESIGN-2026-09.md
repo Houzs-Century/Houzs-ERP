@@ -20,13 +20,24 @@ Owner's per-category rule (supersedes 2026-07-17). One global toggle:
 
 | Step | State | Where |
 |---|---|---|
-| A1. Grouping logic rewrite (`po-grouping.ts` `groupKeyFor` + convert wiring `sofaSoDocNos`) + tests | **DONE, in this PR** | branch `feat/mrp-combine-perso-grouping`, worktree `mrp-sofa-cover` |
-| A2. Sales-Order VIEW toggle + search + "整单转 PO" + sofa selecting auto-includes its accessories (visible) | TODO (frontend) | `frontend/src/pages/scm-v2/Mrp.tsx` + mobile pair; reuse `/from-sos` |
+| A1. Grouping logic rewrite (`po-grouping.ts` `groupKeyFor` + convert wiring `sofaSoDocNos`) + tests | **MERGED — PR #3602 on main (47ffa2644)** | was worktree `mrp-sofa-cover` (removed) |
+| A2. MRP search + sofa cover rides VISIBLY + the pull-in bug fix | **DONE — PR #3606, worktree `mrp-so-view`** | `frontend/src/pages/scm-v2/Mrp.tsx` |
 | A3. Bedframe "two POs" diagnosis | check built (PR #3601), awaiting merge+dispatch | see Track C |
 
-Note: with A1 + the existing `gatherSofa` pull, Combine mode from the Sofa tab
-ALREADY co-locates a sofa's same-supplier accessories onto its PO. A2 is the
-nicer UX (whole-SO card) and the search the owner asked for.
+**A2 finding (the crux).** The A1 note below was HALF WRONG. `gatherSofa`'s
+accessory pull reads `data.skus`, but the Sofa tab requested `?category=SOFA`,
+which strips every non-sofa row — so the pull matched NOTHING and the cover
+never rode from the MRP page. Dead since the 2026-06-15 per-category tab split.
+A2 fixes it: the Sofa tab now requests the full plan (no category filter), which
+also serves the stored snapshot instantly. Bug ledger
+`docs/bugs/0801-mrp-sofa-cover-pull-in-was-dead-since-the-per-category-tab-s.md`.
+
+A2 delivers: search box (all tabs); cover/pillow riders SHOWN under each sofa SO
+with a Combined/Per-SO caption; selection scoped so ONE sofa order pulls only
+THAT order's cover; the existing Proceed-PO on a selected sofa SO now converts
+the whole order (sofa + cover) — the "整单转 PO" the owner wanted. NOT built: a
+brand-new cross-category all-SO grouping VIEW, and the mobile MRP (a read-only
+`MobileModuleList`); both deferred — see notes.
 
 ### Track B — Lead time: supplier × category manual override (highest priority)
 
@@ -58,15 +69,22 @@ classified different-supplier (correct) vs same-supplier (the separate-batch
 limitation). **Needs: my review of the SQL -> merge -> dispatch (workflow_dispatch
 only works once on main).**
 
-## Shipped already
-- Others tab flicker fix — `PR #3596` (queued). Others is now a permanent 5th tab.
+## Shipped / in flight
+- A1 grouping — `PR #3602` **MERGED** to main.
+- Others tab flicker fix — `PR #3596` (area-tag fix pushed, auto-merge armed).
+- Track C read-only diagnostic — `PR #3601` (completeness-claim reworded, auto-merge armed).
+- A2 (this) — `PR #3606` (search + sofa cover riders + pull-in fix).
 
 ## Worktrees in play
-- `mrp-sofa-cover` = `feat/mrp-combine-perso-grouping` (Track A1 — this PR)
+- `mrp-so-view` = `feat/mrp-so-view` (Track A2 — PR #3606)
 - `mrp-grouping-diag` = `diag/mrp-grouping-facts` (Track C — PR #3601)
-- `others-tab-stable` = `fix/others-tab-always` (PR #3596, merging)
+- `others-tab-stable` = `fix/others-tab-always` (PR #3596)
+- (removed after merge: `mrp-sofa-cover` = `feat/mrp-combine-perso-grouping`)
 
 ## Open decisions / notes
 - Mattress window KEPT (owner picker 2026-09-11).
 - Under Per-SO the 皮套 splits off the sofa PO — co-location is a COMBINE feature. Owner is aware.
-- Cover category (ACCESSORY vs Others) still to be confirmed by PR #3601; A1 handles both (Combine pulls any non-core line of a sofa SO onto the sofa PO).
+- Cover category (ACCESSORY vs Others) still to be confirmed by PR #3601; A2 handles both — it pulls ACCESSORY lines, and A1 grouping co-locates any non-core line of a sofa SO onto the sofa PO.
+- DEFERRED: a cross-category "one card per SO across all categories" view (needs backend all-category aggregation) — A2 gave the sofa-cover payoff without it, since the Sofa tab is already grouped by SO and the cover now rides visibly. Raise as a separate proposal if the owner wants bedframe/mattress folded into the same SO card.
+- DEFERRED: mobile MRP is a read-only `MobileModuleList` (variant "mrp"); it has no convert flow, so A2's sofa-cover UX is desktop-only for now.
+- Track B (supplier×category lead time) — DONE, this PR (feat/mrp-supplier-lead-time). All of A/B/C now shipped or in flight.
