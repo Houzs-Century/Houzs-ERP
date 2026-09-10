@@ -1,3 +1,11 @@
+# Goods receipt — module guide
+
+> **A STUB, and it says so.** This file was created on 2026-09-10 because the
+> working-agreement check needs a guide to point at when the receipt's cost gate
+> changes. It documents ONE surface. Everything else about goods receipts —
+> creating, posting, over-receipt, freight allocation, the AutoCount conversion —
+> is NOT here yet; read `backend/src/scm/routes/grns.ts` and
+> `docs/MODULE-GUIDE-VERIFICATION.md` before trusting this as a map.
 
 ## A receipt SAVES without a price, and the zero is recorded (2026-09-10)
 
