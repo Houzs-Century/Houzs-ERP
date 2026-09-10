@@ -136,7 +136,13 @@ export type MrpResponse = {
 };
 
 /** Stock Status Report / MRP — recomputed server-side on every call. */
-export function useMrp(params: { category: string; warehouseId: string; includeUndated?: boolean }) {
+/* `category: null` is the Others tab asking for EVERYTHING and sorting the rows
+   out itself (pages/scm-v2/mrp-views.ts). It is a distinct state from a missing
+   parameter and from 'all', and it is typed rather than encoded as a magic
+   string so a caller cannot pass it by accident: this page's whole bug class is
+   one filter meaning two things. It joins the QUERY KEY too — 'all' and a
+   category must never share a cache entry. */
+export function useMrp(params: { category: string | null; warehouseId: string; includeUndated?: boolean }) {
   const { category, warehouseId, includeUndated } = params;
   /* Undated demand is HIDDEN unless the caller asks for it (owner 2026-08-18;
      same default as the server's parseIncludeUndated). Kept in one place so the
@@ -145,7 +151,7 @@ export function useMrp(params: { category: string; warehouseId: string; includeU
      "one rule, two homes" shape that this codebase keeps paying for. */
   const wantUndated = includeUndated ?? false;
   return useQuery({
-    queryKey: ['mrp', category, warehouseId, wantUndated],
+    queryKey: ['mrp', category ?? 'all', warehouseId, wantUndated],
     queryFn: () => {
       const q = new URLSearchParams();
       if (category && category !== 'all') q.set('category', category);

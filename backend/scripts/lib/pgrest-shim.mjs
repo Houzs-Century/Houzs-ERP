@@ -94,6 +94,14 @@ const IDENT = /^[a-z_][a-z0-9_]*$/;
    the allocator's own answer)". PROVEN on three separate production
    dispatches, all of them green: runs 34099835565, 34127825188, 34132871751
    (2026-09-07). Same composition as docs/bugs/0599, one layer lower. */
+/* The ONE parser for PostgREST's `in.(…)` list, imported rather than restated —
+   `filter(col,'in',…)` below is the escaped form of the same grammar the app now
+   WRITES with `pgrestInList`, and two implementations of one grammar is how the
+   bug being routed around got in. A `.ts` import is safe here: every script that
+   loads this shim runs under `npx tsx` (verified across .github/workflows), and
+   vitest resolves it for tests/pgrestShim.test.*. */
+import { parsePgrestInList } from '../../src/scm/lib/pgrest-in-list.ts';
+
 const EMBEDDED_FILTER = /^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/;
 
 /* Split on commas at parenthesis depth 0, so an embed's own column list stays
@@ -448,6 +456,20 @@ export function pgrestShim(sql, schema = "scm", opts = {}) {
         return proxied;
       },
       in(col, arr) { state.filters.push({ op: "in", col, v: arr }); return proxied; },
+      /* filter(col, 'in', '("a","b\\"c")') — the ESCAPED in-list. Four repair
+         scripts drive autocount-outbox.ts through this shim, and that file reads
+         supplier bindings through lib/supplier-bindings.ts, which stopped using
+         `.in()` because supabase-js cannot serialise a value carrying a `"`
+         (docs/bugs/0780). Parsed by the SAME function PostgREST's grammar is
+         written in, never by a second `split(",")` here — a naive split is the
+         very defect being routed around. Any other operator is a loud gap. */
+      filter(col, op, v) {
+        if (op === "in" && typeof v === "string" && v.startsWith("(") && v.endsWith(")")) {
+          state.filters.push({ op: "in", col, v: parsePgrestInList(v) });
+          return proxied;
+        }
+        return gap(`filter(${col}, ${op}, ${v}) — only the 'in' operator with a parenthesised list is implemented`);
+      },
       /* Scalar comparisons. The allocator filters open lots with .gt('qty', 0);
          these four are the same shape as .eq and carry no PostgREST-specific
          semantics, so they are safe to translate literally. */

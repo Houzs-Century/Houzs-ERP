@@ -1,0 +1,86 @@
+name: Supplier listing vs our POs (read-only)
+
+# Where do our purchase orders disagree with the SUPPLIER'S OWN listing of what
+# it built?
+#
+# The owner, 2026-09-10, handing over the export:
+#
+#   已经 Proceed 的 Order，你可以根据我的这个 Listing（这是 Supplier 给到我的，
+#   这个肯定准）去纠正我们的 SO 和 PO。你只要纠正了 PO，就知道整个
+#   Transaction Flow 怎么纠正了。
+#
+# The supplier's system records the sofa BY COMPARTMENT with every variant,
+# because it is the system that built it. On a proceeded order that beats both
+# AutoCount (one line per sofa) and the drawing. Where our PO disagrees, OURS is
+# wrong. That is the reverse of the stock rule and not a contradiction: the
+# stock rule governs cost layers nobody edits here, this governs what was
+# physically ordered.
+#
+# It compares the piece MULTISET first (what was ordered - costs money), then
+# the SEQUENCE only where the multiset already agrees (direction), then the
+# variants through lib/parse-sofa.mjs, the module that owns that grammar.
+#
+# SELECT only. No writes, no DDL, no transaction. Manual trigger only. Own
+# concurrency group. Exit 0 for every legitimate answer. It repairs nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company_id:
+        description: "Company. Blank = 1."
+        required: false
+        default: ""
+      list_limit:
+        description: "Documents to name per bucket. Blank = 60."
+        required: false
+        default: ""
+      groups:
+        description: "Item groups, comma-separated. ALL for every group. Blank = SOFA."
+        required: false
+        default: ""
+
+concurrency:
+  group: check-supplier-listing-vs-erp-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-supplier-listing-vs-erp.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          LIST_LIMIT: ${{ inputs.list_limit }}
+          GROUPS: ${{ inputs.groups }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-supplier-listing-vs-erp.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          LIST_LIMIT: ${{ inputs.list_limit }}
+          GROUPS: ${{ inputs.groups }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

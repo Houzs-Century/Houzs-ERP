@@ -10,6 +10,8 @@
 // than its test names claim.
 // ----------------------------------------------------------------------------
 
+import { parsePgrestInList } from './pgrest-in-list';
+
 export type Row = Record<string, any>;
 
 /**
@@ -44,6 +46,13 @@ export function fakeSb(
      one of those handlers answer 400 in tests and pass in production, which is
      the wrong way round for a fake to be wrong. */
   numericIdTables: string[] = [],
+  /* POSTGREST'S OWN RESPONSE CEILING (`db-max-rows`), when a suite needs it.
+     Null means "no ceiling", which is what every existing caller gets. A read
+     that asks for more rows than this gets the ceiling and NO error — the
+     silent truncation that `lib/paginate-all.ts` exists to defeat and that a
+     fake without it cannot reproduce. The exact production number is UNKNOWN
+     (docs/bugs/0447): pass whichever value the test is arguing about. */
+  maxRows: number | null = null,
 ) {
   const from = (table: string) => {
     const mintId = (n: number): string | number => (numericIdTables.includes(table) ? n : `row-${n}`);
@@ -59,6 +68,7 @@ export function fakeSb(
     /** What the last UPDATE actually touched, for `.update(...).select(...)`. */
     let updated: Row[] | null = null;
     let wantCount = false;
+    let headOnly = false;
     let selectCalled = false;
     let lastInserted: Row | null = null;
     /* ORDER BY is applied for real, not ignored. `nextJeNo` mints the next
@@ -68,7 +78,11 @@ export function fakeSb(
        pass while production duplicated a JE. */
     let rangeFrom: number | null = null;
     let rangeTo: number | null = null;
-    const rows = () => {
+    /** Rows the filters match, sorted — BEFORE any window or cap. This is what
+     *  `count: 'exact'` answers with (Content-Range's total), which is why it is
+     *  its own function: a count computed after the window would agree with the
+     *  truncated read and could never reveal it. */
+    const matched = () => {
       const rs = tables[table].filter((r) => filters.every((f) => f(r)));
       for (const { col, asc } of [...sorts].reverse()) {
         rs.sort((a, b) => {
@@ -81,6 +95,10 @@ export function fakeSb(
           return asc ? cmp : -cmp;
         });
       }
+      return rs;
+    };
+    const rows = () => {
+      const rs = matched();
       /* PostgREST `.range(from, to)` is an INCLUSIVE offset window applied
          after sorting — paginateAll (lib/paginate-all.ts) is built on it, so a
          fake without it forces every paged read into bespoke pagination the
@@ -88,7 +106,9 @@ export function fakeSb(
          inclusive of `to`, composable with `.limit()` the way PostgREST
          composes them (limit caps the window). */
       const windowed = rangeFrom != null ? rs.slice(rangeFrom, (rangeTo ?? rs.length - 1) + 1) : rs;
-      return limitN == null ? windowed : windowed.slice(0, limitN);
+      const capped = limitN == null ? windowed : windowed.slice(0, limitN);
+      // The SERVER's ceiling is applied LAST and beats whatever was asked for.
+      return maxRows == null ? capped : capped.slice(0, maxRows);
     };
     /* The insert-time half of a UNIQUE index. Postgres answers 23505 and the
        row is NOT written; enqueueAcOp reads that as "the same intent is already
@@ -117,8 +137,14 @@ export function fakeSb(
       /* head:true asks for the COUNT and no rows. conversionIsPartial reads it
          to decide whether a transfer leaves any of the parent's lines behind,
          and a fake that answered `undefined` would make every test take the
-         refusal branch for the wrong reason. */
-      if (wantCount) return { data: null, count: rows().length, error: null };
+         refusal branch for the wrong reason.
+
+         `count` WITHOUT `head` is a different request and used to be answered
+         as if it were this one — `{ data: null }`, so a paginated list read
+         (`.select(COLS, { count: 'exact' })`, the shape every SCM list page
+         uses) came back with no rows at all under this fake. It falls through
+         to the row return below, which carries the count alongside. */
+      if (headOnly) return { data: null, count: matched().length, error: null };
       if (pendingRows) {
         /* Bulk insert. PostgREST takes an array and writes every row in ONE
            statement; postSiRevenue posts both GL lines that way, so a fake that
@@ -176,13 +202,16 @@ export function fakeSb(
         updated = touched;
         return { data: null, error: null };
       }
-      return { data: rows(), error: null };
+      return wantCount
+        ? { data: rows(), count: matched().length, error: null }
+        : { data: rows(), error: null };
     };
     const builder: any = {
       select(cols?: string, opts?: { count?: string; head?: boolean }) {
         const gone = (missing[table] ?? []).filter((c) => (cols ?? '').split(',').map((x) => x.trim()).includes(c));
         if (gone.length) columnError = { code: '42703', message: `column ${table}.${gone[0]} does not exist` };
         if (opts?.count) wantCount = true;
+        if (opts?.head) headOnly = true;
         selectCalled = true;
         return builder;
       },
@@ -238,7 +267,28 @@ export function fakeSb(
       },
       neq(col: string, val: unknown) { filters.push((r) => String(r[col]) !== String(val)); return builder; },
       in(col: string, vals: unknown[]) { filters.push((r) => vals.map(String).includes(String(r[col]))); return builder; },
-      lt(col: string, val: unknown) { filters.push((r) => Number(r[col] ?? 0) < Number(val)); return builder; },
+      /* `.filter(col, 'in', '("a","b\\"c")')` — the ESCAPED in-list the shared
+         readers now build, because supabase-js cannot serialise a value carrying
+         a `"` (docs/bugs/0780). Parsed by the SAME function the app writes with:
+         a second `split(',')` here would swallow the malformed list exactly the
+         way the bug does, and report a clean run. Any other operator THROWS, for
+         the reason `not()` above gives. */
+      filter(col: string, op: string, val: unknown) {
+        if (op !== 'in') throw new Error(`fake-postgrest: filter(${op}) is not implemented`);
+        const vals = parsePgrestInList(String(val));
+        filters.push((r) => vals.includes(String(r[col])));
+        return builder;
+      },
+      /* `lt` compares the way gte/lte below do — by the column's type, NULL
+         matching nothing. It used to be numeric-only with a `?? 0` fold, so an
+         ISO timestamp became NaN and every row silently dropped: a month window
+         written as gte(first) + lt(next-first) — the only correct shape for a
+         timestamptz — returned an empty report against this fake while the
+         real database returned the rows (docs/bugs/0785). */
+      lt(col: string, val: unknown) {
+        filters.push((r) => r[col] != null && (typeof r[col] === 'number' ? Number(r[col]) < Number(val) : String(r[col]) < String(val)));
+        return builder;
+      },
       /* gte/lte compare as PostgREST does for the column's type: numbers
          numerically, everything else lexically — which is exactly how ISO
          date/timestamp strings order, the use these appear in (accounting's

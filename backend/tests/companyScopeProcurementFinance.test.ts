@@ -30,6 +30,7 @@ import {
   createPurchaseReturnFromGrnHandler,
 } from '../src/scm/routes/purchase-returns';
 import { convertSosToPosCore } from '../src/scm/routes/mfg-purchase-orders';
+import { parsePgrestInList } from '../src/scm/lib/pgrest-in-list';
 
 const CO_A = 1; // HOUZS
 const CO_B = 2; // 2990
@@ -66,6 +67,13 @@ class FakeQuery {
     const s = new Set((vals ?? []).map(String));
     this.preds.push((r) => s.has(String(r[col])));
     return this;
+  }
+  /* The ESCAPED in-list the shared readers now build — supabase-js cannot
+     serialise a value carrying a `"` (docs/bugs/0780). Parsed by the SAME
+     function the app writes with, never a second split(','). */
+  filter(col: string, op: string, val: string) {
+    if (op !== 'in') throw new Error(`fake: filter(${op}) is not implemented`);
+    return this.in(col, parsePgrestInList(val));
   }
   gte() { return this; }
   lte() { return this; }

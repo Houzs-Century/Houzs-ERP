@@ -51,6 +51,13 @@
 >   next request. Valid targets are the catalogue-derived SCM LEAF keys —
 >   exactly what `scmAreaGuard` reads; god positions are refused (wildcard
 >   bypasses the guard). Pinned by `backend/tests/positionPageOverrides.test.ts`.
+> * **Roles editor rebuilt (2026-09-10, design handoff):** the `permissions`
+>   tab's first "Roles" sub-view — `RolesTab` in `frontend/src/pages/Roles.tsx`,
+>   also mounted standalone at `?tab=roles` (`frontend/src/pages/Team.tsx`) and now
+>   on mobile (`frontend/src/mobile/MobileRoles.tsx`, wired into
+>   `frontend/src/mobile/MobileApp.tsx`) — was rebuilt from the card grid into a
+>   `resource × verb` master-detail matrix. The position-capability matrix (the
+>   section's OTHER sub-view) is untouched. Full guide: `docs/modules/roles.md`.
 > * Member profile / invite: `TeamMemberProfile.tsx` (drawer, inline
 >   assignment editing, activity log) and `TeamInviteModal.tsx` (assignment +
 >   position set before send; company toggle chips).

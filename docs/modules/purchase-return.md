@@ -327,3 +327,33 @@ Identity is asserted **before** the quantity cap wherever both run: a ceiling
 computed against the wrong line is a number about the wrong thing, and reporting
 it sends the operator to fix a quantity when the real fault is the source they
 picked.
+
+## The Special Order panel is not a bedframe/sofa feature (2026-09-10)
+
+The owner, the day the Custom / other free text opened on the Sales Order:
+「POGR 是不是也是要能看得到这些数据？…全部都是要带过去的哦，要不然你有 column 的话也
+带不过去」.
+
+Half of it already worked, and the halves are different things:
+
+- the text ALREADY reached the supplier's document. `description2` is stamped
+  server-side from `buildVariantSummary`, which appends the `SPECIAL:` segment
+  AFTER the per-group attribute branch — so a category contributing no
+  attributes still carries its note.
+- the text was NOT on this document's SCREEN. The editor was gated on bedframe
+  or sofa, and on `maint`, which `SpecialOrders` does not need — so a mattress,
+  accessory or dining line was excluded twice over, and the operator could
+  neither read the spec nor correct it.
+
+The gate is now the shared module `frontend/src/vendor/scm/lib/special-order-surface.ts`,
+read by the Sales Order, both mobile surfaces and every cost document, so the
+rule cannot drift per document. **The add-on pool passed here is EMPTY on
+purpose**: this document carries no catalogue for those categories, and choosing
+WHAT to build belongs to the sales order, not to the buyer or the receiver.
+
+Because of that empty pool, `SpecialOrders` no longer labels a carried pick
+*"retired — untick to remove"* when it has no options list to judge it against —
+a catalogue we do not have cannot call anything retired, and on a purchase order
+that label told the buyer to delete what the factory is building. With no pool
+the picks render read-only under *"from the Sales Order"*. See
+`docs/bugs/0779-the-special-order-text-reached-the-supplier-pdf-but-was-invi.md`.

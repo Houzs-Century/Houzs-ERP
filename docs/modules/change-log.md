@@ -179,9 +179,20 @@ hide the CREATION of a document from a change log.
    `changesBySystem` are both always present and are computed BEFORE the
    `author` filter is applied. That is the direct fix for the "50 staff actions"
    shape.
-2. **Stop silently.** `totals.truncated` is true when the database read hit its
-   own ceiling (`ROW_CAP`, 4000 rows), and both surfaces then print that every
+2. **Stop silently.** `totals.truncated` is true when a read came back with
+   fewer rows than the window holds, and both surfaces then print that every
    count is a floor and not a total.
+
+   **It is measured against the server's own exact count** (`count: 'exact'`,
+   i.e. Content-Range), per read, and OR'd across the two — never against
+   `ROW_CAP`. `ROW_CAP` (4,000) bounds our appetite; PostgREST enforces its own
+   `db-max-rows` underneath it, so a read can stop early far below 4,000. The
+   flag WAS `rows.length >= ROW_CAP`, and that could not fire: `rows` is the sum
+   of two reads each capped by the server, so at the 1,000 this repo assumes
+   (`lib/paginate-all.ts` PAGE, still unmeasured — `docs/bugs/0447`) the sum tops
+   out at 2,000. It was also wrong the other way for a larger ceiling, comparing
+   a two-read SUM with a one-read cap. Same device as `so-handover.ts`
+   `/preview`, which has always done it correctly.
 3. **Leak finance detail.** `stripAuditFinance` runs on the merged rows, exactly
    as `/entity-audit-log` runs it — stripping the detail while leaving the
    history just moves the leak one endpoint over.

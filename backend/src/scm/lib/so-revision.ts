@@ -691,6 +691,30 @@ export async function applySoAmendment(
     const unitCost = rec.unit_cost_sen;
     const lineCost = unitCost * qty;
 
+    /* NAME + variant summary must track a SPEC's new code (owner 2026-08-11).
+       This UPDATE rewrote item_code but left description / description2 untouched,
+       so a code-swap amendment left the line naming itself by the OLD product on
+       every name-first surface — the amend editor's SoLineCard picker, the
+       follow-up PO's material_name, and anything reading `description`. The ADD
+       branch above already resolves the name from the catalog (mfg_products.name);
+       SPEC must do the same. Fail-soft: an unknown code keeps the stored name
+       rather than blocking an approved amendment over a display field (the ADD
+       branch refuses a brand-new line with no catalog row; a SPEC line already
+       exists and its code passed the submit gate). */
+    let specDescription: string | null | undefined;   // undefined = leave as-is
+    if (change === 'SPEC') {
+      let pq = sb.from('mfg_products').select('name').eq('code', itemCode);
+      if (soCompanyId != null) pq = pq.eq('company_id', soCompanyId);
+      const { data: prodRows, error: prodErr } = await pq.limit(1);
+      // Bind the read error (audit:swallowed-reads): a real failure ABORTS the
+      // apply — it is NOT "no such code". An EMPTY result is "unknown code" and
+      // stays fail-soft below (the stored name is kept), so a DB blip can never
+      // masquerade as a missing catalogue row and blank/keep a name by accident.
+      if (prodErr) throw new Error(`applySoAmendment: SPEC name lookup failed for ${itemCode}: ${prodErr.message}`);
+      const prod = prodRows?.[0] as { name?: string | null } | undefined;
+      if (prod) specDescription = (prod.name ?? '').trim() || null;
+    }
+
     const { error: updErr } = await sb.from('mfg_sales_order_items').update({
       item_code:               itemCode,
       qty,
@@ -706,6 +730,11 @@ export async function applySoAmendment(
       leg_price_sen:           rec.leg_price_sen,
       special_order_price_sen: rec.special_order_sen,
       custom_specials:         rec.custom_specials ?? null,
+      /* NAME follows the code on a SPEC; QTY leaves it (item_code unchanged).
+         description2 is the server-built variant summary — the single source of
+         truth POST / and the ADD branch use — rebuilt from the applied variants. */
+      ...(specDescription !== undefined ? { description: specDescription } : {}),
+      ...(change === 'SPEC' ? { description2: buildVariantSummary(itemGroup, variants) || null } : {}),
       /* Mig 0280 — write the REMARK only when the request carries one. NULL is
          "not requested", so spreading it conditionally is what stops an
          amendment raised last week (or any row created before 0280, where the
@@ -1216,7 +1245,6 @@ export async function reviseBoundPo(
      silently deferred to that PO's own confirm rather than mis-warned here. */
   const scopedPos = opts?.onlyPoId ? livePos.filter((p) => p.id === opts.onlyPoId) : livePos;
   if (scopedPos.length === 0) return noop();
-  const scopeCoversAll = scopedPos.length === livePos.length;
   const livePoIds = new Set(scopedPos.map((p) => p.id));
 
   // (8) Re-read the NOW-REVISED SO lines keyed by id (the derivation source).
@@ -1308,17 +1336,26 @@ export async function reviseBoundPo(
       const label = (line.description || itemCode || 'a new item').trim();
       const binding = itemCode ? mainBindingByCode.get(itemCode) : undefined;
       if (!binding) {
-        /* Scoped confirm: this warning belongs to whichever confirm can act on
-           it. Emit it only when the scope covers every bound PO, so a partial
-           confirm doesn't false-alarm about a sibling PO's item. */
-        if (scopeCoversAll) warnings.push(`A newly added item (${label}) has no supplier set, so it could not be added to a purchase order. Set its main supplier, then raise a purchase order for it.`);
+        /* No supplier bound at all — this line can reach NO purchase order, so it
+           warns regardless of how many bound POs the recompute scoped. The
+           sibling-PO case (a line whose supplier owns a PO this confirm did not
+           touch) is handled by the out-of-scope `continue` below, never here — so
+           this point is only ever a real gap. It used to be gated on "the scope
+           covers every bound PO", which is never true on a sales order with 2+
+           live POs (the PO-Amendments confirm is always scoped to one), so the
+           buyer was told nothing about an item that would have no order on
+           delivery day. */
+        warnings.push(`A newly added item (${label}) has no supplier set, so it could not be added to a purchase order. Set its main supplier, then raise a purchase order for it.`);
         continue;
       }
+      // Supplier match is resolved against the FULL bound set (livePos), so an
+      // empty `forSupplier` means no open PO on this SO carries this supplier —
+      // a genuine gap, not a scoping artefact — and warns regardless of scope.
       const forSupplier = livePos.filter((p) => p.supplier_id === binding.supplierId);
       const target = forSupplier.find((p) => p.purchase_location_id && p.purchase_location_id === line.warehouse_id)
         ?? forSupplier[0];
       if (!target) {
-        if (scopeCoversAll) warnings.push(`A newly added item (${label}) is from a supplier that has no open purchase order on this sales order, so a purchase order still needs to be raised for it.`);
+        warnings.push(`A newly added item (${label}) is from a supplier that has no open purchase order on this sales order, so a purchase order still needs to be raised for it.`);
         continue;
       }
       // Out-of-scope target = a sibling PO's line; its own confirm inserts it.
@@ -1362,7 +1399,7 @@ export async function reviseBoundPo(
       // supplier binding is keyed on).
       const { data: existing, error: exErr } = await sb
         .from('purchase_order_items')
-        .select('item_code, discount_sen')
+        .select('item_code, discount_sen, photo_urls')
         .eq('id', pi.id)
         .maybeSingle();
       if (exErr) throw new Error(`reviseBoundPo: PO line load failed: ${exErr.message}`);
@@ -1383,6 +1420,18 @@ export async function reviseBoundPo(
         variants:   variants ?? null,
       });
 
+      /* Re-carry the SO line's CURRENT photos, preserving the PO's OWN uploads
+         (`po-items/...`). The INSERT below already carries an ADDED line's photos
+         (mig 0274); a SURVIVING line re-derived here used to keep its STALE
+         snapshot, so a code-swap that REPLACED the SO line left the PO showing a
+         dead `so-items/<old>/...` key whose R2 object is gone (docs/bugs/0789). */
+      const poOwnedPhotos = ((existing as { photo_urls?: string[] | null } | null)?.photo_urls ?? [])
+        .filter((k) => String(k).startsWith('po-items/'));
+      const rederivedPhotos: string[] = [];
+      for (const k of [...poOwnedPhotos, ...(revised.photo_urls ?? [])]) {
+        if (!rederivedPhotos.includes(k)) rederivedPhotos.push(k);
+      }
+
       const { error: updErr } = await sb.from('purchase_order_items').update({
         qty,
         unit_price_sen: unitPriceSen,
@@ -1392,6 +1441,7 @@ export async function reviseBoundPo(
         description2:     buildVariantSummary(String(itemGroup ?? ''), variants ?? null) || null,
         warehouse_id:     revised.warehouse_id,
         delivery_date:    revised.line_delivery_date,
+        photo_urls:       rederivedPhotos,
       }).eq('id', pi.id);
       if (updErr) throw new Error(`reviseBoundPo: PO line update failed for ${pi.id}: ${updErr.message}`);
       linesRederived += 1;

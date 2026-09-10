@@ -298,7 +298,7 @@ UUID**; use `houzsUser.id` for the public bigint.
 
 | # | Filter | Silent? | What survives |
 |---|---|---|---|
-| 1 | `.eq('cancelled', false)` + company scope + **`.limit(500)`**, ordered `doc_no` DESC | **yes** | at most 500 SO ITEM rows, newest doc numbers first. Newer orders are on the safe side of this cap; older ones fall off it with no message |
+| 1 | `.eq('cancelled', false)` + company scope, **PAGED** (`lib/outstanding-so-lines.ts`), ordered `doc_no` DESC then `id` | n/a | **every** live SO item row. Was `.limit(500)` — at most 500 rows, newest doc numbers first, with no message when older orders fell off. Company 1 held 15,050 live lines on 2026-09-08 (`docs/bugs/0677`), so 96.7% of them were unreachable |
 | 2 | SO header status not in `CANCELLED`, `DRAFT`, `ON_HOLD` | **yes** | a **DRAFT SO is never convertible.** This is the honest, common answer to "my new SO cannot be converted": confirm it first |
 | 3 | pooled MRP shortage `> 0` — `shortageBySoItem.get(id) ?? 0` | **yes, and it is the dangerous one** | see below |
 | 4 | client-side: category filter, date-range filter, draft-already-consumed subtraction, one-supplier-per-PO lock (greys rows out, with a visible banner) | no | the visible grid |
@@ -337,6 +337,14 @@ works and is multi-select at line level — but only for a line that is
 (a) confirmed or later, (b) inside the newest 500 item rows, and (c) one of the
 ~7% MRP happened to plan. Fixing (c) is PR #2304 (#2300, #2294 alongside);
 **none merged**.
+
+> **UPDATED.** (c) is closed — `computeMrp`'s demand read is paged
+> (`docs/bugs/0248`), so MRP plans the whole demand set. (b) is closed by
+> `lib/outstanding-so-lines.ts`: filter 1 pages instead of capping, so the
+> window no longer decides which orders are convertible. (a) stands and is
+> correct — a DRAFT order is not convertible on purpose. Filter 3's `?? 0`
+> ambiguity also stands: a line MRP never planned and a line MRP found fully
+> covered still read the same on this screen.
 
 ---
 
@@ -1700,3 +1708,33 @@ hard-binding rule with `allocated_batch_no` still NULL — in which case the shi
 goes through the drop-ship confirmation, which `buildDropshipOffenders` can only
 offer once every affected line has a bound PO. That is the difference the link
 makes; the guard itself does not move.
+
+## The Special Order panel is not a bedframe/sofa feature (2026-09-10)
+
+The owner, the day the Custom / other free text opened on the Sales Order:
+「POGR 是不是也是要能看得到这些数据？…全部都是要带过去的哦，要不然你有 column 的话也
+带不过去」.
+
+Half of it already worked, and the halves are different things:
+
+- the text ALREADY reached the supplier's document. `description2` is stamped
+  server-side from `buildVariantSummary`, which appends the `SPECIAL:` segment
+  AFTER the per-group attribute branch — so a category contributing no
+  attributes still carries its note.
+- the text was NOT on this document's SCREEN. The editor was gated on bedframe
+  or sofa, and on `maint`, which `SpecialOrders` does not need — so a mattress,
+  accessory or dining line was excluded twice over, and the operator could
+  neither read the spec nor correct it.
+
+The gate is now the shared module `frontend/src/vendor/scm/lib/special-order-surface.ts`,
+read by the Sales Order, both mobile surfaces and every cost document, so the
+rule cannot drift per document. **The add-on pool passed here is EMPTY on
+purpose**: this document carries no catalogue for those categories, and choosing
+WHAT to build belongs to the sales order, not to the buyer or the receiver.
+
+Because of that empty pool, `SpecialOrders` no longer labels a carried pick
+*"retired — untick to remove"* when it has no options list to judge it against —
+a catalogue we do not have cannot call anything retired, and on a purchase order
+that label told the buyer to delete what the factory is building. With no pool
+the picks render read-only under *"from the Sales Order"*. See
+`docs/bugs/0779-the-special-order-text-reached-the-supplier-pdf-but-was-invi.md`.

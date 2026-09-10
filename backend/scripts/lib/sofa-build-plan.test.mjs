@@ -6,6 +6,7 @@ import {
   moneyOfRows,
   pairRowsToPieces,
   planCopyMoney,
+  legHeightToWrite,
   seatHeightToWrite,
   splitBuildCopies,
   supersededBy,
@@ -296,4 +297,27 @@ test("an entry that selects no rows is asserted, not explained away", () => {
 test("the LAST ruling wins when three files touch one build", () => {
   const doc = ["SO:A", "SO:A", "SO:A"];
   assert.deepEqual(supersededBy(doc, [["r1"], ["r1"], ["r1"]]), [1, 2, -1]);
+});
+
+test("legHeightToWrite takes bare inches and refuses anything else", () => {
+  /* The supplier's listing writes "leg:6inch"; lib/parse-sofa.mjs decodes that
+     to the NUMBER 6, and variants.legHeight holds bare inches. Both shapes are
+     asserted because the proposer passes String(parse.leg). */
+  assert.deepEqual(legHeightToWrite("6"), { write: true, value: "6", why: "inches" });
+  assert.deepEqual(legHeightToWrite(6), { write: true, value: "6", why: "inches" });
+  assert.equal(legHeightToWrite("1").write, true);
+  assert.equal(legHeightToWrite(" 4 ").value, "4");
+
+  /* Nothing to write is not a failure - it is the common case, because the
+     supplier states no leg on most bedframe-only documents. */
+  assert.equal(legHeightToWrite(null).write, false);
+  assert.equal(legHeightToWrite(undefined).write, false);
+  assert.equal(legHeightToWrite("").write, false);
+
+  /* THE ONE THAT MATTERS: a value carrying its unit must NOT be stored with the
+     unit stripped off, because "6inch" and 6 are the same length and "6inch"
+     silently becoming 6 would be indistinguishable from a correct write. */
+  const withUnit = legHeightToWrite("6inch");
+  assert.equal(withUnit.write, false);
+  assert.match(withUnit.why, /not a number of inches/);
 });

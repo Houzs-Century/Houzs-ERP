@@ -271,6 +271,20 @@ distiller. The rename made all of this legible; it changed none of it.
    core, never reimplemented here. Each scanned receipt becomes a payments-ledger
    row through `recordSoPaymentRow`, the same factored insert+audit core the
    interactive payments route uses.
+
+   > **Header deposit invariant (docs/bugs/0785-*).** Paid is `soPaidSen` =
+   > `(is_deposit-row-exists ? 0 : deposit_sen) + Σ rows`
+   > (`shared/so-outstanding.ts:102`; list rollup `mfg-sales-orders.ts:2203`), so a
+   > header `deposit_sen` is only safe when a receipt books the backing `is_deposit`
+   > row. The create core skips that row for the scan's dropdown method
+   > (`'Merchant'` ≠ the lowercase ledger whitelist, `:5314`), so **the slip's
+   > deposit is stamped on the header ONLY when a classified payment receipt
+   > exists** — the guard in runScanJob (`safeScanDepositSen`,
+   > `lib/scan-header-deposit.ts`) zeroes it for a receiptless or shell draft.
+   > Without it, a receiptless scan orphaned the header deposit and it
+   > double-counted once the operator added the payment by hand (audit
+   > `scripts/check-orphan-scan-deposits.mjs`). Owner rule: never book money off an
+   > unclassified photo — the operator adds it on the draft.
 6. **Reaper** — `SCAN_JOB_STALE_MINUTES = 3` (`:4375`). A job stuck
    `queued`/`running` past 3 minutes is re-run once from its durable R2 photos
    (`retry_count` 0 → 1, migration 0070) and only errored after that single retry

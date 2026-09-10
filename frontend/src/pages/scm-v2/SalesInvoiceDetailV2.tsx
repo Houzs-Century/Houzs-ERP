@@ -188,6 +188,8 @@ type SiItem = {
   cancelled?: boolean;
   item_group?: string;
   variants?: Record<string, unknown> | null;
+  /* Per-line delivery date carried from the DO line. */
+  line_delivery_date?: string | null;
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -1057,6 +1059,18 @@ export function SalesInvoiceDetailV2() {
           </div>
         );
       },
+    },
+    {
+      key: "delivery",
+      label: "Delivery",
+      width: "104px",
+      align: "left",
+      getValue: (l) => l.line_delivery_date ?? "",
+      render: (l) => (
+        <span className="font-mono text-[12px] text-ink-secondary">
+          {l.line_delivery_date ? fmtDate(l.line_delivery_date) : "—"}
+        </span>
+      ),
     },
     {
       key: "qty",
