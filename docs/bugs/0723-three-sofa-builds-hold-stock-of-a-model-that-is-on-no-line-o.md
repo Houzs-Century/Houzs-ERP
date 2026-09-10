@@ -79,6 +79,66 @@ three orders' item ids, so whatever wrote them wrote directly. The 8030 codes on
 this family come from `SOFA_MODEL_ALIAS` (HOK-5537 / HOK-5540 supplier SKUs map
 to `8030-*`), which is where a re-coding lane would plausibly have been working.
 
+**Evidence added 2026-09-09 — the lot's own NAME is the surviving witness, and it
+splits the nine into two different problems.** Two live reads, neither of which
+had been taken when this was filed.
+
+*One.* Across every sofa lot in the cutover, the model code and the name the
+importer stamped agree — with exactly one exception:
+
+```sql
+select split_part(item_code,'-',1) as model, product_name, count(*), count(distinct batch_no)
+from scm.inventory_lots where source_doc_no='AC-BAL-SOFA-2026-08-10'
+  and split_part(item_code,'-',1) in ('8030','9058','5535') group by 1,2;
+```
+
+| model | name on the lot | lots | batches |
+| --- | --- | --- | --- |
+| `5535` | SOFA NOVA | 14 | 4 |
+| `8030` | SOFA SOFFIO (+ SOFFIO CONSOLE) | 45 | 15 |
+| `9058` | SOFA MAYBATCH | 43 | 13 |
+| `8030` | **SOFA MAYBATCH** | **3** | **1 — HC-PO-009017, and nowhere else** |
+
+105 lots hold the mapping; 3 break it, and they are three of the nine. So on
+HC-PO-009017 the code says Soffio while the name says Maybatch — which is the
+model that order actually carries. Same fabric (`gd2502-09`), same three
+compartments, same `received_at` as the genuine Maybatch beside it.
+
+*Two.* The orders themselves. Each bought ONE sofa and received it in full
+(`scm.purchase_order_items`, `qty` = `received_qty` = 1 on every sofa line):
+
+| batch | the order bought | its lots hold |
+| --- | --- | --- |
+| HC-PO-009017 | 1 × MAYBATCH — `9058-1B(LHF)`, `-2A(RHF)`, `-CNR` | 6 pieces |
+| HC-PO-009550 | 1 × SOFFIO — `8030-1A(LHF)`, `-2A(RHF)`, `-CNR` | 6 pieces |
+| HC-PO-009712 | 1 × NOVA — `5535-1A(LHF)`, `-2A(RHF)`, `-CNR` | 9 pieces |
+
+**What that changes.** The three batches are no longer one class:
+
+- **HC-PO-009017 now has a leading theory** — a DUPLICATE of the one Maybatch the
+  order bought, whose second copy was written with an `8030` code. The name is the
+  part the re-coding missed. This is why the duplicate detector never caught it: it
+  keys on `item_code`, and a mis-coded copy does not look like a copy.
+- **HC-PO-009550 and HC-PO-009712 are NOT that.** Their strays agree with
+  themselves — code `9058` *and* name Maybatch; code `8030` *and* name Soffio — so
+  nothing was mis-coded. The system genuinely holds a second, different model
+  against those batches, and whether it exists is still unanswered.
+- HC-PO-009712 separately carries a 0721-class duplicate: six `5535` pieces that
+  are the same three compartments under two spellings of one spec
+  (`…umbrella fabric` vs `…umbrella fabric,nylon fabric`).
+
+**What it does NOT establish.** These lots are an AutoCount OPENING BALANCE, not a
+receipt off the purchase order — `source_doc_no = 'AC-BAL-SOFA-2026-08-10'`, with
+the PO only in `batch_no`. So the order's quantity is the ERP's record of what was
+bought, not proof of what AutoCount held. A second sofa could have been on hand and
+tagged to the same PO reference. The floor check is still the thing that settles
+it; this only makes it three specific questions instead of one open one.
+
+**Floor-check sheet.** The pieces, per batch, with the question each one answers:
+<https://claude.ai/code/artifact/ff0921d3-25d9-4317-8d10-ff7139c2f1c5> — and note
+`scm.inventory_lots` records a warehouse and nothing finer, so there is no shelf
+position to send anyone to. All 21 pieces are in BALAKONG WAREHOUSE.
+
 **Why it is not "just" 9 pieces.** A sofa is sold as a set of compartments, so
 9 pieces read as 3 whole sofas in
 `backend/scripts/lib/sofa-piece-fold.mjs` — the arithmetic the AutoCount stock
