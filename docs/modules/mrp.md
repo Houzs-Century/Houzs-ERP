@@ -351,11 +351,21 @@ page shows an Others tab. The derivation lives in one module,
 - the FOUR the owner works from — Sofa, Bedframe, Mattress, Accessories — always,
   in that order, standing even when `categories` is absent so an in-flight
   response cannot blank the tab bar;
-- ONE **Others** tab appended when, and only when, the catalogue holds anything
-  outside those four (owner 2026-09-10, 「应该要放others 一个category把」;
-  `docs/bugs/0782-the-extra-mrp-categories-each-grew-their-own-tab-instead-of.md`).
-  It is not one-tab-per-extra-category: that shape would grow a column the day
-  the owner registers a category at runtime through `acc_register_item_group`;
+- ONE **Others** tab, now a PERMANENT fifth tab painted from the first frame
+  alongside the four — NOT derived from `categories` (owner 2026-09-11, watching
+  it blink in a beat after the others on every reload: 「loading 的时候它就不见了，
+  没有 loading 的时候就有」;
+  `docs/bugs/0795-mrp-others-tab-appears-only-after-data-loads-blinking-in-a-b.md`).
+  This SUPERSEDES the earlier "appended only when the catalogue holds a non-core
+  category" (`docs/bugs/0782-the-extra-mrp-categories-each-grew-their-own-tab-instead-of.md`):
+  the four core tabs are constants and were always painted, but Others was
+  DERIVED from the loaded list, so it popped in late — a tab bar that changes
+  shape mid-load is one nobody trusts. `mrpViews` now ignores its `categories`
+  argument (kept only so callers need not change) and always returns the five.
+  An occasional empty Others (a company selling only the four) is the fair price
+  for a shape that never flickers. It is still not one-tab-per-extra-category:
+  that shape would grow a column the day the owner registers a category at
+  runtime through `acc_register_item_group`;
 - `SERVICE` never gets a tab, and never falls into Others — `isServiceLine` skips
   service lines BEFORE the category filter, so it could only ever be empty. Named,
   not silently filtered.
