@@ -441,6 +441,40 @@ a client-side filter of what is already loaded — and a non-empty query
 force-opens the matches so the hit is visible without a manual drill. It resets
 on a tab switch so a query narrowing one tab cannot blank the next.
 
+### 2.5 Lead times — the order-by date, and the per-supplier override
+
+A demand line's **order-by date** = its customer delivery date minus a lead-time,
+so a PO is raised early enough for the supplier to deliver ahead of the customer
+(Commander 2026-05-29). The SAME resolver computes the MRP page's order-by HINT
+and the real `purchase_order_items.delivery_date` the convert writes, so the two
+can never disagree — `scm/lib/lead-time.ts`, called from `mrp.ts` (hint) and
+`mfg-purchase-orders.ts` (the PO).
+
+The lead-time is layered, highest priority first:
+
+1. **override** — `scm.mrp_supplier_category_lead_times[(supplier, category)]`,
+   the owner's MANUAL per-supplier number (owner 2026-09-11: 「我会在每一个
+   Supplier 去 set 它的 Category lead time」). When a row exists for a line's
+   supplier + category it **replaces** the base — "this supplier's sofa takes N
+   days" is more specific than "sofa takes N days". A row's PRESENCE is the
+   override; its ABSENCE means "use the base", so an explicit 0 is a real
+   override (order same-day) and it is CLEARED by deleting the row, never by
+   saving 0.
+2. **base** — `scm.mrp_category_lead_times[(warehouse, category)]`, the owner's
+   per-(warehouse, category) table behind the MRP page's "Lead Times" dialog.
+   Cascade: (warehouse, category) -> (NULL, category) -> 0.
+3. **learned buffers** — the Procurement Agent's per-supplier punctuality and
+   per-season margins, ADDED on top (empty until approved on the agent console).
+
+`effectiveBase = override ?? base`, then `total = effectiveBase + supplier +
+season`. Empty override table = base wins, so the layer shipped as a pure no-op.
+
+**Endpoints + UI.** Base: `GET/PUT /api/scm/mrp-lead-times` (the MRP page dialog).
+Override: `GET/PUT/DELETE /api/scm/mrp-supplier-lead-times` (GET `?supplierId=`;
+PUT upserts; DELETE clears), gated `scm.procurement.mrp` like the base, edited on
+the supplier page's **Lead Times** tab (`SupplierLeadTimes.tsx`). Both writes
+invalidate the `mrp` query so the order-by dates recompute.
+
 ## 3. Supply
 
 - On-hand: `inventory_balances` summed per bucket.

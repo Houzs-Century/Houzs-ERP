@@ -22,17 +22,29 @@
 //
 // Both callers now come through here, so there is no second copy to drift.
 //
-// THE MODEL — three additive layers, each with a different owner:
+// THE MODEL — a base layer (with a manual per-supplier override on top of it)
+// plus two additive learned buffers, each with a different owner:
 //
 //   base     scm.mrp_category_lead_times[(warehouse, category)]
 //            The OWNER's manual setting. Authoritative. Nothing in this file,
 //            and no agent, may change it.
+//   override scm.mrp_supplier_category_lead_times[(supplier, category)]
+//            The OWNER's manual per-SUPPLIER setting (owner 2026-09-11). When a
+//            row exists for this line's supplier + category it REPLACES the base
+//            number — highest priority — because "this supplier's sofa takes N
+//            days" is more specific than "sofa takes N days". Empty = base wins.
 //   supplier a LEARNED safety buffer per supplier, from how late that supplier
 //            actually delivers (agents.procurement.supplierBufferDays).
 //   season   a LEARNED safety buffer per calendar month
 //            (agents.procurement.seasonBufferDays).
 //
-//   total = base + supplier + season
+//   effectiveBase = override[(supplier, category)] ?? base[(warehouse, category)]
+//   total         = effectiveBase + supplier + season
+//
+// The learned buffers still ADD on top of an override (both empty until an agent
+// is approved, so no behaviour change today). Keeping the override at the base
+// layer, not collapsing the two, means the owner's manual number and the agent's
+// learned margin stay separately attributable and either can be zeroed alone.
 //
 // Owner's rule, in his words: "我的 Lead Time 都会提早 ... 要根据不同的供应商准时
 // 程度、不同的季节以及不同的仓库，来制定提前的 Delivery Date." The warehouse and
@@ -61,6 +73,16 @@ export interface LeadTimeBase {
   byCat: Map<string, number>;
 }
 
+/** The owner's manual per-(supplier, category) overrides, loaded once per
+    request. Keyed `${supplierId}|${category}` (category lowercased). An EMPTY
+    map is a pure no-op: the resolver then falls straight through to the base
+    table, byte-for-byte the behaviour before this layer existed. */
+export interface LeadOverrides {
+  bySupplierCat: Map<string, number>;
+}
+
+export const NO_OVERRIDES: LeadOverrides = { bySupplierCat: new Map() };
+
 /** The agent's learned buffers. Both default to empty = a pure no-op, which is
     what ships first: with no buffers this resolver returns exactly the base,
     i.e. byte-for-byte the behaviour of the two copies it replaces. */
@@ -78,6 +100,9 @@ export interface LeadTimeInput {
   /** The SO/PO line's item_group. Matched lowercase; anything outside the five
       categories simply misses and contributes 0 — same as the code replaced. */
   category: string | null;
+  /** The line's supplier id (uuid). Drives the manual per-supplier OVERRIDE
+      lookup. Omit (or null) to skip the override — the base then applies. */
+  supplierId?: string | null;
   /** Optional. Omit (or pass null) to skip the supplier layer entirely. */
   supplierCode?: string | null;
   /** The customer delivery date (ISO YYYY-MM-DD). Drives the season lookup.
@@ -131,6 +156,36 @@ export async function loadLeadTimeBase(
     callers cannot select different shapes. */
 export const LEAD_TIME_SELECT = 'warehouse_id, category, lead_days';
 
+/** The column list for the manual per-supplier override table. */
+export const LEAD_OVERRIDE_SELECT = 'supplier_id, category, lead_days';
+
+type OverrideRow = { supplier_id: string | null; category: string; lead_days: number };
+
+/**
+ * Load the owner's manual per-(supplier, category) overrides.
+ *
+ * THROWS on a query error, for the same reason loadLeadTimeBase does: a swallowed
+ * error yields empty overrides -> the priority the owner set silently vanishes
+ * and the PO reverts to the category base without a word. The caller fails the
+ * convert rather than write a date the owner did not intend. `query` is the
+ * already-company-scoped PostgREST builder.
+ */
+export async function loadSupplierCategoryOverrides(
+  query: PromiseLike<{ data: unknown; error: { message?: string } | null }>,
+): Promise<LeadOverrides> {
+  const { data, error } = await query;
+  if (error) throw new Error(`mrp_supplier_lead_overrides_load_failed: ${error.message ?? 'unknown'}`);
+
+  const bySupplierCat = new Map<string, number>();
+  for (const r of (data ?? []) as OverrideRow[]) {
+    const cat = (r.category ?? '').toLowerCase();
+    const days = Number(r.lead_days);
+    if (!r.supplier_id || !cat || !Number.isFinite(days) || days < 0) continue;
+    bySupplierCat.set(`${r.supplier_id}|${cat}`, days);
+  }
+  return { bySupplierCat };
+}
+
 /**
  * base only — the owner's manual number.
  * Cascade, unchanged from both originals: (warehouse, category) -> (NULL,
@@ -145,6 +200,22 @@ function baseLeadDays(base: LeadTimeBase, warehouseId: string | null, category: 
   );
 }
 
+/**
+ * The owner's manual per-supplier override for this line, or undefined when
+ * none. Undefined (not 0) on a miss so the caller's `?? base` falls through; an
+ * explicit 0 the owner set is a real value and WINS over the base (0 ?? base is
+ * 0). A line with no supplier skips the override entirely.
+ */
+function overrideLeadDays(
+  overrides: LeadOverrides,
+  supplierId: string | null | undefined,
+  category: string | null,
+): number | undefined {
+  if (!supplierId) return undefined;
+  const cat = (category ?? '').toLowerCase();
+  return overrides.bySupplierCat.get(`${supplierId}|${cat}`);
+}
+
 /** A non-negative whole number, or 0. Buffers are safety margin: a negative
     would pull the PO date LATER than the customer's date, which is never the
     intent and would silently ship the order late. Reject rather than trust. */
@@ -157,17 +228,23 @@ function safeBuffer(v: unknown): number {
 /**
  * Resolve every layer. Pure — no I/O, so it is directly testable.
  *
- * With NO_BUFFERS this returns { base, 0, 0, total: base }, which is exactly
- * what the two hand-rolled copies computed. That equivalence is the point: the
- * convergence ships as a provable no-op plus the error fix, and the learned
- * layers land separately.
+ * With NO_OVERRIDES + NO_BUFFERS this returns { base, 0, 0, total: base }, which
+ * is exactly what the two hand-rolled copies computed. That equivalence is the
+ * point: this layer ships as a provable no-op until the owner enters a supplier
+ * override, and the learned buffers land separately.
+ *
+ * `base` in the breakdown is the EFFECTIVE base — the manual per-supplier
+ * override when one exists for this line, else the warehouse/category base.
  */
 export function resolveLeadDays(
   base: LeadTimeBase,
+  overrides: LeadOverrides,
   buffers: LeadBuffers,
   input: LeadTimeInput,
 ): LeadTimeBreakdown {
-  const b = baseLeadDays(base, input.warehouseId, input.category);
+  const b =
+    overrideLeadDays(overrides, input.supplierId, input.category) ??
+    baseLeadDays(base, input.warehouseId, input.category);
 
   const supplier = input.supplierCode
     ? safeBuffer(buffers.supplierBufferDays[input.supplierCode])

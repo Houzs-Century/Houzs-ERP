@@ -70,9 +70,11 @@ import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { resolveLineWarehouseId, type SoWarehouseMasters } from '../lib/so-warehouse';
 import {
   loadLeadTimeBase,
+  loadSupplierCategoryOverrides,
   resolveLeadDays,
   subtractCalendarDays,
   LEAD_TIME_SELECT,
+  LEAD_OVERRIDE_SELECT,
   NO_BUFFERS,
   type LeadBuffers,
 } from '../lib/lead-time';
@@ -552,6 +554,13 @@ export async function computeMrp(
   const leadBaseProm = eager(loadLeadTimeBase(
     scoped(sb.from('mrp_category_lead_times').select(LEAD_TIME_SELECT)),
   ));
+  /* The owner's MANUAL per-(supplier, category) overrides (owner 2026-09-11) —
+     loaded here beside the base so the order-by HINT this page shows can never
+     disagree with the date the convert commits (both read the same override).
+     Empty until he sets one, so the hint is unchanged today. */
+  const leadOverridesProm = eager(loadSupplierCategoryOverrides(
+    scoped(sb.from('mrp_supplier_category_lead_times').select(LEAD_OVERRIDE_SELECT)),
+  ));
   /* The category walk (section 2), the two warehouse masters (section 2) and the
      stock + PO-supply reads (sections 3 and 4). Each is byte-identical to the
      query that stood at its own site; only the moment it is ISSUED moved. */
@@ -590,24 +599,28 @@ export async function computeMrp(
   // for the whole plan. Fail loudly rather than emit a wrong-but-plausible
   // schedule.
   const leadBase = (await leadBaseProm)();
-  /* supplierCode is the SKU's MAIN supplier — an approximation, and a stated
-     one: the convert may end up on a different supplier via a per-pick or
-     per-SKU override, in which case that supplier's buffer applies instead and
+  const leadOverrides = (await leadOverridesProm)();
+  /* supplier (id + code) is the SKU's MAIN supplier — an approximation, and a
+     stated one: the convert may end up on a different supplier via a per-pick or
+     per-SKU override, in which case THAT supplier's override/buffer applies and
      the real PO date can differ from this hint. The main supplier is what this
      page shows and what the convert picks absent an override, so it is the
      honest default; the alternative (no supplier at all) would disagree with
-     EVERY buffered PO rather than just the overridden ones. */
+     EVERY overridden/buffered PO rather than just the ones that moved. The id
+     drives the manual per-supplier override, the code the learned buffer. */
   const orderByOf = (
     deliveryDate: string | null,
     category: string | null,
     whId: string | null,
+    supplierId: string | null,
     supplierCode: string | null,
   ): string | null =>
     subtractCalendarDays(
       deliveryDate,
-      resolveLeadDays(leadBase, leadBuffers, {
+      resolveLeadDays(leadBase, leadOverrides, leadBuffers, {
         warehouseId: whId,
         category,
+        supplierId,
         supplierCode,
         deliveryDate,
       }).total,
@@ -1046,7 +1059,7 @@ export async function computeMrp(
   //       in-place before posting the PO, AutoCount-style). ────────────────
   type SupplierOpt = { supplierId: string; code: string; name: string; isMain: boolean };
   const codes = [...new Set(demand.map((d) => d.item_code))];
-  const mainByCode = new Map<string, { code: string; name: string }>();
+  const mainByCode = new Map<string, { id: string; code: string; name: string }>();
   const suppliersByCode = new Map<string, SupplierOpt[]>();
   /* CHUNKED + PAGED, and since 2026-08-19 through the SHARED reader
      (lib/supplier-bindings.ts) rather than a copy of the rule that lived only
@@ -1076,7 +1089,7 @@ export async function computeMrp(
       arr.push({ supplierId: b.supplier_id, code: s.code, name: s.name, isMain: b.is_main_supplier });
       suppliersByCode.set(b.item_code, arr);
       // First (is_main_supplier first via ORDER BY) wins as the default main.
-      if (!mainByCode.has(b.item_code)) mainByCode.set(b.item_code, { code: s.code, name: s.name });
+      if (!mainByCode.has(b.item_code)) mainByCode.set(b.item_code, { id: b.supplier_id, code: s.code, name: s.name });
     }
   }
 
@@ -1298,7 +1311,7 @@ export async function computeMrp(
         soDate: r.so?.so_date ?? null,
         deliveryDate: lineDelivery,
         processingDate: r.so?.processing_date ?? null,
-        orderByDate: orderByOf(lineDelivery, prod?.category ?? null, whId, mainByCode.get(code)?.code ?? null),
+        orderByDate: orderByOf(lineDelivery, prod?.category ?? null, whId, mainByCode.get(code)?.id ?? null, mainByCode.get(code)?.code ?? null),
         qty: eff,
         source,
         poNumber,
@@ -1500,7 +1513,7 @@ export async function computeMrp(
         soDate: d.so?.so_date ?? null,
         deliveryDate: setDelivery,
         processingDate: d.so?.processing_date ?? null,
-        orderByDate: orderByOf(setDelivery, prod?.category ?? null, whId, mainByCode.get(d.item_code)?.code ?? null),
+        orderByDate: orderByOf(setDelivery, prod?.category ?? null, whId, mainByCode.get(d.item_code)?.id ?? null, mainByCode.get(d.item_code)?.code ?? null),
         itemCode: d.item_code,
         description: prod?.name ?? d.description ?? null,
         variantLabel: buildVariantSummary(d.item_group, v) || null,
