@@ -4128,6 +4128,34 @@ Two properties it has to keep:
   pre-rename spelling of the Processing Date, correctly. A row older than that
   rename is still PRINTED in full; it simply does not get the `>>` marker.
 
+**The third probe counts the DAMAGE the other two found: `backend/scripts/check-stale-line-desc2.mjs`**
+(Actions -> *Stale printed line spec census (read-only)*, optional `cutoff_utc`).
+An approved SPEC amendment rewrites the line's `variants`; rebuilding
+`description2` from them only reached production when #3551's deploy finished,
+`2026-09-10T10:50:39Z`. Every SPEC amendment approved before that instant moved
+the spec and left the printed sentence saying the old thing — one row with two
+answers, and whoever makes the item reads one of them
+(`docs/bugs/0789-*`).
+
+It never re-derives the expected sentence. The approval's own audit row already
+holds it: `applySoAmendment` writes `line_<code>_spec` from the SAME
+`buildVariantSummary` call that produces `description2`, before and after. A
+second implementation here would be the drift that `docs/bugs/0787-*` was about.
+
+Three properties to keep:
+
+- **UNCLEAR is its own outcome**, never folded into REBUILT or STALE. An item
+  code does not identify a LINE — HC-SO-012312 carries two `HILTON (A)-(Q)` —
+  so the match asks whether ANY line with that code prints the expected value,
+  and "neither" stays "neither".
+- **Approvals after the cutoff are counted separately, and that half is the
+  self-check.** A STALE there means the rebuild is not working and refutes the
+  premise the census was written on. A probe that can only confirm is not
+  evidence.
+- **It reports; it does not repair.** Fixing an order means raising and
+  approving one more spec amendment, which carries a price authority
+  (`scm.amendment.approve_lines`). No script here may forge that.
+
 **A THIRD kind of reader was added on 2026-09-07: the REPORTS.** The AutoCount
 reconcile did not know this key existed, so every line closed by this very ruling
 kept reporting as an outstanding `DIFFER` — the owner's applied decision quoted
