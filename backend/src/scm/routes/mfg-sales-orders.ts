@@ -1264,16 +1264,17 @@ mfgSalesOrders.get('/', async (c) => {
     const otherStatusOr = `status.is.null,status.not.in.(${[...SO_STATUSES].join(',')})`;
     if (status === 'ON_HOLD') q = q.or(HELD_OR_TERM);
     else if (status) { const vals = soStatusesForTab(status); q = status === 'OTHER' ? q.or(otherStatusOr) : (vals.length === 1 ? q.eq('status', vals[0]) : q.in('status', vals)); }
-    /* free-text search replaces the legacy `debtor` param in this branch.
-       One term matches customer NAME (debtor_name), PHONE, or the SO
-       REFERENCE (ref) — plus doc_no / debtor_code / agent / location /
-       branding it already covered. */
+    /* free-text search over the reference the list DISPLAYS: customerRefOf is
+       `ref || customer_so_no`, so BOTH are searched — an order whose `ref` is
+       null shows its reference from `customer_so_no` yet was unsearchable
+       before (bug 0755). Plus doc_no / debtor_code / agent / location / branding. */
     const search = c.req.query('q');
     if (search) {
       const s = escapeForOr(search);
       if (s) q = q.or([
         `doc_no.ilike.%${s}%`, `debtor_name.ilike.%${s}%`, `debtor_code.ilike.%${s}%`,
-        `agent.ilike.%${s}%`, `sales_location.ilike.%${s}%`, `ref.ilike.%${s}%`, `branding.ilike.%${s}%`,
+        `agent.ilike.%${s}%`, `sales_location.ilike.%${s}%`, `ref.ilike.%${s}%`,
+        `customer_so_no.ilike.%${s}%`, `branding.ilike.%${s}%`,
         ...phoneSearchOrParts(s, search, normalizePhone),
       ].join(','));
     }
@@ -1350,7 +1351,7 @@ mfgSalesOrders.get('/', async (c) => {
       else if (status) { const vals = soStatusesForTab(status); moneyQ = status === 'OTHER' ? moneyQ.or(otherStatusOr) : (vals.length === 1 ? moneyQ.eq('status', vals[0]) : moneyQ.in('status', vals)); }
       if (search) {
         const ms = escapeForOr(search);
-        if (ms) moneyQ = moneyQ.or(`doc_no.ilike.%${ms}%,debtor_name.ilike.%${ms}%,debtor_code.ilike.%${ms}%,agent.ilike.%${ms}%,sales_location.ilike.%${ms}%,ref.ilike.%${ms}%,branding.ilike.%${ms}%`);
+        if (ms) moneyQ = moneyQ.or(`doc_no.ilike.%${ms}%,debtor_name.ilike.%${ms}%,debtor_code.ilike.%${ms}%,agent.ilike.%${ms}%,sales_location.ilike.%${ms}%,ref.ilike.%${ms}%,customer_so_no.ilike.%${ms}%,branding.ilike.%${ms}%`);
       }
       if (from) moneyQ = moneyQ.gte('so_date', from);
       if (to) moneyQ = moneyQ.lte('so_date', to);
