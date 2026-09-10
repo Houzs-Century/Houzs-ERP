@@ -60,11 +60,17 @@ function resolveUrl() {
 const note = (s) => console.log(`::notice::${s}`);
 
 /** The two fields this investigation is about, by every spelling they carry.
- *  The audit differ writes camelCase keys; the columns are snake_case. */
+ *  The audit differ writes camelCase keys; the columns are snake_case.
+ *
+ *  The pre-mig-0286 spelling of the Processing Date is NOT here: it is a retired
+ *  vocabulary term and `audit:vocabulary` refuses it in code, correctly. That
+ *  narrows this marker to rows written since the rename — which is every row
+ *  this investigation is about, since the saves in question are from 2026-09.
+ *  An audit row older than the rename would still be PRINTED in full; it would
+ *  simply not carry the `>>` marker, so nothing is hidden, only unhighlighted. */
 const DATE_FIELDS = new Set([
   "processingDate", "processing_date",
   "customerDeliveryDate", "customer_delivery_date",
-  "internalExpectedDd", "internal_expected_dd",
 ]);
 
 const short = (v) => {
