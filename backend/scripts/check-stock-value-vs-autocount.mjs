@@ -58,12 +58,23 @@
  *   ZERO-COST     lots we could not price (the book never priced them either).
  *                 They carry quantity and no value on our side.
  *
- * ── SOFA IS FOLDED ────────────────────────────────────────────────────────
- * The book prices a whole sofa; we hold compartments. Comparing them piece by
- * piece would report every sofa as a difference in both directions at once. The
- * fold is `lib/sofa-piece-fold.mjs`, the same module the quantity reconcile
- * uses — owner ruling 2026-09-07, and it changes nothing about how sofa stock is
- * stored.
+ * ── SOFA IS COUNTED APART, BECAUSE THE TWO SIDES COUNT DIFFERENT THINGS ───
+ * The book holds ONE row for a whole sofa; we hold one lot per compartment. The
+ * first version of this script summed our compartments and set the total beside
+ * the book's whole-sofa figure, and the owner caught it: 「我们那么多是因为
+ * breakdown compartment」. It reported `9028` as 13 in the book against 63 here
+ * and called the RM 66,266 between them a difference. It is a unit change, not a
+ * difference, and it made the headline say we hold 2,635 units more than the book
+ * when the quantity reconcile — which folds properly — says the opposite: 9,830
+ * against 9,731, and 103 whole sofas against 108.
+ *
+ * So sofa is NOT mixed into the like-for-like total any more. It gets its own
+ * block: whole sofas counted with `foldSofaPieces` (each build counted by its
+ * SMALLEST surviving piece, because a build missing a piece is not a sofa), and
+ * value compared only in TOTAL — the book has no compartment codes, so there is
+ * no per-item comparison to make.
+ *
+ * That leaves the non-sofa block as the number a balance sheet can use.
  *
  * READ-ONLY: SELECTs only, no DDL, no writes, no transaction. Every legitimate
  * answer exits 0 — the answer is the output, not the exit code.
@@ -80,7 +91,7 @@ import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
 import { SERVICE_GROUPS, loadAcBinding } from './lib/ac-stock-compare.mjs';
 import { readMappingCsv, normCode } from './lib/ac-mapping-csv.mjs';
-import { sofaModelOf, makeModelMatcher } from './lib/sofa-piece-fold.mjs';
+import { sofaModelOf, makeModelMatcher, foldSofaPieces } from './lib/sofa-piece-fold.mjs';
 
 const CO = Number(process.env.COMPANY_ID ?? 1);
 const TOP = Number(process.env.TOP ?? 40);
@@ -118,10 +129,10 @@ for (const [acCode, erpCode] of byAc) {
   if (m) sofaModels.add(m);
 }
 const matchModel = makeModelMatcher(sofaModels);
-/** One comparison key per physical product: a sofa compartment folds to its
- *  model, everything else is its own ERP code. */
-const foldKey = (erp) => matchModel(erp) ?? norm(erp);
-const isSofaKey = (k) => sofaModels.has(norm(k));
+/* `matchModel` is the SOFA TEST, not a key builder: a code it recognises is a
+   sofa and goes to the sofa block; everything else is compared under its own ERP
+   code. It used to fold a compartment onto its model and let that key meet the
+   book's whole-sofa row, which is the bug this file was rewritten for. */
 
 const sql = postgres(process.env.DATABASE_URL, { ssl: 'require', max: 1, prepare: false });
 
@@ -134,6 +145,7 @@ try {
   let acService = { qty: 0, sen: 0, cells: 0 };
   let acGap = { qty: 0, sen: 0, cells: 0, codes: new Set() };
   let acUnmapped = { qty: 0, sen: 0, codes: new Set() };
+  let acSofa = { sofas: 0, sen: 0, cells: 0 };
   for (const c of snap.cells) {
     if (isService(c.item)) { acService.qty += c.bal_qty; acService.sen += c.value_sen; acService.cells += 1; continue; }
     /* A NEGATIVE balance is followed, not set aside. Owner 2026-09-10:
@@ -147,9 +159,15 @@ try {
       continue;
     }
     if (!mapping.has(norm(c.item))) { acUnmapped.qty += c.bal_qty; acUnmapped.sen += c.value_sen; acUnmapped.codes.add(c.item); }
-    const k = foldKey(erpCodeOf(c.item));
-    const e = ac.get(k) ?? { qty: 0, sen: 0 };
-    e.qty += c.bal_qty; e.sen += c.value_sen; ac.set(k, e);
+    const erpCode = erpCodeOf(c.item);
+    if (matchModel(erpCode)) {
+      /* A whole sofa in the book. Counted and valued in its own block below —
+         never added to a total our compartments also feed. */
+      acSofa.sofas += c.bal_qty; acSofa.sen += c.value_sen; acSofa.cells += 1;
+      continue;
+    }
+    const e = ac.get(erpCode) ?? { qty: 0, sen: 0 };
+    e.qty += c.bal_qty; e.sen += c.value_sen; ac.set(erpCode, e);
   }
   const acTotal = [...ac.values()].reduce((a, e) => a + e.sen, 0);
   const acQty = [...ac.values()].reduce((a, e) => a + e.qty, 0);
@@ -158,7 +176,8 @@ try {
   const lots = await sql`
     SELECT l.item_code, l.qty_remaining::numeric AS qty,
            coalesce(l.unit_cost_sen, 0)::bigint AS cost,
-           l.source_doc_type, l.source_doc_no
+           l.source_doc_type, l.source_doc_no,
+           l.warehouse_id, l.batch_no
       FROM scm.inventory_lots l
      WHERE l.company_id = ${CO} AND l.qty_remaining <> 0`;
   /* The consignment rule, copied from src/scm/lib/inventory-movements.ts:103 so
@@ -172,6 +191,7 @@ try {
   const erp = new Map();
   let consign = { qty: 0, sen: 0, lots: 0 };
   let zeroCost = { qty: 0, lots: 0, codes: new Set() };
+  const erpSofa = { sen: 0, pieces: 0, rows: [] };
   for (const l of lots) {
     const q = Number(l.qty);
     const sen = Math.round(q * Number(l.cost));
@@ -180,7 +200,18 @@ try {
       continue;
     }
     if (Number(l.cost) === 0) { zeroCost.qty += q; zeroCost.lots += 1; zeroCost.codes.add(l.item_code); }
-    const k = foldKey(norm(l.item_code));
+    const model = matchModel(norm(l.item_code));
+    if (model) {
+      /* A sofa COMPARTMENT. Its value joins the sofa total; its quantity goes to
+         the fold, which counts whole sofas — summing compartments here is exactly
+         the mistake this block exists to stop. */
+      erpSofa.sen += sen;
+      erpSofa.pieces += q;
+      erpSofa.rows.push({ model, warehouseId: l.warehouse_id, batchNo: l.batch_no,
+        itemCode: l.item_code, qty: q });
+      continue;
+    }
+    const k = norm(l.item_code);
     const e = erp.get(k) ?? { qty: 0, sen: 0 };
     e.qty += q; e.sen += sen; erp.set(k, e);
   }
@@ -188,10 +219,28 @@ try {
   const erpQty = [...erp.values()].reduce((a, e) => a + e.qty, 0);
 
   /* ── the headline, with every definitional line shown ─────────────────── */
-  log('\n=== THE NUMBER THE BALANCE SHEET WILL CARRY ===');
-  log(`  AutoCount, comparable stock          ${String(Math.round(acQty)).padStart(7)}u   ${rm(acTotal).padStart(16)}`);
-  log(`  our system, comparable stock         ${String(Math.round(erpQty)).padStart(7)}u   ${rm(erpTotal).padStart(16)}`);
+  /* Whole sofas, each build counted by its SMALLEST surviving piece: a build
+     missing a piece is not a sofa. Same module the quantity reconcile uses. */
+  const folded = foldSofaPieces(erpSofa.rows);
+  let whole = 0;
+  let ceiling = 0;
+  let incomplete = 0;
+  for (const cell of folded.values()) { whole += cell.whole; ceiling += cell.ceiling; incomplete += cell.incomplete; }
+
+  log('\n=== NON-SOFA — the number a balance sheet can use ===');
+  log(`  AutoCount                            ${String(Math.round(acQty)).padStart(7)}u   ${rm(acTotal).padStart(16)}`);
+  log(`  our system                           ${String(Math.round(erpQty)).padStart(7)}u   ${rm(erpTotal).padStart(16)}`);
   log(`  DIFFERENCE (ours minus the book)     ${String(Math.round(erpQty - acQty)).padStart(7)}u   ${rm(erpTotal - acTotal).padStart(16)}`);
+
+  log('\n=== SOFA — counted apart, because the two sides count different things ===');
+  log(`  AutoCount   ${String(Math.round(acSofa.sofas)).padStart(5)} whole sofa(s) over ${acSofa.cells} cell(s)   ${rm(acSofa.sen)}`);
+  log(`  our system  ${String(Math.round(whole)).padStart(5)} whole sofa(s) folded from ${Math.round(erpSofa.pieces)} compartment(s)   ${rm(erpSofa.sen)}`);
+  log(`  DIFFERENCE  ${String(Math.round(whole - acSofa.sofas)).padStart(5)} sofa(s)   ${rm(erpSofa.sen - acSofa.sen)}`);
+  log(`  our count is COMPLETE sofas — every piece still on the shelf. Counting each`);
+  log(`  build by its biggest surviving piece instead gives ${Math.round(ceiling)}; the difference is`);
+  log(`  ${Math.round(ceiling - whole)} sofa(s) missing at least one piece (${incomplete} build(s) stand uneven).`);
+  log('  There is NO per-item sofa comparison below: the book has no compartment');
+  log('  codes, so nothing on our side has a counterpart to be set beside.');
   log('');
   log('  set aside before comparing, each for a stated reason:');
   log(`    AutoCount SERVICE items — the owner's ruling, we do not carry them`);
@@ -218,8 +267,7 @@ try {
     const dSen = e.sen - a.sen;
     const dQty = e.qty - a.qty;
     if (dSen === 0 && Math.abs(dQty) < 0.0001) continue;
-    rows.push({ k, aQty: a.qty, aSen: a.sen, eQty: e.qty, eSen: e.sen, dQty, dSen,
-      sofa: isSofaKey(k) });
+    rows.push({ k, aQty: a.qty, aSen: a.sen, eQty: e.qty, eSen: e.sen, dQty, dSen });
   }
   rows.sort((x, y) => Math.abs(y.dSen) - Math.abs(x.dSen));
   const onlyBook = rows.filter((r) => r.eQty === 0);
@@ -230,14 +278,8 @@ try {
   log(`  (the owner's rule: what AutoCount does not have, we do not need)`);
   log('');
   log(`  ${'product'.padEnd(34)} ${'qty book vs ours'.padStart(19)} ${'book value'.padStart(14)} ${'our value'.padStart(14)} ${'difference'.padStart(14)}`);
-  log('  ("pcs" marks a sofa: the book counts whole sofas and we count compartments,');
-  log('   so only the VALUE of those two columns is comparable.)');
   for (const r of rows.slice(0, TOP)) {
-    /* On a sofa the two quantities count different things — whole sofas in the
-       book, compartments here — so the number is printed and marked, never
-       subtracted. Only the VALUE is comparable, and value is what the balance
-       sheet carries. */
-    const q = r.sofa ? `${Math.round(r.aQty)} vs ${Math.round(r.eQty)} pcs` : `${Math.round(r.aQty)} vs ${Math.round(r.eQty)}`;
+    const q = `${Math.round(r.aQty)} vs ${Math.round(r.eQty)}`;
     log(`  ${r.k.slice(0, 34).padEnd(34)} ${q.padStart(19)} `
       + `${rm(r.aSen).padStart(14)} ${rm(r.eSen).padStart(14)} ${rm(r.dSen).padStart(14)}`);
   }
