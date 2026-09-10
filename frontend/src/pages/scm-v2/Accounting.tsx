@@ -50,6 +50,7 @@ import { ItemGroupsTab } from './ItemGroups';
 import { StockCloseTab } from './StockClose';
 import { PnLTab, BalanceSheetTab } from './Reports';
 import { ReceiptsPaymentsTab } from './ReceiptsPayments';
+import { PaymentCorrectionsTab } from './PaymentCorrectionsTab';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
@@ -64,7 +65,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 // amount, never "RM NaN". Kept under the local name so callsites are unchanged.
 const fmt = (sen: number | null | undefined) => fmtSen(sen);
 
-type Tab = 'coa' | 'groups' | 'je' | 'gl' | 'tb' | 'close' | 'pnl' | 'bs' | 'rp' | 'ar' | 'ap' | 'check';
+type Tab = 'coa' | 'groups' | 'je' | 'gl' | 'tb' | 'close' | 'pnl' | 'bs' | 'rp' | 'ar' | 'ap' | 'check' | 'corrections';
 
 export const Accounting = () => {
   const [tab, setTab] = useState<Tab>('je');
@@ -86,6 +87,7 @@ export const Accounting = () => {
         <TabBtn label="AR Aging"        icon={<TrendingUp {...ICON} />} active={tab === 'ar'}  onClick={() => setTab('ar')} />
         <TabBtn label="AP Aging"        icon={<TrendingDown {...ICON} />} active={tab === 'ap'} onClick={() => setTab('ap')} />
         <TabBtn label="Self-check"      icon={<ShieldCheck {...ICON} />} active={tab === 'check'} onClick={() => setTab('check')} />
+        <TabBtn label="Corrections"     icon={<FileText {...ICON} />} active={tab === 'corrections'} onClick={() => setTab('corrections')} />
       </div>
 
       {tab === 'coa'   && <CoaTab />}
@@ -100,6 +102,7 @@ export const Accounting = () => {
       {tab === 'ar'    && <ArAgingTab />}
       {tab === 'ap'    && <ApAgingTab />}
       {tab === 'check' && <SelfCheckTab />}
+      {tab === 'corrections' && <PaymentCorrectionsTab />}
     </div>
   );
 };

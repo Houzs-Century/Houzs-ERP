@@ -407,11 +407,21 @@ export type PayoutDay = {
   fileName: string | null;
   /** What the uploaded report itself nets, when there is one. */
   reportNetSen: number | null;
-  /** report − advice. Zero is agreement; anything else is the finding. */
+  /** report − (advice + charge). Zero is agreement; anything else is the finding. */
   differenceSen: number | null;
   reportOpenLines: number | null;
+  /** What the bank deducted from this day's payout and where Finance booked it
+      (docs/bugs/0787) — 0 / null when nothing was. */
+  chargeSen: number;
+  chargeAccountCode: string | null;
+  chargeNote: string | null;
+  chargeJeNo: string | null;
   state: PayoutDayState;
 };
+
+/** An account a bank charge may be booked to: an active expense leaf of this
+    company — the same list the Setup page offers for the merchant fee. */
+export type ChargeAccount = { accountCode: string; accountName: string };
 
 export type PayoutStatus = {
   netSen: number;
@@ -439,11 +449,49 @@ export type Payout = {
 
 export const usePayouts = () => useQuery({
   queryKey: ['settlement-payouts'],
-  queryFn: () => authedFetch<{ payouts: Payout[] }>(`/accounting/settlement/payouts`),
+  queryFn: () => authedFetch<{
+    payouts: Payout[];
+    chargeAccounts: ChargeAccount[];
+    /** Each acquirer's fee account — what the charge dialog defaults to. */
+    feeAccountByAcquirer: Record<string, string | null>;
+  }>(`/accounting/settlement/payouts`),
   staleTime: 15_000,
   retry: retryUnlessClientError,
   retryDelay: 800,
 });
+
+/** The bank deducted a charge from one day of an advice — book it where
+    Finance says (docs/bugs/0787). The journal moves, so the entries list is
+    re-read along with the advices. */
+export const usePostPayoutCharge = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ payoutId, settledOn, ...body }: { payoutId: number; settledOn: string; amountSen?: number | null; accountCode: string; note: string }) =>
+      authedFetch<{ ok: boolean; chargeSen: number; accountCode: string; jeNo: string }>(
+        `/accounting/settlement/payouts/${payoutId}/days/${encodeURIComponent(settledOn)}/charge`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['settlement-payouts'] });
+      void qc.invalidateQueries({ queryKey: ['journal-entries'] });
+    },
+  });
+};
+
+export const useUndoPayoutCharge = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ payoutId, settledOn }: { payoutId: number; settledOn: string }) =>
+      authedFetch<{ ok: boolean }>(
+        `/accounting/settlement/payouts/${payoutId}/days/${encodeURIComponent(settledOn)}/charge`,
+        { method: 'DELETE' },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['settlement-payouts'] });
+      void qc.invalidateQueries({ queryKey: ['journal-entries'] });
+    },
+  });
+};
 
 export const useUploadPayoutAdvice = () => {
   const qc = useQueryClient();

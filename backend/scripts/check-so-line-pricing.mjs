@@ -20,7 +20,14 @@
 //      cost, cancelled flag — and its SPECIALS, read out of `variants`. The
 //      specials are the reason this probe exists: they travel with the variant
 //      cascade (docs/bugs/0754-*) and some of them are priced, so if the RM 250
-//      IS an add-on this is where it shows.
+//      IS an add-on this is where it shows. Each special is TAGGED with the
+//      `variants` key it came from, and the line's full key inventory is printed
+//      under it — see SPECIAL_KEYS below for the wrong answer that bought both.
+//
+//   2b. The line's stored Description 2 beside those specials. On a line whose
+//      spec has been amended these two are meant to say the same sentence; when
+//      they disagree, the printed document disagrees with itself and that is
+//      the finding.
 //
 //   3. A reconciliation line: the sum of the lines against the header total, so
 //      "the money is not on any line" is a visible answer rather than an
@@ -62,24 +69,68 @@ const num = (s, n) => String(s ?? "").padStart(n);
    screen shows him, and keep the raw sen beside the totals for arithmetic. */
 const rm = (sen) => (Number(sen ?? 0) / 100).toFixed(2);
 
+/** The keys `buildVariantSummary` reads for the SPECIAL segment it prints on
+ *  every customer document — backend/src/scm/shared/variant-summary.ts.
+ *
+ *  This list is COPIED, not imported: the renderer is TypeScript in `src/` and
+ *  this script is a dependency-free `.mjs` that runs before any build. So it can
+ *  DRIFT, and the drift is not harmless — it already cost a wrong answer.
+ *
+ *  On 2026-09-10 this probe read `specials` / `customSpecials` /
+ *  `specialsRecorded` and reported that HC-SO-012312's two HILTON bedframes no
+ *  longer carried "Right Drawer", while their printed Description 2 still said
+ *  they did. The renderer reads `variants.specials ?? variants.special`, and
+ *  nothing here read the SINGULAR key — so a line storing its add-ons under
+ *  `special` showed as clean here and as carrying the drawer on the document.
+ *  A probe that reads different keys from the surface it is checking reports a
+ *  clean run it has not earned (CLAUDE.md: "a checker that cannot match reports
+ *  a clean run"), and here it pointed an investigation at the wrong half.
+ *
+ *  `specialChoices` is not a special of its own — it annotates a picked code
+ *  ("Right Drawer (10\")") — but it is printed below because a choice attached
+ *  to a code that is no longer picked is exactly the kind of leftover worth
+ *  seeing. */
+const SPECIAL_KEYS = ["specials", "special", "customSpecials", "specialsRecorded", "specialChoices"];
+
+const flat = (v) =>
+  Array.isArray(v)
+    ? v.map((x) => (typeof x === "string" ? x : JSON.stringify(x)))
+    : typeof v === "string"
+      ? [v]
+      : [JSON.stringify(v)];
+
 /** The specials on a line, however they were written.
  *
  *  `variants` is jsonb and this family of keys has been through several shapes
  *  (docs/bugs/0053-*, 0018-*), so this reads defensively and says what it found
  *  rather than assuming one. An unreadable shape prints as-is — a probe that
- *  swallowed it would hide the very row worth looking at. */
+ *  swallowed it would hide the very row worth looking at.
+ *
+ *  Deliberately a UNION over every key above, including the two the renderer
+ *  treats as alternatives (`specials ?? special`). The renderer has to pick one;
+ *  a probe must not, because "which key is this line actually using" is the
+ *  question being asked. Each value is TAGGED with the key it came from, so two
+ *  keys disagreeing reads as a disagreement instead of a longer list. */
 function specialsOf(variants) {
   if (variants == null || typeof variants !== "object") return "";
   const out = [];
-  for (const key of ["specials", "customSpecials", "specialsRecorded"]) {
+  for (const key of SPECIAL_KEYS) {
     const v = variants[key];
     if (v == null) continue;
-    if (Array.isArray(v)) out.push(...v.map((x) => (typeof x === "string" ? x : JSON.stringify(x))));
-    else if (typeof v === "string") out.push(v);
-    else out.push(JSON.stringify(v));
+    for (const item of flat(v)) out.push(`${key}=${item}`);
   }
-  return out.join(" + ");
+  return out.join(" | ");
 }
+
+/** Every key the line's `variants` actually holds.
+ *
+ *  Printed because the list above can only find what it knows to look for, and
+ *  the failure it was written for was a key nobody had listed. Names only, no
+ *  values: the values are money, addresses and remarks, and this prints into a
+ *  CI log. A key whose name is new to you is the finding — read it with a
+ *  targeted query, do not widen this dump. */
+const variantKeys = (variants) =>
+  variants != null && typeof variants === "object" ? Object.keys(variants).sort().join(", ") : "";
 
 async function main() {
   const docNo = (process.env.DOC_NO ?? "").trim();
@@ -133,10 +184,16 @@ async function main() {
         `${num(rm(l.unit_price_sen), 10)}${num(rm(l.discount_sen), 9)}${num(rm(l.total_sen), 10)}  ` +
         `${pad(l.cancelled ? "YES" : "", 5)}${specialsOf(l.variants)}`,
       );
-      /* description2 is the AutoCount text — on a migrated order it is what the
-         account book itself says this line is, which is the only independent
-         opinion available here. */
+      /* description2 on a MIGRATED line started as the AutoCount text, but it is
+         not frozen: the direct edit path writes it, and an approved SPEC
+         amendment REBUILDS it from `variants`
+         (scm/lib/so-revision.ts, the `change === 'SPEC'` branch). So printing it
+         beside the specials above is a comparison of two things that are meant
+         to say the same sentence — and when they do not, one of them is stale
+         and the customer document is contradicting itself. */
       if (l.description2) note(`      book text: ${l.description2}`);
+      const keys = variantKeys(l.variants);
+      if (keys) note(`      variant keys: ${keys}`);
     }
 
     const headerTotal = Number(h.local_total_sen ?? 0);

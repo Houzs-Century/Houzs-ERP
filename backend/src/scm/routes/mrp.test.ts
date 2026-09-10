@@ -25,6 +25,7 @@ import { describe, expect, test } from 'vitest';
 import { computeMrp, mrpStockAssignment, stockAssignmentKey, parseIncludeUndated, InvalidQueryFlag } from './mrp';
 import { NO_BUFFERS } from '../lib/lead-time';
 import { distributeAssignedToLots, isMakeToOrderCategory } from '../lib/inventory-movements';
+import { parsePgrestInList } from '../lib/pgrest-in-list';
 
 type Row = Record<string, unknown>;
 
@@ -49,6 +50,14 @@ function fakeSb(tables: Record<string, Row[]>) {
     select() { return this; }
     eq(col: string, val: unknown) { this.rows = this.rows.filter((r) => r[col] === val); return this; }
     in(col: string, vals: unknown[]) { this.rows = this.rows.filter((r) => (vals as unknown[]).includes(r[col])); return this; }
+    /* The ESCAPED in-list section 2 and the supplier reader now build —
+       supabase-js cannot serialise an item code carrying a `"`, which emptied
+       38 codes' suppliers in production (docs/bugs/0780). Parsed by the SAME
+       function the engine writes with, never a second split(','). */
+    filter(col: string, op: string, val: string) {
+      if (op !== 'in') throw new Error(`fake: filter(${op}) is not implemented`);
+      return this.in(col, parsePgrestInList(val));
+    }
     // No-op: the engine pushes status not-in filters into SQL as an under-the-cap
     // optimisation; the JS-side SO_DONE / PO_DEAD filters stay authoritative and
     // are what these tests exercise.

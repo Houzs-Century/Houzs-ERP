@@ -93,3 +93,49 @@ describe('the payment edit and delete routes', () => {
     expect(body).not.toContain('SO_PAYMENT_AMEND');
   });
 });
+
+/* THE REASON, AND WHERE IT LANDS (owner 2026-09-10, docs/bugs/0782). A
+   correction made on the amend right owes a reason and is a Finance event;
+   a same-day fix is neither. Both facts hang off `via === 'amend'` from the
+   predicate, and both routes have to act on it the same way. */
+describe('a correction on the amend right owes a reason and is marked for Finance', () => {
+  test('both routes refuse an amend-right correction that carries no reason', () => {
+    for (const [method, path] of GATED) {
+      const body = handlerBody(method, path);
+      expect(body, `${method} ${path} does not gate on via === 'amend'`).toContain("via === 'amend'");
+      expect(body, `${method} ${path} does not refuse a missing reason`).toContain('REASON_REQUIRED');
+    }
+  });
+
+  test('both audit an amend-right correction with the amend source and the typed reason', () => {
+    for (const [method, path] of GATED) {
+      const body = handlerBody(method, path);
+      expect(body, `${method} ${path} does not mark the audit row`).toContain('source: AMEND_SOURCE');
+      expect(body, `${method} ${path} does not carry the reason into the audit`).toMatch(/note: (p\.reason|delReason)/);
+    }
+  });
+
+  test('both put the ledger pair on the audit row', () => {
+    for (const [method, path] of GATED) {
+      expect(handlerBody(method, path), `${method} ${path} does not record what it did to the ledger`)
+        .toContain('ledgerFieldChange(');
+    }
+  });
+
+  /* The audit row can only carry the JE numbers if the ledger moved FIRST.
+     Re-posting after the audit would record a correction with no entry on it
+     every single time, and the report would read as if the books never moved. */
+  test('the PATCH re-posts the ledger BEFORE it writes the audit row', () => {
+    const body = handlerBody('patch', '/:docNo/payments/:id');
+    const repost = body.indexOf('repostSoPaymentBestEffort(');
+    const audit = body.indexOf("action: 'UPDATE_PAYMENT'");
+    expect(repost).toBeGreaterThan(-1);
+    expect(audit).toBeGreaterThan(-1);
+    expect(repost, 'the re-post runs after the audit, so the audit cannot carry the JE numbers').toBeLessThan(audit);
+  });
+
+  test('the PATCH accepts the reason in its body; the DELETE reads it off the query', () => {
+    expect(routeSource).toMatch(/reason:\s+z\.string\(\)\.trim\(\)\.max\(500\)\.optional\(\)/);
+    expect(handlerBody('delete', '/:docNo/payments/:id')).toContain("c.req.query('reason')");
+  });
+});

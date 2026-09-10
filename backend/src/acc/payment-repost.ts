@@ -41,7 +41,12 @@ export type PaymentLedgerFacts = {
 
 export type RepostResult =
   | { ok: true; status: 'unchanged'; moved: LedgerField[] }
-  | { ok: true; status: 'reposted'; moved: LedgerField[]; jeNo: string }
+  /** `originalJeNo` is the entry that was voided and `contraJeNo` the contra
+      that voided it — both null when the payment had never booked, so there
+      was nothing to reverse. The original's number is the one a reader
+      recognises; the contra's alone was read as "the entry that was reversed"
+      (docs/bugs/0786). */
+  | { ok: true; status: 'reposted'; moved: LedgerField[]; jeNo: string; originalJeNo: string | null; contraJeNo: string | null }
   /** The gate declined to book it at all — an `imported` row AutoCount carries,
       or a zero amount. Nothing was reversed either. */
   | { ok: true; status: 'not_booked'; moved: LedgerField[]; reason: string }
@@ -121,6 +126,8 @@ export async function repostSoPaymentEdit(
   const live = ((existing ?? []) as Array<{ je_no: string; entry_date: string | null; reversed: boolean | null }>)
     .find((r) => !r.reversed) ?? null;
 
+  let originalJeNo: string | null = null;
+  let contraJeNo: string | null = null;
   if (live) {
     const undone = await reverseJournal(sb, {
       sourceType: 'SOPAY',
@@ -131,6 +138,7 @@ export async function repostSoPaymentEdit(
     if (!undone.ok) {
       return { ok: false, status: 'reverse_failed', moved, reason: `${undone.status}${undone.reason ? `: ${undone.reason}` : ''}` };
     }
+    if (undone.status === 'reversed') { originalJeNo = undone.originalJeNo; contraJeNo = undone.jeNo; }
   }
 
   const rebooked: PostPaymentResult = await postSoPayment(sb, p.after);
@@ -145,7 +153,7 @@ export async function repostSoPaymentEdit(
      union also carries `would_post`, which this call cannot produce (it passes
      no dryRun) — and a fallthrough would report a re-post that never happened. */
   if (rebooked.status === 'posted' || rebooked.status === 'already_posted') {
-    return { ok: true, status: 'reposted', moved, jeNo: rebooked.jeNo };
+    return { ok: true, status: 'reposted', moved, jeNo: rebooked.jeNo, originalJeNo, contraJeNo };
   }
   return { ok: true, status: 'not_booked', moved, reason: rebooked.status };
 }

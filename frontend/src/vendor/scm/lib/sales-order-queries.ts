@@ -750,9 +750,12 @@ export const useAttachSalesOrderPaymentSlip = () => {
 export const useDeleteSalesOrderPayment = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ docNo, id, version }: { docNo: string; id: string; version: number }) =>
+    /* `reason` rides the query the way `version` does — a DELETE carries no
+       body here. Required by the server when the amend right opened the door. */
+    mutationFn: ({ docNo, id, version, reason }: { docNo: string; id: string; version: number; reason?: string }) =>
       authedFetch<{ ok: boolean }>(
-        `/mfg-sales-orders/${docNo}/payments/${id}?version=${encodeURIComponent(String(version))}`,
+        `/mfg-sales-orders/${docNo}/payments/${id}?version=${encodeURIComponent(String(version))}`
+          + (reason ? `&reason=${encodeURIComponent(reason)}` : ''),
         { method: 'DELETE' },
       ),
     // The ['mfg-sales-orders'] root prefix-covers this SO's payments ledger and

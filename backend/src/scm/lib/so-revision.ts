@@ -691,6 +691,30 @@ export async function applySoAmendment(
     const unitCost = rec.unit_cost_sen;
     const lineCost = unitCost * qty;
 
+    /* NAME + variant summary must track a SPEC's new code (owner 2026-08-11).
+       This UPDATE rewrote item_code but left description / description2 untouched,
+       so a code-swap amendment left the line naming itself by the OLD product on
+       every name-first surface — the amend editor's SoLineCard picker, the
+       follow-up PO's material_name, and anything reading `description`. The ADD
+       branch above already resolves the name from the catalog (mfg_products.name);
+       SPEC must do the same. Fail-soft: an unknown code keeps the stored name
+       rather than blocking an approved amendment over a display field (the ADD
+       branch refuses a brand-new line with no catalog row; a SPEC line already
+       exists and its code passed the submit gate). */
+    let specDescription: string | null | undefined;   // undefined = leave as-is
+    if (change === 'SPEC') {
+      let pq = sb.from('mfg_products').select('name').eq('code', itemCode);
+      if (soCompanyId != null) pq = pq.eq('company_id', soCompanyId);
+      const { data: prodRows, error: prodErr } = await pq.limit(1);
+      // Bind the read error (audit:swallowed-reads): a real failure ABORTS the
+      // apply — it is NOT "no such code". An EMPTY result is "unknown code" and
+      // stays fail-soft below (the stored name is kept), so a DB blip can never
+      // masquerade as a missing catalogue row and blank/keep a name by accident.
+      if (prodErr) throw new Error(`applySoAmendment: SPEC name lookup failed for ${itemCode}: ${prodErr.message}`);
+      const prod = prodRows?.[0] as { name?: string | null } | undefined;
+      if (prod) specDescription = (prod.name ?? '').trim() || null;
+    }
+
     const { error: updErr } = await sb.from('mfg_sales_order_items').update({
       item_code:               itemCode,
       qty,
@@ -706,6 +730,11 @@ export async function applySoAmendment(
       leg_price_sen:           rec.leg_price_sen,
       special_order_price_sen: rec.special_order_sen,
       custom_specials:         rec.custom_specials ?? null,
+      /* NAME follows the code on a SPEC; QTY leaves it (item_code unchanged).
+         description2 is the server-built variant summary — the single source of
+         truth POST / and the ADD branch use — rebuilt from the applied variants. */
+      ...(specDescription !== undefined ? { description: specDescription } : {}),
+      ...(change === 'SPEC' ? { description2: buildVariantSummary(itemGroup, variants) || null } : {}),
       /* Mig 0280 — write the REMARK only when the request carries one. NULL is
          "not requested", so spreading it conditionally is what stops an
          amendment raised last week (or any row created before 0280, where the

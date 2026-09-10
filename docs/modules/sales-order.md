@@ -4079,6 +4079,55 @@ at. It renders and never prices — the key reaches one string in a printed
 column, the script's only arithmetic is lines vs header total from `total_sen`,
 and it is SELECT-only, so it cannot move money even by accident.
 
+**It was reading FEWER keys than the renderer, and reported a clean line that
+was not one (2026-09-10, `docs/bugs/0787-*`).** The probe read `specials`,
+`customSpecials` and `specialsRecorded`; `buildVariantSummary` reads
+`variants.specials ?? variants.special` plus `specialsRecorded`. The SINGULAR
+`special` was in the renderer and in no version of the probe, so a line holding
+its add-ons there printed "Right Drawer" on every customer copy while the probe
+called it empty — and that false clean was quoted to the owner as "the data is
+fixed, only the printed text is stale" on HC-SO-012312.
+
+Three properties now hold, and the reason for each is in the script's own
+`SPECIAL_KEYS` comment:
+
+- the key list MIRRORS the renderer's, plus `specialChoices`;
+- the probe takes the UNION where the renderer takes an alternative
+  (`specials ?? special`) — the renderer has to pick one, a probe must not,
+  because *which key is this line using* is the question being asked;
+- every value printed is TAGGED with the key it came from, and each line prints
+  its full `variants` key inventory (names only — the values are money,
+  addresses and remarks, and this prints into a CI log), because a list can only
+  find what it knows to look for and the failure above was a key nobody listed.
+
+The list is COPIED, not imported: the renderer is TypeScript under `src/` and
+the probe is a dependency-free `.mjs` that runs before any build. That copy is
+the drift surface — widen the renderer's key list and this one does not follow.
+
+**Its sibling reads the ORDER'S OWN TRAIL: `backend/scripts/check-so-history.mjs`**
+(Actions -> *SO history check (read-only)*, one `doc_no` input). It prints every
+`scm.mfg_so_audit_log` row and every `scm.so_amendments` row oldest-first, with
+each field's from -> to, and marks the Processing / Delivery date pair with `>>`.
+It was written for HC-SO-012312, where a rep set the Processing Date, saw it come
+back empty and only got it to stick on a second attempt — three explanations had
+been reasoned out and all three refuted, so the trail was what was left. It
+ANSWERED that: the order carries exactly one `UPDATE_DETAILS` row in its life,
+and the three saves before it wrote lines only. A save that persists half a
+document and says nothing is the finding; the probe does not explain the gap and
+must not be read as if it did.
+
+Two properties it has to keep:
+
+- **Long-tail fields print to 400 characters, not 60** (`LONG_TAIL_FIELDS`,
+  `docs/bugs/0788-*`). `buildVariantSummary` emits `SPECIAL:` LAST, so a
+  bedframe's first 60 characters are fabric and dimensions and every spec change
+  printed identical on both sides. The widening is matched on the FIELD NAME, so
+  it stays a decision about which fields carry a tail rather than a blanket dump
+  into a CI log.
+- **No retired vocabulary in its field list.** `audit:vocabulary` refused the
+  pre-rename spelling of the Processing Date, correctly. A row older than that
+  rename is still PRINTED in full; it simply does not get the `>>` marker.
+
 **A THIRD kind of reader was added on 2026-09-07: the REPORTS.** The AutoCount
 reconcile did not know this key existed, so every line closed by this very ruling
 kept reporting as an outstanding `DIFFER` — the owner's applied decision quoted
@@ -4519,6 +4568,24 @@ names a path that exists. Both screens read the key the same way
 `frontend/src/vendor/scm/lib/soPaymentAmendClients.test.ts` pins that both still
 pass the fourth argument — dropping it compiles, type-checks, and silently hides
 the control from Finance again.
+
+**A reason is owed on the amend right, and only there (2026-09-10,
+docs/bugs/0785).** The predicate now says WHY a row may change (`via`), and
+both routes act on `via === 'amend'`: the PATCH takes `reason` in its body and
+the DELETE reads `?reason=` beside `?version=`; without one, both refuse with
+`reason_required`. Such a correction is audited with `source = 'amend'`, the
+reason in `note`, and two field changes — `ledger` (the original entry → the
+one booked in its place) and `ledgerReversal` (the contra that voided the
+original) — which is why the PATCH now re-posts BEFORE it writes the audit
+row. Two changes, not one: the first cut carried only the contra and the
+report read "0099 reversed → 0100", which a reader took to mean 0099 had been
+reversed (docs/bugs/0786). A
+same-day fix by whoever keyed the payment writes the audit row it always did
+(owner: 靠权限改的来决定). Both screens ask through `usePrompt` before the
+write and abandon it when the ask is dismissed; the mobile sheet is told by its
+parent through `reasonRequired`, because the permission and the draft flag live
+with the list. Finance reads the result on the Accounting page's
+**Corrections** tab (docs/modules/accounting.md).
 
 ### The BALANCE a human is shown — which total it subtracts from (2026-09-08)
 

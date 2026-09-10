@@ -737,6 +737,58 @@ payment. Pinned by `scm/shared/soPaymentAmendRight.test.ts`,
 refuses) and `tests/soPaymentAmendRoutes.test.ts` (RED against the unfixed
 route file).
 
+**The reason, and the Corrections report (2026-09-10, docs/bugs/0785).** A
+correction made on the amend right owes a reason and is a Finance event; a
+same-day fix by whoever keyed the payment is neither (owner: 靠权限改的来决定).
+`paymentRowMutable` now says WHY a row may change — `via: 'draft' | 'same_day'
+| 'amend' | null` — and both payment routes act on `via === 'amend'`: refuse
+without a reason (`reason_required`), and audit the correction with
+`source = 'amend'`, the reason in `note`, and two extra field changes —
+`ledger: original → new` (what replaced what) and `ledgerReversal: null →
+contra` (the PATCH re-posts BEFORE it audits so the row can carry the numbers;
+`repostSoPaymentEdit` and `afterSoPaymentRemoved` hand all three back, and
+`reverseJournal`'s `reversed` result now names `originalJeNo`). The first
+version carried only the contra, as `ledger.from`, and the report printed
+"0099 reversed → 0100" — read as if 0099 were the entry reversed, when 0099 IS
+the reversal (owner: 不明白; docs/bugs/0786). The Ledger column now reads
+**"0047 → reversed by 0099 → 0100"**; the one legacy row is read as
+contra-only and never presents the contra as the original.
+
+**A bank charge deducted from a payout (2026-09-10, docs/bugs/0787).** Public
+Bank kept RM 324.00 of the 2026-06-06 settlement as a card-terminal application
+fee, so the advice said RM 3,024.18 for a day whose report nets RM 3,348.18 —
+and the Payment advice screen could only say "differs". The charge now lives on
+the ADVICE DAY row (`acc_settlement_payout_batches.charge_*`, migration
+`20260910T1200`): `statusOfPayout` treats a day as agreeing when **report net =
+advice net + charge** and carries the charge so the screen shows where it went.
+`acc/payout-charge.ts` books it — Dr the account **Finance picks** (owner:
+可以让我点了后选这笔进什么户口吗; any ACTIVE EXPENSE LEAF of this company, the
+merchant-fee account's four refusals now shared as `checkExpenseLeaf`,
+defaulting to the acquirer's fee account) / Cr the acquirer's transit, **dated
+the settlement day**, source `SETTLECHARGE` keyed on the day row; the amount
+defaults to the whole difference and may not exceed it; the note is required;
+a charged day refuses a second charge (undo first, through the engine).
+`loadBatchReceipts` reports what the bank deducted beside what it credited and
+`postBatchReceipt` counts both, so the short credit that follows a fee reads as
+fully received. Routes `POST`/`DELETE /settlement/payouts/:id/days/:settledOn/charge`;
+the list carries `chargeAccounts` (`expenseLeafAccounts`, shared with Setup)
+and `feeAccountByAcquirer`. On the tab, a day the bank paid LESS for offers
+**Bank deducted a charge**; a day it paid MORE for does not. Pinned by
+`acc/payout-charge.test.ts`, the charge cases in `acc/payout-advice.test.ts`,
+`acc/settlement-receipt-charge.test.ts`, `scm/routes/payoutChargeRoute.test.ts`
+and `PayoutAdviceTab.test.tsx`. No new table: `GET /accounting/payment-corrections?month=` is a
+filtered read of `mfg_so_audit_log` — `source = 'amend'`, the two payment
+actions, this company, this month — shaped by `acc/payment-corrections.ts`
+(newest first, the ledger pair pulled out, the summary added up). The Accounting
+page's **Corrections** tab shows month, a person filter, three cards (count,
+net effect on money received, deleted), the table with the reason and both JE
+numbers, and Print through `payment-corrections-pdf.ts` — built by
+`correctionsDocument`, the same pure-then-draw shape as the bank statement. The
+screens ask through `usePrompt` (an optional text input on the shared
+ConfirmDialog; a required input cannot be confirmed blank). A fake-client trap
+surfaced on the way: its `lt` compared numerically, so a timestamptz month
+window returned nothing against the fake — fixed to match `gte`/`lte`.
+
 **Phase 2B part 1 (2026-08-16): Daily Bank.** GET /accounting/daily-bank?date= answers the owner one question - today, where is the money and how much can actually move - live from the ledger (2.3: no caches): opening/in/out/closing per money account (scm.accounts.acc_money flag, migration 0299), settlement-in-transit balances per acquirer (visible, never counted movable), and — since phase 3 (2026-08-28, mig 0339) — pendingApprovalSen: every DRAFT payment voucher sitting in the approval queue, converted to MYR the way posting will, subtracted from available. Page /scm/daily-bank (Finance menu): date navigation + Get Image (canvas-drawn PNG to clipboard for WhatsApp, download fallback). Board arithmetic pinned in acc/daily-bank.test.ts. 946-0000 Cash Over/Short + OVER_SHORT role seeded for the coming daily cashup.
 
 **Phase 3 (2026-08-28): PV approval — money leaves only after a yes.** The full write-up lives in docs/modules/payment-voucher.md §0b (marker columns per the 0324 lesson, the pure rule table in scm/lib/pv-approval.ts, the post gate, the scm.payment_voucher.approve key, the audit verbs). What belongs to THIS module: the Daily Bank board's available figure now answers "closing minus what is already asked for", which is the question the owner's phase-3 placeholder was holding a seat for.

@@ -509,3 +509,38 @@ describe('applySoAmendment — the discount channel (mig 0317)', () => {
     expect(store.mfg_sales_order_items.find((r) => r.id !== 'L1')!.discount_sen).toBe(0);
   });
 });
+
+/* ── The NAME must track the CODE on a SPEC change ──────────────────────────
+   A SPEC that swaps item_code rewrote the code but left `description` (the
+   product name) and `description2` (the variant summary) stale, so a code-swap
+   amendment named the line by the OLD product on every name-first surface — the
+   amend editor's SoLineCard picker, the follow-up PO's material_name, and
+   anything reading description. The ADD branch already resolved the name from
+   the catalog (mfg_products.name); SPEC now does too. docs/bugs/0781. */
+describe('applySoAmendment — a SPEC re-syncs the line NAME to the new code\'s catalogue name', () => {
+  it('rewrites description from the swapped-to code\'s catalogue name', async () => {
+    const store = baseStore();
+    // The catalogue product the SPEC swaps TO — a different code, a different name.
+    store.mfg_products.push(product({ code: 'ACC-2', name: 'Nesting Table' }));
+    store.so_amendment_lines = [specLine({ new_item_code: 'ACC-2' })];
+
+    await apply(store);
+
+    const line = lineOf(store);
+    expect(line.item_code).toBe('ACC-2');
+    expect(line.description).toBe('Nesting Table');   // NOT the stale 'Side Table'
+  });
+
+  it('a QTY-only change leaves the name untouched (the write is scoped to SPEC)', async () => {
+    const store = baseStore();
+    store.so_amendment_lines = [specLine({
+      change_type: 'QTY', new_qty: 2, new_unit_price_sen: CATALOGUE_SEN,
+      old_snapshot: { item_code: 'ACC-1', itemGroup: 'accessory', qty: 1, unitPriceSen: CATALOGUE_SEN },
+    })];
+
+    await apply(store);
+
+    expect(lineOf(store).qty).toBe(2);
+    expect(lineOf(store).description).toBe('Side Table');
+  });
+});

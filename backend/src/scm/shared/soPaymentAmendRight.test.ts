@@ -37,7 +37,7 @@ const month: PaymentReconciledBy = { kind: 'month', accountCode: '310-0010', mon
 
 describe('the same-day window, unchanged', () => {
   it('still lets today be corrected by anyone', () => {
-    expect(paymentRowMutable(TODAY, TODAY, false)).toEqual({ mutable: true, problem: null });
+    expect(paymentRowMutable(TODAY, TODAY, false)).toEqual({ mutable: true, problem: null, via: 'same_day' });
   });
 
   it('still locks an older payment for somebody without the right', () => {
@@ -54,7 +54,7 @@ describe('the same-day window, unchanged', () => {
 describe("Finance's amend right", () => {
   it('opens an old payment for a holder of the right', () => {
     expect(paymentRowMutable(OLD, TODAY, false, { mayAmend: true }))
-      .toEqual({ mutable: true, problem: null });
+      .toEqual({ mutable: true, problem: null, via: 'amend' });
   });
 
   it('changes nothing for somebody who does not hold it', () => {
@@ -113,5 +113,30 @@ describe('a RECONCILED payment is closed to everyone', () => {
      is a decision on the record rather than an accident of line order. */
   it('leaves the DRAFT exemption alone, on purpose', () => {
     expect(paymentRowMutable(OLD, TODAY, true, { reconciled: merchant }).mutable).toBe(true);
+  });
+});
+
+/* WHY the door is open matters as much as that it is. A correction made on the
+   strength of the amend right owes a reason and lands on the Finance
+   corrections report; a same-day fix by whoever keyed it does not (owner
+   2026-09-10: 靠权限改的来决定). The predicate is the only thing that knows
+   which of the two it just allowed, so it has to say. */
+describe('the predicate says WHY a row may change', () => {
+  it('names the draft exemption', () => {
+    expect(paymentRowMutable(OLD, TODAY, true).via).toBe('draft');
+  });
+
+  it('names the same-day window', () => {
+    expect(paymentRowMutable(TODAY, TODAY, false).via).toBe('same_day');
+    expect(paymentRowMutable(TODAY, TODAY, false, { mayAmend: true }).via).toBe('same_day');
+  });
+
+  it('names the amend right, and only when it was what opened the door', () => {
+    expect(paymentRowMutable(OLD, TODAY, false, { mayAmend: true }).via).toBe('amend');
+  });
+
+  it('names nothing when the row may not change', () => {
+    expect(paymentRowMutable(OLD, TODAY, false).via).toBeNull();
+    expect(paymentRowMutable(OLD, TODAY, false, { mayAmend: true, reconciled: merchant }).via).toBeNull();
   });
 });

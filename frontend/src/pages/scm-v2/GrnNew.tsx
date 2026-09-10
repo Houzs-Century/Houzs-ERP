@@ -484,6 +484,14 @@ export const GrnNew = () => {
     : null;
   // Header PO id: picks → first pick's PO; single-PO → that PO; manual → null.
   const headerPoId = hasPicks ? pickPoId : (po?.id ?? null);
+  /* Owner 2026-09-10 — the free "Add another item" affordance is no longer
+     manual-only. A from-PO-picks / single-PO GRN can also receive an EXTRA item
+     the PO never ordered (a supplier freebie, a sample) in the SAME create step,
+     instead of saving first and adding it on the detail page. The server's
+     unlinked-PO guard still refuses a hand-added line whose material IS on the
+     header PO. Gated on a resolved supplier so the binding-aware picker has one;
+     manual mode keeps showing it even before a supplier is chosen. */
+  const canAddManualLine = isManual || !!supplierId;
   /* Multi-currency (Phase 1-A) — a PO-linked GRN inherits (and the server
      re-derives) the source PO's currency, so the picker is LOCKED to it; a
      manual / from-picks GRN lets the operator choose (defaults MYR = no-op). */
@@ -569,14 +577,19 @@ export const GrnNew = () => {
   const debouncedProductQuery = useDebouncedValue(productQuery, 250);
   const productsQ = useMfgProducts({
     search: debouncedProductQuery,
-    enabled: isManual && debouncedProductQuery.trim().length >= 2,
+    // The catalogue search fires only when someone types >=2 chars, which only
+    // happens in a MANUAL line's item-code picker — so it stays dormant in a
+    // pure PO receipt without gating on isManual (which used to suppress it for
+    // a manual line added beside PO picks).
+    enabled: debouncedProductQuery.trim().length >= 2,
   });
 
   // Commander 2026-05-29 — supplier-bound picks carry no category on the
   // binding row, so (mirroring New PO's `allSkus`/`categoryForCode`) we pull
-  // the full catalogue to resolve a bound SKU's itemGroup. Gated to manual +
-  // supplier so a PO-sourced / no-supplier GRN never fires the lookup.
-  const allSkusQ = useMfgProducts({ enabled: isManual && !!supplierId });
+  // the full catalogue to resolve a bound SKU's itemGroup. Fires only when a
+  // supplier is set AND a manual line actually exists (in any mode), so a
+  // PO-sourced receipt with no hand-added line never pays for the lookup.
+  const allSkusQ = useMfgProducts({ enabled: !!supplierId && lines.some((l) => l.purchaseOrderItemId === null) });
   const categoryForCode = (code: string): string | undefined => {
     const sku = (allSkusQ.data ?? []).find((p) => p.code === code);
     return sku?.category ? sku.category.toLowerCase() : undefined;
@@ -1365,8 +1378,10 @@ export const GrnNew = () => {
             })
           )}
 
-          {/* "Add another item" — manual mode (mirrors New PO, always shown). */}
-          {isManual && (
+          {/* "Add another item" — a hand-added extra line. Shown in every mode
+              now (owner 2026-09-10): manual, from-PO-picks, and single-PO, so an
+              item the PO never ordered can be received in the same create step. */}
+          {canAddManualLine && (
             <button
               type="button"
               onClick={addEmptyManualLine}
