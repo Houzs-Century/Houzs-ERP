@@ -60,6 +60,19 @@ async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/**
+ * Where a company books an acquirer's merchant fee when nobody has said
+ * otherwise. Matches the column DEFAULT set by migration 20260910T0147; the two
+ * must move together, which is why the code is written once here rather than
+ * spelled into each call site.
+ *
+ * Owner's choice, 2026-09-09: 900-T009 TERMINAL INTEREST CHARGES. It replaced
+ * 930-0000, which his AutoCount chart carries as a DEACTIVATED placeholder
+ * called MISCELLANEOUS EXPENSES XXX — every settlement confirm in both
+ * companies refused with "account 930-0000 is deactivated" until this moved.
+ */
+const MERCHANT_FEE_ACCOUNT = '900-T009';
+
 type StoredRow = {
   id: number; line_no: number; txn_date: string; ref: string | null;
   gross_sen: number; fee_sen: number; net_sen: number;
@@ -145,7 +158,11 @@ export const settlementSetupSave = guard(async (c) => {
   const link: Record<string, unknown> = {};
   if (body.bankAccountCode !== undefined) link.bank_account_code = body.bankAccountCode || null;
   if (body.transitAccountCode !== undefined) link.transit_account_code = String(body.transitAccountCode || '326-0000');
-  if (body.feeAccountCode !== undefined) link.fee_account_code = String(body.feeAccountCode || '930-0000');
+  /* MERCHANT_FEE_ACCOUNT, not a literal repeated twice. 930-0000 was the seed
+     default until 2026-09-09, when the owner's AutoCount chart turned out to
+     have deactivated it — every settlement confirm refused with 'account
+     930-0000 is deactivated' (migration 20260910T0147). */
+  if (body.feeAccountCode !== undefined) link.fee_account_code = String(body.feeAccountCode || MERCHANT_FEE_ACCOUNT);
   if (body.isActive !== undefined) link.is_active = Boolean(body.isActive);
   if (Object.keys(link).length > 0) {
     link.updated_at = new Date().toISOString();
@@ -356,7 +373,7 @@ export const settlementMaintenanceMerchant = guard(async (c) => {
       company_id: companyId,
       acquirer_code: code,
       transit_account_code: (patch.transit_account_code as string | undefined) ?? '326-0000',
-      fee_account_code: '930-0000',
+      fee_account_code: MERCHANT_FEE_ACCOUNT,
       bank_account_code: body.bankAccountCode || null,
       is_active: body.enabled === undefined ? true : Boolean(body.enabled),
     });
