@@ -163,7 +163,17 @@ export const SpecialOrders = ({
   /* Codes retired/renamed in Special Add-ons (or pre-takeover legacy strings)
      still show as removable rows — invisible-but-stuck picks were how the old
      editor leaked RM 0 specials onto orders. */
-  const retired = picked.filter((c) => !options.some((o) => o.code === c));
+  /* A CATALOGUE WE DO NOT HAVE CANNOT CALL ANYTHING RETIRED. `retired` means
+     "this code is gone from Special Add-ons, untick it" — a claim only an
+     options list can support. The cost documents (PO / GRN / PI / PR /
+     adjustment) render this block for categories they carry no pool for, so
+     with `options` empty EVERY carried pick would have been labelled dead and
+     offered for removal, which is the opposite of the truth: those picks came
+     from the sales order and are what the factory is building.
+     With no pool the picks still SHOW — read-only, under their own caption —
+     because hiding them would be worse than mislabelling them. */
+  const retired = options.length > 0 ? picked.filter((c) => !options.some((o) => o.code === c)) : [];
+  const carriedWithoutPool = options.length === 0 ? picked : [];
   const selectedCount = picked.length + recorded.length + (hasCustom ? 1 : 0);
 
   return (
@@ -230,6 +240,15 @@ export const SpecialOrders = ({
                 <div className={styles.specialsSurcharge}>
                   from AutoCount — already in this document's price, not charged again
                 </div>
+              </div>
+            </label>
+          ))}
+          {carriedWithoutPool.map((code) => (
+            <label key={`carried-${code}`} className={styles.specialsItem}>
+              <input type="checkbox" className={styles.specialsCheckbox} checked disabled readOnly />
+              <div>
+                <div className={styles.specialsLabel}>{labelFor(code)}</div>
+                <div className={styles.specialsSurcharge}>from the Sales Order</div>
               </div>
             </label>
           ))}
