@@ -56,6 +56,7 @@ import { activeCompanyId, isMirroredDocNo, houzsOwns2990 } from './companyScope'
 import { todayMyt } from './my-time';
 import { dateOrNull } from './date-coerce';
 import { soWarehouseIdForDoc } from './so-warehouse';
+import { inPoLineOrder, nextPoLineNo, sortBySourceSoLine } from './po-line-order';
 import { soIsMigratedShape } from './so-is-migrated';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
 import { soAmendableHeaderFields } from '../shared/so-field-policy';
@@ -984,11 +985,13 @@ export async function snapshotPo(
       ? (header as { revision: number }).revision
       : 1;
 
-  const { data: lines, error: lErr } = await sb
+  /* The document's own order (owner 2026-09-10), not created_at alone: a
+     snapshot is diffed against the next one, and `created_at` is not a total
+     order — every line of a converted sofa shares it (lib/po-line-order.ts). */
+  const { data: lines, error: lErr } = await inPoLineOrder(sb
     .from('purchase_order_items')
     .select('*')
-    .eq('purchase_order_id', poId)
-    .order('created_at', { ascending: true, nullsFirst: true });
+    .eq('purchase_order_id', poId));
   if (lErr) throw new Error(`snapshotPo: lines load failed: ${lErr.message}`);
 
   const snapshot = {
@@ -1245,7 +1248,6 @@ export async function reviseBoundPo(
      silently deferred to that PO's own confirm rather than mis-warned here. */
   const scopedPos = opts?.onlyPoId ? livePos.filter((p) => p.id === opts.onlyPoId) : livePos;
   if (scopedPos.length === 0) return noop();
-  const scopeCoversAll = scopedPos.length === livePos.length;
   const livePoIds = new Set(scopedPos.map((p) => p.id));
 
   // (8) Re-read the NOW-REVISED SO lines keyed by id (the derivation source).
@@ -1337,17 +1339,26 @@ export async function reviseBoundPo(
       const label = (line.description || itemCode || 'a new item').trim();
       const binding = itemCode ? mainBindingByCode.get(itemCode) : undefined;
       if (!binding) {
-        /* Scoped confirm: this warning belongs to whichever confirm can act on
-           it. Emit it only when the scope covers every bound PO, so a partial
-           confirm doesn't false-alarm about a sibling PO's item. */
-        if (scopeCoversAll) warnings.push(`A newly added item (${label}) has no supplier set, so it could not be added to a purchase order. Set its main supplier, then raise a purchase order for it.`);
+        /* No supplier bound at all — this line can reach NO purchase order, so it
+           warns regardless of how many bound POs the recompute scoped. The
+           sibling-PO case (a line whose supplier owns a PO this confirm did not
+           touch) is handled by the out-of-scope `continue` below, never here — so
+           this point is only ever a real gap. It used to be gated on "the scope
+           covers every bound PO", which is never true on a sales order with 2+
+           live POs (the PO-Amendments confirm is always scoped to one), so the
+           buyer was told nothing about an item that would have no order on
+           delivery day. */
+        warnings.push(`A newly added item (${label}) has no supplier set, so it could not be added to a purchase order. Set its main supplier, then raise a purchase order for it.`);
         continue;
       }
+      // Supplier match is resolved against the FULL bound set (livePos), so an
+      // empty `forSupplier` means no open PO on this SO carries this supplier —
+      // a genuine gap, not a scoping artefact — and warns regardless of scope.
       const forSupplier = livePos.filter((p) => p.supplier_id === binding.supplierId);
       const target = forSupplier.find((p) => p.purchase_location_id && p.purchase_location_id === line.warehouse_id)
         ?? forSupplier[0];
       if (!target) {
-        if (scopeCoversAll) warnings.push(`A newly added item (${label}) is from a supplier that has no open purchase order on this sales order, so a purchase order still needs to be raised for it.`);
+        warnings.push(`A newly added item (${label}) is from a supplier that has no open purchase order on this sales order, so a purchase order still needs to be raised for it.`);
         continue;
       }
       // Out-of-scope target = a sibling PO's line; its own confirm inserts it.
@@ -1460,7 +1471,19 @@ export async function reviseBoundPo(
        line that already carries a PO line was excluded from addedNeedingPo, so a
        re-run inserts nothing. company_id follows the PO's own company (authoritative
        in a cross-company approve), not the request's active company. */
-    for (const add of addedByPo.get(po.id) ?? []) {
+    /* Owner 2026-09-10 — added lines go at the END of the purchase order, in
+       the order the SALES ORDER holds them (lib/po-line-order.ts). Read once
+       per PO and incremented locally: the rows are inserted one at a time, so
+       re-reading the max between them would cost a round trip per line. */
+    const addsForPo = sortBySourceSoLine(
+      (addedByPo.get(po.id) ?? []).map((a) => ({
+        add: a,
+        soDocNo: (a.line as { doc_no?: string | null }).doc_no ?? null,
+        soLineNo: (a.line as { line_no?: number | null }).line_no ?? null,
+      })),
+    );
+    let nextLineNo = await nextPoLineNo(sb, po.id);
+    for (const { add } of addsForPo) {
       const line = add.line;
       const qty = line.qty != null ? Math.max(1, line.qty) : 1;
       const itemGroup = line.item_group;
@@ -1474,6 +1497,7 @@ export async function reviseBoundPo(
       const { error: insErr } = await sb.from('purchase_order_items').insert({
         ...(po.company_id != null ? { company_id: po.company_id } : {}),
         purchase_order_id: po.id,
+        line_no:           nextLineNo,
         material_kind:     'mfg_product',
         item_code:     line.item_code ?? '',
         material_name:     line.description ?? line.item_code ?? '',
@@ -1492,6 +1516,7 @@ export async function reviseBoundPo(
         from_mrp:          false,
       });
       if (insErr) throw new Error(`reviseBoundPo: added PO line insert failed for SO line ${add.soItemId}: ${insErr.message}`);
+      nextLineNo += 1;
       linesAdded += 1;
     }
 

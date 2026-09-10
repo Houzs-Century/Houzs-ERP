@@ -211,6 +211,49 @@ export function groupSoLinesForDisplay<T extends RawSoDisplayLine>(
   return out;
 }
 
+// ──────────────── DOCUMENT LINE ORDER (owner 2026-09-10) ────────────────────
+// 「我们的 Sales Order 都是从 L 到 R（L 在第一，R 在最后）」, and
+// 「照片是根据 line item 的顺序来的」 — a printed document's line order is the
+// STORED one, and the photo block follows it.
+//
+// `scm.purchase_order_items.line_no` (mig 20260910T0547) is that stored order.
+// It is applied here as well as in SQL because the PDF generators are handed
+// `items` by whichever page fetched them, and a caller that fetched without an
+// ORDER BY must not be able to print a scrambled document.
+//
+// NULLS FIRST: a line whose document predates the column has no line_no, and a
+// line appended to such a document starts at 1 — so the un-numbered lines are
+// the OLDER ones and belong in front. STABLE, so lines that share a value (all
+// NULL, on an untouched historical document) keep the order they arrived in.
+
+/** The stored position, or null for a line that has none.
+ *
+ *  Read off the row rather than declared as a constraint: the backend hands
+ *  this rows typed `Record<string, unknown>` (PostgREST without generated
+ *  types) and the frontend hands it a named `PoItem`, and no single interface
+ *  accepts both — a `{ line_no?: ... }` constraint is a WEAK TYPE, which the
+ *  compiler refuses against an index-signature row as "no properties in
+ *  common". Same shape as `readCellIndex` above, and the guard is the contract:
+ *  anything that is not a finite number is no position at all. */
+const readLineNo = (line: unknown): number | null => {
+  const v = (line as { line_no?: unknown } | null | undefined)?.line_no;
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+};
+
+/** Sort by the stored document line order. Stable; NULLs first. */
+export const sortLinesByStoredLineNo = <T>(lines: readonly T[]): T[] =>
+  lines
+    .map((l, i) => ({ l, i }))
+    .sort((a, b) => {
+      const x = readLineNo(a.l);
+      const y = readLineNo(b.l);
+      if (x === null && y === null) return a.i - b.i;
+      if (x === null) return -1;
+      if (y === null) return 1;
+      return (x - y) || (a.i - b.i);
+    })
+    .map((e) => e.l);
+
 // ───────────────────── SO line ORDER rules (Loo 2026-06-12) ─────────────────
 // Priority lines: the MAINS — sofa, mattress, bedframe — lead every SO line
 // listing; accessories follow; SERVICE rows close the document. Within a rank

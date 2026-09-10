@@ -34,7 +34,7 @@ import { parseStatement, type StatementColumnMap } from '../../acc/settlement-pa
 import { matchStatement, recordedNotArrived, listOnce, UNTAGGED_LIST, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
 import {
   loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow, postStatementCharge,
-  postBatchReceipt, loadBatchReceipts, undoBatchReceipt, unconfirmSettlementRow, clearOrphanBatch,
+  postBatchReceipt, loadBatchReceipts, undoBatchReceipt, unconfirmSettlementRow, clearOrphanBatch, findPaymentsForRow,
 } from '../../acc/settlement';
 import { resolveRoles } from '../../acc/rules';
 import { loadLineMonth, loadLiveMonthLock } from '../../acc/bank';
@@ -939,7 +939,7 @@ export const settlementConfirmRow = guard(async (c) => {
   });
   if (!r.ok) {
     const status = r.status === 'not_found' ? 404
-      : ['amount_mismatch', 'no_payments', 'ignored', 'payment_already_settled'].includes(r.status) ? 409
+      : ['amount_mismatch', 'no_payments', 'ignored', 'payment_already_settled', 'payment_not_found', 'not_card_payment'].includes(r.status) ? 409
       : 500;
     return c.json({ error: r.status, message: r.reason }, status);
   }
@@ -1190,6 +1190,21 @@ export const settlementRowUnconfirm = guard(async (c) => {
 /* POST /rows/:id/ignore — set a line aside (or put it back). A confirmed line
    cannot be ignored: it is in the ledger, and the way out of the ledger is a
    journal, not a checkbox. */
+/* GET /rows/:id/find?q= — "Find the sale": the company's card payments the
+   window could not offer, searched by document / customer / approval / amount,
+   the exact gross ranked first (docs/bugs/0792). Reads only; confirming is the
+   same POST /rows/:id/confirm, which reads the chosen payments back. */
+export const settlementFindPayments = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const rowId = Number(c.req.param('id'));
+  if (!Number.isInteger(rowId)) return c.json({ error: 'bad_id' }, 400);
+  const q = String(c.req.query('q') ?? '').slice(0, 80);
+  const r = await findPaymentsForRow(c.get('supabase'), co.companyId, rowId, q);
+  if (!r.ok) return c.json({ error: r.status, message: r.reason }, r.status === 'not_found' ? 404 : 500);
+  return c.json({ q, payments: r.payments });
+});
+
 export const settlementIgnoreRow = guard(async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -1265,10 +1280,33 @@ export const settlementWatchlist = guard(async (c) => {
   if (sErr) return c.json({ error: 'load_failed', reason: sErr.message }, 500);
   const stranded = ((strandedRaw ?? []) as Array<Record<string, any>>).filter((r) => !only || r.acquirer_code === only);
 
+  /* WHO SOLD IT (owner 2026-09-10: 我想要看到 salesman 的名字) — the order's
+     salesperson, read off the order and then off the staff table in two plain
+     reads; a name that cannot be read is blank, never somebody else's. */
+  const salespersonOf = new Map<string, string>();
+  {
+    const docs = [...new Set(recorded.filter((p) => p.source === 'SOPAY').map((p) => p.docNo).filter(Boolean))];
+    const staffIdOf = new Map<string, string>();
+    for (let i = 0; i < docs.length; i += 200) {
+      const { data, error } = await sb.from('mfg_sales_orders').select('doc_no, salesperson_id').eq('company_id', co.companyId).in('doc_no', docs.slice(i, i + 200));
+      if (error) return c.json({ error: 'load_failed', reason: `salesperson: ${error.message}` }, 500);
+      for (const r of data as Array<{ doc_no: string; salesperson_id: string | null }>) if (r.salesperson_id) staffIdOf.set(r.doc_no, String(r.salesperson_id));
+    }
+    const staffIds = [...new Set(staffIdOf.values())];
+    const nameOf = new Map<string, string>();
+    for (let i = 0; i < staffIds.length; i += 200) {
+      const { data, error } = await sb.from('staff').select('id, name').in('id', staffIds.slice(i, i + 200));
+      if (error) return c.json({ error: 'load_failed', reason: `staff: ${error.message}` }, 500);
+      for (const r of data as Array<{ id: string; name: string | null }>) if (r.name) nameOf.set(String(r.id), r.name);
+    }
+    for (const [doc, sid] of staffIdOf) { const n = nameOf.get(sid); if (n) salespersonOf.set(doc, n); }
+  }
   return c.json({
     from,
     to,
-    recordedNotArrived: recorded.sort((a, b) => b.ageDays - a.ageDays),
+    recordedNotArrived: recorded
+      .sort((a, b) => b.ageDays - a.ageDays)
+      .map((p) => ({ ...p, salespersonName: p.source === 'SOPAY' ? (salespersonOf.get(p.docNo) ?? null) : null })),
     arrivedNotRecorded: stranded,
     clean: recorded.length === 0 && stranded.length === 0,
   });

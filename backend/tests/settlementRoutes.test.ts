@@ -17,7 +17,7 @@ import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import {
   settlementSetup, settlementUpload, settlementBatches, settlementBatchDetail,
-  settlementConfirmRow, settlementConfirmMatched, settlementIgnoreRow, settlementWatchlist,
+  settlementConfirmRow, settlementConfirmMatched, settlementIgnoreRow, settlementWatchlist, settlementFindPayments,
   settlementBatchReceived, settlementInTransit, settlementRowUnconfirm,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
 } from '../src/scm/routes/accounting-settlement';
@@ -90,6 +90,7 @@ function harness(tables: Record<string, Row[]>, perms: readonly string[] = [GL_P
   app.post('/settlement/rows/:id/ignore', settlementIgnoreRow as never);
   app.post('/settlement/batches/:id/received', settlementBatchReceived as never);
   app.get('/settlement/watchlist', settlementWatchlist as never);
+  app.get('/settlement/rows/:id/find', settlementFindPayments as never);
   app.get('/settlement/in-transit', settlementInTransit as never);
   app.get('/settlement/maintenance', settlementMaintenance as never);
   app.patch('/settlement/maintenance/merchant', settlementMaintenanceMerchant as never);
@@ -362,17 +363,61 @@ describe('confirming is the moment of posting', () => {
     expect(adjLines.find((l) => l.account_code === '326-0000')).toMatchObject({ credit_sen: 25416 });
   });
 
+  /* The RM 1,000.00 payment against the RM 777.00 line — and the screen's own
+     figure is not what is compared: the payment's amount in the books is
+     (docs/bugs/0792), so a browser claiming 777.00 changes nothing. */
   test('confirming a line whose selection does not add up is refused with the difference', async () => {
     const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
     await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
     const unmatched = sb.tables.acc_settlement_rows.find((r) => r.bucket === 'UNMATCHED')!;
 
     const res = await post(app, `/settlement/rows/${unmatched.id}/confirm`, {
-      payments: [{ source: 'SOPAY', id: 'px', docNo: 'SO-9', amountSen: 1000 }],
+      payments: [{ source: 'SOPAY', id: 'p1', docNo: 'SO-2608-001', amountSen: 77700 }],
     });
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ error: 'amount_mismatch' });
     expect(sb.tables.journal_entries).toHaveLength(0);
+  });
+
+  /* docs/bugs/0792 — "Find the sale" lets a person pick ANY card payment, so
+     the confirm reads each one back: not in this company's books, or not a
+     card payment, is a refusal the operator can read, not a 500. */
+  test('a payment the books do not hold, or a cash one, is refused by name', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment(), soPayment({ id: 'cash1', so_doc_no: 'SO-2608-002', method: 'cash', merchant_provider: null, amount_sen: 77700 })] });
+    await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
+    const unmatched = sb.tables.acc_settlement_rows.find((r) => r.bucket === 'UNMATCHED')!;
+
+    const ghost = await post(app, `/settlement/rows/${unmatched.id}/confirm`, {
+      payments: [{ source: 'SOPAY', id: 'px', docNo: 'SO-9', amountSen: 77700 }],
+    });
+    expect(ghost.status).toBe(409);
+    expect(await ghost.json()).toMatchObject({ error: 'payment_not_found' });
+
+    const cash = await post(app, `/settlement/rows/${unmatched.id}/confirm`, {
+      payments: [{ source: 'SOPAY', id: 'cash1', docNo: 'SO-2608-002', amountSen: 77700 }],
+    });
+    expect(cash.status).toBe(409);
+    expect(await cash.json()).toMatchObject({ error: 'not_card_payment' });
+    expect(sb.tables.journal_entries).toHaveLength(0);
+  });
+
+  test('GET rows/:id/find lists the company card payments by document, the exact gross marked possible', async () => {
+    const { app, sb } = harness({
+      mfg_sales_order_payments: [
+        soPayment({ id: 'late', so_doc_no: 'SO-2608-077', paid_at: '2026-08-20T10:00:00', amount_sen: 77700, approval_code: null, merchant_provider: null }),
+        soPayment(),
+      ],
+      mfg_sales_orders: [{ doc_no: 'SO-2608-077', company_id: CO, debtor_name: 'Chou Mun Yee' }, { doc_no: 'SO-2608-001', company_id: CO, debtor_name: 'Someone Else' }],
+      sales_invoices: [],
+    });
+    await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
+    const unmatched = sb.tables.acc_settlement_rows.find((r) => r.bucket === 'UNMATCHED')!;
+
+    const res = await app.request(`/settlement/rows/${unmatched.id}/find?q=chou`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { payments: Array<{ id: string; possible: boolean; customerName: string | null }> };
+    expect(body.payments).toEqual([expect.objectContaining({ id: 'late', possible: true, customerName: 'Chou Mun Yee' })]);
+    expect((await app.request('/settlement/rows/999999/find')).status).toBe(404);
   });
 
   test('a line with no payment behind it cannot be cleared out of in-transit', async () => {
@@ -567,7 +612,7 @@ describe('taking a confirmed line back — the door the ignore refusal points at
        time — the once-only unique would refuse this if the link survived. */
     const again = await post(app, `/settlement/rows/${confirmed.id}/confirm`, {
       matchReason: 'manual',
-      payments: [{ source: 'SOPAY', id: 'm1', docNo: 'SO-2608-001', amountSen: 100000 }],
+      payments: [{ source: 'SOPAY', id: 'p1', docNo: 'SO-2608-001', amountSen: 100000 }],
     });
     expect(again.status).toBe(200);
     expect(sb.tables.acc_settlement_rows.find((r) => r.id === confirmed.id)!.confirmed_at).toBeTruthy();
