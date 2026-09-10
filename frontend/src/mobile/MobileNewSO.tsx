@@ -61,6 +61,7 @@ import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
+import { MobileSavedPhotoThumb, StagedPhotoThumb } from "./MobileSavedPhotoThumb";
 import { zeroPriceClaim } from "../vendor/scm/lib/zeroPriceClaim";
 import { invalidateSoShared } from "./sharedInvalidate";
 import { mobileLineAddHeaders } from "./mobile-so-line-save";
@@ -2540,6 +2541,7 @@ export function MobileNewSO({
                           onOpenSpecialPicker={() => setSpecialPickerFor(l.key)}
                           showPrices={showSpecialPrices}
                           canEditPrice={canEditPrice}
+                          soDocNo={docNo}
                           onChange={(patch) => patchLine(l.key, patch)}
                           onDdateChange={(v) => setLineDdateManual(l.key, v)}
                           onRemove={async () => {
@@ -2913,6 +2915,7 @@ function LineCard({
   onOpenSpecialPicker,
   showPrices,
   canEditPrice,
+  soDocNo,
   onChange,
   onDdateChange,
   onRemove,
@@ -2932,6 +2935,10 @@ function LineCard({
   /* Unit-price lock (SO-SKU spec D4) — false for everyone below admin, so the
      price follows the SKU Master sell price and cannot be hand-typed. */
   canEditPrice: boolean;
+  /* The SO's doc_no when this card renders for a saved order (edit mode).
+     Undefined on the New SO path. Used by the saved-photo thumbnail to fetch
+     a signed URL and to route photo delete to the right document. */
+  soDocNo?: string;
   onChange: (patch: Partial<LineItem>) => void;
   /* FIX D1(b) — a manual Item Delivery Date edit routes through here so the
      parent can flag the line as an override the header cascade won't touch. */
@@ -3215,13 +3222,19 @@ function LineCard({
           </button>
         </div>
 
-        {/* Photo thumbnails — already-saved (edit prefill) + staged (this session) */}
+        {/* Photo thumbnails — saved (edit prefill) + staged (this session).
+            Was a text-only "SAVED" placeholder with no image and no delete;
+            HC-SO-007678 mobile edit 2026-09-11. See docs/bugs/. */}
         {(line.photoKeys.length > 0 || line.photoFiles.length > 0) && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 1 }}>
-            {line.photoKeys.map((k) => (
-              <div key={k} style={photoTile}>
-                <div style={{ ...photoTileInner, background: "#e1efed", color: "#16695f", fontSize: 8, fontWeight: 700, letterSpacing: ".04em" }}>SAVED</div>
-              </div>
+            {soDocNo && line.itemId && line.photoKeys.map((k) => (
+              <MobileSavedPhotoThumb
+                key={k}
+                docNo={soDocNo}
+                itemId={line.itemId}
+                photoKey={k}
+                onDeleted={() => onChange({ photoKeys: line.photoKeys.filter((x) => x !== k) })}
+              />
             ))}
             {line.photoFiles.map((f, i) => (
               <StagedPhotoThumb key={`${f.name}-${i}`} file={f} onRemove={() => removeStagedPhoto(i)} />
@@ -3233,34 +3246,8 @@ function LineCard({
   );
 }
 
-/* Read-only tile style for a persisted (edit) photo — the full thumbnail lives
-   on the SO detail screen; here we show a compact marker so the operator knows
-   photos exist without a signed-URL round-trip. */
-const photoTile: React.CSSProperties = {
-  width: 52, height: 52, flex: "none", borderRadius: 9, overflow: "hidden",
-  border: "1px solid #d6d9d2", position: "relative",
-};
-const photoTileInner: React.CSSProperties = {
-  width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center",
-};
-
-/* Staged (this-session) photo — object-URL preview + a delete X. Revokes the
-   URL on unmount / file change (mirrors the desktop pendingPreviews). */
-function StagedPhotoThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
-  const url = useMemo(() => URL.createObjectURL(file), [file]);
-  useEffect(() => () => URL.revokeObjectURL(url), [url]);
-  return (
-    <div style={photoTile}>
-      <img src={url} alt={file.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-      <button
-        type="button"
-        onClick={onRemove}
-        title="Remove (not uploaded yet)"
-        style={{ position: "absolute", top: 2, right: 2, width: 16, height: 16, borderRadius: 999, border: "none", background: "rgba(17,20,15,.7)", color: "#fff", fontSize: 10, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-      >{"✕"}</button>
-    </div>
-  );
-}
+/* Tile chrome + StagedPhotoThumb + MobileSavedPhotoThumb moved to
+   ./MobileSavedPhotoThumb — see that file for the shared style constants. */
 
 /* FabricField — a tappable read-only row that opens the searchable FabricPicker
    modal (native <select> with 700+ options is unusable per owner). Shows the
