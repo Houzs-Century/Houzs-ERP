@@ -844,6 +844,12 @@ export function DeliveryOrderNewV2() {
         category: l.itemGroup ?? "",
         variants: (l.variants ?? {}) as Record<string, unknown>,
       })),
+      /* NULL = every category, i.e. UNCHANGED. A Delivery Order only ever
+         SEEDS (the header above says it never follows afterwards, and whether
+         it should is an owner decision). The 2026-09-09 sofa-only ruling was
+         about Sales Orders; applying it here would be a second quiet decision
+         on a document nobody asked about. Required parameter, visible answer. */
+      null,
     ),
     [lines]
   );

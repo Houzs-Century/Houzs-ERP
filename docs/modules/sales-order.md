@@ -1088,6 +1088,29 @@ COLOUR sync in `updateLine` / the mobile FabricPicker, which is scoped to one
 physical sofa (`variants.buildKey`), not to a category. It no longer gates the
 master cascade.
 
+> **SOFA ONLY — owner ruling 2026-09-09.** 「主行改一次，全部跟着改 … 这个只限于
+> sofa item」. `CASCADE_CATEGORIES` in the shared module is `{'sofa'}`, and BOTH
+> Sales Order surfaces import it: mobile used to declare `["sofa","bedframe"]`
+> and desktop passed `null` (EVERY category, a mattress line's specials
+> included), so one rule had two answers.
+>
+> **Why it had to narrow.** Rule 1 above FORCES the master's latest change over
+> a hand-typed follower, and `NEVER_INHERITED_KEYS` is only `remark` + `buildKey`
+> — so SPECIALS travel too. A rep removed a drawer from beds 2 and 3, touched
+> bed 1 again, and it came back: 「remove 三次才没有」 (HC-SO-012312,
+> `docs/bugs/0754-*`). A sofa is one physical thing assembled from several lines;
+> three bedframes are three beds.
+>
+> **The SEED is gated by the same set.** `seedableMasterVariants` takes the
+> category set as a REQUIRED parameter — without gating the seed, a new bedframe
+> line still arrives pre-filled and only stops being RE-forced afterwards, which
+> fixes the second removal and not the first.
+>
+> **Consignment Orders and Delivery Orders were NOT narrowed.** Both call sites
+> pass an explicit `null`. The compiler found them when the parameter became
+> required; the ruling was given about Sales Orders, and extending it to a
+> document the owner was not asked about is his call, not the implementer's.
+
 **Never inherited:** `remark` (per line) and `buildKey` (the build IDENTITY of
 one physical sofa — copying it forges a compartment, which reaches the free-gift
 trigger and the PDF module grouping;
@@ -4027,6 +4050,17 @@ Two surfaces render it, and they are the whole point of writing it at all:
 | `scm/shared/variant-summary.ts` (+ the byte-identical frontend copy) | folds the recorded codes into the same `SPECIAL:` segment of Description 2, after the picked ones, skipping any the operator has since picked properly — so it reaches every print, the PO/DO/SI copies and the Detail Listing |
 | `vendor/scm/components/SpecialOrders.tsx` | one ticked, DISABLED row per recorded code, subtitled "from AutoCount — already in this document's price, not charged again", and it counts toward `(N selected)` |
 
+**A read-only DIAGNOSTIC joined the allow-list on 2026-09-09.**
+`backend/scripts/check-so-line-pricing.mjs` answers "where did this one order's
+money come from, line by line?" — written for HC-SO-012312, where three
+bedframes were split and RM 250 appeared on a line whose two neighbours are FOC.
+It reads the key because **which half an option sits in is the question**: an
+option in `specials` may carry a surcharge, one in `specialsRecorded` must not,
+so a probe blind to the difference cannot say which case the operator is looking
+at. It renders and never prices — the key reaches one string in a printed
+column, the script's only arithmetic is lines vs header total from `total_sen`,
+and it is SELECT-only, so it cannot move money even by accident.
+
 **A THIRD kind of reader was added on 2026-09-07: the REPORTS.** The AutoCount
 reconcile did not know this key existed, so every line closed by this very ruling
 kept reporting as an outstanding `DIFFER` — the owner's applied decision quoted
@@ -4406,6 +4440,34 @@ fall behind.
 Best-effort throughout, exactly like the AutoCount enqueue and the GL posting
 beside them — a failure never fails the operator's save, and the next roll
 self-heals.
+
+#### Editing a payment now reaches the GENERAL LEDGER too (2026-09-10, docs/bugs/0778)
+
+The table above is about the invoices. The BOOKS were a separate gap, and only
+the DELETE row ever closed it: `PATCH /:docNo/payments/:id` wrote the row,
+re-rolled the invoices, queued the AutoCount edit and stopped, so a corrected
+payment left its journal entry saying the old figure — silently. It now calls
+`repostSoPaymentBestEffort` (`scm/lib/so-payment-row.ts`), which reverses the
+old entry and books a fresh one. Same best-effort contract as everything else
+on this path, with one difference: a refusal is logged rather than swallowed,
+because it leaves the payment with no active entry.
+
+Two rules live in `backend/src/acc/payment-repost.ts`, not here. **Only four
+columns move the books** — `amount_sen`, `paid_at`, `method`,
+`merchant_provider` — so an approval-code or account-sheet fix re-posts
+nothing. And the correcting **contra is dated on the ORIGINAL entry's date**,
+so the wrong entry and its reversal net to zero in the month they were made;
+**DELETE keeps dating its contra TODAY**, because removing a payment is an
+event that happens today, and the two must not be merged.
+
+The UPDATE_PAYMENT audit's nine-column from → to comparison moved out of this
+route in the same change (`soPaymentFieldChanges`, beside
+`recordSoPaymentRow`): the audit records nine columns, the ledger reads four,
+and they are deliberately different questions. This route file is over its size
+ceiling and may only shrink, which is why the lift rode along.
+
+Still NOT here: who may edit an old payment. `paymentRowMutable` remains purely
+time-based — see `scm/shared/so-field-policy.ts`.
 
 ### The BALANCE a human is shown — which total it subtracts from (2026-09-08)
 
