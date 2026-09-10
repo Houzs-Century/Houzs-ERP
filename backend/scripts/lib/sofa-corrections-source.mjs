@@ -57,6 +57,13 @@ export const CORRECTION_FILES = [
      same reason the two above are: `FILE=` is a SUBSTRING filter and a dated
      name would make `FILE=2026-09` select two rounds at once. */
   "sofa-compartment-corrections-tv-direction.json",
+  /* The 2026-09-10 TV round: every not-proceeded at-risk document carrying a
+     drawing was re-read (129 of 129). These four are the builds the drawing says
+     are mirrored - TV below the run, chaise drawn on the LEFT, held on the RIGHT.
+     The name carries NO `2026-09`: the `only` filter is a substring match and a
+     second file matching it makes loadCorrections(DATA, "2026-09") return two
+     rounds, which its own test pins at one. */
+  "sofa-compartment-corrections-tv-photo-round.json",
 ];
 
 /**

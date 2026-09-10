@@ -85,6 +85,12 @@ const norm = (s) => String(s ?? '').trim().toUpperCase();
 const suffix = (code) => { const s = norm(code); const i = s.indexOf('-'); return i < 0 ? s : s.slice(i + 1); };
 const modelOf = (code) => { const s = norm(code); const i = s.indexOf('-'); return i < 0 ? s : s.slice(0, i); };
 const bag = (xs) => xs.slice().sort().join('|');
+/* One run written from the other end is the SAME SOFA - reversing moves no hand,
+   and 1A(LHF) is a left-hand-facing arm wherever it is written. The owner, on
+   HC-PO-009587: 「一样的东西啊 只是LHF 在第一个item而已」. A MIRROR is reverse
+   AND swap the hands, and that is a different sofa - it shows up as a multiset
+   difference, which is where it belongs. */
+const sameSofa = (a, b) => a.join('+') === b.join('+') || a.slice().reverse().join('+') === b.join('+');
 
 /* One value for the whole build, or none. The supplier writes the leg on every
    piece of a run and they agree; where they do NOT agree, no single number is
@@ -170,7 +176,7 @@ try {
     const theirs = d.lines.map((l) => suffix(l.code));
     const mine = rows.map((r) => suffix(r.item_code));
     const sameBag = bag(theirs) === bag(mine);
-    const sameSeq = theirs.join('+') === mine.join('+');
+    const sameSeq = sameSofa(theirs, mine);
 
     const parsed = d.lines.map((l) => (l.desc2 ? parseSofa(l.desc2, modelOf(l.code)) : null));
     const seat = oneOf(parsed.map((p) => p?.size));
@@ -211,16 +217,20 @@ try {
     const ourModel = oneOf(rows.map((r) => modelOf(r.item_code)));
     if (!ourModel) { stats.ambiguousKey += 1; continue; }
 
-    /* An earlier round may already hold this build from a DRAWING. If it names
-       the same pieces in a different order, the drawing keeps the order. */
+    /* An earlier round may already hold this build from a DRAWING. Where it is
+       the SAME SOFA - identical, or the same run written from the other end -
+       the drawing's own order is kept, so a document already answered is not
+       re-stated in the opposite direction for no reason. Where the sofas really
+       differ, the supplier wins, as instructed. */
     let target = theirs;
     const prior = priorByDoc.get(String(po.po_number).toUpperCase())
       ?? (soDoc ? priorByDoc.get(String(soDoc).toUpperCase()) : undefined);
-    if (prior && bag(prior.pieces.map((x) => norm(x))) === bag(theirs)) {
-      if (prior.pieces.map((x) => norm(x)).join('+') !== theirs.join('+')) {
-        target = prior.pieces.map((x) => norm(x));
+    if (prior) {
+      const p = prior.pieces.map((x) => norm(x));
+      if (sameSofa(p, theirs) && p.join('+') !== theirs.join('+')) {
+        target = p;
         stats.orderKeptFromDrawing += 1;
-        orderKept.push({ po: po.po_number, so: soDoc, drawing: target.join('+'), supplier: theirs.join('+'),
+        orderKept.push({ po: po.po_number, so: soDoc, drawing: p.join('+'), supplier: theirs.join('+'),
           source: prior.source });
       }
     }
@@ -274,7 +284,7 @@ try {
   log(`      of those, no sales order found  ${stats.noSo}   <- purchase order corrected alone`);
   log(`      sales order found but KEYLESS   ${stats.soNoKey}   <- PO entry only; a keyless line cannot be addressed`);
   log(`   entries emitted (PO + SO apart)    ${entries.length}`);
-  log(`   ORDER kept from an earlier DRAWING ${stats.orderKeptFromDrawing}   <- same pieces, the export has no line number`);
+  log(`   ORDER kept from an earlier DRAWING ${stats.orderKeptFromDrawing}   <- same sofa, other end; the drawing's order stands`);
   for (const o of orderKept) {
     log(`      ${String(o.po).padEnd(16)} drawing ${o.drawing}   supplier ${o.supplier}   (${o.source})`);
   }
