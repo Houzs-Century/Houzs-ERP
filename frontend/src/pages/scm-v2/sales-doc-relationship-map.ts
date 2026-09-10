@@ -32,7 +32,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useDocumentFlow, type FlowNode } from '../../vendor/scm/lib/flow-queries';
-import type { ChainNode } from '../../components/scm-v2/DocumentRelationshipMapModal';
+import type { ChainNode, PairingKind } from '../../components/scm-v2/DocumentRelationshipMapModal';
 import { useCustomerPoNotice } from './so-relationship-map';
 import { useDocChoice, type DocChoiceApi } from './doc-choice';
 
@@ -47,39 +47,63 @@ function docCell(nodes: FlowNode[], plural: string, emptyDoc: string): { doc: st
   return { doc: `${nodes.length} ${plural}`, multiple: true };
 }
 
-/* Procurement guard mirror — the GRN detail route (/scm/grns/:id) is mounted
-   <ScmGuard area="scm.procurement.grn"> with NO allowSales, so a salesperson who
-   opens a DO through the sales hatch must not be handed a node that navigates
-   straight into <Forbidden>. Same OR-shape as the SO map + the Guard itself. */
-function useCanOpenGrn() {
+/* Procurement guard mirror — /scm/purchase-orders/:id, /scm/grns/:id and
+   /scm/purchase-invoices/:id are each mounted <ScmGuard area="scm.procurement.*">
+   with NO allowSales, so a salesperson who opens a DO through the sales hatch
+   must not be handed a node that navigates straight into <Forbidden>. Same
+   OR-shape as the SO map + the Guards themselves. */
+function useProcurementGates(): ProcurementGates {
   const { can, pageAccess } = useAuth();
-  return can('scm.access') || pageAccess('scm.procurement.grn') !== 'none';
+  const all = can('scm.access');
+  return useMemo(
+    () => ({
+      canOpenPo: all || pageAccess('scm.procurement.po') !== 'none',
+      canOpenGrn: all || pageAccess('scm.procurement.grn') !== 'none',
+      canOpenPi: all || pageAccess('scm.procurement.pi') !== 'none',
+    }),
+    [all, pageAccess],
+  );
 }
 
-// ── Delivery Order chain — Customer PO ▶ Sales Order ▶ Delivery Order (current)
-//    ▶ GRN ▶ Sales Invoice (Nick 2026-07-08 5-node shape) ─────────────────────
+// ── Delivery Order chain — the owner's TWO-CHAIN shape (2026-07-23), the same
+//    seven nodes the Sales Order map renders:
+//      sales    : Customer PO ▶ Sales Order ▶ Delivery Order (current) ▶ Sales Invoice
+//      purchase : Sales Order ▼ Purchase Order ▶ GRN ▶ Purchase Invoice
+//    It replaces Nick's 2026-07-08 five-node chain, which had the GRN sitting in
+//    the sales row with no room for the purchase order that produced it. The DO
+//    page had a GRN node and no way to answer "bought on what?" — the graph has
+//    carried `po` and `pi` nodes all along (document-flow emits them, and the SO
+//    map already draws them); only this builder never read them. ──────────────
 export type DoRelationshipHeader = CustomerRefHeader & {
   id: string;
   do_number: string;
   so_doc_no?: string | null;
 };
 
-/** Pure node builder for the DO chain (exported for unit tests). Given the
- *  header + the family nodes resolved off the live graph, returns the 5-node
- *  ChainNode array. This is where the audit-R8 fix lives: a non-empty grnNodes
- *  paints the GRN node 'done' with the real GRN label instead of the old
- *  hard-coded "Not created". */
+/** The procurement-side route gates, resolved once by the hook and passed in so
+ *  the builder stays pure. Each mirrors its route's own <ScmGuard> (no
+ *  allowSales), so a salesperson is never handed a node that navigates straight
+ *  into <Forbidden> — it says "Procurement document" and answers in a notice. */
+export type ProcurementGates = { canOpenPo: boolean; canOpenGrn: boolean; canOpenPi: boolean };
+
+/** Pure node builder for the DO chain (exported for unit tests). Returns the
+ *  SEVEN-node ChainNode array in the order the canvas positions them: indices
+ *  0-3 are the sales row, 4-6 the purchase row hanging off the Sales Order. */
 export function buildDoChainNodes(
   header: DoRelationshipHeader,
   soNodes: FlowNode[],
-  grnNodes: FlowNode[],
   siNodes: FlowNode[],
-  canOpenGrn: boolean,
+  poNodes: FlowNode[],
+  grnNodes: FlowNode[],
+  piNodes: FlowNode[],
+  gates: ProcurementGates,
 ): ChainNode[] {
   const poRef = customerRefOf(header);
   const so = docCell(soNodes, 'sales orders', header.so_doc_no || 'Not linked');
-  const grn = docCell(grnNodes, 'GRNs', 'Not created');
   const si = docCell(siNodes, 'invoices', 'Not created');
+  const po = docCell(poNodes, 'purchase orders', 'Not created');
+  const grn = docCell(grnNodes, 'GRNs', 'Not created');
+  const pi = docCell(piNodes, 'invoices', 'Not created');
   const soLinked = soNodes.length > 0 || !!header.so_doc_no;
   return [
     {
@@ -101,19 +125,7 @@ export function buildDoChainNodes(
       meta: 'This document',
       state: 'current',
     },
-    {
-      type: 'GRN',
-      doc: grn.doc,
-      meta:
-        grnNodes.length === 0
-          ? 'On supplier delivery'
-          : !canOpenGrn
-            ? 'Procurement document'
-            : grn.multiple
-              ? 'Tap to list'
-              : 'Tap to open',
-      state: grnNodes.length > 0 ? 'done' : 'pending',
-    },
+    /* Node 3 closes the SALES row. */
     {
       type: 'Sales Invoice',
       doc: si.doc,
@@ -125,12 +137,57 @@ export function buildDoChainNodes(
             : 'Tap to open',
       state: siNodes.length > 0 ? 'done' : 'pending',
     },
+    /* Nodes 4-6 = the PURCHASE row, hanging off the Sales Order because that is
+       where the supplier order is raised from. */
+    {
+      type: 'Purchase Order',
+      doc: po.doc,
+      meta:
+        poNodes.length === 0
+          ? 'On supplier order'
+          : !gates.canOpenPo
+            ? 'Procurement document'
+            : po.multiple
+              ? 'Tap to list'
+              : 'Tap to open',
+      state: poNodes.length > 0 ? 'done' : 'pending',
+    },
+    {
+      type: 'GRN',
+      doc: grn.doc,
+      meta:
+        grnNodes.length === 0
+          ? 'On supplier delivery'
+          : !gates.canOpenGrn
+            ? 'Procurement document'
+            : grn.multiple
+              ? 'Tap to list'
+              : 'Tap to open',
+      state: grnNodes.length > 0 ? 'done' : 'pending',
+    },
+    {
+      type: 'Purchase Invoice',
+      doc: pi.doc,
+      meta:
+        piNodes.length === 0
+          ? 'On supplier billing'
+          : !gates.canOpenPi
+            ? 'Procurement document'
+            : pi.multiple
+              ? 'Tap to list'
+              : 'Tap to open',
+      state: piNodes.length > 0 ? 'done' : 'pending',
+    },
   ];
 }
 
 export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
   nodes: ChainNode[];
   onNodeClick: (n: ChainNode) => boolean;
+  /* The SO ▼ PO hop is PROVENANCE — "bought for", muted, never an execution
+     binding. Same rule as the SO map: a dash may only ever mean "floating", and
+     this map shows no floating hop (usePoSoCoverage is keyed by purchase doc). */
+  pairing: { kind: PairingKind } | null;
 } & DocChoiceApi {
   const navigate = useNavigate();
   const notify = useNotify();
@@ -139,16 +196,18 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
      this doc no left the operator copying numbers by hand. */
   const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const showCustomerPo = useCustomerPoNotice();
-  const canOpenGrn = useCanOpenGrn();
+  const gates = useProcurementGates();
 
   const flow = useDocumentFlow('do', header?.id ?? null);
   const soNodes = useMemo(() => flowNodesOf(flow.data, 'so'), [flow.data]);
-  const grnNodes = useMemo(() => flowNodesOf(flow.data, 'grn'), [flow.data]);
   const siNodes = useMemo(() => flowNodesOf(flow.data, 'si'), [flow.data]);
+  const poNodes = useMemo(() => flowNodesOf(flow.data, 'po'), [flow.data]);
+  const grnNodes = useMemo(() => flowNodesOf(flow.data, 'grn'), [flow.data]);
+  const piNodes = useMemo(() => flowNodesOf(flow.data, 'pi'), [flow.data]);
 
   const nodes: ChainNode[] = useMemo(
-    () => (header ? buildDoChainNodes(header, soNodes, grnNodes, siNodes, canOpenGrn) : []),
-    [header, soNodes, grnNodes, siNodes, canOpenGrn],
+    () => (header ? buildDoChainNodes(header, soNodes, siNodes, poNodes, grnNodes, piNodes, gates) : []),
+    [header, soNodes, siNodes, poNodes, grnNodes, piNodes, gates],
   );
 
   const onNodeClick = useCallback(
@@ -174,7 +233,7 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
         return false;
       }
       if (n.type === 'GRN' && grnNodes.length > 0) {
-        if (!canOpenGrn) {
+        if (!gates.canOpenGrn) {
           void notify({
             title: 'Goods Received is not open to you',
             body:
@@ -194,15 +253,62 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
         });
         return false;
       }
+      if (n.type === 'Purchase Order' && poNodes.length > 0) {
+        if (!gates.canOpenPo) {
+          void notify({
+            title: 'Purchase Orders are not open to you',
+            body:
+              `This delivery's goods were bought on ${poNodes.map((p) => p.label).join(', ')}. ` +
+              `Opening a PO needs Procurement access — ask an admin if you need it.`,
+          });
+          return false;
+        }
+        if (poNodes.length === 1) {
+          navigate(`/scm/purchase-orders/${poNodes[0]!.id}`);
+          return true;
+        }
+        openChoice({
+          title: 'Bought on more than one purchase order',
+          intro: 'This delivery is purchased across several Purchase Orders. Pick one to open it.',
+          docs: poNodes.map((p) => ({ id: p.id, label: p.label, sub: p.status, to: `/scm/purchase-orders/${p.id}` })),
+        });
+        return false;
+      }
+      if (n.type === 'Purchase Invoice' && piNodes.length > 0) {
+        if (!gates.canOpenPi) {
+          void notify({
+            title: 'Purchase Invoices are not open to you',
+            body:
+              `The supplier billed these goods on ${piNodes.map((p) => p.label).join(', ')}. ` +
+              `Opening a PI needs Procurement access — ask an admin if you need it.`,
+          });
+          return false;
+        }
+        if (piNodes.length === 1) {
+          navigate(`/scm/purchase-invoices/${piNodes[0]!.id}`);
+          return true;
+        }
+        openChoice({
+          title: 'Billed on more than one supplier invoice',
+          intro: 'The supplier billed these goods across several Purchase Invoices. Pick one to open it.',
+          docs: piNodes.map((p) => ({ id: p.id, label: p.label, sub: p.status, to: `/scm/purchase-invoices/${p.id}` })),
+        });
+        return false;
+      }
       if (n.type === 'Customer PO' && n.state === 'done') {
         showCustomerPo(n.doc);
       }
       return false;
     },
-    [navigate, notify, openChoice, showCustomerPo, header?.so_doc_no, header?.do_number, soNodes, grnNodes, siNodes, canOpenGrn],
+    [navigate, notify, openChoice, showCustomerPo, header?.so_doc_no, header?.do_number, soNodes, siNodes, poNodes, grnNodes, piNodes, gates],
   );
 
-  return { nodes, onNodeClick, choice, openChoice, closeChoice, pickChoice };
+  const pairing = useMemo<{ kind: PairingKind } | null>(
+    () => (poNodes.length > 0 ? { kind: 'provenance' } : null),
+    [poNodes],
+  );
+
+  return { nodes, onNodeClick, pairing, choice, openChoice, closeChoice, pickChoice };
 }
 
 // ── Sales Invoice chain — Customer PO ▶ Sales Order ▶ Delivery Order ▶
