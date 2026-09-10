@@ -380,3 +380,70 @@ describe('the guard in front of the cancel', () => {
     expect(reached).toHaveBeenCalledWith('CANCELLED');
   });
 });
+
+/* THE MOUNT-ORDER TRAP — the guard runs BEFORE the sub-router's supabaseAuth.
+ *
+ * Owner, 2026-09-10, after purchasing tried to cancel a purchase order:
+ * "Could not identify who is cancelling this document." Not her session (she
+ * had written successfully hours earlier) and not her permissions (that 403
+ * fires before any permission is read).
+ *
+ * `cancelApprovalGuard` is mounted at the SCM level — `scm.use("/mfg-purchase-
+ * orders/:id/cancel", …)` in scm/index.ts, ahead of `scm.route(…)`. `houzsUser`
+ * is set by each SUB-ROUTER's own `supabaseAuth`, so at this mount point it does
+ * not exist yet and the REAL Houzs user is still sitting in `user` — which is
+ * exactly what write-freeze.ts's `callerBypasses` comment records, from the same
+ * bug on 2026-08-11.
+ *
+ * EVERY TEST ABOVE SETS BOTH, so the suite never saw production's shape. This
+ * one sets only what the request actually carries at that point.
+ *
+ * The identity rule the module header states is NOT relaxed: after the bridge
+ * `user` is the pinned scm.staff uuid and must never be used as an actor id
+ * (it would name one actor on every row). Accepting `user` is gated on it still
+ * being the Houzs shape — a numeric public.users.id — which is only true BEFORE
+ * the bridge runs. The last test pins that. */
+describe('the guard runs before supabaseAuth: identify the caller from `user` too', () => {
+  /** Production's shape at the guard's mount point: the Houzs session user is in
+   *  `user` (numeric public.users.id) and `houzsUser` does not exist yet. */
+  function appPreBridge(who: Who) {
+    const a = new Hono<{ Bindings: Env; Variables: Variables }>();
+    a.use('*', async (c, next) => {
+      c.set('user', { id: who.id, name: who.name, email: 'x@houzs.test',
+        permissions: who.perms, permissions_set: new Set(who.perms) } as unknown as User);
+      c.set('companyId', CO);
+      c.set('supabase', sb as unknown as SupabaseClient);
+      await next();
+    });
+    a.use('/mfg-purchase-orders/:id/cancel', cancelApprovalGuard('PO'));
+    a.patch('/mfg-purchase-orders/:id/cancel', (c) => { reached('po'); return c.json({ ok: true }); });
+    return a;
+  }
+
+  test('a purchase order cancel is NOT refused as caller_unknown', async () => {
+    const res = await appPreBridge(L2).request('/mfg-purchase-orders/po-1/cancel',
+      { method: 'PATCH', ...json({ reason: 'customer cancelled the order' }) }, ENV);
+    const b = await body(res);
+    expect(b.error).not.toBe('caller_unknown');
+    expect(res.status).not.toBe(403);
+  });
+
+  test('the pinned scm.staff identity is still refused — it names nobody', async () => {
+    /* AFTER the bridge `user.id` is the system staff uuid. Reading it as the
+       actor is the bug the module header forbids (one actor on every row), so a
+       context carrying ONLY that must still be caller_unknown. */
+    const a = new Hono<{ Bindings: Env; Variables: Variables }>();
+    a.use('*', async (c, next) => {
+      c.set('user', CALLER);                    // id: 'staff-uuid'
+      c.set('companyId', CO);
+      c.set('supabase', sb as unknown as SupabaseClient);
+      await next();
+    });
+    a.use('/mfg-purchase-orders/:id/cancel', cancelApprovalGuard('PO'));
+    a.patch('/mfg-purchase-orders/:id/cancel', (c) => c.json({ ok: true }));
+    const res = await a.request('/mfg-purchase-orders/po-1/cancel',
+      { method: 'PATCH', ...json({ reason: 'customer cancelled the order' }) }, ENV);
+    expect(res.status).toBe(403);
+    expect((await body(res)).error).toBe('caller_unknown');
+  });
+});
