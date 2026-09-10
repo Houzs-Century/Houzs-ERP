@@ -76,14 +76,14 @@ try {
   //    allocation + (if PO_DOC given) every line of that PO regardless of link. ─
   const directPoLines = soLineIds.length ? await sql`
     SELECT p.id, o.po_number AS doc_no, p.item_code, p.qty::numeric AS qty,
-           p.received_qty::numeric AS received, p.so_item_id, p.cancelled
+           p.received_qty::numeric AS received, p.so_item_id, o.status::text AS po_status
       FROM scm.purchase_order_items p
       JOIN scm.purchase_orders o ON o.id = p.purchase_order_id
      WHERE o.company_id = ${CO} AND p.so_item_id = ANY(${soLineIds})` : [];
 
   const byAllocPoLines = allocPoItemIds.length ? await sql`
     SELECT p.id, o.po_number AS doc_no, p.item_code, p.qty::numeric AS qty,
-           p.received_qty::numeric AS received, p.so_item_id, p.cancelled
+           p.received_qty::numeric AS received, p.so_item_id, o.status::text AS po_status
       FROM scm.purchase_order_items p
       JOIN scm.purchase_orders o ON o.id = p.purchase_order_id
      WHERE p.id = ANY(${allocPoItemIds})` : [];
@@ -93,7 +93,7 @@ try {
 
   const allPoLines = poDocs.length ? await sql`
     SELECT p.id, o.po_number AS doc_no, p.item_code, p.qty::numeric AS qty,
-           p.received_qty::numeric AS received, p.so_item_id, p.cancelled,
+           p.received_qty::numeric AS received, p.so_item_id,
            o.status::text AS po_status
       FROM scm.purchase_order_items p
       JOIN scm.purchase_orders o ON o.id = p.purchase_order_id
@@ -107,7 +107,7 @@ try {
     const link = p.so_item_id
       ? `-> SO line ${p.so_item_id.slice(0, 8)} (${soLineById.has(p.so_item_id) ? 'THIS SO' : 'another SO'})`
       : (alloc.some((a) => a.purchase_order_item_id === p.id) ? '-> via allocation' : '-> NOT linked to any SO line');
-    log(`  ${p.doc_no} [${p.po_status}]  ${p.item_code}  qty=${p.qty}  received=${p.received}  ${link}${p.cancelled ? '  [CANCELLED]' : ''}`);
+    log(`  ${p.doc_no} [${p.po_status}]  ${p.item_code}  qty=${p.qty}  received=${p.received}  ${link}${p.po_status === 'CANCELLED' ? '  [CANCELLED PO]' : ''}`);
   }
 
   // ── The verdict, per uncovered SO line, in the two worlds. ────────────────
@@ -120,21 +120,21 @@ try {
     const need = Number(l.qty);
     // Linked to this line, by either mechanism.
     const directQty = allPoLines
-      .filter((p) => p.so_item_id === l.id && !p.cancelled)
+      .filter((p) => p.so_item_id === l.id && p.po_status !== 'CANCELLED')
       .reduce((s, p) => s + Number(p.qty), 0);
     const viaAlloc = allocBySoLine.get(l.id) ?? 0;
     const linkedQty = directQty + viaAlloc;
 
     // How many of THIS item code exist on the touching POs, linked or not.
     const poQtySameCode = allPoLines
-      .filter((p) => p.item_code === l.item_code && !p.cancelled)
+      .filter((p) => p.item_code === l.item_code && p.po_status !== 'CANCELLED')
       .reduce((s, p) => s + Number(p.qty), 0);
     const poQtyLinkedElsewhere = allPoLines
-      .filter((p) => p.item_code === l.item_code && !p.cancelled
+      .filter((p) => p.item_code === l.item_code && p.po_status !== 'CANCELLED'
         && p.so_item_id && p.so_item_id !== l.id)
       .reduce((s, p) => s + Number(p.qty), 0);
     const poQtyUnlinkedSameCode = allPoLines
-      .filter((p) => p.item_code === l.item_code && !p.cancelled && !p.so_item_id
+      .filter((p) => p.item_code === l.item_code && p.po_status !== 'CANCELLED' && !p.so_item_id
         && !alloc.some((a) => a.purchase_order_item_id === p.id))
       .reduce((s, p) => s + Number(p.qty), 0);
 
