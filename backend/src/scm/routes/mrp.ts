@@ -84,6 +84,7 @@ import {
 import { collectBatchClaims, openBucketStock, drawBucketStock } from '../lib/batch-claimed-stock';
 import { WH_NONE, composite, loadCommittedShipments } from '../lib/committed-shipments';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { pgrestInList } from '../lib/pgrest-in-list';
 import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { mapBounded, eager } from '../lib/concurrency';
 import type { Env, Variables } from '../env';
@@ -737,10 +738,17 @@ export async function computeMrp(
   // longer bounded by a 1000-row demand slice.
   const prodByCode = new Map<string, ProductRow>();
   const demandCodes = [...new Set(demand.map((d) => d.item_code).filter((c): c is string => !!c))];
+  /* `.filter(… 'in', pgrestInList(batch))`, not `.in('code', batch)` — this is
+     the read whose gap docs/bugs/0777 left open ("why prodByCode lacks those
+     eight codes at all"). It is the SAME batching over the SAME code list as the
+     supplier read, so it loses the SAME codes for the same reason: supabase-js
+     cannot serialise an item code carrying a `"`, and everything after such a
+     code in its batch silently matches nothing. All eight of 0777's codes are in
+     the 38 the supplier map lost (run 34457477642). See lib/pgrest-in-list.ts. */
   const { data: prods, error: prodErr } = await chunkIn<ProductRow>(demandCodes, (batch, from, to) => scoped(sb
     .from('mfg_products')
     .select('code, name, category')
-    .in('code', batch))
+    .filter('code', 'in', pgrestInList(batch)))
     // ORDER BY id, not code: `.range()` windows are only coherent under a TOTAL
     // order, and `code` is unique per COMPANY — with companyId null (the
     // no-scoping case) the same code appears once per company, so a tie at a

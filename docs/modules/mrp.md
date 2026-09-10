@@ -406,6 +406,37 @@ suppliers, each VARIANT does. All three groupers used to copy it off whichever
 child happened to be first, nothing read it, and the next renderer to want a
 supplier on a parent row would have shown one module's binding against all three.
 
+### And it is NOT `.in()` any more — an item code can carry a `"` (2026-09-10)
+
+Both the supplier read and section 2's `mfg_products` read now build their filter
+with `pgrestInList` (`backend/src/scm/lib/pgrest-in-list.ts`) and send it as
+`.filter(column, 'in', …)`. **Do not change either back to `.in()`.**
+
+`@supabase/postgrest-js` wraps a value in double quotes when it holds one of
+`, ( )` and escapes nothing inside them; PostgREST requires a backslash before a
+quote and a doubled backslash for a backslash. So an item code carrying an inch mark closes its own quote
+early, the next `)` closes the whole `in.(` list, and **every code after it in
+that batch matches nothing while the request answers 200.** Company 1's open
+demand carries two such codes — `DUNLOPILLO GENERASI 5" MATT (S)` and
+`… (SS)` — and on 2026-09-10 they were emptying the Supplier column on 38 item
+codes at once (run 34457477642; full measurement in `docs/bugs/0780-mrp-shows-no-supplier-on-a-line-whose-product-is-bound.md`).
+
+The payload is byte-identical to what `.in()` builds for any batch holding no
+quote and no backslash, which is pinned against the real library in
+`backend/src/scm/lib/pgrest-in-list.test.ts` — so adopting it changed nothing for
+the reads that already worked.
+
+Two consequences worth knowing before you touch this:
+
+- **A test fake must implement `filter(col, 'in', payload)`**, and must parse it
+  with `parsePgrestInList` rather than a second `split(',')` — a naive split
+  reproduces the bug and reports a clean run. The shared fakes
+  (`backend/src/scm/lib/fake-postgrest.ts`, `backend/tests/fakePostgrest.ts`) and
+  `backend/scripts/lib/pgrest-shim.mjs` already do.
+- **The other reads in this tree still use `.in()` on an item code** — 65 call
+  sites outside these two as of 2026-09-10 — so any of them can lose the same two
+  codes. They are listed, unfixed and deliberately so, in the bug entry.
+
 ## 4. Buckets and allocation
 
 ### What is covering a line — ONE rule, two questions (2026-08-21)
