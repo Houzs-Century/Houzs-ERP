@@ -1088,6 +1088,29 @@ COLOUR sync in `updateLine` / the mobile FabricPicker, which is scoped to one
 physical sofa (`variants.buildKey`), not to a category. It no longer gates the
 master cascade.
 
+> **SOFA ONLY — owner ruling 2026-09-09.** 「主行改一次，全部跟着改 … 这个只限于
+> sofa item」. `CASCADE_CATEGORIES` in the shared module is `{'sofa'}`, and BOTH
+> Sales Order surfaces import it: mobile used to declare `["sofa","bedframe"]`
+> and desktop passed `null` (EVERY category, a mattress line's specials
+> included), so one rule had two answers.
+>
+> **Why it had to narrow.** Rule 1 above FORCES the master's latest change over
+> a hand-typed follower, and `NEVER_INHERITED_KEYS` is only `remark` + `buildKey`
+> — so SPECIALS travel too. A rep removed a drawer from beds 2 and 3, touched
+> bed 1 again, and it came back: 「remove 三次才没有」 (HC-SO-012312,
+> `docs/bugs/0754-*`). A sofa is one physical thing assembled from several lines;
+> three bedframes are three beds.
+>
+> **The SEED is gated by the same set.** `seedableMasterVariants` takes the
+> category set as a REQUIRED parameter — without gating the seed, a new bedframe
+> line still arrives pre-filled and only stops being RE-forced afterwards, which
+> fixes the second removal and not the first.
+>
+> **Consignment Orders and Delivery Orders were NOT narrowed.** Both call sites
+> pass an explicit `null`. The compiler found them when the parameter became
+> required; the ruling was given about Sales Orders, and extending it to a
+> document the owner was not asked about is his call, not the implementer's.
+
 **Never inherited:** `remark` (per line) and `buildKey` (the build IDENTITY of
 one physical sofa — copying it forges a compartment, which reaches the free-gift
 trigger and the PDF module grouping;

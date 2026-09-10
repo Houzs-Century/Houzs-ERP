@@ -798,6 +798,8 @@ export const SalesOrderNew = () => {
   const inheritVariantsByCategory = useMemo(
     () => seedableMasterVariants(
       lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown> })),
+      /* Sofa only — the same set the live cascade below now takes. */
+      CASCADE_CATEGORIES,
     ),
     [lines],
   );

@@ -1317,7 +1317,8 @@ export function MobileNewSO({
      has any variants set — the PICK-TIME seed. Same shared helper the desktop
      form calls; this file used to carry its own copy of it. */
   const inheritVariantsByCategory = useMemo(
-    () => seedableMasterVariants(cascadeLines),
+    /* Sofa only — the owner ruling this file also applies to the live cascade. */
+    () => seedableMasterVariants(cascadeLines, CASCADE_CATEGORIES),
     [cascadeLines],
   );
 

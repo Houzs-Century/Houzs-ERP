@@ -135,15 +135,20 @@ export function masterVariantsByCategory(
  */
 export function seedableMasterVariants(
   lines: readonly CascadeLine[],
+  /* REQUIRED, and null means "every category" — the same parameter
+     `cascadeMasterVariants` takes, because the seed and the live cascade must
+     answer the SAME question. It is not optional: a call site that said nothing
+     would silently keep the old every-category behaviour, which is the
+     `optional-param-noop` class (docs/bugs/0098-*). Gating the SEED matters on
+     its own — without it a new bedframe line still arrives pre-filled from bed
+     1 and only stops being RE-forced afterwards, which fixes the second removal
+     and not the first. The seed IS the "自动 duplicate" the rep reported. */
+  categories: ReadonlySet<string> | null,
 ): Record<string, Record<string, unknown>> {
   const out: Record<string, Record<string, unknown>> = {};
   for (const l of lines) {
     if (!l.category) continue;
-    /* Gated by the SAME set as the live cascade. Without this a new bedframe
-       line still arrives pre-filled from bed 1 — the follower would simply
-       never be re-forced afterwards, which fixes the second removal and not
-       the first. The seed IS the "自动 duplicate" the rep reported. */
-    if (!CASCADE_CATEGORIES.has(l.category)) continue;
+    if (categories && !categories.has(l.category)) continue;
     if (l.category in out) continue;
     if (Object.keys(l.variants).length > 0) out[l.category] = l.variants;
   }
