@@ -94,7 +94,8 @@ try {
     SELECT i.doc_no, i.line_no, i.item_code,
            h.${PDATE} IS NOT NULL AS proceeded,
            coalesce(h.status::text, '') AS status,
-           coalesce(h.debtor_name, '') AS customer
+           coalesce(h.debtor_name, '') AS customer,
+           coalesce(array_length(i.photo_urls, 1), 0) AS pics
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
      WHERE h.company_id = ${CO}
@@ -105,8 +106,9 @@ try {
   const docs = new Map();
   for (const r of rows) {
     let d = docs.get(r.doc_no);
-    if (!d) docs.set(r.doc_no, (d = { doc: r.doc_no, proceeded: r.proceeded, status: r.status, customer: r.customer, pieces: [] }));
+    if (!d) docs.set(r.doc_no, (d = { doc: r.doc_no, proceeded: r.proceeded, status: r.status, customer: r.customer, pieces: [], pics: 0 }));
     d.pieces.push(suffix(r.item_code));
+    d.pics += Number(r.pics || 0);
   }
 
   /* Documents the correction rounds already answered - those are decided, not
@@ -160,12 +162,28 @@ try {
 
   if (outstanding.length) {
     rule();
-    line(`STILL TO READ - ${outstanding.length} document(s)`);
+    /* A DRAWING IS THE ONLY THING THAT DECIDES DIRECTION, so a document with no
+       photograph is not work anybody can do - it is a question for the owner or
+       the supplier. Splitting these apart is the difference between a backlog
+       and a list of impossible tasks. */
+    const withPic = outstanding.filter((d) => d.pics > 0);
+    const noPic = outstanding.filter((d) => d.pics === 0);
+    line(`      of those, a drawing is ON THE LINE       ${withPic.length}   <- readable now`);
+    line(`      NO drawing anywhere on the document      ${noPic.length}   <- nothing to read`);
+    line('');
+    line(`STILL TO READ, drawing present - ${withPic.length} document(s)`);
     rule();
-    for (const d of outstanding.slice(0, LIMIT)) {
+    for (const d of withPic.slice(0, LIMIT)) {
+      line(`   ${d.doc.padEnd(15)} ${(d.customer || '').slice(0, 22).padEnd(23)} ${d.status.padEnd(12)} ${String(d.pics).padStart(2)} pic  ${d.pieces.join('+')}`);
+    }
+    if (withPic.length > LIMIT) line(`   ... and ${withPic.length - LIMIT} more (raise LIST_LIMIT)`);
+    rule();
+    line(`NO DRAWING - ${noPic.length} document(s). Direction cannot be decided from our data.`);
+    rule();
+    for (const d of noPic.slice(0, LIMIT)) {
       line(`   ${d.doc.padEnd(15)} ${(d.customer || '').slice(0, 22).padEnd(23)} ${d.status.padEnd(12)} ${d.pieces.join('+')}`);
     }
-    if (outstanding.length > LIMIT) line(`   ... and ${outstanding.length - LIMIT} more (raise LIST_LIMIT to see them)`);
+    if (noPic.length > LIMIT) line(`   ... and ${noPic.length - LIMIT} more (raise LIST_LIMIT)`);
   }
 
   head('READ-ONLY.  Nothing above was written.');
