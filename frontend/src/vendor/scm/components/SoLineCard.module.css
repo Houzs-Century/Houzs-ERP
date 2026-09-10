@@ -497,8 +497,12 @@
 
 .photoTile {
   position: relative;
-  width: 64px;
-  height: 64px;
+  /* Owner 2026-09-11: 64px was still too small vs the ~200px PHOTOS rail's
+     width — the photo read as a stamp, the delete X was hard to hit. Bumped
+     to 100px, which still fits two per row in the rail (2 * 100 + 6px gap
+     ≈ 206px) so no wrap regression, and reads at a glance.  */
+  width: 100px;
+  height: 100px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   background: var(--c-cream);
@@ -538,10 +542,13 @@
 
 .photoDelete {
   position: absolute;
-  top: -8px;
-  right: -8px;
-  width: 22px;
-  height: 22px;
+  /* Owner 2026-09-11: 22px was still hard to hit. Bumped to 28px with a
+     larger -10 offset so the X sits clearly outside the tile's corner
+     instead of half-overlapping the image. */
+  top: -10px;
+  right: -10px;
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
   background: var(--c-festive-b, #B8331F);
   color: var(--c-paper);
@@ -557,8 +564,10 @@
 }
 
 .photoAddBtn {
-  width: 64px;
-  height: 64px;
+  /* Match .photoTile above (100px) — the dashed add button sits inline with
+     tiles and used to shrink beside them once the tile grew. */
+  width: 100px;
+  height: 100px;
   border-radius: var(--radius-sm);
   border: 1px dashed var(--c-orange);
   background: transparent;
