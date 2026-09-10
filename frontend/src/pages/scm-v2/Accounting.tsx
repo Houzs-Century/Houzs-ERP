@@ -42,6 +42,8 @@ import {
   type ControlCheckRow,
   type UnbookedPayments,
   type PaymentDryRun,
+  type PaymentDrift,
+  type PaymentDriftRow,
 } from './accounting-phase1-queries';
 import { DataTable, type Column } from '../../components/DataTable';
 import { ItemGroupsTab } from './ItemGroups';
