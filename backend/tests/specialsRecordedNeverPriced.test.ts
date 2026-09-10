@@ -44,6 +44,22 @@ const ALLOWED = new Set([
   // THE WRITER, and this test.
   'backend/scripts/record-priced-specials-on-migrated-lines.mjs',
   'backend/tests/specialsRecordedNeverPriced.test.ts',
+  /* DISPLAY — a read-only diagnostic, added 2026-09-09 with its reason because
+     this list is the mechanism and not an obstacle.
+
+     WHY IT READS THE KEY. It answers "where did this order's money come from,
+     line by line?" for one named document (HC-SO-012312: three bedframes split
+     and RM 250 appeared on a line whose two neighbours are FOC). Whether a
+     line's option sits in `specials` or in `specialsRecorded` is exactly the
+     distinction that question turns on — the recorded half is the half that must
+     NOT have added a surcharge, so a probe that could not tell them apart could
+     not tell the owner which case he is looking at.
+
+     WHY IT IS SAFE UNDER THIS RULE. It renders and never prices: the key reaches
+     one string in a printed SPECIALS column and no arithmetic anywhere. The
+     probe's only sum is lines vs header total, computed from `total_sen` alone.
+     It is also SELECT-only — it cannot write a price even by accident. */
+  'backend/scripts/check-so-line-pricing.mjs',
   /* A SECOND WRITER, and it only ever CLEARS — added 2026-09-09 with the reason,
      because this list is the mechanism for that and not an obstacle to it.
 

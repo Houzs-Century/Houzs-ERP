@@ -48,7 +48,7 @@ import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
    moved to scm/lib so scan-so.ts's background writer reaches the same rules
    without importing a 12,000-line router. Re-exported below for the callers
    that still name this module. */
-import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, bookSoPaymentBestEffort, type SoPaymentRowInput } from '../lib/so-payment-row';
+import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, bookSoPaymentBestEffort, repostSoPaymentBestEffort, soPaymentFieldChanges, type SoPaymentRowInput } from '../lib/so-payment-row';
 import { recomputeSiPaidForOrder } from '../lib/si-order-deposit';
 export { recordSoPaymentRow };
 export type { SoPaymentRowInput };
@@ -1264,16 +1264,17 @@ mfgSalesOrders.get('/', async (c) => {
     const otherStatusOr = `status.is.null,status.not.in.(${[...SO_STATUSES].join(',')})`;
     if (status === 'ON_HOLD') q = q.or(HELD_OR_TERM);
     else if (status) { const vals = soStatusesForTab(status); q = status === 'OTHER' ? q.or(otherStatusOr) : (vals.length === 1 ? q.eq('status', vals[0]) : q.in('status', vals)); }
-    /* free-text search replaces the legacy `debtor` param in this branch.
-       One term matches customer NAME (debtor_name), PHONE, or the SO
-       REFERENCE (ref) — plus doc_no / debtor_code / agent / location /
-       branding it already covered. */
+    /* free-text search over the reference the list DISPLAYS: customerRefOf is
+       `ref || customer_so_no`, so BOTH are searched — an order whose `ref` is
+       null shows its reference from `customer_so_no` yet was unsearchable
+       before (bug 0755). Plus doc_no / debtor_code / agent / location / branding. */
     const search = c.req.query('q');
     if (search) {
       const s = escapeForOr(search);
       if (s) q = q.or([
         `doc_no.ilike.%${s}%`, `debtor_name.ilike.%${s}%`, `debtor_code.ilike.%${s}%`,
-        `agent.ilike.%${s}%`, `sales_location.ilike.%${s}%`, `ref.ilike.%${s}%`, `branding.ilike.%${s}%`,
+        `agent.ilike.%${s}%`, `sales_location.ilike.%${s}%`, `ref.ilike.%${s}%`,
+        `customer_so_no.ilike.%${s}%`, `branding.ilike.%${s}%`,
         ...phoneSearchOrParts(s, search, normalizePhone),
       ].join(','));
     }
@@ -1350,7 +1351,7 @@ mfgSalesOrders.get('/', async (c) => {
       else if (status) { const vals = soStatusesForTab(status); moneyQ = status === 'OTHER' ? moneyQ.or(otherStatusOr) : (vals.length === 1 ? moneyQ.eq('status', vals[0]) : moneyQ.in('status', vals)); }
       if (search) {
         const ms = escapeForOr(search);
-        if (ms) moneyQ = moneyQ.or(`doc_no.ilike.%${ms}%,debtor_name.ilike.%${ms}%,debtor_code.ilike.%${ms}%,agent.ilike.%${ms}%,sales_location.ilike.%${ms}%,ref.ilike.%${ms}%,branding.ilike.%${ms}%`);
+        if (ms) moneyQ = moneyQ.or(`doc_no.ilike.%${ms}%,debtor_name.ilike.%${ms}%,debtor_code.ilike.%${ms}%,agent.ilike.%${ms}%,sales_location.ilike.%${ms}%,ref.ilike.%${ms}%,customer_so_no.ilike.%${ms}%,branding.ilike.%${ms}%`);
       }
       if (from) moneyQ = moneyQ.gte('so_date', from);
       if (to) moneyQ = moneyQ.lte('so_date', to);
@@ -11100,24 +11101,19 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     return c.json({ error: 'payment_version_conflict', currentVersion: Number(latest?.version ?? expectedPaymentVersion) }, 409);
   }
 
-  /* UPDATE_PAYMENT audit — same ledger + shape as ADD/DELETE, listing only the
-     fields that actually changed (from → to). Best-effort inside recordSoAudit. */
-  const changes: FieldChange[] = [];
-  if (nextPaidAt !== before.paid_at) changes.push({ field: 'paidAt', from: before.paid_at, to: nextPaidAt });
-  if (nextMethod !== before.method) changes.push({ field: 'method', from: before.method, to: nextMethod });
-  if (nextAmount !== before.amount_sen) changes.push({ field: 'amountSen', from: before.amount_sen, to: nextAmount });
-  if ((nextMerchantProvider ?? null) !== (before.merchant_provider ?? null)) changes.push({ field: 'merchantProvider', from: before.merchant_provider, to: nextMerchantProvider });
-  if ((nextInstallment ?? null) !== (before.installment_months ?? null)) changes.push({ field: 'installmentMonths', from: before.installment_months, to: nextInstallment });
-  if ((nextOnline ?? null) !== (before.online_type ?? null)) changes.push({ field: 'onlineType', from: before.online_type, to: nextOnline });
-  if ((nextApproval ?? null) !== (before.approval_code ?? null)) changes.push({ field: 'approvalCode', from: before.approval_code, to: nextApproval });
-  if ((nextAccountSheet ?? null) !== (before.account_sheet ?? null)) changes.push({ field: 'accountSheet', from: before.account_sheet, to: nextAccountSheet });
-  if ((nextCollectedBy ?? null) !== (before.collected_by ?? null)) changes.push({ field: 'collectedBy', from: before.collected_by, to: nextCollectedBy });
+  /* UPDATE_PAYMENT audit — the nine-column from → to list, compared beside the
+     row it describes (soPaymentFieldChanges), NOT the four the ledger reads. */
+  const next = {
+    paid_at: nextPaidAt, method: nextMethod, amount_sen: nextAmount, merchant_provider: nextMerchantProvider,
+    installment_months: nextInstallment, online_type: nextOnline, approval_code: nextApproval,
+    account_sheet: nextAccountSheet, collected_by: nextCollectedBy,
+  };
   await recordSoAudit(sb, {
     docNo,
     action: 'UPDATE_PAYMENT',
     actorId: user.id,
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
-    fieldChanges: changes,
+    fieldChanges: soPaymentFieldChanges(before, next),
   });
 
   /* Same reason as the insert: an edited amount moves the outstanding balance,
@@ -11127,6 +11123,11 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
      costs one queued edit, while deciding here which fields matter would put a
      second opinion about the balance rule next to so-outstanding.ts. */
   await queueAcSoEdit(c, docNo);
+
+  /* THE LEDGER FOLLOWS THE EDIT (docs/bugs/0778) — this route wrote the row and
+     stopped, so a correction left its entry behind. See acc/payment-repost. */
+  await repostSoPaymentBestEffort(sb, { id, docNo, companyId: co.companyId, before, next });
+
   // An edited amount also moves what the invoices off this order have settled.
   await recomputeSiPaidForOrder(sb, docNo, co.companyId);
 
