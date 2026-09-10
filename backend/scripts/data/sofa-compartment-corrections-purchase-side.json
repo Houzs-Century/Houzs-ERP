@@ -1,239 +1,239 @@
 {
-  "_note": "THE PURCHASE SIDE OF A SOFA WHOSE SALES SIDE IS ALREADY RULED, 2026-09-09. Every build in sofa-compartment-corrections-drawings.json names ONE document and it is always the SALES order, so the sales order got its compartments and the purchase order raised from it was left holding the single lead piece the importer created. Measured on production, read-only run 34299650607 (probe-so-po-compartment-cover.mjs, book cut 2026-09-09T00:18:49Z): thirteen purchase orders carry FEWER compartments than the sales order they were raised from, and that is the whole of the `transfer to` / `transfer from` difference on those documents - the reconcile compares the FRACTION transferred (lib/transfer-counter-verdict.mjs), so a sales order of three compartments with one purchased row reads 1/3 against the book's 1/1. THE OWNER'S RULE DECIDES WHICH SIDE MOVES: 「Purchase order follows the SALES ORDER」, given on 2026-09-09 about HC-SO-010287 itself, the mirrored pair in this file. So the sales build is copied ONTO the purchase order, never the other way. WHY EVERY ENTRY IS KEYED AND NONE IS TEXT-MATCHED: the applier finds a build by scm.purchase_order_items.description2, and the plan run 34297962031 skipped eleven purchase orders with `no line carries this text` while the ACCOUNT BOOK's text for those same lines matches the needle exactly - the ERP's purchase row holds different text from the book's. The book's own DtlKey does not have that problem: every purchase row concerned carries it in linked_ac_dtlkey (printed as `key NNNNNN` by that probe), and lib/sofa-desc2-match.mjs treats a line key as IDENTITY and never falls back to text. WHAT IS NOT IN THIS FILE, and why: HC-PO-008783 (its console is an open question the owner alone can close - see the _held entry in the 2026-09 file) and HC-PO-009828 (no line key at all; backfill-ac-downstream-line-keys.mjs is what fills that, not a ruling).",
-  "_rules": "Same as every other round: money never moves - the price rides the FIRST piece and every other piece is 0; rows are matched to target pieces and UPDATED in place so a row id and any receipt hanging off it survives. RECEIVED PURCHASE ORDERS ARE NOT WAVED THROUGH HERE. Five of these thirteen are RECEIVED, and 「库存先不看」 means a write that would move an on-hand figure stops. It is not this file that decides that: apply-sofa-compartment-corrections.mjs already refuses a build whose downstream moved real stock (downstreamMovedStock - any scm.inventory_movements row naming the document, or a GRN/DO that is not migrated_no_stock), and it PRINTS the figure it refused on. The entries are written so the plan run answers that question with a measurement instead of an argument; a refusal is the answer, and the document stays named.",
-  "entries": [
-    {
-      "docs": [
-        "HC-PO-009783"
-      ],
-      "model": "8030",
-      "pieces": [
-        "1A(LHF)",
-        "1NA",
-        "1A(RHF)"
-      ],
-      "seat": "24",
-      "lineKeys": [
-        "889749"
-      ],
-      "why": "CONFIDENT. Read off the purchase order's OWN slip (.ac-photos/po/PO-009783__889749_1.jpg, enlarged 4x): three separate outlines, a hatched strip inside the left edge of the first and inside the right edge of the third, the middle plain. The book's text says the same in words - '3 seater  24 icnh per seat'. It is also the build already ruled for the sales order this purchase order was raised from, HC-SO-013103 (sofa-compartment-corrections-drawings.json), and prod holds exactly those three rows on the sales side while HC-PO-009783 [SUBMITTED] holds only 8030-1A(LHF) (probe run 34299650607)."
-    },
-    {
-      "docs": [
-        "HC-PO-010160"
-      ],
-      "model": "9058",
-      "pieces": [
-        "1A(LHF)",
-        "1NA",
-        "L(RHF)"
-      ],
-      "seat": "30",
-      "lineKeys": [
-        "924538"
-      ],
-      "why": "CONFIDENT. Purchase slip PO-010160__924538_1.jpg: box 1 hatched inside its left edge, box 2 plain, box 3 drawn about 2.5x deeper and running OUT from the end of the row with a narrow hatched arm block at its right - a chaise, not merely a deeper seat. The book agrees in words: 'L SHAPE  30 inch per seat'. Same build as the sales order's ruling for HC-SO-013258. Prod: the sales side holds 1A(LHF)+1NA+L(RHF), HC-PO-010160 [SUBMITTED] holds 1A(LHF)+L(RHF) and is short the 1NA."
-    },
-    {
-      "docs": [
-        "HC-PO-010146"
-      ],
-      "model": "5535",
-      "pieces": [
-        "2A(LHF)",
-        "L(RHF)"
-      ],
-      "seat": "30",
-      "lineKeys": [
-        "924289"
-      ],
-      "why": "CONFIDENT. Purchase slip PO-010146__924289_1.jpg, headed '5535 L': an arm block at the far left, then ONE outline holding two cells each marked 30\" divided by a single vertical - two seats inside one outline is ONE 2-seat piece by the owner's own rule - then a separate box marked 30\" drawn about 2.5x deeper running out perpendicular with an arm block on its right. Same build as the sales ruling for HC-SO-013310. Prod: HC-PO-010146 [SUBMITTED] holds 5535-2A(LHF) only and is short the L(RHF)."
-    },
-    {
-      "docs": [
-        "HC-PO-010161"
-      ],
-      "model": "8030",
-      "pieces": [
-        "L(LHF)",
-        "1NA",
-        "1A(RHF)"
-      ],
-      "seat": "35",
-      "lineKeys": [
-        "924543"
-      ],
-      "why": "LIKELY, and it is the SALES side that decides it. The sales order's ruling (HC-SO-013322, sofa-compartment-corrections-drawings.json) is L(LHF)+1NA+1A(RHF) at 35 and prod holds exactly that on the sales side. Read on its own, the purchase slip PO-010161__924543_1.jpg gives three separate outlines each marked 35 with the hatching at the two outer edges, and its FIRST box is drawn about 1.8x deeper than the other two with no elbow and no perpendicular run - which under the owner's rule 'a merely deeper box is not a chaise' reads as 1A(LHF) rather than L(LHF). The two readings differ on that first piece only. 「Purchase order follows the SALES ORDER」 settles it in favour of L(LHF), and the deeper box is what a chaise looks like from the end of a straight run. Recorded as LIKELY so this one piece can be overruled without touching the rest of the file. The slip's margin also carries the seat-to-length table that confirms the numbers in these boxes are SEAT INCHES: 35 = 10.75 feet, 32 = 10, 30 = 9.5, 28 = 9, 26 = 8.5, 24 = 8."
-    },
-    {
-      "docs": [
-        "HC-PO-010087"
-      ],
-      "model": "8030",
-      "pieces": [
-        "1A(LHF)",
-        "1A(RHF)"
-      ],
-      "seat": "35",
-      "lineKeys": [
-        "917339"
-      ],
-      "why": "CONFIDENT on the build, from the sales side. HC-SO-013389's build was ruled 1A(LHF)+1A(RHF) at 35 in sofa-compartment-corrections-2026-09.json from the OWNER's own reading of his slip, and prod holds both rows on the sales order. HC-PO-010087 [SUBMITTED] holds only 8030-1A(LHF) (probe run 34299650607). Note the purchase order is PO-010087 and NOT PO-010083, which is a different order carrying two other sofas - the number comes from the ACCOUNT BOOK's own edge, PO-010087 line 917339 raised from SO-013389 line 915302, not from a name that looked close."
-    },
-    {
-      "docs": [
-        "HC-PO-010151"
-      ],
-      "model": "8030",
-      "pieces": [
-        "1A(LHF)",
-        "1A(RHF)"
-      ],
-      "seat": "30",
-      "lineKeys": [
-        "924316"
-      ],
-      "why": "LIKELY. Purchase slip PO-010151__924316_1.jpg: two boxes with a gap between them, three diagonal strokes inside the LEFT edge of the left box and inside the RIGHT edge of the right box, neither box divided - one seat each. A single unexplained vertical stroke sits in the gap; it is a lone line and not a closed box, and a console on these slips is always drawn as a narrow CLOSED box (compare PO-010145 in this file), so it is not read as a Console. That stroke is the only reason this is LIKELY. The reading is the same as the sales ruling for HC-SO-013434, and prod holds 1A(LHF)+1A(RHF) on the sales side against HC-PO-010151 [SUBMITTED] holding 8030-1A(LHF) alone. Seat 30 is the book's own words, '30 inch per seat'."
-    },
-    {
-      "docs": [
-        "HC-PO-010150"
-      ],
-      "model": "9058",
-      "pieces": [
-        "1A(LHF)",
-        "1NA",
-        "L(RHF)"
-      ],
-      "seat": "28",
-      "lineKeys": [
-        "924305"
-      ],
-      "why": "CONFIDENT. Purchase slip PO-010150__924305_1.jpg draws the room in FEET rather than seat inches - a brace across the top reading '8 feet ~ 10 feet' with a circled '9 feet', and a vertical arrow at the right reading '6 f[eet]'. Box 1 is hatched inside its left edge, box 2 is plain and narrower, box 3 runs to about twice the others' depth and is the piece the 6-foot arrow measures. Six feet of depth is a chaise, not a deeper seat. Same build as the sales ruling for HC-SO-011160. Prod: the sales side holds 1A(LHF)+1NA+L(RHF); HC-PO-010150 [SUBMITTED] holds 9058-1A(LHF) and four pillow lines. Seat 28 is the book's own words, '28 inch per seat'; the drawing states no seat inches."
-    },
-    {
-      "docs": [
-        "HC-PO-010085"
-      ],
-      "model": "9058",
-      "pieces": [
-        "2A(LHF)",
-        "1A(RHF)"
-      ],
-      "seat": "30",
-      "lineKeys": [
-        "917329"
-      ],
-      "why": "THE OWNER DECIDED THIS ONE HIMSELF, and it is the document he decided it on. HC-PO-010085 and HC-SO-010287 carry the same sofa MIRRORED - prod holds 9058-1A(LHF)+9058-2A(RHF) on the purchase order and 9058-2A(LHF)+9058-1A(RHF) on the sales order (probe run 34299650607) - which is why repair-po-so-link-sofa-compartments.mjs refuses it at gate 4. Asked which side is right, he answered on 2026-09-09 that the SALES ORDER wins and the purchase order is corrected. So the purchase order is relabelled to the sales build. Two rows in, two rows out: nothing is inserted and nothing is deleted. The book's own text for the line is 'MODENZA-05 (DARK OLIVE)/30\"/3S(1+2)', which read left to right would give 1+2 - the purchase order's current order - and that is exactly the disagreement he settled; 「一律跟账本。除了sofa compartment而已啊」 puts the sofa build outside what the book decides. Seat 30 is from that same text."
-    },
-    {
-      "docs": [
-        "HC-PO-009587"
-      ],
-      "model": "9058",
-      "pieces": [
-        "1A(LHF)",
-        "1NA",
-        "L(RHF)"
-      ],
-      "seat": "26",
-      "lineKeys": [
-        "872577"
-      ],
-      "why": "THE OWNER'S OWN READING, carried to the purchase side. sofa-compartment-corrections-2026-08.json holds this build for HC-PO-009587 and HC-SO-010209 already - he re-read the slip on 2026-09-08 and gave 1AL + 1NA + 1L(R) at 26 - but that entry's needle is the book's text 'L shape \\nbottom Nilon \\nColour : modenz', and plan run 34297962031 reports `no line carries this text` on the purchase order while the BOOK's text for PO-009587 line 872577 is exactly that. So the answer was never in doubt; only the address was. This entry is that same answer re-addressed by the book's own line key. PROD IS RECEIVED: HC-PO-009587 [RECEIVED] holds one row, 9058-1S, pointing at NOTHING, against a sales order holding all three compartments. The applier's own stock guard decides whether a received order may be corrected, and prints the figure if it refuses."
-    },
-    {
-      "docs": [
-        "HC-PO-009679"
-      ],
-      "model": "9058",
-      "pieces": [
-        "2A(LHF)",
-        "CNR",
-        "1A(RHF)"
-      ],
-      "seat": "28",
-      "lineKeys": [
-        "880127"
-      ],
-      "why": "THE ACCOUNT BOOK'S OWN Desc2 SPELLS THE BUILD OUT: '{SIZE:2ER+C+1ER+(28\")}' - two seats with an end arm, a corner, one seat with an end arm, at 28 inches. It is already ruled for HC-PO-009679 and HC-SO-010955 in sofa-compartment-corrections-2026-08.json, whose whole why is 'Desc2 2ER+C+1ER', and prod holds all three rows on the sales side. Plan run 34297962031 skipped the purchase order with `no line carries this text` even though that IS the book's text for PO-009679 line 880127, so this entry re-addresses the same answer by the line key. PROD IS RECEIVED: HC-PO-009679 [RECEIVED] holds one row, 9058-1S, pointing at NOTHING. The applier's stock guard decides."
-    },
-    {
-      "docs": [
-        "HC-PO-009830"
-      ],
-      "model": "9028",
-      "pieces": [
-        "2A(LHF)",
-        "L(RHF)"
-      ],
-      "seat": "30",
-      "lineKeys": [
-        "892708"
-      ],
-      "why": "CONFIDENT on the build, from the sales side and the ACCOUNT BOOK's own words together. The book's Desc2 is '2L(30\")' - a two-seat run and a chaise, at 30 inches - and prod holds exactly 9028-2A(LHF)+9028-L(RHF) on HC-SO-011207, the sales order this purchase order was raised from. HC-PO-009830 [RECEIVED] holds one row, 9028-1S, pointing at NOTHING. 「Purchase order follows the SALES ORDER」. The applier's stock guard decides whether a received order may be corrected."
-    },
-    {
-      "docs": [
-        "HC-PO-009467"
-      ],
-      "model": "9028",
-      "pieces": [
-        "1A(LHF)",
-        "1A(RHF)"
-      ],
-      "seat": "28",
-      "lineKeys": [
-        "861768"
-      ],
-      "why": "CONFIDENT. The book's own text decodes without a drawing at all: '(1EL+1ER)28inch' - one left-end arm, one right-end arm, 28 inches. Prod holds exactly 9028-1A(LHF)+9028-1A(RHF) on HC-SO-012128, the sales order this was raised from, so the book and the sales side already agree with each other. HC-PO-009467 [RECEIVED] holds one row, 9028-1S, pointing at NOTHING. The applier's stock guard decides whether a received order may be corrected."
-    },
-    {
-      "docs": [
-        "HC-PO-009554"
-      ],
-      "model": "9058",
-      "pieces": [
-        "2A(LHF)",
-        "CNR",
-        "1A(RHF)"
-      ],
-      "seat": "30",
-      "lineKeys": [
-        "868667"
-      ],
-      "why": "CONFIDENT, read off the sales order's slip (.ac-photos/so/SO-012729__867593_1.jpg, enlarged 4x): a separate quarter-round outline with 'Corner' beside it, a '+', a single outline holding TWO cells each marked 30\" with a narrow arm strip down its right edge, a '+', and a single box marked 30\" with an arm strip along its bottom. Arrows from both point at a box marked TV. That is CNR + 2A + 1A at 30 - the quarter-round is the shape the owner confirmed as a CORNER on this very document. Prod holds 9058-2A(LHF)+9058-CNR+9058-1A(RHF) on HC-SO-012729; the book's text says only '30\" CORNER / COL : B0315-23', which states the corner and the seat and nothing else. HC-PO-009554 [RECEIVED] holds one row, 9058-1S, pointing at NOTHING. The applier's stock guard decides."
-    },
-    {
-      "docs": [
-        "HC-PO-009018"
-      ],
-      "model": "9028",
-      "pieces": [
-        "STOOL"
-      ],
-      "seat": null,
-      "lineKeys": [
-        "829666"
-      ],
-      "why": "NOT A SOFA, AND THE ERP IS ALREADY RIGHT - this entry only records the reading so the reconcile stops asking for a drawing it has already been shown. The slip PO-009018__829666_1.jpg holds one square with the word 'Stool' written inside it, 32\" along the top edge and 49\" down the right, no hatching, no seat cells and no arms. Prod holds 9028-STOOL. The book books the line as AMN-SF9028 SOFA and gives 'BO315-21/32\" X 49\"' - those two numbers are the stool's own dimensions, not a seat size, which is why parse-sofa cannot read a build out of them and returns the line as undecodable. Nothing is written by this entry: the target multiset is what the row already holds."
-    },
-    {
-      "docs": [
-        "HC-PO-010145"
-      ],
-      "model": "8030",
-      "pieces": [
-        "1A(LHF)",
-        "CONSOLE",
-        "1A(RHF)"
-      ],
-      "seat": "35",
-      "lineKeys": [
-        "924286"
-      ],
-      "why": "CONFIDENT, AND THE ERP IS ALREADY RIGHT - prod holds CONSOLE+1A(RHF)+1A(LHF), the same multiset. This entry records the reading so the line stops reporting as unanswerable. The book's text spells it out - '1EL + CS + 1EL' - and the slip PO-010145__924286_1.jpg draws it: a box marked 35 hatched inside its left edge, a narrow empty box between (two verticals, no hatching) with an arrow from the handwritten word 'conso' pointing at it, and a box marked 35 hatched inside its right edge. The slip is headed 8030, which is the owner's confirmed alias of the book's HOK-5540, so the model agrees. The slip says 'colour tbc' where the book records B0315-21 PEARL - the colour was chosen after the slip was written, so that is not evidence against the book."
-    }
-  ],
-  "_held": []
+ "_note": "THE PURCHASE SIDE OF A SOFA WHOSE SALES SIDE IS ALREADY RULED, 2026-09-09. Every build in sofa-compartment-corrections-drawings.json names ONE document and it is always the SALES order, so the sales order got its compartments and the purchase order raised from it was left holding the single lead piece the importer created. Measured on production, read-only run 34299650607 (probe-so-po-compartment-cover.mjs, book cut 2026-09-09T00:18:49Z): thirteen purchase orders carry FEWER compartments than the sales order they were raised from, and that is the whole of the `transfer to` / `transfer from` difference on those documents - the reconcile compares the FRACTION transferred (lib/transfer-counter-verdict.mjs), so a sales order of three compartments with one purchased row reads 1/3 against the book's 1/1. THE OWNER'S RULE DECIDES WHICH SIDE MOVES: 「Purchase order follows the SALES ORDER」, given on 2026-09-09 about HC-SO-010287 itself, the mirrored pair in this file. So the sales build is copied ONTO the purchase order, never the other way. WHY EVERY ENTRY IS KEYED AND NONE IS TEXT-MATCHED: the applier finds a build by scm.purchase_order_items.description2, and the plan run 34297962031 skipped eleven purchase orders with `no line carries this text` while the ACCOUNT BOOK's text for those same lines matches the needle exactly - the ERP's purchase row holds different text from the book's. The book's own DtlKey does not have that problem: every purchase row concerned carries it in linked_ac_dtlkey (printed as `key NNNNNN` by that probe), and lib/sofa-desc2-match.mjs treats a line key as IDENTITY and never falls back to text. WHAT IS NOT IN THIS FILE, and why: HC-PO-008783 (its console is an open question the owner alone can close - see the _held entry in the 2026-09 file) and HC-PO-009828 (no line key at all; backfill-ac-downstream-line-keys.mjs is what fills that, not a ruling).",
+ "_rules": "Same as every other round: money never moves - the price rides the FIRST piece and every other piece is 0; rows are matched to target pieces and UPDATED in place so a row id and any receipt hanging off it survives. RECEIVED PURCHASE ORDERS ARE NOT WAVED THROUGH HERE. Five of these thirteen are RECEIVED, and 「库存先不看」 means a write that would move an on-hand figure stops. It is not this file that decides that: apply-sofa-compartment-corrections.mjs already refuses a build whose downstream moved real stock (downstreamMovedStock - any scm.inventory_movements row naming the document, or a GRN/DO that is not migrated_no_stock), and it PRINTS the figure it refused on. The entries are written so the plan run answers that question with a measurement instead of an argument; a refusal is the answer, and the document stays named.",
+ "entries": [
+  {
+   "docs": [
+    "HC-PO-009783"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "seat": "24",
+   "lineKeys": [
+    "889749"
+   ],
+   "why": "CONFIDENT. Read off the purchase order's OWN slip (.ac-photos/po/PO-009783__889749_1.jpg, enlarged 4x): three separate outlines, a hatched strip inside the left edge of the first and inside the right edge of the third, the middle plain. The book's text says the same in words - '3 seater  24 icnh per seat'. It is also the build already ruled for the sales order this purchase order was raised from, HC-SO-013103 (sofa-compartment-corrections-drawings.json), and prod holds exactly those three rows on the sales side while HC-PO-009783 [SUBMITTED] holds only 8030-1A(LHF) (probe run 34299650607)."
+  },
+  {
+   "docs": [
+    "HC-PO-010160"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "L(RHF)"
+   ],
+   "seat": "30",
+   "lineKeys": [
+    "924538"
+   ],
+   "why": "CONFIDENT. Purchase slip PO-010160__924538_1.jpg: box 1 hatched inside its left edge, box 2 plain, box 3 drawn about 2.5x deeper and running OUT from the end of the row with a narrow hatched arm block at its right - a chaise, not merely a deeper seat. The book agrees in words: 'L SHAPE  30 inch per seat'. Same build as the sales order's ruling for HC-SO-013258. Prod: the sales side holds 1A(LHF)+1NA+L(RHF), HC-PO-010160 [SUBMITTED] holds 1A(LHF)+L(RHF) and is short the 1NA."
+  },
+  {
+   "docs": [
+    "HC-PO-010146"
+   ],
+   "model": "5535",
+   "pieces": [
+    "2A(LHF)",
+    "L(RHF)"
+   ],
+   "seat": "30",
+   "lineKeys": [
+    "924289"
+   ],
+   "why": "CONFIDENT. Purchase slip PO-010146__924289_1.jpg, headed '5535 L': an arm block at the far left, then ONE outline holding two cells each marked 30\" divided by a single vertical - two seats inside one outline is ONE 2-seat piece by the owner's own rule - then a separate box marked 30\" drawn about 2.5x deeper running out perpendicular with an arm block on its right. Same build as the sales ruling for HC-SO-013310. Prod: HC-PO-010146 [SUBMITTED] holds 5535-2A(LHF) only and is short the L(RHF)."
+  },
+  {
+   "docs": [
+    "HC-PO-010161"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "L(RHF)"
+   ],
+   "seat": "35",
+   "lineKeys": [
+    "924543"
+   ],
+   "why": "LIKELY, and it is the SALES side that decides it. The sales order's ruling (HC-SO-013322, sofa-compartment-corrections-drawings.json) is L(LHF)+1NA+1A(RHF) at 35 and prod holds exactly that on the sales side. Read on its own, the purchase slip PO-010161__924543_1.jpg gives three separate outlines each marked 35 with the hatching at the two outer edges, and its FIRST box is drawn about 1.8x deeper than the other two with no elbow and no perpendicular run - which under the owner's rule 'a merely deeper box is not a chaise' reads as 1A(LHF) rather than L(LHF). The two readings differ on that first piece only. 「Purchase order follows the SALES ORDER」 settles it in favour of L(LHF), and the deeper box is what a chaise looks like from the end of a straight run. Recorded as LIKELY so this one piece can be overruled without touching the rest of the file. The slip's margin also carries the seat-to-length table that confirms the numbers in these boxes are SEAT INCHES: 35 = 10.75 feet, 32 = 10, 30 = 9.5, 28 = 9, 26 = 8.5, 24 = 8. | SUPERSEDED 2026-09-11 to the build the SUPPLIER round writes (propose-supplier-sofa-corrections production run 34502972739). Owner 2026-09-11: the supplier is the authority on a proceeded order, and two disagreeing builds at one address is what sofa-corrections-source.test.mjs refuses - leaving both would let file order decide silently."
+  },
+  {
+   "docs": [
+    "HC-PO-010087"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "seat": "35",
+   "lineKeys": [
+    "917339"
+   ],
+   "why": "CONFIDENT on the build, from the sales side. HC-SO-013389's build was ruled 1A(LHF)+1A(RHF) at 35 in sofa-compartment-corrections-2026-09.json from the OWNER's own reading of his slip, and prod holds both rows on the sales order. HC-PO-010087 [SUBMITTED] holds only 8030-1A(LHF) (probe run 34299650607). Note the purchase order is PO-010087 and NOT PO-010083, which is a different order carrying two other sofas - the number comes from the ACCOUNT BOOK's own edge, PO-010087 line 917339 raised from SO-013389 line 915302, not from a name that looked close."
+  },
+  {
+   "docs": [
+    "HC-PO-010151"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "seat": "30",
+   "lineKeys": [
+    "924316"
+   ],
+   "why": "LIKELY. Purchase slip PO-010151__924316_1.jpg: two boxes with a gap between them, three diagonal strokes inside the LEFT edge of the left box and inside the RIGHT edge of the right box, neither box divided - one seat each. A single unexplained vertical stroke sits in the gap; it is a lone line and not a closed box, and a console on these slips is always drawn as a narrow CLOSED box (compare PO-010145 in this file), so it is not read as a Console. That stroke is the only reason this is LIKELY. The reading is the same as the sales ruling for HC-SO-013434, and prod holds 1A(LHF)+1A(RHF) on the sales side against HC-PO-010151 [SUBMITTED] holding 8030-1A(LHF) alone. Seat 30 is the book's own words, '30 inch per seat'."
+  },
+  {
+   "docs": [
+    "HC-PO-010150"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "L(RHF)"
+   ],
+   "seat": "28",
+   "lineKeys": [
+    "924305"
+   ],
+   "why": "CONFIDENT. Purchase slip PO-010150__924305_1.jpg draws the room in FEET rather than seat inches - a brace across the top reading '8 feet ~ 10 feet' with a circled '9 feet', and a vertical arrow at the right reading '6 f[eet]'. Box 1 is hatched inside its left edge, box 2 is plain and narrower, box 3 runs to about twice the others' depth and is the piece the 6-foot arrow measures. Six feet of depth is a chaise, not a deeper seat. Same build as the sales ruling for HC-SO-011160. Prod: the sales side holds 1A(LHF)+1NA+L(RHF); HC-PO-010150 [SUBMITTED] holds 9058-1A(LHF) and four pillow lines. Seat 28 is the book's own words, '28 inch per seat'; the drawing states no seat inches."
+  },
+  {
+   "docs": [
+    "HC-PO-010085"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "2A(RHF)"
+   ],
+   "seat": "30",
+   "lineKeys": [
+    "917329"
+   ],
+   "why": "THE OWNER DECIDED THIS ONE HIMSELF, and it is the document he decided it on. HC-PO-010085 and HC-SO-010287 carry the same sofa MIRRORED - prod holds 9058-1A(LHF)+9058-2A(RHF) on the purchase order and 9058-2A(LHF)+9058-1A(RHF) on the sales order (probe run 34299650607) - which is why repair-po-so-link-sofa-compartments.mjs refuses it at gate 4. Asked which side is right, he answered on 2026-09-09 that the SALES ORDER wins and the purchase order is corrected. So the purchase order is relabelled to the sales build. Two rows in, two rows out: nothing is inserted and nothing is deleted. The book's own text for the line is 'MODENZA-05 (DARK OLIVE)/30\"/3S(1+2)', which read left to right would give 1+2 - the purchase order's current order - and that is exactly the disagreement he settled; 「一律跟账本。除了sofa compartment而已啊」 puts the sofa build outside what the book decides. Seat 30 is from that same text. | SUPERSEDED 2026-09-11 by the SUPPLIER'S OWN LISTING (propose-supplier-sofa-corrections production run 34502972739). The owner ruled these four follow the supplier even though the two readings are different sofas, not a from-the-other-end reversal: 「ok 四张跟supplier的」. The supplier's system records what it BUILT; this entry was a reading of a photograph."
+  },
+  {
+   "docs": [
+    "HC-PO-009587"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "L(RHF)"
+   ],
+   "seat": "26",
+   "lineKeys": [
+    "872577"
+   ],
+   "why": "THE OWNER'S OWN READING, carried to the purchase side. sofa-compartment-corrections-2026-08.json holds this build for HC-PO-009587 and HC-SO-010209 already - he re-read the slip on 2026-09-08 and gave 1AL + 1NA + 1L(R) at 26 - but that entry's needle is the book's text 'L shape \\nbottom Nilon \\nColour : modenz', and plan run 34297962031 reports `no line carries this text` on the purchase order while the BOOK's text for PO-009587 line 872577 is exactly that. So the answer was never in doubt; only the address was. This entry is that same answer re-addressed by the book's own line key. PROD IS RECEIVED: HC-PO-009587 [RECEIVED] holds one row, 9058-1S, pointing at NOTHING, against a sales order holding all three compartments. The applier's own stock guard decides whether a received order may be corrected, and prints the figure if it refuses."
+  },
+  {
+   "docs": [
+    "HC-PO-009679"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "CNR",
+    "2A(RHF)"
+   ],
+   "seat": "28",
+   "lineKeys": [
+    "880127"
+   ],
+   "why": "THE ACCOUNT BOOK'S OWN Desc2 SPELLS THE BUILD OUT: '{SIZE:2ER+C+1ER+(28\")}' - two seats with an end arm, a corner, one seat with an end arm, at 28 inches. It is already ruled for HC-PO-009679 and HC-SO-010955 in sofa-compartment-corrections-2026-08.json, whose whole why is 'Desc2 2ER+C+1ER', and prod holds all three rows on the sales side. Plan run 34297962031 skipped the purchase order with `no line carries this text` even though that IS the book's text for PO-009679 line 880127, so this entry re-addresses the same answer by the line key. PROD IS RECEIVED: HC-PO-009679 [RECEIVED] holds one row, 9058-1S, pointing at NOTHING. The applier's stock guard decides. | SUPERSEDED 2026-09-11 to the build the SUPPLIER round writes (propose-supplier-sofa-corrections production run 34502972739). Owner 2026-09-11: the supplier is the authority on a proceeded order, and two disagreeing builds at one address is what sofa-corrections-source.test.mjs refuses - leaving both would let file order decide silently."
+  },
+  {
+   "docs": [
+    "HC-PO-009830"
+   ],
+   "model": "9028",
+   "pieces": [
+    "2A(LHF)",
+    "L(RHF)"
+   ],
+   "seat": "30",
+   "lineKeys": [
+    "892708"
+   ],
+   "why": "CONFIDENT on the build, from the sales side and the ACCOUNT BOOK's own words together. The book's Desc2 is '2L(30\")' - a two-seat run and a chaise, at 30 inches - and prod holds exactly 9028-2A(LHF)+9028-L(RHF) on HC-SO-011207, the sales order this purchase order was raised from. HC-PO-009830 [RECEIVED] holds one row, 9028-1S, pointing at NOTHING. 「Purchase order follows the SALES ORDER」. The applier's stock guard decides whether a received order may be corrected."
+  },
+  {
+   "docs": [
+    "HC-PO-009467"
+   ],
+   "model": "9028",
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "seat": "28",
+   "lineKeys": [
+    "861768"
+   ],
+   "why": "CONFIDENT. The book's own text decodes without a drawing at all: '(1EL+1ER)28inch' - one left-end arm, one right-end arm, 28 inches. Prod holds exactly 9028-1A(LHF)+9028-1A(RHF) on HC-SO-012128, the sales order this was raised from, so the book and the sales side already agree with each other. HC-PO-009467 [RECEIVED] holds one row, 9028-1S, pointing at NOTHING. The applier's stock guard decides whether a received order may be corrected."
+  },
+  {
+   "docs": [
+    "HC-PO-009554"
+   ],
+   "model": "9058",
+   "pieces": [
+    "2A(LHF)",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "seat": "30",
+   "lineKeys": [
+    "868667"
+   ],
+   "why": "CONFIDENT, read off the sales order's slip (.ac-photos/so/SO-012729__867593_1.jpg, enlarged 4x): a separate quarter-round outline with 'Corner' beside it, a '+', a single outline holding TWO cells each marked 30\" with a narrow arm strip down its right edge, a '+', and a single box marked 30\" with an arm strip along its bottom. Arrows from both point at a box marked TV. That is CNR + 2A + 1A at 30 - the quarter-round is the shape the owner confirmed as a CORNER on this very document. Prod holds 9058-2A(LHF)+9058-CNR+9058-1A(RHF) on HC-SO-012729; the book's text says only '30\" CORNER / COL : B0315-23', which states the corner and the seat and nothing else. HC-PO-009554 [RECEIVED] holds one row, 9058-1S, pointing at NOTHING. The applier's stock guard decides."
+  },
+  {
+   "docs": [
+    "HC-PO-009018"
+   ],
+   "model": "9028",
+   "pieces": [
+    "STOOL"
+   ],
+   "seat": null,
+   "lineKeys": [
+    "829666"
+   ],
+   "why": "NOT A SOFA, AND THE ERP IS ALREADY RIGHT - this entry only records the reading so the reconcile stops asking for a drawing it has already been shown. The slip PO-009018__829666_1.jpg holds one square with the word 'Stool' written inside it, 32\" along the top edge and 49\" down the right, no hatching, no seat cells and no arms. Prod holds 9028-STOOL. The book books the line as AMN-SF9028 SOFA and gives 'BO315-21/32\" X 49\"' - those two numbers are the stool's own dimensions, not a seat size, which is why parse-sofa cannot read a build out of them and returns the line as undecodable. Nothing is written by this entry: the target multiset is what the row already holds."
+  },
+  {
+   "docs": [
+    "HC-PO-010145"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "CSL",
+    "1A(RHF)"
+   ],
+   "seat": "35",
+   "lineKeys": [
+    "924286"
+   ],
+   "why": "CONFIDENT, AND THE ERP IS ALREADY RIGHT - prod holds CONSOLE+1A(RHF)+1A(LHF), the same multiset. This entry records the reading so the line stops reporting as unanswerable. The book's text spells it out - '1EL + CS + 1EL' - and the slip PO-010145__924286_1.jpg draws it: a box marked 35 hatched inside its left edge, a narrow empty box between (two verticals, no hatching) with an arrow from the handwritten word 'conso' pointing at it, and a box marked 35 hatched inside its right edge. The slip is headed 8030, which is the owner's confirmed alias of the book's HOK-5540, so the model agrees. The slip says 'colour tbc' where the book records B0315-21 PEARL - the colour was chosen after the slip was written, so that is not evidence against the book. | SUPERSEDED 2026-09-11 by the SUPPLIER'S OWN LISTING (propose-supplier-sofa-corrections production run 34502972739). The owner ruled these four follow the supplier even though the two readings are different sofas, not a from-the-other-end reversal: 「ok 四张跟supplier的」. The supplier's system records what it BUILT; this entry was a reading of a photograph."
+  }
+ ],
+ "_held": []
 }
