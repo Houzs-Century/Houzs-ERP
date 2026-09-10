@@ -5952,3 +5952,33 @@ special order was the whole obstacle in two more disguises:
 
 **The refusal reported is the FIRST attempt's** — what is wrong with the document
 as it stands, not with a rewrite of it.
+
+## The BOOK says which ERP lines are one sofa — not adjacency (2026-09-10)
+
+New SURFACE on `collapseSofaLines` and `collapseRun` in
+`backend/src/services/autocount-sofa-collapse.ts`. `collapseRun` now takes a
+REQUIRED `bookGrouped` flag.
+
+**A sofa is ONE line in AutoCount and several here, and every piece carries that
+one line's `DtlKey`.** The runs were formed by ADJACENCY — consecutive lines
+sharing a model and a stored Desc2 — which is right until something interrupts a
+sofa. `HC-SO-001526` holds `1EL` and `2ER` of one sofa with ANOTHER sofa's two
+lines between them, so each end was collapsed alone; and `1EL` by itself decodes
+to a single SEAT, not a left arm. Four more documents are the same shape.
+
+`scatteredByBookLine` gathers lines sharing a key and a model, **non-contiguous
+only**, so a run the adjacency rule already forms is left to it and nothing that
+works today moves.
+
+**THE HAZARD, and why `bookGrouped` exists.** A gathered run arrives in the ERP's
+INSERTION order, which states nothing about how the sofa is built. Composing from
+it round-trips perfectly and writes the **MIRROR** of the sofa the book records —
+`2ER + 1EL` where the book says `1EL + 2ER` — and nothing downstream catches a
+mirror. So for a gathered run whose pieces match the book's as a MULTISET, the
+ORDER comes from the book's own text. Money, warehouse and dates still come from
+the ERP rows; size, colour and specials are still compared exactly.
+
+**A last-resort echo** sends the book its own text when both compose attempts
+fail and the stored text decodes to the same multiset — `HC-SO-000814` and
+`HC-SO-001112`, whose pieces match and whose order does not. Reached only after
+the composer has failed, so it cannot hide an edit.
