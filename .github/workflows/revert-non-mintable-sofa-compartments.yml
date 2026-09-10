@@ -1,0 +1,38 @@
+name: Revert non-mintable sofa compartments (HOUZS, manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (default) or apply"
+        type: choice
+        options: ["dry-run", "apply"]
+        default: "dry-run"
+      confirm:
+        description: 'Required for apply: I HAVE REVIEWED THE DRY-RUN'
+        type: string
+        default: ""
+
+concurrency:
+  group: revert-non-mintable-sofa-compartments
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: install
+        working-directory: backend
+        run: npm ci --ignore-scripts --no-audit --no-fund --loglevel=error
+      - name: run
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ github.event.inputs.mode }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+        run: node scripts/revert-non-mintable-sofa-compartments.mjs
