@@ -11,6 +11,7 @@ import {
   SPECIAL_ORDER_POINTER,
 } from './autocount-desc2-abbrev';
 import { AC_DESC2_MAX } from './autocount-sofa-collapse';
+import { composeDescription2 } from './autocount-writeback';
 
 const PREFIX_12312 = 'PC151-11 / DIVAN 10" + NO LEG / GAP 14" / T.Heights 24" / SPECIAL: ';
 const PREFIX_2609 = 'PC151-11 / DIVAN 8" + LEG 0" / GAP 12" / T.Heights 20" / SPECIAL: ';
@@ -175,5 +176,35 @@ describe('the pointer replaces a SEGMENT, never the tail of the string', () => {
   it('is the owner\'s sentence, not a paraphrase', () => {
     /* Pinned because it is text a person in the office reads and acts on. */
     expect(SPECIAL_ORDER_POINTER).toBe('Special Order: Refer to ERP');
+  });
+});
+
+describe('the composer is what calls the ladder — the wiring, not the rule', () => {
+  /* A rule nothing calls changes nothing. `composeDescription2` is the one
+     function that turns an ERP line into the string AutoCount is handed, and
+     these ask IT rather than the ladder, so a future edit that drops the call
+     fails here instead of silently un-shipping the whole thing. */
+  const line = (variants: Record<string, unknown>) => ({
+    item_code: 'HOK-1003 (A) (K)',
+    item_group: 'bedframe',
+    description2: null,
+    variants,
+  });
+
+  it('a special order over the column reaches AutoCount as the pointer', () => {
+    const out = composeDescription2(line({
+      fabricCode: 'PC151-01', gap: '12"',
+      specials: ['Customer would like to customize the front divan with one drawer on the left and one drawer on the right.'],
+    }) as never);
+    expect(out).not.toBeNull();
+    expect(String(out).length).toBeLessThanOrEqual(AC_DESC2_MAX);
+    expect(String(out)).toContain(SPECIAL_ORDER_POINTER);
+    expect(String(out)).toContain('PC151-01');
+  });
+
+  it('a line that fits is composed exactly as it was before any of this', () => {
+    const out = composeDescription2(line({ fabricCode: 'PC151-01', gap: '12"', specials: ['Right Drawer'] }) as never);
+    expect(String(out)).toContain('Right Drawer');
+    expect(String(out)).not.toContain(SPECIAL_ORDER_POINTER);
   });
 });
