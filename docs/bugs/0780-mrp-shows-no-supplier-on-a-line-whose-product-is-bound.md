@@ -234,15 +234,15 @@ that file reads supplier bindings.
 
 ### NOT fixed, deliberately, and what it would take
 
-**65 other `.in()` reads in `backend/src` filter on an item-code column** and are
+**67 `.in()` reads in `backend/src` still filter on an item-code column** and are
 exposed to the same two product codes. They are not touched here because the
 sweep is not free: several of them are on paths that scripts drive through
 `pgrest-shim.mjs`, and a 67-site mechanical change to the money routes in the
 same PR as the diagnosis is a diff nobody can review against the evidence. Three
 ways to close it, cheapest first:
 
-1. **Sweep the call sites** to `.filter(col, 'in', pgrestInList(batch))`. Small
-   per site, mechanical, but ~67 of them plus every fake they touch.
+1. **Sweep them** to `.filter(col, 'in', pgrestInList(batch))`. Small per site
+   and mechanical, but 67 of them plus the fakes they touch.
 2. **Fix it once at the client** — override `in()` when the service client is
    built in `src/db/supabase.ts`. One place, covers everything including code
    nobody has written yet; the cost is that `.in()` then behaves differently from

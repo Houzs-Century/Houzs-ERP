@@ -433,9 +433,10 @@ Two consequences worth knowing before you touch this:
   reproduces the bug and reports a clean run. The shared fakes
   (`backend/src/scm/lib/fake-postgrest.ts`, `backend/tests/fakePostgrest.ts`) and
   `backend/scripts/lib/pgrest-shim.mjs` already do.
-- **The other reads in this tree still use `.in()` on an item code** — 65 call
-  sites outside these two as of 2026-09-10 — so any of them can lose the same two
-  codes. They are listed, unfixed and deliberately so, in the bug entry.
+- **The other reads in this tree still use `.in()` on an item code** — 67 of
+  them outside these two as of 2026-09-10, counted by the enumeration block in
+  the PR — so any of them can lose the same two codes. Unfixed, deliberately;
+  the bug entry says why and what closing it takes.
 
 ## 4. Buckets and allocation
 
