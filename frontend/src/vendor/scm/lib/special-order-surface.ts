@@ -37,6 +37,8 @@
 // SERVICE is absent because a fee line is not goods and orders nothing.
 // ----------------------------------------------------------------------------
 
+import { useSkuCategoryByCode } from './mfg-products-queries';
+
 /** Categories whose stock pools by item code — a special must not re-key them. */
 const POOLED = new Set(['accessory', 'others']);
 
@@ -64,4 +66,35 @@ export function specialOrderSurface(input: {
     block: true,
     optionPicker: !POOLED.has(cat) || input.pickedSpecialCount > 0,
   };
+}
+
+/* ── The mobile pairing: resolve the category, THEN decide ──────────────────
+   Mobile asks this question in two places — the row that opens the sheet and
+   the sheet itself — and they must never disagree about whether the checkbox
+   presets are on offer, or the operator taps a row promising presets into a
+   sheet that has none. Both the resolution and the decision therefore live
+   here, in one call, rather than being written out twice at the call sites.
+
+   WHY THE RESOLVED CATEGORY AND NOT THE LINE'S OWN: mobile's LINE_CATS holds
+   only sofa / bedframe / mattress, so an accessory, a dining item and a
+   delivery FEE all read as "" on the line and cannot be told apart — and a fee
+   line must not offer a special order. `useSkuCategoryByCode` is cached by
+   react-query, so the second caller costs nothing.
+
+   Desktop does NOT use this: SoLineCard resolves its category from the picked
+   product first (`picked?.category ?? skuCategoryQ.data ?? itemGroup`), which
+   is a better answer than this hook can give, and calls the pure function with
+   it. Same rule, one implementation, two ways in. */
+export function useSpecialOrderSurface(input: {
+  itemCode: string;
+  /** The line's own category, used when the SKU lookup has nothing to say. */
+  fallbackCategory: string;
+  pickedSpecialCount: number;
+}): SpecialOrderSurface {
+  const q = useSkuCategoryByCode(input.itemCode || undefined);
+  return specialOrderSurface({
+    category: String(q.data ?? '').toLowerCase() || input.fallbackCategory,
+    hasItemCode: Boolean(input.itemCode),
+    pickedSpecialCount: input.pickedSpecialCount,
+  });
 }

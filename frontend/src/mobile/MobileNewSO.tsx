@@ -75,7 +75,7 @@ import {
   type ModelAllowedOptions,
   type SpecialAddonRow,
 } from "../vendor/scm/lib/mfg-products-queries";
-import { specialOrderSurface } from "../vendor/scm/lib/special-order-surface";
+import { useSpecialOrderSurface } from "../vendor/scm/lib/special-order-surface";
 import { useFabricColoursSearch, type FabricColourRow } from "../vendor/scm/lib/fabric-queries";
 /* Owner 2026-07-16 — the recorded-payment ledger is the SHARED
    RecordedPaymentsList, the SAME component the scan-draft review screen
@@ -303,6 +303,13 @@ const LINE_CATS: Array<{ value: LineCat; label: string }> = [
    bank nobody chose. The picks now seed blank (newPayment) and PayCard renders
    the LIVE catalog via useSoDropdownOptions/optionsOrFallback, so there is no
    remaining reader — and no static list left to drift from the DB values. */
+
+/* variants.specials -> trimmed code list. Was written out twice, identically. */
+const specialsList = (val: unknown): string[] => {
+  if (Array.isArray(val)) return val.map(String).filter(Boolean);
+  if (typeof val === "string" && val) return [val];
+  return [];
+};
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const num = (s: string) => parseFloat(String(s).replace(/,/g, "")) || 0;
@@ -3008,31 +3015,12 @@ function LineCard({
      one-line summary for the tappable "Special order" row. Presets live on
      variants.specials; the "Custom / other" free-text order on the UNCHANGED
      variants.extraAddonNote + extraAddonAmountRM. */
-  const specialsList = (val: unknown): string[] => {
-    if (Array.isArray(val)) return val.map(String).filter(Boolean);
-    if (typeof val === "string" && val) return [val];
-    return [];
-  };
   const pickedSpecials = specialsList(v.specials ?? v.special);
   const extraNote = String(v.extraAddonNote ?? "");
   const extraAmountRM = Number(v.extraAddonAmountRM ?? 0);
   const hasCustom = Boolean(extraNote.trim()) || extraAmountRM > 0;
   const specialCount = pickedSpecials.length + (hasCustom ? 1 : 0);
-
-  /* WHICH SPECIAL-ORDER SURFACE THIS LINE GETS — one rule, shared with desktop
-     (vendor/scm/lib/special-order-surface.ts). Owner 2026-09-10: an SP
-     mattress's SIZE and a custom pillow's COLOUR had nowhere to be written.
-
-     The EFFECTIVE category has to come from the SKU, not from `line.cat`:
-     LINE_CATS only holds sofa / bedframe / mattress, so an accessory, a dining
-     item and a delivery FEE all read as "" there and cannot be told apart —
-     and a fee line must not offer a special order. */
-  const effectiveCat = String(skuCategoryQ.data ?? "").toLowerCase() || line.cat;
-  const specialSurface = specialOrderSurface({
-    category: effectiveCat,
-    hasItemCode: Boolean(line.itemCode),
-    pickedSpecialCount: pickedSpecials.length,
-  });
+  const specialSurface = useSpecialOrderSurface({ itemCode: line.itemCode, fallbackCategory: line.cat, pickedSpecialCount: pickedSpecials.length });
 
   const addPhotos = (files: File[]) => {
     if (files.length === 0) return;
@@ -3178,10 +3166,7 @@ function LineCard({
             opens the bottom sheet (presets + Custom / other). Replaces the old
             inline accordion + the standalone Extra input; the data path is
             unchanged (variants.specials + extraAddonNote/extraAddonAmountRM).
-            Shown for sofa + bedframe, and — since 2026-09-10 — for every other
-            goods line too, so the free-text order has somewhere to live on a
-            mattress, an accessory or a dining item. specialOrderSurface owns
-            that decision and the desktop card reads the same module. */}
+            Shown for every goods line since 2026-09-10 (useSpecialOrderSurface). */}
         {picked && pools.ready && (line.cat === "sofa" || line.cat === "bedframe" || specialSurface.block) && (
           <button
             type="button"
@@ -3421,11 +3406,6 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
   const allowQ = useModelAllowedOptionsByCode(line.itemCode || undefined);
   const allow = allowQ.data ?? null;
   const v = line.variants;
-  /* The sheet resolves its own category rather than taking one from the caller:
-     the row that opens it and this sheet must never disagree about whether the
-     checkbox presets are on offer, and `useSkuCategoryByCode` is the same cached
-     query the row already ran, so asking again costs nothing. */
-  const sheetCatQ = useSkuCategoryByCode(line.itemCode || undefined);
 
   /* setVar — merge one or more variant keys + track overriddenKeys so the
      sofa-compartment follower cascade leaves a manual pick alone (mirrors
@@ -3435,11 +3415,6 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
     onChange({ variants: { ...line.variants, ...patch }, overriddenKeys: overrides });
   };
 
-  const specialsList = (val: unknown): string[] => {
-    if (Array.isArray(val)) return val.map(String).filter(Boolean);
-    if (typeof val === "string" && val) return [val];
-    return [];
-  };
   const catUpper = line.itemGroup.toUpperCase();
   const specialOptions: SpecialAddonRow[] = useMemo(() => {
     // Owner 2026-07-14 — opt-out pool (mirrors SoLineCard/main): empty/absent
@@ -3453,15 +3428,7 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
     );
   }, [pools.specialAddons, catUpper, allow]);
   const pickedSpecials = specialsList(v.specials ?? v.special);
-  /* POOLED GOODS GET THE FREE TEXT AND NO CHECKBOXES — a ticked add-on joins the
-     variant key (`special=`) and would split an accessory's stock bucket, while
-     the free text is read by no branch of computeVariantKey. The rule and the
-     reasoning live in special-order-surface.ts; this line only applies it. */
-  const presets = specialOrderSurface({
-    category: String(sheetCatQ.data ?? "").toLowerCase() || line.cat,
-    hasItemCode: Boolean(line.itemCode),
-    pickedSpecialCount: pickedSpecials.length,
-  }).optionPicker ? specialOptions : [];
+  const presets = useSpecialOrderSurface({ itemCode: line.itemCode, fallbackCategory: line.cat, pickedSpecialCount: pickedSpecials.length }).optionPicker ? specialOptions : [];
   const specialChoicesMap: Record<string, string[]> =
     v.specialChoices && typeof v.specialChoices === "object"
       ? (v.specialChoices as Record<string, string[]>)
