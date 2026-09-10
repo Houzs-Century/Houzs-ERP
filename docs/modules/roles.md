@@ -49,8 +49,8 @@ presentations.
 
 | Surface | File | Notes |
 |---|---|---|
-| Desktop workspace | `frontend/src/pages/Roles.tsx` → `RolesTab` | Master/detail. Embedded in `Team.tsx` at `/team?tab=roles`; the Roles tab is off the visible strip (owner "删了role") but URL-reachable. Team owns the `PageHeader` + New Role button and passes `{ creating, onCloseCreate }`. |
-| Mobile screen | `frontend/src/mobile/MobileRoles.tsx` | Role list → per-role detail; each `resource` is a collapsible card of permission toggles, staged + saved through a sticky action bar. Single-role edit (no bulk). Reached via the Profile row `{ to: "/roles", gateVia: "/team?tab=hub" }` in `MobileApp.tsx`; the screen mounts only for `can("roles.read")`. |
+| Desktop workspace | `frontend/src/pages/Roles.tsx` → `RolesTab` | Master/detail. Embedded in `frontend/src/pages/Team.tsx` at `/team?tab=roles`; the Roles tab is off the visible strip (owner "删了role") but URL-reachable. Team owns the `PageHeader` + New Role button and passes `{ creating, onCloseCreate }`. |
+| Mobile screen | `frontend/src/mobile/MobileRoles.tsx` | Role list → per-role detail; each `resource` is a collapsible card of permission toggles, staged + saved through a sticky action bar. Single-role edit (no bulk). Wired into `frontend/src/mobile/MobileApp.tsx` (lazy screen + `destinationScreen` + overlay + a Profile row `{ to: "/roles", gateVia: "/team?tab=hub" }`); the screen mounts only for `can("roles.read")`. |
 | Pure model | `frontend/src/lib/rolesPermissionModel.ts` (+ `.test.ts`) | `buildModules` adapts the flat catalogue into the `module → row → verb` grid; `activeIds`/`setPerm`/`setPerms`/`cellState`/`moduleCounts`/`diffGrants` are the staging + tri-state + guard logic. |
 | Modals | `frontend/src/pages/roles/RolesModals.tsx` | `NewRoleModal` (name / description / start-from) + `RolePickerModal` (Apply-to = multi target, Copy-from = single source). |
 | Settings drawer | `frontend/src/pages/roles/RoleSettingsDrawer.tsx` | Name / description / `scope_to_pic` + the page-access matrix (preserves the old editor's non-permission capabilities). |
