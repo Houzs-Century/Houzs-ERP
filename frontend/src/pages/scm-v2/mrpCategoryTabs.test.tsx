@@ -117,12 +117,14 @@ describe('MRP — a tab for every category the catalogue holds', () => {
     }
   });
 
-  test('a response that carries no category list still renders the four originals', () => {
+  test('a response that carries no category list still renders all five tabs', () => {
     /* A request in flight, or a backend predating `categories`, must not blank
-       the tab bar — the failure mode of a derived list is an empty one. */
+       the tab bar. Since 2026-09-11 Others is a PERMANENT fifth tab (owner: it
+       must not blink in a beat after the other four during loading), so it is
+       painted here too even though `categories` is empty. */
     mrpData = { ...mrpData, categories: [] };
     renderPage();
     expect(screen.getAllByRole('tab').map((t) => t.textContent))
-      .toEqual(['Sofa', 'Bedframe', 'Mattress', 'Accessories']);
+      .toEqual(['Sofa', 'Bedframe', 'Mattress', 'Accessories', 'Others']);
   });
 });
