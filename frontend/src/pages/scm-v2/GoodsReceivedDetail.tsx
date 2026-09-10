@@ -62,6 +62,7 @@ import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
+import { specialOrderSurface } from '../../vendor/scm/lib/special-order-surface';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
@@ -720,6 +721,31 @@ export const GoodsReceivedDetail = () => {
                       refuses the change too). To change it, cancel this GRN and
                       edit the PO. Only a MANUAL line (source_po_number null) keeps
                       the editor. You always still SEE the variant summary. */}
+                  {isEditing && !it.source_po_number && specialOrderSurface({
+                    category: d.itemGroup ?? '', hasItemCode: Boolean(it.item_code), pickedSpecialCount: 0,
+                  }).block && (
+                    /* THE SPECIAL ORDER on a MANUAL line whose category has no
+                       variant grid — mattress, accessory, dining. The read-only
+                       summary below already SHOWS the note for every line
+                       (buildVariantSummary appends the SPECIAL segment whatever
+                       the group), so this adds the ability to TYPE it, not to
+                       see it. Owner 2026-09-10, 「POGR 是不是也是要能看得到这些
+                       数据？」. Empty pool: this document carries no catalogue
+                       for those categories, and choosing WHAT to build is the
+                       sales order's job. */
+                    <div style={{ background: 'var(--c-cream)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: 'var(--space-3)', marginBottom: 'var(--space-2)' }}>
+                      <SpecialOrders
+                        options={[]}
+                        variants={(d.variants ?? {}) as Record<string, unknown>}
+                        onPatch={(patch) => setLineDrafts((prev) => {
+                          const cur = prev[it.id] ?? d;
+                          return { ...prev, [it.id]: { ...cur, variants: { ...(cur.variants ?? {}), ...patch } } };
+                        })}
+                        showPrices={false}
+                        disabled={isLocked}
+                      />
+                    </div>
+                  )}
                   {isEditing && !it.source_po_number && (d.itemGroup === 'bedframe' || d.itemGroup === 'sofa') && maint ? (
                     <div style={{ background: 'var(--c-cream)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: 'var(--space-3)' }}>
                       <div style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-11)', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--fg-muted)', marginBottom: 'var(--space-2)' }}>{d.itemGroup} Variants</div>

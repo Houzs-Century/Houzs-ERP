@@ -3981,6 +3981,24 @@ attribute branch, not inside it, so a category contributing no attributes still
 carries its note — and `description2` on a purchase order is exactly this
 string. Pinned in `backend/src/scm/shared/variantSummarySuperseded.test.ts`.
 
+**And it is visible on the cost documents, since 2026-09-10.** The owner: 「POGR
+是不是也是要能看得到这些数据？…全部都是要带过去的哦」. Every cost document used to
+gate its editor on bedframe/sofa, so the text reached the supplier's PDF and
+appeared on no screen. They now read the same module:
+
+| document | what changed |
+| --- | --- |
+| Purchase Order (`PoLineCard.tsx`, `PurchaseOrderNew.tsx`) | panel added for the categories with no variant grid |
+| GRN create (`GrnNew.tsx`), Purchase Invoice, Purchase Return | same |
+| Goods-received DETAIL | already SHOWED the note inside `variantSummary`; the manual-line EDITOR was added |
+| Delivery Order | **already correct** — `do-item-row.ts` copies `variants` wholesale and stamps `description2`; `DeliveryOrderDetailV2.tsx` renders it |
+| Stock Adjustment | **deliberately not added** — not supplier-facing, and the note is not part of a lot's identity |
+
+The pool passed on a cost document is EMPTY: it carries no add-on catalogue for
+those categories, and choosing WHAT to build belongs to the sales order. Since
+that change, `SpecialOrders` no longer labels a carried pick *"retired"* when it
+has no pool to judge it against — see `docs/bugs/0779-the-special-order-text-reached-the-supplier-pdf-but-was-invi.md`.
+
 **What actually landed in production, 2026-08-11.** The `Hydraulic` row was
 created by `seed-hydraulic-special-addon.mjs` (run **31454564942**) at
 `sell=0 cost=0`, `categories=BEDFRAME`, `active=true`, read back on a fresh

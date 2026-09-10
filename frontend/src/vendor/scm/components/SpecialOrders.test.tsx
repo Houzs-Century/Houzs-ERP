@@ -85,3 +85,36 @@ describe('SpecialOrders', () => {
     expect((screen.getByRole('checkbox', { name: /HB Fully Cover/i }) as HTMLInputElement).disabled).toBe(false);
   });
 });
+
+/*
+ * A CATALOGUE WE DO NOT HAVE CANNOT CALL ANYTHING RETIRED.
+ *
+ * The cost documents (PO / GRN / PI / purchase return) render this block for
+ * categories they carry no add-on pool for — mattress, accessory, dining —
+ * because the owner asked on 2026-09-10 that a custom pillow's colour and an SP
+ * mattress's size be visible and editable there, not only on the Sales Order.
+ * With an empty `options` list every carried pick used to fall into the
+ * "retired — untick to remove" branch, which tells the buyer that what the
+ * factory is building is dead and invites them to delete it.
+ *
+ * The picks must still SHOW — hiding them would be worse than mislabelling
+ * them — so they render read-only under their own caption.
+ */
+describe('SpecialOrders with no add-on pool', () => {
+  it('does not call a carried pick retired when it has no catalogue to judge it against', () => {
+    render(<SpecialOrders options={[]} variants={{ specials: ['HB_FULL'] }} onPatch={() => {}} showPrices={false} open />);
+    expect(screen.queryByText(/retired/i)).toBeNull();
+    expect(screen.getByText('from the Sales Order')).toBeTruthy();
+    expect((screen.getByRole('checkbox', { name: /HB_FULL/i }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('still calls a pick retired when the pool EXISTS and does not contain it', () => {
+    render(<SpecialOrders options={OPTIONS} variants={{ specials: ['GONE_CODE'] }} onPatch={() => {}} showPrices={false} open />);
+    expect(screen.getByText(/retired/i)).toBeTruthy();
+  });
+
+  it('still offers the Custom / other free text with no pool at all', () => {
+    render(<SpecialOrders options={[]} variants={{}} onPatch={() => {}} showPrices={false} open />);
+    expect(screen.getByText('Custom / other')).toBeTruthy();
+  });
+});

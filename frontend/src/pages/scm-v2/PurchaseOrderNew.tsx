@@ -49,6 +49,7 @@ import {
 } from '@2990s/shared/mfg-pricing';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
+import { specialOrderSurface } from '../../vendor/scm/lib/special-order-surface';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
@@ -1012,6 +1013,24 @@ export const PurchaseOrderNew = () => {
             // are already encoded in the SKU code itself (e.g. "HAPPI.S
             // DEWCOOL MATT (S)"), so the editor was just visual noise.
             const showVariants  = l.category && ['sofa', 'bedframe'].includes(l.category) && maint;
+            /* THE SPECIAL ORDER IS A SEPARATE QUESTION FROM THE VARIANT GRID,
+               and the comment directly above is why this had to be said out
+               loud: the owner removed the MATTRESS VARIANT editor in 2026-05
+               because size and branding are already in the SKU code. That
+               ruling stands and nothing below reintroduces it.
+               What he asked for on 2026-09-10 is the SPECIAL ORDER text — an SP
+               mattress's size, a custom pillow's colour, a dining款式 — 「POGR
+               是不是也是要能看得到这些数据？」 It reaches the supplier's PDF
+               already (description2 carries the SPECIAL segment for every
+               category); it was only invisible on screen.
+               One rule, shared with the Sales Order and mobile:
+               vendor/scm/lib/special-order-surface.ts. Empty pool on purpose —
+               choosing WHAT to build belongs to the sales order. */
+            const specialSurface = specialOrderSurface({
+              category: l.category ?? '',
+              hasItemCode: Boolean(l.itemCode),
+              pickedSpecialCount: 0,
+            });
 
             return (
               <div
@@ -1192,6 +1211,23 @@ export const PurchaseOrderNew = () => {
                 </label>
 
                 {/* Per-category variant editor (PR #126 logic, PR #129 card layout) */}
+                {specialSurface.block && (
+                  <div style={{
+                    background: 'var(--c-cream)',
+                    border: '1px solid var(--line)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: 'var(--space-3)',
+                  }}>
+                    <SpecialOrders
+                      options={[]}
+                      variants={l.variants}
+                      onPatch={(patch) => setLine(l.rid, { variants: { ...l.variants, ...patch } })}
+                      showPrices={false}
+                      sourceLinked={Boolean(l.soItemId)}
+                      sourceLabel="Sales Order"
+                    />
+                  </div>
+                )}
                 {showVariants && (
                   <div style={{
                     background: 'var(--c-cream)',

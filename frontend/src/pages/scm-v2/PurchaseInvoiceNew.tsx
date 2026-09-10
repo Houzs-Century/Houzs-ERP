@@ -47,6 +47,7 @@ import { useGrnDetail, useGrnDetails } from '../../vendor/scm/lib/grn-queries';
 import { useActiveCurrencies, rateFor } from '../../vendor/scm/lib/currencies-queries';
 import { CurrencySelect } from '../../vendor/scm/components/CurrencySelect';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
+import { specialOrderSurface } from '../../vendor/scm/lib/special-order-surface';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
 import { useMfgProducts, useMaintenanceConfig, useSpecialAddons } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
@@ -828,6 +829,22 @@ export const PurchaseInvoiceNew = () => {
               l.grnItemId === null &&
               (l.itemGroup === 'bedframe' || l.itemGroup === 'sofa') &&
               !!maint;
+              /* THE SPECIAL ORDER, for the categories with no variant grid.
+                 Owner 2026-09-10: 「POGR 是不是也是要能看得到这些数据？…全部都是
+                 要带过去的哦」 — a custom pillow's colour and an SP mattress's
+                 size reach the supplier's PDF already (description2 carries the
+                 SPECIAL segment for every category) but were invisible on every
+                 cost document, because each one gates its editor on bedframe or
+                 sofa. One rule, shared: vendor/scm/lib/special-order-surface.ts.
+                 Empty pool on purpose — this document carries no catalogue for
+                 those categories, and choosing WHAT to build is the sales
+                 order's job. SpecialOrders no longer calls a carried pick
+                 "retired" when it has no pool to judge it against. */
+            const specialSurface = specialOrderSurface({
+              category: l.itemGroup ?? '',
+              hasItemCode: Boolean(l.itemCode),
+              pickedSpecialCount: 0,
+            });
             const setVariant = (key: string, value: string) =>
               setLine(l.rid, { variants: (() => {
                 const variants: Record<string, unknown> = { ...(l.variants ?? {}), [key]: value };
@@ -928,6 +945,18 @@ export const PurchaseInvoiceNew = () => {
                 )}
 
                 {/* Per-category VARIANT EDITOR for MANUAL bedframe/sofa lines. */}
+                {specialSurface.block && (
+                  <div style={{ marginTop: 'var(--space-2)' }}>
+                    <SpecialOrders
+                      options={[]}
+                      variants={(l.variants ?? {}) as Record<string, unknown>}
+                      onPatch={(patch) => setLine(l.rid, { variants: { ...(l.variants ?? {}), ...patch } })}
+                      showPrices={false}
+                      sourceLinked={l.grnItemId !== null}
+                      sourceLabel="Purchase Order"
+                    />
+                  </div>
+                )}
                 {showVariantEditor && (
                   <div style={{ background: 'var(--c-cream)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: 'var(--space-3)' }}>
                     <div style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-11)', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--fg-muted)', marginBottom: 'var(--space-2)' }}>{l.itemGroup} Variants</div>
