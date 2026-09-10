@@ -87,6 +87,21 @@ try {
     notice(`  ${s.invoice_number}: ${soMatch}${coMatch}, company=${s.company_id}, total_sen=${s.total_sen}, paid_sen=${s.paid_sen}, status=${s.status}`);
   }
 
+  // 4. If nothing linked, find the invoice(s) actually created for this customer
+  //    so the linkage they DID end up with is visible.
+  const recent = await pg`
+    SELECT invoice_number, so_doc_no, customer_so_no, delivery_order_id, total_sen, paid_sen, status, created_at
+    FROM sales_invoices
+    WHERE debtor_name ILIKE '%LUCAS%'
+    ORDER BY created_at DESC NULLS LAST
+    LIMIT 12`;
+  notice(`RECENT invoices for LUCAS: ${recent.length}`);
+  for (const r of recent) {
+    const doTag = r.delivery_order_id == null ? "delivery_order_id=NULL"
+      : (r.delivery_order_id === doId ? "delivery_order_id=THIS-DO" : "delivery_order_id=other");
+    notice(`  ${r.invoice_number}: so_doc_no='${r.so_doc_no}', customer_so_no='${r.customer_so_no}', ${doTag}, total_sen=${r.total_sen}, paid_sen=${r.paid_sen}, status=${r.status}, created=${r.created_at}`);
+  }
+
   notice("VERDICT HINTS — (1) ORDER not found or so_doc_no=MISMATCH: the read-through never resolves the order. (2) a NON-CANCELLED sibling with high paid_sen: it absorbed the deposit (allocation is earliest invoice first). (3) company=MISMATCH: readOrderDeposit's company filter drops the order.");
 } finally {
   await pg.end({ timeout: 5 });
