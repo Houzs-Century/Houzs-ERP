@@ -13,13 +13,36 @@ describe('a plain-seat build has a spelling', () => {
     expect(composeSofaDesc2(['1S', '2S'], { size: '28' })).toBe('1S + 2S (28")');
   });
 
-  it('STILL refuses anything containing a 3S, because that spelling is wrong', () => {
-    /* `3S (28")` decodes to the two-piece build [2A(LHF), 1A(RHF)] — measured
-       2026-09-09, wrong on all ten models and both mechanism settings. The
-       first draft of this change removed that refusal on the strength of a
-       measurement taken WITHOUT the size suffix a real build carries. */
-    expect(composeSofaDesc2(['3S'], { size: '28' })).toBeNull();
-    expect(composeSofaDesc2(['3S', '1S', '2S'], { size: '28' })).toBeNull();
+  it('a SIZED 3S still never reaches the book — the GATE refuses it now', () => {
+    /* CHANGED 2026-09-10, and the warning this test was written to carry is
+       still right and is exactly why the change is shaped this way. `3S (28")`
+       decodes to the two-piece build [2A(LHF), 1A(RHF)] — wrong on all ten
+       models and both mechanism settings — and that must never be written.
+
+       What moved is WHERE it is refused. `tokenFor` now PROPOSES `3S`, and
+       `decodesTo`, which sees the real seat size, turns the sized case away.
+       Withholding the token refused the SIZELESS case too, and that is the case
+       the two documents have: production, 2026-09-10, reports `seat size NONE`
+       for HC-SO-001640 [3S] and HC-SO-001472 [3S, 1S, 2S]. */
+    for (const model of MODELS) {
+      const sized = composeSofaDesc2(['3S'], { size: '28' });
+      expect(decodesTo(sized as string, model, ['3S'], { size: '28' }).ok, model).toBe(false);
+      const three = composeSofaDesc2(['3S', '1S', '2S'], { size: '28' });
+      expect(decodesTo(three as string, model, ['3S', '1S', '2S'], { size: '28' }).ok, model).toBe(false);
+    }
+  });
+
+  it('and a SIZELESS 3S round-trips on every model, which is why it is written', () => {
+    /* The claim the change rests on, measured the same way as the one above
+       rather than argued from it. */
+    for (const build of [['3S'], ['3S', '1S', '2S']]) {
+      const text = composeSofaDesc2(build, { size: null });
+      expect(text, `no spelling for ${build.join('+')}`).not.toBeNull();
+      for (const model of MODELS) {
+        const v = decodesTo(text as string, model, build, { size: null });
+        expect(v.ok, `${build.join('+')} on ${model}: ${v.ok ? '' : v.why}`).toBe(true);
+      }
+    }
   });
 
   it('round-trips on every model the refusals name', () => {

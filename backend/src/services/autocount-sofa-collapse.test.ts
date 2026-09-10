@@ -338,9 +338,39 @@ describe('the two corrections that a naive inverse gets wrong', () => {
     }
   });
 
-  it('refuses a solo 3S rather than emitting text that decodes to two pieces', () => {
+  it('a SIZED 3S is refused — by the gate now, not by withholding the token', () => {
+    /* CHANGED 2026-09-10, and the measurement that used to justify withholding
+       the token is what makes proposing it safe. `3S (28")` decodes to a
+       DIFFERENT sofa, so the round trip refuses it — which is where every other
+       spelling in this file is judged. Withholding it refused the sizeless case
+       too, and that is the case a real 3S build has. */
     expect(parseSofa('3S (28")', '9028', false).pieces).toEqual(['2A(LHF)', '1A(RHF)']);
-    expect(composeSofaDesc2(['3S'], { size: '28' })).toBeNull();
+    const sized = composeSofaDesc2(['3S'], { size: '28' });
+    expect(sized).toBe('3S (28")');
+    expect(decodesTo(sized as string, '9028', ['3S'], { size: '28' }).ok).toBe(false);
+  });
+
+  it('and a 3S with NO seat size goes through, which is what HC-SO-001640 has', () => {
+    const bare = composeSofaDesc2(['3S'], { size: null });
+    expect(bare).toBe('3S');
+    expect(decodesTo(bare as string, '9028', ['3S'], { size: null }).ok).toBe(true);
+    /* HC-SO-001472's build, refused for the sized case's reason since the day
+       the token was withheld. */
+    const three = composeSofaDesc2(['3S', '1S', '2S'], { size: null });
+    expect(decodesTo(three as string, '00913', ['3S', '1S', '2S'], { size: null }).ok).toBe(true);
+  });
+
+  it('end to end: a sizeless 3S document composes, a sized one is refused', () => {
+    const line = (over: Partial<CollapsibleLine>): CollapsibleLine => ({
+      item_code: '00913-3S', item_group: 'sofa', description: 'SOFA 00913 3S',
+      description2: '[ 3S / COL: HM 3383-6 ]', qty: 1, unit_price_sen: 399000,
+      linked_ac_dtlkey: 111907, variants: { colourLabel: 'HM 3383-6', specials: [] },
+      ...over,
+    });
+    expect(collapseSofaLines([line({})]).refusals).toEqual([]);
+    const sized = collapseSofaLines([line({ variants: { seatHeight: 28, colourLabel: 'HM 3383-6', specials: [] } })]);
+    expect(sized.lines).toHaveLength(0);
+    expect(sized.refusals[0].reason).toContain('does not survive a decode');
   });
 });
 
@@ -936,5 +966,70 @@ describe('a special order that will not fit points at the ERP', () => {
     })));
     expect(res.lines).toHaveLength(0);
     expect(res.refusals[0].reason).toContain(String(AC_DESC2_MAX));
+  });
+});
+
+// ----------------------------------------------------------------------------
+// THE POINTER IS TRIED FOR EVERY WAY A SPECIAL ORDER CAN BLOCK A DOCUMENT.
+//
+// Measured on production 2026-09-10, the special order was the whole obstacle on
+// three more builds and wore three different faces — a forbidden character, a
+// word the decoder has never heard of, and length. The owner's ruling covers all
+// three, because what it says is that the special order need not reach AutoCount
+// at all: 「Special Order 可以不进 ... 最重要是每一张单都可以进到就行了」.
+// ----------------------------------------------------------------------------
+describe('a special order that BLOCKS a sofa points at the ERP too', () => {
+  const sofa = (specials: string[], over: Partial<CollapsibleLine> = {}): CollapsibleLine[] => ([
+    {
+      item_code: '5526-2A(LHF)', item_group: 'sofa', description: 'SOFA 5526 2A(LHF)',
+      description2: '2EL + STOOL (28")', qty: 1, unit_price_sen: 399000, linked_ac_dtlkey: 91,
+      variants: { seatHeight: 28, colourLabel: 'BEIGE', specials }, ...over,
+    },
+    {
+      item_code: '5526-STOOL', item_group: 'sofa', description: 'SOFA 5526 STOOL',
+      description2: '2EL + STOOL (28")', qty: 1, unit_price_sen: 0, linked_ac_dtlkey: 91,
+      variants: { seatHeight: 28, colourLabel: 'BEIGE', specials }, ...over,
+    },
+  ]);
+
+  it('a special carrying a forbidden character no longer blames the pieces', () => {
+    /* composeSofaDesc2 refuses a special containing `+` or `/` — it would look
+       like a second structure segment — and the refusal used to read "cannot
+       spell [2A(LHF), STOOL]", naming the pieces and blaming them.
+       HC-SO-001526 and HC-SO-001445 are that. */
+    const res = collapseSofaLines(sofa(['NO BACK CUSHION / TBC']));
+    expect(res.refusals).toEqual([]);
+    expect(String(res.lines[0].description2)).toContain('Special Order: Refer to ERP');
+    expect(String(res.lines[0].description2)).toContain('2EL + STOOL');
+  });
+
+  it('a special the decoder has never heard of no longer fails the round trip', () => {
+    /* `ALL` (HC-SO-008302) and `DAYBED` (HC-SO-004716): the decoder reads
+       specials from a fixed vocabulary, so these never come back and the gate
+       refused a build that was otherwise perfect. */
+    const res = collapseSofaLines(sofa(['BOTTOM FULLY COVERED BY FABRIC', 'ALL']));
+    expect(res.refusals).toEqual([]);
+    expect(String(res.lines[0].description2)).toContain('Special Order: Refer to ERP');
+  });
+
+  it('and a special that travels fine still travels, in full', () => {
+    const res = collapseSofaLines(sofa(['Nylon Fabric']));
+    expect(res.refusals).toEqual([]);
+    expect(String(res.lines[0].description2)).toContain('Nylon Fabric');
+    expect(String(res.lines[0].description2)).not.toContain('Special Order');
+  });
+
+  it('the refusal reported is what is wrong with the DOCUMENT, not with a rewrite of it', () => {
+    /* Both attempts fail when the pieces are the problem, and the sentence a
+       person reads must then be about the pieces. */
+    const res = collapseSofaLines([
+      {
+        item_code: '5526-CNR', item_group: 'sofa', description: 'SOFA 5526 CNR',
+        description2: 'C', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: 92,
+        variants: { colourLabel: 'BEIGE', specials: ['ALL'] },
+      },
+    ]);
+    expect(res.lines).toHaveLength(0);
+    expect(res.refusals[0].reason).toContain('cannot spell');
   });
 });
