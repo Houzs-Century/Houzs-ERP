@@ -1,7 +1,7 @@
 ## A PO line carried a STALE SO photo key after the SO line was replaced, so the PO photo rendered err [low]
 
 <!-- area: Purchase orders + GRN + PI -->
-<!-- status: open -->
+<!-- status: fixed -->
 
 **白话.** 采购单（PO）上「从销售单（SO）带过来的参考图」，是**转单那一刻抄的一个
 地址快照**，之后修订（revision）也只是保留这个快照。所以当 SO 那行的照片后来换了
@@ -28,7 +28,7 @@ returns null for the dead key → `SoLinePhotoStrip` renders "err". The carry co
 Census: exactly **1** PO line affected (this one), 0 dangling SO links.
 
 **Fix.**
-- **Data repair (this PR — UNTESTED against prod until dispatched).**
+- **Data repair (APPLIED and verified).**
   `backend/scripts/repair-po-carried-photos.mjs` (+ pure planner
   `scripts/lib/po-carried-photo-resync.mjs`, tested by
   `backend/tests/poCarriedPhotoResync.test.mjs`) re-aligns each affected PO line's
@@ -38,11 +38,14 @@ Census: exactly **1** PO line affected (this one), 0 dangling SO links.
   default; `MODE=apply` + `CONFIRM="REPAIR PO CARRIED PHOTOS"`; fresh-connection
   shape verify. Dispatch via Actions -> **Repair PO carried photos (plan by
   default)** — plan first, then apply. Passes `audit:release-discipline`.
-- **Root fix (DEFERRED, owner 2026-09-10).** Make the PO revision / read path
-  re-carry carried photos from the current SO line by `so_item_id` (preserving
-  PO-owned keys), so a carried photo is a live reference and cannot go stale. Not
-  in this PR.
+  Observed: apply dispatched 2026-09-10 (Actions run 34483202538) — 1 candidate,
+  1 re-synced, fresh-connection verify OK; HC-PO-2609-049 line 9028-2A(RHF) now
+  carries the SO line's current photo and displays instead of "err".
+- **Root fix (DONE — `docs/bugs/0790`).** The PO revision (`reviseBoundPo`) now
+  re-carries carried photos from the current SO line on the surviving-line
+  re-derive UPDATE, preserving PO-owned keys, so a carried photo cannot go stale.
 
-**Ref.** claude/repair-po-carried-photos, 2026-09-10. Data repair here; root fix
-deferred. NOT caused by the same-day SO-amendment name fix (that touched
-`description` only; the "err" predated it, present on `_R2`).
+**Ref.** claude/repair-po-carried-photos, 2026-09-10. Data repair applied (run
+34483202538) and root fix landed (`docs/bugs/0790`). NOT caused by the same-day
+SO-amendment name fix (that touched `description` only; the "err" predated it,
+present on `_R2`).
