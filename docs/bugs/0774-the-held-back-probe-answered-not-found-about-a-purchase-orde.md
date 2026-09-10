@@ -1,4 +1,4 @@
-## The held-back probe answered NOT FOUND about a purchase order that exists [low]
+## A refused purchase order was filed under a UUID, and the probe could not look it up [medium]
 
 **Symptom.** The owner opened the AutoCount Sync page on 2026-09-10, saw a
 held-back row whose DOCUMENT column read
@@ -14,7 +14,23 @@ question — `check-autocount-held-back.mjs`, whose header says it exists so tha
 
 The document exists. The check was looking in the wrong table.
 
-**Root cause (traced).** A sales order is named by `doc_no`; a purchase order is
+**Root cause (traced), and there are TWO — the second is why the row looked like
+that in the first place.**
+
+**1. The refusal path threw the number away.** `enqueueEdit` composes the state
+inside a `try`, and `composed.docNo` is the PO NUMBER — its own comment says so:
+*"A PO route knows its id, not its number; the outbox row is keyed by the human
+document number so it lines up with the create row."* The CATCH then wrote
+`docNo: String(opts.docNo ?? opts.docId ?? '')`, and a purchase-order route
+passes only `docId`. So every REFUSED purchase-order edit was filed under a
+UUID — while its own error message read `PO HC-PO-2609-055: 2 of 2 line(s) carry
+no AutoCount DtlKey`. The composer had the number all along.
+
+The number is now kept in `resolvedDocNo` where the catch can reach it. Pinned by
+`backend/src/scm/lib/autocount-outbox.test.ts`, **proved RED** on the unfixed
+tree (`Tests 1 failed | 126 passed`).
+
+**2. And the check could not look it up.** A sales order is named by `doc_no`; a purchase order is
 named by `po_number` and identified by `id`. `composePoState` writes the outbox
 row's document name as `docNo: header.po_number || poId`
 (`backend/src/scm/lib/autocount-outbox.ts`), so a purchase order whose
