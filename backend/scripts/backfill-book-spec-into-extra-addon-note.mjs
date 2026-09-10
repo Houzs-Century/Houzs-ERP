@@ -382,6 +382,18 @@ async function main() {
     }
   }
 
+  /* THE OWNER'S DECISION (b) needs to SEE the wording, not a category name.
+     Some of the book's text is a specification ("SUPER KING (200x200CM)") and
+     some of it is a commercial note that rode the same field ("FOC", "postage",
+     "FREE GIFT") — telling a supplier "SPECIAL: FOC" describes nothing. Which
+     of those is a spec is his call, so the whole vocabulary is printed with its
+     counts rather than filtered by a word list somebody here invented. */
+  const byText = new Map();
+  for (const p of plan) bump(byText, p.text);
+  const vocab = [...byText].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  note(`\n=== THE WORDING THIS WOULD WRITE — ${vocab.length} distinct texts over ${plan.length} lines, most common first (top 30) ===`);
+  for (const [text, n] of vocab.slice(0, 30)) note(`    ${String(n).padStart(4)}  ${JSON.stringify(text)}`);
+
   note(`\n=== SAMPLE — the text this run would write (first ${SAMPLE}) ===`);
   for (const p of plan.slice(0, SAMPLE)) {
     note(`  ${p.doc_no} line ${p.line_no}  [${p.category}] ${p.item_code ?? ''}  from ${p.origin}`);
