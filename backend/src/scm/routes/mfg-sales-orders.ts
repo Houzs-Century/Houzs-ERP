@@ -11100,11 +11100,8 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     return c.json({ error: 'payment_version_conflict', currentVersion: Number(latest?.version ?? expectedPaymentVersion) }, 409);
   }
 
-  /* UPDATE_PAYMENT audit — same ledger + shape as ADD/DELETE, listing only the
-     fields that actually changed (from → to). The comparison lives beside the
-     payment row's own writer (soPaymentFieldChanges) because it is a fact about
-     the ROW, not about this route; it is a DIFFERENT question from
-     ledgerBearingChange below, which asks only which of those reach the books. */
+  /* UPDATE_PAYMENT audit — the nine-column from → to list, compared beside the
+     row it describes (soPaymentFieldChanges), NOT the four the ledger reads. */
   const next = {
     paid_at: nextPaidAt, method: nextMethod, amount_sen: nextAmount, merchant_provider: nextMerchantProvider,
     installment_months: nextInstallment, online_type: nextOnline, approval_code: nextApproval,
@@ -11126,10 +11123,8 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
      second opinion about the balance rule next to so-outstanding.ts. */
   await queueAcSoEdit(c, docNo);
 
-  /* THE LEDGER FOLLOWS THE EDIT (docs/bugs/0778). Until now this route wrote
-     the row and stopped, so a corrected payment left its journal entry behind
-     — silently, because only DELETE ever touched the books. Which edits move
-     them, and where the correcting contra is dated, live in acc/payment-repost. */
+  /* THE LEDGER FOLLOWS THE EDIT (docs/bugs/0778) — this route wrote the row and
+     stopped, so a correction left its entry behind. See acc/payment-repost. */
   await repostSoPaymentBestEffort(sb, { id, docNo, companyId: co.companyId, before, next });
 
   // An edited amount also moves what the invoices off this order have settled.
