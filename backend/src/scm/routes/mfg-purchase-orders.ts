@@ -2132,6 +2132,15 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     lines: Line[]; soDocNos: Set<string>;
   };
   const byGroup = new Map<string, Bucket>();
+  /* Owner 2026-09-11 — under 'combined', a sofa order's accessories (pillow /
+     皮套) ride onto the sofa's PO. That is BATCH context: an accessory line rides
+     with the sofa only if its SO carries a sofa line in this convert. Compute
+     the set once, pass it to every groupKeyFor call below. */
+  const sofaSoDocNos = new Set(
+    soItems
+      .filter((it) => (it.itemGroup ?? '').trim().toLowerCase() === 'sofa')
+      .map((it) => it.soDocNo),
+  );
   for (const it of soItems) {
     const b = effectiveBindingFor(it)!;
     const effectiveSupplierId = b.supplier_id;
@@ -2181,6 +2190,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
         deliveryDate: lineDeliveryDate,
       },
       poMode,
+      { sofaSoDocNos },
     );
     const bucket = byGroup.get(groupKey)
       ?? { supplierId: effectiveSupplierId, warehouseId: lineWarehouseId, currency: b.currency, lines: [], soDocNos: new Set<string>() };

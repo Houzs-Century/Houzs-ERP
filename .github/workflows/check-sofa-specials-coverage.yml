@@ -1,0 +1,26 @@
+name: Check sofa specials coverage (HOUZS, read-only)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: check-sofa-specials-coverage
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: install
+        working-directory: backend
+        run: npm ci --ignore-scripts --no-audit --no-fund --loglevel=error
+      - name: run
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/check-sofa-specials-coverage.mjs

@@ -375,12 +375,12 @@
    "model": "8030",
    "pieces": [
     "1A(LHF)",
-    "CONSOLE",
+    "CSL",
     "1A(RHF)"
    ],
    "desc2Match": "1EL + CS + 1EL",
    "confidence": "likely",
-   "why": "photo: photo 802567: slip headed '8030', 'colour: tbc', with 'TV' and 'conso[le]' written above the drawing. Three elements: a box with a hatched block at its far LEFT holding a two-digit number, a narrow empty tall box between, and a box holding a two-digit number with a hatched block at its far RIGHT. Photo 802568 is a showroom reference photo showing exactly two seats with a console between them. JUDGEMENT CALL: the book Desc2 writes both end pieces as '1EL' (left) whereas the drawing plainly puts the hatched arm at the outer LEFT of one and the outer RIGHT of the other; I followed the drawing. Seat omitted on purpose - the digits read as 25 or 26 at this resolution and I will not guess. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊)."
+   "why": "photo: photo 802567: slip headed '8030', 'colour: tbc', with 'TV' and 'conso[le]' written above the drawing. Three elements: a box with a hatched block at its far LEFT holding a two-digit number, a narrow empty tall box between, and a box holding a two-digit number with a hatched block at its far RIGHT. Photo 802568 is a showroom reference photo showing exactly two seats with a console between them. JUDGEMENT CALL: the book Desc2 writes both end pieces as '1EL' (left) whereas the drawing plainly puts the hatched arm at the outer LEFT of one and the outer RIGHT of the other; I followed the drawing. Seat omitted on purpose - the digits read as 25 or 26 at this resolution and I will not guess. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊). | SUPERSEDED 2026-09-11 to the build the SUPPLIER round writes (propose-supplier-sofa-corrections production run 34502972739). Owner 2026-09-11: the supplier is the authority on a proceeded order, and two disagreeing builds at one address is what sofa-corrections-source.test.mjs refuses - leaving both would let file order decide silently."
   },
   {
    "docs": [
@@ -943,14 +943,14 @@
    ],
    "model": "9058",
    "pieces": [
-    "1A(LHF)",
+    "L(LHF)",
     "1NA",
-    "L(RHF)"
+    "1A(RHF)"
    ],
    "seat": "32",
    "desc2Match": "back rest",
    "confidence": "owner",
-   "why": "OWNER 2026-09-09, in two messages. First, answering the returned spreadsheet: 「L（LHF）+1NA+1AR model是5536 special order change backrest to 5540/8030, 然后backcushion align 或者fully extend」. Then, when told this file was about to recode the rows to 5536: 「那就是9058 然后去给supplier的时候才是5536」. SO NOTHING CHANGES ON THIS DOCUMENT. The pieces are his own ruling from this morning and are already written (docs/bugs/0736), and the model stays 9058. THE RULE THIS BUYS, which is worth more than the entry: on a PURCHASE ORDER the account book's item code is the SUPPLIER'S model, not ours - 'HOK-5536 SOFA' is supplier HOK's name for what we call 9058, and 'back rest (5540)' is a special order on it. A PO item code differing from the ERP's is therefore EXPECTED and is not by itself a defect. I had read the three names as a contradiction to resolve and was one dispatch away from recoding three live rows to a supplier's SKU. Recorded so the reconcile's ruling lookup reads RULED and stops returning this document to him. | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」."
+   "why": "OWNER 2026-09-09, in two messages. First, answering the returned spreadsheet: 「L（LHF）+1NA+1AR model是5536 special order change backrest to 5540/8030, 然后backcushion align 或者fully extend」. Then, when told this file was about to recode the rows to 5536: 「那就是9058 然后去给supplier的时候才是5536」. SO NOTHING CHANGES ON THIS DOCUMENT. The pieces are his own ruling from this morning and are already written (docs/bugs/0736), and the model stays 9058. THE RULE THIS BUYS, which is worth more than the entry: on a PURCHASE ORDER the account book's item code is the SUPPLIER'S model, not ours - 'HOK-5536 SOFA' is supplier HOK's name for what we call 9058, and 'back rest (5540)' is a special order on it. A PO item code differing from the ERP's is therefore EXPECTED and is not by itself a defect. I had read the three names as a contradiction to resolve and was one dispatch away from recoding three live rows to a supplier's SKU. Recorded so the reconcile's ruling lookup reads RULED and stops returning this document to him. | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」. | SUPERSEDED 2026-09-11 by the SUPPLIER'S OWN LISTING (propose-supplier-sofa-corrections production run 34502972739). The owner ruled these four follow the supplier even though the two readings are different sofas, not a from-the-other-end reversal: 「ok 四张跟supplier的」. The supplier's system records what it BUILT; this entry was a reading of a photograph."
   }
  ]
 }

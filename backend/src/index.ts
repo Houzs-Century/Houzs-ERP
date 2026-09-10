@@ -84,6 +84,7 @@ import { soMirror } from "./scm/routes/so-mirror";
 import { drainCommands } from "./scm/lib/amendment-command";
 import { drainStockAllocationRecompute } from "./scm/lib/stock-allocation-job";
 import { drainAutoCountOutbox } from "./scm/lib/autocount-outbox";
+import { relinkHeldBackSweep } from "./scm/lib/autocount-relink-sweep";
 import { refreshAllMrpSnapshots } from "./scm/lib/mrp-snapshot";
 import { amendmentMirror } from "./scm/routes/amendment-mirror";
 import { customerMirror } from "./scm/routes/customer-mirror";
@@ -594,6 +595,22 @@ export default {
             else if (r.processed) console.log(`[cron ac-writeback] ${JSON.stringify(r)}`);
           })
           .catch((e) => console.error("[cron ac-writeback]", e))
+      );
+      /* Keyless-conversion backlog sweep. Ships DARK: no-op unless
+         scm.app_config 'scm.autocount_relink_sweep' is 'plan' (report only) or
+         'apply' (stamp the book's line keys, then queue the keyed edit). Reads
+         the live book to match up delivery orders / goods receipts that were
+         converted before the book reported its keys back, so a person no longer
+         has to press "Match up lines" per document. Best-effort — a sweep
+         failure can never break the slot. */
+      ctx.waitUntil(
+        relinkHeldBackSweep(env)
+          .then((r) => {
+            if (r.mode !== "off" && (r.scanned || r.linesStamped || r.docsEnqueued)) {
+              console.log(`[cron ac-relink-sweep] ${JSON.stringify(r)}`);
+            }
+          })
+          .catch((e) => console.error("[cron ac-relink-sweep]", e))
       );
       /* SO allocation projection sweep.
 

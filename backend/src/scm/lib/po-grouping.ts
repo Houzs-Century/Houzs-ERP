@@ -1,94 +1,56 @@
 // ----------------------------------------------------------------------------
 // po-grouping.ts — the owner's per-CATEGORY rule for how SO lines become POs.
 //
-// Owner, 2026-07-17, verbatim:
-//   1. Bedframe（床架）：一个 SO 开成一张 PO。
-//   2. Sofa（沙发）：也是一个 SO 开成一张 PO。
-//   3. Mattress（床垫）：好几个 Mattress 合并开成一张 PO，然后根据我的 Delivery
-//      Date 去排整。这样做的目的是为了优化我们整体的 Inventory Turnover Rate。
+// Owner, 2026-09-11, verbatim re-spec of the COMBINED / PER-SO toggle. Each
+// category responds differently to the ONE global toggle:
 //
-// WHAT CHANGED. The split was a SINGLE GLOBAL TOGGLE (`mode: 'combined' |
-// 'per-so'`) applied to the whole convert, with exactly one hardcoded exception:
-// SOFA always split per-SO. So a mixed pick could only ever get ONE behaviour —
-// there was no way for bedframe to split while mattress merged in the same run.
-// The rule is per-category, so the code is now per-category.
+//   PER-SO   — everything stays with its own sales order, SPLIT BY CATEGORY:
+//              each (SO, category) is its own PO.
+//   COMBINE  — consolidate:
+//     · Sofa      the whole SO's sofa + its accessories (pillow / 皮套) all on
+//                 ONE PO. The cover is packed inside the sofa, so it must ride
+//                 with it. (Per-SO instead splits the accessories off.)
+//     · Bedframe  same as Per-SO — the toggle has NO effect. Same supplier +
+//                 one SO -> one PO (even two or three bedframe lines). Different
+//                 supplier splits.
+//     · Mattress  merge same-supplier WITHIN the delivery WEEK (the window is
+//                 KEPT — owner 2026-09-11 — so a mattress due in three months is
+//                 not pulled into this week's PO; that would wreck turnover, the
+//                 thing the window exists to protect).
+//     · Accessory merge same-supplier ACROSS SOs — UNLESS the accessory belongs
+//                 to a sofa order, in which case the sofa rule wins and it rides
+//                 with the sofa (see `sofaSoDocNos`).
 //
-// SOFA's per-SO rule is NOT new and is not the owner's turnover rule — it is the
-// dye-lot rule already documented at the call site (Commander 2026-05-31): a
-// colour-matched set split across POs comes back in different dye lots. It
-// happens to agree with rule 2. Kept, and kept for its own reason.
+// This SUPERSEDES the owner's 2026-07-17 rules (sofa/bedframe hardcoded per-SO,
+// mattress always per-window, accessory following the toggle). The per-line
+// `splitRuleFor` abstraction that encoded those could not express the sofa's
+// cross-category accessory pull — that depends on whether the line's SO carries
+// a sofa, which is BATCH context, not a property of the line. So the rule now
+// lives entirely in `groupKeyFor`, which takes that context.
 //
-// THE MATTRESS WINDOW — the part worth reading.
-// "Merge mattresses" and "optimise inventory turnover" pull in OPPOSITE
-// directions if merging is unbounded: fold a mattress due in three months into
-// this week's PO and it lands in the warehouse three months early. That is
-// turnover made WORSE, by the rule meant to improve it. So merging is bounded by
-// a DELIVERY-DATE WINDOW (owner-confirmed 2026-07-17): same (warehouse,
-// supplier) AND same window -> one PO. Next week's and next quarter's mattresses
-// never share a PO.
+// Every key still starts (warehouse, supplier). Folding the warehouse in is
+// load-bearing: it guarantees each emitted PO is single-warehouse, which the
+// downstream GRN relies on to land stock where the SO line asked for it. And a
+// key can only ever merge lines of the SAME supplier, so the physical "one PO =
+// one supplier" constraint is automatic — a sofa's accessory with a DIFFERENT
+// supplier gets a different base and splits off, correctly.
 //
-// The window is anchored to a real Monday (1970-01-05) rather than to "today",
-// so the same line always falls in the same bucket no matter when the convert
-// runs — a convert on Friday and the same convert on Monday must not produce
-// different POs. At the default 7 days a bucket IS the ISO week, which is what
-// makes it explainable to a human ("this week's mattresses").
-//
-// CATEGORIES THE OWNER DID NOT RULE ON — accessory, service, and anything else
-// item_group happens to carry (it is free text, with no CHECK) — keep following
-// the caller's existing toggle. He ruled on three categories; this file encodes
-// three. Inventing a rule for the rest would be putting words in his mouth.
+// THE MATTRESS WINDOW is anchored to a real Monday (1970-01-05) rather than to
+// "today", so the same line always falls in the same bucket no matter when the
+// convert runs. At the default 7 days a bucket IS the ISO week ("this week's
+// mattresses").
 // ----------------------------------------------------------------------------
 
 /** The caller's existing global toggle. Unchanged in meaning. */
 export type PoMode = 'combined' | 'per-so';
 
-/** How one line's PO bucket is formed. */
-export type PoSplitRule =
-  /** One PO per (warehouse, supplier, SO). */
-  | { kind: 'per-so' }
-  /** One PO per (warehouse, supplier, delivery-date window). */
-  | { kind: 'per-window'; windowDays: number }
-  /** One PO per (warehouse, supplier) — the toggle's 'combined'. */
-  | { kind: 'combined' };
-
-/** Default merge window for mattress. 7 = the ISO week. */
+/** Default merge window for mattress under Combine. 7 = the ISO week. */
 export const DEFAULT_MATTRESS_WINDOW_DAYS = 7;
 
 /** 1970-01-05 was a Monday. Anchoring to it makes a 7-day bucket == the ISO
     week, and makes every bucket independent of when the convert runs. */
 const MONDAY_EPOCH_MS = Date.parse('1970-01-05T00:00:00Z');
 const DAY_MS = 86_400_000;
-
-/**
- * The owner's rule for one line's category.
- *
- * `toggle` is the caller's existing mode, used ONLY for the categories he did
- * not rule on — so a mixed pick gets bedframe per-SO, mattress per-window, and
- * accessories still following whatever the operator picked.
- */
-export function splitRuleFor(
-  itemGroup: string | null | undefined,
-  toggle: PoMode,
-  mattressWindowDays: number = DEFAULT_MATTRESS_WINDOW_DAYS,
-): PoSplitRule {
-  switch ((itemGroup ?? '').trim().toLowerCase()) {
-    // Dye lot (Commander 2026-05-31) — one SO's whole sofa set is one PO, never
-    // merged with another SO's set, never split per component SKU. Agrees with
-    // the owner's rule 2, but stands on its own reason.
-    case 'sofa':
-      return { kind: 'per-so' };
-    // Owner rule 1 (2026-07-17).
-    case 'bedframe':
-      return { kind: 'per-so' };
-    // Owner rule 3 (2026-07-17) — merge, but only within a delivery window, or
-    // the merge defeats the turnover it exists to improve.
-    case 'mattress':
-      return { kind: 'per-window', windowDays: normaliseWindow(mattressWindowDays) };
-    // Not ruled on — the operator's toggle still decides.
-    default:
-      return toggle === 'per-so' ? { kind: 'per-so' } : { kind: 'combined' };
-  }
-}
 
 /** A window of at least 1 whole day. A zero/negative/NaN window would collapse
     every mattress into one bucket (or throw), silently undoing the rule —
@@ -128,30 +90,57 @@ export interface GroupKeyInput {
   deliveryDate: string | null;
 }
 
-/**
- * The bucket key for one line. Same key = same PO.
- *
- * Every key starts (warehouse, supplier) — unchanged, and load-bearing: folding
- * the warehouse in is what guarantees each emitted PO is single-warehouse, which
- * the downstream GRN relies on to land stock where the SO line asked for it.
- *
- * An UNDATED mattress line cannot be windowed, so it falls back to its own SO
- * (`per-so`) rather than merging into an arbitrary bucket. Conservative on
- * purpose: a wrongly-merged PO is a real supplier order for goods that arrive at
- * the wrong time, and it is not obviously wrong on the screen.
- */
-export function groupKeyFor(input: GroupKeyInput, toggle: PoMode, mattressWindowDays?: number): string {
-  const base = `${input.warehouseId ?? 'null'}::${input.supplierId}`;
-  const rule = splitRuleFor(input.itemGroup, toggle, mattressWindowDays);
+export interface GroupKeyContext {
+  /** SO doc numbers in THIS convert batch that carry a SOFA line. Under
+      'combined', an accessory (or other non-core) line whose SO is in this set
+      joins the sofa's PO instead of merging across SOs — the owner's "皮套 packed
+      in the sofa rides with it" rule (2026-09-11). Empty set = no sofa orders in
+      the batch, so accessories merge by supplier as normal. REQUIRED so a caller
+      cannot forget it and silently lose the sofa-cover co-location. */
+  sofaSoDocNos: ReadonlySet<string>;
+  /** Mattress merge window in days; defaults to the ISO week. */
+  mattressWindowDays?: number;
+}
 
-  switch (rule.kind) {
-    case 'per-so':
-      return `${base}::${input.soDocNo}`;
-    case 'per-window': {
-      const start = windowStartOf(input.deliveryDate, rule.windowDays);
-      return start ? `${base}::w${start}` : `${base}::${input.soDocNo}`;
+/**
+ * The bucket key for one line. Same key = same PO (within one convert batch).
+ *
+ * Owner's per-category rules, 2026-09-11 (see the file header). The `toggle`
+ * decides everything except bedframe, which is per-SO either way.
+ */
+export function groupKeyFor(input: GroupKeyInput, toggle: PoMode, ctx: GroupKeyContext): string {
+  const base = `${input.warehouseId ?? 'null'}::${input.supplierId}`;
+  const cat = (input.itemGroup ?? '').trim().toLowerCase();
+
+  // PER-SO — everything with its own SO, split by category. The category tag is
+  // what SPLITS a sofa order's sofa from its accessories (the owner's "分开").
+  if (toggle === 'per-so') {
+    return `${base}::so:${input.soDocNo}::cat:${cat || 'none'}`;
+  }
+
+  // COMBINE.
+  switch (cat) {
+    case 'sofa':
+      // Per-SO (dye lot), and NO category tag — so this SO's accessories, keyed
+      // the same below, MERGE onto the sofa's PO.
+      return `${base}::so:${input.soDocNo}`;
+    case 'bedframe':
+      // Toggle has no effect: same supplier + one SO -> one PO. The category tag
+      // keeps it off the sofa's untagged key even when an SO has both.
+      return `${base}::so:${input.soDocNo}::cat:bedframe`;
+    case 'mattress': {
+      // Merge within the delivery WEEK (window kept, owner 2026-09-11). An
+      // undated mattress cannot be windowed, so it falls back to its own SO
+      // rather than merging into an arbitrary bucket.
+      const start = windowStartOf(input.deliveryDate, normaliseWindow(ctx.mattressWindowDays ?? DEFAULT_MATTRESS_WINDOW_DAYS));
+      return start ? `${base}::w:${start}::cat:mattress` : `${base}::so:${input.soDocNo}::cat:mattress`;
     }
-    case 'combined':
-      return base;
+    default:
+      // Accessory / others. If this SO has a sofa, ride with it (the untagged
+      // per-SO key, identical to the sofa's above). Otherwise merge same-supplier
+      // across SOs into one accessory PO.
+      return ctx.sofaSoDocNos.has(input.soDocNo)
+        ? `${base}::so:${input.soDocNo}`
+        : `${base}::acc`;
   }
 }
