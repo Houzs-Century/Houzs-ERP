@@ -25,21 +25,19 @@
    makes the two expressions ONE.
 
    WHAT THIS DOES NOT DO: invent a category, or write a second label table. The
-   noun comes from `brandingCategoryNoun`, which is already the one total
-   category -> noun function here, and a category it has never heard of is Title
-   Cased and shown rather than dropped — for exactly the reason recorded there,
-   that a category added to the enum tomorrow must still print something true
-   about itself.
+   every extra category gets ONE shared tab, labelled "Others" — the owner's
+   ruling, and the shape that survives him adding a category at runtime.
    ---------------------------------------------------------------------------- */
 
-import { brandingCategoryNoun } from '../../vendor/shared/so-branding-label';
 
 export type MrpView = {
-  /** The tab's own id — the lower-cased category. */
+  /** The tab's own id — the lower-cased category, or 'others' for the catch-all. */
   value: string;
   /** The `?category=` the tab asks the server for, and the value a row's
-   *  `category` must equal to render on it. ONE string, both jobs. */
-  category: string;
+   *  `category` must equal to render on it. ONE string, both jobs.
+   *  NULL on the Others tab, which asks for everything and then keeps what no
+   *  other tab claims — see `OTHERS` below. */
+  category: string | null;
   label: string;
 };
 
@@ -50,8 +48,8 @@ export type MrpView = {
 const NEVER_A_TAB = new Set(['SERVICE']);
 
 /* The four that shipped, with the labels the page has always shown (the
-   accessory tab is plural here and singular in `brandingCategoryNoun`, which is
-   a wording difference on one screen, not a second rule). They stand even when
+   accessory tab is plural here, which is a wording difference on one screen,
+   not a second rule). They stand even when
    `categories` is absent — a response still in flight, or from a backend
    predating the field, must not blank the tab bar. */
 const BASE: readonly MrpView[] = [
@@ -61,12 +59,30 @@ const BASE: readonly MrpView[] = [
   { value: 'accessory', category: 'ACCESSORY', label: 'Accessories' },
 ];
 
-/* THE LABEL IS NOT WRITTEN HERE. `brandingCategoryNoun` is already the ONE
-   total category -> noun function in this codebase — it takes the raw enum
-   values, carries the four added members, and Title Cases anything it has never
-   heard of rather than printing nothing. A second noun table on this page would
-   be the same duplicated-decision the tab list itself was
-   (backend/scripts/check-duplicated-decisions.mjs catches it). */
+/* The four the page has always had, as a set — the membership test the Others
+   tab is defined against. */
+const CORE: ReadonlySet<string> = new Set(BASE.map((v) => v.category as string));
+
+/* ONE tab for everything else — the owner, 2026-09-10: 「应该要放others 一个
+   category把」.
+
+   PR #3522 made the tab list derive from the catalogue, which fixed the
+   disappearance (DINING / BEDLINES / DIFFUSER / CARPET rows belonged to no tab
+   and were dropped twice) but gave each of those four its own tab. He wants the
+   four he works from, plus one catch-all.
+
+   IT IS ALSO THE MORE DURABLE SHAPE, which is why it is not merely a preference
+   being honoured. `scm.acc_register_item_group()` is SECURITY DEFINER granted to
+   `service_role` precisely so a category can be created at runtime; under the
+   per-category rule his own new category would grow a tab nobody designed, and
+   under this one it lands in Others the moment it exists. A tab bar that changes
+   shape when somebody adds a lookup value is a tab bar nobody trusts.
+
+   `category: null` means: ask the server for EVERYTHING (no `?category=`), then
+   keep the rows no other tab claims. It cannot be a single `?category=` string
+   because it stands for a set — and inventing a fake enum value to put in the
+   query string would be a lie the engine would then filter on. */
+const OTHERS: MrpView = { value: 'others', category: null, label: 'Others' };
 
 /**
  * The `?category=` a tab id asks for.
@@ -79,13 +95,12 @@ const BASE: readonly MrpView[] = [
  * — which is the whole point: a tab whose id says one thing while its rows are
  * filtered by another is this bug with extra steps.
  */
-export function mrpCategoryOf(value: string): string {
-  return value.trim().toUpperCase();
-}
-
-/** The tab id for a category — the inverse of `mrpCategoryOf`. */
-function tabValueOf(category: string): string {
-  return category.toLowerCase();
+export function mrpCategoryOf(value: string): string | null {
+  const v = value.trim().toLowerCase();
+  /* The Others tab stands for a SET, so it asks for no filter at all and sorts
+     the rows out itself (`rowBelongsToView`). Returning 'OTHERS' here would send
+     the engine a category no product has, and it would answer with nothing. */
+  return v === OTHERS.value ? null : value.trim().toUpperCase();
 }
 
 /**
@@ -102,13 +117,26 @@ export function mrpViews(
      redundant one the linter would rightly delete. */
   categories: readonly (string | null | undefined)[] | undefined,
 ): MrpView[] {
-  const views: MrpView[] = BASE.filter((v) => !NEVER_A_TAB.has(v.category)).map((v) => ({ ...v }));
-  const seen = new Set(views.map((v) => v.category));
+  const views: MrpView[] = BASE.filter((v) => !NEVER_A_TAB.has(v.category as string)).map((v) => ({ ...v }));
   for (const raw of categories ?? []) {
     const cat = (raw ?? '').trim().toUpperCase();
-    if (!cat || seen.has(cat) || NEVER_A_TAB.has(cat)) continue;
-    seen.add(cat);
-    views.push({ value: tabValueOf(cat), category: cat, label: brandingCategoryNoun(cat).noun });
+    if (!cat || NEVER_A_TAB.has(cat) || CORE.has(cat)) continue;
+    views.push(OTHERS);
+    break;
   }
   return views;
+}
+
+/** Does a row belong on this tab? The Others tab claims what no other tab does. */
+export function rowBelongsToView(view: MrpView, rowCategory: string | null | undefined): boolean {
+  const cat = (rowCategory ?? '').trim().toUpperCase();
+  if (view.category !== null) return cat === view.category;
+  /* BY EXCLUSION, not by the catalogue list, and that is the load-bearing
+     choice. Matching Others against the `categories` the response happened to
+     report would strand a row whose category is not in that list — a product
+     deleted from the catalogue, a category added between two requests, a row
+     the engine kept on its item GROUP rather than a catalogue category (bug
+     0777). Exclusion cannot strand anything: every row that is not one of the
+     four, and is not SERVICE, has a home. */
+  return cat !== '' && !CORE.has(cat) && !NEVER_A_TAB.has(cat);
 }

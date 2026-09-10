@@ -344,25 +344,42 @@ misses every future one.
 
 **The rule now.** `MrpResult.categories` — every product category in the
 company's catalogue, read in section 2, paged, company-scoped, and INDEPENDENT of
-`catFilter`, so every tab's response carries the same list — is what the page
-renders tabs from. The derivation lives in one module,
+`catFilter`, so every tab's response carries the same list — decides whether the
+page shows an Others tab. The derivation lives in one module,
 `frontend/src/pages/scm-v2/mrp-views.ts`:
 
-- the four original tabs first, in their original order (they stand even when
-  `categories` is absent, so an in-flight response cannot blank the tab bar);
-- then every other catalogue category, in the order the server sent it;
-- `SERVICE` never gets a tab — `isServiceLine` skips service lines BEFORE the
-  category filter, so it could only ever be empty. It is named, not silently
-  filtered;
-- a category with no hand-written label is Title Cased and shown, never dropped,
-  matching `shared/so-branding-label.ts`'s rule for the same reason;
-- `mrpCategoryOf(tabId)` and the tab id are a declared inverse PAIR, because the
-  page must pick `?category=` before it has a response to derive tabs from. The
-  round-trip is pinned on every enum member by `mrp-views.test.ts`.
+- the FOUR the owner works from — Sofa, Bedframe, Mattress, Accessories — always,
+  in that order, standing even when `categories` is absent so an in-flight
+  response cannot blank the tab bar;
+- ONE **Others** tab appended when, and only when, the catalogue holds anything
+  outside those four (owner 2026-09-10, 「应该要放others 一个category把」;
+  `docs/bugs/0782-the-extra-mrp-categories-each-grew-their-own-tab-instead-of.md`).
+  It is not one-tab-per-extra-category: that shape would grow a column the day
+  the owner registers a category at runtime through `acc_register_item_group`;
+- `SERVICE` never gets a tab, and never falls into Others — `isServiceLine` skips
+  service lines BEFORE the category filter, so it could only ever be empty. Named,
+  not silently filtered.
 
-Both tests read the vocabulary out of the SQL and out of the committed alignment
-payload rather than a typed list, because a typed list here would be the fault
-being tested.
+**Others is `category: null`, and that is a THIRD filter state, distinct from a
+category string and from `'all'`.** It asks the server for NO `?category=` — it
+stands for a SET, and a fake enum value in the query string would be filtered to
+nothing — then keeps the rows no other tab claims. Membership is decided by
+`rowBelongsToView`, which for Others claims **by EXCLUSION**: a row is Others' if
+its category is non-empty, not one of the four, and not SERVICE. Exclusion is the
+load-bearing choice — matching against the reported `categories` would strand a
+row whose category is not in that list (a product deleted from the catalogue, a
+category added between two requests, or a row the engine kept on its item GROUP,
+§2.1). A `null`-category row stays off every tab, INCLUDING Others, so the catch-
+all never becomes the bin that hides the §2.1 bug.
+
+`mrpCategoryOf(tabId)` and the tab id are a declared inverse pair (`others` maps
+to `null`), because the page must pick `?category=` before it has a response to
+derive tabs from. The round-trip is pinned by `mrp-views.test.ts`, which also
+asserts every enum member and every aligned-SKU category is claimed by SOME view
+— on MEMBERSHIP, not on a tab NAME, since a name assertion would pass while a row
+still fell through. Both tests read the vocabulary out of the SQL and the
+committed alignment payload rather than a typed list, because a typed list here
+would be the fault being tested.
 
 **STILL OPEN, and it is the owner's call.** A row whose category is `null`
 (§2.1's honest null) is dropped by the section-6 filter and counted nowhere. The
