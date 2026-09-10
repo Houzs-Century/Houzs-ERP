@@ -10960,17 +10960,10 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
   };
   if (before.so_doc_no !== docNo) return c.json({ error: 'payment_doc_mismatch' }, 400);
 
-  /* Same-day lock — a payment recorded TODAY (MYT) can be corrected; after
-     midnight the day's cash-up is settled and it LOCKS. EXEMPT DRAFT SOs: a
-     draft isn't confirmed/settled yet (e.g. an OCR-scanned draft whose payment
-     was mis-read), so its payments must stay freely editable — mirrors the
-     frontend's draftUnlocked (2026-07-13), which was never matched here.
-
-     Owner 2026-07-19 confirmed this same window governs DELETE too, which had
-     no time gate at all. Both routes now go through the shared
-     paymentRowMutable() predicate rather than each spelling the rule out, so
-     they cannot drift — and the deferred bank-reconciliation condition will
-     have exactly one place to land. */
+  /* WHO MAY CHANGE THIS ROW, AND WHY — one predicate for the PATCH, the DELETE
+     and both screens (scm/shared/so-field-policy.ts, paymentRowMutable): DRAFT
+     fluid → RECONCILED shut to everyone → same day fluid → the amend right →
+     shut. paymentMayChange() feeds it the reconciliation the server reads. */
   const { data: soRow } = await sb
     .from('mfg_sales_orders')
     .select('status')
@@ -11163,31 +11156,14 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
   if (!versionCheck.ok) return c.json(versionCheck.body, versionCheck.status);
   const expectedVersion = versionCheck.version;
 
-  /* SAME-DAY WINDOW (Owner 2026-07-19) — "删除只有在当天才行。正常情况下，他当天
-     key in 的时候，因为还没有 lock 下来，所以当天都可以任意更改." A payment row may
-     be deleted ONLY on the MY calendar day it was keyed in.
-
-     This route previously had NO time gate at all — strictly weaker than the
-     PATCH on the same row, which has carried this window since 2026-07-13. So a
-     months-old payment on a delivered, invoiced SO could be hard-deleted,
-     silently flipping the order from PAID back to owing. This closes that.
-
-     Keyed off created_at (when the row was KEYED IN), never paid_at (the date
-     on the document): keying off paid_at would let someone unlock an old
-     payment's deletion by first editing its date to today, with the edit and
-     the delete authorising each other.
-
-     MYT, not UTC — mytDateOf/todayMyt shift +8h before reading the date, so the
-     window closes at Malaysian midnight rather than 8h late or 8h early.
-
-     Enforced HERE and not only in the UI: the clients also drop the delete
-     control once the window closes, but that is the courtesy — this is the
-     control. The DRAFT exemption mirrors the PATCH route exactly (a draft has
-     nothing locked; the owner was describing a confirmed order).
-
-     THE DEFERRED RULE HAS LANDED (2026-09-10, docs/bugs/0780): FINANCE may
-     remove an older payment, a RECONCILED one is refused to everybody, and
-     paymentMayChange() below asks both. */
+  /* THE SAME GATE AS THE PATCH (owner 2026-07-19: 删除只有在当天才行 — until
+     then this route had NO time gate, so a months-old payment on a delivered,
+     invoiced SO could be hard-deleted and flip it from PAID to owing). Keyed
+     off created_at, never paid_at: keying off the document date would let an
+     edit and a delete authorise each other. MYT, not UTC. Enforced HERE — the
+     missing button in the clients is the courtesy, this is the control. Since
+     2026-09-10 the amend right opens it and a RECONCILED payment shuts it to
+     everyone (docs/bugs/0780); paymentMayChange() below asks both. */
   const { data: soStatusRow } = await sb
     .from('mfg_sales_orders')
     .select('status')
