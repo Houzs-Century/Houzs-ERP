@@ -60,7 +60,8 @@ import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
-import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
+import { useCreateMfgSalesOrder, useDeleteSoItemPhoto } from "../vendor/scm/lib/sales-order-queries";
+import { useScmLinePhoto } from "../vendor/scm/lib/so-line-photo";
 import { zeroPriceClaim } from "../vendor/scm/lib/zeroPriceClaim";
 import { invalidateSoShared } from "./sharedInvalidate";
 import { mobileLineAddHeaders } from "./mobile-so-line-save";
@@ -2540,6 +2541,7 @@ export function MobileNewSO({
                           onOpenSpecialPicker={() => setSpecialPickerFor(l.key)}
                           showPrices={showSpecialPrices}
                           canEditPrice={canEditPrice}
+                          soDocNo={docNo}
                           onChange={(patch) => patchLine(l.key, patch)}
                           onDdateChange={(v) => setLineDdateManual(l.key, v)}
                           onRemove={async () => {
@@ -2913,6 +2915,7 @@ function LineCard({
   onOpenSpecialPicker,
   showPrices,
   canEditPrice,
+  soDocNo,
   onChange,
   onDdateChange,
   onRemove,
@@ -2932,6 +2935,10 @@ function LineCard({
   /* Unit-price lock (SO-SKU spec D4) — false for everyone below admin, so the
      price follows the SKU Master sell price and cannot be hand-typed. */
   canEditPrice: boolean;
+  /* The SO's doc_no when this card renders for a saved order (edit mode).
+     Undefined on the New SO path. Used by the saved-photo thumbnail to fetch
+     a signed URL and to route photo delete to the right document. */
+  soDocNo?: string;
   onChange: (patch: Partial<LineItem>) => void;
   /* FIX D1(b) — a manual Item Delivery Date edit routes through here so the
      parent can flag the line as an override the header cascade won't touch. */
@@ -3215,14 +3222,35 @@ function LineCard({
           </button>
         </div>
 
-        {/* Photo thumbnails — already-saved (edit prefill) + staged (this session) */}
+        {/* Photo thumbnails — already-saved (edit prefill) + staged (this session).
+            Owner 2026-09-11 (HC-SO-007678 on mobile): the SAVED tile used to be
+            a text-only "SAVED" placeholder with no image and no delete button,
+            so a rep opening an existing SO in Edit saw nothing where photos
+            used to be and could not remove any of them. Now the tile fetches
+            a signed URL (useScmLinePhoto) and carries a delete X wired to
+            useDeleteSoItemPhoto — same pair the desktop SoLineCard uses. */}
         {(line.photoKeys.length > 0 || line.photoFiles.length > 0) && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 1 }}>
-            {line.photoKeys.map((k) => (
-              <div key={k} style={photoTile}>
-                <div style={{ ...photoTileInner, background: "#e1efed", color: "#16695f", fontSize: 8, fontWeight: 700, letterSpacing: ".04em" }}>SAVED</div>
-              </div>
-            ))}
+            {line.photoKeys.map((k) =>
+              soDocNo && line.itemId ? (
+                <MobileSavedPhotoThumb
+                  key={k}
+                  docNo={soDocNo}
+                  itemId={line.itemId}
+                  photoKey={k}
+                  onDeleted={() => onChange({ photoKeys: line.photoKeys.filter((x) => x !== k) })}
+                />
+              ) : (
+                /* Belt-and-braces fallback: New-SO path cannot have photoKeys
+                   yet (the line has no itemId), and Edit always has soDocNo,
+                   so this branch is unreachable in practice. Keeping the old
+                   SAVED marker rather than rendering nothing avoids a silent
+                   drop if the invariant ever breaks. */
+                <div key={k} style={photoTile}>
+                  <div style={{ ...photoTileInner, background: "#e1efed", color: "#16695f", fontSize: 8, fontWeight: 700, letterSpacing: ".04em" }}>SAVED</div>
+                </div>
+              ),
+            )}
             {line.photoFiles.map((f, i) => (
               <StagedPhotoThumb key={`${f.name}-${i}`} file={f} onRemove={() => removeStagedPhoto(i)} />
             ))}
@@ -3243,6 +3271,47 @@ const photoTile: React.CSSProperties = {
 const photoTileInner: React.CSSProperties = {
   width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center",
 };
+
+/* Saved (persisted, edit-mode) photo — fetches a signed URL via the shared
+   useScmLinePhoto state machine (same one desktop SoLinePhotoStrip uses) so
+   the operator sees the real thumbnail, and offers a delete X wired to the
+   versioned photo-delete mutation. The parent drops the key from
+   `line.photoKeys` on success so the tile disappears without a full refetch.
+   Was a text-only "SAVED" placeholder with no image and no delete button —
+   owner 2026-09-11, HC-SO-007678 mobile edit. */
+function MobileSavedPhotoThumb({ docNo, itemId, photoKey, onDeleted }: {
+  docNo: string; itemId: string; photoKey: string; onDeleted: () => void;
+}) {
+  const photo = useScmLinePhoto("so", photoKey, docNo, itemId);
+  const deleteMut = useDeleteSoItemPhoto();
+  const busy = deleteMut.isPending;
+  return (
+    <div style={photoTile}>
+      {photo.src ? (
+        <img
+          src={photo.src}
+          alt=""
+          onError={photo.onImgError}
+          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+        />
+      ) : (
+        <div style={{ ...photoTileInner, background: "#e1efed", color: "#16695f", fontSize: 8, fontWeight: 700, letterSpacing: ".04em" }}>
+          {photo.error ? "ERR" : "..."}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={() => {
+          if (busy) return;
+          deleteMut.mutate({ docNo, itemId, photoKey }, { onSuccess: () => onDeleted() });
+        }}
+        disabled={busy}
+        title="Remove"
+        style={{ position: "absolute", top: 2, right: 2, width: 20, height: 20, borderRadius: 999, border: "none", background: "rgba(17,20,15,.75)", color: "#fff", fontSize: 12, lineHeight: 1, cursor: busy ? "wait" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}
+      >{"✕"}</button>
+    </div>
+  );
+}
 
 /* Staged (this-session) photo — object-URL preview + a delete X. Revokes the
    URL on unmount / file change (mirrors the desktop pendingPreviews). */
