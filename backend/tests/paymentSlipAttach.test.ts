@@ -56,14 +56,23 @@ describe('payment proof attach route', () => {
   test('is NOT behind the same-day payment window', () => {
     const attach = handlerBody('post', '/:docNo/payments/:id/slip');
     expect(attach).not.toContain('paymentRowMutable');
+    expect(attach).not.toContain('paymentMayChange');
     expect(attach).not.toContain('PAYMENT_WINDOW_CLOSED_ERROR');
   });
 
   test('the money routes it sits beside ARE behind that window', () => {
-    // Without this, the assertion above could pass on a file that lost the
-    // window entirely — which would be a far worse bug than the one it guards.
-    expect(handlerBody('patch', '/:docNo/payments/:id')).toContain('paymentRowMutable');
-    expect(handlerBody('delete', '/:docNo/payments/:id')).toContain('paymentRowMutable');
+    /* Without this, the assertion above could pass on a file that lost the
+       window entirely — which would be a far worse bug than the one it guards.
+
+       The gate is named `paymentMayChange` since 2026-09-10 (docs/bugs/0780):
+       the two money routes now load whether the payment has been RECONCILED
+       and hand that to `paymentRowMutable`, which is still the only place the
+       rule lives. Asserting on the wrapper rather than the predicate is the
+       stronger check of the two — a route that called the bare predicate again
+       would have quietly dropped both the reconciliation and Finance's right,
+       and this test would say so. */
+    expect(handlerBody('patch', '/:docNo/payments/:id')).toContain('paymentMayChange');
+    expect(handlerBody('delete', '/:docNo/payments/:id')).toContain('paymentMayChange');
   });
 
   test('keeps the guards that are about ownership, not timing', () => {

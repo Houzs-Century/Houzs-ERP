@@ -715,8 +715,27 @@ no active entry, which is the unbooked card's finding and the backfill's to
 heal. SI payments have no edit route at all, so there is nothing to mirror.
 Pinned by `acc/payment-repost.test.ts` (through the real poster and the fake
 client) and `tests/soPaymentEditReposts.test.ts` (that the ROUTE calls it —
-RED against the unfixed route file). **Step 3, the Finance permission gated on
-"editable until RECONCILED", is still not built.**
+RED against the unfixed route file).
+
+**Finance holds the correction right (2026-09-10, docs/bugs/0780) — step 3, the
+last.** `acc/payment-reconciled.ts` answers "has this payment been reconciled",
+and names WHICH of three places closed over it rather than collapsing them into
+one flag: `acc_settlement_matches` claims the payment ROW (the only one that
+speaks for a payment that never booked); `acc_bank_statement_matches` claims its
+ACTIVE entry by je_no; `acc_bank_month_locks` closes that entry's MONEY-leg
+account for the month — read off the DEBIT line, because the credit leg is Trade
+Debtors and a guard on the wrong line would find no lock and wave everything
+through. **Every read fails CLOSED**: an unreadable check refuses and says to
+retry, never "not reconciled", or the guard switches itself off exactly when the
+database is unhappy (the `loadLineMonth` rule, same reason). `paymentMayChange`
+is the one call the two SO payment routes make — loading the fact AND asking
+`paymentRowMutable`, because a route that did only the first half would read as
+if it had checked. The permission is `scm.so_payment.amend`, held by nobody but
+`*` until granted in Team > Positions, and it does NOT reach past a reconciled
+payment. Pinned by `scm/shared/soPaymentAmendRight.test.ts`,
+`acc/payment-reconciled.test.ts` (one case per read proving a failing read
+refuses) and `tests/soPaymentAmendRoutes.test.ts` (RED against the unfixed
+route file).
 
 **Phase 2B part 1 (2026-08-16): Daily Bank.** GET /accounting/daily-bank?date= answers the owner one question - today, where is the money and how much can actually move - live from the ledger (2.3: no caches): opening/in/out/closing per money account (scm.accounts.acc_money flag, migration 0299), settlement-in-transit balances per acquirer (visible, never counted movable), and — since phase 3 (2026-08-28, mig 0339) — pendingApprovalSen: every DRAFT payment voucher sitting in the approval queue, converted to MYR the way posting will, subtracted from available. Page /scm/daily-bank (Finance menu): date navigation + Get Image (canvas-drawn PNG to clipboard for WhatsApp, download fallback). Board arithmetic pinned in acc/daily-bank.test.ts. 946-0000 Cash Over/Short + OVER_SHORT role seeded for the coming daily cashup.
 
