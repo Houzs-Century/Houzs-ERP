@@ -1,7 +1,7 @@
 ## Scrap pillow SKU choice: nothing checks that a coloured pillow sits on the CUSTOM SKU [medium]
 
 <!-- area: Cutover + migrated data -->
-<!-- status: open -->
+<!-- status: owner-decision -->
 
 **Symptom.** The owner, 2026-09-10: *"并且你要确保我的 scrap pillow 是选对的:
 1. 有颜色的是选 custom scrap pillow 2. 没有颜色是选 random。另外,你之前查回去一下
@@ -68,10 +68,86 @@ stubbed out, its residue was inspected string by string, and `Col -02 Beige#`,
 `rondom` are in its patterns because they are in the data, not because they were
 imagined.
 
-**PRODUCTION RUN: not yet dispatched at the time this entry was written.** A
-`workflow_dispatch` workflow cannot be triggered until its file is on `main`
-(`HTTP 404: workflow ... not found on the default branch`), so the numbers from
-production land in the immediately following PR that updates this entry. Nothing
-here asserts a production count.
+**MEASURED ON PRODUCTION.** Run
+[34455827116](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34455827116),
+`success`, 2026-09-10, company 1. Population: **330 scrap-pillow sales-order
+lines across 294 orders**, none cancelled, 122 on a PROCEEDED order.
 
-**Ref.** `audit/scrap-pillow-sku`, 2026-09-10.
+**1. The two families DO exist here — AutoCount has no such split, so they were
+minted on this side.** Nine scrap-pillow products, and the family is readable
+only from the NAME:
+
+| family | code | name |
+| --- | --- | --- |
+| CUSTOM | `SQUARE PILLOW` | `AMN-SQUARE PILLOW (16"x16") (CUSTOM)` |
+| RANDOM | `AMN-SOFA PILLOW` | `AMN-SOFA PILLOW (RANDOM) (FREE GIFT)` |
+| RANDOM | `SOFA PILLOW (FOC)` | `SOFA PILLOW (FREE GIFT) (RANDOM)` |
+| neither | `THL-SOFA PILLOW` | `SOFA PILLOW (FREE GIFT)` |
+| neither | `LONG PILLOW`, `822 SQUARE PILLOW`, `823 LONG PILLOW`, `5142 PILLOW`, `5543 LONG PILLOW` | the supplier long/square pillows |
+
+`SOFA PILLOW (FOC)` and `THL-SOFA PILLOW` carry the SAME name, `SOFA PILLOW
+(FREE GIFT)`, and only one of them says `(RANDOM)`. That is the same
+two-identities-one-piece shape as `9058-Console` / `9058-CONSOLE`, and it splits
+stock and demand between them.
+
+**2. The colour is in NO structured field on ANY of these lines.** Measured over
+all 330:
+
+```
+    0 / 330  variants (structured colour keys)
+    0 / 330  variants.extraAddonNote
+  289 / 330  description2                  COLOUR=131 PENDING=87 RANDOM=51 NONE=20
+  295 / 330  remark                        COLOUR=130 PENDING=90 RANDOM=52 NONE=23
+```
+
+The only key present in `variants` anywhere is `variants.remark`, on 5 lines. So
+every colour these lines have is FREE TEXT, and the Special Order field shipped
+on 2026-09-10 (PR #3507) is empty on all of them — which is what the AutoCount
+backfill stream exists to fill.
+
+**3. The cross-tab.** Family x colour x proceeded, the four numbers that decide:
+
+| | lines |
+| --- | --- |
+| **A. CUSTOM SKU, no colour, order PROCEEDED** (the owner's hard defect) | **2** |
+| **B. RANDOM SKU but a colour IS stated** (wrong SKU the other way) | **9** |
+| **C. CUSTOM SKU, no colour, NOT proceeded** (LEGITIMATE, not work) | **11** |
+| **D. on NEITHER family** | **59** |
+| E. CUSTOM SKU, colour TBC/KIV, proceeded | 0 |
+| F. CUSTOM SKU whose own text SAYS random | 9 (1 proceeded) |
+
+Both of A are text that is present and is not readable as a colour, not blanks:
+`HC-SO-010214` line 3 holds `CH151-5 (PEARL)` — a colour CODE the fabric library
+cannot look up (it holds `CH141-5`, not `CH151-5`) — and `HC-SO-012128` line 3
+holds `FOR CONPESSANTION WRONG ITEM DELIVERY`. So the true count of proceeded
+CUSTOM pillows with no colour anybody wrote down is **at most 2, and arguably 1**.
+
+**4. The migration copied the book FAITHFULLY. What it did not do is pick the
+SKU to match what it copied.**
+
+```
+  book NAMES a colour, we sit on the RANDOM SKU : 8
+  book says RANDOM, we sit on the CUSTOM SKU    : 7
+  book NAMES a colour, our line carries NONE    : 0
+  book says RANDOM, our line carries a COLOUR   : 0
+  book is SILENT about colour on this line      : 31
+  no book line at all (post-snapshot / unlinked) : 82
+```
+
+**Zero colours were dropped and zero were invented** — those are the two ways a
+migration corrupts text, and neither happened. The defect is **15 lines whose SKU
+family contradicts the book's own words on the same line**, which is a different
+fault with a different remedy.
+
+**One value divergence found and NOT explained here.** `HC-SO-010120` line 2
+holds `HR805-10` in `description2` while the book's Desc2 for the same DtlKey
+reads `colour : B0315-29`. The probe compares the KIND of statement, not the
+VALUE, so it cannot say whether that is a post-cutover correction by staff or a
+mis-copy. **UNKNOWN — it needs its own look.**
+
+**5. The purchase-order side**, which is the document the owner actually asked
+about: 82 scrap-pillow PO lines — 59 CUSTOM/colour, 18 neither/colour,
+2 CUSTOM/none, 2 CUSTOM/random, 1 RANDOM/random.
+
+**Ref.** `audit/scrap-pillow-sku` (probe, PR #3533),
+`audit/scrap-pillow-sku-results` (this measurement), 2026-09-10.
