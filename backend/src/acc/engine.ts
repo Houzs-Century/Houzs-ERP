@@ -320,7 +320,10 @@ export type ReverseJournalInput = {
 };
 
 export type ReverseJournalResult =
-  | { ok: true; status: 'reversed'; jeNo: string; jeId: string }
+  /** `jeNo` is the CONTRA written (or, when the original had no lines to
+      mirror, the original itself); `originalJeNo` is always the entry that
+      was voided — the number a reader recognises, which the contra's is not. */
+  | { ok: true; status: 'reversed'; jeNo: string; jeId: string; originalJeNo: string }
   | { ok: true; status: 'already_reversed' | 'nothing_to_reverse' }
   | { ok: false; status: 'reversal_read_failed' | 'reversal_insert_failed' | 'reversal_lines_failed'; reason?: string };
 
@@ -374,7 +377,7 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
   if (totalSen <= 0) {
     // Nothing of value to reverse — flag it so re-voids no-op.
     await sb.from('journal_entries').update({ reversed: true }).eq('id', orig.id);
-    return { ok: true, status: 'reversed', jeNo: orig.je_no, jeId: orig.id };
+    return { ok: true, status: 'reversed', jeNo: orig.je_no, jeId: orig.id, originalJeNo: orig.je_no };
   }
 
   // Mirror the SAME accounts + parties with debit/credit swapped — a faithful
@@ -477,5 +480,5 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
   await sb.from('journal_entries').update({ posted: true }).eq('id', revJe.id);
   await sb.from('journal_entries').update({ reversed: true, reversed_by_je: revJe.id }).eq('id', orig.id);
 
-  return { ok: true, status: 'reversed', jeNo: revJe.je_no, jeId: revJe.id };
+  return { ok: true, status: 'reversed', jeNo: revJe.je_no, jeId: revJe.id, originalJeNo: orig.je_no };
 }

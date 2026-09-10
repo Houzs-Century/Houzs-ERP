@@ -32,7 +32,8 @@ export type CorrectionRowInput = {
   amountFromSen: number | null;
   amountToSen: number | null;
   reason: string;
-  reversedJeNo: string | null;
+  originalJeNo: string | null;
+  contraJeNo: string | null;
   jeNo: string | null;
 };
 
@@ -80,12 +81,18 @@ export const whatChanged = (r: CorrectionRowInput): string => {
   return parts.length > 0 ? parts.join('; ') : 'Edited';
 };
 
-/** "JE-2609-0031 reversed → JE-2609-0058" / "JE-2609-0040 reversed" / "—". */
+/** Three numbers in the order the books moved: the ORIGINAL, the contra that
+    voided it, the entry booked in its place —
+    "0047 → reversed by 0099 → 0100". A delete stops at the reversal; a row
+    that knows only the contra (the one legacy row) says "reversed by …" and
+    never presents the contra as the original — that misreading is what this
+    wording replaces (owner, 2026-09-10: 不明白; docs/bugs/0786). */
 export const ledgerText = (r: CorrectionRowInput): string => {
-  if (r.reversedJeNo && r.jeNo) return `${r.reversedJeNo} reversed → ${r.jeNo}`;
-  if (r.reversedJeNo) return `${r.reversedJeNo} reversed`;
-  if (r.jeNo) return `booked ${r.jeNo}`;
-  return '—';
+  const parts: string[] = [];
+  if (r.originalJeNo) parts.push(r.originalJeNo);
+  if (r.contraJeNo) parts.push(`reversed by ${r.contraJeNo}`);
+  if (r.jeNo) parts.push(parts.length > 0 ? r.jeNo : `booked ${r.jeNo}`);
+  return parts.length > 0 ? parts.join(' → ') : '—';
 };
 
 export const monthText = (month: string): string => {

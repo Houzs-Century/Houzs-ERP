@@ -9,9 +9,10 @@
    No new table. A correction is already an `mfg_so_audit_log` row
    (UPDATE_PAYMENT / DELETE_PAYMENT); this module marks the ones made on the
    amend right with `source = 'amend'`, puts the typed reason in `note`, and
-   adds one field change — `ledger`, from the contra that voided the old entry
-   to the entry booked in its place — so the SO's own audit history shows the
-   same facts the report does. The report is then a filtered read of that log.
+   adds two field changes — `ledger`, the original entry → the one booked in
+   its place, and `ledgerReversal`, the contra that voided the original — so
+   the SO's own audit history shows the same facts the report does. The report
+   is then a filtered read of that log.
 
    This file is pure. The route reads the rows; `paymentCorrectionsReport`
    decides what they mean. */
@@ -22,8 +23,13 @@ import type { LedgerTouch } from '../scm/lib/so-payment-row';
 /** The `source` an audit row carries when the amend right made the change. */
 export const AMEND_SOURCE = 'amend';
 
-/** The field-change name that carries the ledger pair on the audit row. */
+/** The field-change name that says what REPLACED what on the ledger: the
+    original entry → the entry booked in its place (null on a delete). */
 export const LEDGER_FIELD = 'ledger';
+/** The contra that voided the original — its own change, because a reader
+    who sees only "0099 → 0100" takes 0099 for the entry that was reversed,
+    when 0099 IS the reversal (owner, 2026-09-10: 不明白; docs/bugs/0786). */
+export const LEDGER_REVERSAL_FIELD = 'ledgerReversal';
 
 /** The refusal both routes answer when a correction on the amend right arrives
     with no reason. Plain sentence, no braces, no bare code — it is shown. */
@@ -33,12 +39,15 @@ export const REASON_REQUIRED = {
     + 'correction made after the day it was keyed in.',
 } as const;
 
-/** One audit field change describing what the correction did to the ledger.
-    Nothing when it touched nothing — a never-booked payment reverses no entry
-    and an audit row must not claim otherwise. */
+/** The audit field changes describing what the correction did to the ledger:
+    `ledger` original → new, and `ledgerReversal` naming the contra when one
+    was written. Nothing when it touched nothing — a never-booked payment
+    reverses no entry and an audit row must not claim otherwise. */
 export function ledgerFieldChange(touch: LedgerTouch): FieldChange[] {
-  if (touch.reversedJeNo == null && touch.jeNo == null) return [];
-  return [{ field: LEDGER_FIELD, from: touch.reversedJeNo, to: touch.jeNo }];
+  if (touch.originalJeNo == null && touch.contraJeNo == null && touch.jeNo == null) return [];
+  const out: FieldChange[] = [{ field: LEDGER_FIELD, from: touch.originalJeNo, to: touch.jeNo }];
+  if (touch.contraJeNo != null) out.push({ field: LEDGER_REVERSAL_FIELD, from: null, to: touch.contraJeNo });
+  return out;
 }
 
 /* ── The report ──────────────────────────────────────────────────────────── */
@@ -72,7 +81,13 @@ export type CorrectionRow = {
   amountFromSen: number | null;
   amountToSen: number | null;
   reason: string;
-  reversedJeNo: string | null;
+  /** The entry that was voided. Null on a first booking — and on the one row
+      written before the contra had its own change, where `ledger.from` was
+      the contra and the original was not recorded. */
+  originalJeNo: string | null;
+  /** The contra that voided it. */
+  contraJeNo: string | null;
+  /** The entry booked in its place. Null on a delete. */
   jeNo: string | null;
 };
 
@@ -123,7 +138,13 @@ export function paymentCorrectionsReport(
     const kind: CorrectionRow['kind'] = a.action === 'DELETE_PAYMENT' ? 'deleted' : 'edited';
     const all = changesOf(a.field_changes);
     const ledger = all.find((c) => c.field === LEDGER_FIELD);
-    const changes = all.filter((c) => c.field !== LEDGER_FIELD);
+    const reversal = all.find((c) => c.field === LEDGER_REVERSAL_FIELD);
+    const changes = all.filter((c) => c.field !== LEDGER_FIELD && c.field !== LEDGER_REVERSAL_FIELD);
+    const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
+    /* LEGACY: the first row ever written (2026-09-10, 2990-SO-2606-043) carried
+       the CONTRA in `ledger.from` and had no `ledgerReversal`. Read it as what
+       it is — a reversal with the original unknown — never as an original. */
+    const legacy = reversal === undefined && ledger !== undefined && str(ledger.from) !== null;
     const amount = changes.find((c) => c.field === 'amountSen');
     rows.push({
       id: a.id,
@@ -136,8 +157,9 @@ export function paymentCorrectionsReport(
       amountFromSen: amount ? senOf(amount.from) : null,
       amountToSen: amount ? senOf(amount.to) : null,
       reason: String(a.note ?? '').trim(),
-      reversedJeNo: ledger && typeof ledger.from === 'string' ? ledger.from : null,
-      jeNo: ledger && typeof ledger.to === 'string' ? ledger.to : null,
+      originalJeNo: legacy ? null : (ledger ? str(ledger.from) : null),
+      contraJeNo: legacy ? str(ledger.from) : (reversal ? str(reversal.to) : null),
+      jeNo: ledger ? str(ledger.to) : null,
     });
   }
   rows.sort((x, y) => y.at.localeCompare(x.at) || y.id.localeCompare(x.id));

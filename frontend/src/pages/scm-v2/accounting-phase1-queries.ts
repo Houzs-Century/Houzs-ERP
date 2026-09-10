@@ -122,7 +122,10 @@ export type PaymentCorrectionRow = {
   amountFromSen: number | null;
   amountToSen: number | null;
   reason: string;
-  reversedJeNo: string | null;
+  /** The entry that was voided, the contra that voided it, the entry booked
+      in its place — any null when that part did not happen. */
+  originalJeNo: string | null;
+  contraJeNo: string | null;
   jeNo: string | null;
 };
 export type PaymentCorrections = {

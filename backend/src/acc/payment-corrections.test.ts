@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  AMEND_SOURCE, LEDGER_FIELD, REASON_REQUIRED,
+  AMEND_SOURCE, LEDGER_FIELD, LEDGER_REVERSAL_FIELD, REASON_REQUIRED,
   ledgerFieldChange, paymentCorrectionsReport, type CorrectionAuditRow,
 } from './payment-corrections';
 
@@ -20,6 +20,7 @@ const audit = (over: Partial<CorrectionAuditRow> = {}): CorrectionAuditRow => ({
   field_changes: [
     { field: 'amountSen', from: 199_000, to: 199_100 },
     { field: LEDGER_FIELD, from: 'JE-2609-0031', to: 'JE-2609-0058' },
+    { field: LEDGER_REVERSAL_FIELD, from: null, to: 'JE-2609-0057' },
   ],
   note: 'Sales keyed RM 1,990 — receipt shows RM 1,991',
   created_at: '2026-09-10T02:15:00Z',
@@ -29,19 +30,32 @@ const audit = (over: Partial<CorrectionAuditRow> = {}): CorrectionAuditRow => ({
 const customers = new Map<string, string | null>([['2990-SO-2606-043', 'Wong li way']]);
 
 describe('ledgerFieldChange', () => {
-  it('carries the contra and the new entry as one from → to', () => {
-    expect(ledgerFieldChange({ reversedJeNo: 'JE-1', jeNo: 'JE-2' }))
-      .toEqual([{ field: LEDGER_FIELD, from: 'JE-1', to: 'JE-2' }]);
+  /* `ledger` says what replaced what — the ORIGINAL entry and the one booked
+     in its place. The contra that did the voiding is its own change, because
+     a reader who sees only "0099 → 0100" takes 0099 for the entry that was
+     reversed, when 0099 IS the reversal (owner, 2026-09-10: 不明白). */
+  it('names the original → the new entry, and the contra beside it', () => {
+    expect(ledgerFieldChange({ originalJeNo: 'JE-47', contraJeNo: 'JE-99', jeNo: 'JE-100' })).toEqual([
+      { field: LEDGER_FIELD, from: 'JE-47', to: 'JE-100' },
+      { field: LEDGER_REVERSAL_FIELD, from: null, to: 'JE-99' },
+    ]);
   });
 
-  it('a delete has a contra and nothing new', () => {
-    expect(ledgerFieldChange({ reversedJeNo: 'JE-1', jeNo: null }))
-      .toEqual([{ field: LEDGER_FIELD, from: 'JE-1', to: null }]);
+  it('a delete has an original and a contra, and nothing new', () => {
+    expect(ledgerFieldChange({ originalJeNo: 'JE-47', contraJeNo: 'JE-99', jeNo: null })).toEqual([
+      { field: LEDGER_FIELD, from: 'JE-47', to: null },
+      { field: LEDGER_REVERSAL_FIELD, from: null, to: 'JE-99' },
+    ]);
+  });
+
+  it('a payment that had never booked has only the new entry, and no reversal line', () => {
+    expect(ledgerFieldChange({ originalJeNo: null, contraJeNo: null, jeNo: 'JE-100' }))
+      .toEqual([{ field: LEDGER_FIELD, from: null, to: 'JE-100' }]);
   });
 
   /* An audit row must not claim the books moved when they did not. */
   it('writes nothing when the ledger was not touched', () => {
-    expect(ledgerFieldChange({ reversedJeNo: null, jeNo: null })).toEqual([]);
+    expect(ledgerFieldChange({ originalJeNo: null, contraJeNo: null, jeNo: null })).toEqual([]);
   });
 });
 
@@ -54,18 +68,28 @@ describe('the constants the routes and the report share', () => {
 });
 
 describe('paymentCorrectionsReport', () => {
-  it('reads an edited amount: both figures, the reason, and both JE numbers', () => {
+  it('reads an edited amount: both figures, the reason, and all three JE numbers', () => {
     const { rows } = paymentCorrectionsReport([audit()], customers);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       kind: 'edited', by: 'Chew', docNo: '2990-SO-2606-043', customer: 'Wong li way',
       amountFromSen: 199_000, amountToSen: 199_100,
       reason: 'Sales keyed RM 1,990 — receipt shows RM 1,991',
-      reversedJeNo: 'JE-2609-0031', jeNo: 'JE-2609-0058',
+      originalJeNo: 'JE-2609-0031', contraJeNo: 'JE-2609-0057', jeNo: 'JE-2609-0058',
     });
   });
 
-  it('keeps the ledger pair OUT of the visible changes — it has its own columns', () => {
+  /* The one row written before the contra had its own change (2026-09-10,
+     2990-SO-2606-043): `ledger` carried the CONTRA as `from`. It must read as
+     what it is — a reversal with the original unknown — never as an original. */
+  it('reads a legacy row, where the contra rode in `from`, as contra-only', () => {
+    const { rows } = paymentCorrectionsReport([audit({
+      field_changes: [{ field: 'amountSen', from: 30_800, to: 30_700 }, { field: LEDGER_FIELD, from: '2990-JE-2606-0099', to: '2990-JE-2606-0100' }],
+    })], customers);
+    expect(rows[0]).toMatchObject({ originalJeNo: null, contraJeNo: '2990-JE-2606-0099', jeNo: '2990-JE-2606-0100' });
+  });
+
+  it('keeps the ledger changes OUT of the visible changes — they have their own columns', () => {
     const { rows } = paymentCorrectionsReport([audit()], customers);
     expect(rows[0].changes.map((c) => c.field)).toEqual(['amountSen']);
   });
@@ -78,10 +102,11 @@ describe('paymentCorrectionsReport', () => {
         { field: 'method', from: 'cash', to: null },
         { field: 'amountSen', from: 50_000, to: null },
         { field: LEDGER_FIELD, from: 'JE-2608-0388', to: null },
+        { field: LEDGER_REVERSAL_FIELD, from: null, to: 'JE-2609-0012' },
       ],
       note: 'Keyed twice',
     })], customers);
-    expect(rows[0]).toMatchObject({ kind: 'deleted', amountFromSen: 50_000, amountToSen: null, reversedJeNo: 'JE-2608-0388', jeNo: null });
+    expect(rows[0]).toMatchObject({ kind: 'deleted', amountFromSen: 50_000, amountToSen: null, originalJeNo: 'JE-2608-0388', contraJeNo: 'JE-2609-0012', jeNo: null });
   });
 
   it('an edit that did not touch the amount carries no figures', () => {
@@ -97,7 +122,7 @@ describe('paymentCorrectionsReport', () => {
     const { rows } = paymentCorrectionsReport([audit({
       field_changes: [{ field: 'amountSen', from: 1, to: 2 }, { field: LEDGER_FIELD, from: null, to: 'JE-9' }],
     })], customers);
-    expect(rows[0]).toMatchObject({ reversedJeNo: null, jeNo: 'JE-9' });
+    expect(rows[0]).toMatchObject({ originalJeNo: null, contraJeNo: null, jeNo: 'JE-9' });
   });
 
   it('survives an audit row whose changes are not a list', () => {

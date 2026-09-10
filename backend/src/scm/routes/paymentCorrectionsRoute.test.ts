@@ -25,6 +25,7 @@ const row = (id: string, over: Record<string, unknown> = {}) => ({
   field_changes: [
     { field: 'amountSen', from: 199_000, to: 199_100 },
     { field: 'ledger', from: 'JE-2609-0031', to: 'JE-2609-0058' },
+    { field: 'ledgerReversal', from: null, to: 'JE-2609-0057' },
   ],
   created_at: '2026-09-10T02:15:00Z',
   ...over,
@@ -54,7 +55,7 @@ const CALLER = {
 
 type Report = {
   month: string;
-  rows: Array<{ id: string; kind: string; customer: string | null; reason: string; jeNo: string | null; reversedJeNo: string | null; amountFromSen: number | null; amountToSen: number | null }>;
+  rows: Array<{ id: string; kind: string; customer: string | null; reason: string; jeNo: string | null; originalJeNo: string | null; contraJeNo: string | null; amountFromSen: number | null; amountToSen: number | null }>;
   summary: { corrections: number; edited: number; deleted: number; netMovedSen: number; deletedSen: number };
 };
 
@@ -83,7 +84,7 @@ describe('GET /accounting/payment-corrections', () => {
     const body = await (await get('?month=2026-09')).json() as Report;
     expect(body.rows[0]).toMatchObject({
       kind: 'edited', customer: 'Wong li way', reason: 'Sales keyed the wrong figure',
-      amountFromSen: 199_000, amountToSen: 199_100, reversedJeNo: 'JE-2609-0031', jeNo: 'JE-2609-0058',
+      amountFromSen: 199_000, amountToSen: 199_100, originalJeNo: 'JE-2609-0031', contraJeNo: 'JE-2609-0057', jeNo: 'JE-2609-0058',
     });
     expect(body.rows[1]).toMatchObject({ kind: 'deleted', customer: 'Lim Siew Mei', amountFromSen: 50_000, amountToSen: null, jeNo: null });
   });

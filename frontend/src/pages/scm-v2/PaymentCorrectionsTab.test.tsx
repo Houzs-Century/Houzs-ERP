@@ -28,13 +28,13 @@ const REPORT: PaymentCorrections = {
       id: 'a', at: '2026-09-10T02:15:00Z', by: 'Chew', docNo: '2990-SO-2606-043', customer: 'Wong li way',
       kind: 'edited', changes: [{ field: 'amountSen', from: 199_000, to: 199_100 }],
       amountFromSen: 199_000, amountToSen: 199_100,
-      reason: 'Sales keyed RM 1,990 — receipt shows RM 1,991', reversedJeNo: 'JE-2609-0031', jeNo: 'JE-2609-0058',
+      reason: 'Sales keyed RM 1,990 — receipt shows RM 1,991', originalJeNo: 'JE-2609-0031', contraJeNo: 'JE-2609-0057', jeNo: 'JE-2609-0058',
     },
     {
       id: 'b', at: '2026-09-05T08:00:00Z', by: 'Mei Ling', docNo: '2990-SO-2608-092', customer: 'Lim Siew Mei',
       kind: 'deleted', changes: [{ field: 'amountSen', from: 50_000, to: null }],
       amountFromSen: 50_000, amountToSen: null,
-      reason: 'Keyed twice', reversedJeNo: 'JE-2608-0388', jeNo: null,
+      reason: 'Keyed twice', originalJeNo: 'JE-2608-0388', contraJeNo: 'JE-2609-0012', jeNo: null,
     },
   ],
   summary: { corrections: 2, edited: 1, deleted: 1, netMovedSen: 100 - 50_000, deletedSen: 50_000 },
@@ -61,10 +61,10 @@ describe('the corrections tab', () => {
     expect(screen.getByText('Wong li way')).toBeTruthy();
     expect(screen.getByText('Amount RM 1,990.00 → RM 1,991.00')).toBeTruthy();
     expect(screen.getByText('Sales keyed RM 1,990 — receipt shows RM 1,991')).toBeTruthy();
-    expect(screen.getByText('JE-2609-0031 reversed → JE-2609-0058')).toBeTruthy();
+    expect(screen.getByText('JE-2609-0031 → reversed by JE-2609-0057 → JE-2609-0058')).toBeTruthy();
 
     expect(screen.getByText('Deleted — RM 500.00 removed')).toBeTruthy();
-    expect(screen.getByText('JE-2608-0388 reversed')).toBeTruthy();
+    expect(screen.getByText('JE-2608-0388 → reversed by JE-2609-0012')).toBeTruthy();
   });
 
   test('the person filter narrows the rows and leaves the month\'s summary alone', async () => {
