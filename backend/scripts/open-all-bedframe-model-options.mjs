@@ -44,6 +44,17 @@ const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : 
 
 const BEDFRAME_KEYS = ["sizes", "divan_heights", "total_heights", "gaps", "leg_heights", "specials"];
 const MATTRESS_KEYS = ["sizes"];
+/* SKU-BACKED KEYS. Owner 2026-09-10 after seeing the sofa compartment
+   over-open: 「mattress 也是不可以啊。Mattress 有些是没有 single 跟 super
+   single，或者没有 queen 跟 king 的，你也不要乱买。这个是关到 code 的，sku
+   要碰啊」. Bedframe and mattress SIZES map 1:1 to `mfg_products` rows
+   (`{model_code}-{size}`) the same way sofa COMPARTMENTS do — every enabled
+   size needs a paired SKU or the picker offers an option the save path
+   refuses. So we filter the pool for these keys per-Model to what the SKU
+   table already has. divan_heights / total_heights / gaps / leg_heights /
+   specials are variant ATTRIBUTES on the size SKU, not separate SKUs, and
+   stay a straight pool union. */
+const SKU_BACKED_KEYS = new Set(["sizes"]);
 
 function poolValue(v) {
   if (v == null) return null;
@@ -58,6 +69,7 @@ function unionInto(existing, pool) {
   const added = pool.filter((v) => !have.has(v));
   return { next: [...cur, ...added], added };
 }
+const K = (s) => String(s ?? "").trim().toUpperCase();
 
 async function main() {
   const [co] = await sql`SELECT id FROM public.companies WHERE code = ${"HOUZS"}`;
@@ -97,6 +109,15 @@ async function main() {
         WHERE company_id = ${cid} AND category = ${category} AND active = true
         ORDER BY model_code`;
       note(`${category} models under HOUZS: ${models.length}`);
+
+      /* SKU-backed pool for `sizes`: only enable sizes that already have a
+         paired `mfg_products.{model_code}-{size}` row for this model. Filtered
+         PER MODEL — not a shared allow-list — since Model A may have K/Q while
+         Model B has only S/SS/SP. */
+      const skus = await tx`SELECT UPPER(code) AS code FROM scm.mfg_products
+        WHERE company_id = ${cid} AND category = ${category}`;
+      const skuSet = new Set(skus.map((r) => r.code));
+
       let modelsChanged = 0;
       const totals = Object.fromEntries(keys.map((k) => [k, 0]));
       for (const m of models) {
@@ -104,8 +125,12 @@ async function main() {
         const perKeyAdd = {};
         let dirty = false;
         for (const k of keys) {
-          const p = pool[k];
+          let p = pool[k];
           if (!p || p.length === 0) continue;
+          if (SKU_BACKED_KEYS.has(k)) {
+            p = p.filter((v) => skuSet.has(`${K(m.model_code)}-${K(v)}`));
+            if (p.length === 0) continue;
+          }
           const { next, added } = unionInto(opts[k], p);
           if (added.length > 0) {
             opts[k] = next;
