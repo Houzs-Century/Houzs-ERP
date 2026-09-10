@@ -132,13 +132,40 @@ type AnyCtx = any;
 
 const nowIso = () => new Date().toISOString();
 
-const actorOf = (c: AnyCtx): { id: number | null; name: string | null } => {
+/* READS BOTH IDENTITIES, IN THIS ORDER, AND THE ORDER IS THE WHOLE POINT.
+   `cancelApprovalGuard` / `cancelExecutionBypass` are mounted at the SCM level
+   (`scm.use("/mfg-purchase-orders/:id/cancel", …)`, scm/index.ts), which runs
+   BEFORE the sub-router's own `supabaseAuth` — so at that moment `houzsUser`
+   does not exist yet and the REAL Houzs user is still sitting in `user`. Reading
+   only `houzsUser` there resolved to null and answered
+   403 `caller_unknown` to everybody: purchasing could not cancel a purchase
+   order at all (owner 2026-09-10, `docs/bugs/0770`).
+
+   write-freeze.ts's `callerBypasses` records this identical trap from
+   2026-08-11 and solves it the same way; `hasHouzsPerm` (lib/houzs-perms.ts)
+   already dual-reads too. This function was the one that did not.
+
+   THE MODULE HEADER'S IDENTITY RULE IS NOT RELAXED. After the bridge, `user` is
+   the pinned scm.staff identity — one uuid for everybody — and using it as an
+   actor id is exactly how `mfg_so_audit_log` came to name the same person on
+   every row. So `user` is accepted ONLY while it is still the Houzs shape: a
+   numeric `public.users.id`. The staff uuid fails that test, so after the
+   bridge this falls through to null and the caller_unknown refusal stands —
+   pinned by the second test in the mount-order block of the suite. */
+const houzsIdentityOf = (c: AnyCtx): { id: number | null; name: string | null } => {
   const hu = c.get('houzsUser');
-  return { id: hu?.id ?? null, name: hu?.name ?? null };
+  if (hu?.id != null) return { id: Number(hu.id), name: hu.name ?? null };
+  const pre = c.get('user') as { id?: unknown; name?: unknown } | undefined;
+  const id = Number(pre?.id);
+  return Number.isInteger(id) && id > 0
+    ? { id, name: (pre?.name as string | null | undefined) ?? null }
+    : { id: null, name: null };
 };
 
+const actorOf = (c: AnyCtx): { id: number | null; name: string | null } => houzsIdentityOf(c);
+
 const signerOf = (c: AnyCtx): Signer => ({
-  userId: c.get('houzsUser')?.id ?? null,
+  userId: houzsIdentityOf(c).id,
   holds: (perm) => hasHouzsPerm(c, perm),
 });
 
