@@ -59,8 +59,27 @@ export const FABRIC_IDENTITY_KEYS: readonly string[] = [
  *  a module of the master's sofa for the free-gift trigger
  *  (backend/src/scm/shared/free-gift.ts) and prints inside its module row on
  *  the PDF (vendor/shared/so-line-display.ts). Both desktop and mobile copied
- *  it before this module existed. */
-export const NEVER_INHERITED_KEYS: readonly string[] = ['remark', 'buildKey'];
+ *  it before this module existed.
+ *
+ *  `extraAddonNote` / `extraAddonAmountRM` / `specials` / `specialLabels` /
+ *  `specialChoices` — the per-line SPECIAL ORDER payload (Custom-other free
+ *  text and ticked add-on codes). Same shape as `remark`: a note the operator
+ *  wrote on ONE line about ONE build, never a category-wide axis to align.
+ *  Owner reported 2026-09-11 against HC-SO-007678: on the mobile SO he added
+ *  a customize-drawer note to HILTON (a bedframe line) and saved; after
+ *  reload FENRIR — a different bedframe line further down the same order —
+ *  carried the identical text and would not let him remove it. Traced: this
+ *  list only excluded `remark` and `buildKey`, so `cascadeMasterVariants`
+ *  FORCED the master's extraAddonNote (and its four siblings) onto every
+ *  follower of the same category, exactly like the "latest wins" rule for a
+ *  sofa's fabric — appropriate for a fabric shared across compartments of
+ *  one physical sofa, wrong for a per-line note. Adding the five keys here
+ *  closes both DESKTOP and MOBILE (both surfaces import this module). */
+export const NEVER_INHERITED_KEYS: readonly string[] = [
+  'remark', 'buildKey',
+  'extraAddonNote', 'extraAddonAmountRM',
+  'specials', 'specialLabels', 'specialChoices',
+];
 
 /** The categories a master's variants may travel across AT ALL — owner ruling
  *  2026-09-09: 「主行改一次，全部跟着改 … 这个只限于 sofa item」.
