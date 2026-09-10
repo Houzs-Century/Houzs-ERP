@@ -12,7 +12,9 @@
 -- scan instead of a sequential scan on every keystroke.
 --
 -- Idempotent (IF NOT EXISTS); pg_trgm is already enabled (the sibling indexes
--- use gin_trgm_ops). Reversal: DROP INDEX IF EXISTS scm.trgm_mfg_so_customer_so_no;
+-- use gin_trgm_ops).
+--
+-- REVERSAL: DROP INDEX IF EXISTS scm.trgm_mfg_so_customer_so_no;
 
 CREATE INDEX IF NOT EXISTS trgm_mfg_so_customer_so_no
   ON scm.mfg_sales_orders USING gin (customer_so_no gin_trgm_ops);
