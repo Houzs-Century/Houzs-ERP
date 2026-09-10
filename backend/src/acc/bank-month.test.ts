@@ -205,6 +205,21 @@ describe('files that print no balances at all', () => {
 });
 
 describe('a month with nothing in it', () => {
+  /* docs/bugs/0794: an empty statement filed under the month speaks for both
+     its balances — the file lies wholly inside the month by construction. */
+  it('is complete when an empty statement filed under it prints its balance', () => {
+    const a = assembleMonth('2026-03', [stmt({
+      id: 7, fileName: 'acs_23600600000_31032026.csv',
+      periodFrom: '2026-03-01', periodTo: '2026-03-31', openingBalanceSen: 300000, closingBalanceSen: 300000,
+    })], [])!;
+    expect(a.complete).toBe(true);
+    expect(a.statementOpeningSen).toBe(300000);
+    expect(a.statementClosingSen).toBe(300000);
+    expect(a.periodFrom).toBe('2026-03-01');
+    expect(a.periodTo).toBe('2026-03-31');
+    expect(a.gaps).toEqual([]);
+  });
+
   it('is the calendar month and says what it lacks', () => {
     const a = assembleMonth('2026-09', [], [])!;
     expect(a.periodFrom).toBe('2026-09-01');

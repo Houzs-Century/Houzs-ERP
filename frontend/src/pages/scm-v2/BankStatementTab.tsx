@@ -77,7 +77,12 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
         setFile(null);
         setResult({
           ok: true,
-          text: `${r.lines} movement(s) over ${r.periodFrom} → ${r.periodTo}`
+          /* A quiet month reads as what it is, not as "0 movements": the file
+             was filed, and the month it is for can now be closed
+             (docs/bugs/0794). */
+          text: r.lines === 0
+            ? `No transactions in this statement — filed for ${r.periodFrom.slice(0, 7)} at ${fmt(r.openingBalanceSen ?? 0)} throughout. The month can be reconciled and closed under By month.`
+            : `${r.lines} movement(s) over ${r.periodFrom} → ${r.periodTo}`
             + `, ${fmt(r.inSen)} in and ${fmt(r.outSen)} out`
             /* Say what was JOINED and what was LEFT OUT. Both are places a
                reader could otherwise think the file was misread. */
@@ -127,8 +132,9 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
               the month its own date falls in, and the month view is built from
               those dates. This only supplies a year the file left out. */}
           <span style={softText}>
-            Only for a file whose dates carry no year. Where the file prints full dates this changes nothing —
-            each movement belongs to the month of its own date.
+            Only for a file whose dates carry no year, or one with no transactions at all (a quiet month's
+            statement is filed under the month chosen here). Where the file prints full dates this changes
+            nothing — each movement belongs to the month of its own date.
           </span>
         </div>
 

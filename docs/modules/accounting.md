@@ -1275,8 +1275,9 @@ reconciled and its statement printed, because a reconciliation somebody filed is
 a claim and a month that can still move behind the paper makes the paper a lie.
 `backend/src/acc/bank-lock.ts` holds both rules. **May it close:** never while
 movements are still undecided (an unfinished month is not a month with a problem,
-so a reason must NOT buy a way past it) and never when it is empty; freely when
-it reconciles and is covered end to end; WITH A REQUIRED REASON when the bank and
+so a reason must NOT buy a way past it) and never when NO STATEMENT is filed for
+it (a month with a statement and no movement is the ordinary quiet month — see
+below); freely when it reconciles and is covered end to end; WITH A REQUIRED REASON when the bank and
 books still differ, a day was never uploaded, no file printed a closing balance,
 or the figures failed the identity check — businesses do close over known
 differences, and what must not happen is closing silently. **What a closed month
@@ -1299,6 +1300,30 @@ period close** — it stops the bank reconciliation screens from changing a clos
 month, not a journal entry posted into those dates from elsewhere. Contracts:
 `backend/src/acc/bank-lock.test.ts` (an unfinished month refuses even with a
 reason; each unclean month refuses without one and closes with one).
+
+**A month in which nothing moved (2026-09-10, docs/bugs/0794; owner: 我应该每一
+个月都要做 bank reconciliation 不是？没有 transaction 那么你就让我锁起来).**
+Hong Leong's March export for 2990 is one "Balance from previous statement
+3000.00" row and nothing under it; the reader refused it, March never appeared
+under By month, and the lock refused any month with zero movements — so the
+chain of closed months had a hole at March. A quiet month is still reconciled
+(bank 3,000 = books 3,000) and closed. `parseBankStatement` now reads a file
+that prints a balance and no movement as a statement of that balance (no lines,
+opening = closing, in/out 0) filed under the calendar month the operator names
+in the **Year and month** box — the file carries no date, so without the box it
+is refused with what to do; a file with neither movement nor balance is still
+refused. `feedersOf` (`accounting-bank-months.ts`) makes an empty statement
+(`line_count = 0`) whose period lies inside a month one of that month's files,
+for the list, the detail and `loadMonthForLock` alike; `assembleMonth` then
+finds it complete with both balances. `mayLockMonth` measures
+`statementCount`, not movements: `empty_month` means no statement filed, and
+a quiet month goes through the ordinary doubts — filed under the wrong month,
+its balance against the ledger gives it away and the close wants a reason. The
+upload writes no line rows for it and the screen says "No transactions in this
+statement — filed for 2026-03 at RM 3,000.00 throughout" (`BankStatementTab.tsx`).
+Contracts: `bank-parse.test.ts`, `bank-lock.test.ts`, `bank-month.test.ts`,
+`backend/tests/bankRoutes.test.ts` (which now also mounts the month list and
+the lock — their first route contract), `BankStatementTab.test.tsx`.
 
 **"This movement is already in the books" (2026-09-09; owner, on a RM 3,000
 transfer sitting beside the RM 3,000 receipt that posted it: the only button was
