@@ -1,7 +1,7 @@
 ## An approved SO amendment that swapped the item code left the line NAME stale, so the amend editor showed the old product [medium]
 
 <!-- area: Sales orders + pricing -->
-<!-- status: open -->
+<!-- status: fixed -->
 
 **白话.** 改一张已锁定销售单要走「修订（amendment）」。批准后，如果这次修订是
 换 item 编号（例如把 2A 左扶手换成 2A 右扶手），系统把**编号**换了、价格也换了，
@@ -43,7 +43,7 @@ the editor resubmits `newItemCode` from the stored (new) code, not from the name
   proved RED on the pre-fix tree (`expected "Nesting Table", received "Side
   Table"`), GREEN after; a QTY-only guard test confirms the write is scoped to
   SPEC.
-- **Historical (B, built; DB run pending dispatch — UNTESTED against prod).**
+- **Historical (B, APPLIED and verified).**
   `backend/scripts/repair-so-amendment-line-names.mjs` (+ pure planner
   `scripts/lib/so-amendment-name-repair.mjs`, tested by
   `backend/tests/soAmendmentNameRepair.test.mjs`) resets `description` to the
@@ -53,6 +53,11 @@ the editor resubmits `newItemCode` from the stored (new) code, not from the name
   AMENDMENT NAMES"`; fresh-connection shape verify. Dispatch via Actions ->
   **Repair SO amendment line names (plan by default)** (plan first, review, then
   apply). Passes `audit:release-discipline`.
+  Observed: plan then apply dispatched 2026-09-10 (Actions run 34469486810) — 26
+  candidate lines, 6 stale names WRITTEN, 20 already correct and left; the
+  fresh-connection re-read confirmed all 6 now carry the catalogue name.
+  HC-SO-012016 now reads `SOFA VERANO 2A(RHF)` and `SOFA VERANO 1A(LHF)`.
 
-**Ref.** claude/priceless-chaum-35a0dd, 2026-09-10. Forward fix ships on merge;
-historical rows stay stale until B is dispatched.
+**Ref.** A (forward fix) merged as PR #3551 and deployed 2026-09-10; B (repair)
+applied the same day (Actions run 34469486810). Original branch
+claude/priceless-chaum-35a0dd.
