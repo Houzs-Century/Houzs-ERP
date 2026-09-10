@@ -410,7 +410,14 @@ export type PaymentRowMutability = {
   /** Plain-language reason when it may not — shown to the operator verbatim.
       null when it may. */
   problem: string | null;
+  /** WHY it may, when it may — null when it may not. A correction allowed by
+      the amend right owes a reason and is reported to Finance; a same-day fix
+      by whoever keyed it is not (owner 2026-09-10: 靠权限改的来决定). This is
+      the only place that knows which of the two it just allowed. */
+  via: PaymentChangeVia;
 };
+
+export type PaymentChangeVia = 'draft' | 'same_day' | 'amend' | null;
 
 /**
  * The single predicate behind "may this recorded payment still be changed".
@@ -437,13 +444,14 @@ export const paymentRowMutable = (
   soIsDraft: boolean,
   who: PaymentAmendContext = {},
 ): PaymentRowMutability => {
-  if (soIsDraft) return { mutable: true, problem: null };
-  if (who.reconciled) return { mutable: false, problem: paymentReconciledMessage(who.reconciled) };
-  if (createdDateMyt === todayDateMyt) return { mutable: true, problem: null };
-  if (who.mayAmend === true) return { mutable: true, problem: null };
+  if (soIsDraft) return { mutable: true, problem: null, via: 'draft' };
+  if (who.reconciled) return { mutable: false, problem: paymentReconciledMessage(who.reconciled), via: null };
+  if (createdDateMyt === todayDateMyt) return { mutable: true, problem: null, via: 'same_day' };
+  if (who.mayAmend === true) return { mutable: true, problem: null, via: 'amend' };
   return {
     mutable: false,
     problem: PAYMENT_WINDOW_CLOSED_MESSAGE,
+    via: null,
   };
 };
 

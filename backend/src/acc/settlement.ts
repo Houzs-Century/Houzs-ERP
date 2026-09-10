@@ -71,6 +71,29 @@ export async function loadAcquirer(
   return { ok: true, acquirer: data as AcquirerRow };
 }
 
+/** The accounts an expense may be booked to from a screen: ACTIVE LEAVES of
+    this company's EXPENSE accounts — the two properties the posting gate
+    checks, so a code offered here cannot be one the gate will refuse. The
+    Setup page's merchant-fee picker and the advice screen's bank-charge picker
+    both read this (docs/bugs/0762, 0787). */
+export async function expenseLeafAccounts(
+  sb: any, companyId: number,
+): Promise<{ ok: true; accounts: Array<{ accountCode: string; accountName: string }> } | { ok: false; reason: string }> {
+  const { data, error } = await sb.from('accounts')
+    .select('account_code, account_name, parent_code')
+    .eq('company_id', companyId).eq('account_type', 'EXPENSE').eq('is_active', true)
+    .order('account_code');
+  if (error) return { ok: false, reason: error.message };
+  const rows = (data ?? []) as Array<Record<string, any>>;
+  const hasChild = new Set(rows.filter((r) => r.parent_code).map((r) => String(r.parent_code)));
+  return {
+    ok: true,
+    accounts: rows
+      .filter((r) => !hasChild.has(String(r.account_code)))
+      .map((r) => ({ accountCode: String(r.account_code), accountName: String(r.account_name ?? r.account_code) })),
+  };
+}
+
 const isoDay = (v: unknown): string => String(v ?? '').slice(0, 10);
 
 /** The window read and the by-reference read overlap by design — a payment
@@ -809,7 +832,7 @@ export async function loadBatchReceipts(
   sb: any,
   companyId: number,
   batchId: number,
-): Promise<{ ok: true; receipts: Array<Record<string, any>>; receivedSen: number } | { ok: false; reason: string }> {
+): Promise<{ ok: true; receipts: Array<Record<string, any>>; receivedSen: number; chargedSen: number } | { ok: false; reason: string }> {
   const { data, error } = await sb
     .from('acc_settlement_receipts')
     .select('id, batch_id, received_on, amount_sen, bank_ref, note, je_no, created_by, created_at')
@@ -818,7 +841,18 @@ export async function loadBatchReceipts(
     .order('received_on');
   if (error) return { ok: false, reason: error.message };
   const receipts = (data ?? []) as Array<Record<string, any>>;
-  return { ok: true, receipts, receivedSen: receipts.reduce((s, r) => s + Number(r.amount_sen ?? 0), 0) };
+  /* What the bank DEDUCTED from this statement's payout (docs/bugs/0787) —
+     booked to an expense against the transit, so it counts as settled the same
+     way a credit does: the statement is fully received when credits + charges
+     reach what it says it pays. A read that fails is a refusal, not "no charge". */
+  const { data: dayRaw, error: dErr } = await sb
+    .from('acc_settlement_payout_batches')
+    .select('charge_sen')
+    .eq('company_id', companyId)
+    .eq('batch_id', batchId);
+  if (dErr) return { ok: false, reason: dErr.message };
+  const chargedSen = ((dayRaw ?? []) as Array<Record<string, any>>).reduce((s, r) => s + Number(r.charge_sen ?? 0), 0);
+  return { ok: true, receipts, receivedSen: receipts.reduce((s, r) => s + Number(r.amount_sen ?? 0), 0), chargedSen };
 }
 
 export async function postBatchReceipt(
@@ -853,7 +887,7 @@ export async function postBatchReceipt(
 
   const already = await loadBatchReceipts(sb, companyId, batchId);
   if (!already.ok) return { ok: false, status: 'load_failed', reason: already.reason };
-  const outstanding = payableSen - already.receivedSen;
+  const outstanding = payableSen - already.receivedSen - already.chargedSen;
   if (outstanding === 0) {
     return {
       ok: false,
@@ -959,7 +993,9 @@ export async function postBatchReceipt(
     amountSen,
     receivedSen,
     payableSen,
-    outstandingSen: payableSen - receivedSen,
+    /* Charges the bank deducted count as settled (docs/bugs/0787): the credit
+       that arrives after a RM 324 fee is the whole of what was still owed. */
+    outstandingSen: payableSen - receivedSen - already.chargedSen,
   };
 }
 

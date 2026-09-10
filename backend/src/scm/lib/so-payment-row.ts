@@ -150,7 +150,7 @@ export async function repostSoPaymentBestEffort(
     id: string; docNo: string; companyId: number | null;
     before: Partial<SoPaymentEditable>; next: SoPaymentEditable;
   },
-): Promise<void> {
+): Promise<LedgerTouch> {
   const after: SoPaymentRow = {
     id: p.id,
     so_doc_no: p.docNo,
@@ -164,8 +164,18 @@ export async function repostSoPaymentBestEffort(
   if (!out.ok) {
     /* eslint-disable-next-line no-console */
     console.error('[acc] SO payment edit not re-posted:', p.id, out.status, out.reason);
+    return { originalJeNo: null, contraJeNo: null, jeNo: null };
   }
+  return out.status === 'reposted'
+    ? { originalJeNo: out.originalJeNo, contraJeNo: out.contraJeNo, jeNo: out.jeNo }
+    : { originalJeNo: null, contraJeNo: null, jeNo: null };
 }
+
+/** What a correction did to the ledger, for the audit row to carry: the entry
+    that was voided, the contra that voided it, and the entry booked in its
+    place. Any is null when that part did not happen — a never-booked payment
+    reverses nothing, a delete books nothing new. */
+export type LedgerTouch = { originalJeNo: string | null; contraJeNo: string | null; jeNo: string | null };
 
 export async function recordSoPaymentRow(
   sb: any,
@@ -320,7 +330,7 @@ export async function recordSoPaymentRow(
 export async function afterSoPaymentRemoved(
   sb: any,
   p: { paymentId: string; docNo: string; companyId: number | null },
-): Promise<void> {
+): Promise<LedgerTouch> {
   /* Accounting-module hook (需求书 §6.3, owner approved 2026-08-16): void the
      deleted payment's ledger entry. A row that never booked no-ops. */
   const unbooked = await reverseSoPayment(sb, p.paymentId, p.docNo);
@@ -328,8 +338,10 @@ export async function afterSoPaymentRemoved(
     /* eslint-disable-next-line no-console */
     console.error('[acc] SO payment reversal failed:', p.paymentId, unbooked.status, unbooked.reason);
   }
+  const voided = unbooked.ok && unbooked.status === 'reversed' ? unbooked : null;
   /* The deposit just shrank, so an invoice it was settling may owe money again.
      This is the direction that matters: an invoice left reading PAID after the
      payment behind it was reversed tells the office to collect nothing. */
   await recomputeSiPaidForOrder(sb, p.docNo, p.companyId);
+  return { originalJeNo: voided?.originalJeNo ?? null, contraJeNo: voided?.jeNo ?? null, jeNo: null };
 }

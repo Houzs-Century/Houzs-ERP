@@ -344,25 +344,42 @@ misses every future one.
 
 **The rule now.** `MrpResult.categories` — every product category in the
 company's catalogue, read in section 2, paged, company-scoped, and INDEPENDENT of
-`catFilter`, so every tab's response carries the same list — is what the page
-renders tabs from. The derivation lives in one module,
+`catFilter`, so every tab's response carries the same list — decides whether the
+page shows an Others tab. The derivation lives in one module,
 `frontend/src/pages/scm-v2/mrp-views.ts`:
 
-- the four original tabs first, in their original order (they stand even when
-  `categories` is absent, so an in-flight response cannot blank the tab bar);
-- then every other catalogue category, in the order the server sent it;
-- `SERVICE` never gets a tab — `isServiceLine` skips service lines BEFORE the
-  category filter, so it could only ever be empty. It is named, not silently
-  filtered;
-- a category with no hand-written label is Title Cased and shown, never dropped,
-  matching `shared/so-branding-label.ts`'s rule for the same reason;
-- `mrpCategoryOf(tabId)` and the tab id are a declared inverse PAIR, because the
-  page must pick `?category=` before it has a response to derive tabs from. The
-  round-trip is pinned on every enum member by `mrp-views.test.ts`.
+- the FOUR the owner works from — Sofa, Bedframe, Mattress, Accessories — always,
+  in that order, standing even when `categories` is absent so an in-flight
+  response cannot blank the tab bar;
+- ONE **Others** tab appended when, and only when, the catalogue holds anything
+  outside those four (owner 2026-09-10, 「应该要放others 一个category把」;
+  `docs/bugs/0782-the-extra-mrp-categories-each-grew-their-own-tab-instead-of.md`).
+  It is not one-tab-per-extra-category: that shape would grow a column the day
+  the owner registers a category at runtime through `acc_register_item_group`;
+- `SERVICE` never gets a tab, and never falls into Others — `isServiceLine` skips
+  service lines BEFORE the category filter, so it could only ever be empty. Named,
+  not silently filtered.
 
-Both tests read the vocabulary out of the SQL and out of the committed alignment
-payload rather than a typed list, because a typed list here would be the fault
-being tested.
+**Others is `category: null`, and that is a THIRD filter state, distinct from a
+category string and from `'all'`.** It asks the server for NO `?category=` — it
+stands for a SET, and a fake enum value in the query string would be filtered to
+nothing — then keeps the rows no other tab claims. Membership is decided by
+`rowBelongsToView`, which for Others claims **by EXCLUSION**: a row is Others' if
+its category is non-empty, not one of the four, and not SERVICE. Exclusion is the
+load-bearing choice — matching against the reported `categories` would strand a
+row whose category is not in that list (a product deleted from the catalogue, a
+category added between two requests, or a row the engine kept on its item GROUP,
+§2.1). A `null`-category row stays off every tab, INCLUDING Others, so the catch-
+all never becomes the bin that hides the §2.1 bug.
+
+`mrpCategoryOf(tabId)` and the tab id are a declared inverse pair (`others` maps
+to `null`), because the page must pick `?category=` before it has a response to
+derive tabs from. The round-trip is pinned by `mrp-views.test.ts`, which also
+asserts every enum member and every aligned-SKU category is claimed by SOME view
+— on MEMBERSHIP, not on a tab NAME, since a name assertion would pass while a row
+still fell through. Both tests read the vocabulary out of the SQL and the
+committed alignment payload rather than a typed list, because a typed list here
+would be the fault being tested.
 
 **STILL OPEN, and it is the owner's call.** A row whose category is `null`
 (§2.1's honest null) is dropped by the section-6 filter and counted nowhere. The
@@ -405,6 +422,45 @@ places that ask the same question inherit it instead of re-deriving it.
 suppliers, each VARIANT does. All three groupers used to copy it off whichever
 child happened to be first, nothing read it, and the next renderer to want a
 supplier on a parent row would have shown one module's binding against all three.
+
+### And it is NOT `.in()` any more — an item code can carry a `"` (2026-09-10)
+
+Both the supplier read and section 2's `mfg_products` read now build their filter
+with `pgrestInList` (`backend/src/scm/lib/pgrest-in-list.ts`) and send it as
+`.filter(column, 'in', …)`. **Do not change either back to `.in()`.**
+
+`@supabase/postgrest-js` wraps a value in double quotes when it holds one of
+`, ( )` and escapes nothing inside them; PostgREST requires a backslash before a
+quote and a doubled backslash for a backslash. So an item code carrying an inch mark closes its own quote
+early, the next `)` closes the whole `in.(` list, and **every code after it in
+that batch matches nothing while the request answers 200.** Company 1's open
+demand carries two such codes — `DUNLOPILLO GENERASI 5" MATT (S)` and
+`… (SS)` — and on 2026-09-10 they were emptying the Supplier column on 38 item
+codes at once (run 34457477642; full measurement in `docs/bugs/0780-mrp-shows-no-supplier-on-a-line-whose-product-is-bound.md`).
+
+The payload is byte-identical to what `.in()` builds for any batch holding no
+quote and no backslash, which is pinned against the real library in
+`backend/src/scm/lib/pgrest-in-list.test.ts` — so adopting it changed nothing for
+the reads that already worked.
+
+Two consequences worth knowing before you touch this:
+
+- **A test fake must implement `filter(col, 'in', payload)`**, and must parse it
+  with `parsePgrestInList` rather than a second `split(',')` — a naive split
+  reproduces the bug and reports a clean run. The shared fakes
+  (`backend/src/scm/lib/fake-postgrest.ts`, `backend/tests/fakePostgrest.ts`) and
+  `backend/scripts/lib/pgrest-shim.mjs` already do.
+- **A test fake's comparison operators must compare by the column's type**,
+  NULL matching nothing — the way `fake-postgrest`'s `gte`/`lte` do, and the
+  way `lt` does since 2026-09-10 (docs/bugs/0785). Before that `lt` was
+  numeric-only with a `?? 0` fold, so the only correct shape for a timestamptz
+  month window — `gte(first) + lt(next-first)` — returned nothing against the
+  fake while the real database returned the rows. A fake that silently drops
+  rows on a string compare reports a clean run for the wrong reason.
+- **The other reads in this tree still use `.in()` on an item code** — 67 of
+  them outside these two as of 2026-09-10, counted by the enumeration block in
+  the PR — so any of them can lose the same two codes. Unfixed, deliberately;
+  the bug entry says why and what closing it takes.
 
 ## 4. Buckets and allocation
 

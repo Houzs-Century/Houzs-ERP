@@ -801,6 +801,7 @@ export function DeliveryOrderDetailV2() {
   const {
     nodes: chainNodes,
     onNodeClick: onChainNodeClick,
+    pairing: chainPairing,
     choice: chainChoice,
     closeChoice: closeChainChoice,
     pickChoice: pickChainChoice,
@@ -1734,6 +1735,7 @@ export function DeliveryOrderDetailV2() {
           // closes; an in-app notice keeps it open (renders over the map).
           if (onChainNodeClick(n)) closeModal();
         }}
+        pairing={chainPairing}
       />
       {/* A chain slot standing for several documents opens this chooser instead
           of a notice that only named them. Picking a row navigates, so the map

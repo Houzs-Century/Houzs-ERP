@@ -206,7 +206,7 @@ describe('paymentMayChange', () => {
   });
 
   it('opens an old payment for a holder of the right', async () => {
-    expect(await ask(world(), { mayAmend: true })).toEqual({ mutable: true, problem: null });
+    expect(await ask(world(), { mayAmend: true })).toEqual({ mutable: true, problem: null, via: 'amend' });
   });
 
   it('refuses the holder of the right once the payment is reconciled', async () => {
@@ -231,6 +231,6 @@ describe('paymentMayChange', () => {
      that every read needs proves nothing was asked. */
   it('exempts a DRAFT order without asking the books anything', async () => {
     const sb = world({}, { acc_settlement_matches: ['created_at'], journal_entries: ['je_no'] });
-    expect(await ask(sb, { soIsDraft: true })).toEqual({ mutable: true, problem: null });
+    expect(await ask(sb, { soIsDraft: true })).toEqual({ mutable: true, problem: null, via: 'draft' });
   });
 });

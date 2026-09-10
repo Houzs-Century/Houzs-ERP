@@ -138,7 +138,7 @@ describe('so-field-policy — payment same-day window (Owner 2026-07-19)', () =>
   const TODAY = '2026-07-19';
 
   it('lets a payment keyed in TODAY be changed — same day is fluid', () => {
-    expect(paymentRowMutable(TODAY, TODAY, false)).toEqual({ mutable: true, problem: null });
+    expect(paymentRowMutable(TODAY, TODAY, false)).toEqual({ mutable: true, problem: null, via: 'same_day' });
   });
 
   it('LOCKS a payment keyed in on any earlier day', () => {
@@ -183,7 +183,7 @@ describe('so-field-policy — who may correct a payment (Owner + management 2026
 
   it('opens an older payment for a holder of the amend right', () => {
     expect(paymentRowMutable(OLD, TODAY, false, { mayAmend: true }))
-      .toEqual({ mutable: true, problem: null });
+      .toEqual({ mutable: true, problem: null, via: 'amend' });
   });
 
   it('leaves it shut for everybody else, exactly as before', () => {

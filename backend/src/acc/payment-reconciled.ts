@@ -149,13 +149,13 @@ export async function paymentMayChange(
 ): Promise<PaymentRowMutability> {
   /* A DRAFT order is exempt before anything is read: its payments were never
      locked, and there is no reason to ask the settlement tables about one. */
-  if (p.soIsDraft) return { mutable: true, problem: null };
+  if (p.soIsDraft) return { mutable: true, problem: null, via: 'draft' };
 
   const found = await paymentReconciliation(sb, p.companyId, p.paymentId, p.source ?? 'SOPAY');
   if (!found.ok) {
     /* eslint-disable-next-line no-console */
     console.error('[acc] reconciliation check failed for payment', p.paymentId, found.reason);
-    return { mutable: false, problem: RECONCILIATION_UNREADABLE };
+    return { mutable: false, problem: RECONCILIATION_UNREADABLE, via: null };
   }
   return paymentRowMutable(p.createdDateMyt, p.todayDateMyt, false, {
     mayAmend: p.mayAmend,

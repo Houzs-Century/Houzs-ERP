@@ -48,7 +48,7 @@ const diningSku = (): MrpResponse['skus'] => [{
 let mrpData: MrpResponse;
 /** What the page last ASKED the server for — a tab that displays one category
  *  while requesting another is this bug with extra steps. */
-let lastCategory: string | undefined;
+let lastCategory: string | null | undefined;
 
 vi.mock('../../vendor/scm/lib/mrp-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/mrp-queries')>()),
@@ -82,15 +82,19 @@ describe('MRP — a tab for every category the catalogue holds', () => {
     lastCategory = undefined;
   });
 
-  test('a DINING order line is reachable — the tab exists and its row renders', () => {
+  test('a DINING order line is reachable — under Others, and its row renders', () => {
+    /* Owner 2026-09-10: 「应该要放others 一个category把」. The extra categories
+       share ONE tab, so the test that matters is that the LINE is reachable —
+       not that a tab carries its name. */
     renderPage();
 
-    const tab = screen.getByRole('tab', { name: 'Dining' });
+    const tab = screen.getByRole('tab', { name: 'Others' });
     fireEvent.click(tab);
 
-    // The page asked the server for the category the tab names…
-    expect(lastCategory).toBe('DINING');
-    // …and the row the engine planned is on screen.
+    /* Others asks for NO category filter: it stands for a set, and sending the
+       engine a category no product carries would answer with nothing. It sorts
+       the rows out itself, by exclusion. */
+    expect(lastCategory).toBeNull();
     expect(screen.getByText('AN-TABLE TOP')).toBeTruthy();
   });
 
@@ -100,14 +104,17 @@ describe('MRP — a tab for every category the catalogue holds', () => {
     expect(names.slice(0, 4)).toEqual(['Sofa', 'Bedframe', 'Mattress', 'Accessories']);
   });
 
-  test('every non-service catalogue category has a tab, and SERVICE has none', () => {
+  test('the extra categories share ONE Others tab, and SERVICE has none', () => {
     renderPage();
     const names = screen.getAllByRole('tab').map((t) => t.textContent);
-    expect(names).toEqual([
-      'Sofa', 'Bedframe', 'Mattress', 'Accessories',
-      'Bedlines', 'Carpet', 'Diffuser', 'Dining',
-    ]);
+    expect(names).toEqual(['Sofa', 'Bedframe', 'Mattress', 'Accessories', 'Others']);
     expect(names).not.toContain('Service');
+    /* Named individually, these four would be four tabs. That is the shape the
+       owner rejected, and the shape that would grow again the next time he
+       registers a category at runtime. */
+    for (const gone of ['Bedlines', 'Carpet', 'Diffuser', 'Dining']) {
+      expect(names).not.toContain(gone);
+    }
   });
 
   test('a response that carries no category list still renders the four originals', () => {

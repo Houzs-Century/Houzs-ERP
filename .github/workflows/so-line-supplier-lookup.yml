@@ -1,20 +1,31 @@
 name: SO line supplier lookup (read-only)
 
-# Manual, read-only. Answers "why does one line of this order find its supplier
-# and the line beside it say — none —?" by printing each line's item_code as
-# STORED — length and any non-ASCII byte included — beside whether a binding
-# exists for that exact string, and whether one exists once case and surrounding
-# space are ignored.
+# Manual, read-only. The dispatch route for docs/bugs/0780 — "MRP shows no
+# supplier on a line whose product IS bound". It runs the bug's probes in the
+# order they were written, so one dispatch answers the whole chain:
+#
+#   1. check-so-line-supplier-lookup.mjs — each line's item_code as STORED
+#      (length and any non-ASCII byte included) beside whether a binding exists
+#      for that exact string, and whether one exists once case and surrounding
+#      space are ignored. Run 34454717897 answered this: every line of
+#      HC-SO-013497 / HC-SO-013495 matches on its EXACT string, so a spelling
+#      mismatch is REFUTED.
+#   2. probe-mrp-supplier-map-loss.mjs — what MRP's OWN read produced. It reads
+#      scm.mrp_snapshots.result, the frozen output of computeMrp written by the
+#      Worker through the real supabase-js/PostgREST transport, and compares per
+#      item code the suppliers the engine ATTACHED against the bindings that
+#      EXIST. That is the only way to see the engine's read at the edge: this
+#      repository is public, so SUPABASE_SERVICE_ROLE_KEY must never become an
+#      Actions secret and the query cannot be replayed directly.
 #
 # Owner 2026-09-10, on HC-SO-013497: 9058-L(LHF) and 9058-1A(RHF) show HOOKKA
 # INDUSTRIES, 9058-1NA shows nothing, and the supplier page proves 9058-1NA is
-# bound. Two explanations are already dead — every 9058 product carries bindings
-# (run 34447806315) and the 1000-row cap was fixed in the shared reader — so what
-# is left is the exact-string match MRP makes.
+# bound.
 #
-# SELECTs only: no DDL, no writes, no transaction. Exits 0 for every legitimate
-# answer including "no such document", because the ANSWER is the output and a red
-# job reads as "the check broke".
+# SELECTs only: no DDL, no writes, no transaction. Both scripts exit 0 for every
+# legitimate answer — including "no such document", "no snapshot row" and
+# "nothing is lost" — because the ANSWER is the output and a red job reads as
+# "the check broke".
 on:
   workflow_dispatch:
     inputs:
@@ -28,6 +39,11 @@ on:
         required: false
         default: "1"
         type: string
+      top:
+        description: "How many item codes the supplier-map probe lists per class"
+        required: false
+        default: "40"
+        type: string
 
 # Its own group — a diagnostic must never queue behind, or displace, a release.
 concurrency:
@@ -37,16 +53,36 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@v4
+      # npm ci, not a one-package install: the supplier-map probe imports the
+      # REAL chunk arithmetic from src/scm/lib/paginate-all.ts under tsx, so a
+      # re-declared batch size in the probe could never disagree with the code.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-      - name: Install the one dependency the script needs
-        run: npm --prefix backend install postgres --no-audit --no-fund --no-save
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
       - name: Report the line-to-binding lookup
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DOC_NOS: ${{ inputs.doc_nos }}
           COMPANY_ID: ${{ inputs.company_id }}
-        run: node backend/scripts/check-so-line-supplier-lookup.mjs
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: node scripts/check-so-line-supplier-lookup.mjs
+      - name: Report the supplier map the engine actually produced
+        # `if: always()` so a failure in the first probe cannot hide the second
+        # answer. Both are read-only; neither depends on the other.
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DOC_NOS: ${{ inputs.doc_nos }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          TOP: ${{ inputs.top }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: npx tsx scripts/probe-mrp-supplier-map-loss.mjs

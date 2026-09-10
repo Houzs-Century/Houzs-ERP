@@ -22,6 +22,7 @@
 import { describe, it, expect } from 'vitest';
 import { reviseBoundPo } from './so-revision';
 import { deriveMfgPoUnitCost } from './po-pricing';
+import { parsePgrestInList } from './pgrest-in-list';
 
 /* ── Minimal chainable, awaitable PostgREST stand-in ────────────────────────
    Supports the exact surface reviseBoundPo + snapshotPo + deriveMfgPoUnitCost +
@@ -53,6 +54,13 @@ class Query {
   select() { return this; }
   eq(col: string, val: any) { this.filters.push({ kind: 'eq', col, val }); return this; }
   in(col: string, val: any[]) { this.filters.push({ kind: 'in', col, val }); return this; }
+  /* The ESCAPED in-list the shared readers now build — supabase-js cannot
+     serialise a value carrying a `"` (docs/bugs/0780). Parsed by the SAME
+     function the app writes with, never a second split(','). */
+  filter(col: string, op: string, val: string) {
+    if (op !== 'in') throw new Error(`fake: filter(${op}) is not implemented`);
+    return this.in(col, parsePgrestInList(val));
+  }
   lte() { return this; }
   order(col: string, opts?: { ascending?: boolean }) { this.orders.push({ col, asc: opts?.ascending !== false }); return this; }
   limit(n: number) { this.limitN = n; return this; }

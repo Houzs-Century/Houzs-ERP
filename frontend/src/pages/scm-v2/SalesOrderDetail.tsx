@@ -1344,14 +1344,6 @@ export const SalesOrderDetail = () => {
     });
   }, []);
 
-  /* Edit-mode seed/clear effect — whole-order inline edit. Entering edit
-     mode populates a draft for EVERY current line so they all render as
-     inline SoLineCard editors at once; leaving edit mode wipes the drafts
-     (and any half-typed add-draft). Re-seeds whenever the underlying items
-     change (e.g. after a delete or a successful Save re-fetch) so the
-     inline editors stay in sync with the server snapshot. Lines the user
-     is mid-deleting via removeEditingLine are intentionally dropped from
-     the draft map and won't be re-seeded until the next items change. */
   useEffect(() => {
     if (!isEditing) {
       setEditingDrafts({});
@@ -1359,11 +1351,19 @@ export const SalesOrderDetail = () => {
       originalDraftsRef.current = {};
       return;
     }
-    const next: Record<string, SoLineDraft> = {};
-    for (const it of items) next[it.id] = draftFromItem(it);
-    // Snapshot the pristine drafts so Save can skip lines the user never edits.
-    originalDraftsRef.current = next;
-    setEditingDrafts(next);
+    // On items refetch (a photo upload/delete invalidates the SO detail),
+    // MERGE — keep the user's in-flight drafts, seed only new lines, drop
+    // gone ones. A naive re-seed used to wipe unsaved picks (docs/bugs/).
+    const orig: Record<string, SoLineDraft> = {};
+    for (const it of items) orig[it.id] = draftFromItem(it);
+    originalDraftsRef.current = orig;
+    setEditingDrafts((prev) => {
+      const alive = new Set(items.map((it) => it.id));
+      const next: Record<string, SoLineDraft> = {};
+      for (const id of Object.keys(prev)) if (alive.has(id)) next[id] = prev[id];
+      for (const it of items) if (!(it.id in next)) next[it.id] = draftFromItem(it);
+      return next;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing, items]);
 
