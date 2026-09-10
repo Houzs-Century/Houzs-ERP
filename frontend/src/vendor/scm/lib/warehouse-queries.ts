@@ -93,7 +93,9 @@ export type RackScope =
 
 export type CreateRackBody =
   | (RackScope & { rack: string; position?: string; reserved?: boolean; notes?: string })
-  | (RackScope & { count: number; prefix?: string });
+  /* Seed: `count` alone keeps the flat "<prefix> 1..N"; add `series` +
+     `levels` for the aisle.level grid (shared/rack-labels.ts). */
+  | (RackScope & { count: number; prefix?: string; series?: string; levels?: number });
 
 export function useCreateRack() {
   const qc = useQueryClient();

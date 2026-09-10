@@ -1,0 +1,65 @@
+name: Align the last three cutover documents to the book (PLAN gated)
+
+# Three named documents, three shapes, one reviewed list. Nothing sweeps.
+#
+#  A  PO-006690 — the book states no price on its one line; we hold RM 380.00.
+#     The owner, 2026-09-09, asked directly whether "follow the book" means
+#     clearing our 380 to zero on a purchase order: 「跟账本」, then 「是的」.
+#  B  GR-005334 — two lines hold each other's item code (docs/bugs/0690's
+#     transposition class). Swapped in ONE transaction; half a swap is worse
+#     than neither half.
+#  C  GR-005256 — the receipt's leg is blank where the book AND the purchase
+#     order both say 1". A migrated receipt is a snapshot: correcting the PO
+#     (run 34341039880) cannot reach backwards into it.
+#
+# Each already has a purpose-built repair that CANNOT reach it, checked rather
+# than assumed: the GRN item-code repair ran and said NOTHING TO REPAIR (it
+# fixes an untranslated code; these are both real ERP codes on the wrong lines),
+# the variant-snapshot repair only restores a value that could not be a
+# measurement (a blank is absent, not impossible), and the GR money repair is
+# the receipt side while PO-006690 is an order.
+#
+# PLAN is the default and writes nothing. APPLY needs the confirm phrase, every
+# row asserts what it currently holds before it is touched, and a fresh
+# connection re-reads all three afterwards and asserts the SHAPE including the
+# money. Re-running is inert.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'For apply ONLY, type exactly: ALIGN THE LAST THREE TO THE BOOK'
+        required: false
+        default: ""
+        type: string
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: align-last-three-cutover-docs
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/align-last-three-cutover-docs.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}

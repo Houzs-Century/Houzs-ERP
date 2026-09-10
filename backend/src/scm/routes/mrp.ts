@@ -869,18 +869,44 @@ export async function computeMrp(
          outstanding quantity), and the units it takes from a receipt are
          DECREMENTED from the pooled bucket so nothing is counted twice.
 
-     SOFA IS DELIBERATELY NOT HERE, and the shared predicate is not being
-     redefined — only narrowed at this call site. Sofa demand never enters the
-     general walk (`cat === 'SOFA'` is skipped in section 6); it is planned as
-     colour-matched SETS in section 8, whose supply model is its own. Excluding
-     sofa PO lines from the pool without rewriting that walk would starve it. */
+     SOFA IS HERE TOO SINCE 2026-09-09, and the sentence that used to stand in
+     this paragraph — "SOFA IS DELIBERATELY NOT HERE … excluding sofa PO lines
+     from the pool without rewriting that walk would starve it" — was correct
+     about the mechanism and is what the rewrite in section 8 discharges. It read
+     as a design choice; it was a piece of work not yet done, and leaving it
+     undone made this page ask the owner to buy sofas standing in his warehouse.
+
+     WHAT IT COST, measured on the live page 2026-09-09 (owner: "你确定在 MRP 显
+     示出来的 sofa 跟 bed frame 都是 short、需要 order 的吗?"). The sofa tab asked
+     for 70 units across 28 sales orders. Only 42 were really missing. Eight of
+     those orders — 26 units — had their OWN purchase order fully received, and
+     26 of those very lines read READY on the sales-order screen at the same
+     moment. The STOCK column read 0 on all 136 sofa rows while 246 units of
+     company-1 sofa sat in the warehouse. Bedframe, which went dedicated in
+     docs/bugs/0736, was right to the unit on the same page: 50 short, and 50
+     lines with no purchase order.
+
+     The reason sofa was that much worse is the variant key. A fully received PO
+     leaves nothing outstanding (`left <= 0` below), so before this change its
+     receipt reached section 8 only through the pooled STOCK bucket — and sofa's
+     key is fabricCode|seatHeight|legHeight|specials, four free-text fields that
+     the order and the receipt spell differently far more often than not:
+
+       HC-SO-011008 asks   fabriccode=modenza-01|seatheight=32|special=nylon fabric
+       HC-PO-009881 landed fabriccode=modenza-06|seatheight=32|special=bottom wrap by nylon fabric,nylon fabric
+
+     THE READINESS ENGINE WAS ALREADY DOING THIS. `isHardBoundLine` has named
+     sofa a bound group since 2026-08-10 and `so-stock-allocation.ts` honours it.
+     Measured on prod: of 1,240 open company-1 sofa lines, ZERO read READY
+     without their own purchase order and ZERO carry a batch claim without one.
+     So this is MRP catching up with the allocator, not a new rule — and it can
+     take coverage away from no line the allocator currently lights. */
   const dedicatedReceivedByLine = new Map<string, number>();
   const dedicatedOpenByLine = new Map<string, PoSupply[]>();
   const boundCompany = companyId === HARD_BOUND_COMPANY_ID;
   const isDedicated = (r: PoLineRow): boolean =>
     boundCompany
     && !!r.so_item_id
-    && (r.item_group ?? '').trim().toLowerCase() !== 'sofa'
     && isHardBoundLine(r.item_group, r.item_code);
   for (const r of (poRaw ?? []) as unknown as PoLineRow[]) {
     if (!r.po || PO_DEAD.has(r.po.status)) continue;
@@ -1298,7 +1324,24 @@ export async function computeMrp(
       variantKey: bucket.vkey,
       variantLabel: vlabel || null,
       description: prod?.name ?? rows[0]?.description ?? null,
-      category: prod?.category ?? null,
+      /* THE SAME EXPRESSION THE FILTER USED, and it has to be — §6 keeps a line
+         on `prod?.category ?? catFromGroup(d.item_group)`, so a line whose
+         item_code is not in mfg_products is kept on its GROUP and was then
+         emitted here as `?? null`. The frontend picks a tab's rows with
+         `s.category === VIEW_CATEGORY[view]`, so an uncategorised row belongs to
+         no tab and disappears from all four — while `qtyNeeded` on it proves the
+         engine had planned it the whole time.
+         Measured on prod 2026-09-10: EIGHT accessory codes, 62 dated open lines,
+         110 units, absent from the page and present in the stored snapshot
+         (docs/bugs/0777). Owner: 「除了 Category Service 不需要进来，其他基本上都
+         需要」 — and silent disappearance is the half that is only found on
+         delivery day.
+         catFromGroup exists for exactly this case; its own comment (Wei Siang
+         2026-06-16) says "so the demand still SHOWS under its category tab
+         instead of silently vanishing". This emit site simply never called it.
+         Still `null` when the group maps to nothing — that is honest, not a
+         guess, and the filter let such a line through on the same reasoning. */
+      category: prod?.category ?? rows.map((r) => catFromGroup(r.item_group)).find((c) => c !== null) ?? null,
       qtyNeeded,
       stock,
       poOutstanding,
@@ -1380,6 +1423,14 @@ export async function computeMrp(
        including why item_group is NOT re-derived from the product master. */
     const ownPo = poByKey.get(k) ?? [];
     const poQueue: PoSupply[] = ownPo.map((p) => ({ ...p })).sort((a, b) => byDateAsc(a.eta, b.eta));
+    /* COMPANY 1 SOFA IS HARD-BOUND — the twin of section 7's branch, added
+       2026-09-09 for the reason section 4a now records at length. A bound set
+       draws its OWN purchase order and nothing else: its receipt first
+       (`dedicatedReceivedByLine`, which is why a fully received PO still covers
+       even though it left `poQueue` empty), then its own outstanding quantity.
+       The pooled `bucketStock` / `poQueue` above stay exactly as they are for
+       company 2, which keeps the pooled model. */
+    const boundSofa = boundCompany;
 
     for (const d of rows) {
       const v = (d.variants ?? {}) as Record<string, unknown>;
@@ -1397,19 +1448,24 @@ export async function computeMrp(
       const setDelivery = deliveryOf(d);
 
       let need = eff;
-      const fromStock = drawBucketStock(bucketStock, batchClaims.qtyByLine.get(d.id) ?? 0, need);
+      /* Bound: the units RECEIVED on this set's own purchase order. Unbound
+         (company 2): the pooled on-hand carve, batch claims honoured. */
+      const fromStock = boundSofa
+        ? Math.min(need, dedicatedReceivedByLine.get(d.id) ?? 0)
+        : drawBucketStock(bucketStock, batchClaims.qtyByLine.get(d.id) ?? 0, need);
       need -= fromStock;
       let poNumber: string | null = null;
       let poEta: string | null = null;
       let poSupplierId: string | null = null;
-      while (need > 0 && poQueue.length > 0) {
-        const front = poQueue[0];
+      const queue = boundSofa ? (dedicatedOpenByLine.get(d.id) ?? []) : poQueue;
+      while (need > 0 && queue.length > 0) {
+        const front = queue[0];
         if (!front) break;
         const take = Math.min(front.qtyLeft, need);
         if (poNumber == null) { poNumber = front.poNumber; poEta = front.eta; poSupplierId = front.supplierId; }
         front.qtyLeft -= take;
         need -= take;
-        if (front.qtyLeft <= 0) poQueue.shift();
+        if (front.qtyLeft <= 0) queue.shift();
       }
       const ordered = eff - need;                     // covered by pooled stock+PO
 

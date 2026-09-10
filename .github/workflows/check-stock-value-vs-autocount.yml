@@ -1,0 +1,55 @@
+name: Does our stock VALUE equal AutoCount's (read-only)
+
+# Owner 2026-09-09: 「最重要的是一定要跟 AutoCount 一样，要不然我的 balance sheet
+# 之后做的时候会不准、不一样。」 The number that matters is the one his balance
+# sheet will carry, so this reports the TOTAL on both sides and then every
+# product that moves it, largest first.
+#
+# The AutoCount side is StockDTL grouped by (item, location): SUM(Qty) is the
+# balance and SUM(Qty*Cost) is its value under AutoCount's own costing. It is NOT
+# data/ac-utd-stock-cost.json.gz, which is committed, looks like the right file,
+# and is a UTD-cost extract for a different question -- 736 units and RM 100,169,
+# led by TRANSPORTATION CHARGES at -373.
+#
+# Four things are separated before anything is called a difference, because
+# folding them in makes the total look wrong for reasons nobody needs to chase:
+# AutoCount SERVICE items (the owner's ruling: we do not carry them), AutoCount's
+# own negative-balance cells, our consignment stock (quantity yes, value no), and
+# our lots still at zero cost. Sofas are folded to the model, because the book
+# prices a whole sofa and we hold compartments.
+#
+# Read-only: SELECTs only, no DDL, no writes, no transaction, manual trigger,
+# own concurrency group.
+
+on:
+  workflow_dispatch:
+    inputs:
+      top:
+        description: "How many differing products to list (default 40)"
+        required: false
+        default: "40"
+
+concurrency:
+  group: check-stock-value-vs-autocount
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-stock-value-vs-autocount.mjs
+        env:
+          TOP: ${{ github.event.inputs.top }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

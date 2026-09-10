@@ -28,7 +28,7 @@ import { safeRate, toMyrSen } from '../lib/fx';
 import { todayMyt } from '../lib/my-time';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { postJournal, reverseJournal } from '../../acc/engine';
-import { backfillSoPayments, unbookedPayments } from '../../acc/payments';
+import { backfillSoPayments, paymentEntryDisagreements, unbookedPayments } from '../../acc/payments';
 import { computeDailyBank } from '../../acc/daily-bank';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
@@ -1251,6 +1251,14 @@ export const controlCheckHandler = async (c: any) => {
      returned so the screen can show which period it is speaking about. */
   const unbooked = await unbookedPayments(sb, companyId);
 
+  /* THE FOURTH FINDING: a payment that reached the ledger and then stopped
+     agreeing with it. `PATCH /:docNo/payments/:id` updates the row and never
+     re-posts, so an edited payment leaves its entry behind — silently. The
+     one-day edit window hides this today; Finance is about to be given the
+     power to correct old payments (owner + management, 2026-09-10), so the
+     divergence has to be visible BEFORE that window opens. Reads only. */
+  const drift = await paymentEntryDisagreements(sb, companyId);
+
   return c.json({
     checks,
     /* neverBooked rides along (docs/bugs/0654: it was computed and then
@@ -1262,6 +1270,9 @@ export const controlCheckHandler = async (c: any) => {
           ...(unbooked.neverBooked ? { neverBooked: unbooked.neverBooked } : {}),
         }
       : { since: null, rows: [], totalSen: 0, ok: false, error: unbooked.reason },
+    paymentDrift: drift.ok
+      ? { rows: drift.rows, scanned: drift.scanned, ok: drift.rows.length === 0 }
+      : { rows: [], scanned: 0, ok: false, error: drift.reason },
   });
 };
 

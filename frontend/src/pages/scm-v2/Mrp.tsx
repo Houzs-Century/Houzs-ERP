@@ -23,6 +23,7 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { ChevronRight, ChevronDown, RefreshCw, Truck, ShoppingCart, CalendarRange, Clock } from 'lucide-react';
+import { useFrozenTableHeader } from '../../components/useFrozenTableHeader';
 import {
   useMrp, useRegenerateMrp, useCategoryLeadTimes, useUpdateCategoryLeadTime, GLOBAL_LEAD_KEY,
   type MrpSku, type MrpLine, type MrpResponse, type SofaSet, type LeadCategory,
@@ -868,8 +869,43 @@ export const Mrp = () => {
   const basisLabel = dateBasis === 'processing' ? 'Processing Date' : dateBasis === 'soDate' ? 'SO Date' : dateBasis === 'orderBy' ? 'Order-by' : 'Delivery';
   const windowLabel = hasWindow ? `${basisLabel} ${dateFrom || '…'} → ${dateTo || '…'}` : '';
 
+  /* Frozen header — owner 2026-07-24 "每个table的header都要freeze", and again on
+     2026-09-09 for this page ("MRP 需要freeze row title"). MRP keeps its own
+     hand-built Model -> Variant -> SO tree instead of <DataTable>, so it never
+     inherited the freeze; #3430 pointed it at the SAME hook rather than a second
+     copy of that geometry.
+
+     DISARMED THE SAME DAY (owner 2026-09-09, shown the measurement below and
+     asked with a picker: 「先把 MRP 的表头固定关掉」). The geometry is sound but
+     its central assumption does not hold on THIS page: it reserves the strip
+     above the table under the pinned page header and relies on PAGE SCROLL to
+     carry the composition up. Measured live on erp.houzscentury.com/scm/mrp,
+     sofa tab, in a 879px window:
+
+       --page-header-offset      151px
+       box sticks at top         388px   (151 + 244px of title / tabs / filters)
+       scroller max-height       443px   <- the rows the operator can see
+       content height          5,090px
+       main.scrollHeight           879   === main.clientHeight
+
+     The capped table makes the page exactly viewport-height, so there is NO page
+     scroll to spend: the 388px is reserved permanently and the list is half a
+     screen, with ~98px of dead space under it. That is the failure mode the
+     hook's own comments already record from earlier rounds ("看的list就很少了").
+
+     `false` returns the page to plain flow — the hook sets no cap, renders no
+     runway spacer, and `.tableScroll` is inert uncapped (its CSS says so). The
+     wiring below is LEFT IN PLACE deliberately: re-freezing this page is a
+     geometry fix (give the composition real scroll runway, or mark a
+     `data-freeze-anchor` below the filter row so only the header strip is
+     reserved), not a re-integration. Flip this back to `true` in the same PR
+     that fixes it, and measure the four numbers above on the real page before
+     claiming it works — #3430 shipped verified against a HARNESS, and its own
+     bug doc states that no test asserts the freeze. */
+  const freeze = useFrozenTableHeader(false);
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" ref={freeze.rootRef}>
       <PageHeader
         eyebrow="Planning"
         title="MRP · Stock Status Report"
@@ -1044,9 +1080,10 @@ export const Mrp = () => {
       {/* Table — 3-level Model → Variant → SO orders, identical for both tabs.
           Sofa feeds the same renderer via the sofaSetsToSkus adapter; only the
           select handlers differ (sofa selects the whole same-SO set). */}
-      <div className={styles.tableWrap}>
+      <div className={styles.tableWrap} style={freeze.boxStyle}>
+        <div ref={freeze.scrollWrapRef} className={`thin-scroll ${styles.tableScroll}`} style={freeze.scrollStyle}>
         <table className={styles.table}>
-          <thead>
+          <thead className={styles.stickyHead}>
             <tr>
               <th className={styles.colSelect}>
                 <input
@@ -1111,7 +1148,15 @@ export const Mrp = () => {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
+      {/* The runway spacer: capping the table's height shortens the page, so
+          page scroll would stop just short of carrying the composition up to
+          the pinned header. This gives that scroll back. Rendered only while
+          the freeze is armed. */}
+      {freeze.freezeBox && freeze.freezeBox.runway > 0 && (
+        <div ref={freeze.spacerRef} aria-hidden style={{ height: freeze.freezeBox.runway }} />
+      )}
 
       {/* In-app result dialog — Commander 2026-05-29: confirm/result inside the
           page, not a browser alert. The 'confirm' kind is the Proceed-PO step

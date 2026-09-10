@@ -1,0 +1,49 @@
+name: Did the write-back change the account book? (read-only)
+
+# The owner's question, 2026-09-09: 「如果是这样我怎么知道我的数据对不对」 — after
+# learning that two days of cutover repairs had queued AutoCount write-backs and
+# that hundreds had already been sent.
+#
+# Compares what the queue SENT (scm.autocount_outbox.payload) against what the
+# account book HELD at backend/scripts/data/ac-reconcile-truth.json.gz, exported
+# 2026-09-09T00:18:49Z from AED_HOUZS live.
+#
+# IT DOES NOT TOUCH THE LIVE BOOK, and that is not only about lock timeouts. The
+# live book holds TODAY's value, so finding our value there cannot tell "the book
+# already said this and we echoed it" from "we overwrote it". What separates them
+# is what the book held BEFORE the write, which is what the snapshot is.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+      top:
+        description: "How many rows to list per section"
+        required: false
+        default: "80"
+
+concurrency:
+  group: ac-writeback-vs-book
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-ac-writeback-vs-book.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          TOP: ${{ inputs.top }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

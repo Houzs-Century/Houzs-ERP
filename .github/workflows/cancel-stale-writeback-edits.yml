@@ -1,0 +1,96 @@
+name: Cancel stale AutoCount write-back edits
+
+# STOP A BULK RE-QUEUE FROM OVERWRITING THE LICENSED ACCOUNT BOOK.
+#
+# Measured on production 2026-09-09 09:17 UTC (read-only DSN): between 08:43 and
+# 09:17 something re-queued sales-order `edit` operations under company 1 in
+# bulk — 171 rows in five minutes, three per second, which is a program and not
+# a person. An `edit` payload is a whole-document overwrite ({DocNo, Lines:[
+# {DtlKey, Qty, UnitPrice, Description, Desc2, Location}]}), so each one rewrites
+# a document in the book line by line. By 09:17 the drain had sent 319 of them
+# across 260 documents.
+#
+# The ERP's sales orders were PULLED FROM AutoCount at the cutover and are being
+# corrected by hand to reconcile the two sides, so writing the ERP's value back
+# pushes in-progress corrections onto the system of record — backwards.
+#
+# WHAT IT SELECTS, and why it is not "who queued it". `created_by = 1` is
+# hello@houzscentury.com, the owner's own login, so that selector would also
+# cancel edits he made himself. The script selects on whether the DOCUMENT moved:
+# enqueueAcEdit runs on save, so a genuine edit is queued seconds after its sales
+# order's updated_at, while a re-queue lands on a document nobody has touched for
+# days. On the live queue that split was 73 stale against 2 genuine, and the
+# stale side was days old, not minutes.
+#
+# WHY NOT THE WRITE-BACK SWITCH. scm.autocount_writeback takes 'off' / 'all' / a
+# list of COMPANY ids — there is no value meaning "block edits, pass new orders".
+# Turning it off for company 1 also stops the genuine documents queued behind the
+# flood. The owner's standing ruling is that the switch stays on and the repairs
+# are what stop queueing.
+#
+# WHY A WORKFLOW AND NOT A LOCAL RUN. The desktop DSN is claude_ro and cannot
+# write — `permission denied for table autocount_outbox`, verified before this
+# was written. secrets.DATABASE_URL, which can write, exists only here.
+#
+# DEFAULT IS PLAN. The defaults write nothing and print every row that would be
+# cancelled, so the run log is the list. Applying needs a deliberate mode change
+# AND the confirm phrase; the script refuses without it.
+#
+# REVERSAL. Uniform, so the undo needs no per-row lookup — every cancelled row
+# was `pending` with a NULL last_error:
+#   UPDATE scm.autocount_outbox SET status='pending', last_error=NULL
+#    WHERE status='skipped' AND last_error LIKE 'cancelled 2026-09-09 on the owner instruction:%';
+# Re-running it after an undo cancels them again, so the undo is safe to try.
+#
+# IDEMPOTENT. The UPDATE carries status='pending'; a second run selects nothing
+# and reports 0. Re-run it if the producer starts up again — that is the intended
+# use.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "Required for apply: cancel stale writeback edits"
+        required: false
+        default: ""
+      stale_minutes:
+        description: "How long after a save an edit still counts as that save's own (default 10)"
+        required: false
+        default: "10"
+
+# Its own group: a repair must never queue behind, or displace, a release.
+concurrency:
+  group: cancel-stale-writeback-edits
+  cancel-in-progress: false
+
+jobs:
+  cancel:
+    runs-on: ubuntu-latest
+    # Where DATABASE_URL lives — the same environment the deploy uses.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/cancel-stale-writeback-edits.mjs
+        env:
+          MODE: ${{ github.event.inputs.mode }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          STALE_MINUTES: ${{ github.event.inputs.stale_minutes }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

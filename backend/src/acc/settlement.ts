@@ -73,6 +73,22 @@ export async function loadAcquirer(
 
 const isoDay = (v: unknown): string => String(v ?? '').slice(0, 10);
 
+/** The window read and the by-reference read overlap by design — a payment
+    inside the window that also carries a statement reference arrives in both.
+    One payment must reach the matcher once, or it would be offered twice and
+    could be double-claimed. */
+const dedupeById = (rows: Array<Record<string, any>>): Array<Record<string, any>> => {
+  const seen = new Set<string>();
+  const out: Array<Record<string, any>> = [];
+  for (const r of rows) {
+    const id = String(r.id ?? '');
+    if (id === '' || seen.has(id)) continue;
+    seen.add(id);
+    out.push(r);
+  }
+  return out;
+};
+
 const shiftDays = (date: string, days: number): string =>
   new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 
@@ -116,10 +132,32 @@ export async function loadPaymentCandidates(
   acquirer: Pick<AcquirerRow, 'display_name' | 'date_tolerance_days'>,
   from: string,
   to: string,
+  /**
+   * The references the statement itself carries.
+   *
+   * THE DATE WINDOW MUST NOT HIDE AN EXACT REFERENCE (owner, 2026-09-09, on
+   * four PBB lines the screen called "No payment recorded near …"). Each of
+   * those four HAD its payment in the ERP, carrying the identical approval code
+   * and the identical amount — keyed five to eleven days after the swipe,
+   * because the sale was written up later. PBB's tolerance is three days, so
+   * the payment was never LOADED, so the reference was never even looked at.
+   *
+   * The window is the right instrument for "which payments could plausibly be
+   * this amount on this day". It is the wrong one for a reference, which is the
+   * acquirer's own identifier for the swipe and does not become less true
+   * because somebody keyed the sale a week late. So the refs are fetched as
+   * well, whatever their date, and the matcher decides what to do with the
+   * distance.
+   */
+  refs: readonly string[] = [],
 ): Promise<{ ok: true; payments: PaymentCandidate[] } | { ok: false; reason: string }> {
   const lo = shiftDays(from, -Math.max(0, acquirer.date_tolerance_days));
   const hi = `${shiftDays(to, Math.max(0, acquirer.date_tolerance_days))}T23:59:59.999`;
   const name = acquirer.display_name.trim();
+  /* Deduplicated and blank-free: a statement of 300 lines shares a handful of
+     references, and an empty one would ask the database for every payment that
+     has no approval code at all. */
+  const wanted = [...new Set(refs.map((r) => String(r ?? '').trim()).filter(Boolean))];
 
   /* The window is read WHOLE and filtered here, not by `.eq('merchant_provider',
      name)` in the query — that filter was how a NULL-tagged payment could never
@@ -131,7 +169,23 @@ export async function loadPaymentCandidates(
     .gte('paid_at', lo)
     .lte('paid_at', hi);
   if (soErr) return { ok: false, reason: `SO payments: ${soErr.message}` };
-  const soRaw = ((soAll ?? []) as Array<Record<string, any>>)
+
+  /* The same payments again, by reference, with no date bound. A read that
+     FAILS is a failure, not "no references matched" — a silently empty result
+     here would put the module back where it started, with the payment present
+     and the screen saying it is not. */
+  let soByRef: Array<Record<string, any>> = [];
+  if (wanted.length > 0) {
+    const { data, error } = await sb
+      .from('mfg_sales_order_payments')
+      .select('id, so_doc_no, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by')
+      .eq('company_id', companyId)
+      .in('approval_code', wanted);
+    if (error) return { ok: false, reason: `SO payments by reference: ${error.message}` };
+    soByRef = (data ?? []) as Array<Record<string, any>>;
+  }
+
+  const soRaw = dedupeById([...((soAll ?? []) as Array<Record<string, any>>), ...soByRef])
     .filter((r) => couldBeAcquirers(String(r.method), r.merchant_provider as string | null, name));
 
   const { data: siAll, error: siErr } = await sb
@@ -141,7 +195,19 @@ export async function loadPaymentCandidates(
     .gte('paid_at', lo)
     .lte('paid_at', hi);
   if (siErr) return { ok: false, reason: `SI payments: ${siErr.message}` };
-  const siRaw = ((siAll ?? []) as Array<Record<string, any>>)
+
+  let siByRef: Array<Record<string, any>> = [];
+  if (wanted.length > 0) {
+    const { data, error } = await sb
+      .from('sales_invoice_payments')
+      .select('id, sales_invoice_id, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by')
+      .eq('company_id', companyId)
+      .in('approval_code', wanted);
+    if (error) return { ok: false, reason: `SI payments by reference: ${error.message}` };
+    siByRef = (data ?? []) as Array<Record<string, any>>;
+  }
+
+  const siRaw = dedupeById([...((siAll ?? []) as Array<Record<string, any>>), ...siByRef])
     .filter((r) => couldBeAcquirers(String(r.method), r.merchant_provider as string | null, name));
 
   /* WHOSE sale it was. The operator is reconciling money against documents,

@@ -54,7 +54,7 @@ const LINE: BankLine & { file_name: string | null } = {
   amount_sen: 60000, charge_sen: 0, kind: 'PAYOUT',
   acquirer_code: 'HLB', trading_date: '2026-09-01', merchant_no: '32409997',
   matched_batch_id: null, split: null, state: 'OPEN', posted_je_no: null, note: null,
-  matches: [], candidates: [], file_name: 'd01.csv',
+  matches: [], candidates: [], entryCandidates: [], file_name: 'd01.csv',
 };
 
 const STATEMENTS = [

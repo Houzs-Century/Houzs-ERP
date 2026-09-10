@@ -1,0 +1,40 @@
+name: Probe share links (read-only)
+
+# Answers "do the public calendar share links load right now, and if not,
+# what does the server say?" from GitHub's network — the one place this repo
+# can both read the tokens (secrets.DATABASE_URL) and reach production.
+#
+# Prints party, HTTP status, timing and the body's error/message. Never the
+# token. Manual trigger only: a production read must not become CI noise.
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Site to probe (no trailing slash)"
+        required: false
+        default: "https://erp.houzscentury.com"
+
+# Own group — never queue behind, or displace, a release.
+concurrency:
+  group: probe-share-links
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/probe-share-links.mjs "${{ inputs.base }}"
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -144,7 +144,7 @@ import { buildScope, currencyVerdict, decodeSnapshot, isTestDoc, LOCAL_CURRENCY 
 import {
   splitBookUnpriced, splitDecidedAbsences, splitErpZeroMoney, splitGuessedItemCodePairing,
 } from "./lib/ac-not-a-difference.mjs";
-import { applyChainShape, reportChainShape } from "./lib/ac-chain-shape.mjs";
+import { applyChainShape, recordUnpairedBookLine, reportChainShape, sourceDecisionFor } from "./lib/ac-chain-shape.mjs";
 import { blankRowArm, isBlankBookRow, splitBlankBookRows } from "./lib/ac-blank-book-row.mjs";
 import { grPairGrain } from "./lib/ac-gr-pair-grain.mjs";
 import { erpReconcileTypes } from "./lib/ac-reconcile-erp-sql.mjs";
@@ -1247,10 +1247,8 @@ for (const cfg of TYPES) {
       else if (i < freeAc.length) {
         const msgAc = `${ac}: AutoCount DtlKey ${freeAc[i].dtlKey} has no ERP line`;
         F.unmatchedAc.push(msgAc);
-        /* ONE row per DOCUMENT, or `preserveTotal` counts one document twice. */
-        if (!unpairedBookLineRows.some((r) => r.key === ac)) {
-          unpairedBookLineRows.push({ key: ac, erpNo: d.erp_no, line: msgAc });
-        }
+        recordUnpairedBookLine(unpairedBookLineRows,
+          { key: ac, erpNo: d.erp_no, dtlKey: freeAc[i].dtlKey, line: msgAc });
         VERDICT.record(t, ac, d.erp_no, "a book line we do not have",
           `AutoCount DtlKey ${freeAc[i].dtlKey} has no ERP line`);
       } else {
@@ -1407,8 +1405,8 @@ for (const cfg of TYPES) {
   /* The migrated invoice chain's line SHAPE, both halves, split from ONE set of
      facts and RECORDED on the verdict — it used to reach the summary line and
      nothing else (docs/bugs/0746). lib/ac-chain-shape.mjs. */
-  const { LS, UB } = applyChainShape({ eligible: Boolean(cfg.migratedChainLineShape),
-    t, lineCountRows, unpairedBookLineRows, shapeFacts, recorder: VERDICT });
+  const { LS, UB, SRC } = applyChainShape({ eligible: Boolean(cfg.migratedChainLineShape),
+    t, lineCountRows, unpairedBookLineRows, shapeFacts, recorder: VERDICT, ...sourceDecisionFor(erp, book, t) });
   log(
     `${t} DATA (${bothSides} documents on both sides, ${comparedLines} lines paired) — ` +
       `line-count differs: ${LS.differ}` + (LS.lineShape ? ` (+${LS.lineShape} the same goods and the same money on a different number of rows)` : "") +
@@ -1475,7 +1473,7 @@ for (const cfg of TYPES) {
     );
     for (const row of IC.impostors.slice(0, SHOW)) plain(`      ${row.line} — ${row.why}`);
   }
-  reportChainShape({ t, LS, UB, log, plain, first, show: SHOW });
+  reportChainShape({ t, LS, UB, SRC, log, plain, first, show: SHOW });
   if (!MZ.applied && zeroMoneyDocs) {
     log(
       `${t} — ${zeroMoneyDocs} of the ${bothSides} documents on both sides carry ZERO money in the ERP ` +

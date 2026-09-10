@@ -62,6 +62,7 @@ naming `agent` on an otherwise legitimate handover.
 
 | Method | Path | Permission | Purpose |
 |--------|------|-----------|---------|
+| GET | `/api/scm/so-handover/holders` | `scm.so.attribute_other` | WHO holds this company's Sales Orders — `{ holders: [{ staffId, name, staffCode, active, orders }] }`, most orders first. The From picker's list; see §6 for why it is not the roster |
 | GET | `/api/scm/so-handover/preview?from=<staffId>` | `scm.so.attribute_other` | Every SO in the active company currently attributed to that staff id: `{ from, total, truncated, batchMax, orders[] }`, capped at 500 |
 | POST | `/api/scm/so-handover/apply` | `scm.so.attribute_other` | Moves a named batch: `{ fromStaffId, toStaffId, docNos[] }` → `{ moved[], skipped[] }` |
 | POST | `/api/scm/so-handover/share` | `scm.so.attribute_other` | Grants or withdraws ACCESS without moving attribution: `{ staffIds[], docNos[], mode }` → `{ changed[], skipped[] }`. See §8 |
@@ -158,26 +159,36 @@ NEW order joins the locked population shortly after it is saved.
 section on **SO Maintenance** (`/scm/sales-orders/maintenance`) behind the same
 permission the API enforces.
 
-- **From** reads the FULL roster (`useStaff`) — the person handing over is usually
-  deactivated already, and an active-only list would hide the exact case this
-  tool exists for. Inactive people are labelled.
+- **From** lists **who HOLDS orders** — `GET /so-handover/holders`
+  (`useSoHandoverHolders`), ordered by order count with the count in the label.
+  Inactive holders are labelled and still selectable; most of them have left,
+  which is the point.
 
-> **"FULL roster" IS COMPANY-SCOPED, AND THAT HIDES RESIGNED REPS.** *Found
-> 2026-09-09: three resigned salespeople could not be selected at all.*
-> `GET /staff` runs `scopeStaffRowsToActiveCompany`, and
+> **IT USED TO READ THE STAFF ROSTER, AND THAT HID THE PEOPLE THIS PANEL IS
+> FOR.** *2026-09-09.* `GET /staff` runs `scopeStaffRowsToActiveCompany`, and
 > `staffCompanyIds` (`scm/lib/staffCompanyScope.ts`) buckets a staff row with
-> **no linked ERP user** to the **2990 mirror** company. Somebody imported from
-> AutoCount who never had an ERP login — the normal shape for a long-resigned
-> rep — is therefore invisible while HOUZS is active, which is precisely the
-> person this panel exists to hand over. **Switching company is the workaround.**
+> **no linked ERP user** to the **2990 mirror**. An AutoCount-imported rep who
+> never had an ERP login — the normal shape for a long-resigned one — was
+> therefore unselectable while HOUZS was active.
 >
-> The real fix is that this picker asks the wrong question: it lists the staff
-> ROSTER when the operator's question is "who holds this company's orders". A
-> holder list cannot omit a holder by construction. Not done — it is a change to
-> the panel's data source, and the diagnostic came first:
-> `backend/scripts/check-so-holders.mjs` + the **SO holders check (read-only)**
-> workflow print, per company, every salesperson_id holding a non-cancelled
-> order with a `PICKER` column saying whether the panel can select them.
+> **Measured, not argued** (`check-so-holders.mjs`, production run
+> 34336422828): **22 holders / 339 non-cancelled orders in HOUZS** could not be
+> picked, including all three reps the owner had come to hand over.
+>
+> **Switching company does NOT rescue it**, which is what made this worth fixing
+> rather than documenting: their ORDERS are in HOUZS while their staff rows
+> answer to 2990, so under HOUZS you see the orders and not the person, and
+> under 2990 you see the person and not the orders. Neither company can complete
+> the handover.
+>
+> A list derived from the ORDERS cannot omit somebody who holds one. The
+> diagnostic that measured it is still there and still useful for "how many will
+> actually move": `backend/scripts/check-so-holders.mjs` + the **SO holders
+> check (read-only)** workflow.
+>
+> `/holders` counts the SAME way `/preview` lists — company-scoped, no status
+> filter — so the number on the picker and the number on the list under it
+> cannot disagree.
 - **To** reads `usePickableStaff` (company-scoped, active only), so an order can
   never land on a departed or cross-company rep.
 - **Also give access to** (2026-09-09) reads the same pickable list and ADDS to a

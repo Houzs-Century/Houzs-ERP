@@ -201,6 +201,14 @@ export const NOTE_CLASSES = Object.freeze([
      moves, or that is short a PRICED line, fails both gates and stays counted.
      Applies only to the types declared `migratedChainLineShape`. */
   'migrated-chain-line-shape',
+  /* THE DOCUMENT THIS LINE WAS RAISED FROM WAS NEVER MIGRATED. The book bills a
+     purchase-invoice line whose PURCHASE ORDER is outside the outstanding
+     population the cutover carried — the book holds 9,416 orders and 474 came
+     over — so it is a line we never had, not one we lost. PROVED per document
+     by lib/ac-not-a-difference.mjs section 7: EVERY unpaired book line on the
+     document names a source order absent from ours, measured off the ERP's own
+     rows. One line whose order we DO hold keeps the whole document counted. */
+  'chain-source-not-migrated',
   /* THE ERP NAMES A PRODUCT THE BOOK DOES NOT, BY THE OWNER'S OWN DECISION.
      Declared with the book model it overrides and who decided it, so it EXPIRES
      the moment the book stops saying that — which is what tells his decision

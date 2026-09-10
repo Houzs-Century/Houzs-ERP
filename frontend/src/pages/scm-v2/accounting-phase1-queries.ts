@@ -80,9 +80,37 @@ export const usePaymentBookingDryRun = () => useMutation({
   }),
 });
 
+/** A payment that reached the ledger and then stopped agreeing with it. The
+    PATCH that edits a payment never re-posts, so an edited row leaves its
+    entry behind; `fields` names what moved (amount / date / method), and both
+    sides are carried so the difference can be read without opening the entry.
+    A changed acquirer is NOT in here — that lives in the entry's lines. */
+export type PaymentDriftRow = {
+  source: 'SOPAY' | 'SIPAY';
+  id: string;
+  docNo: string;
+  jeNo: string;
+  fields: Array<'amount' | 'date' | 'method'>;
+  paymentAmountSen: number;
+  entryAmountSen: number;
+  paidOn: string;
+  entryDate: string;
+  paymentMethod: string;
+  entryMethod: string | null;
+};
+export type PaymentDrift = {
+  rows: PaymentDriftRow[];
+  /** How many active payment entries were read — a clean answer over zero
+      entries is a different statement from a clean answer over 4,000. */
+  scanned: number;
+  ok: boolean;
+  /** Only when the check itself could not run. */
+  error?: string;
+};
+
 export const useControlCheck = () => useQuery({
   queryKey: ['control-check'],
-  queryFn: () => authedFetch<{ checks: ControlCheckRow[]; payments: UnbookedPayments }>(`/accounting/control-check`),
+  queryFn: () => authedFetch<{ checks: ControlCheckRow[]; payments: UnbookedPayments; paymentDrift?: PaymentDrift }>(`/accounting/control-check`),
   staleTime: 30_000,
   retry: retryUnlessClientError,
   retryDelay: 800,

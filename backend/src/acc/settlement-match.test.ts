@@ -385,3 +385,71 @@ describe('a swipe covering many documents', () => {
     expect([...(d.suggested ?? [])].map((p) => p.id).sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
   });
 });
+
+/* ── A REFERENCE FAR FROM THE DAY ─────────────────────────────────────────────
+   Owner, 2026-09-09, on four PBB lines the screen called "No payment recorded
+   near …": each one HAD its payment in the ERP, carrying the identical approval
+   code and the identical amount, keyed five to eleven days after the swipe
+   because the sale was written up late. PBB's tolerance is three days, so the
+   payment was never loaded and the reference was never even looked at.
+
+   The loader now fetches a reference whatever its date (acc/settlement). What
+   is pinned here is what the MATCHER does with the distance: it offers the
+   payment rather than taking it, because a reference matching across two weeks
+   is also the shape of a code mis-keyed onto a later sale — and this is the one
+   path that books money without a human. */
+
+describe('a reference that matches outside the date window', () => {
+  const far = (days: number) => matchStatement(
+    cfg({ date_tolerance_days: 3 }),
+    [row({ txnDate: '2026-06-01', ref: '058016' })],
+    [pay({ id: 'late', docNo: 'SO-2606-006', approvalCode: '058016', paidOn: '2026-06-01' })]
+      .map((p) => ({ ...p, paidOn: new Date(Date.parse('2026-06-01T00:00:00Z') + days * 86_400_000).toISOString().slice(0, 10) })),
+  );
+
+  it('is offered and pre-ticked, never auto-taken', () => {
+    const [d] = far(11);
+    expect(d.bucket).toBe('NEEDS_CONFIRM');
+    expect(d.matched).toEqual([]);
+    expect(d.candidates.map((p) => p.id)).toEqual(['late']);
+    /* Pre-ticked: the evidence is strong, the decision is still his. */
+    expect(d.suggested.map((p) => p.id)).toEqual(['late']);
+  });
+
+  it('says the document, the day it was recorded and how far off it is', () => {
+    const [d] = far(11);
+    expect(d.clue).toMatch(/SO-2606-006/);
+    expect(d.clue).toMatch(/2026-06-12/);
+    expect(d.clue).toMatch(/11 days/);
+    expect(d.clue).toMatch(/outside the 3-day window/);
+  });
+
+  /* Inside the window nothing changes — the ordinary auto-match still stands. */
+  it('inside the window it is still taken automatically', () => {
+    const [d] = far(2);
+    expect(d.bucket).toBe('MATCHED');
+    expect(d.matched.map((p) => p.id)).toEqual(['late']);
+    expect(d.suggested).toEqual([]);
+  });
+
+  it('the edge of the window is inside it', () => {
+    expect(far(3)[0]!.bucket).toBe('MATCHED');
+    expect(far(4)[0]!.bucket).toBe('NEEDS_CONFIRM');
+  });
+
+  /* A far reference is not claimed, so the SAME payment stays available to a
+     line that matches it properly. Taking it would settle the wrong line. */
+  it('does not claim the payment away from a nearer line', () => {
+    const ds = matchStatement(
+      cfg({ date_tolerance_days: 3 }),
+      [row({ lineNo: 1, txnDate: '2026-06-01', ref: '058016' }),
+       row({ lineNo: 2, txnDate: '2026-06-12', ref: '058016' })],
+      [pay({ id: 'one', docNo: 'SO-2606-006', approvalCode: '058016', paidOn: '2026-06-12' })],
+    );
+    expect(ds[0]!.bucket).toBe('NEEDS_CONFIRM');
+    expect(ds[0]!.suggested.map((p) => p.id)).toEqual(['one']);
+    /* The line it really belongs to still auto-matches. */
+    expect(ds[1]!.bucket).toBe('MATCHED');
+    expect(ds[1]!.matched.map((p) => p.id)).toEqual(['one']);
+  });
+});

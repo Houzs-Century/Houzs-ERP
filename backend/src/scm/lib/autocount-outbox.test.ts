@@ -876,13 +876,13 @@ describe('a line the ERP just added is declared, never inferred', () => {
       expect(lines.find((l) => l.ItemCode === AC_B)?.IsNewLine).toBe(true);
     });
 
-    test('NOT declared: still refused, so a legacy keyless line can never be appended twice', async () => {
+    test('NOT declared: refused, named by the PO NUMBER so a person can act on it (0774)', async () => {
       const sb = withFlag('1', {
         purchase_orders: [{ ...poDoc }], suppliers: [{ ...sup }],
         purchase_order_items: [{ ...oldLine }, { ...newLine }], warehouses: wh,
       }, poCols);
       expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'PO', docId: 'po-1' })).toBe(false);
-      expect(outbox(sb)[0].last_error).toContain('refused, nothing sent');
+      expect(outbox(sb)[0]).toMatchObject({ doc_no: 'HC-PO-9', last_error: expect.stringContaining('refused, nothing sent') });
     });
 
     /* A new detail with no Location dies on FK_PODTL_Location, and the document
@@ -1623,11 +1623,11 @@ describe('the three fields the extract carries and the write-back did not send',
       expect(d.Desc2).toBe('PC151-01 Sand / DIVAN 8" + LEG 2" / GAP 12"');
     });
 
-    test('a Further Description over nvarchar(100) is refused into a NAMED skipped row', async () => {
+    test('a Further Description over nvarchar(100) — the COLOUR — is refused into a NAMED skipped row', async () => {
       const sb = seed({}, {
         description2: null,
         item_group: 'bedframe',
-        variants: { fabricCode: 'PC151-01', gap: '12"', specials: ['X'.repeat(120)] },
+        variants: { fabricCode: `PC151-01 ${'X'.repeat(120)}`, gap: '12"' },
       });
       expect((await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).queued).toBe(false);
       const [row] = outbox(sb);

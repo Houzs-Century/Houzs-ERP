@@ -284,6 +284,37 @@ is the `optional-param-noop` trap CLAUDE.md names, and the other ~15
   are born NULL in the first place. Read rule and write default live in one
   file on purpose: they must never disagree about the same order.
 
+### 2.1 A row's `category` — the fallback, and why the row disappears without it
+
+**The response field `skus[].category` is what puts a row on a tab.** The
+frontend picks a tab's rows with `s.category === VIEW_CATEGORY[view]`
+(`frontend/src/pages/scm-v2/Mrp.tsx:553`), so a row whose `category` is `null`
+belongs to NO tab and is invisible on all four — with no empty state, no count,
+and no warning, because a missing row and a covered row look identical here.
+
+**The category is decided in ONE way, in two places, and they must stay the
+same expression:**
+
+```
+prod?.category ?? catFromGroup(<the line's item_group>)
+```
+
+- the FILTER — `mrp.ts:1099`, deciding whether a line enters demand at all;
+- the EMIT — `mrp.ts:1344`, the value that ships on the row (first non-null
+  `catFromGroup` across the bucket's own rows).
+
+`catFromGroup` (`mrp.ts:1087`) maps an `item_group` to
+BEDFRAME / SOFA / MATTRESS / ACCESSORY / SERVICE and returns `null` for anything
+else. It exists so a line whose `item_code` is not in `mfg_products` still shows
+under its tab; **`null` out of it is still `null` on the row** — an unrecognised
+group is not guessed at.
+
+Until 2026-09-10 the emit site read `prod?.category ?? null` while the filter had
+the fallback, so the engine kept those lines, planned them, and shipped them with
+no category: eight accessory codes / 62 lines / 110 units on prod were planned and
+shown nowhere (`docs/bugs/0777-mrp-dropped-8-accessory-codes-from-every-tab-because-the-row.md`).
+If a third reader of a line's category is ever added, it uses this expression too.
+
 ## 3. Supply
 
 - On-hand: `inventory_balances` summed per bucket.
@@ -479,9 +510,29 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   bucket,
   every line in a company-1 bedframe bucket is bound, so nothing else can draw
   it, and leaving the units visible is what keeps the on-hand figure honest.
-  **SOFA is excluded at this call site** — sofa demand never enters section 7
-  (section 6 skips it) and section 8 has its own supply model; the shared
-  predicate is unchanged.
+- **AND SOFA JOINED THE RULE ON 2026-09-09** — the bullet above used to end
+  *"SOFA is excluded at this call site … section 8 has its own supply model"*,
+  and that sentence read as a design choice while describing work not yet done.
+  Section 8 planned every sofa SET on the pooled bucket key alone, which is
+  survivable for an OUTSTANDING purchase order (it sits in the pool under its own
+  key) and not survivable for a RECEIVED one: `left = qty − received_qty` is 0,
+  the line never enters the pool, and with no `dedicatedReceivedByLine` leg its
+  receipt could only arrive through the STOCK bucket — keyed on
+  `fabricCode|seatHeight|legHeight|specials`, four free-text fields the order and
+  the receipt spell differently far more often than not.
+
+  Measured on the live page 2026-09-09: the sofa tab asked for **70 units on 28
+  orders**; **42** were really missing, **8 of those orders (26 units) had their
+  own purchase order fully received**, and 26 of those lines read READY on the
+  sales-order screen at the same moment. STOCK read **0 on all 136 sofa rows**
+  while **246 units** of company-1 sofa sat in the warehouse. Bedframe, already
+  dedicated, was right to the unit on the same page (50 short, 50 lines with no
+  PO). `docs/bugs/0769`.
+
+  It was MRP catching up with the allocator, not a new rule: `isHardBoundLine`
+  has named sofa bound since 2026-08-10, and on prod **zero** of 1,240 open
+  company-1 sofa lines read READY without their own purchase order. Company 2
+  keeps the pooled sofa model.
 
 ### "If the variants are different, will it still match my goods?" (owner, 2026-08-16)
 
@@ -644,6 +695,67 @@ Frontend pair (one logic layer): desktop `pages/scm-v2/Inventory.tsx`
 | `backend/scripts/lib/undated-demand-queries.mjs` | That probe's SQL, in one home so a test can EXECUTE it. No shebang — a test imports it |
 | `backend/tests-pg/probeUndatedDemandSql.pg.test.ts` | Runs every one of those queries against real Postgres in `backend-postgres`. Exists because the probe's first production dispatch died on unexecuted SQL |
 
+## 7b. The page's frozen header (2026-09-09) — BUILT, THEN DISARMED THE SAME DAY
+
+> **THE FREEZE IS OFF ON THIS PAGE. `Mrp.tsx` calls
+> `useFrozenTableHeader(false)`** — owner 2026-09-09, hours after it shipped:
+> 「先把 MRP 的表头固定关掉」. Everything below still describes the wiring, which
+> is deliberately left in place; only the arming flag changed. What went wrong is
+> geometry, not integration, and the numbers are in `docs/bugs/0768`:
+>
+> ```
+> --page-header-offset  151px      box sticks at    388px
+> scroller max-height   443px      content        5,090px
+> main.scrollHeight       879   === main.clientHeight   -> the page cannot scroll
+> ```
+>
+> The design reserves the strip above the table and spends PAGE SCROLL to carry
+> the composition up. On MRP the capped table is the only thing that made the
+> page taller than the viewport, so capping it removed the very scroll the design
+> needs: 388px reserved permanently, 443px of rows in an 879px window, ~98px of
+> dead space below. **Before flipping the flag back, fix that** — give the
+> composition real runway, or mark a `data-freeze-anchor` below the filter row so
+> only the header strip is reserved — and measure those four numbers on the real
+> page, because `docs/bugs/0753` states plainly that no test asserts the freeze
+> and `#3430` was verified against a harness that had page scroll.
+>
+> `DataTable`'s use of the hook is untouched; every converted table still
+> freezes.
+
+Owner, 2026-09-09: "MRP 需要freeze row title" — the same rule he set on
+2026-07-24 for every table ("每个table的header都要freeze"). MRP kept its own
+hand-built Model -> Variant -> SO tree instead of `<DataTable>`, so it never
+inherited the freeze.
+
+The geometry was LIFTED OUT of `DataTable.tsx` into
+`frontend/src/components/useFrozenTableHeader.ts` and both now drive it — a
+second implementation would have had to rediscover the iterations that one
+already survived (the cap must not eat the visible list, the page must still be
+able to scroll the composition up to the pinned header). Read that file before
+changing either surface.
+
+What it means for this page, structurally:
+
+- `.tableWrap` is now the bordered BOX only (`overflow: hidden`), and it carries
+  the sticky offset. The scrolling moved one level in, to a new `.tableScroll`
+  (`overflow-x: auto; overflow-y: auto`) — a sticky box cannot also be the
+  scrollport its own sticky children resolve against. The horizontal scroll the
+  wrap was added for in 2026-05-29 ("右边卡到了") lives there now.
+- The sticky rule is `.stickyHead th`, on the TOP-LEVEL `<thead>` only. A bare
+  `.table thead th` would also match the drilldown `.childTable`, which renders
+  inside a `<td>` of this table, and float those nested headers over their own
+  rows.
+- The rule under the header is drawn with `box-shadow: inset 0 -2px 0`, not
+  `border-bottom`: `.table` is `border-collapse: collapse`, where a sticky
+  cell's collapsed border belongs to the table's border grid and stops painting
+  once the cell leaves its resting place.
+- A runway spacer renders at the bottom of the page while the freeze is armed.
+  Capping the table's height shortens the page; the spacer gives back exactly
+  the scroll that cap removed.
+
+The freeze DISARMS itself when the rows do not overflow the cap, so a short
+list keeps its plain flow and never grows an inner scrollbar.
+
 ## 8. Traps
 
 - The engine runs in a Worker behind PostgREST: unbounded selects clip at
@@ -654,6 +766,12 @@ Frontend pair (one logic layer): desktop `pages/scm-v2/Inventory.tsx`
   data with a truncation guard sitting right underneath it (§5). A cap is only
   loud if the number it compares against is the number the server will actually
   return. Prefer `paginateAll` / `chunkIn` over a bare `.limit()` and a guard.
+- **A row that is FILTERED IN must also be EMITTED with the value the filter
+  used.** Whenever a field decides both "does this line count" and "where does
+  this row appear", writing it twice is writing two rules. `category` did
+  exactly this and cost 110 planned units of silence (§2.1, docs/bugs/0777).
+  This class is worse than a crash: the page still renders, still looks
+  complete, and the gap is found on delivery day.
 - `companyId` is REQUIRED on `computeMrp` (typed `number | null | undefined`,
   key not optional) — see the #710/#712 incident comment at the signature.
 - Status columns are ENUMS in Postgres — any raw SQL must `::text` before

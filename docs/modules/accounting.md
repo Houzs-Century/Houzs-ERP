@@ -669,6 +669,32 @@ has, which is exactly how this shipped). The card's **Book N payments now**
 button, offered only after a dry run the gate refused nothing on and behind a
 confirm, is the same endpoint without dryRun — the owner presses it.
 
+**A payment that reached the ledger and then stopped agreeing with it
+(2026-09-10, docs/bugs/0774).** The card above answers "did the money reach
+the books". It had no answer for "does it still say what the books say".
+`PATCH /:docNo/payments/:id` writes the payment row and never re-posts its
+entry — only DELETE touches the ledger, through `afterSoPaymentRemoved`. The
+one thing holding the two in step is `paymentRowMutable`
+(`scm/shared/so-field-policy.ts`): a payment is editable only on the day it
+was keyed, so almost nothing survives long enough to drift (production
+2026-09-10: 0 amount disagreements, 3 date). The owner has confirmed with
+management that FINANCE should hold the power to correct a mis-keyed payment,
+which removes that accident — so the divergence is now watched before the
+window opens. `acc/payment-drift.ts` is the pure comparison (amount, date,
+and the method read back out of the poster's own narration
+`Payment {method} on {docNo}` — an unrecognised narration makes NO method
+claim); `paymentEntryDisagreements` in `acc/payments.ts` does the reads,
+paging both payment tables in full because the date is one of the things
+under suspicion; `/control-check` returns it as `paymentDrift`; the Self-check
+tab shows both sides of every difference. A changed acquirer is deliberately
+out of scope — it lives in the entry's LINES — and the card says so. It
+writes nothing and offers no fix button, because the fix is the next step:
+**make the edit reverse and re-post**, and only then the Finance permission,
+gated on "editable until the payment has been RECONCILED" rather than by time
+(`so-field-policy.ts` already reserves the one place that condition lands).
+Pinned by `acc/payment-drift.test.ts`,
+`scm/routes/controlCheckPaymentDrift.test.ts` and `PaymentDriftCard.test.tsx`.
+
 **Phase 2B part 1 (2026-08-16): Daily Bank.** GET /accounting/daily-bank?date= answers the owner one question - today, where is the money and how much can actually move - live from the ledger (2.3: no caches): opening/in/out/closing per money account (scm.accounts.acc_money flag, migration 0299), settlement-in-transit balances per acquirer (visible, never counted movable), and — since phase 3 (2026-08-28, mig 0339) — pendingApprovalSen: every DRAFT payment voucher sitting in the approval queue, converted to MYR the way posting will, subtracted from available. Page /scm/daily-bank (Finance menu): date navigation + Get Image (canvas-drawn PNG to clipboard for WhatsApp, download fallback). Board arithmetic pinned in acc/daily-bank.test.ts. 946-0000 Cash Over/Short + OVER_SHORT role seeded for the coming daily cashup.
 
 **Phase 3 (2026-08-28): PV approval — money leaves only after a yes.** The full write-up lives in docs/modules/payment-voucher.md §0b (marker columns per the 0324 lesson, the pure rule table in scm/lib/pv-approval.ts, the post gate, the scm.payment_voucher.approve key, the audit verbs). What belongs to THIS module: the Daily Bank board's available figure now answers "closing minus what is already asked for", which is the question the owner's phase-3 placeholder was holding a seat for.
@@ -720,6 +746,66 @@ one exact-summing pair — it comes back as `suggested`, pre-ticked on screen wi
 the reason, for a human to confirm. Offered, never taken: two possible answers is
 a question, so nothing is ticked and he chooses;
 `acc/settlement.ts` confirms, which POSTS that moment.
+
+**A REFERENCE IS NOT BOUND BY THE DATE WINDOW (2026-09-09, docs/bugs/0760).**
+`loadPaymentCandidates` used to read the tolerance window only, and the
+reference was consulted afterwards — so a payment outside the window was never
+loaded and its reference never looked at. Four PBB lines on prod read "No
+payment recorded near …" while their payment sat in the ERP with the identical
+reference and the identical amount, keyed five to eleven days later because the
+sale was written up late. The window answers "which payments could plausibly be
+this amount on this day"; it is the wrong instrument for a reference, which is
+the acquirer's own identifier for the swipe. The loader now takes the
+statement's own refs and fetches them whatever their date (deduplicated against
+the window read, so one payment reaches the matcher once). The matcher **offers**
+such a payment pre-ticked with the distance named, rather than auto-taking it —
+a reference matching across two weeks is also the shape of a code mis-keyed onto
+a later sale, and this is the one path that books money without a human. Inside
+the tolerance the automatic match is unchanged.
+
+**A ref-matched line carries its payment in `matched`, not `candidates`
+(same bug).** matchStatement empties `candidates`/`suggested` for that bucket on
+purpose — there is nothing to choose. The batch detail read only those two
+fields, so a matched line whose link had not persisted arrived with no payment
+and the screen ran its last branch, "No payment in the ERP explains this money",
+directly under the clue naming the sale it had matched; Confirm then sent an
+empty selection and was refused. The detail now falls back to `matched` for
+both, and the upload REFUSES when its rows insert returns fewer ids than
+decisions — the silent skip that left nine MATCHED lines with zero links.
+
+**THE MERCHANT FEE ACCOUNT (2026-09-09, docs/bugs/0762).** Every acquirer link
+in both companies had `fee_account_code = '930-0000'`, seeded by migration 0332
+when the chart was the old one. The AutoCount relay (0346) and the 397-account
+seed replaced the chart underneath, and in the new one 930-0000 is
+"MISCELLANEOUS EXPENSES XXX" and **inactive** — so the posting gate refused
+every settlement confirm with *"account 930-0000 is deactivated"*, in both
+companies, and had done since the chart moved. It stayed hidden because nothing
+reads the fee account until a line is CONFIRMED, and confirms were blocked by
+0760/0761. Migration `20260910T0147` repoints the links and the column default
+to **900-T009 TERMINAL INTEREST CHARGES** (the owner's choice), guarded so only
+rows still on the placeholder move and the target must be an EXPENSE, ACTIVE and
+a LEAF in that same company. The route's fallbacks are now one
+`MERCHANT_FEE_ACCOUNT` constant so the code and the column default cannot drift.
+**And the Setup screen can now pick it** (owner: 这个需要). Reconciliation setup
+offers each company its own ACTIVE EXPENSE LEAVES — server-filtered to the same
+properties the posting gate checks, so a code on the list cannot be one the gate
+refuses — and the PATCH re-checks all four by name (in this chart, active, an
+EXPENSE, a leaf) rather than accepting a code that fails later at confirm time.
+A fee account the chart can no longer post to is NAMED on the cell, because that
+silence is how 930-0000 went unnoticed while every confirm in both companies
+refused.
+
+**AND THE BULK BUTTON IS ITS OWN PATH (docs/bugs/0761).** `settlementConfirmMatched`
+("Confirm all N matched") builds each line's payments from `acc_settlement_matches`
+alone, so the detail fix left it still answering *Posted 0* over lines whose
+payment the screen was by then showing. It now applies the same fallback — for a
+pending MATCHED row with **no link**, recompute and take the matcher's `matched`
+— recomputed only for unlinked rows, so a stored human decision is never
+overridden, and confirming writes the link back so the data heals as it is
+worked. **Only `matched` is rescued, never `suggested`:** nobody reads each line
+on this path, and an out-of-window reference or a lone amount match is offered on
+the detail screen precisely because it needs eyes. The handler also 404s on a
+missing batch rather than reporting an empty success.
 
 **Which payments are candidates (2026-09-04, the owner's first real uploads
 made the gap loud: four MBB lines all UNMATCHED while their sales sat in the
@@ -1092,6 +1178,32 @@ period close** — it stops the bank reconciliation screens from changing a clos
 month, not a journal entry posted into those dates from elsewhere. Contracts:
 `backend/src/acc/bank-lock.test.ts` (an unfinished month refuses even with a
 reason; each unclean month refuses without one and closes with one).
+
+**"This movement is already in the books" (2026-09-09; owner, on a RM 3,000
+transfer sitting beside the RM 3,000 receipt that posted it: the only button was
+"Not ours to reconcile", which is not true).** `POST /bank/lines/:id/match` has
+existed since layer 4 shipped and had NO user interface, so everything on a
+statement that is not card money — a customer's transfer, a bank charge, a
+deposit — had no correct action. `entryCandidatesFor`
+(`backend/src/acc/bank-match.ts`) now ranks the posted entries a movement could
+be, and both `/bank/statements/:id` and `/bank/months/...` return them per line
+as `entryCandidates` (open lines only). Deliberately narrow, because the
+operator is agreeing that two records are ONE FACT: the amount must agree **to
+the sen and in the same direction** (a tolerance would let RM 3,000.00 reconcile
+against RM 3,000.50 and lose the fifty sen for ever), the entry must be within
+`ENTRY_MATCH_WINDOW_DAYS` (7 — a cheque banked on Friday clears on Monday), and
+an entry another movement already claims is not offered at all rather than
+refused after choosing. Ranked closest-day first with a deterministic tie-break;
+**proposed, never auto-applied**. The row shows the entry number, its date, how
+many days apart it is, and the document behind it; nothing is pre-selected and
+the button will not fire until a choice is made.
+
+**Where a reconciliation is "saved" (same day, same question: 我也没有看到哪里可
+以save 这个recon).** There is no Save because there is no draft — every decision
+writes when pressed, and the reconciliation is recomputed from the ledger on
+every read (§2.3, no caches). What records one is **closing its month** (above).
+The file view now says both, and names the month its own dates fall in, because
+the difference between finding that and hunting for it is one sentence.
 
 On both reconciliation screens, working a statement REPLACES the list rather than stacking under it —
 the owner on the version that stacked: 就感觉很多东西挤在一页. Each page links to

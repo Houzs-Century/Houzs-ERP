@@ -1,0 +1,65 @@
+name: Make the cutover stock say when it really arrived (2026-09-09)
+
+# Owner 2026-09-09: 「从 AutoCount 来的 stock 全部，你都要跟着 AutoCount 那边去拿到
+# 它的 variant、它的 stock、COGS 跟它的那个年龄」 -- age is the fourth of the four.
+#
+# It matters twice. The Stock Breakdown screen sorts by Age so you can see what
+# has sat longest, and a lot stamped with the migration date reads as brand new.
+# And that same date is the FIFO ORDER: the next delivery order consumes the
+# oldest lot first, so a wrong date sends it to the wrong layer and books the
+# wrong cost.
+#
+# THE ONLY SOURCE IT TRUSTS is the book's own words. When the opening balance was
+# rebuilt from AutoCount's receipt history, each movement recorded its source
+# document verbatim -- "AC GR GR-004679 2026-05-28". Where that date disagrees
+# with the lot, the book is right. A lot whose note names no receipt date is
+# COUNTED AND LISTED, never guessed: for those, when the goods arrived is
+# genuinely not recorded on our side.
+#
+# DEFAULT IS PLAN. Apply needs the confirm phrase. Every UPDATE names the exact
+# date being replaced, so a lot somebody re-dated in the meantime matches nothing
+# and is reported. Verification asserts the lot count, quantities and inventory
+# value are unchanged -- this writes one column and moves no stock and no money.
+#
+# REVERSAL -- the apply log prints "<old> -> <new>" for every lot it moved:
+#   UPDATE scm.inventory_lots SET received_at = '<old>T00:00:00Z' WHERE id = <id>;
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "Required for apply: fix cutover lot age 2026-09-09"
+        required: false
+        default: ""
+
+concurrency:
+  group: fix-cutover-lot-age-2026-09-09
+  cancel-in-progress: false
+
+jobs:
+  age:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/fix-cutover-lot-age-2026-09-09.mjs
+        env:
+          MODE: ${{ github.event.inputs.mode }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -51,6 +51,12 @@ on:
         default: "no"
         type: choice
         options: ["no", "yes"]
+      follow_sales_order:
+        description: "yes = when the purchase text and the sales order describe DIFFERENT sofas, take the SALES ORDER's. Owner decision only; pair it with doc."
+        required: false
+        default: "no"
+        type: choice
+        options: ["no", "yes"]
 
 concurrency:
   group: repair-mislabelled-sofa-po-${{ inputs.target }}
@@ -75,6 +81,7 @@ jobs:
           COMPANY: ${{ inputs.company }}
           DOC: ${{ inputs.doc }}
           ALLOW_DELIVERED: ${{ inputs.allow_delivered == 'yes' && '1' || '' }}
+          FOLLOW_SALES_ORDER: ${{ inputs.follow_sales_order == 'yes' && '1' || '' }}
           NODE_OPTIONS: --dns-result-order=ipv4first
 
   run-prod:
@@ -94,4 +101,5 @@ jobs:
           COMPANY: ${{ inputs.company }}
           DOC: ${{ inputs.doc }}
           ALLOW_DELIVERED: ${{ inputs.allow_delivered == 'yes' && '1' || '' }}
+          FOLLOW_SALES_ORDER: ${{ inputs.follow_sales_order == 'yes' && '1' || '' }}
           NODE_OPTIONS: --dns-result-order=ipv4first

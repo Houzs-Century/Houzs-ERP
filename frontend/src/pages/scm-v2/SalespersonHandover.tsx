@@ -36,7 +36,8 @@ import { ArrowRight, Loader2, UserCog, UserPlus, X } from "lucide-react";
 import { Button } from "../../components/Button";
 import { SearchableSelect } from "../../vendor/scm/components/SearchableSelect";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
-import { useStaff, usePickableStaff } from "../../vendor/scm/lib/admin-queries";
+import { usePickableStaff } from "../../vendor/scm/lib/admin-queries";
+import { useSoHandoverHolders } from "../../vendor/scm/lib/sales-order-queries";
 
 type PreviewOrder = {
   docNo: string;
@@ -73,15 +74,16 @@ const selectCls =
   "h-10 w-full rounded-md border border-border bg-surface px-3 text-[13px] text-ink outline-none focus:border-primary disabled:opacity-60";
 
 export function SalespersonHandover() {
-  /* FROM reads the FULL roster (useStaff) — the person handing over has usually
-     been deactivated already, and an active-only list would hide exactly the
-     case this tool exists for. TO reads the company-scoped ACTIVE list, so an
-     order can never land on a departed or cross-company rep. */
-  const rosterQ = useStaff();
+  /* FROM lists WHO HOLDS ORDERS, most first (useSoHandoverHolders — its own
+     comment has the measurement). It used to read the staff roster, which is
+     scoped by a person's company LINK and therefore hid exactly the resigned
+     AutoCount reps this panel exists for.
+     TO still reads the company-scoped ACTIVE list, so an order can never land
+     on a departed or cross-company rep — that direction genuinely wants the
+     roster, and wants it narrow. */
+  const holdersQ = useSoHandoverHolders();
+  const holders = holdersQ.data ?? [];
   const pickableQ = usePickableStaff();
-  const roster = [...(rosterQ.data ?? [])].sort((a, b) =>
-    (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }),
-  );
   const pickable = [...(pickableQ.data ?? [])].sort((a, b) =>
     (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }),
   );
@@ -95,7 +97,15 @@ export function SalespersonHandover() {
   const [result, setResult] = useState<BatchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const nameOf = (id: string) => roster.find((s) => s.id === id)?.name || "—";
+  /* Resolves against BOTH lists: the From side comes from holders, the To /
+     share side from the pickable roster, and one id can be in either. Falls
+     back to the staff code and never to a raw uuid — a holder whose staff row
+     has no name is still somebody the operator must be able to identify. */
+  const nameOf = (id: string) => {
+    const h = holders.find((x) => x.staffId === id);
+    if (h) return h.name || h.staffCode || "(unnamed)";
+    return pickable.find((s) => s.id === id)?.name || "—";
+  };
 
   async function loadPreview(staffId: string) {
     setPreview(null);
@@ -235,16 +245,22 @@ export function SalespersonHandover() {
             className={selectCls}
             ariaLabel="Orders currently with"
             placeholder="— Pick the salesperson leaving —"
-            disabled={busy || rosterQ.isLoading}
+            disabled={busy || holdersQ.isLoading}
             value={fromId}
             onChange={(v) => {
               setFromId(v);
               void loadPreview(v);
             }}
-            options={roster.map((s) => ({
-              value: s.id,
-              label: s.active ? s.name : `${s.name} (inactive)`,
-            }))}
+            /* The COUNT is in the label on purpose: this list is ordered by it,
+               and it is the number the operator is about to act on. `inactive`
+               still shows — most people here have left, which is the point. */
+            options={holders.map((h) => {
+              const who = h.name || h.staffCode || "(unnamed)";
+              return {
+                value: h.staffId,
+                label: `${who}${h.active === false ? " (inactive)" : ""} — ${h.orders}`,
+              };
+            })}
           />
         </label>
         <label className="block">

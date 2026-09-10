@@ -51,7 +51,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { buildFabricColourIndex } from "./lib/fabric-colour-match.mjs";
-import { mergeVariantPatch, OWNED_SOFA_KEYS } from "./lib/variant-merge.mjs";
+import { mergeVariantPatch, OWNED_BOOK_CORRECTION_KEYS } from "./lib/variant-merge.mjs";
 import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const DST = process.env.DATABASE_URL;
@@ -115,6 +115,13 @@ async function main() {
   for (const e of entries) {
     const table = TABLE[e.type];
     if (!table) { plain(`  !! ${e.ac_doc}: unknown type ${e.type} — skipped`); skipped++; continue; }
+    /* An unrecognised axis used to fall through to the SCALAR branch and write
+       seatHeight, so a typo would silently stamp a leg measurement into the seat.
+       Named explicitly and refused, the way every other gate here is. */
+    if (!["colour", "seat", "leg"].includes(e.axis)) {
+      plain(`  !! ${e.ac_doc}: unknown axis ${JSON.stringify(e.axis)} — the axes are colour, seat, leg — skipped`);
+      skipped++; continue;
+    }
     const rows = e.type === "SO"
       ? await sql`SELECT i.id::text AS id, i.item_code, i.variants, i.doc_no,
                     (h.${PDATE} IS NOT NULL) AS proceeded
@@ -151,7 +158,8 @@ async function main() {
     /* THE STALE-LIST REFUSAL — asserted on EVERY row of the build. A build
        whose pieces disagree with each other is a state a human has to look at,
        never one to flatten by writing over it. */
-    const valueOf = (r) => (e.axis === "colour" ? pickColour(r.variants) : String(inches(pickAxisSeat(r.variants)) ?? ""));
+    const pickScalar = (r) => (e.axis === "leg" ? pickAxisLeg(r.variants) : pickAxisSeat(r.variants));
+    const valueOf = (r) => (e.axis === "colour" ? pickColour(r.variants) : String(inches(pickScalar(r)) ?? ""));
     const sameAs = (v, want) => (e.axis === "colour"
       ? (() => { const a = idOf(findColour, v), b = idOf(findColour, want); return a && b ? a === b : norm(v) === norm(want); })()
       : v === String(want));
@@ -177,8 +185,8 @@ async function main() {
       };
     } else {
       const n = inches(e.book);
-      if (n === null) { plain(`  !! ${head}: the book's seat "${e.book}" is not a number — skipped`); skipped++; continue; }
-      patch = { seatHeight: `${n}"` };
+      if (n === null) { plain(`  !! ${head}: the book's ${e.axis} "${e.book}" is not a number — skipped`); skipped++; continue; }
+      patch = e.axis === "leg" ? { legHeight: `${n}"` } : { seatHeight: `${n}"` };
     }
 
     const down = await downstream(e.type, rows.map((r) => r.id));
@@ -203,7 +211,7 @@ async function main() {
   let written = 0, rowsWritten = 0;
   for (const w of writable) {
     let n = 0;
-    for (const r of w.rows) n += await mergeVariantPatch(sql, { table: w.table, id: r.id, patch: w.patch, owned: OWNED_SOFA_KEYS });
+    for (const r of w.rows) n += await mergeVariantPatch(sql, { table: w.table, id: r.id, patch: w.patch, owned: OWNED_BOOK_CORRECTION_KEYS });
     if (n !== w.rows.length) { plain(`  !! ${w.e.ac_doc}: merged ${n} of ${w.rows.length} piece(s) — a row vanished or its variants is not an object`); }
     if (n) { written++; rowsWritten += n; }
   }
@@ -235,8 +243,9 @@ async function main() {
           const want = findAgain(w.e.book);
           if (!got || !want || got.colour_id !== want.colour_id) why.push(`colour reads ${JSON.stringify(pickColour(r.variants))}, wanted ${w.e.book}`);
         } else {
-          const got = inches(pickAxisSeat(r.variants));
-          if (got !== inches(w.e.book)) why.push(`seat reads ${JSON.stringify(pickAxisSeat(r.variants))}, wanted ${w.e.book}"`);
+          const read = w.e.axis === "leg" ? pickAxisLeg(r.variants) : pickAxisSeat(r.variants);
+          const got = inches(read);
+          if (got !== inches(w.e.book)) why.push(`${w.e.axis} reads ${JSON.stringify(read)}, wanted ${w.e.book}"`);
         }
       }
       if (why.length) bad.push(`${w.e.ac_doc} ${wr.item_code}: ${why.join("; ")}`);
@@ -261,6 +270,20 @@ const idOf = (findColour, text) => {
 function pickAxisSeat(v) {
   const o = v && typeof v === "object" && !Array.isArray(v) ? v : {};
   for (const k of ["seatHeight", "depth"]) {
+    const x = o[k] == null ? "" : String(o[k]).trim();
+    if (x) return x;
+  }
+  return "";
+}
+
+/* THE LEG AXIS. The key names are NOT invented here: they are the ones
+   `scripts/lib/variant-reconcile.mjs:278` compares on —
+   `{ key: "leg", label: "leg height", erpKeys: ["legHeight", "sofaLegHeight"] }`.
+   Reading a different key from the checker that reports the difference is how a
+   repair "fixes" a row the report goes on calling wrong. */
+function pickAxisLeg(v) {
+  const o = v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  for (const k of ["legHeight", "sofaLegHeight"]) {
     const x = o[k] == null ? "" : String(o[k]).trim();
     if (x) return x;
   }

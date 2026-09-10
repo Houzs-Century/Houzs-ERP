@@ -28,6 +28,7 @@ import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
+import { buildSeedRackLabels } from '../shared/rack-labels';
 
 export const warehouse = new Hono<{ Bindings: Env; Variables: Variables }>();
 warehouse.use('*', supabaseAuth);
@@ -222,18 +223,30 @@ export const createWarehouseRacksHandler = async (c: any) => {
   if (targets.length === 0) return c.json({ error: 'warehouse_required' }, 400);
   const multi = targets.length > 1;
 
-  // Seed mode: { count, prefix } creates "Rack 1".."Rack N" in every target,
-  // skipping labels that already exist (unique (warehouse_id, rack)).
+  /* Seed mode: { count, prefix } creates "Rack 1".."Rack N" in every target,
+     skipping labels that already exist (unique (warehouse_id, rack)).
+
+     With { series, levels } it creates an AISLE.LEVEL grid instead —
+     series "L", count 21, levels 2 gives "Rack L1.1" … "Rack L21.2" (owner
+     2026-09-09, KL WAREHOUSE's real numbering). The label shapes live in
+     shared/rack-labels.ts, mirrored to the browser, so the modal's preview and
+     this insert cannot disagree; `levels: 1` reproduces the flat shape exactly,
+     which is the back-compat contract every earlier seed run relies on. */
   const count = Number(body.count ?? 0);
   if (Number.isFinite(count) && count > 0) {
     const prefix = String(body.prefix ?? 'Rack').trim() || 'Rack';
+    const labels = buildSeedRackLabels({
+      prefix,
+      series: typeof body.series === 'string' ? body.series : null,
+      count,
+      levels: body.levels == null ? 1 : Number(body.levels),
+    });
     const rows: Array<Record<string, unknown>> = [];
     for (const warehouseId of targets) {
       const { data: existing } = await sb
         .from('warehouse_racks').select('rack').eq('warehouse_id', warehouseId);
       const taken = new Set((existing ?? []).map((r: { rack: string }) => r.rack));
-      for (let i = 1; i <= Math.min(count, 200); i++) {
-        const label = `${prefix} ${i}`;
+      for (const label of labels) {
         // multi-company: stamp the active company on every seeded rack
         if (!taken.has(label)) rows.push({ company_id: activeCompanyId(c), warehouse_id: warehouseId, rack: label, status: 'EMPTY' });
       }

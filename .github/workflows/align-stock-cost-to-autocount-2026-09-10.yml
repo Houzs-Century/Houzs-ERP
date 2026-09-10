@@ -1,0 +1,85 @@
+name: Give our stock the cost the book still carries (2026-09-10)
+
+# Owner 2026-09-10: 「最重要的是一定要跟 AutoCount 一样，要不然我的 balance sheet
+# 之后做的时候会不准、不一样」, and on the plan: 「是的」.
+#
+# WHAT IS WRONG TODAY, measured (run 34436681698): on the 961 cells where
+# AutoCount's own cost layers add up to its own balance, the book holds 7,605
+# units worth RM 1,485,503 and we hold 10,240 units worth RM 2,484,147. Most of
+# that is not stock we do not have -- it is cost we priced too high. Same
+# quantity, several times the value:
+#
+#   AK-SLEEP ESSENTIAL 7 HOLES   1,132 vs 1,130   RM 3,158 vs RM 20,340
+#   DL-SERENITY LTX PIL             94 vs 94      RM 0     vs RM 17,672
+#   NTYR-TECHGEL MEM PIL           493 vs 493     RM 25,039 vs RM 40,426
+#
+# The cutover priced each lot from the RECEIPT it came from. AutoCount values
+# what is LEFT, and after FIFO has eaten the early layers what remains is not
+# what the receipt cost.
+#
+# IT COPIES THE BOOK'S LAYERS, IT DOES NOT FORCE A TOTAL. Forcing our total to
+# equal the book's would set a unit cost that is wrong per unit wherever the
+# quantity also differs -- CODY-(Q) is 36 in the book and 65 here, so a forced
+# total gives RM 124.60 a piece for a thing that costs RM 225, and buries a real
+# stock difference inside a money field. UTDStockCostDTL holds the layers the
+# book still has, in order; those are copied onto our lots oldest-first.
+#
+# FOUR REFUSALS, each stated: a cell whose QUANTITY disagrees is reported and
+# skipped (re-costing it would hide a stock problem behind a money change); the
+# 112 cells whose layers do not add up to their own balance are UNKNOWN; SERVICE
+# items are out on the owner's ruling; and SOFA is excluded by construction --
+# the book prices a whole sofa while our stock is per compartment, so no lot
+# matches and none is written. A NEGATIVE balance IS followed
+# (「如果是负库存，你也是要跟着负库存的」).
+#
+# DEFAULT IS PLAN. Apply needs the confirm phrase. Every UPDATE names the exact
+# cost being replaced. Verification asserts quantities and lot count unchanged
+# and that the value moved by exactly the planned amount.
+#
+# REVERSAL -- the apply log prints "<old> -> <new>" for every lot it moved:
+#   UPDATE scm.inventory_lots SET unit_cost_sen = <old> WHERE id = <id>;
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "Required for apply: align stock cost to autocount 2026-09-10"
+        required: false
+        default: ""
+      top:
+        description: "How many cells to print (default 40)"
+        required: false
+        default: "40"
+
+concurrency:
+  group: align-stock-cost-to-autocount-2026-09-10
+  cancel-in-progress: false
+
+jobs:
+  align:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/align-stock-cost-to-autocount-2026-09-10.mjs
+        env:
+          MODE: ${{ github.event.inputs.mode }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          TOP: ${{ github.event.inputs.top }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

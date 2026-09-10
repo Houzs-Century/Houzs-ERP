@@ -1407,6 +1407,12 @@ Ledger: `docs/bugs/0715-subtracting-the-state-from-the-city-deleted-the-city-whe
   - `queryFn` → `authedFetch('/mfg-sales-orders?status=…')`
   - `staleTime: 30_000`, `placeholderData: prev` (keep old rows while a tab switch loads).
 - `useMfgSalesOrderDetail(docNo)` — `['mfg-sales-order-detail', docNo]`, `enabled: !!docNo`.
+- `useSoHandoverHolders()` — `['so-handover-holders']`, `GET /so-handover/holders`:
+  the salespeople who HOLD this company's orders, most first. It lives in this
+  file because it reads Sales Orders, but the rule it serves belongs to
+  **`so-handover.md` §6** — it exists because the staff ROSTER is scoped by a
+  person's company link and hid 22 holders / 339 orders from the handover
+  picker. Read that section before changing it.
 - Mutations (`create/patch/proceed/cancel/…`) each call
   `qc.invalidateQueries({ queryKey: ['mfg-sales-orders'] })` on success, so the list
   reflects a write immediately (same tab) and cross-tab via the MutationCache broadcast.
@@ -2461,6 +2467,48 @@ pinned by `backend/tests/acNotADifference.test.ts` and
 
 **SALES ORDERS are not a `migratedChainLineShape` type**, so no sales-order figure
 moves on this: a book line a sales order does not have is still a difference.
+
+### `chain-source-not-migrated` — a SECOND pass over the same axis (2026-09-10)
+
+Added because the shape proof above cannot answer for purchase invoices. Only
+OUTSTANDING purchase orders were migrated — the book holds 9,416, 474 came over —
+and **one AutoCount goods receipt serves many purchase orders**, so a receipt we
+DO hold still carries lines from orders we never imported. Our purchase invoice
+is built from OUR receipt, so it cannot carry those lines and the book bills
+them: a line we never had, not one we lost. Measured on the committed cut, 124 of
+the 211 in-scope receipts are affected, 837 such lines against 587 in scope.
+
+`splitUnmigratedSourceLine` (`lib/ac-not-a-difference.mjs` §7) runs from
+`applyChainShape` over the rows the shape proof REFUSED — never over all of them,
+so the two lanes cannot both claim a document — and reclassifies into the
+declared class **`chain-source-not-migrated`**, which carries its own sentence in
+`DECLARED_LABEL`.
+
+Four gates, the last three measured per line: the TYPE declares the decision
+(`UNMIGRATED_SOURCE`, no type letter in the wiring); the book NAMES a source for
+the line; every candidate source is the declared type; and we hold NONE of them —
+coverage READ off the ERP's own purchase-order rows, never off `SCOPE`, which
+states the population the migration was *defined* to carry rather than the one it
+did.
+
+**The verdict is per DOCUMENT, so it is all or nothing.** A document whose eleven
+unpaired lines are migration gaps and whose twelfth is a line we really lost stays
+counted — that is `docs/bugs/0668` with the arrow reversed. And `sourceOf` returns
+a LIST: the book names no purchase order on a purchase-invoice line at all
+(`FromDocType` is `GR` on every one), so the order is a hop further up, and of the
+1,349 lines on the 189 in-scope invoices **493 resolve to more than one order**.
+Picking one would be the checker inventing a correspondence (`docs/bugs/0690`).
+
+**MEASURED**, read-only run 34377446020 against production, company 1, on the
+branch that added it — **re-run before quoting it**: of the purchase invoices on
+this axis, **14 are the line SHAPE, 43 are the unmigrated source order, and 78
+refuse and stay counted**. The 78 divide into *we DO hold the purchase order that
+line was raised from* and *the book names no source for that line* — both
+possible real defects, neither waved through.
+
+`docs/bugs/0768-the-121-purchase-invoices-the-book-bills-lines-we-never-had.md`
+(cited by FILENAME — `0768` is taken three times in the ledger), pinned by the
+same two test files as the lane above.
 
 **Nothing on the sales-order side of this moved.** `check-so-tally.mjs` is not
 modified by that lane, `VERDICT_OUT` still receives SALES ORDERS and nothing
@@ -3969,6 +4017,17 @@ same reason the checker was on it: the same render, in a new file, computing no
 price and reading no money. (The move also brought a `no-key` column beside
 `differ` on the SCALAR axes — `docs/bugs/0712`, and
 `docs/modules/delivery-order.md` for what it means.)
+
+**A FOURTH allow-list entry, 2026-09-09, and it is the first WRITER on it.**
+`backend/scripts/repair-migrated-invoice-variants-from-receipt.mjs` copies a
+goods-receipt line's `variants` onto the migrated purchase-invoice line raised
+from it, where that copy came out empty. It names `specialsRecorded` only to
+WITHHOLD it: its `WITHHELD` map lists every key it refuses to carry across, with
+the reason, beside `specials`, `special` and `customSpecials`. Mentioning a key
+in order not to write it is the opposite of pricing it, and the failure mode is
+the safe one — a parent key in neither its owned list
+(`OWNED_PI_SNAPSHOT_KEYS`) nor the withheld map makes the row REFUSE rather than
+be copied in part.
 
 Those readers are on the allow-list because they are READ-ONLY: they SELECT and
 print, none writes a line, and none can reach a price. The rule stays "render the

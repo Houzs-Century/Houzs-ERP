@@ -1214,6 +1214,7 @@ export async function enqueueEdit(
     touchedFields?: readonly string[];
   },
 ): Promise<boolean> {
+  let resolvedDocNo: string | null = null;  // the CATCH needs the number: a PO route passes only docId, so a refusal was filed under a UUID (docs/bugs/0774)
   try {
     if (opts.companyId == null) return false;
     if (!(await isWritebackEnabled(sb, opts.companyId))) return false;
@@ -1227,7 +1228,7 @@ export async function enqueueEdit(
     if (!composed) return false;
     /* A PO route knows its id, not its number; the outbox row is keyed by the
        human document number so it lines up with the create row. */
-    const docNo = composed.docNo;
+    const docNo = (resolvedDocNo = composed.docNo);
 
     const pending = await findPendingOriginatingOp(sb, opts.companyId, opts.docType, docNo, opts.docId ?? null);
     if (pending) {
@@ -1321,7 +1322,7 @@ export async function enqueueEdit(
       companyId: opts.companyId as number,
       op: 'edit',
       docType: opts.docType,
-      docNo: String(opts.docNo ?? opts.docId ?? ''),
+      docNo: String(resolvedDocNo ?? opts.docNo ?? opts.docId ?? ''),
       docId: opts.docId ?? null,
     });
     return false;

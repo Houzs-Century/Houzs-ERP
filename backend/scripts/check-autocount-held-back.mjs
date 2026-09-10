@@ -120,6 +120,82 @@ const ageOf = (iso) => {
 };
 const day = (iso) => (iso ? String(new Date(iso).toISOString().slice(0, 10)) : "-");
 
+/**
+ * The same STATE report, for a PURCHASE order.
+ *
+ * WHY IT IS SEPARATE FROM THE SALES ONE. A sales order is named by `doc_no`; a
+ * purchase order is named by `po_number` and identified by `id`. The queue can
+ * show EITHER: `composePoState` writes `docNo: header.po_number || poId`, so an
+ * outbox row reads as a raw UUID whenever `po_number` is empty. Looking a UUID
+ * up in `scm.mfg_sales_orders.doc_no` answers "NOT FOUND" about a document that
+ * exists, which is the one wrong answer this check must never give.
+ *
+ * IT PRINTS `po_number` ITSELF, blank or not, because that is the whole question
+ * a UUID-shaped row raises: is the number missing, or is the queue just showing
+ * the id? Nothing else about the document is printed that a public log should
+ * not carry - no supplier, no item, no money.
+ */
+async function purchaseOrderState(doc) {
+  const cols = await columnsOf("scm", "purchase_orders");
+  if (!cols.size) {
+    out("   scm.purchase_orders is not readable, so this cannot be answered here.");
+    return;
+  }
+  const wanted = ["id", "po_number", "company_id", "status", "po_date",
+                  "linked_ac_docno", "created_at", "updated_at"];
+  const have = wanted.filter((c) => cols.has(c));
+  const list = have.map((c) => `"${c}"`).join(", ");
+  /* BY NUMBER FIRST, then by id. Both are asked because both are what the queue
+     can be showing, and a `uuid = text` comparison is an absent OPERATOR rather
+     than a no-match - so the id lookup is cast and guarded on its own. */
+  let [po] = cols.has("po_number")
+    ? await pg.unsafe(`SELECT ${list} FROM scm.purchase_orders WHERE po_number = $1`, [doc])
+    : [];
+  if (!po) {
+    try {
+      [po] = await pg.unsafe(`SELECT ${list} FROM scm.purchase_orders WHERE id::text = $1`, [doc]);
+    } catch {
+      po = undefined;
+    }
+  }
+  if (!po) {
+    out(`   scm.purchase_orders has no row with po_number or id = '${doc}' either.`);
+    return;
+  }
+  out("   IT IS A PURCHASE ORDER.");
+  const num = String(po.po_number ?? "").trim();
+  out(`   po_number       ${num || "EMPTY — this is why the queue shows the id instead"}`);
+  out(`   company_id      ${po.company_id ?? "-"}   status ${po.status ?? "-"}`);
+  out(`   document date   ${day(po.po_date)}   created ${day(po.created_at)}   updated ${day(po.updated_at)}`);
+  out(`   linked_ac_docno ${po.linked_ac_docno ?? "NONE — no AutoCount counterpart recorded"}`);
+
+  const itemCols = await columnsOf("scm", "purchase_order_items");
+  if (!itemCols.has("purchase_order_id")) {
+    out("   lines           UNKNOWN — scm.purchase_order_items has no purchase_order_id column.");
+    return;
+  }
+  const hasCancelled = itemCols.has("cancelled");
+  const orderBy = itemCols.has("created_at") ? "created_at, id" : "id";
+  const lines = await pg.unsafe(
+    `SELECT id, linked_ac_dtlkey${hasCancelled ? ", cancelled" : ""}
+       FROM scm.purchase_order_items WHERE purchase_order_id::text = $1 ORDER BY ${orderBy}`,
+    [String(po.id)],
+  );
+  const live = hasCancelled ? lines.filter((l) => !l.cancelled) : lines;
+  const keyless = live
+    .map((l, i) => [i + 1, l])
+    .filter(([, l]) => l.linked_ac_dtlkey === null || l.linked_ac_dtlkey === undefined)
+    .map(([i]) => i);
+  out(
+    `   lines           ${lines.length} total` +
+      (hasCancelled ? `, ${lines.length - live.length} cancelled, ${live.length} live` : "") +
+      ` — ${live.length - keyless.length} carry linked_ac_dtlkey, ${keyless.length} do NOT`,
+  );
+  if (keyless.length) {
+    out(`   keyless line positions (1-based, live lines ordered by ${orderBy}): ${keyless.join(", ")}`);
+  }
+}
+
 try {
   // ── 1. WHAT IS HELD BACK ────────────────────────────────────────────────
   const [totals, held] = await Promise.all([
@@ -269,7 +345,14 @@ try {
   );
 
   if (!so) {
-    out(`   NOT FOUND. scm.mfg_sales_orders has no row with doc_no = '${DOC}'.`);
+    out(`   scm.mfg_sales_orders has no row with doc_no = '${DOC}'.`);
+    /* A PURCHASE ORDER IS NAMED DIFFERENTLY, and the queue can show it by its
+       raw id. `composePoState` writes `docNo: header.po_number || poId`, so an
+       outbox row reads as a UUID whenever that column is empty — which is
+       exactly what the owner saw on the Sync page on 2026-09-10 and asked about
+       (「为什么会有这样的document」). Answering "not found" there was the check
+       looking in the wrong table, not a missing document. */
+    await purchaseOrderState(DOC);
   } else {
     out(`   company_id      ${so.company_id ?? "-"}`);
     out(`   status          ${so.status ?? "-"}${so.cancelled === undefined ? "" : `  cancelled=${so.cancelled}`}`);

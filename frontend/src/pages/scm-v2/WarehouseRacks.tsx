@@ -52,6 +52,7 @@ import {
 } from '../../vendor/scm/lib/warehouse-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
+import { buildSeedRackLabels, MAX_SEED_RACKS } from '../../vendor/shared/rack-labels';
 import styles from './WarehouseRacks.module.css';
 import formStyles from './Suppliers.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -965,18 +966,32 @@ function SeedRacksModal({
   const create = useCreateRack();
   const notify = useNotify();
   const [prefix, setPrefix] = useState('Rack');
+  const [series, setSeries] = useState('');
   const [count, setCount] = useState(10);
+  const [levels, setLevels] = useState(1);
   const [scopeMode, setScopeMode] = useState<ScopeMode>('this');
   const [scopeChosen, setScopeChosen] = useState<string[]>([]);
+
+  /* The labels the server WILL write, from the shared generator — the preview
+     must not be a second guess at the rule (shared/rack-labels.ts). */
+  const preview = buildSeedRackLabels({
+    prefix: prefix.trim() || 'Rack', series, count: Number(count), levels: Number(levels),
+  });
 
   const submit = () => {
     const n = Math.floor(Number(count));
     if (!Number.isFinite(n) || n < 1) {
-      notify({ title: 'Enter how many racks to create (1–200).', tone: 'error' });
+      notify({ title: `Enter how many racks to create (1–${MAX_SEED_RACKS}).`, tone: 'error' });
       return;
     }
     create.mutate(
-      { ...scopeBody(scopeMode, warehouseId, scopeChosen), count: n, prefix: prefix.trim() || 'Rack' },
+      {
+        ...scopeBody(scopeMode, warehouseId, scopeChosen),
+        count: n,
+        prefix: prefix.trim() || 'Rack',
+        series: series.trim(),
+        levels: Math.max(1, Math.floor(Number(levels)) || 1),
+      },
       {
         onSuccess: (res) => {
           const made = res.created ?? res.racks?.length ?? 0;
@@ -997,7 +1012,11 @@ function SeedRacksModal({
         </div>
         <div className={formStyles.modalBody}>
           <p className={formStyles.subtitle} style={{ margin: 0 }}>
-            Quickly create numbered racks (e.g. Rack 1 … Rack {Math.max(1, Math.floor(Number(count) || 0))}). Labels that already exist are skipped. Max 200 at a time.
+            {preview.length > 0
+              ? <>Creates {preview.length} rack{preview.length === 1 ? '' : 's'}: <strong>{preview[0]}</strong>
+                  {preview.length > 1 && <> … <strong>{preview[preview.length - 1]}</strong></>}.</>
+              : <>Enter how many racks to create.</>}
+            {' '}Labels that already exist are skipped. Max {MAX_SEED_RACKS} at a time.
           </p>
           <label className={formStyles.field}>
             <span className={formStyles.fieldLabel}>Prefix</span>
@@ -1005,9 +1024,19 @@ function SeedRacksModal({
               onChange={(e) => setPrefix(e.target.value)} />
           </label>
           <label className={formStyles.field}>
-            <span className={formStyles.fieldLabel}>How many</span>
-            <input className={formStyles.fieldInput} type="number" min={1} max={200} value={count}
+            <span className={formStyles.fieldLabel}>Series (optional)</span>
+            <input className={formStyles.fieldInput} value={series} placeholder="e.g. L or R — leave blank for plain numbers"
+              onChange={(e) => setSeries(e.target.value)} />
+          </label>
+          <label className={formStyles.field}>
+            <span className={formStyles.fieldLabel}>How many {Number(levels) > 1 ? 'aisles' : 'racks'}</span>
+            <input className={formStyles.fieldInput} type="number" min={1} max={MAX_SEED_RACKS} value={count}
               onChange={(e) => setCount(Number(e.target.value))} />
+          </label>
+          <label className={formStyles.field}>
+            <span className={formStyles.fieldLabel}>Levels per aisle</span>
+            <input className={formStyles.fieldInput} type="number" min={1} max={20} value={levels}
+              onChange={(e) => setLevels(Number(e.target.value))} />
           </label>
           <RackScopeField
             warehouses={warehouses}
