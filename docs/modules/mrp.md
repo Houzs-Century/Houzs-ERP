@@ -284,6 +284,37 @@ is the `optional-param-noop` trap CLAUDE.md names, and the other ~15
   are born NULL in the first place. Read rule and write default live in one
   file on purpose: they must never disagree about the same order.
 
+### 2.1 A row's `category` — the fallback, and why the row disappears without it
+
+**The response field `skus[].category` is what puts a row on a tab.** The
+frontend picks a tab's rows with `s.category === VIEW_CATEGORY[view]`
+(`frontend/src/pages/scm-v2/Mrp.tsx:553`), so a row whose `category` is `null`
+belongs to NO tab and is invisible on all four — with no empty state, no count,
+and no warning, because a missing row and a covered row look identical here.
+
+**The category is decided in ONE way, in two places, and they must stay the
+same expression:**
+
+```
+prod?.category ?? catFromGroup(<the line's item_group>)
+```
+
+- the FILTER — `mrp.ts:1099`, deciding whether a line enters demand at all;
+- the EMIT — `mrp.ts:1344`, the value that ships on the row (first non-null
+  `catFromGroup` across the bucket's own rows).
+
+`catFromGroup` (`mrp.ts:1087`) maps an `item_group` to
+BEDFRAME / SOFA / MATTRESS / ACCESSORY / SERVICE and returns `null` for anything
+else. It exists so a line whose `item_code` is not in `mfg_products` still shows
+under its tab; **`null` out of it is still `null` on the row** — an unrecognised
+group is not guessed at.
+
+Until 2026-09-10 the emit site read `prod?.category ?? null` while the filter had
+the fallback, so the engine kept those lines, planned them, and shipped them with
+no category: eight accessory codes / 62 lines / 110 units on prod were planned and
+shown nowhere (`docs/bugs/0777-mrp-dropped-8-accessory-codes-from-every-tab-because-the-row.md`).
+If a third reader of a line's category is ever added, it uses this expression too.
+
 ## 3. Supply
 
 - On-hand: `inventory_balances` summed per bucket.
@@ -735,6 +766,12 @@ list keeps its plain flow and never grows an inner scrollbar.
   data with a truncation guard sitting right underneath it (§5). A cap is only
   loud if the number it compares against is the number the server will actually
   return. Prefer `paginateAll` / `chunkIn` over a bare `.limit()` and a guard.
+- **A row that is FILTERED IN must also be EMITTED with the value the filter
+  used.** Whenever a field decides both "does this line count" and "where does
+  this row appear", writing it twice is writing two rules. `category` did
+  exactly this and cost 110 planned units of silence (§2.1, docs/bugs/0777).
+  This class is worse than a crash: the page still renders, still looks
+  complete, and the gap is found on delivery day.
 - `companyId` is REQUIRED on `computeMrp` (typed `number | null | undefined`,
   key not optional) — see the #710/#712 incident comment at the signature.
 - Status columns are ENUMS in Postgres — any raw SQL must `::text` before
