@@ -1,0 +1,90 @@
+name: Backfill the book's spec text into the Special note (PLAN by default)
+
+# The owner, 2026-09-10: 「查回去autocount的记录看那些square pillow custom 和
+# special order 的mattress 和dining table diningleg 的spec全部放进去那个special
+# custom的地方。这样子，当我们发给 Supplier PO 的时候，他才能看得到这个 pillow 是
+# 什么颜色的，然后 mattress 是什么尺寸，以及我们的 dining table、dining leg、
+# dining chair 是什么款式。」
+#
+# WHAT IT WRITES: ONE key, scm.mfg_sales_order_items.variants.extraAddonNote,
+# on company-1 sales-order lines whose resolved category is in the write scope,
+# whose note is empty, and for which the account book holds a spec text. The
+# write is a jsonb MERGE, so no other key of the bag is touched. It never writes
+# variants.specials (that key enters computeVariantKey and would re-key the line
+# into a different stock bucket), never custom_specials (derived, self-erasing),
+# never description2, never money, never a header field.
+#
+# WHY THAT REACHES THE SUPPLIER: a purchase-order line copies the SO line's
+# variants and stamps description2 from buildVariantSummary
+# (mfg-purchase-orders.ts:2259, :2394), and buildVariantSummary appends
+# `SPECIAL: <extraAddonNote>` after the per-group attribute branch — so a
+# category with no attributes of its own still carries its note onto the PO.
+#
+# PLAN (default): every UPDATE runs inside ONE transaction and is ROLLED BACK.
+# The output prints the census by category, the per-source split, the guard's
+# exclusions, the SO statuses these lines sit on, the projected AutoCount Desc2
+# lengths, and a fresh-connection re-read asserting the rollback held and that
+# no variant key was lost. Nothing persists.
+# mode=apply commits the same transaction and additionally requires the CONFIRM
+# phrase, which is not defaulted here — it has to be typed into the dispatch.
+#
+# Manual trigger only, own concurrency group — a repair must never queue behind
+# or displace a release. Never scheduled.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (rolls back) or apply (commits)"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      categories:
+        description: "comma-separated resolved categories to WRITE (the census still prints every category)"
+        required: false
+        default: "accessory,mattress,others"
+        type: string
+      company:
+        description: "company id (1 = Houzs Century; a 2990-* document is out of scope)"
+        required: false
+        default: "1"
+        type: string
+      sample:
+        description: "how many worked samples to print"
+        required: false
+        default: "12"
+        type: string
+      confirm:
+        description: 'apply ONLY: type I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: backfill-book-spec-into-extra-addon-note
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/backfill-book-spec-into-extra-addon-note.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CATEGORIES: ${{ inputs.categories }}
+          COMPANY: ${{ inputs.company }}
+          SAMPLE: ${{ inputs.sample }}
+          CONFIRM: ${{ inputs.confirm }}
