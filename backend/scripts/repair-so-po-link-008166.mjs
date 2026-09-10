@@ -112,7 +112,7 @@ async function main() {
 
   const res = await sql`
     UPDATE scm.purchase_order_items
-       SET so_item_id = ${starved}, updated_at = NOW()
+       SET so_item_id = ${starved}
      WHERE id = ${moveLine.id} AND so_item_id = ${overloaded}
      RETURNING id`;
   log('');
