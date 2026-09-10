@@ -53,10 +53,14 @@ the identical 12 rows on `930-0000`: **12 moved, 0 left on the dead account**,
 and the column default now reads `'900-T009'::text`. `src/acc` + settlement
 routes: 374 passing.
 
-**Not fixed here.** The Reconciliation Setup screen lets a person pick the
-transit account and the receiving bank but **not the fee account**, though the
-API has accepted `feeAccountCode` all along. That is why this needed a
-migration instead of a click. Worth adding; the owner has not asked yet.
+**And the screen can now pick it.** Told that the Setup page could not, the
+owner asked for it (这个需要). Reconciliation setup offers each company its own
+ACTIVE EXPENSE LEAVES, filtered by the server to the same properties the posting
+gate checks, and the PATCH re-checks all four by name — in this chart, active, an
+EXPENSE, a leaf — so a code that would fail at confirm time is refused where the
+choice is made. A fee account the chart can no longer post to is NAMED on the
+cell rather than shown as a blank select: that silence is how 930-0000 went
+unnoticed.
 
 **Status stays `open` until the owner's lines actually post on prod.**
 
