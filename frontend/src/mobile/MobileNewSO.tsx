@@ -1317,7 +1317,6 @@ export function MobileNewSO({
      has any variants set — the PICK-TIME seed. Same shared helper the desktop
      form calls; this file used to carry its own copy of it. */
   const inheritVariantsByCategory = useMemo(
-    /* Sofa only — the owner ruling this file also applies to the live cascade. */
     () => seedableMasterVariants(cascadeLines, CASCADE_CATEGORIES),
     [cascadeLines],
   );
@@ -1339,9 +1338,6 @@ export function MobileNewSO({
     const { variants, masters } = cascadeMasterVariants(
       cascadeLines,
       masterSnapshotRef.current,
-      /* The ONE set, shared with desktop (owner 2026-09-09: cascade is for sofa
-         only). This used to be a mobile-local ["sofa","bedframe"] while desktop
-         passed null for every category. */
       CASCADE_CATEGORIES,
     );
     masterSnapshotRef.current = masters;
@@ -2361,10 +2357,7 @@ export function MobileNewSO({
                     disabled={scheduleDatesLocked}
                     min={today}
                     /* Derives Processing — rule + why in lib/processingDate.ts. */
-                    onChange={(iso) => {
-                      setDelivDate(iso);
-                      if (iso && !procDate) setProcDate(deriveProcessingDate(iso));
-                    }}
+                    onChange={(iso) => { setDelivDate(iso); if (iso && !procDate) setProcDate(deriveProcessingDate(iso)); }}
                   />
                 </Field>
                 <div style={{ fontSize: 10, color: "#9aa093", marginTop: -3 }}>
