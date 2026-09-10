@@ -75,28 +75,30 @@ try {
   // ── The PO lines: those directly linked (so_item_id) + those linked via an
   //    allocation + (if PO_DOC given) every line of that PO regardless of link. ─
   const directPoLines = soLineIds.length ? await sql`
-    SELECT p.id, p.doc_no, p.item_code, p.qty::numeric AS qty,
+    SELECT p.id, o.doc_no, p.item_code, p.qty::numeric AS qty,
            p.received_qty::numeric AS received, p.so_item_id, p.cancelled
       FROM scm.purchase_order_items p
-     WHERE p.company_id = ${CO} AND p.so_item_id = ANY(${soLineIds})` : [];
+      JOIN scm.purchase_orders o ON o.id = p.purchase_order_id
+     WHERE o.company_id = ${CO} AND p.so_item_id = ANY(${soLineIds})` : [];
 
   const byAllocPoLines = allocPoItemIds.length ? await sql`
-    SELECT p.id, p.doc_no, p.item_code, p.qty::numeric AS qty,
+    SELECT p.id, o.doc_no, p.item_code, p.qty::numeric AS qty,
            p.received_qty::numeric AS received, p.so_item_id, p.cancelled
       FROM scm.purchase_order_items p
+      JOIN scm.purchase_orders o ON o.id = p.purchase_order_id
      WHERE p.id = ANY(${allocPoItemIds})` : [];
 
   const poDocs = [...new Set([...directPoLines, ...byAllocPoLines].map((p) => p.doc_no))];
   if (POq && !poDocs.includes(POq)) poDocs.push(POq);
 
   const allPoLines = poDocs.length ? await sql`
-    SELECT p.id, p.doc_no, p.item_code, p.qty::numeric AS qty,
+    SELECT p.id, o.doc_no, p.item_code, p.qty::numeric AS qty,
            p.received_qty::numeric AS received, p.so_item_id, p.cancelled,
            o.status::text AS po_status
       FROM scm.purchase_order_items p
-      JOIN scm.purchase_orders o ON o.doc_no = p.doc_no AND o.company_id = p.company_id
-     WHERE p.company_id = ${CO} AND p.doc_no = ANY(${poDocs})
-     ORDER BY p.doc_no, p.item_code, p.id` : [];
+      JOIN scm.purchase_orders o ON o.id = p.purchase_order_id
+     WHERE o.company_id = ${CO} AND o.doc_no = ANY(${poDocs})
+     ORDER BY o.doc_no, p.item_code, p.id` : [];
 
   log('');
   log(`PURCHASE ORDER lines that touch ${SO} (${poDocs.join(', ') || 'none'}):`);
