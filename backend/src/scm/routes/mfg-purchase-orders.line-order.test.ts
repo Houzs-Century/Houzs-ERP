@@ -74,6 +74,23 @@ function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
     }
     eq(col: string, val: unknown) { this.rows = this.rows.filter((r) => r[col] === val); return this; }
     in(col: string, vals: unknown[]) { this.rows = this.rows.filter((r) => vals.includes(r[col])); return this; }
+    /* pgrest-in-list (bug 0780 / PR #3545) calls .filter(col,'in','("A","B")')
+       instead of .in() so a value with a comma or quote is escaped safely. The
+       real client understands it; this fake must too, or a convert that reads
+       supplier bindings throws "filter is not a function" before it ever stamps
+       a line_no. Parse the PostgREST in-list back to values. */
+    filter(col: string, op: string, val: unknown) {
+      if (op === 'in' && typeof val === 'string') {
+        const inner = val.replace(/^\(/, '').replace(/\)$/, '');
+        const vals = inner
+          ? inner.split(',').map((v) => v.trim().replace(/^"(.*)"$/, '$1'))
+          : [];
+        this.rows = this.rows.filter((r) => vals.includes(String(r[col])));
+      } else if (op === 'eq') {
+        this.rows = this.rows.filter((r) => r[col] === val);
+      }
+      return this;
+    }
     not() { return this; }
     is(col: string, val: unknown) {
       if (val === null) this.rows = this.rows.filter((r) => r[col] == null);
