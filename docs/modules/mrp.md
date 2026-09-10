@@ -287,10 +287,12 @@ is the `optional-param-noop` trap CLAUDE.md names, and the other ~15
 ### 2.1 A row's `category` — the fallback, and why the row disappears without it
 
 **The response field `skus[].category` is what puts a row on a tab.** The
-frontend picks a tab's rows with `s.category === VIEW_CATEGORY[view]`
-(`frontend/src/pages/scm-v2/Mrp.tsx:553`), so a row whose `category` is `null`
-belongs to NO tab and is invisible on all four — with no empty state, no count,
-and no warning, because a missing row and a covered row look identical here.
+frontend picks a tab's rows with `s.category === apiCategory` — the active tab's
+own category (`frontend/src/pages/scm-v2/Mrp.tsx`; it read a hand-typed
+`VIEW_CATEGORY[view]` until 2026-09-10, see §2.2) — so a row whose `category` is
+`null` belongs to NO tab and is invisible on every one of them, with no empty
+state, no count and no warning, because a missing row and a covered row look
+identical here.
 
 **The category is decided in ONE way, in two places, and they must stay the
 same expression:**
@@ -314,6 +316,59 @@ the fallback, so the engine kept those lines, planned them, and shipped them wit
 no category: eight accessory codes / 62 lines / 110 units on prod were planned and
 shown nowhere (`docs/bugs/0777-mrp-dropped-8-accessory-codes-from-every-tab-because-the-row.md`).
 If a third reader of a line's category is ever added, it uses this expression too.
+
+### 2.2 The TAB LIST is the server's, not the page's — and the enum is OPEN
+
+**`skus[].category` puts a row on a tab; §2.1 is only half of that.** The other
+half is whether a tab for that category EXISTS, and until 2026-09-10 the page
+typed its own list of four while the catalogue could hold nine
+(`docs/bugs/0778-mrp-showed-four-tabs-while-the-product-catalogue-held-nine-c.md`).
+
+`public.mfg_product_category` and its `scm` twin carry NINE members: the five in
+the baseline DDL plus DINING / BEDLINES / DIFFUSER / CARPET, added by migrations
+`0258`-`0261` and `0262`-`0265`. `backend/src/scm/routes/mfg-products.ts` lists
+all nine as `MFG_PRODUCT_CATEGORIES` and rejects a product create outside them.
+A line on any of the four newer ones was dropped TWICE — by the section-6 filter
+because the page only ever sends one of its four tab values as `?category=`, and
+again by the page's own equality — and neither drop was counted. Measured from
+files committed in this repo: `backend/scripts/data/align-skus-houzs-century.json`
+opens **181 of 1,242** SKUs across those four, and the AutoCount outstanding-SO
+export carries **10 open lines / 15 units** on DINING codes.
+
+**The enum is deliberately OPEN.** `20260905T0900_acc_item_groups.sql` ships
+`scm.acc_register_item_group(text, text)`, `SECURITY DEFINER` and granted to
+`service_role`, which `ALTER TYPE ... ADD VALUE`s both enums at runtime so the
+owner can add a category himself; its header says *"every reader treats the enum
+as an open list"*. So a hard-coded tab list does not merely miss four members, it
+misses every future one.
+
+**The rule now.** `MrpResult.categories` — every product category in the
+company's catalogue, read in section 2, paged, company-scoped, and INDEPENDENT of
+`catFilter`, so every tab's response carries the same list — is what the page
+renders tabs from. The derivation lives in one module,
+`frontend/src/pages/scm-v2/mrp-views.ts`:
+
+- the four original tabs first, in their original order (they stand even when
+  `categories` is absent, so an in-flight response cannot blank the tab bar);
+- then every other catalogue category, in the order the server sent it;
+- `SERVICE` never gets a tab — `isServiceLine` skips service lines BEFORE the
+  category filter, so it could only ever be empty. It is named, not silently
+  filtered;
+- a category with no hand-written label is Title Cased and shown, never dropped,
+  matching `shared/so-branding-label.ts`'s rule for the same reason;
+- `mrpCategoryOf(tabId)` and the tab id are a declared inverse PAIR, because the
+  page must pick `?category=` before it has a response to derive tabs from. The
+  round-trip is pinned on every enum member by `mrp-views.test.ts`.
+
+Both tests read the vocabulary out of the SQL and out of the committed alignment
+payload rather than a typed list, because a typed list here would be the fault
+being tested.
+
+**STILL OPEN, and it is the owner's call.** A row whose category is `null`
+(§2.1's honest null) is dropped by the section-6 filter and counted nowhere. The
+`undated` tally forty lines below shows the shape the fix would take — count on
+the rows the `continue` removes, before it removes them — but it sits inside the
+section 0777 changed the same day.
 
 ## 3. Supply
 
@@ -694,6 +749,9 @@ Frontend pair (one logic layer): desktop `pages/scm-v2/Inventory.tsx`
 | `backend/scripts/probe-undated-demand.mjs` | Read-only production probe: how much live demand is undated, BOTH companies, with the refutation tests for why. Dispatch via `.github/workflows/probe-undated-demand.yml` |
 | `backend/scripts/lib/undated-demand-queries.mjs` | That probe's SQL, in one home so a test can EXECUTE it. No shebang — a test imports it |
 | `backend/tests-pg/probeUndatedDemandSql.pg.test.ts` | Runs every one of those queries against real Postgres in `backend-postgres`. Exists because the probe's first production dispatch died on unexecuted SQL |
+| `frontend/src/pages/scm-v2/mrp-views.ts` | The page's TAB LIST, derived from `MrpResponse.categories` (§2.2). Holds the tab-id <-> category inverse pair, the SERVICE exclusion, and the Title-Case fallback for a category added to the enum at runtime |
+| `frontend/src/pages/scm-v2/mrp-views.test.ts` | Reads `mfg_product_category` out of the SQL and the SKU counts out of `backend/scripts/data/align-skus-houzs-century.json` — never a typed list — and asserts every member is reachable from a tab |
+| `frontend/src/pages/scm-v2/mrpCategoryTabs.test.tsx` | The same claim through the RENDERED page: the Dining tab exists, asks the server for `DINING`, and its row is on screen |
 
 ## 7b. The page's frozen header (2026-09-09) — BUILT, THEN DISARMED THE SAME DAY
 
