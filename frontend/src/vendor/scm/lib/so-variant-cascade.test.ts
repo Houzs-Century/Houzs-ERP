@@ -95,8 +95,43 @@ describe('what never travels', () => {
     expect(out.variants[1]).toEqual({ seatHeight: '21' });
   });
 
-  test('the never-inherit list is exactly those two', () => {
-    expect([...NEVER_INHERITED_KEYS].sort()).toEqual(['buildKey', 'remark']);
+  test('the SPECIAL-ORDER payload stays per line — HC-SO-007678 leak', () => {
+    // Owner 2026-09-11: a customize-drawer note added to HILTON leaked to
+    // FENRIR on the same order. The five keys below hold that payload; none
+    // is a category-wide axis, so none may travel between lines.
+    const out = run(
+      [
+        sofa({
+          extraAddonNote: 'add drawer left + right',
+          extraAddonAmountRM: 150,
+          specials: ['SP-01', 'SP-02'],
+          specialLabels: ['Drawer L', 'Drawer R'],
+          specialChoices: { 'SP-01': ['12"'] },
+          seatHeight: '21',
+        }),
+        sofa(),
+      ],
+      {},
+    );
+    // Seat height IS category-wide, so it travels; the special payload does not.
+    expect(out.variants[1]).toEqual({ seatHeight: '21' });
+    expect(out.variants[1]).not.toHaveProperty('extraAddonNote');
+    expect(out.variants[1]).not.toHaveProperty('extraAddonAmountRM');
+    expect(out.variants[1]).not.toHaveProperty('specials');
+    expect(out.variants[1]).not.toHaveProperty('specialLabels');
+    expect(out.variants[1]).not.toHaveProperty('specialChoices');
+  });
+
+  test('the never-inherit list is exactly the per-line keys we know about', () => {
+    expect([...NEVER_INHERITED_KEYS].sort()).toEqual([
+      'buildKey',
+      'extraAddonAmountRM',
+      'extraAddonNote',
+      'remark',
+      'specialChoices',
+      'specialLabels',
+      'specials',
+    ]);
   });
 
   test('a blank master value does not blank a follower', () => {
@@ -144,12 +179,16 @@ describe('categories', () => {
   });
 
   test('a restricted category set leaves everything else alone (the mobile surface)', () => {
+    // `seatHeight` is a category-wide axis, so it exercises the "outside the
+    // restricted set" path without dragging in `specials` — which is now
+    // per-line (NEVER_INHERITED_KEYS above; HC-SO-007678 leak, 2026-09-11)
+    // and never travels regardless of `categories`.
     const lines: CascadeLine[] = [
-      { category: 'mattress', variants: { specials: ['FIRM'] } },
+      { category: 'mattress', variants: { seatHeight: '21' } },
       { category: 'mattress', variants: {} },
     ];
     expect(run(lines, {}, new Set(['sofa', 'bedframe'])).variants[1]).toEqual({});
-    expect(run(lines, {}, null).variants[1]).toEqual({ specials: ['FIRM'] });
+    expect(run(lines, {}, null).variants[1]).toEqual({ seatHeight: '21' });
   });
 });
 
