@@ -1,0 +1,38 @@
+name: Compare AutoCount vs ERP dates (read-only)
+
+# Are our DO / SO document dates the same as AutoCount's? Reads the two mirrors
+# already in the DB (autocount_delivery_orders, ac_snapshot_sales_orders) and
+# compares against scm.delivery_orders / scm.mfg_sales_orders. Read-only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      doc:
+        description: "Document number substring to dump in full (default 12445)"
+        required: false
+        default: "12445"
+
+concurrency:
+  group: compare-ac-erp-dates
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/compare-ac-erp-dates.mjs
+        env:
+          DOC: ${{ inputs.doc }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
