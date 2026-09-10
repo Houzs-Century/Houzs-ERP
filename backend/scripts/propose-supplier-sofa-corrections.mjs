@@ -85,6 +85,9 @@ const norm = (s) => String(s ?? '').trim().toUpperCase();
 const suffix = (code) => { const s = norm(code); const i = s.indexOf('-'); return i < 0 ? s : s.slice(i + 1); };
 const modelOf = (code) => { const s = norm(code); const i = s.indexOf('-'); return i < 0 ? s : s.slice(0, i); };
 const bag = (xs) => xs.slice().sort().join('|');
+/* One run written from the other end is the SAME SOFA - reversing moves no hand.
+   Owner, on HC-PO-009587: 「一样的东西啊 只是LHF 在第一个item而已」. */
+const sameSofa = (a, b) => a.join('+') === b.join('+') || a.slice().reverse().join('+') === b.join('+');
 
 /* One value for the whole build, or none. The supplier writes the leg on every
    piece of a run and they agree; where they do NOT agree, no single number is
@@ -107,16 +110,21 @@ const priorByDoc = new Map();
 {
   const loaded = loadCorrections(path.join(here, 'data'));
   for (const b of loaded.builds) {
-    if (String(b.source || '').includes('supplier-2026-09-10')) continue;
+    if (String(b.source || '').includes('supplier')) continue;
     for (const d of b.docs || []) {
-      if (Array.isArray(b.pieces) && b.pieces.length) priorByDoc.set(String(d).toUpperCase(), b);
+      if (!Array.isArray(b.pieces) || !b.pieces.length) continue;
+      const k = String(d).toUpperCase();
+      const list = priorByDoc.get(k) ?? [];
+      list.push(b);
+      priorByDoc.set(k, list);
     }
   }
 }
 const sql = postgres(process.env.DATABASE_URL, { ssl: 'require', max: 1, prepare: false });
 
 const entries = [];
-const stats = { docs: 0, noPo: 0, noRows: 0, ambiguousKey: 0, already: 0, proposed: 0, received: 0, noSo: 0, amended: 0, soNoKey: 0, orderKeptFromDrawing: 0 };
+const stats = { docs: 0, noPo: 0, noRows: 0, ambiguousKey: 0, already: 0, proposed: 0, received: 0, noSo: 0, amended: 0, soNoKey: 0, orderKeptFromDrawing: 0, priorRefuted: 0 };
+const refuted = [];
 const orderKept = [];
 const amendedList = [];
 
@@ -211,18 +219,33 @@ try {
     const ourModel = oneOf(rows.map((r) => modelOf(r.item_code)));
     if (!ourModel) { stats.ambiguousKey += 1; continue; }
 
-    /* An earlier round may already hold this build from a DRAWING. If it names
-       the same pieces in a different order, the drawing keeps the order. */
+    /* A document may carry MORE THAN ONE earlier answer, and they need not agree
+       with each other - HC-PO-009679 held three. Keeping whichever happened to be
+       indexed last is arbitrary: on that document it kept the purchase-side
+       round, which is the MIRROR of both the 2026-08 drawing and the supplier.
+       So pick a prior the supplier CONFIRMS (same sofa - identical, or the same
+       run written from the other end) and ignore the ones it refutes. */
     let target = theirs;
-    const prior = priorByDoc.get(String(po.po_number).toUpperCase())
-      ?? (soDoc ? priorByDoc.get(String(soDoc).toUpperCase()) : undefined);
-    if (prior && bag(prior.pieces.map((x) => norm(x))) === bag(theirs)) {
-      if (prior.pieces.map((x) => norm(x)).join('+') !== theirs.join('+')) {
-        target = prior.pieces.map((x) => norm(x));
+    const priors = [
+      ...(priorByDoc.get(String(po.po_number).toUpperCase()) ?? []),
+      ...(soDoc ? priorByDoc.get(String(soDoc).toUpperCase()) ?? [] : []),
+    ];
+    const agreeing = priors.filter((b) => sameSofa(b.pieces.map((x) => norm(x)), theirs));
+    if (agreeing.length) {
+      const p = agreeing[0].pieces.map((x) => norm(x));
+      if (p.join('+') !== theirs.join('+')) {
+        target = p;
         stats.orderKeptFromDrawing += 1;
-        orderKept.push({ po: po.po_number, so: soDoc, drawing: target.join('+'), supplier: theirs.join('+'),
-          source: prior.source });
+        orderKept.push({ po: po.po_number, so: soDoc, drawing: p.join('+'), supplier: theirs.join('+'),
+          source: agreeing[0].source });
       }
+    } else if (priors.length) {
+      /* Every earlier answer disagrees with the supplier. The supplier wins, and
+         the earlier entry has to be superseded BY HAND or the loader holds two
+         different builds at one address - which its own test refuses. */
+      stats.priorRefuted += 1;
+      refuted.push({ po: po.po_number, so: soDoc, supplier: theirs.join('+'),
+        priors: priors.map((b) => `${b.pieces.join('+')} (${b.source})`) });
     }
 
     /* ONE ENTRY PER DOCUMENT. A build addressed by line key names exactly one
@@ -274,6 +297,8 @@ try {
   log(`      of those, no sales order found  ${stats.noSo}   <- purchase order corrected alone`);
   log(`      sales order found but KEYLESS   ${stats.soNoKey}   <- PO entry only; a keyless line cannot be addressed`);
   log(`   entries emitted (PO + SO apart)    ${entries.length}`);
+  log(`   an earlier round the supplier REFUTES ${stats.priorRefuted}   <- supersede that entry by hand`);
+  for (const r of refuted) log(`      ${String(r.po).padEnd(16)} supplier ${r.supplier}   earlier: ${r.priors.join(' | ')}`);
   log(`   ORDER kept from an earlier DRAWING ${stats.orderKeptFromDrawing}   <- same pieces, the export has no line number`);
   for (const o of orderKept) {
     log(`      ${String(o.po).padEnd(16)} drawing ${o.drawing}   supplier ${o.supplier}   (${o.source})`);
