@@ -420,7 +420,7 @@ describe('the guard runs before supabaseAuth: identify the caller from `user` to
     return a;
   }
 
-  test('a purchase order cancel is NOT refused as caller_unknown', async () => {
+  it('a purchase order cancel is NOT refused as caller_unknown', async () => {
     const res = await appPreBridge(L2).request('/mfg-purchase-orders/po-1/cancel',
       { method: 'PATCH', ...json({ reason: 'customer cancelled the order' }) }, ENV);
     const b = await body(res);
@@ -428,7 +428,7 @@ describe('the guard runs before supabaseAuth: identify the caller from `user` to
     expect(res.status).not.toBe(403);
   });
 
-  test('the pinned scm.staff identity is still refused — it names nobody', async () => {
+  it('the pinned scm.staff identity is still refused — it names nobody', async () => {
     /* AFTER the bridge `user.id` is the system staff uuid. Reading it as the
        actor is the bug the module header forbids (one actor on every row), so a
        context carrying ONLY that must still be caller_unknown. */
