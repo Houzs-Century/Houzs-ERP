@@ -289,7 +289,8 @@ is the `optional-param-noop` trap CLAUDE.md names, and the other ~15
 **The response field `skus[].category` is what puts a row on a tab.** The
 frontend picks a tab's rows with `s.category === apiCategory` — the active tab's
 own category (`frontend/src/pages/scm-v2/Mrp.tsx`; it read a hand-typed
-`VIEW_CATEGORY[view]` until 2026-09-10, see §2.2) — so a row whose `category` is
+`VIEW_CATEGORY[view]` until 2026-09-10, see §2.2; the Sofa tab is the exception,
+§2.3) — so a row whose `category` is
 `null` belongs to NO tab and is invisible on every one of them, with no empty
 state, no count and no warning, because a missing row and a covered row look
 identical here.
@@ -396,6 +397,49 @@ would be the fault being tested.
 `undated` tally forty lines below shows the shape the fix would take — count on
 the rows the `continue` removes, before it removes them — but it sits inside the
 section 0777 changed the same day.
+
+### 2.3 The SOFA tab asks for the FULL plan, so the cover rides with the sofa
+
+Every other tab sends `?category=<its tab>` (§2.1). The **Sofa** tab is the one
+exception: `apiCategory` is `null` there, so it requests the whole plan with no
+category filter. Two reasons, both load-bearing (owner 2026-09-11):
+
+1. **The cover (皮套) must reach the sofa's convert batch.** A sofa order's
+   leather cover / pillow is an ACCESSORY line, and the owner's rule is that it
+   ships on the SAME PO as the sofa. `gatherSofa` pulls those accessory shortage
+   lines off `data.skus` into the `/from-sos` batch so `po-grouping.ts` can
+   co-locate them (Combined) or split them to their own PO (Per-SO). With
+   `?category=SOFA` the engine drops every non-SOFA row, so `data.skus` held only
+   sofa and the pull matched nothing — the cover never rode, from the MRP page.
+   Dead since the 2026-06-15 per-category tab split; fixed 2026-09-11
+   (`docs/bugs/0801-mrp-sofa-cover-pull-in-was-dead-since-the-per-category-tab-s.md`).
+2. **It is the DEFAULT view, so it is FREE.** `catFilter === null && whFilter ===
+   null && !includeUndated` is `isDefaultMrpView`, which serves the stored
+   snapshot instantly (`mrp-snapshot.ts`). `?category=SOFA` was NOT the default
+   view, so the Sofa tab used to recompute the whole plan live on every open;
+   asking for the full plan makes the most-used tab read the snapshot instead.
+
+The sofa TABLE is unaffected either way — it renders from `data.sofaSets`, which
+`computeMrp` builds SOFA-by-construction and ignores `catFilter` for (§ the
+`sofaSets` array). `data.skus` on the Sofa tab is read ONLY by `gatherSofa` and
+the cover-rider display; it never leaks into the sofa rows.
+
+**Cover riders are SHOWN, not just ordered.** Under each sofa SO the page lists
+that order's accessory shortage lines as read-along rider rows (no checkbox —
+they follow the sofa's selection), with a caption that states where they land in
+the current mode: Combined = on the sofa PO when the supplier matches, Per-SO =
+their own PO. `gatherSofa`'s `setDocs` derives from the sofa picks actually being
+ordered, so selecting ONE order pulls only THAT order's cover.
+
+### 2.4 Search — a client-side find over the rows in view
+
+A **Search** box (owner 2026-09-11, 「MRP 也要有 search 的功能…那版太长了」)
+narrows the current tab's rows by a case-insensitive substring over item code,
+description, module / variant label, and each SO line's doc no + customer (a sofa
+row also matches its cover riders). It never changes the server request — purely
+a client-side filter of what is already loaded — and a non-empty query
+force-opens the matches so the hit is visible without a manual drill. It resets
+on a tab switch so a query narrowing one tab cannot blank the next.
 
 ## 3. Supply
 
