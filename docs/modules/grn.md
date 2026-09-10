@@ -93,10 +93,20 @@ It also reads the IN-BAND failure: `PATCH /grns/:id/post` answers **200** with
 `docs/bugs/0495-post-grn-and-post-purchase-invoice-had-no-error-path-and-the.md`.
 
 **The stock-side invalidation rule:** every mutation that can move inventory also
-invalidates `['inventory']` — `usePostGrn` (`:146`) and `useCancelGrn` (`:222`).
-And because a GRN's stock IN changes the PO's `received_qty` and status,
-`useGrnFromPos` invalidates `['mfg-purchase-orders']` too (`:53`) and
-force-refetches the picker key (`:55`).
+invalidates `['inventory']`. That is `usePostGrn` and `useCancelGrn`, and — since
+2026-09-10 — the whole GRN CRUD block, each of which re-syncs stock server-side:
+`useGrnFromPos` (auto-posts a whole-PO convert → IN), `useUpdateGrnHeader`
+(warehouse relocation on a POSTED GRN → OUT+IN), and `useAddGrnItem` /
+`useUpdateGrnItem` / `useDeleteGrnItem` (POSTED GRN → IN / delta OUT+IN /
+reversing OUT). Until then those five invalidated only `['grn-detail']` +
+`['grns']`, so a mounted Stock Card / inventory list showed stale on-hand after a
+posted-GRN line change or a From-PO convert; pinned by
+`frontend/src/vendor/scm/lib/grn-stock-invalidation.test.tsx`, traced in
+`docs/bugs/0780-grn-stock-moving-mutations-did-not-invalidate-the-inventory.md`.
+`useCreateGrn` is NOT in the set: its only caller (`GrnNew.tsx`) follows a
+non-draft create with `usePostGrn`, which carries the invalidation. And because a
+GRN's stock IN changes the PO's `received_qty` and status, `useGrnFromPos`
+invalidates `['mfg-purchase-orders']` too and force-refetches the picker key.
 
 ### Caching / loading behaviour
 Three layers as in `docs/modules/sales-order.md` §1. GRN specifics:
