@@ -126,11 +126,13 @@ describe('every category a product can carry is reachable from an MRP tab', () =
 });
 
 describe('what the tab list does and does not invent', () => {
-  test('the four original tabs stand even when the server says nothing', () => {
+  test('the five tabs stand even when the server says nothing', () => {
     /* A response from a backend that predates `categories`, or one still in
-       flight, must not blank the page's tab bar. */
-    expect(mrpViews(undefined).map((v) => v.category))
-      .toEqual(['SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY']);
+       flight, must not blank the page's tab bar. Since 2026-09-10 Others is a
+       PERMANENT fifth tab (owner, watching it blink in a beat after the other
+       four during loading), so its null-category tab rides along even here. */
+    expect(mrpViews(undefined).map((v) => v.value))
+      .toEqual(['sofa', 'bedframe', 'mattress', 'accessory', 'others']);
   });
 
   test('SERVICE never becomes a tab', () => {
@@ -170,11 +172,17 @@ describe('what the tab list does and does not invent', () => {
     expect(rowBelongsToView(others, 'WALLPAPER')).toBe(true);
   });
 
-  test('Others appears only when the catalogue has something for it', () => {
-    /* A company selling nothing outside the four sees four tabs, not an empty
-       fifth. The tab bar states what this catalogue holds. */
+  test('Others is a permanent tab even when the catalogue has only the four', () => {
+    /* SUPERSEDES the earlier "show Others only when the catalogue has a non-core
+       category". Owner 2026-09-10, watching Others blink out on every reload:
+       「loading 的时候它就不见了，没有 loading 的时候就有」. The four core tabs are
+       constants and are always painted; Others was DERIVED from the loaded
+       `categories`, so it popped in a beat later — a tab bar that changes shape
+       mid-load is a tab bar nobody trusts. Others is now a permanent fifth tab,
+       painted from the first frame. An occasional empty Others (a company selling
+       only the four) is the fair price for a shape that never flickers. */
     expect(mrpViews(['SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE']).map((v) => v.value))
-      .toEqual(['sofa', 'bedframe', 'mattress', 'accessory']);
+      .toEqual(['sofa', 'bedframe', 'mattress', 'accessory', 'others']);
   });
 
   test('Others claims by EXCLUSION, so no row can be homeless', () => {

@@ -110,21 +110,21 @@ export function mrpCategoryOf(value: string): string | null {
  * the server sent them. Duplicates and SERVICE are dropped; nothing else is.
  */
 export function mrpViews(
-  /* The element type is NULLABLE on purpose. This is JSON off the wire, not a
-     value this process constructed, and `MrpResponse.categories: string[]` is a
-     promise about the server rather than a guarantee about the bytes. Widening
-     it here is what makes the `?? ''` below a real guard instead of the
-     redundant one the linter would rightly delete. */
-  categories: readonly (string | null | undefined)[] | undefined,
+  /* Ignored since 2026-09-10, and kept only so callers need not change. Owner,
+     seeing the Others tab blink out during every reload: 「loading 的时候它就不见
+     了，没有 loading 的时候就有，为什么那么奇怪呢？它的那个组件不是跟正常的
+     Matrix、Serena 是一样的吗？」 — he is right. The four core tabs are a constant
+     and so are always painted, even while `data` is still loading; Others was
+     DERIVED from the loaded `categories`, so it was absent until the response
+     arrived and then popped in. A tab that appears a beat after its siblings is
+     a tab nobody trusts. Others is now a permanent fifth tab, painted with the
+     other four from the first frame, and `rowBelongsToView` still routes rows to
+     it by exclusion. An occasional empty Others (a company selling only the four)
+     is a fair price for a tab bar whose shape never flickers — and this overrides
+     the earlier "show Others only when the catalogue has a non-core category". */
+  _categories?: readonly (string | null | undefined)[] | undefined,
 ): MrpView[] {
-  const views: MrpView[] = BASE.filter((v) => !NEVER_A_TAB.has(v.category as string)).map((v) => ({ ...v }));
-  for (const raw of categories ?? []) {
-    const cat = (raw ?? '').trim().toUpperCase();
-    if (!cat || NEVER_A_TAB.has(cat) || CORE.has(cat)) continue;
-    views.push(OTHERS);
-    break;
-  }
-  return views;
+  return [...BASE, OTHERS].filter((v) => !NEVER_A_TAB.has(v.category as string)).map((v) => ({ ...v }));
 }
 
 /** Does a row belong on this tab? The Others tab claims what no other tab does. */

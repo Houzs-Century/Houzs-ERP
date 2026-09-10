@@ -1,0 +1,42 @@
+name: MRP grouping facts (read-only)
+
+# Manual, read-only. Answers three of the owner's MRP grouping questions from the
+# LIVE tables, not the MRP display and not any doc:
+#   1. is the base lead-time table populated? (an empty table subtracts 0 days
+#      everywhere, invisibly);
+#   2. on a sofa order, what category do the covers / pillows carry — ACCESSORY
+#      or something in "Others"?
+#   3. when an order's bedframes are split across two POs, is it a correct
+#      different-supplier split, or the same-supplier separate-convert-batch case?
+#
+# SELECTs only: no DDL, no writes, no transaction. Exits 0 for every legitimate
+# answer including "the table is empty" and "no split orders" — the answer is the
+# output. Its own concurrency group, so it never queues behind or displaces a deploy.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "Company (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: mrp-grouping-facts
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the one dependency the script needs
+        run: npm --prefix backend install postgres --no-audit --no-fund --no-save
+      - name: Report MRP grouping facts
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+        run: node backend/scripts/check-mrp-grouping-facts.mjs
