@@ -70,6 +70,7 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
 import { parseSofa } from './lib/parse-sofa.mjs';
+import { loadCorrections } from './lib/sofa-corrections-source.mjs';
 
 const CO = Number(process.env.COMPANY_ID || 1);
 const OUT = process.env.OUT || '';
@@ -94,10 +95,29 @@ const oneOf = (values) => {
 };
 
 const book = gz('supplier-so-detail-2026-09-10.json.gz');
+
+/* Builds an earlier round already answered, indexed by document. A round that
+   read the OWNER'S OWN drawing is not overridden on ORDER alone: this file
+   carries no line-number column, so its sequence is the export's row order, and
+   that caveat is stated in check-supplier-listing-vs-erp.mjs's header. Where the
+   MULTISET differs the supplier wins, as instructed. Where only the order
+   differs and somebody already read the drawing, the drawing keeps the order and
+   the supplier still supplies the variants. */
+const priorByDoc = new Map();
+{
+  const loaded = loadCorrections(path.join(here, 'data'));
+  for (const b of loaded.builds) {
+    if (String(b.source || '').includes('supplier-2026-09-10')) continue;
+    for (const d of b.docs || []) {
+      if (Array.isArray(b.pieces) && b.pieces.length) priorByDoc.set(String(d).toUpperCase(), b);
+    }
+  }
+}
 const sql = postgres(process.env.DATABASE_URL, { ssl: 'require', max: 1, prepare: false });
 
 const entries = [];
-const stats = { docs: 0, noPo: 0, noRows: 0, ambiguousKey: 0, already: 0, proposed: 0, received: 0, noSo: 0, amended: 0 };
+const stats = { docs: 0, noPo: 0, noRows: 0, ambiguousKey: 0, already: 0, proposed: 0, received: 0, noSo: 0, amended: 0, soNoKey: 0, orderKeptFromDrawing: 0 };
+const orderKept = [];
 const amendedList = [];
 
 try {
@@ -160,12 +180,23 @@ try {
        corrected together and cannot drift. */
     const soIds = rows.map((r) => r.so_item_id).filter(Boolean);
     let soDoc = null;
+    let soKeys = [];
     if (soIds.length) {
       const so = await sql`
-        SELECT DISTINCT i.doc_no FROM scm.mfg_sales_order_items i
+        SELECT DISTINCT i.doc_no, i.linked_ac_dtlkey::text AS dtlkey
+          FROM scm.mfg_sales_order_items i
           JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
          WHERE h.company_id = ${CO} AND i.id = ANY(${soIds})`;
-      if (so.length === 1) soDoc = so[0].doc_no;
+      const uniqDocs = [...new Set(so.map((r) => r.doc_no))];
+      if (uniqDocs.length === 1) {
+        soDoc = uniqDocs[0];
+        /* The SALES ORDER carries its OWN key. It is usually the same value as
+           the purchase side's, but "usually" is not a reason to reuse one - a
+           key that names the wrong line addresses nothing and the round reports
+           as applied while writing nothing (the failure pinned by the
+           purchase-side test). */
+        soKeys = [...new Set(so.map((r) => r.dtlkey).filter(Boolean))];
+      }
     }
     if (!soDoc) stats.noSo += 1;
 
@@ -180,13 +211,31 @@ try {
     const ourModel = oneOf(rows.map((r) => modelOf(r.item_code)));
     if (!ourModel) { stats.ambiguousKey += 1; continue; }
 
-    entries.push({
-      docs: [po.po_number, ...(soDoc ? [soDoc] : [])],
+    /* An earlier round may already hold this build from a DRAWING. If it names
+       the same pieces in a different order, the drawing keeps the order. */
+    let target = theirs;
+    const prior = priorByDoc.get(String(po.po_number).toUpperCase())
+      ?? (soDoc ? priorByDoc.get(String(soDoc).toUpperCase()) : undefined);
+    if (prior && bag(prior.pieces.map((x) => norm(x))) === bag(theirs)) {
+      if (prior.pieces.map((x) => norm(x)).join('+') !== theirs.join('+')) {
+        target = prior.pieces.map((x) => norm(x));
+        stats.orderKeptFromDrawing += 1;
+        orderKept.push({ po: po.po_number, so: soDoc, drawing: target.join('+'), supplier: theirs.join('+'),
+          source: prior.source });
+      }
+    }
+
+    /* ONE ENTRY PER DOCUMENT. A build addressed by line key names exactly one
+       document, because a DtlKey belongs to exactly one - pinned by
+       sofa-corrections-source.test.mjs. The purchase order and the sales order
+       are therefore two entries carrying the SAME target build and each its own
+       key, which is also what keeps the pair from drifting: both are corrected
+       or neither is. */
+    const common = {
       model: ourModel,
-      pieces: theirs,
+      pieces: target,
       ...(seat === null ? {} : { seat }),
       ...(leg === null ? {} : { leg: String(leg) }),
-      lineKeys: keys,
       confidence: 'certain',
       why: `SUPPLIER LISTING ${d.supplierDoc} (${book._source}). The supplier records the build by `
         + `compartment with every variant; the owner named it the authority on a proceeded order `
@@ -195,7 +244,10 @@ try {
         + `${sameBag && sameSeq ? ' (pieces already agree; this entry carries the seat/leg only)' : ''}`
         + `${received > 0 ? `. ${received} unit(s) already received against this purchase order.` : '.'}`,
       source: 'supplier-2026-09-10',
-    });
+    };
+    entries.push({ ...common, docs: [po.po_number], lineKeys: keys });
+    if (soDoc && soKeys.length) entries.push({ ...common, docs: [soDoc], lineKeys: soKeys });
+    else if (soDoc) stats.soNoKey += 1;
     stats.proposed += 1;
   }
 
@@ -220,6 +272,12 @@ try {
   log(`   already correct, nothing to write  ${stats.already}`);
   log(`   PROPOSED                           ${stats.proposed}`);
   log(`      of those, no sales order found  ${stats.noSo}   <- purchase order corrected alone`);
+  log(`      sales order found but KEYLESS   ${stats.soNoKey}   <- PO entry only; a keyless line cannot be addressed`);
+  log(`   entries emitted (PO + SO apart)    ${entries.length}`);
+  log(`   ORDER kept from an earlier DRAWING ${stats.orderKeptFromDrawing}   <- same pieces, the export has no line number`);
+  for (const o of orderKept) {
+    log(`      ${String(o.po).padEnd(16)} drawing ${o.drawing}   supplier ${o.supplier}   (${o.source})`);
+  }
   log(`      of those, stock already received ${stats.received}   <- the applier decides, by its own rule`);
 
   const json = `${JSON.stringify(doc, null, 1)}\n`;
