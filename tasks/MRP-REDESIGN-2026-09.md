@@ -40,10 +40,14 @@ additive buffer, approved on the agent console).
 
 | Step | State | Where |
 |---|---|---|
-| B1. New table for supplier×category lead days (migration, migrations-pg) | TODO | `backend/src/db/migrations-pg/` |
-| B2. Resolver: supplier×category OVERRIDES base (highest priority) | TODO | `scm/lib/lead-time.ts` (`resolveLeadDays`), both call sites (`mrp.ts`, `mfg-purchase-orders.ts`) |
-| B3. Supplier page UI to set per-category lead days | TODO | supplier detail FE + a route |
-| B4. Confirm base table has data (read-only) | folded into PR #3601 §1 | Track C |
+| B1. New table for supplier×category lead days (migration, migrations-pg) | **DONE — Track B PR** | `20260911T0900_scm_mrp_supplier_category_lead_times.sql` |
+| B2. Resolver: supplier×category OVERRIDES base (highest priority) | **DONE — Track B PR** | `scm/lib/lead-time.ts` (`loadSupplierCategoryOverrides` + override layer in `resolveLeadDays`); both call sites (`mrp.ts`, `mfg-purchase-orders.ts`) pass it; agent estimate passes `NO_OVERRIDES` |
+| B3. Supplier page UI + endpoints | **DONE — Track B PR** | route `mrp-supplier-lead-times` (GET/PUT/DELETE); FE `SupplierLeadTimes.tsx` on a new supplier-page "Lead Times" tab |
+| B4. Confirm base table has data (read-only) | DONE — see diagnostic §1 (sofa/bedframe=7, accessory/mattress=0, no per-warehouse overrides) | Track C |
+
+Track B ships as a NO-OP until the owner enters a supplier override (empty table
+= base wins). The override REPLACES the base layer; learned buffers still add on
+top. Worktree `mrp-supplier-lead` = branch `feat/mrp-supplier-lead-time`.
 
 ### Track C — Read-only diagnostics (owner asked to "run the check")
 
