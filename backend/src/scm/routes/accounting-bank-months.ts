@@ -69,6 +69,16 @@ const asMonthStatement = (s: Row): MonthStatement => ({
   closingBalanceSen: s.closing_balance_sen == null ? null : Number(s.closing_balance_sen),
 });
 
+/** The files that speak for a month: the ones a line of the month came from,
+    and an EMPTY statement filed under it (docs/bugs/0794 — a quiet month's file
+    has no line to arrive by, so it is found by the period it was filed with,
+    which lies wholly inside the month by construction). A file with lines all
+    in other months still has no business speaking for this one. */
+const feedersOf = (all: Row[], lineStatementIds: Set<number>, window: { from: string; to: string }): Row[] =>
+  all.filter((s) => lineStatementIds.has(Number(s.id))
+    || (Number(s.line_count ?? 0) === 0
+      && (dayOf(s.period_from) ?? '') >= window.from && (dayOf(s.period_to) ?? '') <= window.to));
+
 /** The movement shape the reconciliation wants, off a line row. */
 const asMovement = (l: Row, jeNo: string | null): StatementMovement => ({
   id: Number(l.id),
@@ -173,6 +183,23 @@ export const bankMonths = bankGuard(async (c) => {
     buckets.set(key, at);
   }
 
+  /* A QUIET MONTH has no line to bucket by (docs/bugs/0794): its empty
+     statement is listed under the month it was filed with. */
+  for (const s of statements) {
+    if (Number(s.line_count ?? 0) !== 0) continue;
+    const from = dayOf(s.period_from);
+    const to = dayOf(s.period_to);
+    if (from === null || to === null || monthOf(from) !== monthOf(to)) continue;
+    const accountCode = textOf(s.account_code) ?? '';
+    const key = `${accountCode}|${monthOf(from)}`;
+    const at = buckets.get(key) ?? {
+      accountCode, month: monthOf(from), statementIds: new Set<number>(),
+      lines: 0, openCount: 0, openSen: 0, openPayouts: 0, inSen: 0, outSen: 0, movements: [],
+    };
+    at.statementIds.add(Number(s.id));
+    buckets.set(key, at);
+  }
+
   /* Newest first — the month he is working is the one he just uploaded into. */
   const months = [...buckets.values()]
     .sort((a, b) => b.month.localeCompare(a.month) || a.accountCode.localeCompare(b.accountCode))
@@ -248,8 +275,7 @@ export async function loadMonthForLock(
   });
   const movements = lines.map((l) => asMovement(l, textOf(l.posted_je_no)));
 
-  const fedIds = new Set(lines.map((l) => Number(l.statement_id)));
-  const fed = allStatements.filter((s) => fedIds.has(Number(s.id)));
+  const fed = feedersOf(allStatements, new Set(lines.map((l) => Number(l.statement_id))), window);
   const assembly = assembleMonth(month, fed.map(asMonthStatement), movements);
   if (!assembly) return { ok: false, reason: `${month} is not a month` };
 
@@ -340,11 +366,11 @@ export const bankMonthDetail = bankGuard(async (c) => {
 
   const movements = lines.map((l) => asMovement(l, jeOf(l)));
 
-  /* The files that fed this month — the ones a line came from, and no others.
-     A file uploaded against this account whose every movement is in another
-     month has no business speaking for this one's balances. */
-  const fedIds = new Set(lines.map((l) => Number(l.statement_id)));
-  const fed = allStatements.filter((s) => fedIds.has(Number(s.id)));
+  /* The files that fed this month — the ones a line came from, plus an empty
+     statement filed under it. A file uploaded against this account whose every
+     movement is in another month has no business speaking for this one's
+     balances. */
+  const fed = feedersOf(allStatements, new Set(lines.map((l) => Number(l.statement_id))), window);
   const assembly = assembleMonth(month, fed.map(asMonthStatement), movements);
   if (!assembly) return c.json({ error: 'bad_month' }, 400);
 

@@ -302,7 +302,9 @@ export const bankUpload = guard(async (c) => {
   }
   const statementId = (stmtRow as { id: number }).id;
 
-  const { error: linesErr } = await sb.from('acc_bank_statement_lines').insert(
+  /* A quiet month's statement has no lines to write (docs/bugs/0794); an
+     insert of nothing is not asked for. */
+  const { error: linesErr } = decisions.length === 0 ? { error: null } : await sb.from('acc_bank_statement_lines').insert(
     decisions.map((raw, idx) => {
       const already = alreadyRecorded[idx];
       /* Named, not silently dropped: a movement that looks identical is not

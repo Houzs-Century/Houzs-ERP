@@ -22,7 +22,7 @@ import {
 
 const req = (over: Partial<LockRequest> = {}): LockRequest => ({
   accountCode: '310-0020', month: '2026-09',
-  openCount: 0, lineCount: 42,
+  openCount: 0, lineCount: 42, statementCount: 3,
   differenceSen: 0, consistent: true, complete: true, note: null,
   ...over,
 });
@@ -50,18 +50,34 @@ describe('a month with work still in it', () => {
   });
 });
 
+/* A month with no STATEMENT cannot be closed — closing it would claim
+   something no file supports. A month with a statement and no MOVEMENT is the
+   ordinary quiet month (docs/bugs/0794): the bank printed a balance, the books
+   hold the same, and it closes like any other. */
 describe('a month with nothing in it', () => {
-  it('cannot be closed, because closing it would claim nothing', () => {
-    const v = mayLockMonth(req({ lineCount: 0 }));
+  it('cannot be closed when no statement was filed for it, because closing it would claim nothing', () => {
+    const v = mayLockMonth(req({ lineCount: 0, statementCount: 0 }));
     expect(v.ok).toBe(false);
     expect(!v.ok && v.error).toBe('empty_month');
   });
 
   /* Checked BEFORE the open count, so an empty month is named for what it is
      rather than reported as "0 movements still undecided". */
-  it('is named as empty even though it also has nothing open', () => {
-    const v = mayLockMonth(req({ lineCount: 0, openCount: 0 }));
-    expect(!v.ok && v.message).toContain('no movements');
+  it('is named as having no statement even though it also has nothing open', () => {
+    const v = mayLockMonth(req({ lineCount: 0, statementCount: 0, openCount: 0 }));
+    expect(!v.ok && v.message).toContain('no statement');
+  });
+
+  it('closes with no ceremony when a statement covers it and the bank and the books agree', () => {
+    const v = mayLockMonth(req({ lineCount: 0, statementCount: 1 }));
+    expect(v.ok).toBe(true);
+    expect(v.ok && v.needsNote).toBe(false);
+  });
+
+  it('still wants a reason when the quiet month does not reconcile', () => {
+    const v = mayLockMonth(req({ lineCount: 0, statementCount: 1, differenceSen: 300000 }));
+    expect(v.ok).toBe(false);
+    expect(!v.ok && v.error).toBe('reason_required');
   });
 });
 

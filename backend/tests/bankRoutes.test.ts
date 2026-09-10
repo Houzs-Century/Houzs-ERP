@@ -22,6 +22,8 @@ import {
   bankRulesList, bankRuleCreate, bankRuleUpdate,
 } from '../src/scm/routes/accounting-bank';
 import { bankConfigList, bankConfigSave } from '../src/scm/routes/accounting-bank-config';
+import { bankMonths } from '../src/scm/routes/accounting-bank-months';
+import { bankMonthLock } from '../src/scm/routes/accounting-bank-locks';
 /* Layer 3's own undo is registered on this rig too: it can reverse an entry a
    closed bank month has already reported, so it is a door into the same room
    and is guarded by the same lock. */
@@ -45,6 +47,23 @@ const MBB_ACCOUNT: Row = {
     amount: 'AMOUNT', indicator: 'AMOUNT IND',
   },
 };
+
+/* Hong Leong, the shape the owner's 2990 account actually sends (docs/bugs/0794). */
+const HLB_ACCOUNT: Row = {
+  id: 2, company_id: CO, account_code: '310-0020', bank_code: 'HLB',
+  account_no: '23600600000', statement_format: 'CSV', delimiter: null,
+  amount_format: 'decimal', credit_indicator: 'CR', is_active: true,
+  column_map: {
+    date: ['Date', 'Transaction Date'], description: ['Transaction Description', 'Remarks'],
+    reference: ['Ref. No.'], debit: ['Withdrawal'], credit: ['Deposit'], balance: ['Balance'],
+  },
+};
+/* March: the account opened in February at RM 3,000.00 and nothing moved. */
+const HLB_EMPTY_MARCH = [
+  'HLB PRIMEBIZ CURRENT ACCOUNT - 23600600000,',
+  'Date,Transaction Description,Cheque No.,Ref. No.,Deposit,Withdrawal,Balance',
+  '="",="Balance from previous statement",="",="",="",="",="3000.00"',
+].join('\n');
 
 const RULES: Row[] = [
   { id: 1, acquirer_code: 'MBB', pattern: 'CARD SALES', match_field: 'both', trading_date_pattern: 'DATED\\s*(\\d{8})', merchant_pattern: 'M/?N\\s*(\\d+)', sort_order: 10, is_active: true },
@@ -127,6 +146,8 @@ function harness(tables: Record<string, Row[]> = {}, perms: readonly string[] = 
   app.post('/bank/rules', bankRuleCreate as never);
   app.patch('/bank/rules/:id', bankRuleUpdate as never);
   app.post('/settlement/receipts/:id/undo', settlementReceiptUndo as never);
+  app.get('/bank/months', bankMonths as never);
+  app.post('/bank/months/:accountCode/:month/lock', bankMonthLock as never);
   return { app, sb };
 }
 
@@ -211,6 +232,84 @@ describe('uploading a statement', () => {
     const res = await upload(app, { accountCode: '999-0000' });
     expect(res.status).toBe(400);
     expect((await res.json() as any).message).toMatch(/330-0000 \(MBB\)/);
+  });
+});
+
+/* ── A month in which nothing moved ──────────────────────────────────────────
+   Owner, 2026-09-10: 我应该每一个月都要做 bank reconciliation 不是？没有
+   transaction 那么你就让我锁起来. March's Hong Leong export is one balance row
+   and nothing under it; the screen refused the file and the month could never
+   be closed, so the chain of closed months broke on March (docs/bugs/0794). */
+describe('a month with no bank movement', () => {
+  const quiet = () => harness({
+    acc_bank_statement_config: [MBB_ACCOUNT, HLB_ACCOUNT],
+    /* The books: RM 3,000.00 paid in during February, nothing since. */
+    v_gl_entries: [{ company_id: CO, account_code: '310-0020', je_no: 'JE-2602-0001', entry_date: '2026-02-07', source_type: 'PV', source_doc_no: 'HPV-2602-028', debit_sen: 300000, credit_sen: 0, notes: null }],
+  });
+  const empty = (app: Hono, over: Record<string, unknown> = {}) =>
+    post(app, '/bank/statements', { accountCode: '310-0020', fileName: 'acs_23600600000_31032026.csv', content: HLB_EMPTY_MARCH, ...over });
+
+  test('an empty file with no month named is refused with what to do', async () => {
+    const { app, sb } = quiet();
+    const res = await empty(app);
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.error).toBe('unreadable_statement');
+    expect(body.message).toMatch(/year and month/i);
+    expect(sb.tables.acc_bank_statements).toHaveLength(0);
+  });
+
+  test('filed under its month, it is a statement of zero movements at the balance it prints', async () => {
+    const { app, sb } = quiet();
+    const res = await empty(app, { statementMonth: '2026-03' });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.lines).toBe(0);
+    expect(body.periodFrom).toBe('2026-03-01');
+    expect(body.periodTo).toBe('2026-03-31');
+    expect(body.openingBalanceSen).toBe(300000);
+    expect(body.closingBalanceSen).toBe(300000);
+    expect(sb.tables.acc_bank_statements).toHaveLength(1);
+    expect(sb.tables.acc_bank_statements[0]).toMatchObject({ line_count: 0, period_from: '2026-03-01', period_to: '2026-03-31' });
+    expect(sb.tables.acc_bank_statement_lines).toHaveLength(0);
+  });
+
+  test('the month list shows it, complete, with the bank and the books agreeing', async () => {
+    const { app } = quiet();
+    await empty(app, { statementMonth: '2026-03' });
+    const months = (await (await app.request('/bank/months')).json() as any).months as any[];
+    const march = months.find((m) => m.accountCode === '310-0020' && m.month === '2026-03');
+    expect(march).toBeTruthy();
+    expect(march).toMatchObject({ statementCount: 1, lineCount: 0, openCount: 0, complete: true, closingBalanceSen: 300000, gapCount: 0 });
+  });
+
+  test('and it closes like any other reconciled month', async () => {
+    const { app, sb } = quiet();
+    await empty(app, { statementMonth: '2026-03' });
+    const res = await post(app, '/bank/months/310-0020/2026-03/lock', {});
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.lock).toMatchObject({ differenceSen: 0, statementCount: 1, wasComplete: true });
+    expect(sb.tables.acc_bank_month_locks).toHaveLength(1);
+  });
+
+  /* Filed under a month whose books say otherwise, the quiet file does not
+     close silently: the balance it printed is the check. */
+  test('filed under the wrong month, the balance gives it away and the close wants a reason', async () => {
+    const { app } = quiet();
+    await empty(app, { statementMonth: '2026-01' });
+    const res = await post(app, '/bank/months/310-0020/2026-01/lock', {});
+    expect(res.status).toBe(409);
+    expect((await res.json() as any).error).toBe('reason_required');
+  });
+
+  test('a month nobody filed a statement for cannot be closed', async () => {
+    const { app } = quiet();
+    const res = await post(app, '/bank/months/310-0020/2026-03/lock', {});
+    expect(res.status).toBe(409);
+    const body = await res.json() as any;
+    expect(body.error).toBe('empty_month');
+    expect(body.message).toMatch(/no statement/);
   });
 });
 
