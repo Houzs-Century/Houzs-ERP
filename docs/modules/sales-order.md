@@ -4368,6 +4368,34 @@ Best-effort throughout, exactly like the AutoCount enqueue and the GL posting
 beside them — a failure never fails the operator's save, and the next roll
 self-heals.
 
+#### Editing a payment now reaches the GENERAL LEDGER too (2026-09-10, docs/bugs/0778)
+
+The table above is about the invoices. The BOOKS were a separate gap, and only
+the DELETE row ever closed it: `PATCH /:docNo/payments/:id` wrote the row,
+re-rolled the invoices, queued the AutoCount edit and stopped, so a corrected
+payment left its journal entry saying the old figure — silently. It now calls
+`repostSoPaymentBestEffort` (`scm/lib/so-payment-row.ts`), which reverses the
+old entry and books a fresh one. Same best-effort contract as everything else
+on this path, with one difference: a refusal is logged rather than swallowed,
+because it leaves the payment with no active entry.
+
+Two rules live in `backend/src/acc/payment-repost.ts`, not here. **Only four
+columns move the books** — `amount_sen`, `paid_at`, `method`,
+`merchant_provider` — so an approval-code or account-sheet fix re-posts
+nothing. And the correcting **contra is dated on the ORIGINAL entry's date**,
+so the wrong entry and its reversal net to zero in the month they were made;
+**DELETE keeps dating its contra TODAY**, because removing a payment is an
+event that happens today, and the two must not be merged.
+
+The UPDATE_PAYMENT audit's nine-column from → to comparison moved out of this
+route in the same change (`soPaymentFieldChanges`, beside
+`recordSoPaymentRow`): the audit records nine columns, the ledger reads four,
+and they are deliberately different questions. This route file is over its size
+ceiling and may only shrink, which is why the lift rode along.
+
+Still NOT here: who may edit an old payment. `paymentRowMutable` remains purely
+time-based — see `scm/shared/so-field-policy.ts`.
+
 ### The BALANCE a human is shown — which total it subtracts from (2026-09-08)
 
 The order total lives in TWO columns and the balance rule reads whichever one is
