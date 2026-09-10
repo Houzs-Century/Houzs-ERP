@@ -165,3 +165,43 @@ describe('so-field-policy — payment same-day window (Owner 2026-07-19)', () =>
     expect(msg as string).toMatch(/day it was keyed in/i);
   });
 });
+
+/* The vendored copy carries the SAME rule as the server's, and this file is
+   the referee check-shared-mirrors.mjs names for the pair. Owner + management
+   2026-09-10: Finance may correct a payment after the day it was keyed, and a
+   RECONCILED payment is closed to everybody — so both halves have to hold on
+   this side too, or the button and the endpoint disagree about who may click.
+
+   Note what the CLIENT never does: it never passes `reconciled`. A settlement
+   match and a bank statement live on the server, so this side offers the
+   control on the permission alone and lets the endpoint refuse. These cases
+   pin the behaviour anyway, because the predicate is one rule and the day
+   somebody plumbs the fact through, it must already be right. */
+describe('so-field-policy — who may correct a payment (Owner + management 2026-09-10)', () => {
+  const TODAY = '2026-09-10';
+  const OLD = '2026-08-02';
+
+  it('opens an older payment for a holder of the amend right', () => {
+    expect(paymentRowMutable(OLD, TODAY, false, { mayAmend: true }))
+      .toEqual({ mutable: true, problem: null });
+  });
+
+  it('leaves it shut for everybody else, exactly as before', () => {
+    expect(paymentRowMutable(OLD, TODAY, false, { mayAmend: false }).mutable).toBe(false);
+    expect(paymentRowMutable(OLD, TODAY, false).mutable).toBe(false);
+  });
+
+  it('shuts a RECONCILED payment to the holder of the right as well', () => {
+    const r = paymentRowMutable(OLD, TODAY, false, {
+      mayAmend: true, reconciled: { kind: 'bank', jeNo: 'JE-2608-0031' },
+    });
+    expect(r.mutable).toBe(false);
+    expect(r.problem).toMatch(/JE-2608-0031/);
+  });
+
+  it('shuts a reconciled payment even on the day it was keyed', () => {
+    expect(paymentRowMutable(TODAY, TODAY, false, {
+      reconciled: { kind: 'merchant', on: '2026-09-10' },
+    }).mutable).toBe(false);
+  });
+});

@@ -4466,8 +4466,33 @@ route in the same change (`soPaymentFieldChanges`, beside
 and they are deliberately different questions. This route file is over its size
 ceiling and may only shrink, which is why the lift rode along.
 
-Still NOT here: who may edit an old payment. `paymentRowMutable` remains purely
-time-based — see `scm/shared/so-field-policy.ts`.
+#### Who may correct an old payment: FINANCE (2026-09-10, docs/bugs/0780)
+
+The deferred rule `paymentRowMutable` reserved a place for in 2026-07-19 has
+landed, together with the permission it was waiting for. Owner + management:
+**已经和management 确定了，让权限在finance 这里更改.** The predicate takes a
+fourth argument and the ORDER of its rules is the design:
+
+| | |
+|---|---|
+| DRAFT | still fluid — the 2026-07-13 exemption, untouched |
+| **RECONCILED** | closed to EVERYONE, Finance included, and it beats the same-day window too |
+| same day | still fluid for whoever keyed it |
+| **may amend** | `scm.so_payment.amend` — Finance's door, granted in Team > Positions |
+| otherwise | the window that has always closed |
+
+Both the PATCH and the DELETE call `paymentMayChange`
+(`backend/src/acc/payment-reconciled.ts`), which is the one call that loads the
+reconciliation AND asks the predicate — two steps that must stay in step. It
+names WHICH of three places closed over the payment: a merchant settlement
+match on the row, a bank-statement match on its ACTIVE entry, or a closed month
+on the entry's MONEY-leg account. **Every read fails CLOSED** — an unreadable
+check refuses and says to retry, never "not reconciled".
+
+The screens pass `mayAmend` and never pass `reconciled`: only the server can
+see a settlement match, so they offer the control on the permission alone and
+let the endpoint refuse. That is why the old refusal sentence now ends "ask
+Finance to adjust it" — it finally names a path that exists.
 
 ### The BALANCE a human is shown — which total it subtracts from (2026-09-08)
 

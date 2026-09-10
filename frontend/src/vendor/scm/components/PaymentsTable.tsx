@@ -42,6 +42,7 @@ import { todayMyt, mytDayOf } from '../lib/dates';
    the button and the endpoint cannot disagree about whether the window is open
    (Owner 2026-07-19). */
 import { paymentRowMutable } from '../lib/so-field-policy';
+import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import {
   PAYMENT_METHOD_CODE_TO_VALUE,
   PAYMENT_METHOD_DEFAULT_LABELS,
@@ -465,6 +466,12 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
   /* Owner 2026-07-13 — DRAFT SO: lift the per-row same-day EDIT lock so every
      persisted payment on an unconfirmed order can still be corrected. */
   const draftUnlocked = props.draftUnlocked ?? false;
+  /* Owner + management 2026-09-10 — FINANCE may correct a payment after the
+     day it was keyed. Showing the control is the courtesy; the endpoint still
+     decides, and it refuses a payment that has already been RECONCILED — a
+     fact only the server can read, so this side never claims to know it. */
+  const { can } = useHouzsAuth();
+  const mayAmend = can('scm.so_payment.amend');
 
   /* ── Official Receipt print (GL redesign 9b) ──────────────────────────
      ensure-then-print: the endpoint fetches the payment's OR (creating one
@@ -741,7 +748,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     if (Number.isNaN(t)) return false;
     const day = mytDayOf(createdAt);
     if (day === null) return false;
-    return paymentRowMutable(day, todayMyt(), draftUnlocked).mutable;
+    return paymentRowMutable(day, todayMyt(), draftUnlocked, { mayAmend }).mutable;
   };
 
   /* installment_months (int|null) → the maintenance plan LABEL/value to rehydrate
