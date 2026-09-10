@@ -429,7 +429,7 @@ export const GoodsReceivedDetail = () => {
         ...d,
         itemCode:     bound.item_code,
         materialName: bound.material_name,
-        supplierSku:  bound.supplier_sku ?? null,
+        supplierSku:  bound.supplier_sku,
         unitPriceSen: bound.unit_price_sen,
         itemGroup:    sku?.category ? sku.category.toLowerCase() : d.itemGroup,
       }));
@@ -440,9 +440,9 @@ export const GoodsReceivedDetail = () => {
       setAddDraft((d) => ({
         ...d,
         itemCode:     code,
-        materialName: match.name ?? code,
+        materialName: match.name,
         supplierSku:  null,
-        itemGroup:    match.category ? match.category.toLowerCase() : null,
+        itemGroup:    match.category.toLowerCase(),
       }));
       return;
     }

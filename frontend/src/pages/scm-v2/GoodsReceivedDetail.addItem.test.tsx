@@ -19,6 +19,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { GoodsReceivedDetail } from './GoodsReceivedDetail';
 
 const h = vi.hoisted(() => ({
   addMock: vi.fn(),
@@ -72,9 +73,6 @@ vi.mock('../../components/scm-v2/PrintPreviewModal', () => ({
   PrintPreviewModal: () => null,
   usePrintPreview: () => ({ open: false, openPreview: vi.fn(), close: vi.fn(), handlers: {} }),
 }));
-
-// eslint-disable-next-line import/first
-import { GoodsReceivedDetail } from './GoodsReceivedDetail';
 
 const makeGrn = (over: Record<string, unknown> = {}) => ({
   id: 'G1',
