@@ -11,10 +11,11 @@
 // on `scm.mfg_sales_order_items`. Swapping `created_at` between the two rows
 // therefore swaps their emit order and nothing else moves.
 //
-// REVERSAL: run this a second time; the swap is its own undo.
+// REVERSAL: the two compartments shared a created_at before this ran; to undo,
+// set 1NA's created_at back to 2A(RHF)'s value (the dry-run prints both).
 //
-// RE-RUN: NOT idempotent — running twice returns to the ORIGINAL order. Only
-// dispatch when you want the swap applied.
+// RE-RUN: idempotent. Once 1NA sorts before 2A(RHF) the script prints
+// "already sorts before" and exits 0 without writing.
 //
 // SCOPED HARD: only touches two rows on ONE named document. Refuses if the
 // document does not exist, if the sofa model is not 5526, or if either of the
@@ -97,22 +98,34 @@ try {
     process.exit(1);
   }
 
-  const rowA = a[0];
-  const rowB = b[0];
-  console.log(`SWAP TARGET A: ${rowA.item_code}  id=${rowA.id}  created_at=${rowA.created_at}`);
-  console.log(`SWAP TARGET B: ${rowB.item_code}  id=${rowB.id}  created_at=${rowB.created_at}`);
+  const rowA = a[0]; // 1NA — must sort FIRST
+  const rowB = b[0]; // 2A(RHF) — must sort SECOND
+  console.log(`WANT FIRST  (${COMPARTMENT_A}): ${rowA.item_code}  id=${rowA.id}  created_at=${rowA.created_at}`);
+  console.log(`WANT SECOND (${COMPARTMENT_B}): ${rowB.item_code}  id=${rowB.id}  created_at=${rowB.created_at}`);
+
+  // A SWAP IS NOT ENOUGH — the two rows share a created_at to the microsecond
+  // (both were inserted by the same edit), so exchanging the values leaves them
+  // equal and the `id` tiebreaker keeps 2A(RHF) first. To force `1NA` ahead we
+  // give it a created_at strictly EARLIER than 2A(RHF)'s: one second before.
+  // That still lands after L(LHF) (a different, older day), so only the two
+  // targeted compartments move relative to each other.
+  const alreadyOrdered = new Date(rowA.created_at).getTime() < new Date(rowB.created_at).getTime();
+  if (alreadyOrdered) {
+    console.log(`OK — ${COMPARTMENT_A} already sorts before ${COMPARTMENT_B}. Nothing to do.`);
+    process.exit(0);
+  }
 
   if (!APPLY) {
-    console.log(`DRY-RUN — no write. Would swap created_at between the two rows above.`);
+    console.log(`DRY-RUN — no write. Would set ${COMPARTMENT_A}.created_at = ${COMPARTMENT_B}.created_at - 1 second, so it sorts first.`);
     console.log(`Re-run with MODE=apply CONFIRM=${CONFIRM_PHRASE} to write.`);
     process.exit(0);
   }
 
-  await pg.begin(async (tx) => {
-    await tx`UPDATE scm.mfg_sales_order_items SET created_at = ${rowB.created_at} WHERE id = ${rowA.id}`;
-    await tx`UPDATE scm.mfg_sales_order_items SET created_at = ${rowA.created_at} WHERE id = ${rowB.id}`;
-  });
-  console.log('WROTE: swapped created_at between the two rows.');
+  await pg`
+    UPDATE scm.mfg_sales_order_items
+       SET created_at = (${rowB.created_at}::timestamptz - interval '1 second')
+     WHERE id = ${rowA.id}`;
+  console.log(`WROTE: set ${COMPARTMENT_A} one second before ${COMPARTMENT_B}.`);
 } finally {
   await pg.end();
 }
