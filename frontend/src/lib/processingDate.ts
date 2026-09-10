@@ -20,11 +20,27 @@ export const PROCESSING_LEAD_DAYS = 42;
  * empty field that silently fails the pairing gate on save.
  *
  * WHY IT LIVES HERE. It was a private const inside SalesOrderNew.tsx, which is
- * over its size ceiling. It is also the ONE place this rule is written: mobile
- * does not derive a Processing Date at all (its `procDate` is seeded from the
- * scanned slip and otherwise typed by hand), so if that ever becomes a shared
- * affordance, this is the module both surfaces import rather than the second
- * hand-written copy of "42 days, but not the past".
+ * over its size ceiling. It is also the ONE place this rule is written, so both
+ * surfaces import it rather than keeping a second hand-written copy of "42 days,
+ * but not the past".
+ *
+ * MOBILE JOINED ON 2026-09-09, and the paragraph above used to end "mobile does
+ * not derive a Processing Date at all … if that ever becomes a shared
+ * affordance, this is the module both surfaces import". It became one: a rep
+ * reported 「那个日期 proceed date 之前是有 auto detect 的，现在的需要自己填」
+ * (`docs/bugs/0755-*`). Desktop had always derived it; mobile's field is seeded
+ * from a scan path no call site supplies, so it was always blank and always
+ * typed by hand — a rule built on one surface only, which is the class CLAUDE.md
+ * names as recurring.
+ *
+ * Both callers fire this from the DELIVERY date's onChange, and both apply the
+ * same two limits, which are the reason this is a courtesy and not a policy:
+ *   · it fills a BLANK Processing Date only. A date already on the order, or one
+ *     the rep just typed, is theirs and is not overwritten.
+ *   · CLEARING Delivery leaves Processing alone. Each field has its own Clear
+ *     control, and the both-or-neither pairing is a SERVER save gate
+ *     (`processing_delivery_must_pair`) that names the problem — guessing here
+ *     would only make the refusal harder to read.
  */
 export const deriveProcessingDate = (deliveryDate: string): string => {
   const today = todayMyt();

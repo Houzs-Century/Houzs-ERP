@@ -4,6 +4,7 @@ import {
   cascadeMasterVariants,
   seedFollowerVariants,
   seedableMasterVariants,
+  CASCADE_CATEGORIES,
   FABRIC_IDENTITY_KEYS,
   type MasterVariantSnapshot,
 } from "../vendor/scm/lib/so-variant-cascade";
@@ -22,6 +23,7 @@ import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import { addressLineProps } from "../lib/acColumnWidths";
+import { deriveProcessingDate } from "../lib/processingDate";
 import { paymentMethodCodeForValue } from "../vendor/scm/lib/payment-methods";
 import { soDateGuardError, soStockLocationError, soErrorText } from "../vendor/scm/lib/so-form-validate";
 import { useBranding } from "../hooks/useBranding";
@@ -75,6 +77,7 @@ import {
   type ModelAllowedOptions,
   type SpecialAddonRow,
 } from "../vendor/scm/lib/mfg-products-queries";
+import { useSpecialOrderSurface } from "../vendor/scm/lib/special-order-surface";
 import { useFabricColoursSearch, type FabricColourRow } from "../vendor/scm/lib/fabric-queries";
 /* Owner 2026-07-16 — the recorded-payment ledger is the SHARED
    RecordedPaymentsList, the SAME component the scan-draft review screen
@@ -303,6 +306,13 @@ const LINE_CATS: Array<{ value: LineCat; label: string }> = [
    the LIVE catalog via useSoDropdownOptions/optionsOrFallback, so there is no
    remaining reader — and no static list left to drift from the DB values. */
 
+/* variants.specials -> trimmed code list. Was written out twice, identically. */
+const specialsList = (val: unknown): string[] => {
+  if (Array.isArray(val)) return val.map(String).filter(Boolean);
+  if (typeof val === "string" && val) return [val];
+  return [];
+};
+
 const uid = () => Math.random().toString(36).slice(2, 10);
 const num = (s: string) => parseFloat(String(s).replace(/,/g, "")) || 0;
 const toSen = (s: string) => Math.round(num(s) * 100);
@@ -317,9 +327,6 @@ const fmt = (n: number) => n.toLocaleString("en-MY", { minimumFractionDigits: 2,
    the compartments of one sofa. */
 const FABRIC_SYNC_KEYS: readonly string[] = FABRIC_IDENTITY_KEYS;
 
-/* Mobile renders variant panels for sofa + bedframe only, so the cascade is
-   scoped to those. Desktop passes null (every category). */
-const MOBILE_CASCADE_CATEGORIES: ReadonlySet<string> = new Set(["sofa", "bedframe"]);
 
 function newLine(): LineItem {
   return {
@@ -1318,7 +1325,7 @@ export function MobileNewSO({
      has any variants set — the PICK-TIME seed. Same shared helper the desktop
      form calls; this file used to carry its own copy of it. */
   const inheritVariantsByCategory = useMemo(
-    () => seedableMasterVariants(cascadeLines),
+    () => seedableMasterVariants(cascadeLines, CASCADE_CATEGORIES),
     [cascadeLines],
   );
 
@@ -1339,9 +1346,7 @@ export function MobileNewSO({
     const { variants, masters } = cascadeMasterVariants(
       cascadeLines,
       masterSnapshotRef.current,
-      /* Mobile only shows variant panels for sofa + bedframe, so only those
-         cascade here. Passed explicitly because desktop answers differently. */
-      MOBILE_CASCADE_CATEGORIES,
+      CASCADE_CATEGORIES,
     );
     masterSnapshotRef.current = masters;
     setLines((prev) => {
@@ -2359,7 +2364,8 @@ export function MobileNewSO({
                     value={delivDate}
                     disabled={scheduleDatesLocked}
                     min={today}
-                    onChange={(iso) => setDelivDate(iso)}
+                    /* Derives Processing — rule + why in lib/processingDate.ts. */
+                    onChange={(iso) => { setDelivDate(iso); if (iso && !procDate) setProcDate(deriveProcessingDate(iso)); }}
                   />
                 </Field>
                 <div style={{ fontSize: 10, color: "#9aa093", marginTop: -3 }}>
@@ -3007,16 +3013,12 @@ function LineCard({
      one-line summary for the tappable "Special order" row. Presets live on
      variants.specials; the "Custom / other" free-text order on the UNCHANGED
      variants.extraAddonNote + extraAddonAmountRM. */
-  const specialsList = (val: unknown): string[] => {
-    if (Array.isArray(val)) return val.map(String).filter(Boolean);
-    if (typeof val === "string" && val) return [val];
-    return [];
-  };
   const pickedSpecials = specialsList(v.specials ?? v.special);
   const extraNote = String(v.extraAddonNote ?? "");
   const extraAmountRM = Number(v.extraAddonAmountRM ?? 0);
   const hasCustom = Boolean(extraNote.trim()) || extraAmountRM > 0;
   const specialCount = pickedSpecials.length + (hasCustom ? 1 : 0);
+  const specialSurface = useSpecialOrderSurface({ itemCode: line.itemCode, fallbackCategory: line.cat, pickedSpecialCount: pickedSpecials.length });
 
   const addPhotos = (files: File[]) => {
     if (files.length === 0) return;
@@ -3162,8 +3164,8 @@ function LineCard({
             opens the bottom sheet (presets + Custom / other). Replaces the old
             inline accordion + the standalone Extra input; the data path is
             unchanged (variants.specials + extraAddonNote/extraAddonAmountRM).
-            Shown for sofa + bedframe (where specials apply). */}
-        {picked && pools.ready && (line.cat === "sofa" || line.cat === "bedframe") && (
+            Shown for every goods line since 2026-09-10 (useSpecialOrderSurface). */}
+        {picked && pools.ready && (line.cat === "sofa" || line.cat === "bedframe" || specialSurface.block) && (
           <button
             type="button"
             onClick={onOpenSpecialPicker}
@@ -3411,11 +3413,6 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
     onChange({ variants: { ...line.variants, ...patch }, overriddenKeys: overrides });
   };
 
-  const specialsList = (val: unknown): string[] => {
-    if (Array.isArray(val)) return val.map(String).filter(Boolean);
-    if (typeof val === "string" && val) return [val];
-    return [];
-  };
   const catUpper = line.itemGroup.toUpperCase();
   const specialOptions: SpecialAddonRow[] = useMemo(() => {
     // Owner 2026-07-14 — opt-out pool (mirrors SoLineCard/main): empty/absent
@@ -3429,6 +3426,7 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
     );
   }, [pools.specialAddons, catUpper, allow]);
   const pickedSpecials = specialsList(v.specials ?? v.special);
+  const presets = useSpecialOrderSurface({ itemCode: line.itemCode, fallbackCategory: line.cat, pickedSpecialCount: pickedSpecials.length }).optionPicker ? specialOptions : [];
   const specialChoicesMap: Record<string, string[]> =
     v.specialChoices && typeof v.specialChoices === "object"
       ? (v.specialChoices as Record<string, string[]>)
@@ -3457,7 +3455,7 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
      extraSen, so a special order MUST expose its groups — otherwise it silently
      locks to choices[0] (the default toggleSpecial seeds). */
   const changeChoice = (code: string, groupIdx: number, label: string) => {
-    const def = specialOptions.find((d) => d.code === code);
+    const def = presets.find((d) => d.code === code);
     const entry = [...(specialChoicesMap[code] ?? (def?.optionGroups ?? []).map(() => ""))];
     entry[groupIdx] = label;
     setVar({ specialChoices: { ...specialChoicesMap, [code]: entry } });
@@ -3467,7 +3465,7 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
   const extraAmountRM = Number(v.extraAddonAmountRM ?? 0);
   const hasCustom = Boolean(extraNote.trim()) || extraAmountRM > 0;
   const [customOpen, setCustomOpen] = useState(hasCustom);
-  const ghostPicks = pickedSpecials.filter((c) => !specialOptions.some((a) => a.code === c));
+  const ghostPicks = pickedSpecials.filter((c) => !presets.some((a) => a.code === c));
 
   return (
     <div className="sheet-bd" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -3484,12 +3482,12 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
         </div>
 
         <div className="sheet-scroll" style={{ gap: 9 }}>
-          {specialOptions.length === 0 && ghostPicks.length === 0 && (
+          {presets.length === 0 && ghostPicks.length === 0 && (
             <div style={{ fontSize: 12, color: "#767b6e" }}>
               No preset special orders for this model — use “Custom / other” below.
             </div>
           )}
-          {specialOptions.map((a) => {
+          {presets.map((a) => {
             const on = pickedSpecials.includes(a.code);
             return (
               <label
@@ -3523,7 +3521,7 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
               (owner 2026-07-20 parity with desktop SpecialOrders) — without these
               the special order silently locks to the first option even though each
               choice can carry its own surcharge. The RM delta rides showPrices. */}
-          {specialOptions.filter((a) => pickedSpecials.includes(a.code) && a.optionGroups.length > 0).map((a) =>
+          {presets.filter((a) => pickedSpecials.includes(a.code) && a.optionGroups.length > 0).map((a) =>
             a.optionGroups.map((g, gi) => (
               <Field key={`${a.code}-${gi}`} label={`${a.label} · ${g.label}${g.required ? " *" : ""}`}>
                 <select

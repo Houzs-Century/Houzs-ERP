@@ -54,6 +54,7 @@ import {
 import { cacheSoLinePhotoSignedUrl, useSoLinePhoto } from '../lib/so-line-photo';
 import { feeAmountSen, feeDiscountForAmount, lockedFeeSemantics } from '../lib/delivery-fee-amount';
 import { useDebouncedValue } from '../lib/hooks';
+import { specialOrderSurface } from '../lib/special-order-surface';
 import { useAuth, isAdminLevel, isHatchSales } from '../lib/auth';
 import { CATEGORY_BADGE } from '../lib/category-badges';
 import { sortByNumeric } from '../lib/sort-options';
@@ -731,14 +732,27 @@ const SoLineCardInner = ({
      2026-07-13). */
   const hasVariants = Boolean(draft.itemCode) && Boolean(maint) && (category === 'bedframe' || category === 'sofa');
   const specials = specialsList(draft.variants.specials ?? draft.variants.special);
-  const posRemarkSpecial = posRemarkSpecialOf(draft.variants);
   /* SO-parity (Loo 2026-06-06) — mattress lines can carry Special Add-ons too
-     (POS prices MATTRESS specials since PR #456). Render JUST the accordion
-     for them — no fabric/height grid. Hidden until a mattress Model has
-     specials ticked in Modular (none today) or the line already carries one
-     (a configured pick OR the POS remark/extra special). */
-  const hasMattressSpecials = Boolean(draft.itemCode) && category === 'mattress'
-    && (specialOptions.length > 0 || specials.length > 0 || posRemarkSpecial != null);
+     (POS prices MATTRESS specials since PR #456). Render JUST the accordion for
+     them — no fabric/height grid.
+
+     WHO GETS THE PANEL, AND WHETHER IT OFFERS CHECKBOXES, is one decision and it
+     lives in lib/special-order-surface.ts with its own tests — read that file
+     for the reasoning, including why free text is safe on a pooled line and a
+     ticked add-on is not. It replaces the condition that used to sit here:
+
+         specialOptions.length > 0 || specials.length > 0 || posRemarkSpecialOf(...) != null
+
+     which asked "is there an add-on to tick?" and answered no for every plain
+     mattress (the catalogue defines none) and every accessory. So the owner had
+     nowhere to write an SP mattress's SIZE or a custom pillow's COLOUR
+     (2026-09-10). The panel now opens on the line's category alone. */
+  const specialSurface = specialOrderSurface({
+    category,
+    hasItemCode: Boolean(draft.itemCode),
+    pickedSpecialCount: specials.length,
+  });
+  const hasSpecialOrder = specialSurface.block;
 
   /* ── Render ─────────────────────────────────────────────────────── */
 
@@ -1010,9 +1024,9 @@ const SoLineCardInner = ({
           is now unconditional and bodyRight is pinned to track 2 (see the
           module CSS), so the photo rail holds the right edge on EVERY line and
           the left of a variant-less line is simply the empty track. */}
-      {(picked || hasVariants || hasMattressSpecials || canShowPhotos) && (
+      {(picked || hasVariants || hasSpecialOrder || canShowPhotos) && (
       <div className={styles.body}>
-        {(hasVariants || hasMattressSpecials) && <div className={styles.bodyLeft}>
+        {(hasVariants || hasSpecialOrder) && <div className={styles.bodyLeft}>
       {hasVariants && category === 'bedframe' && (
         <div className={styles.variants}>
           <div className={styles.variantsHead}>BEDFRAME VARIANTS</div>
@@ -1135,13 +1149,15 @@ const SoLineCardInner = ({
         </div>
       )}
 
-      {hasMattressSpecials && (
+      {hasSpecialOrder && (
         <div className={styles.variants}>
-          <div className={styles.variantsHead}>MATTRESS ADD-ONS</div>
+          <div className={styles.variantsHead}>
+            {category === 'mattress' ? 'MATTRESS ADD-ONS' : 'SPECIAL ORDER'}
+          </div>
           <SpecialOrders
             open={specialsOpen}
             onToggle={() => setSpecialsOpen((o) => !o)}
-            options={specialOptions}
+            options={specialSurface.optionPicker ? specialOptions : []}
             variants={draft.variants}
             onPatch={setVariants}
             disabled={!isEditing}

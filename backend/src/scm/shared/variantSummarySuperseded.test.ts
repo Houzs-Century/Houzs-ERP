@@ -44,3 +44,39 @@ describe('the superseded note never reaches the account book', () => {
     expect(without.length).toBeLessThanOrEqual(AC_DESC2_MAX);
   });
 });
+
+/*
+ * THE FREE TEXT MUST REACH THE SUPPLIER, on a category with no variants at all.
+ *
+ * Owner 2026-09-10 asked where a custom pillow's COLOUR and an SP mattress's
+ * SIZE are written so the supplier sees them. Opening the "Custom / other"
+ * field on those categories (frontend vendor/scm/lib/special-order-surface.ts)
+ * only delivers half the answer — the other half is that what he types has to
+ * print. It does, and it does so for a reason worth pinning: the SPECIAL
+ * segment is appended AFTER the per-group attribute branch and is not inside
+ * it, so a category that contributes no attributes still carries its note.
+ *
+ * These fix that property in place. `description2` on a purchase order is
+ * exactly this string (mfg-purchase-orders.ts stamps it on create and amend),
+ * so a regression here would silently strip the note off every PO.
+ */
+describe('a free-text special prints on a category that has no variant axes', () => {
+  it('prints an accessory line note as its own SPECIAL segment', () => {
+    expect(buildVariantSummary('accessory', { extraAddonNote: 'Colour: dusty pink' }))
+      .toBe('SPECIAL: Colour: dusty pink');
+  });
+
+  it('prints a mattress SP size the same way', () => {
+    expect(buildVariantSummary('mattress', { extraAddonNote: 'Size 60x75 (SP)' }))
+      .toBe('SPECIAL: Size 60x75 (SP)');
+  });
+
+  it('prints a dining/others line note too', () => {
+    expect(buildVariantSummary('others', { extraAddonNote: 'Top colour: walnut' }))
+      .toBe('SPECIAL: Top colour: walnut');
+  });
+
+  it('leaves a line with no note untouched — no empty SPECIAL segment', () => {
+    expect(buildVariantSummary('accessory', {})).toBe('');
+  });
+});
