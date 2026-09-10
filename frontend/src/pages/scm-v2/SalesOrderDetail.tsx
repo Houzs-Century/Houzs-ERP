@@ -1344,22 +1344,6 @@ export const SalesOrderDetail = () => {
     });
   }, []);
 
-  /* Edit-mode seed/clear effect — whole-order inline edit. Entering edit
-     mode populates a draft for EVERY current line so they all render as
-     inline SoLineCard editors at once; leaving edit mode wipes the drafts
-     (and any half-typed add-draft).
-     PRESERVE local drafts on items refetch. A photo upload/delete inside
-     any line runs a mutation whose onSuccess invalidates the SO detail
-     query, and the refetch changes the `items` reference — before this
-     guard, the effect re-seeded every draft from the fresh server snapshot
-     and wiped every unsaved variant/compartment pick the user had made on
-     any other line. See docs/bugs/. On refetch we now merge: seed drafts
-     ONLY for items that don't already have one (newly appeared lines),
-     drop drafts for items that no longer exist server-side, and leave
-     every in-flight draft alone. The pristine snapshot Save diffs against
-     is refreshed from the current server items on every pass — updates to
-     server-controlled fields (photoUrls after upload, stock coverage) are
-     still reflected on Save without touching what the user typed. */
   useEffect(() => {
     if (!isEditing) {
       setEditingDrafts({});
@@ -1367,18 +1351,17 @@ export const SalesOrderDetail = () => {
       originalDraftsRef.current = {};
       return;
     }
+    // On items refetch (a photo upload/delete invalidates the SO detail),
+    // MERGE — keep the user's in-flight drafts, seed only new lines, drop
+    // gone ones. A naive re-seed used to wipe unsaved picks (docs/bugs/).
     const orig: Record<string, SoLineDraft> = {};
     for (const it of items) orig[it.id] = draftFromItem(it);
     originalDraftsRef.current = orig;
     setEditingDrafts((prev) => {
-      const next = { ...prev };
-      for (const it of items) {
-        if (!next[it.id]) next[it.id] = draftFromItem(it);
-      }
       const alive = new Set(items.map((it) => it.id));
-      for (const id of Object.keys(next)) {
-        if (!alive.has(id)) delete next[id];
-      }
+      const next: Record<string, SoLineDraft> = {};
+      for (const id of Object.keys(prev)) if (alive.has(id)) next[id] = prev[id];
+      for (const it of items) if (!(it.id in next)) next[it.id] = draftFromItem(it);
       return next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
