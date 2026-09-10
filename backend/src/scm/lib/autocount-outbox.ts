@@ -1214,16 +1214,7 @@ export async function enqueueEdit(
     touchedFields?: readonly string[];
   },
 ): Promise<boolean> {
-  /* THE NUMBER THE COMPOSER RESOLVED, kept where the CATCH can reach it.
-     A purchase-order route knows its id, not its number, so `opts.docNo` is
-     undefined on that path — and the catch below fell back to the id. Every
-     REFUSED purchase-order edit was therefore filed under a UUID, which is what
-     the owner saw on the Sync page on 2026-09-10 and asked about
-     (「为什么会有这样的document」): the row read
-     `b534845b-601f-435a-91bf-0eac2743b601` while its own error message said
-     `HC-PO-2609-055`. The composer had the number all along; only the failure
-     path threw it away. */
-  let resolvedDocNo: string | null = null;
+  let resolvedDocNo: string | null = null;  // the CATCH needs the number: a PO route passes only docId, so a refusal was filed under a UUID (docs/bugs/0774)
   try {
     if (opts.companyId == null) return false;
     if (!(await isWritebackEnabled(sb, opts.companyId))) return false;
@@ -1237,8 +1228,7 @@ export async function enqueueEdit(
     if (!composed) return false;
     /* A PO route knows its id, not its number; the outbox row is keyed by the
        human document number so it lines up with the create row. */
-    const docNo = composed.docNo;
-    resolvedDocNo = docNo;
+    const docNo = (resolvedDocNo = composed.docNo);
 
     const pending = await findPendingOriginatingOp(sb, opts.companyId, opts.docType, docNo, opts.docId ?? null);
     if (pending) {
