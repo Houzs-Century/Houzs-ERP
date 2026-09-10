@@ -31,7 +31,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { mrpViews, mrpCategoryOf } from './mrp-views';
+import { mrpViews, mrpCategoryOf, rowBelongsToView } from './mrp-views';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const SCHEMA_SQL = path.join(repoRoot, 'backend/scripts/scm-schema/2990s-full-schema.sql');
@@ -85,8 +85,16 @@ describe('the checker itself', () => {
 describe('every category a product can carry is reachable from an MRP tab', () => {
   test('the mfg_product_category enum', () => {
     const members = enumMembers('mfg_product_category');
-    const tabs = mrpViews(members).map((v) => v.category);
-    const unreachable = members.filter((m) => !NEVER_A_TAB.has(m) && !tabs.includes(m));
+    /* REACHABLE now means "some tab claims it", not "a tab is named after it".
+       Since 2026-09-10 the extra categories share ONE Others tab (owner:
+       「应该要放others 一个category把」), so the question the page actually has to
+       answer is whether every member has a home — which is exactly what
+       `rowBelongsToView` decides, by EXCLUSION. Asserting on tab NAMES would
+       pass while a row still fell through. */
+    const views = mrpViews(members);
+    const unreachable = members.filter(
+      (m) => !NEVER_A_TAB.has(m) && !views.some((v) => rowBelongsToView(v, m)),
+    );
     expect(
       unreachable,
       `mfg_product_category has ${unreachable.join(', ')} but the MRP page has no tab for it. `
@@ -106,9 +114,9 @@ describe('every category a product can carry is reachable from an MRP tab', () =
     const bySku = new Map<string, number>();
     for (const r of payload.rows) bySku.set(r.category, (bySku.get(r.category) ?? 0) + 1);
 
-    const tabs = mrpViews([...bySku.keys()]).map((v) => v.category);
+    const views = mrpViews([...bySku.keys()]);
     const stranded = [...bySku.entries()]
-      .filter(([cat]) => !NEVER_A_TAB.has(cat) && !tabs.includes(cat))
+      .filter(([cat]) => !NEVER_A_TAB.has(cat) && !views.some((v) => rowBelongsToView(v, cat)))
       .map(([cat, n]) => `${cat} (${n} SKUs)`);
     expect(
       stranded,
@@ -129,9 +137,11 @@ describe('what the tab list does and does not invent', () => {
     expect(mrpViews(['SOFA', 'SERVICE']).map((v) => v.category)).not.toContain('SERVICE');
   });
 
-  test('a category is never duplicated when the server also names a base one', () => {
-    const cats = mrpViews(['ACCESSORY', 'SOFA', 'DINING']).map((v) => v.category);
-    expect(new Set(cats).size).toBe(cats.length);
+  test('four extra categories produce ONE Others tab, not four', () => {
+    const values = mrpViews(['ACCESSORY', 'SOFA', 'DINING', 'BEDLINES', 'DIFFUSER', 'CARPET'])
+      .map((v) => v.value);
+    expect(values).toEqual(['sofa', 'bedframe', 'mattress', 'accessory', 'others']);
+    expect(values.filter((v) => v === 'others')).toHaveLength(1);
   });
 
   test('the tab a click selects asks the server for the tab it displays', () => {
@@ -141,16 +151,45 @@ describe('what the tab list does and does not invent', () => {
        whose id says one thing while its rows are filtered by another is this
        whole bug with extra steps. */
     const views = mrpViews(enumMembers('mfg_product_category'));
-    expect(views.length).toBeGreaterThan(4);
+    expect(views.length).toBe(5); // the four, plus Others
     for (const v of views) expect(mrpCategoryOf(v.value)).toBe(v.category);
+    /* Others asks for NO filter — it stands for a set, and sending the engine a
+       category no product carries would answer with nothing. */
+    expect(mrpCategoryOf('others')).toBeNull();
   });
 
-  test('an unrecognised category still gets a tab, labelled with its own name', () => {
-    /* No guessing and no dropping: a category the label table has never heard of
-       is title-cased and shown, because the alternative is the bug. */
-    const v = mrpViews(['SOFA', 'WALLPAPER']).find((x) => x.category === 'WALLPAPER');
-    expect(v).toBeDefined();
-    expect(v!.label).toBe('Wallpaper');
-    expect(v!.value).toBe('wallpaper');
+  test('an unrecognised category lands in Others rather than growing a tab', () => {
+    /* `scm.acc_register_item_group()` is SECURITY DEFINER granted to
+       service_role so the owner can create a category at runtime. Under the old
+       per-category rule his new category would grow a tab nobody designed;
+       under this one it has a home the moment it exists, and the tab bar does
+       not change shape because somebody added a lookup value. */
+    const views = mrpViews(['SOFA', 'WALLPAPER']);
+    expect(views.map((v) => v.value)).toEqual(['sofa', 'bedframe', 'mattress', 'accessory', 'others']);
+    const others = views.find((v) => v.value === 'others')!;
+    expect(rowBelongsToView(others, 'WALLPAPER')).toBe(true);
+  });
+
+  test('Others appears only when the catalogue has something for it', () => {
+    /* A company selling nothing outside the four sees four tabs, not an empty
+       fifth. The tab bar states what this catalogue holds. */
+    expect(mrpViews(['SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE']).map((v) => v.value))
+      .toEqual(['sofa', 'bedframe', 'mattress', 'accessory']);
+  });
+
+  test('Others claims by EXCLUSION, so no row can be homeless', () => {
+    const others = mrpViews(['DINING']).find((v) => v.value === 'others')!;
+    /* Not in the catalogue list this response happened to carry — a product
+       deleted, a category added between two requests, or a row the engine kept
+       on its item GROUP (bug 0777). It still has a home. */
+    expect(rowBelongsToView(others, 'CARPET')).toBe(true);
+    expect(rowBelongsToView(others, 'NEVER-SEEN-BEFORE')).toBe(true);
+    /* But it never steals a row that belongs to a real tab, and never shows a
+       service line — the page has never planned those. */
+    expect(rowBelongsToView(others, 'SOFA')).toBe(false);
+    expect(rowBelongsToView(others, 'SERVICE')).toBe(false);
+    /* A row with no category at all stays off every tab. bug 0777 fixed the
+       engine so this is rare, but Others must not become the bin that hides it. */
+    expect(rowBelongsToView(others, null)).toBe(false);
   });
 });

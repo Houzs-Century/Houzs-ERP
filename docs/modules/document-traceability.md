@@ -946,11 +946,33 @@ all three, mirroring `so-relationship-map.ts`.
 (`useDoRelationshipMap` / `useSiRelationshipMap` / `useDrRelationshipMap`) reads
 `useDocumentFlow(type, id)` — linkage **B**, the same company-scoped graph the
 SO map, the vendor `DocumentFlowModal` and the purchase-side maps use — and a
-pure `build*ChainNodes(...)` fn maps the resolved family nodes to the 5-node
-canvas (unit-tested in `sales-doc-relationship-map.test.ts`). GRN opens are
-procurement-gated (same OR-shape as the SO map, so a sales-hatch reader is never
-handed a `<Forbidden>` node); the SI **Payments** node lists payments in an
-in-app notice (they live on that page) rather than navigating.
+pure `build*ChainNodes(...)` fn maps the resolved family nodes to the canvas
+(unit-tested in `sales-doc-relationship-map.test.ts`).
+
+> **The DO renders SEVEN nodes since 2026-09-10; the SI and DR still render
+> five.** The DO moved to the owner's two-chain shape (2026-07-23) — the same one
+> the SO map draws: sales row `Customer PO ▶ Sales Order ▶ Delivery Order ▶ Sales
+> Invoice`, purchase row `Purchase Order ▶ GRN ▶ Purchase Invoice` hanging off the
+> Sales Order. The five-node chain put the GRN in the sales row with no room for
+> the purchase order that produced it, so the DO could say goods were received and
+> never say what they were bought on. `document-flow` has emitted `po` and `pi`
+> nodes all along — only the DO builder never read them. On production 204 of 268
+> delivery orders resolve at least one PO, and 186 of those exactly one.
+>
+> **SI and DR did NOT move, deliberately.** The canvas positions come from a
+> hard-coded array with exactly two shapes, five entries or seven, switched on
+> `nodes.length >= 7`. The SI's fifth node is **Payments** and the DR's is the
+> **Delivery Return** itself; neither has a slot in the seven-node shape, so
+> converting them would drop a node that a previous audit deliberately added.
+> **Six is not a shape**: a six-node array falls through to the five-entry
+> positions and the sixth node is dropped SILENTLY — no throw, nothing logged
+> (pinned in `DocumentRelationshipMapModal.two-chain.test.tsx`). Adding "one more
+> cell" means adding a sixth position first.
+
+PO / GRN / PI opens are each procurement-gated (same OR-shape as the SO map, so a
+sales-hatch reader is never handed a `<Forbidden>` node — the tile reads
+"Procurement document" and answers in a notice); the SI **Payments** node lists
+payments in an in-app notice (they live on that page) rather than navigating.
 
 **CRITICAL — status untouched.** Only the DO/SI/DR *traceability* node source
 changed. The DO status strip, `computeDoLifecycle`, and delivery-planning state

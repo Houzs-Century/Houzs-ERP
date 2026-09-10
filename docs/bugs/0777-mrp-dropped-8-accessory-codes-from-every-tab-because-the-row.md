@@ -52,7 +52,7 @@ Checked for the same asymmetry and NOT found: the other engine,
 SOFA and never drops a line for a null one; the frontend has exactly one
 category-equality filter and no mobile MRP surface.
 
-**Still UNKNOWN, and deliberately out of this fix.** Why `prodByCode` lacks those
+**ANSWERED 2026-09-10 — see below. Was: still UNKNOWN, and deliberately out of this fix.** Why `prodByCode` lacks those
 eight codes at all. Section 2 (`mrp.ts:742`) reads `mfg_products` bounded by the
 demanded codes, chunked and paged, under the company predicate — so either the catalog
 rows sit under a different `company_id`, or they are absent. The fallback makes the
@@ -60,5 +60,17 @@ rows VISIBLE either way, but until that is settled those lines also miss their
 category LEAD TIME (`mrp.ts:1293` passes `prod?.category ?? null` to `orderByOf`), so
 their order-by date is computed without one. That is a data question, not a planning
 one, and it needs a read against prod.
+
+**The UNKNOWN above is now answered, and it was not a data question after all.**
+`prodByCode` lacks those eight codes because section 2's `chunkIn` read cannot
+serialise an item code carrying a `"` — company 1's demand holds two of them
+(`DUNLOPILLO GENERASI 5" MATT (S)` and `(SS)`) — and everything after such a code
+in its batch silently matches nothing while the request answers 200. Measured on
+production, run **34457477642**: the supplier read batches the SAME code list the
+same way and lost 38 codes, and **all eight of the codes above are among them**.
+Two different tables losing the same codes off one list is what settles that the
+loss is in the batching, not in either table. Fixed with the supplier read in
+`docs/bugs/0780-mrp-shows-no-supplier-on-a-line-whose-product-is-bound.md`; the
+category lead time those lines were missing comes back with their catalogue row.
 
 **Ref.** fix/mrp-row-category-fallback, 2026-09-10.

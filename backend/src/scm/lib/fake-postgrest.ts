@@ -10,6 +10,8 @@
 // than its test names claim.
 // ----------------------------------------------------------------------------
 
+import { parsePgrestInList } from './pgrest-in-list';
+
 export type Row = Record<string, any>;
 
 /**
@@ -265,6 +267,18 @@ export function fakeSb(
       },
       neq(col: string, val: unknown) { filters.push((r) => String(r[col]) !== String(val)); return builder; },
       in(col: string, vals: unknown[]) { filters.push((r) => vals.map(String).includes(String(r[col]))); return builder; },
+      /* `.filter(col, 'in', '("a","b\\"c")')` — the ESCAPED in-list the shared
+         readers now build, because supabase-js cannot serialise a value carrying
+         a `"` (docs/bugs/0780). Parsed by the SAME function the app writes with:
+         a second `split(',')` here would swallow the malformed list exactly the
+         way the bug does, and report a clean run. Any other operator THROWS, for
+         the reason `not()` above gives. */
+      filter(col: string, op: string, val: unknown) {
+        if (op !== 'in') throw new Error(`fake-postgrest: filter(${op}) is not implemented`);
+        const vals = parsePgrestInList(String(val));
+        filters.push((r) => vals.includes(String(r[col])));
+        return builder;
+      },
       /* `lt` compares the way gte/lte below do — by the column's type, NULL
          matching nothing. It used to be numeric-only with a `?? 0` fold, so an
          ISO timestamp became NaN and every row silently dropped: a month window

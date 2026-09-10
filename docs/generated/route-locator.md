@@ -295,12 +295,12 @@ Total: 1227 route registrations across 158 files.
 - L10694  GET    /:docNo/payments
 - L10747  POST   /:docNo/payments
 - L10940  PATCH  /:docNo/payments/:id
-- L11149  DELETE /:docNo/payments/:id
-- L11274  GET    /:docNo/payments/:id/slip-url
-- L11328  POST   /:docNo/payments/:id/slip
-- L11425  GET    /debtors/search
-- L11455  PATCH  /:docNo/items/:itemId/stock-status
-- L11595  POST   /:docNo/amendments
+- L11142  DELETE /:docNo/payments/:id
+- L11250  GET    /:docNo/payments/:id/slip-url
+- L11304  POST   /:docNo/payments/:id/slip
+- L11401  GET    /debtors/search
+- L11431  PATCH  /:docNo/items/:itemId/stock-status
+- L11571  POST   /:docNo/amendments
 
 ## backend/src/routes/agent-console.ts  (33)
 - L119  GET    /status
@@ -1421,8 +1421,8 @@ Total: 1227 route registrations across 158 files.
 - L69  PUT    /
 
 ## backend/src/scm/routes/mrp.ts  (2)
-- L1788  GET    /
-- L1834  POST   /regenerate
+- L1796  GET    /
+- L1842  POST   /regenerate
 
 ## backend/src/scm/routes/outstanding.ts  (2)
 - L56  GET    /${slug}
