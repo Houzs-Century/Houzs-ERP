@@ -10980,8 +10980,7 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
   const editWindow = await paymentMayChange(sb, {
     companyId: co.companyId, paymentId: id,
     createdDateMyt: mytDateOf(before.created_at), todayDateMyt: todayMyt(),
-    soIsDraft: (soRow?.status as string | undefined) === 'DRAFT',
-    mayAmend: hasHouzsPerm(c, SO_PAYMENT_AMEND),
+    soIsDraft: (soRow?.status as string | undefined) === 'DRAFT', mayAmend: hasHouzsPerm(c, SO_PAYMENT_AMEND),
   });
   if (!editWindow.mutable) {
     return c.json({ error: PAYMENT_WINDOW_CLOSED_ERROR, reason: editWindow.problem }, 409);
@@ -11175,11 +11174,9 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
      control. The DRAFT exemption mirrors the PATCH route exactly (a draft has
      nothing locked; the owner was describing a confirmed order).
 
-     THE DEFERRED RULE HAS LANDED (2026-09-10, docs/bugs/0780): the owner's
-     bank-reconciliation condition ("如果他已经做完 bank record 并且 knock off
-     掉了，就不行了") is now one more argument to paymentRowMutable(), fed by
-     paymentMayChange() below — and FINANCE, holding scm.so_payment.amend, may
-     remove an older payment. A RECONCILED one is refused to everybody. */
+     THE DEFERRED RULE HAS LANDED (2026-09-10, docs/bugs/0780): FINANCE may
+     remove an older payment, a RECONCILED one is refused to everybody, and
+     paymentMayChange() below asks both. */
   const { data: soStatusRow } = await sb
     .from('mfg_sales_orders')
     .select('status')
