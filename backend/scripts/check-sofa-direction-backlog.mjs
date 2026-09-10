@@ -15,9 +15,14 @@
  * retrieve those.  So the work we still owe is the NOT-PROCEEDED half, and this
  * script measures it instead of quoting 476 again.
  *
- * PROCEEDED is `internal_expected_dd IS NOT NULL`.  `processing_date` was DROPPED
- * by mig 0189 - it had no writer after PR #140 and reading it answers NULL on
- * every order edited since, which would report every order as not proceeded.
+ * PROCEEDED is "the order has a Processing Date", and the column NAME is taken
+ * from lib/so-processing-date.mjs rather than typed here.  There have been three
+ * names: mig 0189 dropped a dead `processing_date`, then mig 0286 renamed
+ * `internal_expected_dd` INTO `processing_date` (applied on prod 2026-08-13).
+ * This script's first draft hand-typed the retired name, which is exactly what
+ * that helper exists to stop - a column that does not exist is 42703, and 42703
+ * fails the WHOLE statement, so the census would have reported nothing at all
+ * rather than a smaller truth.
  *
  * MIRROR-PROOF IS COMPUTED FIRST, AND IT IS MOST OF THE POPULATION.  A mirror is
  * "reverse the piece order and swap every (LHF)/(RHF)".  A build whose mirror
@@ -38,6 +43,7 @@ import postgres from 'postgres';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadCorrections } from './lib/sofa-corrections-source.mjs';
+import { soProcessingDateFragment } from './lib/so-processing-date.mjs';
 
 const CO = Number(process.env.COMPANY_ID || 1);
 const LIMIT = Number(process.env.LIST_LIMIT || 60);
@@ -81,11 +87,12 @@ const isMirrorProof = (pieces) => {
 }
 
 const sql = postgres(process.env.DATABASE_URL, { ssl: 'require', max: 1, prepare: false });
+const PDATE = soProcessingDateFragment(sql);
 
 try {
   const rows = await sql`
     SELECT i.doc_no, i.line_no, i.item_code,
-           h.internal_expected_dd IS NOT NULL AS proceeded,
+           h.${PDATE} IS NOT NULL AS proceeded,
            coalesce(h.status::text, '') AS status,
            coalesce(h.debtor_name, '') AS customer
       FROM scm.mfg_sales_order_items i
@@ -130,7 +137,7 @@ try {
 
   head('SOFA DIRECTION BACKLOG - scoped by the owner 2026-09-10');
   line(`   company ${CO}.  Sofa lines are rows with item_group = 'sofa', cancelled rows excluded.`);
-  line('   PROCEEDED = the order has a Processing Date (internal_expected_dd).');
+  line('   PROCEEDED = the order has a Processing Date.');
   line("   Owner: a PROCEEDED order's build comes back from the SUPPLIER, who records it");
   line('   by compartment with every variant.  Those are NOT ours to re-read.');
   line('');
