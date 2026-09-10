@@ -63,11 +63,11 @@ async function main() {
     }
   }
   const doRows = await sql`
-    SELECT doc_no, do_number, do_date, shipout_date, customer_delivered_date, linked_ac_docno
+    SELECT do_number, do_date, shipout_date, customer_delivered_date, linked_ac_docno
       FROM scm.delivery_orders WHERE do_number ILIKE ${"%" + NEEDLE + "%"} LIMIT 20`;
   if (doRows.length === 0) log(`(no ERP delivery order matches "${NEEDLE}")`);
   for (const r of doRows) {
-    log(`ERP DO ${r.do_number ?? r.doc_no}: do_date(doc)=${d(r.do_date)} shipout=${d(r.shipout_date)} customer_delivered=${d(r.customer_delivered_date)} -> book ${r.linked_ac_docno ?? "(unlinked)"}`);
+    log(`ERP DO ${r.do_number}: do_date(doc)=${d(r.do_date)} shipout=${d(r.shipout_date)} customer_delivered=${d(r.customer_delivered_date)} -> book ${r.linked_ac_docno ?? "(unlinked)"}`);
     if (r.linked_ac_docno) {
       const [b] = await sql`SELECT doc_date, cancelled FROM public.autocount_delivery_orders WHERE doc_no = ${r.linked_ac_docno}`;
       if (b) log(`   AutoCount DO ${r.linked_ac_docno}: doc_date=${d(b.doc_date)} cancelled=${b.cancelled}`);
