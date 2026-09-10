@@ -24,12 +24,12 @@
    ],
    "model": "9058",
    "pieces": [
-    "2A(LHF)",
+    "1A(LHF)",
     "CNR",
-    "1A(RHF)"
+    "2A(RHF)"
    ],
    "seat": "28",
-   "why": "Desc2 2ER+C+1ER",
+   "why": "Desc2 2ER+C+1ER | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」.",
    "desc2Match": "{SIZE:2ER+C+1ER+(28\")}/{COL:CH141-12 MET"
   },
   {
@@ -70,12 +70,12 @@
    "model": "9058",
    "pieces": [
     "1A(LHF)",
-    "1NA",
     "CNR",
+    "1NA",
     "1A(RHF)"
    ],
    "seat": "30",
-   "why": "Desc2 1R+1NA+C+1R",
+   "why": "Desc2 1R+1NA+C+1R | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」.",
    "desc2Match": "1R+1NA+C+1R/Size:30”/Col:GD2502#18-Grey/"
   },
   {
@@ -340,13 +340,13 @@
    "model": "8030",
    "pieces": [
     "1A(LHF)",
+    "1NA",
+    "1NA",
     "CNR",
-    "1NA",
-    "1NA",
     "1A(RHF)"
    ],
    "seat": "28",
-   "why": "photo at 5x, corner position corrected by the owner",
+   "why": "photo at 5x, corner position corrected by the owner | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」.",
    "desc2Match": "28 inch per seat \\nfully cover replace t"
   },
   {
@@ -440,13 +440,13 @@
    "model": "9058",
    "pieces": [
     "1A(LHF)",
-    "1NA",
     "CNR",
+    "1NA",
     "1A(RHF)"
    ],
    "seat": "30",
    "colour": "modenza 05",
-   "why": "owner read the original slip (our photo is cropped)",
+   "why": "owner read the original slip (our photo is cropped) | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」.",
    "desc2Match": "colour  : MODENZA 05- DARK OLIVE \\nchang"
   },
   {

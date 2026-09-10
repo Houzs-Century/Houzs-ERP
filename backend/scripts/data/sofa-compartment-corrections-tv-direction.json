@@ -1,0 +1,348 @@
+{
+ "round": "sofa direction re-read from the drawings, 2026-09-10",
+ "why": "The builds decoded from drawings before 2026-09-09 did not consult the TV marker, so every sketch with the TV drawn ABOVE the run was recorded mirrored. Verified on 13 drawings by hand with no exception before any of this was generated.",
+ "ruling": "Owner 2026-09-10: 「做到答案了的 反了的就改完 如果没有tv的就当作tv在下面」",
+ "entries": [
+  {
+   "docs": [
+    "HC-SO-008942"
+   ],
+   "model": null,
+   "pieces": [
+    "1A(LHF)",
+    "CNR",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was 1A(LHF)+1NA+CNR+1A(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "624441"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-010120"
+   ],
+   "model": null,
+   "pieces": [
+    "2A(LHF)",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was 1A(LHF)+CNR+2A(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "687986"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-010123"
+   ],
+   "model": null,
+   "pieces": [
+    "2A(LHF)",
+    "L(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was L(LHF)+2A(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "688041"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-010955"
+   ],
+   "model": null,
+   "pieces": [
+    "1A(LHF)",
+    "CNR",
+    "2A(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was 2A(LHF)+CNR+1A(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "759060"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-011002"
+   ],
+   "model": null,
+   "pieces": [
+    "L(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was 1A(LHF)+1NA+L(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "760747"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-011159"
+   ],
+   "model": null,
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was 1A(LHF)+CNR+1NA+1A(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "770334"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-011446"
+   ],
+   "model": null,
+   "pieces": [
+    "1A(LHF)",
+    "CNR",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was 1A(LHF)+1NA+CNR+1A(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "790595"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-011447"
+   ],
+   "model": null,
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was 1A(LHF)+CNR+1NA+1A(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "790600"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-011601"
+   ],
+   "model": null,
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was 1A(LHF)+CNR+1NA+1A(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "802011"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-012026"
+   ],
+   "model": null,
+   "pieces": [
+    "1A(LHF)",
+    "CNR",
+    "1NA",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was 1A(LHF)+1NA+1NA+CNR+1A(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "829183"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-012106"
+   ],
+   "model": null,
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1NA",
+    "L(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was L(LHF)+1NA+1NA+1A(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "832989"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-012108"
+   ],
+   "model": null,
+   "pieces": [
+    "L(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was 1A(LHF)+1NA+L(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "833027"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-012525"
+   ],
+   "model": null,
+   "pieces": [
+    "1A(LHF)",
+    "CNR",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was 1A(LHF)+1NA+CNR+1A(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "853613"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-012752"
+   ],
+   "model": null,
+   "pieces": [
+    "L(LHF)",
+    "1NA",
+    "2NA",
+    "CONSOLE",
+    "1A(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was 1A(LHF)+CONSOLE+2NA+1NA+L(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "869137"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-012828"
+   ],
+   "model": null,
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1NA",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was 1A(LHF)+CNR+1NA+1NA+1A(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "873103"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-013262"
+   ],
+   "model": null,
+   "pieces": [
+    "L(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was 1A(LHF)+1NA+L(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "904665"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-013312"
+   ],
+   "model": null,
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "L(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was L(LHF)+1NA+1A(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "909254"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-013322"
+   ],
+   "model": null,
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "L(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was L(LHF)+1NA+1A(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "910577"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-013497"
+   ],
+   "model": null,
+   "pieces": [
+    "L(LHF)",
+    "1NA",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was 1A(LHF)+1NA+1NA+L(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
+   "confidence": "measured",
+   "lineKeys": [
+    "926847"
+   ]
+  },
+  {
+   "docs": [
+    "HC-SO-013503"
+   ],
+   "model": null,
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "why": "OWNER-GIVEN, 2026-09-10. He read this drawing himself and stated the build: 1A(LHF)+1NA+1A(RHF). The TV is drawn ABOVE the run so the recorded L(LHF)+1NA+1A(RHF) was mirrored, and the mechanical mirror of it would be 1A(LHF)+1NA+L(RHF) -- but the first piece is a plain arm 1A, not a chaise L, which is a SECOND mistake the mirror does not fix. His answer is used verbatim rather than the derived one.",
+   "confidence": "owner",
+   "lineKeys": [
+    "926872"
+   ]
+  }
+ ],
+ "_held": [
+  {
+   "docs": [
+    "HC-SO-012025"
+   ],
+   "why": "HELD: this document carries 2 sofa lines and the drawing round did not record which line the build belongs to. Guessing would put one sofa's build on another. Needs the line named before it can be applied. Intended build was 1A(LHF)+CNR+1NA+1A(RHF)"
+  }
+ ]
+}
