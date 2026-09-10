@@ -1279,7 +1279,8 @@ ITSELF while the rest still land. It matches on the RAW ERP code today, so a lin
 whose code the bindings rewrite is refused rather than mis-assigned —
 `docs/bugs/0585-*`.
 
-**All six document types since 2026-09-10** (`docs/bugs/0792-*`). Until then the
+**All six document types since 2026-09-10**
+(`docs/bugs/0792-match-up-lines-400-d-for-do-gr-iv-pi-so-keyless-conversions.md`). Until then the
 route's `DOC` map held only SO and PO and 400'd everything else, so a keyless
 delivery order / goods receipt / invoice — a conversion that ran before the
 service reported its keys, or a partial the ERP could not name — could never be
