@@ -72,12 +72,12 @@ export function ledgerBearingChange(before: PaymentLedgerFacts, after: PaymentLe
 
 /** The facts a payment ROW carries, whichever shape it arrives in. */
 export const ledgerFactsOf = (row: {
-  amount_sen: number | null; paid_at: string | null; method: string | null; merchant_provider: string | null;
+  amount_sen?: number | null; paid_at?: string | null; method?: string | null; merchant_provider?: string | null;
 }): PaymentLedgerFacts => ({
   amountSen: Number(row.amount_sen ?? 0),
   paidOn: dayOf(row.paid_at),
   method: String(row.method ?? ''),
-  merchantProvider: row.merchant_provider,
+  merchantProvider: row.merchant_provider ?? null,
 });
 
 /**

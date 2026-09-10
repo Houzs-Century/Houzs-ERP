@@ -44,27 +44,31 @@ describe('editing a payment moves its journal entry', () => {
 
   /* It must be handed BOTH sides. Given only the new row it cannot tell an
      amount correction from an approval-code typo, and would either re-post
-     every edit or none. */
+     every edit or none. Scoped to the CALL, not the handler: `before` and
+     `next` are both in scope for a hundred lines around it, so asserting over
+     the whole handler would pass on a call that hands over neither. */
   test('it is given the payment as it was, and as it now stands', () => {
-    const body = handlerBody('patch', '/:docNo/payments/:id');
-    expect(body).toContain('before: ledgerFactsOf(before)');
-    expect(body).toMatch(/after:\s*\{/);
-  });
-
-  /* The four fields the ledger reads must all be handed over. Passing the row
-     minus `merchant_provider`, say, would silently book every card payment to
-     the generic EDC transit instead of the acquirer's own account.
-
-     Scoped to the CALL, not the handler: `paid_at:` and the rest also appear in
-     the UPDATE object twenty lines above, so asserting over the whole handler
-     would pass on a call that hands over nothing. */
-  test('every field the ledger reads is passed to it', () => {
     const body = handlerBody('patch', '/:docNo/payments/:id');
     const at = body.indexOf('repostSoPaymentBestEffort');
     expect(at, 'the re-post call is not in this handler').toBeGreaterThan(-1);
-    const call = body.slice(at, body.indexOf('});', at) + 3);
-    for (const field of ['id,', 'so_doc_no:', 'paid_at:', 'method:', 'merchant_provider:', 'amount_sen:', 'company_id:']) {
-      expect(call, `the re-post call omits ${field}`).toContain(field);
+    const call = body.slice(at, body.indexOf(');', at) + 2);
+    for (const arg of ['id,', 'docNo,', 'companyId:', 'before,', 'next']) {
+      expect(call, `the re-post call omits ${arg}`).toContain(arg);
+    }
+  });
+
+  /* The four columns the ledger reads must all be in `next`. Dropping
+     `merchant_provider` from it, say, would silently book every card payment
+     to the generic EDC transit instead of the acquirer's own account — and
+     would ALSO drop it from the UPDATE_PAYMENT audit, since one object now
+     feeds both. */
+  test('every column the ledger reads is in the object handed over', () => {
+    const body = handlerBody('patch', '/:docNo/payments/:id');
+    const at = body.indexOf('const next = {');
+    expect(at, 'the handler builds no `next` object').toBeGreaterThan(-1);
+    const next = body.slice(at, body.indexOf('};', at) + 2);
+    for (const col of ['paid_at:', 'method:', 'merchant_provider:', 'amount_sen:']) {
+      expect(next, `the edited row omits ${col}`).toContain(col);
     }
   });
 
