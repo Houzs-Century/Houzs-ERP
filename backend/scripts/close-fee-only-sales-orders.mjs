@@ -108,6 +108,22 @@ async function main() {
       + `still open: ${r.open_charges || '(nothing at all)'}`);
   }
 
+  /* PLAN MUST EXERCISE WHAT APPLY WILL WRITE — bought 2026-09-10, run
+     34440869582. The first apply died on `::scm.so_status` (42704, no such
+     type; the column's type is `scm.mfg_so_status`) and the plan before it had
+     reported a clean 29 — because a plan that only SELECTS never touches the
+     cast the write depends on. "The plan passed" answered a different question
+     from "the write will parse", which is exactly the trap CLAUDE.md names.
+     Nothing was written that run, so this cost a re-dispatch and not data — but
+     only by luck of it failing on the FIRST row rather than the last.
+     So: cast every target status here, in plan too. A wrong type name fails
+     with no rows at risk. */
+  for (const status of [...new Set(rows.map((r) => r.to_status))]) {
+    const [{ ok }] = await sql`SELECT ${status}::scm.mfg_so_status::text AS ok`;
+    if (ok !== status) throw new Error(`status cast check failed for ${status}`);
+  }
+  log(`status cast checked against scm.mfg_so_status: ${[...new Set(rows.map((r) => r.to_status))].join(', ')}`);
+
   if (!APPLY) {
     log('');
     log(`PLAN ONLY — set MODE=apply CONFIRM=${CONFIRM_PHRASE} to write.`);
@@ -123,7 +139,7 @@ async function main() {
   for (const r of rows) {
     const res = await sql`
       UPDATE scm.mfg_sales_orders
-         SET status = ${r.to_status}::scm.so_status, updated_at = NOW()
+         SET status = ${r.to_status}::scm.mfg_so_status, updated_at = NOW()
        WHERE doc_no = ${r.doc_no} AND company_id = ${CO}
          AND status::text = ${r.from_status}
        RETURNING doc_no`;
