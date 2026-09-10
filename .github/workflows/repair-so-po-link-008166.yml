@@ -1,0 +1,42 @@
+name: Repair SO/PO link HC-SO-008166 (plan/apply)
+
+# Manual. Moves ONE 9058-1NA purchase-order line from the sales-order line that
+# holds both to its starved twin, so HC-SO-008166's false SHORT clears. The PO
+# already carries both pieces (run 34484832417); this only redistributes a link.
+# No quantity, no money, no goods move. Scoped by identity — it refuses if
+# production no longer matches the diagnosed shape.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "On apply only — type REDISTRIBUTE-008166-1NA"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-so-po-link-008166
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the one dependency the script needs
+        run: npm --prefix backend install postgres --no-audit --no-fund --no-save
+      - name: Repair the link
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: node backend/scripts/repair-so-po-link-008166.mjs
