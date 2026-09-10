@@ -2360,17 +2360,7 @@ export function MobileNewSO({
                     value={delivDate}
                     disabled={scheduleDatesLocked}
                     min={today}
-                    /* Picking a Delivery date DERIVES the Processing date, the
-                       same rule desktop has always had (Delivery − 6 weeks,
-                       never in the past). Mobile left it blank and the rep
-                       typed it by hand — reported 2026-09-09: 「proceed date
-                       之前是有 auto detect 的，现在的需要自己填」.
-                       Only fills a BLANK field: a date already on the order (or
-                       one the rep just typed) is theirs, not ours to overwrite.
-                       Clearing Delivery leaves Processing alone — the Clear
-                       control beside it is the way to empty it, and the
-                       both-or-neither rule is a save gate that names the
-                       problem. */
+                    /* Derives Processing — rule + why in lib/processingDate.ts. */
                     onChange={(iso) => {
                       setDelivDate(iso);
                       if (iso && !procDate) setProcDate(deriveProcessingDate(iso));
