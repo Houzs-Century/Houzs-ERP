@@ -37,9 +37,20 @@
  *
  * The owner put it in one line: 「9028 2ARHF=sofa verano 2ARHF 啊？可是你是LHF」.
  *
- * That makes scm.mfg_products the root, and the document lines the symptom -
- * every order ever raised on such a SKU inherited the wrong name, and every
- * future one will. So SECTION A is the master and SECTION B the documents.
+ * ── AND THE MASTER TURNED OUT TO BE CLEAN. MEASURED, run 34462427810 ───────
+ * That reasoning made scm.mfg_products the prime suspect, and it is NOT the
+ * cause: 372 sofa SKUs state a hand, and ZERO have a name contradicting their
+ * own code. The sales orders are almost as clean - 2 of 1,329 lines disagree,
+ * and BOTH are on HC-SO-012016, the one document the owner found by eye.
+ *
+ * So the importer's lookup is not what broke these two rows. What fits is the
+ * AMENDMENT path: applySoAmendment (so-revision.ts:694) updates `item_code` and
+ * never `description`, and HC-SO-012016 was amended the same day. That defect is
+ * assigned elsewhere; this script measures the population it left behind.
+ *
+ * SECTION A stays because a clean master has to be RE-PROVEN, not assumed - it
+ * is one query, and the day somebody renames a SKU by hand is the day it starts
+ * mattering.
  *
  * ── WHAT IT COUNTS ─────────────────────────────────────────────────────────
  *   HAND DISAGREES - the code says (LHF) and the description says (RHF), or the
@@ -64,14 +75,16 @@
  *   DATABASE_URL   required
  *   COMPANY_ID     optional, default 1
  *   LIST_LIMIT     optional, default 60
- *   TABLES         optional: SO,PO,DO. Default all three - the drift matters
- *                  most on the PURCHASE order, which is what the factory reads.
+ *   TABLES         optional: SO,PO,GR,DO. Default all four - the drift matters
+ *                  most on the PURCHASE order, which is what the factory reads,
+ *                  and on the GOODS RECEIPT, which is the code the stock was
+ *                  booked under.
  */
 import postgres from 'postgres';
 
 const CO = Number(process.env.COMPANY_ID || 1);
 const LIMIT = Number(process.env.LIST_LIMIT || 60);
-const WANT = new Set(String(process.env.TABLES || 'SO,PO,DO').toUpperCase().split(',').map((s) => s.trim()));
+const WANT = new Set(String(process.env.TABLES || 'SO,PO,GR,DO').toUpperCase().split(',').map((s) => s.trim()));
 
 const line = (s = '') => console.log(`::notice::${s}`);
 const rule = () => line('-'.repeat(78));
@@ -120,6 +133,11 @@ const SPECS = [
     join: 'JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no', docCol: 'i.doc_no' },
   { key: 'PO', what: 'PURCHASE order  <- this is what the factory reads', table: 'scm.purchase_order_items', desc: 'material_name',
     join: 'JOIN scm.purchase_orders h ON h.id = i.purchase_order_id', docCol: 'h.po_number' },
+  /* The GOODS RECEIPT, added at the owner's instruction 2026-09-10 (「包过我的GR」).
+     It is the link between the purchase order and the stock lot, so a wrong code
+     here is a wrong code on the stock itself, not only on paper. */
+  { key: 'GR', what: 'goods receipt  <- the code the STOCK was booked under', table: 'scm.grn_items', desc: 'description',
+    join: 'JOIN scm.grns h ON h.id = i.grn_id', docCol: 'h.grn_number' },
   { key: 'DO', what: 'delivery order', table: 'scm.delivery_order_items', desc: 'description',
     join: 'JOIN scm.delivery_orders h ON h.id = i.delivery_order_id', docCol: 'h.do_number' },
 ];
@@ -177,13 +195,38 @@ try {
   let grandHand = 0;
   for (const spec of SPECS) {
     if (!WANT.has(spec.key)) continue;
+    /* NOT every line table has a `cancelled` column - purchase_order_items does
+       not, and naming it is 42703, which fails the WHOLE statement and reports
+       nothing rather than a smaller truth (run 34462427810 died exactly here,
+       after the sales-order section had already printed). Ask the catalogue
+       instead of assuming the four tables are shaped alike. */
+    const [hasCancelled] = await sql`
+      SELECT 1 AS yes FROM information_schema.columns
+       WHERE table_schema = ${spec.table.split('.')[0]}
+         AND table_name = ${spec.table.split('.')[1]}
+         AND column_name = 'cancelled'`;
+    const [hasGroup] = await sql`
+      SELECT 1 AS yes FROM information_schema.columns
+       WHERE table_schema = ${spec.table.split('.')[0]}
+         AND table_name = ${spec.table.split('.')[1]}
+         AND column_name = 'item_group'`;
+    /* Where the table has no item_group, fall back to the CODE shape: a sofa
+       compartment code is `<model>-<piece>` and the piece is what carries the
+       hand, so a row stating a hand anywhere is in scope. That is wider than
+       item_group, never narrower, so nothing is silently dropped. */
+    const sofaPred = hasGroup
+      ? `lower(coalesce(i.item_group, '')) = 'sofa'`
+      : `(i.item_code ILIKE '%(LHF)%' OR i.item_code ILIKE '%(RHF)%' OR i.${spec.desc} ILIKE '%(LHF)%' OR i.${spec.desc} ILIKE '%(RHF)%')`;
+
     const rows = await sql.unsafe(
       `SELECT ${spec.docCol} AS doc, i.item_code AS code, i.${spec.desc} AS descr
          FROM ${spec.table} i ${spec.join}
         WHERE h.company_id = $1
-          AND lower(coalesce(i.item_group, '')) = 'sofa'
-          AND coalesce(i.cancelled, false) = false
+          AND ${sofaPred}
+          ${hasCancelled ? "AND coalesce(i.cancelled, false) = false" : ''}
         ORDER BY 1`, [CO]);
+    if (!hasGroup) line(`   (${spec.key}: no item_group column - selected by code/name stating a hand)`);
+    if (!hasCancelled) line(`   (${spec.key}: no cancelled column - every row counted)`);
 
     const handBad = []; const pieceBad = []; let codeSilent = 0; let descSilent = 0; let agree = 0;
     for (const r of rows) {

@@ -34,7 +34,7 @@ on:
         required: false
         default: ""
       tables:
-        description: "SO,PO,DO - which document types. Blank = all three."
+        description: "SO,PO,GR,DO - which document types. Blank = all four."
         required: false
         default: ""
       list_limit:
