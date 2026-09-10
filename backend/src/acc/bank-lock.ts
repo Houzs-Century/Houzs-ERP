@@ -58,10 +58,13 @@ export type LockRequest = {
   month: string;
   /** Movements still undecided. Anything above zero refuses. */
   openCount: number;
-  /** Movements the month has at all — closing a month with nothing in it is
-      closing nothing, and is refused so an empty month cannot be used to make
-      a claim. */
+  /** Movements the month has at all. Zero is the ordinary quiet month, not a
+      refusal (docs/bugs/0794) — what a close needs is a STATEMENT. */
   lineCount: number;
+  /** Files filed for the month. Closing a month no file speaks for is closing
+      nothing, and is refused so an empty month cannot be used to make a
+      claim. */
+  statementCount: number;
   /** Statement minus ledger. Null when no file printed a closing balance. */
   differenceSen: number | null;
   /** Did the server's own identity check hold? */
@@ -87,12 +90,13 @@ export type LockVerdict =
 export function mayLockMonth(req: LockRequest): LockVerdict {
   const where = `${req.accountCode} ${req.month}`;
 
-  if (req.lineCount === 0) {
+  if (req.statementCount === 0) {
     return {
       ok: false,
       error: 'empty_month',
-      message: `${where} has no movements, so there is nothing to close.`
-        + ' Upload the statements for this month first.',
+      message: `${where} has no statement filed, so there is nothing to close.`
+        + ' Upload the bank statement for this month first — one with no transactions in it still counts,'
+        + ' filed under the month it is for.',
     };
   }
 

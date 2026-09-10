@@ -127,6 +127,7 @@ export const bankMonthLock = bankGuard(async (c) => {
     accountCode, month,
     openCount: state.openCount,
     lineCount: state.lineCount,
+    statementCount: state.statementCount,
     differenceSen: state.reconciliation.differenceSen,
     consistent: state.reconciliation.consistent,
     complete: state.assembly.complete,

@@ -88,6 +88,17 @@ const openStatement = () => {
   fireEvent.click(screen.getByText('Reconcile'));
 };
 
+/* docs/bugs/0794: the month box is ALSO how a file with no transactions is
+   filed — the sentence under it must say so, or the refusal it points at
+   makes no sense. */
+describe('the year-and-month box', () => {
+  test('says it also files a statement that carries no transactions', () => {
+    render(<BankStatementTab />);
+    expect(screen.getByLabelText('Statement month')).toBeTruthy();
+    expect(screen.getByText(/no transactions at all/)).toBeTruthy();
+  });
+});
+
 describe('the list of statements read', () => {
   test('says how much of each is still undecided, and how much of that is card money', () => {
     render(<BankStatementTab />);
