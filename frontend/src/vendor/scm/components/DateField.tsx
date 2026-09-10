@@ -180,35 +180,25 @@ export function DateField({
   onBlur,
   required = false,
 }: DateFieldProps) {
-  // `editing` is non-null only while the text box has focus; the rest of the
-  // time the display is derived straight from the canonical ISO `value`, so the
-  // field can never drift out of sync with the parent.
-  const [editing, setEditing] = useState<string | null>(null);
-  // Set on blur when the operator's own text does not parse. Before this the
-  // field silently reverted to the previous date and the operator read that as
-  // his own typo — the entry was lost with no border, no message and nothing
-  // announced, because `aria-invalid` came only from the `invalid` PROP.
-  const [draftInvalid, setDraftInvalid] = useState(false);
   const nativeRef = useRef<HTMLInputElement>(null);
   const fallbackId = useId();
   const inputId = id ?? fallbackId;
   const coarse = useCoarsePointer();
 
-  const display = editing ?? isoToDmy(value);
-  const showInvalid = invalid || draftInvalid;
-  const errorId = `${inputId}-date-error`;
+  const display = isoToDmy(value);
+  const showInvalid = invalid;
 
-  // MOUSE ONLY. showPicker() is the reliable opener on the desktop engines
-  // (Chrome 99+, Edge, Firefox 101+) and it is what the calendar button uses.
-  // It is NOT the touch path: see the .nativeIconTarget comment in the
-  // stylesheet — on a coarse pointer the native input sits over the calendar
-  // icon and IS the tap target, so no script runs at all. Measured on WebKit
-  // 26.5: showPicker() exists there and does not throw, and engages nothing.
+  /* Owner 2026-09-10: 「remove 掉可以打字 force 只能用 calender」 +
+     「calender 点一下开点一下关 就这样简单」. The field is a click target;
+     anywhere a tap lands opens the OS date picker. The visible text box is
+     read-only display and never receives typing — a picked date closes the
+     picker; a tap outside closes it too. That retires the split-field design
+     the 2026-09-09 「可以保留手打」 ruling asked for. */
   const openPicker = () => {
     const el = nativeRef.current;
     if (!el || disabled) return;
     if (typeof el.showPicker === 'function') {
-      try { el.showPicker(); return; } catch { /* not allowed in this context */ }
+      try { el.showPicker(); return; } catch { /* user-gesture context refused */ }
     }
     el.focus();
     el.click();
@@ -224,70 +214,27 @@ export function DateField({
             ? { ...style, borderColor: 'var(--c-orange)', background: 'var(--c-cream)' }
             : style
       }
+      onClick={openPicker}
     >
       <input
         id={inputId}
         name={name}
         className={styles.textInput}
         type="text"
-        inputMode="numeric"
         autoComplete="off"
         placeholder={placeholder}
         title={title}
         aria-label={ariaLabel}
-        // The red border above is the SEEN half of this state; without the
-        // attribute it was invisible to a screen reader and unassertable in a
-        // test. Painting and announcing must not be able to drift apart.
         aria-invalid={showInvalid || undefined}
-        aria-describedby={draftInvalid ? errorId : undefined}
         disabled={disabled}
         required={required}
+        readOnly
         value={display}
-        /* Select-all on focus (owner 2026-09-06: 日期我输入时希望不用自己打 "/"):
-           the field often arrives pre-filled — today's date on a new bill —
-           and typing into it APPENDED, so 31032026 became 06/09/202631032026,
-           parsed as nothing, and snapped back on blur. Typing now replaces. */
-        onFocus={(e) => { setEditing(isoToDmy(value)); setDraftInvalid(false); e.currentTarget.select(); }}
-        onChange={(e) => {
-          const raw = e.target.value;
-          /* Digits typed straight through wear the mask as they land:
-             3103 → 31/03, 31032026 → 31/03/2026. Anything else (a pasted
-             31-03-2026, a stray letter) is left as typed for the parser — and
-             so is anything carrying a separator the OPERATOR placed, which the
-             mask used to strip and re-insert at the wrong slot. */
-          const digits = raw.replace(/\D/g, '');
-          const maskable = /^[\d/]*$/.test(raw) && digits.length <= 8 && separatorsAreMaskOwn(raw);
-          const t = maskable ? maskDmy(digits) : raw;
-          setEditing(t);
-          setDraftInvalid(false);
-          const trimmed = t.trim();
-          if (trimmed === '') { onChange(''); return; }
-          const iso = parseDmy(trimmed);
-          if (iso) onChange(iso); // invalid/partial: hold until it parses or blur reports it
-        }}
-        onBlur={() => {
-          const text = (editing ?? '').trim();
-          if (text !== '' && parseDmy(text) === null) {
-            // Keep what he typed on screen and SAY it was not understood. The
-            // old behaviour dropped it and restored the previous date, so a
-            // lost entry looked identical to no entry at all.
-            setDraftInvalid(true);
-          } else {
-            setEditing(null);
-            setDraftInvalid(false);
-          }
-          onBlur?.();
-        }}
       />
-      {draftInvalid && (
-        <span id={errorId} className={styles.draftError} role="alert">
-          Not a date — use dd/mm/yyyy
-        </span>
-      )}
       <button
         type="button"
         className={styles.iconBtn}
-        onClick={openPicker}
+        onClick={(e) => { e.stopPropagation(); openPicker(); }}
         disabled={disabled}
         tabIndex={-1}
         aria-label="Open calendar"
@@ -322,18 +269,6 @@ export function DateField({
         type="date"
         tabIndex={-1}
         {...(coarse
-          /* On a finger the native input SITS OVER the calendar icon and
-             receives the tap — so the OS wheel picker gets focus and Chrome
-             warns "Blocked aria-hidden on an element because its descendant
-             retained focus". Give it its own accessible name in that mode
-             instead of hiding it: the input IS the operator's affordance,
-             and hiding it from assistive tech contradicts what it does. The
-             name is DISTINCT from both the visible text box's aria-label
-             ("Delivery date", "Processing date", …) and the calendar
-             button's "Open calendar" — otherwise getByLabelText finds two
-             elements and the tests refuse. On a mouse the input is 20px,
-             transparent and pointer-events:none behind the button, so no
-             focus lands there and aria-hidden stays honest and quiet. */
           ? { 'aria-label': 'Choose date' }
           : { 'aria-hidden': true })}
         disabled={disabled}
@@ -341,19 +276,11 @@ export function DateField({
         min={min}
         max={max}
         onChange={(e) => {
-          // A pick supersedes whatever draft the text box was holding, invalid
-          // or not; without this the flagged draft would sit on top of the
-          // date the operator just chose.
-          setEditing(null);
-          setDraftInvalid(false);
           onChange(e.target.value);
-          // A calendar pick is a COMPLETED entry, but it lands on this hidden
-          // input — the visible text box never focuses on this path, so it
-          // never blurs, and a blur-committing host (InlineEdit saves on blur)
-          // silently dropped the pick (2026-08-20: a Service-case Supplier
-          // Pickup Date chosen via the icon showed in the field, never saved).
-          // Fire the same completion signal, one tick later so the host sees
-          // this change's state flushed before it commits.
+          // A calendar pick is a COMPLETED entry but it lands on this hidden
+          // input; a blur-committing host (InlineEdit saves on blur) would
+          // otherwise miss it (2026-08-20: a Service-case Supplier Pickup
+          // Date chosen via the icon showed in the field, never saved).
           setTimeout(() => onBlur?.(), 0);
         }}
       />
