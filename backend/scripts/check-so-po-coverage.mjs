@@ -42,6 +42,83 @@ const log = (m = '') => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}
 const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
 
 try {
+  // ── CENSUS MODE (SO_DOC=CENSUS): how widespread is the lopsided-link pattern?
+  //    A sofa/bedframe SO line reads SHORT because its OWN linked PO qty is below
+  //    its need, WHILE the PO(s) touching the order carry enough of that item
+  //    code for the whole order's need — the goods are on order, the links are
+  //    piled on a sibling. That is world (b), and it is what a buyer must NOT
+  //    re-order against. Contrasted with world (a): the code is genuinely short
+  //    on the touching POs.
+  if (SO.toUpperCase() === 'CENSUS') {
+    const rows = await sql`
+      WITH so AS (
+        SELECT i.id, i.doc_no, i.item_code, i.qty::numeric AS qty,
+               COALESCE((SELECT SUM(d.qty) FROM scm.delivery_order_items d
+                           JOIN scm.delivery_orders h ON h.id = d.delivery_order_id
+                          WHERE d.so_item_id = i.id
+                            AND COALESCE(h.status::text,'') <> 'CANCELLED'), 0)::numeric AS delivered
+          FROM scm.mfg_sales_order_items i
+          JOIN scm.mfg_sales_orders o ON o.doc_no = i.doc_no AND o.company_id = i.company_id
+         WHERE i.company_id = ${CO} AND i.cancelled = false
+           AND lower(COALESCE(i.item_group,'')) IN ('sofa','bedframe')
+           AND o.status::text NOT IN ('CANCELLED','CLOSED','DELIVERED','INVOICED','DRAFT','SHIPPED')
+      ),
+      lk AS (
+        SELECT p.so_item_id, p.qty::numeric AS qty
+          FROM scm.purchase_order_items p
+          JOIN scm.purchase_orders o ON o.id = p.purchase_order_id
+         WHERE o.company_id = ${CO} AND o.status::text <> 'CANCELLED' AND p.so_item_id IS NOT NULL
+        UNION ALL
+        SELECT a.so_item_id, a.qty::numeric
+          FROM scm.purchase_order_item_allocations a
+          JOIN scm.purchase_order_items p ON p.id = a.purchase_order_item_id
+          JOIN scm.purchase_orders o ON o.id = p.purchase_order_id
+         WHERE o.company_id = ${CO} AND o.status::text <> 'CANCELLED'
+      ),
+      line_linked AS (
+        SELECT so.*, COALESCE((SELECT SUM(lk.qty) FROM lk WHERE lk.so_item_id = so.id), 0)::numeric AS linked
+          FROM so
+      ),
+      grp AS (
+        SELECT doc_no, item_code, SUM(qty) AS need_total, SUM(linked) AS linked_total, COUNT(*) AS lines
+          FROM line_linked GROUP BY doc_no, item_code
+      )
+      SELECT ll.doc_no, ll.item_code, ll.qty, ll.linked,
+             g.need_total, g.linked_total, g.lines,
+             CASE WHEN g.linked_total >= g.need_total THEN 'b' ELSE 'a' END AS world
+        FROM line_linked ll
+        JOIN grp g USING (doc_no, item_code)
+       WHERE ll.linked < ll.qty
+       ORDER BY world, ll.doc_no, ll.item_code`;
+
+    const b = rows.filter((r) => r.world === 'b');
+    const a = rows.filter((r) => r.world === 'a');
+    const bDocs = new Set(b.map((r) => r.doc_no));
+    const aDocs = new Set(a.map((r) => r.doc_no));
+    log(`CENSUS — company ${CO}, outstanding sofa/bedframe lines that read SHORT:`);
+    log('');
+    log(`WORLD (b) — goods ARE on the PO, the link is piled on a sibling:`);
+    log(`  ${b.length} line(s) across ${bDocs.size} sales order(s). Re-ordering these DOUBLE-orders.`);
+    for (const r of b.slice(0, 40)) {
+      log(`    ${r.doc_no}  ${r.item_code}  this line needs ${r.qty}, linked ${r.linked}; `
+        + `the order needs ${r.need_total} of it and the PO carries ${r.linked_total}`);
+    }
+    if (b.length > 40) log(`    ... and ${b.length - 40} more`);
+    log('');
+    log(`WORLD (a) — the code is genuinely short on the touching POs (a real top-up):`);
+    log(`  ${a.length} line(s) across ${aDocs.size} sales order(s).`);
+    for (const r of a.slice(0, 20)) {
+      log(`    ${r.doc_no}  ${r.item_code}  needs ${r.qty}, linked ${r.linked}; `
+        + `order needs ${r.need_total}, PO carries ${r.linked_total}`);
+    }
+    if (a.length > 20) log(`    ... and ${a.length - 20} more`);
+    log('');
+    log('World (b) is repaired by REDISTRIBUTING links (no new PO, no goods move); '
+      + 'world (a) needs a top-up PO. Both read off the POs own lines, not the MRP display.');
+    await sql.end();
+    process.exit(0);
+  }
+
   log(`company=${CO}  sales order=${SO}${POq ? `  purchase order=${POq}` : ''}`);
   log('');
 
