@@ -1,0 +1,71 @@
+name: Put the sofa corner back on the side the drawing says (2026-09-10)
+
+# Owner 2026-09-10: 「纠正direction 要根据看TV」, and on this remainder: 「要」.
+#
+# WHAT IS STILL WRONG. apply-sofa-compartment-corrections (run 34441508244)
+# corrected 20 mirrored sofas, but it pairs rows to target pieces BY CODE and
+# updates in place -- right for the two END pieces, whose codes really change,
+# and a no-op for a middle piece whose code appears on both sides of the mirror.
+# Its own dry run said so on HC-SO-012752: "change 1A(LHF) -> L(LHF) / keep 1NA /
+# keep 2NA / keep CONSOLE / change L(RHF) -> 1A(RHF)" -- the console never moved.
+#
+# So nine documents have the right ends and the corner still on the wrong side.
+# 1A+1NA+CNR+1A and 1A+CNR+1NA+1A are two different sofas: the corner turns the
+# run at a different point and the factory builds what the sequence says.
+#
+# IT MOVES line_no, NOT item_code. Permuting the codes would leave a purchase
+# order's dedication pointing at a row that is now a different compartment.
+# Moving the row takes its code, its money and its id along with it. The FIRST
+# and LAST rows are never touched, which is what keeps the money still: the
+# cutover put the whole build's price on the lead row, so leaving row 1 where it
+# is means no price changes position.
+#
+# It refuses before writing anything if a target is not its own middle reversed,
+# and refuses a document whose rows have moved since they were measured.
+#
+# DEFAULT IS PLAN. Apply needs the confirm phrase. Verification re-reads on a
+# fresh connection and asserts the SEQUENCE, the unchanged code multiset, the row
+# count and both money columns.
+#
+# REVERSAL -- the apply log prints "<old> -> <new>" for every row it renumbered:
+#   UPDATE scm.mfg_sales_order_items SET line_no = <old> WHERE id = <id>;
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "Required for apply: reverse sofa middle order 2026-09-10"
+        required: false
+        default: ""
+
+concurrency:
+  group: reverse-sofa-middle-order-2026-09-10
+  cancel-in-progress: false
+
+jobs:
+  reorder:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/reverse-sofa-middle-order-2026-09-10.mjs
+        env:
+          MODE: ${{ github.event.inputs.mode }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
