@@ -204,6 +204,10 @@ const DayStanding = ({ day, payoutId, chargeAccounts, defaultAccount }: {
             onClick={() => undo.mutate({ payoutId, settledOn: day.settledOn })}>
             {undo.isPending ? 'Undoing…' : 'Undo'}
           </button>
+          {/* A refusal reaches the person who pressed Undo, in the server's own sentence. */}
+          {undo.isError && (
+            <span style={{ color: danger, fontSize: 'var(--fs-12)', marginLeft: 6 }}>{refusalText(undo.error, 'The charge could not be undone.')}</span>
+          )}
         </span>
       ) : <span className={grid.good}>agrees</span>;
     case 'DIFFERS': {
