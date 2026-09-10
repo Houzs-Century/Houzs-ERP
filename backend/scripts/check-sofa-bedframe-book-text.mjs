@@ -18,7 +18,7 @@
  *
  * copied WHOLE into the note makes the supplier's document read
  *
- *     SEAT 26 / LEG 2" / SPECIAL: 1+1NA+L(26/28'Inch)/Col:KIV/Bottom upgrade…
+ *     SEAT 26 / LEG 2" / SPECIAL: 1+1NA+L(26/28'Inch)/Col:KIV/Bottom upgrade...
  *
  * — and part of that the document already said. Noise on a supplier document is
  * how a real instruction gets skipped. That is a trade-off with a cost on both
@@ -42,6 +42,7 @@ import { gunzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import postgres from 'postgres';
+import { coverageBag, residueOf, kindOf, sizeTokensFromItemCode } from './lib/book-text-residue.mjs';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('DATABASE_URL is not set. Aborting.'); process.exit(1); }
@@ -58,105 +59,35 @@ const raw = (m = '') => console.log(m);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const norm = (v) => String(v ?? '').replace(/\r\n/g, '\n').trim();
 const pad = (n, w = 6) => String(n).padStart(w);
+const pct = (n, d) => (d === 0 ? '0%' : `${((n / d) * 100).toFixed(1)}%`);
 
-/* ── THE SPLITTING TEST ────────────────────────────────────────────────────
-   An EXACT-STRING match between the book text and our summary is NOT a
-   sufficient test and must not be used as one: the two say overlapping things
-   in different words — the book writes `L(26/28'Inch)`, we write `SEAT 26` —
-   so an exact comparison would put almost every line in "carries something
-   new" and prove nothing. Measured in section 2 below and printed, so the
-   claim is not taken on trust.
+/* THE SPLITTING TEST lives in scripts/lib/book-text-residue.mjs — read that
+   file's header for what it measures, why an exact-string match is NOT a
+   sufficient test here, and both of its error directions. It is a library and
+   not a local helper so that a local re-analysis of an exported corpus and this
+   production probe compute the same answer from the same code. */
 
-   What is measured instead is RESIDUE AFTER COVERAGE:
-
-     1. the book text is cut into ATOMS on `/`, `,`, `;` and newline, but only
-        OUTSIDE brackets — so `L(26/28'Inch)` stays one atom and does not shred;
-     2. a COVERAGE bag is built from the line's own generated summary
-        (NARROW = exactly what description2 prints) and, separately, from the
-        summary plus the item codes on the same order (WIDE = what the whole
-        document says, since the PO also lists the codes);
-     3. an atom is COVERED when its letters-and-digits identity is contained in
-        the coverage identity (3 chars or more, so `NA` cannot match inside
-        `NAVY`), or when EVERY significant token of the atom appears as a whole
-        token in the coverage bag;
-     4. RESIDUE = the atoms left over. Empty residue -> shape A, the book says
-        nothing the document does not already say. Non-empty -> shape B.
-
-   ITS ERROR DIRECTIONS, both real:
-
-     * FALSE POSITIVES INTO B (the dominant one). The test compares SURFACE
-       TOKENS, so the same fact in different words lands in B — the book's
-       `1+1NA+L` describes the same build the ERP holds as separate piece lines
-       with their own item codes, and `26/28'Inch` is the seat depth we print as
-       `SEAT 26`. So B is an UPPER BOUND on how much genuinely new information
-       there is. WIDE coverage exists to bound it from the other side.
-     * FALSE NEGATIVES INTO A. An atom whose words happen to appear in the
-       summary for another reason reads as covered — e.g. a book note naming a
-       fabric code the fabric segment already carries, where the note was
-       actually asking for a CHANGE to it. Shape A is therefore a slight
-       over-count and shape B a slight under-count on that axis.
-
-   Neither direction is fixable without reading each line, which is what the
-   worked examples in section 4 are for. */
-const ALNUM = (s) => String(s).toUpperCase().replace(/NILON/g, 'NYLON').replace(/[^A-Z0-9]/g, '');
-const TOKENS = (s) => String(s).toUpperCase().replace(/NILON/g, 'NYLON').split(/[^A-Z0-9]+/).filter(Boolean);
-/* Deliberately tiny. A unit word and a bare conjunction carry no specification;
-   everything else — including NO, WITHOUT, CHANGE — is information and stays. */
-const STOP = new Set(['INCH', 'INCHES', 'CM', 'MM', 'FT', 'COL', 'COLOR', 'COLOUR', 'AND', 'THE', 'TO', 'OF', 'X']);
-
-function atomsOf(text) {
-  const out = [];
-  let buf = '';
-  let depth = 0;
-  for (const ch of String(text)) {
-    if (ch === '(' || ch === '[') depth += 1;
-    else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
-    if (depth === 0 && (ch === '/' || ch === ',' || ch === ';' || ch === '\n')) { out.push(buf); buf = ''; continue; }
-    buf += ch;
-  }
-  out.push(buf);
-  return out.map((s) => s.trim()).filter(Boolean);
-}
-
-function coverageBag(text) {
-  return { id: ALNUM(text), toks: new Set(TOKENS(text)) };
-}
-
-function isCovered(atom, bag) {
-  const id = ALNUM(atom);
-  if (!id) return true;
-  if (id.length >= 3 && bag.id.includes(id)) return true;
-  const toks = TOKENS(atom).filter((t) => !STOP.has(t));
-  if (toks.length === 0) return true;
-  return toks.every((t) => bag.toks.has(t));
-}
-
-const residueOf = (book, bag) => atomsOf(book).filter((a) => !isCovered(a, bag));
-
-/* Named shapes for the residue, so the report says WHAT is new and not only how
-   much. Ordered: the first test that matches wins.
-
-   THE BUILD TEST IS CHECKED BEFORE THE MEASUREMENT TEST on purpose. A sofa
-   build like `1+1NA+L(26/28'Inch)` contains a measurement, so a measurement-
-   first order would file the whole build under "a measurement in words" and
-   hide the single most common residue there is. A build is recognised
-   structurally instead: it joins its parts with `+`, and every letter-run in it
-   is a short piece code (NA, L, CNR, ER, ELT, INCH) rather than a word. */
-const isBuildList = (atom) =>
-  atom.includes('+') && (atom.match(/[A-Za-z]+/g) ?? []).every((w) => w.length <= 5);
-const KINDS = [
-  ['colour or size not yet decided (KIV / TBC)', /\b(KIV|TBC|TBA|PENDING)\b/i],
-  ['a fabric or material note', /\b(FABRIC|NYLON|NILON|LEATHER|PU|COTTON|LINEN|UMBRELLA|VELVET|CANVAS|MATERIAL|CUSHION|FOAM)\b/i],
-  ['an instruction to change / add / remove', /\b(UPGRADE|CHANGE|ADD|ADDITIONAL|EXTRA|REMOVE|WITHOUT|NO|NONE|NON|INSTEAD|SWAP|REPLACE|CUSTOM|SPECIAL)\b/i],
-  ['a build / piece list', isBuildList],
-  ['a measurement in words', /\d\s*(?:"|''|INCH|INCHES|CM|MM|FT|'|”)/i],
+const KIV = 'colour or size not yet decided (KIV / TBC)';
+const BUILD = 'a build / piece list';
+/* Which ONE kind best describes a line, when its leftover carries several. A
+   free-text instruction outranks a repeated measurement, because it is the kind
+   that is lost if we do not carry it. */
+const PRIORITY = [
+  'an instruction to change / add / remove',
+  'a fabric or material note',
+  'something else',
+  'a measurement in words',
+  BUILD,
+  KIV,
 ];
-const kindOf = (atom) => (KINDS.find(([, t]) => (typeof t === 'function' ? t(atom) : t.test(atom)))
-  ?? ['something else', null])[0];
+const dominantKind = (r) => {
+  const ks = new Set(r.resS.map(kindOf));
+  return PRIORITY.find((p) => ks.has(p)) ?? '(none)';
+};
 
 /* The book's own Desc2, keyed by DtlKey — the OLDER of the two book copies.
    See preserve-autocount-desc2-in-remark.mjs for why neither source alone is
-   complete. Absent file is a finding, not a crash. */
+   complete. An absent file is a finding, not a crash. */
 function loadSnapshot() {
   try {
     const parsed = JSON.parse(gunzipSync(readFileSync(path.join(HERE, 'data', 'ac-line-desc2.json.gz'))).toString('utf8'));
@@ -183,7 +114,7 @@ async function main() {
   log(`company=${CO}   groups=sofa,bedframe   source=live production, read-only`);
   log(snap.ok
     ? `book snapshot ac-line-desc2.json.gz: ${snap.so.size} SO Desc2 values, exportedAt ${snap.exportedAt} (${snap.source})`
-    : `book snapshot UNREADABLE (${snap.reason}) — the snapshot column of this report will read 0. That is a gap, not a zero.`);
+    : `book snapshot UNREADABLE (${snap.reason}) — the snapshot column reads 0. That is a gap, not a zero.`);
 
   const rows = await sql`
     SELECT i.id::text                                  AS id,
@@ -213,7 +144,7 @@ async function main() {
     + `  (sofa ${rows.filter((r) => r.item_group === 'sofa').length},`
     + ` bedframe ${rows.filter((r) => r.item_group === 'bedframe').length})`);
   if (rows.length === 0) {
-    log('NO ROWS. Either company ' + CO + ' has no sofa/bedframe lines or item_group is spelled');
+    log(`NO ROWS. Either company ${CO} has no sofa/bedframe lines or item_group is spelled`);
     log('differently there. That is the finding; nothing here is broken.');
     return;
   }
@@ -222,15 +153,13 @@ async function main() {
   for (const r of rows) census.set(r.so_status || '(blank)', (census.get(r.so_status || '(blank)') ?? 0) + 1);
   log('order-status census (raw, nothing folded):');
   for (const [s, n] of [...census].sort((a, b) => b[1] - a[1])) log(`  ${pad(n)}  ${s}`);
-  log(`lines on a CANCELLED line flag: ${rows.filter((r) => r.cancelled).length}`);
+  log(`lines with the CANCELLED line flag: ${rows.filter((r) => r.cancelled).length}`);
   log(`lines on an order linked to AutoCount: ${rows.filter((r) => r.linked_ac_docno).length}`);
   log('');
 
   const { buildVariantSummary } = await import('../src/scm/shared/variant-summary.ts');
 
-  /* Sibling item codes per order — the WIDE coverage bag. The purchase order
-     lists the codes as well as description2, so a build the book spells out in
-     words may already be on the document as separate coded lines. */
+  /* Sibling item codes per order — part of the WIDE coverage bag. */
   const siblings = new Map();
   for (const r of rows) {
     if (!siblings.has(r.doc_no)) siblings.set(r.doc_no, []);
@@ -268,22 +197,32 @@ async function main() {
     const book = winner ? src[winner] : '';
 
     const narrow = coverageBag(generated);
-    const wide = coverageBag(`${generated} ${r.item_code ?? ''} ${(siblings.get(r.doc_no) ?? []).join(' ')}`);
-    const resN = book ? residueOf(book, narrow) : [];
-    const resW = book ? residueOf(book, wide) : [];
+    /* WIDE — what the whole purchase order says, not only its Description 2:
+       the document also lists the item CODES, and a sofa's build is held in the
+       ERP as separate piece lines with their own codes. `(K)` on a bedframe code
+       is the reason the book's `KING SIZE` is not new information. */
+    const wide = coverageBag(`${generated} ${r.item_code ?? ''} `
+      + `${(siblings.get(r.doc_no) ?? []).join(' ')} ${sizeTokensFromItemCode(r.item_code)}`);
+    const resN = book ? residueOf(book, narrow, false) : [];
+    const resW = book ? residueOf(book, wide, false) : [];
+    const resS = book ? residueOf(book, wide, true) : [];
 
     const delivered = Number(r.net_delivered) > 0 && Number(r.net_delivered) >= Number(r.qty);
     const bucket = (r.cancelled || TERMINAL.has(r.so_status)) ? 'closed'
       : (NOT_YET.has(r.so_status) ? 'notyet' : (delivered ? 'closed' : 'open'));
 
     const noteAlready = norm(variants.extraAddonNote);
-    const projected = book ? (generated ? `${generated} / SPECIAL: ${book}` : `SPECIAL: ${book}`) : generated;
+    const whole = book ? (generated ? `${generated} / SPECIAL: ${book}` : `SPECIAL: ${book}`) : generated;
+    const onlyNew = resS.length
+      ? (generated ? `${generated} / SPECIAL: ${resS.join(' / ')}` : `SPECIAL: ${resS.join(' / ')}`)
+      : generated;
 
     facts.push({
-      ...r, generated, src, excluded, winner, book, resN, resW, bucket, noteAlready,
-      genLen: generated.length, projLen: projected.length, projected,
+      ...r, generated, src, excluded, winner, book, resN, resW, resS, bucket, noteAlready,
+      genLen: generated.length, wholeLen: whole.length, onlyNewLen: onlyNew.length, whole, onlyNew,
       shape: book ? (resN.length === 0 ? 'A' : 'B') : '-',
       shapeWide: book ? (resW.length === 0 ? 'A' : 'B') : '-',
+      shapeLabel: book ? (resS.length === 0 ? 'A' : 'B') : '-',
     });
   }
 
@@ -314,8 +253,7 @@ function section1(f) {
   for (const r of f) venn.set(key(r), (venn.get(key(r)) ?? 0) + 1);
   log('  OVERLAP (D = description2, R = remark label, S = snapshot; - = absent):');
   for (const [k, n] of [...venn].sort((a, b) => b[1] - a[1])) {
-    const note = k === '---' ? '   no book text on this line at all' : '';
-    log(`    ${k}  ${pad(n)}${note}`);
+    log(`    ${k}  ${pad(n)}${k === '---' ? '   no book text on this line at all' : ''}`);
   }
   log('');
   log(`  lines carrying a book text from ANY source     : ${pad(any.length)} of ${f.length}`);
@@ -324,61 +262,70 @@ function section1(f) {
   log(`    where only the snapshot has it               : ${pad(any.filter((r) => r.winner === 'snapshot').length)}`);
   log('');
   log('  excluded by the copy-not-derive guard (the value EXACTLY equals our own');
-  log('  buildVariantSummary output, so it is our text and not the book\'s):');
+  log("  buildVariantSummary output, so it is our text and not the book's):");
   log(`    description2 : ${pad(f.filter((r) => r.excluded.description2).length)}`);
   log(`    remark       : ${pad(f.filter((r) => r.excluded.remark).length)}`);
   log(`    snapshot     : ${pad(f.filter((r) => r.excluded.snapshot).length)}`);
   log('');
-  log(`  lines that ALREADY carry variants.extraAddonNote (a backfill would skip these):`
+  log('  lines that ALREADY carry variants.extraAddonNote (a backfill would skip these):'
     + ` ${f.filter((r) => r.noteAlready).length}`);
   log('');
 }
 
-/* ── 2. THE TWO POPULATIONS ───────────────────────────────────────────────── */
+/* ── 2. THE TWO POPULATIONS, UNDER THREE READINGS ─────────────────────────── */
 function section2(f) {
   const any = f.filter((r) => r.book);
   log('=== 2. THE SPLIT: does the book say anything the document does not already say? ===');
   log('');
-  log('FIRST, WHY EXACT MATCHING IS NOT THE TEST. Measured on these same rows:');
-  const exact = any.filter((r) => r.book === r.generated).length;
-  const ci = any.filter((r) => r.book.toUpperCase().replace(/\s+/g, ' ') === r.generated.toUpperCase().replace(/\s+/g, ' ')).length;
-  log(`  book text EXACTLY equals our summary            : ${pad(exact)} of ${any.length}`);
-  log(`  ...even ignoring case and whitespace            : ${pad(ci)} of ${any.length}`);
-  log('  So an exact comparison would call almost every line "carries something new" and');
-  log('  would be measuring spelling, not information. The test below is used instead.');
+  log('FIRST, WHY EXACT MATCHING IS NOT THE TEST. Read the next two numbers with their');
+  log('circularity stated: the copy-not-derive guard has ALREADY removed the lines whose');
+  log('text exactly equals our summary (they are our text, not the book\'s), and section 1');
+  log('reports how many that was. So the first line below is 0 by construction. The second');
+  log('is not, and it is the one that carries the argument — relaxing the comparison to');
+  log('ignore case and whitespace recovers almost nothing, which is what says the two');
+  log('sides differ in WORDING and not merely in spacing.');
+  const flat = (s) => s.toUpperCase().replace(/\s+/g, ' ').trim();
+  log(`  book text EXACTLY equals our summary            : ${pad(any.filter((r) => r.book === r.generated).length)} of ${any.length}   (0 by construction)`);
+  log(`  ...ignoring case and whitespace                 : ${pad(any.filter((r) => flat(r.book) === flat(r.generated)).length)} of ${any.length}`);
+  log('  An exact test would therefore call every one of these lines "carries something');
+  log('  new" and would be measuring spelling. The test below is used instead.');
   log('');
-  log('THE TEST — residue after coverage (the file header states it in full, with its');
-  log('two error directions). NARROW coverage = the generated summary alone, which is');
-  log('exactly what description2 prints. WIDE coverage = that plus the item codes on the');
-  log('same order, which the purchase order also lists.');
+  log('THE TEST — residue after coverage. scripts/lib/book-text-residue.mjs states it in');
+  log('full, with both of its error directions. Three readings, deliberately, because one');
+  log('number here would be a false precision:');
+  log('  NARROW  coverage = the generated summary alone — exactly what description2 says.');
+  log('  WIDE    coverage = that plus the item codes on the same order and the bed size the');
+  log('          code already states, which the purchase order also prints.');
+  log('  LABEL   = WIDE, plus the words BOTH systems use as segment LABELS dropped, so the');
+  log('          book\'s "M.GAP: 12 INCH" is compared against our "GAP 12" on the NUMBER.');
+  log('  NARROW is the UPPER bound on "carries something new"; LABEL is the LOWER bound.');
   log('');
-  const a = any.filter((r) => r.shape === 'A');
-  const b = any.filter((r) => r.shape === 'B');
-  const aw = any.filter((r) => r.shapeWide === 'A');
-  const bw = any.filter((r) => r.shapeWide === 'B');
-  log(`  NARROW  shape A — the book says nothing new     : ${pad(a.length)}  (${pct(a.length, any.length)})`);
-  log(`  NARROW  shape B — the book carries something new: ${pad(b.length)}  (${pct(b.length, any.length)})`);
-  log(`  WIDE    shape A                                 : ${pad(aw.length)}  (${pct(aw.length, any.length)})`);
-  log(`  WIDE    shape B                                 : ${pad(bw.length)}  (${pct(bw.length, any.length)})`);
-  log('  The gap between NARROW B and WIDE B is the text the DOCUMENT already carries');
-  log('  through its item codes even though description2 does not spell it out.');
+  const row = (name, key) => {
+    const a = any.filter((r) => r[key] === 'A').length;
+    const b = any.filter((r) => r[key] === 'B').length;
+    log(`  ${name.padEnd(8)} A (says nothing new) ${pad(a)} (${pct(a, any.length)})`
+      + `   B (carries something new) ${pad(b)} (${pct(b, any.length)})`);
+  };
+  row('NARROW', 'shape');
+  row('WIDE', 'shapeWide');
+  row('LABEL', 'shapeLabel');
   log('');
+  const b = any.filter((r) => r.shapeLabel === 'B');
   const kinds = new Map();
-  for (const r of b) {
-    const seen = new Set();
-    for (const atom of r.resN) {
-      const k = kindOf(atom);
-      if (seen.has(k)) continue;
-      seen.add(k);
-      kinds.set(k, (kinds.get(k) ?? 0) + 1);
-    }
-  }
-  log('  WHAT the residue is, on the NARROW test (a line counted once per kind):');
+  for (const r of b) for (const k of new Set(r.resS.map(kindOf))) kinds.set(k, (kinds.get(k) ?? 0) + 1);
+  log('  WHAT the LABEL-reading leftover is (a line counted once per kind it carries):');
   for (const [k, n] of [...kinds].sort((x, y) => y[1] - x[1])) log(`    ${pad(n)}  ${k}`);
+  log('');
+  log('  and the ONE kind that best describes each line, by this priority:');
+  log(`    ${PRIORITY.join(' > ')}`);
+  const dom = new Map();
+  for (const r of b) { const d = dominantKind(r); dom.set(d, (dom.get(d) ?? 0) + 1); }
+  for (const k of PRIORITY) if (dom.get(k)) log(`    ${pad(dom.get(k))}  ${k}`);
   log('');
   for (const g of ['sofa', 'bedframe']) {
     const sub = any.filter((r) => r.item_group === g);
-    log(`  ${g.padEnd(9)} A ${pad(sub.filter((r) => r.shape === 'A').length)}   B ${pad(sub.filter((r) => r.shape === 'B').length)}   (of ${sub.length} with book text)`);
+    log(`  ${g.padEnd(9)} LABEL A ${pad(sub.filter((r) => r.shapeLabel === 'A').length)}`
+      + `   LABEL B ${pad(sub.filter((r) => r.shapeLabel === 'B').length)}   (of ${sub.length} with book text)`);
   }
   log('');
 }
@@ -390,32 +337,39 @@ function section3(f) {
   log('            INVOICED / COMPLETED / FULLY_DELIVERED, the line is not cancelled, and its');
   log('            delivered quantity (delivery_order_items on a DO that is not DRAFT or');
   log('            CANCELLED) is short of the ordered quantity.');
-  log('CLOSED    = anything else with a terminal header status, a cancelled line, or delivery');
-  log('            already covering the ordered quantity.');
-  log('NOT YET   = DRAFT. Printed on its own row rather than folded either way: a draft order');
-  log('            has not been placed, so it is neither outstanding work nor finished work.');
+  log('CLOSED    = a terminal header status, a cancelled line, or delivery already covering');
+  log('            the ordered quantity.');
+  log('NOT YET   = DRAFT, on its own row: a draft order has not been placed, so it is neither');
+  log('            outstanding work nor finished work.');
   log('');
-  const cell = (bucket, shape) => f.filter((r) => r.bucket === bucket && r.shape === shape).length;
+  log('Split by the LABEL reading (the lower bound — the lines where the book most');
+  log('defensibly knows something the document does not).');
+  log('');
+  const cell = (bkt, shape) => f.filter((r) => r.bucket === bkt && r.shapeLabel === shape).length;
   log('                        shape A      shape B     no book text     total');
   for (const bkt of ['open', 'closed', 'notyet']) {
     const all = f.filter((r) => r.bucket === bkt);
     log(`  ${bkt.padEnd(20)}${pad(cell(bkt, 'A'), 8)}${pad(cell(bkt, 'B'), 13)}${pad(cell(bkt, '-'), 13)}${pad(all.length, 12)}`);
   }
-  log(`  ${'TOTAL'.padEnd(20)}${pad(f.filter((r) => r.shape === 'A').length, 8)}${pad(f.filter((r) => r.shape === 'B').length, 13)}${pad(f.filter((r) => r.shape === '-').length, 13)}${pad(f.length, 12)}`);
   log('');
-  log('  The row that decides the size of the job is OPEN / shape B: those are the lines');
-  log('  where a supplier still has to build something and the book knows a fact the');
-  log('  document does not carry.');
-  log('');
+  for (const bkt of ['open', 'closed']) {
+    const sub = f.filter((r) => r.bucket === bkt && r.shapeLabel === 'B');
+    log(`  ${bkt.toUpperCase()} lines carrying something new, by dominant kind (${sub.length}):`);
+    const dom = new Map();
+    for (const r of sub) { const d = dominantKind(r); dom.set(d, (dom.get(d) ?? 0) + 1); }
+    for (const k of PRIORITY) if (dom.get(k)) log(`    ${pad(dom.get(k))}  ${k}`);
+    log(`    of which the leftover is ONLY "${KIV}": ${sub.filter((r) => r.resS.every((a) => kindOf(a) === KIV)).length}`);
+    log(`    of which the leftover is ONLY "${BUILD}": ${sub.filter((r) => r.resS.every((a) => kindOf(a) === BUILD)).length}`);
+    log('');
+  }
 }
 
 /* ── 4. WORKED EXAMPLES ───────────────────────────────────────────────────── */
 function section4(f) {
   log('=== 4. WORKED EXAMPLES — real rows, side by side ===');
-  log('Every example prints the book text, the string our summary produces for that same');
-  log('line TODAY (which is what description2 and the purchase order say), the residue the');
-  log('test found, and what the purchase order would read if the book text were copied');
-  log('WHOLE into variants.extraAddonNote.');
+  log('Each example prints the book text, the string our summary produces for that line');
+  log('TODAY (which is what description2 and the purchase order say), what the LABEL');
+  log('reading found left over, and what the purchase order would read under each option.');
   log('');
   const spread = (list, n) => {
     if (list.length <= n) return list;
@@ -423,43 +377,62 @@ function section4(f) {
     return Array.from({ length: n }, (_, i) => list[Math.floor(i * step)]);
   };
   const show = (r, idx) => {
-    raw(`  [${idx}] ${r.doc_no} line ${r.line_no}  ${r.item_group}  ${r.item_code ?? '(no code)'}  qty ${Number(r.qty)}  ${r.bucket.toUpperCase()}  (source: ${r.winner})`);
-    raw(`      book text : ${r.book}`);
-    raw(`      ERP today : ${r.generated || '(the summary is EMPTY for this line)'}`);
-    raw(`      residue   : ${r.resN.length ? r.resN.map((a) => JSON.stringify(a)).join('  |  ') : '(none — shape A)'}`);
-    raw(`      PO would  : ${r.projected}${r.projLen > AC_DESC2_MAX ? `   [${r.projLen} chars — over AutoCount's ${AC_DESC2_MAX}]` : ''}`);
+    raw(`  [${idx}] ${r.doc_no} line ${r.line_no}  ${r.item_group}  ${r.item_code ?? '(no code)'}`
+      + `  qty ${Number(r.qty)}  ${r.bucket.toUpperCase()}  (source: ${r.winner})`);
+    raw(`      book text  : ${r.book}`);
+    raw(`      ERP today  : ${r.generated || '(the summary is EMPTY for this line)'}`);
+    raw(`      left over  : ${r.resS.length ? r.resS.map((a) => JSON.stringify(a)).join('  |  ') : '(nothing — shape A)'}`);
+    raw(`      copy WHOLE : ${r.whole}${r.wholeLen > AC_DESC2_MAX ? `   [${r.wholeLen} chars — over AutoCount's ${AC_DESC2_MAX}]` : ''}`);
+    if (r.resS.length) {
+      raw(`      copy NEW   : ${r.onlyNew}${r.onlyNewLen > AC_DESC2_MAX ? `   [${r.onlyNewLen} chars]` : ''}`);
+    }
     raw('');
   };
-  const a = f.filter((r) => r.shape === 'A');
+  const a = f.filter((r) => r.shapeLabel === 'A');
   log(`--- SHAPE A: the book says nothing the document does not already say (${a.length} lines) ---`);
-  log('If the owner picks "copy whole", these are the lines whose purchase order gains');
-  log('a SPECIAL segment that only repeats itself.');
+  log('If the owner picks "copy whole", these are the lines whose purchase order gains a');
+  log('SPECIAL segment that only repeats itself.');
   log('');
   spread(a, EXAMPLES).forEach((r, i) => show(r, i + 1));
 
-  const b = f.filter((r) => r.shape === 'B');
+  const b = f.filter((r) => r.shapeLabel === 'B');
   log(`--- SHAPE B: the book carries something the document does NOT say (${b.length} lines) ---`);
-  log('One example per residue kind first, then a spread across the rest.');
+  log('One example per dominant kind first, then a spread across the rest.');
   log('');
   const picked = [];
   const seen = new Set();
   for (const r of b) {
-    const k = kindOf(r.resN[0]);
+    const k = dominantKind(r);
     if (seen.has(k)) continue;
     seen.add(k);
     picked.push(r);
   }
   for (const r of spread(b.filter((x) => !picked.includes(x)), Math.max(0, EXAMPLES - picked.length))) picked.push(r);
   picked.slice(0, Math.max(EXAMPLES, seen.size)).forEach((r, i) => show(r, i + 1));
+
+  log('--- The most common leftovers across the whole corpus, so the shapes are nameable ---');
+  const atoms = new Map();
+  for (const r of b) {
+    for (const at of r.resS) {
+      const k = at.toUpperCase().replace(/\s+/g, ' ').trim();
+      atoms.set(k, (atoms.get(k) ?? 0) + 1);
+    }
+  }
+  for (const [at, n] of [...atoms].sort((x, y) => y[1] - x[1]).slice(0, 30)) {
+    raw(`  ${pad(n, 5)}  ${kindOf(at).padEnd(42)} ${JSON.stringify(at)}`);
+  }
+  raw(`  distinct leftover phrases: ${atoms.size}`);
+  raw('');
 }
 
-/* ── 5. WHAT COPYING WHOLE WOULD COST THE DOCUMENT ────────────────────────── */
+/* ── 5. WHAT COPYING WOULD COST THE DOCUMENT ──────────────────────────────── */
 function section5(f) {
   const any = f.filter((r) => r.book);
-  log('=== 5. THE COST OF COPYING WHOLE, IN CHARACTERS ===');
+  const b = f.filter((r) => r.shapeLabel === 'B');
+  log('=== 5. THE COST, IN CHARACTERS ON THE DOCUMENT ===');
   log('description2 is what the supplier reads and it is also what the AutoCount write-back');
-  log('sends as SODTL.Desc2 / PODTL.Desc2, an nvarchar(100). Over that, the abbreviator\'s');
-  log('last rung replaces the whole SPECIAL segment with the owner\'s pointer sentence');
+  log("sends as SODTL.Desc2 / PODTL.Desc2, an nvarchar(100). Over that, the abbreviator's");
+  log("last rung replaces the whole SPECIAL segment with the owner's pointer sentence");
   log('"Special Order: Refer to ERP" (src/services/autocount-desc2-abbrev.ts), so AutoCount');
   log('gets the pointer instead of the text. The supplier PDF is not capped and keeps it all.');
   log('');
@@ -469,20 +442,16 @@ function section5(f) {
     return `min ${s[0]}  median ${s[Math.floor(s.length / 2)]}  p90 ${s[Math.floor(s.length * 0.9)]}  max ${s[s.length - 1]}`;
   };
   log(`  description2 length TODAY (lines with book text) : ${lenStats(any.map((r) => r.genLen))}`);
-  log(`  description2 length if the book text is appended : ${lenStats(any.map((r) => r.projLen))}`);
-  log(`  over ${AC_DESC2_MAX} chars today                          : ${pad(any.filter((r) => r.genLen > AC_DESC2_MAX).length)}`);
-  log(`  over ${AC_DESC2_MAX} chars after copying whole            : ${pad(any.filter((r) => r.projLen > AC_DESC2_MAX).length)}`);
-  log(`  ...of those, shape A (pure repetition, and it costs the AutoCount copy its text): `
-    + `${any.filter((r) => r.projLen > AC_DESC2_MAX && r.shape === 'A').length}`);
+  log(`  ...if the WHOLE book text is appended            : ${lenStats(any.map((r) => r.wholeLen))}`);
+  log(`  ...if only the LEFTOVER is appended              : ${lenStats(b.map((r) => r.onlyNewLen))}`);
   log('');
-  const resLen = any.filter((r) => r.shape === 'B').map((r) => (r.generated ? `${r.generated} / SPECIAL: ${r.resN.join(' / ')}` : `SPECIAL: ${r.resN.join(' / ')}`).length);
-  log(`  If only the RESIDUE were copied instead of the whole book text:`);
-  log(`    description2 length                           : ${lenStats(resLen)}`);
-  log(`    over ${AC_DESC2_MAX} chars                                 : ${resLen.filter((n) => n > AC_DESC2_MAX).length}`);
+  log(`  over ${AC_DESC2_MAX} chars today                          : ${pad(any.filter((r) => r.genLen > AC_DESC2_MAX).length)} of ${any.length}`);
+  log(`  over ${AC_DESC2_MAX} after copying WHOLE                  : ${pad(any.filter((r) => r.wholeLen > AC_DESC2_MAX).length)} of ${any.length}`);
+  log(`  over ${AC_DESC2_MAX} after copying only the LEFTOVER      : ${pad(b.filter((r) => r.onlyNewLen > AC_DESC2_MAX).length)} of ${b.length}`);
+  log('  of the WHOLE-copy overflows, shape A (pure repetition, and the AutoCount copy');
+  log(`  loses its text to the pointer for nothing)       : ${any.filter((r) => r.wholeLen > AC_DESC2_MAX && r.shapeLabel === 'A').length}`);
   log('');
 }
-
-const pct = (n, d) => (d === 0 ? '0%' : `${((n / d) * 100).toFixed(1)}%`);
 
 main()
   .catch((e) => {
