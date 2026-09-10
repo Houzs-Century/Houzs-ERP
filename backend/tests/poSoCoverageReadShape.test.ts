@@ -282,6 +282,8 @@ describe('resolvePoSoCoveragePerSkuForPos — the answer, the cost and the overl
       state_warehouse_mappings: 1,
       supplier_material_bindings: 1,
       mrp_category_lead_times: 1,
+      mrp_supplier_category_lead_times: 1, // owner's per-supplier lead override, loaded beside the base
+
       /* 3, not 2, since fix/unbounded-in-list-chunking landed. The deliverable-
          remaining read of this table was previously unbounded at BOTH ends: no
          chunking of the .in() list AND no paging, so it silently dropped any row
@@ -292,7 +294,7 @@ describe('resolvePoSoCoveragePerSkuForPos — the answer, the cost and the overl
       delivery_orders: 2,                 // DO-lock headers + MRP committed shipments
       delivery_return_items: 1,
     });
-    expect(db.totalReads()).toBe(29);
+    expect(db.totalReads()).toBe(30); // +1: the per-supplier lead override, loaded beside the base
   });
 
   it('has the delivered ledger and the MRP engine in flight before the stored-origin chain validates its SOs', async () => {

@@ -85,6 +85,7 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/payment-audit-log/*", "scm.finance.accounting"],
   ["/mrp/*", "scm.procurement.mrp"],
   ["/mrp-lead-times/*", "scm.procurement.mrp"],
+  ["/mrp-supplier-lead-times/*", "scm.procurement.mrp"],
   ["/outstanding/*", "scm.finance.outstanding"],
   ["/unbilled-deliveries/*", "scm.finance.outstanding"],
   ["/addons/*", "scm.procurement.products"],
