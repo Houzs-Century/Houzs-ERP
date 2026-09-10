@@ -37,9 +37,20 @@
  *
  * The owner put it in one line: 「9028 2ARHF=sofa verano 2ARHF 啊？可是你是LHF」.
  *
- * That makes scm.mfg_products the root, and the document lines the symptom -
- * every order ever raised on such a SKU inherited the wrong name, and every
- * future one will. So SECTION A is the master and SECTION B the documents.
+ * ── AND THE MASTER TURNED OUT TO BE CLEAN. MEASURED, run 34462427810 ───────
+ * That reasoning made scm.mfg_products the prime suspect, and it is NOT the
+ * cause: 372 sofa SKUs state a hand, and ZERO have a name contradicting their
+ * own code. The sales orders are almost as clean - 2 of 1,329 lines disagree,
+ * and BOTH are on HC-SO-012016, the one document the owner found by eye.
+ *
+ * So the importer's lookup is not what broke these two rows. What fits is the
+ * AMENDMENT path: applySoAmendment (so-revision.ts:694) updates `item_code` and
+ * never `description`, and HC-SO-012016 was amended the same day. That defect is
+ * assigned elsewhere; this script measures the population it left behind.
+ *
+ * SECTION A stays because a clean master has to be RE-PROVEN, not assumed - it
+ * is one query, and the day somebody renames a SKU by hand is the day it starts
+ * mattering.
  *
  * ── WHAT IT COUNTS ─────────────────────────────────────────────────────────
  *   HAND DISAGREES - the code says (LHF) and the description says (RHF), or the
