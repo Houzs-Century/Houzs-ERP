@@ -1,6 +1,6 @@
 ## MRP Others tab appears only after data loads, blinking in a beat after the other four [low]
 
-<!-- area: MRP + planning -->
+<!-- area: Frontend + mobile -->
 
 **Symptom.** The owner, 2026-09-11, with two screenshots side by side: while the
 MRP page shows "Loading MRP..." the tab bar has FOUR tabs (Sofa, Bedframe,
