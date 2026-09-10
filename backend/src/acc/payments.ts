@@ -21,6 +21,7 @@
 import { postJournal, reverseJournal, validateJournal } from './engine';
 import { resolveRoles, customerPaymentLines, type RuleLine } from './rules';
 import { accMastersCompanyId } from './masters-company';
+import { paymentEntryDrift, type EntryFact, type PaymentDrift, type PaymentFact } from './payment-drift';
 
 export type SoPaymentRow = {
   id: string;
@@ -497,4 +498,92 @@ export async function unbookedPayments(
   /* Oldest first: the one that has been wrong longest is the one to chase. */
   rows.sort((a, b) => a.paidOn.localeCompare(b.paidOn));
   return { ok: true, since, rows, totalSen: rows.reduce((s, r) => s + r.amountSen, 0) };
+}
+
+/* ── A payment that no longer says what its entry says ──────────────────────
+   The reads behind acc/payment-drift's decision. Both payment tables are
+   PAGED in full rather than bounded by a date: the date is one of the things
+   that can have been edited, so a window would hide exactly the row it was
+   looking for. Only ACTIVE (posted, not reversed) SOPAY/SIPAY entries count —
+   a reversed one has already been superseded and says nothing about today. */
+export async function paymentEntryDisagreements(
+  sb: any,
+  companyId: number,
+): Promise<{ ok: true; rows: PaymentDrift[]; scanned: number } | { ok: false; reason: string }> {
+  const entries: EntryFact[] = [];
+  {
+    let from = 0;
+    const page = 1000;
+    for (;;) {
+      const { data, error } = await sb.from('journal_entries')
+        .select('je_no, source_type, source_doc_no, entry_date, total_debit_sen, narration')
+        .eq('company_id', companyId)
+        .in('source_type', ['SOPAY', 'SIPAY'])
+        .eq('posted', true).eq('reversed', false)
+        .order('je_no')
+        .range(from, from + page - 1);
+      if (error) return { ok: false, reason: `journal scan: ${error.message}` };
+      const raw = (data ?? []) as Array<Record<string, any>>;
+      for (const r of raw) {
+        const docNo = String(r.source_doc_no ?? '');
+        if (!docNo) continue;
+        entries.push({
+          source: String(r.source_type) === 'SIPAY' ? 'SIPAY' : 'SOPAY',
+          sourceDocNo: docNo,
+          jeNo: String(r.je_no ?? ''),
+          entryDate: String(r.entry_date ?? '').slice(0, 10),
+          totalDebitSen: Number(r.total_debit_sen ?? 0),
+          narration: String(r.narration ?? ''),
+        });
+      }
+      if (raw.length < page) break;
+      from += page;
+    }
+  }
+  /* Nothing has been booked here, so nothing can disagree. Skipping the two
+     table scans in that case keeps a fresh company cheap. */
+  if (entries.length === 0) return { ok: true, rows: [], scanned: 0 };
+
+  const payments: PaymentFact[] = [];
+  const readAll = async (
+    table: 'mfg_sales_order_payments' | 'sales_invoice_payments',
+    source: 'SOPAY' | 'SIPAY',
+    docColumn: 'so_doc_no' | 'sales_invoice_id',
+  ): Promise<string | null> => {
+    let from = 0;
+    const page = 1000;
+    for (;;) {
+      const { data, error } = await sb.from(table)
+        .select(`id, ${docColumn}, paid_at, amount_sen, method`)
+        .eq('company_id', companyId)
+        .neq('method', 'imported')
+        .order('id')
+        .range(from, from + page - 1);
+      if (error) return `${table}: ${error.message}`;
+      const raw = (data ?? []) as Array<Record<string, any>>;
+      for (const r of raw) {
+        const id = String(r.id ?? '');
+        if (!id) continue;
+        const paidOn = String(r.paid_at ?? '').slice(0, 10);
+        payments.push({
+          source,
+          id,
+          docNo: String(r[docColumn] ?? ''),
+          paidOn: /^\d{4}-\d{2}-\d{2}$/.test(paidOn) ? paidOn : '',
+          amountSen: Number(r.amount_sen ?? 0),
+          method: String(r.method ?? ''),
+        });
+      }
+      if (raw.length < page) break;
+      from += page;
+    }
+    return null;
+  };
+
+  const soErr = await readAll('mfg_sales_order_payments', 'SOPAY', 'so_doc_no');
+  if (soErr) return { ok: false, reason: soErr };
+  const siErr = await readAll('sales_invoice_payments', 'SIPAY', 'sales_invoice_id');
+  if (siErr) return { ok: false, reason: siErr };
+
+  return { ok: true, rows: paymentEntryDrift(payments, entries), scanned: entries.length };
 }

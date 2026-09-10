@@ -669,6 +669,32 @@ has, which is exactly how this shipped). The card's **Book N payments now**
 button, offered only after a dry run the gate refused nothing on and behind a
 confirm, is the same endpoint without dryRun — the owner presses it.
 
+**A payment that reached the ledger and then stopped agreeing with it
+(2026-09-10, docs/bugs/0774).** The card above answers "did the money reach
+the books". It had no answer for "does it still say what the books say".
+`PATCH /:docNo/payments/:id` writes the payment row and never re-posts its
+entry — only DELETE touches the ledger, through `afterSoPaymentRemoved`. The
+one thing holding the two in step is `paymentRowMutable`
+(`scm/shared/so-field-policy.ts`): a payment is editable only on the day it
+was keyed, so almost nothing survives long enough to drift (production
+2026-09-10: 0 amount disagreements, 3 date). The owner has confirmed with
+management that FINANCE should hold the power to correct a mis-keyed payment,
+which removes that accident — so the divergence is now watched before the
+window opens. `acc/payment-drift.ts` is the pure comparison (amount, date,
+and the method read back out of the poster's own narration
+`Payment {method} on {docNo}` — an unrecognised narration makes NO method
+claim); `paymentEntryDisagreements` in `acc/payments.ts` does the reads,
+paging both payment tables in full because the date is one of the things
+under suspicion; `/control-check` returns it as `paymentDrift`; the Self-check
+tab shows both sides of every difference. A changed acquirer is deliberately
+out of scope — it lives in the entry's LINES — and the card says so. It
+writes nothing and offers no fix button, because the fix is the next step:
+**make the edit reverse and re-post**, and only then the Finance permission,
+gated on "editable until the payment has been RECONCILED" rather than by time
+(`so-field-policy.ts` already reserves the one place that condition lands).
+Pinned by `acc/payment-drift.test.ts`,
+`scm/routes/controlCheckPaymentDrift.test.ts` and `PaymentDriftCard.test.tsx`.
+
 **Phase 2B part 1 (2026-08-16): Daily Bank.** GET /accounting/daily-bank?date= answers the owner one question - today, where is the money and how much can actually move - live from the ledger (2.3: no caches): opening/in/out/closing per money account (scm.accounts.acc_money flag, migration 0299), settlement-in-transit balances per acquirer (visible, never counted movable), and — since phase 3 (2026-08-28, mig 0339) — pendingApprovalSen: every DRAFT payment voucher sitting in the approval queue, converted to MYR the way posting will, subtracted from available. Page /scm/daily-bank (Finance menu): date navigation + Get Image (canvas-drawn PNG to clipboard for WhatsApp, download fallback). Board arithmetic pinned in acc/daily-bank.test.ts. 946-0000 Cash Over/Short + OVER_SHORT role seeded for the coming daily cashup.
 
 **Phase 3 (2026-08-28): PV approval — money leaves only after a yes.** The full write-up lives in docs/modules/payment-voucher.md §0b (marker columns per the 0324 lesson, the pure rule table in scm/lib/pv-approval.ts, the post gate, the scm.payment_voucher.approve key, the audit verbs). What belongs to THIS module: the Daily Bank board's available figure now answers "closing minus what is already asked for", which is the question the owner's phase-3 placeholder was holding a seat for.
