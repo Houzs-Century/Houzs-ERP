@@ -56,24 +56,37 @@ if (!url) {
 const pg = postgres(url, { ssl: 'require', prepare: false, max: 1 });
 
 try {
+  // Sofa item codes are `{model}-{compartment}` split on the FIRST hyphen —
+  // e.g. `5526-1NA`, `5526-2A(RHF)` — per splitSofaCode in
+  // backend/src/services/autocount-sofa-collapse.ts. The compartment is
+  // everything after that first hyphen.
+  const compartmentOf = (itemCode) => {
+    const s = String(itemCode ?? '').trim();
+    const i = s.indexOf('-');
+    return i > 0 ? s.slice(i + 1) : null;
+  };
+
+  // ALL lines on the doc, in canonical composer order. Printed whole so the
+  // dry-run reveals the real item codes rather than trusting a guessed prefix
+  // (the first apply guessed 'SOFA 5526%' and found nothing). The compartment
+  // match below is by the FIRST-hyphen split, exactly as the composer reads it.
   const rows = await pg`
     SELECT id, item_code, description, created_at
       FROM scm.mfg_sales_order_items
      WHERE doc_no = ${DOC_NO}
        AND company_id = ${COMPANY_ID}
-       AND item_code LIKE ${'SOFA ' + SOFA_MODEL + '%'}
      ORDER BY created_at, id`;
 
-  console.log('SOFA LINES BEFORE (ordered as composer sees them):');
-  for (const r of rows) console.log(`  ${r.item_code}  created_at=${r.created_at}  id=${r.id}`);
+  console.log('ALL LINES BEFORE (ordered as composer sees them):');
+  for (const r of rows) console.log(`  ${r.item_code}  (compartment=${compartmentOf(r.item_code)})  created_at=${r.created_at}  id=${r.id}`);
 
   if (rows.length === 0) {
-    console.error(`REFUSED — no sofa ${SOFA_MODEL} lines found on ${DOC_NO}`);
+    console.error(`REFUSED — no lines found on ${DOC_NO}`);
     process.exit(1);
   }
 
-  const a = rows.filter((r) => (r.item_code ?? '').endsWith(` ${COMPARTMENT_A}`));
-  const b = rows.filter((r) => (r.item_code ?? '').endsWith(` ${COMPARTMENT_B}`));
+  const a = rows.filter((r) => compartmentOf(r.item_code) === COMPARTMENT_A);
+  const b = rows.filter((r) => compartmentOf(r.item_code) === COMPARTMENT_B);
 
   if (a.length !== 1) {
     console.error(`REFUSED — expected exactly 1 line ending in "${COMPARTMENT_A}", found ${a.length}`);
@@ -113,7 +126,6 @@ try {
       FROM scm.mfg_sales_order_items
      WHERE doc_no = ${DOC_NO}
        AND company_id = ${COMPANY_ID}
-       AND item_code LIKE ${'SOFA ' + SOFA_MODEL + '%'}
      ORDER BY created_at, id`;
 
   console.log('SOFA LINES AFTER:');
@@ -123,9 +135,14 @@ try {
     process.exit(0);
   }
 
+  const compartmentOf = (itemCode) => {
+    const s = String(itemCode ?? '').trim();
+    const i = s.indexOf('-');
+    return i > 0 ? s.slice(i + 1) : null;
+  };
   const codes = after.map((r) => r.item_code ?? '');
-  const idxA = codes.findIndex((c) => c.endsWith(` ${COMPARTMENT_A}`));
-  const idxB = codes.findIndex((c) => c.endsWith(` ${COMPARTMENT_B}`));
+  const idxA = codes.findIndex((c) => compartmentOf(c) === COMPARTMENT_A);
+  const idxB = codes.findIndex((c) => compartmentOf(c) === COMPARTMENT_B);
   if (idxA === -1 || idxB === -1 || idxA > idxB) {
     console.error(`POST-CHECK FAILED — expected ${COMPARTMENT_A} before ${COMPARTMENT_B}, got A=${idxA} B=${idxB}`);
     process.exit(1);
