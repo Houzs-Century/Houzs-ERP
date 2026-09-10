@@ -65,9 +65,9 @@ import {
   soProcessingLockColumns,
   soAmendableHeaderFields,
   lockedColumnsChanged,
-  paymentRowMutable,
   PAYMENT_WINDOW_CLOSED_ERROR,
 } from '../shared/so-field-policy';
+import { paymentMayChange, SO_PAYMENT_AMEND } from '../../acc/payment-reconciled';
 /* SO-SKU spec P2 — every charge is a SKU line. Predicates from P1; the
    fee/addon → SERVICE-line decomposition builders are pure + shared. */
 import {
@@ -10977,11 +10977,11 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
         + 'Please tell IT which payment this is.',
     }, 409);
   }
-  const editWindow = paymentRowMutable(
-    mytDateOf(before.created_at),
-    todayMyt(),
-    (soRow?.status as string | undefined) === 'DRAFT',
-  );
+  const editWindow = await paymentMayChange(sb, {
+    companyId: co.companyId, paymentId: id,
+    createdDateMyt: mytDateOf(before.created_at), todayDateMyt: todayMyt(),
+    soIsDraft: (soRow?.status as string | undefined) === 'DRAFT', mayAmend: hasHouzsPerm(c, SO_PAYMENT_AMEND),
+  });
   if (!editWindow.mutable) {
     return c.json({ error: PAYMENT_WINDOW_CLOSED_ERROR, reason: editWindow.problem }, 409);
   }
@@ -11174,12 +11174,9 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
      control. The DRAFT exemption mirrors the PATCH route exactly (a draft has
      nothing locked; the owner was describing a confirmed order).
 
-     WHERE THE DEFERRED RULE GOES: the owner has parked the bank-reconciliation
-     condition ("如果他已经做完 bank record 并且 knock off 掉了，就不行了") until
-     reconciliation and knock-off exist. When he defines it, it becomes one more
-     argument to paymentRowMutable() — that predicate is the only place any
-     surface asks this question, so it lands everywhere at once. Nothing
-     speculative is built for it here. */
+     THE DEFERRED RULE HAS LANDED (2026-09-10, docs/bugs/0780): FINANCE may
+     remove an older payment, a RECONCILED one is refused to everybody, and
+     paymentMayChange() below asks both. */
   const { data: soStatusRow } = await sb
     .from('mfg_sales_orders')
     .select('status')
@@ -11197,7 +11194,13 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
         + 'Please tell IT which payment this is.',
     }, 409);
   }
-  const windowCheck = paymentRowMutable(mytDateOf(createdAtRaw), todayMyt(), soIsDraft);
+  // STRICT like the PATCH/POST either side: scopeToCompany degrades, and this DELETEs.
+  const delCo = requireActiveCompanyId(c); if (!delCo.ok) return c.json(delCo.refusal, 409);
+  const windowCheck = await paymentMayChange(sb, {
+    companyId: delCo.companyId, paymentId: id,
+    createdDateMyt: mytDateOf(createdAtRaw), todayDateMyt: todayMyt(),
+    soIsDraft, mayAmend: hasHouzsPerm(c, SO_PAYMENT_AMEND),
+  });
   if (!windowCheck.mutable) {
     return c.json({
       error: PAYMENT_WINDOW_CLOSED_ERROR,
@@ -11205,8 +11208,6 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
     }, 409);
   }
 
-  // STRICT like the PATCH/POST either side: scopeToCompany degrades, and this DELETEs.
-  const delCo = requireActiveCompanyId(c); if (!delCo.ok) return c.json(delCo.refusal, 409);
   const { data: deleted, error } = await scopeToCompanyId(sb.from('mfg_sales_order_payments').delete()
     .eq('id', id)
     .eq('so_doc_no', docNo)

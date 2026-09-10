@@ -40,6 +40,7 @@ import { todayMyt, mytDayOf } from "../vendor/scm/lib/dates";
    desktop PaymentsTable call, so no surface can disagree about whether the
    same-day window is still open (Owner 2026-07-19). */
 import { paymentRowMutable } from "../vendor/scm/lib/so-field-policy";
+import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import {
   useSoDropdownOptions,
   optionsOrFallback,
@@ -590,6 +591,12 @@ export function RecordedPaymentsList({
   onChanged: () => void | Promise<void>;
 }) {
   const confirm = useConfirm();
+  /* Owner + management 2026-09-10 — FINANCE may correct a payment after the day
+     it was keyed. The control showing is the courtesy; the endpoint decides,
+     and it refuses one that has already been RECONCILED, which only the server
+     can see. Desktop PaymentsTable asks the same question the same way. */
+  const { can } = useHouzsAuth();
+  const mayAmend = can("scm.so_payment.amend");
   const deletePaymentMut = useDeleteSalesOrderPayment();
   const attachSlipMut = useAttachSalesOrderPaymentSlip();
   const [editPay, setEditPay] = useState<RecordedPayment | null>(null);
@@ -651,7 +658,7 @@ export function RecordedPaymentsList({
   const rowMutable = (p: RecordedPayment): boolean => {
     const day = mytDayOf(createdAtOf(p));
     if (day === null) return false;
-    return paymentRowMutable(day, todayMyt(), draftUnlocked).mutable;
+    return paymentRowMutable(day, todayMyt(), draftUnlocked, { mayAmend }).mutable;
   };
 
   /* Delete a persisted payment — parity with the desktop PaymentsTable trash

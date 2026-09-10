@@ -36,7 +36,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft, FileText, Pencil, Trash2, Printer, Save, Ban, ChevronDown, ArrowRightLeft,
+  ArrowLeft, FileText, Pencil, Trash2, Printer, Save, Ban, ChevronDown, ArrowRightLeft, Plus, X,
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
@@ -48,6 +48,7 @@ import {
   useUpdateGrnHeader,
   useUpdateGrnItem,
   useDeleteGrnItem,
+  useAddGrnItem,
   useCancelGrn,
   usePostGrn,
 } from '../../vendor/scm/lib/grn-queries';
@@ -57,11 +58,13 @@ import {
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { useRacks } from '../../vendor/scm/lib/warehouse-queries';
-import { useMaintenanceConfig, useSpecialAddons } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMaintenanceConfig, useSpecialAddons, useMfgProducts } from '../../vendor/scm/lib/mfg-products-queries';
+import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
+import { specialOrderSurface } from '../../vendor/scm/lib/special-order-surface';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
@@ -192,6 +195,24 @@ const lineSnapshot = (it: GrnItemRow): LineDraft => ({
   zeroCostReason: it.zero_cost_reason ?? '',
 });
 
+/* Manual "extra item" add-row draft — a genuinely-free receipt (an item the
+   source PO never ordered, a supplier extra, a sample). It carries no
+   purchase_order_item_id, so the server writes the stock IN but ticks nothing
+   off any PO; the unlinked-PO guard refuses it only when the item IS on the
+   parent PO (that must go through the From-PO picker instead). Money is in sen,
+   the code is item_code — matching the New-GRN manual line. */
+type AddDraft = {
+  itemCode: string;
+  materialName: string;
+  supplierSku: string | null;
+  itemGroup: string | null;
+  qty: number;            // maps to qty_received
+  unitPriceSen: number;
+};
+const BLANK_ADD: AddDraft = {
+  itemCode: '', materialName: '', supplierSku: null, itemGroup: null, qty: 1, unitPriceSen: 0,
+};
+
 export const GoodsReceivedDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -245,6 +266,28 @@ export const GoodsReceivedDetail = () => {
   const [headerDraft, setHeaderDraft] = useState<HeaderDraft | null>(null);
   const [lineDrafts, setLineDrafts] = useState<Record<string, LineDraft>>({});
   const [savingDraft, setSavingDraft] = useState(false);
+
+  /* Manual "extra item" add-row (owner 2026-09-10) — the detail page can now
+     receive an item that was NOT on the source PO, mirroring the New-GRN manual
+     line. This intentionally softens the 2026-05-31 "never by free add-line"
+     rule: the primary path stays convert-from-PO, but a genuinely-free receipt
+     (a supplier extra, a sample) no longer needs a whole new GRN. The picker is
+     supplier-binding-aware like New GRN / New PO: once resolved to this supplier
+     the datalist lists its bound SKUs, else it falls back to the gated
+     full-catalogue search. The add commits immediately via POST /:id/items
+     (like the From-PO append + line delete). */
+  const addGrnItem = useAddGrnItem();
+  const [showAddItem, setShowAddItem] = useState(false);
+  const [addDraft, setAddDraft] = useState<AddDraft>(BLANK_ADD);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [productQuery, setProductQuery] = useState('');
+  const debouncedProductQuery = useDebouncedValue(productQuery, 250);
+  const addSupplierDetailQ = useSupplierDetail(grn?.supplier_id ?? null);
+  const bindings = addSupplierDetailQ.data?.bindings ?? [];
+  const productsQ = useMfgProducts({
+    search: debouncedProductQuery,
+    enabled: showAddItem && debouncedProductQuery.trim().length >= 2,
+  });
 
   // DRAFT + POSTED ("Confirmed") are editable; CANCELLED / CLOSED lock. POSTED is
   // additionally locked once the GRN has a downstream PI/PR (unified model,
@@ -364,6 +407,78 @@ export const GoodsReceivedDetail = () => {
     setHeaderDraft(null);
     setLineDrafts({});
     setIsEditing(true);
+  };
+
+  const resetAddItem = () => {
+    setShowAddItem(false);
+    setAddDraft(BLANK_ADD);
+    setAddError(null);
+    setProductQuery('');
+  };
+
+  /* Mirror New GRN's manual line picker: a supplier binding fills name + unit
+     price + supplier SKU + category; a bare catalogue hit fills name + category;
+     free typing keeps the text and drops any stale supplier code (a code must
+     not outlive the pick it belonged to). */
+  const onAddCodeChange = (code: string) => {
+    setProductQuery(code);
+    const bound = grn.supplier_id ? bindings.find((b) => b.item_code === code) : undefined;
+    if (bound) {
+      const sku = (productsQ.data ?? []).find((p) => p.code === code);
+      setAddDraft((d) => ({
+        ...d,
+        itemCode:     bound.item_code,
+        materialName: bound.material_name,
+        supplierSku:  bound.supplier_sku,
+        unitPriceSen: bound.unit_price_sen,
+        itemGroup:    sku?.category ? sku.category.toLowerCase() : d.itemGroup,
+      }));
+      return;
+    }
+    const match = (productsQ.data ?? []).find((p) => p.code === code);
+    if (match) {
+      setAddDraft((d) => ({
+        ...d,
+        itemCode:     code,
+        materialName: match.name,
+        supplierSku:  null,
+        itemGroup:    match.category.toLowerCase(),
+      }));
+      return;
+    }
+    setAddDraft((d) => ({ ...d, itemCode: code, supplierSku: null }));
+  };
+
+  const submitAddItem = async () => {
+    setAddError(null);
+    const code = addDraft.itemCode.trim();
+    const name = addDraft.materialName.trim();
+    if (!code) { setAddError('Pick or type an item code first.'); return; }
+    if (!name) { setAddError('This item needs a description.'); return; }
+    if (!(addDraft.qty >= 0)) { setAddError('Received qty must be 0 or more.'); return; }
+    try {
+      await addGrnItem.mutateAsync({
+        grnId:               grn.id,
+        purchaseOrderItemId: null,            // manual line — no PO rollup
+        materialKind:        'mfg_product',
+        itemCode:            code,
+        materialName:        name,
+        supplierSku:         addDraft.supplierSku ?? undefined,
+        itemGroup:           addDraft.itemGroup ?? undefined,
+        qty:                 addDraft.qty,
+        unitPriceSen:        addDraft.unitPriceSen,
+        deliveryDate:        (headerView.receivedAt || (grn.received_at ?? '').slice(0, 10)) || undefined,
+      });
+      resetAddItem();
+    } catch (e) {
+      /* The server's unlinked-PO guard (receiving a material the parent PO
+         already orders, by hand), the zero-cost receipt gate, and any lock /
+         over-receipt surface here as a plain sentence. Keep the row open so the
+         operator can adjust the code / price or switch to the From-PO picker.
+         A zero-cost refusal is then resolved on the added line's own card
+         (its zero-cost acknowledgement) once the line exists. */
+      setAddError(e instanceof Error ? e.message : "Couldn't add this item.");
+    }
   };
 
   /* Single Save — commit header (only if touched) + every changed line's field
@@ -588,10 +703,12 @@ export const GoodsReceivedDetail = () => {
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Line Items ({visibleItems.length})</h2>
-          {/* Entry-point consistency (Commander 2026-05-31): the convert-from-PO
-              action now lives as a prominent TOP-LEVEL header button (see actions
-              row above), mirroring Create GR — NOT a buried line-level add. A GRN
-              is built by CONVERTING from POs, never by free add-line. */}
+          {/* The primary path stays convert-from-PO — the TOP-LEVEL "From
+              Purchase Order" header button (see actions row above), mirroring
+              Create GR. The "Add manual item" affordance BELOW covers a
+              genuinely-free receipt (an item the PO never ordered, a sample);
+              the server still refuses receiving a material the parent PO DOES
+              order by hand (unlinked_po_lines) — that must go through From PO. */}
         </header>
 
         {visibleItems.length === 0 ? (
@@ -720,6 +837,31 @@ export const GoodsReceivedDetail = () => {
                       refuses the change too). To change it, cancel this GRN and
                       edit the PO. Only a MANUAL line (source_po_number null) keeps
                       the editor. You always still SEE the variant summary. */}
+                  {isEditing && !it.source_po_number && specialOrderSurface({
+                    category: d.itemGroup ?? '', hasItemCode: Boolean(it.item_code), pickedSpecialCount: 0,
+                  }).block && (
+                    /* THE SPECIAL ORDER on a MANUAL line whose category has no
+                       variant grid — mattress, accessory, dining. The read-only
+                       summary below already SHOWS the note for every line
+                       (buildVariantSummary appends the SPECIAL segment whatever
+                       the group), so this adds the ability to TYPE it, not to
+                       see it. Owner 2026-09-10, 「POGR 是不是也是要能看得到这些
+                       数据？」. Empty pool: this document carries no catalogue
+                       for those categories, and choosing WHAT to build is the
+                       sales order's job. */
+                    <div style={{ background: 'var(--c-cream)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: 'var(--space-3)', marginBottom: 'var(--space-2)' }}>
+                      <SpecialOrders
+                        options={[]}
+                        variants={(d.variants ?? {}) as Record<string, unknown>}
+                        onPatch={(patch) => setLineDrafts((prev) => {
+                          const cur = prev[it.id] ?? d;
+                          return { ...prev, [it.id]: { ...cur, variants: { ...(cur.variants ?? {}), ...patch } } };
+                        })}
+                        showPrices={false}
+                        disabled={isLocked}
+                      />
+                    </div>
+                  )}
                   {isEditing && !it.source_po_number && (d.itemGroup === 'bedframe' || d.itemGroup === 'sofa') && maint ? (
                     <div style={{ background: 'var(--c-cream)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: 'var(--space-3)' }}>
                       <div style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-11)', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--fg-muted)', marginBottom: 'var(--space-2)' }}>{d.itemGroup} Variants</div>
@@ -919,6 +1061,145 @@ export const GoodsReceivedDetail = () => {
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* Manual / extra item — receive an item that was NOT on the source PO
+            (a supplier extra, a sample). Edit + unlocked only (isLocked already
+            covers Cancelled/Closed AND has-PI/PR). Commits at once via
+            POST /:id/items with no purchase_order_item_id, like the From-PO
+            append + line delete already do. */}
+        {isEditing && !isLocked && (
+          <div style={{ marginTop: 'var(--space-3)' }}>
+            {!showAddItem ? (
+              <button
+                type="button"
+                onClick={() => setShowAddItem(true)}
+                style={{
+                  width: '100%',
+                  border: '1px dashed var(--line)',
+                  borderRadius: 'var(--radius-lg)',
+                  background: 'transparent',
+                  color: 'var(--c-burnt)',
+                  padding: 'var(--space-3)',
+                  cursor: 'pointer',
+                  fontSize: 'var(--fs-13)',
+                  fontWeight: 600,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 'var(--space-2)',
+                }}
+              >
+                <Plus {...ICON} /> Add manual item
+              </button>
+            ) : (
+              <div style={{
+                background: 'var(--c-paper)',
+                border: '1px solid var(--c-burnt)',
+                borderRadius: 'var(--radius-lg)',
+                padding: 'var(--space-4)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 'var(--space-3)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
+                  <span style={{
+                    fontFamily: 'var(--font-button)', fontSize: 'var(--fs-12)', fontWeight: 700,
+                    letterSpacing: '0.10em', color: 'var(--fg-muted)',
+                  }}>
+                    NEW MANUAL ITEM
+                  </span>
+                  {addDraft.itemGroup && <ItemGroupPill group={addDraft.itemGroup} />}
+                </div>
+
+                {/* Identity row — Item Code picker (supplier-binding-aware) +
+                    Supplier SKU (resolved) + Description. Mirrors New GRN. */}
+                <div className={styles.formGrid3}>
+                  <label className={styles.field}>
+                    <span className={styles.fieldLabel}>Item Code (Internal)</span>
+                    <input
+                      type="text"
+                      list="grn-add-manual-products"
+                      value={addDraft.itemCode}
+                      onChange={(e) => onAddCodeChange(e.target.value)}
+                      placeholder={grn.supplier_id && bindings.length > 0
+                        ? 'Pick one of this supplier’s bound SKUs…'
+                        : 'Type ≥2 chars to search SKUs by code or name…'}
+                      className={styles.fieldInput}
+                      style={{ fontFamily: 'var(--font-mono)' }}
+                    />
+                    <datalist id="grn-add-manual-products">
+                      {grn.supplier_id && bindings.length > 0
+                        ? sortByText(bindings).map((b) => (
+                            <option key={b.id} value={b.item_code}>
+                              {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
+                            </option>
+                          ))
+                        : sortByText(productsQ.data ?? []).map((p) => (
+                            <option key={p.id} value={p.code}>{p.name} · {p.category}</option>
+                          ))}
+                    </datalist>
+                  </label>
+                  <label className={styles.field}>
+                    <span className={styles.fieldLabel}>Supplier SKU</span>
+                    <input
+                      type="text" readOnly value={addDraft.supplierSku ?? '—'}
+                      className={styles.fieldInput}
+                      style={{ fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
+                    />
+                  </label>
+                  <label className={styles.field}>
+                    <span className={styles.fieldLabel}>Description</span>
+                    <input
+                      type="text" value={addDraft.materialName}
+                      onChange={(e) => setAddDraft((d) => ({ ...d, materialName: e.target.value }))}
+                      placeholder="(auto-filled when an item is picked — editable)"
+                      className={styles.fieldInput}
+                    />
+                  </label>
+                </div>
+
+                {/* Received qty + Unit Price. Discount / variants / delivery /
+                    zero-cost ack are edited on the resulting line card once
+                    it's added. */}
+                <div className={styles.formGrid4}>
+                  <label className={styles.field}>
+                    <span className={styles.fieldLabel}>Received</span>
+                    <input
+                      type="number" min={0}
+                      className={styles.fieldInput} style={{ textAlign: 'right' }}
+                      value={addDraft.qty}
+                      onChange={(e) => setAddDraft((d) => ({ ...d, qty: Number(e.target.value) || 0 }))}
+                    />
+                  </label>
+                  <label className={styles.field}>
+                    <span className={styles.fieldLabel}>Unit Price ({grn.currency})</span>
+                    <MoneyInput bare selectOnFocus inputClassName={styles.fieldInput}
+                      valueSen={addDraft.unitPriceSen}
+                      onCommit={(sen) => setAddDraft((d) => ({ ...d, unitPriceSen: sen ?? 0 }))} />
+                  </label>
+                </div>
+
+                {addError && (
+                  <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-festive-b, #B8331F)' }}>{addError}</div>
+                )}
+
+                <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end' }}>
+                  <Button variant="ghost" size="sm" onClick={resetAddItem} disabled={addGrnItem.isPending}>
+                    <X {...ICON} /> Cancel
+                  </Button>
+                  <Button variant="primary" size="sm" onClick={submitAddItem} disabled={addGrnItem.isPending}>
+                    <Plus {...ICON} /> {addGrnItem.isPending ? 'Adding…' : 'Add item'}
+                  </Button>
+                </div>
+
+                <p style={{ margin: 0, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
+                  For an item that WAS on this PO, use “From Purchase Order” above instead —
+                  a manual line takes the stock in but ticks nothing off the order.
+                </p>
+              </div>
+            )}
           </div>
         )}
       </section>

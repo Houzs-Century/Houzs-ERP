@@ -1,0 +1,52 @@
+name: SO line supplier lookup (read-only)
+
+# Manual, read-only. Answers "why does one line of this order find its supplier
+# and the line beside it say — none —?" by printing each line's item_code as
+# STORED — length and any non-ASCII byte included — beside whether a binding
+# exists for that exact string, and whether one exists once case and surrounding
+# space are ignored.
+#
+# Owner 2026-09-10, on HC-SO-013497: 9058-L(LHF) and 9058-1A(RHF) show HOOKKA
+# INDUSTRIES, 9058-1NA shows nothing, and the supplier page proves 9058-1NA is
+# bound. Two explanations are already dead — every 9058 product carries bindings
+# (run 34447806315) and the 1000-row cap was fixed in the shared reader — so what
+# is left is the exact-string match MRP makes.
+#
+# SELECTs only: no DDL, no writes, no transaction. Exits 0 for every legitimate
+# answer including "no such document", because the ANSWER is the output and a red
+# job reads as "the check broke".
+on:
+  workflow_dispatch:
+    inputs:
+      doc_nos:
+        description: "Sales-order doc numbers, comma separated"
+        required: false
+        default: "HC-SO-013497,HC-SO-013495"
+        type: string
+      company_id:
+        description: "Company (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+
+# Its own group — a diagnostic must never queue behind, or displace, a release.
+concurrency:
+  group: so-line-supplier-lookup
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the one dependency the script needs
+        run: npm --prefix backend install postgres --no-audit --no-fund --no-save
+      - name: Report the line-to-binding lookup
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DOC_NOS: ${{ inputs.doc_nos }}
+          COMPANY_ID: ${{ inputs.company_id }}
+        run: node backend/scripts/check-so-line-supplier-lookup.mjs

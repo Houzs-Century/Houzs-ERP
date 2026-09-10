@@ -3981,6 +3981,24 @@ attribute branch, not inside it, so a category contributing no attributes still
 carries its note — and `description2` on a purchase order is exactly this
 string. Pinned in `backend/src/scm/shared/variantSummarySuperseded.test.ts`.
 
+**And it is visible on the cost documents, since 2026-09-10.** The owner: 「POGR
+是不是也是要能看得到这些数据？…全部都是要带过去的哦」. Every cost document used to
+gate its editor on bedframe/sofa, so the text reached the supplier's PDF and
+appeared on no screen. They now read the same module:
+
+| document | what changed |
+| --- | --- |
+| Purchase Order (`PoLineCard.tsx`, `PurchaseOrderNew.tsx`) | panel added for the categories with no variant grid |
+| GRN create (`GrnNew.tsx`), Purchase Invoice, Purchase Return | same |
+| Goods-received DETAIL | already SHOWED the note inside `variantSummary`; the manual-line EDITOR was added |
+| Delivery Order | **already correct** — `do-item-row.ts` copies `variants` wholesale and stamps `description2`; `DeliveryOrderDetailV2.tsx` renders it |
+| Stock Adjustment | **deliberately not added** — not supplier-facing, and the note is not part of a lot's identity |
+
+The pool passed on a cost document is EMPTY: it carries no add-on catalogue for
+those categories, and choosing WHAT to build belongs to the sales order. Since
+that change, `SpecialOrders` no longer labels a carried pick *"retired"* when it
+has no pool to judge it against — see `docs/bugs/0779-the-special-order-text-reached-the-supplier-pdf-but-was-invi.md`.
+
 **What actually landed in production, 2026-08-11.** The `Hydraulic` row was
 created by `seed-hydraulic-special-addon.mjs` (run **31454564942**) at
 `sell=0 cost=0`, `categories=BEDFRAME`, `active=true`, read back on a fresh
@@ -4466,8 +4484,41 @@ route in the same change (`soPaymentFieldChanges`, beside
 and they are deliberately different questions. This route file is over its size
 ceiling and may only shrink, which is why the lift rode along.
 
-Still NOT here: who may edit an old payment. `paymentRowMutable` remains purely
-time-based — see `scm/shared/so-field-policy.ts`.
+#### Who may correct an old payment: FINANCE (2026-09-10, docs/bugs/0780)
+
+The deferred rule `paymentRowMutable` reserved a place for in 2026-07-19 has
+landed, together with the permission it was waiting for. Owner + management:
+**已经和management 确定了，让权限在finance 这里更改.** The predicate takes a
+fourth argument and the ORDER of its rules is the design:
+
+| | |
+|---|---|
+| DRAFT | still fluid — the 2026-07-13 exemption, untouched |
+| **RECONCILED** | closed to EVERYONE, Finance included, and it beats the same-day window too |
+| same day | still fluid for whoever keyed it |
+| **may amend** | `scm.so_payment.amend` — Finance's door, granted in Team > Positions |
+| otherwise | the window that has always closed |
+
+Both the PATCH and the DELETE call `paymentMayChange`
+(`backend/src/acc/payment-reconciled.ts`), which is the one call that loads the
+reconciliation AND asks the predicate — two steps that must stay in step. It
+names WHICH of three places closed over the payment: a merchant settlement
+match on the row, a bank-statement match on its ACTIVE entry, or a closed month
+on the entry's MONEY-leg account. **Every read fails CLOSED** — an unreadable
+check refuses and says to retry, never "not reconciled".
+
+The two screens that render the edit and delete controls —
+`frontend/src/vendor/scm/components/PaymentsTable.tsx` (desktop) and
+`frontend/src/mobile/RecordedPayments.tsx` (mobile) — pass `mayAmend` and
+**never** pass `reconciled`: only the server can see a settlement match, so they
+offer the control on the permission alone and let the endpoint refuse. That is
+why the old refusal sentence now ends "ask Finance to adjust it" — it finally
+names a path that exists. Both screens read the key the same way
+(`can('scm.so_payment.amend')`); they have diverged on this predicate before
+(the delete path vs the edit path, 2026-07-19), so
+`frontend/src/vendor/scm/lib/soPaymentAmendClients.test.ts` pins that both still
+pass the fourth argument — dropping it compiles, type-checks, and silently hides
+the control from Finance again.
 
 ### The BALANCE a human is shown — which total it subtracts from (2026-09-08)
 

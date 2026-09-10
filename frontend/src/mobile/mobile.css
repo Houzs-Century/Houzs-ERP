@@ -265,8 +265,13 @@
    renders shorter and narrower than the text inputs beside it. Owner sighting
    2026-08-03: line 1 (dated) and line 2 (blank) on the same row, visibly
    different controls. Pinning the shadow value's height and letting it fill the
-   control makes an empty date box the same size as a filled one. */
-.hz-m input[type="date"].fld-i { -webkit-appearance: none; appearance: none; display: block; min-height: 30px; box-sizing: border-box; }
+   control makes an empty date box the same size as a filled one.
+   NOTE: do NOT set `-webkit-appearance: none` here. On iOS Safari that flag
+   strips the tap-to-open behaviour of the native wheel picker — the field then
+   takes focus but the picker never appears, forcing users to type the date by
+   hand. Bug 2026-09-10, see docs/bugs/. The pseudo-element size rules below
+   apply without appearance-stripping, so we keep the collapse fix. */
+.hz-m input[type="date"].fld-i { display: block; min-height: 30px; box-sizing: border-box; }
 .hz-m input[type="date"].fld-i::-webkit-date-and-time-value { min-height: 1.3em; width: 100%; text-align: left; margin: 0; }
 .hz-m input[type="date"].fld-i::-webkit-calendar-picker-indicator { margin-left: 0; opacity: .55; }
 .hz-m select.fld-i { appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa093' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>"); background-repeat: no-repeat; background-position: right 8px center; padding-right: 26px; }
@@ -283,11 +288,13 @@
 .hz-m input[type="time"], .hz-m input[type="month"], .hz-m input[type="week"],
 .hz-m select, .hz-m textarea { font-size: 12.5px !important; }
 /* Native date/time inputs render oversized on iOS/Android — normalise them to
-   match the app's text-input sizing (same height/font/padding) app-wide. */
+   match the app's text-input sizing (same height/font/padding) app-wide.
+   NOTE: appearance is deliberately NOT stripped here. iOS Safari drops the
+   tap-to-open picker when the input carries `-webkit-appearance: none`, and
+   users had to type the date manually. Bug 2026-09-10, see docs/bugs/. */
 .hz-m input[type="date"],
 .hz-m input[type="datetime-local"],
 .hz-m input[type="time"] {
-  appearance: none; -webkit-appearance: none;
   min-height: 0; height: auto; min-width: 0; max-width: 100%;
   font-family: inherit; font-size: 12.5px; line-height: 1.3;
 }

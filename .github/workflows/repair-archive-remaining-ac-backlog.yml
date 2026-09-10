@@ -1,0 +1,49 @@
+name: Repair — archive the remaining AC backlog (DRY-RUN gated)
+
+# One-shot: archive the outbox rows for every doc the owner said to clear
+# on 2026-09-10, EXCEPT HC-SO-013346 and HC-SO-009373 (which the owner is
+# aligning in AC by hand). See the script header for the full list and each
+# class's reason.
+#
+# DRY-RUN by default. CONFIRM=ARCHIVE-REMAINING-AC-BACKLOG to write.
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: '1 to write, anything else DRY-RUN'
+        required: false
+        default: '0'
+        type: string
+      confirm:
+        description: 'For apply ONLY, type exactly: ARCHIVE-REMAINING-AC-BACKLOG'
+        required: false
+        default: ''
+        type: string
+
+# Its OWN group. A one-shot repair must not queue behind — or displace — a deploy.
+concurrency:
+  group: repair-archive-remaining-ac-backlog
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-archive-remaining-ac-backlog.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.apply == '1' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

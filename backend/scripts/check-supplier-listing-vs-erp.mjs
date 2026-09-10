@@ -109,7 +109,15 @@ try {
     .filter((d) => d.lines.length);
   line(`   ${docs.length} supplier document(s) carry a line in that group`);
 
-  const buckets = { noRef: [], noPo: [], noLines: [], multiset: [], sequence: [], variants: [], agree: [] };
+  const buckets = { noRef: [], noPo: [], noLines: [], multiset: [], sequence: [], variants: [], variantsDeferred: [], agree: [] };
+  /* The lowest and highest AutoCount purchase order we actually hold. The
+     not-found bucket is meaningless without it: an unmatched reference below
+     our floor is an order the cutover never took (scope was outstanding only),
+     not a broken link. */
+  const [range] = await sql`
+    SELECT min(linked_ac_docno) AS lo, max(linked_ac_docno) AS hi, count(*)::int AS n
+      FROM scm.purchase_orders
+     WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`;
 
   for (const d of docs) {
     const ref = d.ourPoRef;
@@ -150,13 +158,21 @@ try {
       received: ours.reduce((a, r) => a + Number(r.received_qty ?? 0), 0),
     };
 
-    if (bag(theirs) !== bag(mine)) { buckets.multiset.push(rec); continue; }
-    if (theirs.join('+') !== mine.join('+')) { buckets.sequence.push(rec); continue; }
+    /* THE THREE FINDINGS ARE INDEPENDENT, and the first version of this script
+       got that wrong: it `continue`d on a piece difference, so a document whose
+       order disagreed never had its VARIANTS compared at all - 37 of 139 on the
+       first production run (34453751607). A wrong leg height does not become
+       irrelevant because the corner is also on the wrong side. A document is now
+       reported under every bucket that applies. */
+    const sameBag = bag(theirs) === bag(mine);
+    const sameSeq = theirs.join('+') === mine.join('+');
 
-    /* Same pieces, same order - now the variants. parseSofa owns the grammar of
-       "leg:1inch / Nylon Fabric, Extend Down 5''(1A)". */
+    /* Variants are compared only where the pieces MATCH POSITIONALLY, because
+       that is the only case where line i on both sides is the same piece.
+       Where they do not, the variant question is answered after the pieces are
+       corrected, and saying so is better than comparing the wrong pair. */
     const diffs = [];
-    for (let i = 0; i < d.lines.length; i += 1) {
+    for (let i = 0; i < d.lines.length && sameBag && sameSeq; i += 1) {
       const raw = d.lines[i].desc2;
       if (!raw) continue;
       /* parseSofa(d2, model) - the module that owns this grammar. Its shape is
@@ -177,8 +193,11 @@ try {
         if (A !== B) diffs.push(`${suffix(ours[i].item_code)} ${what}: supplier "${a}" vs ours "${b ?? ''}"`);
       }
     }
-    if (diffs.length) buckets.variants.push({ ...rec, diffs });
-    else buckets.agree.push(rec);
+    if (!sameBag) buckets.multiset.push(rec);
+    else if (!sameSeq) buckets.sequence.push(rec);
+    if (sameBag && sameSeq && diffs.length) buckets.variants.push({ ...rec, diffs });
+    if (sameBag && sameSeq && !diffs.length) buckets.agree.push(rec);
+    if (!(sameBag && sameSeq)) buckets.variantsDeferred.push(rec);
   }
 
   const show = (name, list, fmt) => {
@@ -198,6 +217,12 @@ try {
   line(`   our purchase order not found           ${buckets.noPo.length}`);
   line(`   purchase order has no line in group    ${buckets.noLines.length}`);
   line(`   supplier row carries no PO reference   ${buckets.noRef.length}`);
+  line(`   variants NOT compared (pieces differ)  ${buckets.variantsDeferred.length}   <- answered after the pieces are`);
+  line('');
+  line(`   for the not-found bucket: we hold ${range?.n ?? 0} migrated purchase order(s), `
+    + `AutoCount ${range?.lo ?? '-'} .. ${range?.hi ?? '-'}.`);
+  line('   A reference BELOW that floor is an order the cutover never took (its scope was');
+  line('   outstanding documents only) - not a broken link, and not work.');
 
   show('DIFFERENT PIECES - the supplier built something else', buckets.multiset,
     (r) => `${(r.po.po_number || '').padEnd(16)} ${(r.ourPoRef || '').padEnd(14)} `
