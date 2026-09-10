@@ -80,7 +80,7 @@ const BASE: readonly MrpView[] = [
  * filtered by another is this bug with extra steps.
  */
 export function mrpCategoryOf(value: string): string {
-  return (value ?? '').trim().toUpperCase();
+  return value.trim().toUpperCase();
 }
 
 /** The tab id for a category — the inverse of `mrpCategoryOf`. */
@@ -94,7 +94,14 @@ function tabValueOf(category: string): string {
  * The four originals first, then every other catalogue category in the order
  * the server sent them. Duplicates and SERVICE are dropped; nothing else is.
  */
-export function mrpViews(categories: readonly string[] | undefined): MrpView[] {
+export function mrpViews(
+  /* The element type is NULLABLE on purpose. This is JSON off the wire, not a
+     value this process constructed, and `MrpResponse.categories: string[]` is a
+     promise about the server rather than a guarantee about the bytes. Widening
+     it here is what makes the `?? ''` below a real guard instead of the
+     redundant one the linter would rightly delete. */
+  categories: readonly (string | null | undefined)[] | undefined,
+): MrpView[] {
   const views: MrpView[] = BASE.filter((v) => !NEVER_A_TAB.has(v.category)).map((v) => ({ ...v }));
   const seen = new Set(views.map((v) => v.category));
   for (const raw of categories ?? []) {
