@@ -124,6 +124,18 @@ raises follow-ups; three filters decide what, and where:
    ordered — so there the full bound set stays in play and `reviseBoundPo` does
    the supplier matching at confirm.
 
+**At confirm, an added line that reaches NO purchase order WARNS** — "no supplier
+set" or "supplier has no open PO on this sales order" — in the follow-up's
+response `warnings` (the confirm toast, desktop + mobile). The supplier match runs
+against the FULL bound set, so a line whose supplier owns a SIBLING PO the confirm
+did not scope is deferred to that PO's own confirm silently, never warned. Until
+2026-09-10 both warnings were gated on `scopeCoversAll`, which is never true on a
+sales order with 2+ live bound POs (the confirm is always scoped to one), so the
+gap was silent exactly where it was most likely — the missing order surfaced on
+delivery day. Fixed in `fix/amendment-po-warn`
+(`docs/bugs/0783-amendment-added-line-on-a-multi-po-sales-order-got-no-purcha.md`);
+it is a visibility fix only — no PO is auto-created.
+
 Nothing left after all three = no PO amendment, and the SO audit row says
 "No PO follow-up needed for this amendment." Tests:
 `lib/amendment-po-followup.test.ts`.
