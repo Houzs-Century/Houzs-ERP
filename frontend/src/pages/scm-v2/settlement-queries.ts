@@ -52,6 +52,9 @@ export type SettlementCandidate = {
       shown as 未标 merchant so the operator knows he is claiming untagged
       money; confirming stamps the tag on. */
   merchantProvider?: string | null;
+  /** On a "Find the sale" result: the payment's own amount is the line's exact
+      gross — the system's guess, ranked first, never the only choice. */
+  possible?: boolean;
 };
 
 export type SettlementLink = {
@@ -522,7 +525,10 @@ export type Watchlist = {
   from: string; to: string; clean: boolean;
   /** acquirerCode null = keyed in without a bank; the server lists such a
       payment ONCE (docs/bugs/0688) and the screen shows it as 未标. */
-  recordedNotArrived: Array<SettlementCandidate & { ageDays: number; acquirerCode: string | null }>;
+  /** salespersonName: who sold it, off the order (owner 2026-09-10: 我想要看到
+      salesman 的名字); null when the order names nobody or the payment is an
+      invoice's. */
+  recordedNotArrived: Array<SettlementCandidate & { ageDays: number; acquirerCode: string | null; salespersonName?: string | null }>;
   arrivedNotRecorded: Array<{ id: number; acquirer_code: string; txn_date: string; ref: string | null; gross_sen: number; notes: string | null }>;
 };
 
@@ -565,6 +571,20 @@ export const useInTransit = () => useQuery({
   queryKey: ['settlement-in-transit'],
   queryFn: () => authedFetch<InTransit>(`/accounting/settlement/in-transit`),
   staleTime: 30_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+/* "Find the sale" (docs/bugs/0790): the company's card payments the window
+   could not offer, searched by document / customer / approval / amount. Off
+   until the operator opens the search on a line. */
+export const useFindPayments = (rowId: number | null, q: string) => useQuery({
+  queryKey: ['settlement-find', rowId, q],
+  queryFn: () => authedFetch<{ q: string; payments: Array<SettlementCandidate & { possible: boolean; method: string }> }>(
+    `/accounting/settlement/rows/${rowId}/find?q=${encodeURIComponent(q)}`,
+  ),
+  enabled: rowId != null,
+  staleTime: 10_000,
   retry: retryUnlessClientError,
   retryDelay: 800,
 });

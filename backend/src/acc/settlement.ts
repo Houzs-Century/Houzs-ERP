@@ -344,6 +344,137 @@ export async function clearOrphanBatch(
 /** `${source}:${id}` for every payment a settlement line already claimed. The
     read FAILS CLOSED: if it cannot answer, matching must not proceed, because
     an empty answer here would offer already-cleared money as a candidate. */
+/* ── "Find the sale" — the payment the window could not offer ─────────────
+   Owner 2026-09-10, on a GHL line the screen called "no sale in the ERP":
+   我要怎样选对应的 SO? The sale WAS in the ERP — the same amount, keyed twelve
+   days after the swipe with no bank on it — and the matcher never loaded it
+   because the acquirer's window is three days. The window is the right
+   instrument for "what could plausibly be this"; it is the wrong one for "the
+   person knows which sale this is". So a line can be searched against the
+   company's card payments whatever their date, with the system's own
+   "possible" ones (the exact gross) ranked first — and nothing withheld
+   (owner: 你可以注明 possible，但不能不让我选其他的). Three things are never
+   offered: cash and transfer (not on any merchant report), another company's
+   money, and a payment another line has already claimed. */
+
+export type FoundPayment = PaymentCandidate & {
+  method: string;
+  /** The exact gross of the line — the system's own guess, ranked first. */
+  possible: boolean;
+};
+
+/* What a merchant report can be explained by: card, instalment, and the
+   migration-era rows AutoCount carried with no method of their own. */
+const CARD_METHODS = new Set(['merchant', 'installment', 'imported']);
+
+/** Money typed as money ("2865", "2,865.00", "RM 2865") → sen; null when the
+    text is not a number. */
+const senOfText = (q: string): number | null => {
+  const t = q.replace(/^rm\s*/i, '').replace(/[,\s]/g, '');
+  if (!/^\d+(\.\d{1,2})?$/.test(t)) return null;
+  return Math.round(Number(t) * 100);
+};
+
+/* The shape both payment tables answer the search with. */
+type CardPaymentRow = {
+  id: string; so_doc_no?: string | null; sales_invoice_id?: string | null; paid_at: string | null;
+  amount_sen: number | null; approval_code: string | null; method: string | null; merchant_provider: string | null;
+  collected_by: string | null; created_by: string | null;
+};
+
+export async function findPaymentsForRow(
+  sb: Parameters<typeof loadSettledKeys>[0],
+  companyId: number,
+  rowId: number,
+  q: string,
+  limit = 50,
+): Promise<{ ok: true; payments: FoundPayment[] } | { ok: false; status: 'not_found' | 'load_failed'; reason: string }> {
+  const { data: rowRaw, error: rowErr } = await sb
+    .from('acc_settlement_rows').select('id, gross_sen').eq('id', rowId).eq('company_id', companyId).maybeSingle();
+  if (rowErr) return { ok: false, status: 'load_failed', reason: rowErr.message };
+  if (!rowRaw) return { ok: false, status: 'not_found', reason: `settlement line ${rowId} not found` };
+  const grossSen = Number((rowRaw as { gross_sen: number }).gross_sen);
+
+  const settled = await loadSettledKeys(sb, companyId);
+  if (!settled.ok) return { ok: false, status: 'load_failed', reason: settled.reason };
+
+  const { data: soRaw, error: soErr } = await sb
+    .from('mfg_sales_order_payments')
+    .select('id, so_doc_no, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by')
+    .eq('company_id', companyId)
+    .in('method', [...CARD_METHODS])
+    .order('paid_at', { ascending: false })
+    .limit(3000);
+  if (soErr) return { ok: false, status: 'load_failed', reason: `SO payments: ${soErr.message}` };
+  const { data: siRaw, error: siErr } = await sb
+    .from('sales_invoice_payments')
+    .select('id, sales_invoice_id, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by')
+    .eq('company_id', companyId)
+    .in('method', [...CARD_METHODS])
+    .order('paid_at', { ascending: false })
+    .limit(3000);
+  if (siErr) return { ok: false, status: 'load_failed', reason: `SI payments: ${siErr.message}` };
+  const soRows = ((soRaw ?? []) as CardPaymentRow[]).filter((r) => !settled.keys.has(`SOPAY:${String(r.id)}`));
+  const siRows = ((siRaw ?? []) as CardPaymentRow[]).filter((r) => !settled.keys.has(`SIPAY:${String(r.id)}`));
+
+  /* The customer, off the document — read in chunks, because the name is one
+     of the things a person searches by. A read that fails is a refusal. */
+  const nameOf = new Map<string, string>();
+  const invoiceNoOf = new Map<string, string>();
+  const soDocs = [...new Set(soRows.map((r) => String(r.so_doc_no ?? '')).filter(Boolean))];
+  for (let i = 0; i < soDocs.length; i += 200) {
+    const { data, error } = await sb.from('mfg_sales_orders').select('doc_no, debtor_name').eq('company_id', companyId).in('doc_no', soDocs.slice(i, i + 200));
+    if (error) return { ok: false, status: 'load_failed', reason: `SO customers: ${error.message}` };
+    for (const r of (data ?? []) as Array<{ doc_no: string; debtor_name: string | null }>) if (r.debtor_name) nameOf.set(`SO:${r.doc_no}`, r.debtor_name);
+  }
+  const siIds = [...new Set(siRows.map((r) => String(r.sales_invoice_id ?? '')).filter(Boolean))];
+  for (let i = 0; i < siIds.length; i += 200) {
+    const { data, error } = await sb.from('sales_invoices').select('id, invoice_number, debtor_name').eq('company_id', companyId).in('id', siIds.slice(i, i + 200));
+    if (error) return { ok: false, status: 'load_failed', reason: `SI customers: ${error.message}` };
+    for (const r of (data ?? []) as Array<{ id: string; invoice_number: string | null; debtor_name: string | null }>) {
+      if (r.debtor_name) nameOf.set(`SI:${r.id}`, r.debtor_name);
+      if (r.invoice_number) invoiceNoOf.set(r.id, r.invoice_number);
+    }
+  }
+
+  const tagOf = (r: CardPaymentRow): string | null => {
+    const p = r.merchant_provider == null ? '' : String(r.merchant_provider).trim();
+    return p === '' ? null : p;
+  };
+  const all: FoundPayment[] = [
+    ...soRows.map((r): FoundPayment => ({
+      source: 'SOPAY', id: String(r.id), docNo: String(r.so_doc_no ?? ''), paidOn: isoDay(r.paid_at),
+      amountSen: Number(r.amount_sen ?? 0), approvalCode: r.approval_code ?? null,
+      customerName: nameOf.get(`SO:${String(r.so_doc_no ?? '')}`) ?? null,
+      recordedById: (r.collected_by ?? r.created_by ?? null) as string | null,
+      merchantProvider: tagOf(r), method: String(r.method ?? ''), possible: Number(r.amount_sen ?? 0) === grossSen,
+    })),
+    ...siRows.map((r): FoundPayment => ({
+      source: 'SIPAY', id: String(r.id),
+      docNo: invoiceNoOf.get(String(r.sales_invoice_id ?? '')) ?? String(r.sales_invoice_id ?? ''), paidOn: isoDay(r.paid_at),
+      amountSen: Number(r.amount_sen ?? 0), approvalCode: r.approval_code ?? null,
+      customerName: nameOf.get(`SI:${String(r.sales_invoice_id ?? '')}`) ?? null,
+      recordedById: (r.collected_by ?? r.created_by ?? null) as string | null,
+      merchantProvider: tagOf(r), method: String(r.method ?? ''), possible: Number(r.amount_sen ?? 0) === grossSen,
+    })),
+  ];
+
+  /* The search: a document number, a customer's name, an approval code, or an
+     amount — whichever the person has in front of them. Empty lists everything. */
+  const needle = q.trim().toLowerCase();
+  const sen = senOfText(q.trim());
+  const hit = needle === ''
+    ? all
+    : all.filter((p) =>
+      p.docNo.toLowerCase().includes(needle)
+      || (p.customerName ?? '').toLowerCase().includes(needle)
+      || (p.approvalCode ?? '').toLowerCase() === needle
+      || (sen != null && p.amountSen === sen));
+
+  hit.sort((a, b) => Number(b.possible) - Number(a.possible) || b.paidOn.localeCompare(a.paidOn) || a.docNo.localeCompare(b.docNo));
+  return { ok: true, payments: hit.slice(0, limit) };
+}
+
 export async function loadSettledKeys(
   sb: any,
   companyId: number,
@@ -532,13 +663,39 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
     return { ok: false, status: 'ignored', reason: 'This line was set aside. Put it back in the list before confirming it.' };
   }
 
-  const chosen = input.payments ?? [];
-  if (chosen.length === 0) {
+  const asked = input.payments ?? [];
+  if (asked.length === 0) {
     return {
       ok: false,
       status: 'no_payments',
       reason: 'Nothing to confirm: this settlement has no matching payment in the ERP. Record the sale first — money that arrived without a sale behind it must not be cleared out of the in-transit account.',
     };
+  }
+  /* READ THE CHOSEN PAYMENTS BACK. The amount the screen sent is what the
+     screen believed; the amount that clears in-transit is what the row holds
+     now. A person may pick any card payment of the company (docs/bugs/0790),
+     so this is where a stale list, a payment corrected since, a cash sale, or
+     another company's money is refused — by what the database says, not by
+     what the browser sent. */
+  const chosen: Array<{ source: 'SOPAY' | 'SIPAY'; id: string; docNo: string | null; amountSen: number }> = [];
+  for (const [source, table, docCol] of [['SOPAY', 'mfg_sales_order_payments', 'so_doc_no'], ['SIPAY', 'sales_invoice_payments', 'sales_invoice_id']] as const) {
+    const wanted = asked.filter((p) => p.source === source);
+    if (wanted.length === 0) continue;
+    const { data, error } = await sb.from(table)
+      .select(`id, ${docCol}, amount_sen, method`)
+      .eq('company_id', companyId)
+      .in('id', wanted.map((p) => p.id));
+    if (error) return { ok: false, status: 'load_failed', reason: `${source} payments: ${error.message}` };
+    const byId = new Map(((data ?? []) as Array<Pick<CardPaymentRow, 'id' | 'so_doc_no' | 'sales_invoice_id' | 'amount_sen' | 'method'>>).map((r) => [String(r.id), r]));
+    for (const p of wanted) {
+      const r = byId.get(p.id);
+      if (!r) return { ok: false, status: 'payment_not_found', reason: `Payment ${p.docNo ?? p.id} is not in this company's books. Refresh the list.` };
+      const method = String(r.method ?? '');
+      if (!CARD_METHODS.has(method)) {
+        return { ok: false, status: 'not_card_payment', reason: `${p.docNo ?? p.id} was paid by ${method || 'an unknown method'} — a merchant report cannot be explained by it.` };
+      }
+      chosen.push({ source, id: p.id, docNo: p.docNo ?? (r[docCol] == null ? null : String(r[docCol])), amountSen: Number(r.amount_sen ?? 0) });
+    }
   }
   /* The sum must be the gross, to the sen. A difference here IS the thing this
      layer exists to catch, so it is named and refused, never absorbed. */

@@ -54,6 +54,14 @@ const world = (over: Record<string, Row[]> = {}) => fakeSb(
     acc_settlement_rows: [{ ...SETTLEMENT_ROW }],
     acc_settlement_matches: [],
     acc_settlement_receipts: [],
+    /* The payments a confirm may claim. Since docs/bugs/0790 the confirm reads
+       each chosen payment back — amount and method from the row, not the
+       screen — so the world must hold them. */
+    mfg_sales_order_payments: [
+      { id: 'p1', so_doc_no: 'SO-2608-001', company_id: 1, paid_at: '2026-08-01T10:00:00', amount_sen: 100000, approval_code: 'A1', method: 'merchant', merchant_provider: 'MBB' },
+      { id: 'r1', so_doc_no: 'SO-9', company_id: 1, paid_at: '2026-08-02T10:00:00', amount_sen: -50000, approval_code: null, method: 'merchant', merchant_provider: 'MBB' },
+    ],
+    sales_invoice_payments: [],
     journal_entries: [],
     journal_entry_lines: [],
     ...over,
@@ -189,11 +197,14 @@ describe('confirmSettlementRow — reconciling the card machine books the FEE, a
     expect(sb.tables.acc_settlement_rows[0]).toMatchObject({ bucket: 'MATCHED', posted_je_no: null });
   });
 
+  /* The payment's OWN amount is what must add up — the screen's figure is
+     ignored (docs/bugs/0790): here the screen claims the full RM 1,000.00 over
+     a payment the books hold at RM 900.00. */
   it('refuses a selection that does not add up, and names the difference', async () => {
-    const sb = world();
+    const sb = world({ mfg_sales_order_payments: [{ id: 'p1', so_doc_no: 'SO-1', company_id: 1, amount_sen: 90000, method: 'merchant', merchant_provider: 'MBB' }] });
     const r = await confirmSettlementRow(sb, {
       companyId: 1, rowId: 7, matchReason: 'manual', userName: null,
-      payments: [{ source: 'SOPAY', id: 'p1', docNo: 'SO-1', amountSen: 90000 }],
+      payments: [{ source: 'SOPAY', id: 'p1', docNo: 'SO-1', amountSen: 100000 }],
     });
     expect(r).toMatchObject({ ok: false, status: 'amount_mismatch' });
     expect((r as { reason: string }).reason).toMatch(/-100\.00/);
@@ -252,8 +263,8 @@ describe('confirmSettlementRow — stamping the merchant tag on', () => {
   it('writes the acquirer onto an untagged payment, and leaves a tagged one alone', async () => {
     const sb = world({
       mfg_sales_order_payments: [
-        { id: 'p1', company_id: 1, method: 'imported', merchant_provider: null },
-        { id: 'p2', company_id: 1, method: 'merchant', merchant_provider: 'PBB' },
+        { id: 'p1', company_id: 1, method: 'imported', merchant_provider: null, amount_sen: 60000 },
+        { id: 'p2', company_id: 1, method: 'merchant', merchant_provider: 'PBB', amount_sen: 40000 },
       ],
     });
     const r = await confirmSettlementRow(sb, {
