@@ -51,6 +51,7 @@ import {
   installmentPlanToMonths,
   type ExtractedPayment,
 } from '../lib/scan-receipt-plan';
+import { safeScanDepositSen } from '../lib/scan-header-deposit';
 
 // The scm-scoped service client (getSupabaseService, db:{schema:'scm'}) and the
 // middleware-attached c.get('supabase') are both schema-parameterised clients.
@@ -4043,6 +4044,35 @@ async function runScanJob(
       // duplicate_of flag (touched above → the mobile Scan card's "Duplicate of
       // <doc>" pill) AND the private scan Announcement posted below. So do NOT
       // prefix body.note here; dupDocNo is carried into that notice instead.
+    }
+
+    /* PAID-ROLLUP INVARIANT (docs/bugs/0785-*) — header deposit_sen is safe ONLY
+       when an is_deposit ledger row backs it. `soPaidSen` is
+       `(is_deposit-row-exists ? 0 : deposit_sen) + Σ ledger rows`
+       (shared/so-outstanding.ts:102; list rollup mfg-sales-orders.ts:2203), so an
+       UNBACKED header deposit is added ON TOP of every payment the operator
+       records later — double-counting the deposit (a customer who paid 1400
+       showed 2800). A scan books that backing row ONLY in recordScanReceiptPayments,
+       and ONLY for a NON-shell draft with a CLASSIFIED payment receipt: the shell
+       paths return before the receipt pass (:4133), and a receiptless slip books
+       nothing (:3407). Everywhere else the slip's handwritten depositRm would
+       orphan on the header, so drop it — the ledger is the sole source of Paid and
+       the operator adds the payment on review. Owner rule (recordScanReceiptPayments
+       header, ~:3375): never book money off an unclassified photo. The receipt-backed
+       case is byte-identical — its is_deposit row makes soPaidSen ignore the header
+       anyway, so deposit_sen is left untouched for reports/PDF there. */
+    const originalDepositSen = typeof body.depositSen === 'number' ? body.depositSen : 0;
+    const safeDepositSen = safeScanDepositSen(originalDepositSen, {
+      isShell: body._scanShell === true,
+      hasClassifiedReceipt:
+        parsed != null && classifiedReceiptIndices(parsed, job.uploadedImages).length > 0,
+    });
+    if (safeDepositSen !== originalDepositSen) {
+      console.warn(
+        `[scan-job] dropping unbacked header deposit ${originalDepositSen} sen -> ${safeDepositSen} on ${job.id} `
+        + '(no classified receipt to book an is_deposit row); operator adds the payment on the draft',
+      );
+      body.depositSen = safeDepositSen;
     }
 
     // PRICING-CRITICAL create — the factored mfg-sales-orders core, replayed
