@@ -468,12 +468,32 @@ describe('REFUSAL is the designed outcome, never a plausible guess', () => {
   });
 
   it('refuses rather than truncating a Desc2 longer than AutoCount holds', () => {
-    const long = `${'X'.repeat(AC_DESC2_MAX)}Y`;
-    expect(long.length).toBe(AC_DESC2_MAX + 1);
+    /* CHANGED 2026-09-10 and the change is deliberate. This used a 101-character
+       run of X, which the decoder puts on the SPECIALS axis — so the owner's
+       pointer rung now fits it and the document goes, carrying the build read
+       off the ITEM CODES (which is where the pieces come from, not from this
+       text) plus a sentence saying the specification is in the ERP.
+
+       The property this test exists for is unchanged: nothing is ever
+       TRUNCATED. It is asked here of the case the pointer cannot reach — length
+       in the COLOUR, which is part of the specification and never replaced. */
+    const long = `COL: ${'X'.repeat(AC_DESC2_MAX)}Y`;
     const res = collapseSofaLines(build([{ item_code: '9028-1S', description2: long }]));
     expect(res.lines).toHaveLength(0);
     expect(res.refusals[0].reason).toContain(String(AC_DESC2_MAX));
     expect(res.refusals[0].reason).toContain('truncating');
+  });
+
+  it('an unreadable Desc2 travels as the build plus a pointer, not as itself', () => {
+    /* The case the rewrite above gave up, kept as its own test so the new
+       behaviour is asserted rather than merely no longer failing. */
+    const long = `${'X'.repeat(AC_DESC2_MAX)}Y`;
+    const res = collapseSofaLines(build([{ item_code: '9028-1S', description2: long }]));
+    expect(res.refusals).toEqual([]);
+    const text = String(res.lines[0].description2);
+    expect(text.length).toBeLessThanOrEqual(AC_DESC2_MAX);
+    expect(text).toContain('Special Order: Refer to ERP');
+    expect(text).not.toContain('XXX');
   });
 
   it('refuses a compartment list it cannot spell, quoting what the stored text decodes to', () => {
@@ -824,5 +844,97 @@ describe('over-long STORED text does not refuse a document the composer can spel
        document, which is the outcome the gate exists to prevent. */
     const res = collapseSofaLines(sofa());
     expect(String(res.lines[0].description2)).not.toBe(STORED);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// A SOFA WHOSE SPECIAL ORDER WILL NOT FIT POINTS AT THE ERP.
+//
+// The owner's rung, 2026-09-10: 「Special Order 可以不进 ... 最重要是每一张单都
+// 可以进到就行了」. It is the LAST rung and it costs the special order only —
+// the pieces, the size and the colour are still composed exactly and still have
+// to survive the decode gate, because those are what a wrong answer would build.
+// ----------------------------------------------------------------------------
+describe('a special order that will not fit points at the ERP', () => {
+  const sofa = (specials: string[]): CollapsibleLine[] => ([
+    {
+      item_code: '9028-L(RHF)', item_group: 'sofa', description: 'SOFA 9028 L(RHF)',
+      description2: 'LR + 2EL / COL: BEIGE', qty: 1, unit_price_sen: 399000,
+      linked_ac_dtlkey: 55,
+      variants: { seatHeight: 35, colourLabel: 'BO315-03 BEIGE', specials },
+    },
+    {
+      item_code: '9028-2A(LHF)', item_group: 'sofa', description: 'SOFA 9028 2A(LHF)',
+      description2: 'LR + 2EL / COL: BEIGE', qty: 1, unit_price_sen: 0,
+      linked_ac_dtlkey: 55,
+      variants: { seatHeight: 35, colourLabel: 'BO315-03 BEIGE', specials },
+    },
+  ]);
+
+  const TOO_LONG = [
+    'BOTTOM USE UMBRELLA FABRIC',
+    'Nylon Fabric',
+    'Use 9028 ArmRest and a very long note about the build that will not fit',
+  ];
+
+  it('sends the build with a pointer instead of refusing the document', () => {
+    const res = collapseSofaLines(sofa(TOO_LONG));
+    expect(res.refusals).toEqual([]);
+    const text = String(res.lines[0].description2);
+    expect(text.length).toBeLessThanOrEqual(AC_DESC2_MAX);
+    expect(text).toContain('Special Order: Refer to ERP');
+    /* The half that must NOT be lost. */
+    expect(text).toContain('LR + 2EL');
+    expect(text).toContain('BO315-03 BEIGE');
+    expect(text).toContain('(35")');
+  });
+
+  it('is the LAST rung — specials that fit travel verbatim', () => {
+    const res = collapseSofaLines(sofa(['Nylon Fabric']));
+    expect(res.refusals).toEqual([]);
+    const text = String(res.lines[0].description2);
+    expect(text).toContain('Nylon Fabric');
+    expect(text).not.toContain('Special Order: Refer to ERP');
+  });
+
+  it('never ADDS a pointer to a build that has no special order', () => {
+    const res = collapseSofaLines(sofa([]));
+    expect(res.refusals).toEqual([]);
+    expect(String(res.lines[0].description2)).not.toContain('Special Order');
+  });
+
+  it('the gate asks whether the POINTER is there, not whether it decodes back', () => {
+    /* parseSofa reads specials from a fixed vocabulary — nylon, wooden arm,
+       recliner — because it was written to decode the account book's own text.
+       It will never read the pointer back as a special, so comparing it through
+       sameSpecials would refuse every document this rung exists to rescue. */
+    expect(decodesTo(
+      'LR + 2EL (35") / COL: BEIGE / Special Order: Refer to ERP',
+      '9028', ['L(RHF)', '2A(LHF)'],
+      { size: '35', colour: 'BEIGE', specials: ['Special Order: Refer to ERP'] },
+    ).ok).toBe(true);
+  });
+
+  it('and it REFUSES when the pointer is not in the text', () => {
+    /* The guard that keeps the rule above from being a blank cheque: a caller
+       claiming the specials were pointed at the ERP must actually have said so
+       in the text it is about to send. */
+    const v = decodesTo(
+      'LR + 2EL (35") / COL: BEIGE',
+      '9028', ['L(RHF)', '2A(LHF)'],
+      { size: '35', colour: 'BEIGE', specials: ['Special Order: Refer to ERP'] },
+    );
+    expect(v.ok).toBe(false);
+  });
+
+  it('still refuses when the length is in the COLOUR, not the special order', () => {
+    /* The pointer costs the special order and nothing else, so it cannot rescue
+       a document whose build or colour is itself over the column. */
+    const res = collapseSofaLines(sofa(TOO_LONG).map((l) => ({
+      ...l,
+      variants: { seatHeight: 35, colourLabel: `BEIGE ${'X'.repeat(110)}`, specials: TOO_LONG },
+    })));
+    expect(res.lines).toHaveLength(0);
+    expect(res.refusals[0].reason).toContain(String(AC_DESC2_MAX));
   });
 });

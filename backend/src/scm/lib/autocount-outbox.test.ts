@@ -1623,11 +1623,11 @@ describe('the three fields the extract carries and the write-back did not send',
       expect(d.Desc2).toBe('PC151-01 Sand / DIVAN 8" + LEG 2" / GAP 12"');
     });
 
-    test('a Further Description over nvarchar(100) is refused into a NAMED skipped row', async () => {
+    test('a Further Description over nvarchar(100) — the COLOUR — is refused into a NAMED skipped row', async () => {
       const sb = seed({}, {
         description2: null,
         item_group: 'bedframe',
-        variants: { fabricCode: 'PC151-01', gap: '12"', specials: ['X'.repeat(120)] },
+        variants: { fabricCode: `PC151-01 ${'X'.repeat(120)}`, gap: '12"' },
       });
       expect((await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).queued).toBe(false);
       const [row] = outbox(sb);

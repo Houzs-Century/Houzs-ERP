@@ -73,8 +73,60 @@ export function abbreviateDesc2(text: string, max: number): string {
     out = out.replace(pattern, short);
     if (out.length <= max) return out;
   }
-  /* Still over. Return the SHORTENED text rather than the original: it is the
-     same specification in the owner's own words, and the caller's refusal
-     message then reports the length that is actually the problem. */
+  /* THE LAST RUNG, and it is the owner's decision rather than a heuristic: the
+     special order does not have to reach AutoCount at all. */
+  const pointed = pointSpecialsAtTheErp(out);
+  if (pointed.length <= max) return pointed;
+  /* Still over even with the specials replaced by a pointer, so the length is
+     in the build or the colour and no rung here can reach it. Return the
+     SHORTENED text: it is the same specification in the owner's own words, and
+     the caller's refusal then reports the length that is actually the problem. */
   return out;
+}
+
+/**
+ * THE OWNER'S OWN SENTENCE, 2026-09-10. Do not reword it.
+ *
+ * 「你可以写说 "Special Order: Refer to ERP"。那 Special Order 就不需要进去
+ * Auto Call 那边了,然后就没问题了。」
+ *
+ * It is a POINTER, not a summary, and that distinction is the whole reason this
+ * is allowed where truncation is not. Half a specification reads as a complete
+ * instruction and builds the wrong furniture; a sentence that says "the
+ * specification is in the ERP" cannot be mistaken for one.
+ */
+export const SPECIAL_ORDER_POINTER = 'Special Order: Refer to ERP';
+
+/** The segment separator `buildVariantSummary` and `composeSofaDesc2` both use. */
+const SEGMENT = ' / ';
+
+/**
+ * Replace the SPECIAL segment of a composed Description 2 with the pointer.
+ *
+ * WHY THE OWNER ALLOWS THIS AT ALL, in his words on 2026-09-10: 「反正我们没有用
+ * Auto Call 的 PO 那些,用 Auto Call 只是因为我要平行跑这个系统 ... 最重要是每一
+ * 张单都可以进到就行了。」 AutoCount is a parallel run; the factory builds from
+ * the ERP and the PDF. So the special order is not load-bearing THERE, and a
+ * document that reaches the book with a pointer is worth more than a document
+ * that reaches nothing with the full text.
+ *
+ * SEGMENT-BOUNDED, never "everything after SPECIAL:". A `FREE - <campaign>`
+ * segment prints AFTER the special one and is a different fact about the line;
+ * cutting to the end of the string would silently delete it.
+ *
+ * THE ERP KEEPS EVERY WORD. Nothing here writes to `variants.specials`, which is
+ * priced BY NAME - renaming a special zeroes its surcharge on the next save
+ * (`docs/bugs/0770-shortening-the-stored-text-to-fit-autocount-would-have-repri.md`).
+ * This is a rendering decision at the moment of sending, like the abbreviations
+ * above it.
+ */
+export function pointSpecialsAtTheErp(text: string): string {
+  const segments = text.split(SEGMENT);
+  let touched = false;
+  const out = segments.map((seg) => {
+    if (!/^\s*SPECIAL\s*:/i.test(seg)) return seg;
+    touched = true;
+    return SPECIAL_ORDER_POINTER;
+  });
+  return touched ? out.join(SEGMENT) : text;
 }

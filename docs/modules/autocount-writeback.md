@@ -5852,3 +5852,42 @@ compose branch keeps its own length gate on the text it produces.
 **This does not promise such a document then goes.** A long specification is long
 whichever renderer writes it, and the composed text has its own gate. What it
 removes is a refusal that never consulted the text being sent.
+
+## A special order that will not fit POINTS AT THE ERP (2026-09-10)
+
+New SURFACE on `backend/src/services/autocount-desc2-abbrev.ts`
+(`SPECIAL_ORDER_POINTER`, `pointSpecialsAtTheErp`) and on `collapseRun` /
+`decodesTo` in `backend/src/services/autocount-sofa-collapse.ts`.
+
+**The owner's ruling, 2026-09-10, and it is a decision about what AutoCount is
+FOR:** 「反正我们没有用 Auto Call 的 PO 那些,用 Auto Call 只是因为我要平行跑这个
+系统 ... Special Order 可以不进,最重要是每一张单都可以进到就行了。」 and 「你可以
+写说 "Special Order: Refer to ERP"。」
+
+AutoCount is a parallel run. The factory builds from the ERP and the PDF, so the
+special order is not load-bearing there.
+
+**The ladder, least loss first.**
+
+1. It fits — sent unchanged, by identity.
+2. The owner's abbreviations, stopping at the least change that fits.
+3. The special-order segment becomes `Special Order: Refer to ERP`.
+
+Measured on the strings that were actually blocked: **207 -> 91, 212 -> 96,
+123 -> 73**. `HC-SO-012312`'s 115 still goes at 98 with all three customisations
+intact, because rung 3 only runs when rung 2 has not already fitted it.
+
+**A pointer is not a truncation**, which is why it is allowed where cutting is
+not: half a specification reads as a complete instruction and builds the wrong
+furniture. Nothing here is ever cut, and nothing here writes `variants.specials`.
+
+**The sofa gate has one deliberate rule for it.** `parseSofa` reads specials from
+a fixed vocabulary — nylon, wooden arm, recliner — because it decodes the account
+book's own text, and it will never read the pointer back as a special. So when
+the specials handed to `decodesTo` are exactly the pointer, the gate asks whether
+the pointer is IN the text and compares the pieces, the size and the colour
+exactly as before. A caller claiming to have pointed at the ERP without saying so
+in the text is refused.
+
+**What it still cannot rescue:** a Desc2 whose length is in the build or the
+COLOUR. Those are the specification, and they are never replaced.

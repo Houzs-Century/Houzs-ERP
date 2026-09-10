@@ -38,6 +38,7 @@
 // decoder the cutover importers use — deliberately the same module, because a
 // second copy that drifts would make the gate prove nothing.
 // ----------------------------------------------------------------------------
+import { SPECIAL_ORDER_POINTER } from './autocount-desc2-abbrev';
 import { liveColour } from '../scm/shared/variant-summary';
 import { parseSofa, type SofaParse } from '../../scripts/lib/parse-sofa.mjs';
 
@@ -286,11 +287,31 @@ export function decodesTo(
   if (up(re.color) !== up(expect.colour)) {
     return { ok: false, why: `colour decodes as ${re.color ?? 'none'}, expected ${expect.colour ?? 'none'}` };
   }
-  if (!sameSpecials(re.specials, expect.specials ?? [])) {
+  /* THE POINTER IS NOT A SPECIAL, so it is not checked like one.
+     `parseSofa` reads specials from a FIXED vocabulary — nylon, wooden arm,
+     recliner and the rest — because it was written to decode the account book's
+     own text. It will never read `Special Order: Refer to ERP` back as a
+     special, so comparing it through `sameSpecials` refuses every document the
+     owner's rung was added to rescue.
+     What the gate asks instead is the only thing that matters about a pointer:
+     IS IT THERE. The pieces, the size and the colour above are still compared
+     exactly, and they are what a wrong answer would build. */
+  const expected = expect.specials ?? [];
+  const pointing = expected.length === 1 && expected[0] === SPECIAL_ORDER_POINTER;
+  if (pointing) {
+    if (!text.includes(SPECIAL_ORDER_POINTER)) {
+      return {
+        ok: false,
+        why: 'the special order was replaced by a pointer and the pointer is not in the text',
+      };
+    }
+    return { ok: true };
+  }
+  if (!sameSpecials(re.specials, expected)) {
     return {
       ok: false,
       why: `special orders do not survive: [${re.specials.join('; ') || 'none'}] vs `
-        + `[${(expect.specials ?? []).join('; ') || 'none'}]`,
+        + `[${expected.join('; ') || 'none'}]`,
     };
   }
   return { ok: true };
@@ -459,17 +480,38 @@ function collapseRun(
         + `(stored Desc2 "${desc2}" decodes to [${build.join(', ') || 'nothing'}])`,
     };
   }
-  if (composed.length > AC_DESC2_MAX) {
+  /* 3. POINT AT THE ERP — the owner's rung, 2026-09-10, and the last one.
+     「Special Order 可以不进 ... 最重要是每一张单都可以进到就行了」. The pieces,
+     the size and the colour still have to be right and still have to survive the
+     gate below; only the special order may be replaced by a sentence saying
+     where it lives. Tried ONLY when the full text does not fit, and only when
+     there is a special order to point at — handing the composer a pointer for a
+     build that has no specials would ADD a segment and make it longer. */
+  let text = composed;
+  let sent = specials;
+  if (text.length > AC_DESC2_MAX && specials.length) {
+    const pointed = composeSofaDesc2(compartments, {
+      size, colour, specials: [SPECIAL_ORDER_POINTER],
+    });
+    if (pointed && pointed.length <= AC_DESC2_MAX) {
+      text = pointed;
+      sent = [SPECIAL_ORDER_POINTER];
+    }
+  }
+  if (text.length > AC_DESC2_MAX) {
     return {
-      refusal: `composed Desc2 is ${composed.length} characters and AutoCount's field holds `
+      refusal: `composed Desc2 is ${text.length} characters and AutoCount's field holds `
         + `${AC_DESC2_MAX}; truncating would silently drop part of the build`,
     };
   }
-  const gate = decodesTo(composed, model, compartments, { size, colour, specials });
+  /* The gate is asked about the text that is ACTUALLY SENT, with the specials
+     that are actually in it. Comparing the pointed text against the full
+     special list would fail every time and turn the rung above into dead code. */
+  const gate = decodesTo(text, model, compartments, { size, colour, specials: sent });
   if (!gate.ok) {
     return { refusal: `composed Desc2 does not survive a decode: ${gate.why}` };
   }
-  return { lines: [mkLine(run, composed, 'compose')] };
+  return { lines: [mkLine(run, text, 'compose')] };
 }
 
 /**
