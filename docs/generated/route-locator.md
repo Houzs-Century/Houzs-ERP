@@ -1420,8 +1420,8 @@ Total: 1226 route registrations across 158 files.
 - L69  PUT    /
 
 ## backend/src/scm/routes/mrp.ts  (2)
-- L1732  GET    /
-- L1778  POST   /regenerate
+- L1771  GET    /
+- L1817  POST   /regenerate
 
 ## backend/src/scm/routes/outstanding.ts  (2)
 - L56  GET    /${slug}
