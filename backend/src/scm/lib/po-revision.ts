@@ -32,6 +32,7 @@ import { snapshotPo, ReceivedFloorError } from './so-revision';
 import { recordEntityAudit } from './entity-audit';
 import { poReceivedFloorViolation } from '../shared/po-amendment';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
+import { nextPoLineNo } from './po-line-order';
 
 /* The routable field atoms a PO amendment moves — lines + header. Mirrors the
    frontend poLineFieldKinds / poHeaderFieldKind so the audit routing note matches
@@ -214,9 +215,13 @@ export async function applyPoAmendment(
       if (!itemCode) throw new Error('applyPoAmendment: ADD line has no new_item_code');
       const qty = Math.max(1, Number(diff.new_qty ?? 1));
       const unit = centi(diff.new_unit_price_sen);
+      // Owner 2026-09-10 — an amendment's added line goes at the END of the
+      // document (lib/po-line-order.ts).
+      const lineNo = await nextPoLineNo(sb, poId);
       const { error: insErr } = await sb.from('purchase_order_items').insert({
         ...(companyId != null ? { company_id: companyId } : {}),
         purchase_order_id: poId,
+        line_no: lineNo,
         material_kind:     String((diff.new_variants?.materialKind as string | undefined) ?? 'mfg_product'),
         item_code:     itemCode,
         material_name:     diff.new_material_name ?? itemCode,
