@@ -29,6 +29,22 @@
  * docs/bugs/0779). Matching on Desc2 text is what needs an `exclude` list when
  * one sofa's description is a substring of another's.
  *
+ * ── THE EXCEPTION THE OWNER NAMED, AND IT REVERSES THE AUTHORITY ───────────
+ *     除非我们submit了amendment，然后还没发supplier PO amendment
+ *     你只需要看我们有什么PO amendment就知道了
+ *
+ * The supplier is right about what it BUILT. But where we raised a PO AMENDMENT
+ * after their export was cut and have not re-sent it, THEIR copy is the stale
+ * one and ours is the newer instruction - correcting toward the file would
+ * silently undo a change somebody deliberately made. Same shape as
+ * erp-amount-is-newer-than-the-book: decide by which side moved LAST, never by
+ * which source is nominally the authority.
+ *
+ * So every PO's amendment record (scm.po_amendments, mig 0194) is read, and a PO
+ * carrying one raised AFTER the supplier document's date is EXCLUDED and
+ * reported apart. REQUESTED counts as much as APPROVED: a request that has not
+ * been sent is exactly the case he is describing.
+ *
  * ── WHAT IT REFUSES TO PROPOSE ─────────────────────────────────────────────
  *   - a supplier reference with no purchase order here. Owner: 「找不到PO 可能
  *     已经送完了的 就不理」 - those are old completed orders the cutover never
@@ -81,7 +97,8 @@ const book = gz('supplier-so-detail-2026-09-10.json.gz');
 const sql = postgres(process.env.DATABASE_URL, { ssl: 'require', max: 1, prepare: false });
 
 const entries = [];
-const stats = { docs: 0, noPo: 0, noRows: 0, ambiguousKey: 0, already: 0, proposed: 0, received: 0, noSo: 0 };
+const stats = { docs: 0, noPo: 0, noRows: 0, ambiguousKey: 0, already: 0, proposed: 0, received: 0, noSo: 0, amended: 0 };
+const amendedList = [];
 
 try {
   const docs = book.documents
@@ -97,6 +114,26 @@ try {
       ?? (await sql`SELECT id, po_number FROM scm.purchase_orders
                      WHERE company_id = ${CO} AND po_number = ${ref}`)[0];
     if (!po) { stats.noPo += 1; continue; }
+
+    /* The owner's exception: a PO we amended after their export was cut is
+       NEWER than the file. REQUESTED counts, not only APPROVED - an amendment
+       that has not gone out is precisely the case. */
+    const amend = await sql`
+      SELECT amendment_no, status::text AS status,
+             to_char(created_at, 'YYYY-MM-DD') AS raised,
+             to_char(approved_at, 'YYYY-MM-DD') AS approved
+        FROM scm.po_amendments
+       WHERE po_id = ${po.id}
+         AND status::text <> 'REJECTED'
+       ORDER BY created_at DESC`;
+    const cut = String(d.supplierDate || '').slice(0, 10);
+    const newer = amend.filter((a) => !cut || String(a.raised) > cut || (a.approved && String(a.approved) > cut));
+    if (newer.length) {
+      stats.amended += 1;
+      amendedList.push({ po: po.po_number, supplierDoc: d.supplierDoc, cut,
+        amendments: newer.map((a) => `${a.amendment_no} ${a.status} raised ${a.raised}`) });
+      continue;
+    }
 
     const rows = await sql`
       SELECT i.id, i.item_code, i.linked_ac_dtlkey::text AS dtlkey,
@@ -177,6 +214,7 @@ try {
   log('SUMMARY');
   log(`   supplier sofa documents            ${stats.docs}`);
   log(`   no purchase order here (IGNORED)   ${stats.noPo}   <- owner: already delivered, do not chase`);
+  log(`   WE AMENDED IT AFTER THEIR CUT      ${stats.amended}   <- ours is newer; NOT corrected toward the file`);
   log(`   purchase order has no sofa row     ${stats.noRows}`);
   log(`   build not identified by one key    ${stats.ambiguousKey}`);
   log(`   already correct, nothing to write  ${stats.already}`);
