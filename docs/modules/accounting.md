@@ -760,9 +760,14 @@ to **900-T009 TERMINAL INTEREST CHARGES** (the owner's choice), guarded so only
 rows still on the placeholder move and the target must be an EXPENSE, ACTIVE and
 a LEAF in that same company. The route's fallbacks are now one
 `MERCHANT_FEE_ACCOUNT` constant so the code and the column default cannot drift.
-**The Setup screen still cannot pick this account** — transit and bank are
-pickable, the fee is not, which is why this took a migration rather than a
-click.
+**And the Setup screen can now pick it** (owner: 这个需要). Reconciliation setup
+offers each company its own ACTIVE EXPENSE LEAVES — server-filtered to the same
+properties the posting gate checks, so a code on the list cannot be one the gate
+refuses — and the PATCH re-checks all four by name (in this chart, active, an
+EXPENSE, a leaf) rather than accepting a code that fails later at confirm time.
+A fee account the chart can no longer post to is NAMED on the cell, because that
+silence is how 930-0000 went unnoticed while every confirm in both companies
+refused.
 
 **AND THE BULK BUTTON IS ITS OWN PATH (docs/bugs/0761).** `settlementConfirmMatched`
 ("Confirm all N matched") builds each line's payments from `acc_settlement_matches`

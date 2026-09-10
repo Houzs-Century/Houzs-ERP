@@ -912,3 +912,90 @@ describe('confirm-all posts a matched line whose link went missing', () => {
     expect(res.status).toBe(404);
   });
 });
+
+/* ── WHERE THE MERCHANT FEE GOES, CHOOSABLE ──────────────────────────────────
+   It had to be a migration once (docs/bugs/0762): the fee account was seeded at
+   930-0000, the AutoCount chart deactivated that code, and every settlement
+   confirm in both companies refused with nothing on any screen able to repoint
+   it. The owner, told that: 这个需要.
+
+   What is pinned here is that the screen can only be OFFERED, and can only
+   SAVE, an account the posting gate would actually accept — because the whole
+   failure was a fee account the gate refuses. */
+
+describe('the merchant fee account is chosen, not assumed', () => {
+  const EXPENSES: Row[] = [
+    { account_code: '900-0000', account_name: 'EXPENSES', account_type: 'EXPENSE', parent_code: null, is_active: true, company_id: CO },
+    { account_code: '900-B001', account_name: 'BANK CHARGES', account_type: 'EXPENSE', parent_code: '900-0000', is_active: true, company_id: CO },
+    { account_code: '900-T009', account_name: 'TERMINAL INTEREST CHARGES', account_type: 'EXPENSE', parent_code: '900-0000', is_active: true, company_id: CO },
+    /* The shape that started all this: present, but switched off. */
+    { account_code: '930-0000', account_name: 'MISCELLANEOUS EXPENSES XXX', account_type: 'EXPENSE', parent_code: null, is_active: false, company_id: CO },
+    { account_code: '310-0010', account_name: 'Bank', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: CO },
+  ];
+  const CFG: Row[] = [
+    { code: 'MBB', display_name: 'MBB', statement_format: 'CSV', has_unique_ref: true, fee_method: 'stated', date_tolerance_days: 3, column_map: { date: 'Txn Date', gross: 'Gross', fee: 'MDR' }, is_active: true },
+  ];
+  const rig = () => harness({
+    accounts: EXPENSES, acc_acquirer_config: CFG,
+    acc_company_acquirers: [{ company_id: CO, acquirer_code: 'MBB', bank_account_code: '310-0010', fee_account_code: '930-0000', is_active: true }],
+  });
+
+  test('offers the active expense LEAVES, and never a header or a dead code', async () => {
+    const { app } = rig();
+    const body = await (await app.request('/settlement/maintenance')).json() as {
+      feeAccounts: Record<string, Array<{ account_code: string }>>;
+    };
+    const offered = (body.feeAccounts[String(CO)] ?? []).map((a) => a.account_code);
+    expect(offered).toEqual(['900-B001', '900-T009']);
+    /* 900-0000 has children — nothing posts to it. 930-0000 is switched off,
+       which is the exact account that refused every confirm. */
+    expect(offered).not.toContain('900-0000');
+    expect(offered).not.toContain('930-0000');
+  });
+
+  test('says what each company currently books the fee to', async () => {
+    const { app } = rig();
+    const body = await (await app.request('/settlement/maintenance')).json() as { merchants: Array<Record<string, any>> };
+    expect(body.merchants.find((m) => m.code === 'MBB')!.byCompany[String(CO)])
+      .toMatchObject({ feeAccountCode: '930-0000' });
+  });
+
+  test('saves a pick', async () => {
+    const { app, sb } = rig();
+    const res = await patch(app, '/settlement/maintenance/merchant', { companyId: CO, code: 'MBB', feeAccountCode: '900-T009' });
+    expect(res.status).toBe(200);
+    expect((sb.tables.acc_company_acquirers as Row[])[0]!.fee_account_code).toBe('900-T009');
+  });
+
+  /* THE ONES THAT MATTER. Each refusal is the posting gate's own rule, applied
+     where the choice is made rather than at the moment somebody confirms a
+     statement — which is where it was applied before, six days too late. */
+  test('refuses an account that is switched off', async () => {
+    const { app, sb } = rig();
+    const res = await patch(app, '/settlement/maintenance/merchant', { companyId: CO, code: 'MBB', feeAccountCode: '930-0000' });
+    expect(res.status).toBe(400);
+    expect(String(((await res.json()) as Row).message)).toMatch(/switched off/);
+    expect((sb.tables.acc_company_acquirers as Row[])[0]!.fee_account_code).toBe('930-0000');
+  });
+
+  test('refuses an account that is not an expense', async () => {
+    const { app } = rig();
+    const res = await patch(app, '/settlement/maintenance/merchant', { companyId: CO, code: 'MBB', feeAccountCode: '310-0010' });
+    expect(res.status).toBe(400);
+    expect(String(((await res.json()) as Row).message)).toMatch(/expense/i);
+  });
+
+  test('refuses a header account, and says to pick one of its children', async () => {
+    const { app } = rig();
+    const res = await patch(app, '/settlement/maintenance/merchant', { companyId: CO, code: 'MBB', feeAccountCode: '900-0000' });
+    expect(res.status).toBe(400);
+    expect(String(((await res.json()) as Row).message)).toMatch(/sub-accounts/);
+  });
+
+  test('refuses a code this company does not carry', async () => {
+    const { app } = rig();
+    const res = await patch(app, '/settlement/maintenance/merchant', { companyId: CO, code: 'MBB', feeAccountCode: '999-9999' });
+    expect(res.status).toBe(400);
+    expect(String(((await res.json()) as Row).message)).toMatch(/not in this company/);
+  });
+});
