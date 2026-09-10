@@ -417,9 +417,9 @@ export function Team() {
     },
     roles: {
       eyebrow: "Workspace · Access Control",
-      title: "Roles",
+      title: "Roles & Permissions",
       description:
-        "Define what each role can access. System roles are locked; create custom roles for fine-grained control.",
+        "Pick a role on the left, then toggle its grants module by module. Select several roles to edit them together.",
     },
     mail: {
       eyebrow: "Workspace · Mail Center",

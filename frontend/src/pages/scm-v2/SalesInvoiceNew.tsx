@@ -194,7 +194,7 @@ export const SalesInvoiceNew = () => {
       doItemId: string; itemCode: string; itemGroup: string | null;
       description: string | null; uom: string | null; qty: number;
       unitPriceSen: number; discountSen: number; unitCostSen: number;
-      variants: unknown;
+      variants: unknown; lineDeliveryDate?: string | null;
     };
     const stash = fromPicks ? readScmHandoff<Stash[]>('siFromDoPicks') : null;
 
@@ -212,6 +212,8 @@ export const SalesInvoiceNew = () => {
         discountSen: Number(s.discountSen ?? 0),
         unitCostSen: Number(s.unitCostSen ?? 0),
         variants: (s.variants as Record<string, unknown>) ?? {},
+        /* Carry the DO line's delivery date onto the SI line. */
+        lineDeliveryDate: s.lineDeliveryDate ?? null,
       })));
       removeScmHandoff('siFromDoPicks');
     } else if (doItems.length > 0) {
@@ -229,6 +231,7 @@ export const SalesInvoiceNew = () => {
         unitCostSen: Number(it.unit_cost_sen ?? 0),
         variants: (it.variants as Record<string, unknown>) ?? {},
         remark: (it.notes as string) ?? '',
+        lineDeliveryDate: (it.line_delivery_date as string | null) ?? null,
       })));
     }
 
@@ -406,6 +409,7 @@ export const SalesInvoiceNew = () => {
           discountSen: l.discountSen,
           unitCostSen: l.unitCostSen,
           variants: l.variants,
+          lineDeliveryDate: l.lineDeliveryDate ?? null,
         })),
       },
       {

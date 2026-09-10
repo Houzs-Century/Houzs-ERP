@@ -587,6 +587,11 @@ The rule holds because the owner chose it, not because that argument covered it;
 `backend/tests/loadedStaysInvoiceable.test.ts` pins it, and pins that #2557's
 DELIVERED exclusion is still intact.
 
+The convert descriptor `DoRemainingLine` also carries each line's own
+`line_delivery_date` (mig `20260910T1251`, SI side): the DO->SI picker copies the
+DO line's delivery date onto the invoice line, which previously had nowhere to
+land. See `docs/modules/sales-invoice.md` and `docs/bugs/0788`.
+
 
 The shape, so the section still says something: `DO_SHIPPED_STATES` is the
 **write trigger** (first entry fires the OUT — `COMPLETED` is deliberately
