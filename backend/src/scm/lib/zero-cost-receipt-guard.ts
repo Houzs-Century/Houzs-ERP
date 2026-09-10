@@ -306,5 +306,13 @@ export async function checkReceiptCosts(
   if (candidates.length === 0) return null;
   const known = await loadKnownPurchaseCostSen(sb, candidates.map((l) => l.itemCode), companyId);
   const offenders = findUncostedReceiptLines(candidates, known);
-  return offenders.length > 0 ? zeroCostReceiptResponse(offenders) : null;
+  if (offenders.length === 0) return null;
+  /* THE OWNER'S RULING, 2026-09-10 — see RECEIVED_WITH_NO_PRICE above. The
+     receipt is NOT refused. The offending lines are stamped as received with no
+     price, with nobody's name on them, and this returns null so the post goes
+     on. `zeroCostReceiptResponse` is kept because it is what an operator's own
+     tick path still answers with, and because deleting the shape would take the
+     `ackField` contract with it. */
+  await recordReceivedWithNoPrice(sb, offenders);
+  return null;
 }

@@ -223,10 +223,26 @@ describe('loadKnownPurchaseCostSen', () => {
 });
 
 describe('checkReceiptCosts — the chokepoint helper', () => {
-  test('refuses the receipt that would open a zero-cost layer', async () => {
-    const res = await checkReceiptCosts(fakeSb(LOTS), [line()], 1);
-    expect(res?.error).toBe(ZERO_COST_RECEIPT_ERROR);
-    expect(res?.lines[0]).toMatchObject({ knownUnitCostSen: 87000 });
+  test('LETS THROUGH the receipt that would open a zero-cost layer, and STAMPS it', async () => {
+    /* CHANGED 2026-09-10 by the owner's ruling 「GRN 没有amount 也要可以save」.
+       The detection is unchanged — findUncostedReceiptLines still names this
+       line, and its own tests above still assert that. What changed is the
+       answer: the receipt is not refused, it is marked. docs/bugs/0779. */
+    const writes: Record<string, unknown>[] = [];
+    const base = fakeSb(LOTS);
+    const sb = {
+      from: (t: string) => (t === 'grn_items'
+        ? { update: (patch: Record<string, unknown>) => ({ in: (_c: string, ids: string[]) => {
+            for (const id of ids) writes.push({ id, ...patch });
+            return Promise.resolve({ error: null });
+          } }) }
+        : (base.from as () => unknown)()),
+    };
+    expect(await checkReceiptCosts(sb, [line({ id: 'grn-row-1' })], 1)).toBeNull();
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({
+      id: 'grn-row-1', zero_cost_ack: true, zero_cost_ack_by: null,
+    });
   });
 
   test('lets a genuinely free SKU through', async () => {
@@ -261,7 +277,7 @@ describe('the owner\'s ruling: a receipt SAVES without a price (2026-09-10)', ()
     };
   };
 
-  it('stamps the lines it would have refused, with NOBODY\'s name on them', async () => {
+  test('stamps the lines it would have refused, with NOBODY\'s name on them', async () => {
     const sb = rows();
     const r = await recordReceivedWithNoPrice(sb as never, [{ id: 'a' }, { id: 'b' }], '2026-09-10T00:00:00.000Z');
     expect(r).toEqual({ stamped: 2, failed: 0 });
@@ -272,13 +288,13 @@ describe('the owner\'s ruling: a receipt SAVES without a price (2026-09-10)', ()
     expect(sb.store.every((x) => x.zero_cost_ack === true && x.zero_cost_ack_by === null)).toBe(true);
   });
 
-  it('never throws and never blocks the receipt when the marker cannot be written', async () => {
+  test('never throws and never blocks the receipt when the marker cannot be written', async () => {
     const dead = { from: () => { throw new Error('no'); } };
     await expect(recordReceivedWithNoPrice(dead as never, [{ id: 'a' }])).resolves
       .toEqual({ stamped: 0, failed: 1 });
   });
 
-  it('does nothing when there is no line to stamp', async () => {
+  test('does nothing when there is no line to stamp', async () => {
     const sb = rows();
     expect(await recordReceivedWithNoPrice(sb as never, [{ id: null }])).toEqual({ stamped: 0, failed: 0 });
     expect(sb.store).toHaveLength(0);
