@@ -341,26 +341,26 @@ Total: 1226 route registrations across 158 files.
 - L580  GET    /outstanding-so-items
 - L710  GET    /so-line-candidates
 - L857  GET    /:id
-- L1030  GET    /:id/linked
-- L1075  GET    /:id/revisions
-- L1401  POST   /
-- L2467  POST   /from-sos
-- L2547  PATCH  /:id
-- L2710  POST   /bulk-supplier-date
-- L3009  POST   /:id/items
-- L3131  PATCH  /:id/items/:itemId
-- L3306  DELETE /:id/items/:itemId
-- L3476  GET    /:id/items/:itemId/allocations
-- L3486  POST   /:id/items/:itemId/allocations
-- L3539  PATCH  /:id/items/:itemId/allocations/:allocationId
-- L3588  DELETE /:id/items/:itemId/allocations/:allocationId
-- L3679  GET    /:id/items/:itemId/photos/:photoKey/signed
-- L3737  GET    /:id/items/:itemId/photos/:photoKey
-- L3751  POST   /:id/convert-from-so
-- L4101  PATCH  /:id/confirm
-- L4122  POST   /:id/send-to-supplier
-- L4400  PATCH  /:id/cancel
-- L4412  PATCH  /:id/reopen
+- L1032  GET    /:id/linked
+- L1077  GET    /:id/revisions
+- L1404  POST   /
+- L2427  POST   /from-sos
+- L2507  PATCH  /:id
+- L2670  POST   /bulk-supplier-date
+- L2969  POST   /:id/items
+- L3092  PATCH  /:id/items/:itemId
+- L3267  DELETE /:id/items/:itemId
+- L3437  GET    /:id/items/:itemId/allocations
+- L3447  POST   /:id/items/:itemId/allocations
+- L3500  PATCH  /:id/items/:itemId/allocations/:allocationId
+- L3549  DELETE /:id/items/:itemId/allocations/:allocationId
+- L3640  GET    /:id/items/:itemId/photos/:photoKey/signed
+- L3698  GET    /:id/items/:itemId/photos/:photoKey
+- L3712  POST   /:id/convert-from-so
+- L4065  PATCH  /:id/confirm
+- L4086  POST   /:id/send-to-supplier
+- L4364  PATCH  /:id/cancel
+- L4376  PATCH  /:id/reopen
 
 ## backend/src/scm/routes/fleet-maintenance.ts  (23)
 - L569  GET    /dashboard
@@ -794,17 +794,17 @@ Total: 1226 route registrations across 158 files.
 - L1879  PATCH  /:id/status
 
 ## backend/src/scm/routes/document-cancel-routes.ts  (11)
-- L445  GET    /:docNo/cancel-request
-- L446  POST   /:docNo/cancel-request
-- L447  POST   /:docNo/cancel-request/approve
-- L448  POST   /:docNo/cancel-request/reject
-- L449  POST   /:docNo/cancel-request/withdraw
-- L454  GET    /:id/cancel-request
-- L455  POST   /:id/cancel-request
-- L456  POST   /:id/cancel-request/approve
-- L457  POST   /:id/cancel-request/reject
-- L458  POST   /:id/cancel-request/withdraw
-- L463  GET    /
+- L472  GET    /:docNo/cancel-request
+- L473  POST   /:docNo/cancel-request
+- L474  POST   /:docNo/cancel-request/approve
+- L475  POST   /:docNo/cancel-request/reject
+- L476  POST   /:docNo/cancel-request/withdraw
+- L481  GET    /:id/cancel-request
+- L482  POST   /:id/cancel-request
+- L483  POST   /:id/cancel-request/approve
+- L484  POST   /:id/cancel-request/reject
+- L485  POST   /:id/cancel-request/withdraw
+- L490  GET    /
 
 ## backend/src/scm/routes/mfg-products.ts  (11)
 - L224  GET    /

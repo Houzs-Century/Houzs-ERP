@@ -123,6 +123,32 @@ describe('the stored order reaches the screen and the paper', () => {
   });
 });
 
+describe('nextPoLineNo', () => {
+  const stub = (result: { data: unknown; error: unknown }) => ({
+    from: () => ({ select: () => ({ eq: () => ({ order: () => ({ limit: () => ({ maybeSingle: () => Promise.resolve(result) }) }) }) }) }),
+  });
+
+  test('an empty PO, and a PO whose lines predate the column, both answer 1', async () => {
+    const { nextPoLineNo } = await import('../src/scm/lib/po-line-order');
+    expect(await nextPoLineNo(stub({ data: null, error: null }), 'po-1')).toBe(1);
+    expect(await nextPoLineNo(stub({ data: { line_no: null }, error: null }), 'po-1')).toBe(1);
+  });
+
+  test('it continues after the highest', async () => {
+    const { nextPoLineNo } = await import('../src/scm/lib/po-line-order');
+    expect(await nextPoLineNo(stub({ data: { line_no: 7 }, error: null }), 'po-1')).toBe(8);
+  });
+
+  test('a FAILED read throws — it must not read as "this PO has no lines"', async () => {
+    /* supabase-js does not throw on its own, so an unbound error here would be
+       indistinguishable from an empty PO and would put line_no 1 on a document
+       that already has ten (check-swallowed-reads.mjs). */
+    const { nextPoLineNo } = await import('../src/scm/lib/po-line-order');
+    await expect(nextPoLineNo(stub({ data: null, error: { message: 'connection lost' } }), 'po-1'))
+      .rejects.toThrow('connection lost');
+  });
+});
+
 describe('sortLinesByStoredLineNo', () => {
   test('orders by the stored position', async () => {
     const { sortLinesByStoredLineNo } = await import('../src/scm/shared/so-line-display');

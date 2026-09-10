@@ -73,19 +73,21 @@ type LineNoReader = {
  * both answer max(line_no) = NULL. That is correct in both cases only because
  * the read sorts NULLS FIRST (see the header).
  *
- * A read failure answers 1 rather than throwing: the caller is mid-insert of a
- * line the operator asked for, and refusing the whole write because the
- * ordering hint could not be read would trade a cosmetic defect for a lost
- * line. It is logged at the call site through the insert's own error path.
+ * A FAILED read THROWS. supabase-js does not throw on its own, so an unbound
+ * `error` here would be indistinguishable from "this PO has no lines" and the
+ * next line would write line_no 1 onto a document that already has ten
+ * (`check-swallowed-reads.mjs`). The caller is about to insert into this same
+ * table; if it cannot be read, the insert has no business proceeding.
  */
 export async function nextPoLineNo(sb: unknown, purchaseOrderId: string): Promise<number> {
-  const { data } = await (sb as LineNoReader)
+  const { data, error } = await (sb as LineNoReader)
     .from('purchase_order_items')
     .select('line_no')
     .eq('purchase_order_id', purchaseOrderId)
     .order('line_no', { ascending: false, nullsFirst: false })
     .limit(1)
     .maybeSingle();
+  if (error) throw new Error(`nextPoLineNo: could not read the PO's line order: ${error.message}`);
   const max = data?.line_no;
   return typeof max === 'number' && Number.isFinite(max) ? max + 1 : 1;
 }
