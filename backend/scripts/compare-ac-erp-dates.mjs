@@ -6,9 +6,10 @@
 // where they disagree.
 //
 // The AutoCount side comes from the two mirrors already in our DB, so no host
-// access is needed:
-//   * DO  header -> scm.autocount_delivery_orders (mig 0215): doc_no, doc_date
-//   * SO  header -> scm.ac_snapshot_sales_orders   (mig 0288): doc_no, doc_date, raw
+// access is needed. They live in the PUBLIC schema (migs 0215/0288 created them
+// unqualified), while scm.delivery_orders / scm.mfg_sales_orders are in `scm`:
+//   * DO  header -> public.autocount_delivery_orders (mig 0215): doc_no, doc_date
+//   * SO  header -> public.ac_snapshot_sales_orders   (mig 0288): doc_no, doc_date, raw
 // The DO mirror carries NO delivery date (only doc_date); the SO snapshot keeps
 // the whole `raw` payload, so its DeliveryDate / ProcessingDate are read from
 // there. Our side is scm.delivery_orders / scm.mfg_sales_orders, joined by
@@ -36,9 +37,9 @@ const rawDate = (raw, key) => {
 async function main() {
   // 1) How fresh is each AutoCount mirror? A stale mirror makes every
   //    comparison below suspect, so it is the first thing on screen.
-  const [doFresh] = await sql`SELECT max(synced_at) AS latest, count(*)::int AS n FROM scm.autocount_delivery_orders`;
-  const [soN] = await sql`SELECT count(*)::int AS n, max(snapshot_at) AS latest FROM scm.ac_snapshot_sales_orders`;
-  const runs = await sql`SELECT kind, status, stored, finished_at FROM scm.ac_snapshot_runs ORDER BY started_at DESC LIMIT 4`;
+  const [doFresh] = await sql`SELECT max(synced_at) AS latest, count(*)::int AS n FROM public.autocount_delivery_orders`;
+  const [soN] = await sql`SELECT count(*)::int AS n, max(snapshot_at) AS latest FROM public.ac_snapshot_sales_orders`;
+  const runs = await sql`SELECT kind, status, stored, finished_at FROM public.ac_snapshot_runs ORDER BY started_at DESC LIMIT 4`;
   log("=== MIRROR FRESHNESS (the AutoCount side is only as current as these) ===");
   log(`AutoCount DO mirror  (autocount_delivery_orders): ${doFresh.n} rows, newest synced_at ${doFresh.latest ?? "(never)"}`);
   log(`AutoCount SO snapshot(ac_snapshot_sales_orders) : ${soN.n} rows, newest snapshot_at ${soN.latest ?? "(never)"}`);
@@ -56,7 +57,7 @@ async function main() {
         FROM scm.mfg_sales_order_items WHERE doc_no = ${r.doc_no} AND cancelled = false`;
     log(`ERP SO ${r.doc_no}: so_date(doc)=${d(r.so_date)} line_delivery=${d(ld?.min_dd)}..${d(ld?.max_dd)} amended_delivery=${d(r.amended_delivery_date)} -> book ${r.linked_ac_docno ?? "(unlinked)"}`);
     if (r.linked_ac_docno) {
-      const [b] = await sql`SELECT doc_date, raw FROM scm.ac_snapshot_sales_orders WHERE doc_no = ${r.linked_ac_docno}`;
+      const [b] = await sql`SELECT doc_date, raw FROM public.ac_snapshot_sales_orders WHERE doc_no = ${r.linked_ac_docno}`;
       if (b) log(`   AutoCount SO ${r.linked_ac_docno}: doc_date=${d(b.doc_date)} DeliveryDate=${d(rawDate(b.raw, "DeliveryDate"))} ProcessingDate=${d(rawDate(b.raw, "ProcessingDate"))}`);
       else log(`   AutoCount SO ${r.linked_ac_docno}: NOT in the SO snapshot (filtered out, or the snapshot predates it)`);
     }
@@ -68,12 +69,12 @@ async function main() {
   for (const r of doRows) {
     log(`ERP DO ${r.do_number ?? r.doc_no}: do_date(doc)=${d(r.do_date)} shipout=${d(r.shipout_date)} customer_delivered=${d(r.customer_delivered_date)} -> book ${r.linked_ac_docno ?? "(unlinked)"}`);
     if (r.linked_ac_docno) {
-      const [b] = await sql`SELECT doc_date, cancelled FROM scm.autocount_delivery_orders WHERE doc_no = ${r.linked_ac_docno}`;
+      const [b] = await sql`SELECT doc_date, cancelled FROM public.autocount_delivery_orders WHERE doc_no = ${r.linked_ac_docno}`;
       if (b) log(`   AutoCount DO ${r.linked_ac_docno}: doc_date=${d(b.doc_date)} cancelled=${b.cancelled}`);
       else log(`   AutoCount DO ${r.linked_ac_docno}: NOT in the DO mirror`);
     }
   }
-  const byRef = await sql`SELECT doc_no, doc_date, ref, debtor_name FROM scm.autocount_delivery_orders WHERE doc_no ILIKE ${"%" + NEEDLE + "%"} OR ref ILIKE ${"%" + NEEDLE + "%"} LIMIT 20`;
+  const byRef = await sql`SELECT doc_no, doc_date, ref, debtor_name FROM public.autocount_delivery_orders WHERE doc_no ILIKE ${"%" + NEEDLE + "%"} OR ref ILIKE ${"%" + NEEDLE + "%"} LIMIT 20`;
   for (const b of byRef) log(`AutoCount DO ${b.doc_no}: doc_date=${d(b.doc_date)} ref=${b.ref ?? ""} debtor=${b.debtor_name ?? ""}`);
 
   // 3) How WIDESPREAD is a document-date disagreement? Count our linked DOs and
@@ -83,13 +84,13 @@ async function main() {
     SELECT count(*)::int AS matched,
            count(*) FILTER (WHERE left(d.do_date::text,10) <> left(a.doc_date,10))::int AS differ
       FROM scm.delivery_orders d
-      JOIN scm.autocount_delivery_orders a ON a.doc_no = d.linked_ac_docno
+      JOIN public.autocount_delivery_orders a ON a.doc_no = d.linked_ac_docno
      WHERE d.do_date IS NOT NULL AND a.doc_date IS NOT NULL`;
   log(`DO: ${doGap.differ} of ${doGap.matched} linked delivery orders have do_date != AutoCount doc_date`);
   const doSamples = await sql`
     SELECT d.do_number, left(d.do_date::text,10) AS ours, left(a.doc_date,10) AS book
       FROM scm.delivery_orders d
-      JOIN scm.autocount_delivery_orders a ON a.doc_no = d.linked_ac_docno
+      JOIN public.autocount_delivery_orders a ON a.doc_no = d.linked_ac_docno
      WHERE d.do_date IS NOT NULL AND a.doc_date IS NOT NULL
        AND left(d.do_date::text,10) <> left(a.doc_date,10)
      ORDER BY d.do_date DESC LIMIT 15`;
@@ -99,13 +100,13 @@ async function main() {
     SELECT count(*)::int AS matched,
            count(*) FILTER (WHERE left(s.so_date::text,10) <> left(a.doc_date,10))::int AS differ
       FROM scm.mfg_sales_orders s
-      JOIN scm.ac_snapshot_sales_orders a ON a.doc_no = s.linked_ac_docno
+      JOIN public.ac_snapshot_sales_orders a ON a.doc_no = s.linked_ac_docno
      WHERE s.so_date IS NOT NULL AND a.doc_date IS NOT NULL`;
   log(`SO: ${soGap.differ} of ${soGap.matched} linked sales orders have so_date != AutoCount doc_date`);
   const soSamples = await sql`
     SELECT s.doc_no, left(s.so_date::text,10) AS ours, left(a.doc_date,10) AS book
       FROM scm.mfg_sales_orders s
-      JOIN scm.ac_snapshot_sales_orders a ON a.doc_no = s.linked_ac_docno
+      JOIN public.ac_snapshot_sales_orders a ON a.doc_no = s.linked_ac_docno
      WHERE s.so_date IS NOT NULL AND a.doc_date IS NOT NULL
        AND left(s.so_date::text,10) <> left(a.doc_date,10)
      ORDER BY s.so_date DESC LIMIT 15`;
