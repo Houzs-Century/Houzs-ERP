@@ -98,6 +98,58 @@ covers the set. The stale-key set is the surplus.
   refusal fails 1; not reporting the wrong-model class fails 2; ignoring the
   sales-order binding fails 1).
 
+**THE COST BACKFILL CHANGED WHAT THIS REPAIR IS — read before running it
+(2026-09-10).** The plan quoted above was safe because the lots were uncosted:
+retiring them moved quantity and no money. That is no longer true. On 2026-09-09
+and 2026-09-10 the costing lane closed the gap — [#3486](https://github.com/Houzs-Century/Houzs-ERP/pull/3486)
+fixed a `Date` sliced as a string that became `NaN`, so no sofa lot could be
+costed at all, and [#3495](https://github.com/Houzs-Century/Houzs-ERP/pull/3495)
+gave the stock the cost the account book still carried. Read live 2026-09-10:
+
+| `scm.inventory_lots` where `source_doc_no = 'AC-BAL-SOFA-2026-08-10'` | 2026-09-08 | 2026-09-10 |
+| --- | --- | --- |
+| lots | 238 | 238 |
+| `unit_cost_sen = 0` | 224 | **10** |
+
+So **the "a lot carrying cost" refusal now fires on almost the whole population.**
+That refusal is not misbehaving — it is doing precisely the job it was written
+for, and it is the reason nothing silently moved money in the window between the
+plan and the backfill. But it means an apply TODAY does close to nothing:
+
+```sql
+-- the tool's own grouping: (batch_no, item_code) over OPEN cutover lots
+with open_lots as (
+  select * from scm.inventory_lots
+  where source_doc_no='AC-BAL-SOFA-2026-08-10' and qty_remaining > 0 and batch_no is not null
+)
+select count(*) cells, sum(n) lots, sum(n-1) surplus, sum(zero) still_zero_cost
+from (select batch_no, item_code, count(*) n,
+             count(*) filter (where unit_cost_sen = 0) zero
+      from open_lots group by 1,2 having count(*) > 1) g;
+```
+
+| duplicate cells | lots in them | surplus lots | still cost-0 |
+| --- | --- | --- | --- |
+| 32 | 64 | **32** | **2** |
+
+**Two would be retired; the other thirty would be refused.** Anyone reading the
+2026-09-08 dry run (`run 34241345216` → "30 to retire, 14 refused") and pressing
+apply expecting thirty retirements will get two.
+
+**And the decision itself is now a money decision.** Retiring the 32 surplus lots
+removes **RM 27,962 – RM 28,658** of inventory value — the range is only that wide
+because it depends which lot of each pair the purchase line keeps. That is the
+number to weigh, not the RM 9,800 this ledger's sibling recorded for the four
+costed duplicates on 2026-09-08; that figure is superseded, because back then
+"costed" described four lots and now it describes sixty-two.
+
+**What did NOT change.** The duplicates are still real and still overstate stock —
+costing them did not make them fewer, it made them dearer. The keep rule, the
+refusals and the tests are all unchanged and still correct. What is gone is the
+property that made this a low-stakes cleanup: it is now a write-off the owner has
+to authorise with a figure in front of them. See also `docs/bugs/0723`, whose nine
+mismatched pieces are likewise all costed now.
+
 **Still not written.** Retiring the 3 lots keyed without `nylon fabric`
 (ids `4b9bdbc2-…`, `89f67bc0-…`, `deb10345-…`) is a stock write and needs the
 sofa-stock lane's own plan/apply tool plus the owner's word; the 8030 rows
