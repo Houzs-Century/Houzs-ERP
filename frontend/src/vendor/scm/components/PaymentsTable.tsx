@@ -846,7 +846,9 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     if (d.amountSen <= 0) return;
     /* Same-day EDIT (owner 2026-07-13) — an edit draft carries the id of the
        persisted row it amends. Route it through PATCH instead of POST. */
-    if (d.editingPersistedId) { commitEdit(d); return; }
+    /* commitEdit is async since it may ask for a reason; its failures are
+       reported inside it (notify), so nothing is lost by not awaiting here. */
+    if (d.editingPersistedId) { void commitEdit(d); return; }
     /* Cascade guard (spec 1) — block the commit when the chosen method is
        missing a required sub-field (Merchant → Bank + Plan; Online → Sub-Type)
        and tell the operator which one. */

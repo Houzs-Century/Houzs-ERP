@@ -812,7 +812,7 @@ export function RecordedPaymentsList({
           staff={staff}
           defaultCollectedBy={defaultCollectedBy}
           editPayment={editPay}
-          reasonRequired={editPay ? rowVia(editPay) === "amend" : false}
+          reasonRequired={rowVia(editPay) === "amend"}
           onClose={() => setEditPay(null)}
           onSaved={async () => { setEditPay(null); await onChanged(); }}
         />

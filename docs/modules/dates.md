@@ -330,7 +330,10 @@ is *"every other patchable header column is FREE by omission"*.
 > delete authorising each other. Since 2026-09-10 the predicate also takes a
 > RECONCILED fact and a Finance permission (docs/bugs/0780), and neither of
 > those moved the date rule: MYT calendar days, `mytDateOf` / `todayMyt`, no raw
-> UTC slice.
+> UTC slice. Since the same day it also answers WHY a row may change (`via`:
+> draft / same_day / amend — docs/bugs/0785), which is how a correction on
+> the amend right comes to owe a reason while a same-day fix does not; the
+> `same_day` answer is still the `created_at` comparison described here.
 **`amended_delivery_date` appears nowhere in it.** So it has: no processing lock,
 no amendment approval, no past-date check, no pair rule, no cascade to the lines.
 
