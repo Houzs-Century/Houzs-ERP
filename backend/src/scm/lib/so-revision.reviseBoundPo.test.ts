@@ -360,3 +360,26 @@ describe('reviseBoundPo — unchanged contracts still hold', () => {
     await expect(reviseBoundPo(fakeSb(store), AMD, 'user-1')).rejects.toMatchObject({ code: 'received_floor' });
   });
 });
+
+/* A SURVIVING line re-derived here used to keep its STALE carried SO photo, so a
+   code-swap that REPLACED the SO line left the PO showing a dead so-items/<old>
+   key (docs/bugs/0789). The ADD path already carried the current photo; the
+   re-derive now does too, preserving the PO's OWN uploads. */
+describe('reviseBoundPo — a surviving line re-carries the SO photos', () => {
+  it('re-syncs the stale carried SO photo and PRESERVES the PO own upload', async () => {
+    const store = baseStore();
+    store.mfg_sales_order_items = [soLine({ id: 'L1', item_code: 'BF-1', photo_urls: ['so-items/SO-1/L1/new.jpg'] })];
+    store.so_revisions = [{ amendment_id: AMD, revision: 1, snapshot: { lines: [{ id: 'L1' }], poLinks: { L1: ['POI-1'] } } }];
+    store.purchase_order_items = [
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1',
+               photo_urls: ['po-items/POX/POI-1/own.jpg', 'so-items/SO-1/L1/OLD.jpg'] }),
+    ];
+
+    await reviseBoundPo(fakeSb(store), AMD, 'user-1');
+
+    // The PO's own upload is kept; the stale carried key is replaced by the SO
+    // line's CURRENT photo — NOT left as the dead so-items/SO-1/L1/OLD.jpg.
+    expect(store.purchase_order_items.find((i) => i.id === 'POI-1')!.photo_urls)
+      .toEqual(['po-items/POX/POI-1/own.jpg', 'so-items/SO-1/L1/new.jpg']);
+  });
+});

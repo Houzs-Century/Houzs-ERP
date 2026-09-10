@@ -1391,7 +1391,7 @@ export async function reviseBoundPo(
       // supplier binding is keyed on).
       const { data: existing, error: exErr } = await sb
         .from('purchase_order_items')
-        .select('item_code, discount_sen')
+        .select('item_code, discount_sen, photo_urls')
         .eq('id', pi.id)
         .maybeSingle();
       if (exErr) throw new Error(`reviseBoundPo: PO line load failed: ${exErr.message}`);
@@ -1412,6 +1412,18 @@ export async function reviseBoundPo(
         variants:   variants ?? null,
       });
 
+      /* Re-carry the SO line's CURRENT photos, preserving the PO's OWN uploads
+         (`po-items/...`). The INSERT below already carries an ADDED line's photos
+         (mig 0274); a SURVIVING line re-derived here used to keep its STALE
+         snapshot, so a code-swap that REPLACED the SO line left the PO showing a
+         dead `so-items/<old>/...` key whose R2 object is gone (docs/bugs/0789). */
+      const poOwnedPhotos = ((existing as { photo_urls?: string[] | null } | null)?.photo_urls ?? [])
+        .filter((k) => String(k).startsWith('po-items/'));
+      const rederivedPhotos: string[] = [];
+      for (const k of [...poOwnedPhotos, ...(revised.photo_urls ?? [])]) {
+        if (!rederivedPhotos.includes(k)) rederivedPhotos.push(k);
+      }
+
       const { error: updErr } = await sb.from('purchase_order_items').update({
         qty,
         unit_price_sen: unitPriceSen,
@@ -1421,6 +1433,7 @@ export async function reviseBoundPo(
         description2:     buildVariantSummary(String(itemGroup ?? ''), variants ?? null) || null,
         warehouse_id:     revised.warehouse_id,
         delivery_date:    revised.line_delivery_date,
+        photo_urls:       rederivedPhotos,
       }).eq('id', pi.id);
       if (updErr) throw new Error(`reviseBoundPo: PO line update failed for ${pi.id}: ${updErr.message}`);
       linesRederived += 1;
