@@ -43,6 +43,7 @@ import { formatPhone } from '@2990s/shared/phone';
 import { parseProvenanceNote } from '../../shared/transfer-vocabulary';
 import {
   orderSofaModuleRowsWithinBuilds,
+  sortLinesByStoredLineNo,
   sortSoLinesByGroupRank,
 } from '@2990s/shared/so-line-display';
 import { drawSofaLayout } from './sofa-layout-pdf';
@@ -127,6 +128,11 @@ type PoItem = {
   /** Line id (uuid) — pairs with the header id for the photo proxy routes.
       Optional for callers that predate photos on the PO. */
   id?:           string | null;
+  /** Mig 20260910T0547 — the line's stored position on this purchase order.
+      Optional: null on documents that predate the column, and absent entirely
+      for a caller that did not select it, both of which sort first and keep
+      the order they arrived in. */
+  line_no?:      number | null;
   item_code: string;
   material_name: string;
   supplier_sku:  string | null;
@@ -268,10 +274,18 @@ async function renderPurchaseOrderInto(
      const. Canonical SKU/build order (sofa modules LHF→NA→RHF, mains→
      accessories→services) — mirror the sales side. The shared helper keys on
      `item_code`; sort a shimmed view that carries the original row back
-     unchanged (render-time only, no persistence touched). */
+     unchanged (render-time only, no persistence touched).
+
+     `sortLinesByStoredLineNo` is the BASE (owner 2026-09-10: 「我们的 Sales
+     Order 都是从 L 到 R」, 「照片是根据 line item 的顺序来的」) — the document's
+     own stored order, mig 20260910T0547. The two sorts above it are stable, so
+     a line's place survives them, and this const drives BOTH the table and the
+     photo block, which is why the photos scrambled with the lines. It is
+     applied here as well as in the detail route's SQL because a caller may have
+     fetched the items from somewhere with no ORDER BY. */
   const orderedItems = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      items.map((it) => ({ ...it, item_code: it.item_code, __row: it })),
+      sortLinesByStoredLineNo(items.map((it) => ({ ...it, item_code: it.item_code, __row: it }))),
       (r) => r.item_group as string | null | undefined,
     ),
   ).map((r) => r.__row);

@@ -35,8 +35,10 @@ import {
 } from '../shared/mfg-pricing';
 import {
   orderSofaModuleRowsWithinBuilds,
+  sortLinesByStoredLineNo,
   sortSoLinesByGroupRank,
 } from '../shared/so-line-display';
+import { inPoLineOrder, nextPoLineNo, sortBySourceSoLine, stampPoLineNos } from '../lib/po-line-order';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { changedPoIdentityLockCols, poIdentityLockedRefusal } from '../shared/po-identity-lock';
 import { poVariantGaps, poVariantCheckFailedBody, poVariantConfirmRefusal, poWarehouseGap, PO_WAREHOUSE_REQUIRED } from './po-gates';
@@ -367,6 +369,10 @@ const HEADER_COLS =
   HOLD_COLUMNS;
 
 const ITEM_COLS =
+  /* line_no (mig 20260910T0547) — the printed line order. Selected here because
+     the PDF re-sorts on it client-side (purchase-order-pdf.ts) rather than
+     trusting whatever order a caller happened to fetch the items in. */
+  'line_no, ' +
   'id, purchase_order_id, binding_id, material_kind, item_code, material_name, ' +
   'supplier_sku, qty, unit_price_sen, line_total_sen, received_qty, notes, created_at, ' +
   /* PR #41 — variant fields (migration 0056) */
@@ -867,7 +873,7 @@ mfgPurchaseOrders.get('/:id', async (c) => {
       .select(`${HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, address)`)
       .eq('id', id), c)
       .maybeSingle(),
-    supabase.from('purchase_order_items').select(ITEM_COLS).eq('purchase_order_id', id).order('created_at'),
+    inPoLineOrder(supabase.from('purchase_order_items').select(ITEM_COLS).eq('purchase_order_id', id)),
     supabase.from('grns')
       .select('id', { head: true, count: 'exact' })
       .eq('purchase_order_id', id)
@@ -894,13 +900,16 @@ mfgPurchaseOrders.get('/:id', async (c) => {
      LHF→NA→RHF, mains→accessories→services), mirroring the SO detail GET
      (mfg-sales-orders.ts). The shared helper keys on `item_code`; PO lines
      expose `item_code`, so sort a shimmed view that carries the original
-     row back unchanged. `.order('created_at')` above stays as the stable
-     tiebreaker — pure ordering, no persistence touched. */
+     row back unchanged. `inPoLineOrder` above is the stored order (line_no,
+     then created_at, id) and both sorts below are STABLE, so a line's place on
+     the document survives them — pure ordering, no persistence touched. */
   type PoItemRow = Record<string, unknown> & { id: string; item_code: string };
   const itemRows = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      ((itemsRes.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; item_code: string }>)
-        .map((it): PoItemRow => ({ ...it, item_code: it.item_code })),
+      sortLinesByStoredLineNo(
+        ((itemsRes.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; item_code: string }>)
+          .map((it): PoItemRow => ({ ...it, item_code: it.item_code })),
+      ),
       (r) => r.item_group as string | null | undefined,
     ),
   );
@@ -1351,11 +1360,16 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
         photosBySoItem.set(r.id, r.photo_urls ?? []);
       }
     }
-    const itemsToInsert = itemRows.map((r) => ({
+    /* line_no (owner 2026-09-10) — the request's array order IS the order the
+       operator arranged on the New PO form, and the From-SO picker fills that
+       form in the sales order's order. Numbering it here is what makes the
+       document print back the way it was entered instead of however Postgres
+       returns rows that share a created_at. */
+    const itemsToInsert = stampPoLineNos(itemRows.map((r) => ({
       ...r,
       purchase_order_id: header.id,
       photo_urls: (r.so_item_id ? photosBySoItem.get(r.so_item_id) : null) ?? [],
-    }));
+    })), 1);
     const { error: iErr } = await supabase.from('purchase_order_items').insert(stampCompany(itemsToInsert, c));
     if (iErr) {
       // Best-effort rollback of header so we don't leak a no-items PO.
@@ -1616,6 +1630,10 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   // + delivery date below.
   type SoItem = {
     id: string; doc_no: string; item_code: string; description: string | null;
+    /* The SO's own line order (owner 2026-09-10: 「我们的 Sales Order 都是从 L 到
+       R」). The PO derives its own line_no from this — see lib/po-line-order.ts.
+       Nullable: 12 production SO lines carry no line_no. */
+    line_no: number | null;
     qty: number; po_qty_picked: number; unit_price_sen: number;
     line_delivery_date: string | null;
     // Phase 3 (2026-05-29) — carry the SO line's category + variant bag so the
@@ -1636,7 +1654,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     so: { sales_location: string | null; customer_delivery_date: string | null } | null;
   };
   const SO_ITEM_SELECT =
-    'id, doc_no, item_code, description, item_group, variants, qty, po_qty_picked, unit_price_sen, line_delivery_date, warehouse_id, photo_urls, cancelled, ' +
+    'id, doc_no, line_no, item_code, description, item_group, variants, qty, po_qty_picked, unit_price_sen, line_delivery_date, warehouse_id, photo_urls, cancelled, ' +
     /* No company_id on this embed: both source reads below are SCOPED, so a
        cross-company line is never returned and there is nothing to compare. */
     'so:mfg_sales_orders!inner ( sales_location, customer_delivery_date )';
@@ -1723,7 +1741,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       // Even if no SO row found, fabricate a minimal one so PO still gets created.
       pickedItems.push({
         row: row ?? {
-          id: '', doc_no: it.soDocNo, item_code: it.itemCode, description: it.itemName,
+          id: '', doc_no: it.soDocNo, line_no: null, item_code: it.itemCode, description: it.itemName,
           qty: it.qty, po_qty_picked: 0, unit_price_sen: 0,
           line_delivery_date: null, item_group: null, variants: null,
           // No SO line warehouse on the legacy fabricated row → falls back to
@@ -1795,6 +1813,10 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       // Commander 2026-05-29 — the source SO line id, threaded to the PO line so
       // the append-to-existing-PO path can persist so_item_id (release-on-delete).
       soItemId:  row.id || null,
+      /* Owner 2026-09-10 — the SO line's own position, which decides where this
+         line sits on the PO (sortBySourceSoLine). Carried here rather than
+         re-read later because the supplier grouping below is what reorders. */
+      soLineNo:  row.line_no ?? null,
       // Owner 2026-08-10 — the SO line's photo keys, carried to the PO line.
       photoUrls: row.photo_urls ?? [],
       // Commander 2026-05-31 — per-pick supplier override (MRP), the highest
@@ -2124,6 +2146,11 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     warehouseId: string | null; deliveryDate: string | null;
     itemGroup: string | null; variants: Record<string, unknown> | null;
     soItemId: string | null;
+    /* Owner 2026-09-10 — where the SOURCE sales order holds this line. The
+       bucket's lines are sorted on it before the insert, so a PO reads in its
+       sales order's order no matter what order the picks arrived in (the MRP
+       picker groups by ITEM, so they routinely do not). */
+    soDocNo: string | null; soLineNo: number | null;
     photoUrls: string[];
   };
   type Bucket = {
@@ -2201,6 +2228,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       itemGroup: it.itemGroup,
       variants: it.variants,
       soItemId: it.soItemId,
+      soDocNo: it.soDocNo,
+      soLineNo: it.soLineNo,
       photoUrls: it.photoUrls,
     });
     bucket.soDocNos.add(it.soDocNo);
@@ -2237,13 +2266,20 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
        supplier matches the target and append all their lines. Each line keeps
        its own per-line warehouse_id (the SO line's warehouse); the target PO's
        header purchase_location_id is left as-is. */
-    const targetLines = [...byGroup.values()]
+    /* In the SALES ORDERS' order, not the picks' (owner 2026-09-10). Buckets
+       are gathered across warehouses here, so the sort spans them — which is
+       what "the sales order's order" means on a PO merged from several. */
+    const targetLines = sortBySourceSoLine([...byGroup.values()]
       .filter((bk) => bk.supplierId === target.supplier_id)
-      .flatMap((bk) => bk.lines);
+      .flatMap((bk) => bk.lines));
     if (targetLines.length === 0) {
       return c.json({ error: 'supplier_mismatch', reason: 'None of the picked SO lines belong to this PO’s supplier.' }, 409);
     }
-    const rows = targetLines.map((l) => ({
+    /* Appended lines continue after whatever the PO already holds. A PO whose
+       lines predate line_no answers 1 here, and the read sorts NULLS FIRST, so
+       the new line still lands after them (lib/po-line-order.ts). */
+    const appendFrom = await nextPoLineNo(supabase, target.id);
+    const rows = stampPoLineNos(targetLines.map((l) => ({
       purchase_order_id: target.id,
       material_kind: 'mfg_product',
       item_code: l.itemCode,
@@ -2263,7 +2299,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       photo_urls: l.photoUrls,
       // Commander 2026-05-31 — MRP-origin lines are reference-only (no SO lock).
       from_mrp: fromMrp,
-    }));
+    })), appendFrom);
     const { error: iErr } = await supabase.from('purchase_order_items').insert(stampCompany(rows, c));
     if (iErr) return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500);
     await recomputePoTotals(supabase, target.id);
@@ -2373,7 +2409,9 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       continue;
     }
 
-    const rows = bucket.lines.map((l) => ({
+    /* A fresh PO numbers from 1, in the SALES ORDERS' order rather than the
+       picks' (owner 2026-09-10 — see lib/po-line-order.ts). */
+    const rows = stampPoLineNos(sortBySourceSoLine(bucket.lines).map((l) => ({
       purchase_order_id: header.id,
       material_kind: 'mfg_product',
       item_code: l.itemCode,
@@ -2406,7 +2444,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       photo_urls: l.photoUrls,
       // Commander 2026-05-31 — MRP-origin lines are reference-only (no SO lock).
       from_mrp: fromMrp,
-    }));
+    })), 1);
     const { error: iErr } = await supabase.from('purchase_order_items').insert(stampCompany(rows, c));
     if (iErr) {
       await supabase.from('purchase_orders').delete().eq('id', header.id);
@@ -3091,7 +3129,9 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
     supplier_delivery_date_4: dateOrNull(it.supplierDeliveryDate4),
     warehouse_id: (it.warehouseId as string) ?? null,
   };
-  const { data, error } = await sb.from('purchase_order_items').insert({ ...row, company_id: activeCompanyId(c) }).select('*').single();
+  // Owner 2026-09-10 — a hand-added line goes at the END of the document.
+  const lineNo = await nextPoLineNo(sb, poId);
+  const { data, error } = await sb.from('purchase_order_items').insert({ ...row, line_no: lineNo, company_id: activeCompanyId(c) }).select('*').single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
   await recomputePoTotals(sb, poId);
   await recomputePoExpectedAt(sb, poId);
@@ -3783,7 +3823,7 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
   // it used to re-copy full qty on every call → double-ordering).
   const { data: soItems, error: soErr } = await scopeToCompany(sb
     .from('mfg_sales_order_items')
-    .select('id, item_code, description, description2, item_group, qty, po_qty_picked, unit_price_sen, discount_sen, unit_cost_sen, variants, uom, remark, photo_urls')
+    .select('id, line_no, item_code, description, description2, item_group, qty, po_qty_picked, unit_price_sen, discount_sen, unit_cost_sen, variants, uom, remark, photo_urls')
     .eq('doc_no', soDocNo)
     .eq('cancelled', false), c);
   if (soErr) return c.json({ error: 'so_load_failed', reason: soErr.message }, 500);
@@ -3828,8 +3868,15 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
     discount_sen: number | null; unit_cost_sen: number | null;
     variants: unknown; uom: string | null; remark: string | null;
     photo_urls: string[] | null;
+    /* The SO's own position, which decides where these lines land on the PO. */
+    line_no: number | null;
   };
-  const notOnPo = (wanted as SoItem[]).filter((r) => !existingSet.has(r.item_code));
+  /* Owner 2026-09-10 — append in the SALES ORDER's own order. This path reads
+     one SO with no ORDER BY, so without this the lines land in whatever order
+     PostgREST returned them (lib/po-line-order.ts). */
+  const notOnPo = sortBySourceSoLine(
+    (wanted as SoItem[]).map((r) => ({ ...r, soDocNo, soLineNo: r.line_no })),
+  ).filter((r) => !existingSet.has(r.item_code));
   /* F1 audit fix (2026-06-10) — convert ONLY the unpicked remainder. This path
      used to re-copy the FULL qty on every call regardless of po_qty_picked,
      so converting the same SO into a second PO double-ordered the supplier. */
@@ -3911,7 +3958,9 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
     return { cost, supplierSku: b.supplier_sku };
   };
 
-  const rows = toInsert.map((it) => {
+  // Owner 2026-09-10 — appended lines continue after the PO's highest line_no.
+  const convertFrom = await nextPoLineNo(sb, poId);
+  const rows = stampPoLineNos(toInsert.map((it) => {
     const remaining = Math.max(0, Number(it.qty ?? 0) - Number(it.po_qty_picked ?? 0));
     const { cost, supplierSku } = supplierCostFor(it);
     return {
@@ -3940,7 +3989,7 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
       // the From-SO picker paths above.
       photo_urls:       it.photo_urls ?? [],
     };
-  });
+  }), convertFrom);
 
   const { data: inserted, error: insErr } = await sb
     .from('purchase_order_items')
