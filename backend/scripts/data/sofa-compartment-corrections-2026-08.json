@@ -69,13 +69,12 @@
    ],
    "model": "9058",
    "pieces": [
-    "1A(LHF)",
-    "CNR",
-    "1NA",
-    "1A(RHF)"
+    "2A(LHF)",
+    "1A(RHF)",
+    "STOOL"
    ],
    "seat": "30",
-   "why": "Desc2 1R+1NA+C+1R | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」.",
+   "why": "Desc2 1R+1NA+C+1R | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」. | SUPERSEDED 2026-09-11 by the SUPPLIER'S OWN LISTING (propose-supplier-sofa-corrections production run 34502972739). The owner ruled these four follow the supplier even though the two readings are different sofas, not a from-the-other-end reversal: 「ok 四张跟supplier的」. The supplier's system records what it BUILT; this entry was a reading of a photograph.",
    "desc2Match": "1R+1NA+C+1R/Size:30”/Col:GD2502#18-Grey/"
   },
   {
