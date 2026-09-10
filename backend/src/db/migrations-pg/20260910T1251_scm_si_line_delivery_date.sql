@@ -1,0 +1,43 @@
+-- ----------------------------------------------------------------------------
+-- 20260910T1251_scm_si_line_delivery_date.sql
+--
+-- A Sales Invoice LINE can finally carry its own delivery date.
+--
+-- THE GAP (owner, 2026-09-10, DO-2609-012 -> Sales Invoice)
+--   Converting a Delivery Order to a Sales Invoice landed every invoice line
+--   with a BLANK delivery-date box. The shared line editor (SoLineCard) renders
+--   a per-line "Delivery Date" field bound to lineDeliveryDate, and both the
+--   Sales Order (mfg_sales_order_items) and Delivery Order (delivery_order_items)
+--   persist it -- but sales_invoice_items had NO such column, so the DO line's
+--   date had nowhere to be copied to and nothing to be saved into. The header
+--   customer_delivery_date already carries; only the per-line date was stranded.
+--
+-- SHAPE
+--   ONE nullable column, `line_delivery_date date`, mirroring
+--   delivery_order_items / mfg_sales_order_items. NULL on every existing row =
+--   today's blank box. The DO->SI convert paths (POST /, POST /from-dos,
+--   POST /:id/items/from-do/:doId) copy the DO line's date forward; buildItemRow
+--   reads it.lineDeliveryDate for the manual create/add path. This is a DATE, not
+--   money, so the _sen rename (0305) does not touch it. The SI has no header->line
+--   date cascade, so it needs no `_overridden` companion the DO/SO carry.
+--
+-- Houzs SCM port conventions: schema-qualified to scm.*, plain ADD COLUMN IF NOT
+-- EXISTS (NOT a DO block -- the pg-migrate runner splits each file on ";\n" and
+-- would fragment a dollar-quoted block), additive + re-run safe, so the
+-- auto-apply on every deploy is a no-op after the first.
+--
+-- VIEW-TRAP NOTE: no view projects scm.sales_invoice_items (the SI detail reads
+-- the base table directly via .from('sales_invoice_items')), so ADDING a column
+-- cannot break a column-enumerated view. Adding never breaks a view regardless;
+-- the trap is only for DROP/rename.
+--
+-- No ILIKE search touches these columns, so no pg_trgm index is owed here.
+-- Backward compatible: every existing row reads NULL / false = today's blank box.
+-- No backfill -- historical invoices never captured a per-line date.
+--
+-- REVERSAL: ALTER TABLE scm.sales_invoice_items DROP COLUMN IF EXISTS line_delivery_date;
+-- ----------------------------------------------------------------------------
+
+SET search_path = scm, public;
+
+ALTER TABLE scm.sales_invoice_items ADD COLUMN IF NOT EXISTS line_delivery_date date;

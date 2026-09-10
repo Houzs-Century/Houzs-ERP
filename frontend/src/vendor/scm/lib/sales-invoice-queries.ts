@@ -149,6 +149,8 @@ export type DoRemainingLine = {
   description: string | null;
   description2: string | null;
   uom: string | null;
+  /** The DO line's per-line delivery date, carried into the SI. */
+  lineDeliveryDate: string | null;
   delivered: number;
   invoiced: number;
   returned: number;

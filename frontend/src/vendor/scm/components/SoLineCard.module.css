@@ -497,12 +497,17 @@
 
 .photoTile {
   position: relative;
-  width: 40px;
-  height: 40px;
+  width: 64px;
+  height: 64px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   background: var(--c-cream);
-  overflow: hidden;
+  /* overflow VISIBLE so the delete X in the corner is not clipped by the
+     tile's bounds — the img still fills the tile because it uses object-fit:
+     cover, and the pending stripe below it lives inside the tile. Was
+     `hidden` here, which was clipping the top-right delete X in half on
+     desktop; see docs/bugs/. */
+  overflow: visible;
   flex-shrink: 0;
 }
 
@@ -511,6 +516,7 @@
   height: 100%;
   object-fit: cover;
   display: block;
+  border-radius: var(--radius-sm);
 }
 
 .photoPlaceholder {
@@ -532,25 +538,27 @@
 
 .photoDelete {
   position: absolute;
-  top: -6px;
-  right: -6px;
-  width: 18px;
-  height: 18px;
+  top: -8px;
+  right: -8px;
+  width: 22px;
+  height: 22px;
   border-radius: 999px;
   background: var(--c-festive-b, #B8331F);
   color: var(--c-paper);
-  border: 1px solid var(--c-paper);
+  border: 2px solid var(--c-paper);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   line-height: 1;
+  z-index: 2;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
 }
 
 .photoAddBtn {
-  width: 40px;
-  height: 40px;
+  width: 64px;
+  height: 64px;
   border-radius: var(--radius-sm);
   border: 1px dashed var(--c-orange);
   background: transparent;
