@@ -144,10 +144,17 @@ async function main() {
     const nAfter = { REBUILT: 0, STALE: 0, UNCLEAR: 0 };
 
     for (const [docNo, entry] of byDoc) {
+      /* `doc_no`, NOT `so_doc_no`. The two tables spell the same reference
+         differently — the audit log above is `so_doc_no`, the line table is
+         `doc_no` — and reading the neighbouring query is what makes that look
+         obvious rather than arbitrary. This script died on its first dispatch
+         with `column "so_doc_no" does not exist`, after every gate passed,
+         because they all read code and none of them opens the database
+         (docs/bugs/0790-*). */
       const lines = await sql`
         SELECT item_code, description2, cancelled
           FROM scm.mfg_sales_order_items
-         WHERE so_doc_no = ${docNo}`;
+         WHERE doc_no = ${docNo}`;
       const live = lines.filter((l) => !l.cancelled);
       const stale = [];
       for (const ch of entry.before) {
