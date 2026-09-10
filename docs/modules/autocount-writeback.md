@@ -313,7 +313,11 @@ never guessed — link, never money or stock) and queues a KEYED edit
 (`stamped > 0`, no line left keyless), so a live book can never take a duplicate
 line or a duplicate edit. Fails CLOSED to `off` on any unreadable value, and
 `enqueueEdit` still self-gates on `scm.autocount_writeback`, so BOTH switches
-must be on to move a document. Bounded to 25 documents per slot. Ledger:
+must be on to move a document. Bounded to 25 documents per slot. Set the switch
+with the **Set AutoCount relink sweep** workflow
+(`.github/workflows/set-relink-sweep.yml` -> `scripts/set-relink-sweep.mjs`),
+`plan` first — its own default is plan and it writes nothing until
+`MODE=apply CONFIRM=set-relink-sweep`. Ledger:
 `docs/bugs/0796-keyless-conversion-documents-needed-a-person-to-match-up-lin.md`.
 
 ---
