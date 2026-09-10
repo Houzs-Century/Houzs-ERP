@@ -86,9 +86,11 @@ export function RoleSettingsDrawer({
     setBusy(true);
     try {
       if (!readOnly && identityDirty) {
+        // Only reached for an editable (non-system) role, so name + scope are
+        // always sendable; system roles never get here (readOnly gates them).
         await api.patch(`/api/roles/${role.id}`, {
-          // Name is locked for system roles; only send what the backend accepts.
-          ...(isSystem ? {} : { name: name.trim(), scope_to_pic: scopeToPic }),
+          name: name.trim(),
+          scope_to_pic: scopeToPic,
           description: description.trim() || null,
         });
       }
@@ -101,8 +103,8 @@ export function RoleSettingsDrawer({
       }
       toast.success(`Updated ${name.trim()}`);
       onSaved();
-    } catch (e: any) {
-      toast.error(e?.message || "Save failed");
+    } catch (e) {
+      toast.error((e instanceof Error && e.message) || "Save failed");
     } finally {
       setBusy(false);
     }

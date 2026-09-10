@@ -247,8 +247,8 @@ function RoleDetail({
       await api.patch(`/api/roles/${role.id}`, { permissions: Array.from(staged) });
       toast.success("Permissions saved.");
       onSaved();
-    } catch (e: any) {
-      toast.error(e?.message || "Save failed. Please try again.");
+    } catch (e) {
+      toast.error((e instanceof Error && e.message) || "Save failed. Please try again.");
     } finally {
       setBusy(false);
     }

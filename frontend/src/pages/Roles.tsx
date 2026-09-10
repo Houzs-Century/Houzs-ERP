@@ -137,7 +137,7 @@ export function RolesTab({
       if (want != null && data.roles.some((r) => r.id === want)) return want;
       if (prev != null && data.roles.some((r) => r.id === prev)) return prev;
       const sys = data.roles.find((r) => r.is_system);
-      return sys?.id ?? data.roles[0]?.id ?? null;
+      return sys?.id ?? data.roles.at(0)?.id ?? null;
     });
     pendingSelect.current = null;
     setChecked([]);
@@ -153,7 +153,7 @@ export function RolesTab({
   const ids = computeActiveIds(selected, checked, lockedIds);
   const current = selected != null ? roleById.get(selected) ?? null : null;
   const isSystemView = isBulk ? ids.length === 0 : current ? isLockedRole(current) : false;
-  const mod = modules.find((m) => m.id === moduleId) ?? modules[0] ?? null;
+  const mod = modules.find((m) => m.id === moduleId) ?? modules.at(0) ?? null;
 
   const diff = useMemo(() => diffGrants(grants, baseline), [grants, baseline]);
   const dirty = diff.total > 0;
@@ -248,8 +248,8 @@ export function RolesTab({
       );
       toast.success("Permissions saved.");
       rolesQ.reload();
-    } catch (e: any) {
-      toast.error(e?.message || "Save failed. Please try again.");
+    } catch (e) {
+      toast.error((e instanceof Error && e.message) || "Save failed. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -265,8 +265,8 @@ export function RolesTab({
       });
       toast.success("Cleared the unrecognised keys.");
       rolesQ.reload();
-    } catch (e: any) {
-      toast.error(e?.message || "Could not clear the keys.");
+    } catch (e) {
+      toast.error((e instanceof Error && e.message) || "Could not clear the keys.");
     }
   }
 
@@ -290,8 +290,8 @@ export function RolesTab({
       toast.success(`Deleted ${r.name}`);
       if (selected === r.id) setSelected(null);
       rolesQ.reload();
-    } catch (e: any) {
-      toast.error(e?.message || "Delete failed.");
+    } catch (e) {
+      toast.error((e instanceof Error && e.message) || "Delete failed.");
     }
   }
 
@@ -315,12 +315,12 @@ export function RolesTab({
         description: draft.description.trim() || null,
         permissions,
       });
-      pendingSelect.current = res?.id ?? null;
+      pendingSelect.current = res.id;
       toast.success("Role created — set its grants below.");
       onCloseCreate();
       rolesQ.reload();
-    } catch (e: any) {
-      toast.error(e?.message || "Could not create the role.");
+    } catch (e) {
+      toast.error((e instanceof Error && e.message) || "Could not create the role.");
     } finally {
       setCreatingBusy(false);
     }
@@ -342,11 +342,11 @@ export function RolesTab({
         permissions,
         scope_to_pic: r.scope_to_pic,
       });
-      pendingSelect.current = res?.id ?? null;
+      pendingSelect.current = res.id;
       toast.success(`Duplicated as “${name}”.`);
       rolesQ.reload();
-    } catch (e: any) {
-      toast.error(e?.message || "Could not duplicate the role.");
+    } catch (e) {
+      toast.error((e instanceof Error && e.message) || "Could not duplicate the role.");
     }
   }
 
@@ -363,16 +363,16 @@ export function RolesTab({
       );
       setPicker(null);
       rolesQ.reload();
-    } catch (e: any) {
-      toast.error(e?.message || "Could not apply permissions.");
+    } catch (e) {
+      toast.error((e instanceof Error && e.message) || "Could not apply permissions.");
     } finally {
       setPickerBusy(false);
     }
   }
 
   function copyFrom(sourceIds: number[]) {
+    if (sourceIds.length === 0) return;
     const srcId = sourceIds[0];
-    if (srcId == null) return;
     const srcPerms = new Set(baseline[srcId] ?? new Set(roleById.get(srcId)?.permissions ?? []));
     setGrants((g) => {
       const next = { ...g };
@@ -631,7 +631,7 @@ export function RolesTab({
 
               {/* unrecognised-keys banner — stored keys this build no longer knows
                   (served by GET /api/roles as unknown_permissions, #2554) */}
-              {!isBulk && current && (current.unknown_permissions?.length ?? 0) > 0 && (
+              {!isBulk && (current.unknown_permissions?.length ?? 0) > 0 && (
                 <div className="border-b border-border-subtle bg-warning-bg">
                   <button
                     onClick={() => setBannerOpen((v) => !v)}
@@ -684,7 +684,7 @@ export function RolesTab({
                     message="All permissions"
                     description="System roles hold every grant in every module and cannot be edited. Duplicate this role if you need an editable copy."
                     cta={
-                      canManage && current
+                      canManage
                         ? { label: "Duplicate as editable role", onClick: () => duplicateRole(current) }
                         : undefined
                     }

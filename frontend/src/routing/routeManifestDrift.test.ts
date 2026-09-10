@@ -132,10 +132,12 @@ describe("mobile route drift gate", () => {
     // 36 since 2026-09-08: /change-log, the System group's second row — the
     // owner asks "who changed my sales order" away from a desk too.
     expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(36);
-    expect(PROFILE_ORG_ITEMS).toHaveLength(5);
-    expect(allMobile).toHaveLength(41);
-    expect(new Set(allMobile.map((item) => item.to)).size).toBe(41);
-    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(40);
+    // 6 since 2026-09-10: /roles, the rebuilt Roles & Permissions screen, reached
+    // from a Profile row (gated via the Team hub tab).
+    expect(PROFILE_ORG_ITEMS).toHaveLength(6);
+    expect(allMobile).toHaveLength(42);
+    expect(new Set(allMobile.map((item) => item.to)).size).toBe(42);
+    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(41);
   });
 
   it("maps every declared mobile row to a real screen, never a placeholder stub", () => {
