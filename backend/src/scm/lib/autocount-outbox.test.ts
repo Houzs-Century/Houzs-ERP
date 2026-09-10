@@ -1624,16 +1624,38 @@ describe('the three fields the extract carries and the write-back did not send',
     });
 
     test('a Further Description over nvarchar(100) is refused into a NAMED skipped row', async () => {
+      /* CHANGED 2026-09-10. This used a 120-character SPECIAL, which the owner's
+         pointer rung now fits — 「Special Order 可以不进 ... 最重要是每一张单都可以
+         进到就行了」 — so that input no longer reaches the refusal at all. The
+         refusal itself is unchanged and still has to work, so it is asked here
+         about a length the pointer cannot touch: the fabric colour, which is
+         part of the specification and is never replaced. */
       const sb = seed({}, {
         description2: null,
         item_group: 'bedframe',
-        variants: { fabricCode: 'PC151-01', gap: '12"', specials: ['X'.repeat(120)] },
+        variants: { fabricCode: `PC151-01 ${'X'.repeat(120)}`, gap: '12"' },
       });
       expect((await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).queued).toBe(false);
       const [row] = outbox(sb);
       expect(row.status).toBe('skipped');
       expect(row.last_error).toContain('refused, nothing sent (Desc2TooLongError)');
       expect(outbox(sb).some((r) => r.status === 'pending')).toBe(false);
+    });
+
+    test('a SPECIAL order over the column travels as a pointer, and the document goes', async () => {
+      /* The owner's ruling, end to end through the real enqueue: what used to be
+         a refused document is now a queued one carrying the build plus a
+         sentence saying where the specification lives. */
+      const sb = seed({}, {
+        description2: null,
+        item_group: 'bedframe',
+        variants: { fabricCode: 'PC151-01', gap: '12"', specials: ['X'.repeat(120)] },
+      });
+      expect((await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).queued).toBe(true);
+      const d = (outbox(sb)[0].payload.body as { Details: Array<Record<string, unknown>> }).Details[0];
+      expect(String(d.Desc2)).toContain('Special Order: Refer to ERP');
+      expect(String(d.Desc2)).toContain('PC151-01');
+      expect(String(d.Desc2).length).toBeLessThanOrEqual(100);
     });
   });
 
