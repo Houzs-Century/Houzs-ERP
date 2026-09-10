@@ -298,7 +298,7 @@ UUID**; use `houzsUser.id` for the public bigint.
 
 | # | Filter | Silent? | What survives |
 |---|---|---|---|
-| 1 | `.eq('cancelled', false)` + company scope + **`.limit(500)`**, ordered `doc_no` DESC | **yes** | at most 500 SO ITEM rows, newest doc numbers first. Newer orders are on the safe side of this cap; older ones fall off it with no message |
+| 1 | `.eq('cancelled', false)` + company scope, **PAGED** (`lib/outstanding-so-lines.ts`), ordered `doc_no` DESC then `id` | n/a | **every** live SO item row. Was `.limit(500)` — at most 500 rows, newest doc numbers first, with no message when older orders fell off. Company 1 held 15,050 live lines on 2026-09-08 (`docs/bugs/0677`), so 96.7% of them were unreachable |
 | 2 | SO header status not in `CANCELLED`, `DRAFT`, `ON_HOLD` | **yes** | a **DRAFT SO is never convertible.** This is the honest, common answer to "my new SO cannot be converted": confirm it first |
 | 3 | pooled MRP shortage `> 0` — `shortageBySoItem.get(id) ?? 0` | **yes, and it is the dangerous one** | see below |
 | 4 | client-side: category filter, date-range filter, draft-already-consumed subtraction, one-supplier-per-PO lock (greys rows out, with a visible banner) | no | the visible grid |
@@ -337,6 +337,14 @@ works and is multi-select at line level — but only for a line that is
 (a) confirmed or later, (b) inside the newest 500 item rows, and (c) one of the
 ~7% MRP happened to plan. Fixing (c) is PR #2304 (#2300, #2294 alongside);
 **none merged**.
+
+> **UPDATED.** (c) is closed — `computeMrp`'s demand read is paged
+> (`docs/bugs/0248`), so MRP plans the whole demand set. (b) is closed by
+> `lib/outstanding-so-lines.ts`: filter 1 pages instead of capping, so the
+> window no longer decides which orders are convertible. (a) stands and is
+> correct — a DRAFT order is not convertible on purpose. Filter 3's `?? 0`
+> ambiguity also stands: a line MRP never planned and a line MRP found fully
+> covered still read the same on this screen.
 
 ---
 

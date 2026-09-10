@@ -83,7 +83,12 @@ const MAX_HOURS = 24 * 120;
 /* Two ceilings, because they protect different things. ROW_CAP bounds what we
    pull out of Postgres; DOC_CAP bounds what we hand the browser. A truncated
    answer says so in the payload — a change log that quietly stops at 500 rows
-   is the "check that answers a different question". */
+   is the "check that answers a different question".
+
+   ROW_CAP IS NOT THE TRUNCATION TEST, and never could be: PostgREST enforces its
+   own `db-max-rows` under whatever `.limit()` asks for, so the real ceiling is
+   the SERVER's and this number is only an upper bound on our appetite. The
+   `truncated` flag is computed from Content-Range instead — see the payload. */
 const ROW_CAP = 4000;
 const DOC_CAP = 400;
 
@@ -189,17 +194,27 @@ export const changeLogHandler = async (
 
   const sb = c.get('supabase');
   const rows: RawRow[] = [];
+  /* Did EITHER read stop short of the window it was asked for? Accumulated per
+     read, from the server's own exact total — see the `truncated` note below. */
+  let readStoppedEarly = false;
+  const stoppedEarly = (total: number | null | undefined, got: number): boolean =>
+    (total ?? got) > got;
 
   if (docTypes.includes('SO')) {
     let q = sb.from('mfg_so_audit_log')
-      .select('id, so_doc_no, action, actor_id, actor_name_snapshot, field_changes, status_snapshot, source, created_at')
+      .select(
+        'id, so_doc_no, action, actor_id, actor_name_snapshot, field_changes, status_snapshot, source, created_at',
+        { count: 'exact' },
+      )
       .gte('created_at', sinceIso)
       .order('created_at', { ascending: false })
       .limit(ROW_CAP);
     q = scopeToCompany(q, c);
-    const { data, error } = await q;
+    const { data, error, count } = await q;
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-    for (const r of (data ?? []) as unknown as Array<Record<string, unknown>>) {
+    const soRows = (data ?? []) as unknown as Array<Record<string, unknown>>;
+    readStoppedEarly ||= stoppedEarly(count, soRows.length);
+    for (const r of soRows) {
       rows.push({
         id: String(r.id),
         doc_no: String(r.so_doc_no ?? ''),
@@ -221,18 +236,23 @@ export const changeLogHandler = async (
     .map((t) => ENTITY_DOC_TYPES[t]);
   if (entityTypes.length > 0) {
     let q = sb.from('entity_audit_log')
-      .select('id, entity_type, entity_id, entity_doc_no, action, actor_id, actor_name_snapshot, field_changes, status_snapshot, source, created_at')
+      .select(
+        'id, entity_type, entity_id, entity_doc_no, action, actor_id, actor_name_snapshot, field_changes, status_snapshot, source, created_at',
+        { count: 'exact' },
+      )
       .in('entity_type', entityTypes)
       .gte('created_at', sinceIso)
       .order('created_at', { ascending: false })
       .limit(ROW_CAP);
     q = scopeToCompany(q, c);
-    const { data, error } = await q;
+    const { data, error, count } = await q;
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+    const entityRows = (data ?? []) as unknown as Array<Record<string, unknown>>;
+    readStoppedEarly ||= stoppedEarly(count, entityRows.length);
     const backToKey = new Map<string, ChangeLogDocType>(
       Object.entries(ENTITY_DOC_TYPES).map(([k, v]) => [v as string, k as ChangeLogDocType]),
     );
-    for (const r of (data ?? []) as unknown as Array<Record<string, unknown>>) {
+    for (const r of entityRows) {
       const key = backToKey.get(String(r.entity_type));
       if (!key) continue;
       rows.push({
@@ -328,9 +348,22 @@ export const changeLogHandler = async (
       documents: documents.length,
       documentsShown: shown.length,
       people: people.size,
-      /* TRUE when the database read hit its own ceiling, so the window is not
-         fully covered and no total above is complete. */
-      truncated: rows.length >= ROW_CAP,
+      /* TRUE when a read came back with fewer rows than the window holds, so
+         no total above is complete.
+
+         MEASURED AGAINST THE SERVER'S OWN EXACT COUNT, per read — never against
+         ROW_CAP. `rows.length >= ROW_CAP` was the previous test and it could
+         not fire: PostgREST caps a response at `db-max-rows` whatever `.limit()`
+         asks for, so each of the two reads returns at most that ceiling and
+         `rows` is their SUM. With the ceiling this repo assumes (1000,
+         `lib/paginate-all.ts` PAGE — still unmeasured, docs/bugs/0447) the sum
+         tops out at 2,000 against a 4,000 threshold. It was also wrong in the
+         other direction for any larger ceiling, because a two-read SUM was
+         being compared with a ONE-read cap: 3,000 + 1,500 untruncated rows
+         would have reported truncated. Content-Range answers the question
+         directly and needs no ceiling to be known — the same device
+         `so-handover.ts` /preview already uses. */
+      truncated: readStoppedEarly,
     },
     documents: shown,
   });

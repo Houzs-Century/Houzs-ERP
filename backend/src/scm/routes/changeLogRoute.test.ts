@@ -71,11 +71,15 @@ function harness(opts: {
   entity?: Row[];
   companyId?: number | undefined;
   perms?: string[];
+  /* PostgREST's own response ceiling. Left off, the fake has none — which is
+     the state every other case here wants. The truncation suite passes one,
+     because a ceiling is the ONLY thing that makes a short read happen. */
+  maxRows?: number;
 }) {
   const sb = fakeSb({
     mfg_so_audit_log: opts.so ?? [],
     entity_audit_log: opts.entity ?? [],
-  });
+  }, {}, [], [], opts.maxRows ?? null);
   const app = new Hono<{ Bindings: Env; Variables: Variables }>();
   app.use('*', async (c, next) => {
     c.set('supabase', sb as unknown as Variables['supabase']);
@@ -255,6 +259,49 @@ describe('the window', () => {
 
   it('does not report a truncated read on an ordinary one', async () => {
     const app = harness({ so: [soRow()] });
+    expect((await get(app)).body.totals?.truncated).toBe(false);
+  });
+});
+
+/* THE WARNING THAT MUST NEVER BE SILENT — frontend/src/lib/changeLog.ts's own
+   words for `clTruncationNote`, the banner telling the owner every count above
+   is a floor. It was silent, always: `truncated` was `rows.length >= ROW_CAP`
+   with ROW_CAP 4,000, and `rows` is the SUM of two reads that PostgREST caps
+   at `db-max-rows` each. At the 1,000 this repo assumes the sum tops out at
+   2,000, so the comparison could not be true however much the window held.
+
+   Only the POSITIVE case was ever missing. The suite above already asserted
+   the negative, which is why nothing went red for it. */
+describe('a read that stopped early SAYS so', () => {
+  const many = (n: number, make: (i: number) => Row) =>
+    Array.from({ length: n }, (_, i) => make(i));
+
+  it('reports truncated when the SO window holds more than one read returns', async () => {
+    const app = harness({
+      so: many(1_200, (i) => soRow({ so_doc_no: `HC-SO-${String(i).padStart(6, '0')}` })),
+      maxRows: 1_000,
+    });
+    const { body } = await get(app);
+    expect(body.totals?.truncated).toBe(true);
+  });
+
+  it('reports truncated when it is the OTHER table that came back short', async () => {
+    const app = harness({
+      so: [soRow()],
+      entity: many(1_200, (i) => entityRow({ entity_doc_no: `HC-DO-${String(i).padStart(6, '0')}` })),
+      maxRows: 1_000,
+    });
+    expect((await get(app)).body.totals?.truncated).toBe(true);
+  });
+
+  it('stays false at exactly the ceiling with nothing behind it', async () => {
+    /* The boundary the old test got wrong in the other direction. A read that
+       returns every matching row is complete even when that number equals the
+       ceiling — Content-Range says so, and a `>=` against a cap could not. */
+    const app = harness({
+      so: many(1_000, (i) => soRow({ so_doc_no: `HC-SO-${String(i).padStart(6, '0')}` })),
+      maxRows: 1_000,
+    });
     expect((await get(app)).body.totals?.truncated).toBe(false);
   });
 });
