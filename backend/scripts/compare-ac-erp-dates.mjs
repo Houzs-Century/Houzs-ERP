@@ -27,8 +27,9 @@ const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 
 const d = (v) => {
   if (v == null) return "(none)";
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
   const s = String(v);
-  return s.length > 10 ? s.slice(0, 10) : s;
+  return s.length >= 10 ? s.slice(0, 10) : s;
 };
 const rawDate = (raw, key) => {
   try { const o = typeof raw === "string" ? JSON.parse(raw) : raw; return o?.[key] ?? null; } catch { return null; }
@@ -63,8 +64,9 @@ async function main() {
     }
   }
   const doRows = await sql`
-    SELECT do_number, do_date, shipout_date, customer_delivered_date, linked_ac_docno
-      FROM scm.delivery_orders WHERE do_number ILIKE ${"%" + NEEDLE + "%"} LIMIT 20`;
+    SELECT do_number, so_doc_no, do_date, shipout_date, customer_delivered_date, linked_ac_docno
+      FROM scm.delivery_orders
+     WHERE do_number ILIKE ${"%" + NEEDLE + "%"} OR so_doc_no ILIKE ${"%" + NEEDLE + "%"} LIMIT 20`;
   if (doRows.length === 0) log(`(no ERP delivery order matches "${NEEDLE}")`);
   for (const r of doRows) {
     log(`ERP DO ${r.do_number}: do_date(doc)=${d(r.do_date)} shipout=${d(r.shipout_date)} customer_delivered=${d(r.customer_delivered_date)} -> book ${r.linked_ac_docno ?? "(unlinked)"}`);
