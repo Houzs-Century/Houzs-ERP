@@ -63,7 +63,10 @@ async function main() {
              st.name                           AS to_name,
              st.staff_code                     AS to_code
         FROM scm.mfg_so_audit_log a
-        CROSS JOIN LATERAL jsonb_array_elements(a.field_changes) fc
+        CROSS JOIN LATERAL jsonb_array_elements(
+          CASE WHEN jsonb_typeof(a.field_changes) = 'array'
+               THEN a.field_changes ELSE '[]'::jsonb END
+        ) fc
         LEFT JOIN scm.staff sf ON sf.id::text = NULLIF(fc->>'from', '')
         LEFT JOIN scm.staff st ON st.id::text = NULLIF(fc->>'to', '')
        WHERE fc->>'field' = 'salespersonId'
