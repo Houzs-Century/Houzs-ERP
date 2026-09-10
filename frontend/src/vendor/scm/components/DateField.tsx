@@ -321,7 +321,18 @@ export function DateField({
         data-touch-target={coarse ? 'true' : undefined}
         type="date"
         tabIndex={-1}
-        aria-hidden
+        {...(coarse
+          /* On a finger the native input SITS OVER the calendar icon and
+             receives the tap — so the OS wheel picker gets focus and Chrome
+             warns "Blocked aria-hidden on an element because its descendant
+             retained focus". Give it a real accessible name in that mode
+             instead of hiding it: the input IS the operator's affordance,
+             and hiding it from assistive tech contradicts what it does. See
+             docs/bugs/. On a mouse the input is 20px, transparent and
+             pointer-events:none behind the button — no focus ever lands
+             there, so aria-hidden stays honest and quiet. */
+          ? { 'aria-label': ariaLabel ?? 'Open calendar' }
+          : { 'aria-hidden': true })}
         disabled={disabled}
         value={value || ''}
         min={min}
