@@ -752,7 +752,31 @@ version carried only the contra, as `ledger.from`, and the report printed
 "0099 reversed → 0100" — read as if 0099 were the entry reversed, when 0099 IS
 the reversal (owner: 不明白; docs/bugs/0786). The Ledger column now reads
 **"0047 → reversed by 0099 → 0100"**; the one legacy row is read as
-contra-only and never presents the contra as the original. No new table: `GET /accounting/payment-corrections?month=` is a
+contra-only and never presents the contra as the original.
+
+**A bank charge deducted from a payout (2026-09-10, docs/bugs/0787).** Public
+Bank kept RM 324.00 of the 2026-06-06 settlement as a card-terminal application
+fee, so the advice said RM 3,024.18 for a day whose report nets RM 3,348.18 —
+and the Payment advice screen could only say "differs". The charge now lives on
+the ADVICE DAY row (`acc_settlement_payout_batches.charge_*`, migration
+`20260910T1200`): `statusOfPayout` treats a day as agreeing when **report net =
+advice net + charge** and carries the charge so the screen shows where it went.
+`acc/payout-charge.ts` books it — Dr the account **Finance picks** (owner:
+可以让我点了后选这笔进什么户口吗; any ACTIVE EXPENSE LEAF of this company, the
+merchant-fee account's four refusals now shared as `checkExpenseLeaf`,
+defaulting to the acquirer's fee account) / Cr the acquirer's transit, **dated
+the settlement day**, source `SETTLECHARGE` keyed on the day row; the amount
+defaults to the whole difference and may not exceed it; the note is required;
+a charged day refuses a second charge (undo first, through the engine).
+`loadBatchReceipts` reports what the bank deducted beside what it credited and
+`postBatchReceipt` counts both, so the short credit that follows a fee reads as
+fully received. Routes `POST`/`DELETE /settlement/payouts/:id/days/:settledOn/charge`;
+the list carries `chargeAccounts` (`expenseLeafAccounts`, shared with Setup)
+and `feeAccountByAcquirer`. On the tab, a day the bank paid LESS for offers
+**Bank deducted a charge**; a day it paid MORE for does not. Pinned by
+`acc/payout-charge.test.ts`, the charge cases in `acc/payout-advice.test.ts`,
+`acc/settlement-receipt-charge.test.ts`, `scm/routes/payoutChargeRoute.test.ts`
+and `PayoutAdviceTab.test.tsx`. No new table: `GET /accounting/payment-corrections?month=` is a
 filtered read of `mfg_so_audit_log` — `source = 'amend'`, the two payment
 actions, this company, this month — shaped by `acc/payment-corrections.ts`
 (newest first, the ledger pair pulled out, the summary added up). The Accounting

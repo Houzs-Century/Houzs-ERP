@@ -49,7 +49,7 @@ import { bankMonths, bankMonthDetail } from './accounting-bank-months';
 import { bankLocks, bankMonthLock, bankMonthUnlock } from './accounting-bank-locks';
 import { paymentCorrections } from './accounting-payment-corrections';
 import { bankConfigList, bankConfigSave } from './accounting-bank-config';
-import { payoutUpload, payoutList } from './accounting-payouts';
+import { payoutUpload, payoutList, payoutCharge, payoutChargeUndo } from './accounting-payouts';
 import {
   chartUnionHandler, chartTickHandler, chartImportHandler,
   chartRenameHandler, chartUpdateHandler, chartDeleteHandler, chartCreateHandler,
@@ -121,6 +121,10 @@ accounting.get('/settlement/in-transit', settlementInTransit);
    reports one bank credit pays (owner: 几份 excel 对一份 pdf). */
 accounting.post('/settlement/payouts', payoutUpload);
 accounting.get('/settlement/payouts', payoutList);
+/* A bank charge deducted from one day of an advice, booked to the account
+   Finance picks (docs/bugs/0787); and its undo. */
+accounting.post('/settlement/payouts/:id/days/:settledOn/charge', payoutCharge);
+accounting.delete('/settlement/payouts/:id/days/:settledOn/charge', payoutChargeUndo);
 
 /* Layer 4 — reconciling the BANK's own statement (brief §3.5). Registered the
    same way and for the same reason: one path each, every one in the matrix.
