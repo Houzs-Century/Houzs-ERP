@@ -1610,6 +1610,7 @@ export without regenerating cannot leave the composer resolving against last
 month's book while the suite stays green.
 
 ---
+
 ## 7c. A conversion must name the lines it took
 
 `AcSyncService`'s convert routes resolve their source lines through `DtlKeys()`:
@@ -2412,7 +2413,6 @@ written, and `notes`, mapped nowhere — so which one is the book's `Description
 is the owner's call, not a code change. It costs nothing today: the sales arms
 build with `transferMaster: false` (`AcSyncService.cs:1096`), so the `""` written
 over `Description` overwrites nothing. Registered as **D17**, severity low.
-
 
 ## 7d. The four documents AutoCount cannot create at all
 
@@ -3263,7 +3263,6 @@ hide it — it comes back as a `failed` entry naming the list.
 Only `BRANDING` and `VENUE` are treated as dropdowns. `ToPONo` is free text and
 has no option list to open.
 
-
 ## 7e1. A creditor code that RESOLVES is not a creditor code that is RIGHT
 
 *Added 2026-08-18.*
@@ -3449,6 +3448,7 @@ coincide.
 The parent travels separately (`payload.fromDoc`, resolved at drain) and must
 never be confused with this: `DocNo` is the CHILD's number, `FromDocNo` is the
 parent's.
+
 ## 7h. Editing a MIGRATED sofa order — why it was refused, and what fixes it
 
 An operator opens an existing sofa order, changes something, saves. The edit is
@@ -5207,6 +5207,7 @@ refuses any. The AutoCount Sync page also reads that log directly —
 
 **This is INERT until the host is rebuilt.** `AcSyncService.cs` compiles nowhere
 but the office machine; `docs/autocount-service-deploy.md` is the swap.
+
 ## `RULED` — the owner's own sofa build, and why it is not `AGREE` (2026-09-08)
 
 The reconcile's variant table gained a **ninth verdict** on the sofa
@@ -5565,6 +5566,7 @@ and it is NOT built — `docs/bugs/0728`.
 
 **The refusal is per DOCUMENT, not per field.** One over-long string keeps the
 whole sales order out of the accounts.
+
 ## `chain-onward-not-migrated` — a decision the cutover made, not a backlog (2026-09-09)
 
 The reconcile's note vocabulary — the classes `so-verdict-derive.mjs` declares
@@ -5768,6 +5770,7 @@ that, along with the identity case and the never-truncates case.
 rule can shorten. Those two still need the owner or a shorter note. The other
 four fix themselves: `HC-SO-012312` x3 and `HC-PO-2609-017` need the document
 SAVED once, and no repair script at all, because the shortening happens on send.
+
 ## A re-queue sends ONE rebuild per document, not one per refusal (2026-09-09)
 
 New SURFACE on `backend/src/scm/lib/autocount-requeue.ts`: `editRebuildVerdict`
@@ -5804,3 +5807,48 @@ This is the same reasoning the ladder already applies to `row-pending`.
 The CREATE path already had this (`existingCreateRow`); only the edit path was
 missing it. Trace and the red-first proof in
 `docs/bugs/0771-a-re-queue-sweep-would-have-rebuilt-one-sales-order-twenty-o.md`.
+
+## A sofa's colour travels as its LIVE name (2026-09-09)
+
+New SURFACE on `backend/src/services/autocount-sofa-collapse.ts` and on both
+mirrors of `variant-summary.ts`: `liveColour` is now a module-scope export, and
+`collapseRun` applies it to the colour it hands the composer.
+
+**The fabric library renumbered itself on 2026-08-11** and left the superseded rows in
+place, each carrying `[superseded by X on 2026-08-11]` in its own LABEL. A
+line still pointing at a dead row therefore renders **39 characters of
+bookkeeping** in the middle of the build specification. Read off production:
+
+```
+LR + 2EL / COL: BO315-3 [superseded by BO315-03 on 2026-08-11] / BOTTOM USE UMBRELLA FABRIC / Nylon Fabric
+```
+
+**One fault, two faces.** Three sofa orders were over the 100-character column by
+almost exactly those 39 characters (`HC-SO-008460` 112, `HC-SO-012513` 113,
+`HC-SO-012629` 117); two more failed the round-trip gate because the decoder eats
+the brackets while the expectation still carried them (`HC-SO-004725`,
+`HC-SO-007958`).
+
+**Why the earlier fix did not reach them.** `liveColour` was a local const inside
+`buildVariantSummary`, so it protected the one renderer it lived in. A sofa's
+Desc2 is built by `composeSofaDesc2` on its own path. This is the module's
+recurring shape — two renderers of the same value, one of them fixed — and the
+cure is the same as always: the rule moves to one place both can read.
+
+**Applied to the EXPECTATION as well as to the text.** `colour` is the single
+value handed to `composeSofaDesc2` AND to `decodesTo`, so one change keeps the
+round trip honest instead of trading a length refusal for a colour mismatch.
+
+## The length gate belongs to the text that is SENT (2026-09-09)
+
+Same file. `collapseRun` refused a document whose STORED `description2` was over
+100 characters — the ERP's own line summary, which for a sofa is never what goes
+to AutoCount; the composed build is. `HC-SO-013339` is refused today at 107
+stored characters without the composer being asked at all.
+
+The gate moved into the ECHO branch, the only branch that sends that string. The
+compose branch keeps its own length gate on the text it produces.
+
+**This does not promise such a document then goes.** A long specification is long
+whichever renderer writes it, and the composed text has its own gate. What it
+removes is a refusal that never consulted the text being sent.

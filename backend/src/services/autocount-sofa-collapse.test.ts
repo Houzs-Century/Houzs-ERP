@@ -701,3 +701,128 @@ describe('folding follows the shape AutoCount already holds, not the item code',
     expect(res.lines[0].linked_ac_dtlkey ?? null).toBeNull();
   });
 });
+
+// ----------------------------------------------------------------------------
+// A DEAD FABRIC ROW'S OBITUARY IS NOT PART OF THE BUILD.
+//
+// The fabric library renumbered itself on 2026-08-11 and left every old row in
+// place with `[superseded by X on 2026-08-11]` written into the row's own LABEL.
+// buildVariantSummary has stripped that since the day it was found; this
+// renderer did not, and it is the one a sofa goes through — so HC-SO-008460
+// (112), HC-SO-012513 (113) and HC-SO-012629 (117) stayed refused against a
+// field that holds 100, all three by the same 39 characters of bookkeeping.
+//
+// Two more were refused by the other half of the same fault: the composed text
+// lost the brackets while the EXPECTATION still carried them, so the round trip
+// failed on a colour that had not changed (HC-SO-004725, HC-SO-007958).
+// ----------------------------------------------------------------------------
+describe('a superseded colour travels as its live name', () => {
+  const OBITUARY = 'BO315-3 [superseded by BO315-03 on 2026-08-11]';
+  const sofa = (over: Partial<CollapsibleLine> = {}): CollapsibleLine[] => ([
+    {
+      item_code: '9028-L(RHF)', item_group: 'sofa', description: 'SOFA 9028 L(RHF)',
+      description2: 'LR + 2EL / COL: ' + OBITUARY, qty: 1, unit_price_sen: 399000,
+      linked_ac_dtlkey: 55,
+      variants: { colourLabel: OBITUARY, specials: ['BOTTOM USE UMBRELLA FABRIC', 'Nylon Fabric'] },
+      ...over,
+    },
+    {
+      item_code: '9028-2A(LHF)', item_group: 'sofa', description: 'SOFA 9028 2A(LHF)',
+      description2: 'LR + 2EL / COL: ' + OBITUARY, qty: 1, unit_price_sen: 0,
+      linked_ac_dtlkey: 55,
+      variants: { colourLabel: OBITUARY, specials: ['BOTTOM USE UMBRELLA FABRIC', 'Nylon Fabric'] },
+      ...over,
+    },
+  ]);
+
+  it('writes the SUCCESSOR code and fits inside the column', () => {
+    const res = collapseSofaLines(sofa());
+    expect(res.refusals).toEqual([]);
+    expect(res.lines).toHaveLength(1);
+    const text = String(res.lines[0].description2);
+    expect(text).toContain('BO315-03');
+    expect(text).not.toContain('superseded');
+    expect(text.length).toBeLessThanOrEqual(AC_DESC2_MAX);
+  });
+
+  it('the obituary is what put it over — 39 characters of bookkeeping', () => {
+    /* Measured rather than asserted from memory: the same build with the note
+       still in it is over the column, and that is the whole defect. */
+    const withNote = `LR + 2EL / COL: ${OBITUARY} / BOTTOM USE UMBRELLA FABRIC / Nylon Fabric`;
+    expect(withNote.length).toBeGreaterThan(AC_DESC2_MAX);
+    const res = collapseSofaLines(sofa());
+    expect(String(res.lines[0].description2).length).toBeLessThan(withNote.length - 30);
+  });
+
+  it('the ROUND TRIP passes, because the expectation uses the live name too', () => {
+    /* The half that a shorter string alone would not have fixed. `colour` is
+       handed to composeSofaDesc2 AND to decodesTo; stripping it in only one of
+       them trades a length refusal for a colour-mismatch refusal. */
+    const res = collapseSofaLines(sofa());
+    expect(res.refusals).toEqual([]);
+    expect(res.lines[0].via).toBe('compose');
+  });
+
+  it('a colour with no note is untouched', () => {
+    const res = collapseSofaLines(sofa({
+      description2: 'LR + 2EL / COL: BO315-03 BEIGE',
+      variants: { colourLabel: 'BO315-03 BEIGE', specials: [] },
+    }));
+    expect(res.refusals).toEqual([]);
+    expect(String(res.lines[0].description2)).toContain('BO315-03 BEIGE');
+  });
+});
+
+// ----------------------------------------------------------------------------
+// THE LENGTH GATE BELONGS TO THE TEXT THAT IS ACTUALLY SENT.
+//
+// The stored `description2` is the ERP's own line summary, written by the
+// importer or by buildVariantSummary. It is NOT what goes to AutoCount for a
+// sofa — the composed build is — and yet the gate sat at the top of collapseRun
+// and refused the whole document on it. HC-SO-013339 is refused today at 107
+// stored characters without the composer ever being asked.
+//
+// This does not promise that every such document then goes: the composed text
+// has its own gate, and a long specification is long whichever renderer writes
+// it. What it removes is the refusal that never consulted the text being sent.
+// ----------------------------------------------------------------------------
+describe('over-long STORED text does not refuse a document the composer can spell', () => {
+  const STORED = 'BO315-03 BEIGE / SEAT 35 / LEG DEFAULT / SPECIAL: Use 9028 ArmRest/L Shape 188CM/Bottom use Umbrella Fabric';
+
+  /* The variants are the ERP's CURRENT state and the stored text is what the
+     line was imported with. They differ here on purpose — that is the whole
+     case: an edited line whose imported summary is long and whose actual build
+     spells short. */
+  const sofa = (): CollapsibleLine[] => ([
+    {
+      item_code: '8030-L(RHF)', item_group: 'sofa', description: 'SOFA 8030 L(RHF)',
+      description2: STORED, qty: 1, unit_price_sen: 399000, linked_ac_dtlkey: 66,
+      variants: { seatHeight: 35, colourLabel: 'BO315-03 BEIGE', specials: ['Nylon Fabric'] },
+    },
+    {
+      item_code: '8030-2A(LHF)', item_group: 'sofa', description: 'SOFA 8030 2A(LHF)',
+      description2: STORED, qty: 1, unit_price_sen: 0, linked_ac_dtlkey: 66,
+      variants: { seatHeight: 35, colourLabel: 'BO315-03 BEIGE', specials: ['Nylon Fabric'] },
+    },
+  ]);
+
+  it('the stored text really is over the column', () => {
+    expect(STORED.length).toBeGreaterThan(AC_DESC2_MAX);
+  });
+
+  it('composes instead of refusing, and what it sends fits', () => {
+    const res = collapseSofaLines(sofa());
+    expect(res.refusals).toEqual([]);
+    expect(res.lines).toHaveLength(1);
+    expect(String(res.lines[0].description2).length).toBeLessThanOrEqual(AC_DESC2_MAX);
+    expect(res.lines[0].via).toBe('compose');
+  });
+
+  it('and it never ECHOES an over-long stored string', () => {
+    /* The gate did not go away, it moved to the branch that sends this text.
+       An echo of 107 characters would be refused by AutoCount for the whole
+       document, which is the outcome the gate exists to prevent. */
+    const res = collapseSofaLines(sofa());
+    expect(String(res.lines[0].description2)).not.toBe(STORED);
+  });
+});
