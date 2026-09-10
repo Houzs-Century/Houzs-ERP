@@ -1279,6 +1279,21 @@ ITSELF while the rest still land. It matches on the RAW ERP code today, so a lin
 whose code the bindings rewrite is refused rather than mis-assigned —
 `docs/bugs/0585-*`.
 
+**All six document types since 2026-09-10** (`docs/bugs/0792-*`). Until then the
+route's `DOC` map held only SO and PO and 400'd everything else, so a keyless
+delivery order / goods receipt / invoice — a conversion that ran before the
+service reported its keys, or a partial the ERP could not name — could never be
+matched up. `planLineRelink` was always type-agnostic and `/doc-read` always
+served all six (`AcSyncService.cs` `DocTypes`), so only the header/line wiring
+was missing. The four conversion types resolve their header through the outbox
+row's `doc_id` — the header uuid `enqueueConvert` always stores — NOT the queue
+`doc_no`, whose shape is not uniform (an unnumbered delivery order carries its
+uuid, a goods receipt its business number; keying on `doc_no` would be the
+`docs/bugs/0601` trap again). Lines link by that same header id
+(`delivery_order_id` / `grn_id` / `sales_invoice_id` / `purchase_invoice_id`),
+and all four carry `item_code` / `description2` / `linked_ac_dtlkey` (DOWNSTREAM
+`itemCols`). It still writes only a link, never money or stock.
+
 ### Whose name does a line have? (open, 2026-09-01)
 
 Owner, 2026-08-31: 「我们更改什么就 send 什么…为什么 AutoCount 要回传给我们呢?」 The
