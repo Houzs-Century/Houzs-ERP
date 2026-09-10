@@ -5891,3 +5891,32 @@ in the text is refused.
 
 **What it still cannot rescue:** a Desc2 whose length is in the build or the
 COLOUR. Those are the specification, and they are never replaced.
+
+## A refused document is named by its NUMBER, not its id (2026-09-10)
+
+New SURFACE on `enqueueEdit` in `backend/src/scm/lib/autocount-outbox.ts` and on
+`backend/scripts/check-autocount-held-back.mjs`.
+
+**What the owner saw.** A held-back row on the Sync page called
+`b534845b-601f-435a-91bf-0eac2743b601`, and the question 「为什么会有这样的
+document」. It is `HC-PO-2609-055`.
+
+**Why it looked like that.** `enqueueEdit` composes inside a `try`, and
+`composed.docNo` IS the human document number — the code says so where it reads
+it: *"A PO route knows its id, not its number; the outbox row is keyed by the
+human document number so it lines up with the create row."* The CATCH then wrote
+`docNo: String(opts.docNo ?? opts.docId ?? '')`, and a purchase-order route
+passes only `docId`. So every REFUSED purchase-order edit was filed under a
+UUID, while its own error message named the document correctly. The number is now
+kept in `resolvedDocNo`, where the catch can reach it.
+
+**A delivery note, a receipt and an invoice take the same path**, so the same was
+true of every conversion-built document whose edit was refused.
+
+**And the check could not look one up.** `check-autocount-held-back.mjs` section
+3 read only `scm.mfg_sales_orders`, and section 2 searches tables carrying a
+`doc_no` column — which `scm.purchase_orders` does not have. `purchaseOrderState`
+now reads it by `po_number` and then by `id::text`, cast and guarded on its own
+because `uuid = text` fails as an absent OPERATOR rather than as a no-match, and
+"no purchase order" is the one wrong answer that check must never give. It prints
+`po_number` itself, which is the whole question a UUID-shaped row raises.

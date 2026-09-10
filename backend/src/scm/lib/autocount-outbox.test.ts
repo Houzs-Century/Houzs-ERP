@@ -876,13 +876,13 @@ describe('a line the ERP just added is declared, never inferred', () => {
       expect(lines.find((l) => l.ItemCode === AC_B)?.IsNewLine).toBe(true);
     });
 
-    test('NOT declared: still refused, so a legacy keyless line can never be appended twice', async () => {
+    test('NOT declared: refused, named by the PO NUMBER so a person can act on it (0774)', async () => {
       const sb = withFlag('1', {
         purchase_orders: [{ ...poDoc }], suppliers: [{ ...sup }],
         purchase_order_items: [{ ...oldLine }, { ...newLine }], warehouses: wh,
       }, poCols);
       expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'PO', docId: 'po-1' })).toBe(false);
-      expect(outbox(sb)[0].last_error).toContain('refused, nothing sent');
+      expect(outbox(sb)[0]).toMatchObject({ doc_no: 'HC-PO-9', last_error: expect.stringContaining('refused, nothing sent') });
     });
 
     /* A new detail with no Location dies on FK_PODTL_Location, and the document
