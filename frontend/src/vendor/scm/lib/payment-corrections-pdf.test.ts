@@ -13,7 +13,7 @@ const row = (over: Partial<CorrectionRowInput> = {}): CorrectionRowInput => ({
   kind: 'edited', changes: [{ field: 'amountSen', from: 199_000, to: 199_100 }],
   amountFromSen: 199_000, amountToSen: 199_100,
   reason: 'Sales keyed RM 1,990 — receipt shows RM 1,991',
-  reversedJeNo: 'JE-2609-0031', jeNo: 'JE-2609-0058',
+  originalJeNo: 'JE-2609-0031', contraJeNo: 'JE-2609-0057', jeNo: 'JE-2609-0058',
   ...over,
 });
 
@@ -42,15 +42,26 @@ describe('whatChanged', () => {
   });
 });
 
+/* Three numbers, in the order the books moved: the ORIGINAL, the contra that
+   voided it, the entry booked in its place. The first version printed
+   "0099 reversed → 0100", and 0099 was the contra — a reader took it for the
+   entry that had been reversed (owner, 2026-09-10: 不明白). */
 describe('ledgerText', () => {
-  it('reads the pair as a reversal and a re-booking', () => {
-    expect(ledgerText(row())).toBe('JE-2609-0031 reversed → JE-2609-0058');
+  it('reads original → reversed by contra → new', () => {
+    expect(ledgerText(row())).toBe('JE-2609-0031 → reversed by JE-2609-0057 → JE-2609-0058');
   });
 
-  it('a delete has only the reversal; a first booking has only the new entry; nothing reads as a dash', () => {
-    expect(ledgerText(row({ jeNo: null }))).toBe('JE-2609-0031 reversed');
-    expect(ledgerText(row({ reversedJeNo: null }))).toBe('booked JE-2609-0058');
-    expect(ledgerText(row({ reversedJeNo: null, jeNo: null }))).toBe('—');
+  it('a delete stops at the reversal', () => {
+    expect(ledgerText(row({ jeNo: null }))).toBe('JE-2609-0031 → reversed by JE-2609-0057');
+  });
+
+  it('a legacy row that knows only the contra says so, and never calls it the original', () => {
+    expect(ledgerText(row({ originalJeNo: null }))).toBe('reversed by JE-2609-0057 → JE-2609-0058');
+  });
+
+  it('a first booking has only the new entry; nothing reads as a dash', () => {
+    expect(ledgerText(row({ originalJeNo: null, contraJeNo: null }))).toBe('booked JE-2609-0058');
+    expect(ledgerText(row({ originalJeNo: null, contraJeNo: null, jeNo: null }))).toBe('—');
   });
 });
 
@@ -64,7 +75,7 @@ describe('correctionsDocument', () => {
       '2990-SO-2606-043\nWong li way',
       'Amount RM 1,990.00 → RM 1,991.00',
       'Sales keyed RM 1,990 — receipt shows RM 1,991',
-      'JE-2609-0031 reversed → JE-2609-0058',
+      'JE-2609-0031 → reversed by JE-2609-0057 → JE-2609-0058',
     ]]);
     expect(doc.empty).toBeNull();
   });

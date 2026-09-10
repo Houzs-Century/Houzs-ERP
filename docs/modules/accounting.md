@@ -743,10 +743,16 @@ same-day fix by whoever keyed the payment is neither (owner: 靠权限改的来�
 `paymentRowMutable` now says WHY a row may change — `via: 'draft' | 'same_day'
 | 'amend' | null` — and both payment routes act on `via === 'amend'`: refuse
 without a reason (`reason_required`), and audit the correction with
-`source = 'amend'`, the reason in `note`, and one extra field change
-`ledger: reversedJeNo → jeNo` (the PATCH re-posts BEFORE it audits so the row
-can carry both numbers; `repostSoPaymentEdit` and `afterSoPaymentRemoved` hand
-them back). No new table: `GET /accounting/payment-corrections?month=` is a
+`source = 'amend'`, the reason in `note`, and two extra field changes —
+`ledger: original → new` (what replaced what) and `ledgerReversal: null →
+contra` (the PATCH re-posts BEFORE it audits so the row can carry the numbers;
+`repostSoPaymentEdit` and `afterSoPaymentRemoved` hand all three back, and
+`reverseJournal`'s `reversed` result now names `originalJeNo`). The first
+version carried only the contra, as `ledger.from`, and the report printed
+"0099 reversed → 0100" — read as if 0099 were the entry reversed, when 0099 IS
+the reversal (owner: 不明白; docs/bugs/0786). The Ledger column now reads
+**"0047 → reversed by 0099 → 0100"**; the one legacy row is read as
+contra-only and never presents the contra as the original. No new table: `GET /accounting/payment-corrections?month=` is a
 filtered read of `mfg_so_audit_log` — `source = 'amend'`, the two payment
 actions, this company, this month — shaped by `acc/payment-corrections.ts`
 (newest first, the ledger pair pulled out, the summary added up). The Accounting

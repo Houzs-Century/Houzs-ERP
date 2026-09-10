@@ -164,18 +164,18 @@ export async function repostSoPaymentBestEffort(
   if (!out.ok) {
     /* eslint-disable-next-line no-console */
     console.error('[acc] SO payment edit not re-posted:', p.id, out.status, out.reason);
-    return { reversedJeNo: null, jeNo: null };
+    return { originalJeNo: null, contraJeNo: null, jeNo: null };
   }
   return out.status === 'reposted'
-    ? { reversedJeNo: out.reversedJeNo, jeNo: out.jeNo }
-    : { reversedJeNo: null, jeNo: null };
+    ? { originalJeNo: out.originalJeNo, contraJeNo: out.contraJeNo, jeNo: out.jeNo }
+    : { originalJeNo: null, contraJeNo: null, jeNo: null };
 }
 
-/** What a correction did to the ledger, for the audit row to carry: the contra
-    that voided the old entry and the entry booked in its place. Either is null
-    when that half did not happen — a never-booked payment reverses nothing, a
-    delete books nothing new. */
-export type LedgerTouch = { reversedJeNo: string | null; jeNo: string | null };
+/** What a correction did to the ledger, for the audit row to carry: the entry
+    that was voided, the contra that voided it, and the entry booked in its
+    place. Any is null when that part did not happen — a never-booked payment
+    reverses nothing, a delete books nothing new. */
+export type LedgerTouch = { originalJeNo: string | null; contraJeNo: string | null; jeNo: string | null };
 
 export async function recordSoPaymentRow(
   sb: any,
@@ -338,10 +338,10 @@ export async function afterSoPaymentRemoved(
     /* eslint-disable-next-line no-console */
     console.error('[acc] SO payment reversal failed:', p.paymentId, unbooked.status, unbooked.reason);
   }
-  const reversedJeNo = unbooked.ok && unbooked.status === 'reversed' ? unbooked.jeNo : null;
+  const voided = unbooked.ok && unbooked.status === 'reversed' ? unbooked : null;
   /* The deposit just shrank, so an invoice it was settling may owe money again.
      This is the direction that matters: an invoice left reading PAID after the
      payment behind it was reversed tells the office to collect nothing. */
   await recomputeSiPaidForOrder(sb, p.docNo, p.companyId);
-  return { reversedJeNo, jeNo: null };
+  return { originalJeNo: voided?.originalJeNo ?? null, contraJeNo: voided?.jeNo ?? null, jeNo: null };
 }
