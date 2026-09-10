@@ -291,6 +291,31 @@ the strength of a company it could not read, which is the opposite of what
 `isWritebackEnabled` does at enqueue (that one refuses, because writing into a
 live account book on a guess is worse).
 
+### A SECOND switch — the keyless-conversion sweep (2026-09-11)
+
+`scm.app_config` key `scm.autocount_relink_sweep`, read by
+`scm/lib/autocount-relink-sweep.ts`, drives a cron sweep that clears the
+`keyless-line` backlog with no operator:
+
+```
+'off' / '' / row absent  -> no-op (the unset state)
+'plan'                   -> read the book, REPORT what it would stamp/queue, write nothing
+'apply'                  -> stamp the book's line keys, then queue the keyed edit
+```
+
+Why a cron and not a `workflow_dispatch`: matching a line up READS THE LIVE book
+(`/doc-read`), which only the Worker can reach (`AC_SYNC_URL` / `AC_SYNC_KEY` are
+Worker secrets, never Actions ones), and re-queue cannot help a conversion
+document — it only ever rebuilds, which `rebuildAllowed` refuses for DO/GR/IV/PI.
+The sweep stamps only what `planLineRelink` can prove (ambiguous lines refused,
+never guessed — link, never money or stock) and queues a KEYED edit
+(`enqueueEdit`, no rebuild) ONLY on the run that FINISHES the keying
+(`stamped > 0`, no line left keyless), so a live book can never take a duplicate
+line or a duplicate edit. Fails CLOSED to `off` on any unreadable value, and
+`enqueueEdit` still self-gates on `scm.autocount_writeback`, so BOTH switches
+must be on to move a document. Bounded to 25 documents per slot. Ledger:
+`docs/bugs/0796-keyless-conversion-documents-needed-a-person-to-match-up-lin.md`.
+
 ---
 
 ## 4b. The repair gate — a script's write never reaches the book (2026-09-09)
