@@ -794,17 +794,17 @@ Total: 1226 route registrations across 158 files.
 - L1879  PATCH  /:id/status
 
 ## backend/src/scm/routes/document-cancel-routes.ts  (11)
-- L445  GET    /:docNo/cancel-request
-- L446  POST   /:docNo/cancel-request
-- L447  POST   /:docNo/cancel-request/approve
-- L448  POST   /:docNo/cancel-request/reject
-- L449  POST   /:docNo/cancel-request/withdraw
-- L454  GET    /:id/cancel-request
-- L455  POST   /:id/cancel-request
-- L456  POST   /:id/cancel-request/approve
-- L457  POST   /:id/cancel-request/reject
-- L458  POST   /:id/cancel-request/withdraw
-- L463  GET    /
+- L472  GET    /:docNo/cancel-request
+- L473  POST   /:docNo/cancel-request
+- L474  POST   /:docNo/cancel-request/approve
+- L475  POST   /:docNo/cancel-request/reject
+- L476  POST   /:docNo/cancel-request/withdraw
+- L481  GET    /:id/cancel-request
+- L482  POST   /:id/cancel-request
+- L483  POST   /:id/cancel-request/approve
+- L484  POST   /:id/cancel-request/reject
+- L485  POST   /:id/cancel-request/withdraw
+- L490  GET    /
 
 ## backend/src/scm/routes/mfg-products.ts  (11)
 - L224  GET    /
@@ -1420,8 +1420,8 @@ Total: 1226 route registrations across 158 files.
 - L69  PUT    /
 
 ## backend/src/scm/routes/mrp.ts  (2)
-- L1771  GET    /
-- L1817  POST   /regenerate
+- L1788  GET    /
+- L1834  POST   /regenerate
 
 ## backend/src/scm/routes/outstanding.ts  (2)
 - L56  GET    /${slug}
