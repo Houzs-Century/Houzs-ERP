@@ -33,6 +33,13 @@
  * which. `grns.ts` labels the warehouse-change pair
  * "GRN warehouse changed - out of old warehouse", so cause 2 identifies itself.
  *
+ * WHAT IT ACTUALLY FOUND, 2026-09-10 (production run 34452823201): NOTHING WAS
+ * DOUBLE POSTED. All three receipts carry the SAME PRODUCT ON SEVERAL LINES -
+ * HC-GRN-2609-032 has two AKEMI ARMOUR MATT (K) lines, HC-GRN-2609-028 has two
+ * ARMOUR and two BASTION, HC-GRN-2609-012 has four JAGER-(Q) - and every
+ * movement matches its line one for one. Two rows in one bucket, one row per
+ * line, correct balance. See docs/bugs/0780.
+ *
  * IT PROPOSES NOTHING AND REPAIRS NOTHING. What to do about an inflated stock
  * balance is a separate, plan-gated tool and the owner's ruling.
  *
@@ -115,19 +122,33 @@ try {
        ORDER BY item_code`;
     line(`   ${items.length} receipt line(s): ${items.map((i) => `${i.item_code} x${i.qty_accepted}`).join(' | ') || '(none)'}`);
 
-    /* Net per warehouse. A warehouse change and back nets to the right balance
-       even though the bucket count says two; a double submit does not. */
+    /* Net per ITEM, against the SUM of that item's receipt lines.
+       THE SUM, not one line: a receipt may legitimately carry the same product
+       on several lines (two mattresses entered separately), and comparing the
+       net against a single line reports every such receipt as doubled. That is
+       the false positive this whole investigation turned out to be. */
     const net = new Map();
     for (const m of mv) {
-      const k = `${m.item_code}::${m.vk}::${m.warehouse_id}`;
+      const k = `${m.item_code}::${m.warehouse_id}`;
       net.set(k, (net.get(k) ?? 0) + (m.type === 'IN' ? Number(m.qty) : -Number(m.qty)));
     }
-    line('   net movement per item/warehouse:');
+    const wantByItem = new Map();
+    for (const i of items) {
+      wantByItem.set(i.item_code, (wantByItem.get(i.item_code) ?? 0) + Number(i.qty_accepted ?? 0));
+    }
+    const linesByItem = new Map();
+    for (const i of items) linesByItem.set(i.item_code, (linesByItem.get(i.item_code) ?? 0) + 1);
+
+    line('   net movement per item, against the SUM of that item\'s receipt lines:');
     for (const [k, v] of [...net.entries()].sort()) {
-      const [code, , wh] = k.split('::');
-      const want = items.find((i) => i.item_code === code)?.qty_accepted;
-      const flag = want === undefined ? '' : (Number(want) === v ? '   <- matches the receipt line' : `   <- RECEIPT LINE SAYS ${want}`);
-      line(`      ${code.slice(0, 26).padEnd(27)} wh ${wh}  net ${String(v).padStart(4)}${flag}`);
+      const [code, wh] = k.split('::');
+      const want = wantByItem.get(code);
+      const nLines = linesByItem.get(code) ?? 0;
+      const many = nLines > 1 ? `  [${nLines} receipt lines for this item]` : '';
+      const flag = want === undefined
+        ? '   <- NO RECEIPT LINE for this item'
+        : (Number(want) === v ? '   <- agrees with the receipt' : `   <- RECEIPT TOTALS ${want}, MOVEMENTS ${v}`);
+      line(`      ${code.slice(0, 26).padEnd(27)} wh ${wh}  net ${String(v).padStart(4)}${flag}${many}`);
     }
   }
 
