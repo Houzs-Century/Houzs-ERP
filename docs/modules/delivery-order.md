@@ -587,6 +587,11 @@ The rule holds because the owner chose it, not because that argument covered it;
 `backend/tests/loadedStaysInvoiceable.test.ts` pins it, and pins that #2557's
 DELIVERED exclusion is still intact.
 
+The convert descriptor `DoRemainingLine` also carries each line's own
+`line_delivery_date` (mig `20260910T1251`, SI side): the DO->SI picker copies the
+DO line's delivery date onto the invoice line, which previously had nowhere to
+land. See `docs/modules/sales-invoice.md` and `docs/bugs/0788`.
+
 
 The shape, so the section still says something: `DO_SHIPPED_STATES` is the
 **write trigger** (first entry fires the OUT — `COMPLETED` is deliberately
@@ -2094,6 +2099,19 @@ which reaches the free-gift trigger (`backend/src/scm/shared/free-gift.ts`) and
 the PDF module grouping (`vendor/shared/so-line-display.ts`) — and its `remark`,
 which is per-line by nature. `seedFollowerVariants` strips both.
 `docs/bugs/0508-the-consignment-order-ran-its-own-copy-of-the-variant-cascad.md`.
+
+**What changed on 2026-09-09 — WHICH CATEGORIES seed, and it is still every
+one.** The owner ruled that the Sales Order cascade is 「只限于 sofa item」
+(`docs/bugs/0754-*`), and `seedableMasterVariants` gained a REQUIRED `categories`
+parameter so the compiler would name every call site rather than let a default
+decide. **This file passes an explicit `null` — every category, UNCHANGED.**
+
+The ruling was given about Sales Orders. Narrowing a Delivery Order because a
+Sales Order was narrowed would be extending it for him, and the open question at
+the top of this section (should a DO line follow line 1 at all?) is the same
+question one level up. The `null` is now a visible decision in the diff instead
+of whatever the parameter happened to default to — which is the whole point of
+the required-parameter rule.
 The rule itself, and which pages are on it, are documented in
 `docs/modules/sales-order.md`.
 

@@ -33,6 +33,7 @@ import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { useAuth, isAdminLevel } from '../../vendor/scm/lib/auth';
 import { useCreatePosFromSoItems } from '../../vendor/scm/lib/suppliers-queries';
 import { newIdempotencyKey } from '../../lib/idempotency';
+import { mrpViews, mrpCategoryOf, rowBelongsToView } from './mrp-views';
 import { fmtDate, fmtDateTime } from '../../vendor/shared/format';
 import { allocSourceOf } from '../../vendor/shared/mrp-alloc-source';
 import { DateField } from '../../vendor/scm/components/DateField';
@@ -77,7 +78,11 @@ function DeliveryCell({ iso }: { iso: string | null }) {
   );
 }
 
-type View = 'sofa' | 'bedframe' | 'mattress' | 'accessory';
+/* A tab id — the lower-cased product category it shows. NOT a closed union:
+   the tab list is derived from the catalogue the server reports, so a category
+   added to mfg_product_category tomorrow gets a tab without a code change here.
+   See mrp-views.ts for why a hard-coded list stranded 181 SKUs. */
+type View = string;
 
 // Lead-time maintenance shows the four orderable categories (Service excluded,
 // mirroring the MRP tabs). Commander 2026-06-18 — moved here from SO Maintenance.
@@ -174,17 +179,10 @@ function LeadTimesDialog({ onClose, warehouses }: { onClose: () => void; warehou
   );
 }
 
-/* MRP split into four category tabs (Commander 2026-06-15). Each tab is locked
-   to its own category; Service is excluded (not an orderable stock item). */
-const VIEW_CATEGORY: Record<View, string> = {
-  sofa: 'SOFA', bedframe: 'BEDFRAME', mattress: 'MATTRESS', accessory: 'ACCESSORY',
-};
-const VIEW_TABS: { value: View; label: string }[] = [
-  { value: 'sofa', label: 'Sofa' },
-  { value: 'bedframe', label: 'Bedframe' },
-  { value: 'mattress', label: 'Mattress' },
-  { value: 'accessory', label: 'Accessories' },
-];
+/* MRP is split into one tab per product category (Commander 2026-06-15); the
+   list itself lives in mrp-views.ts and is derived from the catalogue the
+   server reports, because a hard-coded four stranded every DINING / BEDLINES /
+   DIFFUSER / CARPET line. Service is excluded (not an orderable stock item). */
 
 /* A "Model" groups every variant that shares the same SKU code (item_code).
    Bedframe/sofa: one model, many fabric/colour variants. Mattress/accessory:
@@ -491,10 +489,18 @@ export const Mrp = () => {
      (YYYY-MM-DD). Blank = send no override → server uses each SO's own date. */
   const [proceedExpectedAt, setProceedExpectedAt] = useState<string>('');
 
-  // Each tab is locked to its own category (Commander 2026-06-15 — four tabs).
-  const apiCategory = VIEW_CATEGORY[view];
+  // Each tab is locked to its own category (Commander 2026-06-15).
+  const apiCategory = mrpCategoryOf(view);
   const q = useMrp({ category: apiCategory, warehouseId, includeUndated: showUndated });
   const data = q.data;
+  /* THE TAB LIST IS THE SERVER'S, not a constant here. `categories` is every
+     category in this company's product catalogue (mrp.ts section 2 — paged,
+     company-scoped, and independent of the category filter, so every tab's
+     response carries the same list). Four tabs were typed here while the enum
+     had nine members, and the four that had no tab were dropped by the server
+     before render and again by the filter below: planned, quantified, shown
+     nowhere. See mrp-views.ts. */
+  const views = mrpViews(data?.categories);
   /* Stored planning snapshot (option B, 2026-08-19). `data.stored` is true when
      this came from the saved snapshot (the default view opens instantly from it);
      `regenerate` recomputes it server-side. See mrp-snapshot.ts. */
@@ -548,9 +554,15 @@ export const Mrp = () => {
   /* Four category tabs (Commander 2026-06-15): Sofa is fed from the per-SO sofa
      SETS; the other three filter the SKU payload to their own category so a
      stray category can't leak across tabs. */
+  /* THE TAB DECIDES WHAT BELONGS TO IT, and it is the same module that built
+     the tab. Comparing to one string here is what stranded four categories
+     before (mrp-views.ts), and the Others tab stands for a SET, so equality
+     cannot express it — `rowBelongsToView` claims by EXCLUSION, which is the
+     only form that cannot leave a row homeless. */
+  const activeView = views.find((v) => v.value === view) ?? views[0]!;
   const tabSkus = view === 'sofa'
     ? sofaSetsToSkus(data?.sofaSets ?? [])
-    : (data?.skus ?? []).filter((s) => s.category === VIEW_CATEGORY[view]);
+    : (data?.skus ?? []).filter((s) => rowBelongsToView(activeView, s.category));
 
   /* Delivery-date window: filter child lines + recompute the parent's Qty
      Needed / Shortage to the window. Stock/PO Outstanding stay SKU-level
@@ -1001,10 +1013,12 @@ export const Mrp = () => {
       />
 
       {/* Tabs — Commander 2026-06-15: one tab per category (Service excluded).
+          The LIST comes from the response's own `categories` (mrp-views.ts), so
+          a category the catalogue holds can never be one this page cannot show.
           Underline strip matching the shared <TabStrip>; hand-rolled so the
           tablist/tab/aria-selected semantics this page already had survive. */}
       <div className="no-scrollbar -mx-4 flex items-center gap-1 overflow-x-auto border-b border-border px-4 sm:mx-0 sm:px-0 [&>*]:shrink-0" role="tablist">
-        {VIEW_TABS.map((t) => (
+        {views.map((t) => (
           <button key={t.value} type="button" role="tab" aria-selected={view === t.value}
             data-active={view === t.value} onClick={() => switchView(t.value)}
             className={

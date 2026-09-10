@@ -30,6 +30,7 @@ import {
   cascadeMasterVariants,
   seedFollowerVariants,
   seedableMasterVariants,
+  CASCADE_CATEGORIES,
   FABRIC_IDENTITY_KEYS,
   type MasterVariantSnapshot,
 } from '../../vendor/scm/lib/so-variant-cascade';
@@ -767,9 +768,10 @@ export const SalesOrderNew = () => {
     const { variants, masters } = cascadeMasterVariants(
       lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown> })),
       masterSnapshotRef.current,
-      /* Desktop cascades EVERY category — a mattress line's specials included.
-         Passed explicitly because mobile answers this differently. */
-      null,
+      /* The ONE set, shared with mobile (owner 2026-09-09: cascade is for sofa
+         only). This used to be `null` — EVERY category, a mattress line's
+         specials included — while mobile scoped it to sofa + bedframe. */
+      CASCADE_CATEGORIES,
     );
     masterSnapshotRef.current = masters;
     let didUpdate = false;
@@ -796,6 +798,8 @@ export const SalesOrderNew = () => {
   const inheritVariantsByCategory = useMemo(
     () => seedableMasterVariants(
       lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown> })),
+      /* Sofa only — the same set the live cascade below now takes. */
+      CASCADE_CATEGORIES,
     ),
     [lines],
   );

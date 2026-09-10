@@ -104,6 +104,15 @@ try {
       const specials = Array.isArray(v.specials) ? v.specials.length : 0;
 
       console.log(`   model ${model}  build [${comps.join(', ')}]  seat size ${size ?? 'NONE'}  ${specials} special order(s)`);
+      /* THE BOOK'S OWN ANSWER to "which ERP lines are one line there": a sofa is
+         ONE line in AutoCount and several here, and every piece carries that one
+         line's DtlKey. If a refused run's pieces share a key with lines the run
+         does NOT contain, the run was formed by ADJACENCY when the key already
+         said which lines belong together. */
+      const keys = new Set(codes.map((c) => lines.find((l) => String(l.item_code) === String(c))?.linked_ac_dtlkey).filter((k) => k != null).map(String));
+      const elsewhere = lines.filter((l) => keys.has(String(l.linked_ac_dtlkey)) && !codes.includes(String(l.item_code)));
+      console.log(`   DtlKey on this run: ${keys.size ? [...keys].join(', ') : 'NONE'}` +
+        (elsewhere.length ? `  -- ${elsewhere.length} OTHER line(s) here share it: ${elsewhere.map((l) => splitSofaCode(String(l.item_code))?.compartment ?? l.item_code).join(', ')}` : ''));
       console.log(`   refused: ${String(ref.reason).slice(0, 150)}`);
 
       /* WOULD A WITHHELD SPELLING WORK? Composed with the compartments as they

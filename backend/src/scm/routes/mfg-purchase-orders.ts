@@ -42,6 +42,7 @@ import { poVariantGaps, poVariantCheckFailedBody, poVariantConfirmRefusal, poWar
 import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
 import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../lib/po-pricing';
 import { readMfgProductBindings } from '../lib/supplier-bindings';
+import { loadOutstandingSoLines } from '../lib/outstanding-so-lines';
 import { poHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
@@ -586,19 +587,14 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
      warehouse (from the SO's sales_location) + delivery date (from the SO
      LINE's own line_delivery_date). processing_date + sales_location
      come off the SO header; line_delivery_date off the item. */
-  const { data: items, error } = await scopeToCompany(
-    supabase
-      .from('mfg_sales_order_items')
-      .select(`
-      id, doc_no, item_code, description, item_group, qty, po_qty_picked, unit_price_sen,
-      variants, line_suffix, cancelled, line_delivery_date,
-      so:mfg_sales_orders!inner ( doc_no, debtor_name, branding, status, on_hold, so_date, customer_delivery_date, processing_date, sales_location )
-    `),
-    c,
-  )
-    .eq('cancelled', false)
-    .order('doc_no', { ascending: false })
-    .limit(500);
+  /* PAGED — lib/outstanding-so-lines.ts. This read carried a `.limit(500)` with
+     all three of the filters that decide the answer running after it in JS, so
+     the picker offered at most 500 of the company's 15,050 live SO lines
+     (measured 2026-09-08, docs/bugs/0677) chosen by document number. */
+  const { data: items, error } = await loadOutstandingSoLines(
+    supabase,
+    (q) => scopeToCompany(q, c),
+  );
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
   type Row = {

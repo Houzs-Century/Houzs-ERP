@@ -1033,3 +1033,112 @@ describe('a special order that BLOCKS a sofa points at the ERP too', () => {
     expect(res.refusals[0].reason).toContain('cannot spell');
   });
 });
+
+// ----------------------------------------------------------------------------
+// THE BOOK ALREADY SAYS WHICH ERP LINES ARE ONE LINE.
+//
+// A sofa is ONE line in AutoCount and several here, and every piece carries that
+// one line's DtlKey. The runs are formed by ADJACENCY, which is right until
+// something interrupts a sofa — HC-SO-001526 holds `1EL` and `2ER` of one sofa
+// with ANOTHER sofa's two lines between them, so each end was collapsed alone,
+// and `1EL` by itself decodes to a single seat rather than a left arm.
+//
+// Measured on production 2026-09-10: HC-SO-001255, HC-SO-001526, HC-SO-002315,
+// HC-SO-004716 and HC-SO-012016 are all this shape.
+// ----------------------------------------------------------------------------
+describe('a sofa interrupted by another sofa is still ONE build', () => {
+  const piece = (
+    code: string, key: number | null, d2: string, over: Partial<CollapsibleLine> = {},
+  ): CollapsibleLine => ({
+    item_code: code, item_group: 'sofa', description: `SOFA ${code}`,
+    description2: d2, qty: 1, unit_price_sen: 0, linked_ac_dtlkey: key,
+    variants: { seatHeight: 35, colourLabel: 'BEIGE', specials: [] }, ...over,
+  });
+
+  /* HC-SO-001526's shape: two ends of one sofa with a second sofa between. */
+  const D2_A = '1EL + 2ER (35")';
+  const D2_B = '2EL + STOOL (35")';
+  const interleaved = (): CollapsibleLine[] => ([
+    piece('5526-2A(RHF)', 102956, D2_A, { unit_price_sen: 399000 }),
+    piece('5526-2A(LHF)', 102957, D2_B, { unit_price_sen: 299000 }),
+    piece('5526-STOOL', 102957, D2_B),
+    piece('5526-1A(LHF)', 102956, D2_A),
+  ]);
+
+  it('gathers the two ends into one line instead of refusing both', () => {
+    const res = collapseSofaLines(interleaved());
+    expect(res.refusals).toEqual([]);
+    /* Two book lines out of four ERP lines — one per DtlKey. */
+    expect(res.lines).toHaveLength(2);
+    expect(res.lines.map((l) => Number(l.linked_ac_dtlkey))).toEqual([102956, 102957]);
+  });
+
+  it('emits the gathered build at the position of its FIRST piece', () => {
+    /* The document's line order is what a person reads; a sofa must not jump
+       to the end of the document because its pieces were scattered. */
+    const res = collapseSofaLines(interleaved());
+    expect(res.lines[0].sourceIndexes).toEqual([0, 3]);
+    expect(res.lines[1].sourceIndexes).toEqual([1, 2]);
+  });
+
+  it("writes the BOOK'S order, never the mirror the ERP rows happen to be in", () => {
+    /* THE HAZARD THIS TEST EXISTS FOR. The ERP's line order here is
+       [2A(RHF), 1A(LHF)]; the book holds `1EL + 2ER`. Composing from the row
+       order round-trips perfectly and writes `2ER + 1EL` — the MIRROR of the
+       sofa the book records, which nothing downstream would catch. */
+    const res = collapseSofaLines(interleaved());
+    expect(String(res.lines[0].description2)).toContain('1EL + 2ER');
+    expect(String(res.lines[0].description2)).not.toContain('2ER + 1EL');
+    /* The colour still comes from the ERP — the arrangement is the only thing
+       the book is authoritative for. */
+    expect(String(res.lines[0].description2)).toContain('BEIGE');
+  });
+
+  it("and echoes the book's text verbatim when nothing about it has changed", () => {
+    const same = interleaved().map((l) => (
+      Number(l.linked_ac_dtlkey) === 102956
+        ? { ...l, description2: '1EL + 2ER (35") / COL: BEIGE' }
+        : l
+    ));
+    const res = collapseSofaLines(same);
+    expect(String(res.lines[0].description2)).toBe('1EL + 2ER (35") / COL: BEIGE');
+    expect(res.lines[0].via).toBe('echo');
+  });
+
+  it('leaves a sofa the adjacency rule already handles alone', () => {
+    /* The guard that keeps this change to the documents that are broken: a
+       contiguous run is not gathered, so nothing that works today moves. */
+    const contiguous = [
+      piece('5526-2A(RHF)', 102956, D2_A, { unit_price_sen: 399000 }),
+      piece('5526-1A(LHF)', 102956, D2_A),
+      piece('5526-2A(LHF)', 102957, D2_B, { unit_price_sen: 299000 }),
+      piece('5526-STOOL', 102957, D2_B),
+    ];
+    const res = collapseSofaLines(contiguous);
+    expect(res.refusals).toEqual([]);
+    expect(res.lines).toHaveLength(2);
+  });
+
+  it('does not gather two DIFFERENT models that happen to share a key', () => {
+    /* A key is the book's line and two models cannot be one build. Gathering
+       them would hide a data fault behind a composed line. */
+    const res = collapseSofaLines([
+      piece('5526-2A(RHF)', 102956, D2_A, { unit_price_sen: 399000 }),
+      piece('9028-1S', 102957, '1S (35")'),
+      piece('3068-1A(LHF)', 102956, D2_A),
+    ]);
+    /* Nothing is gathered, so the two 102956 lines take the adjacency path and
+       are judged on their own — which is a refusal, loudly, not a silent merge. */
+    expect(res.lines.every((l) => (l.sourceIndexes ?? []).length === 1)).toBe(true);
+  });
+
+  it('a keyless document is untouched — the book has never seen it', () => {
+    const res = collapseSofaLines([
+      piece('5526-2A(RHF)', null, D2_A, { unit_price_sen: 399000 }),
+      piece('5526-2A(LHF)', null, D2_B, { unit_price_sen: 299000 }),
+      piece('5526-1A(LHF)', null, D2_A),
+    ]);
+    expect(res.lines).toHaveLength(3);
+    expect(res.lines.every((l) => l.via === 'passthrough')).toBe(true);
+  });
+});

@@ -321,6 +321,19 @@ move landed, the **reader flip** was left pending. It is still pending.
 `SO_HEADER_FIELD_POLICY` (`backend/src/scm/shared/so-field-policy.ts`) declares
 `processing_date` and `customer_delivery_date` CONTROLLED, and the file's own rule
 is *"every other patchable header column is FREE by omission"*.
+
+> The other date rule in that file is `paymentRowMutable`'s, and it is worth
+> reading beside this section because it gets the same question right: a payment
+> is editable on the day its ROW was keyed (`created_at`), never the day printed
+> on the document (`paid_at`) — keying off the document date would let anyone
+> unlock an old payment by first editing its date to today, the edit and the
+> delete authorising each other. Since 2026-09-10 the predicate also takes a
+> RECONCILED fact and a Finance permission (docs/bugs/0780), and neither of
+> those moved the date rule: MYT calendar days, `mytDateOf` / `todayMyt`, no raw
+> UTC slice. Since the same day it also answers WHY a row may change (`via`:
+> draft / same_day / amend — docs/bugs/0785), which is how a correction on
+> the amend right comes to owe a reason while a same-day fix does not; the
+> `same_day` answer is still the `created_at` comparison described here.
 **`amended_delivery_date` appears nowhere in it.** So it has: no processing lock,
 no amendment approval, no past-date check, no pair rule, no cascade to the lines.
 

@@ -68,6 +68,32 @@ export function seatHeightToWrite(seat) {
 }
 
 /**
+ * The LEG height a correction may write, decided the same way `seatHeightToWrite`
+ * decides the seat and for the same reason: `variants.legHeight` holds BARE
+ * INCHES, so anything that is not a number of inches must be left alone rather
+ * than stored with its unit stripped off.
+ *
+ * It exists because the supplier's listing states a leg on 17 of the 21 sofa
+ * documents whose build already agreed with ours, and our rows hold nothing at
+ * all there (production run 34453751607). A blank leg height is what makes the
+ * factory guess.
+ *
+ * @param {string|number|null|undefined} leg
+ * @returns {{ write: boolean, value: string|null, why: string }}
+ */
+export function legHeightToWrite(leg) {
+  if (leg === null || leg === undefined || String(leg).trim() === "")
+    return { write: false, value: null, why: "no leg on this correction" };
+  const s = String(leg).trim();
+  if (/^\d{1,3}(\.\d+)?$/.test(s)) return { write: true, value: s, why: "inches" };
+  return {
+    write: false,
+    value: null,
+    why: `leg "${s}" is not a number of inches — legHeight holds bare inches, so it is left as it is rather than stored as ${s.replace(/[^\d.]/g, "") || "?"} inches`,
+  };
+}
+
+/**
  * Split the rows the matcher selected for ONE correction into the sofas they
  * actually are.
  *

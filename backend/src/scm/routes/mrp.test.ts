@@ -25,6 +25,7 @@ import { describe, expect, test } from 'vitest';
 import { computeMrp, mrpStockAssignment, stockAssignmentKey, parseIncludeUndated, InvalidQueryFlag } from './mrp';
 import { NO_BUFFERS } from '../lib/lead-time';
 import { distributeAssignedToLots, isMakeToOrderCategory } from '../lib/inventory-movements';
+import { parsePgrestInList } from '../lib/pgrest-in-list';
 
 type Row = Record<string, unknown>;
 
@@ -49,6 +50,14 @@ function fakeSb(tables: Record<string, Row[]>) {
     select() { return this; }
     eq(col: string, val: unknown) { this.rows = this.rows.filter((r) => r[col] === val); return this; }
     in(col: string, vals: unknown[]) { this.rows = this.rows.filter((r) => (vals as unknown[]).includes(r[col])); return this; }
+    /* The ESCAPED in-list section 2 and the supplier reader now build —
+       supabase-js cannot serialise an item code carrying a `"`, which emptied
+       38 codes' suppliers in production (docs/bugs/0780). Parsed by the SAME
+       function the engine writes with, never a second split(','). */
+    filter(col: string, op: string, val: string) {
+      if (op !== 'in') throw new Error(`fake: filter(${op}) is not implemented`);
+      return this.in(col, parsePgrestInList(val));
+    }
     // No-op: the engine pushes status not-in filters into SQL as an under-the-cap
     // optimisation; the JS-side SO_DONE / PO_DEAD filters stay authoritative and
     // are what these tests exercise.
@@ -1388,5 +1397,80 @@ describe('company 1: a sofa set is planned from its own purchase order only', ()
     const res = await computeMrp(asSb(sb), { ...opts, companyId: 2 });
 
     expect(set(res).shortageQty).toBe(0);   // pooled stock still covers it
+  });
+});
+
+/* THE ROW MUST CARRY THE CATEGORY THE FILTER USED — they were two different
+ * expressions, and the difference made demand vanish from every tab.
+ *
+ * Owner, 2026-09-10, on the Accessories tab: 「为什么这个 order 是有 long pillow
+ * 要去 order，可是我的 S3 那边却没有 long pillow 让我 order 的？」
+ *
+ * Measured on production that day: EIGHT accessory item codes — 62 dated open
+ * lines, 110 units — were absent from the page. The engine was innocent: the
+ * stored plan snapshot CONTAINED all of them (LONG PILLOW at qty 43, matching
+ * the database exactly). What they carried was `category: null`, and the
+ * frontend picks a tab's rows with `s.category === VIEW_CATEGORY[view]`, so a
+ * null-category row belongs to NO tab and is invisible on all four.
+ *
+ * The asymmetry: the demand walk decides whether to KEEP a line with
+ *   prod?.category ?? catFromGroup(d.item_group)
+ * and the row it then EMITS was built with
+ *   prod?.category ?? null
+ * A line whose item_code is not in mfg_products therefore PASSES the filter on
+ * its item_group and is then emitted uncategorised. `catFromGroup` exists for
+ * exactly this case — its own comment says "so the demand still SHOWS under its
+ * category tab instead of silently vanishing" (Wei Siang 2026-06-16) — and the
+ * emit site never called it.
+ *
+ * Owner's rule, same day: 「除了 Category Service 不需要进来，其他基本上都需要」.
+ * Silent disappearance is the dangerous half — it is only found on delivery day.
+ */
+describe('an uncatalogued line keeps its category on the row, not just in the filter', () => {
+  const unlisted = (qty: number): Row => ({
+    id: 'si-unlisted', doc_no: 'SO-U1', item_code: 'LONG PILLOW', description: 'AMN-LONG PILLOW',
+    item_group: 'accessory', variants: {}, qty,
+    warehouse_id: 'W1', line_delivery_date: '2026-12-01', line_no: 1, created_at: '2026-07-01T00:00:00Z',
+    cancelled: false,
+    so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: null, customer_state: null },
+  });
+
+  test('mfg_products has no row for it: the SKU still says ACCESSORY', async () => {
+    /* mfg_products is deliberately EMPTY for this code — the production shape.
+       Before the fix the row came back with category null and the Accessories
+       tab dropped it, while qtyNeeded proved the engine had planned it. */
+    const sb = fakeSb({ ...BASE_TABLES, mfg_sales_order_items: [unlisted(3)] });
+
+    const res = await computeMrp(asSb(sb), opts);
+
+    expect(res.skus).toHaveLength(1);
+    expect(res.skus[0]!.qtyNeeded).toBe(3);          // the engine planned it all along
+    expect(res.skus[0]!.category).toBe('ACCESSORY');  // and the row now says which tab
+  });
+
+  test('the catalog still wins when it has a row', async () => {
+    const sb = fakeSb({
+      ...BASE_TABLES,
+      mfg_sales_order_items: [unlisted(3)],
+      mfg_products: [{ id: 'p9', code: 'LONG PILLOW', name: 'AMN-LONG PILLOW', category: 'ACCESSORY' }],
+    });
+
+    const res = await computeMrp(asSb(sb), opts);
+
+    expect(res.skus[0]!.category).toBe('ACCESSORY');
+  });
+
+  test('a group that maps to no category still emits null — not a guess', async () => {
+    /* catFromGroup answers null for anything it does not recognise. The row is
+       then honestly uncategorised rather than assigned a tab it does not belong
+       to; the filter above it already let it through for the same reason. */
+    const sb = fakeSb({
+      ...BASE_TABLES,
+      mfg_sales_order_items: [{ ...unlisted(3), item_group: 'others', item_code: 'MISC-THING' }],
+    });
+
+    const res = await computeMrp(asSb(sb), opts);
+
+    expect(res.skus[0]!.category).toBeNull();
   });
 });

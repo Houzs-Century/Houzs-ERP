@@ -373,13 +373,34 @@ export const lockedColumnsChanged = (
       vendor/scm/lib/dates.ts `isCreatedTodayMyt` on the client). Do not
       invent a new convention here.
 
-   WHERE THE FUTURE CONDITION GOES. The owner has explicitly DEFERRED the
-   bank-reconciliation rule — "如果他已经做完 bank record 并且 knock off 掉了，
-   就不行了" — until reconciliation and knock-off exist. Nothing about that is
-   built here, and there are no speculative hooks for it. When he defines it,
-   it becomes one more `&&` inside paymentRowMutable() below: that predicate is
-   the ONLY place either client or the server asks "may this row still change",
-   so a knock-off check added there lands on every surface at once. */
+   THE DEFERRED CONDITION HAS ARRIVED (owner + management, 2026-09-10). The
+   rule reserved above — "如果他已经做完 bank record 并且 knock off 掉了，就不行
+   了" — is now built, together with the permission it was always waiting for:
+   「已经和management 确定了，让权限在finance 这里更改」. FINANCE may correct a
+   payment after the day it was keyed, holding `scm.so_payment.amend`; nobody
+   may correct one that has already been RECONCILED.
+
+   The order of the rules in paymentRowMutable() below IS the design:
+     DRAFT       → still fluid. Untouched 2026-07-13 exemption; a draft's
+                   payment is not what either later ruling was about.
+     RECONCILED  → closed to EVERYONE, Finance included. By then the figure is
+                   evidence somebody has signed off, printed, and may have sent
+                   to an auditor — the amend right does not reach past it, and
+                   it beats the same-day window too, because a match booked
+                   this morning is no less booked for being young.
+     same day    → still fluid for whoever keyed it. Unchanged.
+     may amend   → Finance's new door.
+     otherwise   → the window that has always closed.
+
+   TWO THINGS THIS PREDICATE STILL DOES NOT DECIDE, on purpose. It does not
+   fetch the reconciliation — the caller does, because only the server can read
+   the settlement and bank tables, and a client that guessed would be guessing
+   about the books (see acc/payment-reconciled.ts, which fails CLOSED on an
+   unreadable read). And it does not know who is asking: `mayAmend` is the
+   answer to a permission check the route has already made.
+
+   This is still the ONLY place either client or the server asks "may this row
+   still change", so all of it lands on every surface at once. */
 
 export type PaymentMutationKind = 'ADD' | 'EDIT' | 'DELETE';
 
@@ -389,7 +410,14 @@ export type PaymentRowMutability = {
   /** Plain-language reason when it may not — shown to the operator verbatim.
       null when it may. */
   problem: string | null;
+  /** WHY it may, when it may — null when it may not. A correction allowed by
+      the amend right owes a reason and is reported to Finance; a same-day fix
+      by whoever keyed it is not (owner 2026-09-10: 靠权限改的来决定). This is
+      the only place that knows which of the two it just allowed. */
+  via: PaymentChangeVia;
 };
+
+export type PaymentChangeVia = 'draft' | 'same_day' | 'amend' | null;
 
 /**
  * The single predicate behind "may this recorded payment still be changed".
@@ -414,13 +442,53 @@ export const paymentRowMutable = (
   createdDateMyt: string,
   todayDateMyt: string,
   soIsDraft: boolean,
+  who: PaymentAmendContext = {},
 ): PaymentRowMutability => {
-  if (soIsDraft) return { mutable: true, problem: null };
-  if (createdDateMyt === todayDateMyt) return { mutable: true, problem: null };
+  if (soIsDraft) return { mutable: true, problem: null, via: 'draft' };
+  if (who.reconciled) return { mutable: false, problem: paymentReconciledMessage(who.reconciled), via: null };
+  if (createdDateMyt === todayDateMyt) return { mutable: true, problem: null, via: 'same_day' };
+  if (who.mayAmend === true) return { mutable: true, problem: null, via: 'amend' };
   return {
     mutable: false,
     problem: PAYMENT_WINDOW_CLOSED_MESSAGE,
+    via: null,
   };
+};
+
+/** WHAT has already reconciled a payment, when something has. Three kinds,
+    because there are three genuinely different places the books can have
+    closed over it, and an operator told only "it is reconciled" cannot go and
+    look at the one that did. */
+export type PaymentReconciledBy =
+  /** Matched into a merchant settlement report — its fee is booked. */
+  | { kind: 'merchant'; on: string }
+  /** Its journal entry has been claimed by a movement on a bank statement. */
+  | { kind: 'bank'; jeNo: string }
+  /** Its month on that account has been closed and reported. */
+  | { kind: 'month'; accountCode: string; month: string };
+
+export type PaymentAmendContext = {
+  /** Does the caller hold `scm.so_payment.amend`? Finance does; sales does
+      not. Absent means no — a missing permission is never an open door. */
+  mayAmend?: boolean;
+  /** What has already reconciled this row, if anything. Null / absent means
+      the caller CHECKED and found nothing — never "the caller did not look":
+      the server refuses outright when it cannot read the answer. */
+  reconciled?: PaymentReconciledBy | null;
+};
+
+/** Why a reconciled payment is closed, naming the reconciliation so it can be
+    found, and saying what to do instead. Same constraints as the message
+    below: plain language, no braces, no error codes, short enough to survive
+    the client's humanApiError sentence filter. */
+export const paymentReconciledMessage = (by: PaymentReconciledBy): string => {
+  const what =
+    by.kind === 'merchant' ? `it was matched on a merchant settlement report on ${by.on}`
+    : by.kind === 'bank' ? `its journal entry ${by.jeNo} was matched to a bank statement`
+    : `the ${by.month} reconciliation for account ${by.accountCode} is closed`;
+  return `This payment can no longer be changed because ${what}. `
+    + 'Changing it would break a reconciliation already reported. '
+    + 'Record a new payment, or raise a credit note.';
 };
 
 /** Why the control is gone. The operator must be told plainly, not just find
@@ -428,7 +496,7 @@ export const paymentRowMutable = (
     error codes so it survives the client's humanApiError sentence filter. */
 export const PAYMENT_WINDOW_CLOSED_MESSAGE =
   'This payment can only be changed or removed on the day it was keyed in. That day has passed, '
-  + 'so it is now locked. Record a new payment instead, or ask the office to adjust it.';
+  + 'so it is now locked. Record a new payment instead, or ask Finance to adjust it.';
 
 /** Wire error code for the closed window. */
 export const PAYMENT_WINDOW_CLOSED_ERROR = 'payment_edit_locked';

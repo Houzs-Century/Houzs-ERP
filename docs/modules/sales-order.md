@@ -1088,6 +1088,29 @@ COLOUR sync in `updateLine` / the mobile FabricPicker, which is scoped to one
 physical sofa (`variants.buildKey`), not to a category. It no longer gates the
 master cascade.
 
+> **SOFA ONLY — owner ruling 2026-09-09.** 「主行改一次，全部跟着改 … 这个只限于
+> sofa item」. `CASCADE_CATEGORIES` in the shared module is `{'sofa'}`, and BOTH
+> Sales Order surfaces import it: mobile used to declare `["sofa","bedframe"]`
+> and desktop passed `null` (EVERY category, a mattress line's specials
+> included), so one rule had two answers.
+>
+> **Why it had to narrow.** Rule 1 above FORCES the master's latest change over
+> a hand-typed follower, and `NEVER_INHERITED_KEYS` is only `remark` + `buildKey`
+> — so SPECIALS travel too. A rep removed a drawer from beds 2 and 3, touched
+> bed 1 again, and it came back: 「remove 三次才没有」 (HC-SO-012312,
+> `docs/bugs/0754-*`). A sofa is one physical thing assembled from several lines;
+> three bedframes are three beds.
+>
+> **The SEED is gated by the same set.** `seedableMasterVariants` takes the
+> category set as a REQUIRED parameter — without gating the seed, a new bedframe
+> line still arrives pre-filled and only stops being RE-forced afterwards, which
+> fixes the second removal and not the first.
+>
+> **Consignment Orders and Delivery Orders were NOT narrowed.** Both call sites
+> pass an explicit `null`. The compiler found them when the parameter became
+> required; the ruling was given about Sales Orders, and extending it to a
+> document the owner was not asked about is his call, not the implementer's.
+
 **Never inherited:** `remark` (per line) and `buildKey` (the build IDENTITY of
 one physical sofa — copying it forges a compartment, which reaches the free-gift
 trigger and the PDF module grouping;
@@ -2880,6 +2903,15 @@ survive, only the link is wiped, which is exactly what makes it invisible.
   nulling; its `snapshotSo` `poLinks` blob is the compensating record the
   Approve-PO gate (`reviseBoundPo`) reads to reconcile the orphaned PO line. It
   captures the PO side only — the DO / SI sides are not snapshotted there.
+- The SO **amendment** ADD is the mirror case: `reviseBoundPo` places the new
+  line on a bound PO whose supplier matches, and **WARNS the buyer at confirm
+  when it reaches none** ("no supplier set" / "supplier has no open PO on this
+  sales order"). Until 2026-09-10 both warnings were gated on `scopeCoversAll`,
+  so on a sales order with 2+ live bound POs (the PO-Amendments confirm is scoped
+  to one) the gap was silent and only found on delivery day — fixed in
+  `fix/amendment-po-warn`, see
+  `docs/bugs/0783-amendment-added-line-on-a-multi-po-sales-order-got-no-purcha.md`.
+  Visibility only: no PO is auto-created.
 
 The 2026-07-31 measurement of the live database: **101 PO lines, only 34 carry
 `so_item_id` — 67 are NULL.**
@@ -3919,6 +3951,63 @@ with `a.categories.includes(category.toUpperCase())`
 (`SoLineCard.tsx` and `mobile/MobileNewSO.tsx`), so a lowercase token yields a
 row the backfill can map to and no human can ever tick.
 
+### Which lines get the Special Order panel, and which get CHECKBOXES (2026-09-10)
+
+Two different questions, and answering both with one condition is what left the
+owner with nowhere to write an SP mattress's SIZE or a custom pillow's COLOUR:
+「我有一些单一的SKU 好像mattress SP和这个custom 需要选颜色 SP需要写尺寸 这种我可以
+在哪里填写呢？」 The panel used to open only where the catalogue defined a
+tickable add-on for that category — it defines none for mattress and none that
+reach accessories, so those lines showed no panel and with it no free text.
+
+The rule is now ONE module with its own tests,
+`frontend/src/vendor/scm/lib/special-order-surface.ts`, read by BOTH surfaces
+(`SoLineCard.tsx` and `mobile/MobileNewSO.tsx` — the row that opens the sheet
+and the sheet itself):
+
+| line category | Special Order panel | catalogue checkboxes |
+| --- | --- | --- |
+| sofa, bedframe | inside their own configurator, not standalone | yes |
+| mattress | yes | yes |
+| accessory, others | yes | **no** — free text only, unless the line already carries a pick |
+| service | no | no |
+
+**Why the checkboxes stay shut on accessory / others, while the free text does
+not.** `computeVariantKey` (`scm/shared/variant-key.ts`) builds a line's stock
+bucket from the group's own attributes plus `normSpecials(a.specials)`, so
+ticking an add-on appends `special=…` and SPLITS the bucket — which for goods
+that pool by item code across customers stops a line matching its stock and the
+purchase orders raised for it. `extraAddonNote` is read by no branch of that
+function, so free text can never move a line. Describe freely, re-key never.
+
+A line that already carries picks keeps its picker, so those picks render with
+their real labels instead of falling into SpecialOrders' *"retired — untick to
+remove"* branch, which would misdescribe a live add-on as dead.
+
+**The note prints, and that is the half that reaches the supplier.**
+`buildVariantSummary` appends the `SPECIAL:` segment AFTER the per-group
+attribute branch, not inside it, so a category contributing no attributes still
+carries its note — and `description2` on a purchase order is exactly this
+string. Pinned in `backend/src/scm/shared/variantSummarySuperseded.test.ts`.
+
+**And it is visible on the cost documents, since 2026-09-10.** The owner: 「POGR
+是不是也是要能看得到这些数据？…全部都是要带过去的哦」. Every cost document used to
+gate its editor on bedframe/sofa, so the text reached the supplier's PDF and
+appeared on no screen. They now read the same module:
+
+| document | what changed |
+| --- | --- |
+| Purchase Order (`PoLineCard.tsx`, `PurchaseOrderNew.tsx`) | panel added for the categories with no variant grid |
+| GRN create (`GrnNew.tsx`), Purchase Invoice, Purchase Return | same |
+| Goods-received DETAIL | already SHOWED the note inside `variantSummary`; the manual-line EDITOR was added |
+| Delivery Order | **already correct** — `do-item-row.ts` copies `variants` wholesale and stamps `description2`; `DeliveryOrderDetailV2.tsx` renders it |
+| Stock Adjustment | **deliberately not added** — not supplier-facing, and the note is not part of a lot's identity |
+
+The pool passed on a cost document is EMPTY: it carries no add-on catalogue for
+those categories, and choosing WHAT to build belongs to the sales order. Since
+that change, `SpecialOrders` no longer labels a carried pick *"retired"* when it
+has no pool to judge it against — see `docs/bugs/0779-the-special-order-text-reached-the-supplier-pdf-but-was-invi.md`.
+
 **What actually landed in production, 2026-08-11.** The `Hydraulic` row was
 created by `seed-hydraulic-special-addon.mjs` (run **31454564942**) at
 `sell=0 cost=0`, `categories=BEDFRAME`, `active=true`, read back on a fresh
@@ -3987,6 +4076,112 @@ Two surfaces render it, and they are the whole point of writing it at all:
 | --- | --- |
 | `scm/shared/variant-summary.ts` (+ the byte-identical frontend copy) | folds the recorded codes into the same `SPECIAL:` segment of Description 2, after the picked ones, skipping any the operator has since picked properly — so it reaches every print, the PO/DO/SI copies and the Detail Listing |
 | `vendor/scm/components/SpecialOrders.tsx` | one ticked, DISABLED row per recorded code, subtitled "from AutoCount — already in this document's price, not charged again", and it counts toward `(N selected)` |
+
+**A read-only DIAGNOSTIC joined the allow-list on 2026-09-09.**
+`backend/scripts/check-so-line-pricing.mjs` answers "where did this one order's
+money come from, line by line?" — written for HC-SO-012312, where three
+bedframes were split and RM 250 appeared on a line whose two neighbours are FOC.
+It reads the key because **which half an option sits in is the question**: an
+option in `specials` may carry a surcharge, one in `specialsRecorded` must not,
+so a probe blind to the difference cannot say which case the operator is looking
+at. It renders and never prices — the key reaches one string in a printed
+column, the script's only arithmetic is lines vs header total from `total_sen`,
+and it is SELECT-only, so it cannot move money even by accident.
+
+**It was reading FEWER keys than the renderer, and reported a clean line that
+was not one (2026-09-10, `docs/bugs/0787-*`).** The probe read `specials`,
+`customSpecials` and `specialsRecorded`; `buildVariantSummary` reads
+`variants.specials ?? variants.special` plus `specialsRecorded`. The SINGULAR
+`special` was in the renderer and in no version of the probe, so a line holding
+its add-ons there printed "Right Drawer" on every customer copy while the probe
+called it empty — and that false clean was quoted to the owner as "the data is
+fixed, only the printed text is stale" on HC-SO-012312.
+
+Three properties now hold, and the reason for each is in the script's own
+`SPECIAL_KEYS` comment:
+
+- the key list MIRRORS the renderer's, plus `specialChoices`;
+- the probe takes the UNION where the renderer takes an alternative
+  (`specials ?? special`) — the renderer has to pick one, a probe must not,
+  because *which key is this line using* is the question being asked;
+- every value printed is TAGGED with the key it came from, and each line prints
+  its full `variants` key inventory (names only — the values are money,
+  addresses and remarks, and this prints into a CI log), because a list can only
+  find what it knows to look for and the failure above was a key nobody listed.
+
+The list is COPIED, not imported: the renderer is TypeScript under `src/` and
+the probe is a dependency-free `.mjs` that runs before any build. That copy is
+the drift surface — widen the renderer's key list and this one does not follow.
+
+**Its sibling reads the ORDER'S OWN TRAIL: `backend/scripts/check-so-history.mjs`**
+(Actions -> *SO history check (read-only)*, one `doc_no` input). It prints every
+`scm.mfg_so_audit_log` row and every `scm.so_amendments` row oldest-first, with
+each field's from -> to, and marks the Processing / Delivery date pair with `>>`.
+It was written for HC-SO-012312, where a rep set the Processing Date, saw it come
+back empty and only got it to stick on a second attempt — three explanations had
+been reasoned out and all three refuted, so the trail was what was left. It
+ANSWERED that: the order carries exactly one `UPDATE_DETAILS` row in its life,
+and the three saves before it wrote lines only. A save that persists half a
+document and says nothing is the finding; the probe does not explain the gap and
+must not be read as if it did.
+
+Two properties it has to keep:
+
+- **Long-tail fields print to 400 characters, not 60** (`LONG_TAIL_FIELDS`,
+  `docs/bugs/0788-*`). `buildVariantSummary` emits `SPECIAL:` LAST, so a
+  bedframe's first 60 characters are fabric and dimensions and every spec change
+  printed identical on both sides. The widening is matched on the FIELD NAME, so
+  it stays a decision about which fields carry a tail rather than a blanket dump
+  into a CI log.
+- **No retired vocabulary in its field list.** `audit:vocabulary` refused the
+  pre-rename spelling of the Processing Date, correctly. A row older than that
+  rename is still PRINTED in full; it simply does not get the `>>` marker.
+
+**The third probe counts the DAMAGE the other two found: `backend/scripts/check-stale-line-desc2.mjs`**
+(Actions -> *Stale printed line spec census (read-only)*, optional `cutoff_utc`).
+An approved SPEC amendment rewrites the line's `variants`; rebuilding
+`description2` from them only reached production when #3551's deploy finished,
+`2026-09-10T10:50:39Z`. Every SPEC amendment approved before that instant moved
+the spec and left the printed sentence saying the old thing — one row with two
+answers, and whoever makes the item reads one of them
+(`docs/bugs/0789-*`).
+
+It never re-derives the expected sentence. The approval's own audit row already
+holds it: `applySoAmendment` writes `line_<code>_spec` from the SAME
+`buildVariantSummary` call that produces `description2`, before and after. A
+second implementation here would be the drift that `docs/bugs/0787-*` was about.
+
+Three properties to keep:
+
+- **UNCLEAR is its own outcome**, never folded into REBUILT or STALE. An item
+  code does not identify a LINE — HC-SO-012312 carries two `HILTON (A)-(Q)` —
+  so the match asks whether ANY line with that code prints the expected value,
+  and "neither" stays "neither". It is **listed, not just counted**: each row
+  prints WAS / ASKED FOR / PRINTS NOW, with cancelled lines shown and flagged,
+  because that third string is the whole reason the verdict is unclear. The
+  first version printed the number alone and the owner's first question was to
+  see them — a count of rows nobody can look at reads as a tidy remainder when
+  it is unfinished work.
+- **Approvals after the cutoff are counted separately, and that half is the
+  self-check.** A STALE there means the rebuild is not working and refutes the
+  premise the census was written on. A probe that can only confirm is not
+  evidence.
+- **Every order it names carries its salesperson, customer and status.** A list
+  of bare document numbers is a lookup task handed back to the reader, and the
+  person who has to raise the amendment is the one fact the list exists to
+  deliver. `salesperson_id` (joined to `scm.staff`) and the legacy `agent` free
+  text are printed together, because neither alone names the rep on every
+  migrated order.
+- **It reports; it does not repair.** Fixing an order means raising and
+  approving one more spec amendment, which carries a price authority
+  (`scm.amendment.approve_lines`). No script here may forge that.
+
+And the trap it fell into on its own first dispatch, worth knowing before you
+write any query that spans these two tables: **`scm.mfg_so_audit_log` links to
+its order with `so_doc_no`, `scm.mfg_sales_order_items` with `doc_no`.** Carrying
+one spelling into the other table is the right column name on the wrong table, it
+reads as correct in review, and no gate in this repo catches it because none of
+them opens the database (`docs/bugs/0792-*`).
 
 **A THIRD kind of reader was added on 2026-09-07: the REPORTS.** The AutoCount
 reconcile did not know this key existed, so every line closed by this very ruling
@@ -4367,6 +4562,85 @@ fall behind.
 Best-effort throughout, exactly like the AutoCount enqueue and the GL posting
 beside them — a failure never fails the operator's save, and the next roll
 self-heals.
+
+#### Editing a payment now reaches the GENERAL LEDGER too (2026-09-10, docs/bugs/0778)
+
+The table above is about the invoices. The BOOKS were a separate gap, and only
+the DELETE row ever closed it: `PATCH /:docNo/payments/:id` wrote the row,
+re-rolled the invoices, queued the AutoCount edit and stopped, so a corrected
+payment left its journal entry saying the old figure — silently. It now calls
+`repostSoPaymentBestEffort` (`scm/lib/so-payment-row.ts`), which reverses the
+old entry and books a fresh one. Same best-effort contract as everything else
+on this path, with one difference: a refusal is logged rather than swallowed,
+because it leaves the payment with no active entry.
+
+Two rules live in `backend/src/acc/payment-repost.ts`, not here. **Only four
+columns move the books** — `amount_sen`, `paid_at`, `method`,
+`merchant_provider` — so an approval-code or account-sheet fix re-posts
+nothing. And the correcting **contra is dated on the ORIGINAL entry's date**,
+so the wrong entry and its reversal net to zero in the month they were made;
+**DELETE keeps dating its contra TODAY**, because removing a payment is an
+event that happens today, and the two must not be merged.
+
+The UPDATE_PAYMENT audit's nine-column from → to comparison moved out of this
+route in the same change (`soPaymentFieldChanges`, beside
+`recordSoPaymentRow`): the audit records nine columns, the ledger reads four,
+and they are deliberately different questions. This route file is over its size
+ceiling and may only shrink, which is why the lift rode along.
+
+#### Who may correct an old payment: FINANCE (2026-09-10, docs/bugs/0780)
+
+The deferred rule `paymentRowMutable` reserved a place for in 2026-07-19 has
+landed, together with the permission it was waiting for. Owner + management:
+**已经和management 确定了，让权限在finance 这里更改.** The predicate takes a
+fourth argument and the ORDER of its rules is the design:
+
+| | |
+|---|---|
+| DRAFT | still fluid — the 2026-07-13 exemption, untouched |
+| **RECONCILED** | closed to EVERYONE, Finance included, and it beats the same-day window too |
+| same day | still fluid for whoever keyed it |
+| **may amend** | `scm.so_payment.amend` — Finance's door, granted in Team > Positions |
+| otherwise | the window that has always closed |
+
+Both the PATCH and the DELETE call `paymentMayChange`
+(`backend/src/acc/payment-reconciled.ts`), which is the one call that loads the
+reconciliation AND asks the predicate — two steps that must stay in step. It
+names WHICH of three places closed over the payment: a merchant settlement
+match on the row, a bank-statement match on its ACTIVE entry, or a closed month
+on the entry's MONEY-leg account. **Every read fails CLOSED** — an unreadable
+check refuses and says to retry, never "not reconciled".
+
+The two screens that render the edit and delete controls —
+`frontend/src/vendor/scm/components/PaymentsTable.tsx` (desktop) and
+`frontend/src/mobile/RecordedPayments.tsx` (mobile) — pass `mayAmend` and
+**never** pass `reconciled`: only the server can see a settlement match, so they
+offer the control on the permission alone and let the endpoint refuse. That is
+why the old refusal sentence now ends "ask Finance to adjust it" — it finally
+names a path that exists. Both screens read the key the same way
+(`can('scm.so_payment.amend')`); they have diverged on this predicate before
+(the delete path vs the edit path, 2026-07-19), so
+`frontend/src/vendor/scm/lib/soPaymentAmendClients.test.ts` pins that both still
+pass the fourth argument — dropping it compiles, type-checks, and silently hides
+the control from Finance again.
+
+**A reason is owed on the amend right, and only there (2026-09-10,
+docs/bugs/0785).** The predicate now says WHY a row may change (`via`), and
+both routes act on `via === 'amend'`: the PATCH takes `reason` in its body and
+the DELETE reads `?reason=` beside `?version=`; without one, both refuse with
+`reason_required`. Such a correction is audited with `source = 'amend'`, the
+reason in `note`, and two field changes — `ledger` (the original entry → the
+one booked in its place) and `ledgerReversal` (the contra that voided the
+original) — which is why the PATCH now re-posts BEFORE it writes the audit
+row. Two changes, not one: the first cut carried only the contra and the
+report read "0099 reversed → 0100", which a reader took to mean 0099 had been
+reversed (docs/bugs/0786). A
+same-day fix by whoever keyed the payment writes the audit row it always did
+(owner: 靠权限改的来决定). Both screens ask through `usePrompt` before the
+write and abandon it when the ask is dismissed; the mobile sheet is told by its
+parent through `reasonRequired`, because the permission and the draft flag live
+with the list. Finance reads the result on the Accounting page's
+**Corrections** tab (docs/modules/accounting.md).
 
 ### The BALANCE a human is shown — which total it subtracts from (2026-09-08)
 
@@ -4862,6 +5136,21 @@ Flow:
 
 `?summary=1` skips the view join + item read entirely (dashboard only needs status
 buckets) — do not fully-hydrate 500 rows for a count.
+
+### List free-text search (`?q=`)
+
+The paginated list's `?q=` runs ONE PostgREST `.or()` — built identically in the
+page-rows query and the money-KPI aggregate query, which must filter the same set
+— over `doc_no / debtor_name / debtor_code / agent / sales_location / ref /
+customer_so_no / branding` + phone. It must cover the fields `customerRefOf`
+(`ref || customer_so_no || po_doc_no`, `frontend/src/lib/customer-ref.ts`) can
+DISPLAY as the Reference, or a shown reference is unsearchable. That was the
+2026-09-09 bug: an order carrying its reference only in `customer_so_no` (the
+native New-SO path leaves `ref` null) rendered `PG10213` in the REFERENCE column
+yet could not be found by it — 21 live orders were in that state. `customer_so_no`
+was added to the search; `po_doc_no` is a 0%-filled dead column not projected onto
+this list and is intentionally not searched. Entry
+`docs/bugs/0755-so-list-search-ignored-customer-so-no-so-a-shown-reference-c.md`.
 
 ---
 

@@ -36,7 +36,7 @@ import { classifyJournal } from '../../acc/journal-class';
 import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched, settlementRowUnconfirm,
-  settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit,
+  settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit, settlementFindPayments,
   settlementBatchReceived, settlementReceiptUndo,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
 } from './accounting-settlement';
@@ -47,8 +47,9 @@ import {
 } from './accounting-bank';
 import { bankMonths, bankMonthDetail } from './accounting-bank-months';
 import { bankLocks, bankMonthLock, bankMonthUnlock } from './accounting-bank-locks';
+import { paymentCorrections } from './accounting-payment-corrections';
 import { bankConfigList, bankConfigSave } from './accounting-bank-config';
-import { payoutUpload, payoutList } from './accounting-payouts';
+import { payoutUpload, payoutList, payoutCharge, payoutChargeUndo } from './accounting-payouts';
 import {
   chartUnionHandler, chartTickHandler, chartImportHandler,
   chartRenameHandler, chartUpdateHandler, chartDeleteHandler, chartCreateHandler,
@@ -114,12 +115,18 @@ accounting.post('/settlement/receipts/:id/undo', settlementReceiptUndo);
 accounting.post('/settlement/rows/:id/confirm', settlementConfirmRow);
 accounting.post('/settlement/rows/:id/unconfirm', settlementRowUnconfirm);
 accounting.post('/settlement/rows/:id/ignore', settlementIgnoreRow);
+/* "Find the sale" — the card payments the window could not offer (docs/bugs/0792). */
+accounting.get('/settlement/rows/:id/find', settlementFindPayments);
 accounting.get('/settlement/watchlist', settlementWatchlist);
 accounting.get('/settlement/in-transit', settlementInTransit);
 /* The acquirer's own payment advice — Public Bank's IBG, which says which
    reports one bank credit pays (owner: 几份 excel 对一份 pdf). */
 accounting.post('/settlement/payouts', payoutUpload);
 accounting.get('/settlement/payouts', payoutList);
+/* A bank charge deducted from one day of an advice, booked to the account
+   Finance picks (docs/bugs/0787); and its undo. */
+accounting.post('/settlement/payouts/:id/days/:settledOn/charge', payoutCharge);
+accounting.delete('/settlement/payouts/:id/days/:settledOn/charge', payoutChargeUndo);
 
 /* Layer 4 — reconciling the BANK's own statement (brief §3.5). Registered the
    same way and for the same reason: one path each, every one in the matrix.
@@ -182,6 +189,9 @@ accounting.get('/bank/months/:accountCode/:month', bankMonthDetail);
    碰). The unlock asks a SECOND permission key inside its handler — reopening
    undoes a document somebody filed. */
 accounting.get('/bank/locks', bankLocks);
+/* The Finance report of payment corrections made on the amend right
+   (docs/bugs/0785) — a filtered read of the SO audit log. */
+accounting.get('/payment-corrections', paymentCorrections);
 accounting.post('/bank/months/:accountCode/:month/lock', bankMonthLock);
 accounting.post('/bank/months/:accountCode/:month/unlock', bankMonthUnlock);
 accounting.post('/bank/lines/:id/receipt', bankLineReceipt);

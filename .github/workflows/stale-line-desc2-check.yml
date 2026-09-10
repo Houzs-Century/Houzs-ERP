@@ -1,0 +1,47 @@
+name: Stale printed line spec census (read-only)
+
+# Answers "which Sales Orders print a spec their line no longer has?" without
+# anyone opening a SQL console. Actions already holds secrets.DATABASE_URL for
+# the deploy, so the check runs here and nobody handles the credential.
+#
+# Written 2026-09-10. Rebuilding a line's Description 2 from the amended variants
+# only started when #3551 shipped (deploy run 34467359474, backend job completed
+# 10:50:39Z). Every SPEC amendment approved before that left the printed sentence
+# saying the old thing, and HC-SO-012312 is the one that was found by eye.
+#
+# Manual trigger only — it is a diagnostic, not a gate, and a production DB read
+# must never run on a schedule that turns it into routine CI noise.
+on:
+  workflow_dispatch:
+    inputs:
+      cutoff_utc:
+        description: "When the rebuild went live (ISO 8601 UTC). Blank uses the shipped default."
+        required: false
+        type: string
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind (or displace) a release.
+concurrency:
+  group: stale-line-desc2-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-stale-line-desc2.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          CUTOFF_UTC: ${{ inputs.cutoff_utc }}

@@ -403,9 +403,6 @@
     "src/pages/ResetPassword.tsx": {
       "@typescript-eslint/no-explicit-any": 1
     },
-    "src/pages/Roles.tsx": {
-      "@typescript-eslint/no-explicit-any": 2
-    },
     "src/pages/Sales.tsx": {
       "@typescript-eslint/no-explicit-any": 12,
       "@typescript-eslint/no-floating-promises": 1,

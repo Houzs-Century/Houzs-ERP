@@ -22,6 +22,7 @@
 import { describe, it, expect } from 'vitest';
 import { reviseBoundPo } from './so-revision';
 import { deriveMfgPoUnitCost } from './po-pricing';
+import { parsePgrestInList } from './pgrest-in-list';
 
 /* ── Minimal chainable, awaitable PostgREST stand-in ────────────────────────
    Supports the exact surface reviseBoundPo + snapshotPo + deriveMfgPoUnitCost +
@@ -53,6 +54,13 @@ class Query {
   select() { return this; }
   eq(col: string, val: any) { this.filters.push({ kind: 'eq', col, val }); return this; }
   in(col: string, val: any[]) { this.filters.push({ kind: 'in', col, val }); return this; }
+  /* The ESCAPED in-list the shared readers now build — supabase-js cannot
+     serialise a value carrying a `"` (docs/bugs/0780). Parsed by the SAME
+     function the app writes with, never a second split(','). */
+  filter(col: string, op: string, val: string) {
+    if (op !== 'in') throw new Error(`fake: filter(${op}) is not implemented`);
+    return this.in(col, parsePgrestInList(val));
+  }
   lte() { return this; }
   order(col: string, opts?: { ascending?: boolean }) { this.orders.push({ col, asc: opts?.ascending !== false }); return this; }
   limit(n: number) { this.limitN = n; return this; }
@@ -329,6 +337,82 @@ describe('reviseBoundPo — ADD reconciles the missing PO line', () => {
   });
 });
 
+describe('reviseBoundPo — a scoped confirm on a MULTI-PO sales order still surfaces an uncovered added line', () => {
+  /* The bug (owner 2026-09-10, 「要,查到底并修掉」): the PO-Amendments confirm scopes
+     reviseBoundPo to ONE bound PO (onlyPoId), so on a sales order that already has
+     2+ live bound POs scopeCoversAll is false. That must NOT silence the warning
+     that an amendment-ADDED line reached no purchase order — otherwise the missing
+     order is only discovered on delivery day. The no-supplier / no-open-PO cases
+     are already decided per line against the FULL bound set, so scoping cannot make
+     them a false alarm. Two POs: POX (S1, WH1) + POY (S2, WH2), each hosting one
+     surviving line; L3 is the amendment's ADD. */
+  function twoPoAddStore(): Record<string, Row[]> {
+    const store = baseStore();
+    store.so_revisions = [{
+      amendment_id: AMD, revision: 1, po_id: null,
+      snapshot: { lines: [{ id: 'L1' }, { id: 'L2' }], poLinks: { L1: ['POI-1'], L2: ['POI-2'] } },
+    }];
+    store.purchase_orders = [
+      { id: 'POX', po_number: 'PO-2607-001', status: 'SUBMITTED', revision: 1,
+        supplier_id: 'S1', purchase_location_id: 'WH1', company_id: 1,
+        subtotal_sen: 1000, total_sen: 1000, expected_at: null },
+      { id: 'POY', po_number: 'PO-2607-002', status: 'SUBMITTED', revision: 1,
+        supplier_id: 'S2', purchase_location_id: 'WH2', company_id: 1,
+        subtotal_sen: 1500, total_sen: 1500, expected_at: null },
+    ];
+    store.mfg_sales_order_items = [
+      soLine({ id: 'L1', item_code: 'BF-1', qty: 1 }),
+      soLine({ id: 'L2', item_code: 'BF-2', qty: 1, warehouse_id: 'WH2', description: 'Bed Two' }),
+      soLine({ id: 'L3', item_code: 'BF-3', qty: 2, warehouse_id: 'WH1', description: 'Bed Three' }),
+    ];
+    store.purchase_order_items = [
+      poLine({ id: 'POI-1', so_item_id: 'L1', purchase_order_id: 'POX', item_code: 'BF-1', qty: 1, line_total_sen: 1000 }),
+      poLine({ id: 'POI-2', so_item_id: 'L2', purchase_order_id: 'POY', item_code: 'BF-2', qty: 1, warehouse_id: 'WH2', line_total_sen: 1500 }),
+    ];
+    // Surviving lines re-derive cleanly; BF-3 (the ADD) is bound per test.
+    store.supplier_material_bindings = [binding('BF-1', 'S1', 1000), binding('BF-2', 'S2', 1500)];
+    return store;
+  }
+
+  it('warns that the added item has no supplier bound — even though the recompute is scoped to one of two POs', async () => {
+    const store = twoPoAddStore();   // BF-3 has NO binding at all
+
+    const res = await reviseBoundPo(fakeSb(store), AMD, 'user-1', undefined, { onlyPoId: 'POX' });
+
+    expect(res.perPo.map((p) => p.poId)).toEqual(['POX']);           // scoped: only POX touched
+    expect(store.purchase_order_items.some((i) => i.so_item_id === 'L3')).toBe(false);
+    expect(res.warnings).toHaveLength(1);
+    expect(res.warnings[0]).toContain('Bed Three');
+    expect(res.warnings[0].toLowerCase()).toContain('no supplier');
+  });
+
+  it('warns that the added item is from a supplier with no open PO — even scoped on a 2-PO sales order', async () => {
+    const store = twoPoAddStore();
+    // BF-3 bound to S3, which owns NEITHER of the two open POs (S1, S2).
+    store.supplier_material_bindings.push(binding('BF-3', 'S3', 1500));
+
+    const res = await reviseBoundPo(fakeSb(store), AMD, 'user-1', undefined, { onlyPoId: 'POX' });
+
+    expect(res.perPo.map((p) => p.poId)).toEqual(['POX']);
+    expect(store.purchase_order_items.some((i) => i.so_item_id === 'L3')).toBe(false);
+    expect(res.warnings).toHaveLength(1);
+    expect(res.warnings[0].toLowerCase()).toContain('purchase order');
+  });
+
+  it('does NOT warn when the added line IS covered by a sibling PO the scope did not touch (no false alarm)', async () => {
+    const store = twoPoAddStore();
+    // BF-3 belongs to S2 = POY's supplier. Confirming POX must DEFER it to POY's
+    // own confirm silently, not warn — the line is covered, just not by this scope.
+    store.supplier_material_bindings.push(binding('BF-3', 'S2', 1500));
+
+    const res = await reviseBoundPo(fakeSb(store), AMD, 'user-1', undefined, { onlyPoId: 'POX' });
+
+    expect(res.perPo.map((p) => p.poId)).toEqual(['POX']);
+    expect(store.purchase_order_items.some((i) => i.so_item_id === 'L3')).toBe(false);  // deferred, not on POX
+    expect(res.warnings).toEqual([]);   // covered by POY — silence is correct
+  });
+});
+
 describe('reviseBoundPo — unchanged contracts still hold', () => {
   it('no bound PO ⇒ NO-OP (empty result, no warnings)', async () => {
     const store = baseStore();
@@ -350,5 +434,28 @@ describe('reviseBoundPo — unchanged contracts still hold', () => {
     ];
 
     await expect(reviseBoundPo(fakeSb(store), AMD, 'user-1')).rejects.toMatchObject({ code: 'received_floor' });
+  });
+});
+
+/* A SURVIVING line re-derived here used to keep its STALE carried SO photo, so a
+   code-swap that REPLACED the SO line left the PO showing a dead so-items/<old>
+   key (docs/bugs/0789). The ADD path already carried the current photo; the
+   re-derive now does too, preserving the PO's OWN uploads. */
+describe('reviseBoundPo — a surviving line re-carries the SO photos', () => {
+  it('re-syncs the stale carried SO photo and PRESERVES the PO own upload', async () => {
+    const store = baseStore();
+    store.mfg_sales_order_items = [soLine({ id: 'L1', item_code: 'BF-1', photo_urls: ['so-items/SO-1/L1/new.jpg'] })];
+    store.so_revisions = [{ amendment_id: AMD, revision: 1, snapshot: { lines: [{ id: 'L1' }], poLinks: { L1: ['POI-1'] } } }];
+    store.purchase_order_items = [
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1',
+               photo_urls: ['po-items/POX/POI-1/own.jpg', 'so-items/SO-1/L1/OLD.jpg'] }),
+    ];
+
+    await reviseBoundPo(fakeSb(store), AMD, 'user-1');
+
+    // The PO's own upload is kept; the stale carried key is replaced by the SO
+    // line's CURRENT photo — NOT left as the dead so-items/SO-1/L1/OLD.jpg.
+    expect(store.purchase_order_items.find((i) => i.id === 'POI-1')!.photo_urls)
+      .toEqual(['po-items/POX/POI-1/own.jpg', 'so-items/SO-1/L1/new.jpg']);
   });
 });
