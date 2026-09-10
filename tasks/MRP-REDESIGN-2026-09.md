@@ -21,7 +21,7 @@ Owner's per-category rule (supersedes 2026-07-17). One global toggle:
 | Step | State | Where |
 |---|---|---|
 | A1. Grouping logic rewrite (`po-grouping.ts` `groupKeyFor` + convert wiring `sofaSoDocNos`) + tests | **MERGED — PR #3602 on main (47ffa2644)** | was worktree `mrp-sofa-cover` (removed) |
-| A2. MRP search + sofa cover rides VISIBLY + the pull-in bug fix | **DONE — PR #3603, worktree `mrp-so-view`** | `frontend/src/pages/scm-v2/Mrp.tsx` |
+| A2. MRP search + sofa cover rides VISIBLY + the pull-in bug fix | **DONE — PR #3606, worktree `mrp-so-view`** | `frontend/src/pages/scm-v2/Mrp.tsx` |
 | A3. Bedframe "two POs" diagnosis | check built (PR #3601), awaiting merge+dispatch | see Track C |
 
 **A2 finding (the crux).** The A1 note below was HALF WRONG. `gatherSofa`'s
@@ -69,10 +69,10 @@ only works once on main).**
 - A1 grouping — `PR #3602` **MERGED** to main.
 - Others tab flicker fix — `PR #3596` (area-tag fix pushed, auto-merge armed).
 - Track C read-only diagnostic — `PR #3601` (completeness-claim reworded, auto-merge armed).
-- A2 (this) — `PR #3603` (search + sofa cover riders + pull-in fix).
+- A2 (this) — `PR #3606` (search + sofa cover riders + pull-in fix).
 
 ## Worktrees in play
-- `mrp-so-view` = `feat/mrp-so-view` (Track A2 — PR #3603)
+- `mrp-so-view` = `feat/mrp-so-view` (Track A2 — PR #3606)
 - `mrp-grouping-diag` = `diag/mrp-grouping-facts` (Track C — PR #3601)
 - `others-tab-stable` = `fix/others-tab-always` (PR #3596)
 - (removed after merge: `mrp-sofa-cover` = `feat/mrp-combine-perso-grouping`)
