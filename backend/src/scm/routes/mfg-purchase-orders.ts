@@ -33,12 +33,9 @@ import {
   type MaintenanceConfig,
   type PoPriceMatrix,
 } from '../shared/mfg-pricing';
-import {
-  orderSofaModuleRowsWithinBuilds,
-  sortLinesByStoredLineNo,
-  sortSoLinesByGroupRank,
-} from '../shared/so-line-display';
+import { orderSofaModuleRowsWithinBuilds, sortLinesByStoredLineNo, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { inPoLineOrder, nextPoLineNo, sortBySourceSoLine, stampPoLineNos } from '../lib/po-line-order';
+import { poConvertLineRow } from '../lib/po-convert-line';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { changedPoIdentityLockCols, poIdentityLockedRefusal } from '../shared/po-identity-lock';
 import { poVariantGaps, poVariantCheckFailedBody, poVariantConfirmRefusal, poWarehouseGap, PO_WAREHOUSE_REQUIRED } from './po-gates';
@@ -369,11 +366,8 @@ const HEADER_COLS =
   HOLD_COLUMNS;
 
 const ITEM_COLS =
-  /* line_no (mig 20260910T0547) — the printed line order. Selected here because
-     the PDF re-sorts on it client-side (purchase-order-pdf.ts) rather than
-     trusting whatever order a caller happened to fetch the items in. */
-  'line_no, ' +
-  'id, purchase_order_id, binding_id, material_kind, item_code, material_name, ' +
+  // line_no (mig 20260910T0547) — the printed order; the PDF re-sorts on it.
+  'line_no, id, purchase_order_id, binding_id, material_kind, item_code, material_name, ' +
   'supplier_sku, qty, unit_price_sen, line_total_sen, received_qty, notes, created_at, ' +
   /* PR #41 — variant fields (migration 0056) */
   'item_group, description, description2, uom, discount_sen, unit_cost_sen, ' +
@@ -900,9 +894,8 @@ mfgPurchaseOrders.get('/:id', async (c) => {
      LHF→NA→RHF, mains→accessories→services), mirroring the SO detail GET
      (mfg-sales-orders.ts). The shared helper keys on `item_code`; PO lines
      expose `item_code`, so sort a shimmed view that carries the original
-     row back unchanged. `inPoLineOrder` above is the stored order (line_no,
-     then created_at, id) and both sorts below are STABLE, so a line's place on
-     the document survives them — pure ordering, no persistence touched. */
+     row back unchanged. `inPoLineOrder` above is the stored order and both
+     sorts below are STABLE — pure ordering, no persistence touched. */
   type PoItemRow = Record<string, unknown> & { id: string; item_code: string };
   const itemRows = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
@@ -1360,11 +1353,7 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
         photosBySoItem.set(r.id, r.photo_urls ?? []);
       }
     }
-    /* line_no (owner 2026-09-10) — the request's array order IS the order the
-       operator arranged on the New PO form, and the From-SO picker fills that
-       form in the sales order's order. Numbering it here is what makes the
-       document print back the way it was entered instead of however Postgres
-       returns rows that share a created_at. */
+    // line_no — the request's array order IS the operator's (lib/po-line-order.ts).
     const itemsToInsert = stampPoLineNos(itemRows.map((r) => ({
       ...r,
       purchase_order_id: header.id,
@@ -1630,11 +1619,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   // + delivery date below.
   type SoItem = {
     id: string; doc_no: string; item_code: string; description: string | null;
-    /* The SO's own line order (owner 2026-09-10: 「我们的 Sales Order 都是从 L 到
-       R」). The PO derives its own line_no from this — see lib/po-line-order.ts.
-       Nullable: 12 production SO lines carry no line_no. */
-    line_no: number | null;
-    qty: number; po_qty_picked: number; unit_price_sen: number;
+    // line_no: the SO's own order, which the PO's derives from (lib/po-line-order.ts).
+    line_no: number | null; qty: number; po_qty_picked: number; unit_price_sen: number;
     line_delivery_date: string | null;
     // Phase 3 (2026-05-29) — carry the SO line's category + variant bag so the
     // PO line cost can auto-price from the supplier matrix + maintenance
@@ -1813,10 +1799,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       // Commander 2026-05-29 — the source SO line id, threaded to the PO line so
       // the append-to-existing-PO path can persist so_item_id (release-on-delete).
       soItemId:  row.id || null,
-      /* Owner 2026-09-10 — the SO line's own position, which decides where this
-         line sits on the PO (sortBySourceSoLine). Carried here rather than
-         re-read later because the supplier grouping below is what reorders. */
-      soLineNo:  row.line_no ?? null,
+      soLineNo:  row.line_no ?? null,   // decides its place on the PO
       // Owner 2026-08-10 — the SO line's photo keys, carried to the PO line.
       photoUrls: row.photo_urls ?? [],
       // Commander 2026-05-31 — per-pick supplier override (MRP), the highest
@@ -2145,12 +2128,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     itemCode: string; itemName: string; qty: number; supplierSku: string; unitPriceSen: number;
     warehouseId: string | null; deliveryDate: string | null;
     itemGroup: string | null; variants: Record<string, unknown> | null;
-    soItemId: string | null;
-    /* Owner 2026-09-10 — where the SOURCE sales order holds this line. The
-       bucket's lines are sorted on it before the insert, so a PO reads in its
-       sales order's order no matter what order the picks arrived in (the MRP
-       picker groups by ITEM, so they routinely do not). */
-    soDocNo: string | null; soLineNo: number | null;
+    soItemId: string | null; soDocNo: string | null; soLineNo: number | null;
     photoUrls: string[];
   };
   type Bucket = {
@@ -2228,8 +2206,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       itemGroup: it.itemGroup,
       variants: it.variants,
       soItemId: it.soItemId,
-      soDocNo: it.soDocNo,
-      soLineNo: it.soLineNo,
+      soDocNo: it.soDocNo, soLineNo: it.soLineNo,
       photoUrls: it.photoUrls,
     });
     bucket.soDocNos.add(it.soDocNo);
@@ -2266,40 +2243,17 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
        supplier matches the target and append all their lines. Each line keeps
        its own per-line warehouse_id (the SO line's warehouse); the target PO's
        header purchase_location_id is left as-is. */
-    /* In the SALES ORDERS' order, not the picks' (owner 2026-09-10). Buckets
-       are gathered across warehouses here, so the sort spans them — which is
-       what "the sales order's order" means on a PO merged from several. */
+    /* In the SALES ORDERS' order, not the picks' — across buckets, which is
+       what that means on a PO merged from several (lib/po-line-order.ts). */
     const targetLines = sortBySourceSoLine([...byGroup.values()]
       .filter((bk) => bk.supplierId === target.supplier_id)
       .flatMap((bk) => bk.lines));
     if (targetLines.length === 0) {
       return c.json({ error: 'supplier_mismatch', reason: 'None of the picked SO lines belong to this PO’s supplier.' }, 409);
     }
-    /* Appended lines continue after whatever the PO already holds. A PO whose
-       lines predate line_no answers 1 here, and the read sorts NULLS FIRST, so
-       the new line still lands after them (lib/po-line-order.ts). */
     const appendFrom = await nextPoLineNo(supabase, target.id);
-    const rows = stampPoLineNos(targetLines.map((l) => ({
-      purchase_order_id: target.id,
-      material_kind: 'mfg_product',
-      item_code: l.itemCode,
-      material_name: l.itemName,
-      supplier_sku: l.supplierSku,
-      qty: l.qty,
-      unit_price_sen: l.unitPriceSen,
-      line_total_sen: l.qty * l.unitPriceSen,
-      delivery_date: l.deliveryDate,
-      warehouse_id:  l.warehouseId,
-      item_group: l.itemGroup,
-      variants: l.variants,
-      description2: buildVariantSummary(String(l.itemGroup ?? ''), l.variants ?? null) || null,
-      // Release-on-delete link (migration 0098).
-      so_item_id: l.soItemId,
-      // Owner 2026-08-10 (migration 0274) — the source SO line's photos.
-      photo_urls: l.photoUrls,
-      // Commander 2026-05-31 — MRP-origin lines are reference-only (no SO lock).
-      from_mrp: fromMrp,
-    })), appendFrom);
+    const rows = stampPoLineNos(
+      targetLines.map((l) => poConvertLineRow(target.id, l, fromMrp)), appendFrom);
     const { error: iErr } = await supabase.from('purchase_order_items').insert(stampCompany(rows, c));
     if (iErr) return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500);
     await recomputePoTotals(supabase, target.id);
@@ -2409,42 +2363,10 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       continue;
     }
 
-    /* A fresh PO numbers from 1, in the SALES ORDERS' order rather than the
-       picks' (owner 2026-09-10 — see lib/po-line-order.ts). */
-    const rows = stampPoLineNos(sortBySourceSoLine(bucket.lines).map((l) => ({
-      purchase_order_id: header.id,
-      material_kind: 'mfg_product',
-      item_code: l.itemCode,
-      material_name: l.itemName,
-      supplier_sku: l.supplierSku,
-      qty: l.qty,
-      unit_price_sen: l.unitPriceSen,
-      line_total_sen: l.qty * l.unitPriceSen,
-      /* Commander 2026-05-28 — per-line delivery date = the source SO LINE's
-         date; per-line warehouse = the SO's sales_location warehouse. Both
-         may be null when the SO didn't carry them — that's allowed. */
-      delivery_date: l.deliveryDate,
-      warehouse_id:  l.warehouseId,
-      /* Commander 2026-05-29 — carry the variant through to the PO so the line
-         shows its config + the MRP can match outstanding PO supply by variant. */
-      item_group: l.itemGroup,
-      variants: l.variants,
-      description2: buildVariantSummary(String(l.itemGroup ?? ''), l.variants ?? null) || null,
-      // Release-on-delete link (migration 0098) — every from-SO line carries
-      // its source SO line so recomputeSoPicked can release it on delete/cancel.
-      so_item_id: l.soItemId,
-      /* Owner 2026-08-10 (migration 0274) — the source SO line's photo keys.
-         The array is copied, the R2 objects are not: SO line and PO line point
-         at the same objects, so a photo deleted on the SO also leaves the PO.
-         PER LINE, never deduplicated across the bucket — one sofa build is many
-         compartment lines that legitimately share the same build photo, and each
-         PO line must carry it or that compartment shows no photo at all. Lines
-         stay 1:1 with their SO line (see the merge note above), so this is
-         simply each line's own array. */
-      photo_urls: l.photoUrls,
-      // Commander 2026-05-31 — MRP-origin lines are reference-only (no SO lock).
-      from_mrp: fromMrp,
-    })), 1);
+    // A fresh PO numbers from 1, in the sales orders' order, not the picks'.
+    // Both arms build the same row — lib/po-convert-line.ts owns its shape.
+    const rows = stampPoLineNos(
+      sortBySourceSoLine(bucket.lines).map((l) => poConvertLineRow(header.id, l, fromMrp)), 1);
     const { error: iErr } = await supabase.from('purchase_order_items').insert(stampCompany(rows, c));
     if (iErr) {
       await supabase.from('purchase_orders').delete().eq('id', header.id);
@@ -3129,8 +3051,7 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
     supplier_delivery_date_4: dateOrNull(it.supplierDeliveryDate4),
     warehouse_id: (it.warehouseId as string) ?? null,
   };
-  // Owner 2026-09-10 — a hand-added line goes at the END of the document.
-  const lineNo = await nextPoLineNo(sb, poId);
+  const lineNo = await nextPoLineNo(sb, poId);   // a hand-added line goes last
   const { data, error } = await sb.from('purchase_order_items').insert({ ...row, line_no: lineNo, company_id: activeCompanyId(c) }).select('*').single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
   await recomputePoTotals(sb, poId);
@@ -3867,16 +3788,11 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
     unit_price_sen: number;
     discount_sen: number | null; unit_cost_sen: number | null;
     variants: unknown; uom: string | null; remark: string | null;
-    photo_urls: string[] | null;
-    /* The SO's own position, which decides where these lines land on the PO. */
-    line_no: number | null;
+    photo_urls: string[] | null; line_no: number | null;
   };
-  /* Owner 2026-09-10 — append in the SALES ORDER's own order. This path reads
-     one SO with no ORDER BY, so without this the lines land in whatever order
-     PostgREST returned them (lib/po-line-order.ts). */
-  const notOnPo = sortBySourceSoLine(
-    (wanted as SoItem[]).map((r) => ({ ...r, soDocNo, soLineNo: r.line_no })),
-  ).filter((r) => !existingSet.has(r.item_code));
+  // In the SALES ORDER's own order — this read has no ORDER BY of its own.
+  const notOnPo = sortBySourceSoLine((wanted as SoItem[]).map((r) => ({ ...r, soDocNo, soLineNo: r.line_no })))
+    .filter((r) => !existingSet.has(r.item_code));
   /* F1 audit fix (2026-06-10) — convert ONLY the unpicked remainder. This path
      used to re-copy the FULL qty on every call regardless of po_qty_picked,
      so converting the same SO into a second PO double-ordered the supplier. */
@@ -3958,8 +3874,7 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
     return { cost, supplierSku: b.supplier_sku };
   };
 
-  // Owner 2026-09-10 — appended lines continue after the PO's highest line_no.
-  const convertFrom = await nextPoLineNo(sb, poId);
+  const convertFrom = await nextPoLineNo(sb, poId);   // appended lines go last
   const rows = stampPoLineNos(toInsert.map((it) => {
     const remaining = Math.max(0, Number(it.qty ?? 0) - Number(it.po_qty_picked ?? 0));
     const { cost, supplierSku } = supplierCostFor(it);

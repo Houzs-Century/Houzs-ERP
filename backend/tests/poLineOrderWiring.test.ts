@@ -83,7 +83,7 @@ describe('the stored order reaches the screen and the paper', () => {
     expect(src).toContain("inPoLineOrder(supabase.from('purchase_order_items').select(ITEM_COLS)");
     /* The column has to be SELECTED or the order is invisible to the PDF, which
        re-sorts on it client-side. */
-    expect(src).toContain("'line_no, '");
+    expect(src).toContain("'line_no, id, purchase_order_id,");
   });
 
   test('no read spells the order out by hand beside the helper', () => {
