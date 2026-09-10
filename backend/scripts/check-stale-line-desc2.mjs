@@ -59,6 +59,12 @@
 //
 // RE-RUN: safe and free. It reads and prints; running it twice changes nothing.
 //
+// Every order it names carries its SALESPERSON, its customer and its status on
+// the same line. A list of bare document numbers is a lookup task handed back to
+// the reader — nine of them is nine lookups before anybody can start — and the
+// person who has to raise the amendment is the one fact the list exists to
+// deliver.
+//
 // It says which orders print the wrong sentence. It does NOT repair them —
 // repairing means raising and approving an amendment per order, which is a
 // business act with a price authority attached, and no script here may forge it.
@@ -160,6 +166,27 @@ async function main() {
         SELECT item_code, description2, cancelled
           FROM scm.mfg_sales_order_items
          WHERE doc_no = ${docNo}`;
+      /* WHO has to act, on the SAME row as what has to be done. A list of
+         document numbers is a lookup task handed back to the reader; nine of
+         them is nine lookups before anybody can start. `salesperson_id` is the
+         column the handover tool keys on, and `agent` is the legacy free text
+         that is all some migrated orders carry — printed together because
+         neither alone names the rep on every order. */
+      const [head] = await sql`
+        SELECT so.doc_no, so.status, so.debtor_name, so.agent,
+               s.name AS salesperson_name
+          FROM scm.mfg_sales_orders so
+          LEFT JOIN scm.staff s ON s.id = so.salesperson_id
+         WHERE so.doc_no = ${docNo}`;
+      const who = (() => {
+        const named = txt(head?.salesperson_name).trim();
+        const legacy = txt(head?.agent).trim();
+        if (named && legacy && named !== legacy) return `${named} (book: ${legacy})`;
+        return named || legacy || "(no salesperson on this order)";
+      })();
+      const heading =
+        `${docNo} — ${who} — ${txt(head?.debtor_name) || "(no customer)"}` +
+        ` — ${txt(head?.status) || "(no status)"}`;
       const live = lines.filter((l) => !l.cancelled);
       const stale = [];
       const unclear = [];
@@ -182,8 +209,8 @@ async function main() {
         }
       }
       for (const ch of entry.after) nAfter[verdictOf(ch, live)] += 1;
-      if (stale.length > 0) staleDocs.push({ docNo, stale });
-      if (unclear.length > 0) unclearDocs.push({ docNo, unclear });
+      if (stale.length > 0) staleDocs.push({ heading, stale });
+      if (unclear.length > 0) unclearDocs.push({ heading, unclear });
     }
 
     note("---- approvals BEFORE the cutoff (the affected population) ----");
@@ -200,7 +227,7 @@ async function main() {
       note("  NONE. Nothing to chase.");
     }
     for (const d of staleDocs) {
-      note(`  ${d.docNo} — ${d.stale.length} line(s)`);
+      note(`  ${d.heading} — ${d.stale.length} line(s)`);
       for (const ch of d.stale) {
         note(`      ${ch.code}`);
         note(`        PRINTS NOW: ${clip(ch.from, 300)}`);
@@ -220,7 +247,7 @@ async function main() {
       note("  Something changed it after the approval, or the line is gone. Read them.");
     }
     for (const d of unclearDocs) {
-      note(`  ${d.docNo} — ${d.unclear.length} row(s)`);
+      note(`  ${d.heading} — ${d.unclear.length} row(s)`);
       for (const ch of d.unclear) {
         note(`      ${ch.code}   (approved ${ch.at})`);
         note(`        WAS       : ${clip(ch.from, 300)}`);
