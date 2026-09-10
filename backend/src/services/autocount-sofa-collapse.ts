@@ -252,6 +252,19 @@ export const AC_DESC2_MAX = 100;
 
 const specialKey = (s: string) => String(s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/NILON/g, 'NYLON');
 
+/** The same pieces, in any order. Used ONLY by the last-resort echo — every
+ *  other comparison in this file is order-sensitive, because the order of a
+ *  sofa's pieces IS the sofa. */
+function sameMultiset(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const count = (xs: string[]) => xs.reduce<Map<string, number>>(
+    (m, x) => m.set(up(x), (m.get(up(x)) ?? 0) + 1), new Map());
+  const A = count(a);
+  const B = count(b);
+  for (const [k, n] of A) if (B.get(k) !== n) return false;
+  return true;
+}
+
 function sameSpecials(a: string[], b: string[]): boolean {
   const A = new Set(a.map(specialKey).filter(Boolean));
   const B = new Set(b.map(specialKey).filter(Boolean));
@@ -359,6 +372,13 @@ function sharedDescription(lines: CollapsibleLine[]): string | null {
 function collapseRun(
   run: { line: CollapsibleLine; index: number; compartment: string }[],
   model: string,
+  /* Did the ACCOUNT BOOK group these lines, by their shared DtlKey, rather than
+     this file's adjacency rule? Required rather than defaulted, because it
+     decides which side states the ARRANGEMENT: a gathered run reaches here in
+     the ERP's insertion order, which says nothing about how the sofa is built,
+     while the book's text says exactly that. Defaulting it either way makes one
+     of the two callers silently wrong (CLAUDE.md, BUG CLASS optional-param-noop). */
+  bookGrouped: boolean,
 ): { lines: CollapsedLine[] } | { refusal: string } {
   const codes = run.map((r) => r.line.item_code);
   const desc2 = String(run[0].line.description2 ?? '').trim();
@@ -452,6 +472,22 @@ function collapseRun(
   const colour = colourRaw ? liveColour(colourRaw) : null;
   const specials = readSpecials(v).length ? readSpecials(v) : ps.specials;
 
+  /* 0. WHEN THE BOOK GROUPED THESE LINES, THE BOOK'S ORDER IS THE SOFA.
+     A gathered run arrives in the ERP's INSERTION order, and that order states
+     nothing about how the sofa is built: HC-SO-001526's two ends arrive
+     [2A(RHF), 1A(LHF)] while the book holds `1EL + 2ER`. Composing from the
+     insertion order round-trips happily and writes the MIRROR of the sofa the
+     book records — the classic wrong answer on this subject, and one nothing
+     downstream would catch.
+
+     So for a gathered run whose pieces are the book's pieces as a MULTISET, the
+     ORDER is taken from the book's own text and everything below composes in
+     that order. The line's money, warehouse and dates still come from the ERP
+     rows, which are not reordered; only the arrangement comes from the book,
+     which is the one thing a row order cannot state. Size, colour and specials
+     are still compared EXACTLY, so a real edit to any of them recomposes. */
+  const pieces = bookGrouped && sameMultiset(build, compartments) ? build : compartments;
+
   /* 1. ECHO — the stored text still decodes to exactly what the ERP holds.
      THE COMPARTMENTS ARE NOT THE WHOLE BUILD. A fabric colour, a seat height or
      a special order can change while the piece list does not, and echoing then
@@ -466,9 +502,12 @@ function collapseRun(
      HC-SO-013339's stored Desc2 is 107 characters and the text it would have
      written is 30. Over-long stored text now falls through to compose, which
      either spells the build inside the column or refuses it visibly. */
-  if (reps > 0
+  if ((reps > 0 || pieces !== compartments)
     && desc2.length <= AC_DESC2_MAX
     && decodesTo(desc2, model, build, { size, colour, specials }).ok) {
+    /* A gathered run is ONE build by the book's own key, so it emits one line;
+       the repeat arithmetic below is for a run that holds N identical sofas. */
+    if (pieces !== compartments) return { lines: [mkLine(run, desc2, 'echo')] };
     const out: CollapsedLine[] = [];
     for (let k = 0; k < reps; k += 1) {
       out.push(mkLine(run.slice(k * build.length, (k + 1) * build.length), desc2, 'echo'));
@@ -500,10 +539,10 @@ function collapseRun(
      diagnosis is what went wrong with the document as it stands, not with a
      rewrite of it. */
   const attempt = (sp: string[]): { text: string } | { why: string } => {
-    const t = composeSofaDesc2(compartments, { size, colour, specials: sp });
+    const t = composeSofaDesc2(pieces, { size, colour, specials: sp });
     if (!t) {
       return {
-        why: `cannot spell [${compartments.join(', ')}] in the AutoCount Desc2 grammar `
+        why: `cannot spell [${pieces.join(', ')}] in the AutoCount Desc2 grammar `
           + `(stored Desc2 "${desc2}" decodes to [${build.join(', ') || 'nothing'}])`,
       };
     }
@@ -516,7 +555,7 @@ function collapseRun(
     /* The gate is asked about the text that is ACTUALLY SENT, with the specials
        that are actually in it. Comparing pointed text against the full special
        list would fail every time and make the second attempt dead code. */
-    const g = decodesTo(t, model, compartments, { size, colour, specials: sp });
+    const g = decodesTo(t, model, pieces, { size, colour, specials: sp });
     if (!g.ok) return { why: `composed Desc2 does not survive a decode: ${g.why}` };
     return { text: t };
   };
@@ -526,6 +565,32 @@ function collapseRun(
   if (specials.length) {
     const pointed = attempt([SPECIAL_ORDER_POINTER]);
     if ('text' in pointed) return { lines: [mkLine(run, pointed.text, 'compose')] };
+  }
+
+  /* 4. THE BOOK'S OWN TEXT, as a LAST RESORT and only on a MULTISET match.
+     The alternative here is refusing the whole document, so what this sends is
+     weighed against nothing arriving at all — and what it sends is the text the
+     account book ALREADY HOLDS. On a migrated line `description2` is the book's
+     own Desc2, copied by the importer; re-sending it changes that line by
+     nothing.
+
+     MULTISET, not sequence, and ONLY here. The ERP's line order is insertion
+     order; the book's text states the arrangement. HC-SO-000814 is the case:
+     the ERP holds [L(LHF), 2A(RHF), 1NA] and the book's text decodes to
+     [L(LHF), 1NA, 2A(RHF)] — the same three pieces, and the book's order is the
+     physical one, because an arm piece is an END and nothing follows it.
+
+     WHY IT IS NOT THE ECHO RULE AT THE TOP OF THIS FUNCTION. Relaxing THAT to a
+     multiset would let a genuine re-arrangement keep its old text — a chaise
+     moved from the left end to the right is the same pieces and a different
+     sofa, and the mirror is the classic wrong answer here. Reached only after
+     the composer has failed, this cannot hide an edit: a re-arrangement that
+     composes is written, and one that does not compose was never going to
+     reach the book at all. Size, colour and specials are still compared
+     EXACTLY, by the same decodesTo the composer answers to. */
+  if (desc2.length <= AC_DESC2_MAX && sameMultiset(build, compartments)
+    && decodesTo(desc2, model, build, { size, colour, specials }).ok) {
+    return { lines: [mkLine(run, desc2, 'echo')] };
   }
   return { refusal: full.why };
 }
@@ -538,9 +603,58 @@ function collapseRun(
  * `refusals` with a reason a human can act on; it is the CALLER's job to decide
  * that a document with any refusal does not sync (see toDetails).
  */
+/**
+ * The sofas whose pieces the BOOK says are one line, and this file's own
+ * adjacency rule would not put together.
+ *
+ * A sofa is ONE line in AutoCount and several here, and every piece carries that
+ * one line's DtlKey (`docs/autocount-integration-map.md` 4.2). The runs below
+ * are formed by adjacency, which is right whenever nothing interrupts a sofa and
+ * wrong the moment something does: HC-SO-001526 holds `1EL` and `2ER` of one
+ * sofa with ANOTHER sofa's two lines between them, so each end was collapsed
+ * alone — and `1EL` by itself decodes to a single seat, not a left arm. Four
+ * more documents are the same shape (HC-SO-001255, HC-SO-002315, HC-SO-004716,
+ * HC-SO-012016), measured on production 2026-09-10.
+ *
+ * NON-CONTIGUOUS ONLY, deliberately. A run the adjacency rule already forms is
+ * left to it, so this can only change the documents that are broken today.
+ *
+ * SAME MODEL AS WELL AS SAME KEY. A key is the book's line, and two different
+ * models cannot be one build; disagreeing models mean something is wrong with
+ * the data, and gathering them would hide it behind a composed line.
+ */
+function scatteredByBookLine(
+  lines: CollapsibleLine[],
+): Map<number, { line: CollapsibleLine; index: number; compartment: string }[]> {
+  const byKey = new Map<string, { line: CollapsibleLine; index: number; compartment: string }[]>();
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const split = splitSofaCode(line.item_code);
+    if (!split) continue;
+    if (line.item_group != null && up(line.item_group) !== 'SOFA') continue;
+    const key = line.linked_ac_dtlkey;
+    if (key == null) continue;
+    const k = `${up(split.model)}::${String(key)}`;
+    const bucket = byKey.get(k) ?? [];
+    bucket.push({ line, index, compartment: split.compartment });
+    byKey.set(k, bucket);
+  }
+  const out = new Map<number, { line: CollapsibleLine; index: number; compartment: string }[]>();
+  for (const group of byKey.values()) {
+    if (group.length < 2) continue;
+    const contiguous = group.every((x, i) => i === 0 || x.index === group[i - 1].index + 1);
+    if (contiguous) continue;
+    out.set(group[0].index, group);
+  }
+  return out;
+}
+
 export function collapseSofaLines(lines: CollapsibleLine[]): CollapseResult {
   const out: CollapsedLine[] = [];
   const refusals: SofaRefusal[] = [];
+  const scattered = scatteredByBookLine(lines);
+  const consumed = new Set<number>();
+  for (const group of scattered.values()) for (const x of group) consumed.add(x.index);
   let run: { line: CollapsibleLine; index: number; compartment: string }[] = [];
   let runModel: string | null = null;
   let runDesc2: string | null = null;
@@ -589,7 +703,7 @@ export function collapseSofaLines(lines: CollapsibleLine[]): CollapseResult {
       return;
     }
 
-    const r = collapseRun(run, runModel);
+    const r = collapseRun(run, runModel, false);
     if ('refusal' in r) {
       refusals.push({
         sourceIndexes: run.map((x) => x.index),
@@ -605,6 +719,26 @@ export function collapseSofaLines(lines: CollapsibleLine[]): CollapseResult {
   };
 
   lines.forEach((line, index) => {
+    /* A piece the BOOK has already grouped. The whole build is emitted at the
+       position of its FIRST piece so the document's line order is preserved;
+       the others are skipped, because they are already in that run. */
+    if (consumed.has(index)) {
+      const group = scattered.get(index);
+      if (!group) return;
+      flush();
+      const gModel = splitSofaCode(group[0].line.item_code)?.model ?? '';
+      const gr = collapseRun(group, gModel, true);
+      if ('refusal' in gr) {
+        refusals.push({
+          sourceIndexes: group.map((x) => x.index),
+          itemCodes: group.map((x) => x.line.item_code),
+          reason: `sofa ${gModel}: ${gr.refusal}`,
+        });
+      } else {
+        out.push(...gr.lines);
+      }
+      return;
+    }
     const split = splitSofaCode(line.item_code);
     /* item_group is advisory: the cutover importer sets 'sofa' on every
        compartment, but a hand-built line may leave it null. The compartment
