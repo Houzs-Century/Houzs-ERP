@@ -139,6 +139,20 @@ it; this only makes it three specific questions instead of one open one.
 `scm.inventory_lots` records a warehouse and nothing finer, so there is no shelf
 position to send anyone to. All 21 pieces are in BALAKONG WAREHOUSE.
 
+> **The nine are now COSTED (2026-09-10).** When this was filed they carried
+> `unit_cost_sen = 0`, which is why the duplicate tool could refuse them without
+> anyone having to weigh a number. The costing lane has since closed that gap
+> ([#3486](https://github.com/Houzs-Century/Houzs-ERP/pull/3486),
+> [#3495](https://github.com/Houzs-Century/Houzs-ERP/pull/3495)); re-read live the
+> same day, all nine now carry a cost — 3 of 3 in each of the three batches. So
+> the two answers the floor check chooses between are no longer symmetric in
+> cost: **retiring them now removes inventory value, and re-coding them moves it
+> between models.** Neither is the free correction it would have been on
+> 2026-09-08. The floor check is unchanged and still the thing that settles it;
+> what changed is that the fix which follows it needs the owner's word about
+> money. See `docs/bugs/0721` for the same shift across the whole duplicate
+> population.
+
 **Why it is not "just" 9 pieces.** A sofa is sold as a set of compartments, so
 9 pieces read as 3 whole sofas in
 `backend/scripts/lib/sofa-piece-fold.mjs` — the arithmetic the AutoCount stock
