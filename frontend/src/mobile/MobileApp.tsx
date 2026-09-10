@@ -43,6 +43,7 @@ const MobileInbox = lazy(() => import("./MobileInbox").then((m) => ({ default: m
 const MobileServiceCase = lazy(() => import("./MobileServiceCase").then((m) => ({ default: m.MobileServiceCase })));
 const MobilePMS = lazy(() => import("./MobilePMS").then((m) => ({ default: m.MobilePMS })));
 const MobileMailCenter = lazy(() => import("./MobileMailCenter").then((m) => ({ default: m.MobileMailCenter })));
+const MobileRoles = lazy(() => import("./MobileRoles").then((m) => ({ default: m.MobileRoles })));
 const MobileAnnouncements = lazy(() => import("./MobileAnnouncements").then((m) => ({ default: m.MobileAnnouncements })));
 // The unacknowledged-notice pop-up. Lazy like every other mobile screen, and
 // only mounted once the unread badge says something IS waiting — that hook
@@ -105,6 +106,7 @@ type Screen =
   | { t: "delivery-planning" }
   | { t: "pms"; projectId?: number }
   | { t: "mail" }
+  | { t: "roles" }
   | { t: "announcements" }
   | { t: "inbox" }
   /* A real mobile destination this user's position may not open. Reached only
@@ -137,6 +139,7 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/mail-center") return { t: "mail" };
   if (path === "/announcements") return { t: "announcements" };
   if (path === "/activity-inbox") return { t: "inbox" };
+  if (path === "/roles") return { t: "roles" };
   if (path === "/scm/delivery-planning") return { t: "delivery-planning" };
   // Fleet Health on a phone IS the driver's mileage capture; the desktop Fleet
   // Health dashboard (plans admin + board) is the same URL's desktop surface.
@@ -434,6 +437,11 @@ export const PROFILE_ORG_ITEMS: MobileMenuItem[] = [
      members/departments modules until the handoff's mobile pass (S8). */
   { to: "/team?tab=directory", label: "Directory" },
   { to: "/team?tab=departments2", label: "Departments" },
+  /* Roles & Permissions admin — its own mobile screen (MobileRoles), single-role
+     edit. gateVia the /team hub tab (users.read/roles.read): roles has no nav
+     leaf to borrow, and a distinct /roles path keeps it out of the /team?tab=*
+     set mobileMenuGates.test pins. Screen mounts only for can("roles.read"). */
+  { to: "/roles", label: "Roles", gateVia: "/team?tab=hub" },
 ];
 
 /** Mobile app shell — bottom tab bar + slide-up module menu, permission-gated
@@ -568,7 +576,9 @@ function MobileAppInner() {
   // Organisation rows shown inside the Profile screen — gated by the SAME
   // `allowed` check (+ Announcements' alwaysShow bypass) the menu used when
   // these items lived in its Organisation group.
-  const profileOrgItems = PROFILE_ORG_ITEMS.filter((it) => it.alwaysShow || allowed(it.to));
+  const profileOrgItems = PROFILE_ORG_ITEMS.filter((it) =>
+    it.capability ? capability(user, it.capability) : (it.alwaysShow || allowed(it.gateVia ?? it.to)),
+  );
 
   // What this user may open, and what the mobile app implements at all. The
   // difference between the two is the "your position can't open this" answer;
@@ -868,6 +878,7 @@ function MobileAppInner() {
   else if (screen.t === "delivery-planning") overlay = <MobileDeliveryPlanning onBack={back} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber) => setScreen({ t: "pod", docNo: doNumber, from: "delivery-planning" })} />;
   else if (screen.t === "pms") overlay = <MobilePMS onBack={back} initialProjectId={screen.projectId} />;
   else if (screen.t === "mail") overlay = <MobileMailCenter onBack={back} />;
+  else if (screen.t === "roles") overlay = can("roles.read") ? <MobileRoles onBack={back} /> : <TabLocked title="Roles" />;
   else if (screen.t === "announcements") overlay = <MobileAnnouncements onBack={back} />;
   else if (screen.t === "inbox") overlay = <MobileInbox onBack={back} onOpen={(n) => { const doc = (n as { doc_no?: string }).doc_no; if (doc) setScreen({ t: "so-detail", docNo: doc }); }} />;
   else if (screen.t === "locked") overlay = <UrlLocked label={screen.label} onHome={leaveUrlDeadEnd} />;
