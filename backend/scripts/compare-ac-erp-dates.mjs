@@ -64,7 +64,7 @@ async function main() {
   }
   const doRows = await sql`
     SELECT doc_no, do_number, do_date, shipout_date, customer_delivered_date, linked_ac_docno
-      FROM scm.delivery_orders WHERE do_number ILIKE ${"%" + NEEDLE + "%"} OR doc_no ILIKE ${"%" + NEEDLE + "%"} LIMIT 20`;
+      FROM scm.delivery_orders WHERE do_number ILIKE ${"%" + NEEDLE + "%"} LIMIT 20`;
   if (doRows.length === 0) log(`(no ERP delivery order matches "${NEEDLE}")`);
   for (const r of doRows) {
     log(`ERP DO ${r.do_number ?? r.doc_no}: do_date(doc)=${d(r.do_date)} shipout=${d(r.shipout_date)} customer_delivered=${d(r.customer_delivered_date)} -> book ${r.linked_ac_docno ?? "(unlinked)"}`);
