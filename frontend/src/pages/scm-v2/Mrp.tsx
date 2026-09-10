@@ -33,7 +33,7 @@ import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { useAuth, isAdminLevel } from '../../vendor/scm/lib/auth';
 import { useCreatePosFromSoItems } from '../../vendor/scm/lib/suppliers-queries';
 import { newIdempotencyKey } from '../../lib/idempotency';
-import { mrpViews, mrpCategoryOf } from './mrp-views';
+import { mrpViews, mrpCategoryOf, rowBelongsToView } from './mrp-views';
 import { fmtDate, fmtDateTime } from '../../vendor/shared/format';
 import { allocSourceOf } from '../../vendor/shared/mrp-alloc-source';
 import { DateField } from '../../vendor/scm/components/DateField';
@@ -554,9 +554,15 @@ export const Mrp = () => {
   /* Four category tabs (Commander 2026-06-15): Sofa is fed from the per-SO sofa
      SETS; the other three filter the SKU payload to their own category so a
      stray category can't leak across tabs. */
+  /* THE TAB DECIDES WHAT BELONGS TO IT, and it is the same module that built
+     the tab. Comparing to one string here is what stranded four categories
+     before (mrp-views.ts), and the Others tab stands for a SET, so equality
+     cannot express it — `rowBelongsToView` claims by EXCLUSION, which is the
+     only form that cannot leave a row homeless. */
+  const activeView = views.find((v) => v.value === view) ?? views[0]!;
   const tabSkus = view === 'sofa'
     ? sofaSetsToSkus(data?.sofaSets ?? [])
-    : (data?.skus ?? []).filter((s) => s.category === apiCategory);
+    : (data?.skus ?? []).filter((s) => rowBelongsToView(activeView, s.category));
 
   /* Delivery-date window: filter child lines + recompute the parent's Qty
      Needed / Shortage to the window. Stock/PO Outstanding stay SKU-level
