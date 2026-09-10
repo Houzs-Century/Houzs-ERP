@@ -4050,6 +4050,17 @@ Two surfaces render it, and they are the whole point of writing it at all:
 | `scm/shared/variant-summary.ts` (+ the byte-identical frontend copy) | folds the recorded codes into the same `SPECIAL:` segment of Description 2, after the picked ones, skipping any the operator has since picked properly — so it reaches every print, the PO/DO/SI copies and the Detail Listing |
 | `vendor/scm/components/SpecialOrders.tsx` | one ticked, DISABLED row per recorded code, subtitled "from AutoCount — already in this document's price, not charged again", and it counts toward `(N selected)` |
 
+**A read-only DIAGNOSTIC joined the allow-list on 2026-09-09.**
+`backend/scripts/check-so-line-pricing.mjs` answers "where did this one order's
+money come from, line by line?" — written for HC-SO-012312, where three
+bedframes were split and RM 250 appeared on a line whose two neighbours are FOC.
+It reads the key because **which half an option sits in is the question**: an
+option in `specials` may carry a surcharge, one in `specialsRecorded` must not,
+so a probe blind to the difference cannot say which case the operator is looking
+at. It renders and never prices — the key reaches one string in a printed
+column, the script's only arithmetic is lines vs header total from `total_sen`,
+and it is SELECT-only, so it cannot move money even by accident.
+
 **A THIRD kind of reader was added on 2026-09-07: the REPORTS.** The AutoCount
 reconcile did not know this key existed, so every line closed by this very ruling
 kept reporting as an outstanding `DIFFER` — the owner's applied decision quoted
