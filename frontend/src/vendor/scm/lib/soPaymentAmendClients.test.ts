@@ -58,3 +58,33 @@ describe('the payment screens and the amend right', () => {
     }
   });
 });
+
+/* THE REASON (owner 2026-09-10: 靠权限改的来决定). A correction opened by the
+   amend right asks for a reason BEFORE the write and sends it; a same-day fix
+   asks nothing. Both screens have to read `via` off the predicate for that,
+   and both have to hand the answer to the mutation — a screen that asked and
+   then dropped the text would make the server refuse every Finance edit. */
+describe('the payment screens ask for a reason on the amend right', () => {
+  test('both read WHY the row may change, not only whether', () => {
+    for (const [name, suffix] of SCREENS) {
+      expect(fileEnding(suffix), `${name} never reads via`).toMatch(/\.via;/);
+      expect(fileEnding(suffix), `${name} does not branch on the amend right`).toMatch(/=== ['"]amend['"]/);
+    }
+  });
+
+  test('both ask through the shared prompt, with a REQUIRED input', () => {
+    for (const [name, suffix] of SCREENS) {
+      const text = fileEnding(suffix);
+      expect(text, `${name} does not use the shared prompt`).toContain('usePrompt');
+      expect(text, `${name} asks without requiring an answer`).toMatch(/required:\s*true/);
+    }
+  });
+
+  test('both send the reason with the write, and abandon the write when the ask is dismissed', () => {
+    for (const [name, suffix] of SCREENS) {
+      const text = fileEnding(suffix);
+      expect(text, `${name} drops the reason on the floor`).toMatch(/\{ reason \}/);
+      expect(text, `${name} writes even when the ask was cancelled`).toContain('reason === null) return');
+    }
+  });
+});

@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-181 route modules (51 in `backend/src/routes`, 130 in `backend/src/scm/routes`), 1243 endpoint registrations.
+182 route modules (51 in `backend/src/routes`, 131 in `backend/src/scm/routes`), 1244 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -77,6 +77,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-chart.ts` | 0 | 787 |
 | `backend/src/scm/routes/accounting-item-groups.ts` | 0 | 259 |
 | `backend/src/scm/routes/accounting-numbering.ts` | 0 | 134 |
+| `backend/src/scm/routes/accounting-payment-corrections.ts` | 0 | 82 |
 | `backend/src/scm/routes/accounting-payouts.ts` | 0 | 196 |
 | `backend/src/scm/routes/accounting-pi-backfill.ts` | 0 | 149 |
 | `backend/src/scm/routes/accounting-receipts.ts` | 0 | 88 |
@@ -84,7 +85,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-rp.ts` | 0 | 319 |
 | `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1509 |
 | `backend/src/scm/routes/accounting-stock-close.ts` | 0 | 53 |
-| `backend/src/scm/routes/accounting.ts` | 82 | 1534 |
+| `backend/src/scm/routes/accounting.ts` | 83 | 1538 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ap-invoice-files.ts` | 0 | 50 |
@@ -94,7 +95,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/autocount-outbox.ts` | 10 | 1319 |
 | `backend/src/scm/routes/autocount-relink.ts` | 0 | 179 |
 | `backend/src/scm/routes/categories.ts` | 10 | 509 |
-| `backend/src/scm/routes/change-log.ts` | 1 | 345 |
+| `backend/src/scm/routes/change-log.ts` | 1 | 378 |
 | `backend/src/scm/routes/consignment-notes.ts` | 12 | 1262 |
 | `backend/src/scm/routes/consignment-orders.ts` | 19 | 2332 |
 | `backend/src/scm/routes/consignment-returns.ts` | 9 | 1248 |
@@ -140,9 +141,9 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/maintenance-config.ts` | 5 | 410 |
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1256 |
 | `backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts` | 1 | 82 |
-| `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4538 |
+| `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4534 |
 | `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 2 | 326 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11950 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11965 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 147 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 2 | 1846 |
@@ -216,13 +217,13 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2127 files, 733323 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2142 files, 736227 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15144 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 11950 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 11965 |
 | `frontend/src/pages/ServiceCases.tsx` | 8817 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 8581 |
 | `frontend/src/pages/Team.tsx` | 5686 |
@@ -230,7 +231,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/scm-v2/Products.tsx` | 5449 |
 | `backend/src/routes/projects.ts` | 5153 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
-| `backend/src/scm/routes/mfg-purchase-orders.ts` | 4538 |
+| `backend/src/scm/routes/mfg-purchase-orders.ts` | 4534 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4483 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4334 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4206 |
@@ -415,7 +416,7 @@ Page files by directory:
 | `frontend/src/pages` | 38 |
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 5 |
-| `frontend/src/pages/scm-v2` | 148 |
+| `frontend/src/pages/scm-v2` | 149 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 10 |

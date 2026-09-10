@@ -26,7 +26,7 @@
 // ----------------------------------------------------------------------------
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
+import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { fetchPaymentSlipUrl, uploadSlipFull } from "../vendor/scm/lib/slip";
 import {
@@ -39,7 +39,7 @@ import { todayMyt, mytDayOf } from "../vendor/scm/lib/dates";
 /* The SHARED payment-window predicate — the same function the server and the
    desktop PaymentsTable call, so no surface can disagree about whether the
    same-day window is still open (Owner 2026-07-19). */
-import { paymentRowMutable } from "../vendor/scm/lib/so-field-policy";
+import { paymentRowMutable, type PaymentChangeVia } from "../vendor/scm/lib/so-field-policy";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import {
   useSoDropdownOptions,
@@ -260,9 +260,14 @@ export function AddPaymentSheet({
   editPayment = null,
   onClose,
   onSaved,
+  reasonRequired = false,
 }: {
   docNo: string;
   staff: Array<{ id: string; name: string }>;
+  /* The parent decided this edit is opened by the amend right, so a reason is
+     owed before the PATCH (owner 2026-09-10). The sheet cannot decide this
+     itself: the permission and the draft flag live with the list. */
+  reasonRequired?: boolean;
   /* Collected By default for a NEW payment = logged-in user's staff id. */
   defaultCollectedBy?: string;
   /* When set, the sheet EDITS this persisted payment (PATCH) instead of adding
@@ -274,6 +279,7 @@ export function AddPaymentSheet({
   const notify = useNotify();
   const addPaymentMut = useAddSalesOrderPayment();
   const editPaymentMut = useEditSalesOrderPayment();
+  const askReason = usePrompt();
   const isEdit = Boolean(editPayment);
   /* One key for the one payment this sheet is open to record (lib/idempotency.ts).
      The sheet's MOUNT is the intent: both parents render it behind `payOpen` /
@@ -384,6 +390,15 @@ export function AddPaymentSheet({
     if (code === "merchant") { body.merchantProvider = bank || null; body.installmentMonths = planToMonths(plan); }
     else if (code === "installment") { body.merchantProvider = bank || null; body.installmentMonths = planToMonths(plan); }
     else if (code === "transfer") { body.onlineType = online || null; }
+    const reason = isEdit && reasonRequired
+      ? await askReason({
+        title: "Why is this payment being corrected?",
+        body: "Finance keeps a record of every correction made after the day it was keyed in.",
+        input: { label: "Reason", placeholder: "Sales keyed RM 1,990 — receipt shows RM 1,991", required: true },
+        confirmLabel: "Save changes",
+      })
+      : "";
+    if (reason === null) return;
     try {
       /* The shared vendored mutations — mobile shares the desktop payment write
          path (they invalidate the payments ledger key useSalesOrderPayments reads). */
@@ -391,7 +406,7 @@ export function AddPaymentSheet({
         /* No key on the EDIT path, deliberately: a PATCH sets named fields on ONE
            row addressed by id, so firing it twice writes the same row the same
            way. It cannot duplicate money; only the POST below creates a row. */
-        await editPaymentMut.mutateAsync({ docNo, id: editPayment.id, version: editPayment.version, ...body });
+        await editPaymentMut.mutateAsync({ docNo, id: editPayment.id, version: editPayment.version, ...body, ...(reason ? { reason } : {}) });
       } else {
         await addPaymentMut.mutateAsync({ docNo, ...body, idempotencyKey: idemKey });
       }
@@ -597,6 +612,7 @@ export function RecordedPaymentsList({
      can see. Desktop PaymentsTable asks the same question the same way. */
   const { can } = useHouzsAuth();
   const mayAmend = can("scm.so_payment.amend");
+  const askReason = usePrompt();
   const deletePaymentMut = useDeleteSalesOrderPayment();
   const attachSlipMut = useAttachSalesOrderPaymentSlip();
   const [editPay, setEditPay] = useState<RecordedPayment | null>(null);
@@ -660,6 +676,12 @@ export function RecordedPaymentsList({
     if (day === null) return false;
     return paymentRowMutable(day, todayMyt(), draftUnlocked, { mayAmend }).mutable;
   };
+  /* WHY a row may change — 'amend' is the one that owes a reason. */
+  const rowVia = (p: RecordedPayment): PaymentChangeVia => {
+    const day = mytDayOf(createdAtOf(p));
+    if (day === null) return null;
+    return paymentRowMutable(day, todayMyt(), draftUnlocked, { mayAmend }).via;
+  };
 
   /* Delete a persisted payment — parity with the desktop PaymentsTable trash
      action. In-app confirm (no-naked-edits), then the shared mutation. */
@@ -671,12 +693,21 @@ export function RecordedPaymentsList({
       confirmLabel: "Delete",
       danger: true,
     }))) return;
+    const row = payments.find((p) => p.id === paymentId);
+    const reason = row && rowVia(row) === "amend"
+      ? await askReason({
+        title: "Why is this payment being removed?",
+        body: "Finance keeps a record of every correction made after the day it was keyed in.",
+        input: { label: "Reason", placeholder: "Keyed twice — duplicate of the RM 500 on 29/08", required: true },
+        confirmLabel: "Remove", danger: true,
+      })
+      : "";
+    if (reason === null) return;
     setError(null);
     setWorking(true);
     try {
-      const row = payments.find((p) => p.id === paymentId);
       if (!row) throw new Error("Payment is no longer loaded. Refresh before deleting it.");
-      await deletePaymentMut.mutateAsync({ docNo, id: paymentId, version: row.version });
+      await deletePaymentMut.mutateAsync({ docNo, id: paymentId, version: row.version, ...(reason ? { reason } : {}) });
       await onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't delete the payment. Please try again.");
@@ -781,6 +812,7 @@ export function RecordedPaymentsList({
           staff={staff}
           defaultCollectedBy={defaultCollectedBy}
           editPayment={editPay}
+          reasonRequired={editPay ? rowVia(editPay) === "amend" : false}
           onClose={() => setEditPay(null)}
           onSaved={async () => { setEditPay(null); await onChanged(); }}
         />

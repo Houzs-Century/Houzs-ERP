@@ -207,7 +207,12 @@ export type PaymentRowMutability = {
   mutable: boolean;
   /** Plain-language reason when it may not — shown verbatim. null when it may. */
   problem: string | null;
+  /** WHY it may, when it may — null when it may not. 'amend' means the amend
+      right opened the door, so the client must ask for a reason first. */
+  via: PaymentChangeVia;
 };
+
+export type PaymentChangeVia = 'draft' | 'same_day' | 'amend' | null;
 
 /** WHAT has already reconciled a payment, when something has. Three kinds,
     because there are three genuinely different places the books can have
@@ -271,13 +276,14 @@ export const paymentRowMutable = (
   soIsDraft: boolean,
   who: PaymentAmendContext = {},
 ): PaymentRowMutability => {
-  if (soIsDraft) return { mutable: true, problem: null };
-  if (who.reconciled) return { mutable: false, problem: paymentReconciledMessage(who.reconciled) };
-  if (createdDateMyt === todayDateMyt) return { mutable: true, problem: null };
-  if (who.mayAmend === true) return { mutable: true, problem: null };
+  if (soIsDraft) return { mutable: true, problem: null, via: 'draft' };
+  if (who.reconciled) return { mutable: false, problem: paymentReconciledMessage(who.reconciled), via: null };
+  if (createdDateMyt === todayDateMyt) return { mutable: true, problem: null, via: 'same_day' };
+  if (who.mayAmend === true) return { mutable: true, problem: null, via: 'amend' };
   return {
     mutable: false,
     problem: PAYMENT_WINDOW_CLOSED_MESSAGE,
+    via: null,
   };
 };
 

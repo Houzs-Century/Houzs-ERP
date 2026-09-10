@@ -18,7 +18,7 @@
 //     negative receipt.
 // ----------------------------------------------------------------------------
 
-import { postJournal, reverseJournal, validateJournal } from './engine';
+import { postJournal, reverseJournal, validateJournal, type ReverseJournalResult } from './engine';
 import { resolveRoles, customerPaymentLines, type RuleLine } from './rules';
 import { accMastersCompanyId } from './masters-company';
 import { paymentEntryDrift, type EntryFact, type PaymentDrift, type PaymentFact } from './payment-drift';
@@ -155,7 +155,7 @@ export async function reverseSoPayment(
   sb: any,
   paymentId: string,
   soDocNo: string,
-): Promise<{ ok: boolean; status: string; reason?: string }> {
+): Promise<ReverseJournalResult> {
   return reverseJournal(sb, {
     sourceType: 'SOPAY',
     sourceDocNo: paymentId,

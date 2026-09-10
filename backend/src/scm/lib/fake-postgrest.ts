@@ -265,7 +265,16 @@ export function fakeSb(
       },
       neq(col: string, val: unknown) { filters.push((r) => String(r[col]) !== String(val)); return builder; },
       in(col: string, vals: unknown[]) { filters.push((r) => vals.map(String).includes(String(r[col]))); return builder; },
-      lt(col: string, val: unknown) { filters.push((r) => Number(r[col] ?? 0) < Number(val)); return builder; },
+      /* `lt` compares the way gte/lte below do — by the column's type, NULL
+         matching nothing. It used to be numeric-only with a `?? 0` fold, so an
+         ISO timestamp became NaN and every row silently dropped: a month window
+         written as gte(first) + lt(next-first) — the only correct shape for a
+         timestamptz — returned an empty report against this fake while the
+         real database returned the rows (docs/bugs/0785). */
+      lt(col: string, val: unknown) {
+        filters.push((r) => r[col] != null && (typeof r[col] === 'number' ? Number(r[col]) < Number(val) : String(r[col]) < String(val)));
+        return builder;
+      },
       /* gte/lte compare as PostgREST does for the column's type: numbers
          numerically, everything else lexically — which is exactly how ISO
          date/timestamp strings order, the use these appear in (accounting's
