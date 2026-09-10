@@ -1,0 +1,50 @@
+name: Repair PO HC-PO-006690 — supplier HOOKKA -> NICOLLO (DRY-RUN gated)
+
+# One-shot supplier fix: the ERP product on this PO ('DIVAN ONLY-(Q)') resolves
+# to NB- prefixed AutoCount items, and every historical NB- purchase was raised
+# on 400-N002 NICOLLO. The header on this PO is 400-H003 HOOKKA, so the composer
+# refuses "no ItemCode belongs to supplier 400-H003" — the fix is the header.
+#
+# Read the DRY-RUN first; APPLY writes only when CONFIRM matches exactly.
+# Access path: DATABASE_URL through this repo's normal script pattern.
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: '1 to write, anything else DRY-RUN'
+        required: false
+        default: '0'
+        type: string
+      confirm:
+        description: 'For apply ONLY, type exactly: REPAIR-HC-PO-006690'
+        required: false
+        default: ''
+        type: string
+
+# Its OWN group. A one-shot repair must not queue behind — or displace — a deploy.
+concurrency:
+  group: repair-po-006690-supplier
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-po-006690-supplier.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.apply == '1' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
