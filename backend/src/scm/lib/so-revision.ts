@@ -705,7 +705,12 @@ export async function applySoAmendment(
     if (change === 'SPEC') {
       let pq = sb.from('mfg_products').select('name').eq('code', itemCode);
       if (soCompanyId != null) pq = pq.eq('company_id', soCompanyId);
-      const { data: prodRows } = await pq.limit(1);
+      const { data: prodRows, error: prodErr } = await pq.limit(1);
+      // Bind the read error (audit:swallowed-reads): a real failure ABORTS the
+      // apply — it is NOT "no such code". An EMPTY result is "unknown code" and
+      // stays fail-soft below (the stored name is kept), so a DB blip can never
+      // masquerade as a missing catalogue row and blank/keep a name by accident.
+      if (prodErr) throw new Error(`applySoAmendment: SPEC name lookup failed for ${itemCode}: ${prodErr.message}`);
       const prod = prodRows?.[0] as { name?: string | null } | undefined;
       if (prod) specDescription = (prod.name ?? '').trim() || null;
     }
