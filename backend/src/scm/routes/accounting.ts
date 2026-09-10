@@ -36,7 +36,7 @@ import { classifyJournal } from '../../acc/journal-class';
 import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched, settlementRowUnconfirm,
-  settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit,
+  settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit, settlementFindPayments,
   settlementBatchReceived, settlementReceiptUndo,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
 } from './accounting-settlement';
@@ -115,6 +115,8 @@ accounting.post('/settlement/receipts/:id/undo', settlementReceiptUndo);
 accounting.post('/settlement/rows/:id/confirm', settlementConfirmRow);
 accounting.post('/settlement/rows/:id/unconfirm', settlementRowUnconfirm);
 accounting.post('/settlement/rows/:id/ignore', settlementIgnoreRow);
+/* "Find the sale" — the card payments the window could not offer (docs/bugs/0792). */
+accounting.get('/settlement/rows/:id/find', settlementFindPayments);
 accounting.get('/settlement/watchlist', settlementWatchlist);
 accounting.get('/settlement/in-transit', settlementInTransit);
 /* The acquirer's own payment advice — Public Bank's IBG, which says which
