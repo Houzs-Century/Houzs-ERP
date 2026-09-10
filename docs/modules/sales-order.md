@@ -4489,10 +4489,18 @@ match on the row, a bank-statement match on its ACTIVE entry, or a closed month
 on the entry's MONEY-leg account. **Every read fails CLOSED** — an unreadable
 check refuses and says to retry, never "not reconciled".
 
-The screens pass `mayAmend` and never pass `reconciled`: only the server can
-see a settlement match, so they offer the control on the permission alone and
-let the endpoint refuse. That is why the old refusal sentence now ends "ask
-Finance to adjust it" — it finally names a path that exists.
+The two screens that render the edit and delete controls —
+`frontend/src/vendor/scm/components/PaymentsTable.tsx` (desktop) and
+`frontend/src/mobile/RecordedPayments.tsx` (mobile) — pass `mayAmend` and
+**never** pass `reconciled`: only the server can see a settlement match, so they
+offer the control on the permission alone and let the endpoint refuse. That is
+why the old refusal sentence now ends "ask Finance to adjust it" — it finally
+names a path that exists. Both screens read the key the same way
+(`can('scm.so_payment.amend')`); they have diverged on this predicate before
+(the delete path vs the edit path, 2026-07-19), so
+`frontend/src/vendor/scm/lib/soPaymentAmendClients.test.ts` pins that both still
+pass the fourth argument — dropping it compiles, type-checks, and silently hides
+the control from Finance again.
 
 ### The BALANCE a human is shown — which total it subtracts from (2026-09-08)
 
