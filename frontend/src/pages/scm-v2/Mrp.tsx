@@ -467,6 +467,13 @@ export const Mrp = () => {
      show ONLY the rows that still need ordering (shortage > 0), so the operator
      can go straight to Proceed PO without wading past the Ready ones. */
   const [onlyShort, setOnlyShort] = useState<boolean>(false);
+  /* Owner 2026-09-11 — "我的 MRP 也要有 search 的功能，要不然我都找不出 MRP 的
+     list,那版太长了". A find box over the rows already in view: matches item
+     code, description, variant/module label, and each SO line's doc no +
+     customer. It never changes what the server returns — purely a client-side
+     narrowing of the current tab — and a non-empty query force-expands the
+     matches so the hit is visible without a manual drill. */
+  const [search, setSearch] = useState<string>('');
   /* Commander 2026-05-31 — supplier is chosen PER SHORTAGE SO LINE (different
      lines of the same SKU may pick different suppliers). { soItemId: supplierId };
      defaults to the SKU's main supplier when no entry. Covered / already-PO'd
@@ -489,8 +496,23 @@ export const Mrp = () => {
      (YYYY-MM-DD). Blank = send no override → server uses each SO's own date. */
   const [proceedExpectedAt, setProceedExpectedAt] = useState<string>('');
 
-  // Each tab is locked to its own category (Commander 2026-06-15).
-  const apiCategory = mrpCategoryOf(view);
+  /* Each tab is locked to its own category (Commander 2026-06-15) — EXCEPT the
+     Sofa tab, which asks for the full plan (no category filter).
+
+     WHY THE SOFA TAB IS DIFFERENT. A sofa order's cover (皮套) / pillow is an
+     ACCESSORY line, and the owner's standing rule is that it must ride on the
+     SAME PO as the sofa. The page pulls those accessory lines into the sofa's
+     convert batch off `data.skus` (gatherSofa below). But `?category=SOFA`
+     makes the engine drop every non-SOFA row (mrp.ts section 6), so `data.skus`
+     held only sofa and the accessory pull matched NOTHING — the cover never
+     joined the sofa PO from this page. Requesting no filter puts the accessory
+     lines back in `data.skus`; the sofa TABLE is unaffected (it renders from
+     `data.sofaSets`, which ignores the filter either way). It is also the
+     DEFAULT view, so this serves the stored snapshot instantly instead of
+     recomputing the plan live on every open (mrp-snapshot.ts isDefaultMrpView).
+     See docs/bugs/ — the sofa-cover pull-in was dead since the per-category
+     tab split. */
+  const apiCategory = view === 'sofa' ? null : mrpCategoryOf(view);
   const q = useMrp({ category: apiCategory, warehouseId, includeUndated: showUndated });
   const data = q.data;
   /* THE TAB LIST IS THE SERVER'S, not a constant here. `categories` is every
@@ -602,10 +624,56 @@ export const Mrp = () => {
       ? groupByVariant(viewSkus)
       : groupByModel(viewSkus);
 
+  /* Sofa-cover riders (owner 2026-09-11). On the Sofa tab, each sofa order's
+     ACCESSORY shortage lines (皮套 / pillow) are pulled onto the sofa's PO by
+     gatherSofa. Surface them under their SO so the operator SEES the cover ride
+     along instead of learning it only after the PO exists. Keyed by SO doc no
+     (= groupBySo's itemCode). Only shortage (orderable) lines, honouring the
+     active date window — exactly the set gatherSofa orders. data.skus carries
+     accessories only because the sofa tab requests the full plan (apiCategory
+     above); on every other tab this stays empty. */
+  const sofaDocsInView = view === 'sofa'
+    ? new Set(viewSkus.flatMap((s) => s.lines.map((l) => l.soDocNo)))
+    : null;
+  const accessoryBySoDoc = new Map<string, Array<{ sku: MrpSku; line: MrpLine }>>();
+  if (view === 'sofa' && sofaDocsInView) {
+    for (const s of data?.skus ?? []) {
+      if ((s.category ?? '').toUpperCase() !== 'ACCESSORY') continue;
+      for (const l of s.lines) {
+        if (l.source !== 'shortage' || l.shortageQty <= 0 || !l.soItemId) continue;
+        if (!sofaDocsInView.has(l.soDocNo)) continue;
+        if (hasWindow && !lineInWindow(l)) continue;
+        const arr = accessoryBySoDoc.get(l.soDocNo) ?? [];
+        arr.push({ sku: s, line: l });
+        accessoryBySoDoc.set(l.soDocNo, arr);
+      }
+    }
+  }
+
   /* Only-shortages focus filter (Commander 2026-05-29) — affects which ROWS
      render; the summary counts above stay on the full demand set so the
      operator still sees the totals. */
-  const displayModels = onlyShort ? models.filter((m) => m.shortage > 0) : models;
+  const shortModels = onlyShort ? models.filter((m) => m.shortage > 0) : models;
+
+  /* Search (owner 2026-09-11) — narrow the rows in view to a query over code,
+     description, variant/module label, and each SO line's doc no + customer;
+     a sofa row also matches its cover riders. Empty query = everything. */
+  const searchQ = search.trim().toLowerCase();
+  const matchModel = (g: ModelGroup): boolean => {
+    if (!searchQ) return true;
+    const hay: string[] = [g.itemCode, g.description ?? ''];
+    for (const v of g.variants) {
+      hay.push(v.variantLabel ?? '', v.itemCode);
+      for (const l of v.lines) hay.push(l.soDocNo, l.debtorName ?? '');
+    }
+    for (const { sku, line } of accessoryBySoDoc.get(g.itemCode) ?? []) {
+      hay.push(sku.itemCode, sku.description ?? '', line.debtorName ?? '');
+    }
+    return hay.some((h) => h.toLowerCase().includes(searchQ));
+  };
+  const displayModels = searchQ ? shortModels.filter(matchModel) : shortModels;
+  // A search hit is force-opened so the matching line is visible without a drill.
+  const forceOpen = Boolean(searchQ);
 
   const toggleModel = (code: string) =>
     setExpandedModels((prev) => {
@@ -631,6 +699,7 @@ export const Mrp = () => {
     setSelected(new Set());
     setExpandedModels(new Set());
     setExpandedVariants(new Set());
+    setSearch(''); // a query narrowing one tab would otherwise hide the next
   };
 
   /* Fire the (mode-aware) convert-from-SO endpoint for the given picks. Shared
@@ -741,15 +810,22 @@ export const Mrp = () => {
 
     /* Commander 2026-05-29 — "pillow 开在 sofa 里面就要跟 sofa 的 PO 一起". For
        every SO we're proceeding a sofa set on, ALSO pull that SO's accessory
-       (pillow) shortage lines into the same /from-sos batch. The server groups
-       by supplier, so same-supplier pillows land on the sofa's PO and a
-       different-supplier pillow splits to its own PO automatically. Accessories
-       live in the General tab's SKU list, so read them off the raw payload
-       (`data.skus`) — `viewSkus` is sofa-only in this view. Respect the active
-       date window so we don't drag in out-of-window pillows. */
+       (pillow / 皮套) shortage lines into the same /from-sos batch. The server
+       groups by the per-category rule (po-grouping.ts): in Combined a same-
+       supplier cover lands on the sofa's PO, in Per-SO it splits to its own —
+       either way the whole order is proceeded in one action. Accessories live
+       in the General tab's SKU list; they reach `data.skus` here only because
+       the Sofa tab requests the FULL plan (apiCategory). Respect the active date
+       window so we don't drag in out-of-window pillows.
+
+       setDocs is the SO docs we are ACTUALLY ordering a sofa set on — derived
+       from the sofa picks so selecting ONE order pulls only THAT order's cover,
+       not every sofa order's. (It keyed off all sofa docs with shortage before;
+       that was harmless only while the pull-in was dead — bug ledger.) */
+    const soDocByItem = new Map<string, string>();
+    for (const s of skus) for (const l of s.lines) soDocByItem.set(l.soItemId, l.soDocNo);
     const setDocs = new Set(
-      skus.filter((s) => s.shortage > 0).flatMap((s) =>
-        s.lines.filter((l) => l.source === 'shortage' && l.shortageQty > 0).map((l) => l.soDocNo)),
+      base.picks.map((p) => soDocByItem.get(p.soItemId)).filter((d): d is string => Boolean(d)),
     );
     const already = new Set(picks.map((p) => p.soItemId));
     const accessoryLines = (data?.skus ?? [])
@@ -1044,6 +1120,26 @@ export const Mrp = () => {
       {/* Filters — switchable date basis drives the window; Warehouse over
           Category on the right. Category sub-filter only on the General tab. */}
       <div className={styles.filterRow}>
+        {/* Search (owner 2026-09-11) — find a row in a long list. Client-side
+            narrowing of the current tab; matches code, description, module /
+            variant label, and each SO line's doc no + customer. */}
+        <label className={styles.filterField}>
+          <span className={styles.filterLabel}>Search</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <input
+              type="search"
+              className={styles.filterSelect}
+              style={{ minWidth: 220 }}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={view === 'sofa' ? 'SO no, customer, model…' : 'Code, description, SO no, customer…'}
+              aria-label="Search the rows in view"
+            />
+            {search && (
+              <button type="button" className={TOOLBAR_BTN} onClick={() => setSearch('')}>Clear</button>
+            )}
+          </span>
+        </label>
         <label className={styles.filterField}>
           <span className={styles.filterLabel}>Date</span>
           <select className={styles.filterSelect} value={dateBasis}
@@ -1138,7 +1234,8 @@ export const Mrp = () => {
             )}
             {data && displayModels.length === 0 && (
               <tr><td colSpan={9} className={styles.stateCell}>
-                {onlyShort ? 'Nothing needs ordering — everything in view is covered.'
+                {searchQ ? `No rows match "${search.trim()}" on this tab.`
+                  : onlyShort ? 'Nothing needs ordering — everything in view is covered.'
                   : hasWindow ? 'No demand delivering in this window.'
                   : 'No open Sales-Order demand for this filter.'}
               </td></tr>
@@ -1147,10 +1244,11 @@ export const Mrp = () => {
               <ModelRows
                 key={g.groupKey}
                 group={g}
-                modelOpen={expandedModels.has(g.groupKey)}
+                modelOpen={forceOpen || expandedModels.has(g.groupKey)}
                 onToggleModel={() => toggleModel(g.groupKey)}
                 expandedVariants={expandedVariants}
                 onToggleVariant={toggleVariant}
+                forceOpen={forceOpen}
                 selected={selected}
                 onToggleLine={toggleSelectLine}
                 onSetLinesSelected={setLinesSelected}
@@ -1158,6 +1256,8 @@ export const Mrp = () => {
                 onLineSupplierChange={setLineSupplierId}
                 flatModules={view === 'sofa'}
                 variantAtL1={view === 'bedframe'}
+                accessoryRiders={view === 'sofa' ? (accessoryBySoDoc.get(g.itemCode) ?? []) : []}
+                poMode={poMode}
               />
             ))}
           </tbody>
@@ -1274,20 +1374,27 @@ const LineSupplierCell = ({ suppliers, chosenSupplierId, onSupplierChange }: {
 const shortageLineIdsOf = (s: MrpSku): string[] =>
   s.lines.filter((l) => l.source === 'shortage' && l.shortageQty > 0 && l.soItemId).map((l) => l.soItemId);
 
+/* One sofa-cover rider: an ACCESSORY shortage line on a sofa SO, carried with
+   its owning SKU so the row can show the supplier + code alongside the SO line. */
+type AccessoryRider = { sku: MrpSku; line: MrpLine };
+
 /* General tab — one Model and its variants. Multi-variant models expand into
    variant sub-rows (each expandable to its SO orders). Single-variant models
    (mattress, accessory) expand straight to their SO orders. Selection + supplier
    live on each SO ORDER LINE; the Model / Variant checkboxes are parent toggles. */
 const ModelRows = ({
-  group, modelOpen, onToggleModel, expandedVariants, onToggleVariant,
+  group, modelOpen, onToggleModel, expandedVariants, onToggleVariant, forceOpen,
   selected, onToggleLine, onSetLinesSelected, lineSupplier, onLineSupplierChange,
-  flatModules, variantAtL1,
+  flatModules, variantAtL1, accessoryRiders, poMode,
 }: {
   group: ModelGroup;
   modelOpen: boolean;
   onToggleModel: () => void;
   expandedVariants: Set<string>;
   onToggleVariant: (key: string) => void;
+  /* A search hit force-opens every level so the match is visible without a
+     drill. OR'd into each expand check below. */
+  forceOpen?: boolean;
   selected: Set<string>;
   onToggleLine: (soItemId: string) => void;
   onSetLinesSelected: (ids: string[], on: boolean) => void;
@@ -1298,6 +1405,10 @@ const ModelRows = ({
      variant (Description 2) right on the L1 row so colours of the same model are
      distinguishable, and skip the redundant spec label inside the expand. */
   variantAtL1?: boolean;
+  /* Sofa only — the cover / pillow shortage lines on this SO, shown under the
+     sofa modules so the operator sees them ride onto the order (empty otherwise). */
+  accessoryRiders?: AccessoryRider[];
+  poMode?: 'combined' | 'per-so';
 }) => {
   const short = group.shortage > 0;
   // Parent (Model) checkbox state — over every shortage line beneath the model.
@@ -1365,7 +1476,8 @@ const ModelRows = ({
           <td /><td />
           <td colSpan={7}>
             <SofaSoTable group={group} selected={selected} onToggleLine={onToggleLine}
-              lineSupplier={lineSupplier} onLineSupplierChange={onLineSupplierChange} />
+              lineSupplier={lineSupplier} onLineSupplierChange={onLineSupplierChange}
+              accessoryRiders={accessoryRiders ?? []} poMode={poMode ?? 'combined'} />
           </td>
         </tr>
       )}
@@ -1394,7 +1506,7 @@ const ModelRows = ({
       {modelOpen && !flatModules && !single && group.variants.map((v) => {
         const k = rowKey(v);
         const vShort = v.shortage > 0;
-        const vOpen = expandedVariants.has(k);
+        const vOpen = forceOpen || expandedVariants.has(k);
         // Variant parent checkbox — over this variant's shortage lines.
         const vLineIds = shortageLineIdsOf(v);
         const vSel = vLineIds.filter((id) => selected.has(id));
@@ -1563,12 +1675,18 @@ const ChildLine = ({ ln, suppliers, whCode, whName, selected, onToggleLine, chos
    SAME row — instead of the module → order-line two-level drill. Each sofa module
    has exactly one SO line; selection + supplier reuse the per-line handlers, so
    ordering (Proceed PO) is unchanged. */
-const SofaSoTable = ({ group, selected, onToggleLine, lineSupplier, onLineSupplierChange }: {
+const SofaSoTable = ({ group, selected, onToggleLine, lineSupplier, onLineSupplierChange, accessoryRiders, poMode }: {
   group: ModelGroup;
   selected: Set<string>;
   onToggleLine: (soItemId: string) => void;
   lineSupplier: Record<string, string>;
   onLineSupplierChange: (soItemId: string, supplierId: string) => void;
+  /* The cover / pillow shortage lines on THIS SO (owner 2026-09-11). Shown as
+     read-along rows under the sofa modules: they ride onto the order whenever
+     the sofa set is proceeded (gatherSofa), so they follow the sofa's selection
+     rather than carrying their own checkbox. */
+  accessoryRiders: AccessoryRider[];
+  poMode: 'combined' | 'per-so';
 }) => (
   <table className={styles.childTable}>
     <thead>
@@ -1637,6 +1755,57 @@ const SofaSoTable = ({ group, selected, onToggleLine, lineSupplier, onLineSuppli
           </tr>
         );
       }))}
+      {/* Cover / pillow riders (owner 2026-09-11). These ACCESSORY shortage lines
+          belong to this SO and are pulled onto the order when the sofa set is
+          proceeded. Read-along: no checkbox, because they follow the sofa's
+          selection. The caption states where they land in the current mode. */}
+      {accessoryRiders.length > 0 && (
+        <tr className={styles.detailRow}>
+          <td />
+          <td colSpan={10} className="py-1 text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
+            {poMode === 'combined'
+              ? 'Accessories on this order (皮套 / pillow) — ride on the sofa PO when a supplier matches, else their own PO'
+              : 'Accessories on this order (皮套 / pillow) — ordered on their own PO (Per-SO); switch to Combined to ride on the sofa PO'}
+          </td>
+        </tr>
+      )}
+      {accessoryRiders.map(({ sku, line }, i) => {
+        // main-first (suppliers is main-first), guarded on length below — mirrors
+        // skuDefaultSupplierId; an unbound accessory shows "— none —".
+        const main = sku.suppliers.find((s) => s.isMain) ?? sku.suppliers[0];
+        return (
+          <tr key={`acc-${sku.itemCode}-${line.soItemId}-${i}`} className={styles.childShort}>
+            <td className={styles.colSelect} title="Rides with the sofa — selected together">
+              <span className={styles.variantBranch}>↳</span>
+            </td>
+            <td className={styles.codeCell}>{line.soDocNo}</td>
+            <td className={styles.whCell}>
+              {sku.warehouseCode
+                ? <span className={styles.whTag} title={sku.warehouseName ?? undefined}>{sku.warehouseCode}</span>
+                : <span className={styles.whNone}>—</span>}
+            </td>
+            <td>
+              <span className={styles.variantTag}>Accessory</span> {sku.itemCode}
+              {sku.description ? ` · ${sku.description}` : ''}
+            </td>
+            <td>{line.debtorName ?? '—'}</td>
+            <td>{line.customerState ?? '—'}</td>
+            <td>{fmtDate(line.processingDate)}</td>
+            <DeliveryCell iso={line.deliveryDate} />
+            <td className={styles.num}>{line.qty}</td>
+            <td>
+              <span className={`${styles.tag} ${styles.tagShort}`}>
+                SHORT{line.shortageQty > 1 ? ` ×${line.shortageQty}` : ''}
+              </span>
+            </td>
+            <td className={styles.supplierCell}>
+              <span className={styles.poSupplierRO} title="The cover's main supplier. In Combined it joins the sofa PO only when this matches the sofa's supplier.">
+                <Truck {...ICON} /> {sku.suppliers.length ? main.name : '— none —'}
+              </span>
+            </td>
+          </tr>
+        );
+      })}
     </tbody>
   </table>
 );
