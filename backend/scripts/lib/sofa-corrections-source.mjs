@@ -53,6 +53,10 @@ export const CORRECTION_FILES = [
   "sofa-compartment-corrections-book-aligned.json",
   "sofa-compartment-corrections-drawings.json",
   "sofa-compartment-corrections-purchase-side.json",
+  /* The 2026-09-10 direction round. Named by its SOURCE, not by a date, for the
+     same reason the two above are: `FILE=` is a SUBSTRING filter and a dated
+     name would make `FILE=2026-09` select two rounds at once. */
+  "sofa-compartment-corrections-tv-direction.json",
 ];
 
 /**

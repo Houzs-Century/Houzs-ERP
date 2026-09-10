@@ -153,13 +153,13 @@
    ],
    "model": "9058",
    "pieces": [
-    "L(LHF)",
+    "1A(LHF)",
     "1NA",
-    "1A(RHF)"
+    "L(RHF)"
    ],
    "seat": "32",
    "desc2Match": "back rest  (5540)",
-   "why": "CORRECTED BY THE OWNER 2026-09-09: 「L(LHF) + 1NA + 1A(RHF) 一个left 一个right才对」. This entry held L(RHF)+1NA+1A(RHF) -- BOTH ends right-handed, which no sofa is. The chaise is on the LEFT. His rule, stated with the correction: the two outer pieces of a build face opposite ways, so two same-handed ends is a reading error on its face and is checkable without the drawing. | superseded reading, kept as the record: owner read the slip himself 2026-09-04: the taller box is the chaise. Both 9058-L(RHF) and 9058-1A(RHF) exist in the product master | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-010041 added so the pair is corrected together, which is what this file's own rule says."
+   "why": "CORRECTED BY THE OWNER 2026-09-09: 「L(LHF) + 1NA + 1A(RHF) 一个left 一个right才对」. This entry held L(RHF)+1NA+1A(RHF) -- BOTH ends right-handed, which no sofa is. The chaise is on the LEFT. His rule, stated with the correction: the two outer pieces of a build face opposite ways, so two same-handed ends is a reading error on its face and is checkable without the drawing. | superseded reading, kept as the record: owner read the slip himself 2026-09-04: the taller box is the chaise. Both 9058-L(RHF) and 9058-1A(RHF) exist in the product master | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-010041 added so the pair is corrected together, which is what this file's own rule says. | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」."
   },
   {
    "docs": [
@@ -288,13 +288,13 @@
    ],
    "model": "8030",
    "pieces": [
-    "1A(LHF)",
+    "L(LHF)",
     "1NA",
-    "L(RHF)"
+    "1A(RHF)"
    ],
    "seat": "35",
    "desc2Match": "back rest change to 9058",
-   "why": "owner 2026-09-08, reading his own slips one by one and then 「所以全部答案我都给你了」. 「这个是8030 / 1AL+1NA+LR 35寸」. His LR is the chaise on the right; the ERP writes the chaise with NO count prefix, so 1L(R) is L(RHF) (parse-sofa.mjs:602, and the same fold recorded for HC-SO-010209 in docs/sofa-compartment-owner-rulings-2026-09-08.md). The book's own line is quoted from the committed snapshot backend/scripts/data/ac-reconcile-truth.json.gz. SO-012108 DtlKey 833027 is item DSL-8030 SOFA with Desc2 \"back rest change to 9058  bottom change to Nilon  Col : Cove -03  fully cover replace the leg\" - it states NO build at all, which is why the reconcile could not compare it. The backrest note is NOT a model change: the model stays 8030, the second time that rule is seen (HC-SO-012947 is the other). His ruling is taken on the COMPARTMENT axis only - 「一律跟账本。除了sofa compartment而已啊」 - so the SKU model, quantity, price and colour still follow the book."
+   "why": "owner 2026-09-08, reading his own slips one by one and then 「所以全部答案我都给你了」. 「这个是8030 / 1AL+1NA+LR 35寸」. His LR is the chaise on the right; the ERP writes the chaise with NO count prefix, so 1L(R) is L(RHF) (parse-sofa.mjs:602, and the same fold recorded for HC-SO-010209 in docs/sofa-compartment-owner-rulings-2026-09-08.md). The book's own line is quoted from the committed snapshot backend/scripts/data/ac-reconcile-truth.json.gz. SO-012108 DtlKey 833027 is item DSL-8030 SOFA with Desc2 \"back rest change to 9058  bottom change to Nilon  Col : Cove -03  fully cover replace the leg\" - it states NO build at all, which is why the reconcile could not compare it. The backrest note is NOT a model change: the model stays 8030, the second time that rule is seen (HC-SO-012947 is the other). His ruling is taken on the COMPARTMENT axis only - 「一律跟账本。除了sofa compartment而已啊」 - so the SKU model, quantity, price and colour still follow the book. | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」."
   },
   {
    "docs": [
@@ -396,13 +396,13 @@
    "model": "9058",
    "pieces": [
     "1A(LHF)",
-    "CNR",
     "1NA",
+    "CNR",
     "1A(RHF)"
    ],
    "seat": null,
    "desc2Match": "tbc",
-   "why": "owner 2026-09-08, reading his own slips one by one and then 「所以全部答案我都给你了」. 「然后1AL+C+1NA+1AR」. The book's own line is quoted from the committed snapshot backend/scripts/data/ac-reconcile-truth.json.gz. SO-011447 DtlKey 790600 is item DSL-9058 SOFA whose entire Desc2 is \"tbc\" - the book says nothing at all, so his drawing is the only source and that is exactly what the verdict said. No seat on the slip and none in the book, so seat stays null. His ruling is taken on the COMPARTMENT axis only - 「一律跟账本。除了sofa compartment而已啊」 - so the SKU model, quantity, price and colour still follow the book."
+   "why": "owner 2026-09-08, reading his own slips one by one and then 「所以全部答案我都给你了」. 「然后1AL+C+1NA+1AR」. The book's own line is quoted from the committed snapshot backend/scripts/data/ac-reconcile-truth.json.gz. SO-011447 DtlKey 790600 is item DSL-9058 SOFA whose entire Desc2 is \"tbc\" - the book says nothing at all, so his drawing is the only source and that is exactly what the verdict said. No seat on the slip and none in the book, so seat stays null. His ruling is taken on the COMPARTMENT axis only - 「一律跟账本。除了sofa compartment而已啊」 - so the SKU model, quantity, price and colour still follow the book. | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」."
   },
   {
    "docs": [
@@ -440,14 +440,14 @@
    "model": "9058",
    "pieces": [
     "1A(LHF)",
-    "1NA",
-    "1NA",
     "CNR",
+    "1NA",
+    "1NA",
     "1A(RHF)"
    ],
    "seat": null,
    "desc2Match": "arm rest replace to sit area",
-   "why": "owner 2026-09-08, reading his own slips one by one and then 「所以全部答案我都给你了」. 「1AL+1NA+1NA+C+1AR」. The book's own line is quoted from the committed snapshot backend/scripts/data/ac-reconcile-truth.json.gz. SO-012026 DtlKey 829183 is item DSL-9058 SOFA, Desc2 \"backrest  8030   bottom to Nilon  arm rest replace to sit area  no stiching in sitting area\" - instructions only, no build. Note TWO 1NA in a row: that is his answer and it is written as given, not folded into a 2NA, because the piece list is the physical layout left to right. The backrest note naming 8030 is NOT a model change - the model stays 9058. No seat stated by him or the book. His ruling is taken on the COMPARTMENT axis only - 「一律跟账本。除了sofa compartment而已啊」 - so the SKU model, quantity, price and colour still follow the book."
+   "why": "owner 2026-09-08, reading his own slips one by one and then 「所以全部答案我都给你了」. 「1AL+1NA+1NA+C+1AR」. The book's own line is quoted from the committed snapshot backend/scripts/data/ac-reconcile-truth.json.gz. SO-012026 DtlKey 829183 is item DSL-9058 SOFA, Desc2 \"backrest  8030   bottom to Nilon  arm rest replace to sit area  no stiching in sitting area\" - instructions only, no build. Note TWO 1NA in a row: that is his answer and it is written as given, not folded into a 2NA, because the piece list is the physical layout left to right. The backrest note naming 8030 is NOT a model change - the model stays 9058. No seat stated by him or the book. His ruling is taken on the COMPARTMENT axis only - 「一律跟账本。除了sofa compartment而已啊」 - so the SKU model, quantity, price and colour still follow the book. | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」."
   },
   {
    "docs": [
@@ -497,13 +497,13 @@
    "model": "9050",
    "pieces": [
     "1A(LHF)",
-    "CNR",
     "1NA",
+    "CNR",
     "1A(RHF)"
    ],
    "seat": "32",
    "desc2Match": "bottom wrap to Nilon",
-   "why": "photo: owner 2026-09-08, confirming this build with 「对啊」. HELD BY THE PREVIOUS ROUND AND NOW ANSWERED. He had first given only 「第一个是corner 你也应该懂的 32寸seat」 - the corner and the seat, not the other pieces - so the drawing round left this document in its `_unread` list as ambiguous on two counts: whether the deep piece at the turn is CNR or the chaise L, and which side the upper arm is on. The slip is 240px and that is the only copy there is; enlarged 4x (LANCZOS, autocontrast, sharpen) it reads, and the reading was put to him rather than assumed. THE SLIP, headed 9050, marked '10 feet' overall and 'colour: tbc': top-left a box reading 32 with hatching along its TOP edge and the words 'arm rest' written beside it; a slanted-edge piece descending from it at the turn, which is the corner he had already ruled; then along the bottom a box reading 32, and a box reading 32 with hatching at its RIGHT end and 'arm rest' written again. HATCHING AGAINST THE END OF A BOX IS THE ARM, NOT A PIECE OF ITS OWN - his standing reading rule - so the two hatched ends are the two arm pieces and the build is 1A(LHF) + CNR + 1NA + 1A(RHF). The book's own line is quoted from the committed snapshot backend/scripts/data/ac-reconcile-truth.json.gz: SO-011601 DtlKey 802011 is item AMN-SF9050 SOFA, Desc2 \"bottom wrap to Nilon\" - the book states no build at all, which is exactly the case his drawing decides. The needle cannot reach the document's other line, DtlKey 802012, which is AMN-SOFA PILLOW qty 4 with Desc2 \"random\". THIS IS THE FOURTH DOCUMENT OF THIS EXACT SHAPE he has ruled the same way in one sitting - HC-SO-011158 (also model 9050), HC-SO-011447 and HC-SO-011454 all 1AL+C+1NA+1AR - so it is consistent with his own reading, not a novelty. Seat 32 is written because the slip states it and he repeated it; the book states none, which the reconcile already treats as an operator filling in a value the book never had. MEASURED, not assumed: with model 9050 all four piece codes classify as `decomposition` against the book's AMN-SF9050 SOFA (lib/item-code-class.mjs, model 9050 on both sides), so the SKU axis does not move. NO PURCHASE ORDER TO CORRECT ALONGSIDE IT: searched for a counterpart by fromDocNo and fromSoDtlKey in ac-reconcile-truth.json.gz, and in ac-po-fromsodtlkey, ac-so-linked-pos, ac-sofa-gr-po and ac-outstanding-po - zero hits in all five, so docs/bugs/0719's half-write does not apply here. His ruling is taken on the COMPARTMENT axis only - 「一律跟账本。除了sofa compartment而已啊」 - so the SKU model, quantity, price and colour still follow the book."
+   "why": "photo: owner 2026-09-08, confirming this build with 「对啊」. HELD BY THE PREVIOUS ROUND AND NOW ANSWERED. He had first given only 「第一个是corner 你也应该懂的 32寸seat」 - the corner and the seat, not the other pieces - so the drawing round left this document in its `_unread` list as ambiguous on two counts: whether the deep piece at the turn is CNR or the chaise L, and which side the upper arm is on. The slip is 240px and that is the only copy there is; enlarged 4x (LANCZOS, autocontrast, sharpen) it reads, and the reading was put to him rather than assumed. THE SLIP, headed 9050, marked '10 feet' overall and 'colour: tbc': top-left a box reading 32 with hatching along its TOP edge and the words 'arm rest' written beside it; a slanted-edge piece descending from it at the turn, which is the corner he had already ruled; then along the bottom a box reading 32, and a box reading 32 with hatching at its RIGHT end and 'arm rest' written again. HATCHING AGAINST THE END OF A BOX IS THE ARM, NOT A PIECE OF ITS OWN - his standing reading rule - so the two hatched ends are the two arm pieces and the build is 1A(LHF) + CNR + 1NA + 1A(RHF). The book's own line is quoted from the committed snapshot backend/scripts/data/ac-reconcile-truth.json.gz: SO-011601 DtlKey 802011 is item AMN-SF9050 SOFA, Desc2 \"bottom wrap to Nilon\" - the book states no build at all, which is exactly the case his drawing decides. The needle cannot reach the document's other line, DtlKey 802012, which is AMN-SOFA PILLOW qty 4 with Desc2 \"random\". THIS IS THE FOURTH DOCUMENT OF THIS EXACT SHAPE he has ruled the same way in one sitting - HC-SO-011158 (also model 9050), HC-SO-011447 and HC-SO-011454 all 1AL+C+1NA+1AR - so it is consistent with his own reading, not a novelty. Seat 32 is written because the slip states it and he repeated it; the book states none, which the reconcile already treats as an operator filling in a value the book never had. MEASURED, not assumed: with model 9050 all four piece codes classify as `decomposition` against the book's AMN-SF9050 SOFA (lib/item-code-class.mjs, model 9050 on both sides), so the SKU axis does not move. NO PURCHASE ORDER TO CORRECT ALONGSIDE IT: searched for a counterpart by fromDocNo and fromSoDtlKey in ac-reconcile-truth.json.gz, and in ac-po-fromsodtlkey, ac-so-linked-pos, ac-sofa-gr-po and ac-outstanding-po - zero hits in all five, so docs/bugs/0719's half-write does not apply here. His ruling is taken on the COMPARTMENT axis only - 「一律跟账本。除了sofa compartment而已啊」 - so the SKU model, quantity, price and colour still follow the book. | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」."
   },
   {
    "docs": [
