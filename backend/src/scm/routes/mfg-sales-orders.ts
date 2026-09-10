@@ -48,7 +48,8 @@ import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
    moved to scm/lib so scan-so.ts's background writer reaches the same rules
    without importing a 12,000-line router. Re-exported below for the callers
    that still name this module. */
-import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, bookSoPaymentBestEffort, type SoPaymentRowInput } from '../lib/so-payment-row';
+import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, bookSoPaymentBestEffort, repostSoPaymentBestEffort, type SoPaymentRowInput } from '../lib/so-payment-row';
+import { ledgerFactsOf } from '../../acc/payment-repost';
 import { recomputeSiPaidForOrder } from '../lib/si-order-deposit';
 export { recordSoPaymentRow };
 export type { SoPaymentRowInput };
@@ -11127,6 +11128,27 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
      costs one queued edit, while deciding here which fields matter would put a
      second opinion about the balance rule next to so-outstanding.ts. */
   await queueAcSoEdit(c, docNo);
+
+  /* THE LEDGER FOLLOWS THE EDIT (docs/bugs/0778). Until now this route wrote
+     the row and stopped, so a corrected payment left its journal entry behind
+     — silently, because only DELETE ever touched the books. Four fields move
+     them (amount, date, method, acquirer) and acc/payment-repost decides
+     which of those actually changed; anything else is a no-op that spends no
+     JE number. Best-effort, like every other hook on this path: the operator's
+     edit has committed and a ledger refusal may not become a 500. */
+  await repostSoPaymentBestEffort(sb, {
+    before: ledgerFactsOf(before),
+    after: {
+      id,
+      so_doc_no: docNo,
+      paid_at: nextPaidAt,
+      method: nextMethod,
+      merchant_provider: nextMerchantProvider,
+      amount_sen: nextAmount,
+      company_id: co.companyId,
+    },
+  });
+
   // An edited amount also moves what the invoices off this order have settled.
   await recomputeSiPaidForOrder(sb, docNo, co.companyId);
 

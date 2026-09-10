@@ -15,7 +15,8 @@
 // ----------------------------------------------------------------------------
 import { enqueueEdit } from './autocount-outbox';
 import { recordSoAudit, type FieldChange } from './so-audit';
-import { postSoPayment, reverseSoPayment } from '../../acc/payments';
+import { postSoPayment, reverseSoPayment, type SoPaymentRow } from '../../acc/payments';
+import { repostSoPaymentEdit, type PaymentLedgerFacts } from '../../acc/payment-repost';
 import { createReceiptForPayment } from '../../acc/receipts';
 import { companyCodeById } from './doc-no';
 import { recomputeSiPaidForOrder } from './si-order-deposit';
@@ -93,6 +94,24 @@ export async function bookSoPaymentBestEffort(sb: any, row: Record<string, unkno
   if (!booked.ok) {
     /* eslint-disable-next-line no-console */
     console.error(`[acc] SO ${where} not booked:`, (row as { id?: string }).id, booked.status, booked.reason);
+  }
+}
+
+/** Carry an EDITED payment's ledger entry with it — reverse the old, book the
+    new — on the same best-effort contract as the booking hook above: the
+    operator's edit has already committed, and a ledger refusal may not turn it
+    into a 500 they would retry. A refusal leaves the payment with no active
+    entry, which the Self-check unbooked card reports and the backfill heals;
+    the console line is what names it in the meantime. See acc/payment-repost
+    for which edits move the books, and where the contra is dated. */
+export async function repostSoPaymentBestEffort(
+  sb: any,
+  p: { before: PaymentLedgerFacts; after: SoPaymentRow },
+): Promise<void> {
+  const out = await repostSoPaymentEdit(sb, p);
+  if (!out.ok) {
+    /* eslint-disable-next-line no-console */
+    console.error('[acc] SO payment edit not re-posted:', p.after.id, out.status, out.reason);
   }
 }
 

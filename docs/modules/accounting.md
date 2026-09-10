@@ -695,6 +695,29 @@ gated on "editable until the payment has been RECONCILED" rather than by time
 Pinned by `acc/payment-drift.test.ts`,
 `scm/routes/controlCheckPaymentDrift.test.ts` and `PaymentDriftCard.test.tsx`.
 
+**The edit now moves the entry with it (2026-09-10, docs/bugs/0778) — step 2.**
+`acc/payment-repost.ts` reverses the old entry and books a fresh one, the
+pattern general receipts already use, and the PATCH route calls it through
+`repostSoPaymentBestEffort` (beside `bookSoPaymentBestEffort` in
+`scm/lib/so-payment-row.ts`, same never-blocks contract). Two decisions live in
+that module. **Which edits move the books:** four fields and only four —
+`amount_sen`, `paid_at`, `method` (picks the debit account) and
+`merchant_provider` (picks WHICH transit account); an approval code, account
+sheet, collector, installment term or online sub-type changes no line, and
+re-posting for one would spend a JE number rewriting the same entry.
+**Where the correcting contra is dated:** on the ORIGINAL entry's date, so the
+wrong entry and its reversal net to zero in the month they were made — dated
+today it would leave the money standing in one month's bank column and a
+matching negative in another. DELETE keeps its own hook and still dates its
+contra TODAY, because removing a payment is an event that happens today. A
+refusal is carried up and logged, never swallowed: it leaves the payment with
+no active entry, which is the unbooked card's finding and the backfill's to
+heal. SI payments have no edit route at all, so there is nothing to mirror.
+Pinned by `acc/payment-repost.test.ts` (through the real poster and the fake
+client) and `tests/soPaymentEditReposts.test.ts` (that the ROUTE calls it —
+RED against the unfixed route file). **Step 3, the Finance permission gated on
+"editable until RECONCILED", is still not built.**
+
 **Phase 2B part 1 (2026-08-16): Daily Bank.** GET /accounting/daily-bank?date= answers the owner one question - today, where is the money and how much can actually move - live from the ledger (2.3: no caches): opening/in/out/closing per money account (scm.accounts.acc_money flag, migration 0299), settlement-in-transit balances per acquirer (visible, never counted movable), and — since phase 3 (2026-08-28, mig 0339) — pendingApprovalSen: every DRAFT payment voucher sitting in the approval queue, converted to MYR the way posting will, subtracted from available. Page /scm/daily-bank (Finance menu): date navigation + Get Image (canvas-drawn PNG to clipboard for WhatsApp, download fallback). Board arithmetic pinned in acc/daily-bank.test.ts. 946-0000 Cash Over/Short + OVER_SHORT role seeded for the coming daily cashup.
 
 **Phase 3 (2026-08-28): PV approval — money leaves only after a yes.** The full write-up lives in docs/modules/payment-voucher.md §0b (marker columns per the 0324 lesson, the pure rule table in scm/lib/pv-approval.ts, the post gate, the scm.payment_voucher.approve key, the audit verbs). What belongs to THIS module: the Daily Bank board's available figure now answers "closing minus what is already asked for", which is the question the owner's phase-3 placeholder was holding a seat for.
