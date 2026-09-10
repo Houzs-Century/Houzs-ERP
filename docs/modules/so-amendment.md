@@ -169,6 +169,7 @@ Four decisions worth keeping:
 |---|---|
 | Field kind → department routing, the amendment PDF | [`purchase-order-amendment.md`](./purchase-order-amendment.md) §7 (one table drives SO and PO) |
 | What an approved amendment does to the LINE PRICE | [`sales-order.md`](./sales-order.md) |
+| What an approved SPEC does to a line's NAME | `backend/src/scm/lib/so-revision.ts` re-resolves `description` + `description2` from the catalogue for the new code, like the ADD branch — so a code swap does not leave the line named by the old product (bug 0781) |
 | Amendable header fields (the list is code, not prose) | `frontend/src/vendor/scm/lib/so-amendment-header.ts`, asserted against `soAmendableHeaderKeys()` in CI |
 | The notice delivery model, `source` tags, bell slice | [`announcements.md`](./announcements.md) |
 | PO-side workflow | [`purchase-order-amendment.md`](./purchase-order-amendment.md) |
