@@ -28,8 +28,8 @@ const READY: Payout = {
     readyToReceive: true,
     blockedBy: null,
     days: [
-      { settledOn: '2026-08-07', adviceNetSen: 400000, batchId: 11, fileName: 'pbb-0807.csv', reportNetSen: 400000, differenceSen: 0, reportOpenLines: 0, state: 'AGREES' },
-      { settledOn: '2026-08-08', adviceNetSen: 789800, batchId: 12, fileName: 'pbb-0808.csv', reportNetSen: 789800, differenceSen: 0, reportOpenLines: 0, state: 'AGREES' },
+      { settledOn: '2026-08-07', adviceNetSen: 400000, batchId: 11, fileName: 'pbb-0807.csv', reportNetSen: 400000, differenceSen: 0, reportOpenLines: 0, chargeSen: 0, chargeAccountCode: null, chargeNote: null, chargeJeNo: null, state: 'AGREES' },
+      { settledOn: '2026-08-08', adviceNetSen: 789800, batchId: 12, fileName: 'pbb-0808.csv', reportNetSen: 789800, differenceSen: 0, reportOpenLines: 0, chargeSen: 0, chargeAccountCode: null, chargeNote: null, chargeJeNo: null, state: 'AGREES' },
     ],
   },
 };
@@ -43,16 +43,28 @@ const BLOCKED: Payout = {
     readyToReceive: false,
     blockedBy: '1 of the 3 day(s) this pays for have no merchant report uploaded yet — 2026-08-14.',
     days: [
-      { settledOn: '2026-08-14', adviceNetSen: 300000, batchId: null, fileName: null, reportNetSen: null, differenceSen: null, reportOpenLines: null, state: 'REPORT_MISSING' },
-      { settledOn: '2026-08-15', adviceNetSen: 300000, batchId: 21, fileName: 'pbb-0815.csv', reportNetSen: 312050, differenceSen: 12050, reportOpenLines: 0, state: 'DIFFERS' },
-      { settledOn: '2026-08-16', adviceNetSen: 300000, batchId: 22, fileName: 'pbb-0816.csv', reportNetSen: 300000, differenceSen: 0, reportOpenLines: 2, state: 'REPORT_NOT_RECONCILED' },
+      { settledOn: '2026-08-14', adviceNetSen: 300000, batchId: null, fileName: null, reportNetSen: null, differenceSen: null, reportOpenLines: null, chargeSen: 0, chargeAccountCode: null, chargeNote: null, chargeJeNo: null, state: 'REPORT_MISSING' },
+      { settledOn: '2026-08-15', adviceNetSen: 300000, batchId: 21, fileName: 'pbb-0815.csv', reportNetSen: 312050, differenceSen: 12050, reportOpenLines: 0, chargeSen: 0, chargeAccountCode: null, chargeNote: null, chargeJeNo: null, state: 'DIFFERS' },
+      { settledOn: '2026-08-16', adviceNetSen: 300000, batchId: 22, fileName: 'pbb-0816.csv', reportNetSen: 300000, differenceSen: 0, reportOpenLines: 2, chargeSen: 0, chargeAccountCode: null, chargeNote: null, chargeJeNo: null, state: 'REPORT_NOT_RECONCILED' },
     ],
   },
 };
 
+const chargeMutate = vi.fn();
+const undoMutate = vi.fn();
+const usePayoutsMock = vi.fn(() => ({
+  data: {
+    payouts: [READY, BLOCKED],
+    chargeAccounts: [{ accountCode: '900-T009', accountName: 'Terminal charges' }, { accountCode: '905-0000', accountName: 'Stationery' }] as Array<{ accountCode: string; accountName: string }>,
+    feeAccountByAcquirer: { PBB: '900-T009' } as Record<string, string | null>,
+  },
+  isLoading: false,
+}));
 vi.mock('./settlement-queries', () => ({
-  usePayouts: () => ({ data: { payouts: [READY, BLOCKED] }, isLoading: false }),
+  usePayouts: () => usePayoutsMock(),
   useUploadPayoutAdvice: () => ({ mutate: uploadMutate, isPending: false }),
+  usePostPayoutCharge: () => ({ mutate: chargeMutate, isPending: false }),
+  useUndoPayoutCharge: () => ({ mutate: undoMutate, isPending: false }),
 }));
 
 import { PayoutAdviceTab } from './PayoutAdviceTab';
@@ -119,5 +131,81 @@ describe('uploading one', () => {
     expect(body.acquirerCode).toBe('PBB');
     expect(body.fileName).toBe('HOUZSCENTURY_IBG_240826.pdf');
     expect(body.contentBase64).toMatch(/^data:application\/pdf;base64,/);
+  });
+});
+
+/* THE BANK CHARGE (owner 2026-09-10, docs/bugs/0787). A day the bank paid
+   LESS for than its report offers "Bank deducted a charge"; the ask starts on
+   the whole difference and the acquirer's fee account, lets Finance pick any
+   other, requires a note, and sends exactly those to the server. A day that
+   agrees because a charge was booked says so with the money and the account,
+   and offers Undo. A day the bank paid MORE for is not offered the button —
+   that is not a deduction. */
+describe('a day the bank paid less for than its report', () => {
+  test('offers to book the difference as a charge, to the account Finance picks', () => {
+    chargeMutate.mockReset();
+    render(<PayoutAdviceTab />);
+    fireEvent.click(screen.getByText('Bank deducted a charge'));
+
+    const amount = screen.getByLabelText('Charge amount') as HTMLInputElement;
+    expect(amount.value).toBe('120.50');
+    const account = screen.getByLabelText('Charge account') as HTMLSelectElement;
+    expect(account.value).toBe('900-T009');
+    expect(screen.getByText('905-0000 · Stationery')).toBeTruthy();
+
+    /* Nothing goes without a note. */
+    const book = screen.getByText('Book charge') as HTMLButtonElement;
+    expect(book.disabled).toBe(true);
+
+    fireEvent.change(account, { target: { value: '905-0000' } });
+    fireEvent.change(screen.getByLabelText('What the bank deducted this for'), { target: { value: 'PBB terminal fee' } });
+    expect(book.disabled).toBe(false);
+    fireEvent.click(book);
+    expect(chargeMutate).toHaveBeenCalledWith(
+      { payoutId: 2, settledOn: '2026-08-15', amountSen: 12050, accountCode: '905-0000', note: 'PBB terminal fee' },
+      expect.anything(),
+    );
+  });
+
+  test('a day that agrees because of a charge names the money and the account, and can be undone', () => {
+    undoMutate.mockReset();
+    usePayoutsMock.mockReturnValueOnce({
+      data: {
+        payouts: [{
+          ...READY,
+          status: {
+            ...READY.status,
+            days: [{ settledOn: '2026-08-07', adviceNetSen: 302418, batchId: 11, fileName: 'pbb-0807.csv', reportNetSen: 334818, differenceSen: 0, reportOpenLines: 0, chargeSen: 32400, chargeAccountCode: '900-T009', chargeNote: 'terminal application fee', chargeJeNo: '2990-JE-2606-0101', state: 'AGREES' }],
+          },
+        }],
+        chargeAccounts: [], feeAccountByAcquirer: {},
+      },
+      isLoading: false,
+    });
+    render(<PayoutAdviceTab />);
+    expect(screen.getByText(/agrees · bank charge RM 324\.00 → 900-T009/)).toBeTruthy();
+    expect(screen.getByText(/terminal application fee/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Undo'));
+    expect(undoMutate).toHaveBeenCalledWith({ payoutId: 1, settledOn: '2026-08-07' });
+  });
+
+  test('a day the bank paid MORE for is not offered a charge — that is not a deduction', () => {
+    usePayoutsMock.mockReturnValueOnce({
+      data: {
+        payouts: [{
+          ...BLOCKED,
+          status: {
+            ...BLOCKED.status,
+            blockedBy: 'pbb-0815.csv nets RM 3,000.00 but the advice says RM 3,120.50 for 2026-08-15 — a difference of RM 120.50.',
+            days: [{ settledOn: '2026-08-15', adviceNetSen: 312050, batchId: 21, fileName: 'pbb-0815.csv', reportNetSen: 300000, differenceSen: -12050, reportOpenLines: 0, chargeSen: 0, chargeAccountCode: null, chargeNote: null, chargeJeNo: null, state: 'DIFFERS' }],
+          },
+        }],
+        chargeAccounts: [], feeAccountByAcquirer: {},
+      },
+      isLoading: false,
+    });
+    render(<PayoutAdviceTab />);
+    expect(screen.getByText(/differs by RM 120\.50/)).toBeTruthy();
+    expect(screen.queryByText('Bank deducted a charge')).toBeNull();
   });
 });
