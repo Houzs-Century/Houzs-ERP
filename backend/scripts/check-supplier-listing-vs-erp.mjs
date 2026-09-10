@@ -34,8 +34,12 @@
  *   1. the piece MULTISET. Robust to row order, so a difference here is a
  *      difference in WHAT WAS ORDERED - a wrong piece, a missing piece, an
  *      extra one. This is the finding that costs money.
- *   2. the piece SEQUENCE. Only compared when the multiset already agrees, so
- *      it isolates DIRECTION - the corner on the wrong side, the mirrored run
+ *   2. the piece SEQUENCE - and a plain REVERSAL counts as AGREEMENT. One run
+ *      written from the other end is the same sofa: reversing does not move a
+ *      hand, and 1A(LHF) is a left-hand-facing arm wherever it appears. Only a
+ *      genuine re-ordering (the corner at a different point in the run) is a
+ *      difference. A MIRROR - reverse AND swap every hand - is a different sofa
+ *      and shows up as a MULTISET difference, which is where it belongs
  *      (docs/bugs/0774, 0777).
  *   3. the VARIANTS carried in the supplier's `Detail Description 2`, parsed by
  *      lib/parse-sofa.mjs - the module that owns that grammar and the one
@@ -90,6 +94,24 @@ const modelOf = (code) => {
   return i < 0 ? s : s.slice(0, i);
 };
 const bag = (xs) => xs.slice().sort().join('|');
+
+/* THE SAME SOFA, LISTED FROM THE OTHER END. The owner, 2026-09-10, on
+ * HC-PO-009587 where I had called two readings a conflict:
+ *
+ *     你自己亲手重读那张图  1A(LHF)+1NA+L(RHF)
+ *     供应商档案            L(RHF)+1NA+1A(LHF)
+ *     「这两个一样啊」
+ *
+ * And they are. Reverse the second and the hands do not move:
+ * L(RHF)+1NA+1A(LHF) reversed is 1A(LHF)+1NA+L(RHF), which is the first. A
+ * piece's hand is intrinsic - 1A(LHF) is a left-hand-facing arm wherever it is
+ * written - so a plain REVERSAL is one sofa written from the other end, not a
+ * different sofa.
+ *
+ * A MIRROR is reverse AND swap every hand, and that IS a different sofa. The two
+ * were being counted as one thing, which inflated "different order" with rows
+ * that agree. */
+const sameSofa = (a, b) => a.join('+') === b.join('+') || a.slice().reverse().join('+') === b.join('+');
 
 const book = gz('supplier-so-detail-2026-09-10.json.gz');
 const wantGroups = GROUPS === 'ALL' ? null : new Set(GROUPS.split(',').map((s) => s.trim()));
@@ -165,7 +187,8 @@ try {
        irrelevant because the corner is also on the wrong side. A document is now
        reported under every bucket that applies. */
     const sameBag = bag(theirs) === bag(mine);
-    const sameSeq = theirs.join('+') === mine.join('+');
+    /* Identical, or the same run written from the other end. Both are agreement. */
+    const sameSeq = sameSofa(theirs, mine);
 
     /* Variants are compared only where the pieces MATCH POSITIONALLY, because
        that is the only case where line i on both sides is the same piece.
@@ -212,7 +235,7 @@ try {
   line(`   supplier documents compared            ${docs.length}`);
   line(`   agree on pieces, order and variants    ${buckets.agree.length}`);
   line(`   DIFFERENT PIECES (what was ordered)    ${buckets.multiset.length}   <- costs money`);
-  line(`   same pieces, DIFFERENT ORDER           ${buckets.sequence.length}   <- direction`);
+  line(`   same pieces, DIFFERENT ORDER           ${buckets.sequence.length}   <- direction (a plain REVERSAL is NOT counted here: same sofa, other end)`);
   line(`   same build, DIFFERENT VARIANTS         ${buckets.variants.length}`);
   line(`   our purchase order not found           ${buckets.noPo.length}`);
   line(`   purchase order has no line in group    ${buckets.noLines.length}`);
