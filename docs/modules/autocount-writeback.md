@@ -5920,3 +5920,35 @@ now reads it by `po_number` and then by `id::text`, cast and guarded on its own
 because `uuid = text` fails as an absent OPERATOR rather than as a no-match, and
 "no purchase order" is the one wrong answer that check must never give. It prints
 `po_number` itself, which is the whole question a UUID-shaped row raises.
+
+## `3S` is PROPOSED and the gate refuses the sized case (2026-09-10)
+
+New SURFACE on `tokenFor` in `backend/src/services/autocount-sofa-collapse.ts`.
+`3S` used to return `null`, so no build containing it could ever be written.
+
+**The measurement that forbade it is what makes proposing it safe.** `3S (28")`
+decodes to `[2A(LHF), 1A(RHF)]` — a different sofa — on all ten models the
+refusals name; bare `3S` decodes to `[3S]` on all ten. So the spelling is right
+exactly when there is no seat size to attach, and `decodesTo` is what knows which
+case it is. Withholding the token refused BOTH, and production says
+`HC-SO-001640` and `HC-SO-001472` carry **no seat size at all**.
+
+This is the file's own principle, applied: *proposing a spelling is safe by
+construction, because every composed string is handed to the gate.*
+
+## The special-order pointer covers every way a special BLOCKS a sofa (2026-09-10)
+
+Same file, `collapseRun`. The compose is one `attempt` tried twice — with the
+ERP's specials, then with `Special Order: Refer to ERP`.
+
+The owner's ruling was applied to LENGTH first. Measured on production, the
+special order was the whole obstacle in two more disguises:
+
+- a special containing `+` or `/` makes `composeSofaDesc2` return null, and the
+  refusal then reads **"cannot spell [2A(LHF), STOOL]"** — naming the pieces and
+  blaming them;
+- `ALL` and `DAYBED` are not in the decoder's special vocabulary, so they never
+  come back and the round trip fails on a build that is otherwise perfect.
+
+**The refusal reported is the FIRST attempt's** — what is wrong with the document
+as it stands, not with a rewrite of it.

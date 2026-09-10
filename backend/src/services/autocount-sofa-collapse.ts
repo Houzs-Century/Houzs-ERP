@@ -148,12 +148,16 @@ function tokenFor(comp: string, i: number, n: number): string | null {
        and "2 (28\")" both decode to NOTHING at all, so the bare-digit spelling
        was a guaranteed refusal for every single-seat build.
 
-       3S STILL HAS NO SPELLING, and that refusal is load-bearing: "3S (28\")"
-       decodes to the TWO-piece build [2A(LHF), 1A(RHF)] — re-measured 2026-09-09
-       over the ten models these refusals name and both mechanism settings, wrong
-       in all twenty. Writing it would put a different sofa in a licensed ledger.
-       Anything containing it goes the same way: "3S + 1S + 2S (28\")" decodes to
-       [2A(LHF), 1A(RHF), 1S, 2S].
+       3S IS NOW PROPOSED, and the measurement that used to forbid it is the
+       reason it is SAFE to propose. Re-measured 2026-09-10 over the ten models
+       these refusals name: "3S (28\")" decodes to [2A(LHF), 1A(RHF)] — a
+       DIFFERENT sofa — in all twenty, and bare "3S" decodes to [3S] in all
+       twenty. Same for "3S + 1S + 2S". So the spelling is right exactly when
+       there is no seat size to attach, and the gate below is what knows which
+       case it is: a sized build composes "3S (28\")", fails the decode and is
+       refused precisely as before. Withholding the token refused BOTH cases,
+       and HC-SO-001640 [3S] and HC-SO-001472 [3S, 1S, 2S] — neither of which
+       carries a seat size — were refused for the sized case's reason.
 
        THE `solo` GUARD ON 1S AND 2S IS GONE, and only that. Measured the same
        way and in the same shape — WITH the size suffix a real build carries,
@@ -168,7 +172,7 @@ function tokenFor(comp: string, i: number, n: number): string | null {
        proposal costs a refusal; a missing one costs a document. */
     case '1S': return '1S';
     case '2S': return '2S';
-    case '3S': return null;
+    case '3S': return '3S';
     case '1NA': return '1NA';
     case '2NA': return '2NA';
     case 'CNR': return solo ? null : 'C';
@@ -472,46 +476,58 @@ function collapseRun(
     return { lines: out };
   }
 
-  // 2. COMPOSE — the build no longer matches the text it was imported with.
-  const composed = composeSofaDesc2(compartments, { size, colour, specials });
-  if (!composed) {
-    return {
-      refusal: `cannot spell [${compartments.join(', ')}] in the AutoCount Desc2 grammar `
-        + `(stored Desc2 "${desc2}" decodes to [${build.join(', ') || 'nothing'}])`,
-    };
-  }
-  /* 3. POINT AT THE ERP — the owner's rung, 2026-09-10, and the last one.
-     「Special Order 可以不进 ... 最重要是每一张单都可以进到就行了」. The pieces,
-     the size and the colour still have to be right and still have to survive the
-     gate below; only the special order may be replaced by a sentence saying
-     where it lives. Tried ONLY when the full text does not fit, and only when
-     there is a special order to point at — handing the composer a pointer for a
-     build that has no specials would ADD a segment and make it longer. */
-  let text = composed;
-  let sent = specials;
-  if (text.length > AC_DESC2_MAX && specials.length) {
-    const pointed = composeSofaDesc2(compartments, {
-      size, colour, specials: [SPECIAL_ORDER_POINTER],
-    });
-    if (pointed && pointed.length <= AC_DESC2_MAX) {
-      text = pointed;
-      sent = [SPECIAL_ORDER_POINTER];
+  /* 2. COMPOSE, and 3. POINT AT THE ERP if the special order is what blocks it.
+     One attempt, tried twice: once with the special orders the ERP holds, and —
+     only if that fails and there ARE any — once with the owner's pointer.
+
+     THE POINTER IS TRIED FOR EVERY WAY A SPECIAL CAN BLOCK A DOCUMENT, not only
+     for length. Measured on production 2026-09-10, the special order was the
+     whole obstacle on three more builds and in three different disguises:
+
+       · composeSofaDesc2 REFUSES a special containing `+` or `/`, and the
+         refusal reads "cannot spell [2A(LHF), STOOL]" — which names the pieces
+         and blames them (HC-SO-001526, HC-SO-001445);
+       · the decoder reads specials from a FIXED vocabulary, so `ALL` and
+         `DAYBED` never come back and the round trip fails on a build that is
+         otherwise perfect (HC-SO-008302, HC-SO-004716);
+       · and the text is over the column (the length case, already known).
+
+     The owner's ruling covers all three — 「Special Order 可以不进 ... 最重要是每
+     一张单都可以进到就行了」 — because what it says is that the special order need
+     not reach AutoCount at all, not that it may be shortened when long.
+
+     THE REFUSAL REPORTED IS THE FIRST ATTEMPT'S. When both fail, the honest
+     diagnosis is what went wrong with the document as it stands, not with a
+     rewrite of it. */
+  const attempt = (sp: string[]): { text: string } | { why: string } => {
+    const t = composeSofaDesc2(compartments, { size, colour, specials: sp });
+    if (!t) {
+      return {
+        why: `cannot spell [${compartments.join(', ')}] in the AutoCount Desc2 grammar `
+          + `(stored Desc2 "${desc2}" decodes to [${build.join(', ') || 'nothing'}])`,
+      };
     }
+    if (t.length > AC_DESC2_MAX) {
+      return {
+        why: `composed Desc2 is ${t.length} characters and AutoCount's field holds `
+          + `${AC_DESC2_MAX}; truncating would silently drop part of the build`,
+      };
+    }
+    /* The gate is asked about the text that is ACTUALLY SENT, with the specials
+       that are actually in it. Comparing pointed text against the full special
+       list would fail every time and make the second attempt dead code. */
+    const g = decodesTo(t, model, compartments, { size, colour, specials: sp });
+    if (!g.ok) return { why: `composed Desc2 does not survive a decode: ${g.why}` };
+    return { text: t };
+  };
+
+  const full = attempt(specials);
+  if ('text' in full) return { lines: [mkLine(run, full.text, 'compose')] };
+  if (specials.length) {
+    const pointed = attempt([SPECIAL_ORDER_POINTER]);
+    if ('text' in pointed) return { lines: [mkLine(run, pointed.text, 'compose')] };
   }
-  if (text.length > AC_DESC2_MAX) {
-    return {
-      refusal: `composed Desc2 is ${text.length} characters and AutoCount's field holds `
-        + `${AC_DESC2_MAX}; truncating would silently drop part of the build`,
-    };
-  }
-  /* The gate is asked about the text that is ACTUALLY SENT, with the specials
-     that are actually in it. Comparing the pointed text against the full
-     special list would fail every time and turn the rung above into dead code. */
-  const gate = decodesTo(text, model, compartments, { size, colour, specials: sent });
-  if (!gate.ok) {
-    return { refusal: `composed Desc2 does not survive a decode: ${gate.why}` };
-  }
-  return { lines: [mkLine(run, text, 'compose')] };
+  return { refusal: full.why };
 }
 
 /**
