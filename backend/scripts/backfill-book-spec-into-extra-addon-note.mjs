@@ -201,6 +201,28 @@ function decide(row, gen, genLabelled, book) {
   }
 
   const key = row.linked_ac_dtlkey == null ? null : Number(row.linked_ac_dtlkey);
+/* NOISE, not a spec — do NOT print it on a supplier PO. Owner 2026-09-10:
+   「random和TBC会选random 的square pillow啊」 — a line whose book text is only
+   TBC / random / FOC / a bare placeholder is telling us the SKU should be the
+   RANDOM one, it is not text the supplier needs. Those lines are excluded from
+   the text backfill (and are input to the scrap-pillow SKU audit instead).
+   Conservative by construction: a candidate is dropped ONLY when EVERY
+   meaningful token is a known placeholder, so a real colour code, dimension or
+   word keeps the whole note. The error direction is "keep a borderline one",
+   never "drop a real spec". */
+const NOISE_TOKENS = new Set([
+  'tbc', 'random', 'rand', 'foc', 'free', 'gift', 'postage', 'na', 'nil',
+  'none', 'kiv', 'pending', 'tba',
+]);
+const LABEL_TOKENS = new Set(['col', 'colour', 'color', 'cushion', 'fabric']);
+function isNoiseOnlyText(text) {
+  const toks = String(text).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const meaningful = toks.filter((t) => !LABEL_TOKENS.has(t));
+  if (meaningful.length === 0) return true; // just a label like "Col:" with nothing after
+  // Every meaningful token must be a placeholder word or a bare single digit.
+  return meaningful.every((t) => NOISE_TOKENS.has(t) || /^\d$/.test(t));
+}
+
   const candidates = [
     { origin: 'description2', text: norm(row.description2) },
     { origin: 'snapshot', text: key == null ? '' : (book.so.get(key) ?? '') },
@@ -212,13 +234,18 @@ function decide(row, gen, genLabelled, book) {
   const ours = new Set([norm(gen), norm(genLabelled)].filter(Boolean));
   const excluded = [];
   const usable = [];
+  let sawNoiseOnly = false;
   for (const c of candidates) {
     if (!c.text) continue;
     if (ours.has(c.text)) { excluded.push(c.origin); continue; }
+    if (isNoiseOnlyText(c.text)) { sawNoiseOnly = true; continue; }
     usable.push(c);
   }
 
   if (!usable.length) {
+    if (sawNoiseOnly) {
+      return { action: 'skip', reason: 'book text is only a TBC/random/FOC placeholder (owner 2026-09-10: those pick the RANDOM SKU, not printed text)', excludedOurs: excluded.length > 0 };
+    }
     return excluded.length
       ? { action: 'skip', reason: `every book copy is our own generated summary (${[...new Set(excluded)].join(', ')})`, excludedOurs: true }
       : { action: 'skip', reason: 'no book text on this line in any of the three sources' };
