@@ -4079,6 +4079,31 @@ at. It renders and never prices — the key reaches one string in a printed
 column, the script's only arithmetic is lines vs header total from `total_sen`,
 and it is SELECT-only, so it cannot move money even by accident.
 
+**It was reading FEWER keys than the renderer, and reported a clean line that
+was not one (2026-09-10, `docs/bugs/0787-*`).** The probe read `specials`,
+`customSpecials` and `specialsRecorded`; `buildVariantSummary` reads
+`variants.specials ?? variants.special` plus `specialsRecorded`. The SINGULAR
+`special` was in the renderer and in no version of the probe, so a line holding
+its add-ons there printed "Right Drawer" on every customer copy while the probe
+called it empty — and that false clean was quoted to the owner as "the data is
+fixed, only the printed text is stale" on HC-SO-012312.
+
+Three properties now hold, and the reason for each is in the script's own
+`SPECIAL_KEYS` comment:
+
+- the key list MIRRORS the renderer's, plus `specialChoices`;
+- the probe takes the UNION where the renderer takes an alternative
+  (`specials ?? special`) — the renderer has to pick one, a probe must not,
+  because *which key is this line using* is the question being asked;
+- every value printed is TAGGED with the key it came from, and each line prints
+  its full `variants` key inventory (names only — the values are money,
+  addresses and remarks, and this prints into a CI log), because a list can only
+  find what it knows to look for and the failure above was a key nobody listed.
+
+The list is COPIED, not imported: the renderer is TypeScript under `src/` and
+the probe is a dependency-free `.mjs` that runs before any build. That copy is
+the drift surface — widen the renderer's key list and this one does not follow.
+
 **A THIRD kind of reader was added on 2026-09-07: the REPORTS.** The AutoCount
 reconcile did not know this key existed, so every line closed by this very ruling
 kept reporting as an outstanding `DIFFER` — the owner's applied decision quoted
