@@ -13,6 +13,7 @@ import {
   masterVariantsByCategory,
   seedableMasterVariants,
   seedFollowerVariants,
+  CASCADE_CATEGORIES,
   NEVER_INHERITED_KEYS,
   type CascadeLine,
   type MasterVariantSnapshot,
@@ -152,6 +153,58 @@ describe('categories', () => {
   });
 });
 
+/* THE OWNER'S RULING, 2026-09-09: 「主行改一次，全部跟着改 … 这个只限于 sofa
+   item」. A sofa is ONE physical thing assembled from several lines, so its
+   modules share a fabric and a leg height by construction. Three bedframes on
+   one order are three beds.
+
+   Pinned here because the cost of losing it is silent and was already paid: a
+   rep removed a drawer from beds 2 and 3, touched bed 1 again, and the cascade's
+   first rule (the master's latest change FORCES the follower) wrote it back —
+   「remove 三次才没有」, HC-SO-012312. Widening CASCADE_CATEGORIES again would
+   reintroduce that with nothing on screen to say so. */
+describe("the sofa-only ruling", () => {
+  test('CASCADE_CATEGORIES is sofa, and nothing else', () => {
+    expect([...CASCADE_CATEGORIES]).toEqual(['sofa']);
+  });
+
+  test('a bedframe master does NOT force its followers', () => {
+    const bed = (variants: Record<string, unknown> = {}): CascadeLine =>
+      ({ category: 'bedframe', variants });
+    /* Bed 1 carries a drawer; beds 2 and 3 do not. Under the ruling they stay
+       that way even when bed 1 moves again — which is the exact sequence the
+       rep hit. */
+    const first = run([bed({ drawer: 'RIGHT' }), bed({}), bed({})], {}, CASCADE_CATEGORIES);
+    expect(first.variants[1]).toEqual({});
+    expect(first.variants[2]).toEqual({});
+    const second = run(
+      [bed({ drawer: 'RIGHT', gap: '14' }), bed({}), bed({})],
+      first.masters,
+      CASCADE_CATEGORIES,
+    );
+    expect(second.variants[1]).toEqual({});
+    expect(second.variants[2]).toEqual({});
+  });
+
+  test('a sofa master still drives its followers — the rule it was kept for', () => {
+    const out = run([sofa({ seatHeight: '21' }), sofa()], {}, CASCADE_CATEGORIES);
+    expect(out.variants[1]).toEqual({ seatHeight: '21' });
+  });
+
+  /* The SEED is gated by the same set. Without this a new bedframe line still
+     arrives pre-filled from bed 1 and only stops being RE-forced afterwards —
+     which fixes the second removal and not the first. */
+  test('the seed does not pre-fill a new bedframe line either', () => {
+    const lines: CascadeLine[] = [
+      { category: 'bedframe', variants: { drawer: 'RIGHT' } },
+      { category: 'sofa', variants: { seatHeight: '21' } },
+    ];
+    expect(seedableMasterVariants(lines, CASCADE_CATEGORIES)).toEqual({
+      sofa: { seatHeight: '21' },
+    });
+  });
+});
+
 describe('reference stability', () => {
   test('an unchanged line keeps its SAME variants object, so the form can bail out', () => {
     const master = sofa({ seatHeight: '21' });
@@ -173,7 +226,7 @@ describe('the seed helpers', () => {
   });
 
   test('seedableMasterVariants skips an empty master — there is nothing to copy', () => {
-    expect(seedableMasterVariants([sofa(), sofa({ seatHeight: '21' })])).toEqual({
+    expect(seedableMasterVariants([sofa(), sofa({ seatHeight: "21" })], null)).toEqual({
       sofa: { seatHeight: '21' },
     });
   });

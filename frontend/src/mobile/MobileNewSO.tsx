@@ -4,6 +4,7 @@ import {
   cascadeMasterVariants,
   seedFollowerVariants,
   seedableMasterVariants,
+  CASCADE_CATEGORIES,
   FABRIC_IDENTITY_KEYS,
   type MasterVariantSnapshot,
 } from "../vendor/scm/lib/so-variant-cascade";
@@ -22,6 +23,7 @@ import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import { addressLineProps } from "../lib/acColumnWidths";
+import { deriveProcessingDate } from "../lib/processingDate";
 import { paymentMethodCodeForValue } from "../vendor/scm/lib/payment-methods";
 import { soDateGuardError, soStockLocationError, soErrorText } from "../vendor/scm/lib/so-form-validate";
 import { useBranding } from "../hooks/useBranding";
@@ -325,9 +327,6 @@ const fmt = (n: number) => n.toLocaleString("en-MY", { minimumFractionDigits: 2,
    the compartments of one sofa. */
 const FABRIC_SYNC_KEYS: readonly string[] = FABRIC_IDENTITY_KEYS;
 
-/* Mobile renders variant panels for sofa + bedframe only, so the cascade is
-   scoped to those. Desktop passes null (every category). */
-const MOBILE_CASCADE_CATEGORIES: ReadonlySet<string> = new Set(["sofa", "bedframe"]);
 
 function newLine(): LineItem {
   return {
@@ -1326,7 +1325,7 @@ export function MobileNewSO({
      has any variants set — the PICK-TIME seed. Same shared helper the desktop
      form calls; this file used to carry its own copy of it. */
   const inheritVariantsByCategory = useMemo(
-    () => seedableMasterVariants(cascadeLines),
+    () => seedableMasterVariants(cascadeLines, CASCADE_CATEGORIES),
     [cascadeLines],
   );
 
@@ -1347,9 +1346,7 @@ export function MobileNewSO({
     const { variants, masters } = cascadeMasterVariants(
       cascadeLines,
       masterSnapshotRef.current,
-      /* Mobile only shows variant panels for sofa + bedframe, so only those
-         cascade here. Passed explicitly because desktop answers differently. */
-      MOBILE_CASCADE_CATEGORIES,
+      CASCADE_CATEGORIES,
     );
     masterSnapshotRef.current = masters;
     setLines((prev) => {
@@ -2367,7 +2364,8 @@ export function MobileNewSO({
                     value={delivDate}
                     disabled={scheduleDatesLocked}
                     min={today}
-                    onChange={(iso) => setDelivDate(iso)}
+                    /* Derives Processing — rule + why in lib/processingDate.ts. */
+                    onChange={(iso) => { setDelivDate(iso); if (iso && !procDate) setProcDate(deriveProcessingDate(iso)); }}
                   />
                 </Field>
                 <div style={{ fontSize: 10, color: "#9aa093", marginTop: -3 }}>
