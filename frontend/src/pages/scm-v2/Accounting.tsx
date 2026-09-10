@@ -42,6 +42,8 @@ import {
   type ControlCheckRow,
   type UnbookedPayments,
   type PaymentDryRun,
+  type PaymentDrift,
+  type PaymentDriftRow,
 } from './accounting-phase1-queries';
 import { DataTable, type Column } from '../../components/DataTable';
 import { ItemGroupsTab } from './ItemGroups';
@@ -685,6 +687,7 @@ const SelfCheckTab = () => {
       {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Running checks…</div>}
       {checks.map((check) => <ControlCheckCard key={check.role} check={check} />)}
       {q.data?.payments && <UnbookedPaymentsCard p={q.data.payments} />}
+      {q.data?.paymentDrift && <PaymentDriftCard d={q.data.paymentDrift} />}
     </div>
   );
 };
@@ -796,6 +799,91 @@ export const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
             ))}
           </tbody>
         </table>
+      )}
+    </div>
+  );
+};
+
+/* ── A payment that reached the ledger and then stopped agreeing with it ────
+   Editing a payment writes the row and does NOT re-post its journal entry, so
+   the two drift apart in silence. Today almost nothing is editable — a payment
+   can only be changed on the day it was keyed — and that accident is the only
+   thing holding the count at zero. The owner has confirmed with management
+   (2026-09-10) that Finance should be able to correct a mis-keyed payment,
+   which opens that window; this card is what has to be watching when it does.
+
+   It reads. It writes nothing, and offers no button to: putting the entry
+   right is the NEXT step (make the edit reverse and re-post), and a fix
+   offered before that exists would be a fix that does not work. */
+const driftWords: Record<PaymentDriftRow['fields'][number], string> = {
+  amount: 'amount', date: 'date', method: 'how it was paid',
+};
+
+export const PaymentDriftCard = ({ d }: { d: PaymentDrift }) => {
+  const good = 'var(--c-secondary-a, #2F5D4F)';
+  const bad = 'var(--c-festive-b, #B8331F)';
+  const soft = 'var(--c-ink-soft, #777)';
+  const clean = d.ok && d.rows.length === 0;
+  /* Nothing booked here yet is not the same statement as everything agrees,
+     and the card must not borrow the second one's words for the first. */
+  const nothingToCompare = clean && d.scanned === 0;
+
+  return (
+    <div style={{ ...cardStyle, borderColor: clean ? good : bad }} className="space-y-2">
+      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+        <b>Payments that still agree with their entry</b>
+        <span style={{
+          padding: '2px 10px', borderRadius: 999, fontWeight: 700, fontSize: 'var(--fs-12)',
+          background: clean ? 'rgba(47, 93, 79, 0.12)' : 'rgba(184, 51, 31, 0.12)',
+          color: clean ? good : bad,
+        }}>
+          {nothingToCompare ? 'nothing to compare' : clean ? `all ${d.scanned}` : `${d.rows.length} do not`}
+        </span>
+      </div>
+
+      {d.error && <div style={{ fontSize: 'var(--fs-13)', color: bad }}>The check could not run: {d.error}</div>}
+
+      <div style={{ fontSize: 'var(--fs-12)', color: soft }}>
+        {nothingToCompare
+          ? 'No payment has reached the ledger in this company yet, so there is no entry to compare a payment against.'
+          : `Comparing ${d.scanned} payment${d.scanned === 1 ? '' : 's'} against the journal entry that explains it. `
+            + 'Editing a payment does not re-post its entry, so a change made after the day it was keyed leaves the books behind.'}
+      </div>
+
+      {d.rows.length > 0 && (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+          <thead>
+            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.18))' }}>
+              <th>Document</th><th>Entry</th><th>What moved</th>
+              <th style={{ textAlign: 'right' }}>Payment says</th>
+              <th style={{ textAlign: 'right' }}>Entry says</th>
+            </tr>
+          </thead>
+          <tbody>
+            {d.rows.map((r) => (
+              <tr key={`${r.source}:${r.id}`} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.10))' }}>
+                <td>{r.docNo}</td>
+                <td>{r.jeNo}</td>
+                <td>{r.fields.map((f) => driftWords[f]).join(', ')}</td>
+                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                  {fmt(r.paymentAmountSen)}<br />
+                  <span style={{ color: soft, fontSize: 'var(--fs-12)' }}>{r.paidOn || 'no date'} · {r.paymentMethod}</span>
+                </td>
+                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                  {fmt(r.entryAmountSen)}<br />
+                  <span style={{ color: soft, fontSize: 'var(--fs-12)' }}>{r.entryDate} · {r.entryMethod ?? 'not stated'}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {d.rows.length > 0 && (
+        <div style={{ fontSize: 'var(--fs-12)', color: soft }}>
+          Nothing here is corrected automatically. The entry is put right by reversing it and
+          booking it again — until that is built, reverse the entry by hand and re-key the payment.
+        </div>
       )}
     </div>
   );
