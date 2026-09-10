@@ -59,6 +59,7 @@
 import { readFileSync } from 'node:fs';
 import postgres from 'postgres';
 import { chunkSizeForUrl, PAGE } from '../src/scm/lib/paginate-all.ts';
+import { SO_TERMINAL_STATES } from '../src/scm/shared/so-terminal-states.ts';
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -244,15 +245,15 @@ try {
   }
 
   // 4. The chunk arithmetic, in numbers.
-  const codes = perCode.map((r) => r.code);
-  const size = chunkSizeForUrl(codes);
+  const snapCodes = perCode.map((r) => r.code);
+  const snapSize = chunkSizeForUrl(snapCodes);
   const bindByCode = new Map(perCode.map((r) => [r.code, r.bindings]));
-  const batches = [];
-  for (let i = 0; i < codes.length; i += size) batches.push(codes.slice(i, i + size));
-  const rowsPerBatch = batches.map((b) => b.reduce((n, c) => n + (bindByCode.get(c) ?? 0), 0));
+  const snapBatches = [];
+  for (let i = 0; i < snapCodes.length; i += snapSize) snapBatches.push(snapCodes.slice(i, i + snapSize));
+  const rowsPerBatch = snapBatches.map((b) => b.reduce((n, c) => n + (bindByCode.get(c) ?? 0), 0));
   const over = rowsPerBatch.filter((n) => n > PAGE).length;
-  log('the shared reader over THIS code list (lib/supplier-bindings.ts arithmetic):');
-  log(`  codes ${codes.length}  ·  chunkSizeForUrl ${size}  ·  batches ${batches.length}  ·  PAGE ${PAGE}`);
+  log('the shared reader over the snapshot\'s own code list (rough scale check):');
+  log(`  codes ${snapCodes.length}  ·  chunkSizeForUrl ${snapSize}  ·  batches ${snapBatches.length}  ·  PAGE ${PAGE}`);
   log(`  binding rows per batch: ${rowsPerBatch.join(', ')}`);
   log(`  batches that need a SECOND page: ${over}`);
   if (over === 0) {
@@ -260,6 +261,96 @@ try {
     log('  cap cannot be what empties a code here. It also could not produce THIS shape —');
     log('  the read orders is_main_supplier DESC first, so a truncation drops ALTERNATES');
     log('  before it ever drops a main.');
+  }
+  log('');
+
+  // 5. THE IN-LIST ITSELF. `@supabase/postgrest-js` 2.108.2 serialises `.in()` as
+  //    `in.(v1,v2,…)` and wraps a value in double quotes when it contains one of
+  //    `, ( )` — WITHOUT escaping anything inside those quotes (dist/index.cjs,
+  //    `PostgrestReservedCharsRegexp = /[,()]/`). PostgREST's own grammar says a
+  //    double quote inside such a value must be written `\"` and a backslash
+  //    `\\` (docs.postgrest.org url_grammar). So an item code carrying a `"` —
+  //    an inch mark, which a mattress catalogue is full of — produces a filter
+  //    whose quoting closes early. This section finds those codes in the LIVE
+  //    demand set and puts their position beside the losses, so the reader can
+  //    see whether the losses sit where such a code sits.
+  const demandCodes = await sql`
+    WITH d AS (
+      SELECT i.item_code, i.id
+        FROM scm.mfg_sales_order_items i
+        JOIN scm.mfg_sales_orders o
+          ON o.doc_no = i.doc_no AND o.company_id = i.company_id
+       WHERE i.company_id = ${CO}
+         AND i.cancelled = false
+         AND i.qty > 0
+         AND i.item_code IS NOT NULL
+         AND o.status::text <> ALL(${SO_TERMINAL_STATES})
+    )
+    SELECT item_code, MIN(id::text) AS first_id
+      FROM d GROUP BY item_code ORDER BY MIN(id::text)`;
+  const ordered = demandCodes.map((r) => r.item_code);
+  /* MRP also drops a line whose delivered-net already covers it, which this
+     reconstruction cannot do in SQL — so `ordered` is a SUPERSET and the batch
+     boundaries below are approximate. Stated, not hidden: the question it is
+     asked is "do the losses CLUSTER where an unescapable code sits", and a
+     superset can blur a boundary without inventing a cluster. */
+  const isPoison = (c) => c.includes('"') || c.includes('\\');
+  const poison = ordered.filter(isPoison);
+  const size = chunkSizeForUrl(ordered);
+  const idx = new Map(ordered.map((c, i) => [c, i]));
+  log('the LIVE demand code list, as the reader would batch it:');
+  log(`  codes ${ordered.length} (superset: delivered-net not applied)  ·  chunkSizeForUrl ${size}`
+    + `  ·  batches ${Math.ceil(ordered.length / size)}`);
+  log(`  codes whose value CANNOT be serialised by .in() (contain " or \\): ${poison.length}`);
+  for (const c of poison) {
+    log(`    [${idx.get(c)}] batch ${Math.floor(idx.get(c) / size)}, position ${idx.get(c) % size}  ${JSON.stringify(c)}`);
+  }
+  const poisonBatches = new Set(poison.map((c) => Math.floor(idx.get(c) / size)));
+  const firstPoisonAt = new Map();
+  for (const c of poison) {
+    const b = Math.floor(idx.get(c) / size);
+    const p = idx.get(c) % size;
+    if (!firstPoisonAt.has(b) || p < firstPoisonAt.get(b)) firstPoisonAt.set(b, p);
+  }
+  log('');
+  const placed = perCode
+    .filter((r) => idx.has(r.code))
+    .map((r) => ({ ...r, i: idx.get(r.code), batch: Math.floor(idx.get(r.code) / size), pos: idx.get(r.code) % size }));
+  const missingFromDemand = perCode.length - placed.length;
+  const lostPlaced = placed.filter((r) => r.bindings > 0 && r.mx === 0);
+  const okPlaced = placed.filter((r) => r.bindings > 0 && r.mx > 0);
+  log(`snapshot codes located in that list: ${placed.length} (${missingFromDemand} not found — a`);
+  log('code the reconstruction did not reproduce; it is a superset in one direction and');
+  log('the snapshot can still hold a code whose demand line has since changed).');
+  log('');
+  log('batch  codes  bound  LOST  attached  first unserialisable value at position');
+  const byBatch = new Map();
+  for (const r of placed) {
+    const b = byBatch.get(r.batch) ?? { codes: 0, bound: 0, lost: 0, ok: 0 };
+    b.codes += 1;
+    if (r.bindings > 0) { b.bound += 1; if (r.mx === 0) b.lost += 1; else b.ok += 1; }
+    byBatch.set(r.batch, b);
+  }
+  for (const b of [...byBatch.keys()].sort((a, z) => a - z)) {
+    const v = byBatch.get(b);
+    const p = firstPoisonAt.has(b) ? String(firstPoisonAt.get(b)) : '—';
+    log(`  ${String(b).padStart(4)}  ${String(v.codes).padStart(5)}  ${String(v.bound).padStart(5)}`
+      + `  ${String(v.lost).padStart(4)}  ${String(v.ok).padStart(8)}  ${p.padStart(6)}`);
+  }
+  log('');
+  const lostInPoisoned = lostPlaced.filter((r) => poisonBatches.has(r.batch)).length;
+  const lostAfterPoison = lostPlaced.filter(
+    (r) => poisonBatches.has(r.batch) && r.pos > firstPoisonAt.get(r.batch)).length;
+  const okAfterPoison = okPlaced.filter(
+    (r) => poisonBatches.has(r.batch) && r.pos > firstPoisonAt.get(r.batch)).length;
+  log(`LOST codes located: ${lostPlaced.length}`);
+  log(`  of those, in a batch carrying an unserialisable value: ${lostInPoisoned}`);
+  log(`  of those, POSITIONED AFTER that value in the batch:    ${lostAfterPoison}`);
+  log(`codes that KEPT their suppliers while positioned after one: ${okAfterPoison}`);
+  if (poison.length === 0) {
+    log('');
+    log('No demand code carries a " or a \\, so THIS mechanism is refuted for this');
+    log('company and the losses above need another explanation.');
   }
 } catch (err) {
   console.error(`query failed: ${err instanceof Error ? err.message : String(err)}`);
