@@ -2903,6 +2903,15 @@ survive, only the link is wiped, which is exactly what makes it invisible.
   nulling; its `snapshotSo` `poLinks` blob is the compensating record the
   Approve-PO gate (`reviseBoundPo`) reads to reconcile the orphaned PO line. It
   captures the PO side only — the DO / SI sides are not snapshotted there.
+- The SO **amendment** ADD is the mirror case: `reviseBoundPo` places the new
+  line on a bound PO whose supplier matches, and **WARNS the buyer at confirm
+  when it reaches none** ("no supplier set" / "supplier has no open PO on this
+  sales order"). Until 2026-09-10 both warnings were gated on `scopeCoversAll`,
+  so on a sales order with 2+ live bound POs (the PO-Amendments confirm is scoped
+  to one) the gap was silent and only found on delivery day — fixed in
+  `fix/amendment-po-warn`, see
+  `docs/bugs/0783-amendment-added-line-on-a-multi-po-sales-order-got-no-purcha.md`.
+  Visibility only: no PO is auto-created.
 
 The 2026-07-31 measurement of the live database: **101 PO lines, only 34 carry
 `so_item_id` — 67 are NULL.**
