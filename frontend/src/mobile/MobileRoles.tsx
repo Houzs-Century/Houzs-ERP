@@ -272,6 +272,27 @@ function RoleDetail({
       </header>
 
       <div className="scroll" style={{ padding: "12px 14px", paddingBottom: dirty.total > 0 ? 96 : 32 }}>
+        {(role.unknown_permissions?.length ?? 0) > 0 && (
+          <div className="card" style={{ padding: 12, marginBottom: 10, border: "1px solid var(--amber)", background: "var(--amber-bg)" }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--amber)" }}>
+              {role.unknown_permissions!.length} stored key
+              {role.unknown_permissions!.length === 1 ? "" : "s"} this build does not recognise
+            </div>
+            <div style={{ fontSize: 11.5, color: "var(--ink2)", marginTop: 4, lineHeight: 1.4 }}>
+              They grant nothing. Clear them from the desktop editor.
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+              {role.unknown_permissions!.map((k) => (
+                <span
+                  key={k}
+                  style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--ink2)", background: "#fff", border: "1px solid var(--line)", borderRadius: 999, padding: "2px 8px" }}
+                >
+                  {k}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         {locked ? (
           <div className="card" style={{ padding: 18, textAlign: "center", border: "1px solid var(--line-card)" }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: "var(--ink)" }}>All permissions</div>

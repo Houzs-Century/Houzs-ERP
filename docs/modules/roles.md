@@ -44,19 +44,22 @@ reaches the client and is lost on the next save.
 
 ## 3. Frontend
 
-Desktop only — `mobileRoute.ts` resolves `/team?tab=roles` to "desktop-only".
+Desktop AND mobile — one shared logic layer (`lib/rolesPermissionModel.ts`), two
+presentations.
 
 | Surface | File | Notes |
 |---|---|---|
-| Workspace | `frontend/src/pages/Roles.tsx` → `RolesTab` | Master/detail. Embedded in `Team.tsx` at `/team?tab=roles`; the Roles tab is off the visible strip (owner "删了role") but URL-reachable. Team owns the `PageHeader` + New Role button and passes `{ creating, onCloseCreate }`. |
+| Desktop workspace | `frontend/src/pages/Roles.tsx` → `RolesTab` | Master/detail. Embedded in `Team.tsx` at `/team?tab=roles`; the Roles tab is off the visible strip (owner "删了role") but URL-reachable. Team owns the `PageHeader` + New Role button and passes `{ creating, onCloseCreate }`. |
+| Mobile screen | `frontend/src/mobile/MobileRoles.tsx` | Role list → per-role detail; each `resource` is a collapsible card of permission toggles, staged + saved through a sticky action bar. Single-role edit (no bulk). Reached via the Profile row `{ to: "/roles", gateVia: "/team?tab=hub" }` in `MobileApp.tsx`; the screen mounts only for `can("roles.read")`. |
 | Pure model | `frontend/src/lib/rolesPermissionModel.ts` (+ `.test.ts`) | `buildModules` adapts the flat catalogue into the `module → row → verb` grid; `activeIds`/`setPerm`/`setPerms`/`cellState`/`moduleCounts`/`diffGrants` are the staging + tri-state + guard logic. |
 | Modals | `frontend/src/pages/roles/RolesModals.tsx` | `NewRoleModal` (name / description / start-from) + `RolePickerModal` (Apply-to = multi target, Copy-from = single source). |
 | Settings drawer | `frontend/src/pages/roles/RoleSettingsDrawer.tsx` | Name / description / `scope_to_pic` + the page-access matrix (preserves the old editor's non-permission capabilities). |
 
 ### Behaviour
 - **Matrix.** Module strip = `resource` values; columns = `READ · CREATE · WRITE
-  · MANAGE`; rows = permission keys grouped by "stem" (key minus its trailing
-  verb). CRUD resources collapse to one row × 4 cells; heterogeneous ones
+  · MANAGE · APPROVE` (five real verbs); rows = permission keys grouped by "stem"
+  (key minus its trailing verb). CRUD resources collapse to one row × cells;
+  heterogeneous ones
   (Projects, Supply Chain) spread into one-off rows, and any (row, verb) with no
   real key renders as an **N/A dashed** cell. Toggling a cell adds/removes that
   one key from the staged set.
@@ -78,18 +81,23 @@ Desktop only — `mobileRoute.ts` resolves `/team?tab=roles` to "desktop-only".
 
 ## 4. Traps & deviations from the design mock
 
-- **The mock's clean grid is not the data model.** The prototype assumed
-  `module → resource → {read,write,manage,approve}`. Real verbs are
-  read/create/write/manage (no uniform "approve"; approve-like grants are
-  separate `manage` keys shown as their own rows). Columns and rows here are
-  DERIVED from the flat catalogue — don't reintroduce a hand-authored grid.
+- **The grid is DERIVED from the flat catalogue, not hand-authored.** Real verbs
+  are read/create/write/manage/**approve** (main added `approve` —
+  `scm.so_cancel.approve_l1/l2`, `announcements.approve`), so the matrix has FIVE
+  columns; rows are keys grouped by stem, with N/A where a (resource, verb) has no
+  key. Don't reintroduce a hand-authored module/resource/action table.
 - **Groups are System/Custom**, not the mock's 9 departments (roles have no group
   field).
 - **Members are derived client-side** from `/api/users` (needs `users.read`;
   degrades to `member_count` only).
-- **Omitted, no backing:** the unrecognised-keys banner (unknown keys are
-  stripped before they reach the client) and the per-grant audit-hover line
-  (no per-grant actor).
+- **Unrecognised keys ARE surfaced** (#2554): `GET /api/roles` returns
+  `unknown_permissions` per role (`droppedPermissions()`, the complement of
+  `parsePermissions`), so the rail shows a ⚠ marker, the panel shows a collapsible
+  banner listing the dropped keys, and "Clear" re-saves the role's valid set — the
+  backend strips unknown keys on any write, so it is all-or-nothing, not per-key.
+  Mobile shows the same dropped keys read-only.
+- **Still omitted, no backing:** the per-grant audit-hover line (no per-grant
+  actor; `audit_events` records per-`role.update`, not per key).
 - **Deferred:** permission Templates / "Save as template" — a shared store needs
   a backend table; localStorage would violate the personal-prefs-only rule.
 - **DS fix that rides along:** `SearchInput` now takes `widthClassName` (default

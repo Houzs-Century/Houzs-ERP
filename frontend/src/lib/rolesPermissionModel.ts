@@ -1,27 +1,29 @@
 // Pure model behind the Roles & Permissions matrix.
 //
 // The redesign's prototype assumed a tidy `module -> resource -> {read, write,
-// manage, approve}` grid. Production has no such thing: permissions are a FLAT
-// catalogue of `{ key, resource, verb }` (verbs read/create/write/manage; no
-// uniform "approve"), and a role's grants are a flat `string[]` of those keys.
-// This module adapts the flat catalogue into the grid the UI draws, and holds
-// the staging/diff/guard logic. It is deliberately React-free and pure so the
-// behaviour (especially the system-role write guards) is unit-tested.
+// manage, approve}` grid. Production is a FLAT catalogue of `{ key, resource,
+// verb }` (verbs read/create/write/manage/approve), and a role's grants are a
+// flat `string[]` of those keys. This module adapts the flat catalogue into the
+// grid the UI draws, and holds the staging/diff/guard logic. It is deliberately
+// React-free and pure so the behaviour (especially the system-role write
+// guards) is unit-tested.
 
 import type { PermissionDef } from "../types";
 
-export type Verb = "read" | "create" | "write" | "manage";
+export type Verb = "read" | "create" | "write" | "manage" | "approve";
 
-// Fixed column order, mirroring the prototype's four columns. Every module
-// shows all four; a (row, verb) with no real permission key renders N/A, which
-// is how the grid "degrades where reality doesn't fit".
-export const VERBS: readonly Verb[] = ["read", "create", "write", "manage"];
+// Fixed column order. Every module shows all columns; a (row, verb) with no real
+// permission key renders N/A, which is how the grid "degrades where reality
+// doesn't fit". `approve` is a real backend verb (scm.so_cancel.approve_l1/l2,
+// announcements.approve) — kept last so it never shifts the CRUD columns.
+export const VERBS: readonly Verb[] = ["read", "create", "write", "manage", "approve"];
 
 export const VERB_LABEL: Record<Verb, string> = {
   read: "Read",
   create: "Create",
   write: "Write",
   manage: "Manage",
+  approve: "Approve",
 };
 
 /** One matrix row: a sub-resource "stem" and the real key sitting under each verb. */

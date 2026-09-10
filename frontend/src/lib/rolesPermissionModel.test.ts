@@ -10,6 +10,7 @@ import {
   cellState,
   moduleCounts,
   diffGrants,
+  VERBS,
   type GrantMap,
 } from "./rolesPermissionModel";
 
@@ -186,5 +187,22 @@ describe("diffGrants", () => {
   it("is clean when nothing changed", () => {
     const g: GrantMap = { 2: new Set(["a"]) };
     expect(diffGrants(g, { 2: new Set(["a"]) })).toEqual({ total: 0, roleIds: [] });
+  });
+});
+
+describe("approve verb (added on main)", () => {
+  it("is the fifth column and buckets an approve key into it", () => {
+    expect(VERBS).toEqual(["read", "create", "write", "manage", "approve"]);
+    const mods = buildModules([
+      { key: "announcements.read", resource: "Announcements", verb: "read", label: "View", description: "" },
+      { key: "announcements.approve", resource: "Announcements", verb: "approve", label: "Approve announcements", description: "" },
+    ]);
+    const ann = mods.find((m) => m.id === "Announcements")!;
+    // Both keys share the "announcements" stem, so one row carries read + approve.
+    expect(ann.rows).toHaveLength(1);
+    expect(ann.rows[0].keyByVerb).toEqual({
+      read: "announcements.read",
+      approve: "announcements.approve",
+    });
   });
 });

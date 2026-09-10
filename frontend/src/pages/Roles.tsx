@@ -4,6 +4,7 @@ import {
   Check,
   Minus,
   Shield,
+  AlertTriangle,
   Copy,
   Share2,
   ClipboardPaste,
@@ -112,6 +113,7 @@ export function RolesTab({
   const [groupFilter, setGroupFilter] = useState<GroupFilter>("all");
   const [closedGroups, setClosedGroups] = useState<Record<string, boolean>>({});
   const [membersOpen, setMembersOpen] = useState(false);
+  const [bannerOpen, setBannerOpen] = useState(false);
   const [grants, setGrants] = useState<GrantMap>({});
   const [baseline, setBaseline] = useState<GrantMap>({});
   const [saving, setSaving] = useState(false);
@@ -164,9 +166,15 @@ export function RolesTab({
       if (groupFilter === "custom" && r.is_system) return false;
       if (!q) return true;
       if ((r.name + " " + (r.description ?? "")).toLowerCase().includes(q)) return true;
-      return r.permissions.some(
-        (k) => k.toLowerCase().includes(q) || (keyLabel.get(k) ?? "").toLowerCase().includes(q)
-      );
+      if (
+        r.permissions.some(
+          (k) => k.toLowerCase().includes(q) || (keyLabel.get(k) ?? "").toLowerCase().includes(q)
+        )
+      )
+        return true;
+      // Searching an unrecognised stored key (e.g. planner.run) surfaces the
+      // roles that still carry it — the whole point of showing them.
+      return (r.unknown_permissions ?? []).some((k) => k.toLowerCase().includes(q));
     });
   }, [roleList, groupFilter, q, keyLabel]);
 
@@ -244,6 +252,21 @@ export function RolesTab({
       toast.error(e?.message || "Save failed. Please try again.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Re-save the role's VALID staged grants; the backend PATCH filters through
+  // isValidPermission, so this drops every unrecognised stored key at once
+  // (per-key clear isn't possible — the API strips them all on any write).
+  async function clearDropped(r: Role) {
+    try {
+      await api.patch(`/api/roles/${r.id}`, {
+        permissions: Array.from(grants[r.id] ?? new Set(r.permissions)),
+      });
+      toast.success("Cleared the unrecognised keys.");
+      rolesQ.reload();
+    } catch (e: any) {
+      toast.error(e?.message || "Could not clear the keys.");
     }
   }
 
@@ -606,6 +629,53 @@ export function RolesTab({
                 </div>
               )}
 
+              {/* unrecognised-keys banner — stored keys this build no longer knows
+                  (served by GET /api/roles as unknown_permissions, #2554) */}
+              {!isBulk && current && (current.unknown_permissions?.length ?? 0) > 0 && (
+                <div className="border-b border-border-subtle bg-warning-bg">
+                  <button
+                    onClick={() => setBannerOpen((v) => !v)}
+                    className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-[12px] text-warning-text"
+                  >
+                    <AlertTriangle size={13} className="flex-none" />
+                    <span className="flex-1 font-semibold">
+                      {current.unknown_permissions!.length} stored key
+                      {current.unknown_permissions!.length === 1 ? "" : "s"} this build does not recognise — they grant nothing
+                    </span>
+                    <ChevronDown
+                      size={14}
+                      className={cn("flex-none transition-transform duration-[120ms]", !bannerOpen && "-rotate-90")}
+                    />
+                  </button>
+                  {bannerOpen && (
+                    <div className="px-4 pb-3">
+                      <p className="mb-2 text-[11.5px] text-warning-text">
+                        These keys are stored on the role but this build no longer recognises them, so they grant nothing. Clear them to keep the role tidy.
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {current.unknown_permissions!.map((k) => (
+                          <span
+                            key={k}
+                            className="rounded-full border border-border-subtle bg-surface px-2 py-0.5 font-mono text-[11px] tabular-nums text-ink-secondary"
+                          >
+                            {k}
+                          </span>
+                        ))}
+                      </div>
+                      {canManage && (
+                        <button
+                          onClick={() => clearDropped(current)}
+                          className="mt-2.5 rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] font-semibold text-ink-secondary hover:border-err hover:text-err"
+                        >
+                          Clear {current.unknown_permissions!.length} dropped key
+                          {current.unknown_permissions!.length === 1 ? "" : "s"}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* body: system empty-state OR the matrix */}
               {isSystemView ? (
                 <div className="p-11">
@@ -686,8 +756,8 @@ export function RolesTab({
 
                   {/* matrix */}
                   <div className="overflow-x-auto">
-                    <div className="min-w-[452px]">
-                      <div className="grid h-[34px] grid-cols-[minmax(200px,1fr)_repeat(4,58px)] items-center border-b border-border-subtle bg-surface px-4">
+                    <div className="min-w-[520px]">
+                      <div className="grid h-[34px] grid-cols-[minmax(200px,1fr)_repeat(5,58px)] items-center border-b border-border-subtle bg-surface px-4">
                         <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
                           Resource
                         </div>
@@ -706,7 +776,7 @@ export function RolesTab({
                       {mod.rows.map((row) => (
                         <div
                           key={row.stem}
-                          className="grid grid-cols-[minmax(200px,1fr)_repeat(4,58px)] items-center border-b border-border-subtle bg-surface px-4 py-2.5 hover:bg-surface-dim"
+                          className="grid grid-cols-[minmax(200px,1fr)_repeat(5,58px)] items-center border-b border-border-subtle bg-surface px-4 py-2.5 hover:bg-surface-dim"
                         >
                           <div className="min-w-0 pr-3">
                             <div className="text-[13px] font-medium text-ink">{row.label}</div>
@@ -854,6 +924,14 @@ function RoleRow({
             <Badge tone="accent" size="xs">
               System
             </Badge>
+          )}
+          {(role.unknown_permissions?.length ?? 0) > 0 && (
+            <span
+              className="flex-none leading-none"
+              title={`${role.unknown_permissions!.length} stored key${role.unknown_permissions!.length === 1 ? "" : "s"} this build does not recognise: ${role.unknown_permissions!.join(", ")}`}
+            >
+              <AlertTriangle size={11} className="text-warning-text" />
+            </span>
           )}
         </div>
         <div className="mt-0.5 truncate text-[11px] text-ink-muted">
