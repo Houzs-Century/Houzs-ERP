@@ -1,6 +1,6 @@
 ## The DS SearchInput could not be widened by a caller, so the field stayed pinned at 288px [low]
 
-<!-- area: Design system -->
+<!-- area: Frontend + mobile -->
 
 **Symptom.** Rebuilding the Roles & Permissions left rail (`frontend/src/pages/Roles.tsx`) needed a full-width search field. `SearchInput` (`frontend/src/components/Button.tsx`) rendered at a hard 288px and there was no clean way to widen it: `className` styles the WRAPPER, not the field, and `inputClassName` only "worked" by luck.
 
