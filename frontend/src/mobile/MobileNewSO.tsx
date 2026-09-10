@@ -3426,7 +3426,20 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
     );
   }, [pools.specialAddons, catUpper, allow]);
   const pickedSpecials = specialsList(v.specials ?? v.special);
-  const presets = useSpecialOrderSurface({ itemCode: line.itemCode, fallbackCategory: line.cat, pickedSpecialCount: pickedSpecials.length }).optionPicker ? specialOptions : [];
+  /* Mobile parity: SOFA and BEDFRAME lines get this sheet AS their special
+     picker (there is no separate mobile sofa/bedframe configurator that
+     hosts the checkboxes — LineCard opens THIS sheet for both categories
+     at MobileNewSO.tsx:3168). `useSpecialOrderSurface.optionPicker` is
+     written for desktop, where SoLineCard renders the checkboxes inside
+     the configurator and returns `false` here to avoid a duplicate — that
+     gate must not carry over to mobile or every sofa opens with "No
+     preset special orders" while the 19 codes sit in `specialOptions`
+     unrendered (owner 2026-09-11, PROVEN by check-sofa-specials-coverage).
+     Pooled goods (accessory/others) keep the guard: ticking an add-on
+     re-keys the stock bucket, which pooled categories must not do. */
+  const surface = useSpecialOrderSurface({ itemCode: line.itemCode, fallbackCategory: line.cat, pickedSpecialCount: pickedSpecials.length });
+  const showPresetsForMobile = surface.optionPicker || catUpper === "SOFA" || catUpper === "BEDFRAME";
+  const presets = showPresetsForMobile ? specialOptions : [];
   const specialChoicesMap: Record<string, string[]> =
     v.specialChoices && typeof v.specialChoices === "object"
       ? (v.specialChoices as Record<string, string[]>)
