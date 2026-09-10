@@ -1,0 +1,40 @@
+name: SO handover audit check (read-only)
+
+# Answers "which Sales Orders moved from one salesperson to another, and their
+# exact doc numbers" — so a follow-up "Also give access to" can be aimed at only
+# that batch, not everything the new holder owns. Written 2026-09-10 after
+# Kingsley's orders were handed to Shawn and only Kingsley's subset should be
+# shared onward with Stanley.
+#
+# Actions already holds secrets.DATABASE_URL for the deploy, so the check runs
+# here and nobody handles the credential. Manual trigger only — a diagnostic,
+# not a gate, and a production DB read must never run on a schedule that turns it
+# into routine CI noise.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind (or displace) a release.
+concurrency:
+  group: so-handover-audit-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-so-handover-audit.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
