@@ -943,6 +943,37 @@ note per deposit invoice at that moment (`credit_note_id` is the link);
 until then the sale stays on 509-0000. Contracts:
 `backend/tests/depositInvoices.test.ts`, `DepositInvoices.test.tsx`.
 
+**The final invoice at delivery (2026-09-12, docs/bugs/0830; the deposit-invoice
+design's next step).** When the company's deposit-invoice switch is ON, the
+delivery reconciler (`backend/src/scm/lib/so-delivery-sync.ts`, the moment it
+flips an order to DELIVERED) invoices the order BY ITSELF:
+`backend/src/scm/lib/auto-final-invoice.ts` reads the order's deliveries an
+invoice may be raised from (`siTransferRefusal`, the picker's own gate),
+every line with quantity still unbilled (`doLineRemaining`, basis
+invoiceable), skips an order that already has a live invoice
+(`absorbsOrderDeposit`: a draft or a cancelled one is none), and raises ONE
+invoice — SENT, `{co}-SI-YYMM-NNN`, revenue per product group, the paid roll
+counting the deposits, the CREATE audit row noted "Auto: final invoice at
+delivery". Never blocks the delivery. The conversion it runs is the picker's
+own, lifted into `backend/src/scm/lib/si-from-do.ts`
+(`createSalesInvoiceFromDoLines`, an HTTP-shaped outcome; `recomputeTotals`,
+`buildItemRow`, `recordSiCreate`, `migratedRefusalForDeliveries` moved beside
+it) — `POST /sales-invoices/from-dos` in
+`backend/src/scm/routes/sales-invoices.ts` is now a thin door on it. Two rules
+changed on the way: the paid roll (`recomputeSiPaid`) runs on EVERY from-DO
+invoice, not only when customer credit landed, so an invoice off a
+deposit-paid order reads PARTIALLY_PAID / PAID from birth; and
+`postSiRevenue` (`backend/src/scm/lib/post-si-revenue.ts`) stamps the AR
+party the way the payment does — `customerPartyCode`: the debtor code when
+the business keeps one, else the order's `customer_id` — so a 2990 invoice
+nets in the customer's sub-ledger with its payments, deposit invoices and
+credit notes instead of sitting under no party. NEXT (④c-B): one credit
+note per deposit invoice at this moment (`credit_note_id`), and the
+Collection report's balance view keyed on "has a sales invoice". Contracts:
+`backend/tests/autoFinalInvoice.test.ts`; the router's own pins
+(`backend/tests/oneSystemTwoOrganisations.test.ts` reads DO_HEADER from the
+lib since this change).
+
 **The Merchant charges report (2026-09-12, docs/bugs/0826; owner: 我需要知道
 merchant charge 多少%，就是 charge / received amount，每个月的然后每个 merchant …
 每个不同 merchant 都要能看到，我指的是 gross … 每个月全部 merchant 加起来的%).**

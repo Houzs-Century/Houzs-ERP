@@ -20,6 +20,7 @@ import { isServiceLine } from '../shared';
 import { recordSoAudit } from './so-audit';
 import { advanceSoGeneration } from './so-generation';
 import { loadUnlinkedDoCoverage } from './do-unlinked-coverage';
+import { autoFinalInvoiceBestEffort } from './auto-final-invoice';
 
 export type SoLineQty = { id: string; qty: number };
 export type DoLineQty = { soItemId: string | null; qty: number };
@@ -400,6 +401,12 @@ export async function syncSoDeliveredFromDo(
         statusSnapshot: target, source: 'automation',
         note,
       });
+      /* THE FINAL INVOICE AT DELIVERY (docs/bugs/0830): when the company's
+         deposit-invoice flow is on, the order just delivered is invoiced here,
+         by itself, off every delivered line not yet billed. Best-effort like
+         everything in this reconciler — a delivery is never blocked by its
+         invoice. */
+      if (target === 'DELIVERED') await autoFinalInvoiceBestEffort(sb, { docNo, companyId: soCompanyId, actorId: actorId ?? null });
     } catch {
       /* best-effort — a sync failure must NEVER roll back or block the DO */
     }

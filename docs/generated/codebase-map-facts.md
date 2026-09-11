@@ -180,7 +180,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/receipts.ts` | 5 | 373 |
 | `backend/src/scm/routes/reports.ts` | 6 | 1308 |
 | `backend/src/scm/routes/sales-analysis.ts` | 2 | 551 |
-| `backend/src/scm/routes/sales-invoices.ts` | 15 | 2559 |
+| `backend/src/scm/routes/sales-invoices.ts` | 15 | 2054 |
 | `backend/src/scm/routes/scan-lorry-invoice.ts` | 1 | 381 |
 | `backend/src/scm/routes/scan-payment.ts` | 1 | 587 |
 | `backend/src/scm/routes/scan-so.ts` | 11 | 4895 |
@@ -225,7 +225,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2225 files, 755648 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2227 files, 755860 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
