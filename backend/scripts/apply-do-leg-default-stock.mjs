@@ -261,7 +261,7 @@ async function main() {
       FROM scm.delivery_order_items di
      WHERE di.delivery_order_id = ANY(${docIds}::uuid[])
        AND di.item_code = ANY(${[...new Set(plan.repairs.map((r) => r.itemCode))]})
-       AND COALESCE(di.line_cost_centi, 0) = 0`;
+       AND COALESCE(di.line_cost_sen, 0) = 0`;
   await v.end();
 
   notice("\nVERIFY (fresh connection):");

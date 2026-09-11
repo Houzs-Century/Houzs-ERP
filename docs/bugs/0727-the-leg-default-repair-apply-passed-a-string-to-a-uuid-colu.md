@@ -53,5 +53,18 @@ the raw half the SAFE precondition (a clean strip + a zero-consumption delete mo
 no money) and make the recovery assert that precondition. And bind every value to
 its real column type: performed_by is a uuid, and "a readable label" is not one.
 
+**Follow-up 2026-09-11 — the SAME root bit the verify step too.** After the
+recovery APPLY committed correctly (independently confirmed on production: the 5
+target lots decremented 1 -> 0, 5 costed OUT rows, 5 consumptions, DO lines
+stamped RM 5,216.14), the run STILL exited failure — its post-write verify query
+read `delivery_order_items.line_cost_centi`, and the column is `line_cost_sen`
+(money is sen on current main). So a completed, correct repair reported red.
+Both leg-default scripts carried the wrong column in their verify (the apply's
+was copied into the recovery). Corrected to `line_cost_sen` in
+fix/verify-column-sen; no write path changed, and neither script re-runs in
+practice. Second instance of this entry's own lesson — bind every value to its
+real column, and it is not only the WRITE that must: a verify naming a column
+that does not exist turns a success into a false failure.
+
 **Ref.** fix/complete-do-leg-default-stock, 2026-09-11. Sibling of docs/bugs/0722
 (the bug this repair addresses) and its plan/apply tools (#3594, #3624).
