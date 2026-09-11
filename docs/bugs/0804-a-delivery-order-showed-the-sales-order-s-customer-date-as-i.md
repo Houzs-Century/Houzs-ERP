@@ -31,7 +31,7 @@ sets existing AutoCount-linked DOs (`linked_ac_docno IS NOT NULL`) to their own
 `do_date` where they differ, and verifies zero remain on a fresh connection.
 
 > **SUPERSEDED 2026-09-11 — the caveat below was the whole bug. See
-> docs/bugs/0808.** The repair was never applied and is DELETED. Measured against
+> docs/bugs/0810.** The repair was never applied and is DELETED. Measured against
 > the live book, AutoCount's line delivery date differs from its document date on
 > **65 of 235** linked delivery orders, so `do_date` is not a faithful proxy and
 > this repair would have written a wrong date on 65 live documents. The premise

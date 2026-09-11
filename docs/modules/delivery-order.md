@@ -2562,7 +2562,7 @@ not in 0714's field map (`DO_CARRY` is deliberately "what a driver needs").
 as the customer block, so a new migrated document carries all of it at once.
 
 **The DELIVERY DATES are deliberately NOT on that list, and two attempts to put
-them there are on record (docs/bugs/0808).** The 2026-09-08 version copied
+them there are on record (docs/bugs/0810).** The 2026-09-08 version copied
 `s.customer_delivery_date`, which goes stale the moment AutoCount's own date is
 changed — that is the HC12445 report. The 2026-09-11 version (#3615, 0804) used
 `d.do_date` as a proxy for the book's delivery date; MEASURED against the live
@@ -2616,7 +2616,7 @@ initial keeps `do_date = today`, so the "opened fresh" case still opens today.
 The `/from-sos` server route falls back to today when the source SO carries no
 `customer_delivery_date`.
 
-Three holes were closed together (docs/bugs/0807):
+Three holes were closed together (docs/bugs/0807-do-line-delivery-date-silently-dropped-by-payload-key-mismat.md):
 
 - `DeliveryOrderNewV2.tsx`'s item POST payload was built with key
   `deliveryDate`, and `backend/src/scm/lib/do-item-row.ts` reads

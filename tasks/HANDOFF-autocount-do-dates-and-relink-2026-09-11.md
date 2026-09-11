@@ -62,7 +62,7 @@ read-only.
 
 It asked whether to revert the new-document half of #3615 (a new DO taking its
 own `do_date` instead of the SO's customer date). The owner settled it the same
-morning and it shipped as **#3623 (docs/bugs/0807)**: every date a new DO opens
+morning and it shipped as **#3623 (docs/bugs/0807-do-line-delivery-date-silently-dropped-by-payload-key-mismat.md)**: every date a new DO opens
 with — `do_date`, `customer_delivery_date`, and every LINE's delivery date —
 defaults to the SO's `customer_delivery_date`. 「我开 DO 之前我改 SO 就行 ……
 当我开 DO 的时候，你就跟着 default 这个 date 来开」. Deployed (run head
@@ -78,7 +78,7 @@ keeping the SO in step with AutoCount is the thing that matters.
 | sales orders | 2,939 | 600 | **100** | 39 | 2,205 |
 | delivery orders | 237 | 152 | **81** | - | 4 |
 | SO lines | 15,500 | - | **510** | 288 | - |
-| DO lines | 859 | - | **850** | 850, all of them (bug 0807) | - |
+| DO lines | 859 | - | **850** | 850, all of them (bug 0807-do-line-delivery-date) | - |
 
 Only **7** of 237 linked DOs have a `do_date` differing from the book's DocDate,
 so the DOCUMENT date is fine; it is the DELIVERY date that drifted.
@@ -98,7 +98,7 @@ so the DOCUMENT date is fine; it is the DELIVERY date that drifted.
   `migrated-do-writer.mjs` no longer set a delivery date at all — both values they
   could reach for are measured wrong. Pinned by
   `backend/tests/migratedDoSalesFields.test.mjs`.
-- Ledger `docs/bugs/0808-*.md`, guide `docs/modules/delivery-order.md`.
+- Ledger `docs/bugs/0810-*.md`, guide `docs/modules/delivery-order.md`.
 
 ### What it deliberately does NOT touch
 
@@ -109,7 +109,7 @@ so the DOCUMENT date is fine; it is the DELIVERY date that drifted.
 - **blank SO delivery dates (39 headers, 288 lines).** MRP gates on this field,
   so filling them changes what the floor sees and waits on the owner. Behind
   `INCLUDE_BLANKS=1` / the workflow's checkbox. Blank DO LINE dates ARE filled by
-  default: those are bug 0807's residue and nothing upstream reads them.
+  default: those are bug 0807-do-line-delivery-date's residue and nothing upstream reads them.
 
 ### NEXT — the durable fix, which needs the office host
 

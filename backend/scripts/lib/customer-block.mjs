@@ -177,5 +177,5 @@ export const DO_SALES_CARRY = [
      The book's real field is SODTL/DODTL.DeliveryDate, which the inbound pull
      does not carry, so this backfill cannot know it and no longer guesses:
      repair-delivery-dates-from-book.mjs sets it from a committed export of that
-     column. docs/bugs/0808, 0804, 0716. */
+     column. docs/bugs/0810, 0804, 0716. */
 ];

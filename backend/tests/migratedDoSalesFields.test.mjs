@@ -4,7 +4,7 @@
 // date on the LINE (SODTL/DODTL.DeliveryDate), the inbound pull does not carry
 // that column, and both values this backfill could reach for have been measured
 // wrong — the SO's date goes stale (HC12445) and d.do_date differs from the
-// book's delivery date on 65 of 235 linked delivery orders (0808).
+// book's delivery date on 65 of 235 linked delivery orders (0810).
 // docs/bugs/0714 carried the customer block (phone / address); the header block
 // above it on the same screen was blank for the same cause (docs/bugs/0716).
 //
@@ -51,7 +51,7 @@ describe('DO_SALES_CARRY', () => {
     // moment AutoCount's changes, and d.do_date (#3615) substitutes the
     // document date for the book's delivery date - measured wrong on 65 of 235
     // linked delivery orders. The real column arrives via
-    // scripts/repair-delivery-dates-from-book.mjs. docs/bugs/0808.
+    // scripts/repair-delivery-dates-from-book.mjs. docs/bugs/0810.
     const cols = DO_SALES_CARRY.map(([c]) => c);
     expect(cols).not.toContain('customer_delivery_date');
     expect(cols).not.toContain('expected_delivery_at');

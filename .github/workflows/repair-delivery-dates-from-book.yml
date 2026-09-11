@@ -5,7 +5,7 @@ name: Repair delivery dates from the AutoCount book
 # backend/scripts/data/ac-delivery-dates.json.gz. Replaces "Repair DO delivery
 # dates to follow AutoCount", which used the DO's document date as a proxy and
 # would have written a wrong date on 65 of 235 linked delivery orders.
-# PLAN by default. See docs/bugs/0808-*.md.
+# PLAN by default. See docs/bugs/0810-*.md.
 
 on:
   workflow_dispatch:

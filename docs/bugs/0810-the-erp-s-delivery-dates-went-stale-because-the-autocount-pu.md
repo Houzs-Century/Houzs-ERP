@@ -37,7 +37,7 @@ orders, 600 agree with the book, **100 differ**, 39 are blank in the ERP and
 exists). Of 237 delivery orders, **81 differ**; only 7 have a `do_date` that
 differs from the book's `DocDate`, so the DOCUMENT date is fine and it is the
 DELIVERY date that drifted. 510 sales-order lines and 850 delivery-order lines
-also differ, the DO lines because every one of them is blank (bug 0807).
+also differ, the DO lines because every one of them is blank (bug 0807-do-line-delivery-date).
 
 **What was WRONG with the first fix, and how it was caught.** PR #3615
 (`repair-do-delivery-dates-to-autocount.mjs` [gone]) set a linked DO's delivery

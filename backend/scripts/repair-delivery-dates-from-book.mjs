@@ -135,10 +135,10 @@ async function main() {
   //    matching cannot pair them (memory: sofa-is-one-book-line). ───────────
   //    No parent join is needed: both item tables carry their own `company_id`,
   //    and `linked_ac_dtlkey` only exists on a line that came from the book.
-  //    `line_delivery_date_overridden` (0807) marks a date an operator typed on
+  //    `line_delivery_date_overridden` (0807-do-line-delivery-date) marks a date an operator typed on
   //    purpose — never clobbered, only counted.
   //    BLANKS, per table. A blank DO line date is not a judgement call: it is
-  //    the residue of bug 0807 (the payload key mismatch that dropped every DO
+  //    the residue of bug 0807-do-line-delivery-date (the payload key mismatch that dropped every DO
   //    line date until 2026-09-11), nothing reads it upstream, and the book has
   //    the value — so those are filled by default. A blank SO line/header date
   //    is different: MRP gates on it, so filling thousands of them changes what
@@ -169,7 +169,7 @@ async function main() {
   log(`SO LINES         scanned=${soL.scanned}  to fix=${soL.out.length}  blank=${soL.blanks} (left blank: MRP gates on this, needs INCLUDE_BLANKS=1)  operator-overridden=${soL.overridden}`);
   log(`DELIVERY ORDERS  linked=${doRows.length}  to fix=${doFix.length}  skipped=${JSON.stringify(doSkip)}`);
   for (const f of doFix.slice(0, 10)) log(`   ${f.doc} [${f.status}] ${f.from} -> both ${f.to}`);
-  log(`DO LINES         scanned=${doL.scanned}  to fix=${doL.out.length}  of which were blank=${doL.blanks} (filled: bug 0807 residue)  operator-overridden=${doL.overridden}`);
+  log(`DO LINES         scanned=${doL.scanned}  to fix=${doL.out.length}  of which were blank=${doL.blanks} (filled: bug 0807-do-line-delivery-date residue)  operator-overridden=${doL.overridden}`);
   log(`FYI: linked DOs whose do_date differs from the book's DocDate: ${doDocDateMismatch} — NOT touched here, the document date is a separate fact.`);
 
   if (MODE !== "apply") {
