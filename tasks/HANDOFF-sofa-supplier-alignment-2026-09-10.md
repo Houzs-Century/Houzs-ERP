@@ -1,6 +1,6 @@
 # HANDOFF — sofa/bedframe alignment to the supplier listing
 
-**Updated 2026-09-11 ~13:20Z — second round, on the owner's FULLER export.**
+**Updated 2026-09-11 ~18:40Z — third round. §10b is what landed on production today; §10c-10e are what is left and why.**
 Read this top-to-bottom; it is written so a stranger can continue without the chat.
 
 The owner handed over `houzs-century-ALL-SO-detail-with-CustomerPO-2026-09-11.xlsx`
@@ -391,6 +391,78 @@ stock). Every held line is printed with which of those pins it.
 balance, movement and allocation rows to the new key in the same transaction as
 the line — the same tool §6 already owes for the 11 received-stock builds. Do
 MEASURE-first → plan → show the owner → apply. Do NOT "just fill them".
+
+## 10b. WHAT ACTUALLY LANDED ON PRODUCTION, 2026-09-11 (the second half of the day)
+
+Every row here is a run id and its own VERIFY line. Owner's ruling that drove it:
+「跟着供应商… 已经收货了的 也是要改的 跟 SO 一起改整个 transaction flow」.
+
+| what | run | result |
+|---|---|---|
+| sofa compartments + direction, from the supplier listing | 34570546850 | `builds touched 71 · lines updated 180 · added 0` · `VERIFY OK` · 0 money moved · 23 held for real stock |
+| sofa leg heights, lines with nothing received | 34568044809 | `APPLIED — 28 purchase line(s), 25 sales line(s)` · `VERIFY OK` |
+| the two pieces the first apply ADDED on 09-10 without a leg | 34590947841 | `APPLIED — 2 purchase, 2 sales` · `VERIFY OK` |
+| HC-SO-013503 lounger (purchasing's urgent one) | 34570012915 | `OK HC-SO-013503 1A(LHF)+1NA+L(RHF) money 449000/449000` |
+| RECEIVED goods: measurement + its stock, together | 34583514018 | `APPLIED — 158 document line(s), 81 stock row(s) re-keyed` · `VERIFY OK` · 1 refused |
+| bedframe gap (the one line) + the array damage it exposed | 34575444258, 34581688336 | `written: 2 of 2` · `mis-shaped blocks remaining: 0 (was 2)` |
+| `po_qty_picked` sitting on the wrong row | 34588323217 | `wrote 4 of 4` · `rows still disagreeing … : 0` |
+| 70 receipt lines with no spec | 34589987232 | `APPLIED — 70` · `VERIFY OK` |
+
+**Sofa vs the supplier, start of day → end of day (144 documents):** agree 6 → **42**;
+leg/spec different 35 → **1**; pieces different 4 → 4; order-only 13 → 15.
+
+## 10c. THE ONE LINE THAT CANNOT BE WRITTEN, and why it is not stubbornness
+
+`HC-PO-009784` `8030-L(LHF)`, leg 6". Its stock bucket is shared with three
+documents OUTSIDE its own chain — `HC-SO-013229`, `HC-PO-009941`,
+`HC-GRN-2609-009`. Re-keying it moves the lots those three read, so they would
+point at stock that is no longer there: `docs/bugs/0722` in the other direction.
+It needs either a wider tool that moves every consumer of the bucket together, or
+the owner's word that the other three may be moved with it.
+
+## 10d. WHAT THE WHOLE-FLOW AUDIT FOUND, AND WHAT IT RULED OUT (run 34587006588)
+
+Asked for by the owner: 「你在看整条流程有什么不一样的数据 正常来说要一样的」.
+
+| leg | aligned | not |
+|---|---|---|
+| SO → PO | 1,049 lines | 3 code, 15 variant-value, 4 piece-set, 4 unlinkable |
+| PO → GRN | 561 | 0 code, 2 variant-value, 17 piece-set (partial receipts), 91 with no spec |
+| SO → DO | 304 | 0 code, 9 variant-value, 3 piece-set |
+
+**All 3 code differences are the two delivered documents** (§10e). The 91
+spec-less receipts are fixed (70 sofa/bedframe, `docs/bugs/0817`).
+
+**RULED OUT — do not re-chase these:**
+- *"The receiving path stopped copying the spec."* It did not: `grns.ts` copies at
+  both sites read, and 70 of 70 spec-less lines are 2026-08 migrated paperwork.
+- *"A sofa shipped without consuming stock."* 39 of 39 sofa OUT movements consumed
+  a real lot.
+- *"The pillows were double-ordered — cancel one of each pair."* They were NOT.
+  Outstanding SQUARE PILLOW demand is **503** against **237** on hand and **62**
+  on order; LONG PILLOW **114** against **11** and **23**. Cancelling would create
+  a shortage. What IS wrong is the attribution: an MRP-origin convert is exempt
+  from the per-line ceiling by design (`mfg-purchase-orders.ts`, `!fromMrp &&
+  p.qty > remaining`), so the second purchase line lands on a sales line already
+  fully converted and READS as a duplicate. Owner's decision, not a repair.
+
+## 10e. THE TWO DELIVERED DOCUMENTS — the open question, with its evidence
+
+`HC-SO-012046` and `HC-SO-013224`. Three records disagree and the physical truth
+is in neither:
+
+- supplier + our purchase order: `1A(LHF) + 1NA + L(RHF)`
+- sales order + delivery note: `L(LHF) + 2A(RHF)` — and the warehouse consumed
+  exactly those two codes (RM 1,031.87 and RM 1,378.13 out of the 2026-08-10
+  AutoCount opening balance)
+
+Rewriting the delivery to the supplier's version would have to consume stock we do
+NOT hold: `5535-1NA` has no lot at all and `5535-L(RHF)` has 0 remaining. That is
+how a phantom OUT gets written (0722). So this is a STOCK ADJUSTMENT decision —
+the real defect is that the shipment consumed different SKUs from the ones the
+factory delivered — not a relabel. Owner was shown the numbers 2026-09-11 and
+chose to correct them; the adjustment plan is the next piece of work and has NOT
+been written.
 
 ## 11. What this round did NOT touch
 
