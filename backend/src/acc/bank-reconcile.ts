@@ -128,13 +128,36 @@ export type Reconciliation = {
       opening balance. True means the opening gap is fully accounted for. */
   broughtForwardExplained: boolean | null;
 
+  /** THE OWNER'S FORM (2026-09-11, docs/bugs/0806): 我觉得设计应该是这样 —
+      Closing — the books (−)/+ unreconciled items = Closing bank statement.
+      The outstanding items are every entry in the books no statement has
+      shown yet, this period's and earlier ones' alike (全部就是 outstanding
+      items), split into payments the bank has not paid and receipts it has
+      not credited. */
+  outstandingPayments: UnexplainedSide;
+  outstandingReceipts: UnexplainedSide;
+  outstandingJeNos: string[];
+  /** What the books come to once the outstanding items are allowed for, plus
+      what is on the bank and not in the books: the figure that must reach the
+      bank's printed closing. It moves with every match. */
+  computedClosingSen: number;
+  /** The bank's printed closing minus that figure. Zero is the whole point;
+      anything else is money nobody has accounted for. Null when no file
+      printed a closing balance. */
+  unexplainedSen: number | null;
+  /** Does the walk reach the bank's closing? The month cannot close without
+      it (当 closing bank statement amount 无法 tally 就无法 lock). */
+  tallies: boolean;
+
   /** Did the identity hold? False means the inputs disagree with themselves
       and the difference above cannot be trusted. */
   consistent: boolean;
   /** Set only when consistent is false: the two sides that did not agree. */
   inconsistency: string | null;
 
-  /** Nothing open, nothing unmatched, and the two closings equal. */
+  /** It tallies and nothing on the bank is left to decide. Outstanding items
+      in the books are what a reconciliation LISTS, not what stops it: a month
+      whose only difference is an unpresented payment is reconciled. */
   reconciled: boolean;
 };
 
@@ -220,6 +243,18 @@ export function reconcileBankStatement(input: ReconcileInput): Reconciliation {
     }
   }
 
+  /* THE OWNER'S FORM. Every unclaimed entry — this period's and the earlier
+     ones' — is an outstanding item; the books allowing for them, plus what the
+     bank shows that the books do not, must reach the bank's printed closing. */
+  const outstanding = [...unmatched, ...carriedEntries];
+  const pays = outstanding.filter((l) => net(l) < 0);
+  const rcts = outstanding.filter((l) => net(l) > 0);
+  const outstandingPayments: UnexplainedSide = { count: pays.length, sen: sum(pays, net) };
+  const outstandingReceipts: UnexplainedSide = { count: rcts.length, sen: sum(rcts, net) };
+  const computedClosingSen = closingLedgerSen - (booksNotOnBank.sen + carried.sen) + bankNotInBooks.sen;
+  const unexplainedSen = closingStatementSen == null ? null : closingStatementSen - computedClosingSen;
+  const tallies = consistent && unexplainedSen === 0;
+
   return {
     periodFrom, periodTo,
     openingStatementSen, openingLedgerSen, broughtForwardSen,
@@ -228,12 +263,11 @@ export function reconcileBankStatement(input: ReconcileInput): Reconciliation {
     bankNotInBooks, booksNotOnBank,
     unmatchedJeNos: unmatched.map((l) => l.jeNo),
     carried, carriedJeNos: carriedEntries.map((l) => l.jeNo), clearedFromBeforeSen, broughtForwardExplained,
+    outstandingPayments, outstandingReceipts, outstandingJeNos: outstanding.map((l) => l.jeNo),
+    computedClosingSen, unexplainedSen, tallies,
     consistent, inconsistency,
-    /* Reconciled means all three: nothing waiting on either side, and the two
-       closings equal. Two of the three is not reconciled, it is halfway. */
-    reconciled: consistent
-      && bankNotInBooks.count === 0
-      && booksNotOnBank.count === 0
-      && (differenceSen == null || differenceSen === 0),
+    /* Reconciled: it tallies and nothing on the bank is left to decide. An
+       entry the bank has not shown yet is listed, not held against the month. */
+    reconciled: tallies && bankNotInBooks.count === 0,
   };
 }

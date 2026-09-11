@@ -319,22 +319,6 @@
    "lineKeys": [
     "926847"
    ]
-  },
-  {
-   "docs": [
-    "HC-SO-013503"
-   ],
-   "model": null,
-   "pieces": [
-    "1A(LHF)",
-    "1NA",
-    "1A(RHF)"
-   ],
-   "why": "OWNER-GIVEN, 2026-09-10. He read this drawing himself and stated the build: 1A(LHF)+1NA+1A(RHF). The TV is drawn ABOVE the run so the recorded L(LHF)+1NA+1A(RHF) was mirrored, and the mechanical mirror of it would be 1A(LHF)+1NA+L(RHF) -- but the first piece is a plain arm 1A, not a chaise L, which is a SECOND mistake the mirror does not fix. His answer is used verbatim rather than the derived one.",
-   "confidence": "owner",
-   "lineKeys": [
-    "926872"
-   ]
   }
  ],
  "_held": [
