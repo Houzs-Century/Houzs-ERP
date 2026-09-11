@@ -117,6 +117,89 @@ describe('a difference the reconciliation has to explain', () => {
   });
 });
 
+/* Owner, 2026-09-11: 之前 in book 还没有 recon 的也要带下来，因为可能下个月才
+   过钱. A payment posted in April that the bank shows in May is, on April's
+   reconciliation, "in the books, not on the bank" — and on May's it is STILL
+   in the books and not yet claimed, so it must be carried into May's list
+   rather than vanish into the opening balance. It is exactly what the
+   difference brought forward is made of, and the reconciliation says so. */
+describe('entries carried from earlier periods', () => {
+  /* The opening deposit was reconciled on July's statement — claimed
+     elsewhere, so it is not waiting here however old it is. */
+  const input2 = (over: Partial<ReconcileInput> = {}) => input({ claimedElsewhere: new Set(['JE-2607-9']), ...over });
+  const carriedLedger = () => [
+    led({ entryDate: '2026-07-20', jeNo: 'JE-2607-9', debitSen: 5000000 }),
+    /* A cheque written on 28 July, still not cleared when this period opens. */
+    led({ jeNo: 'JE-2607-0031', entryDate: '2026-07-28', debitSen: 0, creditSen: 45000, partyName: 'TENAGA NASIONAL BERHAD' }),
+    led(),
+  ];
+
+  it('lists them separately from this period\'s, and counts them', () => {
+    const r = reconcileBankStatement(input2({
+      /* The bank never saw the cheque, so it opened RM 450.00 above the books. */
+      statementOpeningSen: 5000000, statementClosingSen: 5100000,
+      ledger: carriedLedger(),
+    }));
+    expect(r.carried).toEqual({ count: 1, sen: -45000 });
+    expect(r.carriedJeNos).toEqual(['JE-2607-0031']);
+    /* This period's own list does not swallow it. */
+    expect(r.booksNotOnBank).toEqual({ count: 0, sen: 0 });
+    expect(r.unmatchedJeNos).toEqual([]);
+    expect(r.consistent).toBe(true);
+  });
+
+  it('says when the difference brought forward is exactly those entries', () => {
+    const r = reconcileBankStatement(input2({
+      statementOpeningSen: 5000000, statementClosingSen: 5100000,
+      ledger: carriedLedger(),
+    }));
+    expect(r.broughtForwardSen).toBe(45000);
+    expect(r.broughtForwardExplained).toBe(true);
+  });
+
+  it('and when it is not', () => {
+    const r = reconcileBankStatement(input2({
+      statementOpeningSen: 4985000, statementClosingSen: 5085000,
+      ledger: carriedLedger(),
+    }));
+    expect(r.broughtForwardSen).toBe(30000);
+    expect(r.broughtForwardExplained).toBe(false);
+  });
+
+  it('is null when no file printed an opening balance', () => {
+    const r = reconcileBankStatement(input2({ statementOpeningSen: null, statementClosingSen: null, ledger: carriedLedger() }));
+    expect(r.broughtForwardExplained).toBeNull();
+    expect(r.carried.count).toBe(1);
+  });
+
+  /* A carried entry somebody has matched on THIS statement is claimed, not carried. */
+  it('does not carry an entry a movement on this statement claims', () => {
+    const r = reconcileBankStatement(input2({
+      statementOpeningSen: 5000000, statementClosingSen: 5055000,
+      movements: [mov(), mov({ id: 2, bookedOn: '2026-08-06', amountSen: -45000, state: 'POSTED', jeNo: 'JE-2607-0031' })],
+      ledger: carriedLedger(),
+    }));
+    expect(r.carried).toEqual({ count: 0, sen: 0 });
+    /* The cheque cleared THIS period: the identity carries that term, so the
+       difference is zero and the brought-forward is explained by it. */
+    expect(r.clearedFromBeforeSen).toBe(-45000);
+    expect(r.differenceSen).toBe(0);
+    expect(r.consistent).toBe(true);
+    expect(r.broughtForwardExplained).toBe(true);
+  });
+
+  it('does not carry an entry another statement already claimed', () => {
+    const r = reconcileBankStatement(input({
+      statementOpeningSen: 4955000, statementClosingSen: 5055000,
+      ledger: carriedLedger(),
+      claimedElsewhere: new Set(['JE-2607-9', 'JE-2607-0031']),
+    }));
+    expect(r.carried).toEqual({ count: 0, sen: 0 });
+    expect(r.broughtForwardSen).toBe(0);
+    expect(r.broughtForwardExplained).toBe(true);
+  });
+});
+
 describe('numbers that do not add up', () => {
   /* The guard that makes the whole thing worth trusting: a closing balance
      that disagrees with the lines under it. Real cause — a statement whose

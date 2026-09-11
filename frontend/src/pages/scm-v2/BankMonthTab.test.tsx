@@ -45,6 +45,7 @@ const RECON: Reconciliation = {
   bankNotInBooks: { count: 2, sen: 90000 },
   booksNotOnBank: { count: 0, sen: 0 },
   unmatchedJeNos: [],
+  carried: { count: 0, sen: 0 }, carriedJeNos: [], broughtForwardExplained: null,
   consistent: true, inconsistency: null, reconciled: false,
 };
 

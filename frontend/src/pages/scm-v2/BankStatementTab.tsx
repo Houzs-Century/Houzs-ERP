@@ -27,8 +27,7 @@ import { AlertTriangle, ArrowLeft, CheckCheck, Landmark, Link2, Undo2, Upload } 
 import {
   useBankSetup, useBankStatements, useBankStatement, useUploadBankStatement,
   useBookBankReceipt, useMatchBankLine, useIgnoreBankLine, useUndoBankLine,
-  type BankLine, type BankStatement, type Reconciliation,
-} from './bank-queries';
+  type BankLine, type BankStatement, type Reconciliation, type LedgerEntry } from './bank-queries';
 import { ICON, fmt, btn, softText, danger, good, panel, refusalText } from './settlement-ui';
 import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
@@ -132,9 +131,11 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
               the month its own date falls in, and the month view is built from
               those dates. This only supplies a year the file left out. */}
           <span style={softText}>
-            Only for a file whose dates carry no year, or one with no transactions at all (a quiet month's
-            statement is filed under the month chosen here). Where the file prints full dates this changes
-            nothing — each movement belongs to the month of its own date.
+            For a file whose dates carry no year, or one with no transactions at all (a quiet month's
+            statement is filed under the month chosen here). For a file that prints full dates, naming the month
+            says this statement covers that whole month — the 1st to the last day — so the books are compared over
+            the same days; each movement still belongs to the month of its own date, and one dated outside the
+            month refuses the file.
           </span>
         </div>
 
@@ -275,31 +276,62 @@ const StatementView = ({ id, onBack }: { id: number; onBack: () => void }) => {
         </table>
       )}
 
-      {q.data && q.data.unmatchedEntries.length > 0 && (
+      {q.data && <BooksNotOnBank entries={q.data.unmatchedEntries} what="this statement" />}
+    </section>
+  );
+};
+
+/* ── What the books hold that the bank has not shown ─────────────────────────
+   Two lists, not one (owner 2026-09-11): this period's own entries, and the
+   EARLIER ones still waiting — 之前 in book 还没有 recon 的也要带下来，因为可能
+   下个月才过钱. Each names who was paid or who paid (我要看到 payment detail,
+   例如 pay to who), because an entry number is not something a person can
+   recognise on a bank statement and a name is. Shared by the file view and the
+   month view so the two cannot drift. */
+export const BooksNotOnBank = ({ entries, what }: { entries: LedgerEntry[]; what: string }) => {
+  const now = entries.filter((e) => !e.carried);
+  const earlier = entries.filter((e) => e.carried);
+  const table = (rows: LedgerEntry[]) => (
+    <table className={grid.grid}>
+      <thead>
+        <tr><th>Entry</th><th>Date</th><th>Source</th><th>Who</th><th className={grid.num}>Amount</th></tr>
+      </thead>
+      <tbody>
+        {rows.map((e) => (
+          <tr key={e.jeNo}>
+            <td>{e.jeNo}</td>
+            <td>{e.entryDate}</td>
+            <td>{[e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ') || '—'}</td>
+            <td>{e.partyName ?? e.notes ?? '—'}</td>
+            <td className={grid.num}>{fmt(e.debitSen - e.creditSen)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+  return (
+    <>
+      {now.length > 0 && (
         <section className="space-y-2">
-          <b>{`In the books, not on this statement (${q.data.unmatchedEntries.length})`}</b>
+          <b>{`In the books, not on ${what} (${now.length})`}</b>
           <div style={softText}>
             Posted in this period and the bank has not shown it: an uncleared cheque, a deposit still on its way,
             or an entry belonging to a statement not uploaded yet.
           </div>
-          <table className={grid.grid}>
-            <thead>
-              <tr><th>Entry</th><th>Date</th><th>Source</th><th className={grid.num}>Amount</th></tr>
-            </thead>
-            <tbody>
-              {q.data.unmatchedEntries.map((e) => (
-                <tr key={e.jeNo}>
-                  <td>{e.jeNo}</td>
-                  <td>{e.entryDate}</td>
-                  <td>{[e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ') || '—'}</td>
-                  <td className={grid.num}>{fmt(e.debitSen - e.creditSen)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {table(now)}
         </section>
       )}
-    </section>
+      {earlier.length > 0 && (
+        <section className="space-y-2">
+          <b>{`From earlier months, still not on any statement (${earlier.length})`}</b>
+          <div style={softText}>
+            Posted before this period and no bank statement has shown it yet — the money may clear this month or
+            later. These are what the difference brought forward is made of; match one here when it appears.
+          </div>
+          {table(earlier)}
+        </section>
+      )}
+    </>
   );
 };
 
@@ -417,9 +449,13 @@ export const ReconciliationPanel = ({ r }: { r: Reconciliation }) => {
             </li>
             {r.broughtForwardSen != null && r.broughtForwardSen !== 0 && (
               <li>
-                {/* Its own line, because this period's work cannot close it. */}
-                <b>{fmt(r.broughtForwardSen)}</b> brought forward — the two sides already
-                disagreed by this much before {r.periodFrom}.
+                {/* Its own line, because this period's work cannot close it —
+                    unless it is exactly the earlier entries still waiting for
+                    the bank, in which case it is named for what it is. */}
+                <b>{fmt(r.broughtForwardSen)}</b> brought forward —{' '}
+                {r.broughtForwardExplained
+                  ? `explained by ${r.carried.count + ((r.clearedFromBeforeSen ?? 0) !== 0 ? 1 : 0)} entr${r.carried.count + ((r.clearedFromBeforeSen ?? 0) !== 0 ? 1 : 0) === 1 ? 'y' : 'ies'} from earlier months${r.carried.count > 0 ? ' still not on any statement, listed below' : ' that cleared on this statement'}.`
+                  : `the two sides already disagreed by this much before ${r.periodFrom}.`}
               </li>
             )}
           </ul>
@@ -579,8 +615,8 @@ export const OpenLine = ({ line }: { line: BankLine }) => {
                 <span>
                   <b>{e.jeNo}</b> · {e.entryDate}
                   {e.daysApart > 0 && <span className={grid.sub}> ({e.daysApart}d apart)</span>}
-                  {(e.sourceType ?? e.sourceDocNo) && (
-                    <div className={grid.sub}>{[e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ')}</div>
+                  {(e.sourceType ?? e.sourceDocNo ?? e.partyName) && (
+                    <div className={grid.sub}>{[e.sourceType, e.sourceDocNo, e.partyName].filter(Boolean).join(' · ')}</div>
                   )}
                 </span>
               </label>
