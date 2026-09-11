@@ -14,7 +14,7 @@
 // and the colour `GARFIELD-03` points at the padded one.
 import { describe, expect, it } from 'vitest';
 
-import { retiredSeriesSet, seriesIsRetired } from './fabric-colours';
+import { retiredByCode, retiredSeriesSet, seriesIsRetired } from './fabric-colours';
 
 const RETIRED = new Set(['FG66151', 'J9226']);
 
@@ -107,5 +107,61 @@ describe('seriesIsRetired', () => {
     // casing agrees. Folding case here would start matching two codes that the
     // catalogue deliberately keeps apart.
     expect(seriesIsRetired(RETIRED, 'fg66151')).toBe(false);
+  });
+});
+
+/* The same rule over fabric_trackings, which is keyed by id and NOT by code.
+   21 codes on production carry TWO rows for one code: an active one beside a
+   retired one, usually a plain id next to a `FABRIC_`-prefixed twin. The desktop
+   picker asked per ROW and the dead twin hid the live fabric - 21 active colours
+   hidden, ALL 21 wrongly - while the mobile sheet, which never filtered, showed
+   them. That split is how the owner found it. Rows below are the production data
+   verbatim. docs/bugs/0818. */
+describe('retiredByCode - fabric_trackings', () => {
+  const PROD = [
+    { fabric_code: 'HR805-09', is_active: true },
+    { fabric_code: 'HR805-10', is_active: true },
+    { fabric_code: 'HR805-10', is_active: false },
+    { fabric_code: 'HR805-90', is_active: true },
+    { fabric_code: 'HR805-90', is_active: false },
+    { fabric_code: 'GD2502-22', is_active: true },
+  ];
+
+  it('keeps a code that has ANY active row - the reported bug', () => {
+    const set = retiredByCode(PROD, 'fabric_code', 'is_active');
+    expect(seriesIsRetired(set, 'HR805-90')).toBe(false);
+    expect(seriesIsRetired(set, 'HR805-10')).toBe(false);
+    expect([...set]).toEqual([]);
+  });
+
+  it('retires a code whose every row is inactive', () => {
+    const set = retiredByCode(
+      [{ fabric_code: 'DEAD-01', is_active: false }, { fabric_code: 'DEAD-01', is_active: false }],
+      'fabric_code', 'is_active',
+    );
+    expect(seriesIsRetired(set, 'DEAD-01')).toBe(true);
+  });
+
+  it('the per-ROW question is what was wrong, and this is the difference', () => {
+    const perRow = new Set(PROD.filter((r) => r.is_active === false).map((r) => r.fabric_code));
+    expect([...perRow].sort()).toEqual(['HR805-10', 'HR805-90']);
+    expect([...retiredByCode(PROD, 'fabric_code', 'is_active')]).toEqual([]);
+  });
+
+  it('trims, and ignores blank codes', () => {
+    const set = retiredByCode(
+      [{ fabric_code: ' DEAD-02 ', is_active: false }, { fabric_code: '', is_active: false }],
+      'fabric_code', 'is_active',
+    );
+    expect([...set]).toEqual(['DEAD-02']);
+  });
+
+  it('anything other than true reads as inactive, so a missing flag cannot un-retire', () => {
+    const set = retiredByCode([{ fabric_code: 'X' }, { fabric_code: 'X', is_active: null }], 'fabric_code', 'is_active');
+    expect(seriesIsRetired(set, 'X')).toBe(true);
+  });
+
+  it('retiredSeriesSet is the same rule over id + active', () => {
+    expect([...retiredSeriesSet([{ id: 'GARFIELD', active: true }, { id: 'GARFIELD ', active: false }])]).toEqual([]);
   });
 });

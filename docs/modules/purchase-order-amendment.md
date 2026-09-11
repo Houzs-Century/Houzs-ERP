@@ -116,6 +116,14 @@ raises follow-ups; three filters decide what, and where:
    edit that swaps a service SKU for real goods still escalates. An identity that
    cannot be read is NOT treated as service: an extra follow-up the purchaser
    withdraws beats a real change the supplier never hears about.
+   Upstream, the SAME `isServiceLine` identity now decides the SO amendment's
+   LANE at create time (`shared/amendment-lane.ts` `classifyLineItemCode` — by
+   item_group, not the `SVC-` prefix alone; the go-live DISPOSE / STORAGE /
+   TRANSPORTATION CHARGES codes carry `item_group='service'` with NO prefix and
+   used to slip through). A service line now splits into the DELIVERY (Logistics)
+   lane, which never calls `raisePoFollowUps`, so `serviceOnlyChange` is the
+   BACKSTOP for a MIXED submission rather than the only guard (owner, 2026-09-11,
+   docs/bugs).
 3. **Only the PO that HOSTS a changed line** (owner, 2026-09-09) — it used to be
    every PO bound to the SO, so a one-line change on a multi-PO order raised a
    0-change amendment against each untouched PO too. **The narrowing applies only
