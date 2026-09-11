@@ -154,7 +154,12 @@
 .skuRowShort:hover { background: rgba(22, 105, 95, 0.13); }
 
 .codeCell { font-weight: 700; white-space: nowrap; }
-.descCell { color: #767b6e; }
+/* DataTable cells default to nowrap+ellipsis; setting white-space on this inner
+   element (the DataTable-sanctioned escape hatch for multi-line cells) overrides
+   the inherited nowrap so long bedframe specs wrap instead of being clipped
+   (owner 2026-09-11). The column also carries a fixed width so it wraps within
+   bounds rather than stretching the table. */
+.descCell { color: #767b6e; white-space: normal; overflow-wrap: anywhere; }
 
 /* Per-warehouse MRP (Commander 2026-05-31) — each Model row is scoped to one
    warehouse; the tag makes the binding visible at a glance. */
@@ -217,17 +222,24 @@
   font-weight: 700;
   white-space: nowrap;
 }
-/* Variant / module label pill — petrol soft (was a blue outlier). */
+/* Variant / module label pill — petrol soft (was a blue outlier). Wraps rather
+   than nowrap (owner 2026-09-11): bedframe specs (DIVAN / LEG / GAP / T.Heights /
+   SPECIAL) run long, so on the Model row's Description column the pill must fold
+   onto more lines instead of forcing the column wide. Short labels (sofa modules,
+   colours) are unaffected — they never reach the wrap point. `radius-md` not the
+   full pill radius so a two-line label reads as a rounded tag, not a lozenge. */
 .variantTag {
   display: inline-block;
   margin-left: var(--space-2);
+  max-width: 100%;
   padding: 1px 8px;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-md);
   background: #e1efed;
   color: #0c3f39;
   font-size: var(--fs-11);
   font-weight: 700;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 /* Shortage = the actionable "must order" number. Owner 2026-08-03 wanted the
    SAME petrol hue, just deeper so it stands out ("一样颜色的,只是加深一点,让它显得明显").
@@ -269,7 +281,18 @@
 }
 .supplierSelect:hover { border-color: #16695f; }
 
+/* Shortage rows in the report table (now DataTable) — the actionable ones.
+   Owner 2026-08-03 wanted them obvious; a deep-petrol left bar carries the
+   signal without a solid fill (rejected 2026-05-29). Painted on the row's first
+   cell rather than the <tr>, because a DataTable row is border-separate and a
+   tr-level inset bar is unreliable. The Shortage number is deepened by .shortNum. */
+.rowShort > td:first-child { box-shadow: inset 3px 0 0 #08352e; }
+
 /* ── Child detail (drilldown) ──────────────────────────────────────── */
+/* The expanded body sits inside DataTable's full-width expanded cell; give it
+   the same soft ground the old inline drilldown row had. The child tables carry
+   their own side margins, so this only needs the tint + a little breathing room. */
+.drilldown { padding: var(--space-2) 0 var(--space-3); background: #f4f6f3; }
 .detailRow > td { padding: 0 0 var(--space-3) 0; background: #f4f6f3; }
 .childTable {
   width: 100%;
