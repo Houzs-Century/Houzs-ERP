@@ -3973,10 +3973,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     so_doc_no: firstSoDocNo,
     debtor_code: (head.debtor_code as string | null) ?? null,
     debtor_name: (head.debtor_name as string | null) ?? null,
-    /* Owner 2026-09-11 (docs/bugs/0807, supersedes 0804): every DO date
-       defaults to the SO's customer_delivery_date; falls back to today on
-       a blank SO. Confirmed after two contradictory readings on the same
-       morning — this is the current rule. */
+    // Owner 2026-09-11 (0807 supersedes 0804): DO dates default to SO's.
     do_date: (head.customer_delivery_date as string | null) ?? today,
     expected_delivery_at: (head.customer_delivery_date as string | null) ?? today,
     customer_delivery_date: (head.customer_delivery_date as string | null) ?? today,
@@ -4051,11 +4048,8 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
       line_cost_sen: lineCost,
       line_margin_sen: lineTotal - lineCost,
       variants,
-      /* Owner 2026-09-11 (docs/bugs/0807): DO line date defaults to the SO's. */
-      line_delivery_date: (head.customer_delivery_date as string | null) ?? null,
-      /* Migration 0058 — carry the dedicated variant-breakdown columns from the
-         SO line onto the DO line (the picker previously dropped all 8, so sofa/
-         bedframe builds lost their breakdown on SO→DO convert). */
+      line_delivery_date: (head.customer_delivery_date as string | null) ?? null, // 0807
+      // Mig 0058 — variant breakdown columns carried onto the DO line.
       gap_inches: line.gapInches ?? null,
       divan_height_inches: line.divanHeightInches ?? null,
       divan_price_sen: line.divanPriceSen ?? 0,
