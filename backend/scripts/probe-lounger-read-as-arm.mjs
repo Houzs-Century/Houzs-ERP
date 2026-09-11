@@ -88,7 +88,6 @@ try {
           FROM scm.purchase_order_items pi
          WHERE pi.purchase_order_id = ${po[0].id}
            AND lower(coalesce(pi.item_group,''))='sofa'
-           AND coalesce(pi.cancelled,false)=false
          ORDER BY pi.id`;
       const poRecd = prows.reduce((a, r) => a + Number(r.received || 0), 0);
       log(`  PO: ${po[0].po_number}  linked_ac_docno=${po[0].linked_ac_docno||'-'}  received=${poRecd}`);
