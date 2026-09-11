@@ -15,6 +15,8 @@
    -------------------------------------------------------------------------- */
 
 import { buildVariantSummary } from '../shared';
+import { skuCategoryResolver } from './sku-category';
+import { stampPoLineNos } from './po-line-order';
 
 /** One picked SO line, as `convertSosToPosCore` carries it through grouping. */
 export interface PoConvertLine {
@@ -96,4 +98,39 @@ export function poConvertLineRow(
     // Commander 2026-05-31 — MRP-origin lines are reference-only (no SO lock).
     from_mrp: fromMrp,
   };
+}
+
+/**
+ * Every converted line as a ready-to-insert payload, numbered from `startLineNo`.
+ *
+ * Both convert arms used to do this inline and identically: resolve nothing,
+ * map, stamp. Resolving the SKU category is a THIRD step that must not be
+ * hand-copied into two arms for the same reason the row literal was not — one
+ * arm gets a fix and the other does not, which is precisely the drift that put
+ * `others` on a sofa PO line and hid an open purchase order from MRP.
+ *
+ * `companyId` is the category lookup's scope: the SKU master is per company, so
+ * a null here silently resolves nothing. Passed explicitly, never defaulted.
+ */
+export async function poConvertLineRows(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm PostgREST client is untyped; see lib/sku-category.ts
+  sb: any,
+  purchaseOrderId: string,
+  lines: readonly PoConvertLine[],
+  fromMrp: boolean,
+  companyId: number | null,
+  startLineNo: number,
+): Promise<Array<Record<string, unknown> & { line_no: number }>> {
+  const groupOf = await skuCategoryResolver(
+    sb,
+    lines.map((l) => ({ materialKind: 'mfg_product', itemCode: l.itemCode })),
+    companyId,
+  );
+  return stampPoLineNos(
+    lines.map((l) => poConvertLineRow(
+      purchaseOrderId, l, fromMrp,
+      groupOf({ materialKind: 'mfg_product', itemCode: l.itemCode, itemGroup: l.itemGroup }),
+    )),
+    startLineNo,
+  );
 }
