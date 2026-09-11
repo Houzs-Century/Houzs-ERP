@@ -112,7 +112,7 @@ const bedSpecials = (d2) => String(d2 ?? '')
   }
 }
 
-const book = gz('supplier-so-detail-2026-09-10.json.gz');
+const book = gz('supplier-so-detail-2026-09-11.json.gz');
 const sql = postgres(process.env.DATABASE_URL, { ssl: 'require', max: 1, prepare: false });
 
 try {
