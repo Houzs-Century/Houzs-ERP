@@ -155,8 +155,8 @@ async function main() {
            (SELECT count(*) FROM scm.inventory_movements m
              WHERE m.source_doc_no = d.do_number AND m.movement_type = 'OUT'
                AND m.item_code = ANY(${SOFA_ITEM_CODES}) AND COALESCE(m.total_cost_sen,0) > 0) AS costed_sofa_out,
-           (SELECT COALESCE(SUM(di.line_cost_centi),0) FROM scm.delivery_order_items di
-             WHERE di.delivery_order_id = d.id AND di.item_code = ANY(${SOFA_ITEM_CODES})) AS sofa_line_cost_centi
+           (SELECT COALESCE(SUM(di.line_cost_sen),0) FROM scm.delivery_order_items di
+             WHERE di.delivery_order_id = d.id AND di.item_code = ANY(${SOFA_ITEM_CODES})) AS sofa_line_cost_sen
       FROM scm.delivery_orders d
      WHERE d.do_number = ANY(${DO_NUMBERS})
      ORDER BY d.do_number`;
@@ -165,8 +165,8 @@ async function main() {
   notice("\nVERIFY (fresh connection):");
   let bad = 0;
   for (const r of after) {
-    const good = Number(r.costed_sofa_out) > 0 && Number(r.sofa_line_cost_centi) > 0;
-    notice(`   ${r.do_number}  costed sofa OUT=${r.costed_sofa_out}  sofa line cost=${rm(Number(r.sofa_line_cost_centi))}  ${good ? "OK" : "STILL INCOMPLETE"}`);
+    const good = Number(r.costed_sofa_out) > 0 && Number(r.sofa_line_cost_sen) > 0;
+    notice(`   ${r.do_number}  costed sofa OUT=${r.costed_sofa_out}  sofa line cost=${rm(Number(r.sofa_line_cost_sen))}  ${good ? "OK" : "STILL INCOMPLETE"}`);
     if (!good) bad++;
   }
   if (failures.length > 0 || bad > 0) {
