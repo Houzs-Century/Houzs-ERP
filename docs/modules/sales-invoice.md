@@ -233,7 +233,11 @@ posting.
   company's deposit-invoice switch is on (`lib/auto-final-invoice.ts`;
   docs/modules/accounting.md). `recomputeTotals`, `buildItemRow`,
   `recordSiCreate` and `migratedRefusalForDeliveries` moved into that lib
-  with it; the router imports them back.** **Since 2026-08-20 the phone always sends `asDraft: true`** — see
+  with it; the router imports them back.** The revenue posting closes the
+  order's deposit invoices with a credit note each, and the CANCEL transition
+  releases them again (`releaseDepositInvoicesBestEffort` beside
+  `reverseSiRevenue` in the status handler) — docs/bugs/0831,
+  docs/modules/accounting.md. **Since 2026-08-20 the phone always sends `asDraft: true`** — see
   the ruling below.
 - **Confirm** (DRAFT → SENT, inside the status handler at `:1958-2005`). Stamps
   `sent_at` + `confirmed_at` with a `.eq('status','DRAFT')` race gate (`:1969-1971`),

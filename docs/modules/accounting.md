@@ -890,10 +890,12 @@ number; a second post echoes `already_posted`) → CANCELLED by
 edited (`not_editable`) — cancel and raise again. The page
 (`frontend/src/pages/scm-v2/CreditNotes.tsx`, sidebar Money in → Credit /
 Debit Notes) lists by kind and status, raises a note (lines with a blank
-account land on the default), opens one to its lines, posts, cancels. Not
-yet: applying a note to a specific invoice's balance, printing, the automatic
-CN per deposit invoice (the deposit-invoice design keys it on
-`sales_invoice_id`). `fetchMonthlyDocNos` reads the named column first
+account land on the default), opens one to its lines, posts, cancels. Since
+docs/bugs/0831 the document itself — number, header, lines, journal, contra —
+is `backend/src/acc/credit-notes.ts` (`insertCreditNote` / `postCreditNote` /
+`cancelCreditNote`); the route keeps the caller's half, and the deposit-invoice
+close-out raises its notes through the same core. Not yet: applying a note to
+a specific invoice's balance, printing. `fetchMonthlyDocNos` reads the named column first
 since this PR (a whole-row driver handed back the id and minted -001 twice).
 Contracts: `backend/tests/creditNotes.test.ts`, `CreditNotes.test.tsx`.
 
@@ -973,6 +975,45 @@ Collection report's balance view keyed on "has a sales invoice". Contracts:
 `backend/tests/autoFinalInvoice.test.ts`; the router's own pins
 (`backend/tests/oneSystemTwoOrganisations.test.ts` reads DO_HEADER from the
 lib since this change).
+
+**The close-out: one credit note per deposit invoice at the final invoice
+(2026-09-12, docs/bugs/0831; owner: CN at delivery, 1:1 per DI at final
+invoice).** The moment the final invoice posts its revenue —
+`postSiRevenue` in `backend/src/scm/lib/post-si-revenue.ts`, the one gate
+every issued invoice passes (create, from-DO, confirm, resync, the backfill)
+— `applyDepositInvoicesToInvoice` (`backend/src/acc/deposit-invoices.ts`)
+closes every deposit invoice still standing on the order with a credit note
+of its own: kind CN, `{co}-CN-YYMM-NNN`, Dr DEPOSIT PAY BY CUSTOMER
+(`DEPOSIT_INCOME`) / Cr AR with the customer as party for the deposit's
+amount, dated the INVOICE's day, `source_doc_no` the deposit invoice's
+number, `sales_invoice_id` the invoice, raised and posted through
+`backend/src/acc/credit-notes.ts` and linked on
+`acc_deposit_invoices.credit_note_id`. Idempotent: a linked deposit invoice
+is left alone; a note already raised for the pair (a retry after the link
+failed to write) is linked, not duplicated; a note whose posting was refused
+is still linked, so it is found on the notes page and posted from there
+rather than raised twice. The customer's ledger then reads: deposits −D,
+deposit invoices +D, the final invoice +T, the notes −D → AR = T − D, the
+balance still owed; 509-0000 nets to zero; the sale stands ONCE on the group
+sales accounts. A CANCELLED final invoice (`releaseDepositInvoicesFromInvoice`,
+hooked at the cancel in `backend/src/scm/routes/sales-invoices.ts`) cancels
+those notes by contra and the deposit invoices stand again; a note Finance
+raised against the invoice by hand (no deposit invoice points at it) stays.
+The deposit-invoice list and detail (`backend/src/scm/routes/deposit-invoices.ts`,
+`frontend/src/pages/scm-v2/DepositInvoices.tsx`, "Closed by") name the note.
+THE COLLECTION REPORT (`backend/src/scm/routes/accounting-collection.ts`,
+`frontend/src/pages/scm-v2/CollectionReport.tsx`,
+`frontend/src/vendor/scm/lib/collection-report-queries.ts`; owner: 一个是看
+balance paid / convert to sales invoice Sales) now reads each order's live
+sales invoice (`absorbsOrderDeposit`: a draft or a cancelled one is none):
+the balance is measured against what was BILLED — `billedSen`, the invoice's
+total, else the order's — the invoice is named beside the order, the balance
+view's value column reads "Invoiced value", and an invoiced order is at the
+balance stage whatever its status says (the status set stays for the
+delivered-but-uninvoiced orders; the allowlist entry in
+`backend/scripts/data/duplicated-decision-allowlist.json` says so).
+Contracts: `backend/tests/depositInvoiceCloseout.test.ts`,
+`backend/tests/collectionReport.test.ts`, `CollectionReport.test.tsx`.
 
 **The Merchant charges report (2026-09-12, docs/bugs/0826; owner: 我需要知道
 merchant charge 多少%，就是 charge / received amount，每个月的然后每个 merchant …
