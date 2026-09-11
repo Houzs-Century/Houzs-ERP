@@ -1521,7 +1521,7 @@ Total: 1237 route registrations across 160 files.
 - L59  GET    /:entityType/:entityId
 
 ## backend/src/scm/routes/fabric-colours.ts  (1)
-- L57  GET    /
+- L78  GET    /
 
 ## backend/src/scm/routes/grns-list-enrichment.ts  (1)
 - L46  GET    /list-mrp-enrichment
