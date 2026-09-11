@@ -112,7 +112,7 @@ const ReconcileTab = () => {
   const [statementMonth, setStatementMonth] = useState('');
   /* One result line per file — a month's statements go up in one go and each
      one answers for itself, so a single bad file never hides four good ones. */
-  const [results, setResults] = useState<Array<{ name: string; ok: boolean; text: string }>>([]);
+  const [results, setResults] = useState<Array<{ name: string; ok: boolean; text: string; leftOut?: string }>>([]);
   const [busy, setBusy] = useState(false);
   const chosen = acquirers.find((a) => a.code === code) ?? null;
 
@@ -167,11 +167,22 @@ const ReconcileTab = () => {
           statementMonth: statementMonth || null,
         });
         made.push(r.batchId);
+        /* A line the bank pays once, already on another report, left out of
+           this batch (docs/bugs/0823) — carried separately so the landing view
+           can say it: a report one line short with no reason is a puzzle. */
+        const leftOut = r.alreadyOnReport > 0
+          ? `${r.alreadyOnReport} line(s) already on ${[...new Set(r.alreadyOnReportDetail.map((d) => d.fileName ?? `batch ${d.batchId}`))].join(', ')} left out — the bank pays a card transaction once`
+          : undefined;
         done.push({
           name: f.name,
           ok: true,
+          ...(leftOut ? { leftOut } : {}),
           text: `${r.rows} line${r.rows === 1 ? '' : 's'} (${r.periodFrom} → ${r.periodTo}), gross ${fmt(r.grossSen)}, fee ${fmt(r.feeSen)}`
             + (r.skippedLines > 0 ? ` · ${r.skippedLines} summary line(s) left out` : '')
+            /* A line the bank pays once, already on another report (docs/bugs/0823). */
+            + (r.alreadyOnReport > 0
+              ? ` · ${r.alreadyOnReport} line(s) already on ${[...new Set(r.alreadyOnReportDetail.map((d) => d.fileName ?? `batch ${d.batchId}`))].join(', ')} left out`
+              : '')
             + ` · matched ${bucketCount(r.buckets, 'MATCHED')}, to confirm ${bucketCount(r.buckets, 'NEEDS_CONFIRM')}, not matched ${bucketCount(r.buckets, 'UNMATCHED')}`,
         });
       } catch (err) {
@@ -190,6 +201,7 @@ const ReconcileTab = () => {
   if (justUploaded != null) {
     return (
       <UploadSummary batchIds={justUploaded} refusals={results.filter((r) => !r.ok)}
+        leftOut={results.flatMap((r) => (r.ok && r.leftOut ? [{ name: r.name, text: r.leftOut }] : []))}
         onOpen={setBatchId} onDone={() => setJustUploaded(null)} />
     );
   }
@@ -476,9 +488,11 @@ const PostedNote = ({ posted }: { posted: { confirmed: number; failed: number } 
   </div>
 );
 
-const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
+const UploadSummary = ({ batchIds, refusals, leftOut, onOpen, onDone }: {
   batchIds: number[];
   refusals: Array<{ name: string; text: string }>;
+  /** Files read whole but one or more lines short — already on another report (docs/bugs/0823). */
+  leftOut: Array<{ name: string; text: string }>;
   onOpen: (id: number) => void;
   onDone: () => void;
 }) => {
@@ -550,6 +564,15 @@ const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
           so it says its own reason here or it says nothing anywhere. */}
       {refusals.map((r) => (
         <div key={r.name} style={{ fontSize: 'var(--fs-13)', color: danger, display: 'flex', gap: 6 }}>
+          <AlertTriangle {...ICON} />
+          <span><b>{r.name}</b> — {r.text}</span>
+        </div>
+      ))}
+      {/* A file read whole but a line short: the line is on another report
+          already, and the bank pays it once (docs/bugs/0823). Said here, or
+          the operator sees a report missing a line and no reason. */}
+      {leftOut.map((r) => (
+        <div key={`left-${r.name}`} style={{ fontSize: 'var(--fs-13)', display: 'flex', gap: 6 }}>
           <AlertTriangle {...ICON} />
           <span><b>{r.name}</b> — {r.text}</span>
         </div>

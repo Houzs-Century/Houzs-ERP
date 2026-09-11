@@ -290,6 +290,11 @@ export type UploadResult = {
   rows: number;
   /** Summary/total rows in the file that are not transactions. */
   skippedLines: number;
+  /** Lines already on another report of this acquirer — the same trading day,
+      reference and gross — left out of this batch, each naming the report and
+      line they are on (docs/bugs/0823). */
+  alreadyOnReport: number;
+  alreadyOnReportDetail: Array<{ lineNo: number; txnDate: string; ref: string; grossSen: number; batchId: number; fileName: string | null; lineNoThere: number }>;
   statedNetSen: number | null;
   adjustmentSen: number;
   grossSen: number; feeSen: number; netSen: number;

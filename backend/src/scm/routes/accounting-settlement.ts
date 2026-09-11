@@ -33,7 +33,7 @@ import { todayMyt } from '../lib/my-time';
 import { parseStatement, type StatementColumnMap } from '../../acc/settlement-parse';
 import { matchStatement, recordedNotArrived, listOnce, UNTAGGED_LIST, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
 import {
-  loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow, postStatementCharge,
+  loadAcquirer, loadPaymentCandidates, loadSettledKeys, linesAlreadyOnFile, confirmSettlementRow, postStatementCharge,
   postBatchReceipt, loadBatchReceipts, undoBatchReceipt, unconfirmSettlementRow, clearOrphanBatch, findPaymentsForRow,
 } from '../../acc/settlement';
 import { resolveRoles } from '../../acc/rules';
@@ -538,19 +538,39 @@ export const settlementUpload = guard(async (c) => {
   if (gate.state === 'duplicate') {
     return c.json({ error: 'already_uploaded', message: 'This exact file has already been uploaded. Open the existing batch instead of loading it twice.' }, 409);
   }
+  /* A TRANSACTION ALREADY ON ANOTHER REPORT (docs/bugs/0823). The gate above
+     knows the same FILE; this knows the same LINE — Maybank prints an Amex
+     card sold on an EzyPay instalment on both the EP41 and the T41AX report
+     of the day, and the bank pays it once. Such a line is left out of this
+     batch, the reply names the report it is on, and a file with nothing new
+     is refused before a batch head is written. */
+  const dedupe = await linesAlreadyOnFile(sb, co.companyId, acq.acquirer, parsed);
+  if (!dedupe.ok) return c.json({ error: 'load_failed', reason: dedupe.reason }, 500);
+  if (dedupe.kept.rows.length === 0 && dedupe.alreadyOn.length > 0) {
+    const n = dedupe.alreadyOn.length;
+    const where = [...new Set(dedupe.alreadyOn.map((a) => a.fileName ?? `batch ${a.batchId}`))].join(', ');
+    return c.json({
+      error: 'already_on_report',
+      alreadyOnReport: n,
+      alreadyOnReportDetail: dedupe.alreadyOn,
+      message: `This file was not loaded: its ${n === 1 ? 'transaction is' : `${n} transactions are`} already on ${where}. `
+        + 'The bank pays a card transaction once — open that batch instead.',
+    }, 409);
+  }
+  const stmt = dedupe.kept;
   const { data: batchRow, error: batchErr } = await sb.from('acc_settlement_batches').insert({
     company_id: co.companyId,
     acquirer_code: acquirerCode,
     file_name: fileName,
     file_hash: fileHash,
-    period_from: parsed.periodFrom,
-    period_to: parsed.periodTo,
-    row_count: parsed.rows.length,
-    gross_sen: parsed.grossSen,
-    fee_sen: parsed.feeSen,
-    net_sen: parsed.netSen,
-    stated_net_sen: parsed.statedNetSen,
-    adjustment_sen: parsed.adjustmentSen,
+    period_from: stmt.periodFrom,
+    period_to: stmt.periodTo,
+    row_count: stmt.rows.length,
+    gross_sen: stmt.grossSen,
+    fee_sen: stmt.feeSen,
+    net_sen: stmt.netSen,
+    stated_net_sen: stmt.statedNetSen,
+    adjustment_sen: stmt.adjustmentSen,
     uploaded_by: (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null,
   }).select('id').single();
   if (batchErr) {
@@ -572,8 +592,8 @@ export const settlementUpload = guard(async (c) => {
   const [candidates, settled] = await Promise.all([
     /* The file's own references travel with the request: a payment carrying an
        exact reference must be found whatever its date (docs/bugs/0760). */
-    loadPaymentCandidates(sb, co.companyId, acq.acquirer, parsed.periodFrom, parsed.periodTo,
-      parsed.rows.map((r) => r.ref).filter((r): r is string => typeof r === 'string' && r !== '')),
+    loadPaymentCandidates(sb, co.companyId, acq.acquirer, stmt.periodFrom, stmt.periodTo,
+      stmt.rows.map((r) => r.ref).filter((r): r is string => typeof r === 'string' && r !== '')),
     loadSettledKeys(sb, co.companyId),
   ]);
   if (!candidates.ok) { await abandonBatch(); return c.json({ error: 'load_failed', reason: candidates.reason }, 500); }
@@ -581,7 +601,7 @@ export const settlementUpload = guard(async (c) => {
 
   const decisions = matchStatement(
     { code: acq.acquirer.code, has_unique_ref: acq.acquirer.has_unique_ref, date_tolerance_days: acq.acquirer.date_tolerance_days },
-    parsed.rows, candidates.payments, settled.keys,
+    stmt.rows, candidates.payments, settled.keys,
   );
 
   const { data: writtenRaw, error: rowsErr } = await sb.from('acc_settlement_rows').insert(
@@ -653,14 +673,18 @@ export const settlementUpload = guard(async (c) => {
     /* Summary/total rows the file carries that are not transactions. Reported
        rather than swallowed — the operator should never have to wonder why the
        file had 6 lines and the batch has 5. */
-    skippedLines: parsed.skippedLines,
-    statedNetSen: parsed.statedNetSen,
-    adjustmentSen: parsed.adjustmentSen,
-    grossSen: parsed.grossSen,
-    feeSen: parsed.feeSen,
-    netSen: parsed.netSen,
-    periodFrom: parsed.periodFrom,
-    periodTo: parsed.periodTo,
+    skippedLines: stmt.skippedLines,
+    /* Lines already on another report of this acquirer, left out of this
+       batch, each with the report and line they are on (docs/bugs/0823). */
+    alreadyOnReport: dedupe.alreadyOn.length,
+    alreadyOnReportDetail: dedupe.alreadyOn,
+    statedNetSen: stmt.statedNetSen,
+    adjustmentSen: stmt.adjustmentSen,
+    grossSen: stmt.grossSen,
+    feeSen: stmt.feeSen,
+    netSen: stmt.netSen,
+    periodFrom: stmt.periodFrom,
+    periodTo: stmt.periodTo,
     buckets: { MATCHED: autoMatched, NEEDS_CONFIRM: count('NEEDS_CONFIRM') + (count('MATCHED') - autoMatched), UNMATCHED: count('UNMATCHED'), IGNORED: 0 },
   });
 });

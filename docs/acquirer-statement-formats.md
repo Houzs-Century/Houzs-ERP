@@ -194,6 +194,15 @@ EARLIER `TOTAL` row closes the withheld/rejected block. Taking the first `TOTAL`
 would book a fee of zero; the summary total is the one below the summary
 headings. Both are pinned by tests.
 
+**One swipe can be on two of the four reports.** An Amex card sold on an
+EzyPay instalment is printed on the EP41 report AND the T41AX report of the
+same day — 2990's 14/06/2026 pair `027012896718_EP41_713_20260614.CSV` /
+`027012896718_T41AX_467_20260614.CSV` carry the same RM 3,240.00, auth code
+009069, MDR RM 97.20 — and the bank pays it once. Upload both and the second
+report's line is left out of its batch by day + reference + gross, and a
+report with nothing new is refused (docs/bugs/0823). The portal's zip is not
+uploadable as such: unzip, then choose the CSVs (several at once is fine).
+
 **The rates differ enormously between Maybank's own programmes**, which is why
 booking them from the statement rather than from an assumed rate matters:
 

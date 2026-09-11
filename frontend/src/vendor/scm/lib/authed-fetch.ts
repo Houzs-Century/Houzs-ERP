@@ -483,6 +483,11 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
      page that would refuse again, for a reason the server had written down. */
   payment_edit_locked:
     'This payment is locked, so it was not changed: it has been reconciled, or the day it was keyed in has passed. Ask Finance before recording it again.',
+  /* A merchant report whose lines are all on a report uploaded earlier
+     (docs/bugs/0823). The server names the earlier file; this is the floor
+     when several names push its sentence past the filter. */
+  already_on_report:
+    'This file was not loaded: its transactions are already on a report uploaded earlier. The bank pays a card transaction once — open that batch instead.',
   /* NEVER reword this into "nothing was saved, press Save again". The
      middleware returns this code purely because the payload's hash differs
      from the claim's, and the claim may hold a COMMITTED 201 (the body's
@@ -618,7 +623,7 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
    `so_migrated_readonly` earns it because since 2026-09-08 the answer differs
    per order — one still differs from the account book on `document total`, its
    neighbour matches and is open — and a class-level sentence cannot say which. */
-const SERVER_SENTENCE_WINS: ReadonlySet<string> = new Set(['so_migrated_readonly', 'payment_edit_locked']);
+const SERVER_SENTENCE_WINS: ReadonlySet<string> = new Set(['so_migrated_readonly', 'payment_edit_locked', 'already_on_report']);
 
 /* A machine CODE, not a sentence: snake_case, no spaces. Mirrors the guard in
    api/client.ts. Without it an UNCURATED code that the backend echoes into both
