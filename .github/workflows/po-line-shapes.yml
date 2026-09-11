@@ -1,0 +1,46 @@
+name: PO line shapes (read-only)
+
+# Manual, read-only. Lists the purchase-order-line shapes that hide an open
+# purchase order from the MRP page: a hard-bound line with no `so_item_id` (A),
+# one linked to a hard-bound sales-order line while its own group is not (B),
+# and one whose group contradicts its own SKU's catalogued category (C).
+#
+# It REPORTS; it repairs nothing. A and B are repairable by
+# backend/scripts/repair-mrp-po-line-links.mjs, which plans before it writes.
+#
+# Exits 0 for every legitimate answer, a non-empty one included — the answer is
+# the output, and a red job reads as "the check broke". Non-zero is reserved for
+# an unreachable database and for its own self-check failing, which is the one
+# case where a zero would mean "the matcher is dead" rather than "nothing wrong".
+#
+# NOT SCHEDULED, on purpose: CLAUDE.md — "Never put a production DB read on a
+# schedule; it turns a real query into CI noise nobody reads." Run it after a
+# round of PO work, or when a sales-order line reads SHORT against an open PO.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "Company (1 = Houzs Century; the hard-bound rule is company-1 only)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: po-line-shapes
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the one dependency the script needs
+        run: npm --prefix backend install postgres --no-audit --no-fund --no-save
+      - name: Report PO line shapes
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+        run: node backend/scripts/check-po-line-shapes.mjs
