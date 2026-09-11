@@ -72,6 +72,12 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   { id: "mobile-mode-override", classification: "TRANSIENT", storage: ["localStorage", "sessionStorage"], keyFamily: "hz_force_mobile (session + legacy local cleanup)", matches: exact("hz_force_mobile") },
   { id: "legacy-notification-preference", classification: "TRANSIENT", storage: ["localStorage"], keyFamily: "notifications:browserPush (ownerless cleanup only)", matches: exact("notifications:browserPush") },
   { id: "scan-toast-acks", classification: "TRANSIENT", storage: ["localStorage"], keyFamily: "houzs:scan-draft-acked:u<user>:c<company>", matches: prefix("houzs:scan-draft-acked:") },
+  // "I have seen today's pending-work reminder" (owner 2026-09-09). The DATE is
+  // part of the key, which is the whole mechanism: tomorrow's key does not
+  // exist yet, so the reminder returns by itself with no cron to run and
+  // nothing to reset. localStorage, not session — acknowledging it must
+  // survive a refresh, or the modal would reappear all day.
+  { id: "pending-reminder-acks", classification: "TRANSIENT", storage: ["localStorage"], keyFamily: "pending-reminder:u<user>:c<company>:<YYYY-MM-DD>", matches: (key) => /^pending-reminder:u\d+:c\d+:\d{4}-\d{2}-\d{2}$/.test(key) },
   { id: "identity-preferences", classification: "IDENTITY_PREF", storage: ["localStorage"], keyFamily: "<approved preference base>:u<user>:c<company>", matches: identityPreference },
   { id: "pwa-dismissals", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "pwa:<surface>:dismissed-at", matches: prefix("pwa:") },
   // Native-app opt-ins, per DEVICE and per install. Currently just the
@@ -153,6 +159,7 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "components/useAnnouncementBanner.ts",
   "hooks/useIdentityPreference.ts",
   "hooks/useLocalStorage.ts",
+  "hooks/usePendingReminder.ts",
   "hooks/useStickyFilters.ts",
   "lib/activeCompany.ts",
   "lib/authToken.ts",
