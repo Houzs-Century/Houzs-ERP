@@ -132,11 +132,23 @@ await sql.begin(async (tx) => {
       returning doc_no`;
     if (h.length !== 1) { console.log(`::warning::${r.doc_no} changed since the plan — left alone`); continue; }
     heads += 1;
+    /* THE LINE DATE IS CLEARED *BECAUSE* THE HEADER NOW CARRIES NONE — owner
+       2026-09-11: 「确保是因为它的 processing date 和 delivery date 没有，你才会
+       清空掉它的 item delivery date」. The header UPDATE above committed that
+       emptiness one statement ago; this re-states it as a JOIN predicate so the
+       dependency is enforced by the statement rather than by the order of two
+       statements. If anything put a date back on the header in between, the
+       line date is meaningful again and stays. */
     const l = await tx`
-      update scm.mfg_sales_order_items
+      update scm.mfg_sales_order_items i
       set line_delivery_date = null
-      where doc_no = ${r.doc_no} and cancelled = false and line_delivery_date is not null
-      returning id`;
+      from scm.mfg_sales_orders s
+      where s.doc_no = i.doc_no
+        and i.doc_no = ${r.doc_no} and i.cancelled = false and i.line_delivery_date is not null
+        and s.processing_date is null
+        and s.customer_delivery_date is null
+        and s.amended_delivery_date is null
+      returning i.id`;
     lines += l.length;
   }
 });
