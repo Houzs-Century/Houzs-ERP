@@ -15,6 +15,7 @@
 // ----------------------------------------------------------------------------
 
 import { isServiceLine } from '../shared';
+import { isHardBoundLine, HARD_BOUND_COMPANY_ID } from './so-stock-allocation';
 
 export type StockLineRequest = {
   itemCode: string;
@@ -233,3 +234,57 @@ export const shortStockResponse = (
   shortages,
   ...(bindings.length > 0 ? { bindings } : {}),
 });
+
+/* WHICH LINES ALREADY HOLD THEIR OWN GOODS, so the shared pool is the wrong
+   question for them. Company 1 binds a bedframe / sofa / (SP) mattress line to
+   the purchase order raised from it; readiness lights that line off its own
+   `received_qty` and never reads `inventory_balances`. Returns the sales-order
+   line ids whose own purchase order has received at least what this delivery
+   ships, for `stockCheckableLines` to drop.
+
+   COMPANY 2 GETS AN EMPTY SET, and that is the whole of the company gate: 2990
+   pools, so every line of theirs stays a pool question exactly as before.
+
+   A cancelled purchase order proves nothing and is excluded. `received_qty` is
+   summed because one sales-order line can be split across several purchase
+   lines (allocations, mig 0235).
+
+   Best-effort by construction: a failed read yields an empty set, which returns
+   the guard to its previous, stricter behaviour rather than waving a line
+   through — the safe direction when we cannot tell. */
+export async function dedicatedlyCoveredSoItemIds(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm PostgREST client is untyped throughout this file
+  sb: any,
+  lines: Array<{ soItemId: string | null; itemCode: string; itemGroup?: string | null; qty: number }>,
+  companyId: number | undefined,
+): Promise<Set<string>> {
+  if (companyId !== HARD_BOUND_COMPANY_ID) return new Set();
+  const needBySoItem = new Map<string, number>();
+  for (const l of lines) {
+    if (!l.soItemId) continue;
+    if (!isHardBoundLine(l.itemGroup ?? null, l.itemCode)) continue;
+    needBySoItem.set(l.soItemId, (needBySoItem.get(l.soItemId) ?? 0) + Number(l.qty || 0));
+  }
+  if (needBySoItem.size === 0) return new Set();
+  const { data, error } = await sb
+    .from('purchase_order_items')
+    .select('so_item_id, received_qty, po:purchase_orders!inner(status)')
+    .in('so_item_id', [...needBySoItem.keys()]);
+  if (error) {
+    /* eslint-disable-next-line no-console */
+    console.warn('[do-stock] dedicated-cover read failed, falling back to the pooled check:', error.message);
+    return new Set();
+  }
+  const receivedBySoItem = new Map<string, number>();
+  for (const r of (data ?? []) as Array<{ so_item_id: string | null; received_qty: number | null; po: { status?: string } | Array<{ status?: string }> | null }>) {
+    if (!r.so_item_id) continue;
+    const po = Array.isArray(r.po) ? r.po[0] : r.po;
+    if ((po?.status ?? '') === 'CANCELLED') continue;
+    receivedBySoItem.set(r.so_item_id, (receivedBySoItem.get(r.so_item_id) ?? 0) + Number(r.received_qty ?? 0));
+  }
+  const covered = new Set<string>();
+  for (const [soItemId, need] of needBySoItem) {
+    if ((receivedBySoItem.get(soItemId) ?? 0) >= need) covered.add(soItemId);
+  }
+  return covered;
+}
