@@ -60,7 +60,7 @@ export function parseRackLabel(label: string | null | undefined): ParsedRackLabe
   return {
     prefix: (m[1] || '').toUpperCase(),
     rackNo: Number(m[2]),
-    level: m[3] != null ? Number(m[3]) : null,
+    level: m[3] ? Number(m[3]) : null,
     parsed: true,
   };
 }
@@ -69,7 +69,7 @@ export function parseRackLabel(label: string | null | undefined): ParsedRackLabe
    "L1.2" share it. Unparseable labels are their own single column (raw label). */
 export function rackKeyOf(label: string): string {
   const p = parseRackLabel(label);
-  return p.parsed && !Number.isNaN(p.rackNo) ? `${p.prefix}${p.rackNo}` : (label ?? '').trim();
+  return p.parsed && !Number.isNaN(p.rackNo) ? `${p.prefix}${p.rackNo}` : label.trim();
 }
 
 /* Natural comparator — prefix, then rackNo NUMERICALLY, then level. This is the
@@ -81,7 +81,7 @@ export function compareRackLabels(a: string, b: string): number {
   const aBad = !pa.parsed || Number.isNaN(pa.rackNo);
   const bBad = !pb.parsed || Number.isNaN(pb.rackNo);
   if (aBad || bBad) {
-    if (aBad && bBad) return (a ?? '').localeCompare(b ?? '');
+    if (aBad && bBad) return a.localeCompare(b);
     return aBad ? 1 : -1;
   }
   if (pa.prefix !== pb.prefix) return pa.prefix.localeCompare(pb.prefix);
@@ -141,9 +141,9 @@ function uniq(values: (string | null | undefined)[]): string[] {
 }
 
 export function toSlot(rack: Rack): Slot {
-  const items = rack.items || [];
+  const items = rack.items;
   const p = parseRackLabel(rack.rack);
-  const status = STATUS_MAP[rack.status] ?? 'empty';
+  const status = STATUS_MAP[rack.status];
   const products = uniq(items.map((it) => it.product_name || it.item_code));
   const customers = uniq(items.map((it) => it.customer_name));
   const docs = uniq(items.map((it) => it.source_doc_no));
@@ -162,7 +162,7 @@ export function toSlot(rack: Rack): Slot {
     level: p.level,
     status,
     itemCount: items.length,
-    productCode: primary?.item_code || '',
+    productCode: items.length > 0 ? primary.item_code : '',
     productLabel,
     customer: customers.join(', '),
     qty,

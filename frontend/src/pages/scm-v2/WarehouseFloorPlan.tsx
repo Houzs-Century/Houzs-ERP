@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { Button, SearchInput } from '../../components/Button';
 import { ResizableDetailDrawer } from '../../components/ResizableDetailDrawer';
+import { DateField } from '../../vendor/scm/components/DateField';
 import { fmtDate, fmtQty } from '@2990s/shared';
 import {
   useMovements, useUpdateRack, useDeleteRack,
@@ -43,10 +44,12 @@ type StatePal = {
 };
 const PAL: Record<SlotStatus, StatePal> = {
   occupied: { bg: '#e1efed', border: '#b9d4ce', fg: '#0c3f39', levelBg: '#16695f', levelFg: '#ffffff', tick: '#16695f', tickBd: '#0c3f39', label: 'Occupied', badgeBg: '#e1efed', badgeFg: '#0c3f39', swatch: '#16695f', swatchBd: '#0c3f39' },
-  reserved: { bg: '#f6efd9', border: '#d6d9d2', fg: '#6e4d12', levelBg: '#6e4d12', levelFg: '#ffffff', tick: '#b76b00', tickBd: '#6e4d12', label: 'Reserved', badgeBg: '#f6efd9', badgeFg: '#6e4d12', swatch: '#b76b00', swatchBd: '#6e4d12' },
   empty: { bg: '#ffffff', border: '#e3e6e0', fg: '#414539', levelBg: '#f4f6f3', levelFg: '#414539', tick: '#ffffff', tickBd: '#d3d8cf', label: 'Empty', badgeBg: '#f4f6f3', badgeFg: '#414539', swatch: '#ffffff', swatchBd: '#d3d8cf' },
+  reserved: { bg: '#f6efd9', border: '#d6d9d2', fg: '#6e4d12', levelBg: '#6e4d12', levelFg: '#ffffff', tick: '#b76b00', tickBd: '#6e4d12', label: 'Reserved', badgeBg: '#f6efd9', badgeFg: '#6e4d12', swatch: '#b76b00', swatchBd: '#6e4d12' },
 };
-const STATUS_ORDER: SlotStatus[] = ['occupied', 'empty', 'reserved'];
+/* Legend / chip order, derived from PAL's key order so the status vocabulary
+   lives in ONE place (occupied, empty, reserved). */
+const LEGEND_ORDER = Object.keys(PAL) as SlotStatus[];
 
 const detailLine = (s: Slot): string => {
   if (s.itemCount === 0) return s.status === 'reserved' ? 'on hold' : 'available';
@@ -102,10 +105,10 @@ export function WarehouseFloorPlan({
   const setReserved = async (reserved: boolean) => {
     try {
       for (const s of pickedSlots) await updateRack.mutateAsync({ id: s.rack.id, reserved });
-      notify({ title: reserved ? 'Marked reserved.' : 'Reservation released.' });
+      void notify({ title: reserved ? 'Marked reserved.' : 'Reservation released.' });
       setPicked([]);
     } catch (e) {
-      notify({ title: 'Could not update the selected slots', body: (e as Error).message, tone: 'error' });
+      void notify({ title: 'Could not update the selected slots', body: (e as Error).message, tone: 'error' });
     }
   };
 
@@ -181,7 +184,7 @@ export function WarehouseFloorPlan({
             onStockInHere={() => { onStockInHere(sel.rack.id); setSelId(null); }}
             onDelete={async () => {
               if (sel.itemCount > 0) {
-                notify({ title: 'This slot still has stock on it.', body: 'Stock out its items before deleting.', tone: 'error' });
+                void notify({ title: 'This slot still has stock on it.', body: 'Stock out its items before deleting.', tone: 'error' });
                 return;
               }
               const ok = await confirm({ title: `Delete ${sel.id}?`, body: 'This removes the empty rack. This cannot be undone.', confirmLabel: 'Delete', danger: true });
@@ -234,16 +237,16 @@ function Toolbar({
           <option value="">All customers</option>
           {customers.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
-        <div className="flex h-9 items-center gap-1.5 rounded-md border border-border-subtle bg-surface px-2.5">
+        <div className="flex items-center gap-1.5">
           <span className="font-mono text-[10.5px] uppercase tracking-[0.1em] text-ink-muted">In date</span>
-          <input type="date" value={filters.from} onChange={(e) => setFilter({ from: e.target.value })} aria-label="In date from" className="border-none bg-transparent text-[12px] text-ink-secondary outline-none" />
+          <DateField value={filters.from} onChange={(iso) => setFilter({ from: iso })} aria-label="In date from" style={{ width: 138 }} />
           <span className="text-[11px] text-ink-secondary">→</span>
-          <input type="date" value={filters.to} onChange={(e) => setFilter({ to: e.target.value })} aria-label="In date to" className="border-none bg-transparent text-[12px] text-ink-secondary outline-none" />
+          <DateField value={filters.to} onChange={(iso) => setFilter({ to: iso })} aria-label="In date to" style={{ width: 138 }} />
         </div>
         <button type="button" onClick={onReset} className="h-9 rounded-md px-3 text-[12px] font-semibold text-ink-muted hover:text-ink">Reset</button>
       </div>
       <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-[#f0f2ee] pt-2.5">
-        {STATUS_ORDER.map((k) => {
+        {LEGEND_ORDER.map((k) => {
           const p = PAL[k];
           const on = filters.status === k;
           return (
@@ -574,7 +577,7 @@ function SlotDrawerBody({
               <div key={it.id} className="flex flex-col gap-0.5 rounded-md border border-border-subtle bg-surface-2 p-2.5">
                 <span className="text-[12.5px] font-semibold text-ink">{itemDescription(it)}</span>
                 {itemMeta(it) && <span className="text-[11.5px] text-ink-muted">{itemMeta(it)}</span>}
-                {(it.qty ?? 1) > 1 && <span className="text-[11.5px] text-ink-muted">Qty: {fmtQty(it.qty)}</span>}
+                {it.qty > 1 && <span className="text-[11.5px] text-ink-muted">Qty: {fmtQty(it.qty)}</span>}
               </div>
             ))}
           </div>
