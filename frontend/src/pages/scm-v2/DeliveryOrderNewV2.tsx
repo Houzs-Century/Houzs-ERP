@@ -628,7 +628,12 @@ export function DeliveryOrderNewV2() {
     unitCostSen: l.unitCostSen,
     variants: l.variants,
     remark: l.remark,
-    deliveryDate: l.lineDeliveryDate ?? "",
+    /* Backend reads `lineDeliveryDate` (do-item-row.ts:136), never
+       `deliveryDate` — an owner-observed bug had this key silently dropped on
+       every DO create/edit. `lineDeliveryDateOverridden` carries the operator
+       intent so a header-change cascade skips lines they typed by hand. */
+    lineDeliveryDate: l.lineDeliveryDate ?? "",
+    lineDeliveryDateOverridden: l.lineDeliveryDateOverridden ?? false,
   });
 
   // ── SO→DO line stash (from the line-level picker) ──────────────────
@@ -645,7 +650,11 @@ export function DeliveryOrderNewV2() {
     if (Array.isArray(stash) && stash.length > 0) {
       setLines(
         stash.map((s) => ({
-          ...newDoLine(null),
+          /* Owner ruling 2026-09-11: DO delivery date DEFAULTS to the SO's.
+             `customerDelDate` was pre-filled from the SO by the header
+             effect above, so seeding line dates from it lands the SO's date
+             on every line — the operator can override per line. */
+          ...newDoLine(customerDelDate || null),
           soItemId: s.soItemId ? String(s.soItemId) : null,
           itemCode: String(s.itemCode ?? ""),
           itemGroup: String(s.itemGroup ?? "others"),
@@ -735,7 +744,9 @@ export function DeliveryOrderNewV2() {
     if (!rows || rows.length === 0) return;
     setLines(
       rows.map((it) => ({
-        ...newDoLine(null),
+        /* Owner ruling 2026-09-11: default the line delivery date to the
+           SO's, same as the ?fromPicks= path above. */
+        ...newDoLine(customerDelDate || null),
         soItemId: it.soItemId,
         itemCode: it.itemCode,
         itemGroup: it.itemGroup ?? "others",
