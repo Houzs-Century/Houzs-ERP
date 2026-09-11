@@ -33,6 +33,7 @@ import { PRODUCT_FINANCE_KEYS } from '../lib/finance-keys';
 import { todayMyt } from '../lib/my-time';
 import { baseKeyOf, deleteThumbFor, putOptionalThumb } from '../../services/photoThumbs';
 import type { Env, Variables } from '../env';
+import { pgrestIn } from '../lib/pgrest-in-list';
 
 export const productModels = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -324,10 +325,9 @@ productModels.get('/by-code-batch', async (c) => {
   const allNull = () =>
     Object.fromEntries(codes.map((code) => [code, { allowedOptions: null, category: null }]));
 
-  const { data: skus, error: skuErr } = await supabase
+  const { data: skus, error: skuErr } = await pgrestIn(supabase
     .from('mfg_products')
-    .select('code, model_id, category')
-    .in('code', codes)
+    .select('code, model_id, category'), 'code', codes)
     .eq('company_id', activeCompanyId(c));
   if (skuErr) {
     // Parity with the single route: a missing relation degrades to "no Model"
@@ -575,11 +575,14 @@ productModels.patch('/:id', async (c) => {
         auth: { persistSession: false, autoRefreshToken: false },
       });
       const wantCodes = added.map((comp) => `${codePrefix}-${comp}`);
-      const { data: existing } = await admin
+      const { data: existing, error: existingErr } = await pgrestIn(admin
         .from('mfg_products')
-        .select('code')
-        .in('code', wantCodes)
+        .select('code'), 'code', wantCodes)
         .eq('company_id', activeCompanyId(c));
+      if (existingErr) {
+        // eslint-disable-next-line no-console
+        console.error('[product-models] existing derived-code read failed:', (existingErr as { message?: unknown }).message ?? existingErr);
+      }
       const have = new Set((existing ?? []).map((r) => (r as { code: string }).code));
       const now = new Date().toISOString();
       const rows = added
@@ -936,7 +939,7 @@ productModels.post('/:id/generate-skus', async (c) => {
   // Find which codes already exist so we can report skip count.
   const codes = wantedFiltered.map((w) => w.code);
   const { data: existing } = codes.length
-    ? await supabase.from('mfg_products').select('code').in('code', codes).eq('company_id', activeCompanyId(c))
+    ? await pgrestIn(supabase.from('mfg_products').select('code'), 'code', codes).eq('company_id', activeCompanyId(c))
     : { data: [] as Array<{ code: string }> };
   const existingSet = new Set((existing ?? []).map((r) => r.code as string));
 

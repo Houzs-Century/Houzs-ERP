@@ -11,6 +11,8 @@
 // post (audit-DLQ style). We log + return false so the caller can decide.
 // ----------------------------------------------------------------------------
 
+import { pgrestIn } from './pgrest-in-list';
+
 type MovementInput = {
   movement_type: 'IN' | 'OUT' | 'ADJUSTMENT';
   warehouse_id: string;
@@ -448,12 +450,15 @@ export async function reconcileDropshipBatches(
     try {
       const batches = [...new Set(distinct.map((b) => b.batch_no).filter((x): x is string => !!x))];
       const codes = [...new Set(distinct.map((b) => b.item_code))];
-      const { data: outs } = await sb
+      const { data: outs, error: outsErr } = await pgrestIn(sb
         .from('inventory_movements')
         .select('source_doc_type, source_doc_id, batch_no, item_code')
         .eq('movement_type', 'OUT')
-        .in('batch_no', batches)
-        .in('item_code', codes);
+        .in('batch_no', batches), 'item_code', codes);
+      if (outsErr) {
+        // eslint-disable-next-line no-console
+        console.error('[inventory-movements] reconcile OUT lookup failed:', (outsErr as { message?: unknown }).message ?? outsErr);
+      }
       for (const m of (outs ?? []) as Array<{ source_doc_type: string | null; source_doc_id: string | null }>) {
         if ((m.source_doc_type ?? '').toUpperCase() !== 'DO' || !m.source_doc_id) continue;
         affectedDoIds.add(m.source_doc_id);

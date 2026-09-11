@@ -100,6 +100,7 @@ import { zoneForAddress } from '../lib/zone-classify';
 import { deriveSetCount, type SetLine } from '../lib/set-count';
 import { composeAddress, geocodeAddressCached, normalizeAddress } from '../lib/geocode';
 import { dateOrNull } from '../lib/date-coerce';
+import { pgrestIn } from '../lib/pgrest-in-list';
 
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryPlanning.use('*', supabaseAuth);
@@ -569,9 +570,8 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       if (chunk.length === 0) continue;
       const { data: prodRows } = await paginateAll<{ code: string; category: string | null; branding: string | null }>((from, to) =>
         scopeToCompany(
-          sb.from('mfg_products')
-            .select('code, category, branding')
-            .in('code', chunk),
+          pgrestIn(sb.from('mfg_products')
+            .select('code, category, branding'), 'code', chunk),
           c,
         ).range(from, to),
       );
@@ -1664,7 +1664,7 @@ deliveryPlanning.get('/geo', async (c) => {
       const chunk = codeList.slice(i, i + 300);
       if (chunk.length === 0) continue;
       const { data: prodRows } = await paginateAll<{ code: string; category: string | null }>((from, to) =>
-        scopeToCompany(sb.from('mfg_products').select('code, category').in('code', chunk), c).range(from, to),
+        scopeToCompany(pgrestIn(sb.from('mfg_products').select('code, category'), 'code', chunk), c).range(from, to),
       );
       for (const p of (prodRows ?? [])) if (p.category) geoProductCategory.set(p.code, normCategory(p.category));
     }
