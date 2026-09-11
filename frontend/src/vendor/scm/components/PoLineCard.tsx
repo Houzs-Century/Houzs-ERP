@@ -44,6 +44,7 @@ import { fabricOptionLabel, type FabricTrackingRow } from '../lib/fabric-queries
 import { sortByText, sortByNumeric, byText } from '../lib/sort-options';
 import type { Warehouse } from '../lib/inventory-queries';
 import { MoneyInput } from './MoneyInput';
+import { DiscountInput } from './DiscountInput';
 import { SearchableSelect } from './SearchableSelect';
 import styles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 import { DateField } from "./DateField";
@@ -686,13 +687,15 @@ export const PoLineCard = ({
         </label>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Discount ({currency})</span>
-          <MoneyInput
+          <DiscountInput
             bare
             valueSen={l.discountSen ?? 0}
+            baseSen={l.qty * l.unitPriceSen}
             disabled={disabled}
             onCommit={(sen) => onChange({ discountSen: sen ?? 0 })}
             inputClassName={styles.fieldInput}
             selectOnFocus
+            currency={currency}
           />
         </label>
         {/* T12 — Delivery + Ship-to are PO-only; hidden on the PI card. */}

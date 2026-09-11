@@ -47,6 +47,7 @@ import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { PcVariantEditor } from '../../vendor/scm/components/PcVariantEditor';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { DiscountInput } from '../../vendor/scm/components/DiscountInput';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
@@ -609,8 +610,8 @@ export const PurchaseConsignmentReceiveDetail = () => {
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Discount</span>
                       {isEditing ? (
-                        <MoneyInput bare selectOnFocus inputClassName={styles.fieldInput}
-                          valueSen={d.discountSen} disabled={isLocked}
+                        <DiscountInput bare selectOnFocus inputClassName={styles.fieldInput}
+                          valueSen={d.discountSen} baseSen={d.qty * d.unitPriceSen} disabled={isLocked}
                           onCommit={(sen) => setLine(it, { discountSen: sen ?? 0 })} />
                       ) : (
                         <input

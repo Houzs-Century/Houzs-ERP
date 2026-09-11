@@ -48,6 +48,7 @@ import {
   type PoPriceMatrix,
 } from '@2990s/shared/mfg-pricing';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { DiscountInput } from '../../vendor/scm/components/DiscountInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { specialOrderSurface } from '../../vendor/scm/lib/special-order-surface';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
@@ -1408,12 +1409,14 @@ export const PurchaseOrderNew = () => {
                   </label>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Discount ({currency})</span>
-                    <MoneyInput
+                    <DiscountInput
                       bare
                       valueSen={l.discountSen ?? 0}
+                      baseSen={l.qty * l.unitPriceSen}
                       onCommit={(sen) => setLine(l.rid, { discountSen: sen ?? 0 })}
                       inputClassName={styles.fieldInput}
                       selectOnFocus
+                      currency={currency}
                     />
                   </label>
                   <label className={styles.field}>
