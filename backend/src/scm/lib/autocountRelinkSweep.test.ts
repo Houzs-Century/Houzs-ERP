@@ -256,3 +256,63 @@ describe('a code the book spells differently', () => {
     expect(run.docs[0].refused.join(' ')).toContain('no unclaimed line with that item code');
   });
 });
+
+/* THE LINE THE BOOK NEVER HAD (docs/bugs/0817).
+ *
+ * Nine goods receipts stood at "1 of 2 matched" and could not move: the mattress
+ * matched and the free pillow refused, because the book's copy of the receipt
+ * has no pillow line at all. AcSyncService names the exit in its own refusal —
+ * "Store the line's AutoCount DtlKey ... or mark the line IsNewLine" — and
+ * enqueueEdit has carried newLineIds since 0588; this path never used it.
+ *
+ * The bar is high on purpose: this SDK gives DeleteDetail to SalesOrder alone,
+ * so a duplicate appended to a receipt or a purchase order is permanent.
+ */
+describe('declaring the line the book never had', () => {
+  const twoLines = (pillowCode: string) => keylessDo({
+    erpLines: [
+      { id: 'matt', company_id: 1, delivery_order_id: 'do-uuid-1', item_code: 'AK-ARMOUR MATT (SK)', description2: null, linked_ac_dtlkey: null },
+      { id: 'pillow', company_id: 1, delivery_order_id: 'do-uuid-1', item_code: pillowCode, description2: null, linked_ac_dtlkey: null },
+    ],
+  });
+
+  it('queues the edit with the absent row named, once everything else is keyed', async () => {
+    bookLines = [{ DtlKey: 5001, ItemCode: 'AK-ARMOUR MATT (SK)', Desc2: null }];
+    setup('apply', twoLines('AK-SLEEP ESSENTIAL 7 HOLES'));
+
+    await relinkHeldBackSweep(env);
+
+    expect(enqueueEditMock).toHaveBeenCalledTimes(1);
+    expect(enqueueEditMock.mock.calls[0][1]).toMatchObject({ newLineIds: ['pillow'] });
+  });
+
+  /* THE TRAP. The book HAS a pillow line; the mattress row is what is missing,
+     so "everything else keyed" does not hold and nothing may be declared. */
+  it('declares nothing while another line is still unmatched for a different reason', async () => {
+    bookLines = [
+      { DtlKey: 6001, ItemCode: 'AK-SLEEP ESSENTIAL 7 HOLES', Desc2: null },
+      { DtlKey: 6002, ItemCode: 'AK-SLEEP ESSENTIAL 7 HOLES', Desc2: null },
+    ];
+    setup('apply', keylessDo({
+      erpLines: [
+        { id: 'p1', company_id: 1, delivery_order_id: 'do-uuid-1', item_code: 'AK-SLEEP ESSENTIAL 7 HOLES', description2: null, linked_ac_dtlkey: null },
+        { id: 'p2', company_id: 1, delivery_order_id: 'do-uuid-1', item_code: 'AK-SLEEP ESSENTIAL 7 HOLES', description2: null, linked_ac_dtlkey: null },
+      ],
+    }));
+
+    await relinkHeldBackSweep(env);
+
+    expect(enqueueEditMock).not.toHaveBeenCalled();
+  });
+
+  /* A document where NOTHING matched has proved nothing about itself, so its
+     unmatched lines are not evidence that the book lacks them. */
+  it('declares nothing when this run stamped no key at all', async () => {
+    bookLines = [];
+    setup('apply', twoLines('AK-SLEEP ESSENTIAL 7 HOLES'));
+
+    await relinkHeldBackSweep(env);
+
+    expect(enqueueEditMock).not.toHaveBeenCalled();
+  });
+});
