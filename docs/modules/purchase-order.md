@@ -180,6 +180,32 @@ already renders as the row's Category chip) — but fixing only the browser woul
 leave the next client free to lose it again. Trace:
 `docs/bugs/0514-the-so-to-po-hop-lost-the-category-so-received-sofa-stock-wa.md`.
 
+> **CORRECTED 2026-09-11 — the rule covered THREE of the four write paths, not
+> four, and this paragraph read as though it covered all of them.** `POST
+> /mfg-purchase-orders` (create) and `POST /:id/items` (add-item) both ran
+> `lineIdentityFields(skuCategoryResolver(…))`. **`convert-from-SO` did not** —
+> `poConvertLineRow` stored `l.itemGroup` exactly as it arrived, so the same
+> sofa could land as `sofa` through one door and `others` through another.
+>
+> What that costs is a second failure the 2026-08-22 section does not mention,
+> because it post-dates it: `item_group` is also what `isHardBoundLine`
+> (`scm/lib/so-stock-allocation.ts`) reads. Since 2026-09-09 a company-1 sofa /
+> bedframe / `(SP)` mattress line is covered ONLY by a PO line that carries its
+> `so_item_id` **and** sits on a hard-bound group (`isDedicated` in
+> `scm/routes/mrp.ts`, then section 8's `boundSofa` walk). A sofa PO line written
+> `others` therefore fails the second half and is invisible to the set: MRP calls
+> the sales-order line SHORT while the purchase order sits open, and the buyer is
+> told to order goods already on order. Owner-reported on `HC-PO-010087` /
+> `HC-SO-013389`, 2026-09-11.
+>
+> **Now:** `poConvertLineRow` takes the resolved group as a REQUIRED fourth
+> parameter (the same doctrine `fromMrp` follows there — a decision that changes
+> the stored row must fail to COMPILE when a caller forgets it), and
+> `poConvertLineRows` in the same module does resolve -> map -> stamp once for
+> BOTH convert arms, so the rule cannot be half-applied to one arm again. An
+> uncatalogued SKU is unchanged: `lineItemGroup` still falls back to the line's
+> own group. Trace: `docs/bugs/0813-convert-from-so-trusted-the-caller-s-item-group-while-create.md`.
+
 **The variant summary on the transfer pickers is labelled "Description 2"
 (2026-08-21).** `VariantDescription` (the shared component GRN ← PO and the nine
 other Convert-From pickers render that column through) exports
