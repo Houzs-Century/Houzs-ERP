@@ -1,0 +1,37 @@
+name: SO readiness facts (read-only)
+
+# Manual, read-only. Answers the owner's question (2026-09-11): do MATTRESS +
+# ACCESSORY sales-order lines turn READY once their stock is allocated / received?
+# It reads the LIVE tables and writes NOTHING (SELECTs only: no DDL, no writes,
+# no transaction). SECTION 2 is the answer — pooled lines that SHOULD be READY
+# (enough matching stock in a sellable warehouse) but are still PENDING/PARTIAL.
+# Exits 0 for every legitimate answer, including "none stuck". Its own concurrency
+# group, so it never queues behind or displaces a deploy.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "Company (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: so-readiness-facts
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the one dependency the script needs
+        run: npm --prefix backend install postgres --no-audit --no-fund --no-save
+      - name: Report SO readiness facts
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+        run: node backend/scripts/check-so-readiness-facts.mjs
