@@ -103,8 +103,10 @@ type GrnItem = {
   item_group?: string | null;
   variants?: Record<string, unknown> | null;
   uom?: string;
-  qty?: number;
-  received_qty?: number;
+  // The GRN detail GET returns qty_accepted (landed in stock) + qty_received, NOT
+  // qty/received_qty — reading those rendered 0 on every line in the quick-view.
+  qty_accepted?: number;
+  qty_received?: number;
   unit_price_sen?: number;
   line_total_sen?: number;
   warehouse_code?: string | null;
@@ -354,7 +356,7 @@ function DetailDrawer({
                         </div>
                       )}
                     </div>
-                    <span className="text-right font-money text-[12.5px] text-ink-secondary">{l.received_qty ?? l.qty ?? 0}</span>
+                    <span className="text-right font-money text-[12.5px] text-ink-secondary">{l.qty_accepted ?? l.qty_received ?? 0}</span>
                     <span className="text-right font-money text-[12.5px] text-ink-secondary">{fmtRm(l.unit_price_sen ?? 0)}</span>
                     <span className="text-right font-money text-[12.5px] font-semibold text-ink">{fmtRm(l.line_total_sen ?? 0)}</span>
                   </div>
@@ -475,7 +477,7 @@ function GrnLinesExpansion({ id }: { id: string }) {
       description: l.description ?? null,
       description2: l.description2 ?? null,
       variants: l.variants ?? null,
-      qty: Number(l.received_qty ?? l.qty ?? 0),
+      qty: Number(l.qty_accepted ?? l.qty_received ?? 0),
       amountSen: l.line_total_sen ?? 0,
       assignedSos: byCode.get(code) ?? [],
       sourceLinked: linkedSkus.has(code),

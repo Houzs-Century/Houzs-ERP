@@ -80,6 +80,11 @@ export type DrillItemFields = {
   variants?: Record<string, unknown> | null;
   qty?: number | null;
   received_qty?: number | null;
+  // GRN detail lines report the received/landed quantity here, NOT in
+  // qty/received_qty (which the GRN GET does not select). Reading the latter
+  // rendered 0 on every GRN line in the list quick-view / row-drill.
+  qty_accepted?: number | null;
+  qty_received?: number | null;
   qty_returned?: number | null;
   unit_price_sen?: number | null;
   line_total_sen?: number | null;
