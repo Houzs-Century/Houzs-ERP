@@ -72,13 +72,28 @@ export async function persistLineKeys(
   row: LineKeyRowLabel,
   target: LineKeyTarget,
   lines: AcCreatedLine[],
-): Promise<void> {
+): Promise<string | null> {
   const label = `[autocount-outbox] ${row.op} ${row.doc_no} line keys`;
+  /* WHY IT RETURNS THE REASON NOW (2026-09-11, docs/bugs/0813).
+     Every branch below used to `return` after a console.error, and the drain
+     discarded it. That console goes to a Worker log this account's token cannot
+     read (`wrangler tail` is denied — the 2026-09-11 handoff records the same
+     blind spot for the relink sweep), so a document went to AutoCount reporting
+     SENT while its lines kept NO identity, and nobody learned that until an
+     operator tried to edit it days later and was refused whole with "The ERP
+     cannot tell which lines AutoCount already has". The caller writes what
+     comes back onto the outbox row, where the health check and the AutoCount
+     Sync screen already look. The console lines stay: they carry detail a
+     one-line reason should not. */
   try {
     /* Not an error. An AcSyncService built before 2026-08-11 returns no lines,
        and the service also degrades to an empty array rather than losing the
        DocNo when its own read-back fails. */
-    if (!lines.length) return;
+    if (!lines.length) {
+      return 'AutoCount reported no lines for this document, so no line identity could be stored. '
+        + 'A service built before 2026-08-11 does not report them, and the service also returns an '
+        + 'empty list rather than losing the DocNo when its own read-back fails.';
+    }
 
     if (lines.length !== target.ids.length) {
       // eslint-disable-next-line no-console
@@ -86,7 +101,8 @@ export async function persistLineKeys(
         `${label}: NOT STORED — AutoCount reported ${lines.length} line(s), the ERP sent `
         + `${target.ids.length}. Storing them by position would attach a key to the wrong line.`,
       );
-      return;
+      return `AutoCount reported ${lines.length} line(s) and the ERP sent ${target.ids.length}, so `
+        + 'no line identity was stored: matching them by position would attach a key to the wrong line.';
     }
 
     const ordered = [...lines].sort((a, b) => a.Seq - b.Seq);
@@ -103,7 +119,8 @@ export async function persistLineKeys(
           `${label}: NOT STORED — position ${i + 1} is '${ordered[i].ItemCode}' in AutoCount but `
           + `'${target.codes[i]}' in the ERP. The two line lists do not correspond.`,
         );
-        return;
+        return `No line identity was stored: line ${i + 1} is '${ordered[i].ItemCode}' in AutoCount `
+          + `but '${target.codes[i]}' here, so the two line lists do not correspond.`;
       }
     }
 
@@ -138,7 +155,8 @@ export async function persistLineKeys(
           `${label}: NOT STORED — position ${i + 1} carries Desc2 '${ordered[i].Desc2}' in `
           + `AutoCount but '${target.desc2?.[i]}' in the ERP. Same ItemCode, different line.`,
         );
-        return;
+        return `No line identity was stored: line ${i + 1} carries the same item code on both sides `
+          + 'but a different further description, so they are not the same line.';
       }
       if (dupes.has(norm(target.codes[i])) && !(gotD && wantD)) {
         // eslint-disable-next-line no-console
@@ -147,10 +165,12 @@ export async function persistLineKeys(
           + 'position ' + (i + 1) + ' has no Desc2 on both sides to tell them apart. '
           + 'Storing by position here would be a guess.',
         );
-        return;
+        return `No line identity was stored: item code '${target.codes[i]}' is on more than one line `
+          + `and line ${i + 1} has no further description on both sides to tell them apart.`;
       }
     }
 
+    let failed = 0;
     for (let i = 0; i < ordered.length; i += 1) {
       /* Every ERP row behind this AutoCount line gets the SAME key. For a sofa
          that is the build's compartments; composeEdit later accepts the build
@@ -160,14 +180,24 @@ export async function persistLineKeys(
           .update({ linked_ac_dtlkey: ordered[i].DtlKey })
           .eq('id', id);
         if (error) {
+          failed += 1;
           // eslint-disable-next-line no-console
           console.error(`${label}: partial — row ${id} failed: ${error.message}`);
         }
       }
     }
+    /* A PARTIAL IS WORSE THAN A CLEAN MISS and has to say so: composeEdit
+       refuses a document with ANY keyless line, so one failed write costs the
+       whole document its next edit exactly as if nothing had been stored. */
+    return failed
+      ? `Line identity was stored for only part of this document: ${failed} row(s) could not be `
+        + 'written. Its next edit will still be refused until they are matched up.'
+      : null;
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error(`${label}: not stored:`, e instanceof Error ? e.message : String(e));
+    return 'No line identity was stored: the write failed with '
+      + (e instanceof Error ? e.message : String(e));
   }
 }
 
