@@ -167,10 +167,15 @@ export const DO_SALES_CARRY = [
   ['agent', 's.agent'],
   ['branding', 's.branding'],
   ['ref', 's.ref'],
-  /* The DELIVERY dates FOLLOW THE DO's OWN DATE (d.do_date = AutoCount's DocDate),
-     never the SO's customer date — owner 2026-09-11 「全部要跟 autocount」. The
-     other fields above legitimately come from the SO; only these two changed
-     (reverses the 2026-09-08 s.customer_delivery_date source). */
-  ['customer_delivery_date', 'd.do_date'],
-  ['expected_delivery_at', 'd.do_date'],
+  /* THE DELIVERY DATES ARE NOT ON THIS LIST, and both wrong answers are on
+     record. `s.customer_delivery_date` (2026-09-08) copied the sales order's
+     date, which goes stale the moment AutoCount's is changed — that is the
+     HC12445 report. `d.do_date` (2026-09-11, #3615) used the DO's document
+     date as a proxy for the book's delivery date, and MEASURED against the
+     live book the two differ on 65 of 235 linked delivery orders, so it would
+     have stamped a wrong date on 65 live documents.
+     The book's real field is SODTL/DODTL.DeliveryDate, which the inbound pull
+     does not carry, so this backfill cannot know it and no longer guesses:
+     repair-delivery-dates-from-book.mjs sets it from a committed export of that
+     column. docs/bugs/0810, 0804, 0716. */
 ];
