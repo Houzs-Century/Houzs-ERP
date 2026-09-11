@@ -1,7 +1,65 @@
 # HANDOFF — sofa/bedframe alignment to the supplier listing
 
-**Updated 2026-09-11 ~03:10Z, at the owner's request to swap this to another person.**
+**Updated 2026-09-11 ~04:35Z, at the owner's request to hand over.**
 Read this top-to-bottom; it is written so a stranger can continue without the chat.
+
+---
+
+## HOT — the live GR blocker being worked at handover (HC-SO-013503)
+
+The owner hit a real GR failure and it exposed TWO systemic gaps. Finish this first.
+
+**The document.** `HC-SO-013503` (customer MR CHAN) + its PO `HC-PO-2609-053`.
+Build: `8030` sofa, three 35" pieces. Prod holds `1A(LHF)+1NA+1A(RHF)`. It should
+be `1A(LHF)+1NA+L(RHF)` — the THIRD piece is a **lounger L(RHF)** (the taller box,
+hatched on the right), not an arm. Owner confirmed in chat 2026-09-11:
+「用今天的SO-013503 / Po2609-053 确定」.
+
+**Why it was wrong (traced).** On 2026-09-10 the owner read this drawing HIMSELF
+and gave `1A(LHF)+1NA+1A(RHF)` verbatim (was in `tv-direction.json`, key 926872,
+`confidence: owner`). That dropped the lounger. On 2026-09-11, with the goods in
+front of him for GR, he corrected it. The original drawing read + the mechanical
+TV-mirror + the supplier + the physical goods ALL give `...+L(RHF)`.
+
+**State of the fix (branch `fix/probe-received-col`, committed + pushed, NOT applied):**
+- new file `backend/scripts/data/sofa-compartment-corrections-owner-not-in-file.json`
+  — SO + PO entries, target `1A(LHF)+1NA+L(RHF)`, addressed by live line keys
+  (SO 926872; PO 928403/928404/928405). Registered in `CORRECTION_FILES`.
+- the superseded 926872 entries were REMOVED from `tv-direction.json` and
+  `drawings.json` so one address carries one answer. Guard test: only the
+  pre-existing 1ELT failure remains.
+- **Dry-run run 34562298315:** SO **applies clean** (money held, 449000). PO is
+  **REFUSED — "money would move" 273000→106000.** The PO carries money on more
+  than one line, and the applier pairs rows BY CODE, so it reads the `1A(RHF)→
+  L(RHF)` swap as remove+add and its money guard (correctly) refuses.
+
+**THE NEXT STEP — do the PO as an IN-PLACE RENAME, not through the pair-by-code applier.**
+The correct operation is: rename PO line `928404` `8030-1A(RHF)`→`8030-L(RHF)`
+in place, keeping its price/qty/so_item_id. That moves NO money. `received=0`
+(probe 34561370209) so no stock/lot to move; `8030-L(RHF)` SKU exists. Options:
+  (a) apply the SO via the channel (`file=owner-not-in-file`, DOC=HC-SO-013503,
+      apply=1) — it is clean; then rename the PO line surgically; OR
+  (b) do BOTH SO and PO as surgical in-place renames (cleanest — the owner's
+      change is literally "one piece is a lounger", i.e. a one-row code change).
+  There is no in-place-rename tool yet. `repair-orphan-sofa-codes.mjs` /
+  `repair-mislabelled-sofa-po-lines.mjs` re-file codes and are the closest
+  precedents to copy for a gated (MODE/CONFIRM/fresh-verify/RE-RUN) one-row rename.
+  After applying, re-run the probe (`probe-lounger-read-as-arm.yml` DOC=HC-SO-013503)
+  to confirm both sides read `L(RHF)`, then the GR can be received.
+
+**SYSTEMIC GAP 1 — re-check the owner's 2026-09-10 SELF-READ batch.** The wrong
+value here was the owner's own 09-10 reading (confidence:owner in
+`tv-direction.json`). If he mis-read one tall-box-lounger as an arm, others in
+that same batch may carry the same error. Pull every `confidence: owner` entry
+dated 2026-09-10 and re-verify against its drawing.
+
+**SYSTEMIC GAP 2 — the supplier export is INCOMPLETE.** `HC-PO-2609-053` (supplier
+PO ref `R04533/ZNT6330`) is NOT in `supplier-so-detail-2026-09-10.xlsx` at all.
+So "aligned to the supplier file" is NOT "all POs correct" — a whole population of
+proceeded orders is outside that file (esp. new `HC-PO-2609-0xx` with non-standard
+refs). Build a check that lists proceeded sofa POs with NO supplier-export match
+AND still-to-receive, and work them from drawings — that is the real remaining
+GR-risk surface, and it is what my earlier "80 not-found = ignore" wrongly buried.
 
 ---
 
