@@ -44,7 +44,8 @@ import { callAcRead } from '../../services/autocount-host-read';
 import { planLineRelink, type BookLine, type ErpLineForRelink } from './autocount-relink-lines';
 import { classifyAcSkip } from './autocount-outbox-status';
 import { DOWNSTREAM } from './autocount-convert-lines';
-import { enqueueEdit } from './autocount-outbox';
+import { enqueueEdit, bindingsFor } from './autocount-outbox';
+import { resolveAcItemCode } from '../../services/autocount-item-code';
 
 type Sb = ReturnType<typeof getSupabaseService>;
 
@@ -272,15 +273,40 @@ async function relinkOneHeldBackDoc(
     .eq(spec.itemFk, t.docId);
   if (lErr) return { ...base, bookDocNo, skipped: `line read failed: ${lErr.message}` };
 
-  const erpLines: ErpLineForRelink[] = (lineRows as Array<Record<string, unknown>>).map((r) => ({
-    id: String(r.id),
-    /* The raw ERP code, deliberately — the same fail-closed choice the "Match up
-       lines" route makes: a supplier's own spelling that the bindings would
-       resolve simply will not match the book's and is refused, not guessed. */
-    acItemCode: (r.item_code as string | null) ?? null,
-    desc2: (r.description2 as string | null) ?? null,
-    dtlKey: r.linked_ac_dtlkey == null ? null : Number(r.linked_ac_dtlkey),
-  }));
+  const rowsIn = lineRows as Array<Record<string, unknown>>;
+  const bindings = await bindingsFor(
+    sb, t.companyId, rowsIn.map((r) => String(r.item_code ?? '')),
+  ).catch(() => new Map<string, string>());
+  const erpLines: ErpLineForRelink[] = rowsIn.map((r) => {
+    /* THE BOOK'S SPELLING, NOT OURS — and this is the follow-up the old comment
+       here promised and never did (docs/bugs/0816).
+
+       `ErpLineForRelink.acItemCode` is documented as "what the write-back SENDS
+       for this row — the book's spelling, not ours". Both callers passed the RAW
+       `item_code` instead, and said so: "Resolving properly is the follow-up,
+       not a silent widening." The follow-up is this.
+
+       It is the whole reason the sweep stamped zero. The ERP holds
+       `AKEMI ARMOUR MATT (SK)`; the account book holds `AK-ARMOUR MATT (SK)`,
+       because composeEdit resolves every code through the cutover bindings
+       before sending it. Matching on the raw code compares our spelling against
+       theirs, so EVERY line of EVERY document whose supplier spells things
+       differently was refused with "the account book has no unclaimed line with
+       that item code" — which is exactly what the first readable sweep report
+       said, on all 13 documents, the moment one existed (docs/bugs/0815).
+
+       STILL FAIL-CLOSED. An unresolvable code falls back to the raw one, which
+       is today's behaviour and refuses; resolution only ever turns a guaranteed
+       miss into a possible match, never a wrong one into a confident one. */
+    const own = (r.item_code as string | null) ?? null;
+    const res = own ? resolveAcItemCode(own, { bindings }) : null;
+    return {
+      id: String(r.id),
+      acItemCode: res?.ok ? res.acItemCode : own,
+      desc2: (r.description2 as string | null) ?? null,
+      dtlKey: r.linked_ac_dtlkey == null ? null : Number(r.linked_ac_dtlkey),
+    };
+  });
   const keylessBefore = erpLines.filter((l) => !(Number.isFinite(Number(l.dtlKey)) && Number(l.dtlKey) > 0)).length;
 
   const plan = planLineRelink({ bookLines, erpLines });
