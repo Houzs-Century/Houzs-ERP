@@ -1,0 +1,48 @@
+name: Delivery lines stranded by the invented leg height — PLAN (read-only)
+
+# Answers "what would it take to put the three Ship-anyway deliveries right?"
+# without anyone opening a SQL console.
+#
+# Three delivery orders (HC-DO-2609-004, -009, -011) shipped through a stock
+# check that was asking about a bucket the delivery form invented — the sofa Leg
+# Height "Default" that no lot has ever carried (docs/bugs/0722). Their OUT
+# movements consumed no lot and carried no cost, so stock is overstated by those
+# pieces and the sales carry no COGS.
+#
+# This REPORTS what the repair would consume and stamp. It has no apply mode:
+# the write that follows needs its own tool and the owner's word, and the whole
+# point of a plan is that the figures are seen before anything moves.
+#
+# Manual trigger only — it is a question, not a gate, and a production DB read
+# must never become routine CI noise.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind (or displace) a release.
+concurrency:
+  group: plan-do-leg-default-stock
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/plan-do-leg-default-stock.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

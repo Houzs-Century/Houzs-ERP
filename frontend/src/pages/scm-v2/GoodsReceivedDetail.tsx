@@ -63,6 +63,7 @@ import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { DiscountInput } from '../../vendor/scm/components/DiscountInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { specialOrderSurface } from '../../vendor/scm/lib/special-order-surface';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -1014,9 +1015,10 @@ export const GoodsReceivedDetail = () => {
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Discount</span>
                       {isEditing ? (
-                        <MoneyInput bare selectOnFocus inputClassName={styles.fieldInput}
-                          valueSen={d.discountSen} disabled={isLocked}
-                          onCommit={(sen) => setLine(it, { discountSen: sen ?? 0 })} />
+                        <DiscountInput bare selectOnFocus inputClassName={styles.fieldInput}
+                          valueSen={d.discountSen} baseSen={d.qty * d.unitPriceSen} disabled={isLocked}
+                          onCommit={(sen) => setLine(it, { discountSen: sen ?? 0 })}
+                          currency={grn.currency} />
                       ) : (
                         <input
                           type="text" readOnly
