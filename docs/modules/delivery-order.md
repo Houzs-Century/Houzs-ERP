@@ -2744,3 +2744,12 @@ line off its `-1S` placeholder it now carries the new code onto
 lines — guarded by `migrated_no_stock`, with a typed invoice HELD and reported by
 number rather than overwritten. Four production invoice lines were left quoting a
 parent that had already changed; `docs/bugs/0687` has the trace and the repair.
+
+## Checking what the hard-binding guard cannot fix
+
+`backend/scripts/check-hard-bound-stock-gap.mjs`, run from Actions as **Hard-bound
+stock gap (read-only)**, lists the two populations the guard leaves behind: the
+negative stock buckets Ship-anyway has already created, and the lines whose own
+purchase order was received while the warehouse holds nothing. The second list is
+a physical question — the goods left on another delivery or were never keyed in —
+so the delivery screen is right to keep warning on them. `docs/bugs/0818`.

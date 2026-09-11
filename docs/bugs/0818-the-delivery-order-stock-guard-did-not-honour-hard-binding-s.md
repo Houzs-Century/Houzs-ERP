@@ -80,8 +80,22 @@ ships.
 first among them *"a line whose own purchase order covers it is not a pool
 question"*. Restored: **21 passed**. Removing the ON-HAND half alone fails *"NOT covered when the warehouse holds nothing — the old warning was right"*, so both halves are pinned separately. Making the helper ignore the map — the ordering bug in one line — fails *"kept when the map is empty"*. `npm --prefix backend run typecheck` clean.
 
-**What this does NOT do, said rather than implied:** it does not repair the 57
-negative buckets already created, and it does not touch the separate
+**The damage already done is MEASURED, not estimated.**
+`backend/scripts/check-hard-bound-stock-gap.mjs` + **Hard-bound stock gap
+(read-only)** answer the two questions the fix leaves open, and were run against
+production on 2026-09-11:
+
+- **52 negative bedframe/sofa buckets, -55 units.** That is the Ship-anyway hole
+  in the goods this rule governs. (The bigger-looking negatives — service -2874,
+  others -1275 — are not furniture: a service line never moves stock at all.)
+- **30 live lines whose own PO was received and whose warehouse holds nothing**,
+  21 bedframe and 9 sofa, out of 465 received hard-bound lines. Every one reads
+  READY. For these the old warning is RIGHT and the fix deliberately keeps it:
+  the goods left the warehouse on somebody else's delivery, or never got keyed
+  in, and finding them is a physical job.
+
+**What this does NOT do, said rather than implied:** it does not repair the 52
+negative bedframe/sofa buckets already created, and it does not touch the separate
 blank-variant problem — stock arriving from AutoCount (`AC_CUTOVER`) carries no
 variant and lands under a blank key, which is why 618 bedframe units sit in a
 bucket no order can name. That one is unresolved and is not this.
