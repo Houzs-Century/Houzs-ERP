@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 
 import { retiredSeriesSet, seriesIsRetired } from './fabric-colours';
 
-const RETIRED = new Set(['FG66151', 'J9226', 'GARFIELD']);
+const RETIRED = new Set(['FG66151', 'J9226']);
 
 describe('seriesIsRetired', () => {
   it('hides a colour whose series is switched off', () => {
@@ -24,34 +24,67 @@ describe('seriesIsRetired', () => {
     expect(seriesIsRetired(RETIRED, 'J9226')).toBe(true);
   });
 
+  it('keeps GARFIELD, which the shipped regression hid', () => {
+    expect(seriesIsRetired(RETIRED, 'GARFIELD')).toBe(false);
+  });
+
   it('keeps a colour whose series is live', () => {
     expect(seriesIsRetired(RETIRED, 'BO315')).toBe(false);
     expect(seriesIsRetired(RETIRED, 'GD2034')).toBe(false);
   });
 
-  it('trims BOTH sides — the padded twin must resolve to the same series', () => {
-    /* Production holds the retired row as `GARFIELD ` and the colour
-       GARFIELD-03 points at `GARFIELD `. Whichever side carries the space, the
-       answer has to be the same, or a live fabric reads as retired depending on
-       which row it met. The builder is what trims the library side, which is
-       why it is used here rather than a hand-made Set. */
-    const padded = retiredSeriesSet([{ id: 'GARFIELD ' }]);
-    expect(seriesIsRetired(padded, 'GARFIELD')).toBe(true);
-    expect(seriesIsRetired(padded, 'GARFIELD ')).toBe(true);
-    expect(seriesIsRetired(retiredSeriesSet([{ id: ' GARFIELD ' }]), 'GARFIELD')).toBe(true);
+  /* THE REGRESSION THIS FILE SHIPPED, kept as the first case so it cannot come
+     back. An earlier builder took only the INACTIVE rows and trimmed them, so
+     the retired `GARFIELD ` trimmed onto the LIVE `GARFIELD` and switched it
+     off - nine colours a customer buys, measured gone minutes after deploy. A
+     LIVE row must win over a retired twin, so the question is per CODE. */
+  it('a LIVE row wins over a retired padded twin — the regression', () => {
+    const set = retiredSeriesSet([
+      { id: 'GARFIELD', active: true },
+      { id: 'GARFIELD ', active: false },
+    ]);
+    expect(seriesIsRetired(set, 'GARFIELD')).toBe(false);
+    expect(seriesIsRetired(set, 'GARFIELD ')).toBe(false);
+  });
+
+  it('retires the code when EVERY row for it is inactive, padded or not', () => {
+    const set = retiredSeriesSet([{ id: 'J9226', active: false }, { id: 'J9226 ', active: false }]);
+    expect(seriesIsRetired(set, 'J9226')).toBe(true);
+    expect(seriesIsRetired(set, 'J9226 ')).toBe(true);
+  });
+
+  it('trims BOTH sides, so a padded value still resolves to its code', () => {
+    const set = retiredSeriesSet([{ id: 'FG66151', active: false }]);
+    expect(seriesIsRetired(set, ' FG66151 ')).toBe(true);
   });
 
   it('the builder drops blank and missing ids rather than retiring everything', () => {
-    const set = retiredSeriesSet([{ id: '  ' }, { id: null }, {}, { id: 'J9226' }]);
+    const set = retiredSeriesSet([{ id: '  ', active: false }, { id: null, active: false }, {}, { id: 'J9226', active: false }]);
     expect([...set]).toEqual(['J9226']);
     expect(seriesIsRetired(set, '')).toBe(false);
   });
 
   it('the builder handles the real production shape', () => {
-    const set = retiredSeriesSet([{ id: 'FG66151' }, { id: 'J9226' }, { id: 'GARFIELD ' }]);
-    expect(set.size).toBe(3);
-    expect(seriesIsRetired(set, 'GARFIELD')).toBe(true);
+    /* Verbatim from production 2026-09-11: two retired series, plus GARFIELD's
+       live row and its retired padded twin. */
+    const set = retiredSeriesSet([
+      { id: 'FG66151', active: false },
+      { id: 'J9226', active: false },
+      { id: 'GARFIELD ', active: false },
+      { id: 'GARFIELD', active: true },
+      { id: 'TARONI', active: true },
+      { id: 'TARONI ', active: true },
+      { id: 'BO315', active: true },
+    ]);
+    expect([...set].sort()).toEqual(['FG66151', 'J9226']);
+    expect(seriesIsRetired(set, 'GARFIELD')).toBe(false);
+    expect(seriesIsRetired(set, 'TARONI ')).toBe(false);
     expect(seriesIsRetired(set, 'BO315')).toBe(false);
+  });
+
+  it('anything other than active===true reads as inactive, so a missing flag cannot silently un-retire', () => {
+    expect(seriesIsRetired(retiredSeriesSet([{ id: 'X' }]), 'X')).toBe(true);
+    expect(seriesIsRetired(retiredSeriesSet([{ id: 'X', active: null }]), 'X')).toBe(true);
   });
 
   it('a blank or missing series is NOT retired — it cannot be proven to be', () => {

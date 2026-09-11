@@ -230,41 +230,41 @@ Total: 1239 route registrations across 160 files.
 - L1501  POST   /:id{[0-9]+}/sales-comment
 - L1527  POST   /:id{[0-9]+}/sales-nudge
 - L1566  GET    /:id{[0-9]+}
-- L1612  POST   /:id{[0-9]+}/access
-- L1613  DELETE /:id{[0-9]+}/access/:userId{[0-9]+}
-- L1626  GET    /:id/customer-history
-- L1872  PATCH  /:id{[0-9]+}
-- L1959  POST   /:id{[0-9]+}/mark-opened
-- L1980  POST   /:id/track-link
-- L1997  POST   /:id/sales-link
-- L2022  DELETE /:id/track-link
-- L2061  POST   /:id/supplier-link
-- L2082  DELETE /:id/supplier-link
-- L2112  POST   /:id/survey-token
-- L2151  POST   /:id/archive
-- L2161  POST   /:id/unarchive
-- L2172  POST   /:id/logistics/:logId/archive
-- L2190  POST   /attachments/:attId/archive
-- L2231  POST   /activity/:actId/archive
-- L2261  PATCH  /attachments/:attId/visibility
-- L2281  POST   /run-escalation
-- L2288  GET    /metrics
-- L2544  GET    /metrics/drill
-- L2694  POST   /:id/generate-po
-- L2753  POST   /:id/approve
-- L2808  POST   /:id/transition
-- L2894  POST   /:id/notes
-- L2922  POST   /:id/notes/:noteId/correct
-- L2952  GET    /:id/timeline.csv
-- L3037  POST   /:id/items
-- L3048  DELETE /:id/items/:itemId
-- L3057  PATCH  /:id/items/:itemId
-- L3148  PUT    /:id/attachments
-- L3195  PUT    /:id/attachments/thumb
-- L3222  GET    /attachments/:key{.+}
-- L3263  GET    /logistics/all
-- L3321  POST   /:id/logistics
-- L3336  PATCH  /:id/logistics/:logId
+- L1610  POST   /:id{[0-9]+}/access
+- L1611  DELETE /:id{[0-9]+}/access/:userId{[0-9]+}
+- L1624  GET    /:id/customer-history
+- L1870  PATCH  /:id{[0-9]+}
+- L1957  POST   /:id{[0-9]+}/mark-opened
+- L1978  POST   /:id/track-link
+- L1995  POST   /:id/sales-link
+- L2020  DELETE /:id/track-link
+- L2059  POST   /:id/supplier-link
+- L2080  DELETE /:id/supplier-link
+- L2110  POST   /:id/survey-token
+- L2149  POST   /:id/archive
+- L2159  POST   /:id/unarchive
+- L2170  POST   /:id/logistics/:logId/archive
+- L2188  POST   /attachments/:attId/archive
+- L2229  POST   /activity/:actId/archive
+- L2259  PATCH  /attachments/:attId/visibility
+- L2279  POST   /run-escalation
+- L2286  GET    /metrics
+- L2542  GET    /metrics/drill
+- L2692  POST   /:id/generate-po
+- L2751  POST   /:id/approve
+- L2806  POST   /:id/transition
+- L2892  POST   /:id/notes
+- L2920  POST   /:id/notes/:noteId/correct
+- L2950  GET    /:id/timeline.csv
+- L3035  POST   /:id/items
+- L3046  DELETE /:id/items/:itemId
+- L3055  PATCH  /:id/items/:itemId
+- L3146  PUT    /:id/attachments
+- L3193  PUT    /:id/attachments/thumb
+- L3220  GET    /attachments/:key{.+}
+- L3261  GET    /logistics/all
+- L3319  POST   /:id/logistics
+- L3334  PATCH  /:id/logistics/:logId
 
 ## backend/src/scm/routes/mfg-sales-orders.ts  (42)
 - L1147  GET    /
@@ -1523,7 +1523,7 @@ Total: 1239 route registrations across 160 files.
 - L59  GET    /:entityType/:entityId
 
 ## backend/src/scm/routes/fabric-colours.ts  (1)
-- L57  GET    /
+- L78  GET    /
 
 ## backend/src/scm/routes/grns-list-enrichment.ts  (1)
 - L46  GET    /list-mrp-enrichment

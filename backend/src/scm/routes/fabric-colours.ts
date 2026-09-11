@@ -35,10 +35,31 @@ export const fabricColours = new Hono<{ Bindings: Env; Variables: Variables }>()
    "optional discipline the caller must remember" shape this repo keeps paying
    for, so the pair below is the whole contract. */
 
-/** The retired-series lookup, built from `fabric_library` rows. Trims each id,
- *  drops the blanks. Pass the rows straight from the query. */
-export const retiredSeriesSet = (rows: readonly Record<string, unknown>[]): Set<string> =>
-  new Set(rows.map((r) => String(r.id ?? "").trim()).filter(Boolean));
+/** The retired-series lookup, built from EVERY `fabric_library` row and its
+ *  `active` flag. A trimmed code counts as retired only when NO active row
+ *  trims to it.
+ *
+ *  THE ROW-BY-ROW VERSION OF THIS SHIPPED A REGRESSION AND HID A LIVE FABRIC.
+ *  It was built from the inactive rows alone and trimmed them, so the retired
+ *  row `GARFIELD ` trimmed to `GARFIELD` and switched off the LIVE `GARFIELD`
+ *  beside it - nine colours a customer buys, gone from the picker, measured
+ *  within minutes of the deploy. The padded twin must resolve to the same code
+ *  (that is why the trim is here at all) AND the live row must win, so the
+ *  question is per CODE, not per row. */
+export const retiredSeriesSet = (
+  rows: readonly { id?: unknown; active?: unknown }[],
+): Set<string> => {
+  const seen = new Set<string>();
+  const live = new Set<string>();
+  for (const r of rows) {
+    const id = String(r.id ?? "").trim();
+    if (!id) continue;
+    seen.add(id);
+    if (r.active === true) live.add(id);
+  }
+  for (const id of live) seen.delete(id);
+  return seen;
+};
 
 /** Is this colour's SERIES switched off in the fabric library?
  *
@@ -90,6 +111,10 @@ fabricColours.get("/", async (c) => {
      Model happened to list those series, which is luck, not a rule: ticking a
      new Model or clearing a pool would have leaked them straight back in.
 
+     THE SET IS BUILT PER CODE, NOT PER ROW - see retiredSeriesSet. Reading only
+     the inactive rows is what shipped a regression: a retired padded twin
+     trimmed onto its live sibling and switched the live one off.
+
      A SEPARATE QUERY, not a PostgREST embed. An `!inner` join on
      fabric_library would be fewer round trips, and the embed name / FK shape
      cannot be verified from this machine (PostgREST needs the Worker's
@@ -104,7 +129,7 @@ fabricColours.get("/", async (c) => {
      discontinued series and keep displaying it. docs/bugs/0816. */
   let retiredSeries = new Set<string>();
   {
-    let lib = supabase.from("fabric_library").select("id").eq("active", false);
+    let lib = supabase.from("fabric_library").select("id, active");
     lib = scopeToCompany(lib, c);
     const { data: libRows, error: libErr } = await lib;
     /* A failure here must NOT empty the picker. The colour list is the product;

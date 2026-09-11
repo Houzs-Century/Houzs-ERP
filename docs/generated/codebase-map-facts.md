@@ -24,7 +24,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/announcementReceipts.ts` | 5 | 362 |
 | `backend/src/routes/announcements.ts` | 10 | 1664 |
 | `backend/src/routes/assistant.ts` | 4 | 225 |
-| `backend/src/routes/assr.ts` | 64 | 3367 |
+| `backend/src/routes/assr.ts` | 64 | 3365 |
 | `backend/src/routes/assrAccess.ts` | 0 | 103 |
 | `backend/src/routes/assrFormIntake.ts` | 6 | 965 |
 | `backend/src/routes/assrPortal.ts` | 14 | 540 |
@@ -75,7 +75,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-bank-config.ts` | 0 | 126 |
 | `backend/src/scm/routes/accounting-bank-locks.ts` | 0 | 230 |
 | `backend/src/scm/routes/accounting-bank-months.ts` | 0 | 509 |
-| `backend/src/scm/routes/accounting-bank.ts` | 0 | 1315 |
+| `backend/src/scm/routes/accounting-bank.ts` | 0 | 1355 |
 | `backend/src/scm/routes/accounting-chart.ts` | 0 | 787 |
 | `backend/src/scm/routes/accounting-item-groups.ts` | 0 | 259 |
 | `backend/src/scm/routes/accounting-numbering.ts` | 0 | 134 |
@@ -122,7 +122,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/driver-leave.ts` | 3 | 163 |
 | `backend/src/scm/routes/drivers.ts` | 3 | 198 |
 | `backend/src/scm/routes/entity-audit-log.ts` | 1 | 101 |
-| `backend/src/scm/routes/fabric-colours.ts` | 1 | 133 |
+| `backend/src/scm/routes/fabric-colours.ts` | 1 | 158 |
 | `backend/src/scm/routes/fabric-library.ts` | 2 | 99 |
 | `backend/src/scm/routes/fabric-tier-addon.ts` | 8 | 322 |
 | `backend/src/scm/routes/fabric-tracking.ts` | 10 | 714 |
@@ -214,13 +214,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 153 | `154_assr_case_access.sql` (154) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 407 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 409 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2195 files, 749822 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2195 files, 750027 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -241,8 +241,8 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/mobile/MobileNewSO.tsx` | 3747 |
 | `backend/src/scm/routes/grns.ts` | 3564 |
 | `frontend/src/components/DataTable.tsx` | 3394 |
-| `frontend/src/mobile/MobileServiceCase.tsx` | 3387 |
-| `backend/src/routes/assr.ts` | 3367 |
+| `frontend/src/mobile/MobileServiceCase.tsx` | 3380 |
+| `backend/src/routes/assr.ts` | 3365 |
 | `backend/src/services/projects.ts` | 3137 |
 | `frontend/src/pages/MailCenter/Inbox.tsx` | 3013 |
 
@@ -477,7 +477,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileSavedPhotoThumb.tsx` | 82 |
 | `frontend/src/mobile/MobileScan.tsx` | 1467 |
 | `frontend/src/mobile/MobileSearch.tsx` | 285 |
-| `frontend/src/mobile/MobileServiceCase.tsx` | 3387 |
+| `frontend/src/mobile/MobileServiceCase.tsx` | 3380 |
 | `frontend/src/mobile/MobileSkuPicker.tsx` | 260 |
 | `frontend/src/mobile/MobileStockCard.tsx` | 335 |
 | `frontend/src/mobile/MobileStockTransferNew.tsx` | 255 |
