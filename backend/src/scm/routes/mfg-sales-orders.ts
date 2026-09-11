@@ -7339,17 +7339,10 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      a key when the request body carried it. */
   await queueAcSoEdit(c, docNo, [], [], Object.keys(updates));
 
-  /* The processing date is the allocator's GATE, and until 2026-09-11 writing
-     it here re-walked nothing — 702 lines sat PENDING on stock already in the
-     warehouse. GLOBAL like the create path at :5587 (a newly-competing order can
-     steal from a lower-priority one, which must regress in the SAME pass), and
-     best-effort because the header CAS has already committed.
-     docs/bugs/0814-*, docs/modules/sales-order.md 0.2. */
+  /* The gate OPENED here, so re-walk: nothing did until 2026-09-11 and 702 lines sat PENDING on stock already in the warehouse. GLOBAL like :5587 (a newly-competing order can steal, and the loser must regress in the SAME pass); best-effort, the header CAS has already committed. docs/bugs/0814-*, docs/modules/sales-order.md 0.2. */
   if (Object.prototype.hasOwnProperty.call(updates, 'processing_date')) {
-    try { await recomputeSoStockAllocation(sb); }
-    catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-processing-date failed:', docNo, e); }
+    try { await recomputeSoStockAllocation(sb); } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-processing-date failed:', docNo, e); }
   }
-
   return c.json({
     ok: true,
     docNo,
