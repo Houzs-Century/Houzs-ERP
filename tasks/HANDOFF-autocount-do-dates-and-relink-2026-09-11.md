@@ -123,6 +123,38 @@ transaction. Nothing was blocked on it. **Do not re-run it to "check"** — it i
 idempotent, but a second apply is nine more minutes of write locks for zero
 rows; the plan mode answers the same question for free.
 
+### FINISHED 2026-09-11 — every book date is now in the ERP, and the remainder is named
+
+Three apply/plan rounds, all from Actions -> **Repair delivery dates from the
+AutoCount book**:
+
+| run | what | result |
+|---|---|---|
+| 34567150379 | plan | 100 SO, 81 DO, 510 SO lines, 850 DO lines to fix |
+| 34567236846 | apply | **1,541 rows**; verified on a fresh connection |
+| 34569351426 | plan, INCLUDE_BLANKS | 39 SO headers + 288 SO lines still blank where the book has a date |
+| 34569433132 | apply, INCLUDE_BLANKS | **327 rows**; verified |
+| 34569746197 | plan, INCLUDE_BLANKS | **to fix = 0 on all four** |
+
+**The end state, and what is deliberately still not equal.** Checked
+independently against the read-only DSN and the committed export:
+
+- 2 sales-order lines carry `line_delivery_date_overridden = true` — an operator
+  typed those on purpose and the repair refuses them. They are the ONLY lines
+  left where the book has a date and we hold a different one.
+- 11,597 sales-order lines and 9 delivery-order lines are still blank because
+  **the book is blank too** (of 11,599 still-blank SO lines the book has a date
+  for 2 — the two overridden ones; of 9 DO lines, none).
+- 2,205 sales-order headers and 4 delivery-order headers hold no single date
+  because THE BOOK'S OWN LINES DISAGREE within those documents. Their LINES are
+  aligned, and `scm/shared/effective-delivery.ts` resolves a line with a blank
+  header to `line_delivery_date` at step 4, so those orders now plan on the
+  book's per-line dates. Giving the header the earliest of them is a product
+  decision nobody has asked for; do not invent it.
+
+Do NOT re-run `apply` to "check". It is idempotent, but a second apply is
+minutes of write locks for zero rows; `plan` answers the same question free.
+
 ### What it deliberately does NOT touch
 
 - rows with `amended_delivery_date` — a deliberate ERP amendment; if it disagrees
@@ -134,21 +166,47 @@ rows; the plan mode answers the same question for free.
   `INCLUDE_BLANKS=1` / the workflow's checkbox. Blank DO LINE dates ARE filled by
   default: those are bug 0807-do-line-delivery-date's residue and nothing upstream reads them.
 
-### NEXT — the durable fix, which needs the office host
+### NEXT — TWO STEPS, and the first one needs a person at the office machine
 
-The pull still does not carry the field, so the drift RETURNS and this repair is
-a STOPGAP. The root fix is two halves:
+The durable fix is BUILT, MERGED and DEPLOYED (PR #3636): the host service now
+serves `/delivery-dates` and the Worker cron pulls it. It does nothing yet, and
+finishing it is these two steps in this order.
 
-1. **Host side**: add the line delivery date to the middleware's SO/DO
-   projections — `backend/scripts/autocount-service/`, compiled locally with
-   `build-local.ps1`, swapped on the host by `deploy-on-host.ps1` (the SQL
-   credentials live there). Our half ships INERT until that runs.
-2. **ERP side**: the ingest must UPDATE existing rows' delivery dates, not only
-   seed new ones — today `doMirror.ts` upserts a nine-column header and
-   `acSnapshot.ts` never sees the column.
+**STEP 1 — on the AutoCount host (`DESKTOP-TDH50IT`). Somebody has to be at that
+machine, or on it over AnyDesk / UltraViewer.** ONE command, which fetches
+`main`, rebuilds `AcSyncService`, swaps it in, health-checks it and rolls itself
+back if the health check disagrees:
 
-Until then, re-running the export plus the repair is the catch-up, and 「跟
-AutoCount 对不上」 on a delivery date is expected drift rather than a new bug.
+```
+powershell -ExecutionPolicy Bypass -File C:\Tempc-session\host-session.ps1
+```
+
+(or `deploy-on-host.ps1` directly, if the session directory is already there.)
+
+**Why nobody can do it remotely, measured 2026-09-11 over ZeroTier:** the host
+is UP — SQL `10.147.17.100,55500` OPEN and SMB 445 OPEN — but **WinRM (5985 /
+5986) and RDP (3389) are CLOSED**, so there is no channel that executes a
+command. And the rebuild must run ON the host regardless: it compiles the SQL
+credentials out of `C:\InistateConnector\setup.json` into the exe.
+
+Confirm it afterwards from anywhere: `GET /api/admin/health/autocount/host-build`
+should report the new build, and `POST /delivery-dates` on the host should stop
+answering 404.
+
+**STEP 2 — then turn the sweep on.** Actions -> **Set AutoCount delivery-date
+sweep** -> `sweep=plan`, `mode=apply`, `CONFIRM=set-delivery-date-sweep`. Read
+one `[cron ac-delivery-dates]` line to see what it would write, then repeat with
+`sweep=apply`. The switch workflow has been dispatched once already (run
+34569417229, success, `plan`) and correctly reported the row as absent = OFF.
+
+**Until STEP 1 runs**, the sweep reads a 404 and reports `hostRouteMissing`, so
+「跟 AutoCount 又对不上了」 on a delivery date is EXPECTED drift rather than a new
+bug, and the catch-up is: re-run `export-ac-delivery-dates.py` on this desktop
+(it needs ZeroTier), commit the snapshot, then the repair workflow.
+
+**Not needed, and worth writing down so nobody builds it:** the inbound
+middleware does NOT have to change. Its source is not in this repository, and
+`/delivery-dates` on the service that IS ours covers the same ground.
 
 ---
 
