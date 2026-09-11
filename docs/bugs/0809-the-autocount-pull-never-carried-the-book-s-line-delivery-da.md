@@ -53,11 +53,9 @@ moves what MRP waits for on thousands of orders; a header carrying
 the pull's; and the header of a document whose book lines disagree among
 themselves, where only the lines move.
 
-**The catch-up for what has already drifted is separate**, and ships in its own
-PR: a repair script over a committed export of the same column, because a CI
-runner is not on the AutoCount network so a workflow cannot read the book
-itself. Its path is not cited here because it does not exist on this branch yet —
-`backend/scripts/repair-delivery-dates-from-book.mjs` [planned] as far as this
-tree is concerned.
+**The catch-up for what has already drifted is separate** —
+`backend/scripts/repair-delivery-dates-from-book.mjs`, which reads a committed
+export of the same column because a CI runner is not on the AutoCount network.
+docs/bugs/0810-the-erp-s-delivery-dates-went-stale-because-the-autocount-pu.md.
 
 **Ref.** `feat/ac-pull-line-delivery-date`, 2026-09-11.
