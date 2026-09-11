@@ -46,7 +46,7 @@ import {
   type RackMovement,
   type RackMovementType,
 } from '../../vendor/scm/lib/warehouse-queries';
-import { itemDescription, itemMeta } from '../../vendor/scm/lib/warehouse-floorplan';
+import { itemDescription, itemMeta, rackKeyOf, ZONE_LABELS } from '../../vendor/scm/lib/warehouse-floorplan';
 import { WarehouseFloorPlan } from './WarehouseFloorPlan';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { buildSeedRackLabels, MAX_SEED_RACKS } from '../../vendor/shared/rack-labels';
@@ -328,6 +328,7 @@ export const WarehouseRacks = () => {
           warehouseId={warehouseId}
           warehouses={warehouses.data ?? []}
           editing={editing}
+          allRacks={rackList}
           onClose={() => { setCreatingMode(null); setEditing(null); }}
         />
       )}
@@ -655,11 +656,12 @@ function MovementTable({ movements, isLoading }: { movements: RackMovement[]; is
 
 /* ── Single-rack create / edit drawer — mirrors the mobile "Rack" form ──── */
 function RackFormDrawer({
-  warehouseId, warehouses, editing, onClose,
+  warehouseId, warehouses, editing, allRacks, onClose,
 }: {
   warehouseId: string;
   warehouses: WarehouseLite[];
   editing: Rack | null;
+  allRacks: Rack[];
   onClose: () => void;
 }) {
   const create = useCreateRack();
@@ -668,6 +670,7 @@ function RackFormDrawer({
   const [form, setForm] = useState({
     rack: editing?.rack ?? '',
     position: editing?.position ?? '',
+    zone: editing?.zone ?? '',
     notes: editing?.notes ?? '',
     reserved: editing?.reserved ?? false,
   });
@@ -681,17 +684,28 @@ function RackFormDrawer({
       return;
     }
     const onError = (e: unknown) => notify({ title: 'Could not save rack', body: (e as Error).message, tone: 'error' });
+    // A rack's zone belongs to the whole column; '' clears the override (auto).
+    const zone = form.zone || null;
     if (editing) {
-      update.mutate(
-        { id: editing.id, rack: form.rack.trim(), position: form.position, notes: form.notes, reserved: form.reserved },
-        { onSuccess: onClose, onError },
-      );
+      // Keep both levels of the rack in one zone: write the edited row, then
+      // sweep the zone onto any sibling level sharing the rack column.
+      const siblings = allRacks.filter((r) => r.id !== editing.id && rackKeyOf(r.rack) === rackKeyOf(editing.rack));
+      void (async () => {
+        try {
+          await update.mutateAsync({ id: editing.id, rack: form.rack.trim(), position: form.position, zone, notes: form.notes, reserved: form.reserved });
+          for (const s of siblings) await update.mutateAsync({ id: s.id, zone });
+          onClose();
+        } catch (e) {
+          void onError(e);
+        }
+      })();
     } else {
       create.mutate(
         {
           ...scopeBody(scopeMode, warehouseId, scopeChosen),
           rack: form.rack.trim(),
           position: form.position || undefined,
+          zone: form.zone || undefined,
           notes: form.notes || undefined,
           reserved: form.reserved,
         },
@@ -727,6 +741,14 @@ function RackFormDrawer({
             <span className={formStyles.fieldLabel}>Position</span>
             <input className={formStyles.fieldInput} value={form.position ?? ''} placeholder="Aisle / bay / level"
               onChange={(e) => setForm((s) => ({ ...s, position: e.target.value }))} />
+          </label>
+          <label className={formStyles.field}>
+            <span className={formStyles.fieldLabel}>Zone</span>
+            <select className={formStyles.fieldInput} value={form.zone}
+              onChange={(e) => setForm((s) => ({ ...s, zone: e.target.value }))}>
+              <option value="">Auto (by rack number)</option>
+              {ZONE_LABELS.map((z) => <option key={z} value={z}>{z}</option>)}
+            </select>
           </label>
           <label className={formStyles.field}>
             <span className={formStyles.fieldLabel}>Notes</span>

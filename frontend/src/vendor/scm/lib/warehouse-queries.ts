@@ -34,6 +34,9 @@ export type Rack = {
   warehouse_id: string;
   rack: string;
   position: string | null;
+  /* Manual floor-plan zone override (e.g. "ZONE A"); null = derive from the
+     rack number (WAREHOUSE_ZONES in warehouse-floorplan.ts). */
+  zone: string | null;
   status: RackStatus;
   reserved: boolean;
   notes: string | null;
@@ -92,7 +95,7 @@ export type RackScope =
   | { allWarehouses: true };
 
 export type CreateRackBody =
-  | (RackScope & { rack: string; position?: string; reserved?: boolean; notes?: string })
+  | (RackScope & { rack: string; position?: string; zone?: string; reserved?: boolean; notes?: string })
   /* Seed: `count` alone keeps the flat "<prefix> 1..N"; add `series` +
      `levels` for the aisle.level grid (shared/rack-labels.ts). */
   | (RackScope & { count: number; prefix?: string; series?: string; levels?: number });
@@ -113,7 +116,7 @@ export function useCreateRack() {
 export function useUpdateRack() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; rack?: string; position?: string; notes?: string; reserved?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; rack?: string; position?: string; zone?: string | null; notes?: string; reserved?: boolean }) =>
       authedFetch<{ rack: Rack; status: RackStatus }>(`/warehouse/racks/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         body: JSON.stringify(body),

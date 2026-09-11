@@ -1058,6 +1058,43 @@ Per-SKU `allowed_options` (Modular ON/OFF) filter every pool via
 per category are the shared `so-variant-rule`; Save is blocked when any line is
 missing a required axis.
 
+**TWO THINGS ABOUT THAT FILTER THAT WERE WRONG UNTIL 2026-09-11 — read these
+before touching a pool (docs/bugs/0814-one-option-field-two-vocabularies-the-fabric-pool-held-serie.md).**
+
+1. **The `fabrics` pool holds a fabric SERIES, not a colour.** The Modular
+   drawer offers `fabric_library.id` (`ProductModelDetail.tsx`:
+   `fabricLibQ.data.filter(active).map(f => f.id)`), while a line carries a
+   `fabric_colours.colour_id`. The gate and the picker now accept EITHER — a
+   colour whose `variants.fabricId` is in the pool passes. Measured before the
+   fix: 79 sofa Models, one shared 101-entry pool, 851 active colours, **3**
+   pickable. Ten pool entries are library LABELS and match nothing at either
+   level; `scripts/repair-fabric-pool-labels.mjs` rewrites those.
+2. **The pool comparison folds typographic quotes**, in
+   `vendor/shared/maintenance-pools.ts` — a person types the pool and Windows
+   turns `"` into U+201C/U+201D, while the editor emits U+0022. Measured: `gaps`
+   held 10 curly values and `total_heights` 6, over 10 bedframe Models, so Gap
+   11-20 inch were invisible on both surfaces while the server accepted them.
+   **`SoLineCard` must call the shared helpers, never a private copy** — it had
+   one, which is exactly why the fold reached mobile and not the desktop.
+
+`backend/scripts/check-allowed-options-vocabulary.mjs` (Actions -> **Check
+option-pool vocabulary**) resolves every pool value against the table its gate
+reads and names what matches nothing. Run it after filling a pool.
+
+3. **A DISCONTINUED fabric offers nothing, and that is enforced at the source
+   now** (owner 2026-09-11: 「inactive的就不需要了」). `GET /fabric-colours`
+   filters on `fabric_colours.active` AND drops any colour whose SERIES is
+   switched off in `fabric_library`. Before this, nothing on the selling path
+   read the series flag: 32 active colours of discontinued series (`FG66151`,
+   `J9226`, `GARFIELD `) were kept out of the picker only because no Model
+   listed those series — so clearing a pool to "open everything" would have
+   leaked them. An unreadable library degrades to the OLD behaviour (every
+   active colour), never to an empty picker.
+
+   **Consequence to know before clearing a fabric pool:** the per-Model list is
+   no longer what hides a retired fabric, so clearing one is now safe in that
+   respect. docs/bugs/0816-a-discontinued-fabric-kept-offering-every-shade-because-noth.md.
+
 **Sofa follower-line cascade — ONE module, and the master's LATEST change
 wins.** The rule is `frontend/src/vendor/scm/lib/so-variant-cascade.ts`, imported
 by `SalesOrderNew.tsx`, `mobile/MobileNewSO.tsx`, `SoLineCard.tsx` and — since

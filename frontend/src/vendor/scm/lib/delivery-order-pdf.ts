@@ -56,12 +56,12 @@ import {
   buildPhotoGroups,
   collectPhotoImages,
   drawItemPhotosBlock,
+  fetchLinePhotoForPdf,
   photoKeyOwners,
   photoKeysOf,
   type PdfPhotoImage,
 } from './pdf-item-photos';
 import { fetchDoItemPhotoBlob } from './sales-order-queries';
-import { THUMB_KEY_SUFFIX } from '../../../lib/imagePipeline';
 /* The status WORD comes from the one home for it, never from a caser here:
    what this document prints and what the screen shows must be the same word.
    docs/modules/document-status-vocabulary.md §1. */
@@ -637,10 +637,12 @@ export async function renderDeliveryOrderInto(
   const showPicking = opts?.showPicking !== false;
   const startPage = doc.getNumberOfPages();
 
-  /* Photos follow the line (owner spec 2026-08): fetch the `.thumb` siblings
-     of every carried photo key up front, best-effort — a key whose fetch or
-     decode fails is skipped and the PDF renders without it. The CN reuse has
-     no header id, so it fetches nothing by construction. */
+  /* Photos follow the line (owner spec 2026-08): fetch the `.thumb` sibling of
+     every carried photo key up front, falling back to the original when the
+     thumb 404s (fetchLinePhotoForPdf — the AutoCount cutover keys have no
+     thumb; docs/bugs/0815), best-effort — a key whose fetch or decode fails is
+     skipped and the PDF renders without it. The CN reuse has no header id, so
+     it fetches nothing by construction. */
   const doId = header.id ?? null;
   const photoGroups = doId
     ? buildPhotoGroups(items.map((it) => ({
@@ -657,7 +659,7 @@ export async function renderDeliveryOrderInto(
         (key) => {
           const ownerId = photoOwners.get(key);
           if (!ownerId) return Promise.reject(new Error('photo_owner_missing'));
-          return fetchDoItemPhotoBlob(doId, ownerId, key + THUMB_KEY_SUFFIX);
+          return fetchLinePhotoForPdf((k) => fetchDoItemPhotoBlob(doId, ownerId, k), key);
         },
         blobToSquarePdfImage,
       )

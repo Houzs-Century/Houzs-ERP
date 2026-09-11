@@ -35,6 +35,7 @@ import {
 } from '@2990s/shared/mfg-pricing';
 import { missingVariantAxes } from '@2990s/shared/so-variant-rule';
 import { computeTotalHeight, totalHeightPatch } from '../../shared/total-height';
+import { restrictPricedToPool, restrictStringsToPool } from '../../shared/maintenance-pools';
 import { activeOptions, isColourKiv, isDeliveryFeeServiceCode, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import {
   useMfgProducts,
@@ -639,10 +640,14 @@ const SoLineCardInner = ({
      them CHANGES WHICH OPTIONS APPEAR — an owner's call, not a bug fix. */
   const allowedByCodeQ = useModelAllowedOptionsByCode(draft.itemCode || undefined);
   const allowOpts = picked?.allowed_options ?? allowedByCodeQ.data ?? null;
+  /* The SHARED restrict helpers, not a private copy. maintenance-pools.ts has
+     said "no editor may inline its own copy again" since it was written, and
+     this file inlined one anyway - which is why the quote-folding that landed
+     there reached mobile and not the desktop. docs/bugs/0814. */
   const restrictP = (opts: Array<{ value: string; priceSen: number }>, pool?: string[] | null) =>
-    (Array.isArray(pool) && pool.length > 0) ? opts.filter((o) => pool.includes(o.value)) : opts;
+    restrictPricedToPool(opts, pool);
   const restrictS = (opts: string[], pool?: string[] | null) =>
-    (Array.isArray(pool) && pool.length > 0) ? opts.filter((o) => pool.includes(o)) : opts;
+    restrictStringsToPool(opts, pool);
 
   /* ── Fabrics picker (SO-parity, Loo 2026-06-06 · SERVER-typeahead 2026-07-14) ──
      Scaling (owner #1 pain): the fabric picker used to pull EVERY active
@@ -1473,7 +1478,12 @@ const FabricColourCombobox = ({
     const allow = new Set(pool ?? []);
     return rows
       .filter((c) => !inactiveCodes.has(c.colourId))
-      .filter((c) => !restricted || allow.has(c.colourId))
+      /* A row passes if the pool names its COLOUR or its SERIES. The pool is
+         filled by ProductModelDetail's Modular drawer, which offers SERIES
+         (fabric_library ids) - so matching colours only made this picker show 3
+         of 851 active colours and is what the owner reported. Same rule as the
+         server gate in allowed-options-check.ts. docs/bugs/0814. */
+      .filter((c) => !restricted || allow.has(c.colourId) || allow.has(c.fabricId))
       .slice(0, 50);
   }, [coloursQ.data, pool, inactiveCodes]);
 

@@ -74,7 +74,15 @@ describe("TeamRolesV2 — Roles section", () => {
     render(<TeamRolesV2 />);
     expect(await screen.findByRole("tab", { name: "Roles" })).toBeTruthy();
     await waitFor(() => expect(screen.getByText("MD")).toBeTruthy());
-    expect(screen.getByText("Owner")).toBeTruthy();
+    /* findAllByText, not getByText. Owner is a SYSTEM role and auto-selects, so
+       once that render lands its name is on screen TWICE - once in the role list
+       and once in the selected-role header - and an unscoped getByText throws
+       `Found multiple elements with the text: Owner`. Whether it has landed by
+       this line is a race, which is why this test failed intermittently and
+       blocked the merge QUEUE three times on 2026-09-11 while passing on
+       re-run. The assertion this test's own title makes is "the role list from
+       /api/roles rendered", and that is what is asserted. */
+    expect((await screen.findAllByText("Owner")).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /New Role/ })).toBeTruthy();
     // The rebuilt editor is a role list + a resource x verb matrix. Owner (a
     // system role) auto-selects and shows the "All permissions" state, so pick
