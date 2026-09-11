@@ -25,6 +25,14 @@
 // (`scripts/repair-delivery-dates-from-book.mjs`); this keeps it from drifting
 // again.
 //
+// IT IS MEANT TO STAY DARK (owner 2026-09-11). 「autocount是没用了的」 - nobody
+// KEYS DOCUMENTS in the book any more, so the stream of book-side changes this
+// chases has stopped, and the one-time backfill was the whole ask. Do NOT rebuild
+// the host to finish this. It earns its keep only if a person edits the book
+// again (a parallel run, a cutover month, an audit correction), and it is two
+// steps from working if that happens. The OUTBOUND write-back is unaffected and
+// still live. tasks/HANDOFF-autocount-do-dates-and-relink-2026-09-11.md.
+//
 // IT SHIPS DARK, TWICE OVER.
 //   * `scm.app_config 'scm.autocount_delivery_date_sweep'` is the switch:
 //     absent / 'off' -> NO-OP (the seeded, unset state); 'plan' -> read and

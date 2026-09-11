@@ -34,6 +34,14 @@ export type Env = {
    *  2026-08-18 rule a secret may only open its own company's data. This one
    *  speaks for 2990 and opens nothing else. Unset => /so-export 401s. */
   SHEET_SYNC_KEY_2990?: string;
+  /** Shared secret for the Houzs Chat delivery callback (Nico 2026-09-02) —
+   *  chat.houzscentury.com posts what the customer tapped ("Confirm Date" /
+   *  "Amend Date") to /api/chat-callback with it in the X-Chat-Key header.
+   *  A FOURTH key, not a reuse: by the 2026-08-18 rule a secret may only open
+   *  its own company's data, and this one speaks for HOUZS — the WhatsApp
+   *  number it calls back about is Houzs's. A future 2990 chat number needs
+   *  its own key. Unset => /api/chat-callback 401s on every request. */
+  CHAT_CALLBACK_KEY?: string;
   /** ISO-8601 instant. While set AND in the future, a Sales Order mutation that
    *  omits the concurrency `version` is accepted with the pre-CAS
    *  last-writer-wins semantics instead of 428. This is the ROLLOUT grace for
