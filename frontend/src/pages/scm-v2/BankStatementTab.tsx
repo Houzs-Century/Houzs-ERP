@@ -92,7 +92,9 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
                findable inside the statement. */
             + (r.alreadyRecorded > 0 ? ` · ${r.alreadyRecorded} were already recorded and have been left out` : '')
             /* The obvious ones went in matched (docs/bugs/0814). */
-            + (r.autoMatched > 0 ? ` · ${r.autoMatched} matched by amount and name` : ''),
+            + (r.autoMatched > 0 ? ` · ${r.autoMatched} matched by amount and name` : '')
+            /* And the bank's own contras (docs/bugs/0817). */
+            + (r.contraPairs > 0 ? ` · ${pairsReversed(r.contraPairs)} left out` : ''),
         });
         onOpen(r.statementId);
       },
@@ -214,6 +216,9 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
 /* The obvious ones, for a statement that was already up when the rule
    arrived (docs/bugs/0814; owner: 只要名字金额一样就自动都对). One press runs the
    same rule the upload runs; the answer says how many it took. */
+/* "1 pair the bank reversed" / "2 pairs the bank reversed" (docs/bugs/0817). */
+const pairsReversed = (n: number) => `${n} pair${n === 1 ? '' : 's'} the bank reversed`;
+
 const AutoMatchNow = ({ id }: { id: number }) => {
   const run = useAutoMatchStatement();
   return (
@@ -223,12 +228,16 @@ const AutoMatchNow = ({ id }: { id: number }) => {
       </button>
       <span style={softText}>
         A movement with exactly one entry of the same amount in the books, whose name the bank's line carries, is
-        matched without asking. The rest stay below for you.
+        matched without asking. A transfer the bank itself reversed under the same reference leaves with its
+        reversal, as a pair. The rest stay below for you.
       </span>
       {run.data && (
         <span style={{ fontSize: 'var(--fs-13)', color: run.data.matched > 0 ? good : undefined }}>
           {run.data.matched} matched by amount and name{run.data.matched > 0 ? ` — ${run.data.jeNos.join(', ')}` : ''}.
         </span>
+      )}
+      {run.data && run.data.contraPairs > 0 && (
+        <span style={{ fontSize: 'var(--fs-13)', color: good }}>{pairsReversed(run.data.contraPairs)} left out.</span>
       )}
       {run.isError && <span style={{ fontSize: 'var(--fs-12)', color: danger }}>{refusalText(run.error, 'The rule did not run.')}</span>}
     </div>

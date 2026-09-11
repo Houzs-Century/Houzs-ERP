@@ -44,7 +44,8 @@ import { callAcRead } from '../../services/autocount-host-read';
 import { planLineRelink, type BookLine, type ErpLineForRelink } from './autocount-relink-lines';
 import { classifyAcSkip } from './autocount-outbox-status';
 import { DOWNSTREAM } from './autocount-convert-lines';
-import { enqueueEdit } from './autocount-outbox';
+import { enqueueEdit, bindingsFor } from './autocount-outbox';
+import { resolveAcItemCode } from '../../services/autocount-item-code';
 
 type Sb = ReturnType<typeof getSupabaseService>;
 
@@ -55,6 +56,65 @@ type SweepDocType = keyof typeof DOWNSTREAM;
 const SWEEP_TYPES = Object.keys(DOWNSTREAM) as SweepDocType[];
 
 export const RELINK_SWEEP_KEY = 'scm.autocount_relink_sweep';
+
+/**
+ * WHERE THE LAST RUN WRITES ITSELF DOWN, and why it has to.
+ *
+ * This sweep reads and writes a LIVE account book, and until 2026-09-11 its only
+ * output was `console.log("[cron ac-relink-sweep] …")` in index.ts — a Worker log
+ * this account's token cannot read, because `wrangler tail` on
+ * autocount-sync-api is DENIED for it. So when the sweep ran in `apply` on
+ * 2026-09-11 and stamped ZERO keys on all five held-back documents, the cause
+ * could not be established at all: the handoff of that day filed it UNKNOWN and
+ * named making this observable as the next action. It was then run twice more,
+ * after a real fix to the matcher (docs/bugs/0812), and stamped zero again —
+ * still with nothing to read. Two rounds of guessing is the cost this key pays
+ * off.
+ *
+ * `scm.app_config` and not a new table: this module already reads its switch
+ * from there, it is flippable without a deploy, and a run summary is operational
+ * state of exactly that kind. The value is a trimmed JSON — counts always, and
+ * the per-document refusals that say WHY, which is the part nobody could see.
+ */
+export const RELINK_SWEEP_RUN_KEY = 'scm.autocount_relink_sweep_last_run';
+
+/** How many documents' detail the summary keeps. The counts are never trimmed. */
+const RUN_DOCS_KEPT = 25;
+
+/**
+ * Write the run down where a read-only workflow can find it.
+ *
+ * BEST-EFFORT, and deliberately so: this is a report about a repair, and a
+ * report that fails must never cost the repair. It is awaited rather than
+ * fired-and-forgotten only so the row is there before the slot ends.
+ */
+export async function recordSweepRun(sb: Sb, summary: SweepSummary): Promise<void> {
+  try {
+    const value = JSON.stringify({
+      at: new Date().toISOString(),
+      mode: summary.mode,
+      scanned: summary.scanned,
+      linesStamped: summary.linesStamped,
+      docsEnqueued: summary.docsEnqueued,
+      docs: summary.docs.slice(0, RUN_DOCS_KEPT).map((d) => ({
+        docType: d.docType,
+        bookDocNo: d.bookDocNo,
+        keylessBefore: d.keylessBefore,
+        stamped: d.stamped,
+        wouldStamp: d.wouldStamp,
+        /* THE ANSWER TO "why zero", and the reason this whole key exists. */
+        refused: d.refused,
+        skipped: d.skipped ?? null,
+      })),
+    });
+    await sb.from('app_config').upsert(
+      { key: RELINK_SWEEP_RUN_KEY, value, description: 'Last AutoCount relink sweep run (read-only report)' },
+      { onConflict: 'key' },
+    );
+  } catch {
+    /* Reporting must not break the repair. */
+  }
+}
 
 export type SweepMode = 'off' | 'plan' | 'apply';
 
@@ -131,7 +191,17 @@ export async function relinkHeldBackSweep(env: Env): Promise<SweepSummary> {
     .not('doc_id', 'is', null)
     .order('created_at', { ascending: true })
     .limit(200);
-  if (error) return { mode, scanned: 0, linesStamped: 0, docsEnqueued: 0, docs: [] };
+  if (error) {
+    /* A CANDIDATE READ THAT FAILS USED TO LOOK EXACTLY LIKE A QUIET DAY —
+       both returned scanned:0 and said nothing. Written down, they differ. */
+    const summary: SweepSummary = { mode, scanned: 0, linesStamped: 0, docsEnqueued: 0, docs: [] };
+    await recordSweepRun(sb, { ...summary, docs: [{
+      companyId: 0, docType: 'GR' as SweepDocType, docId: '', bookDocNo: '',
+      keylessBefore: 0, stamped: 0, wouldStamp: 0, refused: [], enqueued: false,
+      wouldEnqueue: false, skipped: `candidate read failed: ${error.message}`,
+    }] });
+    return summary;
+  }
 
   /* One document, however many queue rows it left. Keyed by company+type+id —
      the id is the header uuid enqueueConvert always stores. */
@@ -161,7 +231,9 @@ export async function relinkHeldBackSweep(env: Env): Promise<SweepSummary> {
     if (res.enqueued) docsEnqueued += 1;
   }
 
-  return { mode, scanned: targets.length, linesStamped, docsEnqueued, docs };
+  const summary: SweepSummary = { mode, scanned: targets.length, linesStamped, docsEnqueued, docs };
+  await recordSweepRun(sb, summary);
+  return summary;
 }
 
 async function relinkOneHeldBackDoc(
@@ -201,15 +273,40 @@ async function relinkOneHeldBackDoc(
     .eq(spec.itemFk, t.docId);
   if (lErr) return { ...base, bookDocNo, skipped: `line read failed: ${lErr.message}` };
 
-  const erpLines: ErpLineForRelink[] = (lineRows as Array<Record<string, unknown>>).map((r) => ({
-    id: String(r.id),
-    /* The raw ERP code, deliberately — the same fail-closed choice the "Match up
-       lines" route makes: a supplier's own spelling that the bindings would
-       resolve simply will not match the book's and is refused, not guessed. */
-    acItemCode: (r.item_code as string | null) ?? null,
-    desc2: (r.description2 as string | null) ?? null,
-    dtlKey: r.linked_ac_dtlkey == null ? null : Number(r.linked_ac_dtlkey),
-  }));
+  const rowsIn = lineRows as Array<Record<string, unknown>>;
+  const bindings = await bindingsFor(
+    sb, t.companyId, rowsIn.map((r) => String(r.item_code ?? '')),
+  ).catch(() => new Map<string, string>());
+  const erpLines: ErpLineForRelink[] = rowsIn.map((r) => {
+    /* THE BOOK'S SPELLING, NOT OURS — and this is the follow-up the old comment
+       here promised and never did (docs/bugs/0816).
+
+       `ErpLineForRelink.acItemCode` is documented as "what the write-back SENDS
+       for this row — the book's spelling, not ours". Both callers passed the RAW
+       `item_code` instead, and said so: "Resolving properly is the follow-up,
+       not a silent widening." The follow-up is this.
+
+       It is the whole reason the sweep stamped zero. The ERP holds
+       `AKEMI ARMOUR MATT (SK)`; the account book holds `AK-ARMOUR MATT (SK)`,
+       because composeEdit resolves every code through the cutover bindings
+       before sending it. Matching on the raw code compares our spelling against
+       theirs, so EVERY line of EVERY document whose supplier spells things
+       differently was refused with "the account book has no unclaimed line with
+       that item code" — which is exactly what the first readable sweep report
+       said, on all 13 documents, the moment one existed (docs/bugs/0815).
+
+       STILL FAIL-CLOSED. An unresolvable code falls back to the raw one, which
+       is today's behaviour and refuses; resolution only ever turns a guaranteed
+       miss into a possible match, never a wrong one into a confident one. */
+    const own = (r.item_code as string | null) ?? null;
+    const res = own ? resolveAcItemCode(own, { bindings }) : null;
+    return {
+      id: String(r.id),
+      acItemCode: res?.ok ? res.acItemCode : own,
+      desc2: (r.description2 as string | null) ?? null,
+      dtlKey: r.linked_ac_dtlkey == null ? null : Number(r.linked_ac_dtlkey),
+    };
+  });
   const keylessBefore = erpLines.filter((l) => !(Number.isFinite(Number(l.dtlKey)) && Number(l.dtlKey) > 0)).length;
 
   const plan = planLineRelink({ bookLines, erpLines });

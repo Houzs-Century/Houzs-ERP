@@ -439,6 +439,41 @@ try {
     notice(`FAILED: 0 outstanding${requeuedFailed.length ? ` (${requeuedFailed.length} re-queued, below)` : ""}`);
   }
 
+  /* ── WHAT THE RELINK SWEEP ACTUALLY DID (docs/bugs/0815) ───────────────────
+     The sweep reads and writes a LIVE account book on a 5-minute cron, and its
+     only output was a console.log in a Worker log this account's token cannot
+     read. It was run in `apply` three times on 2026-09-11 and stamped ZERO keys
+     every time, and the cause could not be established — twice the reason was
+     guessed at and twice the guess was wrong. It now writes its run down; this
+     prints it. `refused` is the part that was never visible: it says, per
+     document, why a line could not be matched. */
+  const [sweepRow] = await pg`
+    SELECT value, updated_at FROM scm.app_config
+     WHERE key = 'scm.autocount_relink_sweep_last_run'`;
+  if (sweepRow) {
+    let run = null;
+    try { run = JSON.parse(sweepRow.value); } catch { /* printed raw below */ }
+    if (!run) {
+      notice(`RELINK SWEEP — last run recorded at ${sweepRow.updated_at}, but its value is not readable JSON.`);
+    } else {
+      notice(
+        `RELINK SWEEP — last ran ${run.at} in ${String(run.mode).toUpperCase()}: scanned ${run.scanned} ` +
+          `document(s), stamped ${run.linesStamped} line key(s), queued ${run.docsEnqueued} edit(s).`,
+      );
+      for (const d of run.docs ?? []) {
+        const head = `  ${d.docType} ${d.bookDocNo || '(no book number)'}: ${d.keylessBefore} keyless, ` +
+          `${d.stamped || d.wouldStamp || 0} matched`;
+        notice(d.skipped ? `${head} — SKIPPED: ${d.skipped}` : head);
+        for (const r of d.refused ?? []) notice(`      refused: ${r}`);
+      }
+      if (!(run.docs ?? []).length) {
+        notice('  no document detail in the last run — either nothing was held back, or the sweep is off.');
+      }
+    }
+  } else {
+    notice('RELINK SWEEP — no run recorded yet. It writes one on its next non-off cron tick.');
+  }
+
   /* ── SENT, BUT THE LINES KEPT NO IDENTITY (docs/bugs/0813) ─────────────────
      A `sent` row with a last_error is not a failure — the document IS in the
      account book. It is a document whose DtlKeys were never stored, so its NEXT

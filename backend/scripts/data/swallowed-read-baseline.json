@@ -126,7 +126,7 @@
       "catches": 0
     },
     "backend/src/scm/lib/mfg-pricing-recompute.ts": {
-      "reads": 15,
+      "reads": 14,
       "catches": 0
     },
     "backend/src/scm/lib/oversell-retrocost.ts": {
@@ -219,10 +219,6 @@
     },
     "backend/src/scm/lib/source-po-trace.ts": {
       "reads": 14,
-      "catches": 0
-    },
-    "backend/src/scm/lib/validate-item-codes.ts": {
-      "reads": 1,
       "catches": 0
     },
     "backend/src/scm/lib/venue-binding.ts": {

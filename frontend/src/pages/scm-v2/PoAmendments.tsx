@@ -163,9 +163,16 @@ export const PoAmendments = () => {
     }));
     /* SO-driven rows = SO amendments with a bound PO (the list endpoint
        resolves bound_pos through purchase_order_items.so_item_id). Pure-sales
-       amendments (no purchase leg) stay in the SO queue only. */
+       amendments (no purchase leg) stay in the SO queue only.
+
+       EXCLUDE the DELIVERY lane: a delivery/customer-side change (schedule,
+       address, or a service line — disposal / storage / transport) never
+       revises a PO, so it must not show in the PO revision inbox even though its
+       SO happens to have a bound PO for its product lines (owner 2026-09-11,
+       docs/bugs). Legacy rows (lane null — pre two-lane rework) keep the old PO
+       leg and still appear. */
     const soDriven: InboxRow[] = ((soQ.data?.amendments ?? []) as AmendmentRow[])
-      .filter((a) => (a.bound_pos?.length ?? 0) > 0)
+      .filter((a) => (a.bound_pos?.length ?? 0) > 0 && a.lane !== 'DELIVERY')
       .map((a) => ({
         key: `so:${a.id}`,
         kind: 'so',

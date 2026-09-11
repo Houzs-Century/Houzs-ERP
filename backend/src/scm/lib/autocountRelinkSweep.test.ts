@@ -10,6 +10,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 let bookLines: Array<{ DtlKey: number; ItemCode: string; Desc2?: string | null }> = [];
 let currentSb: unknown;
 const enqueueEditMock = vi.fn(async (_sb: unknown, _opts: Record<string, unknown>) => true);
+/* The cutover map, per test. Keyed by UPPERCASED ERP code, as bindingsFor is. */
+let bindingsMock = new Map<string, string>();
 
 vi.mock('../../db/supabase', () => ({ getSupabaseService: () => currentSb }));
 vi.mock('../../services/autocount-host-read', () => ({
@@ -17,6 +19,11 @@ vi.mock('../../services/autocount-host-read', () => ({
 }));
 vi.mock('./autocount-outbox', () => ({
   enqueueEdit: (sb: unknown, opts: Record<string, unknown>) => enqueueEditMock(sb, opts),
+  /* The sweep resolves each ERP code to the book's spelling before matching
+     (docs/bugs/0816). These fixtures are already written in the book's
+     spelling, so an empty binding map is the honest stand-in: it exercises the
+     resolver's fallback, which is what a code with no binding really gets. */
+  bindingsFor: async () => bindingsMock,
 }));
 
 const { fakeSb } = await import('./fake-postgrest');
@@ -51,7 +58,8 @@ function keylessDo(overrides: { erpLines?: Row[] } = {}) {
   };
 }
 
-beforeEach(() => { bookLines = []; enqueueEditMock.mockClear(); enqueueEditMock.mockResolvedValue(true); });
+beforeEach(() => {
+  bindingsMock = new Map<string, string>(); bookLines = []; enqueueEditMock.mockClear(); enqueueEditMock.mockResolvedValue(true); });
 
 describe('relink sweep — the switch', () => {
   it('is a NO-OP when the flag is absent: nothing read, nothing queued', async () => {
@@ -141,5 +149,110 @@ describe('relink sweep — apply mode', () => {
     expect(r.linesStamped).toBe(0);
     expect(r.docsEnqueued).toBe(0);
     expect(enqueueEditMock).not.toHaveBeenCalled();
+  });
+});
+
+/* THE RUN HAS TO BE READABLE BY A PERSON (docs/bugs/0815).
+ *
+ * This sweep reads and writes a LIVE account book and its only output was a
+ * console.log in a Worker log this account's token cannot read (`wrangler tail`
+ * is DENIED for it). It was run in `apply` three times on 2026-09-11, stamped
+ * ZERO keys every time, and the cause could not be established at all — the
+ * reason was guessed at twice and the guess was wrong twice. The refusals it
+ * already computes are the answer; they just had nowhere to go.
+ */
+describe('the sweep writes its run down', () => {
+  it('records counts AND the per-document refusals', async () => {
+    /* The book has none of this document's item codes, so every line refuses —
+       exactly the shape that produced an unexplained "stamped 0". */
+    bookLines = [{ DtlKey: 9001, ItemCode: 'SOMETHING-ELSE', Desc2: null }];
+    const sb = setup('plan', keylessDo());
+
+    await relinkHeldBackSweep(env);
+
+    const saved = (sb.tables.app_config as Row[])
+      .find((r) => r.key === 'scm.autocount_relink_sweep_last_run');
+    expect(saved, 'the sweep recorded nothing').toBeTruthy();
+
+    const run = JSON.parse(String(saved!.value));
+    expect(run.mode).toBe('plan');
+    expect(run.scanned).toBe(1);
+    expect(run.linesStamped).toBe(0);
+    /* The part nobody could see: WHY it was zero. */
+    expect(run.docs).toHaveLength(1);
+    expect(run.docs[0].keylessBefore).toBeGreaterThan(0);
+    expect(run.docs[0].refused.join(' ')).toContain('no unclaimed line with that item code');
+  });
+
+  /* A candidate read that fails used to look exactly like a quiet day: both
+     returned scanned 0 and said nothing at all. */
+  it('a failed candidate read is recorded, not silent', async () => {
+    /* `missing` is fakeSb's second argument: asking for a column the table does
+       not have fails the WHOLE query with 42703, which is the real edge this
+       fake exists to reproduce. The sweep selects last_error. */
+    currentSb = fakeSb(
+      { app_config: [{ key: 'scm.autocount_relink_sweep', value: 'plan' }], autocount_outbox: [] },
+      { autocount_outbox: ['last_error'] },
+    );
+
+    await relinkHeldBackSweep(env);
+
+    const saved = ((currentSb as ReturnType<typeof fakeSb>).tables.app_config as Row[])
+      .find((r) => r.key === 'scm.autocount_relink_sweep_last_run');
+    expect(saved, 'a failed candidate read recorded nothing').toBeTruthy();
+    expect(JSON.parse(String(saved!.value)).docs[0].skipped).toContain('candidate read failed');
+  });
+});
+
+/* THE CAUSE THE FIRST READABLE SWEEP REPORT NAMED (docs/bugs/0816).
+ *
+ * composeEdit resolves every ERP code through the cutover bindings before
+ * sending it, so the book holds `AK-ARMOUR MATT (SK)` where the ERP holds
+ * `AKEMI ARMOUR MATT (SK)`. The sweep matched on the RAW code, so it compared
+ * our spelling against theirs and refused EVERY line of EVERY document a
+ * supplier spells differently — "the account book has no unclaimed line with
+ * that item code", on all 13 documents, which is exactly what the sweep said
+ * the moment it could say anything at all.
+ */
+describe('a code the book spells differently', () => {
+  it('matches once the ERP code is resolved the way the write-back sends it', async () => {
+    bindingsMock = new Map([['AKEMI ARMOUR MATT (SK)', 'AK-ARMOUR MATT (SK)']]);
+    bookLines = [{ DtlKey: 4101, ItemCode: 'AK-ARMOUR MATT (SK)', Desc2: null }];
+    const sb = setup('plan', keylessDo({
+      erpLines: [{
+        id: 'l1', company_id: 1, delivery_order_id: 'do-uuid-1',
+        item_code: 'AKEMI ARMOUR MATT (SK)', description2: null, linked_ac_dtlkey: null,
+      }],
+    }));
+
+    await relinkHeldBackSweep(env);
+
+    const run = JSON.parse(String((sb.tables.app_config as Row[])
+      .find((r) => r.key === 'scm.autocount_relink_sweep_last_run')!.value));
+    expect(run.docs[0].refused, run.docs[0].refused?.join(' ')).toEqual([]);
+    expect(run.docs[0].wouldStamp).toBe(1);
+  });
+
+  /* FAIL-CLOSED IS KEPT. The resolver has two sources — the live bindings and
+     the cutover CSV index — so a missing binding is not the same as an
+     unresolvable code (the first draft of this test assumed it was, and the
+     code was right). A code NEITHER source knows falls back to the raw one and
+     refuses, exactly as before. */
+  it('a code neither source knows still refuses rather than guessing', async () => {
+    bindingsMock = new Map();
+    bookLines = [{ DtlKey: 4101, ItemCode: 'AK-ARMOUR MATT (SK)', Desc2: null }];
+    const sb = setup('plan', keylessDo({
+      erpLines: [{
+        id: 'l1', company_id: 1, delivery_order_id: 'do-uuid-1',
+        item_code: 'ZZ-NOTHING-KNOWS-THIS (Q)', description2: null, linked_ac_dtlkey: null,
+      }],
+    }));
+
+    await relinkHeldBackSweep(env);
+
+    const run = JSON.parse(String((sb.tables.app_config as Row[])
+      .find((r) => r.key === 'scm.autocount_relink_sweep_last_run')!.value));
+    expect(run.docs[0].wouldStamp).toBe(0);
+    expect(run.docs[0].refused.join(' ')).toContain('no unclaimed line with that item code');
   });
 });

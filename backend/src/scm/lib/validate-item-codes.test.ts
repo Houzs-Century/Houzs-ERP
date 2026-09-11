@@ -3,6 +3,7 @@ import {
   validateItemCodes, unknownItemCodeResponse,
   findFreeTextSoLines, freeTextSoLineResponse,
 } from './validate-item-codes';
+import { parsePgrestInList } from './pgrest-in-list';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Owner 2026-08-08 (HC-SO-2607-013 "square pillow"): every SO line is a REAL
@@ -12,6 +13,17 @@ import {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 type Row = Record<string, unknown> & { _table: string };
+
+/* Model the WIRE: postgrest-js `.in()` quotes [,()] but never escapes, so a
+   value carrying `"` (inch mark) or `\` drops itself and every value after it
+   when PostgREST parses the list (docs/bugs/0780); a list without those two
+   characters round-trips unchanged. `.filter(_, 'in', pgrestInList(...))` sends
+   an escaped payload that survives — the fix under test. */
+const wireIn = (vs: readonly unknown[]): unknown[] =>
+  vs.some((v) => typeof v === 'string' && /["\\]/.test(v))
+    ? parsePgrestInList(`(${[...new Set(vs)].map((s) => (typeof s === 'string' && /[,()]/.test(s) ? `"${s}"` : `${s}`)).join(',')})`)
+    : [...vs];
+
 const makeSb = (rows: Row[]) => ({
   from(table: string) {
     const eqs: Array<[string, unknown]> = [];
@@ -23,7 +35,11 @@ const makeSb = (rows: Row[]) => ({
     const builder: any = {
       select: () => builder,
       eq: (col: string, v: unknown) => { eqs.push([col, v]); return builder; },
-      in: (col: string, vs: unknown[]) => { ins.push([col, vs]); return builder; },
+      in: (col: string, vs: unknown[]) => { ins.push([col, wireIn(vs)]); return builder; },
+      filter: (col: string, op: string, payload: string) => {
+        if (op === 'in') ins.push([col, parsePgrestInList(payload)]);
+        return builder;
+      },
       then: (resolve: (v: { data: Row[]; error: null }) => void) =>
         resolve({ data: run(), error: null }),
     };
@@ -60,6 +76,16 @@ describe('validateItemCodes requireActive', () => {
   it('blank codes still skip the lookup (the free-text rule owns them, not this one)', async () => {
     expect(await validateItemCodes(sb(), ['', '  ', null, undefined], 1, { requireActive: true }))
       .toEqual({ ok: true });
+  });
+
+  /* docs/bugs/0780. A catalogued code carrying an inch mark (`"`) must not read
+     as unknown. The old `.in('code', …)` quoted it without escaping, so the read
+     dropped it and this gate reported a real SKU as "not in the catalog". The
+     escaped read finds it. A revert to `.in()` trips the wireIn model and fails. */
+  it('a code carrying an inch mark (") is found, not reported unknown — docs/bugs/0780', async () => {
+    const INCH = 'DUNLOPILLO GENERASI 5" MATT (SS)';
+    const inchSb = makeSb([{ _table: 'mfg_products', code: INCH, company_id: 1, status: 'ACTIVE' }]);
+    expect(await validateItemCodes(inchSb, [INCH], 1, { requireActive: true })).toEqual({ ok: true });
   });
 });
 
