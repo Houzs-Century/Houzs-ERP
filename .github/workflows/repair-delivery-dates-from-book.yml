@@ -1,0 +1,54 @@
+name: Repair delivery dates from the AutoCount book
+
+# Puts the ERP's delivery dates back in step with AutoCount's OWN per-line
+# delivery date (SODTL/DODTL.DeliveryDate), read from the committed snapshot
+# backend/scripts/data/ac-delivery-dates.json.gz. Replaces "Repair DO delivery
+# dates to follow AutoCount", which used the DO's document date as a proxy and
+# would have written a wrong date on 65 of 235 linked delivery orders.
+# PLAN by default. See docs/bugs/0808-*.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes NOTHING) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: ["plan", "apply"]
+      confirm:
+        description: "Required for apply: DELIV-DATES-FROM-BOOK"
+        required: false
+        default: ""
+      include_blanks:
+        description: "Also FILL blank sales-order delivery dates from the book (MRP gates on these - owner decision)"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: repair-delivery-dates-from-book
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-delivery-dates-from-book.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          INCLUDE_BLANKS: ${{ inputs.include_blanks && '1' || '0' }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

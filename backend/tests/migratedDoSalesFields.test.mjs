@@ -1,7 +1,10 @@
 // The sales fields on a MIGRATED delivery order — salesperson, agent, branding,
 // customer ref — come from the sales order's header, the way /from-sos copies
-// them. The two DELIVERY dates (customer delivery date, expected-at) follow the
-// DO's OWN do_date (= AutoCount's DocDate) instead, owner 2026-09-11 (0804).
+// them. The two DELIVERY dates are NOT among them: the book keeps its delivery
+// date on the LINE (SODTL/DODTL.DeliveryDate), the inbound pull does not carry
+// that column, and both values this backfill could reach for have been measured
+// wrong — the SO's date goes stale (HC12445) and d.do_date differs from the
+// book's delivery date on 65 of 235 linked delivery orders (0808).
 // docs/bugs/0714 carried the customer block (phone / address); the header block
 // above it on the same screen was blank for the same cause (docs/bugs/0716).
 //
@@ -24,9 +27,9 @@ const route = src('../src/scm/routes/delivery-orders-mfg.ts');
 const squash = (s) => s.replace(/\s+/g, ' ');
 
 describe('DO_SALES_CARRY', () => {
-  it('is the six header fields, and nothing the customer block already carries', () => {
+  it('is the four header fields, and nothing the customer block already carries', () => {
     expect(DO_SALES_CARRY.map(([c]) => c)).toEqual([
-      'salesperson_id', 'agent', 'branding', 'ref', 'customer_delivery_date', 'expected_delivery_at',
+      'salesperson_id', 'agent', 'branding', 'ref',
     ]);
     const block = new Set(DO_CARRY.map(([c]) => c));
     for (const [c] of DO_SALES_CARRY) expect(block.has(c)).toBe(false);
@@ -42,24 +45,38 @@ describe('DO_SALES_CARRY', () => {
     for (const [c] of DO_SALES_CARRY) expect(stmt).toMatch(new RegExp(`\\b${c}:\\s`));
   });
 
-  it("both delivery dates follow the document's own do_date, never the SO or a literal", () => {
-    // owner 2026-09-11 「全部要跟 autocount」 (docs/bugs/0804): AutoCount's DocDate is
-    // the DO's own date, so the DO's delivery dates equal d.do_date, not the SO's
-    // customer date. Reverses the 2026-09-08 s.customer_delivery_date source.
-    const carry = Object.fromEntries(DO_SALES_CARRY);
-    expect(carry.expected_delivery_at).toBe('d.do_date');
-    expect(carry.customer_delivery_date).toBe('d.do_date');
-    for (const [, e] of DO_SALES_CARRY) expect(e).not.toMatch(/'[A-Za-z0-9]/);
+  it('does NOT carry a delivery date, from either side', () => {
+    // Two wrong answers are on record and this list must hold neither:
+    // s.customer_delivery_date (2026-09-08) copies a date that goes stale the
+    // moment AutoCount's changes, and d.do_date (#3615) substitutes the
+    // document date for the book's delivery date - measured wrong on 65 of 235
+    // linked delivery orders. The real column arrives via
+    // scripts/repair-delivery-dates-from-book.mjs. docs/bugs/0808.
+    const cols = DO_SALES_CARRY.map(([c]) => c);
+    expect(cols).not.toContain('customer_delivery_date');
+    expect(cols).not.toContain('expected_delivery_at');
+    for (const [, e] of DO_SALES_CARRY) {
+      expect(e).not.toMatch(/do_date/);
+      expect(e).not.toMatch(/'[A-Za-z0-9]/);
+    }
   });
 });
 
-describe('the writer carries the six in the same UPDATE as the customer block', () => {
+describe('the writer carries the four in the same UPDATE as the customer block', () => {
   const at = writer.indexOf('UPDATE scm.delivery_orders d SET');
   const stmt = squash(writer.slice(at, writer.indexOf('`;', at)));
 
   it('names every column with the shared expression', () => {
     expect(at).toBeGreaterThan(-1);
     for (const [c, expr] of DO_SALES_CARRY) expect(stmt).toContain(`${c} = ${expr}`);
+  });
+
+  it('sets no delivery date of its own - it used to hardcode d.do_date', () => {
+    // The writer HARDCODES this UPDATE rather than building it from the shared
+    // list, so a change to DO_SALES_CARRY does not reach it. That is how the
+    // d.do_date source survived one round of review; pin both halves.
+    expect(stmt).not.toMatch(/customer_delivery_date\s*=/);
+    expect(stmt).not.toMatch(/expected_delivery_at\s*=/);
   });
 
   it('reads the parent by so_doc_no within the company', () => {

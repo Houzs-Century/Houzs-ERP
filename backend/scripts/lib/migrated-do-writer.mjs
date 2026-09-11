@@ -379,9 +379,10 @@ export async function insertMigratedDo(sql, d, { companyId, sysUser, debtorFallb
                emergency_contact_phone = s.emergency_contact_phone,
                emergency_contact_relationship = s.emergency_contact_relationship,
                salesperson_id = s.salesperson_id, agent = s.agent,
-               branding = s.branding, ref = s.ref,
-               customer_delivery_date = d.do_date,
-               expected_delivery_at = d.do_date
+               branding = s.branding, ref = s.ref
+             /* No delivery date here - see DO_SALES_CARRY in customer-block.mjs
+                for why neither the SO's date nor d.do_date is the book's, and
+                which script does set it. */
              FROM scm.mfg_sales_orders s
             WHERE d.id = ${hdr.id}
               AND s.doc_no = d.so_doc_no AND s.company_id = d.company_id`;

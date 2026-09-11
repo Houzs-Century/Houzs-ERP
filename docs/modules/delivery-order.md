@@ -2557,15 +2557,35 @@ Customer ref, Delivery date, Expected at** — was blank for the same cause and 
 not in 0714's field map (`DO_CARRY` is deliberately "what a driver needs").
 
 `DO_SALES_CARRY` in `backend/scripts/lib/customer-block.mjs` is the list:
-`salesperson_id`, `agent`, `branding`, `ref` from the SO, and — **since
-2026-09-11 (owner 「全部要跟 autocount」, docs/bugs/0804)** — `customer_delivery_date`
-and `expected_delivery_at` both = the DO's own `do_date` (= AutoCount's DocDate),
-NOT the SO's customer date. A delivery order's delivery date follows AutoCount;
-the customer's original ask stays on the SO. This reverses the delivery-date half
-of the 2026-09-08 default above (which seeded them from `s.customer_delivery_date`);
-existing rows were repaired by `repair-do-delivery-dates-to-autocount.mjs`. The writer
+`salesperson_id`, `agent`, `branding`, `ref` from the SO. The writer
 (`insertMigratedDo`) applies it in the SAME `UPDATE … FROM scm.mfg_sales_orders`
 as the customer block, so a new migrated document carries all of it at once.
+
+**The DELIVERY DATES are deliberately NOT on that list, and two attempts to put
+them there are on record (docs/bugs/0808).** The 2026-09-08 version copied
+`s.customer_delivery_date`, which goes stale the moment AutoCount's own date is
+changed — that is the HC12445 report. The 2026-09-11 version (#3615, 0804) used
+`d.do_date` as a proxy for the book's delivery date; MEASURED against the live
+book, the book's line delivery date differs from its own document date on **65 of
+235** linked delivery orders, so that repair would have written a wrong date on
+65 live documents. It was deleted along with its workflow
+(`repair-do-delivery-dates-to-autocount.mjs` [gone],
+`.github/workflows/repair-do-delivery-dates.yml` [gone]).
+
+The book's real field is `SODTL/DODTL.DeliveryDate`, per LINE. **The inbound pull
+does not carry it** — `/DeliveryOrder/getSince` is a nine-column header
+projection (`src/types.ts` `ACDeliveryOrder`) — while the outbound write-back
+DOES push ours to it (`scm/lib/autocount-outbox.ts`). One-directional sync on one
+field is drift by construction, so a migrated DO's delivery date comes from a
+committed export of that column instead:
+`backend/scripts/export-ac-delivery-dates.py` writes
+`backend/scripts/data/ac-delivery-dates.json.gz`, and
+`backend/scripts/repair-delivery-dates-from-book.mjs` (Actions → **Repair
+delivery dates from the AutoCount book**; PLAN by default, apply needs
+`CONFIRM="DELIV-DATES-FROM-BOOK"`) sets headers and lines from it, keyed by
+`linked_ac_dtlkey`. It is a STOPGAP: until the middleware carries the field, the
+drift comes back, and the durable fix lives on the AutoCount host
+(`scripts/autocount-service/`, `deploy-on-host.ps1`).
 
 **Not in the list, on purpose.** `venue` / `venue_id` (a canonicalising trigger
 rewrites them on write — 0714's own reason) and `sales_location` /
