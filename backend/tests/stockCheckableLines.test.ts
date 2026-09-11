@@ -228,3 +228,85 @@ describe('uncoveredStockCheckLines — the warehouse map is what decides', () =>
     expect(await uncoveredStockCheckLines(sb, [LINE], new Map(), 1)).toEqual([LINE]);
   });
 });
+
+
+/* THE SPEC NO LONGER DECIDES WHETHER THE GOODS EXIST — owner 2026-09-11, who
+   asked for exactly this: the delivery check looks at warehouse + item code.
+   Our stock arrived from the AutoCount snapshot with no fabric/gap/divan/leg,
+   so it sits under a BLANK variant key while the order asks for the full spec;
+   measured on production the same day, 1,632 bedframe and 693 sofa lines were
+   being told "available 0" about goods standing at that very warehouse. */
+describe("checkStockAvailability ignores the spec when counting what is there", () => {
+  /** Balances at the target warehouse / at other warehouses, per test. */
+  function sbWith(here: Array<Record<string, unknown>>, elsewhere: Array<Record<string, unknown>>) {
+    const from = (table: string) => {
+      const chain: string[] = [];
+      const rows = () => {
+        if (table === "warehouses") {
+          return [
+            { id: "WH-A", code: "A", name: "PENANG WAREHOUSE" },
+            { id: "WH-B", code: "B", name: "BALAKONG WAREHOUSE" },
+            { id: "WH-C", code: "C", name: "BALAKONG DISPLAY" },
+          ];
+        }
+        return chain.includes("neq") ? elsewhere : here;
+      };
+      const builder: any = new Proxy({}, {
+        get(_t, prop) {
+          if (prop === "then") {
+            return (resolve: (v: { data: unknown[] }) => void) => resolve({ data: rows() });
+          }
+          return (...args: unknown[]) => { chain.push(String(prop)); void args; return builder; };
+        },
+      });
+      return builder;
+    };
+    return { from } as any;
+  }
+
+  const jager = (variantKey: string, qty: number) => ({
+    itemCode: "JAGER-(Q)", productName: "Jager", variantKey, qty,
+  });
+  const FULL_SPEC = "PC151-01|12|8|0";
+
+  test("stock under the BLANK key covers a line that asked for the full spec", async () => {
+    const sb = sbWith([{ item_code: "JAGER-(Q)", variant_key: "", qty: 3 }], []);
+    expect(await checkStockAvailability(sb, "WH-A", [jager(FULL_SPEC, 1)], 1)).toEqual([]);
+  });
+
+  test("two lines of the same SKU in different specs are ONE ask, not two", async () => {
+    /* 1 unit on hand, two lines wanting 1 each. Per-bucket, each would have
+       looked at a different empty bucket and BOTH would have been short; blind,
+       they are short by exactly 1 together — and never both pass on one unit. */
+    const sb = sbWith([{ item_code: "JAGER-(Q)", variant_key: "", qty: 1 }], []);
+    const out = await checkStockAvailability(sb, "WH-A", [jager(FULL_SPEC, 1), jager("PC999-02|12|8|0", 1)], 1);
+    expect(out).toHaveLength(1);
+    expect(out[0].needed).toBe(2);
+    expect(out[0].available).toBe(1);
+    expect(out[0].short).toBe(1);
+  });
+
+  test("a genuine short is still a short — nothing at the warehouse, any spec", async () => {
+    const sb = sbWith([], []);
+    const out = await checkStockAvailability(sb, "WH-A", [jager(FULL_SPEC, 1)], 1);
+    expect(out).toHaveLength(1);
+    expect(out[0].available).toBe(0);
+    expect(out[0].variantKey).toBe(FULL_SPEC);
+  });
+
+  test("the other-warehouse hint sums a warehouse's specs into ONE row", async () => {
+    /* This is the case the hint exists for and used to miss: the goods are at
+       Balakong under the blank key, so a spec-keyed hint showed nothing and the
+       operator's only visible way forward was Ship anyway. */
+    const sb = sbWith([], [
+      { warehouse_id: "WH-B", item_code: "JAGER-(Q)", variant_key: "", qty: 2 },
+      { warehouse_id: "WH-B", item_code: "JAGER-(Q)", variant_key: "PC151-01|12|8|0", qty: 1 },
+      { warehouse_id: "WH-C", item_code: "JAGER-(Q)", variant_key: "", qty: 2 },
+    ]);
+    const out = await checkStockAvailability(sb, "WH-A", [jager(FULL_SPEC, 1)], 1);
+    expect(out[0].alternatives).toEqual([
+      { warehouseId: "WH-B", warehouseCode: "B", warehouseName: "BALAKONG WAREHOUSE", available: 3 },
+      { warehouseId: "WH-C", warehouseCode: "C", warehouseName: "BALAKONG DISPLAY", available: 2 },
+    ]);
+  });
+});
