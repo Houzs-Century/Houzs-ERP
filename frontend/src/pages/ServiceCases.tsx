@@ -3323,9 +3323,30 @@ function DetailContent({
   const activity = detail.data?.activity ?? [];
   const logistics = detail.data?.logistics ?? [];
   const relatedPOs = detail.data?.related_pos ?? [];
+  const access = detail.data?.access ?? [];
 
   async function patch(body: Record<string, any>) {
     await api.patch(`/api/assr/${id}`, body);
+    detail.reload();
+    onUpdated();
+  }
+
+  // Nth-person access list. The picker hands back the full desired id set;
+  // diff it against the current grants and POST additions / DELETE removals.
+  // Keeps sales_agent and the two assigned_to slots untouched (owner 2026-09-09).
+  async function syncAccess(ids: number[]) {
+    const current = new Set(
+      access.map((a: any) => Number(a.user_id ?? a.userId)).filter(Boolean),
+    );
+    const wanted = new Set(ids);
+    const toAdd = ids.filter((x) => !current.has(x));
+    const toRemove = [...current].filter((x) => !wanted.has(x));
+    try {
+      for (const uid of toAdd) await api.post(`/api/assr/${id}/access`, { user_id: uid });
+      for (const uid of toRemove) await api.del(`/api/assr/${id}/access/${uid}`);
+    } catch (e: any) {
+      toast.error(e?.message || "Couldn't update access");
+    }
     detail.reload();
     onUpdated();
   }
@@ -3499,6 +3520,16 @@ function DetailContent({
           department_name: u.department_name,
         }))
     : [];
+  // Access chips resolve from the access rows themselves (each carries
+  // user_name), so a granted person always displays even if outside the loaded
+  // users list. UserOptionItem = { id, name }.
+  const accessIds: number[] = access
+    .map((a: any) => Number(a.user_id ?? a.userId))
+    .filter((n: number) => Number.isFinite(n) && n > 0);
+  const accessItems: UserOptionItem[] = access.map((a: any) => ({
+    id: Number(a.user_id ?? a.userId),
+    name: (a.user_name ?? a.userName ?? `#${a.user_id ?? a.userId}`) as string,
+  }));
 
   return (
     <DetailLayout
@@ -4552,7 +4583,20 @@ function DetailContent({
               <InlineEdit
                 label="Agent"
                 value={c.sales_agent}
-                onSave={(v) => patch({ sales_agent: v })}
+                onSave={async (v) => {
+                  // Salesperson stays editable, but changing it reassigns sales
+                  // attribution AND row visibility (the original rep loses the
+                  // case unless re-added). Confirm first (owner 2026-09-09); to
+                  // keep the rep and just let others in, use the Access section.
+                  if (
+                    !(await dialog.confirm(
+                      "Change the Salesperson? This reassigns sales attribution and case visibility — the original rep loses access unless re-added. To keep the rep and just give other people access, cancel and use the Access section instead.",
+                    ))
+                  ) {
+                    throw new Error("Salesperson unchanged");
+                  }
+                  await patch({ sales_agent: v });
+                }}
                 placeholder="Sales rep"
               />
               {/* SO + Ref side by side — mirrors the read view's twin
@@ -4706,6 +4750,23 @@ function DetailContent({
                 Needs an assignee
               </div>
             )}
+          </PanelSection>
+
+          {/* Access — Nth-person visibility (owner 2026-09-09). Grants extra
+              staff read access to this case WITHOUT changing the Salesperson or
+              the two Assigned-to slots. Unlimited; each chip is a granted person
+              who (with their upline) can now see and open the case. */}
+          <PanelSection title="Access" icon={<ShieldCheck size={13} />}>
+            <UserMultiSelect
+              value={accessIds}
+              selectedItems={accessItems}
+              onChange={(ids) => syncAccess(ids)}
+              placeholder="Search to grant access"
+            />
+            <div className="mt-1.5 text-[11px] leading-snug text-ink-muted">
+              Extra people who can see this case. Does not change the Salesperson
+              or Assigned-to.
+            </div>
           </PanelSection>
 
           {/* SLA — Design PR 2. Full red card + big mono countdown +

@@ -937,6 +937,39 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
     await patchCase({ assigned_to_2: nextId }, "Couldn't set co-assignee");
   };
 
+  // ── Access list (Nth-person visibility, desktop parity) ─────────
+  // Grants extra staff read access WITHOUT touching sales_agent or the two
+  // assigned_to slots (owner 2026-09-09). The rows carry user_id + user_name;
+  // the PG driver may camelCase, so read both shapes.
+  const accessRows: Any[] = Array.isArray(data?.access) ? (data as Any).access : [];
+  const grantAccess = async () => {
+    if (busy) return;
+    const have = new Set(
+      accessRows.map((a) => Number(a.user_id ?? a.userId)).filter(Boolean),
+    );
+    const opts = assignableUsers.filter((u) => !have.has(u.id));
+    if (!opts.length) {
+      await notify({ title: "No one to add", body: "Everyone available already has access." });
+      return;
+    }
+    const picked = await choose({
+      title: "Grant access",
+      body: "Give someone read access to this case. Does not change the Salesperson or PIC.",
+      options: opts.map((u) => ({ value: String(u.id), label: u.name })),
+    });
+    if (picked == null || picked === "") return;
+    await runWrite(async () => {
+      await api.post(`/api/assr/${id}/access`, { user_id: Number(picked) });
+    }, "Couldn't grant access");
+  };
+  const revokeAccess = async (uid: number, name: string) => {
+    if (busy) return;
+    if (!(await confirm({ title: `Remove ${name}'s access?`, confirmLabel: "Remove", danger: true }))) return;
+    await runWrite(async () => {
+      await api.del(`/api/assr/${id}/access/${uid}`);
+    }, "Couldn't remove access");
+  };
+
   // ── Case-level values ──
   const poNo = get(c, "poNo", "po_no");
   const creditorCode = get(c, "creditorCode", "creditor_code");
@@ -1587,6 +1620,51 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                   <KV label="Assigned to" value={assignedTo ? String(assignedTo) : "Unassigned"} />
                   <KV label="Co-assignee" value={assignedTo2 ? String(assignedTo2) : "None"} />
                   <KV label="Created by" value={String(get(c, "createdByName", "created_by_name") ?? "—")} />
+                </Acc>
+
+                {/* Access — Nth-person visibility. Extra people who can see this
+                    case, separate from Salesperson and PIC. Tap Add to grant,
+                    the x on a chip to revoke. */}
+                <Acc
+                  title="Access"
+                  headRight={accessRows.length ? `${accessRows.length}` : "None"}
+                  headSlot={
+                    <span
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (!busy) grantAccess(); }}
+                      className="tinybtn"
+                      style={{ color: BROWN, opacity: busy ? 0.5 : 1 }}
+                    >
+                      Add
+                    </span>
+                  }
+                >
+                  {accessRows.length === 0 ? (
+                    <div style={{ fontSize: 12, color: "#8a8f98", padding: "2px 0" }}>
+                      No extra access. Salesperson and PIC keep their own access.
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {accessRows.map((a) => {
+                        const uid = Number(a.user_id ?? a.userId);
+                        const name = String(a.user_name ?? a.userName ?? `#${uid}`);
+                        return (
+                          <span
+                            key={uid}
+                            style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: TEAL_DK, background: "#e1efed", borderRadius: 7, padding: "4px 8px 4px 10px" }}
+                          >
+                            {name}
+                            <span
+                              onClick={() => { if (!busy) revokeAccess(uid, name); }}
+                              style={{ cursor: "pointer", opacity: busy ? 0.5 : 0.7, fontWeight: 700 }}
+                              aria-label={`Remove ${name}`}
+                            >
+                              ×
+                            </span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
                 </Acc>
 
                 {/* Print copy + Portal link + Sales link. Links carry the

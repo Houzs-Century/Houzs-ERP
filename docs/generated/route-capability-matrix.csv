@@ -113,6 +113,8 @@ POST,/api/assr/:id/transition,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"re
 POST,/api/assr/:id/unarchive,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.manage"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 GET,/api/assr/:id{[0-9]+},AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requireServiceCaseAccess(),,NO,INHERITED_ONLY,backend/src/routes/assr.ts
 PATCH,/api/assr/:id{[0-9]+},AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
+POST,/api/assr/:id{[0-9]+}/access,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
+DELETE,/api/assr/:id{[0-9]+}/access/:userId{[0-9]+},AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 POST,/api/assr/:id{[0-9]+}/mark-opened,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 POST,/api/assr/:id{[0-9]+}/sales-comment,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requireServiceCaseAccess(),,YES,MUTATION_INHERITED_ONLY,backend/src/routes/assr.ts
 POST,/api/assr/:id{[0-9]+}/sales-nudge,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requireServiceCaseAccess(),,YES,MUTATION_INHERITED_ONLY,backend/src/routes/assr.ts
