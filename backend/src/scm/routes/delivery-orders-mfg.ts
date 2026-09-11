@@ -4047,11 +4047,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
       line_cost_sen: lineCost,
       line_margin_sen: lineTotal - lineCost,
       variants,
-      /* Owner ruling 2026-09-11: DO delivery date defaults from the SO's
-         customer_delivery_date (the header inherits the SO date on this
-         route; use the same value on every line so the operator sees the
-         same date across header + lines when the DO opens). Individual
-         lines can still be overridden via PATCH once the DO is created. */
+      /* Owner 2026-09-11 (docs/bugs/0807): DO line date defaults to the SO's. */
       line_delivery_date: (head.customer_delivery_date as string | null) ?? null,
       /* Migration 0058 — carry the dedicated variant-breakdown columns from the
          SO line onto the DO line (the picker previously dropped all 8, so sofa/
