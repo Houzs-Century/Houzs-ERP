@@ -9,6 +9,7 @@ import { MediaLightbox, type MediaItem } from "../components/MediaLightbox";
 import { SearchProgress } from "../components/SearchProgress";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { useSearchResultTransition } from "../hooks/useServerSearch";
+import { booleanPreference, useIdentityPreference } from "../hooks/useIdentityPreference";
 import { useAuth } from "../auth/AuthContext";
 import { isSalesNonDirector, isSalesDirectorUser, canLogSalesEntry, canCreateEvent } from "../auth/salesAccess";
 import { NewProjectSheet } from "./MobileNewProject";
@@ -412,7 +413,9 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
   // back timeline-ordered (soonest event first) with my_pending_titles chips
   // saying WHY each row is the caller's; a completed/submitted task drops the
   // row server-side.
-  const [myPendingOn, setMyPendingOn] = useState(false);
+  // Shares the DESKTOP checkbox's stored preference (owner 2026-09-09) so the
+  // daily reminder can arm the same filter on either shell.
+  const [myPendingOn, setMyPendingOn] = useIdentityPreference("projects:myPending", false, booleanPreference);
   // New-event sheet (owner 2026-07-31), gated by canCreateEvent below.
   const [creating, setCreating] = useState(false);
   const notify = useNotify();

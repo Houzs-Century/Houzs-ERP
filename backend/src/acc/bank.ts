@@ -111,7 +111,7 @@ export async function loadRecognitionRules(
 export async function loadPayableBatches(
   sb: any, companyId: number,
 ): Promise<{ ok: true; batches: PayableBatch[] } | Fail> {
-  const [batchRes, rowRes, recRes] = await Promise.all([
+  const [batchRes, rowRes, recRes, chargeRes] = await Promise.all([
     sb.from('acc_settlement_batches')
       .select('id, acquirer_code, file_name, period_from, period_to, net_sen, stated_net_sen')
       .eq('company_id', companyId),
@@ -119,10 +119,18 @@ export async function loadPayableBatches(
       .select('batch_id, confirmed_at, bucket').eq('company_id', companyId),
     sb.from('acc_settlement_receipts')
       .select('batch_id, amount_sen').eq('company_id', companyId),
+    /* What the bank KEPT off a payout and Finance booked as a charge
+       (docs/bugs/0787) is settled the same way a credit is — the report is
+       owed its net less it. Read here too (docs/bugs/0812): the bank side was
+       still asking for the full net, so an advice that rightly said less was
+       distrusted and the credit matched nothing. */
+    sb.from('acc_settlement_payout_batches')
+      .select('batch_id, charge_sen').eq('company_id', companyId),
   ]);
   if (batchRes.error) return { ok: false, reason: batchRes.error.message };
   if (rowRes.error) return { ok: false, reason: rowRes.error.message };
   if (recRes.error) return { ok: false, reason: recRes.error.message };
+  if (chargeRes.error) return { ok: false, reason: chargeRes.error.message };
 
   const openByBatch = new Map<number, number>();
   for (const r of (rowRes.data ?? []) as Array<Record<string, any>>) {
@@ -135,14 +143,20 @@ export async function loadPayableBatches(
     const id = Number(r.batch_id);
     receivedByBatch.set(id, (receivedByBatch.get(id) ?? 0) + Number(r.amount_sen ?? 0));
   }
+  const chargedByBatch = new Map<number, number>();
+  for (const r of (chargeRes.data ?? []) as Array<{ batch_id: number | null; charge_sen: number | null }>) {
+    if (r.batch_id == null) continue;
+    const id = Number(r.batch_id);
+    chargedByBatch.set(id, (chargedByBatch.get(id) ?? 0) + Number(r.charge_sen ?? 0));
+  }
 
   const batches: PayableBatch[] = [];
   for (const b of (batchRes.data ?? []) as Array<Record<string, any>>) {
     const id = Number(b.id);
     if ((openByBatch.get(id) ?? 0) > 0) continue;             // not reconciled yet
     const payableSen = Number(b.stated_net_sen ?? b.net_sen ?? 0);
-    const outstandingSen = payableSen - (receivedByBatch.get(id) ?? 0);
-    if (outstandingSen === 0) continue;                        // already in the bank
+    const outstandingSen = payableSen - (receivedByBatch.get(id) ?? 0) - (chargedByBatch.get(id) ?? 0);
+    if (outstandingSen === 0) continue;                        // already in the bank, or kept by it
     batches.push({
       id,
       acquirerCode: String(b.acquirer_code),
