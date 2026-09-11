@@ -15,7 +15,7 @@
 
 import { useMemo, useState, type CSSProperties } from 'react';
 import {
-  Search, X, Truck, ArrowLeftRight, ChevronsDown, ChevronDown,
+  Search, X, Truck, ArrowLeftRight,
   ArrowDownToLine, Pencil, Trash2, Download,
 } from 'lucide-react';
 import { Button, SearchInput } from '../../components/Button';
@@ -29,7 +29,7 @@ import {
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import {
-  buildBanks, distinctCustomers, distinctProducts, isFiltering, itemDescription,
+  buildZones, distinctCustomers, distinctProducts, isFiltering, itemDescription,
   itemMeta, matchSlot, statusCounts, toSlot,
   type FloorFilters, type Slot, type SlotStatus,
 } from '../../vendor/scm/lib/warehouse-floorplan';
@@ -80,7 +80,7 @@ export function WarehouseFloorPlan({
   const slots = useMemo(() => racks.map(toSlot), [racks]);
   const filtering = isFiltering(filters);
   const hits = useMemo(() => new Set(slots.filter((s) => matchSlot(s, filters)).map((s) => s.id)), [slots, filters]);
-  const banks = useMemo(() => buildBanks(slots), [slots]);
+  const zones = useMemo(() => buildZones(slots), [slots]);
   const counts = useMemo(() => statusCounts(slots), [slots]);
   const products = useMemo(() => distinctProducts(slots), [slots]);
   const customers = useMemo(() => distinctCustomers(slots), [slots]);
@@ -158,10 +158,10 @@ export function WarehouseFloorPlan({
       )}
 
       {showList ? (
-        <ListView banks={banks} filtering={filtering} hits={hits} pickedSet={pickedSet} onClickSlot={clickSlot} />
+        <ListView zones={zones} filtering={filtering} hits={hits} pickedSet={pickedSet} onClickSlot={clickSlot} />
       ) : (
         <FloorPlan
-          banks={banks}
+          zones={zones}
           wide={wide}
           filtering={filtering}
           hits={hits}
@@ -306,9 +306,9 @@ function BatchBar({
 const HATCH = 'repeating-linear-gradient(135deg,#f7f8f6,#f7f8f6 8px,#eceeea 8px,#eceeea 16px)';
 
 function FloorPlan({
-  banks, wide, filtering, hits, pickedSet, onClickSlot, onHover, onHoverEnd,
+  zones, wide, filtering, hits, pickedSet, onClickSlot, onHover, onHoverEnd,
 }: {
-  banks: ReturnType<typeof buildBanks>;
+  zones: ReturnType<typeof buildZones>;
   wide: boolean;
   filtering: boolean;
   hits: Set<string>;
@@ -325,68 +325,75 @@ function FloorPlan({
         <span className="text-[11.5px] text-ink-secondary">click a slot for details · cmd/ctrl-click to multi-select</span>
       </div>
 
-      {/* Dock — north end */}
-      <div className="mb-3.5 flex h-9 min-w-max items-center gap-3 rounded-md bg-primary-ink px-3.5">
-        <Truck size={13} className="text-white" strokeWidth={2} />
-        <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-white">Main entrance / dock</span>
-        <span className="text-[11px] text-[#a9c6c0]">goods in · north end</span>
-        <span className="min-w-[40px] flex-1" />
-        <ChevronsDown size={14} className="text-[#a9c6c0]" strokeWidth={2} />
-      </div>
+      <div className="flex min-w-max items-stretch gap-3">
+        {/* Loading bay — left end (L1 / R1, goods out) */}
+        <div className="flex w-11 flex-none flex-col items-center justify-center gap-2 rounded-md border border-border bg-accent-soft py-3">
+          <ArrowLeftRight size={13} className="text-accent" strokeWidth={2} />
+          <span className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-accent" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Loading bay · goods out</span>
+        </div>
 
-      {banks.map((bank) => (
-        <div key={bank.prefix} className="mb-3.5 flex min-w-max flex-col gap-2">
-          <div className="flex items-baseline gap-2.5">
-            <span className="font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-ink-secondary">{bank.label}</span>
-            <span className="text-[11.5px] text-ink-muted">{bank.range}</span>
-            <span className="text-[11px] tabular-nums text-ink-muted">{bank.used}/{bank.total} used · {bank.utilPct}%</span>
-          </div>
-          <div className="flex gap-1.5">
-            {bank.racks.map((rack) => (
-              <div
-                key={rack.key}
-                className="flex flex-none flex-col gap-0.5 rounded-[7px] border border-border-subtle bg-surface-2 p-1"
-                style={{ width: wide ? 164 : 104 }}
-              >
-                {rack.slots.map((s) => (
-                  <SlotCell
-                    key={s.id}
-                    slot={s}
-                    wide={wide}
-                    filtering={filtering}
-                    hit={hits.has(s.id)}
-                    picked={pickedSet.has(s.rack.id)}
-                    onClick={onClickSlot}
-                    onHover={onHover}
-                    onHoverEnd={onHoverEnd}
-                  />
-                ))}
-                <div className="mt-0.5 h-[3px] overflow-hidden rounded-[2px] bg-border-subtle">
-                  <div className="h-[3px]" style={{ width: `${rack.utilPct}%`, background: rack.utilPct >= 100 ? '#0c3f39' : '#16695f' }} />
+        <div className="flex min-w-max flex-col gap-4">
+        {zones.map((zone) => (
+          <div key={zone.label} className="flex flex-col gap-2">
+            <div className="flex items-baseline gap-2.5 border-b border-dashed border-border-subtle pb-1.5">
+              <span className="font-display text-[17px] font-extrabold uppercase tracking-[0.08em] text-ink">{zone.label}</span>
+              <span className="text-[11px] tabular-nums text-ink-muted">{zone.used}/{zone.total} used · {zone.utilPct}%</span>
+            </div>
+            {zone.banks.map((bank, bi) => (
+              <div key={bank.prefix} className="flex flex-col gap-1.5">
+                {bi > 0 && zone.aisle && (
+                  <div className="my-1 flex h-[30px] items-center gap-3 rounded border-y border-dashed border-[#d3d8cf] px-3.5" style={{ background: HATCH }}>
+                    <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-ink-secondary">{zone.aisle.name}</span>
+                    <span className="text-[11px] text-ink-muted">{zone.aisle.flow}</span>
+                    <span className="flex-1" />
+                    <ArrowLeftRight size={13} className="text-[#9aa093]" strokeWidth={2} />
+                  </div>
+                )}
+                <div className="flex items-baseline gap-2.5">
+                  <span className="font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-ink-secondary">{bank.label}</span>
+                  <span className="text-[11px] tabular-nums text-ink-muted">{bank.used}/{bank.total}</span>
                 </div>
-                <div className="flex items-center justify-between gap-0.5 px-0.5 pt-px">
-                  <span className="text-[11.5px] font-bold text-ink">{rack.name}</span>
-                  <span className="font-mono text-[10px] text-ink-secondary">{rack.occupied}/{rack.total}</span>
+                <div className="flex gap-1.5">
+                  {bank.racks.map((rack) => (
+                    <div
+                      key={rack.key}
+                      className="flex flex-none flex-col gap-0.5 rounded-[7px] border border-border-subtle bg-surface-2 p-1"
+                      style={{ width: wide ? 164 : 104 }}
+                    >
+                      {rack.slots.map((s) => (
+                        <SlotCell
+                          key={s.id}
+                          slot={s}
+                          wide={wide}
+                          filtering={filtering}
+                          hit={hits.has(s.id)}
+                          picked={pickedSet.has(s.rack.id)}
+                          onClick={onClickSlot}
+                          onHover={onHover}
+                          onHoverEnd={onHoverEnd}
+                        />
+                      ))}
+                      <div className="mt-0.5 h-[3px] overflow-hidden rounded-[2px] bg-border-subtle">
+                        <div className="h-[3px]" style={{ width: `${rack.utilPct}%`, background: rack.utilPct >= 100 ? '#0c3f39' : '#16695f' }} />
+                      </div>
+                      <div className="flex items-center justify-between gap-0.5 px-0.5 pt-px">
+                        <span className="text-[11.5px] font-bold text-ink">{rack.name}</span>
+                        <span className="font-mono text-[10px] text-ink-secondary">{rack.occupied}/{rack.total}</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             ))}
           </div>
-          {bank.aisle && (
-            <div className="mt-1 flex h-[34px] items-center gap-3 rounded border-y border-dashed border-[#d3d8cf] px-3.5" style={{ background: HATCH }}>
-              <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-ink-secondary">{bank.aisle.name}</span>
-              <span className="text-[11px] text-ink-muted">{bank.aisle.flow}</span>
-              <span className="flex-1" />
-              <ArrowLeftRight size={13} className="text-[#9aa093]" strokeWidth={2} />
-            </div>
-          )}
+        ))}
         </div>
-      ))}
 
-      {/* Loading bay — south end */}
-      <div className="mt-0.5 flex h-9 min-w-max items-center gap-3 rounded-md border border-border bg-accent-soft px-3.5">
-        <ChevronsDown size={14} className="text-accent" strokeWidth={2} />
-        <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-accent">Loading bay</span>
-        <span className="text-[11px] text-accent-ink">goods out · south end</span>
+        {/* Main entrance / dock — right end (L21 / R17, goods in) */}
+        <div className="flex w-11 flex-none flex-col items-center justify-center gap-2 rounded-md bg-primary-ink py-3">
+          <Truck size={13} className="text-white" strokeWidth={2} />
+          <span className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-white" style={{ writingMode: 'vertical-rl' }}>Main entrance / dock · goods in</span>
+        </div>
       </div>
     </div>
   );
@@ -444,15 +451,15 @@ function SlotCell({
 
 /* ── List view (< 1180px) ───────────────────────────────────────────────── */
 function ListView({
-  banks, filtering, hits, pickedSet, onClickSlot,
+  zones, filtering, hits, pickedSet, onClickSlot,
 }: {
-  banks: ReturnType<typeof buildBanks>;
+  zones: ReturnType<typeof buildZones>;
   filtering: boolean;
   hits: Set<string>;
   pickedSet: Set<string>;
   onClickSlot: (s: Slot, e: React.MouseEvent) => void;
 }) {
-  const racks = banks.flatMap((b) => b.racks);
+  const racks = zones.flatMap((z) => z.banks).flatMap((b) => b.racks);
   return (
     <div className="flex flex-col gap-2">
       {racks.map((rack) => (
