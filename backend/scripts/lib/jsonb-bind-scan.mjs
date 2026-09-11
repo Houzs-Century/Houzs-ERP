@@ -45,7 +45,13 @@
 /** Tags whose template literals are SQL in this repo. `sql`/`tx`/`pg` are the
  *  postgres.js handle names actually used; the rest are the aliases that appear
  *  in scripts. A new alias only needs adding here. */
-const SQL_TAGS = ['sql', 'tx', 'pg', 'client', 'conn', 'db', 'trx', 'dst', 'src'];
+/* `t` is postgres.js's own name for the transaction handle — `sql.begin(async
+   (t) => …)` — and its absence here is the FIRST of the two reasons
+   docs/bugs/0814 walked past this guard with CI green: the scanner never
+   entered the template at all, so the bind inside it was never examined. A
+   one-letter tag is only ever matched as `t`+backtick, which is a tagged
+   template and not an identifier in ordinary code. */
+const SQL_TAGS = ['sql', 'tx', 't', 'pg', 'client', 'conn', 'db', 'trx', 'dst', 'src'];
 
 const STRINGIFY = 'JSON.stringify(';
 
@@ -214,6 +220,43 @@ export function scanSource(file, rawText) {
   // must not read as an instance of it, and line numbers must stay true.
   const text = blankComments(rawText);
 
+  /* A NAME can carry the damage just as well as the call. On 2026-09-11
+     `apply-supplier-bedframe-variants.mjs` shipped this, CI green:
+
+         const patch = JSON.stringify(w.set);
+         await t`… variants = coalesce(variants, '{}'::jsonb) || ${patch}::jsonb …`
+
+     and it turned two production variants blocks into ARRAYS (docs/bugs/0814).
+     The scanner only looked for `JSON.stringify(` INSIDE the interpolation, so a
+     one-line detour past a variable walked straight through the guard it was
+     written to be. Any identifier assigned from JSON.stringify in this file is
+     now the same finding as the call itself — the repo's own rule that a checker
+     which cannot match must never read as a pass. */
+  const stringified = new Set();
+  const assignRe = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*JSON\.stringify\s*\(/g;
+  let a;
+  while ((a = assignRe.exec(text)) !== null) stringified.add(a[1]);
+  /* A NAME is only evidence while it means one thing in the file. This scanner
+     has no scopes, so a short name that is ALSO a parameter somewhere —
+     `const v = JSON.stringify(x)` in one function and `async (v) => sql\`… = ${v}\``
+     in another — would report the second as the first. Measured when this rule
+     was added: 4 of 9 hits were exactly that. A name used as a parameter is
+     therefore dropped, which trades a little reach for a report that is true;
+     the direct `JSON.stringify(...)` match below is unaffected. */
+  for (const name of [...stringified]) {
+    const asParam = new RegExp(`\\(\\s*${name}\\s*[,)]|,\\s*${name}\\s*[,)]|\\b${name}\\s*=>`);
+    if (asParam.test(text)) stringified.delete(name);
+  }
+  /** The expression is a pre-serialized string: either the call, or a name that
+   *  was assigned from it. `patch`, `patch ?? '{}'` and `${patch}` all count. */
+  const isStringified = (expr) => {
+    if (expr.includes(STRINGIFY)) return true;
+    for (const name of stringified) {
+      if (new RegExp(`(^|[^\w$.])${name}([^\w$]|$)`).test(expr)) return true;
+    }
+    return false;
+  };
+
   // ---- shape 1: a stringified value interpolated into a SQL tagged template.
   const tagRe = new RegExp(`(^|[^\\w$.])(${SQL_TAGS.join('|')})\\s*\`` , 'g');
   let m;
@@ -227,7 +270,7 @@ export function scanSource(file, rawText) {
         const end = matchBracket(text, i + 1);
         if (end === -1) break;
         const expr = text.slice(i + 2, end);
-        if (expr.includes(STRINGIFY)) {
+        if (isStringified(expr)) {
           // `${JSON.stringify(x)}::text::jsonb` is the explicit funnel and is
           // allowed, same as the .unsafe form below.
           const after = text.slice(end + 1, end + 24);
@@ -266,7 +309,7 @@ export function scanSource(file, rawText) {
       if (absClose !== -1) {
         const params = splitTopLevel(text, absOpen, absClose);
         params.forEach((p, idx) => {
-          if (!p.text.includes(STRINGIFY)) return;
+          if (!isStringified(p.text)) return;
           if (placeholderIsTextFunnelled(sqlText, idx + 1)) return;
           findings.push({
             file,
@@ -276,7 +319,7 @@ export function scanSource(file, rawText) {
           });
         });
       }
-    } else if (paramsSpan.text.includes(STRINGIFY)) {
+    } else if (isStringified(paramsSpan.text)) {
       findings.push({
         file,
         line: lineOf(text, paramsSpan.start),
