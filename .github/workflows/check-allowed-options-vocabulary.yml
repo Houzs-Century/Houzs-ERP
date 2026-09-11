@@ -1,0 +1,41 @@
+name: Check option-pool vocabulary (read-only)
+
+# Does every value in a Model's option pool mean anything to the gate that
+# reads it? A pool filled from the wrong list offers nothing by those values,
+# which is how the owner opened every sofa Model's fabric allow-list and his
+# staff could still pick only 3 of 851 fabrics. See docs/bugs/0814.
+#
+# READ-ONLY. Exits 0 for every legitimate answer; the answer IS the output.
+
+on:
+  workflow_dispatch:
+    inputs:
+      strict:
+        description: "Fail the job when an authoritative pool value resolves to nothing"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: check-allowed-options-vocabulary
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-allowed-options-vocabulary.mjs ${{ inputs.strict && '--strict' || '' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
