@@ -23,7 +23,7 @@ books which entry":
 
 | action | entry | source_type | reversal |
 |---|---|---|---|
-| Sales invoice issued | Dr AR / Cr SALES | `SI` | `SI_REVERSAL` |
+| Sales invoice issued | Dr AR / Cr each group's sales account (500-x/502/503 by scm.acc_item_group_accounts; unbound group REFUSES — docs/bugs/0829) | `SI` | `SI_REVERSAL` |
 | Purchase invoice posted | Dr each group's purchase account (601-x/602 by scm.acc_item_group_accounts; unbound group REFUSES) / Cr AP | `PI` | `PI_REVERSAL` |
 | AP invoice posted (non-stock supplier bill) | Dr each line's own account / Cr AP control (400 or 405 by the supplier's code) | `API` | `API_REVERSAL` |
 | Payment voucher posted | Dr expense legs / Cr bank-or-AP header; a supplier payment's Dr leg on the AP control carries the supplier as party (since 2026-09-06) | `PV` | `PV_REVERSAL` |
@@ -1740,6 +1740,25 @@ SI auto-posts on create/confirm (`lib/post-si-revenue.ts`; resync
 void+reposts on post-issue edits). PI posts on demand + resyncs. PV posts on
 `POST /payment-vouchers/:id/post` and reverses on cancel. All three files own
 only their document specifics; the entry writing is the engine's.
+
+**One ringgit, one product group, one account (docs/bugs/0829, 2026-09-12).**
+The split a document's lines make before they reach the ledger has ONE home,
+`backend/src/acc/item-group-split.ts` (`splitByItemGroup`): case-fold the
+group code (the registry is upper-case, the panels write lower-case), refuse
+a line with no group (`line_ungrouped`) and a group with no binding
+(`group_unbound`) by name — the owner's rule, 挡下来提醒我去绑 — FX once per
+group, the remainder on the largest group so the entry sums to the header
+total. `postPiAccounting` (`backend/src/scm/routes/accounting.ts`) reads
+its debits from it, unchanged in behaviour; `postSiRevenue` now reads the
+invoice's lines and credits one line per group to
+`acc_item_group_accounts.sales_account` (`siLines` in
+`backend/src/acc/rules.ts` takes the group credits, pinned in
+`backend/src/acc/engine.test.ts`). WHY: 2990's `roles.SALES` (500-0000
+RENTAL REVENUE) is INACTIVE in the accountant's chart, so the old two-line
+rule could not book a 2990 sale at all, and HOUZS's sales all landed on
+RENTAL REVENUE while SALES OF SOFA / BEDDING / DINING / SERVICE INCOME sat
+bound and unread. An invoice refused by name stays unposted; bind the group
+on Accounting → Item Groups and the next create/confirm/resync posts it.
 
 **Migrated documents book nothing** (`migrated_no_stock` guard): AutoCount
 already carries their revenue/payable — posting here would double the books.

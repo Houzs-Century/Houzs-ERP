@@ -18,6 +18,7 @@
 import { todayMyt } from './my-time';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { resolveRoles, siLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
+import { splitByItemGroup } from '../../acc/item-group-split';
 
 export type PostSiResult =
   | { ok: true; status: 'posted'; jeNo: string; jeId: string; totalSen: number }
@@ -26,7 +27,11 @@ export type PostSiResult =
      postSiRevenue. `ok: true` so no caller records a failure for a thing that
      was never meant to post. */
   | { ok: true; status: 'migrated_source' }
-  | { ok: false; status: 'invoice_not_found' | 'zero_total' | 'je_insert_failed' | 'lines_insert_failed' | 'post_failed'; reason?: string };
+  /* The lines could not be classified (docs/bugs/0829): a line with no
+     product group, or a group with no sales account bound for this company.
+     The invoice stays unposted, by name; bind the group (Accounting → Item
+     Groups) or fix the line, and the next create/confirm/resync posts it. */
+  | { ok: false; status: 'invoice_not_found' | 'zero_total' | 'no_lines' | 'line_ungrouped' | 'group_unbound' | 'je_insert_failed' | 'lines_insert_failed' | 'post_failed'; reason?: string };
 
 /**
  * Post (or no-op if already posted) the GL entry for a Sales Invoice.
@@ -35,7 +40,7 @@ export type PostSiResult =
 export async function postSiRevenue(sb: any, invoiceNumber: string): Promise<PostSiResult> {
   const { data: si, error } = await sb
     .from('sales_invoices')
-    .select('invoice_number, invoice_date, debtor_code, debtor_name, total_sen, company_id, migrated_no_stock')
+    .select('id, invoice_number, invoice_date, debtor_code, debtor_name, total_sen, company_id, migrated_no_stock')
     .eq('invoice_number', invoiceNumber)
     .single();
   if (error || !si) return { ok: false, status: 'invoice_not_found' };
@@ -55,6 +60,26 @@ export async function postSiRevenue(sb: any, invoiceNumber: string): Promise<Pos
   const totalSen = Number(si.total_sen);
   if (totalSen <= 0) return { ok: false, status: 'zero_total' };
 
+  /* WHICH SALES ACCOUNT each ringgit belongs to (docs/bugs/0829, the mirror
+     of the purchase side): the invoice's lines carry their product group, the
+     registry carries the group's sales account, and the entry credits one
+     line per group. A line with no group, or a group with no binding,
+     REFUSES by name — the invoice is not booked on a guess. */
+  const { data: itemsRaw, error: itemsErr } = await sb
+    .from('sales_invoice_items')
+    .select('item_group, line_total_sen')
+    .eq('sales_invoice_id', (si as { id: string }).id);
+  if (itemsErr) return { ok: false, status: 'post_failed', reason: `SI lines: ${itemsErr.message}` };
+  const split = await splitByItemGroup(sb, {
+    companyId,
+    docNo: si.invoice_number,
+    items: (itemsRaw ?? []) as Array<{ item_group: string | null; line_total_sen: number | null }>,
+    account: 'sales_account',
+    myrSen: (sen) => sen,
+    totalSen,
+  });
+  if (!split.ok) return { ok: false, status: split.status, reason: split.reason };
+
   const roles = await resolveRoles(sb, companyId);
   const r = await postJournal(sb, {
     companyId,
@@ -62,7 +87,7 @@ export async function postSiRevenue(sb: any, invoiceNumber: string): Promise<Pos
     sourceType: 'SI',
     sourceDocNo: si.invoice_number,
     narration: `Sales invoice ${si.invoice_number} — ${si.debtor_name}`,
-    lines: siLines(roles, si, totalSen),
+    lines: siLines(roles, si, split.groups),
   });
 
   if (r.ok) {
@@ -82,8 +107,9 @@ export async function postSiRevenue(sb: any, invoiceNumber: string): Promise<Pos
     return { ok: false, status: r.status, reason: r.reason };
   }
   // Shape/chart refusals (unbalanced, bad account, …) cannot happen for the
-  // fixed 2-line rule unless the chart itself is wrong — surface them loudly
-  // under the historical catch-all status.
+  // rule's lines unless the chart itself is wrong (an inactive sales account
+  // bound to a group) — surface them loudly under the historical catch-all
+  // status.
   return { ok: false, status: 'post_failed', reason: `${r.status}: ${r.reason ?? ''}` };
 }
 

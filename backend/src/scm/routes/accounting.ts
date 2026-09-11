@@ -32,6 +32,7 @@ import { backfillSoPayments, paymentEntryDisagreements, unbookedPayments } from 
 import { computeDailyBank } from '../../acc/daily-bank';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
+import { splitByItemGroup } from '../../acc/item-group-split';
 import { classifyJournal } from '../../acc/journal-class';
 import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
@@ -631,64 +632,25 @@ export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<
      owner 2026-09-05): the invoice's lines carry their product group, the
      registry carries the group's account, and the entry debits one line per
      group. An invoice whose group is not bound REFUSES by name — the owner's
-     own rule (挡下来提醒我去绑) — because a payable silently landed on the
-     wrong account is exactly the mis-classification this registry exists to
-     end. */
+     own rule (挡下来提醒我去绑). The split itself — case-fold, the two
+     refusals, FX once per group, the remainder on the largest group — is
+     acc/item-group-split, the one home the sales side (docs/bugs/0829)
+     shares. */
   const { data: itemsRaw, error: itemsErr } = await sb
     .from('purchase_invoice_items')
     .select('item_group, line_total_sen')
     .eq('purchase_invoice_id', pi.id);
   if (itemsErr) return { ok: false, status: 'post_failed', reason: `PI lines: ${itemsErr.message}` };
-  const items = (itemsRaw ?? []) as Array<{ item_group: string | null; line_total_sen: number | null }>;
-  if (items.length === 0) {
-    return { ok: false, status: 'no_lines', reason: `${pi.invoice_number} has no lines — a purchase cannot be classified without them.` };
-  }
-
-  /* Group sums in the PI's OWN currency; FX once per group below, so the sen
-     conversion happens exactly the way the header's did. The registry stores
-     upper-case codes; the sales panels write lower-case — one case-fold here,
-     never two vocabularies. */
-  const foreignByGroup = new Map<string, number>();
-  for (const it of items) {
-    const g = String(it.item_group ?? '').trim().toUpperCase();
-    if (!g) {
-      return { ok: false, status: 'line_ungrouped', reason: `${pi.invoice_number} has a line with no product group — fix the line, then post.` };
-    }
-    foreignByGroup.set(g, (foreignByGroup.get(g) ?? 0) + Number(it.line_total_sen ?? 0));
-  }
-
-  const groupCodes = [...foreignByGroup.keys()];
-  const { data: bindsRaw, error: bindsErr } = await sb
-    .from('acc_item_group_accounts')
-    .select('group_code, purchase_account')
-    .eq('company_id', companyId)
-    .in('group_code', groupCodes);
-  if (bindsErr) return { ok: false, status: 'post_failed', reason: `group bindings: ${bindsErr.message}` };
-  const accountOf = new Map(((bindsRaw ?? []) as Array<{ group_code: string; purchase_account: string }>)
-    .map((b) => [b.group_code, b.purchase_account]));
-  const unbound = groupCodes.filter((g) => !accountOf.get(g));
-  if (unbound.length > 0) {
-    return {
-      ok: false,
-      status: 'group_unbound',
-      reason: `${unbound.join(', ')} ${unbound.length === 1 ? 'is' : 'are'} not bound to a purchase account for this company — bind ${unbound.length === 1 ? 'it' : 'them'} on Accounting → Item Groups, then post again.`,
-    };
-  }
-
-  /* MYR per group, and the header total is the LAW: per-group rounding must
-     sum to exactly what the invoice posts, so the remainder (a sen or two of
-     float, only ever on a foreign PI) lands on the largest group — same rule
-     the settlement fee spread uses. */
-  const groupDebits = groupCodes.map((g) => ({
-    groupCode: g,
-    accountCode: accountOf.get(g) as string,
-    myrSen: toMyrSen(foreignByGroup.get(g) ?? 0, pi.exchange_rate),
-  }));
-  const drift = totalSen - groupDebits.reduce((s, g) => s + g.myrSen, 0);
-  if (drift !== 0) {
-    const biggest = groupDebits.reduce((a, b) => (b.myrSen > a.myrSen ? b : a));
-    biggest.myrSen += drift;
-  }
+  const split = await splitByItemGroup(sb, {
+    companyId,
+    docNo: pi.invoice_number,
+    items: (itemsRaw ?? []) as Array<{ item_group: string | null; line_total_sen: number | null }>,
+    account: 'purchase_account',
+    myrSen: (sen) => toMyrSen(sen, pi.exchange_rate),
+    totalSen,
+  });
+  if (!split.ok) return { ok: false, status: split.status, reason: split.reason };
+  const groupDebits = split.groups;
 
   /* Through the ONE gate (acc/engine). The engine owns the idempotency guard
      (fails closed on a read blip — a blip must never book a SECOND payable),
