@@ -51,6 +51,7 @@ import {
   type EnrichmentHeader,
   type EnrichmentItem,
 } from '../lib/so-list-mrp-enrichment';
+import { pgrestIn } from '../lib/pgrest-in-list';
 
 export const mfgSalesOrdersListEnrichment = new Hono<{ Bindings: Env; Variables: Variables }>();
 mfgSalesOrdersListEnrichment.use('*', supabaseAuth);
@@ -162,7 +163,7 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
       const chunk = codes.slice(i, i + 300);
       if (chunk.length === 0) continue;
       const { data, error } = await scopeToCompany(
-        sb.from('mfg_products').select('code, category').in('code', chunk),
+        pgrestIn(sb.from('mfg_products').select('code, category'), 'code', chunk),
         c,
       );
       if (error) break; // service classification degrades; readiness still answers from stored status

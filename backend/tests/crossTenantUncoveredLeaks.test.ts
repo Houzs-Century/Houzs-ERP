@@ -306,8 +306,12 @@ describe('PWP voucher burn is company-scoped (createSalesOrderCore)', () => {
     // one resolved company id, refused up front
     expect(block).toContain('const pwpCompanyId = activeCompanyId(c)');
     expect(block).toContain("error: 'company_unresolved'");
-    // read + atomic burn + rollback each scoped
-    expect(hasSquished(block, ".in('code', allPwpCodes).eq('company_id', pwpCompanyId)")).toBe(true);
+    // read + atomic burn + rollback each scoped. docs/bugs/0819: the prefetch
+    // read now goes through pgrestIn (escapes an inch-mark code) rather than a
+    // bare .in('code', …), but the company predicate still sits on the read
+    // itself — pin BOTH, so the tenant boundary cannot be dropped in a later edit.
+    expect(hasSquished(block, "pgrestIn(sb .from('pwp_codes')")).toBe(true);
+    expect(hasSquished(block, "'code', allPwpCodes).eq('company_id', pwpCompanyId)")).toBe(true);
     expect(hasSquished(block, ".eq('code', code).eq('company_id', pwpCompanyId)")).toBe(true);
     expect(hasSquished(block, ".eq('code', code).eq('status', 'USED').eq('company_id', pwpCompanyId)")).toBe(true);
   });

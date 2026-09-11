@@ -61,6 +61,7 @@ import { enqueueStockAllocationRecompute } from './stock-allocation-queue';
 import { SO_TERMINAL_STATES_PGREST } from '../shared/so-terminal-states';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 import { loadNonSellingWarehouses, warehouseCanPromise } from './non-selling-warehouse';
+import { pgrestIn } from './pgrest-in-list';
 
 /* Only the variant-bearing categories run bound. Owner 2026-08-10:
    "SOFA 和 BEDFRAME 因为有变体的问题,所以要走 Convert to PO 的那个模式.
@@ -644,10 +645,9 @@ async function runSoStockAllocation(
     }).filter(Boolean))];
     // chunkIn — itemCodes can exceed 1000 and balances can exceed the 1000-row
     // cap; batch + page so on-hand isn't understated → lines wrongly PENDING.
-    const { data: balRows, error: balanceError } = await chunkIn<{ warehouse_id: string; item_code: string; variant_key: string | null; qty: number }>(itemCodes, (batch, from, to) => sb
+    const { data: balRows, error: balanceError } = await chunkIn<{ warehouse_id: string; item_code: string; variant_key: string | null; qty: number }>(itemCodes, (batch, from, to) => pgrestIn(sb
       .from('inventory_balances')
-      .select('warehouse_id, item_code, variant_key, qty')
-      .in('item_code', batch)
+      .select('warehouse_id, item_code, variant_key, qty'), 'item_code', batch)
       .range(from, to));
     if (balanceError) throw new Error(`allocation balance load failed: ${balanceError.message}`);
     const onHandByBucket = new Map<string, number>();

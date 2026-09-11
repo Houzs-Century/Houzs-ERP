@@ -112,3 +112,36 @@ export function parsePgrestInList(payload: string): string[] {
   out.push(cur);
   return out;
 }
+
+/**
+ * Apply an `in` predicate on `column` for `values` to a PostgREST builder,
+ * ESCAPING via `pgrestInList` only when a value carries `"` or `\` — the two
+ * characters `.in()` cannot serialise (it quotes `[,()]` but never escapes; see
+ * the header). For every list without one it calls `.in()` unchanged, so the
+ * query string is BYTE-IDENTICAL to what the raw `.in()` builds today. That is
+ * the property that lets this replace `.in('code' | 'item_code', …)` at a call
+ * site with no behaviour change and no test-fake churn: a fake that only
+ * implements `.in` keeps working, because a clean list never reaches `.filter`.
+ * The escape path is reached only by a value the raw `.in()` would silently drop
+ * from the middle of the list, so adopting it can only ADD codes back to a short
+ * read (or a short write's WHERE), never remove one.
+ *
+ * Returns the builder, so it composes exactly where `.in()` sat:
+ *
+ *   pgrestIn(sb.from('mfg_products').select('code'), 'code', codes)
+ *     .eq('company_id', id)
+ *
+ * WHY A HELPER, NOT THE INLINE TERNARY docs/bugs/0780 and 0815 each hand-wrote:
+ * those two fixed the reads their incidents named and left the rest. The sweep
+ * that closed the remaining ~50 by-code reads/writes (docs/bugs/0819) routes
+ * every one through here, so the rule has ONE home and the next by-code read
+ * cannot get the escape condition subtly wrong.
+ */
+export function pgrestIn<Q>(builder: Q, column: string, values: readonly InValue[]): Q {
+  const needsEscape = values.some((v) => typeof v === 'string' && NEEDS_ESCAPE.test(v));
+  const b = builder as {
+    in(column: string, values: readonly InValue[]): Q;
+    filter(column: string, operator: string, value: string): Q;
+  };
+  return needsEscape ? b.filter(column, 'in', pgrestInList(values)) : b.in(column, values);
+}

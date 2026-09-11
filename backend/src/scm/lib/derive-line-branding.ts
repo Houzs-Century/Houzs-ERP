@@ -16,6 +16,7 @@
 // handler; this fill just closes the common case at write time).
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { pgrestIn } from './pgrest-in-list';
 
 export type LineBrandingRow = {
   item_code?: string | null;
@@ -54,9 +55,13 @@ export async function deriveLineBrandingFromProduct(
     const codes = [...codeSet];
     for (let i = 0; i < codes.length; i += 300) {
       const chunk = codes.slice(i, i + 300);
-      let q = sb.from('mfg_products').select('code, branding').in('code', chunk);
+      let q = pgrestIn(sb.from('mfg_products').select('code, branding'), 'code', chunk);
       if (cid != null) q = q.eq('company_id', cid);
-      const { data } = await q;
+      const { data, error } = await q;
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error('[derive-line-branding] mfg_products branding read failed:', (error as { message?: unknown }).message ?? error);
+      }
       for (const p of (data ?? []) as Array<{ code: string; branding: string | null }>) {
         if (!isBlank(p.branding)) {
           brandByKey.set(`${cid ?? 0}:${p.code}`, p.branding!.trim());
@@ -116,7 +121,7 @@ export async function deriveHeaderBrandingFromLines(
   const brandByCode = new Map<string, string>();
   const catByCode = new Map<string, string>();
   for (let i = 0; i < codes.length; i += 300) {
-    let q = sb.from('mfg_products').select('code, branding, category').in('code', codes.slice(i, i + 300));
+    let q = pgrestIn(sb.from('mfg_products').select('code, branding, category'), 'code', codes.slice(i, i + 300));
     if (cid != null) q = q.eq('company_id', cid);
     const { data, error } = await q;
     /* An unreadable catalogue is NOT "this SKU has no brand". Swallowing it via

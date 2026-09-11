@@ -76,6 +76,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
 import { SO_ITEM_FINANCE_KEYS, stripAuditFinance } from '../lib/finance-keys';
 import type { Env, Variables } from '../env';
 import { skuCategoryResolver } from '../lib/sku-category';
+import { pgrestIn } from '../lib/pgrest-in-list';
 
 export const consignmentOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
 consignmentOrders.use('*', supabaseAuth);
@@ -354,10 +355,9 @@ consignmentOrders.get('/', async (c) => {
     const productBranding = new Map<string, string>();
     if (mattressCodesToLookup.size > 0) {
       const { data: prodRows } = await scopeToCompany(
-        sb
+        pgrestIn(sb
           .from('mfg_products')
-          .select('code, branding')
-          .in('code', [...mattressCodesToLookup]),
+          .select('code, branding'), 'code', [...mattressCodesToLookup]),
         c,
       );
       for (const p of (prodRows ?? []) as Array<{ code: string; branding: string | null }>) {

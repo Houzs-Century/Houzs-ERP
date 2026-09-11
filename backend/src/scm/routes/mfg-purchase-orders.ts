@@ -98,6 +98,7 @@ import { eager } from '../lib/concurrency';
 import { provenanceNote } from '../shared/transfer-vocabulary';
 import type { Env, Variables } from '../env';
 import { skuCategoryResolver, lineIdentityFields } from '../lib/sku-category';
+import { pgrestIn } from '../lib/pgrest-in-list';
 
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
    The supplier prices a sofa SET (a colour-matched bundle of modules) as a
@@ -1721,11 +1722,10 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
        item_code) pair does not match, so an unscoped read would have used the
        other company's line verbatim. Scoped, it falls through to the fabricated
        row, which carries qty and price from the CALLER. */
-    const { data: rows } = await scopeToCompany(supabase
+    const { data: rows } = await scopeToCompany(pgrestIn(supabase
       .from('mfg_sales_order_items')
       .select(SO_ITEM_SELECT)
-      .in('doc_no', docNos)
-      .in('item_code', codes), c);
+      .in('doc_no', docNos), 'item_code', codes), c);
     const byKey = new Map<string, SoItem>();
     for (const r of (rows ?? []) as unknown as SoItem[]) byKey.set(`${r.doc_no}|${r.item_code}`, { ...r, so: normSo(r) });
     for (const it of soItems) {
@@ -3791,11 +3791,10 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
 
   // Find which item_codes already exist on the PO so we don't double-insert.
   const codes = (wanted as Array<{ item_code: string }>).map((r) => r.item_code);
-  const { data: existing } = await sb
+  const { data: existing } = await pgrestIn(sb
     .from('purchase_order_items')
     .select('item_code')
-    .eq('purchase_order_id', poId)
-    .in('item_code', codes);
+    .eq('purchase_order_id', poId), 'item_code', codes);
   const existingSet = new Set((existing ?? []).map((r: { item_code: string }) => r.item_code));
 
   type SoItem = {
