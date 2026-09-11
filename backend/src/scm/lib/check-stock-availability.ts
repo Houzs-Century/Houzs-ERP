@@ -15,6 +15,7 @@
 // ----------------------------------------------------------------------------
 
 import { isServiceLine } from '../shared';
+import { isHardBoundLine, HARD_BOUND_COMPANY_ID } from './so-stock-allocation';
 
 export type StockLineRequest = {
   itemCode: string;
@@ -41,14 +42,42 @@ export type StockLineRequest = {
  * could have cleared.
  *
  * Zero-qty lines drop out for the same reason: nothing ships, nothing moves.
+ *
+ * AND A HARD-BOUND LINE WHOSE OWN PURCHASE ORDER HAS BEEN RECEIVED IS NOT A
+ * POOL QUESTION. `dedicatedlyCovered` carries those sales-order line ids, and
+ * they are dropped here for the same reason service lines are: the pool is the
+ * wrong thing to measure them against.
+ *
+ * Company 1 binds a bedframe / sofa / (SP) mattress line to the purchase order
+ * raised from it — readiness lights that line off its OWN
+ * `purchase_order_items.received_qty` and never consults `inventory_balances`
+ * (so-stock-allocation.ts step 6b). This guard did not know that, and measured
+ * every line against the shared bucket. The two halves then disagreed by
+ * design: the order read READY and its delivery order read "need 1, available
+ * 0" — because another order's delivery had drawn the physical units out of a
+ * bucket this line's receipt had put in. Owner 2026-09-11: 「哪一张 Sales Order
+ * 出货，它就会拿哪一张 PO，它们之间的 relationship 都是 hard binding，不是吗?」
+ * — yes, and now both halves say so.
+ *
+ * Worked case: HC-SO-013065 JAGER-(Q). Its own PO HC-PO-009766 received 1/1
+ * through HC-GR-005232-PO-009766 with the full variant, the line read READY,
+ * and the PG bucket for that exact variant stood at -1 because other shipments
+ * had drained it. The operator's only way out was Ship anyway, which pushes the
+ * bucket further negative and makes the next line worse — the loop this closes.
+ *
+ * `dedicatedlyCovered` is REQUIRED, never defaulted: a caller that says nothing
+ * would keep the old pooled answer with no compile error and no runtime signal
+ * (CLAUDE.md, BUG CLASS optional-param-noop). Pass an EMPTY set to mean "this
+ * caller has no binding to honour" — company 2 pools, and that is what it sends.
  */
 export function stockCheckableLines<
-  T extends { itemCode: string; itemGroup?: string | null; qty: number },
->(lines: T[]): T[] {
+  T extends { itemCode: string; itemGroup?: string | null; qty: number; soItemId?: string | null },
+>(lines: T[], dedicatedlyCovered: ReadonlySet<string>): T[] {
   return lines.filter(
     (l) =>
       Number(l.qty) > 0
-      && !isServiceLine({ itemGroup: l.itemGroup ?? null, itemCode: l.itemCode }),
+      && !isServiceLine({ itemGroup: l.itemGroup ?? null, itemCode: l.itemCode })
+      && !(l.soItemId != null && dedicatedlyCovered.has(l.soItemId)),
   );
 }
 
@@ -205,3 +234,113 @@ export const shortStockResponse = (
   shortages,
   ...(bindings.length > 0 ? { bindings } : {}),
 });
+
+/* WHICH LINES ALREADY HOLD THEIR OWN GOODS, so the shared pool is the wrong
+   question for them. Company 1 binds a bedframe / sofa / (SP) mattress line to
+   the purchase order raised from it; readiness lights that line off its own
+   `received_qty` and never reads `inventory_balances`. Returns the sales-order
+   line ids whose own purchase order has received at least what this delivery
+   ships, for `stockCheckableLines` to drop.
+
+   COMPANY 2 GETS AN EMPTY SET, and that is the whole of the company gate: 2990
+   pools, so every line of theirs stays a pool question exactly as before.
+
+   A cancelled purchase order proves nothing and is excluded. `received_qty` is
+   summed because one sales-order line can be split across several purchase
+   lines (allocations, mig 0235).
+
+   Best-effort by construction: a failed read yields an empty set, which returns
+   the guard to its previous, stricter behaviour rather than waving a line
+   through — the safe direction when we cannot tell. */
+export async function dedicatedlyCoveredSoItemIds(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm PostgREST client is untyped throughout this file
+  sb: any,
+  lines: Array<{ soItemId: string | null; itemCode: string; itemGroup?: string | null; qty: number }>,
+  companyId: number | undefined,
+): Promise<Set<string>> {
+  if (companyId !== HARD_BOUND_COMPANY_ID) return new Set();
+  const needBySoItem = new Map<string, number>();
+  for (const l of lines) {
+    if (!l.soItemId) continue;
+    if (!isHardBoundLine(l.itemGroup ?? null, l.itemCode)) continue;
+    needBySoItem.set(l.soItemId, (needBySoItem.get(l.soItemId) ?? 0) + Number(l.qty || 0));
+  }
+  if (needBySoItem.size === 0) return new Set();
+  const { data, error } = await sb
+    .from('purchase_order_items')
+    .select('so_item_id, received_qty, po:purchase_orders!inner(status)')
+    .in('so_item_id', [...needBySoItem.keys()]);
+  if (error) {
+    /* eslint-disable-next-line no-console */
+    console.warn('[do-stock] dedicated-cover read failed, falling back to the pooled check:', error.message);
+    return new Set();
+  }
+  const receivedBySoItem = new Map<string, number>();
+  for (const r of (data ?? []) as Array<{ so_item_id: string | null; received_qty: number | null; po: { status?: string } | Array<{ status?: string }> | null }>) {
+    if (!r.so_item_id) continue;
+    const po = Array.isArray(r.po) ? r.po[0] : r.po;
+    if ((po?.status ?? '') === 'CANCELLED') continue;
+    receivedBySoItem.set(r.so_item_id, (receivedBySoItem.get(r.so_item_id) ?? 0) + Number(r.received_qty ?? 0));
+  }
+  /* AND THE WAREHOUSE MUST ACTUALLY HOLD THE GOODS — the earmark says which
+     units are this line's, not that they exist. Measured before shipping this:
+     of 462 lines the receipt test alone would wave through, 432 have the stock
+     sitting in that warehouse under SOME variant key (the bucket is the wrong
+     place to look, which is the whole point) and **30 do not** — for those the
+     goods are genuinely not there and the old warning was RIGHT. Waving those
+     through would trade a false "no stock" for a silent over-ship, which is the
+     worse of the two errors. So the bucket-blind total is the second half of
+     the test: skip the variant bucket, never skip the warehouse. */
+  const covered = new Set<string>();
+  const candidates = [...needBySoItem].filter(([id, need]) => (receivedBySoItem.get(id) ?? 0) >= need);
+  if (candidates.length === 0) return covered;
+  const byLine = new Map(lines.filter((l) => l.soItemId).map((l) => [l.soItemId as string, l]));
+  const codes = [...new Set(candidates.map(([id]) => byLine.get(id)?.itemCode).filter((c): c is string => !!c))];
+  const { data: bal, error: balError } = await sb
+    .from('inventory_balances')
+    .select('item_code, warehouse_id, qty')
+    .in('item_code', codes);
+  if (balError) {
+    /* eslint-disable-next-line no-console */
+    console.warn('[do-stock] on-hand read failed, falling back to the pooled check:', balError.message);
+    return covered;
+  }
+  const onHand = new Map<string, number>();
+  for (const b of (bal ?? []) as Array<{ item_code: string; warehouse_id: string | null; qty: number }>) {
+    const k = `${b.warehouse_id ?? ''}::${b.item_code}`;
+    onHand.set(k, (onHand.get(k) ?? 0) + Number(b.qty ?? 0));
+  }
+  for (const [soItemId, need] of candidates) {
+    const l = byLine.get(soItemId);
+    if (!l) continue;
+    const wh = (l as { warehouseId?: string | null }).warehouseId ?? null;
+    if ((onHand.get(`${wh ?? ''}::${l.itemCode}`) ?? 0) >= need) covered.add(soItemId);
+  }
+  return covered;
+}
+
+/* THE TWO-STEP THE DO PRE-FLIGHT RUNS, AND THE ORDER IS THE POINT — which is
+   why it lives here rather than in the route. The cover test above asks whether
+   THIS line's warehouse holds the goods, and a line's warehouse is
+   `resolveDoLineWarehouses`'s answer, not a field on the request. So the caller
+   resolves warehouses FIRST and hands the map in. The first cut of this fix
+   computed cover before the warehouses were known, asked about warehouse
+   `null`, and covered nothing — it typechecked, it passed its tests, and it did
+   exactly nothing. Taking the map as a REQUIRED argument is what makes that
+   mistake unwritable. */
+export async function uncoveredStockCheckLines<
+  T extends { lineRef: string; soItemId: string | null; itemCode: string; itemGroup?: string | null; qty: number },
+>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm PostgREST client is untyped throughout this file
+  sb: any,
+  shippable: T[],
+  lineWh: Map<string, string | null>,
+  companyId: number | undefined,
+): Promise<T[]> {
+  const covered = await dedicatedlyCoveredSoItemIds(
+    sb,
+    shippable.map((l) => ({ ...l, warehouseId: lineWh.get(l.lineRef) ?? null })),
+    companyId,
+  );
+  return stockCheckableLines(shippable, covered);
+}

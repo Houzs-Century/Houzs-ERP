@@ -952,6 +952,63 @@ describe('the obvious ones', () => {
   });
 });
 
+/* ── The lock reads the match table too (docs/bugs/0818) ──────────────────────
+   May 2026, Hong Leong: the RM 55,000 deposit of 7 May is two entries — the
+   RM 100,000 receipt OR-2605-001 and the RM 45,000 rental HPV-2605-003 paid
+   out of it — matched together (docs/bugs/0803). The line names the first;
+   the second lives only in the match table. The month screen read both and
+   said June tallied; the lock read the line alone, carried the rental into
+   June as still outstanding, and refused: RM 45,000.00 apart. */
+describe('a month whose earlier entry is claimed only by the match table', () => {
+  const HLB_MAY = [
+    'HLB PRIMEBIZ CURRENT ACCOUNT - 23600600000,',
+    'Date,Transaction Description,Cheque No.,Ref. No.,Deposit,Withdrawal,Balance',
+    '="",="Balance from previous statement",="",="",="",="",="3000.00"',
+    '="07-05-2026",="Fund Transfer at DIO",="",="HOUZS VENTURE HOLDING SDN. BHD.",="55000.00",="",="58000.00"',
+  ].join('\n');
+  const HLB_EMPTY_JUNE = [
+    'HLB PRIMEBIZ CURRENT ACCOUNT - 23600600000,',
+    'Date,Transaction Description,Cheque No.,Ref. No.,Deposit,Withdrawal,Balance',
+    '="",="Balance from previous statement",="",="",="",="",="58000.00"',
+  ].join('\n');
+  const world = () => harness({
+    acc_bank_statement_config: [MBB_ACCOUNT, HLB_ACCOUNT],
+    v_gl_entries: [
+      { company_id: CO, account_code: '310-0020', je_no: 'JE-2602-0001', entry_date: '2026-02-07', source_type: 'PV', source_doc_no: 'HPV-2602-028', debit_sen: 300000, credit_sen: 0, party_name: null, notes: null },
+      { company_id: CO, account_code: '310-0020', je_no: 'JE-2605-0030', entry_date: '2026-05-05', source_type: 'PV', source_doc_no: 'HPV-2605-003', debit_sen: 0, credit_sen: 4500000, party_name: 'NAVINDER SINGH GILL', notes: null },
+      { company_id: CO, account_code: '310-0020', je_no: 'JE-2605-0013', entry_date: '2026-05-07', source_type: 'RCT', source_doc_no: 'OR-2605-001', debit_sen: 10000000, credit_sen: 0, party_name: 'HOUZS VENTURE HOLDING SDN BHD', notes: null },
+    ],
+  });
+  /* May's deposit matched to both entries, then an empty June filed. The
+     line names the first entry only — the shape production's May
+     line 5 holds — so the second is the match table's word alone. */
+  const mayMatchedThenJune = async (app: Hono, sb: ReturnType<typeof harness>['sb']) => {
+    const may = await (await post(app, '/bank/statements', { accountCode: '310-0020', fileName: 'acs_23600600000_31052026.csv', content: HLB_MAY, statementMonth: '2026-05' })).json() as any;
+    const detail = await (await app.request(`/bank/statements/${may.statementId}`)).json() as any;
+    const deposit = detail.lines.find((l: any) => Number(l.amount_sen) === 5500000);
+    expect((await post(app, '/bank/lines/match-group', { lineIds: [deposit.id], jeNos: ['JE-2605-0013', 'JE-2605-0030'] })).status).toBe(200);
+    const row = (sb.tables.acc_bank_statement_lines as Row[]).find((l) => l.id === deposit.id)!;
+    expect(row.state).toBe('POSTED');
+    expect(row.posted_je_no).toBe('JE-2605-0013');
+    expect((sb.tables.acc_bank_statement_matches as Row[]).map((m) => m.je_no).sort()).toEqual(['JE-2605-0013', 'JE-2605-0030']);
+    const june = await (await post(app, '/bank/statements', { accountCode: '310-0020', fileName: 'acs_23600600000_30062026.csv', content: HLB_EMPTY_JUNE, statementMonth: '2026-06' })).json() as any;
+    expect(june.ok).toBe(true);
+  };
+
+  test('the lock agrees with the screen: the rental is not carried, June tallies and closes', async () => {
+    const { app, sb } = world();
+    await mayMatchedThenJune(app, sb);
+    const shown = await (await app.request('/bank/months/310-0020/2026-06')).json() as any;
+    expect(shown.reconciliation.carried).toEqual({ count: 0, sen: 0 });
+    expect(shown.reconciliation.computedClosingSen).toBe(5800000);
+    expect(shown.reconciliation.tallies).toBe(true);
+
+    const res = await post(app, '/bank/months/310-0020/2026-06/lock', {});
+    expect(res.status).toBe(200);
+    expect(sb.tables.acc_bank_month_locks[0]).toMatchObject({ closing_statement_sen: 5800000, closing_ledger_sen: 5800000, difference_sen: 0 });
+  });
+});
+
 /* ── A transfer the bank itself reversed (docs/bugs/0817) ─────────────────────
    Hong Leong, 04/06/2026: 2990's RM 2,872.75 transfer to its own Alliance
    account failed and the bank put it back the same day — "CIB Instant

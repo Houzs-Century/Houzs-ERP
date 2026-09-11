@@ -658,14 +658,17 @@ const SoLineCardInner = ({
      which applies them to the SERVER results:
        • pool  = Model's allowed_options.fabrics (colour codes). Non-empty =
                  restrict (same as the server gate); empty/null = any active.
-       • inactive = fabric_trackings.is_active===false (Migration 0167) — hidden
-                 from NEW picks; a saved line's deactivated code still displays.
+       • inactive — NO LONGER FILTERED HERE. `GET /fabric-colours` drops a colour
+                 whose fabric_trackings CODE has no active row, so the desktop and
+                 the mobile sheet get one rule from one place. This filter used to
+                 live here and asked the question per ROW: 21 codes carry an
+                 active row beside a retired one for the same code, so the dead
+                 twin hid a fabric the floor sells - 21 active colours hidden,
+                 all 21 wrongly - while mobile, which never filtered, showed them.
+                 That split is how the owner found it. docs/bugs/0818.
      A saved line's fabric ALWAYS renders (the combobox shows the stored code),
      so the picker never blanks a previously-selected fabric. */
-  const inactiveFabricCodes = useMemo(
-    () => new Set(fabrics.filter((f) => f.is_active === false).map((f) => f.fabric_code)),
-    [fabrics],
-  );
+  const inactiveFabricCodes = useMemo(() => new Set<string>(), []);
 
   /* Picking a colour writes the SAME variant keys the POS handover payload
      sends (pos-handover-so.ts buildVariants): fabricCode + colourId satisfy

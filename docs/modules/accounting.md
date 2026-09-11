@@ -1468,6 +1468,19 @@ totals agree. Contracts: `backend/tests/bankRoutes.test.ts` (whose harness no
 longer carries the je_no unique — the route's refusal is what "only once"
 exercises), `bank-reconcile.test.ts`, `BankStatementTab.test.tsx`.
 
+**The lock reads what the screen reads (2026-09-11, docs/bugs/0818; owner,
+on June refusing to close at "RM 45,000.00 apart" under a panel that said ✓
+Tallies: 什么意思？).** `loadMonthForLock` (`accounting-bank-months.ts`) and
+`bankMonthDetail` are two readers of one month, and the lock's reader handed
+`claimedOutside` an EMPTY match index, so an earlier month's line matched to
+two entries (docs/bugs/0803 — May's RM 55,000 deposit = the RM 100,000
+receipt less the RM 45,000 rental; the line names only the first) claimed only
+the entry named on the line, and the rental was carried into June as still
+outstanding. Both readers now index the match rows through one helper,
+`matchesByLineOf`, and hand the same index to `claimedOutside`; the lock's
+figure is the panel's figure. Contract: `backend/tests/bankRoutes.test.ts` ("a
+month whose earlier entry is claimed only by the match table").
+
 **A transfer the bank itself reversed is its own contra (2026-09-11,
 docs/bugs/0817; owner, on Hong Leong's 04/06 pair: 这两笔是 contra 的，bank
 transaction fail).** A failed instant transfer and the bank's same-day
