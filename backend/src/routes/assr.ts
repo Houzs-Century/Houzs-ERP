@@ -1606,9 +1606,7 @@ app.get("/:id{[0-9]+}", requireServiceCaseAccess(), async (c) => {
   return c.json(detail);
 });
 
-// Access list (Nth-person visibility). Registrations stay here so the path + gate
-// stay visible to the route-capability generator; the bodies live in
-// routes/assrAccess.ts to keep this file under its size ceiling. See §6.
+// Access list (Nth-person visibility) — literals here (route generator sees the path + gate); bodies in routes/assrAccess.ts for the size ceiling. See §6.
 app.post("/:id{[0-9]+}/access", requirePermission("service_cases.write"), (c) => grantCaseAccess(c, caseInCallerScope));
 app.delete("/:id{[0-9]+}/access/:userId{[0-9]+}", requirePermission("service_cases.write"), (c) => revokeCaseAccess(c, caseInCallerScope));
 

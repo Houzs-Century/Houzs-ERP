@@ -1590,15 +1590,8 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                   <KV label="Created by" value={String(get(c, "createdByName", "created_by_name") ?? "—")} />
                 </Acc>
 
-                {/* Access — Nth-person visibility (own component so this file
-                    stays under its size ceiling; see CaseAccessAcc.tsx). */}
-                <CaseAccessAcc
-                  caseId={id}
-                  access={data?.access ?? []}
-                  busy={busy}
-                  runWrite={runWrite}
-                  assignableUsers={assignableUsers}
-                />
+                {/* Access — Nth-person visibility; own component (size ceiling), see CaseAccessAcc.tsx */}
+                <CaseAccessAcc caseId={id} access={data?.access ?? []} busy={busy} runWrite={runWrite} assignableUsers={assignableUsers} />
 
                 {/* Print copy + Portal link + Sales link. Links carry the
                     ASSR slug for readability; tokens are permanent. */}
