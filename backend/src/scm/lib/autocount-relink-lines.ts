@@ -75,6 +75,27 @@ export interface RelinkPlan {
   refused: string[];
   /** Rows that already carry a key — untouched, and counted so the report adds up. */
   alreadyKeyed: number;
+  /**
+   * ROWS THE ACCOUNT BOOK HAS NO LINE FOR AT ALL — the only refusal a caller may
+   * turn into an `IsNewLine` declaration (docs/bugs/0817).
+   *
+   * AcSyncService names the two ways out of a keyless line itself: *"Store the
+   * line's AutoCount DtlKey ... or mark the line IsNewLine, then retry."* The
+   * second is only honest when the line really is new, and this is the one
+   * refusal that proves it: the book carries NO line with that item code.
+   *
+   * NOT "no UNCLAIMED line", which is the sentence in `refused`. A book line
+   * another ERP row has already claimed still EXISTS, and declaring that row new
+   * would append a second copy of a line the book already holds — on a purchase
+   * order or a receipt, permanently, because this SDK gives DeleteDetail to
+   * SalesOrder alone. So the test here runs against every book line, claimed or
+   * not, and a row only reaches this list when the code appears nowhere.
+   *
+   * Deliberately excludes the folded-sofa refusal: that one asks about
+   * `<model>-1S`, and a build the book holds under its compartments' own codes
+   * would be absent under the folded one while being entirely present.
+   */
+  absent: Array<{ id: string; itemCode: string }>;
 }
 
 const norm = (s: string | null | undefined): string => String(s ?? '').trim().toUpperCase();
@@ -102,6 +123,10 @@ export function planLineRelink(input: {
   const refused: string[] = [];
   const taken = new Set<number>();
   const unmatched: ErpLineForRelink[] = [];
+  const absent: RelinkPlan['absent'] = [];
+  /* EVERY book line, claimed or not — see `absent` on RelinkPlan for why this
+     is not the same question `candidates` answers. */
+  const bookCodes = new Set(bookLines.map((b) => norm(b.ItemCode)).filter(Boolean));
 
   for (const row of keyless) {
     const want = norm(row.acItemCode);
@@ -172,8 +197,14 @@ export function planLineRelink(input: {
     if (!split || split.compartment.trim().toUpperCase() === '1S') return null;
     return split.model;
   };
-  const missing = (row: ErpLineForRelink) =>
+  const missing = (row: ErpLineForRelink) => {
     refused.push(`'${row.acItemCode}' — the account book has no unclaimed line with that item code`);
+    /* The stronger fact, recorded only when it holds: the code is on NO book
+       line at all, so there is nothing this row could be a second copy of. */
+    if (!bookCodes.has(norm(row.acItemCode))) {
+      absent.push({ id: row.id, itemCode: row.acItemCode ?? '' });
+    }
+  };
 
   const groups = new Map<string, ErpLineForRelink[]>();
   for (const row of unmatched) {
@@ -221,5 +252,5 @@ export function planLineRelink(input: {
     );
   }
 
-  return { assign, refused, alreadyKeyed };
+  return { assign, refused, alreadyKeyed, absent };
 }

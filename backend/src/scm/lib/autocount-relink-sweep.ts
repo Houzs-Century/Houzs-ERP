@@ -336,12 +336,51 @@ async function relinkOneHeldBackDoc(
   const keylessAfter = keylessBefore - progressed;
   const completesKeying = progressed > 0 && keylessAfter === 0;
 
+  /* ── THE LINE THE BOOK NEVER HAD (docs/bugs/0817) ───────────────────────────
+     Nine goods receipts stood at "1 of 2 matched" and could not move: the
+     mattress matched, and the free pillow that rides with it refused, because
+     the account book's copy of that receipt has no pillow line at all. The
+     conversion transferred the purchase order's lines and the pillow was never
+     one of them, so no amount of matching will ever key it — it is not a line
+     we failed to find, it is a line the book does not have.
+
+     ACSYNCSERVICE NAMES THIS EXIT ITSELF, in the refusal it raises:
+       "Store the line's AutoCount DtlKey (scm.*_items.linked_ac_dtlkey)
+        or mark the line IsNewLine, then retry."
+     `IsNewLine` is the sanctioned second way, and `enqueueEdit` has carried
+     `newLineIds` since docs/bugs/0588. This path simply never used it.
+
+     WHAT MAKES THE DECLARATION HONEST, and both halves are required:
+       · every OTHER line on the document is keyed — which is what this run just
+         finished doing, and is the same condition composeEdit already demands
+         before it will believe a declared-new line;
+       · the book carries NO line with that item code, claimed or not
+         (`plan.absent`, not the "no unclaimed line" sentence) — so there is
+         nothing on the document this row could be a second copy of.
+
+     WHY THE BAR IS THAT HIGH. This SDK gives DeleteDetail to SalesOrder alone.
+     A duplicate appended to a purchase order or a goods receipt is permanent,
+     and the whole keyless guard exists because of it. A declaration that is
+     merely probable would be worse than the refusal it replaces. */
+  const absentIds = plan.absent.map((a) => a.id);
+  const declaresNew = absentIds.length > 0
+    && progressed > 0
+    && keylessAfter === absentIds.length
+    && plan.refused.length === absentIds.length;
+
   let enqueued = false;
-  if (completesKeying && mode === 'apply') {
-    /* No newLineIds: every line is keyed now, so composeDownstreamState names
-       each book line by its key — a delta edit, never an append. enqueueEdit
-       self-gates on the write-back switch and returns false when it is off. */
-    enqueued = await enqueueEdit(sb, { companyId: t.companyId, docType: t.docType, docId: t.docId });
+  if ((completesKeying || declaresNew) && mode === 'apply') {
+    /* Without newLineIds every line is keyed, so composeDownstreamState names
+       each book line by its key — a delta edit, never an append. WITH them, the
+       named rows travel as IsNewLine and AutoCount appends exactly those.
+       enqueueEdit self-gates on the write-back switch and returns false when it
+       is off. */
+    enqueued = await enqueueEdit(sb, {
+      companyId: t.companyId,
+      docType: t.docType,
+      docId: t.docId,
+      ...(declaresNew ? { newLineIds: absentIds } : {}),
+    });
   }
 
   return {
@@ -352,6 +391,6 @@ async function relinkOneHeldBackDoc(
     wouldStamp: mode === 'plan' ? plan.assign.length : 0,
     refused: plan.refused,
     enqueued,
-    wouldEnqueue: completesKeying && mode === 'plan',
+    wouldEnqueue: (completesKeying || declaresNew) && mode === 'plan',
   };
 }

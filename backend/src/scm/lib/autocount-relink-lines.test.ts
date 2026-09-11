@@ -209,3 +209,71 @@ describe('a sofa build folds to one book line', () => {
     expect(plan.refused).toEqual([]);
   });
 });
+
+/* `absent` — THE ONLY REFUSAL A CALLER MAY TURN INTO A DECLARATION.
+ *
+ * AcSyncService offers two ways out of a keyless line: store its DtlKey, or
+ * mark it IsNewLine. The second is honest only when the line really is new, and
+ * this list is the proof: the book carries NO line with that item code, claimed
+ * or not. A book line another row has claimed still EXISTS, and declaring
+ * against it would append a second copy — permanently, because this SDK gives
+ * DeleteDetail to SalesOrder alone. docs/bugs/0817.
+ */
+describe('what the account book has no line for at all', () => {
+  test('a code on no book line is absent', () => {
+    const plan = planLineRelink({
+      bookLines: [book({ DtlKey: 5001, ItemCode: 'AK-ARMOUR MATT (SK)' })],
+      erpLines: [
+        erp({ id: 'matt', acItemCode: 'AK-ARMOUR MATT (SK)' }),
+        erp({ id: 'pillow', acItemCode: 'AK-SLEEP ESSENTIAL 7 HOLES' }),
+      ],
+    });
+    expect(plan.assign).toEqual([{ id: 'matt', dtlKey: 5001, itemCode: 'AK-ARMOUR MATT (SK)' }]);
+    expect(plan.absent).toEqual([{ id: 'pillow', itemCode: 'AK-SLEEP ESSENTIAL 7 HOLES' }]);
+  });
+
+  /* THE TRAP THIS LIST EXISTS TO AVOID. The book HAS the line; another ERP row
+     took it. "No unclaimed line" is true and "absent" is false, and declaring
+     this row new would duplicate a line the book already holds. */
+  test('a code whose only book line another row claimed is NOT absent', () => {
+    const plan = planLineRelink({
+      bookLines: [book({ DtlKey: 5001, ItemCode: 'HOK-SQUARE PILLOW' })],
+      erpLines: [
+        erp({ id: 'kept', acItemCode: 'HOK-SQUARE PILLOW', dtlKey: 5001 }),
+        erp({ id: 'second', acItemCode: 'HOK-SQUARE PILLOW' }),
+      ],
+    });
+    expect(plan.assign).toEqual([]);
+    expect(plan.refused[0]).toContain('no unclaimed line with that item code');
+    expect(plan.absent, 'a claimed line still EXISTS').toEqual([]);
+  });
+
+  /* A repeated code the book can no longer separate is a matching failure, not
+     a new line: the book holds those lines. */
+  test('an ambiguous repeat is refused but never absent', () => {
+    const plan = planLineRelink({
+      bookLines: [
+        book({ DtlKey: 6001, ItemCode: 'HOK-2008(A) (Q)', Desc2: null }),
+        book({ DtlKey: 6002, ItemCode: 'HOK-2008(A) (Q)', Desc2: null }),
+      ],
+      erpLines: [
+        erp({ id: 'a', acItemCode: 'HOK-2008(A) (Q)', desc2: null }),
+        erp({ id: 'b', acItemCode: 'HOK-2008(A) (Q)', desc2: null }),
+      ],
+    });
+    expect(plan.absent).toEqual([]);
+    expect(plan.refused.length).toBeGreaterThan(0);
+  });
+
+  /* The folded-sofa refusal asks about `<model>-1S`. A build the book holds
+     under its compartments' own codes is absent under the folded one while
+     being entirely present, so that refusal never reaches this list. */
+  test('a folded-sofa refusal is not absent', () => {
+    const plan = planLineRelink({
+      bookLines: [book({ DtlKey: 7001, ItemCode: '8060-1S' }), book({ DtlKey: 7002, ItemCode: '8060-1S' })],
+      erpLines: [erp({ id: 'c1', acItemCode: '8060-CNR' }), erp({ id: 'c2', acItemCode: '8060-1NA' })],
+    });
+    expect(plan.assign).toEqual([]);
+    expect(plan.absent).toEqual([]);
+  });
+});
