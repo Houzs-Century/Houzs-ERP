@@ -20,23 +20,24 @@
 import { Hono } from 'hono';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { companyDocPrefix, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
-import { docMonthTag, mintMonthlyDocNo } from '../lib/doc-no';
 import { dateOrNull } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
-import { postJournal, reverseJournal } from '../../acc/engine';
-import { creditNoteLines, debitNoteLines, supplierCreditNoteLines, resolveRoles, type NoteLine, type NoteParty } from '../../acc/rules';
+import { resolveRoles, type NoteParty } from '../../acc/rules';
 import { customerPartyCode } from '../../acc/payments';
+import {
+  CREDIT_NOTE_HEADER as HEADER, CREDIT_NOTE_LINE as LINE, NOTE_KINDS as KINDS, NOTE_KIND_WORD as KIND_WORD,
+  cancelCreditNote, insertCreditNote, postCreditNote, type NoteKind as Kind,
+} from '../../acc/credit-notes';
 import { requireLeafAccount } from './accounting-chart';
 import { supabaseAuth } from '../middleware/auth';
 
 type Row = Record<string, any>;
-type Kind = 'CN' | 'DN' | 'SCN';
-const KINDS = new Set<string>(['CN', 'DN', 'SCN']);
 const NO_PERM = (what: string) => ({ error: `You don't have permission to ${what}.` });
-const KIND_WORD: Record<Kind, string> = { CN: 'Credit note', DN: 'Debit note', SCN: 'Supplier credit note' };
-
-const HEADER = 'id, company_id, note_number, kind, party_type, party_code, party_name, supplier_id, so_doc_no, sales_invoice_id, ap_invoice_id, purchase_invoice_id, source_doc_no, note_date, total_sen, reason, notes, status, je_no, created_at, created_by, updated_at, posted_at, posted_by, cancelled_at, cancelled_by';
-const LINE = 'id, line_no, description, account_code, amount_sen';
+/* The document itself — number, header, lines, journal, contra — is
+   acc/credit-notes.ts (docs/bugs/0831): the deposit-invoice close-out raises
+   a note from inside the posting path with no request to hand, so the core
+   may not live here. This file keeps the caller's half: permissions, the
+   party lookup, the leaf check on a typed account, the draft edit. */
 
 type CleanLine = { description: string | null; code: string | null; amountSen: number };
 
@@ -171,38 +172,25 @@ export const createCreditNoteHandler = async (c: any): Promise<Response> => {
     if (leafErr) return leafErr;
   }
 
-  const noteNumber = await mintMonthlyDocNo(sb, 'acc_credit_notes', 'note_number', `${companyDocPrefix(c)}${kind}-${docMonthTag(noteDate)}`);
-  const { data: note, error: insErr } = await sb.from('acc_credit_notes').insert({
-    company_id: co.companyId,
-    note_number: noteNumber,
-    kind,
-    party_type: kind === 'SCN' ? 'SUPPLIER' : 'CUSTOMER',
-    party_code: party.code,
-    party_name: party.name,
-    supplier_id: supplierId,
-    so_doc_no: soDocNo,
-    sales_invoice_id: salesInvoiceId,
-    ap_invoice_id: String(body.apInvoiceId ?? '').trim() || null,
-    purchase_invoice_id: String(body.purchaseInvoiceId ?? '').trim() || null,
-    source_doc_no: String(body.sourceDocNo ?? '').trim() || null,
-    note_date: noteDate,
-    total_sen: built.total,
+  const raised = await insertCreditNote(sb, {
+    companyId: co.companyId,
+    docPrefix: companyDocPrefix(c),
+    kind: kind as Kind,
+    party,
+    supplierId,
+    soDocNo,
+    salesInvoiceId,
+    apInvoiceId: String(body.apInvoiceId ?? '').trim() || null,
+    purchaseInvoiceId: String(body.purchaseInvoiceId ?? '').trim() || null,
+    sourceDocNo: String(body.sourceDocNo ?? '').trim() || null,
+    noteDate,
     reason: String(body.reason ?? '').trim() || null,
     notes: String(body.notes ?? '').trim() || null,
-    status: 'DRAFT',
-    je_no: null,
-    created_by: who(c),
-  }).select(HEADER).single();
-  if (insErr || !note) return c.json({ error: 'save_failed', reason: insErr?.message ?? 'insert returned nothing' }, 500);
-
-  const { error: lineErr } = await sb.from('acc_credit_note_lines').insert(lines.map((l, i) => ({
-    company_id: co.companyId, note_id: (note as Row).id, line_no: i + 1, description: l.description, account_code: l.code, amount_sen: l.amountSen,
-  })));
-  if (lineErr) {
-    await sb.from('acc_credit_notes').delete().eq('company_id', co.companyId).eq('id', (note as Row).id);
-    return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
-  }
-  return c.json({ ok: true, note }, 201);
+    lines: lines.map((l) => ({ description: l.description, code: l.code, amountSen: l.amountSen })),
+    createdBy: who(c),
+  });
+  if (!raised.ok) return c.json({ error: 'save_failed', reason: raised.reason }, 500);
+  return c.json({ ok: true, note: raised.note }, 201);
 };
 
 /* A DRAFT changes; a posted note is cancelled and raised again — the ledger
@@ -258,36 +246,13 @@ export const postCreditNoteHandler = async (c: any): Promise<Response> => {
   if ('resp' in found) return found.resp;
   const note = found.note;
   if (note.status === 'CANCELLED') return c.json({ error: 'cancelled', message: `${note.note_number} is cancelled.` }, 409);
-  const sb = c.get('supabase');
-  const { data: lineRows, error: lErr } = await scopeToCompany(sb.from('acc_credit_note_lines').select(LINE).eq('note_id', note.id), c).order('line_no');
-  if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
-  const lines: NoteLine[] = ((Array.isArray(lineRows) ? lineRows : []) as Array<{ description: string | null; account_code: string; amount_sen: number }>)
-    .map((l) => ({ accountCode: l.account_code, amountSen: Number(l.amount_sen), description: l.description }));
-  if (lines.length === 0) return c.json({ error: 'lines_required', message: 'This note has no lines to post.' }, 400);
-
-  const kind = String(note.kind) as Kind;
-  const party: NoteParty = { code: note.party_code ?? null, name: note.party_name ?? null };
-  const roles = await resolveRoles(sb, co.companyId);
-  const ruleLines = kind === 'CN' ? creditNoteLines(roles, { note_number: String(note.note_number) }, party, lines)
-    : kind === 'DN' ? debitNoteLines(roles, { note_number: String(note.note_number) }, party, lines)
-    : supplierCreditNoteLines(roles, { note_number: String(note.note_number) }, party, lines);
-  const je = await postJournal(sb, {
-    companyId: co.companyId,
-    entryDate: String(note.note_date),
-    sourceType: kind,
-    sourceDocNo: String(note.note_number),
-    narration: `${KIND_WORD[kind]} ${note.note_number} — ${party.name ?? party.code ?? 'party'}${note.reason ? ` (${note.reason})` : ''}`,
-    lines: ruleLines,
-  });
-  if (!je.ok) return c.json({ error: 'post_failed', status: je.status, reason: (je as { reason?: string }).reason ?? je.status }, 500);
-
-  if (note.status === 'DRAFT') {
-    const { error: upErr } = await sb.from('acc_credit_notes').update({
-      status: 'POSTED', je_no: je.jeNo, posted_at: new Date().toISOString(), posted_by: who(c), updated_at: new Date().toISOString(),
-    }).eq('company_id', co.companyId).eq('id', note.id);
-    if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+  const posted = await postCreditNote(c.get('supabase'), { companyId: co.companyId, note, actor: who(c) });
+  if (!posted.ok) {
+    if (posted.status === 'lines_required') return c.json({ error: 'lines_required', message: posted.reason }, 400);
+    if (posted.status === 'load_failed' || posted.status === 'save_failed') return c.json({ error: posted.status, reason: posted.reason }, 500);
+    return c.json({ error: 'post_failed', status: posted.status, reason: posted.reason }, 500);
   }
-  return c.json({ ok: true, jeNo: je.jeNo, status: je.status });
+  return c.json({ ok: true, jeNo: posted.jeNo, status: posted.status });
 };
 
 export const cancelCreditNoteHandler = async (c: any): Promise<Response> => {
@@ -298,21 +263,11 @@ export const cancelCreditNoteHandler = async (c: any): Promise<Response> => {
   if ('resp' in found) return found.resp;
   const note = found.note;
   if (note.status === 'CANCELLED') return c.json({ ok: true, already: true });
-  const sb = c.get('supabase');
-  if (note.status === 'POSTED') {
-    const rev = await reverseJournal(sb, {
-      sourceType: String(note.kind),
-      sourceDocNo: String(note.note_number),
-      companyId: co.companyId,
-      narration: (orig) => `Reversal of ${orig.je_no} — ${KIND_WORD[String(note.kind) as Kind].toLowerCase()} ${note.note_number} cancelled`,
-      entryDate: todayMyt(),
-    });
-    if (!rev.ok) return c.json({ error: 'reverse_failed', status: rev.status, reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
+  const cancelled = await cancelCreditNote(c.get('supabase'), { companyId: co.companyId, note, actor: who(c) });
+  if (!cancelled.ok) {
+    if (cancelled.status === 'save_failed') return c.json({ error: 'save_failed', reason: cancelled.reason }, 500);
+    return c.json({ error: 'reverse_failed', status: cancelled.status, reason: cancelled.reason }, 500);
   }
-  const { error: upErr } = await sb.from('acc_credit_notes').update({
-    status: 'CANCELLED', cancelled_at: new Date().toISOString(), cancelled_by: who(c), updated_at: new Date().toISOString(),
-  }).eq('company_id', co.companyId).eq('id', note.id);
-  if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
   return c.json({ ok: true });
 };
 
