@@ -73,7 +73,9 @@ try {
   const rows = await sql`
     SELECT gi.id, gi.item_code, g.grn_number, g.migrated_no_stock AS migrated,
            coalesce(gi.item_group, '') AS own_group,
-           (gi.variants IS NULL OR gi.variants = '{}'::jsonb) AS own_spec_blank,
+           (p.variants IS NOT NULL AND p.variants <> '{}'::jsonb
+             AND (p.variants || jsonb_strip_nulls(coalesce(gi.variants, '{}'::jsonb)))
+                 IS DISTINCT FROM gi.variants) AS spec_would_change,
            coalesce(p.item_group, '') AS parent_group,
            (p.variants IS NOT NULL AND p.variants <> '{}'::jsonb) AS parent_has,
            (SELECT count(*)::int FROM scm.inventory_movements m
@@ -83,7 +85,12 @@ try {
       JOIN scm.purchase_order_items p ON p.id = gi.purchase_order_item_id
      WHERE g.company_id = ${CO}
        AND (
-         (gi.variants IS NULL OR gi.variants = '{}'::jsonb)
+         /* an AXIS the purchase line states and this receipt does not — which
+            includes the whole-blank case and the partial one (HC-GR-004478 held
+            only a leg height against a purchase line stating ten axes) */
+         (p.variants IS NOT NULL AND p.variants <> '{}'::jsonb
+           AND (p.variants || jsonb_strip_nulls(coalesce(gi.variants, '{}'::jsonb)))
+               IS DISTINCT FROM gi.variants)
          OR coalesce(gi.item_group, '') = ''
        )
      ORDER BY g.grn_number, gi.id`;
@@ -95,7 +102,7 @@ try {
      groups have no soft attributes (`computeVariantKey` gives them ''). Copying
      the category alone is still worth it: a line with no group is invisible to
      every per-category audit. */
-  const hasSomething = (r) => (r.parent_has && r.own_spec_blank === true) || (!r.own_group && !!r.parent_group);
+  const hasSomething = (r) => (r.parent_has && r.spec_would_change === true) || (!r.own_group && !!r.parent_group);
   const writable = rows.filter((r) => hasSomething(r) && r.migrated === true && Number(r.movements) === 0);
   const held = rows.filter((r) => !writable.includes(r));
 
@@ -128,9 +135,17 @@ try {
       const res = await sql`
         UPDATE scm.grn_items gi
            SET variants = CASE
-                            WHEN (gi.variants IS NULL OR gi.variants = '{}'::jsonb)
-                             AND p.variants IS NOT NULL AND p.variants <> '{}'::jsonb
-                            THEN p.variants ELSE gi.variants END,
+                            WHEN p.variants IS NOT NULL AND p.variants <> '{}'::jsonb
+                            /* The parent as the BASE, this line's own stated values
+                               on top: a receipt that states only a leg height keeps
+                               that leg and gains the gap, divan, colour and total
+                               its purchase line states. jsonb_strip_nulls first, so
+                               an explicit null on the child cannot blank a value the
+                               parent states. Measured 2026-09-11: HC-GR-004478's two
+                               REGAL (A)-(Q) lines held {"legHeight":"1\""} against a
+                               purchase line stating ten axes. */
+                            THEN p.variants || jsonb_strip_nulls(coalesce(gi.variants, '{}'::jsonb))
+                            ELSE gi.variants END,
                item_group = CASE
                             WHEN coalesce(gi.item_group, '') = '' THEN p.item_group
                             ELSE gi.item_group END
@@ -155,8 +170,11 @@ try {
               JOIN scm.purchase_order_items p ON p.id = gi.purchase_order_item_id
              WHERE gi.id = ANY(${ids})
                AND (
+                 /* what the write promises: every axis the purchase line states is
+                    now on the receipt, and this line's own stated values survived. */
                  (p.variants IS NOT NULL AND p.variants <> '{}'::jsonb
-                   AND (gi.variants IS DISTINCT FROM p.variants OR jsonb_typeof(gi.variants) <> 'object'))
+                   AND (jsonb_typeof(gi.variants) <> 'object'
+                        OR NOT (gi.variants @> jsonb_strip_nulls(p.variants))))
                  OR (coalesce(p.item_group, '') <> '' AND coalesce(gi.item_group, '') = '')
                )`
         : [];
