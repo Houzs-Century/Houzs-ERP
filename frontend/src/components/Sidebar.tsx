@@ -724,6 +724,8 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/accounting?tab=corrections", label: "Corrections", icon: History, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
           // Deposit and balance collected per salesman (owner 2026-09-12; docs/bugs/0825).
           { to: "/scm/accounting?tab=collection", label: "Collection", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          // What each acquirer charged against the gross, per month (owner 2026-09-12; docs/bugs/0826).
+          { to: "/scm/accounting?tab=charges", label: "Merchant charges", icon: CreditCard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
           { to: "/reports/fair-report", label: "Sales Report", icon: BarChart3, requireFairReport: true, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance", "scm.finance.accounting", "scm.finance.outstanding", "projects.finances"] },
         ],
       },
