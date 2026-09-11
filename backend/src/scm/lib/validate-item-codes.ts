@@ -23,6 +23,8 @@
 // stay editable).
 // ----------------------------------------------------------------------------
 
+import { pgrestInList } from './pgrest-in-list';
+
 export type ValidateResult =
   | { ok: true }
   | { ok: false; unknown: string[]; inactive: string[] };
@@ -57,9 +59,24 @@ export async function validateItemCodes(
 ): Promise<ValidateResult> {
   const unique = [...new Set(codes.map((c) => (c ?? '').trim()).filter(Boolean))];
   if (unique.length === 0) return { ok: true };
-  let q = sb.from('mfg_products').select('code, status').in('code', unique);
+  /* postgrest-js `.in()` quotes reserved chars but never ESCAPES, so a catalogued
+     code with a `"` (inch mark) or `\` closes the in-list early and every code
+     after it reads as absent — which this gate would then report as an unknown
+     item code, and which also broke the amendment-submit mix check
+     (docs/bugs/0780). Escape via pgrestInList — byte-identical to `.in()` for a
+     clean list — ONLY when a code actually carries one of those two characters. */
+  let q = sb.from('mfg_products').select('code, status');
+  q = unique.some((code) => /["\\]/.test(code))
+    ? q.filter('code', 'in', pgrestInList(unique))
+    : q.in('code', unique);
   if (companyId != null) q = q.eq('company_id', companyId);
-  const { data } = await q;
+  const { data, error } = await q;
+  /* A failed read must not read as "every code is unknown": log it so a future
+     break is loud, not a silent 409 that sends the requester chasing a code that
+     is really in the catalogue. */
+  if (error) {
+    console.error(`[validate-item-codes] mfg_products read failed (company=${companyId ?? 'unscoped'}):`, (error as { message?: unknown }).message ?? error);
+  }
   const rows = ((data ?? []) as Array<{ code: string; status?: string | null }>);
   const found = new Set(rows.map((r) => r.code));
   const unknown = unique.filter((c) => !found.has(c));
