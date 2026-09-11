@@ -871,22 +871,6 @@
   },
   {
    "docs": [
-    "HC-SO-013503"
-   ],
-   "model": "8030",
-   "pieces": [
-    "1A(LHF)",
-    "1NA",
-    "1A(RHF)"
-   ],
-   "seat": "35",
-   "lineKeys": [
-    "926872"
-   ],
-   "why": "CONFIDENT. Photo SO-013503__926872_1.jpg, enlarged 4x: the model 8030 is written at the top, TV marked above the run, and \"col: cove-16\" below it - which matches the ACCOUNT BOOK's own \"Col :COVE 16\" and is what confirms this photograph belongs to this line. Three SEPARATE outlines, each marked 35. The leftmost is drawn about two and a half times as tall as the other two, running UP out of the row - perpendicular, which is a chaise - and is hatched inside its LEFT edge. The middle is plain. The rightmost is hatched inside its RIGHT edge. The book states no build for this line, only \"fully cover replace the leg  Nilon bottom  Col :COVE 16  after push back fully cover\". | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」."
-  },
-  {
-   "docs": [
     "HC-SO-013497"
    ],
    "model": "9058",

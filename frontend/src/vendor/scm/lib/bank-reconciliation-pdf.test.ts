@@ -28,6 +28,8 @@ const RECON: ReconInput = {
   closingStatementSen: 1090000, closingLedgerSen: 1090000, differenceSen: 0,
   bankNotInBooks: { count: 0, sen: 0 },
   booksNotOnBank: { count: 0, sen: 0 },
+  outstandingPayments: { count: 0, sen: 0 }, outstandingReceipts: { count: 0, sen: 0 },
+  computedClosingSen: 1090000, unexplainedSen: 0, tallies: true,
   consistent: true, inconsistency: null, reconciled: true,
 };
 
@@ -56,11 +58,15 @@ const input = (over: Partial<ReconReportInput> = {}): ReconReportInput => ({
 const stepFor = (r: ReturnType<typeof reconciliationStatement>, label: string) =>
   r.steps.find((s) => s.label.startsWith(label));
 
+/* The owner's form (2026-09-11, docs/bugs/0806): balance per the books,
+   plus the payments the bank has not paid, less the receipts it has not
+   credited, plus or minus what is on the bank and not in the books, equals
+   the balance per the bank statement — and the report says whether it does. */
 describe('a month that reconciles', () => {
-  test('walks from the bank balance to the books and arrives', () => {
+  test('walks from the books to the bank statement and arrives', () => {
     const r = reconciliationStatement(input());
-    expect(stepFor(r, 'Balance per bank statement')!.sen).toBe(1090000);
     expect(stepFor(r, 'Balance per the books')!.sen).toBe(1090000);
+    expect(stepFor(r, 'Balance per bank statement')!.sen).toBe(1090000);
     expect(r.warnings).toEqual([]);
     expect(r.filable).toBe(true);
   });
@@ -70,7 +76,7 @@ describe('a month that reconciles', () => {
   test('the steps sum to the final figure', () => {
     const r = reconciliationStatement(input());
     const walk = r.steps.filter((s) => s.rule !== 'grand').reduce((t, s) => t + s.sen, 0);
-    expect(walk).toBe(stepFor(r, 'Balance per the books')!.sen);
+    expect(walk).toBe(stepFor(r, 'Balance per bank statement')!.sen);
   });
 
   test('names the file behind each end of the walk', () => {
@@ -80,42 +86,40 @@ describe('a month that reconciles', () => {
   });
 });
 
-describe('a month with items on both sides', () => {
-  /* The ordinary open reconciliation: RM 600 on the bank nobody has posted,
-     RM 200 posted that the bank has not shown. */
-  const OPEN: ReconInput = {
+describe('a month with outstanding items', () => {
+  /* April on Hong Leong: books −2,163.31, one payment of 3,101.68 the bank
+     has not paid, RM 600 on the bank nobody has decided, bank 1,538.37. */
+  const APRIL: ReconInput = {
     ...RECON,
-    closingStatementSen: 1090000,
-    closingLedgerSen: 1090000 - 60000 + 20000,
-    differenceSen: 40000,
+    closingStatementSen: 153837, closingLedgerSen: -216331, differenceSen: 370168,
     bankNotInBooks: { count: 1, sen: 60000 },
-    booksNotOnBank: { count: 1, sen: 20000 },
-    reconciled: false,
+    booksNotOnBank: { count: 1, sen: -310168 },
+    outstandingPayments: { count: 1, sen: -310168 }, outstandingReceipts: { count: 0, sen: 0 },
+    computedClosingSen: 153837, unexplainedSen: 0, tallies: true, reconciled: false,
   };
 
-  test('deducts what the bank has and adds what the books have', () => {
-    const r = reconciliationStatement(input({ reconciliation: OPEN }));
-    expect(stepFor(r, 'Less: on the bank')!.sen).toBe(-60000);
-    expect(stepFor(r, 'Add: in the books')!.sen).toBe(20000);
-    expect(stepFor(r, 'Balance per the books')!.sen).toBe(OPEN.closingLedgerSen);
+  test('adds the payments the bank has not paid, and what is on the bank and not in the books', () => {
+    const r = reconciliationStatement(input({ reconciliation: APRIL }));
+    expect(stepFor(r, 'Balance per the books')!.sen).toBe(-216331);
+    expect(stepFor(r, 'Add: payments in the books the bank has not paid yet')!.sen).toBe(310168);
+    expect(stepFor(r, 'Add: payments in the books the bank has not paid yet')!.count).toBe(1);
+    expect(stepFor(r, 'Less: receipts in the books the bank has not credited yet')).toBeUndefined();
+    expect(stepFor(r, 'On the bank, not in the books')!.sen).toBe(60000);
+    expect(stepFor(r, 'Balance per bank statement')!.sen).toBe(153837);
+    const walk = r.steps.filter((s) => s.rule !== 'grand').reduce((t, s) => t + s.sen, 0);
+    expect(walk).toBe(153837);
     expect(r.filable).toBe(true);
   });
 
-  test('says how many items stand behind each step', () => {
-    const r = reconciliationStatement(input({ reconciliation: OPEN }));
-    expect(stepFor(r, 'Less: on the bank')!.count).toBe(1);
-    expect(stepFor(r, 'Add: in the books')!.count).toBe(1);
-  });
-
-  test('a difference brought forward gets its own step, and only when there is one', () => {
-    const noBf = reconciliationStatement(input());
-    expect(stepFor(noBf, 'Less: difference brought forward')).toBeUndefined();
-
-    const withBf = reconciliationStatement(input({
-      reconciliation: { ...RECON, broughtForwardSen: 30000, closingLedgerSen: 1090000 - 30000 },
+  test('an unexplained remainder gets its own step, and only when there is one', () => {
+    expect(stepFor(reconciliationStatement(input({ reconciliation: APRIL })), 'Unexplained')).toBeUndefined();
+    const off = reconciliationStatement(input({
+      reconciliation: { ...APRIL, closingStatementSen: 153837 + 777, differenceSen: 370945, unexplainedSen: 777, tallies: false },
     }));
-    expect(stepFor(withBf, 'Less: difference brought forward')!.sen).toBe(-30000);
-    expect(stepFor(withBf, 'Balance per the books')!.sen).toBe(1060000);
+    expect(stepFor(off, 'Unexplained')!.sen).toBe(777);
+    expect(stepFor(off, 'Balance per bank statement')!.sen).toBe(153837 + 777);
+    expect(off.filable).toBe(false);
+    expect(off.warnings.join(' ')).toContain('does not tally');
   });
 });
 
@@ -129,7 +133,7 @@ describe('a walk that does not arrive', () => {
     }));
     expect(r.filable).toBe(false);
     expect(r.warnings.join(' ')).toContain('walks to');
-    expect(r.warnings.join(' ')).toContain('general ledger says');
+    expect(r.warnings.join(' ')).toContain('bank statement says');
   });
 });
 
@@ -222,7 +226,7 @@ describe('the sections behind the figures', () => {
         sourceDocNo: 'HPV-2609-006', debitSen: 0, creditSen: 45000,
       }],
     }));
-    const books = r.sections.find((s) => s.title.startsWith('In the books, not on the bank'))!;
+    const books = r.sections.find((s) => s.title.startsWith('Outstanding items'))!;
     expect(books.body[0]).toContain('JE-2609-0011');
     expect(books.body[0]?.[2]).toBe('PV · HPV-2609-006');
     /* Money OUT of the account reads as a bracket, like every other statement. */
@@ -230,20 +234,18 @@ describe('the sections behind the figures', () => {
   });
 
   /* Owner, 2026-09-11: pay to who, and the earlier months' entries carried. */
-  test('names who was paid, and lists entries carried from earlier months under their own heading', () => {
+  test('names who was paid, and lists earlier months\' entries in the same table', () => {
     const r = reconciliationStatement(input({
       unmatchedEntries: [
         { jeNo: 'JE-2609-0011', entryDate: '2026-09-28', sourceType: 'PV', sourceDocNo: 'HPV-2609-006', debitSen: 0, creditSen: 45000, partyName: 'TENAGA NASIONAL BERHAD', carried: false },
         { jeNo: 'JE-2608-0031', entryDate: '2026-08-28', sourceType: 'PV', sourceDocNo: 'HPV-2608-031', debitSen: 0, creditSen: 12000, partyName: 'AIR SELANGOR', carried: true },
       ],
     }));
-    const books = r.sections.find((s) => s.title.startsWith('In the books, not on the bank'))!;
+    const books = r.sections.find((s) => s.title.startsWith('Outstanding items'))!;
     expect(books.head).toEqual(['Entry', 'Date', 'Source', 'Who', 'Amount']);
-    expect(books.body).toHaveLength(1);
-    expect(books.body[0]?.[3]).toBe('TENAGA NASIONAL BERHAD');
-    const carried = r.sections.find((s) => s.title.startsWith('From earlier months, still not on any statement'))!;
-    expect(carried.body).toHaveLength(1);
-    expect(carried.body[0]?.[0]).toBe('JE-2608-0031');
-    expect(carried.body[0]?.[3]).toBe('AIR SELANGOR');
+    /* One table, this month's and the earlier month's alike. */
+    expect(books.body).toHaveLength(2);
+    expect(books.body.map((b) => b[3])).toEqual(['TENAGA NASIONAL BERHAD', 'AIR SELANGOR']);
+    expect(r.sections.find((s) => s.title.startsWith('From earlier months'))).toBeUndefined();
   });
 });

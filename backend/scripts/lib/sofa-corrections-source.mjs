@@ -74,6 +74,12 @@ export const CORRECTION_FILES = [
      second file matching it makes loadCorrections(DATA, "2026-09") return two
      rounds, which its own test pins at one. */
   "sofa-compartment-corrections-tv-photo-round.json",
+  /* Owner-directed fixes for PROCEEDED orders that are NOT in the supplier
+     export (a snapshot that omits some orders, e.g. new HC-PO-2609-0xx ones).
+     The supplier round could not reach them, so they kept an earlier mis-read;
+     the target is the owner's own drawing + his supplier record. Name carries
+     no date: `FILE=` is a substring filter, pinned to one round by its test. */
+  "sofa-compartment-corrections-owner-not-in-file.json",
 ];
 
 /**

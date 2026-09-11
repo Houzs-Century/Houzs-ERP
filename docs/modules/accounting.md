@@ -1273,14 +1273,16 @@ Until now every bank movement could be booked, ignored or UNDONE at any time,
 for ever — right while a month is being worked, wrong the moment it has been
 reconciled and its statement printed, because a reconciliation somebody filed is
 a claim and a month that can still move behind the paper makes the paper a lie.
-`backend/src/acc/bank-lock.ts` holds both rules. **May it close:** never while
-movements are still undecided (an unfinished month is not a month with a problem,
-so a reason must NOT buy a way past it) and never when NO STATEMENT is filed for
-it (a month with a statement and no movement is the ordinary quiet month — see
-below); freely when it reconciles and is covered end to end; WITH A REQUIRED REASON when the bank and
-books still differ, a day was never uploaded, no file printed a closing balance,
-or the figures failed the identity check — businesses do close over known
-differences, and what must not happen is closing silently. **What a closed month
+`backend/src/acc/bank-lock.ts` holds both rules. **May it close (since
+docs/bugs/0806):** only when a statement is filed for it, nothing is left to
+decide, its figures account for themselves, it is covered end to end, a file
+printed a closing balance, and it TALLIES — the books allowing for the
+outstanding items reach the bank's closing. Otherwise it cannot close at all:
+`not_tallied` names both figures and the gap. The reason escape that used to
+close a month over a known difference is gone (owner 2026-09-11: 当 closing bank
+statement amount 无法 tally 就无法 lock; 应该不会有银行错吧，毕竟怎样都要 tally
+bank statement) — `lock_note` is written null and stays for the locks closed
+with one. **What a closed month
 refuses:** booking, matching, ignoring, undoing, and uploading a statement whose
 movements land inside it — checked by the movement's OWN date (bank-month rule 1)
 so a straddling file cannot smuggle a write into a closed September, and a lock
@@ -1324,6 +1326,38 @@ statement — filed for 2026-03 at RM 3,000.00 throughout" (`BankStatementTab.ts
 Contracts: `bank-parse.test.ts`, `bank-lock.test.ts`, `bank-month.test.ts`,
 `backend/tests/bankRoutes.test.ts` (which now also mounts the month list and
 the lock — their first route contract), `BankStatementTab.test.tsx`.
+
+**The reconciliation in the owner's form (2026-09-11, docs/bugs/0806).** April
+fully matched read "The bank and the books differ by RM 3,101.68" — the one
+payment the bank had not paid yet — and "brought forward — explained by 1
+entry from earlier months" over six April entries and a hard-coded count. The
+owner: 我觉得设计应该是这样: Closing — the books (−)/+ unreconciled items =
+Closing bank statement; 每当我一 match, closing 就一直变; 当 closing bank
+statement amount 无法 tally 就无法 lock. `reconcileBankStatement` now carries
+that walk: `outstandingPayments` / `outstandingReceipts` / `outstandingJeNos`
+(every unclaimed entry, this period's and earlier ones' alike, by sign — 全部就
+是 outstanding items), `computedClosingSen` = books − outstanding + what is on
+the bank and not in the books, `unexplainedSen` = the printed closing minus
+that, `tallies`, and `reconciled` = tallies with nothing left to decide; an
+entry the bank has not shown yet is what a reconciliation LISTS, not a
+difference. `ReconciliationPanel` (`BankStatementTab.tsx`, shared with the
+month view) is the walk as a table — Closing per the books / Add: payments the
+bank has not paid yet (N items) / Less: receipts not yet credited / On the
+bank, not in the books (N still to decide) / Closing per the books after
+outstanding items / Closing per bank statement — ending on ✓ Tallies or ✗ Off
+by, an Unexplained row only when there is one; the "brought forward" line and
+the "made up of" list are gone, and the two books tables are ONE ("Outstanding
+items — in the books, not yet on the bank", each with date and who). The
+printed statement (`bank-reconciliation-pdf.ts`) walks the same way from the
+books to the bank and refuses to be filed when it does not tally. The Close
+button (`BankMonthTab.tsx`) is off until the month can close and says which
+condition is missing — no reason box. An old file uploaded before the month
+box covered a month (April: 30/4 → 30/4) is re-filed as the month's statement
+in place by `POST /accounting/bank/statements/:id/period { month }`
+(`bankStatementPeriod`; a movement outside the month or a closed month
+refuses) — the header offers "This file is April 2026's statement". Contracts:
+`bank-reconcile.test.ts`, `bank-lock.test.ts` (rewritten), `bankRoutes.test.ts`,
+`BankStatementTab.test.tsx`, `BankMonthTab.test.tsx`, `bank-reconciliation-pdf.test.ts`.
 
 **Undo lets go; a dated statement covers the month it is named for; the
 books' list names who and carries earlier months (2026-09-11, docs/bugs/0802).**

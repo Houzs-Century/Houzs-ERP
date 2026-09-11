@@ -33,6 +33,10 @@ const input = (over: Partial<ReconcileInput> = {}): ReconcileInput => ({
   periodFrom: '2026-08-01', periodTo: '2026-08-15',
   statementOpeningSen: 5000000, statementClosingSen: 5100000,
   movements: [mov()], ledger: [led({ entryDate: '2026-07-20', jeNo: 'JE-2607-9', debitSen: 5000000 }), led()],
+  /* The opening deposit was reconciled on an earlier statement — what the
+     routes say through claimedSetFor. Without it, it would be an outstanding
+     receipt of RM 50,000 (docs/bugs/0806). */
+  claimedElsewhere: new Set(['JE-2607-9']),
   ...over,
 });
 
@@ -224,6 +228,114 @@ describe('a movement matched to several entries', () => {
   });
 });
 
+/* ── The owner's form (2026-09-11) ─────────────────────────────────────────
+   我觉得设计应该是这样: Closing — the books (−)/+ unreconciled items = Closing
+   bank statement. 每当我一 match, closing 就一直变; 当 closing bank statement
+   amount 无法 tally 就无法 lock. So the reconciliation says what the books come
+   to once the outstanding items are allowed for, whether that TALLIES with the
+   bank's printed closing, and — the April case — a month whose only difference
+   is an unpresented payment is reconciled, not "differing" (docs/bugs/0806). */
+describe('the statement form — books, outstanding items, bank', () => {
+  /* April 2026 on 2990's Hong Leong account, in the round: the account opened
+     with RM 3,000; TNB RM 161 posted on the 28th and paid by the bank on the
+     30th; OR-2604-001 RM 39,000 received on the 30th; HPV-007 RM 3,101.68
+     posted on the 30th and not paid by the bank until May. */
+  const april = (over: Partial<ReconcileInput> = {}) => input({
+    periodFrom: '2026-04-30', periodTo: '2026-04-30',
+    statementOpeningSen: 300000, statementClosingSen: 4183900,
+    movements: [
+      mov({ id: 1, bookedOn: '2026-04-30', amountSen: -16100, jeNo: 'PV5' }),
+      mov({ id: 2, bookedOn: '2026-04-30', amountSen: 3900000, jeNo: 'OR1' }),
+    ],
+    ledger: [
+      led({ jeNo: 'OPEN', entryDate: '2026-02-07', debitSen: 300000 }),
+      led({ jeNo: 'PV5', entryDate: '2026-04-28', debitSen: 0, creditSen: 16100, partyName: 'TENAGA NASIONAL BERHAD' }),
+      led({ jeNo: 'OR1', entryDate: '2026-04-30', debitSen: 3900000 }),
+      led({ jeNo: 'PV7', entryDate: '2026-04-30', debitSen: 0, creditSen: 310168, partyName: 'HOUZS VENTURE HOLDING SDN BHD' }),
+    ],
+    claimedElsewhere: new Set(['OPEN']),
+    ...over,
+  });
+
+  it('allows for the unpresented payment and arrives at the bank\'s closing — tallies, reconciled', () => {
+    const r = reconcileBankStatement(april());
+    expect(r.closingLedgerSen).toBe(3873732);
+    expect(r.outstandingPayments).toEqual({ count: 1, sen: -310168 });
+    expect(r.outstandingReceipts).toEqual({ count: 0, sen: 0 });
+    expect(r.computedClosingSen).toBe(4183900);
+    expect(r.closingStatementSen).toBe(4183900);
+    expect(r.unexplainedSen).toBe(0);
+    expect(r.tallies).toBe(true);
+    /* The old verdict called this "differing by RM 3,101.68". It is reconciled. */
+    expect(r.reconciled).toBe(true);
+    expect(r.consistent).toBe(true);
+  });
+
+  it('an entry the bank has not credited yet is a receipt line, and the arithmetic still tallies', () => {
+    const r = reconcileBankStatement(april({
+      ledger: [
+        led({ jeNo: 'OPEN', entryDate: '2026-02-07', debitSen: 300000 }),
+        led({ jeNo: 'PV5', entryDate: '2026-04-28', debitSen: 0, creditSen: 16100 }),
+        led({ jeNo: 'OR1', entryDate: '2026-04-30', debitSen: 3900000 }),
+        led({ jeNo: 'PV7', entryDate: '2026-04-30', debitSen: 0, creditSen: 310168 }),
+        led({ jeNo: 'OR2', entryDate: '2026-04-30', debitSen: 50000 }),
+      ],
+    }));
+    expect(r.outstandingReceipts).toEqual({ count: 1, sen: 50000 });
+    expect(r.computedClosingSen).toBe(4183900);
+    expect(r.tallies).toBe(true);
+  });
+
+  /* An earlier month's unpresented item is an outstanding item like any
+     other — one list, no "brought forward". */
+  it('counts an earlier period\'s unclaimed entry among the outstanding items', () => {
+    const r = reconcileBankStatement(april({
+      ledger: [
+        led({ jeNo: 'OPEN', entryDate: '2026-02-07', debitSen: 300000 }),
+        led({ jeNo: 'PVMAR', entryDate: '2026-03-20', debitSen: 0, creditSen: 4500 }),
+        led({ jeNo: 'PV5', entryDate: '2026-04-28', debitSen: 0, creditSen: 16100 }),
+        led({ jeNo: 'OR1', entryDate: '2026-04-30', debitSen: 3900000 }),
+        led({ jeNo: 'PV7', entryDate: '2026-04-30', debitSen: 0, creditSen: 310168 }),
+      ],
+    }));
+    expect(r.outstandingPayments).toEqual({ count: 2, sen: -314668 });
+    expect(r.outstandingJeNos.sort()).toEqual(['PV7', 'PVMAR']);
+    expect(r.computedClosingSen).toBe(4183900);
+    expect(r.tallies).toBe(true);
+  });
+
+  it('a movement still to decide keeps the arithmetic tallying but the month is not reconciled', () => {
+    const r = reconcileBankStatement(april({
+      statementClosingSen: 4183900 + 5000,
+      movements: [
+        mov({ id: 1, bookedOn: '2026-04-30', amountSen: -16100, jeNo: 'PV5' }),
+        mov({ id: 2, bookedOn: '2026-04-30', amountSen: 3900000, jeNo: 'OR1' }),
+        mov({ id: 3, bookedOn: '2026-04-30', amountSen: 5000, state: 'OPEN', jeNo: null }),
+      ],
+    }));
+    expect(r.bankNotInBooks).toEqual({ count: 1, sen: 5000 });
+    expect(r.computedClosingSen).toBe(4188900);
+    expect(r.tallies).toBe(true);
+    expect(r.reconciled).toBe(false);
+  });
+
+  /* THE ONE THAT MATTERS. The bank says something the books and the listed
+     items cannot reach — a movement left out, an entry missing, a file filed
+     under the wrong month. Named, and the month cannot close on it. */
+  it('does not tally when the bank\'s closing is not what the books and the outstanding items reach', () => {
+    const r = reconcileBankStatement(april({ statementClosingSen: 4183900 + 777 }));
+    expect(r.unexplainedSen).toBe(777);
+    expect(r.tallies).toBe(false);
+    expect(r.reconciled).toBe(false);
+  });
+
+  it('cannot tally when no file printed a closing balance', () => {
+    const r = reconcileBankStatement(april({ statementOpeningSen: null, statementClosingSen: null }));
+    expect(r.unexplainedSen).toBeNull();
+    expect(r.tallies).toBe(false);
+  });
+});
+
 describe('numbers that do not add up', () => {
   /* The guard that makes the whole thing worth trusting: a closing balance
      that disagrees with the lines under it. Real cause — a statement whose
@@ -269,8 +381,12 @@ describe('a statement that prints no balances at all', () => {
     expect(r.differenceSen).toBeNull();
     expect(r.broughtForwardSen).toBeNull();
     expect(r.consistent).toBe(true);
-    /* Nothing outstanding on either side, so as far as it can tell, done. */
-    expect(r.reconciled).toBe(true);
+    /* Nothing outstanding on either side — but with no bank figure there is
+       nothing to tally against, and a month cannot be called reconciled on
+       what it cannot check (docs/bugs/0806). */
+    expect(r.unexplainedSen).toBeNull();
+    expect(r.tallies).toBe(false);
+    expect(r.reconciled).toBe(false);
   });
 
   it('derives a closing from an opening when only the opening is printed', () => {

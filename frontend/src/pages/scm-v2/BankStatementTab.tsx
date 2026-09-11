@@ -26,7 +26,7 @@ import { useState } from 'react';
 import { AlertTriangle, ArrowLeft, CheckCheck, Landmark, Link2, Undo2, Upload } from 'lucide-react';
 import {
   useBankSetup, useBankStatements, useBankStatement, useUploadBankStatement,
-  useBookBankReceipt, useMatchBankLine, useMatchBankGroup, useIgnoreBankLine, useUndoBankLine,
+  useBookBankReceipt, useMatchBankLine, useMatchBankGroup, useIgnoreBankLine, useUndoBankLine, useSetStatementPeriod,
   type BankLine, type BankStatement, type Reconciliation, type LedgerEntry } from './bank-queries';
 import { ICON, fmt, btn, softText, danger, good, panel, refusalText } from './settlement-ui';
 import styles from './Suppliers.module.css';
@@ -209,6 +209,30 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
 
 /* ── One statement ────────────────────────────────────────────────────────── */
 
+/* A file uploaded before the month box covered a month reads by its
+   movements' dates — 30/4 → 30/4 for April. Re-filed as the month's statement
+   in place: nothing else moves (owner 2026-09-11: 这只是显示问题吧; docs/bugs/0806). */
+const RefileAsMonth = ({ statement }: { statement: { id: number; period_from: string | null; period_to: string | null } }) => {
+  const refile = useSetStatementPeriod();
+  const month = (statement.period_from ?? '').slice(0, 7);
+  const [y, m] = month.split('-').map(Number);
+  if (!y || !m) return null;
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const from = `${month}-01`;
+  const to = `${month}-${String(last).padStart(2, '0')}`;
+  if (statement.period_from === from && statement.period_to === to) return null;
+  const name = new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-MY', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  return (
+    <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+      <button type="button" style={{ ...btn(), padding: '2px 8px' }} disabled={refile.isPending}
+        onClick={() => refile.mutate({ id: statement.id, month })}>
+        {refile.isPending ? 'Re-filing…' : `This file is ${name}'s statement`}
+      </button>
+      {refile.isError && <span style={{ fontSize: 'var(--fs-12)', color: danger }}>{refusalText(refile.error, 'The period was not changed.')}</span>}
+    </span>
+  );
+};
+
 const StatementView = ({ id, onBack }: { id: number; onBack: () => void }) => {
   const q = useBankStatement(id);
   const [showDone, setShowDone] = useState(false);
@@ -230,6 +254,7 @@ const StatementView = ({ id, onBack }: { id: number; onBack: () => void }) => {
         <button type="button" style={btn()} onClick={onBack}><ArrowLeft {...ICON} /> All statements</button>
         {statement && <b>{statement.account_code} · {statement.file_name}</b>}
         {statement && <span style={softText}>{statement.period_from} → {statement.period_to}</span>}
+        {statement && <RefileAsMonth statement={statement} />}
       </div>
 
       {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Reading the statement…</div>}
@@ -259,7 +284,7 @@ const StatementView = ({ id, onBack }: { id: number; onBack: () => void }) => {
         </table>
       )}
 
-      {q.data && <BooksNotOnBank entries={q.data.unmatchedEntries} what="this statement" />}
+      {q.data && <BooksNotOnBank entries={q.data.unmatchedEntries} />}
     </section>
   );
 };
@@ -271,50 +296,35 @@ const StatementView = ({ id, onBack }: { id: number; onBack: () => void }) => {
    例如 pay to who), because an entry number is not something a person can
    recognise on a bank statement and a name is. Shared by the file view and the
    month view so the two cannot drift. */
-export const BooksNotOnBank = ({ entries, what }: { entries: LedgerEntry[]; what: string }) => {
-  const now = entries.filter((e) => !e.carried);
-  const earlier = entries.filter((e) => e.carried);
-  const table = (rows: LedgerEntry[]) => (
-    <table className={grid.grid}>
-      <thead>
-        <tr><th>Entry</th><th>Date</th><th>Source</th><th>Who</th><th className={grid.num}>Amount</th></tr>
-      </thead>
-      <tbody>
-        {rows.map((e) => (
-          <tr key={e.jeNo}>
-            <td>{e.jeNo}</td>
-            <td>{e.entryDate}</td>
-            <td>{[e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ') || '—'}</td>
-            <td>{e.partyName ?? e.notes ?? '—'}</td>
-            <td className={grid.num}>{fmt(e.debitSen - e.creditSen)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
+export const BooksNotOnBank = ({ entries }: { entries: LedgerEntry[] }) => {
+  if (entries.length === 0) return null;
+  /* ONE TABLE (owner 2026-09-11: 全部就是 outstanding items，一张表列完): this
+     period's and the earlier ones' alike, each named by who. */
   return (
-    <>
-      {now.length > 0 && (
-        <section className="space-y-2">
-          <b>{`In the books, not on ${what} (${now.length})`}</b>
-          <div style={softText}>
-            Posted in this period and the bank has not shown it: an uncleared cheque, a deposit still on its way,
-            or an entry belonging to a statement not uploaded yet.
-          </div>
-          {table(now)}
-        </section>
-      )}
-      {earlier.length > 0 && (
-        <section className="space-y-2">
-          <b>{`From earlier months, still not on any statement (${earlier.length})`}</b>
-          <div style={softText}>
-            Posted before this period and no bank statement has shown it yet — the money may clear this month or
-            later. These are what the difference brought forward is made of; match one here when it appears.
-          </div>
-          {table(earlier)}
-        </section>
-      )}
-    </>
+    <section className="space-y-2">
+      <b>{`Outstanding items — in the books, not yet on the bank (${entries.length})`}</b>
+      <div style={softText}>
+        Posted and the bank has not shown it yet: a payment not yet paid, a receipt not yet credited, or an
+        entry belonging to a statement not uploaded yet. Each stays here, month after month, until the bank
+        shows it and it is matched.
+      </div>
+      <table className={grid.grid}>
+        <thead>
+          <tr><th>Entry</th><th>Date</th><th>Source</th><th>Who</th><th className={grid.num}>Amount</th></tr>
+        </thead>
+        <tbody>
+          {entries.map((e) => (
+            <tr key={e.jeNo}>
+              <td>{e.jeNo}</td>
+              <td>{e.entryDate}</td>
+              <td>{[e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ') || '—'}</td>
+              <td>{e.partyName ?? e.notes ?? '—'}</td>
+              <td className={grid.num}>{fmt(e.debitSen - e.creditSen)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   );
 };
 
@@ -386,10 +396,33 @@ const Figure = ({ label, sen, tone }: { label: string; sen: number | null; tone?
   </div>
 );
 
+/* THE OWNER'S FORM (2026-09-11, docs/bugs/0806). 我觉得设计应该是这样:
+   Closing — the books (−)/+ unreconciled items = Closing bank statement; 每当
+   我一 match, closing 就一直变; 当 closing bank statement amount 无法 tally 就无
+   法 lock. So the panel is that walk, line by line, ending on whether it
+   TALLIES — and a month whose only difference is a payment the bank has not
+   paid yet is reconciled, not "differing", because that payment is listed
+   below as what it is. Every figure that is a count has its list underneath. */
+const WalkRow = ({ label, sen, count, what, strong, tone }: {
+  label: string; sen: number | null; count?: number; what?: string; strong?: boolean; tone?: 'good' | 'bad';
+}) => (
+  <tr>
+    <td style={{ padding: '4px 8px', fontWeight: strong ? 700 : undefined }}>
+      {label}{count != null && ` (${count} ${what ?? 'item'}${count === 1 ? '' : 's'})`}
+    </td>
+    <td className={grid.num} style={{
+      padding: '4px 8px', fontWeight: strong ? 700 : undefined,
+      color: tone === 'good' ? good : tone === 'bad' ? danger : undefined,
+    }}>
+      {sen == null ? '—' : fmt(sen)}
+    </td>
+  </tr>
+);
+
 export const ReconciliationPanel = ({ r }: { r: Reconciliation }) => {
-  /* The inconsistency comes FIRST and replaces the verdict. Publishing a
-     difference the numbers cannot account for is worse than publishing
-     nothing: it looks like work has been done. */
+  /* The inconsistency comes FIRST and replaces the walk. Publishing a walk
+     the numbers cannot account for is worse than publishing nothing: it looks
+     like work has been done. */
   if (!r.consistent) {
     return (
       <div style={{ ...panel('plain'), border: `1px solid ${danger}` }}>
@@ -400,50 +433,41 @@ export const ReconciliationPanel = ({ r }: { r: Reconciliation }) => {
       </div>
     );
   }
+  if (r.closingStatementSen == null) {
+    return (
+      <div style={panel('plain')}>
+        <b>This file prints no balances, so there is nothing to tally against — only the movements below.</b>
+      </div>
+    );
+  }
+
+  const open = r.bankNotInBooks.count;
+  const outstanding = r.outstandingPayments.count + r.outstandingReceipts.count;
+  const verdict = r.reconciled
+    ? `Reconciled — the books, allowing for ${outstanding} outstanding item${outstanding === 1 ? '' : 's'}, come to the bank statement's closing.`
+    : r.tallies
+      ? `Tallies, but ${open} movement${open === 1 ? '' : 's'} on the bank still to decide — the month is not reconciled until ${open === 1 ? 'it is' : 'they are'}.`
+      : `Does not tally — the books and the outstanding items reach ${fmt(r.computedClosingSen)}, the bank statement says ${fmt(r.closingStatementSen)}: ${fmt(Math.abs(r.unexplainedSen ?? 0))} nobody has accounted for.`;
 
   return (
     <div style={{ ...panel(r.reconciled ? 'good' : 'plain'), display: 'grid', gap: 'var(--space-3)' }}>
-      <b>
-        {r.reconciled
-          ? 'Reconciled — the bank and the books agree, with nothing outstanding on either side.'
-          : r.differenceSen == null
-            ? 'This file prints no balances, so there is nothing to compare against — only the movements below.'
-            : `The bank and the books differ by ${fmt(r.differenceSen)}.`}
-      </b>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--space-3)' }}>
-        <Figure label="Closing — bank statement" sen={r.closingStatementSen} />
-        <Figure label="Closing — the books" sen={r.closingLedgerSen} />
-        <Figure label="Difference" sen={r.differenceSen}
-          tone={r.differenceSen == null ? undefined : r.differenceSen === 0 ? 'good' : 'bad'} />
+      <b>{verdict}</b>
+      <table style={{ borderCollapse: 'collapse', maxWidth: 640 }}>
+        <tbody>
+          <WalkRow label="Closing per the books" sen={r.closingLedgerSen} strong />
+          <WalkRow label="Add: payments in the books the bank has not paid yet" sen={-r.outstandingPayments.sen} count={r.outstandingPayments.count} />
+          <WalkRow label="Less: receipts in the books the bank has not credited yet" sen={-r.outstandingReceipts.sen} count={r.outstandingReceipts.count} />
+          <WalkRow label="On the bank, not in the books" sen={r.bankNotInBooks.sen} count={open} what="still to decide" />
+          <WalkRow label="Closing per the books after outstanding items" sen={r.computedClosingSen} strong />
+          <WalkRow label="Closing per bank statement" sen={r.closingStatementSen} strong />
+          {r.unexplainedSen !== 0 && (
+            <WalkRow label="Unexplained — on the statement, in neither list" sen={r.unexplainedSen} tone="bad" />
+          )}
+        </tbody>
+      </table>
+      <div style={{ fontSize: 'var(--fs-13)', color: r.tallies ? good : danger, fontWeight: 700 }}>
+        {r.tallies ? '✓ Tallies' : `✗ Off by ${fmt(Math.abs(r.unexplainedSen ?? 0))}`}
       </div>
-
-      {!r.reconciled && (
-        <div style={{ fontSize: 'var(--fs-13)' }}>
-          <div>Made up of:</div>
-          <ul style={{ margin: '4px 0 0 0', paddingLeft: 18 }}>
-            <li>
-              <b>{fmt(r.bankNotInBooks.sen)}</b> on the bank and not in the books —{' '}
-              {r.bankNotInBooks.count} movement(s) still to decide, below.
-            </li>
-            <li>
-              <b>{fmt(r.booksNotOnBank.sen)}</b> in the books and not on the bank —{' '}
-              {r.booksNotOnBank.count} entr{r.booksNotOnBank.count === 1 ? 'y' : 'ies'}.
-            </li>
-            {r.broughtForwardSen != null && r.broughtForwardSen !== 0 && (
-              <li>
-                {/* Its own line, because this period's work cannot close it —
-                    unless it is exactly the earlier entries still waiting for
-                    the bank, in which case it is named for what it is. */}
-                <b>{fmt(r.broughtForwardSen)}</b> brought forward —{' '}
-                {r.broughtForwardExplained
-                  ? `explained by ${r.carried.count + ((r.clearedFromBeforeSen ?? 0) !== 0 ? 1 : 0)} entr${r.carried.count + ((r.clearedFromBeforeSen ?? 0) !== 0 ? 1 : 0) === 1 ? 'y' : 'ies'} from earlier months${r.carried.count > 0 ? ' still not on any statement, listed below' : ' that cleared on this statement'}.`
-                  : `the two sides already disagreed by this much before ${r.periodFrom}.`}
-              </li>
-            )}
-          </ul>
-        </div>
-      )}
     </div>
   );
 };
