@@ -241,13 +241,16 @@ export type PaymentAmendContext = {
     below: plain language, no braces, no error codes, short enough to survive
     the client's humanApiError sentence filter. */
 export const paymentReconciledMessage = (by: PaymentReconciledBy): string => {
+  /* UNDER 200 CHARACTERS WITH THE DATE, ENTRY OR ACCOUNT INSIDE — the client's
+     sentence filter (authed-fetch.ts, isPlain) drops anything longer, and at
+     209–219 all three of these were dropped and the operator saw the generic
+     "That clashes with something already in the system" (docs/bugs/0821).
+     Each names what to undo first, because that IS the way to change it. */
   const what =
-    by.kind === 'merchant' ? `it was matched on a merchant settlement report on ${by.on}`
-    : by.kind === 'bank' ? `its journal entry ${by.jeNo} was matched to a bank statement`
-    : `the ${by.month} reconciliation for account ${by.accountCode} is closed`;
-  return `This payment can no longer be changed because ${what}. `
-    + 'Changing it would break a reconciliation already reported. '
-    + 'Record a new payment, or raise a credit note.';
+    by.kind === 'merchant' ? `it was confirmed on a merchant settlement report on ${by.on}. Undo that confirmation first`
+    : by.kind === 'bank' ? `its entry ${by.jeNo} is matched on a bank statement. Undo that bank match first`
+    : `the ${by.month} bank reconciliation for ${by.accountCode} is closed. Reopen that month first`;
+  return `This payment is locked: ${what}, or record a new payment.`;
 };
 
 /** Why the control is gone. Operators must be told, not left guessing. */

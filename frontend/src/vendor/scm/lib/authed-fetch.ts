@@ -473,6 +473,16 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
   // re-read this if a surface ever needs a subject-specific line.
   idempotency_in_flight:
     "This is already going through — give it a moment, then refresh to check. Please don't send it again.",
+  /* A PAYMENT THE BOOKS HAVE CLOSED OVER, or whose same-day window has passed
+     (backend so-field-policy.ts, paymentRowMutable; 409 from both SO payment
+     routes). The server's sentence names WHICH reconciliation and what to undo
+     first, so it wins whenever it is sayable (SERVER_SENTENCE_WINS); this is
+     the floor for a sentence the filter drops. Until docs/bugs/0821 that floor
+     was the generic 409 — "That clashes with something already in the
+     system. Please refresh and check." — which sent the operator to refresh a
+     page that would refuse again, for a reason the server had written down. */
+  payment_edit_locked:
+    'This payment is locked, so it was not changed: it has been reconciled, or the day it was keyed in has passed. Ask Finance before recording it again.',
   /* NEVER reword this into "nothing was saved, press Save again". The
      middleware returns this code purely because the payload's hash differs
      from the claim's, and the claim may hold a COMMITTED 201 (the body's
@@ -608,7 +618,7 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
    `so_migrated_readonly` earns it because since 2026-09-08 the answer differs
    per order — one still differs from the account book on `document total`, its
    neighbour matches and is open — and a class-level sentence cannot say which. */
-const SERVER_SENTENCE_WINS: ReadonlySet<string> = new Set(['so_migrated_readonly']);
+const SERVER_SENTENCE_WINS: ReadonlySet<string> = new Set(['so_migrated_readonly', 'payment_edit_locked']);
 
 /* A machine CODE, not a sentence: snake_case, no spaces. Mirrors the guard in
    api/client.ts. Without it an UNCURATED code that the backend echoes into both

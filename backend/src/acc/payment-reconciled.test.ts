@@ -36,10 +36,21 @@ const LINES: Row[] = [
   { id: 'l2', journal_entry_id: 'je-1', line_no: 2, account_code: '300-0000', debit_sen: 0, credit_sen: 199_000 },
 ];
 
+/* The settlement LINE a link points at. Only a CONFIRMED line — fee booked,
+   confirmed_at set — has closed the books over the payment; the link alone is
+   the matcher's word (docs/bugs/0821). */
+const CONFIRMED_LINE: Row = { id: 9, company_id: 1, bucket: 'MATCHED', confirmed_at: '2026-08-05T09:12:00+08:00', posted_je_no: 'JE-2608-0040' };
+const SUGGESTED_LINE: Row = { id: 9, company_id: 1, bucket: 'MATCHED', confirmed_at: null, posted_je_no: null };
+const LINK: Row = {
+  id: 1, company_id: 1, payment_source: 'SOPAY', payment_id: 'pay-1',
+  settlement_row_id: 9, amount_sen: 199_000, created_at: '2026-08-05T09:12:00+08:00',
+};
+
 const world = (over: {
-  matches?: Row[]; bankMatches?: Row[]; locks?: Row[]; jes?: Row[]; lines?: Row[];
+  matches?: Row[]; rows?: Row[]; bankMatches?: Row[]; locks?: Row[]; jes?: Row[]; lines?: Row[];
 } = {}, missing: Record<string, string[]> = {}) => fakeSb({
   acc_settlement_matches: over.matches ?? [],
+  acc_settlement_rows: over.rows ?? [],
   acc_bank_statement_matches: over.bankMatches ?? [],
   acc_bank_month_locks: over.locks ?? [],
   journal_entries: over.jes ?? [JE],
@@ -51,12 +62,42 @@ describe('paymentReconciliation', () => {
     expect(await paymentReconciliation(world(), 1, 'pay-1')).toEqual({ ok: true, by: null });
   });
 
+  /* THE LINK IS NOT THE RECONCILIATION (docs/bugs/0821). The upload writes a
+     link for every line it matched by reference before anybody has looked; a
+     payment under one is still correctable — which is exactly when a
+     mis-keyed amount gets fixed (bank 3,052.00, keyed 3,053.00). */
+  it('a link the upload wrote but nobody confirmed does not lock the payment', async () => {
+    const sb = world({ matches: [LINK], rows: [SUGGESTED_LINE] });
+    expect(await paymentReconciliation(sb, 1, 'pay-1')).toEqual({ ok: true, by: null });
+  });
+
+  it('names the day the LINE was confirmed, not the day the link was written', async () => {
+    const sb = world({
+      matches: [LINK],
+      rows: [{ ...CONFIRMED_LINE, confirmed_at: '2026-08-09T15:00:00+08:00' }],
+    });
+    expect(await paymentReconciliation(sb, 1, 'pay-1'))
+      .toEqual({ ok: true, by: { kind: 'merchant', on: '2026-08-09' } });
+  });
+
+  it('a line posted without a confirmation stamp still counts as confirmed', async () => {
+    const sb = world({ matches: [LINK], rows: [{ ...CONFIRMED_LINE, confirmed_at: null }] });
+    expect(await paymentReconciliation(sb, 1, 'pay-1'))
+      .toEqual({ ok: true, by: { kind: 'merchant', on: '2026-08-05' } });
+  });
+
+  it('REFUSES when the settlement line behind a link cannot be read', async () => {
+    const sb = world({ matches: [LINK], rows: [CONFIRMED_LINE] }, { acc_settlement_rows: ['confirmed_at'] });
+    expect((await paymentReconciliation(sb, 1, 'pay-1')).ok).toBe(false);
+  });
+
   it('names a MERCHANT match, and the day it was matched', async () => {
     const sb = world({
       matches: [{
         id: 1, company_id: 1, payment_source: 'SOPAY', payment_id: 'pay-1',
         settlement_row_id: 9, amount_sen: 199_000, created_at: '2026-08-05T09:12:00+08:00',
       }],
+      rows: [CONFIRMED_LINE],
     });
     expect(await paymentReconciliation(sb, 1, 'pay-1'))
       .toEqual({ ok: true, by: { kind: 'merchant', on: '2026-08-05' } });
@@ -124,6 +165,7 @@ describe('paymentReconciliation', () => {
         id: 1, company_id: 1, payment_source: 'SOPAY', payment_id: 'pay-1',
         settlement_row_id: 9, amount_sen: 199_000, created_at: '2026-08-05T09:12:00+08:00',
       }],
+      rows: [CONFIRMED_LINE],
     });
     expect(await paymentReconciliation(sb, 1, 'pay-1'))
       .toEqual({ ok: true, by: { kind: 'merchant', on: '2026-08-05' } });
@@ -151,6 +193,7 @@ describe('paymentReconciliation', () => {
         id: 1, company_id: 2, payment_source: 'SOPAY', payment_id: 'pay-1',
         settlement_row_id: 9, amount_sen: 199_000, created_at: '2026-08-05T09:12:00+08:00',
       }],
+      rows: [CONFIRMED_LINE],
     });
     expect(await paymentReconciliation(sb, 1, 'pay-1')).toEqual({ ok: true, by: null });
   });
@@ -161,6 +204,7 @@ describe('paymentReconciliation', () => {
         id: 1, company_id: 1, payment_source: 'SIPAY', payment_id: 'pay-1',
         settlement_row_id: 9, amount_sen: 199_000, created_at: '2026-08-05T09:12:00+08:00',
       }],
+      rows: [CONFIRMED_LINE],
     });
     expect(await paymentReconciliation(sb, 1, 'pay-1')).toEqual({ ok: true, by: null });
   });
@@ -207,6 +251,18 @@ describe('paymentMayChange', () => {
 
   it('opens an old payment for a holder of the right', async () => {
     expect(await ask(world(), { mayAmend: true })).toEqual({ mutable: true, problem: null, via: 'amend' });
+  });
+
+  it('opens a payment whose merchant link is only the matcher\'s suggestion', async () => {
+    const sb = world({ matches: [LINK], rows: [SUGGESTED_LINE] });
+    expect(await ask(sb, { mayAmend: true })).toEqual({ mutable: true, problem: null, via: 'amend' });
+  });
+
+  it('refuses the holder of the right once the merchant line is confirmed', async () => {
+    const sb = world({ matches: [LINK], rows: [CONFIRMED_LINE] });
+    const out = await ask(sb, { mayAmend: true });
+    expect(out.mutable).toBe(false);
+    expect(out.problem).toMatch(/merchant settlement report/i);
   });
 
   it('refuses the holder of the right once the payment is reconciled', async () => {
