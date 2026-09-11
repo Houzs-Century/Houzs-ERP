@@ -109,7 +109,7 @@ import { backfillSoToPoKeys, poBodyForShape } from './autocount-so-to-po-keys';
 import { acParentlessCreateReason, acNotCarriedReason } from './autocount-outbox-status';
 /* Line identity, split out 2026-08-17 for the same cap reason as the two
    imports above. Same function, same call site in dispatchOne. */
-import { persistLineKeys, persistNewLineKeys, newLineTargetOf } from './autocount-line-keys';
+import { lineIdentityGap, persistNewLineKeys, newLineTargetOf } from './autocount-line-keys';
 import { readMfgProductBindings } from './supplier-bindings';
 import {
   soLine,
@@ -118,7 +118,6 @@ import {
   CONVERT_TARGET,
   readConvertSourceKeys,
   readConvertTargetLines,
-  isConvertOp,
   readConvertHeaderFacts,
   /* Moved into that module 2026-08-20: all four are derived from or ask about
      CONVERT_TARGET, which lives there, and this file was at its cap again. */
@@ -1891,25 +1890,10 @@ export async function dispatchOne(
   const result = await callAcService(env, row.op, body, fetchImpl);
 
   if (result.ok) {
-    /* THE SEND SUCCEEDED; LINE IDENTITY IS A SECOND QUESTION (docs/bugs/0813).
-       Storing the DtlKeys AutoCount assigned has always been best-effort, and
-       every way it can fail was silent: `readConvertTargetLines` returns
-       undefined on any doubt, and persistLineKeys returned after a
-       console.error that goes to a Worker log this account's token cannot read.
-       So a conversion reported SENT while its lines kept NO identity, and that
-       was discovered days later by an operator whose edit was refused whole.
-       It is recorded on the row instead, BEFORE the row is marked, so the two
-       facts arrive together. `acNeedsAttention` branches on STATUS, so a note
-       on a `sent` row reports without crying wolf — the same property the
-       not-carried reason relies on at enqueue. */
-    let identityGap: string | null = null;
-    if (payload.lineWriteback) {
-      identityGap = await persistLineKeys(sb, row, payload.lineWriteback, result.lines);
-    } else if (isConvertOp(row.op)) {
-      identityGap = 'No line identity was stored: the ERP could not read this document\'s own lines '
-        + 'when the conversion was queued, so there was nothing to attach the account book\'s keys '
-        + 'to. Match the lines up before editing this document.';
-    }
+    /* Line identity is a second question and this file does not own it:
+       docs/bugs/0813, and `lineIdentityGap` in autocount-line-keys.ts. Recorded
+       BEFORE the mark so the two facts arrive together. */
+    const identityGap = await lineIdentityGap(sb, row, payload, result.lines);
 
     await mark(sb, row.id, {
       ...stamp,

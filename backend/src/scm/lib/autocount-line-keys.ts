@@ -12,6 +12,7 @@
  * different line in a live account book), so it earns being readable on its own.
  */
 import type { AcCreatedLine } from '../../services/autocount-writeback';
+import { isConvertOp } from './autocount-convert-lines';
 /* TYPE-ONLY, so it is erased and there is no runtime cycle back to the module
    that imports this one. The table union is the real contract — writing
    `string` here would let a caller name a table with no `linked_ac_dtlkey`. */
@@ -67,6 +68,32 @@ type Sb = { from: (table: string) => any };
  * AutoCount and the row IS sent. Failing to record identity is a degradation to
  * be logged, not a reason to re-send a document that already exists.
  */
+/**
+ * WHAT THIS SEND LEFT THE DOCUMENT WITHOUT, as one sentence or null.
+ *
+ * Lives here rather than in the drain because line identity is this module's
+ * subject, and because autocount-outbox.ts is at its 2,000-line cap again —
+ * the same seam `readConvertTargetLines` was moved out to find.
+ *
+ * Two ways a document reaches AutoCount with no identity, and they are
+ * different facts: `persistLineKeys` declined (it says which of its checks
+ * failed), or there was never a target to store onto at all — a conversion
+ * whose own lines could not be read when it was queued, which is
+ * `readConvertTargetLines` returning undefined on any doubt.
+ */
+export async function lineIdentityGap(
+  sb: Sb,
+  row: LineKeyRowLabel,
+  payload: { lineWriteback?: LineKeyTarget },
+  lines: AcCreatedLine[],
+): Promise<string | null> {
+  if (payload.lineWriteback) return persistLineKeys(sb, row, payload.lineWriteback, lines);
+  if (!isConvertOp(row.op)) return null;
+  return 'No line identity was stored: the ERP could not read this document\'s own lines when the '
+    + "conversion was queued, so there was nothing to attach the account book's keys to. Match the "
+    + 'lines up before editing this document.';
+}
+
 export async function persistLineKeys(
   sb: Sb,
   row: LineKeyRowLabel,
