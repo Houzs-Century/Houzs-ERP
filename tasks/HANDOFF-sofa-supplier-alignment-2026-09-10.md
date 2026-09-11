@@ -1,113 +1,100 @@
-# HANDOFF — sofa alignment to the supplier listing, 2026-09-10
+# HANDOFF — sofa alignment to the supplier listing, 2026-09-10 / updated 2026-09-11
 
-**Nothing in this round has been written to production.** Every run so far is
-read-only. If you are picking this up, you are not inheriting a half-applied
-repair.
+If you are picking this up: the first apply to production in this whole line of
+work is DONE and VERIFIED (run 34507126629, VERIFY OK — 249 entries over 241
+documents, piece multiset + both money columns, 0 money moved). Everything
+before it was read-only. What remains is listed under STILL OPEN.
 
 ## The owner's task list, in his order
 
 1. Correct every PO **and GR** to match the supplier's listing — compartments
    AND variants. 「包过我的GR」.
-2. Once those agree, re-check the **not-proceeded** orders against the photos.
-3. Check every sales order against the TV rule (TV above / below the run).
+2. Once those agree, re-check the **not-proceeded** orders against the photos
+   (TV above/below).
+3. Check every sales order against the TV rule.
 4. When a PO or SO is confirmed correct, **back-fill the whole chain**
    SO -> PO -> GR -> DO.
-5. **Tally** every sofa compartment and variant, to prove the round actually ran.
+5. **Tally** every sofa compartment and variant, to prove the round ran.
 
-## The four rulings that govern this work
-
-They are in the session memory too, but they belong here because they decide
-what the scripts may do.
+## The rulings that govern this work (all in session memory too)
 
 | ruling | his words | effect |
 |---|---|---|
-| the supplier is the authority | 「supplier的肯定对的 基本上你可以跟」 | correct OURS to match the file, without asking |
-| **unless we amended it** | 「除非我们submit了amendment，然后还没发supplier PO amendment」 | a PO with an amendment raised after the supplier's cut is EXCLUDED — ours is newer. REQUESTED counts, not only APPROVED |
-| a PO we cannot find is finished | 「找不到PO 可能已经送完了的 就不理」 | the 80 unmatched refs are old delivered orders, all below `PO-009122`. Not work |
-| photos only for NOT-proceeded | 「你只需要看那些还没proceed的单就行了」 | a proceeded order's build comes back from the supplier. Proceeded = the SO has a Processing Date |
+| supplier is the authority | 「supplier的肯定对的 基本上你可以跟」 | correct OURS to match, no asking |
+| **unless we amended it** | 「除非我们submit了amendment…」 | a PO amended after their cut is EXCLUDED; REQUESTED counts |
+| a PO we cannot find is finished | 「找不到PO 可能已经送完了的 就不理」 | 80 refs below PO-009122 — not work |
+| photos only for NOT-proceeded | 「你只需要看那些还没proceed的单…」 | proceeded builds come back from the supplier |
+| supplier beats our OWN rounds | 「ok 四张跟supplier的」 | four docs were genuinely different sofas; supplier won, earlier entries superseded |
+| a reversal is the SAME sofa | 「一样的东西啊 只是LHF 在第一个item而已」 | reverse ≠ mirror; only reverse-AND-swap-hands is different |
+| the goods are right, the migrated docket is wrong | 「我做GR的时候…docket entry是错的（旧的单）」 | this whole exercise is so his GR can be received |
 
-## What is measured, and what it says
+## State of the apply (DONE — run 34507126629, VERIFY OK)
 
-All production runs, all read-only.
+`apply-sofa-compartment-corrections.yml`, target=prod, apply=1, run **34507126629**,
+dispatched 2026-09-11 ~01:2x. The DRY-RUN that preceded it (run 34504568090) was:
 
-| question | answer | run |
-|---|---|---|
-| sofa SKUs whose NAME contradicts their CODE | **0 of 372** — the master is CLEAN | 34462427810 |
-| sales-order sofa lines whose code and description disagree | **2 of 1,329**, both on HC-SO-012016 | 34462427810 |
-| supplier vs our POs — different pieces | 13 | 34453751607 |
-| supplier vs our POs — same pieces, different order | 24 | 34453751607 |
-| supplier vs our POs — different variants (leg height) | 17 of 21 compared | 34453751607 |
-| supplier refs with no PO here | 80 — all `PO-007914..PO-008700`, out of cutover scope | 34453751607 |
-| sofa documents, company 1 | 529 (1,329 compartment lines) | 34451102468 |
-| — proceeded (supplier answers these) | 168 | 34451102468 |
-| — not proceeded, at risk, still to read | **179** | 34451102468 |
+    builds touched 293 (295 sofas) · lines updated 774 · added 9 · removed 0
+    refused: 11 real-stock-movement, 1 downstream/money, 6 piece-SKU-not-minted, 1 seat
+    HELD: HC-PO-010056, HC-PO-000162, HC-SO-011733, HC-SO-013384 (x2),
+          GR-000287 chain, HC-SO-012025 (already done by reverse-sofa-build-middle)
+    money moved: 0 on every build
 
-**Not yet measured:** the PURCHASE ORDER, GOODS RECEIPT and DELIVERY ORDER
-sections of the code-vs-description census. The run died before them
-(`docs/bugs/0785`); the fix is in `fix/sofa-code-desc-po-gr`.
+The four TV-round mirror fixes are in it: HC-SO-012368, -012760, -013075,
+-013239, each 2A(LHF)+L(RHF) -> L(LHF)+2A(RHF), money unchanged.
 
-## The tools, and what each is for
+**When the run finishes**: it re-reads every touched document on a FRESH
+connection and asserts the piece multiset + both money columns. Read the tail of
+the log for `VERIFIED` / any `VERIFY FAILED`. If it failed mid-way, the applier
+does each build in its own transaction, so completed builds are committed and
+re-running is inert on them (RE-RUN header). Re-dispatch the same workflow.
 
-| script | workflow | state |
-|---|---|---|
-| `check-supplier-listing-vs-erp.mjs` | `check-supplier-listing-vs-erp.yml` | on main, RUN |
-| `check-sofa-direction-backlog.mjs` | `check-sofa-direction-backlog.yml` | on main, RUN |
-| `check-sofa-code-vs-description.mjs` | `check-sofa-code-vs-description.yml` | on main, run PARTIAL — fix in `fix/sofa-code-desc-po-gr` |
-| `propose-supplier-sofa-corrections.mjs` | `propose-supplier-sofa-corrections.yml` | branch `feat/supplier-sofa-corrections`, NEVER RUN |
-| `apply-sofa-compartment-corrections.mjs` | `apply-sofa-compartment-corrections.yml` | on main; the WRITER. Not run this round |
-| `reverse-sofa-build-middle-2026-09-10.mjs` | same-named yml | on main, PLAN run only |
+## What is DONE (merged to main)
 
-The supplier's export is committed at
-`backend/scripts/data/supplier-so-detail-2026-09-10.json.gz` (1,628 rows, 975
-documents) with the workbook's sha256 inside it.
+- Supplier sofa corrections data (51 builds / 102 entries) — PR #3597
+- TV photo round (4 mirrors) + all 129 readings — PR #3591
+- same-sofa reversal rule — PR #3578
+- prior-selection fix (supplier-confirmed round wins) — PR #3593
+- 9 earlier entries superseded to match the supplier
 
-## The intended write path, and why it is that one
+## What is READ-ONLY MEASURED, numbers you can trust
 
-**Do not write a second writer.** `apply-sofa-compartment-corrections.mjs`
-already corrects the sales order and the purchase order TOGETHER, pairs rows by
-code and UPDATEs in place so `purchase_order_items.so_item_id` survives, refuses
-a build whose downstream moved real stock, holds the money still, and re-reads on
-a fresh connection. `propose-supplier-sofa-corrections.mjs` exists to produce its
-INPUT, not to replace it.
+- product master: 372 sofa SKUs, ZERO name/code contradictions (run 34462427810)
+- sofa SO lines: 2 of 1,329 disagreed (HC-SO-012016, an amendment-path artefact)
+- supplier vs our sofa POs: 51 to change, 26 of them already received stock
+- 129 of 129 sofa drawings read: 109 correct, 4 mirrored, 13 undecided, 3 n/a
 
-Sequence: propose (read-only, emits JSON) -> commit the JSON and add it to
-`CORRECTION_FILES` in `scripts/lib/sofa-corrections-source.mjs` -> run the
-applier in DRY-RUN -> apply.
+## What is STILL OPEN
 
-## Open decisions that are the owner's, not yours
+- **Bedframe supplier comparison** — PR #3599 (`check-supplier-bedframe-vs-erp`),
+  NOT YET RUN. The sofa check over bedframes gave false numbers (53 order, 239
+  variant); this one is bedframe-aware (multiset only, div/gap/leg grammar).
+  1,230 bedframe rows, 3 real size-diffs seen in the sofa-run partial
+  (HC-PO-009933, 009990, 010115). Accessory (66 rows) not compared at all.
+- **26 sofa builds with received stock** — the applier refuses to change their
+  item_code (it would move the lot off its product). List them for the owner;
+  his call.
+- **11 PO lines whose code and name disagree** (from run 34483881613): 3 have a
+  supplier record (HC-PO-009679/010041/010161 — will be fixed by #3597's data),
+  3 are new Sept orders not in the listing (HC-PO-2609-043/045/053).
+- **Square pillow custom-vs-random colour** — NOT touched this round.
+- **51 not-proceeded sofas with NO drawing** — direction unknown; wait for
+  proceed or ask the customer.
+- **13 undecided drawings** — 5 rotated photos, 3 not plans, 5 piece-mismatch.
+- HELD items above, each needs one word from the owner.
+- Older backlog untouched: I-000213 invoice (RM 2,549), AutoCount payments
+  since the cut, 42+21 stock cells disagreeing on quantity.
 
-- **A build whose PO already RECEIVED stock.** The supplier says we ordered
-  different pieces; changing `item_code` under received stock moves the lot off
-  its product. The applier refuses this by its own rule. Apply everything else,
-  then put that list in front of him with the quantity and money at stake.
-- Whether to take a FRESH AutoCount balance cut before touching payments. The
-  committed one is from 2026-09-08 08:02 and only ages.
+## The two bugs assigned to SOMEONE ELSE — do not fix
 
-## Assigned to someone else — do not fix these
-
-The owner said 「这个我让别人fix」:
-
-1. `backend/src/scm/lib/so-revision.ts:694` — `applySoAmendment` updates
-   `item_code` and never `description`, so the name goes stale on an amended
-   line. This is what HC-SO-012016 shows.
-2. `backend/src/scm/lib/so-revision.ts:1386` — `reviseBoundPo` writes neither
-   `item_code` nor `material_name`, so an amended sofa's PURCHASE ORDER keeps the
-   old build entirely. This is the dangerous one; the factory reads the PO.
-
-## Still untouched, from the wider list
-
-- 179 not-proceeded sofa documents whose drawing has not been re-read
-- `HC-SO-012025` corner — plan run, never applied
-- 42 non-sofa + 21 sofa stock cells disagreeing on quantity (RM 7,686)
-- `I-000213` invoice never created (RM 2,549)
-- AutoCount payments taken since the cut, never brought in
+- `so-revision.ts:694` — `applySoAmendment` updates item_code, not description.
+- `so-revision.ts:1386` — `reviseBoundPo` writes neither item_code nor
+  material_name to the bound PO.
 
 ## Corrections I issued this round, so nobody re-inherits them
 
-- The four "double-posted" goods receipts were a FALSE POSITIVE
-  (`docs/bugs/0780`). Nothing was double posted; those receipts carry the same
-  product on several lines.
-- The product master is NOT the root of the code/description mismatch. I said it
-  was, before measuring. It is clean, 372 of 372.
-- "The SKU is probably wrong" on HC-SO-012016 was wrong: the SKU is the NEW value
-  from today's amendment, and the description is the stale one.
+- the 4 "double-posted" GRNs were a FALSE POSITIVE (docs/bugs/0780).
+- product master is NOT the code/description root; it is clean.
+- "TV above = our record is mirrored" was BACKWARDS: TV above means the naive
+  read is the mirror; a recorder who saw the TV recorded it right.
+- five agreeing earlier entries on HC-PO-010041 were one reading copied forward,
+  not evidence.

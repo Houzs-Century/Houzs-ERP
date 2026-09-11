@@ -19,6 +19,7 @@ import type { BankLine, Reconciliation, LedgerEntry } from './bank-queries';
 
 const bookMutate = vi.fn();
 const matchMutate = vi.fn();
+const groupMutate = vi.fn();
 const ignoreMutate = vi.fn();
 
 const LINE: BankLine = {
@@ -80,6 +81,7 @@ vi.mock('./bank-queries', () => ({
   useUploadBankStatement: () => ({ mutate: vi.fn(), isPending: false }),
   useBookBankReceipt: () => ({ mutate: bookMutate, isPending: false, isError: false, error: null }),
   useMatchBankLine: () => ({ mutate: matchMutate, isPending: false, isError: false, error: null }),
+  useMatchBankGroup: () => ({ mutate: groupMutate, isPending: false, isError: false, error: null }),
   useIgnoreBankLine: () => ({ mutate: ignoreMutate, isPending: false, isError: false, error: null }),
   useUndoBankLine: () => ({ mutate: vi.fn(), isPending: false }),
 }));
@@ -125,6 +127,49 @@ describe('what the books hold that the bank has not shown', () => {
   test('the month box says a dated file it names covers the whole month', () => {
     render(<BankStatementTab />);
     expect(screen.getByText(/covers that whole month/)).toBeTruthy();
+  });
+});
+
+/* ── Several movements to one entry ──────────────────────────────────────────
+   Owner, 2026-09-11, on OR-2604-001 = RM 29,000 + RM 10,000: 你应该开发让我自由选.
+   Tick the movements, choose the entry, and the totals must agree
+   (docs/bugs/0803). */
+describe('choosing an entry for several movements at once', () => {
+  const RECEIPT: LedgerEntry = { jeNo: '2990-JE-2604-0017', entryDate: '2026-04-30', sourceType: 'RCT', sourceDocNo: '2990-OR-2604-001', debitSen: 3900000, creditSen: 0, partyName: 'HOUZS VENTURE HOLDING SDN BHD', carried: false };
+  const OTHER_ENTRY: LedgerEntry = { jeNo: '2990-JE-2604-0024', entryDate: '2026-04-30', sourceType: 'PV', sourceDocNo: '2990-HPV-2604-007', debitSen: 0, creditSen: 310168, partyName: 'HOUZS VENTURE HOLDING SDN BHD', carried: false };
+  const big: BankLine = { ...OTHER, id: 21, line_no: 18, amount_sen: 2900000, description: 'Fund Transfer at DIO', reference: '2990 Home PV-000050 HOUZS VENTURE HOLDING SDN. BHD.' };
+  const small: BankLine = { ...OTHER, id: 22, line_no: 17, amount_sen: 1000000, description: 'Fund Transfer at DIO', reference: '2990 PV-000051 HOUZS VENTURE HOLDING SDN. BHD.' };
+
+  test('ticking movements opens the chooser with their total, and the entry list names who', () => {
+    lines = [big, small, OTHER];
+    unmatched = [RECEIPT, OTHER_ENTRY];
+    openStatement();
+    expect(screen.queryByText(/Choose the entry these movements are/)).toBeNull();
+    fireEvent.click(screen.getByLabelText('Pick line 18'));
+    fireEvent.click(screen.getByLabelText('Pick line 17'));
+    expect(screen.getByText(/2 movements picked/)).toBeTruthy();
+    expect(screen.getAllByText(/RM 39,000\.00/).length).toBeGreaterThan(0);
+    const chooser = screen.getByText(/Choose the entry these movements are/).closest('section') as HTMLElement;
+    expect(within(chooser).getAllByText('HOUZS VENTURE HOLDING SDN BHD', { selector: 'td' })).toHaveLength(2);
+    expect(within(chooser).getByLabelText('Entry 2990-JE-2604-0017 for the picked movements')).toBeTruthy();
+  });
+
+  test('the button waits until the two totals agree, then sends the movements and the entry', () => {
+    lines = [big, small, OTHER];
+    unmatched = [RECEIPT, OTHER_ENTRY];
+    openStatement();
+    fireEvent.click(screen.getByLabelText('Pick line 18'));
+    fireEvent.click(screen.getByLabelText('Pick line 17'));
+    const go = () => screen.getByText('These are that entry') as HTMLButtonElement;
+    expect(go().disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText('Entry 2990-JE-2604-0024 for the picked movements'));
+    expect(go().disabled).toBe(true);
+    expect(screen.getByText(/RM 42,101\.68 out/)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Entry 2990-JE-2604-0024 for the picked movements'));
+    fireEvent.click(screen.getByLabelText('Entry 2990-JE-2604-0017 for the picked movements'));
+    expect(go().disabled).toBe(false);
+    fireEvent.click(go());
+    expect(groupMutate.mock.calls[0]?.[0]).toEqual({ lineIds: [21, 22], jeNos: ['2990-JE-2604-0017'] });
   });
 });
 

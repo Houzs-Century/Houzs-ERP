@@ -92,6 +92,7 @@ vi.mock('./bank-queries', () => ({
   useBankStatement: () => ({ data: undefined, isLoading: false }),
   useUploadBankStatement: () => ({ mutate: vi.fn(), isPending: false }),
   useBookBankReceipt: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
+  useMatchBankGroup: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useMatchBankLine: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useIgnoreBankLine: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useUndoBankLine: () => ({ mutate: vi.fn(), isPending: false }),

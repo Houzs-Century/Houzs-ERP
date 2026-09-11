@@ -20,6 +20,7 @@ import {
   bankSetup, bankUpload, bankStatements, bankStatementDetail,
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
   bankRulesList, bankRuleCreate, bankRuleUpdate,
+  bankLinesMatchGroup,
 } from '../src/scm/routes/accounting-bank';
 import { bankConfigList, bankConfigSave } from '../src/scm/routes/accounting-bank-config';
 import { bankMonths } from '../src/scm/routes/accounting-bank-months';
@@ -118,7 +119,9 @@ function harness(tables: Record<string, Row[]> = {}, perms: readonly string[] = 
     {},
     [
       { table: 'acc_bank_statements', column: 'file_hash', name: 'acc_bank_stmt_once' },
-      { table: 'acc_bank_statement_matches', column: 'je_no', name: 'acc_bank_je_once' },
+      /* Since docs/bugs/0803 the index is (company, je_no, bank_line_id): an
+         entry may be paid by several movements, and the ROUTE is what refuses
+         a second claim on an entry another movement already accounts for. */
     ],
     /* Integer ids, or SETTLEBANK-<batch>-<receipt> keys off a 'row-1' string
        become NaN and the second credit silently collides with the first — the
@@ -142,6 +145,7 @@ function harness(tables: Record<string, Row[]> = {}, perms: readonly string[] = 
   app.post('/bank/lines/:id/match', bankLineMatch as never);
   app.post('/bank/lines/:id/ignore', bankLineIgnore as never);
   app.post('/bank/lines/:id/undo', bankLineUndo as never);
+  app.post('/bank/lines/match-group', bankLinesMatchGroup as never);
   app.get('/bank/rules', bankRulesList as never);
   app.post('/bank/rules', bankRuleCreate as never);
   app.patch('/bank/rules/:id', bankRuleUpdate as never);
@@ -529,6 +533,126 @@ describe('what the books hold that no statement has shown', () => {
     const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
     const charge = detail.lines.find((l: any) => Number(l.amount_sen) === -2500);
     expect(charge.entryCandidates).toEqual([expect.objectContaining({ jeNo: 'JE-2608-0012', partyName: 'MAYBANK', daysApart: 0 })]);
+  });
+});
+
+/* ── Several movements to one entry, or one movement to several ──────────────
+   Owner, 2026-09-11, on OR-2604-001 — RM 39,000 received from HOUZS VENTURE
+   HOLDING, which the bank shows as two transfers of RM 29,000 and RM 10,000:
+   他对应的是这两笔，你应该开发让我自由选. The two lines could only offer
+   "Not ours to reconcile". And the other way round: one transfer paying two
+   vouchers (docs/bugs/0803). */
+describe('several movements to one entry, or one to several', () => {
+  /* The first two credits of the file — RM 7,284.48 and RM 1,710.00 — are one
+     receipt of RM 8,994.48 in the books; the RM 25.00 charge is two vouchers. */
+  const RECEIPT = { company_id: CO, account_code: '330-0000', je_no: 'JE-2608-0020', entry_date: '2026-08-03', source_type: 'RCT', source_doc_no: 'OR-2608-001', debit_sen: 899448, credit_sen: 0, party_name: 'HOUZS VENTURE HOLDING SDN BHD', notes: null };
+  const FEE_A = { company_id: CO, account_code: '330-0000', je_no: 'JE-2608-0031', entry_date: '2026-08-12', source_type: 'PV', source_doc_no: 'HPV-2608-031', debit_sen: 0, credit_sen: 1500, party_name: 'MAYBANK', notes: null };
+  const FEE_B = { company_id: CO, account_code: '330-0000', je_no: 'JE-2608-0032', entry_date: '2026-08-12', source_type: 'PV', source_doc_no: 'HPV-2608-032', debit_sen: 0, credit_sen: 1000, party_name: 'MAYBANK', notes: null };
+  const world = () => harness({ v_gl_entries: [RECEIPT, FEE_A, FEE_B] });
+  const opened = async (app: Hono) => {
+    const up = await (await upload(app)).json() as any;
+    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    const lines = detail.lines as any[];
+    return {
+      statementId: up.statementId as number,
+      credits: lines.filter((l) => Number(l.amount_sen) > 0 && l.kind !== 'OTHER' ? true : Number(l.amount_sen) === 171000).sort((a, b) => b.amount_sen - a.amount_sen),
+      charge: lines.find((l) => Number(l.amount_sen) === -2500),
+    };
+  };
+  const group = (app: Hono, lineIds: number[], jeNos: string[]) => post(app, '/bank/lines/match-group', { lineIds, jeNos });
+
+  test('two movements that add up to one entry are matched to it together', async () => {
+    const { app, sb } = world();
+    const { statementId, credits } = await opened(app);
+    const [big, small] = credits.filter((l) => [728448, 171000].includes(Number(l.amount_sen)));
+    const res = await group(app, [big.id, small.id], ['JE-2608-0020']);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, lines: 2, entries: 1 });
+
+    const rows = sb.tables.acc_bank_statement_matches as Row[];
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.je_no)).toEqual(['JE-2608-0020', 'JE-2608-0020']);
+    expect(rows.map((r) => Number(r.amount_sen)).sort((a, b) => a - b)).toEqual([171000, 728448]);
+    for (const id of [big.id, small.id]) {
+      expect(sb.tables.acc_bank_statement_lines.find((l) => l.id === id)).toMatchObject({ state: 'POSTED', posted_je_no: 'JE-2608-0020' });
+    }
+    /* The entry is claimed once, by the pair, and the identity still holds. */
+    const detail = await (await app.request(`/bank/statements/${statementId}`)).json() as any;
+    expect(detail.reconciliation.unmatchedJeNos).not.toContain('JE-2608-0020');
+    expect(detail.reconciliation.consistent).toBe(true);
+  });
+
+  test('one movement that is two vouchers is matched to both', async () => {
+    const { app, sb } = world();
+    const { charge } = await opened(app);
+    const res = await group(app, [charge.id], ['JE-2608-0031', 'JE-2608-0032']);
+    expect(res.status).toBe(200);
+    const rows = sb.tables.acc_bank_statement_matches as Row[];
+    expect(rows.map((r) => [r.je_no, Number(r.amount_sen)])).toEqual([['JE-2608-0031', -1500], ['JE-2608-0032', -1000]]);
+    expect(sb.tables.acc_bank_statement_lines.find((l) => l.id === charge.id)).toMatchObject({ state: 'POSTED', posted_je_no: 'JE-2608-0031' });
+  });
+
+  /* THE RULE THE OWNER SET: 勾的总额必须等于那个 entry 的金额. */
+  test('refuses when the movements and the entries do not add up, and names the difference', async () => {
+    const { app, sb } = world();
+    const { credits } = await opened(app);
+    const big = credits.find((l) => Number(l.amount_sen) === 728448)!;
+    const res = await group(app, [big.id], ['JE-2608-0020']);
+    expect(res.status).toBe(409);
+    const body = await res.json() as any;
+    expect(body.error).toBe('amount_mismatch');
+    expect(body.message).toMatch(/1,710\.00/);
+    expect(sb.tables.acc_bank_statement_matches).toHaveLength(0);
+  });
+
+  test('refuses several movements to several entries — one side at a time', async () => {
+    const { app } = world();
+    const { credits, charge } = await opened(app);
+    const big = credits.find((l) => Number(l.amount_sen) === 728448)!;
+    const res = await group(app, [big.id, charge.id], ['JE-2608-0020', 'JE-2608-0031']);
+    expect(res.status).toBe(400);
+    expect((await res.json() as any).error).toBe('one_side_only');
+  });
+
+  test('refuses an entry another movement already accounts for, and one the books do not hold', async () => {
+    const { app } = world();
+    const { credits, charge } = await opened(app);
+    const [big, small] = credits.filter((l) => [728448, 171000].includes(Number(l.amount_sen)));
+    expect((await group(app, [big.id, small.id], ['JE-2608-0020'])).status).toBe(200);
+    const again = await group(app, [charge.id], ['JE-2608-0020']);
+    expect(again.status).toBe(409);
+    expect((await again.json() as any).error).toBe('already_matched');
+
+    const ghost = await group(app, [charge.id], ['JE-2608-9999']);
+    expect(ghost.status).toBe(404);
+    expect((await ghost.json() as any).error).toBe('entry_not_found');
+  });
+
+  /* Undoing one movement of a pair undoes the pair: half a claim on an entry
+     is not a state the identity can hold. */
+  test('undoing one movement of the pair lets go of the whole pair', async () => {
+    const { app, sb } = world();
+    const { credits } = await opened(app);
+    const [big, small] = credits.filter((l) => [728448, 171000].includes(Number(l.amount_sen)));
+    expect((await group(app, [big.id, small.id], ['JE-2608-0020'])).status).toBe(200);
+    const res = await post(app, `/bank/lines/${small.id}/undo`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, status: 'undone', linesReopened: 2 });
+    expect(sb.tables.acc_bank_statement_matches).toHaveLength(0);
+    for (const id of [big.id, small.id]) {
+      expect(sb.tables.acc_bank_statement_lines.find((l) => l.id === id)).toMatchObject({ state: 'OPEN', posted_je_no: null });
+    }
+  });
+
+  test('a closed month refuses it', async () => {
+    const { app, sb } = world();
+    const { credits } = await opened(app);
+    const [big, small] = credits.filter((l) => [728448, 171000].includes(Number(l.amount_sen)));
+    sb.tables.acc_bank_month_locks = [LOCK('2026-08')];
+    const res = await group(app, [big.id, small.id], ['JE-2608-0020']);
+    expect(res.status).toBe(409);
+    expect((await res.json() as any).error).toBe('month_locked');
+    expect(sb.tables.acc_bank_statement_matches).toHaveLength(0);
   });
 });
 

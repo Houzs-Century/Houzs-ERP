@@ -36,7 +36,7 @@ import {
   type Reconciliation,
 } from './bank-queries';
 import { ICON, fmt, btn, softText, danger, panel, refusalText } from './settlement-ui';
-import { ReconciliationPanel, OpenLine, DoneLine, BooksNotOnBank } from './BankStatementTab';
+import { ReconciliationPanel, OpenLines, DoneLine, BooksNotOnBank } from './BankStatementTab';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
@@ -250,24 +250,7 @@ const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) =
       {q.data && <ReconciliationPanel r={q.data.reconciliation} />}
       {q.data && <WhereTheFiguresCameFrom a={q.data.assembly} />}
 
-      {open.length > 0 && (
-        <section className="space-y-2">
-          <b>{`Still to decide (${open.length})`}</b>
-          <table className={grid.grid}>
-            <thead>
-              <tr>
-                <th>On the bank statement</th>
-                <th className={grid.num}>Amount</th>
-                <th>What it looks like</th>
-                <th>What to do</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ordered.map((l) => <OpenLine key={l.id} line={l} />)}
-            </tbody>
-          </table>
-        </section>
-      )}
+      {open.length > 0 && <OpenLines lines={ordered} entries={q.data?.unmatchedEntries ?? []} />}
 
       {done.length > 0 && (
         <div style={softText}>

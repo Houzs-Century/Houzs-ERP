@@ -502,6 +502,7 @@ export const bankStatementDetail = guard(async (c) => {
     amountSen: Number(l.amount_sen ?? 0),
     state: String(l.state) as StatementMovement['state'],
     jeNo: String(l.state) === 'POSTED' ? (l.posted_je_no ?? liveMatches(l)[0]?.je_no ?? null) : null,
+    jeNos: liveMatches(l).map((m) => String(m.je_no)),
   }));
 
   const reconciliation = reconcileBankStatement({
@@ -518,7 +519,7 @@ export const bankStatementDetail = guard(async (c) => {
      something anybody can chase. This period's, and the EARLIER ones still
      waiting for a bank to show them (owner: 之前 in book 还没有 recon 的也要带
      下来), each marked which it is. */
-  const claimed = new Set(movements.map((m) => m.jeNo).filter(Boolean));
+  const claimed = new Set(movements.flatMap((m) => [m.jeNo, ...(m.jeNos ?? [])]).filter(Boolean));
   const unmatchedEntries = ledger.movements
     .filter((l) => l.entryDate <= String(statement.period_to))
     .filter((l) => !claimed.has(l.jeNo))
@@ -751,18 +752,41 @@ export const bankLineUndo = guard(async (c) => {
 
   /* LET GO OF THE ENTRY (docs/bugs/0802). The link is what makes the books
      count the entry as claimed; a line put back to OPEN with its link still
-     standing left the two sides disagreeing and the entry unmatchable. */
+     standing left the two sides disagreeing and the entry unmatchable.
+
+     THE WHOLE GROUP (docs/bugs/0803). Two movements matched to one entry, or
+     one movement to two entries, are one decision: undoing one of the pair
+     would leave the entry half-claimed, a state the identity cannot hold. So
+     every movement sharing this movement's entries is reopened with it, and
+     the reply says how many. */
+  const { data: mineRaw, error: mErr } = await sb.from('acc_bank_statement_matches')
+    .select('je_no').eq('company_id', co.companyId).eq('bank_line_id', lineId);
+  if (mErr) return c.json({ error: 'load_failed', reason: mErr.message }, 500);
+  const myJes = [...new Set(((Array.isArray(mineRaw) ? mineRaw : []) as Array<{ je_no: string }>).map((m) => String(m.je_no)))];
+  const groupLineIds = new Set<number>([lineId]);
+  if (myJes.length > 0) {
+    const { data: sharedRaw, error: sErr } = await sb.from('acc_bank_statement_matches')
+      .select('bank_line_id').eq('company_id', co.companyId).in('je_no', myJes);
+    if (sErr) return c.json({ error: 'load_failed', reason: sErr.message }, 500);
+    for (const m of (Array.isArray(sharedRaw) ? sharedRaw : []) as Array<{ bank_line_id: number }>) groupLineIds.add(Number(m.bank_line_id));
+  }
+  for (const other of groupLineIds) {
+    if (other === lineId) continue;
+    const shut = await refuseIfLineLocked(c, co.companyId, other, 'undoing this movement (it shares an entry with a movement in a closed month)');
+    if (shut) return shut;
+  }
+  const ids = [...groupLineIds];
   const { error: unlinkErr } = await sb.from('acc_bank_statement_matches')
-    .delete().eq('company_id', co.companyId).eq('bank_line_id', lineId);
+    .delete().eq('company_id', co.companyId).in('bank_line_id', ids);
   if (unlinkErr) return c.json({ error: 'save_failed', reason: unlinkErr.message }, 500);
 
   const { error: upErr } = await sb.from('acc_bank_statement_lines').update({
     state: 'OPEN', posted_je_no: null, posted_je_id: null,
     updated_at: new Date().toISOString(),
-  }).eq('id', lineId).eq('company_id', co.companyId);
+  }).in('id', ids).eq('company_id', co.companyId);
   if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
 
-  return c.json({ ok: true, status: 'undone' });
+  return c.json({ ok: true, status: 'undone', linesReopened: ids.length });
 });
 
 /* ── POST /bank/lines/:id/ignore — none of our business ───────────────────── */
@@ -849,6 +873,14 @@ export const bankLineMatch = guard(async (c) => {
         .select('id, state').eq('company_id', co.companyId).in('id', stale.map((m) => Number(m.bank_line_id)));
       if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
       const posted = new Set(((Array.isArray(theirLines) ? theirLines : []) as Array<{ id: number; state: string }>).filter((l) => String(l.state) === 'POSTED').map((l) => Number(l.id)));
+      /* A live claim by another movement: one entry cannot account for two.
+         Since docs/bugs/0803 the index no longer says this; the route does. */
+      if (stale.some((m) => posted.has(Number(m.bank_line_id)) && Number(m.bank_line_id) !== lineId)) {
+        return c.json({
+          error: 'already_matched',
+          message: `${jeNo} is already reconciled against another movement on a bank statement. One entry cannot account for two.`,
+        }, 409);
+      }
       const dead = stale.filter((m) => !posted.has(Number(m.bank_line_id)) || Number(m.bank_line_id) === lineId).map((m) => Number(m.id));
       if (dead.length > 0) {
         const { error: dErr } = await sb.from('acc_bank_statement_matches').delete().eq('company_id', co.companyId).in('id', dead);
@@ -883,6 +915,114 @@ export const bankLineMatch = guard(async (c) => {
 
   return c.json({ ok: true, status: 'matched', jeNo });
 });
+
+/* ── POST /bank/lines/match-group — several movements are one entry, or one
+   movement is several entries (docs/bugs/0803) ──────────────────────────────
+   Owner, 2026-09-11, on OR-2604-001 — RM 39,000 received, shown by the bank
+   as RM 29,000 + RM 10,000: 他对应的是这两笔，你应该开发让我自由选. Any open
+   movements of one account and any entries of its ledger, ONE SIDE AT A TIME
+   (several-to-one or one-to-several; several-to-several is two decisions
+   pretending to be one), and the two sides must add up to the sen (owner:
+   勾的总额必须等于那个 entry 的金额). An entry a POSTED movement already
+   claims is refused by name; a closed month refuses every line in it. */
+export const bankLinesMatchGroup = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const lineIds = [...new Set((Array.isArray(body.lineIds) ? body.lineIds : []).map((v: unknown) => Number(v)).filter((n: number) => Number.isInteger(n)))] as number[];
+  const jeNos = [...new Set((Array.isArray(body.jeNos) ? body.jeNos : []).map((v: unknown) => String(v ?? '').trim()).filter(Boolean))] as string[];
+  if (lineIds.length === 0) return c.json({ error: 'no_lines', message: 'Tick the movements first.' }, 400);
+  if (jeNos.length === 0) return c.json({ error: 'no_entry', message: 'Say which journal entry (or entries) these movements are.' }, 400);
+  if (lineIds.length > 1 && jeNos.length > 1) {
+    return c.json({
+      error: 'one_side_only',
+      message: 'Match several movements to ONE entry, or one movement to several entries — not several to several. Do it as two matches.',
+    }, 400);
+  }
+
+  for (const id of lineIds) {
+    const shut = await refuseIfLineLocked(c, co.companyId, id, 'matching these movements');
+    if (shut) return shut;
+  }
+  const sb = c.get('supabase');
+
+  const { data: linesRaw, error: lErr } = await sb.from('acc_bank_statement_lines')
+    .select('id, statement_id, amount_sen, state').eq('company_id', co.companyId).in('id', lineIds);
+  if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+  const lines = (Array.isArray(linesRaw) ? linesRaw : []) as Array<{ id: number; statement_id: number; amount_sen: number; state: string }>;
+  if (lines.length !== lineIds.length) return c.json({ error: 'not_found', message: 'One of the movements is not on this company\'s statements. Refresh the list.' }, 404);
+  const notOpen = lines.find((l) => String(l.state) !== 'OPEN');
+  if (notOpen) {
+    return c.json({ error: 'not_open', message: `Movement ${notOpen.id} is already ${String(notOpen.state).toLowerCase()}. Undo it first.` }, 409);
+  }
+  const { data: stmtsRaw, error: sErr } = await sb.from('acc_bank_statements')
+    .select('id, account_code').eq('company_id', co.companyId).in('id', [...new Set(lines.map((l) => Number(l.statement_id)))]);
+  if (sErr) return c.json({ error: 'load_failed', reason: sErr.message }, 500);
+  const accounts = [...new Set(((Array.isArray(stmtsRaw) ? stmtsRaw : []) as Array<{ account_code: string }>).map((s) => String(s.account_code)))];
+  if (accounts.length !== 1) return c.json({ error: 'mixed_accounts', message: 'The movements ticked are on statements of different bank accounts.' }, 400);
+  const accountCode = accounts[0]!;
+
+  /* The entries, by what the ledger says they are — never the screen's amount. */
+  const ledger = await loadAccountLedger(sb, co.companyId, accountCode, '9999-12-31');
+  if (!ledger.ok) return c.json({ error: 'load_failed', reason: ledger.reason }, 500);
+  const entries = jeNos.map((n) => ledger.movements.find((m) => m.jeNo === n) ?? null);
+  const missingAt = entries.findIndex((e) => e === null);
+  if (missingAt >= 0) {
+    return c.json({ error: 'entry_not_found', message: `${jeNos[missingAt]} is not a posted entry on ${accountCode}.` }, 404);
+  }
+  const found = entries as Array<NonNullable<typeof entries[number]>>;
+
+  /* An entry a POSTED movement already accounts for. */
+  const { data: heldRaw, error: hErr } = await sb.from('acc_bank_statement_matches')
+    .select('je_no, bank_line_id').eq('company_id', co.companyId).in('je_no', jeNos);
+  if (hErr) return c.json({ error: 'load_failed', reason: hErr.message }, 500);
+  const held = (Array.isArray(heldRaw) ? heldRaw : []) as Array<{ je_no: string; bank_line_id: number }>;
+  if (held.length > 0) {
+    const { data: heldLines, error: hlErr } = await sb.from('acc_bank_statement_lines')
+      .select('id, state').eq('company_id', co.companyId).in('id', held.map((m) => Number(m.bank_line_id)));
+    if (hlErr) return c.json({ error: 'load_failed', reason: hlErr.message }, 500);
+    const posted = new Set(((Array.isArray(heldLines) ? heldLines : []) as Array<{ id: number; state: string }>).filter((l) => String(l.state) === 'POSTED').map((l) => Number(l.id)));
+    const live = held.find((m) => posted.has(Number(m.bank_line_id)));
+    if (live) {
+      return c.json({
+        error: 'already_matched',
+        message: `${live.je_no} is already reconciled against another movement on a bank statement. One entry cannot account for two.`,
+      }, 409);
+    }
+    /* The rest are rows an older undo left behind (docs/bugs/0802). */
+    const { error: dErr } = await sb.from('acc_bank_statement_matches').delete().eq('company_id', co.companyId).in('je_no', jeNos);
+    if (dErr) return c.json({ error: 'save_failed', reason: dErr.message }, 500);
+  }
+
+  const linesSen = lines.reduce((s, l) => s + Number(l.amount_sen), 0);
+  const entriesSen = found.reduce((s, e) => s + (e.debitSen - e.creditSen), 0);
+  if (linesSen !== entriesSen) {
+    return c.json({
+      error: 'amount_mismatch',
+      message: `The movements come to ${rm(linesSen)} and the entries to ${rm(entriesSen)} — ${rm(linesSen - entriesSen)} out. The two sides must add up to the sen before anything is matched.`,
+    }, 409);
+  }
+
+  /* Rows: several movements → one entry carry each movement's amount; one
+     movement → several entries carry each entry's amount. Either way the rows
+     of an entry sum to what it is, and the rows of a movement to what it is. */
+  const rows = lineIds.length > 1
+    ? lines.map((l) => ({ bank_line_id: Number(l.id), company_id: co.companyId, je_no: jeNos[0]!, amount_sen: Number(l.amount_sen), match_reason: 'manual' }))
+    : found.map((e) => ({ bank_line_id: lineIds[0]!, company_id: co.companyId, je_no: e.jeNo, amount_sen: e.debitSen - e.creditSen, match_reason: 'manual' }));
+  const { error: insErr } = await sb.from('acc_bank_statement_matches').insert(rows);
+  if (insErr) return c.json({ error: 'save_failed', reason: insErr.message }, 500);
+
+  const { error: upErr } = await sb.from('acc_bank_statement_lines')
+    .update({ state: 'POSTED', posted_je_no: jeNos[0]!, updated_at: new Date().toISOString() })
+    .in('id', lineIds).eq('company_id', co.companyId);
+  if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+
+  return c.json({ ok: true, status: 'matched', lines: lineIds.length, entries: jeNos.length, jeNos });
+});
+
+const rm = (sen: number) =>
+  `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /* ── Bank recognition rules — the maintenance window (2026-09-02) ────────────
    The rules that say "this credit is PBB's payout" have been seed-only since

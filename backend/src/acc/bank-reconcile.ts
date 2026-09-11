@@ -54,6 +54,9 @@ export type StatementMovement = {
   state: 'OPEN' | 'POSTED' | 'IGNORED';
   /** The je_no it claims, when it claims one. */
   jeNo?: string | null;
+  /** EVERY entry it claims — one movement can be several vouchers
+      (docs/bugs/0803). jeNo stays the first of them for readers that show one. */
+  jeNos?: string[];
 };
 
 export type ReconcileInput = {
@@ -179,7 +182,11 @@ export function reconcileBankStatement(input: ReconcileInput): Reconciliation {
      number. Everything else posted in the period is in the books and not on
      the bank — an uncleared cheque, a deposit that has not landed, or simply
      an entry belonging to a statement not uploaded yet. */
-  const claimed = new Set(movements.map((m) => m.jeNo).filter((n): n is string => !!n));
+  const claimed = new Set<string>();
+  for (const m of movements) {
+    if (m.jeNo) claimed.add(m.jeNo);
+    for (const n of m.jeNos ?? []) claimed.add(n);
+  }
   const unmatched = during.filter((l) => !claimed.has(l.jeNo));
   const booksNotOnBank: UnexplainedSide = { count: unmatched.length, sen: sum(unmatched, net) };
 

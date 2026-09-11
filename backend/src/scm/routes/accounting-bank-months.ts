@@ -95,7 +95,7 @@ const claimedOutside = (
 };
 
 /** The movement shape the reconciliation wants, off a line row. */
-const asMovement = (l: Row, jeNo: string | null): StatementMovement => ({
+const asMovement = (l: Row, jeNo: string | null, jeNos: string[] = []): StatementMovement => ({
   id: Number(l.id),
   bookedOn: dayOf(l.booked_on) ?? '',
   description: textOf(l.description) ?? '',
@@ -103,7 +103,22 @@ const asMovement = (l: Row, jeNo: string | null): StatementMovement => ({
   amountSen: Number(l.amount_sen ?? 0),
   state: String(l.state) as StatementMovement['state'],
   jeNo,
+  /* Every entry a POSTED line claims (docs/bugs/0803) — one movement can be
+     several vouchers, and the second is claimed too. */
+  jeNos: String(l.state) === 'POSTED' ? jeNos : [],
 });
+
+/** The entries a line's match rows name, by line. */
+const jeNosByLine = (matches: Row[]): Map<number, string[]> => {
+  const out = new Map<number, string[]>();
+  for (const m of matches) {
+    const key = Number(m.bank_line_id);
+    const at = out.get(key) ?? [];
+    at.push(String(m.je_no));
+    out.set(key, at);
+  }
+  return out;
+};
 
 /* ── GET /bank/months — every account × month that has anything in it ─────── */
 
@@ -289,7 +304,11 @@ export async function loadMonthForLock(
     const on = dayOf(l.booked_on);
     return on !== null && on >= window.from && on <= window.to;
   });
-  const movements = lines.map((l) => asMovement(l, textOf(l.posted_je_no)));
+  const matchRes = await sb.from('acc_bank_statement_matches')
+    .select('bank_line_id, je_no').eq('company_id', companyId);
+  if (matchRes.error) return { ok: false, reason: matchRes.error.message };
+  const jesOf = jeNosByLine(rowsOf(matchRes.data));
+  const movements = lines.map((l) => asMovement(l, textOf(l.posted_je_no), jesOf.get(Number(l.id)) ?? []));
   const firstPeriodFrom = allStatements.map((s) => dayOf(s.period_from) ?? '').filter(Boolean).sort()[0] ?? null;
 
   const fed = feedersOf(allStatements, new Set(lines.map((l) => Number(l.statement_id))), window);
@@ -388,7 +407,8 @@ export const bankMonthDetail = bankGuard(async (c) => {
   const jeOf = (l: Row): string | null =>
     (String(l.state) === 'POSTED' ? (textOf(l.posted_je_no) ?? textOf(matchesByLine.get(Number(l.id))?.[0]?.je_no)) : null);
 
-  const movements = lines.map((l) => asMovement(l, jeOf(l)));
+  const jesOf = jeNosByLine(rowsOf(matchRes.data));
+  const movements = lines.map((l) => asMovement(l, jeOf(l), jesOf.get(Number(l.id)) ?? []));
 
   /* The files that fed this month — the ones a line came from, plus an empty
      statement filed under it. A file uploaded against this account whose every
@@ -424,7 +444,7 @@ export const bankMonthDetail = bankGuard(async (c) => {
     claimedElsewhere,
   });
 
-  const claimed = new Set(movements.map((m) => m.jeNo).filter(Boolean));
+  const claimed = new Set(movements.flatMap((m) => [m.jeNo, ...(m.jeNos ?? [])]).filter(Boolean));
   /* This month's, and the earlier ones still waiting for a bank to show them
      (owner 2026-09-11: 之前 in book 还没有 recon 的也要带下来). */
   const unmatchedEntries = ledger.movements
