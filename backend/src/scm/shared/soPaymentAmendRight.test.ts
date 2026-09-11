@@ -103,7 +103,12 @@ describe('a RECONCILED payment is closed to everyone', () => {
       const msg = paymentRowMutable(OLD, TODAY, false, { mayAmend: true, reconciled }).problem;
       expect(msg).not.toBeNull();
       expect(msg as string).not.toMatch(/[{}]|\bnull\b|\bundefined\b|payment_edit_locked/);
-      expect((msg as string).length).toBeLessThan(240);
+      /* humanApiError keeps a sentence only UNDER 200 characters
+         (frontend authed-fetch.ts, isPlain). At 240 this test let three
+         sentences of 209–219 through, and the operator saw the generic
+         "That clashes with something already in the system" instead
+         (docs/bugs/0821). */
+      expect((msg as string).length).toBeLessThan(200);
     }
   });
 
