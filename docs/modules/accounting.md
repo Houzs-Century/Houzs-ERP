@@ -1434,6 +1434,26 @@ totals agree. Contracts: `backend/tests/bankRoutes.test.ts` (whose harness no
 longer carries the je_no unique — the route's refusal is what "only once"
 exercises), `bank-reconcile.test.ts`, `BankStatementTab.test.tsx`.
 
+**The obvious ones are matched without a hand (2026-09-11, docs/bugs/0814;
+owner, on a RM 45,000 rental transfer beside the one RM 45,000 voucher to
+NAVINDER SINGH GILL: 你看着 45,000 为什么我还需要自己 manual 匹配？只要名字金额一样
+就自动都对，名字不一样不确定我可以 manual 对).** "Ranked, never auto-applied"
+gets one narrow exception: `obviousEntryFor` (`backend/src/acc/bank-match.ts`)
+— exactly ONE same-amount entry within the window AND `namesAgree` (the bank's
+description + reference shares a name word with the entry's payee or note;
+words of three letters or more, a stoplist of company boilerplate and bank
+vocabulary, a five-letter prefix because Hong Leong truncates names). Days
+apart within the window do not matter; amount alone or name alone never
+matches; two candidates never do; a claimed entry is never a candidate.
+`applyObviousMatches` (`accounting-bank.ts`) runs it over a statement's OPEN
+not-card movements on upload (`autoMatched` in the reply) and on demand via
+`POST /accounting/bank/statements/:id/auto-match` (the "Match the obvious
+ones now" button; a closed month refuses); a match is recorded with reason
+`amount+name` (migration `20260911T1500` widens `acc_bank_match_reason`), the
+line goes POSTED and reads "matched by amount and name" under already dealt
+with, with Undo. Contracts: `bank-match.test.ts`, `backend/tests/bankRoutes.test.ts`
+("the obvious ones"), `BankStatementTab.test.tsx`.
+
 **"This movement is already in the books" (2026-09-09; owner, on a RM 3,000
 transfer sitting beside the RM 3,000 receipt that posted it: the only button was
 "Not ours to reconcile", which is not true).** `POST /bank/lines/:id/match` has

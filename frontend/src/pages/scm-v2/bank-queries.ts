@@ -203,6 +203,8 @@ export const useUploadBankStatement = () => {
         /** Movements this account had already recorded from an earlier upload —
             settled on arrival, nothing left to press. */
         alreadyRecorded: number;
+        /** Matched by amount and name on the way in (docs/bugs/0814). */
+        autoMatched: number;
         periodFrom: string; periodTo: string; inSen: number; outSen: number;
         openingBalanceSen: number | null; closingBalanceSen: number | null;
         kinds: Record<string, number>;
@@ -452,6 +454,19 @@ export type BankMonthLock = {
   differenceSen: number | null;
   statementCount: number;
   wasComplete: boolean;
+};
+
+/* The obvious matches — one same-amount entry the bank names — run over a
+   statement uploaded before the rule existed (docs/bugs/0814). */
+export const useAutoMatchStatement = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      authedFetch<{ ok: boolean; matched: number; jeNos: string[] }>(
+        `/accounting/bank/statements/${id}/auto-match`, { method: 'POST', body: '{}' },
+      ),
+    onSuccess: () => invalidateAfterBankPosting(qc),
+  });
 };
 
 /* An old file re-filed as its month's statement, in place (docs/bugs/0806). */

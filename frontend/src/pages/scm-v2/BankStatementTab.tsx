@@ -26,7 +26,7 @@ import { useState } from 'react';
 import { AlertTriangle, ArrowLeft, CheckCheck, Landmark, Link2, Undo2, Upload } from 'lucide-react';
 import {
   useBankSetup, useBankStatements, useBankStatement, useUploadBankStatement,
-  useBookBankReceipt, useMatchBankLine, useMatchBankGroup, useIgnoreBankLine, useUndoBankLine, useSetStatementPeriod,
+  useBookBankReceipt, useMatchBankLine, useMatchBankGroup, useIgnoreBankLine, useUndoBankLine, useSetStatementPeriod, useAutoMatchStatement,
   type BankLine, type BankStatement, type Reconciliation, type LedgerEntry } from './bank-queries';
 import { ICON, fmt, btn, softText, danger, good, panel, refusalText } from './settlement-ui';
 import styles from './Suppliers.module.css';
@@ -90,7 +90,9 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
             /* A re-upload settling half its own lines is a surprise even when
                every one of them is right, so it is said here and not only
                findable inside the statement. */
-            + (r.alreadyRecorded > 0 ? ` · ${r.alreadyRecorded} were already recorded and have been left out` : ''),
+            + (r.alreadyRecorded > 0 ? ` · ${r.alreadyRecorded} were already recorded and have been left out` : '')
+            /* The obvious ones went in matched (docs/bugs/0814). */
+            + (r.autoMatched > 0 ? ` · ${r.autoMatched} matched by amount and name` : ''),
         });
         onOpen(r.statementId);
       },
@@ -209,6 +211,30 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
 
 /* ── One statement ────────────────────────────────────────────────────────── */
 
+/* The obvious ones, for a statement that was already up when the rule
+   arrived (docs/bugs/0814; owner: 只要名字金额一样就自动都对). One press runs the
+   same rule the upload runs; the answer says how many it took. */
+const AutoMatchNow = ({ id }: { id: number }) => {
+  const run = useAutoMatchStatement();
+  return (
+    <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+      <button type="button" style={{ ...btn(), padding: '2px 8px' }} disabled={run.isPending} onClick={() => run.mutate(id)}>
+        <Link2 {...ICON} /> {run.isPending ? 'Matching…' : 'Match the obvious ones now'}
+      </button>
+      <span style={softText}>
+        A movement with exactly one entry of the same amount in the books, whose name the bank's line carries, is
+        matched without asking. The rest stay below for you.
+      </span>
+      {run.data && (
+        <span style={{ fontSize: 'var(--fs-13)', color: run.data.matched > 0 ? good : undefined }}>
+          {run.data.matched} matched by amount and name{run.data.matched > 0 ? ` — ${run.data.jeNos.join(', ')}` : ''}.
+        </span>
+      )}
+      {run.isError && <span style={{ fontSize: 'var(--fs-12)', color: danger }}>{refusalText(run.error, 'The rule did not run.')}</span>}
+    </div>
+  );
+};
+
 /* A file uploaded before the month box covered a month reads by its
    movements' dates — 30/4 → 30/4 for April. Re-filed as the month's statement
    in place: nothing else moves (owner 2026-09-11: 这只是显示问题吧; docs/bugs/0806). */
@@ -261,6 +287,7 @@ const StatementView = ({ id, onBack }: { id: number; onBack: () => void }) => {
       {q.data && <ReconciliationPanel r={q.data.reconciliation} />}
       {statement && <WhereItIsSaved statement={statement} openCount={open.length} lineCount={lines.length} />}
 
+      {open.length > 0 && <AutoMatchNow id={id} />}
       {open.length > 0 && <OpenLines lines={ordered} entries={q.data?.unmatchedEntries ?? []} />}
 
       {done.length > 0 && (
@@ -779,6 +806,8 @@ export const DoneLine = ({ line }: { line: BankLine }) => {
           : <span className={grid.good}>
               posted{line.posted_je_no ? ` · ${line.posted_je_no}` : ''}
               {line.matches.length > 0 ? ` · ${line.matches.map((m) => m.je_no).join(', ')}` : ''}
+              {/* Said, because nobody pressed it (docs/bugs/0814). */}
+              {line.matches.some((m) => m.match_reason === 'amount+name') ? ' · matched by amount and name' : ''}
             </span>}
       </td>
       <td>
