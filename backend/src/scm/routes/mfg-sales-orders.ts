@@ -8153,8 +8153,10 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
         ],
       });
 
-      try { await recomputeSoStockAllocation(sb); }
-      catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-line-add failed:', e); }
+      /* Adding a sofa is new demand → recompute may flip this SO into READY.
+         Deferred: the compartment rows are committed; the global sweep runs in
+         the background (waitUntil) so the save returns without blocking ~8s. */
+      deferAllocationRecompute(c, sb, 'post-line-add');
 
       /* The sofa branch RETURNED here and queued nothing, so adding a sofa to
          an order AutoCount already holds never reached the account book at all.
@@ -8208,10 +8210,10 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     ],
   });
 
-  /* New line = new demand → recompute may flip this SO into READY (or
-     bump another SO out). Best-effort. */
-  try { await recomputeSoStockAllocation(sb); }
-  catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-line-add failed:', e); }
+  /* New line = new demand → recompute may flip this SO into READY (or bump
+     another SO out). Deferred: the INSERT is committed; the global sweep runs in
+     the background (waitUntil) so the save returns without blocking ~8s on it. */
+  deferAllocationRecompute(c, sb, 'post-line-add');
 
   await queueAcSoEdit(c, docNo, [], data?.id ? [String(data.id)] : []);
 
@@ -8643,9 +8645,10 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     });
   }
 
-  /* Line qty / variants / category may have changed → recompute. */
-  try { await recomputeSoStockAllocation(sb); }
-  catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-line-patch failed:', e); }
+  /* Line qty / variants / category may have changed → recompute. Deferred: the
+     UPDATE is committed; the global sweep runs in the background (waitUntil) so
+     the save returns without blocking ~8s on it (matches the header PATCH). */
+  deferAllocationRecompute(c, sb, 'post-line-edit');
 
   await queueAcSoEdit(c, docNo);
 
@@ -8753,9 +8756,10 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
     });
   }
 
-  /* Line delete = demand drops → other queued SOs may move into READY. */
-  try { await recomputeSoStockAllocation(sb); }
-  catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-line-delete failed:', e); }
+  /* Line delete = demand drops → other queued SOs may move into READY.
+     Deferred: the delete is committed; the global sweep runs in the background
+     (waitUntil) so the save returns without blocking ~8s on it. */
+  deferAllocationRecompute(c, sb, 'post-line-delete');
 
   await queueAcSoEdit(c, docNo, retire);
 
