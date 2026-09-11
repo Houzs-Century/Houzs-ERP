@@ -166,47 +166,48 @@ minutes of write locks for zero rows; `plan` answers the same question free.
   `INCLUDE_BLANKS=1` / the workflow's checkbox. Blank DO LINE dates ARE filled by
   default: those are bug 0807-do-line-delivery-date's residue and nothing upstream reads them.
 
-### NEXT — TWO STEPS, and the first one needs a person at the office machine
+### DO NOT DO THE HOST STEP — the owner retired the reason for it (2026-09-11)
 
-The durable fix is BUILT, MERGED and DEPLOYED (PR #3636): the host service now
-serves `/delivery-dates` and the Worker cron pulls it. It does nothing yet, and
-finishing it is these two steps in this order.
+An earlier version of this section told the next person to rebuild
+`AcSyncService` on the office machine and switch the sweep on. **Do not.** The
+owner, asked why the backfill was wanted: 「不需要每天啊 我只是要 backfill 一次
+啊」 and 「autocount是没用了的」.
 
-**STEP 1 — on the AutoCount host (`DESKTOP-TDH50IT`). Somebody has to be at that
-machine, or on it over AnyDesk / UltraViewer.** ONE command, which fetches
-`main`, rebuilds `AcSyncService`, swaps it in, health-checks it and rolls itself
-back if the health check disagrees:
+**What that means, and the distinction that matters.** Nobody KEYS DOCUMENTS in
+AutoCount any more — staff work in the ERP, which is the go-live rule (the ERP is
+the only editing surface). So there is no longer a stream of AutoCount-side
+delivery-date changes for an inbound sweep to chase. The whole case for the
+sweep was "the drift returns", and it does not return if nobody edits there.
 
-```
-powershell -ExecutionPolicy Bypass -File C:\Tempc-session\host-session.ps1
-```
+**AutoCount is still RECEIVING, though, and that half is untouched.** Measured
+2026-09-11 15:00 MYT, ERP -> book in the previous three hours: 29 `so_to_do`,
+24 `so_to_po`, 40 SO `edit`, 4 DO `edit`, 2 `create_po`, newest
+`HC-PO-2609-087` at 07:00Z. So it remains the account book and the write-back
+stays live. "No longer used" means no longer EDITED BY PEOPLE, not disconnected.
 
-(or `deploy-on-host.ps1` directly, if the session directory is already there.)
+**So the state to leave this in:**
 
-**Why nobody can do it remotely, measured 2026-09-11 over ZeroTier:** the host
-is UP — SQL `10.147.17.100,55500` OPEN and SMB 445 OPEN — but **WinRM (5985 /
-5986) and RDP (3389) are CLOSED**, so there is no channel that executes a
-command. And the rebuild must run ON the host regardless: it compiles the SQL
-credentials out of `C:\InistateConnector\setup.json` into the exe.
+- the one-time backfill is DONE and measured to zero (the section above);
+- `/delivery-dates` on the host service and
+  `scm/lib/autocount-delivery-date-sweep.ts` are MERGED and DEPLOYED but
+  **deliberately asleep** — the `scm.app_config` row does not exist, and the host
+  route does not exist either. Two independent reasons nothing happens. Leave
+  both alone;
+- **nobody needs to visit the office machine for this.** The rebuild buys an
+  inbound sync for edits that will not be made.
 
-Confirm it afterwards from anywhere: `GET /api/admin/health/autocount/host-build`
-should report the new build, and `POST /delivery-dates` on the host should stop
-answering 404.
+**When this code WOULD earn its keep**, so it is not deleted by someone who did
+not read this: if AutoCount is ever keyed by a person again — a parallel-run for
+another company, a month someone works in the book during a cutover, an audit
+correction made there — then the two steps in the git history of this file
+(host rebuild, then the **Set AutoCount delivery-date sweep** workflow) turn it
+on. Until that happens it is dormant, and dormant is the intended state.
 
-**STEP 2 — then turn the sweep on.** Actions -> **Set AutoCount delivery-date
-sweep** -> `sweep=plan`, `mode=apply`, `CONFIRM=set-delivery-date-sweep`. Read
-one `[cron ac-delivery-dates]` line to see what it would write, then repeat with
-`sweep=apply`. The switch workflow has been dispatched once already (run
-34569417229, success, `plan`) and correctly reported the row as absent = OFF.
-
-**Until STEP 1 runs**, the sweep reads a 404 and reports `hostRouteMissing`, so
-「跟 AutoCount 又对不上了」 on a delivery date is EXPECTED drift rather than a new
-bug, and the catch-up is: re-run `export-ac-delivery-dates.py` on this desktop
-(it needs ZeroTier), commit the snapshot, then the repair workflow.
-
-**Not needed, and worth writing down so nobody builds it:** the inbound
-middleware does NOT have to change. Its source is not in this repository, and
-`/delivery-dates` on the service that IS ours covers the same ground.
+**If a delivery date ever looks wrong against the book again**, the answer is one
+manual pass, no host change: run `export-ac-delivery-dates.py` from the owner's
+desktop (it needs ZeroTier), commit the snapshot, then the **Repair delivery
+dates from the AutoCount book** workflow — `plan`, read it, then `apply`. It took
+minutes today.
 
 ---
 
