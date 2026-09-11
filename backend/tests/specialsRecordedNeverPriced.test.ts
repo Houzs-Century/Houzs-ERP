@@ -44,6 +44,44 @@ const ALLOWED = new Set([
   // THE WRITER, and this test.
   'backend/scripts/record-priced-specials-on-migrated-lines.mjs',
   'backend/tests/specialsRecordedNeverPriced.test.ts',
+  /* DISPLAY — a read-only diagnostic, added 2026-09-09 with its reason because
+     this list is the mechanism and not an obstacle.
+
+     WHY IT READS THE KEY. It answers "where did this order's money come from,
+     line by line?" for one named document (HC-SO-012312: three bedframes split
+     and RM 250 appeared on a line whose two neighbours are FOC). Whether a
+     line's option sits in `specials` or in `specialsRecorded` is exactly the
+     distinction that question turns on — the recorded half is the half that must
+     NOT have added a surcharge, so a probe that could not tell them apart could
+     not tell the owner which case he is looking at.
+
+     WHY IT IS SAFE UNDER THIS RULE. It renders and never prices: the key reaches
+     one string in a printed SPECIALS column and no arithmetic anywhere. The
+     probe's only sum is lines vs header total, computed from `total_sen` alone.
+     It is also SELECT-only — it cannot write a price even by accident. */
+  'backend/scripts/check-so-line-pricing.mjs',
+  /* A SECOND WRITER, and it only ever CLEARS — added 2026-09-09 with the reason,
+     because this list is the mechanism for that and not an obstacle to it.
+
+     WHY IT HAS TO TOUCH THE KEY AT ALL. AutoCount refuses a whole document whose
+     Description 2 is over nvarchar(100), and that string is the SUM of
+     `variants.specials` and `variants.specialsRecorded`. On HC-SO-007678 the
+     106-character sentence lives in the RECORDED half, so no value of `specials`
+     brings the line under 100 — the field has to be emptied or the document
+     never reaches the accounts.
+
+     WHY IT IS SAFE UNDER THE RULE THIS TEST ENFORCES. The rule is that the key
+     must never feed a PRICE or a COST, so a historical document's money cannot
+     move on its next edit. This script writes `specialsRecorded: []` and touches
+     no money column at all; it is plan-by-default, refuses to act on any line
+     whose current text is not character-for-character what the owner was shown,
+     and re-reads on a fresh connection to assert the RENDERING afterwards.
+
+     THE OWNER WROTE THE REPLACEMENT WORDINGS HIMSELF on 2026-09-09 — the text he
+     approved does not contain that sentence — and the plan prints both fields
+     before anything is written, so the removal is seen and confirmed rather than
+     inferred. */
+  'backend/scripts/shorten-specials-to-the-book.mjs',
   /* REPORTING — read-only, and that is the whole reason they are admissible.
      These four open a connection, SELECT, and print; not one of them writes a
      line, and none can reach a price. They were added 2026-09-07 because the
@@ -60,7 +98,20 @@ const ALLOWED = new Set([
   'backend/scripts/lib/variant-reconcile.mjs',
   'backend/scripts/lib/variant-reconcile.test.mjs',
   'backend/scripts/check-ac-erp-reconcile.mjs',
+  /* The variant table and its legend, LIFTED OUT of check-ac-erp-reconcile.mjs
+     on 2026-09-08 because that file hit its 2,000-line ceiling. It prints the
+     `recorded` column's sentence and nothing else: the same render, in a new
+     file. It computes no price and reads no money. */
+  'backend/scripts/lib/variant-report.mjs',
   'backend/scripts/plan-priced-specials-money.mjs',
+  /* The migrated-invoice receipt snapshot names the key only to WITHHOLD it.
+     `repair-migrated-invoice-variants-from-receipt.mjs` copies a goods-receipt
+     line's variants onto the invoice line raised from it, and its `WITHHELD`
+     map lists every key it refuses to carry across with the reason — this one
+     among them. Mentioning a key in order not to write it is the opposite of
+     pricing it, and the refusal is the safer of the two ways to fail: a parent
+     key that is in neither the owned list nor this one makes the row REFUSE. */
+  'backend/scripts/repair-migrated-invoice-variants-from-receipt.mjs',
 ]);
 
 const SCAN = ['backend/src', 'backend/scripts', 'frontend/src'];

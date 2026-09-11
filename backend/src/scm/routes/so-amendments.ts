@@ -26,8 +26,8 @@ import {
 } from '../shared';
 import { applySoAmendment, reviseBoundPo, ReceivedFloorError } from '../lib/so-revision';
 import { raisePoFollowUps } from '../lib/amendment-po-followup';
-import { hasHouzsPerm, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
-import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
+import { hasHouzsPerm, holdsHouzsPermLiterally, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
+import { resolveSalesScopeIds, applySoScope, soDocOutOfScope, resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
 import {
   notifySoAmendmentResolved,
   notifyPoAmendmentRaised,
@@ -154,7 +154,7 @@ type AmendmentWriteLoad =
    so the unscoped load handed one company's user a financial rewrite of the
    other's document. Scope the mutation the way the reads are scoped, and 404
    rather than 403 so an out-of-company id is indistinguishable from a
-   nonexistent one (the convention salesDocOutOfScope already set).
+   nonexistent one (the convention soDocOutOfScope already set).
 
    Second axis: a MIRRORED (2990-) amendment is NOT applied here. Houzs is not
    the writer of 2990's records — applySoAmendment would rewrite a mirrored SO
@@ -298,12 +298,12 @@ soAmendments.get('/', async (c) => {
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
   if (scopeIds && rows.length > 0) {
     // Resolve which of the listed amendments' SOs the caller may see — a single
-    // bounded query over the ≤500 doc_nos on the page (salesperson_id ∈ scope).
+    // bounded query over the ≤500 doc_nos on the page (access_staff_ids ∩ scope,
+    // so an order SHARED with the caller lists its amendments too).
     const docNos = [...new Set(rows.map((r) => r.so_doc_no).filter((x): x is string => !!x))];
-    const { data: soRows } = await scopeToCompany(sb.from('mfg_sales_orders')
+    const { data: soRows } = await scopeToCompany(applySoScope(sb.from('mfg_sales_orders')
       .select('doc_no')
-      .in('doc_no', docNos)
-      .in('salesperson_id', scopeIds), c);
+      .in('doc_no', docNos), scopeIds), c);
     const allowed = new Set(((soRows ?? []) as Array<{ doc_no: string }>).map((r) => r.doc_no));
     rows = rows.filter((r) => r.so_doc_no != null && allowed.has(r.so_doc_no));
   }
@@ -354,6 +354,69 @@ soAmendments.get('/', async (c) => {
     bound_pos: r.so_doc_no ? (boundBySo.get(r.so_doc_no) ?? []) : [],
   }));
   return c.json({ amendments });
+});
+
+/* ── GET /pending-count — how many amendments are waiting for THIS caller ───
+   Feeds the red count on the "Sales Order Amendment" sidebar entry (owner
+   2026-09-09: "根据目前还有多少单需要被审批 — 在需要审批人员账号显示, 审批后就
+   根据目前需要的单号改变").
+
+   THE COUNT IS PER-SIGNER, NOT A GLOBAL BACKLOG. It counts only the lanes this
+   caller can actually sign, so the badge answers "how much is waiting for ME".
+   Someone who holds neither lane key gets 0 and the badge never renders — which
+   is the whole "在需要审批人员账号显示" half of the ask: a number on a menu the
+   reader cannot act on is worse than no number, because it never goes down for
+   them no matter what they do.
+
+   REQUESTED only — that is the one open state a lane row has (amendment-lane.ts
+   state machine); everything else is terminal. Legacy (lane IS NULL) rows are
+   counted for the legacy key holder for the same reason the gates still honour
+   it: a finite backlog that still needs clearing.
+
+   Registered BEFORE `/:id` — Hono matches in order, and a param route above
+   this one would swallow "pending-count" as an amendment id.
+
+   Fails SOFT with 0. A badge is decoration on someone else's screen; a count
+   query that errors must not turn the sidebar into an error state. */
+soAmendments.get('/pending-count', async (c) => {
+  /* holdsHouzsPermLiterally, NOT hasHouzsPerm: the `*` wildcard must not put a
+     count on the Owner account's menu (owner 2026-09-09). Same rule the notice
+     audience already applied — a badge that carries every desk's backlog is a
+     badge its reader learns to ignore, and the wildcard holder can still
+     approve anything and still sees every row inside the module. */
+  const lanes: string[] = [];
+  if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.LINES)) lanes.push('LINES');
+  if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.DELIVERY)) lanes.push('DELIVERY');
+  const legacy = holdsHouzsPermLiterally(c, 'scm.amendment.approve_so');
+  if (lanes.length === 0 && !legacy) return c.json({ count: 0 });
+
+  const sb = c.get('supabase');
+  try {
+    /* Every OPEN amendment for the company, then split by lane in JS.
+       Deliberately not an `.or('lane.in.(…),lane.is.null')`: `lane` is nullable,
+       so the legacy half cannot ride the same `.in()`, and the two-predicate OR
+       is PostgREST filter-grammar that reads as a string and fails as a string.
+       The set it walks is BOUNDED and small by construction — the partial unique
+       indexes (uq_so_amendment_open_legacy / uq_so_amendment_open_lane, mig 0215)
+       allow at most one open row per SO per lane, and prod carries a handful.
+       A count that is easy to read beats a filter that is clever to write. */
+    const { data, error } = await scopeToCompany(
+      sb.from('so_amendments').select('id, lane').eq('status', 'REQUESTED'),
+      c,
+    );
+    if (error) {
+      console.error('[so-amendment] pending-count failed:', error.message);
+      return c.json({ count: 0 });
+    }
+    const rows = data as Array<{ lane: string | null }>;
+    const mine = rows.filter((r) =>
+      r.lane == null ? legacy : lanes.includes(r.lane),
+    );
+    return c.json({ count: mine.length });
+  } catch (e) {
+    console.error('[so-amendment] pending-count threw:', (e as Error).message);
+    return c.json({ count: 0 });
+  }
 });
 
 /* ── GET /command-diag — the owner's dry-run for the write-back channel ─────
@@ -431,16 +494,16 @@ soAmendments.get('/:id', async (c) => {
   // SO header summary — doc_no, status, revision (+ salesperson_id for the scope
   // check below).
   const { data: soRow } = await sb.from('mfg_sales_orders')
-    .select('doc_no, status, revision, salesperson_id')
+    .select('doc_no, status, revision, salesperson_id, access_staff_ids')
     .eq('doc_no', amendment.so_doc_no).maybeSingle();
   const salesOrder = (soRow ?? null) as
-    { doc_no: string; status: string; revision: number; salesperson_id?: number | string | null } | null;
+    { doc_no: string; status: string; revision: number; salesperson_id?: number | string | null; access_staff_ids?: string[] | null } | null;
 
   /* Row-level scope (Owner 2026-07-16) — a scoped salesperson may open only an
      amendment for a Sales Order in their own+downline scope; anything else 404s
      (indistinguishable from a nonexistent id), mirroring the SO detail read.
      View-all callers pass. */
-  if (await salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), salesOrder?.salesperson_id)) {
+  if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: salesOrder?.salesperson_id, accessStaffIds: salesOrder?.access_staff_ids })) {
     return c.json({ error: 'not_found' }, 404);
   }
 

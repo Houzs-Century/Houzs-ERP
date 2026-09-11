@@ -11,15 +11,20 @@ vi.mock("../../vendor/scm/lib/authed-fetch", () => ({
   authedFetch: (...args: unknown[]) => authedFetch(...args),
   API_URL: "",
 }));
-vi.mock("../../vendor/scm/lib/admin-queries", () => ({
-  useStaff: () => ({
+/* The From picker lists ORDER HOLDERS, not the staff roster — the roster is
+   scoped by a person's company link and hid the resigned reps the panel exists
+   for. `alicia` is the resigned holder: inactive, and NOT in the pickable
+   roster below, so a test that passes with her selectable is proving the fix. */
+vi.mock("../../vendor/scm/lib/sales-order-queries", () => ({
+  useSoHandoverHolders: () => ({
     data: [
-      { id: "s-3", name: "Sim", active: true },
-      { id: "s-1", name: "alicia", active: false },
-      { id: "s-2", name: "Bernard", active: true },
+      { staffId: "s-1", name: "alicia", staffCode: "ACIMP-ALI", active: false, orders: 30 },
+      { staffId: "s-3", name: "Sim", staffCode: "EMP-3", active: true, orders: 2 },
     ],
     isLoading: false,
   }),
+}));
+vi.mock("../../vendor/scm/lib/admin-queries", () => ({
   usePickableStaff: () => ({
     data: [
       { id: "s-2", name: "Bernard", active: true },
@@ -58,17 +63,21 @@ const pickFrom = (optionText: string | RegExp) =>
   pick("Orders currently with", optionText);
 
 describe("SalespersonHandover", () => {
-  it("lists the full roster A→Z and marks who is no longer active", () => {
+  /* The list is ORDER HOLDERS, biggest book first, with the count in the label
+     — not the staff roster A→Z. `alicia` is inactive AND absent from the
+     pickable roster, so her being here at all is the regression this pins:
+     under the old source she was unselectable and her 30 orders unreachable. */
+  it("lists who holds orders, most first, with the count", () => {
     render(<SalespersonHandover />);
     fireEvent.focus(screen.getByRole("textbox", { name: "Orders currently with" }));
     const rows = [...document.querySelectorAll("li")].map((li) => li.textContent);
-    expect(rows).toEqual(["alicia (inactive)", "Bernard", "Sim"]);
+    expect(rows).toEqual(["alicia (inactive) — 30", "Sim — 2"]);
   });
 
   it("shows the orders that would move before anything is written", async () => {
     authedFetch.mockResolvedValueOnce(preview(2));
     render(<SalespersonHandover />);
-    pickFrom("alicia (inactive)");
+    pickFrom("alicia (inactive) — 30");
     await waitFor(() => expect(screen.getByText("HC-SO-1")).toBeTruthy());
     expect(screen.getByText("2")).toBeTruthy();          // the count
     expect(screen.getByText("HC-SO-2")).toBeTruthy();
@@ -80,7 +89,7 @@ describe("SalespersonHandover", () => {
   it("chunks the apply into batches of the API's cap", async () => {
     authedFetch.mockResolvedValueOnce(preview(30));
     render(<SalespersonHandover />);
-    pickFrom("alicia (inactive)");
+    pickFrom("alicia (inactive) — 30");
     await waitFor(() => expect(screen.getByText("HC-SO-1")).toBeTruthy());
 
     pick("Hand them to", "Bernard");
@@ -106,7 +115,7 @@ describe("SalespersonHandover", () => {
   it("reports what was skipped instead of claiming a clean run", async () => {
     authedFetch.mockResolvedValueOnce(preview(1));
     render(<SalespersonHandover />);
-    pickFrom("alicia (inactive)");
+    pickFrom("alicia (inactive) — 30");
     await waitFor(() => expect(screen.getByText("HC-SO-1")).toBeTruthy());
 
     pick("Hand them to", "Bernard");
@@ -126,5 +135,66 @@ describe("SalespersonHandover", () => {
       expect(screen.getByText(/Moved 0 orders · skipped 1/)).toBeTruthy(),
     );
     expect(screen.getByText(/No longer attributed/)).toBeTruthy();
+  });
+});
+
+/* SHARING is the second operation on this panel (owner 2026-09-09, 全部平等，
+   不设主). It writes a different column to a different endpoint and must NOT be
+   able to move anybody's orders — which is the thing worth pinning, because both
+   buttons sit in the same header over the same list. */
+describe("SalespersonHandover — sharing", () => {
+  const share = (optionText: string | RegExp) => pick("Also give access to", optionText);
+
+  it("collects several people and posts them to /share, moving nothing", async () => {
+    authedFetch.mockResolvedValueOnce(preview(2));
+    render(<SalespersonHandover />);
+    pickFrom("alicia (inactive) — 30");
+    await waitFor(() => expect(screen.getByText("HC-SO-1")).toBeTruthy());
+
+    share("Bernard");
+    share("Sim");
+
+    authedFetch.mockImplementation(() => Promise.resolve({ changed: [], skipped: [] }));
+    fireEvent.click(screen.getByRole("button", { name: /Share with 2/ }));
+
+    await waitFor(() => {
+      const posts = authedFetch.mock.calls.filter((c) => c[0] === "/so-handover/share");
+      expect(posts).toHaveLength(1);
+      expect(JSON.parse(posts[0][1].body)).toMatchObject({
+        staffIds: ["s-2", "s-3"],
+        mode: "add",
+      });
+    });
+    /* The whole point of the owner's ruling: sharing never touches attribution. */
+    expect(authedFetch.mock.calls.filter((c) => c[0] === "/so-handover/apply")).toHaveLength(0);
+  });
+
+  it("sends mode=remove for a withdrawal, on the same list", async () => {
+    authedFetch.mockResolvedValueOnce(preview(1));
+    render(<SalespersonHandover />);
+    pickFrom("alicia (inactive) — 30");
+    await waitFor(() => expect(screen.getByText("HC-SO-1")).toBeTruthy());
+
+    share("Bernard");
+    authedFetch.mockImplementation(() => Promise.resolve({ changed: [{ docNo: "HC-SO-1" }], skipped: [] }));
+    fireEvent.click(screen.getByRole("button", { name: "Withdraw" }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Withdrew access on 1 order/)).toBeTruthy(),
+    );
+    const posts = authedFetch.mock.calls.filter((c) => c[0] === "/so-handover/share");
+    expect(JSON.parse(posts[0][1].body).mode).toBe("remove");
+  });
+
+  it("keeps the two actions independent — no share picked, no Share button", async () => {
+    authedFetch.mockResolvedValueOnce(preview(1));
+    render(<SalespersonHandover />);
+    pickFrom("alicia (inactive) — 30");
+    await waitFor(() => expect(screen.getByText("HC-SO-1")).toBeTruthy());
+
+    expect(screen.queryByRole("button", { name: /Share with/ })).toBeNull();
+    /* And the handover button is still gated by ITS own field, not by the
+       sharing one. */
+    expect(screen.getByRole("button", { name: /Move to/ }).hasAttribute("disabled")).toBe(true);
   });
 });

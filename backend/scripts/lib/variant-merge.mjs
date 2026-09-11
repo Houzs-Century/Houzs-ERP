@@ -69,8 +69,23 @@ export const OWNED_VARIANT_KEYS = Object.freeze([
   "size",
 ]);
 
-/* The keys the SOFA backfill owns. A sofa has no divan, leg or gap, so those
+/* The keys the SOFA backfill owns. A sofa has no divan and no gap, so those
    must never appear in a sofa patch — its dimensional axis is the seat.
+
+   ── `legHeight` IS A REAL SOFA AXIS, AND IT IS LEFT OUT ON PURPOSE ──────────
+   This comment used to say "a sofa has no divan, leg or gap", and the leg third
+   of that is false: `src/scm/shared/so-variant-rule.ts` gives the SOFA group a
+   Leg Height picker (aliases `legHeight` / `sofaLegHeight`, required false),
+   `scripts/backfill-sofa-leg-default.mjs` fills it, and HC-SO-010284 carries
+   `legHeight: "1\""` on every compartment of its build. A reader that believed
+   this sentence is how the leg ended up with nowhere to go and was filed as a
+   special order instead (`docs/bugs/0741`).
+
+   It stays out of the OWNED list all the same, and that is a different
+   statement: this is the FABRIC-LIBRARY sweep, it exists to re-resolve colours
+   and the seat, and a leg is not its business. The leg is now READ and COMPARED
+   by lib/variant-reconcile.mjs; nothing in this lane writes one. Adding it here
+   would make a colour sweep start writing heights.
 
    `seatHeight` is here and in no other owned list because until now NOTHING
    swept sofa at all: `refresh-po-variants.mjs` and `refresh-so-variants.mjs`
@@ -85,10 +100,77 @@ export const OWNED_SOFA_KEYS = Object.freeze([
   "seatHeight",
 ]);
 
+/* The keys the REVIEWED-LIST book correction owns — `repair-so-variant-from-book.mjs`.
+   OWNED_SOFA_KEYS plus `legHeight`, and the difference between the two lists is
+   the difference between a SWEEP and a LIST.
+
+   The comment above leaves `legHeight` out of OWNED_SOFA_KEYS on purpose and is
+   right to: that list arms `refresh-po-variants.mjs` / `refresh-so-variants.mjs`,
+   which RECOMPUTE from Desc2 on every run, so a key there is a key overwritten
+   on every run — "adding it here would make a colour sweep start writing
+   heights". None of that applies to the book correction, which is a different
+   kind of writer:
+
+     · its population is `data/variant-book-corrections.json`, entries a human
+       reviewed one at a time — never a sweep, never a query;
+     · every entry states `erp_now` and is SKIPPED if the row no longer holds it,
+       so it cannot overwrite a later human edit;
+     · it refuses a build whose pieces disagree with each other.
+
+   So it may own a key the sweeps must not. Kept as its own list rather than by
+   widening theirs, because the two are not the same statement and merging them
+   would silently arm the sweeps (docs/bugs/0755).
+
+   The leg is a real sofa axis — `src/scm/shared/so-variant-rule.ts` gives the
+   SOFA group a Leg Height picker, and `lib/variant-reconcile.mjs:278` COMPARES
+   it. Until now it was compared and never writable, which is how two purchase
+   orders sat in the tally with nothing able to correct them. */
+export const OWNED_BOOK_CORRECTION_KEYS = Object.freeze([
+  "fabricId",
+  "colourId",
+  "fabricCode",
+  "colourLabel",
+  "fabricLabel",
+  "seatHeight",
+  "legHeight",
+]);
+
 /* The subset a non-bedframe (SP) special-size line owns: its dimensions only.
    No fabric, no gap, no divan, no leg - a custom-size MATTRESS has none of
    those and must not have them nulled. */
 export const OWNED_SIZE_ONLY_KEYS = Object.freeze(["size"]);
+
+/* The keys a MIGRATED PURCHASE-INVOICE line may take back from the goods-receipt
+   line it was copied from — repair-migrated-invoice-variants-from-receipt.mjs.
+
+   ITS OWN LIST, not a widening of anyone else's, for the reason docs/bugs/0755
+   records: merging two owned lists silently arms the writer that did not ask
+   for the key. This writer is a third kind again — its source is not the book
+   and not a re-parse, it is OUR OWN parent row, and it only ever fills a line
+   whose `variants` is absent or empty.
+
+   `specials` and `special` are DELIBERATELY absent, and that absence is the
+   money guard. A picked add-on's selling surcharge folds into the authoritative
+   unit price (mfg-pricing.ts), so stamping a priced code onto a historical line
+   reprices the document on its next edit — the owner ruled that out on
+   2026-08-11, and the two writers that know how to do it safely
+   (`backfill-specials-into-variants.mjs`,
+   `record-priced-specials-on-migrated-lines.mjs`) reach only the sales-order
+   and purchase-order tables. Withholding the key here means a parent that
+   carries one cannot leak it through this copy. */
+export const OWNED_PI_SNAPSHOT_KEYS = Object.freeze([
+  "fabricId",
+  "colourId",
+  "fabricCode",
+  "colourLabel",
+  "fabricLabel",
+  "seatHeight",
+  "legHeight",
+  "divanHeight",
+  "gap",
+  "totalHeight",
+  "size",
+]);
 
 const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
@@ -108,6 +190,20 @@ export function assertOnlyOwnedKeys(patch, owned = OWNED_VARIANT_KEYS, who = "va
 /** The bedframe patch: exactly the keys a Desc2 re-parse is entitled to move. */
 export function buildBedframeVariantPatch(bf, fc) {
   const tot = (Number(bf.gap) || 0) + (Number(bf.divan) || 0) + (Number(bf.leg) || 0);
+  /* ── AN UNDECIDED COMPONENT MAKES THE TOTAL UNKNOWN, NOT SMALLER ─────────
+     THE SECOND OF THE THREE COPIES of this rule. `docs/bugs/0732` fixed
+     lib/parse-bedframe.mjs's `bedframeVariants` and named this file and
+     lib/variant-reconcile.mjs as still carrying the defect; this is that entry
+     being finished. `Number(undefined) || 0` counted a component the book wrote
+     TBC/KIV as ZERO, so a sweep re-deriving `Divan: TBC / Gap: 12"` wrote a bed
+     twelve inches tall when nobody has picked the divan under it.
+
+     The rule is READ from `parseBedframe`, never re-decided: `divanPending`,
+     `gapPending` and `legPending` are its facts, set only by an EXPLICIT
+     TBC/KIV against that keyword. A merely ABSENT component is untouched — a
+     divan with no leg mentioned still means no leg (0) per the owner's model,
+     and tests/bedframePendingHeightAllReaders.test.ts pins both halves. */
+  const heightPending = bf.divanPending === true || bf.gapPending === true || bf.legPending === true;
   return assertOnlyOwnedKeys({
     fabricId: fc ? fc.fabric_id : null,
     colourId: fc ? fc.colour_id : null,
@@ -117,7 +213,7 @@ export function buildBedframeVariantPatch(bf, fc) {
     gap: bf.gap != null ? bf.gap + '"' : null,
     divanHeight: bf.divan != null ? bf.divan + '"' : null,
     legHeight: bf.leg != null ? bf.leg + '"' : null,
-    totalHeight: tot ? tot + '"' : null,
+    totalHeight: heightPending || !tot ? null : tot + '"',
     size: bf.size || null,
   }, OWNED_VARIANT_KEYS, "bedframe variant patch");
 }
@@ -158,9 +254,14 @@ export function buildSizeOnlyVariantPatch(bf) {
   return assertOnlyOwnedKeys({ size: bf.size || null }, OWNED_SIZE_ONLY_KEYS, "size-only variant patch");
 }
 
-/* The two line tables a refresh sweep writes. Enumerated rather than
-   interpolated: a table name is never taken from data here. */
-export const MERGE_TABLES = Object.freeze(["mfg_sales_order_items", "purchase_order_items"]);
+/* The line tables this merger writes. Enumerated rather than interpolated: a
+   table name is never taken from data here. The first two are what a refresh
+   SWEEP writes; `purchase_invoice_items` is written only by the reviewed
+   receipt-snapshot repair, which is why it takes its own owned-key list
+   (OWNED_PI_SNAPSHOT_KEYS) and never the sweeps'. */
+export const MERGE_TABLES = Object.freeze([
+  "mfg_sales_order_items", "purchase_order_items", "purchase_invoice_items",
+]);
 
 /**
  * Merge `patch` into one row's `variants`, and optionally restamp the three
@@ -197,6 +298,18 @@ export async function mergeVariantPatch(db, { table, id, patch, geometry = null,
                  WHERE id = ${id}
                    AND jsonb_typeof(COALESCE(variants, '{}'::jsonb)) = 'object'
                  RETURNING id`;
+  } else if (table === "purchase_invoice_items") {
+    /* An invoice line is PAPERWORK: it mirrors no geometry decision of its own,
+       and the one writer here only ever FILLS a line that has nothing. The
+       `variants = '{}'` half of the predicate is what makes it a fill rather
+       than a merge — a line somebody has since given a value keeps it. */
+    if (geometry) throw new Error("mergeVariantPatch: purchase_invoice_items takes no geometry columns");
+    rows = await db`UPDATE scm.purchase_invoice_items SET
+                      variants = COALESCE(variants, '{}'::jsonb) || ${json}
+                    WHERE id = ${id}
+                      AND jsonb_typeof(COALESCE(variants, '{}'::jsonb)) = 'object'
+                      AND COALESCE(variants, '{}'::jsonb) = '{}'::jsonb
+                    RETURNING id`;
   } else {
     rows = geometry
       ? await db`UPDATE scm.purchase_order_items SET

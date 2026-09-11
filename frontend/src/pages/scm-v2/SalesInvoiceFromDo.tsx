@@ -172,42 +172,60 @@ export const SalesInvoiceFromDo = () => {
     setPicks((s) => ({ ...s, [r.doItemId]: { picked: true, qty } }));
   };
 
-  // Select / clear all currently-VISIBLE rows. Select-all respects the lock: it
-  // only adds lines of the locked customer (or, if nothing is picked yet, all
-  // lines of the FIRST row's customer so the result is a valid single-customer set).
-  const selectAll = () => {
+  /* Select-all acts on WHAT THE OPERATOR SEES — the post-search rows the grid
+     hands back (onFilteredRowsChange), not the whole loaded dataset. It walked
+     `rows` and seeded the lock from `rows[0]` (the UNFILTERED first row), so a
+     search + Select all ticked the locked customer's lines across ALL loaded rows
+     instead of the few in view. Mirrors DeliveryOrderFromSo's 2026-08-03 fix; still
+     lock-respecting (locked customer, or — when nothing is picked yet — the first
+     VISIBLE row's customer). */
+  const [visibleRows, setVisibleRows] = useState<DoRemainingLine[]>([]);
+
+  const selectableVisibleKeys = useMemo(
+    () => visibleRows.filter((r) => !isRowLocked(r)).map((r) => r.doItemId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isRowLocked derives from picks/lockedCustomer, both listed
+    [visibleRows, picks, lockedCustomer],
+  );
+
+  /* Tick/untick the given (visible, unlocked) keys — the header checkbox and the
+     toolbar button both call this. Respects the lock: only lines of the locked
+     customer, or — when nothing is picked yet — of the FIRST VISIBLE row's
+     customer, so the result is always a valid single-customer set. */
+  const toggleKeys = (keys: string[], allSelected: boolean) => {
     setPicks((s) => {
       const next = { ...s };
-      const key = lockedCustomer ?? (rows[0] ? custKey(rows[0]) : null);
+      if (allSelected) {
+        for (const k of keys) next[k] = { picked: false, qty: 0 };
+        return next;
+      }
+      const firstVisible = keys.map((k) => rowById.get(k)).find((r): r is DoRemainingLine => Boolean(r));
+      const key = lockedCustomer ?? (firstVisible ? custKey(firstVisible) : null);
       if (!key) return next;
-      for (const r of rows) if (custKey(r) === key) next[r.doItemId] = { picked: true, qty: r.remaining };
+      for (const k of keys) {
+        const r = rowById.get(k);
+        if (r && custKey(r) === key) next[k] = { picked: true, qty: r.remaining };
+      }
       return next;
     });
   };
+
+  const selectAll = () => toggleKeys(selectableVisibleKeys, false);
   const clearAll = () => setPicks({});
 
   const picked = Object.entries(picks).filter(([, v]) => v.picked && v.qty > 0);
   const pickedCount = picked.length;
 
+  /* Ticked rows for the grid's first-class checkbox column — same rule Continue
+     applies, so a row typed down to qty 0 reads as unticked. */
+  const pickedKeys = useMemo(
+    () => new Set(Object.entries(picks).filter(([, v]) => v.picked && v.qty > 0).map(([id]) => id)),
+    [picks],
+  );
+
   const columns = useMemo<DataGridColumn<DoRemainingLine>[]>(() => [
-    {
-      key: 'pick', label: '', width: 40, sortable: false, groupable: false,
-      accessor: (r) => {
-        const on = Boolean(picks[r.doItemId]?.picked);
-        const locked = isRowLocked(r);
-        return (
-          <input
-            type="checkbox"
-            checked={on}
-            disabled={locked}
-            onChange={() => togglePick(r)}
-            onClick={(e) => e.stopPropagation()}
-            aria-label={`Pick ${r.itemCode}`}
-            style={locked ? { cursor: 'not-allowed' } : undefined}
-          />
-        );
-      },
-    },
+    /* The per-row tick lives in the grid's first-class `selectable` column, so the
+       header carries a real select-all checkbox scoped to the filtered rows. Don't
+       re-add a hand-rolled `pick` column — that header can only hold a string. */
     {
       key: 'doNumber', label: 'DO No', width: 140, sortable: true, groupable: true,
       accessor: (r) => <span className={styles.codeCell}>{r.doNumber}</span>,
@@ -322,6 +340,7 @@ export const SalesInvoiceFromDo = () => {
           discountSen: r.discountSen,
           unitCostSen: r.unitCostSen,
           variants: r.variants,
+          lineDeliveryDate: r.lineDeliveryDate,
         };
       })
       .filter((s): s is NonNullable<typeof s> => s !== null);
@@ -411,6 +430,13 @@ export const SalesInvoiceFromDo = () => {
         rowKey={(r) => r.doItemId}
         searchPlaceholder="Search DO, customer, item…"
         onRowClick={(r) => togglePick(r)}
+        onFilteredRowsChange={setVisibleRows}
+        selectable={{
+          selectedKeys: pickedKeys,
+          onToggle: (key) => { const r = rowById.get(key); if (r) togglePick(r); },
+          onToggleAll: toggleKeys,
+          isDisabled: (key) => { const r = rowById.get(key); return r ? isRowLocked(r) : false; },
+        }}
         rowStyle={(r) => isRowLocked(r)
           ? { opacity: 0.45, background: 'var(--c-cream)', cursor: 'not-allowed' }
           : undefined}

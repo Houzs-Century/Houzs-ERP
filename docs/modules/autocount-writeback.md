@@ -221,6 +221,40 @@ own `ALTER`, so it exists in production but appeared in no migration
 (cutover ledger §1 "坑二"). `IF NOT EXISTS` makes 0277 a no-op against the live
 database and makes the column real everywhere else.
 
+#### The column means TWO populations, and the reconcile now separates them
+
+`linked_ac_docno IS NOT NULL` does not mean "the cutover carried this". It means
+"this document exists in AutoCount", which is two populations with opposite
+consequences (`docs/bugs/0703-*`):
+
+| how the number got there | the pair looks like | what it is |
+| --- | --- | --- |
+| the 2026-08-28 cutover import | `HC-` + the book's number | carried over — compare it against the book |
+| this write-back, on success | the ERP's OWN number, so the two strings are EQUAL | the ERP made it and sent it |
+
+The rule that tells them apart is `src/scm/lib/so-is-migrated.ts` — one file, and
+callers IMPORT it. `backend/scripts/lib/ac-erp-native.mjs` is the reconcile's
+caller; it does not restate the rule.
+
+**Why the reconcile cares.** `check-ac-erp-reconcile.mjs` compares the ERP
+against a SNAPSHOT of the book. A document this write-back stamped minutes ago
+cannot be in a snapshot cut this morning, so it used to be reported as *"ERP
+claims a document the book does not have"* — the headline count ROSE every time
+staff raised a document. On 2026-09-08 that was `HC-SO-2609-001`,
+`HC-DO-2609-003` and `HC-DO-2609-011`, 3 of 17. The owner's definition settles
+what the number is for: **「差异 0」= 搬进来的资料全部对上账本**.
+
+Those documents now go in a `native` column of the summary table, named
+individually with the minute they were created, and the run prints the
+arithmetic — *"would have reported 17 under the old population; 3 ... so the
+count is 14"* — so the narrowing cannot be taken on trust. Being ERP-native by
+number shape is not sufficient on its own: `created_at` must be at or after the
+snapshot's `exported_at`. A document this write-back stamped BEFORE the cut whose
+number the snapshot does not state stays a phantom, because that is the write-back
+claiming something the book then did not confirm. Measured on run `34219567205`:
+that bucket is empty, and 0 ERP-native documents of any type were found inside
+the book.
+
 ---
 
 ## 4. The toggle
@@ -256,6 +290,94 @@ the company cannot be resolved — a report must not claim the switch is off on
 the strength of a company it could not read, which is the opposite of what
 `isWritebackEnabled` does at enqueue (that one refuses, because writing into a
 live account book on a guess is worse).
+
+### A SECOND switch — the keyless-conversion sweep (2026-09-11)
+
+`scm.app_config` key `scm.autocount_relink_sweep`, read by
+`scm/lib/autocount-relink-sweep.ts`, drives a cron sweep that clears the
+`keyless-line` backlog with no operator:
+
+```
+'off' / '' / row absent  -> no-op (the unset state)
+'plan'                   -> read the book, REPORT what it would stamp/queue, write nothing
+'apply'                  -> stamp the book's line keys, then queue the keyed edit
+```
+
+Why a cron and not a `workflow_dispatch`: matching a line up READS THE LIVE book
+(`/doc-read`), which only the Worker can reach (`AC_SYNC_URL` / `AC_SYNC_KEY` are
+Worker secrets, never Actions ones), and re-queue cannot help a conversion
+document — it only ever rebuilds, which `rebuildAllowed` refuses for DO/GR/IV/PI.
+The sweep stamps only what `planLineRelink` can prove (ambiguous lines refused,
+never guessed — link, never money or stock) and queues a KEYED edit
+(`enqueueEdit`, no rebuild) ONLY on the run that FINISHES the keying
+(`stamped > 0`, no line left keyless), so a live book can never take a duplicate
+line or a duplicate edit. Fails CLOSED to `off` on any unreadable value, and
+`enqueueEdit` still self-gates on `scm.autocount_writeback`, so BOTH switches
+must be on to move a document. Bounded to 25 documents per slot. Set the switch
+with the **Set AutoCount relink sweep** workflow
+(`.github/workflows/set-relink-sweep.yml` -> `scripts/set-relink-sweep.mjs`),
+`plan` first — its own default is plan and it writes nothing until
+`MODE=apply CONFIRM=set-relink-sweep`. Ledger:
+`docs/bugs/0796-keyless-conversion-documents-needed-a-person-to-match-up-lin.md`.
+
+---
+
+## 4b. The repair gate — a script's write never reaches the book (2026-09-09)
+
+The toggle above answers *"is the write-back on for this company"*. This second
+gate answers a different question: **"did a cutover repair make this change"** —
+and a repair's change must never travel.
+
+> 「正常来说你的这批更改不应该是syncback autocount啊 应该remain啊」
+> 「你不可以有记录再这边啊 这是你import进来的错误 所以没有影响这些啊」
+> — owner, 2026-09-09, on finding 173 sales orders waiting in the queue
+
+A repair **copies a value out of the account book**. Sending it back is
+pointless where the two agree, and where they differ it overwrites his single
+source of truth with our version.
+
+**The mark is on the CLIENT, not in the caller's options.** An option is
+something ~40 repair scripts have to remember, and forgetting is silent and
+lands in a live account book. The transport is what a script cannot avoid: a
+script reaches the database through `backend/scripts/lib/pgrest-shim.mjs`, a
+request through `src/db/supabase.ts`. Marking the shim marks every script at
+once, including ones not written yet.
+
+```
+pgrestShim(sql, "scm")                              -> repair client, queues NOTHING
+pgrestShim(sql, "scm", { writeback: "enqueue" })    -> a deliberate push tool
+```
+
+**Suppressed is the DEFAULT and the polarity is the point.** A repair that
+forgets gets the safe behaviour; pushing has to be typed out, so pushing is what
+a reviewer sees.
+
+`src/scm/lib/ac-repair-suppression.ts` holds the mark, and **the check lives
+inside `isWritebackEnabled`** (`autocount-writeback-flag.ts`) rather than at each
+enqueue. One function, two questions: is the write-back on for this company, and
+is a repair making the change. Every enqueue path already gates on that call —
+including `enqueueCancel` and `enqueueEdit`, whose own UPDATE paths never reach
+`enqueueAcOp`'s insert — so asking there reaches all of them and cannot be
+forgotten at a new call site the way a second, parallel check could be.
+
+**It is a `Symbol`**, so "cannot be set from a UI request" is structural rather
+than a convention: a request body, query string and header can only produce
+string keys, and JSON has no symbols. It is non-enumerable, so it cannot leak
+into a payload either.
+
+**The five tools that may push** are pinned by
+`backend/tests/acWritebackPushAllowlist.test.mjs`, so a sixth cannot join by
+copying a neighbour: `rebuild-ac-document.mjs`, `requeue-autocount-skipped.mjs`,
+`recompose-autocount-transfer.mjs`, `reraise-hc-po-2608-001.mjs`, and
+`sync-ac-delta.mjs` under `LANES=push` only.
+
+The drain is not gated this way and does not need to be: `drainAutoCountOutbox`
+builds its own client from `env` and can never receive a shim client.
+
+See `docs/bugs/0753-cutover-repairs-queue-an-autocount-write-back-and-overwrite.md`
+— including what is still **UNKNOWN**: the gate closes the class, but the path
+that queued 454 edit rows on 2026-09-09 was outside GitHub Actions and has not
+been identified.
 
 ---
 
@@ -327,6 +449,7 @@ Each hook sits at the point the document becomes permanent — after the
 | DO created parentless, and GRN / PI with NO linked line | those routers' `POST /` | `recordParentlessCreate` — a `skipped` row, because AutoCount has no create for these. Not requeueable, which is why a wrongly-parentless row also loses its Send-again button |
 | SI created on `POST /sales-invoices` | `scm/lib/si-autocount-source.ts` | The one of the four that RESOLVES the source before it says anything. `POST /` accepts `deliveryOrderId` and a per-line `doItemId`, so the unconditional `recordParentlessCreate` that used to sit there claimed a fact it never checked and filed every desktop from-DO invoice as ERP-only (`HC-SI-2608-001`; BUG-HISTORY 2026-08-17). Now: one source DO with every line linked -> `enqueueConvert` `do_to_iv`; several -> the merged-conversion skip; a linked line beside a standalone one -> `mixed-source-lines`; genuinely no source -> `recordParentlessCreate`, unchanged |
 | line REMOVED, any of the six | the six `DELETE /.../items/:itemId` handlers | `retiredLineOf(...)` BEFORE the row is destroyed, handed to the edit as `retire` — see 7a |
+| SO edit (**the account book is WRONG and a person is right**) | `scripts/sync-ac-delta.mjs`, `LANES=push` | The only enqueue that does not come from a route. Where the delta sync REFUSES to write a header field because a person owns it, the two systems are left disagreeing — and since the owner opened the system to staff (2026-09-08), the ERP is master on that row, so the BOOK is the side that has to move. One keyed `enqueueEdit` per such order, `touchedFields` naming the columns the person set. Driven over the pg connection by `lib/pgrest-shim.mjs`, so it is the SAME composer and not a second one (precedent: `rebuild-ac-document.mjs`). OFF by default and behind the script's CONFIRM phrase, because it writes into the queue that feeds a licensed book. See `docs/modules/change-log.md` for the watching half of the same instruction |
 
 **An amendment is an EDIT, never a delete-and-recreate.** `applySoAmendment` and
 `applyPoAmendment` rewrite a confirmed document's header and lines in place; the
@@ -415,6 +538,115 @@ in `backend/scripts/lib/migrated-grn-source.mjs`, not inline. It is shared with
 gives every purchase-invoice gap a name. A diagnostic that computed "what we
 would bill" its own way would explain its own copy rather than the converter, so
 there is one statement of it and two callers.
+
+**`ALLOW_TOTAL_MISMATCH=1` writes the invoice from the RECEIPT'S OWN LINES.**
+*Added 2026-09-09.* By default the converter refuses a receipt whose line value
+does not equal what AutoCount's purchase invoice billed
+(`migrated-chain.ts:279`), and that refusal was blocking **288 of 473** migrated
+receipts. The equality is not a law of the data: **one AutoCount purchase invoice
+can span several receipts** — this same converter reports *"folds AutoCount
+receipts A + B into one ERP receipt"* — so a per-receipt comparison must differ
+whenever the book grouped two receipts onto one invoice.
+
+The owner's rule, 2026-09-09: 「我们有几张 GR 就要 convert 成几张 invoice。可是它的
+invoice 不需要提取总价钱，你就拿 line item 就可以了」, sharpened to 「就是每一个
+line item 都要跟 autocall 一样啊」 — every LINE ITEM matches the book; only the
+TOTAL is not required to. And the business reason: 「你从 AutoCount 来的 GR 都一定
+要转成 Purchase Invoice，要不然它就会永远挂成一个 Outstanding 了」.
+
+The lines already satisfy that: the receipts were reconciled to the book line by
+line, and the PO/GR tally reads 400 with one accepted difference
+(`docs/bugs/0762`). **Opt-in per run, never the default, and printed in the run's
+first line** — the total equality was also the proxy that caught a wrongly
+recovered price (483 of 496 migrated GRN lines carry none and the price is read
+back off the order line), and a proxy that is usually redundant is not one that is
+never needed. `docs/bugs/0764`.
+
+**Since 2026-09-09 the PURCHASE invoice's LINES are the account book's own, not
+our receipt's.** The owner sharpened the rule the same day: 「total amount不需要
+可是line amount一定一样」 — the invoice TOTAL need not equal AutoCount's, every
+LINE AMOUNT must, and 「如果 25% 的折扣，那你也要跟着 25%」. Our receipt's lines
+cannot satisfy that, for two reasons read out of the book itself:
+
+- **the book SPLITS one receipt line across two invoices** — `GR-003813` line
+  706719 is `HOK-2008(A) (K)` qty 2 @ 850.00, and `PI-006011` bills 1 of it while
+  `PI-006012` bills the other 1. One ERP row cannot become two lines on two
+  invoices;
+- **AutoCount rounds an amount-shaped discount differently on its own two
+  documents** — `GR-001910` line 410660 is 3 x 32.94, the RECEIPT says 84.00 and
+  `PI-002949` line 410782 says 83.99. Neither equals qty x unit, so nothing
+  derived from a unit price reproduces them.
+
+So every purchase-invoice line is now COPIED from `PIDTL` — item, quantity, unit
+price and amount — with `discount_sen` derived so the ERP's three columns
+reconcile to the book's amount, and `linked_ac_dtlkey` carrying the book's own
+line key.
+
+**The tie is `scm.grn_items.linked_ac_dtlkey`, and the item code is NOT a
+fallback for it.** Our receipt row carries the HOUZS code and the book carries
+the SUPPLIER's model — `CASUAL-(K)` here is `NB-KHJ57(SS)` there — so a code
+match across the two systems matched 2 of 657 lines when it was tried (dry run
+34364714219). The pairing is two halves instead:
+
+1. our row -> the book's receipt line, by the key
+   `backfill-ac-downstream-line-keys.mjs` stamps (run 34355496796, APPLY,
+   2026-09-09: 576 of 812 company-1 receipt rows carry one). **A row with no key
+   is refused and named, and the remedy is to run that backfill first**;
+2. the book's receipt line -> the book's invoice line(s), on item code,
+   quantity, unit price and amount — both sides are AutoCount's own figures
+   there, the one comparison `lib/ac-forced-line-pairing.mjs` calls trustworthy.
+   Never by position (`docs/bugs/0690`).
+
+`backend/scripts/lib/ac-pi-book-lines.mjs` holds half 2
+(`backend/tests/acPiBookLines.test.mjs`). What the book bills off a receipt that
+we do not hold is reported as SURPLUS and left alone — the cutover carried the
+outstanding part of a receipt and the book's invoice bills the whole of it.
+
+**A sofa is ONE line in the book and one row per compartment here**, and the
+backfill gives every compartment the same key by design. The invoice gets ONE
+line; its `grn_item_id` is left NULL rather than pointed at whichever
+compartment sorts first, and `linked_ac_dtlkey` carries the identity. Every one
+of that line's compartment rows has its `invoiced_qty` consumed when it is
+invoiced, so the receipt actually closes.
+
+Three surface changes follow, and they are the ones to know before reading a run:
+
+| what changed | why |
+|---|---|
+| `ambiguous_autocount_invoices` can no longer arise on the purchase path | the book's LINE states which invoice it is on, so a receipt billed across several invoices is SPLIT into one ERP invoice per book invoice instead of refused. `src/scm/lib/migrated-chain.ts` still carries the rule for any other caller |
+| a new refusal, `book_invoice_bills_none_of_our_lines` | decided in the converter, not the planner: the receipt exists in the book but none of OUR lines appears on any of its invoices |
+| a new refusal, `no_book_line_key_on_our_receipt` | not one row of the receipt carries `linked_ac_dtlkey`, so nothing on it can be read against the book. **Not waiting on the backfill** — that ran to exhaustion on the same book cut (run 34355496796, APPLY, "0 to stamp ... 576 already keyed; 73 NOT stamped") and REFUSED these: two lines of one item it cannot tell apart, an uneven sofa fold, or an item the book has no matching line for |
+| a FOREIGN-currency purchase invoice is refused | the book states a line in MYR and in the document's currency, and the migrated purchase order was written with a hard-coded MYR — mixing them books an exchange rate as a discount (`docs/bugs/0665`). 20 of 5,283 are foreign; none in scope today |
+
+**What it produces, measured — prod dry run 34365807410, read-only, 2026-09-09.**
+Of 473 migrated goods receipts, 412 had something left to invoice and carried
+657 lines. **506 of those 657 carry the book's line key** (459 distinct book
+receipt lines; the gap is sofa compartments sharing one), the book's invoices
+bill **362** of those 459, and the run would write **141 invoices** made of
+**362 lines, every one copied from PIDTL**. 31 of the 362 stand for several of
+our rows (a sofa) and point at one while consuming all. Refused: 72 receipts where
+no row carries a book line key, 61 with nothing left to invoice, 57 the book's
+invoices bill none of. Before this change the same run wrote 159 invoices from
+our own receipt rows, whose line amounts were not the book's.
+
+The purchase half no longer opens `ac-invoice-refs.json.gz` at all — invoice,
+lines, date and cancellation all come from `ac-reconcile-truth.json.gz`, so one
+plan cannot describe two vintages. That file's 2-day freshness gate now applies
+only when the SALES half runs, which is the half that still reads it. The book
+snapshot has a gate of its own, same limit. `docs/bugs/0766`.
+
+**The map has a TWO-DAY expiry, and the refusal now names the right script.**
+`data/ac-invoice-refs.json.gz` is written by `export-ac-invoice-refs.py` — not by
+`export-ac-reimport.py`, which the refusal message used to name with a section
+(`ONLY=ivrefs`) that has never existed in its `SECTION_ORDER` (`docs/bugs/0766`,
+the staleness-guard entry). Refresh it with
+`AC_CRED_FILE=<path> python backend/scripts/export-ac-invoice-refs.py` before any
+run, and read the date the converter prints on its first line.
+
+**And `scm.write_freeze` does NOT gate this script.** The freeze is HTTP-layer
+middleware (`src/scm/index.ts:127`); this converter opens Postgres directly and
+never reads the row (`grep`: zero hits). A frozen module is a statement about the
+floor, never about a repair run.
 
 That diagnostic answers in TWO lanes, because "the ERP holds this invoice" means
 two different things with different remedies. The POINTER lane is
@@ -617,14 +849,108 @@ designed, over a population nobody had a route to.
 
 `backend/scripts/backfill-ac-downstream-line-keys.mjs` closes that for goods
 receipts and delivery orders (workflow **Backfill AutoCount line keys (goods
-receipts + delivery orders)**; `APPLY=1` needs `CONFIRM="STAMP DOWNSTREAM LINE
-KEYS"`). It stamps ONLY where the document forces the pairing —
+receipts + delivery orders + invoices)**; `APPLY=1` needs `CONFIRM="STAMP
+DOWNSTREAM LINE KEYS"`). It stamps ONLY where the document forces the pairing —
 `backend/scripts/lib/ac-forced-line-pairing.mjs` holds the rule and its header
 argues each clause — and leaves everything else NULL and named, because a WRONG
 DtlKey makes `AcSyncService` append to the live book while a NULL one is refused
-loudly. Sales invoices and purchase invoices are NOT covered: their lines come
-from OUR delivery order and OUR goods receipt rather than from AutoCount's own
-`IVDTL` / `PIDTL`, so the book states no counterpart to pair against.
+loudly.
+
+> **CORRECTED 2026-09-09.** This paragraph used to end: *"Sales invoices and
+> purchase invoices are NOT covered: their lines come from OUR delivery order
+> and OUR goods receipt rather than from AutoCount's own `IVDTL` / `PIDTL`, so
+> the book states no counterpart to pair against."* The first half is true and
+> the conclusion does not follow. The book states `IVDTL.FromDocNo` /
+> `PIDTL.FromDocNo` — WHICH delivery order or goods receipt each invoice line
+> was raised from — and our own line knows which of ours it came from, so there
+> is a counterpart and it is the book's own key. Believing that sentence is what
+> left 344 invoice lines keyless until the transfer-chain audit could not ask
+> either invoice type anything at all: 「销售发票、采购发票 — 问不了：每一行都没有
+> 账本行号」 (`docs/bugs/0727`).
+
+### The two INVOICE lanes (added 2026-09-09)
+
+The subset problem is what makes an invoice different, not the absence of a key.
+A migrated invoice's lines are built from OUR delivery order / goods receipt and
+the migration carried only the OUTSTANDING population, so the ERP deliberately
+holds a SUBSET of what the book's invoice bills — 131 of the 192 in-scope
+purchase invoices bill at least one line whose purchase order was never carried
+(`backend/scripts/lib/ac-chain-line-grain.mjs`). On `(item, quantity)` alone
+every one of those reads as *"the book has 2 such lines, we have 1"*: refused
+for a reason that is SCOPE, not doubt.
+
+So the bucket gains the source document, and `ac-forced-line-pairing` decides
+per document whether to use it:
+
+- **ALL-OR-NOTHING.** If either side leaves ONE row's source unstated the
+  partition is off and the older rule stands. A sourceless row must not fall
+  into a shared `""` bucket with every other sourceless row — that would pair
+  lines the book never linked.
+- the goods-receipt and delivery-order lanes pass no source at all and are
+  therefore **bit-for-bit** unchanged, which their own tests pin;
+- a sofa fold whose compartments disagree about where they came from states no
+  source, so the partition switches off — the same argument `uneven` already
+  makes about quantity.
+
+`resolveErpSource` decides which of our TWO parents the book means — an invoice
+line reaches its delivery order AND the sales order behind it, its goods receipt
+AND that receipt's purchase order, because the book writes both edges — from the
+book's own list for that invoice, returning null when it names both or neither.
+The parent join is not rewritten here: it is `chainEdges`' own SQL in
+`backend/scripts/lib/ac-transfer-chain-run.mjs`, which already states that
+two-parent shape and why.
+
+**Applied to production 2026-09-08, run `34258125504`** —
+`APPLIED: 291 row(s) stamped of 291 planned`:
+
+| | documents | lines | stamped | left NULL |
+|---|---|---|---|---|
+| sales invoices | 45 | 186 | 174 | 12 |
+| purchase invoices | 55 | 158 | 117 | 41 |
+
+Both tables went 0 -> keyed; **0 stored keys disagreed**. The SHAPE proof
+(fresh connection) reported money, quantities, readiness, stock and the
+migrated-document movement leak IDENTICAL, with `mfg_sales_order_items` and
+`purchase_order_items` carried as an explicit CONTROL that did not move.
+
+What it bought, run `34258790142`: sales invoices answer **0 differ** on SKU,
+quantity, money and the transfer chain — all of which were previously
+unmeasurable. Purchase invoices went the other way: 53 of 55 differ, of which
+the transfer chain alone is 47 documents (all PROCEEDED). Those differences were
+always there; the instrument could not see them. Every printed
+`transfer from` failure names a PURCHASE ORDER where the book names a GOODS
+RECEIPT (21 of 21 in the run's sample, 0 naming a receipt), because the receipt
+behind the invoice carries no `linked_ac_gr_docno` — that is the next thing to
+close, and it is a goods-receipt stamping gap, not an invoice one.
+
+### `transfer chain not verifiable` is TWO populations, and it now says which
+
+Added 2026-09-09. The FROM half has three unanswerable verdicts
+(`IS_UNANSWERABLE` in `lib/transfer-chain-verdict.mjs`). One,
+`agree_doc_line_unstated`, is declared and never locks. The other two BOTH
+recorded the single axis `transfer chain not verifiable` and emitted no cause at
+all, so a document unanswerable only for that reason reached the tally's
+`CANNOT BE COMPARED` column named by nothing — `HC-PO-009828` on run
+34257873206.
+
+They are owed opposite things, which is why one label could not carry both:
+
+| verdict | cause key | whose |
+|---|---|---|
+| `line_not_stamped` | `chainLineNotStamped` | **MECHANICAL** — the book names a source line and our row carries no AutoCount line key. `backfill-ac-downstream-line-keys.mjs` fills it; no ruling from anybody |
+| `erp_parent_unstamped` | `chainParentUnstamped` | **ABSENT SOURCE** — our parent carries no AutoCount number at all (an ERP-native parent). The book has nothing to compare against, so nobody can answer it, the owner included. Never a backlog |
+
+`lib/ac-transfer-chain-run.mjs` now notes the cause beside the refusal it
+already records, from the verdict `v` it already holds — the same shape
+`lib/variant-report.mjs` uses for an unreadable sofa, so a cause and its refusal
+cannot disagree. The mapping is a frozen MAP, not a ternary: a fourth
+unanswerable verdict added later would silently inherit whichever arm a ternary
+put last, and that is the defect this table exists to prevent. An unmapped
+verdict falls to `chainUnverifiable`, which the report prints whole.
+
+Vocabulary and ownership live in `backend/scripts/lib/unanswerable-causes.mjs`;
+`docs/bugs/0729-the-cannot-be-compared-cause-table-described-a-different-pop.md`
+has the four measurements that bought it.
 
 The same absence had a second victim outside this module.
 `check-ac-erp-reconcile.mjs` selected `NULL::bigint AS ac_dtlkey` for goods
@@ -662,14 +988,52 @@ it as one:
    whole sofas — while `foldErpUnits` collapses every compartment row of that
    model into ONE unit of quantity 2. The buckets then cannot meet. Measured on
    9 goods-receipt pairs; `GR-004913 | PO-009018` is `SOFA 9028 x1, SOFA 9028 x1`
-   in the book. `backfill-ac-sofa-line-keys.mjs` refuses the same shape for the
-   same reason, so the two writers agree.
+   in the book.
 
-Closing (3) needs a per-BUILD identity, not a per-model one. The candidate is
-`grn_items.purchase_order_item_id` — but `reshape-migrated-grns.mjs`
-deliberately leaves that NULL exactly when a purchase order carries one item code
-twice, which may be these very rows, so it must be MEASURED before it is built
-on.
+**(3) IS CLOSED ON SALES ORDERS AND STILL OPEN ON THE OTHER TYPES, and the
+difference is EVIDENCE, not effort.** The per-BUILD identity (3) needs turned out
+to be the build text the importer already stored:
+`scm.mfg_sales_order_items.description2`. Where every compartment row of a model
+on a document carries one, `foldErpUnits` groups by it — two builds, two units —
+and `pairDocument` matches each unit to the book line stating the SAME text,
+exact after `normaliseDesc2` (`lib/sofa-desc2-match.mjs`, whose header records
+what a loose `includes` cost) and a perfect bijection or nothing. It splits ONLY
+on evidence: one blank build text on that model and it folds exactly as before.
+
+`grn_items` and `delivery_order_items` carry no build text to pass, so their fold
+is untouched and (3) stands there. That is proved rather than assumed — the
+downstream plan was run from `main` (`34210033771`) and from the branch carrying
+the split (`34210128201`) and both read `GR ... 563 already keyed; 73 NOT
+stamped` and `DO ... 796 already keyed; 36 NOT stamped`, character for character.
+
+On sales orders the clause was worth **116 of 224 stamped rows** (plan
+`34210364936`), and it also dissolved the "uneven compartments" refusals: those
+builds were not uneven, they were two sofas folded into one unit.
+
+### The SALES-ORDER sofas — APPLIED 2026-09-08
+
+`backfill-ac-sofa-line-keys.mjs` (workflow **Backfill AutoCount line keys (SOFA,
+sales orders — plan by default)**) no longer carries a matching rule of its own:
+it reads `ac-reconcile-truth.json.gz` and calls the same `planLineKeys`. Its own
+rule had stamped ZERO rows in every run it ever had, for three reasons that were
+all defects of the rule —
+`docs/bugs/0710-the-sofa-line-key-backfill-could-never-stamp-a-single-row-so.md`.
+
+Apply run `34210459226`: `APPLIED: 224 row(s) stamped of 224 planned`, on 121
+book lines across 81 documents. `MODE=apply` needs
+`CONFIRM="STAMP SALES ORDER SOFA LINE KEYS"`.
+
+| | before | after |
+|---|---|---|
+| sales orders with a keyless line — **uneditable by composeEdit** | **89** | **8** |
+| `mfg_sales_order_items` sofa rows with no key | 237 / 1,168 | 13 / 1,168 |
+| the reconcile's sofa `unread` compartment answers (SO) | 195 | 113 |
+
+**Scope: sales orders, and only the SOFA builds on them.** Purchase orders are
+the lane's control and were deliberately not touched. The build invariant is now
+a STANDING measurement the plan takes on a fresh connection — run `34211018125`:
+across all 523 migrated sales orders holding a sofa, 578 builds, **2** not
+agreeing on one key, both pre-existing and both refused by this tool.
 
 **What the keys bought, measured against the run before them.** Reconcile
 `34189267879` (13:05 +08, before) against `34195045626` (14:32 +08, after). The
@@ -708,6 +1072,108 @@ row in the outbox is a SALES order, including both historical `KeylessLineError`
 refusals. So the key is a NECESSARY condition that is now met; whether it is
 SUFFICIENT needs somebody to edit a migrated goods receipt in the ERP and read
 the resulting outbox row. Until that happens this stays UNTESTED.
+
+### A REPAIR can take the key away again — and it did
+
+The backfill above stamps keys forward. Nothing stops a later repair from
+INSERTing a row that never gets one, and one did: both INSERT statements in
+`backend/scripts/apply-sofa-compartment-corrections.mjs` named their columns one
+at a time and neither named `linked_ac_dtlkey`, so **every sofa compartment that
+script has ever ADDED landed keyless beside siblings that carry the key**.
+
+For a sofa that is not one row missing a key — it is the whole document losing
+its identity, because the invariant this module rests on is that all of a
+build's compartments carry the SAME key
+(`src/scm/lib/autocount-line-keys.ts:155`, and §7b's D9 fold below reads the key
+to decide which rows are one build). `composeEdit` then refuses the document
+whole and the operator reads *"The ERP cannot tell which lines AutoCount already
+has"*.
+
+It is invisible from the other direction too. `check-ac-erp-reconcile.mjs`
+compares a sofa's compartments per DtlKey, so a keyless compartment is not
+counted at all: `HC-SO-013475` held `1A(LHF)+1NA+1A(RHF)` and reconcile run
+`34199937397` read it as `1A(LHF)+1A(RHF)`.
+
+Fixed both ways on 2026-09-08 —
+`docs/bugs/0704-a-sofa-compartment-added-by-a-correction-lost-the-autocount.md`.
+The write path copies `i.linked_ac_dtlkey` from the row the compartment is built
+from; the rows earlier rounds already added are repaired by
+`backend/scripts/repair-sofa-added-compartment-line-key.mjs` (workflow **Repair
+sofa compartments added without their AutoCount line key**; `MODE=apply` needs
+`CONFIRM="I HAVE REVIEWED THE DRY-RUN"`, which the workflow passes). It copies
+only a key the row's OWN siblings already agree on, and only after the book
+confirms that key is a line of that document carrying that row's Desc2 — a wrong
+key is worse than a missing one, so all four gates refuse rather than fall back.
+
+### The key now also ADDRESSES a correction, not just identifies a row
+
+*Added 2026-09-08.* `apply-sofa-compartment-corrections.mjs` picks the lines of one
+build out of a document with `desc2Match`, a substring of the AutoCount Desc2. That
+is not always enough to name a build. On `HC-SO-012827` the book wrote two sofas so
+that **one Desc2 is a substring of the other**:
+
+```
+DtlKey 873100   "3 seater  35 inch  color modenza 07 silver  Nilon bottom"
+DtlKey 873101   "35 inch  color modenza 07 silver  Nilon bottom"
+```
+
+No needle reaches `873101` alone — every candidate is also carried by `873100`, and
+`selectBuildRows` refuses as `ambiguous`, correctly. So a correction may now carry
+**`lineKeys`**, matched against `linked_ac_dtlkey`, which both the SO and PO queries
+in that script now select. Same column, second job: it identified a row, and it now
+addresses one.
+
+Three properties, each a refusal rather than a fallback:
+
+- **It never falls back to the text.** A key the document does not carry is `none`.
+  Matching by text instead would write the build onto the wrong line, which is the
+  transposition class `docs/bugs/0690` names. Measured on prod dry run
+  `34234942367`: the ERP carries `873101` but **not** `873100`, and the run said so
+  and skipped rather than guessing.
+- **The VERIFY step narrows the same way.** Re-reading every sofa row of a
+  two-build document would compare one build's target against both builds' rows and
+  fail a correct write.
+- **The reconcile's ruling lookup understands it too** — `makeSofaRulingLookup`
+  checks `lineKeys` against the ERP lines' `ac_dtlkey` before it looks at text. It
+  did not at first, and `HC-SO-012827` went on reporting *"sofa build not
+  verifiable"* with the owner's answer already in the database (tally run
+  `34236971666`). `docs/bugs/0722`.
+
+**The lesson for the next repair, and it is now the third column lost this
+way** — `warehouse_id` (seven lines PENDING for ever, 2026-08-11),
+`description` / `delivery_date`, and now `linked_ac_dtlkey`: a column-by-column
+INSERT that clones a sibling row omits whatever nobody remembered, silently. If
+a repair adds a row beside an existing one, the columns that carry IDENTITY —
+`linked_ac_dtlkey`, `warehouse_id` — are not optional extras.
+
+### Two files may rule on one build, and the LATER one is the answer
+
+*Added 2026-09-09.* `CORRECTION_FILES`
+(`scripts/lib/sofa-corrections-source.mjs`) is ordered oldest first on purpose,
+so a round may revise an earlier round's build. The VERIFY step above therefore
+asserts only the SURVIVING entry per build: `supersededBy()` in
+`scripts/lib/sofa-build-plan.mjs` overrules an entry when a LATER entry on the
+same document selects any of the same row ids, and the overruled one prints
+`SUPERSEDED <doc> [<file>]` rather than disappearing.
+
+**The test is ROW IDS, not the selector text**, and that is the whole point. The
+pair that bought the rule — `HC-SO-012929`, run `34301924900` — carries two
+different `desc2Match` strings for one build (`"...Barley/Bottom wr"` and
+`"...Barley"`), so a key built from document + model + selector calls them two
+builds and asserts both. Before this, that run wrote 168 builds correctly and
+exited 1, because the 2026-08 target was still checked against a document the
+2026-09 entry had just rewritten — a `FAIL` and an `OK` on the same document,
+three lines apart.
+
+This is the same rule `makeSofaRulingLookup` already followed with `findLast`
+(`docs/bugs/0722`), which the applier's own verification did not know. One rule,
+two homes; keep them together.
+
+**Still open** (`docs/bugs/0742`): the APPLY half runs both entries, adding the
+superseded piece and then deleting it. The end state is correct only while the
+file order is — reorder `CORRECTION_FILES` and the OLD ruling is written last,
+with a verify that now agrees with it. The fix is the same `supersededBy` at
+PLAN time.
 
 ### The defect this section exists for
 
@@ -841,6 +1307,22 @@ already claims is not a candidate, a repeated code needs Desc2 to separate it
 ITSELF while the rest still land. It matches on the RAW ERP code today, so a line
 whose code the bindings rewrite is refused rather than mis-assigned —
 `docs/bugs/0585-*`.
+
+**All six document types since 2026-09-10**
+(`docs/bugs/0792-match-up-lines-400-d-for-do-gr-iv-pi-so-keyless-conversions.md`). Until then the
+route's `DOC` map held only SO and PO and 400'd everything else, so a keyless
+delivery order / goods receipt / invoice — a conversion that ran before the
+service reported its keys, or a partial the ERP could not name — could never be
+matched up. `planLineRelink` was always type-agnostic and `/doc-read` always
+served all six (`AcSyncService.cs` `DocTypes`), so only the header/line wiring
+was missing. The four conversion types resolve their header through the outbox
+row's `doc_id` — the header uuid `enqueueConvert` always stores — NOT the queue
+`doc_no`, whose shape is not uniform (an unnumbered delivery order carries its
+uuid, a goods receipt its business number; keying on `doc_no` would be the
+`docs/bugs/0601` trap again). Lines link by that same header id
+(`delivery_order_id` / `grn_id` / `sales_invoice_id` / `purchase_invoice_id`),
+and all four carry `item_code` / `description2` / `linked_ac_dtlkey` (DOWNSTREAM
+`itemCols`). It still writes only a link, never money or stock.
 
 ### Whose name does a line have? (open, 2026-09-01)
 
@@ -1173,6 +1655,7 @@ export without regenerating cannot leave the composer resolving against last
 month's book while the suite stays green.
 
 ---
+
 ## 7c. A conversion must name the lines it took
 
 `AcSyncService`'s convert routes resolve their source lines through `DtlKeys()`:
@@ -1976,7 +2459,6 @@ is the owner's call, not a code change. It costs nothing today: the sales arms
 build with `transferMaster: false` (`AcSyncService.cs:1096`), so the `""` written
 over `Description` overwrites nothing. Registered as **D17**, severity low.
 
-
 ## 7d. The four documents AutoCount cannot create at all
 
 A DO, GRN, Sales Invoice or Purchase Invoice raised with **no parent** can never
@@ -2263,11 +2745,11 @@ Which ERP column, therefore, matters more than usual, and the trap is live:
 |---|---|
 | `scm.mfg_sales_orders.balance_sen` | **NO.** `recomputeTotals` writes `balance_sen = local_total_sen = total_revenue_sen = grandTotal` on every edit, so it never reflects a payment. It looks right because the cutover's own `UDF_BALANCE` landed in it (`check-migration-fidelity.mjs:95`) — and the first edit of any order overwrote that with the gross total |
 | the view's `balance_sen_live` | close — `local_total - SUM(payments)`, what the SO list, the mobile list and delivery planning render. It MISSES the legacy header deposit that never reached the ledger. **Since mig 0301 (2026-08-16) it is SIGNED** — the `GREATEST(…, 0)` floor was removed so an over-collected order shows red instead of a comfortable RM 0.00 |
-| **`soOutstandingCenti`** (`scm/shared/so-outstanding.ts`) | **YES — this is the one the write-back sends.** Clamped at 0 on purpose: AutoCount is a licensed ledger and the ERP must not push a negative into it. `autocount-read.ts:79` calls THIS |
-| `soBalanceCenti` (same module) | **NOT for the write-back.** The SIGNED figure, for humans: the SO detail page, the list's Balance column and the PDF, which paint a negative red (owner 2026-08-16: 「需要可以超收 negative 边红色」). It answers 0 whenever `total_revenue_sen` is 0, because that column is unset on 2,687 of production's 2,824 live orders and a bare subtraction would paint RM 9.26m of false over-collection |
+| **`soOutstandingSen`** (`scm/shared/so-outstanding.ts`) | **YES — this is the one the write-back sends.** Clamped at 0 on purpose: AutoCount is a licensed ledger and the ERP must not push a negative into it. `autocount-read.ts` calls THIS, through `readSoOutstandingSen` |
+| `soBalanceSen` (same module) | **NOT for the write-back.** The SIGNED figure, for humans: the SO detail page, the list's Balance column and the PDF, which paint a negative red (owner 2026-08-16: 「需要可以超收 negative 边红色」). Since PR #3306 it subtracts from `soDisplayTotalSen` — `total_revenue_sen` when > 0, else `local_total_sen` — so a migrated order shows the money still owed instead of 0; only an order with NO total in EITHER column still answers 0. **The write-back does not get that fallback**, and the split is the point: a screen may estimate from a second column, a licensed ledger may not |
 
-> **The two names are the point.** `soOutstandingCenti` (floored) is what SUMS
-> and what leaves the building; `soBalanceCenti` (signed) is what a person
+> **The two names are the point.** `soOutstandingSen` (floored) is what SUMS
+> and what leaves the building; `soBalanceSen` (signed) is what a person
 > reads. They are deliberately not interchangeable, and the guard that used to
 > REFUSE an over-collection outright was removed on 2026-08-16 — over-collection
 > is legal now, so the money is recorded and the balance simply goes negative.
@@ -2285,10 +2767,32 @@ Three rules the composer keeps:
 - **Zero is a value.** `udf()` drops a falsy entry, so a settled order is sent as
   the string `"0.00"` (`acUdfMoney`). Dropping the key would leave a paid order
   showing a debt in the account book forever.
-- **No total means NO KEY.** `readSoOutstandingCenti` answers `null` when
-  `total_revenue_sen` is absent, because zero would declare a real debt settled
-  in a licensed ledger. The SO detail page reads the same absence as `0` — it is
+- **No total means NO KEY — and 0 IS "no total" (since 2026-09-09).**
+  `readSoOutstandingSen` answers `null` for any `total_revenue_sen` that is not
+  **greater than zero**, because zero would declare a real debt settled in a
+  licensed ledger. The SO detail page reads the same absence as `0` — it is
   drawing a screen, this is writing a ledger.
+
+  It used to refuse only a NULL, which **cannot happen**: the column is `integer
+  DEFAULT 0 NOT NULL`, while every AutoCount-imported order carries a hard 0
+  because the cutover importer's `HCOLS` writes `local_total_sen` and not this
+  column. So the guard stood aside on exactly the orders it was written for, and
+  the reader computed `max(0, 0 - paid) = 0` — the ERP telling the book that a
+  part-paid order was settled. `docs/bugs/0726-*`.
+
+  **It REFUSES rather than falling back to `local_total_sen`**, which is what
+  the SCREEN does since PR #3306. Refusing leaves the book holding its own
+  `UDF_BALANCE`, which is the figure the cutover read and is right; asserting
+  `local_total_sen - paid` would be worse than silence here, because the ERP's
+  PAID side is knowingly incomplete on these orders — payments taken in
+  AutoCount since 2026-08-28 have never reached the ERP (`lib/migrated-so-lock.ts`),
+  so the ERP would OVERSTATE the debt and a paid-up customer would be chased.
+  The type split enforces it: `soOutstandingSen` takes `SoPaidInputs`, which has
+  no `localTotalSen` field.
+
+  **A SETTLED order is not refused.** Its total is a real positive number and
+  its balance is a real 0, so `"0.00"` still goes — the guard is on the TOTAL,
+  never on the answer.
 - **Negative is not expressible.** The book holds a negative `UDF_BALANCE` on 47
   of the 13,015 headers; the ERP clamps at zero on both its own paths (the view's
   `GREATEST`, the detail route's `Math.max`) and keeps an overpayment as customer
@@ -2306,8 +2810,8 @@ else**:
 
 | reader | field it builds | table |
 |---|---|---|
-| `readSoOutstandingSen` (`scm/lib/autocount-read.ts:65`) | `UDF_BALANCE` | `scm.mfg_sales_order_payments` |
-| `readSoPaymentRefs` (`scm/lib/autocount-read.ts:187`) | `UDF_PAYEMENT` | `scm.mfg_sales_order_payments` |
+| `readSoOutstandingSen` (`scm/lib/autocount-read.ts:101`) | `UDF_BALANCE` | `scm.mfg_sales_order_payments` |
+| `readSoPaymentRefs` (`scm/lib/autocount-read.ts:227`) | `UDF_PAYEMENT` | `scm.mfg_sales_order_payments` |
 
 `composePaymentUdf` has exactly two feeders — `scm/lib/so-edit-header.ts:187` and
 `services/autocount-writeback.ts:1284` — and both are fed from those two reads.
@@ -2434,6 +2938,104 @@ also parsed **`Desc2`** to get the ERP's variants —
 `import-ac-outstanding-so.mjs` turns a bedframe's `Desc2` into
 `variants.fabricCode` / `gap` / `divanHeight` / `legHeight` / `totalHeight` /
 `specials` — so the specification has to go back.
+
+> **Where that block is built, since 2026-09-08.** The decode is
+> `parseBedframe(Desc2)` and the ten-key object above is
+> `bedframeVariants(bf, findColour)`, both exported from
+> `backend/scripts/lib/parse-bedframe.mjs`. The object used to be spelled out
+> inside `import-ac-outstanding-so.mjs`, `import-ac-outstanding-po.mjs` and
+> `topup-ac-po-lines.mjs` — byte-for-byte identical in all three — and a fourth
+> writer (`topup-ac-lines-from-truth.mjs`) would have made a fourth copy.
+> `parseBedframe` itself was in exactly that state once and drifted TWICE
+> (a808bf36, 60125216) before anyone noticed, so the copies were the risk. The
+> key names are a CONTRACT with the UI (the Fabrics picker reads `fabricCode`;
+> `totalHeight` is the form's "Total height (auto)") and are pinned by
+> `backend/tests/bedframeVariantsBlock.test.ts`, which transcribes the writers'
+> own expression rather than checking the module against itself.
+> Not to be confused with `blockFor` in `backend/scripts/lib/po-arm-own-text.mjs`:
+> that one carries `size` and NOT `specials` because it is a COMPARISON
+> projection for a diagnostic, never the block a writer persists.
+
+> **`totalHeight` is NULL when a height is undecided, since 2026-09-09.** If the
+> `Desc2` writes the DIVAN, the mattress GAP or the LEG as `TBC` / `KIV`, the
+> block returns `totalHeight: null` rather than a sum. It used to return the sum
+> of whatever else was stated — `Divan: TBC / Gap: 12"` came back as a bed `12"`
+> tall — because `Number(undefined) || 0` counted "not chosen yet" as ZERO. That
+> is the same owner rule the COLOUR arm of this block already obeyed
+> (`isPendingColour`); the two arms were answering it differently.
+>
+> `parseBedframe` now returns `divanPending` / `gapPending` / `legPending`
+> alongside the heights, because an ABSENT component and an UNDECIDED one are
+> different facts — a divan with no leg mentioned still means no leg (0), and a
+> line that never mentions a divan still totals what it does state. Only an
+> explicit marker suppresses the total.
+>
+> Measured on the 2026-09-08 book cut: the divan is written that way on 55
+> lines, the gap on 38, the leg on 20. The reconcile could not see any of it,
+> because it derives the book's side with this same expression and both sides
+> produced the same wrong number — so the pin is
+> `backend/tests/bedframePendingHeight.test.ts`, which asserts the INTENDED
+> value and never one side of a comparison against the other.
+> Ledger: `docs/bugs/0732-an-undecided-divan-height-was-counted-as-zero-so-the-bed-got.md`.
+
+> **And the FREE-TEXT name resolver moved the same way, 2026-09-08.** A code-less
+> AutoCount sales line names its product only in the Description, and
+> `import-ac-outstanding-so.mjs` resolves that against the live company-1 pick
+> list before the owner's blank-line rule can see it. That resolver is now
+> `buildNameResolver` in `backend/scripts/lib/ac-name-resolver.mjs` — a pure
+> move — beside `buildTracedNameResolver`, which is the SAME function returning
+> the rule it took as well as the answer. It had to come out: the drop rule
+> below fires on a resolver MISS and on a genuinely blank line identically, and
+> nothing could ask the resolver why it failed without writing a second copy of
+> the matcher. `backend/tests/acNameResolver.test.mjs` pins that the two agree
+> on every input, so a trace can never report a branch the import does not take.
+
+### The owner's blank-line rule, and the three populations it catches
+
+Owner, 2026-08-09: a code-less AutoCount sales line **with a price is a charge**
+and becomes `TRANSPORTATION CHARGES`; **with no price it is dropped**. The rule
+is his and it stands. What it catches is not one kind of thing, and the import
+prints one number for all of them (`Blank zero-value lines dropped: 17`), which
+is why the owner was answering a count rather than a list
+(`docs/bugs/0711-the-cutover-import-dropped-seventeen-book-lines-behind-one-c.md`).
+
+**THE RESOLVER RUNS FIRST, and a reader of the export alone gets that
+backwards.** `code-less AND zero-priced` is the CANDIDATE set, not the dropped
+set: a line in it that the live pick list can answer was imported as GOODS and
+the rule never saw it. Over all 14,041 lines of
+`backend/scripts/data/ac-outstanding-so.json.gz` the candidate set is 22
+code-less lines — 5 priced, 17 unpriced — and asked against the live pick list
+(probe run `34213244770`) **2 of the 17 resolve**, both on `SO-000015`, both
+already in the ERP. Reading the file alone would have had them written a second
+time onto a live order. What is actually dropped is 15:
+
+| class | n | who owns it |
+| --- | --- | --- |
+| the book states NOTHING and quantity is 0 | 12 | nobody — `lib/ac-blank-book-row.mjs` rules the ERP holding no row for one as the two sides AGREEING |
+| a build INSTRUCTION on a line of its own (`COLOUR : 885-4`, `LEG: FOLLOW DISPLAY`) | 2 | the FIELD it belongs on — a colour is a variant, never a product line. Neither reached the ERP by any route, and `885-4` is in `scm.fabric_colours` **0 times**, so there is no colour field to write it to |
+| the book states nothing and ORDERS FOUR (`SO-011384` dtl 783795) | 1 | the OWNER — the original order slip is the only source |
+
+`backend/scripts/probe-dropped-book-lines.mjs` +
+`.github/workflows/probe-dropped-book-lines.yml` is the read-only way to re-ask
+this. It asks the live pick list through the resolver above BEFORE it calls
+anything dropped, classifies what is left, says per document what the ERP holds,
+searches every field that could carry an instruction, and reports the PROVENANCE
+— how many rows still carry an AutoCount line key, and what the audit log says.
+
+**A keyless row on a migrated sales order is usually the import's own, not a
+hand edit.** `backfill-ac-line-keys.mjs` buckets by the TRANSLATED item code, so
+a code-less book line has no mapping row, is skipped, and the ERP row minted for
+it can never be keyed. Every keyless row on the five documents measured
+corresponds to a code-less book line, and their audit logs are empty
+(`docs/bugs/0712-a-code-less-book-line-can-never-be-keyed-so-the-eight-unjudg.md`).
+Do not read the missing key as evidence that somebody re-entered the line.
+
+**The other importers do NOT share this rule, and the difference matters.**
+`import-ac-outstanding-po.mjs` never drops a code-less purchase line — it records
+an exception, because `scm.purchase_order_items.item_code` is NOT NULL and the
+row cannot be inserted at all (owner 2026-09-02: 「要进 accessories」, which needs
+a product minted first). Where that line is the document's ONLY line, the whole
+purchase order stays out of the ERP.
 
 `Desc2` was already being sent, so this was missing CONTENT, not a missing field.
 `composeDescription2` emitted `Col / Fabric / Seat / Leg` and read colour off
@@ -2706,7 +3308,6 @@ hide it — it comes back as a `failed` entry naming the list.
 Only `BRANDING` and `VENUE` are treated as dropdowns. `ToPONo` is free text and
 has no option list to open.
 
-
 ## 7e1. A creditor code that RESOLVES is not a creditor code that is RIGHT
 
 *Added 2026-08-18.*
@@ -2892,6 +3493,7 @@ coincide.
 The parent travels separately (`payload.fromDoc`, resolved at drain) and must
 never be confused with this: `DocNo` is the CHILD's number, `FromDocNo` is the
 parent's.
+
 ## 7h. Editing a MIGRATED sofa order — why it was refused, and what fixes it
 
 An operator opens an existing sofa order, changes something, saves. The edit is
@@ -4530,7 +5132,24 @@ NULL`, including both count scans; a third scan counts the retired documents
 separately and publishes `counts.archived`. It is never folded into `total` —
 every other number on that line is a claim about what AutoCount did, and this
 one is a claim about what somebody decided. `?state=archived` is the only filter
-that looks at the other shelf.
+that looks at the other shelf — and therefore the only one whose "N of M
+documents" line counts against `counts.archived` rather than `counts.total`
+(`acListTotal`). It read *"3 of 1 document"* on production for the first few
+minutes; `docs/bugs/0705-the-cleared-tab-counted-its-documents-against-a-total-that-e.md`.
+
+**TWO lines read that denominator, not one, and the first correction reached
+only one of them.** They live in different modules on purpose — `acListCountLine`
+(`lib/autocountOutbox.ts`) answers *"how much did the filters leave"* in the
+filter strip; `acShowingLine` (`lib/autocountRegister.ts`) answers *"am I looking
+at all of it"* on the line that closes the register. Two questions, two
+sentences, one shared denominator that nothing named as shared — so the strip was
+corrected to *"Cleared | 3 of 3"* while the register went on closing with
+*"Showing 1–3 of 1 document"*, on the desktop page and the phone screen alike.
+**Both now call `acListTotal(d, state)`; neither page file reads `counts.total`
+at all.** Four tests in `frontend/src/lib/autocountArchive.test.ts` pin the
+COMPOSITION as well as the rule, because the rule alone was never what broke —
+`acListTotal` had shipped with no test of any kind.
+`docs/bugs/0708-the-cleared-tab-fix-corrected-one-of-the-two-lines-that-read.md`.
 
 **On screen.** A **Clear** control on the document line and a **Cleared** tab,
 on BOTH surfaces (`acDocCanArchive` / `acDocCanRestore` decide visibility — a
@@ -4568,3 +5187,843 @@ build that answered every one of that document's sends (`host_mvid`
 `HC-SO-013394`'s rows start carrying `SO-013394`. `acBookNumber` already tells
 this apart from "not in the book" — it is the `not-recorded` verdict, and it is
 deliberately not flagged.
+
+## The transfer uses AutoCount's DOCUMENTED call on every shape (2026-09-08)
+
+**What changed.** `RunTransfer` used to RETURN EARLY into
+`AddPartialTransferDetail` whenever the ERP named lines and sent no quantity.
+Every SO -> DO is that shape, and every one of them was refused:
+
+```
+SO->DO shape: PARTIAL BY LINE - the ERP named 8 source line(s) and no quantity
+transfer: AddPartialTransferDetail per source document
+SO->DO refused: AutoCount.Invoicing.InvalidTransferItemException: Invalid transfer item.
+```
+
+Ten delivery orders, six attempts each, three weeks. The full refutation of every
+data-side theory is `docs/bugs/0716-every-so-to-do-transfer-used-an-undocumented-autocount-call.md`.
+
+**`AddPartialTransferDetail` is on NO page of AutoCount's programmer wiki** — all
+175 read 2026-09-08. The two documented calls are `FullTransfer` and
+`PartialTransfer`, and the host's assemblies expose a `PartialTransfer` overload
+that carries the LINE KEY as well as the item, uom and quantity — so naming an
+exact line loses nothing by moving to it. `LogTransferApi` prints the real
+signatures into the host log at every service start; read those rather than this
+paragraph.
+
+**Where the quantity comes from.** The service reached for the undocumented call
+because "every PartialTransfer overload demands a quantity and the ERP sends
+none". The ERP sends none; the BOOK knows it. A by-line transfer means "these
+lines, at whatever is still outstanding", which is `Qty - TransferedQty` on the
+source row. `OutstandingQtyOf` reads it and `BindTransferArg` uses it whenever the
+ERP's plan carries no number of its own.
+
+So all three shapes now go through the documented call:
+
+| the ERP is saying | what binds |
+| --- | --- |
+| this whole document | every named line at its outstanding quantity |
+| these lines only | those lines at their outstanding quantity |
+| 3 of the 5 on this line | the ERP's own number, from `Details[].Qty` |
+
+**Two rules that come with it, and neither is optional:**
+
+- **`focQty` binds to ZERO, and it is matched BEFORE `qty`.** The parameter name
+  contains `qty`, so the quantity rule answered it with the quantity being
+  SHIPPED — a free-of-charge quantity equal to the sold one on every line of a
+  licensed account book. The ERP has no concept of a FOC quantity and sends none.
+- **The fallback must never run on a document the SDK has already written into.**
+  `PartialTransfer` is one call PER LINE, so a throw on line 4 of 8 leaves three
+  lines in the target and `AddPartialTransferDetail` on top would add them again.
+  `Xfer.DocumentedCallsMade` counts what landed and `RunTransfer` throws instead
+  of falling back once any did.
+
+`AddPartialTransferDetail` is KEPT as the fallback for a shape the documented
+overloads cannot express — it is the call that put DO-011260 in the book — and it
+is reached only when nothing has been written yet.
+
+**AutoCount's own verdict now reaches the ERP.** `PreflightValidItems` has asked
+`TransferHelper.CheckAndGetValidPartialTransferItem` since 2026-08-17 and wrote
+the answer only to the host's log file. It now lands on `Xfer.ItemCheck` and
+`Convert_`'s catch appends it to the message stored in
+`scm.autocount_outbox.last_error`, naming the keys AutoCount refused when it
+refuses any. The AutoCount Sync page also reads that log directly —
+`GET /api/scm/autocount-outbox/host-log`, which existed for weeks with no caller.
+
+**This is INERT until the host is rebuilt.** `AcSyncService.cs` compiles nowhere
+but the office machine; `docs/autocount-service-deploy.md` is the swap.
+
+## `RULED` — the owner's own sofa build, and why it is not `AGREE` (2026-09-08)
+
+The reconcile's variant table gained a **ninth verdict** on the sofa
+compartments axis. It is a new word in the vocabulary `so-verdict-derive.mjs`
+and the summary table share, so it belongs here rather than only in the bug
+ledger.
+
+**Why it had to exist.** 「一律跟账本。除了sofa compartment而已啊」 — the book
+decides every axis EXCEPT the sofa build, which is the owner's. He reads the
+slip's drawing himself and rules, and the ERP is then **supposed** to differ
+from the book's words. `lib/variant-reconcile.mjs` had no input for a
+per-document override, so a build he had personally decided could only come out
+as `DIFFER`, and every run handed it back to him as an open question. On
+2026-09-08 five of the eight proceeded compartment differences were rulings he
+had already given (`docs/bugs/0714-the-reconcile-reports-a-sofa-the-owner-has-already-ruled-on.md`), and being shown one again is what produced
+「这个很多我刚刚都给过你答案了啊」.
+
+**Where the answer comes from.** `check-ac-erp-reconcile.mjs` now loads
+`backend/scripts/data/sofa-compartment-corrections-*.json` through the SAME
+`loadCorrections` the apply script writes from, so the reporter and the writer
+can never disagree about what he ruled. Two properties matter:
+
+- **`_held` builds are excluded.** `loadCorrections` returns them in a separate
+  list. A ruling we have NOT written must keep reading `DIFFER`, because it is
+  still work. `HC-SO-011099` was exactly that until 2026-09-08; it is no
+  longer held (see the section below), and `HC-PO-010056` / `HC-PO-000162`
+  remain.
+- **The entry is selected by its own `desc2Match`**, through the same matcher
+  the apply script uses, never by document number alone. A document can hold
+  more than one sofa build, and putting one build's answer on another build's
+  line is the failure this whole lane exists to prevent.
+
+**The verdict, exactly.** `RULED` requires the ERP to hold his answer as an
+identical MULTISET. It is consulted only AFTER the book comparison has already
+returned a real difference, so a ruling can never turn an `AGREE` or an
+`ERP_BLANK` into something else. A ruling that has not been written — or has
+been written onto the wrong document — still reads `DIFFER`, and the detail now
+names the answer it is failing to match:
+
+```
+... MISSING 1S | EXTRA 1A(LHF), 1NA, 2A(RHF)
+    | the owner ruled 1A(LHF)+2A(RHF)+1B(RHF) and the ERP does NOT hold it
+```
+
+That sentence is the point of the change as much as the new column is: it is the
+line that would have caught `HC-SO-013327` sitting on `1NA` while his ruling
+said `1B(RHF)`.
+
+**It is NOT folded into `AGREE`,** for the same reason `RECORDED` is not. The
+line genuinely does differ from the book, and hiding that would remove the only
+signal that catches a ruling applied to the wrong document.
+
+**One consequence to know about: a `RULED` cell no longer LOCKS the document.**
+`variant-report.mjs` locks on `DIFFER` and on a proceeded `ERP_BLANK`;
+`BOOK_BLANK`, `PENDING`, `RECORDED` and now `RULED` fall to the branches below
+and never lock. Before this change `HC-SO-010209` and `HC-SO-011099` were both
+`LOCKED ... — sofa compartments` in the run's own output. After it, a document
+unlocks exactly when the ERP holds what the owner ruled: `HC-SO-010209` unlocks,
+`HC-SO-011099` stayed locked while its ruling was unwritten — it was unheld on
+2026-09-08 and unlocks the moment the write lands. That is the
+intended behaviour and it is the same standing `RECORDED` already has, but it is
+a permission change, so it is stated here rather than left to be discovered.
+
+Tests: `scripts/lib/variant-reconcile.test.mjs` — the ruled build, the
+not-folded-into-agree property, the unwritten ruling that stays `DIFFER`, the
+no-ruling control, and the assertion that a ruling cannot rescue an ERP carrying
+no compartments at all.
+
+## A collapse RELEASES the purchase dedication it strands (2026-09-08)
+
+New SURFACE on `backend/scripts/apply-sofa-compartment-corrections.mjs`: a new
+operation in the plan an operator reads.
+
+A build that goes from several rows to ONE leaves the dropped rows'
+`purchase_order_items.so_item_id` pointing at rows that are about to disappear,
+and the surplus guard refused the whole build for it (`HC-SO-011099`,
+`docs/bugs/0719`). His answer was never in doubt; our way of writing it was
+stuck. Writing only the purchase half — which DOES succeed — would have left the
+factory's document saying `2S` while the customer's still said
+`1A(LHF)+1A(RHF)`.
+
+The plan gained a `release` op, executed in the SAME transaction as the delete it
+exists for:
+
+```
+release 1A(RHF) — HC-PO-009882 9028-1A(RHF) stops being dedicated to a row
+        this collapse removes; the PO half of this entry deletes it
+```
+
+It is RELEASED (`so_item_id = NULL`), **never re-pointed onto the surviving
+row**, for two reasons. The dedication is one sales line to one purchase line, so
+a second purchase line aimed at the surviving row would read as two incoming
+units of one ordered piece — the same reason an inserted PO line never copies
+`so_item_id`. And re-pointing walks into a trap that is not obvious: the
+downstream carry sets `item_code` on every PO line dedicated to a corrected SO
+row, so re-pointing would have made BOTH purchase rows `9028-2S`, and the PO half
+of the same entry would then have read them as **two identical sofas**
+(`splitBuildCopies`) and refused. Releasing leaves the released row on its old
+code, which is exactly what makes it surplus and deletable.
+
+**The guard was not relaxed.** Five conditions gate the release and every one is
+a refusal that leaves the old behaviour in place:
+
+1. sales-order side only — a GRN hanging off a purchase line is goods, not
+   paperwork, and is not this script's to move;
+2. the build must collapse to exactly ONE piece, so "which surviving row did
+   this purchase line mean" has one answer and needs no guess;
+3. the dropped row must carry NO delivery-order line — something shipped against
+   it, and 「已经出货了的就随便把」 says leave those alone;
+4. every purchase line being released must itself be free of goods receipts, so
+   the PO half can really delete it;
+5. the entry must NAME the purchase order, or nothing would clean up the released
+   line and we would trade a refusal for an unbound purchase line stating the old
+   build.
+
+The money assertion was restated at the same time: it now names the ops that
+LEAVE a priced row (`update`, `insert`) instead of excluding `delete`. The old
+spelling would have summed `undefined` the moment a new op appeared, turning the
+whole assertion into `NaN` — which compares false against everything and would
+have refused every build with a message that is not about money.
+
+`HC-SO-011099` moved out of `_held` in the same change. It is not thereby
+blessed: `RULED` still requires the ERP to hold his answer, so until the write
+runs it reads `DIFFER` and NAMES the answer it is failing to match.
+
+Line-key addressing — `lineKeys` on a correction entry — is a SEPARATE change
+that landed the same day from another lane; it is documented in the section
+below, and `HC-SO-005082` and `HC-SO-011221` are corrected through it.
+
+## Several ERP lines can share ONE book line — the sofa (2026-09-08)
+
+**The rule.** AutoCount holds a sofa as a single line; the ERP decomposes it into
+a line per piece, and every piece carries that one line's `DtlKey`. That is
+deliberate (`docs/autocount-integration-map.md` §4.2), so `linked_ac_dtlkey` is
+NOT unique across ERP lines and nothing may assume it is.
+
+`readConvertSourceKeys` merges by KEY now, first-seen order. Before that it built
+one entry per ERP line and sent `[901830, 901830, 901831]`, which the host
+reported as *"of 3 line key(s) given, only 2 exist on a SO"* — a sentence that
+describes a missing key and was produced by a repeated one. Full trace:
+`docs/bugs/0722-a-sofa-is-one-line-in-the-book-and-several-in-the-erp-so-its.md`.
+
+**Three consequences, and none of them is optional:**
+
+- **A shared key never carries a quantity.** The ERP counts pieces, the book
+  counts sofas. Summing sends 2 against a line of 1 — an over-transfer of a
+  licensed account book. Whole, none is needed: the service moves each named
+  line's outstanding.
+- **A part-shipped shared line is REFUSED.** "Two of the three pieces" has no
+  shape in a document holding one line of one unit.
+- **The untaken siblings must be read.** A delivery shipping one of two pieces
+  sees the key once and looks 1:1; the sibling it left behind is exactly what
+  makes it partial. The read needs no parent predicate — a `DtlKey` identifies
+  one line of one document, so every ERP row carrying it belongs to that book
+  line by construction.
+
+**OWNER RULING 2026-09-08 — option C, and it is BUILT** (`docs/bugs/0725`). A
+part-shipped sofa holds ONLY its own line back; every other line on the document
+goes on time. Completeness is judged on the sofa's own pieces — 「C 除了
+accessories 不看 就看sofa」 — which keying the decision on the shared DtlKey gives
+for free, since a pillow has its own key and is a different question.
+
+**Counted across EVERY delivery, not within one.** Each trip takes one piece, so
+"did THIS document take them all" answers no on the very trip that completes the
+sofa, and it would wait for ever. The delivery that covers the LAST piece is the
+one that carries the sofa into the book.
+
+Two things that stay:
+
+- **A document that is ONLY an incomplete sofa is still refused.** A transfer
+  naming no lines makes the service fall back to every outstanding line on the
+  source — the defect this function exists to prevent.
+- **The AutoCount delivery order will have fewer lines than the ERP's** while a
+  sofa is incomplete, and the sofa lands on a later delivery order than the one
+  its first piece shipped on. That is the trade option C makes, chosen with the
+  alternatives on the table.
+
+## `desc2Exclude` — the address of last resort, and the verifier must use it too (2026-09-08)
+
+New SURFACE on `backend/scripts/apply-sofa-compartment-corrections.mjs` and
+`backend/scripts/lib/sofa-desc2-match.mjs`: a third way a correction names its
+build, and a new verdict an operator can read in the plan.
+
+**There are now three modes, and the ORDER is the argument.**
+
+1. `lineKeys` — the account book's own `DtlKey`. IDENTITY, so it decides and the
+   text is not consulted at all.
+2. `desc2Match` — text, exact then normalised, refusing when it is ambiguous.
+3. `desc2Exclude` — the rows that are **NOT** this build, byte-exactly.
+
+The third exists because the first two can BOTH be unavailable on one document,
+and `HC-SO-012025` is that document. Only its two LEAD rows carry a
+`linked_ac_dtlkey`: a correction that ADDS compartments inserts them with NULL,
+deliberately (`docs/bugs/0690`), so a key reaches one row where the build is
+four. And the account book states that document's build text TWICE — once with a
+LEADING SPACE (`DtlKey 829179`) and once without (`829180`) — each lead's text
+inherited verbatim by the rows added from it. The second sofa's text is therefore
+a strict SUFFIX of the first's, so every substring that finds the second also
+finds the first. The test proves that by trying every substring of it rather than
+asserting it.
+
+While the two were believed to be identical sofas none of this mattered: one
+correction was written onto both, which is this file's own rule. On 2026-09-08
+the owner read the enlarged slips and ruled that they are NOT the same sofa — the
+first `1A(LHF)+1NA+CNR+1A(RHF)`, the second, the slip marked `9050 G`, a plain
+`1S` — and from that moment the second one had no address of any kind.
+
+**Byte-exact, and never normalised.** The discriminator here IS a leading space,
+and `normaliseDesc2` folds runs of whitespace — it would erase exactly the thing
+being matched on. This is the one place in the module where normalisation is
+wrong.
+
+**An exclusion that matches NOTHING is a REFUSAL** (`exclusion-missing`), not a
+quiet no-op:
+
+```
+HC-SO-012025: REFUSED — no line on this document carries the desc2Exclude
+" bottom to Nilon", so the text that tells this build from its neighbour is
+gone. Writing this build without it would put it on BOTH sofas.
+```
+
+If a re-import ever trims that space the discriminator disappears, and without
+the brake the `1S` would be written onto the four-piece sofa as well — silently.
+That is the failure the whole matcher exists to prevent.
+
+**THE WHOLE ADDRESS TRAVELS TO THE VERIFIER, not half of it.**
+`verifyOnFreshConnection` re-reads the entire document and narrows to the build
+the same way the writer did; anything left off the verify item makes it compare
+one build's target against BOTH builds' rows and BOTH builds' money. That has now
+been paid for twice, once per mode. Measured, prod APPLY run `34245004498`: the
+write was correct and complete — the document came out holding
+`1A(LHF)+1NA+CNR+1A(RHF)` and a separate `1S`, exactly the two sofas he ruled —
+and the job still failed with
+
+```
+FAIL HC-SO-012025: pieces are [9050-1A(LHF) | 9050-1A(RHF) | 9050-1NA |
+                               9050-1S | 9050-CNR], expected [9050-1S]
+```
+
+because `desc2Exclude` was not on the verify item. A verifier that narrows
+differently from the writer is not verifying the write; it is asking a different
+question. `needle`, `lineKeys` and `exclude` now all travel. Re-applied and green
+on a fresh connection in run `34245773441`.
+
+**What this does NOT fix, and it is the next repair.** The compartment rows a
+correction ADDS still carry no `linked_ac_dtlkey`, so the reconcile cannot see
+them as part of their build. `HC-SO-012025`'s first sofa is now correct in
+production and still reads CANNOT BE COMPARED — reconcile run `34246640657`
+reports three of its rows as *"has no AutoCount line"*, so that build's ERP side
+reads as a single `1A(LHF)` against the owner's ruled four pieces. The same gap
+holds `HC-SO-013384`'s second sofa, whose two builds' texts are BYTE-IDENTICAL
+and which therefore has no address of any kind until every compartment row is
+keyed. `backfill-ac-sofa-line-keys.mjs` refuses to stamp them precisely because
+two identical builds of one model do not force which is which; the fix is to copy
+the lead's key onto the row at INSERT time, where the provenance is known.
+
+## NOT ACCEPTED means "still", not "ever" (2026-09-09)
+
+The chips and the row badge count a document as not accepted only while its
+newest REFUSAL is newer than its newest ARRIVAL. `acRefusalPredatesArrival`
+(`lib/autocount-outbox-status.ts`) is the one place that decides it, and both the
+count and the row read it from the same per-document map — two opinions about one
+document is exactly how the badge came to disagree with the chip beside it.
+
+**Order, not set membership.** A document that arrived and was later edited into
+a refusal IS in the account book AND does need attention; both chips are right
+about it and nothing there changes. Only the other order — refused, then
+accepted — is history.
+
+### A Description 2 the book cannot store is now VISIBLE (2026-09-09)
+
+`SODTL.Desc2` / `PODTL.Desc2` are `nvarchar(100)` and `Desc2TooLongError` has
+always refused rather than truncating — correctly, because Desc2 is the
+specification the factory builds from. What was missing is that **no screen
+showed the length**, so three documents sat outside the accounts for four
+characters each and the only trace was a line in a workflow log
+(`docs/bugs/0753`).
+
+`VariantDescription` now renders `NNN/100 — too long for AutoCount` beside the
+specification when it overruns. It is placed there rather than on each page for
+the same reason the `Description 2` label is: twelve screens render that one
+component. It is a **warning and not a block** — the ERP stays usable on a line
+the accounts cannot yet take, and nothing is ever truncated.
+
+**There is no `maxLength` for it, and that is not an oversight.** Desc2 is BUILT
+by `buildVariantSummary` from the line's colour, divan, gap, leg, seat and
+special orders, so the length belongs to the whole line and no input owns it.
+Measured 2026-09-09: a plain bedframe renders 46 characters and two long
+special-order notes take it to 104, while the owner's own shortening of the same
+specification is 93. **The wording of the special order is what decides it, not
+the renderer** — and the renderer must not be shortened to save characters,
+because `autocount-line-keys.ts` matches its output against the book's stored
+Desc2 to tell one line from another.
+
+`AC_DESC2_MAX` lives in `frontend/src/lib/acColumnWidths.ts` as a copy of the
+backend constant in `autocount-sofa-collapse.ts`, and
+`frontend/scripts/check-ac-column-widths.mjs` fails the build if the two
+disagree — the same treatment the address width already has.
+
+**The HEALTH REPORT reads the same rule, since 2026-09-09 — and until that day it
+did not.** `check-autocount-outbox-health.mjs` is the second reader of this table
+and was left behind when the page learned the rule, so `HC-DO-2609-004` and
+`HC-DO-2609-009` were IN AUTOCOUNT on the screen and FAILED in the workflow log
+on the same morning (`docs/bugs/0743`). It now imports
+`acRefusalPredatesArrival` through `scripts/lib/ac-failed-superseded.mjs` rather
+than carrying a third copy, and for that it runs under **`npx tsx`**, not `node`
+— the canonical test's line about this script being unable to import TypeScript
+described how it was invoked, not what it can do.
+
+The report prints those rows under **`FAILED — ARRIVED SINCE`**, with the time
+the document reached the book, beside the existing `FAILED — DOCUMENT DELETED
+SINCE`. Both are printed and neither is counted: the row is the record of an
+attempt, and discounting it does not unsay it. The two discounts are now taken
+over EVERY outstanding failure rather than over the 25 the log prints, which was
+correct only while there were fewer than 25.
+
+**This has now been fixed three times at the trigger and once at the shape.**
+Twice the trigger was the re-queue marker (#2220, then the counts block); the
+third was a document re-composed and accepted with no marker on the old row, and
+the page read `NOT ACCEPTED 2` beside `IN AUTOCOUNT 24` out of `ALL 25`
+(`docs/bugs/0727`). If a fourth appears, the question to ask is not which marker
+was missed — it is whether something is still asking "has this ever been
+refused" instead of "is it still refused".
+
+**An unknown order leaves the refusal standing.** Hiding a real one costs a
+document; showing a stale one costs a glance.
+
+## Every AutoCount column has a WIDTH, and the ERP measures one of them (2026-09-09)
+
+`HC-SO-2609-006` never reached the book: *"Cannot set column 'InvAddr1'. The
+value violates the MaxLength limit of this column."* The four invoice-address
+columns are **40 characters** — measured on `AED_HOUZS`, not assumed:
+
+```
+SELECT CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS
+ WHERE TABLE_NAME='SO' AND COLUMN_NAME LIKE 'InvAddr%'
+```
+
+`fitAddressLines` (`services/autocount-writeback.ts`) now fits the address to
+that, and three rules go with it:
+
+- **An address that already fits is returned untouched.** Re-flowing every
+  address would rewrite the line breaks of every document on its next edit for
+  the sake of the few that overflow.
+- **Re-flow at word boundaries, never cut.** This is the address a delivery is
+  printed from.
+- **What still does not fit is reported**, not dropped.
+
+**THE CLASS IS OPEN.** AutoCount's columns are fixed-width, and this repo holds
+exactly one of those widths — `AC_ADDRESS_LINE_MAX` — because somebody went and
+looked after a document stopped. Whether any other string the write-back sends
+can overrun its column is UNMEASURED, not ruled out; a customer name, a
+reference or a remark are the obvious candidates. The remedy is a census of the
+widths the write-back can reach plus a guard that fits each string to its own,
+and it is NOT built — `docs/bugs/0728`.
+
+**The refusal is per DOCUMENT, not per field.** One over-long string keeps the
+whole sales order out of the accounts.
+
+## `chain-onward-not-migrated` — a decision the cutover made, not a backlog (2026-09-09)
+
+The reconcile's note vocabulary — the classes `so-verdict-derive.mjs` declares
+and `so-tally-verdict.mjs` gives a sentence to — gained a **twelfth** member, so
+it belongs here for the same reason `RULED` did.
+
+**Why it had to exist.** Run 34255416449 answered `GOODS RECEIPTS NOT TALLIED —
+289 of 400`. 283 of those differed on one axis only, 单据转换链 `transfer to`
+("how much of this receipt has been invoiced"), and every one read the same way:
+the account book states the line fully invoiced and the ERP records 0.
+
+Measured on `backend/scripts/data/ac-convert-edges.json.gz`, opened rather than
+quoted: the book holds **21,746** goods-receipt lines with **21,450 fully
+transferred onward**, and **5,283** purchase invoices. The ERP holds **55**,
+because the purchase-invoice HISTORY was deliberately never migrated. So
+`scm.grn_items.invoiced_qty` is 0 on those lines and always will be — not a
+wrong number, an ABSENT one, and the owner's decision rather than a defect.
+
+`lib/ac-transfer-chain-run.mjs` had no way to say that. Every `erp_low` went
+down `recorder.record()`, which LOCKS the document — the same channel a wrong
+quantity goes down — so a choice read as 283 documents somebody owed.
+
+**Where the answer comes from.** `splitUnmigratedOnwardTransfer` in
+`lib/ac-not-a-difference.mjs` (section 6), declared per CHILD type in
+`UNMIGRATED_ONWARD`: a goods receipt's onward type is `PI`, a purchase order's
+is `GR`. Nothing is believed. A row leaves the difference column only when four
+things hold, and the last two are MEASURED in the same run:
+
+1. the type declares the decision;
+2. the shape is exactly *the book moved some and we record NONE* — a partial
+   figure is a number we computed, and a computed number that disagrees is a
+   difference;
+3. the book names at least one onward document raised off this one
+   (`onwardIndex`, cancelled onward documents excluded — the conservative
+   direction, since leaving one out can only push a row back into `differ`);
+4. the ERP holds **none** of them — `ONWARD_COVERAGE` reads
+   `scm.purchase_invoices` / `scm.grns` for the AutoCount numbers we carry.
+
+Anything else is an **impostor**: it stays counted and prints LOUDER than the
+differences around it. A goods receipt whose purchase invoice we DO hold is the
+real defect this bucket must never swallow, which is
+`docs/bugs/0668-the-reconcile-printed-real-gaps-as-owner-decisions-for-do-iv.md`
+in the permissive direction.
+
+**The grain is the DOCUMENT and it is said so.** `FromDocDtlKey` is NULL on
+every one of the ~220,000 AutoCount detail rows, so the proof states "no onward
+DOCUMENT we hold was raised off this one" and is never dressed up as a
+line-level accounting.
+
+**Measured, on run 34257834858.** GR: **283 documents, 362 findings, 0
+impostors** excluded, and the verdict fell 289 → **26**. PO: the same decision
+covered **nothing**, so all 7 purchase orders stayed counted. A bucket that
+excused 283 and refused 7 in one run is the evidence that it discriminates
+rather than absorbs.
+
+**Nothing is repaired by it.** A transfer-quantity correction moves an on-hand
+figure and stock is DEFERRED (「库存先不看」). Reclassifying says what a number
+MEANS; it writes nothing.
+
+**A second guard came out of the same work.** `tests/transferChainAxis.test.mjs`
+now asserts every declared NOTE class carries a `DECLARED_LABEL` sentence — a
+class without one prints as its own bare identifier under "WHAT THIS VERDICT
+EXCLUDED", which is a suppression wearing a label. It named a real gap on its
+first run: `unanswerable-cause` has no sentence because it prints under its own
+heading, and that exemption was hand-known in the divert and hand-absent from
+any check. `NOT_DECLARED_CLASSES` in `so-tally-verdict.mjs` now names it once
+and the divert reads from it.
+
+**Reading the residue.** `check-po-gr-residue.mjs` +
+`.github/workflows/po-gr-residue.yml` print one line per still-open document
+saying why. That answer already existed in the reconcile's chain block and was
+unreadable: it is a subprocess's stdout printed at the end of a 1,300-line log
+and GitHub truncates the step before reaching it (runs 34255914713 and
+34258038309, cut off both times). Read-only — SELECTs, one connection, no DDL,
+no transaction, no apply path.
+
+## A correction may name the DOWNSTREAM documents, and it brings them to the build's shape (2026-09-09)
+
+New SURFACE on `backend/scripts/apply-sofa-compartment-corrections.mjs`: a
+corrections entry's `docs` may now name a goods receipt, a delivery order, a
+sales invoice or a purchase invoice, and the run prints and writes them.
+
+**The defect it closes.** The downstream carry at the bottom of the loop is four
+`UPDATE`s, and an `UPDATE` only moves a row that exists. A correction's whole
+effect is to turn ONE placeholder row into N compartment rows, so the lead is
+re-coded and the pieces it ADDED reach nothing. Measured on prod, probe
+[run 34316985562](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34316985562):
+`HC-SO-000814` and `HC-PO-000254` hold `L(LHF)+1NA+2A(RHF)`; `HC-GR-000287`,
+`HC-DO-000542` and `HC-I-000745` hold ONE row each. The receipt, the delivery
+note and the invoice all say a chaise on its own. `docs/bugs/0748`.
+
+**What an operator now sees.** A named downstream document prints its own block:
+
+```
+  HC-GR-000287  [sofa-compartment-corrections-2026-09.json]  goods receipt  L(LHF)  ->  L(LHF)+1NA+2A(RHF)   1 row(s) already stand for a piece, 2 piece(s) have none
+      keep   L(LHF) -> L(LHF)
+      add    1NA  (cloned from this document's own row, zero in N money column(s))
+      add    2A(RHF)
+      money now: unit_price_sen=431700 line_total_sen=431700 — every added piece is 0 in all of them
+```
+
+and the summary gains a line: `downstream documents NAMED by an entry and brought
+to the build's own shape: N document(s) · N row(s) already stood for a piece · N
+row(s) added · N refused`.
+
+**Six refusals, each a stop.** The document is not `migrated_no_stock`; an
+`inventory_movements` row names it; `pg_trigger` carries a trigger the script has
+not been shown; the document holds more rows than the build has pieces (nothing
+here deletes a receipt, delivery or invoice line — 「不可以删只可以 cancel」); a
+money column would move; a piece SKU is not minted. The parent link
+(`purchase_order_item_id` / `so_item_id` / `do_item_id` / `grn_item_id`) is set
+only when exactly one candidate exists and is otherwise left NULL **and named in
+the log**, which is `reshape-migrated-grns.mjs`'s ruling 「跟 autocount 一样」 for
+an attribution the book does not record.
+
+**「库存先不看」 is answered by measurement, and re-answered every run.**
+`pg_trigger` was read on production before this code existed: `scm.grn_items`,
+`scm.sales_invoice_items` and `scm.purchase_invoice_items` carry **zero**
+non-internal triggers, and `scm.delivery_order_items` carries exactly one —
+`trg_do_line_integrity_lock`, `AFTER DELETE OR UPDATE OF delivery_order_id`,
+which an INSERT does not fire. `KNOWN_TRIGGERS` in the script is that reading,
+and a trigger it does not name STOPS the run rather than being reasoned about.
+
+**The row is CLONED, and the column list is read from `information_schema`.**
+`split-collapsed-sofa-lines.mjs` states the reason and this repository has paid
+for it: enumerating columns silently drops whatever the script has not heard of,
+and these tables carry columns no migration in this repository declares. Only
+`item_code`, `variants`, the money columns, `line_no` and the parent link are
+overridden; everything else — the warehouse, the unit, the dates, the notes and
+the AutoCount line key — comes off the row the document already holds.
+
+**The money assertion is over EVERY `*_sen` column**, not two named ones. The
+receipt, the delivery note and the invoices do not agree about which column holds
+a line's total, so a check on one of them passes vacuously where the other is the
+live column. Summed before and after inside the run, and re-summed on the FRESH
+connection in `VERIFY`.
+
+The decision is pure and tested: `scripts/lib/sofa-downstream-parity.mjs` with
+`sofa-downstream-parity.test.mjs`; the guards are pinned at the write site by
+`tests/sofaDownstreamParityGuards.test.mjs`.
+
+**Every read the downstream write needs happens BEFORE the transaction opens,
+and that is not a style choice.** `newSql()` builds the pool with `max: 1`, so
+`sql.begin` holds the only connection for the whole callback; a helper reaching
+for the module-level `sql` from inside it waits for a connection the block itself
+is holding, and the process HANGS — no error, no rollback, a stopped job whose
+log looks exactly like a slow query. It cost prod apply run `34320397321`, which
+had to be cancelled (nothing was written; the transaction never committed). The
+label column, the product names and every parent link are resolved above the
+block, which touches `tx` only, and
+`tests/sofaDownstreamParityGuards.test.mjs` brace-matches the block and pins it.
+`docs/bugs/0749` states the rule for every script here: **inside `sql.begin`,
+only `tx` exists.**
+
+## Description 2 is ABBREVIATED on the way out, and never in the data (2026-09-09)
+
+New SURFACE on `composeDescription2` in
+`backend/src/services/autocount-writeback.ts`: the string it returns is now passed
+through `abbreviateDesc2` from `backend/src/services/autocount-desc2-abbrev.ts`
+before it leaves. Nothing else about the composer moved.
+
+**What it is for.** AutoCount's `SODTL.Desc2` / `PODTL.Desc2` is
+`nvarchar(100)`, and one over-long value refuses the WHOLE document — not the
+line. Six lines across `HC-SO-007678`, `HC-SO-012312` and `HC-PO-2609-017` were
+over, so three documents could not reach the account book at all.
+
+**Why not the obvious fix.** Shortening what the ERP STORES was built first
+(`backend/scripts/shorten-specials-to-the-book.mjs`), planned against production,
+and abandoned when the plan showed what it touches: the text lives in
+`variants.specials`, and a special is priced BY NAME —
+`findOption(pool, p)` in `backend/src/scm/shared/mfg-pricing.ts`, whose own comment reads
+"Unknown picks contribute 0". Renaming `HB Fully Cover` to `HB FC` unmatches the
+option, its surcharge becomes zero, and `recomputeOneLine` runs when the document
+is next saved. **Shortening the stored text is a PRICE CHANGE on a live sales
+order.** Full trace in `docs/bugs/0770-shortening-the-stored-text-to-fit-autocount-would-have-repri.md`.
+
+**Three properties, and the first is what makes it safe to ship.**
+
+1. A string that already fits is returned UNCHANGED, by identity. Nothing that
+   reaches the book today reaches it differently tomorrow.
+2. The abbreviations are applied IN ORDER and it STOPS the moment it fits, so a
+   line that only needs `Right Drawer` shortened does not also lose `Fully
+   Cover`. The least abbreviation that works is the one that is sent.
+3. It NEVER truncates. A string still over the column after every abbreviation is
+   refused by the caller exactly as it is today. Half a specification is a wrong
+   instruction, not a short one.
+
+**The abbreviations are the OWNER'S, not invented here** — he wrote them on
+2026-09-09 while cutting these lines by hand. Adding one is a decision about what
+the workshop will still recognise, so it belongs to him.
+
+**Every rule names a WHOLE PHRASE somebody picked, and that is the property that
+matters.** A bare `Drawer` -> `Dwr` rule was written and removed the same hour:
+the abbreviations run over the whole string, so it reached into an add-on's PROSE
+as well as a picker's name, and `HC-SO-007678`'s note came out as "one Dwr on the
+left and one Dwr on the right". `backend/src/services/desc2AbbreviatedOnTheWayOut.test.ts` pins
+that, along with the identity case and the never-truncates case.
+
+**What this does NOT fix.** `HC-SO-007678`'s two lines are over because of a
+106-character `extraAddonNote` — free prose on a paid add-on, which no phrase
+rule can shorten. Those two still need the owner or a shorter note. The other
+four fix themselves: `HC-SO-012312` x3 and `HC-PO-2609-017` need the document
+SAVED once, and no repair script at all, because the shortening happens on send.
+
+## A re-queue sends ONE rebuild per document, not one per refusal (2026-09-09)
+
+New SURFACE on `backend/src/scm/lib/autocount-requeue.ts`: `editRebuildVerdict`
+can now answer `already-queued`, and `requeueSkipped` collapses a sweep to one
+re-queue per document. Nothing else about the ladder moved.
+
+**Why a sweep could count wrong.** A document refused N times carries N rows —
+`HC-SO-012312` has twenty-one, one per save made while its Description 2 was over
+the account book's 100 characters. The sweep climbed the ladder for each of them
+and answered `would-requeue 21` for ONE sales order, measured in DRY RUN against
+production (run `34393385833`).
+
+**Why that mattered more than tidiness.** A rebuild clears the document's details
+in the live book and lays the ERP's lines down again, reissuing every `DtlKey`.
+Twenty-one of those is twenty-one `InternalSave` calls over the tunnel to the
+office PC, on a document that needed one.
+
+**Why collapsing is correct and not a shortcut.** A rebuild is not a delta. It
+writes the ERP's lines AS THEY STAND, so the first one already carries what all
+twenty-one saves added up to; rows two to twenty-one have nothing left to say.
+This is the same reasoning the ladder already applies to `row-pending`.
+
+**Two guards, because one cannot answer in a dry run.**
+
+- `pendingRowForDocument` reads the queue: a PENDING row for this document, of
+  any op, refuses the rebuild. **Pending only, never `sent`** — a document the
+  write-back has succeeded on carries a `sent` edit row for every save it has
+  ever made, and vetoing on those would refuse every document that works.
+- `REQUEUE_PUTS_IT_ON_ITS_WAY` plus a per-document set inside `requeueSkipped`'s
+  loop, so the DRY RUN predicts the one send APPLY will make. A dry run writes no
+  pending row, so the first guard is blind to it, and this module's promise is
+  that a dry run can only disagree with APPLY about whether the row lands.
+
+The CREATE path already had this (`existingCreateRow`); only the edit path was
+missing it. Trace and the red-first proof in
+`docs/bugs/0771-a-re-queue-sweep-would-have-rebuilt-one-sales-order-twenty-o.md`.
+
+## A sofa's colour travels as its LIVE name (2026-09-09)
+
+New SURFACE on `backend/src/services/autocount-sofa-collapse.ts` and on both
+mirrors of `variant-summary.ts`: `liveColour` is now a module-scope export, and
+`collapseRun` applies it to the colour it hands the composer.
+
+**The fabric library renumbered itself on 2026-08-11** and left the superseded rows in
+place, each carrying `[superseded by X on 2026-08-11]` in its own LABEL. A
+line still pointing at a dead row therefore renders **39 characters of
+bookkeeping** in the middle of the build specification. Read off production:
+
+```
+LR + 2EL / COL: BO315-3 [superseded by BO315-03 on 2026-08-11] / BOTTOM USE UMBRELLA FABRIC / Nylon Fabric
+```
+
+**One fault, two faces.** Three sofa orders were over the 100-character column by
+almost exactly those 39 characters (`HC-SO-008460` 112, `HC-SO-012513` 113,
+`HC-SO-012629` 117); two more failed the round-trip gate because the decoder eats
+the brackets while the expectation still carried them (`HC-SO-004725`,
+`HC-SO-007958`).
+
+**Why the earlier fix did not reach them.** `liveColour` was a local const inside
+`buildVariantSummary`, so it protected the one renderer it lived in. A sofa's
+Desc2 is built by `composeSofaDesc2` on its own path. This is the module's
+recurring shape — two renderers of the same value, one of them fixed — and the
+cure is the same as always: the rule moves to one place both can read.
+
+**Applied to the EXPECTATION as well as to the text.** `colour` is the single
+value handed to `composeSofaDesc2` AND to `decodesTo`, so one change keeps the
+round trip honest instead of trading a length refusal for a colour mismatch.
+
+## The length gate belongs to the text that is SENT (2026-09-09)
+
+Same file. `collapseRun` refused a document whose STORED `description2` was over
+100 characters — the ERP's own line summary, which for a sofa is never what goes
+to AutoCount; the composed build is. `HC-SO-013339` is refused today at 107
+stored characters without the composer being asked at all.
+
+The gate moved into the ECHO branch, the only branch that sends that string. The
+compose branch keeps its own length gate on the text it produces.
+
+**This does not promise such a document then goes.** A long specification is long
+whichever renderer writes it, and the composed text has its own gate. What it
+removes is a refusal that never consulted the text being sent.
+
+## A special order that will not fit POINTS AT THE ERP (2026-09-10)
+
+New SURFACE on `backend/src/services/autocount-desc2-abbrev.ts`
+(`SPECIAL_ORDER_POINTER`, `pointSpecialsAtTheErp`) and on `collapseRun` /
+`decodesTo` in `backend/src/services/autocount-sofa-collapse.ts`.
+
+**The owner's ruling, 2026-09-10, and it is a decision about what AutoCount is
+FOR:** 「反正我们没有用 Auto Call 的 PO 那些,用 Auto Call 只是因为我要平行跑这个
+系统 ... Special Order 可以不进,最重要是每一张单都可以进到就行了。」 and 「你可以
+写说 "Special Order: Refer to ERP"。」
+
+AutoCount is a parallel run. The factory builds from the ERP and the PDF, so the
+special order is not load-bearing there.
+
+**The ladder, least loss first.**
+
+1. It fits — sent unchanged, by identity.
+2. The owner's abbreviations, stopping at the least change that fits.
+3. The special-order segment becomes `Special Order: Refer to ERP`.
+
+Measured on the strings that were actually blocked: **207 -> 91, 212 -> 96,
+123 -> 73**. `HC-SO-012312`'s 115 still goes at 98 with all three customisations
+intact, because rung 3 only runs when rung 2 has not already fitted it.
+
+**A pointer is not a truncation**, which is why it is allowed where cutting is
+not: half a specification reads as a complete instruction and builds the wrong
+furniture. Nothing here is ever cut, and nothing here writes `variants.specials`.
+
+**The sofa gate has one deliberate rule for it.** `parseSofa` reads specials from
+a fixed vocabulary — nylon, wooden arm, recliner — because it decodes the account
+book's own text, and it will never read the pointer back as a special. So when
+the specials handed to `decodesTo` are exactly the pointer, the gate asks whether
+the pointer is IN the text and compares the pieces, the size and the colour
+exactly as before. A caller claiming to have pointed at the ERP without saying so
+in the text is refused.
+
+**What it still cannot rescue:** a Desc2 whose length is in the build or the
+COLOUR. Those are the specification, and they are never replaced.
+
+## A refused document is named by its NUMBER, not its id (2026-09-10)
+
+New SURFACE on `enqueueEdit` in `backend/src/scm/lib/autocount-outbox.ts` and on
+`backend/scripts/check-autocount-held-back.mjs`.
+
+**What the owner saw.** A held-back row on the Sync page called
+`b534845b-601f-435a-91bf-0eac2743b601`, and the question 「为什么会有这样的
+document」. It is `HC-PO-2609-055`.
+
+**Why it looked like that.** `enqueueEdit` composes inside a `try`, and
+`composed.docNo` IS the human document number — the code says so where it reads
+it: *"A PO route knows its id, not its number; the outbox row is keyed by the
+human document number so it lines up with the create row."* The CATCH then wrote
+`docNo: String(opts.docNo ?? opts.docId ?? '')`, and a purchase-order route
+passes only `docId`. So every REFUSED purchase-order edit was filed under a
+UUID, while its own error message named the document correctly. The number is now
+kept in `resolvedDocNo`, where the catch can reach it.
+
+**A delivery note, a receipt and an invoice take the same path**, so the same was
+true of every conversion-built document whose edit was refused.
+
+**And the check could not look one up.** `check-autocount-held-back.mjs` section
+3 read only `scm.mfg_sales_orders`, and section 2 searches tables carrying a
+`doc_no` column — which `scm.purchase_orders` does not have. `purchaseOrderState`
+now reads it by `po_number` and then by `id::text`, cast and guarded on its own
+because `uuid = text` fails as an absent OPERATOR rather than as a no-match, and
+"no purchase order" is the one wrong answer that check must never give. It prints
+`po_number` itself, which is the whole question a UUID-shaped row raises.
+
+## `3S` is PROPOSED and the gate refuses the sized case (2026-09-10)
+
+New SURFACE on `tokenFor` in `backend/src/services/autocount-sofa-collapse.ts`.
+`3S` used to return `null`, so no build containing it could ever be written.
+
+**The measurement that forbade it is what makes proposing it safe.** `3S (28")`
+decodes to `[2A(LHF), 1A(RHF)]` — a different sofa — on all ten models the
+refusals name; bare `3S` decodes to `[3S]` on all ten. So the spelling is right
+exactly when there is no seat size to attach, and `decodesTo` is what knows which
+case it is. Withholding the token refused BOTH, and production says
+`HC-SO-001640` and `HC-SO-001472` carry **no seat size at all**.
+
+This is the file's own principle, applied: *proposing a spelling is safe by
+construction, because every composed string is handed to the gate.*
+
+## The special-order pointer covers every way a special BLOCKS a sofa (2026-09-10)
+
+Same file, `collapseRun`. The compose is one `attempt` tried twice — with the
+ERP's specials, then with `Special Order: Refer to ERP`.
+
+The owner's ruling was applied to LENGTH first. Measured on production, the
+special order was the whole obstacle in two more disguises:
+
+- a special containing `+` or `/` makes `composeSofaDesc2` return null, and the
+  refusal then reads **"cannot spell [2A(LHF), STOOL]"** — naming the pieces and
+  blaming them;
+- `ALL` and `DAYBED` are not in the decoder's special vocabulary, so they never
+  come back and the round trip fails on a build that is otherwise perfect.
+
+**The refusal reported is the FIRST attempt's** — what is wrong with the document
+as it stands, not with a rewrite of it.
+
+## The BOOK says which ERP lines are one sofa — not adjacency (2026-09-10)
+
+New SURFACE on `collapseSofaLines` and `collapseRun` in
+`backend/src/services/autocount-sofa-collapse.ts`. `collapseRun` now takes a
+REQUIRED `bookGrouped` flag.
+
+**A sofa is ONE line in AutoCount and several here, and every piece carries that
+one line's `DtlKey`.** The runs were formed by ADJACENCY — consecutive lines
+sharing a model and a stored Desc2 — which is right until something interrupts a
+sofa. `HC-SO-001526` holds `1EL` and `2ER` of one sofa with ANOTHER sofa's two
+lines between them, so each end was collapsed alone; and `1EL` by itself decodes
+to a single SEAT, not a left arm. Four more documents are the same shape.
+
+`scatteredByBookLine` gathers lines sharing a key and a model, **non-contiguous
+only**, so a run the adjacency rule already forms is left to it and nothing that
+works today moves.
+
+**THE HAZARD, and why `bookGrouped` exists.** A gathered run arrives in the ERP's
+INSERTION order, which states nothing about how the sofa is built. Composing from
+it round-trips perfectly and writes the **MIRROR** of the sofa the book records —
+`2ER + 1EL` where the book says `1EL + 2ER` — and nothing downstream catches a
+mirror. So for a gathered run whose pieces match the book's as a MULTISET, the
+ORDER comes from the book's own text. Money, warehouse and dates still come from
+the ERP rows; size, colour and specials are still compared exactly.
+
+**A last-resort echo** sends the book its own text when both compose attempts
+fail and the stored text decodes to the same multiset — `HC-SO-000814` and
+`HC-SO-001112`, whose pieces match and whose order does not. Reached only after
+the composer has failed, so it cannot hide an edit.

@@ -23,7 +23,7 @@
 // ---------------------------------------------------------------------------
 import type { Env } from "../types";
 import type { AnnouncementAttachment } from "../lib/announcementAudience";
-import { getDocumentType } from "./documentRefs";
+import { getDocumentType, normaliseCode } from "./documentRefs";
 
 export const ANNOUNCEMENT_DOC_TYPE = "ANN";
 export const ATTACHMENT_REQUIRED_MESSAGE =
@@ -34,15 +34,36 @@ function isMissingTable(e: unknown): boolean {
   return /no such table|does not exist|relation .* does not exist/i.test(msg);
 }
 
-/** Does the ANN document type currently demand an attachment before submit?
+/** Does this document type currently demand an attachment before submit?
  *  Unknown type / absent table → false (nothing is blocked by a policy that
  *  has not been set up). */
-export async function attachmentRequiredForAnnouncements(env: Env): Promise<boolean> {
+export async function attachmentRequiredForType(env: Env, typeCode: string): Promise<boolean> {
   try {
-    const t = await getDocumentType(env, ANNOUNCEMENT_DOC_TYPE);
+    const t = await getDocumentType(env, typeCode);
     return t?.attachmentRequired === true;
   } catch (e) {
     if (isMissingTable(e)) return false;
+    throw e;
+  }
+}
+
+/** The document type a notice is created as (mig 20260908T0300). Absent →
+ *  ANN. Anything else must be an ACTIVE row of document_types (Settings →
+ *  Documents); an unknown or inactive code is refused with the message to
+ *  show. When the registry table is absent (a D1 mirror) the shape alone is
+ *  checked. */
+export async function resolveDocType(env: Env, raw: unknown): Promise<{ code: string } | { error: string }> {
+  if (raw == null || String(raw).trim() === "") return { code: ANNOUNCEMENT_DOC_TYPE };
+  const code = normaliseCode(raw);
+  if (!code) return { error: "Document type must be a 2–4 letter code (ANN, MEMO)." };
+  if (code === ANNOUNCEMENT_DOC_TYPE) return { code };
+  try {
+    const t = await getDocumentType(env, code);
+    if (!t) return { error: `Document type ${code} is not registered (Settings → Documents).` };
+    if (!t.isActive) return { error: `Document type ${code} is inactive (Settings → Documents).` };
+    return { code };
+  } catch (e) {
+    if (isMissingTable(e)) return { code };
     throw e;
   }
 }

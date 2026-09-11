@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { GripVertical, ChevronUp, ChevronDown, Plus, Pencil, Trash2, ShieldCheck, Eye, EyeOff, Upload, Image as ImageIcon, Link2, Ban } from "lucide-react";
+import { GripVertical, ChevronUp, ChevronDown, Plus, Pencil, Trash2, ShieldCheck, Eye, EyeOff, Upload, Image as ImageIcon } from "lucide-react";
 import { useReorderable } from "../hooks/useReorderable";
 import { PageHeader } from "../components/Layout";
 import { Button } from "../components/Button";
@@ -12,6 +12,7 @@ import { Skeleton } from "../components/Skeleton";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
 import { clearBrandLogoCache } from "../lib/branding";
+import { shareLinkMenuItems } from "./project-maintenance/shareLinks";
 import {
   useLocalities,
   distinctCountries,
@@ -35,6 +36,7 @@ interface ContractorRow {
   name: string;
   notes: string | null;
   active: number;
+  share_export_scope: "month" | "year";
 }
 interface VenueRow {
   id: number;
@@ -366,39 +368,6 @@ function ContractorManager() {
     }
   }
 
-  // Generate (or reuse) this contractor's public, no-login calendar link and put
-  // it on the clipboard, ready to paste into WhatsApp. The link shows only their
-  // confirmed events + booth numbers — see pages/ContractorCalendar.tsx.
-  async function copyShareLink(o: ContractorRow) {
-    try {
-      const res = await api.post<{ token: string }>(`/api/projects/contractors/${o.id}/share-link`);
-      const url = `${window.location.origin}/c/${res.token}`;
-      await navigator.clipboard.writeText(url);
-      toast.success(`Share link for ${o.name} copied`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not create the share link.");
-    }
-  }
-
-  // Kill the current link (a leaked or wrong-contractor link). A fresh one can be
-  // generated anytime by copying again.
-  async function revokeShareLink(o: ContractorRow) {
-    if (
-      !(await dialog.confirm({
-        title: "Revoke share link",
-        message: `Revoke ${o.name}'s calendar link? Anyone holding the old link loses access. Copy the link again to issue a new one.`,
-        danger: true,
-        confirmLabel: "Revoke",
-      }))
-    )
-      return;
-    try {
-      await api.del(`/api/projects/contractors/${o.id}/share-link`);
-      toast.success("Share link revoked");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not revoke the share link.");
-    }
-  }
 
   const rows = q.data?.data ?? [];
   return (
@@ -441,19 +410,7 @@ function ContractorManager() {
             <span className="flex-1 text-[13px] font-medium text-ink">{o.name}</span>
             <RowActionsMenu
               items={[
-                {
-                  type: "action",
-                  icon: Link2,
-                  label: "Copy share link",
-                  onClick: () => copyShareLink(o),
-                },
-                {
-                  type: "action",
-                  icon: Ban,
-                  label: "Revoke share link",
-                  danger: true,
-                  onClick: () => revokeShareLink(o),
-                },
+                ...shareLinkMenuItems({ kind: "contractor", row: o, reload: () => q.reload() }, toast, dialog),
                 {
                   type: "action",
                   icon: Trash2,
@@ -1914,6 +1871,7 @@ function BrandManager() {
                   active: !!b.active,
                   onClick: () => patch(b, { active: !b.active }),
                 },
+                ...shareLinkMenuItems({ kind: "brand", row: b }, toast, dialog),
                 {
                   type: "action",
                   icon: Trash2,

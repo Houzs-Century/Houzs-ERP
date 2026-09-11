@@ -1,0 +1,16 @@
+-- REVERSAL: ALTER TABLE public.announcements DROP COLUMN IF EXISTS number_dept_id;
+-- Verified against: the D1 mirror in backend/tests/announcementsDocType.test.ts;
+--           staging and production through the normal migrate-before-deploy
+--           path on merge (public.announcements carries doc_type from
+--           20260908T0300 and the approval columns from 20260906T1509).
+--
+-- WHY (owner 2026-09-09, "需要可以选部门"): the [DEPT] segment of a notice's
+-- number was always the SUBMITTER's department. A director or the owner
+-- composing on a department's behalf needs the number under THAT department
+-- (OPS-ANN-2609-0004, not MGT-...), so the composer offers "Numbered under"
+-- and approval mints on the chosen department's series.
+--
+-- WHAT: one nullable column — NULL keeps the old rule (the submitter's
+-- department), so every existing row and every client that does not send it
+-- behaves exactly as before. Nothing else changes.
+ALTER TABLE public.announcements ADD COLUMN IF NOT EXISTS number_dept_id integer;

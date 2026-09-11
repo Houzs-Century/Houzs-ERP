@@ -167,8 +167,8 @@
     },
     {
       "check": "D1",
-      "key": "DO,GR,IV,PI,PO,SO|backend/src/scm/lib/autocount-outbox.ts backend/src/scm/lib/autocount-requeue.ts backend/src/scm/routes/autocount-outbox.ts frontend/src/lib/autocountOutbox.ts",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: REQUEUE_DOC_TYPES, DOC_TYPES, AC_DOC_TYPES, AC_DOC_TYPE_LABEL, AC_DOC_TYPE_PLURAL. Cost of divergence is a blank chip, not a wrong number. NEW HOME since this was recorded: AC_DOC_NOUN in backend/src/scm/lib/autocount-outbox.ts, which maps a doc type to its noun ('SO' -> 'Sales Order') for outbox messages. Presentation of the same vocabulary, exactly like the label and plural maps already listed here."
+      "key": "DO,GR,IV,PI,PO,SO|backend/src/scm/lib/autocount-outbox.ts backend/src/scm/lib/autocount-requeue.ts backend/src/scm/routes/autocount-outbox.ts backend/src/scm/routes/autocount-relink.ts frontend/src/lib/autocountOutbox.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: REQUEUE_DOC_TYPES, DOC_TYPES, AC_DOC_TYPES, AC_DOC_TYPE_LABEL, AC_DOC_TYPE_PLURAL. Cost of divergence is a blank chip, not a wrong number. NEW HOME since this was recorded: AC_DOC_NOUN in backend/src/scm/lib/autocount-outbox.ts, which maps a doc type to its noun ('SO' -> 'Sales Order') for outbox messages. Presentation of the same vocabulary, exactly like the label and plural maps already listed here. ALSO NEW: the DOC map in backend/src/scm/routes/autocount-relink.ts, which keys per-type header/line WIRING (line table, parent column, header resolution) by the same vocabulary so Match up lines works for all six types (docs/bugs/0792) — wiring keyed by the vocabulary, not a second answer to what the types are."
     },
     {
       "check": "D1",
@@ -517,7 +517,7 @@
     },
     {
       "check": "D1",
-      "key": "FULL,NONE,PARTIAL|backend/src/services/pageAccess.ts frontend/src/pages/Roles.tsx",
+      "key": "FULL,NONE,PARTIAL|backend/src/services/pageAccess.ts frontend/src/pages/roles/RoleSettingsDrawer.tsx",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: ACCESS_LEVELS. Cost of divergence is a blank chip, not a wrong number."
     },
     {
@@ -1209,6 +1209,21 @@
       "check": "D2",
       "key": "*,SCM.ACCESS,SCM.PAYMENT_VOUCHER.POST ~ *,SCM.ACCESS,SCM.PAYMENT_VOUCHER.POST,SCM.SALES_ORDER.WRITE",
       "why": "THE FINANCE NAV GATE against the Official Receipts nav gate, one key apart BY DESIGN. The recon/setup/chart rows show only to GL people (scm.payment_voucher.post); the Official Receipts row adds SCM.SALES_ORDER.WRITE because the OR is sales-side paper — the salesperson who records the payment hands the receipt over — and the sidebar MIRRORS the backend guard (accounting-receipts.ts requirePerm: payment_voucher.post OR sales_order.write). Folding onto the GL-only set would hide the book from the very people who print from it; divergence costs a nav row showing or not, never money."
+    },
+    {
+      "check": "D1",
+      "key": "DO,GRN,PO,SO|backend/src/scm/lib/downstream-lock.ts backend/src/scm/routes/change-log.ts frontend/src/lib/changeLog.ts",
+      "why": "THE FOUR DOCUMENT KINDS THE OWNER OPENED TO STAFF (2026-09-08), plus one unrelated set that happens to hold the same four values. Three homes, and each answers a different question: downstream-lock.ts REFUSALS is a map of why a downstream document refuses an edit and has nothing to do with the change log; change-log.ts ALL_DOC_TYPES is the SERVER's list, which is the boundary — the client cannot widen it; frontend/src/lib/changeLog.ts CL_DOC_TYPES plus CL_DOC_TYPE_LABEL is the ONE client-side home, imported by both pages/ChangeLog.tsx and mobile/MobileChangeLog.tsx rather than written out again (they each held a copy until this entry was recorded, and that copy was deleted, not allowlisted). Cost of the remaining divergence is a chip the server answers 'every type' for, never a wrong number. Same shape as the AutoCount doc-type entry above."
+    },
+    {
+      "check": "D1",
+      "key": "*,SCM.CHANGELOG.READ,SETTINGS.MANAGE|frontend/src/App.tsx frontend/src/components/Sidebar.tsx",
+      "why": "THE CHANGE LOG'S TWO READ KEYS, on the nav row and on the route door — the same pair, in the same file pair, for the same reason as the AutoCount Sync entry already recorded here. Neither is the boundary: GET /api/scm/change-log checks them against the REAL caller and 403s. These two only decide whether a row is worth SHOWING and whether the door opens, so a divergence costs a visible-but-empty page, never access."
+    },
+    {
+      "check": "D2",
+      "key": "DO,GRN,PO ~ DO,GRN,PO,SO",
+      "why": "THE CHANGE LOG'S DOCUMENT TYPES VERSUS THE ONES THAT LIVE IN scm.entity_audit_log, differing by SO — and that difference IS the schema, not a drift. Sales orders record into their own table (scm.mfg_so_audit_log); every other SCM document records into scm.entity_audit_log (migration 0139). ENTITY_DOC_TYPES is deliberately the three that table carries, and the route reads both tables to answer as one. The sets are meant to differ and they differ in exactly the right place."
     }
   ]
 }

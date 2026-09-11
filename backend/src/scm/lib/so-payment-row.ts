@@ -15,7 +15,8 @@
 // ----------------------------------------------------------------------------
 import { enqueueEdit } from './autocount-outbox';
 import { recordSoAudit, type FieldChange } from './so-audit';
-import { postSoPayment, reverseSoPayment } from '../../acc/payments';
+import { postSoPayment, reverseSoPayment, type SoPaymentRow } from '../../acc/payments';
+import { ledgerFactsOf, repostSoPaymentEdit } from '../../acc/payment-repost';
 import { createReceiptForPayment } from '../../acc/receipts';
 import { companyCodeById } from './doc-no';
 import { recomputeSiPaidForOrder } from './si-order-deposit';
@@ -95,6 +96,86 @@ export async function bookSoPaymentBestEffort(sb: any, row: Record<string, unkno
     console.error(`[acc] SO ${where} not booked:`, (row as { id?: string }).id, booked.status, booked.reason);
   }
 }
+
+/** Every column of a payment row an edit may move. `before` is the stored row;
+    `next` is what the PATCH decided each column should now be. */
+export type SoPaymentEditable = {
+  paid_at: string; method: string; amount_sen: number;
+  merchant_provider: string | null; installment_months: number | null;
+  online_type: string | null; approval_code: string | null;
+  account_sheet: string | null; collected_by: string | null;
+};
+
+/* The audit's field list, in the order the audit has always printed it. Here
+   rather than in the route because it is a fact about the ROW — the same
+   reason recordSoPaymentRow is here. It is a DIFFERENT question from
+   acc/payment-repost's ledgerBearingChange, which asks which of these reach
+   the BOOKS: the audit records nine, the ledger reads four. Keeping them apart
+   is deliberate; collapsing them would either spam the ledger with re-posts
+   for an approval code or lose an approval code from the audit trail. */
+const AUDITED_FIELDS: ReadonlyArray<[keyof SoPaymentEditable, string]> = [
+  ['paid_at', 'paidAt'], ['method', 'method'], ['amount_sen', 'amountSen'],
+  ['merchant_provider', 'merchantProvider'], ['installment_months', 'installmentMonths'],
+  ['online_type', 'onlineType'], ['approval_code', 'approvalCode'],
+  ['account_sheet', 'accountSheet'], ['collected_by', 'collectedBy'],
+];
+
+/** The UPDATE_PAYMENT audit's from → to list: only the columns that moved.
+    Blank-vs-absent counts as unchanged, the way the route always compared. */
+export function soPaymentFieldChanges(
+  before: Partial<SoPaymentEditable>,
+  next: SoPaymentEditable,
+): FieldChange[] {
+  const out: FieldChange[] = [];
+  for (const [col, name] of AUDITED_FIELDS) {
+    const was = before[col] ?? null;
+    const now = next[col] ?? null;
+    if (was !== now) out.push({ field: name, from: was, to: now });
+  }
+  return out;
+}
+
+/** Carry an EDITED payment's ledger entry with it — reverse the old, book the
+    new — on the same best-effort contract as the booking hook above: the
+    operator's edit has already committed, and a ledger refusal may not turn it
+    into a 500 they would retry. A refusal leaves the payment with no active
+    entry, which the Self-check unbooked card reports and the backfill heals;
+    the console line is what names it in the meantime. See acc/payment-repost
+    for which edits move the books, and where the contra is dated. */
+export async function repostSoPaymentBestEffort(
+  /* The same client the poster takes, borrowed rather than spelled out again —
+     this file may not grow its count of untyped clients. */
+  sb: Parameters<typeof repostSoPaymentEdit>[0],
+  p: {
+    id: string; docNo: string; companyId: number | null;
+    before: Partial<SoPaymentEditable>; next: SoPaymentEditable;
+  },
+): Promise<LedgerTouch> {
+  const after: SoPaymentRow = {
+    id: p.id,
+    so_doc_no: p.docNo,
+    paid_at: p.next.paid_at,
+    method: p.next.method,
+    merchant_provider: p.next.merchant_provider,
+    amount_sen: p.next.amount_sen,
+    company_id: p.companyId,
+  };
+  const out = await repostSoPaymentEdit(sb, { before: ledgerFactsOf(p.before), after });
+  if (!out.ok) {
+    /* eslint-disable-next-line no-console */
+    console.error('[acc] SO payment edit not re-posted:', p.id, out.status, out.reason);
+    return { originalJeNo: null, contraJeNo: null, jeNo: null };
+  }
+  return out.status === 'reposted'
+    ? { originalJeNo: out.originalJeNo, contraJeNo: out.contraJeNo, jeNo: out.jeNo }
+    : { originalJeNo: null, contraJeNo: null, jeNo: null };
+}
+
+/** What a correction did to the ledger, for the audit row to carry: the entry
+    that was voided, the contra that voided it, and the entry booked in its
+    place. Any is null when that part did not happen — a never-booked payment
+    reverses nothing, a delete books nothing new. */
+export type LedgerTouch = { originalJeNo: string | null; contraJeNo: string | null; jeNo: string | null };
 
 export async function recordSoPaymentRow(
   sb: any,
@@ -249,7 +330,7 @@ export async function recordSoPaymentRow(
 export async function afterSoPaymentRemoved(
   sb: any,
   p: { paymentId: string; docNo: string; companyId: number | null },
-): Promise<void> {
+): Promise<LedgerTouch> {
   /* Accounting-module hook (需求书 §6.3, owner approved 2026-08-16): void the
      deleted payment's ledger entry. A row that never booked no-ops. */
   const unbooked = await reverseSoPayment(sb, p.paymentId, p.docNo);
@@ -257,8 +338,10 @@ export async function afterSoPaymentRemoved(
     /* eslint-disable-next-line no-console */
     console.error('[acc] SO payment reversal failed:', p.paymentId, unbooked.status, unbooked.reason);
   }
+  const voided = unbooked.ok && unbooked.status === 'reversed' ? unbooked : null;
   /* The deposit just shrank, so an invoice it was settling may owe money again.
      This is the direction that matters: an invoice left reading PAID after the
      payment behind it was reversed tells the office to collect nothing. */
   await recomputeSiPaidForOrder(sb, p.docNo, p.companyId);
+  return { originalJeNo: voided?.originalJeNo ?? null, contraJeNo: voided?.jeNo ?? null, jeNo: null };
 }

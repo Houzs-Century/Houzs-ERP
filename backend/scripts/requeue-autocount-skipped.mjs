@@ -148,7 +148,9 @@ const notice = (msg) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${ms
 // sb.from('autocount_outbox') inside the enqueue resolves to
 // scm.autocount_outbox unchanged — it cannot tell the difference.
 const pg = postgres(DATABASE_URL, { ssl: "require", prepare: false, max: 1 });
-const sb = pgrestShim(pg, "scm");
+/* PUSHING IS THIS TOOL'S PURPOSE — re-queueing a refused document is the whole
+   point of it, so it opts out of repair suppression. See pgrest-shim.mjs. */
+const sb = pgrestShim(pg, "scm", { writeback: "enqueue" });
 
 /* One line per outcome, in the operator's vocabulary. The verb says whether
    anything happened; the detail says what to do next. */

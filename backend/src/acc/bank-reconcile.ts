@@ -37,6 +37,9 @@ export type LedgerMovement = {
   debitSen: number;
   creditSen: number;
   notes?: string | null;
+  /** Who was paid or who paid — the payee off a voucher, the payer off a
+      receipt (owner 2026-09-11: 我要看到 payment detail, 例如 pay to who). */
+  partyName?: string | null;
 };
 
 /** One movement off the statement, as far as reconciliation cares. */
@@ -51,6 +54,9 @@ export type StatementMovement = {
   state: 'OPEN' | 'POSTED' | 'IGNORED';
   /** The je_no it claims, when it claims one. */
   jeNo?: string | null;
+  /** EVERY entry it claims — one movement can be several vouchers
+      (docs/bugs/0803). jeNo stays the first of them for readers that show one. */
+  jeNos?: string[];
 };
 
 export type ReconcileInput = {
@@ -65,6 +71,11 @@ export type ReconcileInput = {
   /** Every posted movement on this account UP TO periodTo — the opening is
       derived from the ones before periodFrom, so one read serves both ends. */
   ledger: LedgerMovement[];
+  /** je_nos claimed by movements on OTHER statements of this account, and
+      everything older than the first statement ever filed for it. An earlier
+      entry is CARRIED only when nobody has ever claimed it — an April cheque
+      matched on April's statement is not waiting on May's. */
+  claimedElsewhere?: ReadonlySet<string>;
 };
 
 export type UnexplainedSide = {
@@ -101,13 +112,52 @@ export type Reconciliation = {
       report a number nobody can chase. */
   unmatchedJeNos: string[];
 
+  /** CARRIED FROM EARLIER PERIODS (owner 2026-09-11: 之前 in book 还没有 recon
+      的也要带下来，因为可能下个月才过钱): entries posted BEFORE this period that
+      no statement has ever claimed — an April cheque the bank shows in May is
+      still waiting on May's list. They are what the difference brought forward
+      is made of, so they are counted and named separately from this period's. */
+  carried: UnexplainedSide;
+  carriedJeNos: string[];
+  /** Entries from before the period that a movement ON THIS STATEMENT claims
+      — the cheque that cleared this month. Part of the identity: the bank
+      moved by it this period, the books did not. */
+  clearedFromBeforeSen: number;
+  /** Is the difference brought forward exactly the earlier entries — those
+      still carried plus those cleared here? Null when no file printed an
+      opening balance. True means the opening gap is fully accounted for. */
+  broughtForwardExplained: boolean | null;
+
+  /** THE OWNER'S FORM (2026-09-11, docs/bugs/0806): 我觉得设计应该是这样 —
+      Closing — the books (−)/+ unreconciled items = Closing bank statement.
+      The outstanding items are every entry in the books no statement has
+      shown yet, this period's and earlier ones' alike (全部就是 outstanding
+      items), split into payments the bank has not paid and receipts it has
+      not credited. */
+  outstandingPayments: UnexplainedSide;
+  outstandingReceipts: UnexplainedSide;
+  outstandingJeNos: string[];
+  /** What the books come to once the outstanding items are allowed for, plus
+      what is on the bank and not in the books: the figure that must reach the
+      bank's printed closing. It moves with every match. */
+  computedClosingSen: number;
+  /** The bank's printed closing minus that figure. Zero is the whole point;
+      anything else is money nobody has accounted for. Null when no file
+      printed a closing balance. */
+  unexplainedSen: number | null;
+  /** Does the walk reach the bank's closing? The month cannot close without
+      it (当 closing bank statement amount 无法 tally 就无法 lock). */
+  tallies: boolean;
+
   /** Did the identity hold? False means the inputs disagree with themselves
       and the difference above cannot be trusted. */
   consistent: boolean;
   /** Set only when consistent is false: the two sides that did not agree. */
   inconsistency: string | null;
 
-  /** Nothing open, nothing unmatched, and the two closings equal. */
+  /** It tallies and nothing on the bank is left to decide. Outstanding items
+      in the books are what a reconciliation LISTS, not what stops it: a month
+      whose only difference is an unpresented payment is reconciled. */
   reconciled: boolean;
 };
 
@@ -155,25 +205,55 @@ export function reconcileBankStatement(input: ReconcileInput): Reconciliation {
      number. Everything else posted in the period is in the books and not on
      the bank — an uncleared cheque, a deposit that has not landed, or simply
      an entry belonging to a statement not uploaded yet. */
-  const claimed = new Set(movements.map((m) => m.jeNo).filter((n): n is string => !!n));
+  const claimed = new Set<string>();
+  for (const m of movements) {
+    if (m.jeNo) claimed.add(m.jeNo);
+    for (const n of m.jeNos ?? []) claimed.add(n);
+  }
   const unmatched = during.filter((l) => !claimed.has(l.jeNo));
   const booksNotOnBank: UnexplainedSide = { count: unmatched.length, sen: sum(unmatched, net) };
 
+  /* Entries from BEFORE the period: still waiting (carried), or claimed by a
+     movement on this statement (cleared here). Both are the brought-forward's
+     substance; only the second is part of this period's arithmetic. */
+  const elsewhere = input.claimedElsewhere ?? new Set<string>();
+  const carriedEntries = before.filter((l) => !claimed.has(l.jeNo) && !elsewhere.has(l.jeNo));
+  const carried: UnexplainedSide = { count: carriedEntries.length, sen: sum(carriedEntries, net) };
+  const clearedFromBeforeSen = sum(before.filter((l) => claimed.has(l.jeNo)), net);
+  const broughtForwardExplained = broughtForwardSen == null
+    ? null
+    : broughtForwardSen + clearedFromBeforeSen + carried.sen === 0;
+
   /* THE CHECK. Four numbers arrived at four different ways; if they do not
-     satisfy the identity, say so instead of publishing the difference. */
+     satisfy the identity, say so instead of publishing the difference. The
+     bank moves by an earlier entry the period it clears; the books moved when
+     it was posted — so what cleared from before the period is a term of its
+     own, not part of either unmatched side. */
   let consistent = true;
   let inconsistency: string | null = null;
   if (differenceSen != null && broughtForwardSen != null) {
-    const expected = bankNotInBooks.sen - booksNotOnBank.sen + broughtForwardSen;
+    const expected = bankNotInBooks.sen - booksNotOnBank.sen + broughtForwardSen + clearedFromBeforeSen;
     if (expected !== differenceSen) {
       consistent = false;
       inconsistency =
         `The difference of ${differenceSen} sen does not equal what is unmatched on either side `
         + `(${bankNotInBooks.sen} on the bank, ${booksNotOnBank.sen} in the books, `
-        + `${broughtForwardSen} brought forward = ${expected}). `
+        + `${broughtForwardSen} brought forward${clearedFromBeforeSen !== 0 ? `, ${clearedFromBeforeSen} cleared from earlier months` : ''} = ${expected}). `
         + 'The statement balances and the lines under them disagree — check the file before trusting either.';
     }
   }
+
+  /* THE OWNER'S FORM. Every unclaimed entry — this period's and the earlier
+     ones' — is an outstanding item; the books allowing for them, plus what the
+     bank shows that the books do not, must reach the bank's printed closing. */
+  const outstanding = [...unmatched, ...carriedEntries];
+  const pays = outstanding.filter((l) => net(l) < 0);
+  const rcts = outstanding.filter((l) => net(l) > 0);
+  const outstandingPayments: UnexplainedSide = { count: pays.length, sen: sum(pays, net) };
+  const outstandingReceipts: UnexplainedSide = { count: rcts.length, sen: sum(rcts, net) };
+  const computedClosingSen = closingLedgerSen - (booksNotOnBank.sen + carried.sen) + bankNotInBooks.sen;
+  const unexplainedSen = closingStatementSen == null ? null : closingStatementSen - computedClosingSen;
+  const tallies = consistent && unexplainedSen === 0;
 
   return {
     periodFrom, periodTo,
@@ -182,12 +262,12 @@ export function reconcileBankStatement(input: ReconcileInput): Reconciliation {
     closingStatementSen, closingLedgerSen, differenceSen,
     bankNotInBooks, booksNotOnBank,
     unmatchedJeNos: unmatched.map((l) => l.jeNo),
+    carried, carriedJeNos: carriedEntries.map((l) => l.jeNo), clearedFromBeforeSen, broughtForwardExplained,
+    outstandingPayments, outstandingReceipts, outstandingJeNos: outstanding.map((l) => l.jeNo),
+    computedClosingSen, unexplainedSen, tallies,
     consistent, inconsistency,
-    /* Reconciled means all three: nothing waiting on either side, and the two
-       closings equal. Two of the three is not reconciled, it is halfway. */
-    reconciled: consistent
-      && bankNotInBooks.count === 0
-      && booksNotOnBank.count === 0
-      && (differenceSen == null || differenceSen === 0),
+    /* Reconciled: it tallies and nothing on the bank is left to decide. An
+       entry the bank has not shown yet is listed, not held against the month. */
+    reconciled: tallies && bankNotInBooks.count === 0,
   };
 }

@@ -30,6 +30,7 @@ import {
   cascadeMasterVariants,
   seedFollowerVariants,
   seedableMasterVariants,
+  CASCADE_CATEGORIES,
   FABRIC_IDENTITY_KEYS,
   type MasterVariantSnapshot,
 } from '../../vendor/scm/lib/so-variant-cascade';
@@ -55,6 +56,13 @@ import {
 } from '../../vendor/scm/lib/sales-order-queries';
 import { zeroPriceClaim } from '../../vendor/scm/lib/zeroPriceClaim';
 import { authedFetch, humanApiError } from '../../vendor/scm/lib/authed-fetch';
+import {
+  photoLabel,
+  photoUploadFailure,
+  photoUploadFailureMessage,
+  unmatchedLinePhotos,
+  type PhotoUploadFailure,
+} from '../../vendor/scm/lib/photo-upload-failures';
 import { notifySaveProblems } from '../../vendor/scm/components/SaveProblemsList';
 import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import { useIdempotencyKey } from '../../lib/idempotency';
@@ -64,6 +72,7 @@ import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRet
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { resolveSelfStaff } from '../../vendor/scm/lib/self-staff';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { addressLineProps } from '../../lib/acColumnWidths';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { deriveProcessingDate } from '../../lib/processingDate';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
@@ -759,9 +768,10 @@ export const SalesOrderNew = () => {
     const { variants, masters } = cascadeMasterVariants(
       lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown> })),
       masterSnapshotRef.current,
-      /* Desktop cascades EVERY category — a mattress line's specials included.
-         Passed explicitly because mobile answers this differently. */
-      null,
+      /* The ONE set, shared with mobile (owner 2026-09-09: cascade is for sofa
+         only). This used to be `null` — EVERY category, a mattress line's
+         specials included — while mobile scoped it to sofa + bedframe. */
+      CASCADE_CATEGORIES,
     );
     masterSnapshotRef.current = masters;
     let didUpdate = false;
@@ -788,6 +798,8 @@ export const SalesOrderNew = () => {
   const inheritVariantsByCategory = useMemo(
     () => seedableMasterVariants(
       lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown> })),
+      /* Sofa only — the same set the live cascade below now takes. */
+      CASCADE_CATEGORIES,
     ),
     [lines],
   );
@@ -1087,14 +1099,19 @@ export const SalesOrderNew = () => {
      If the counts ever drift (server-side filtering of bad rows, etc.)
      we surface a soft warning and skip the mismatched lines rather than
      guess. The SO is already created so we don't roll back. */
+  /* RETURNS THE REASONS, not a count. It used to answer `{ failed, skipped }`
+     and the caller rebuilt a sentence out of the sum — the same defect #3303
+     fixed for line writes, on the photo path. Wording and the retry/refusal
+     decision live in vendor/scm/lib/photo-upload-failures.ts, shared with the
+     phone editor so the two surfaces cannot drift apart. */
   const flushPendingPhotos = async (
     docNo: string,
     draftLines: DraftLine[],
-  ): Promise<{ failed: number; skipped: number }> => {
+  ): Promise<PhotoUploadFailure[]> => {
     const linesWithPending = draftLines.filter(
       (l) => (l.pendingPhotoFiles?.length ?? 0) > 0,
     );
-    if (linesWithPending.length === 0) return { failed: 0, skipped: 0 };
+    if (linesWithPending.length === 0) return [];
 
     // HOUZS VENDOR — read the saved item IDs back through the vendored
     // authedFetch (→ /api/scm/mfg-sales-orders/:docNo), bypassing the
@@ -1108,8 +1125,11 @@ export const SalesOrderNew = () => {
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error('[so-line-photos] could not load saved item IDs:', e);
-      void humanApiError;
-      return { failed: linesWithPending.length, skipped: 0 };
+      /* Every staged photo is lost, and the count is now per PHOTO rather than
+         per line — the operator re-attaches photos, not lines, so a line count
+         understated the work whenever a line carried more than one. */
+      return linesWithPending.flatMap((l) => (l.pendingPhotoFiles ?? []).map(
+        (f) => photoUploadFailure(photoLabel(l.itemCode, f.name), e)));
     }
 
     /* Positional match — `validLines` is the same slice we sent to
@@ -1117,8 +1137,7 @@ export const SalesOrderNew = () => {
        `validLines[i]`. We only iterate over validLines so cancelled
        drafts (no itemCode) are skipped without breaking the index. */
     const validLines = draftLines.filter((l) => l.itemCode.trim() && l.qty > 0);
-    let failed = 0;
-    let skipped = 0;
+    const failures: PhotoUploadFailure[] = [];
     for (let i = 0; i < validLines.length; i++) {
       const line = validLines[i]!;
       const files = line.pendingPhotoFiles ?? [];
@@ -1130,7 +1149,10 @@ export const SalesOrderNew = () => {
         console.warn('[so-line-photos] index/item_code mismatch — skipping pending uploads', {
           index: i, expected: line.itemCode, got: saved?.item_code,
         });
-        skipped += files.length;
+        /* A "skip" was never a different outcome to the operator: the photo is
+           not on the order either way. It now says WHY it is not, instead of
+           being folded into a total with the ones the server refused. */
+        failures.push(...unmatchedLinePhotos(line.itemCode, files));
         continue;
       }
       for (const f of files) {
@@ -1139,11 +1161,11 @@ export const SalesOrderNew = () => {
         } catch (err) {
           // eslint-disable-next-line no-console
           console.error('[so-line-photos] upload failed', { file: f.name, err });
-          failed++;
+          failures.push(photoUploadFailure(photoLabel(line.itemCode, f.name), err));
         }
       }
     }
-    return { failed, skipped };
+    return failures;
   };
 
   const paymentIntents = () => paymentDrafts.filter((d) => d.amountSen > 0 && !d.receiptImageKey);
@@ -1648,8 +1670,7 @@ export const SalesOrderNew = () => {
              after the SO + items exist. Same non-blocking pattern as
              payments: a photo failure leaves the SO intact and we
              surface a warning rather than rolling back. */
-          const { failed: photoFailed, skipped: photoSkipped } =
-            await flushPendingPhotos(res.docNo, validLines);
+          const photoFailures = await flushPendingPhotos(res.docNo, validLines);
           if (failed > 0) {
             await notify({
               title: `Sales order ${res.docNo} was created, but ${failed} ` +
@@ -1660,11 +1681,15 @@ export const SalesOrderNew = () => {
               tone: 'error',
             });
           }
-          if (photoFailed > 0 || photoSkipped > 0) {
+          if (photoFailures.length > 0) {
             await notify({
-              title: `Sales order ${res.docNo} was created, but ${photoFailed + photoSkipped} ` +
-                `staged photo${(photoFailed + photoSkipped) === 1 ? '' : 's'} could not be uploaded.`,
-              body: 'Please re-attach on the Detail page.',
+              title: `Sales order ${res.docNo} was created, but ${photoFailures.length} ` +
+                `staged photo${photoFailures.length === 1 ? '' : 's'} could not be uploaded.`,
+              /* The reason, and re-attach advice ONLY where re-attaching could
+                 work. "Please re-attach on the Detail page" was printed against
+                 a refusal too, which is an instruction to keep doing the thing
+                 that just failed. */
+              body: photoUploadFailureMessage(photoFailures),
               tone: 'error',
             });
           }
@@ -2081,6 +2106,7 @@ export const SalesOrderNew = () => {
               <input
                 className={`${styles.fieldInput} ${editedClass('address1', address1)}`}
                 value={address1}
+                {...addressLineProps(setAddress1, { value: address2, set: setAddress2 })}
                 onChange={(e) => setAddress1(e.target.value)}
                 placeholder="Unit, street, area"
               />
@@ -2097,6 +2123,7 @@ export const SalesOrderNew = () => {
               <input
                 className={styles.fieldInput}
                 value={address2}
+                {...addressLineProps(setAddress2, null)}
                 onChange={(e) => setAddress2(e.target.value)}
                 placeholder="Apt, floor, building (optional)"
               />
@@ -2207,6 +2234,7 @@ export const SalesOrderNew = () => {
                      ` *` marker + red ring stay off while the order is still a
                      no-date draft (owner 2026-07-14). */
                   variantsRequired={!!processingDate}
+                  seedSofaLegDefault={true}
                   /* Scan-Order (Task #73) — a NO-MATCH scanned line seeds an
                      empty SKU picker; pass the slip rawText as the picker's
                      placeholder hint so the operator can pick a real SKU

@@ -99,6 +99,10 @@ export type DoRemainingLine = {
   description: string | null;
   description2: string | null;
   uom: string | null;
+  /** The DO line's own per-line delivery date, carried through so the DO->SI (and
+   *  DO->DR) convert keeps the delivery date the DO set on each line instead of
+   *  landing a blank box. NULL = the line had none. */
+  lineDeliveryDate: string | null;
   /** delivered = the DO line's qty */
   delivered: number;
   invoiced: number;
@@ -216,7 +220,7 @@ export async function doLineRemaining(
     .from('delivery_order_items')
     .select(
       'id, delivery_order_id, item_code, item_group, description, description2, uom, qty, ' +
-      'unit_price_sen, unit_cost_sen, discount_sen, variants, ' +
+      'unit_price_sen, unit_cost_sen, discount_sen, variants, line_delivery_date, ' +
       'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
       'custom_specials, line_suffix, special_order_price_sen',
     )
@@ -320,6 +324,7 @@ export async function doLineRemaining(
       description: (l.description as string | null) ?? null,
       description2: (l.description2 as string | null) ?? null,
       uom: (l.uom as string | null) ?? null,
+      lineDeliveryDate: (l.line_delivery_date as string | null) ?? null,
       delivered,
       invoiced,
       returned,

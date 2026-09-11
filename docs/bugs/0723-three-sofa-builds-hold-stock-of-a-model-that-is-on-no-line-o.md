@@ -1,0 +1,176 @@
+## Three sofa builds hold stock of a model that is on no line of the order they claim to come from [medium]
+
+<!-- area: Inventory, costing, FIFO -->
+<!-- status: open -->
+
+**白话.** 有三张采购单，仓库里挂着的沙发件跟单上的型号对不上 —— 单上写的是 A 型
+沙发，库存里却挂着 B 型的件，一共 9 件（等于多算 3 台沙发）。**为什么会这样还没
+查清楚**，所以先记下来，一件都没有动。修重复库存那个工具会把它们列出来但拒绝处
+理，等查清楚再说。
+
+**Symptom.** Read live on production 2026-09-08. Three purchase orders carry
+open sofa cutover stock whose compartment codes belong to a model that appears
+on no line of that order:
+
+| batch | its own sofa lines are | the lots hold | pieces | written |
+| --- | --- | --- | --- | --- |
+| HC-PO-009712 | `5535-*` | `8030-*` | 3 | 2026-09-07 20:49:38 |
+| HC-PO-009017 | `9058-*` | `8030-*` | 3 | 2026-09-07 20:49:48 |
+| HC-PO-009550 | `8030-*` | `9058-*` | 3 | 2026-09-07 20:49:43 |
+
+All nine carry the sofa opening lane's own note text, `AutoCount sofa opening:
+PO-0097xx received, batch HC-PO-0097xx`, so they were written by
+`backend/scripts/import-ac-sofa-stock.mjs` — run 34160820055, the display-sofa +
+binding-category release.
+
+> **Correction 2026-09-09 — the note text above does NOT find these lots.**
+> A later session followed `AutoCount sofa opening:` as the handle and got zero
+> rows, which reads as "the lots are gone" rather than "the filter is wrong".
+> Read live on production the same day:
+>
+> | probe | rows |
+> | --- | --- |
+> | `notes ilike '%AutoCount sofa opening%'` | **0** |
+> | `notes is not null` (whole table) | 35 of 2680 |
+> | `source_doc_no ilike 'HC-PO-0097%'` | **0** |
+> | `source_doc_no = 'AC-BAL-SOFA-2026-08-10'` | **238** |
+>
+> The lane's note is not persisted on the lot row, and the purchase order is not
+> the lot's `source_doc_no` — the whole sofa opening lands under one cutover
+> document, and the PO travels in `batch_no`. **The handle is the pair:**
+>
+> ```sql
+> select batch_no, split_part(item_code,'-',1) as model, count(*) lots, sum(qty_remaining) pieces
+> from scm.inventory_lots
+> where source_doc_no = 'AC-BAL-SOFA-2026-08-10'
+>   and batch_no in ('HC-PO-009712','HC-PO-009017','HC-PO-009550')
+> group by 1,2 order by batch_no, model;
+> ```
+>
+> **The nine pieces are still there and still mismatched** (same query, 2026-09-09):
+>
+> | batch | its own model | also holds | pieces astray |
+> | --- | --- | --- | --- |
+> | HC-PO-009017 | `9058-*` (3) | `8030-*` | 3 |
+> | HC-PO-009550 | `8030-*` (3) | `9058-*` | 3 |
+> | HC-PO-009712 | `5535-*` (6) | `8030-*` | 3 |
+>
+> So the finding above stands unchanged; only its "how to find them" was wrong.
+> Nothing here re-opens the root cause, which is still UNKNOWN.
+
+**Root cause: UNKNOWN, and two stories are already dead.** This is recorded
+rather than explained, because both explanations that fit the shape were checked
+and refuted:
+
+- *"Two ERP purchase orders share one AutoCount document, so a build takes its
+  neighbour's number."* REFUTED: each of the three maps 1:1 to its own
+  `linked_ac_docno` (`PO-009712`, `PO-009017`, `PO-009550`), and no
+  `linked_ac_docno` in company 1 is carried by two purchase orders — the
+  group-by returns zero rows.
+- *"The 009017 / 009550 pair is a straight swap, so the importer paired builds to
+  batches off by one."* The 009712 row does not fit that story at all: its lots
+  are 8030 and neither of the other two orders is a 5535.
+
+What IS established: the importer takes the lot's code from the order's own line
+(`code: l.item_code`, section 6). For these rows to exist, those lines must have
+carried the other model at 2026-09-07 20:49 and been re-coded since. Which lane
+re-coded them is not established — `scm.entity_audit_log` holds nothing for the
+three orders' item ids, so whatever wrote them wrote directly. The 8030 codes on
+this family come from `SOFA_MODEL_ALIAS` (HOK-5537 / HOK-5540 supplier SKUs map
+to `8030-*`), which is where a re-coding lane would plausibly have been working.
+
+**Evidence added 2026-09-09 — the lot's own NAME is the surviving witness, and it
+splits the nine into two different problems.** Two live reads, neither of which
+had been taken when this was filed.
+
+*One.* Across every sofa lot in the cutover, the model code and the name the
+importer stamped agree — with exactly one exception:
+
+```sql
+select split_part(item_code,'-',1) as model, product_name, count(*), count(distinct batch_no)
+from scm.inventory_lots where source_doc_no='AC-BAL-SOFA-2026-08-10'
+  and split_part(item_code,'-',1) in ('8030','9058','5535') group by 1,2;
+```
+
+| model | name on the lot | lots | batches |
+| --- | --- | --- | --- |
+| `5535` | SOFA NOVA | 14 | 4 |
+| `8030` | SOFA SOFFIO (+ SOFFIO CONSOLE) | 45 | 15 |
+| `9058` | SOFA MAYBATCH | 43 | 13 |
+| `8030` | **SOFA MAYBATCH** | **3** | **1 — HC-PO-009017, and nowhere else** |
+
+105 lots hold the mapping; 3 break it, and they are three of the nine. So on
+HC-PO-009017 the code says Soffio while the name says Maybatch — which is the
+model that order actually carries. Same fabric (`gd2502-09`), same three
+compartments, same `received_at` as the genuine Maybatch beside it.
+
+*Two.* The orders themselves. Each bought ONE sofa and received it in full
+(`scm.purchase_order_items`, `qty` = `received_qty` = 1 on every sofa line):
+
+| batch | the order bought | its lots hold |
+| --- | --- | --- |
+| HC-PO-009017 | 1 × MAYBATCH — `9058-1B(LHF)`, `-2A(RHF)`, `-CNR` | 6 pieces |
+| HC-PO-009550 | 1 × SOFFIO — `8030-1A(LHF)`, `-2A(RHF)`, `-CNR` | 6 pieces |
+| HC-PO-009712 | 1 × NOVA — `5535-1A(LHF)`, `-2A(RHF)`, `-CNR` | 9 pieces |
+
+**What that changes.** The three batches are no longer one class:
+
+- **HC-PO-009017 now has a leading theory** — a DUPLICATE of the one Maybatch the
+  order bought, whose second copy was written with an `8030` code. The name is the
+  part the re-coding missed. This is why the duplicate detector never caught it: it
+  keys on `item_code`, and a mis-coded copy does not look like a copy.
+- **HC-PO-009550 and HC-PO-009712 are NOT that.** Their strays agree with
+  themselves — code `9058` *and* name Maybatch; code `8030` *and* name Soffio — so
+  nothing was mis-coded. The system genuinely holds a second, different model
+  against those batches, and whether it exists is still unanswered.
+- HC-PO-009712 separately carries a 0721-class duplicate: six `5535` pieces that
+  are the same three compartments under two spellings of one spec
+  (`…umbrella fabric` vs `…umbrella fabric,nylon fabric`).
+
+**What it does NOT establish.** These lots are an AutoCount OPENING BALANCE, not a
+receipt off the purchase order — `source_doc_no = 'AC-BAL-SOFA-2026-08-10'`, with
+the PO only in `batch_no`. So the order's quantity is the ERP's record of what was
+bought, not proof of what AutoCount held. A second sofa could have been on hand and
+tagged to the same PO reference. The floor check is still the thing that settles
+it; this only makes it three specific questions instead of one open one.
+
+**Floor-check sheet.** The pieces, per batch, with the question each one answers:
+<https://claude.ai/code/artifact/ff0921d3-25d9-4317-8d10-ff7139c2f1c5> — and note
+`scm.inventory_lots` records a warehouse and nothing finer, so there is no shelf
+position to send anyone to. All 21 pieces are in BALAKONG WAREHOUSE.
+
+> **The nine are now COSTED (2026-09-10).** When this was filed they carried
+> `unit_cost_sen = 0`, which is why the duplicate tool could refuse them without
+> anyone having to weigh a number. The costing lane has since closed that gap
+> ([#3486](https://github.com/Houzs-Century/Houzs-ERP/pull/3486),
+> [#3495](https://github.com/Houzs-Century/Houzs-ERP/pull/3495)); re-read live the
+> same day, all nine now carry a cost — 3 of 3 in each of the three batches. So
+> the two answers the floor check chooses between are no longer symmetric in
+> cost: **retiring them now removes inventory value, and re-coding them moves it
+> between models.** Neither is the free correction it would have been on
+> 2026-09-08. The floor check is unchanged and still the thing that settles it;
+> what changed is that the fix which follows it needs the owner's word about
+> money. See `docs/bugs/0721` for the same shift across the whole duplicate
+> population.
+
+**Why it is not "just" 9 pieces.** A sofa is sold as a set of compartments, so
+9 pieces read as 3 whole sofas in
+`backend/scripts/lib/sofa-piece-fold.mjs` — the arithmetic the AutoCount stock
+reconcile compares against the book. They are part of the ~20-sofa overstatement
+recorded in
+`docs/bugs/0721-the-sofa-stock-import-opened-a-second-set-of-lots-for-a-buil.md`,
+and the only part of it that tool refuses to touch.
+
+**Fix.** None, deliberately. `backend/scripts/lib/duplicate-sofa-lot-plan.mjs`
+detects the class and REPORTS it — `MODEL NOT ON THE ORDER`, naming the models
+the order does carry — and `repair-duplicate-sofa-cutover-lots.mjs` never
+retires it. Two tests in `backend/tests/duplicateSofaLotPlan.test.mjs` pin that
+refusal, including the case where such a cell ALSO carries two variant keys, so
+a future change to the duplicate rule cannot start retiring these by accident.
+
+Retiring them would remove stock; re-coding them would rewrite it. Both are
+answers to "which sofa is physically on that shelf", and nobody has looked.
+**The next step is a floor check, not a script.**
+
+**Ref.** claude/so-do-conversion-remaining-wz1d5x, 2026-09-08. Found while
+measuring the population for 0721.

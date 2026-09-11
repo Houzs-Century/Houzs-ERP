@@ -587,6 +587,11 @@ The rule holds because the owner chose it, not because that argument covered it;
 `backend/tests/loadedStaysInvoiceable.test.ts` pins it, and pins that #2557's
 DELIVERED exclusion is still intact.
 
+The convert descriptor `DoRemainingLine` also carries each line's own
+`line_delivery_date` (mig `20260910T1251`, SI side): the DO->SI picker copies the
+DO line's delivery date onto the invoice line, which previously had nowhere to
+land. See `docs/modules/sales-invoice.md` and `docs/bugs/0788`.
+
 
 The shape, so the section still says something: `DO_SHIPPED_STATES` is the
 **write trigger** (first entry fires the OUT — `COMPLETED` is deliberately
@@ -739,6 +744,179 @@ part that bites — `delivery_order_items.linked_ac_dtlkey` is null on all 173
 migrated delivery orders, so a migrated delivery cannot be addressed line by
 line. Header-only would still work. Do not start until the read has been done.
 
+### The colours on a keyless delivery line cannot be read line by line, and the reconcile now SAYS so (2026-09-08)
+
+**白话.** 有两张交货单，系统里两行的布料颜色看起来跟账本「对调」了。**没有对调，
+货也没有出错。** 那两行是同一款、同一个数量、同一个客户，系统没有账本的行号，所以
+是系统自己「猜」哪一行对哪一行 —— 猜错一半的机会就长得像对调。两边的颜色**整组
+一样**，客人拿到的就是账本上写的那两个颜色。
+
+`backfill-ac-downstream-line-keys.mjs` stamps `linked_ac_dtlkey` only where the
+document FORCES the pairing. It therefore REFUSES exactly the shape that matters
+here: two rows of one item at one quantity whose book lines differ **in Desc2
+alone** — and Desc2 is where the colour lives. So the one fact that makes two
+colours look different is the same fact that makes the line key unstampable, and
+on those rows `check-ac-erp-reconcile.mjs` was reporting its own guess as a
+finding. Six such "swaps" have now been raised in this repo and five were
+phantoms (`docs/bugs/0672`, `0688`, `0689`, `0695`, `0696`, `0709`, `0712`).
+
+The reconcile's variant table now carries a **`no-key`** column beside `differ`.
+A value moves into it only when all three hold, and they are stated once in
+`lib/variant-reconcile.mjs` `foldGuessedPairing`:
+
+1. at least TWO rows of the bucket carry no AutoCount line key — one unkeyed row
+   among keyed ones is forced by elimination, not guessed;
+2. the bucket holds more than one row;
+3. the two sides' value MULTISETS for that axis are EQUAL — order-independent,
+   so no ordering can fake it and none can hide a real difference behind it. A
+   bucket whose bags differ keeps every one of its differences.
+
+It applies to the SCALAR axes only (`FOLDABLE_AXES`: colour, divan, gap, leg,
+T.Heights, seat). Compartments already have a stricter rule one paragraph up —
+an unkeyed sofa build is UNREADABLE, never AGREE — and specials are a multiset
+over one line already.
+
+**`no-key` is not AGREE.** The row genuinely does not state what the book's row
+states; what is proven is that the DOCUMENT ships the right values and that
+which of our rows is which is unknown. It does not lock the per-document verdict
+and it is not counted as work, and every one of them is printed BY NAME under
+its axis — a class the reader cannot enumerate is a suppression, not a
+declaration (`docs/bugs/0668`).
+
+**Where the DO colour axis stands, measured** — reconcile runs
+[`34210768489`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34210768489)
+(17:34 +08), [`34217483131`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34217483131)
+(18:49, the guard) and [`34217807499`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34217807499)
+(18:53, after the blanks were filled):
+
+| colour / fabric, PROCEEDED | 17:34 | 18:49 | 18:53 |
+|---|---|---|---|
+| agree | 164 | 164 | **168** |
+| ERP blank — the only column that is WORK | 4 | 4 | **0** |
+| differ | 4 | **0** | **0** |
+| no-key | — | 4 | 4 |
+
+**The delivery-order colour backlog is zero.** The four blanks were closed by
+`repair-migrated-do-line-colour.mjs` (`docs/bugs/0715`), which copies the colour
+from the delivery line's OWN sales-order line — the rule
+`lib/migrated-do-writer.mjs` already states — and writes only where the book's
+colour multiset for the whole `(document, item, quantity)` bucket equals the one
+its sales-order lines carry. Apply run
+[`34217713545`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34217713545):
+4 rows, read back on a fresh connection, with money, quantities, readiness,
+stock, the migrated-document movement leak and `scm.autocount_outbox` (45 rows)
+identical before and after.
+
+### A migrated delivery note can be SHORT a line, and no rule can find it (2026-09-08)
+
+The null keys have a second consequence, and it decides the shape of any repair.
+While `delivery_order_items.linked_ac_dtlkey` is null, a delivery note cannot be
+compared to the book line by line: the verdict in the AutoCount reconcile rests
+on its value-then-order fallback. A tool that added "the missing line" to a
+delivery order by that fallback would be writing on a guess.
+
+> **That null is being filled, and it moved while this was written — do not read
+> a count from this paragraph.** The line above said *"null on all 173 migrated
+> delivery orders"* on the morning of 2026-09-08, sourced from the reconcile run
+> `34199308084` (15:26 +08), which listed `DO-001604` among the documents it
+> could not line-match — a verdict only reachable when NO ERP row on the document
+> carries a key. Thirty-four minutes later, plan run `34201640955` read the same
+> document's live rows and found all three sofa compartments carrying DtlKey
+> `199269`. `backfill-ac-downstream-line-keys.mjs` is stamping this column and
+> the state is partial and moving, so `topup-ac-lines-from-truth.mjs`'s DO lane
+> COUNTS the keyed rows of its target document on every run and prints the count,
+> rather than asserting a number that goes stale between two dispatches.
+
+So `backend/scripts/topup-ac-lines-from-truth.mjs` has two lanes and they are not
+symmetrical. Its SO lane is a general rule keyed on DtlKey. Its **DO lane is a
+NAMED list** — `DO_TARGETS`, which since 2026-09-09 lives in
+`backend/scripts/lib/do-topup-targets.mjs` so a test can read it. One entry per
+line it may add, each asserted against the book (document, DtlKey, quantity,
+unit price, line subtotal) and against the ERP (no row already answering it)
+before anything is written. A target whose book row has moved is REFUSED, never
+adjusted to fit.
+
+**As of 2026-09-09 the list holds six lines.** The first is `DO-001604`, whose
+book row is `* DISPOSE 3S L SHAPE SOFA + CONSOLE TABLE`, no item code, quantity
+1, **RM 150.00** — a text-only line carrying real money, explicitly NOT in the
+blank-row class of `docs/bugs/0695` (section G of
+`docs/cutover-so-do-remainder-2026-09-08.md`). Four more are the substituted
+lines of `DO-001953` / `DO-004903` (`docs/bugs/0711`, described below). The last
+is a **free line the book gives away**: `DO-011465`'s four `HOK-SQUARE PILLOW`
+at RM 0.00, the book's own Desc2 reading *for conpesantion wrong item
+delivery.* Being RM 0.00 it moves no header total, which is why the line-count
+comparison was the only thing that could find it
+(`docs/bugs/0752-the-book-s-two-free-delivery-lines-were-never-written-and-a.md`).
+
+**`DO-010332` was written into this list and then taken out again, and the
+reason belongs here.** The book has two lines on that note — `2 x RM 3,250`
+Desc2 `.../2S`, and `1 @ RM 0.00` Desc2 `.../1S`. The ERP holds ONE row, keyed
+to the **2S** line, carrying the **1S** line's build text *and* the item code
+`8050-1S`. Inserting the free line on its own would leave the note with two rows
+both claiming 1S, one of them priced at the other line's money. The existing row
+has to become the 2S line first — a SEAT SIZE on a delivered document, which
+belongs to the sofa tooling and not to a top-up that copies quantities and
+prices. `backend/tests/doTopupTargets.test.mjs` pins its absence so it cannot be
+re-added as a simple top-up.
+
+**Two properties of this lane changed with them, and both are load-bearing.**
+
+- **The insert carries the book's own `Desc2` into `description2`.** It used to
+  write a hard-coded `NULL`, so every line the lane had ever topped up landed
+  with no build text on a note whose other rows all carried theirs. The value
+  comes from `book.DO.desc2` — the account book — never from a target.
+- **Every target is resolved against the committed book snapshot on every PR**,
+  by `backend/tests/doTopupTargets.test.mjs`. That is why `DO_TARGETS` moved to
+  `scripts/lib/`. A named list is hand-typed assertions about a book nobody
+  re-reads, and the script's own drift check runs only when someone dispatches
+  it against production — the worst moment to find a typo. The test also plants
+  four typo shapes and asserts each is rejected.
+
+Two deliberate choices in that write, both recorded because neither is obvious:
+
+- **`item_code` is DECLARED, not copied.** The column is NOT NULL and the book
+  states no ItemCode, so a value is forced. `DISPOSE` is what the book's own
+  text names and what AutoCount's `DISPOSE` code binds to in the mapping sheet;
+  the book's text goes verbatim into `description`, so nothing it said is lost.
+  The reconcile does not compare a delivery order's item codes at all —
+  `lib/ac-reconcile-erp-sql.mjs:196`, *taken from the SALES ORDER line by
+  design* — so the choice cannot create a difference.
+- **`linked_ac_dtlkey` IS stamped, and the row also carries a marker in
+  `notes`.** This reverses the decision the lane was first written with. The
+  original reasoning was that keying one row of a keyless document would flip it
+  out of the reconcile's keyless-multiset comparison into keyed pairing — a
+  wider change than adding a line. The plan run refuted the premise (see the box
+  above): the document is already keyed, so there is no comparison left to flip,
+  and the honest value for a row that IS AutoCount DtlKey 199273 is 199273. A
+  WRONG key is worse than NULL — mig 0280, *NULL means "create"* — which is why
+  the target asserts the book's row (quantity, unit price, line subtotal) before
+  the key is used. The `notes` marker is kept beside it so a re-run still claims
+  the row if a later tool ever rewrites keys.
+
+Header money is re-summed as Sigma `line_total_sen`, the same rule
+`lib/migrated-do-writer.mjs:375` and `delivery-orders-mfg.ts:461` keep, and
+`line_count` is set to what the document holds rather than incremented. No
+inventory movement is written: these documents are `migrated_no_stock`
+(mig 0276) and stay at zero movements — measured before and after the apply,
+`0 movement rows behind 646 migrated documents` in both.
+
+**What the lane PRINTS, and why the wording matters.** Its banner states the
+RULE — *"a delivery note's line keys are being backfilled and the state moves, so
+this lane is a NAMED list, not a rule"* — and each target then prints the
+MEASUREMENT, `N ERP row(s) (K carry an AutoCount line key)`, taken at the moment
+of that run. The banner used to assert the corpus fact instead, and apply run
+`34204421089` printed *"No migrated delivery order carries a line key"* directly
+above three rows carrying DtlKey 199269. A run's own output is the one place a
+stale fact cannot be argued with, so the assertion moved to where it is measured.
+
+**Done, 2026-09-08.** `HC-DO-001604` carries the line: apply run `34204421089`,
+header RM 6,688.00 = the book, `1 of 1 delivery-order line(s)` verified on a
+fresh connection. The delivery-order money column of the AutoCount reconcile went
+1 to 0 (`34204316650` -> `34204590904`) and the note's paired line count went 818
+to 819 with no new unpaired ERP row. Full before/after in
+`docs/cutover-so-do-remainder-2026-09-08.md`.
+Ledger: `docs/bugs/0704-a-top-up-that-reads-the-outstanding-cut-is-blind-to-a-delive.md`.
+
 **What is NOT covered here and is a real gap: money taken at the door.**
 `scm.delivery_order_payments` — the ledger Mobile POD writes when a driver
 collects on delivery — reaches AutoCount **nowhere**. `composePaymentUdf` is fed
@@ -746,6 +924,44 @@ only from the SALES ORDER path (`scm/lib/so-edit-header.ts`, `composeCreateSo`),
 so the book's `UDF_PAYEMENT` / `UDF_BALANCE` never learn about a payment recorded
 against the delivery. That is the payment half of the owner's sentence, it is a
 different lane's subject, and it is named here so it is not lost between the two.
+
+### A migrated delivery order carries the customer block from its sales order (2026-09-08)
+
+`scm.delivery_orders` holds the whole customer block — `phone`, `email`,
+`customer_type`, `building_type`, `address1`, `address2`, `city`, `state`,
+`customer_state`, `postcode`, `customer_country` and the three emergency-contact
+columns — and the interactive create path fills every one of them from the source
+order (`delivery-orders-mfg.ts:3459`). `backend/src/scm/lib/so-to-do-fields.ts`
+owns WHICH fields carry across, for both live converters.
+
+**`lib/migrated-do-writer.mjs` did not carry any of it until 2026-09-08.** Its
+header INSERT named fourteen columns and none of them was in that list, so every
+document either of its callers produced — `create-migrated-documents.mjs` and
+`sync-ac-delta.mjs` — rendered `-` for phone, email and address. The owner
+reported it the day delivery orders opened to staff (`HC-DO-011556`), and the
+point is that it is not a figures problem: **a delivery note with no phone and no
+address is unusable as paperwork even on a fully delivered order whose data he
+has ruled does not matter** (「已经出货了的就随便把 ... 数据对不对不重要了」).
+
+It now copies the block from the parent sales order inside the same transaction,
+one `UPDATE ... FROM scm.mfg_sales_orders`, folding the order's four address
+lines into the delivery order's two the same way `so-to-do-fields.ts` does.
+**Nothing is defaulted** — a field the order does not carry stays NULL, which is
+what the Create-DO banner is built to report honestly. Pinned by
+`backend/tests/migratedDoWriter.test.mjs`.
+
+APPLIED to production 2026-09-08, apply run `34222124527`: 173 delivery orders
+had no phone and no address, and 0 do now. Full before/after in
+`docs/customer-block-gap-2026-09-08.md`.
+
+Rows written before that: `backend/scripts/repair-customer-block.mjs` +
+`.github/workflows/repair-customer-block.yml` (plan by default, apply gated on
+`CONFIRM="CARRY THE CUSTOMER BLOCK"`); the size of the class is measured by
+`backend/scripts/check-customer-block-gap.mjs` +
+`.github/workflows/check-customer-block-gap.yml`, read-only. Neither touches a
+line, a quantity, a price, a payment column or a status, and neither enqueues an
+AutoCount outbox row. Ledger:
+`docs/bugs/0714-the-migrated-delivery-order-never-carried-a-customer-block-s.md`.
 
 ### Who moves the DO status, and what each value blocks (2026-08-16)
 
@@ -1883,8 +2099,37 @@ which reaches the free-gift trigger (`backend/src/scm/shared/free-gift.ts`) and
 the PDF module grouping (`vendor/shared/so-line-display.ts`) — and its `remark`,
 which is per-line by nature. `seedFollowerVariants` strips both.
 `docs/bugs/0508-the-consignment-order-ran-its-own-copy-of-the-variant-cascad.md`.
+
+**What changed on 2026-09-09 — WHICH CATEGORIES seed, and it is still every
+one.** The owner ruled that the Sales Order cascade is 「只限于 sofa item」
+(`docs/bugs/0754-*`), and `seedableMasterVariants` gained a REQUIRED `categories`
+parameter so the compiler would name every call site rather than let a default
+decide. **This file passes an explicit `null` — every category, UNCHANGED.**
+
+The ruling was given about Sales Orders. Narrowing a Delivery Order because a
+Sales Order was narrowed would be extending it for him, and the open question at
+the top of this section (should a DO line follow line 1 at all?) is the same
+question one level up. The `null` is now a visible decision in the diff instead
+of whatever the parameter happened to default to — which is the whole point of
+the required-parameter rule.
 The rule itself, and which pages are on it, are documented in
 `docs/modules/sales-order.md`.
+
+**And a DO line may not INVENT a variant either (2026-09-08).** `SoLineCard`
+auto-fills a blank sofa Leg Height with the maintenance "Default" option — a
+sales-order convenience that was running here too, because the card is shared.
+The leg height is part of the stock bucket (`computeVariantKey` emits
+`legheight=` for a sofa), so the pre-flight in
+`backend/src/scm/lib/check-stock-availability.ts` asked
+`inventory_balances` about a bucket nothing was ever stored under and answered
+"Stock not enough at the selected warehouse" for a sofa that was standing in it.
+Pressing **Ship anyway** did not help either: the OUT then writes under the
+invented key and consumes no lot, so the goods leave and the stock stays on the
+books at cost 0 — which is what HC-DO-2609-004, HC-DO-2609-009 and
+HC-DO-2609-011 did on 2026-09-08 (5 lines, still unrepaired). This page now
+passes `seedSofaLegDefault={false}`; the prop is mandatory so no delivery-side
+form can inherit the sales-side answer by saying nothing.
+`docs/bugs/0722-a-delivery-order-invented-the-sofa-s-leg-height-so-the-stock.md`.
 
 ## `migrated_no_stock` — a DELIVERED order with no OUT behind it (mig 0276)
 
@@ -2061,6 +2306,26 @@ data error.
   ALL-OR-NOTHING with an explicit refusal list, so it never vanished a document;
   and its over-delivery assertion is keyed on quantity, which a substituted line
   changes the meaning of. Enabling it there is a separate, reviewed change.
+- **The ruling could only ever reach a WHOLE document, never a line inside one
+  (2026-09-08).** `buildMigratedDoPlan` ends
+  `[...byDo.values()].filter((d) => !done.has(d.doNo))`
+  (`lib/migrated-do-writer.mjs:293`) and `done` is every `linked_ac_docno`
+  already in `scm.delivery_orders`. So a note whose EVERY line was a
+  substitution came in complete once the flag was on — `DO-001800`,
+  `DO-005583` — while a note that already existed because ONE of its lines could
+  be matched kept the gap: `DO-001953` (book 4, ERP 2) and `DO-004903` (book 3,
+  ERP 1). **Adding a substituted line to a document that already exists is
+  `topup-ac-lines-from-truth.mjs`'s DO lane, not this writer's**, and its targets
+  carry `substituted: true` to write exactly the shape in the table above.
+  `docs/bugs/0713`.
+- **The whole class is 30 delivery orders in the book and 4 in the ERP.**
+  `backend/scripts/probe-do-code-changed-after-conversion.mjs` (read-only) is
+  the measurement, because the reconcile's line-count axis cannot see a note
+  whose code was changed without changing the count. Run
+  [`34213215063`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34213215063)
+  named all 30 against production: 26 are correctly absent (their sales orders
+  were fully delivered before the cut), and the 4 the ERP holds are the four
+  named above.
 
 ## The delivery warehouse lives on the DO HEADER (2026-09-07)
 
@@ -2170,6 +2435,47 @@ entry built from one would 404. The fix is one column on two selects already in
 flight in `routes/delivery-orders-mfg.ts`, and it is not in that change because
 the file is over its size ceiling — `document-conversion.md` §8b sizes it.
 
+## The printed DO is BLACK ON WHITE, ONE FACE, LETTER — it goes through a dot-matrix printer (owner, 2026-09-08)
+
+**What the warehouse prints on:** an Epson LQ-310 (24-pin impact printer, black
+ribbon) onto 9.5 x 11 inch **2-ply continuous paper**. The owner's brief, in
+his words: 「delivery order 需要修改为黑白色而已 / 目前打印了会看不清楚，字体需要放大
+一些 / 字体统一」. The Theme C "Ink & Petrol" sheet of 2026-08-07 was a CSS
+handoff drawn for a screen, and on this printer every one of its devices was a
+cause of the unreadable print — trace in
+`docs/bugs/0713-the-delivery-order-printed-unreadably-on-the-dot-matrix-prin.md`.
+
+The rules the renderer now holds, each pinned in
+`frontend/src/vendor/scm/lib/delivery-order-template.test.ts` off the DRAWN
+output (autoTable's own style setters are in the population):
+
+| rule | why, on THIS printer | pinned by |
+|---|---|---|
+| **one ink: black.** No grey labels, no faint placeholders, no coloured headers | there is no grey ribbon; the driver dithers grey into sparse dots, and the carbonless second ply gets a fainter copy of the dots | *"no fill of any colour, every ink pure black"* |
+| **no fills.** No paper panel, no doc-number pill, no status pill, no header band — the panel is a stroked box, the status is bold text, the header row is bold text over a heavy rule | a fill dithers into a field of dots UNDER the words | same test — `fills` must be `[]` |
+| **one face: helvetica**, at the `DO_SIZE` scale in `delivery-order-theme.ts`, **nothing under 9pt** | 24 pins cannot form 7.5pt courier; and helvetica is the family `ensurePdfCjkFont` redirects, so a Chinese address now paints in EVERY cell | *"one face, and nothing under the 9pt floor"* |
+| **page: Letter** (`DO_PAGE_FORMAT`), not A4 | 9.5 x 11 continuous form is 8.5 in wide between its perforations and 11 in tall — exactly Letter. A4 is 18mm taller, so a fit-to-page print shrank every sheet and its type | *"the page is Letter"* |
+| **solid rules, 0.25mm minimum.** The signature Name / Date fields are solid lines, not dotted | a 0.1mm hairline or a row of dots prints broken | (visual; no test) |
+
+**Layout consequences worth knowing before you touch it.** The Letter sheet is
+shorter and the type is larger, so the page budget moved: the scan QR now sits
+BESIDE the title column (it used to stack under the issued date, and on Letter
+that alone pushed a three-line DO's signature onto a second form); the item
+code and Source PO columns are one step below body size so a 17-character PO
+number fits its column on one line; the signature box is 20mm. Rendered
+2026-09-08 with PyMuPDF off the test fixture: a 3-line DO with driver, note
+and QR is **1 page**; 22 lines are 3 pages.
+
+**The Consignment Note reuses this renderer** (`ConsignmentNoteDetail.tsx`,
+`showPicking: false`) and prints the same way. The shared ITEM PHOTOS block
+(`pdf-item-photos.ts`) is NOT changed — it is shared with the SO and PO PDFs,
+prints only when a line carries a photo, and a photo does not survive an impact
+printer anyway.
+
+**Not in scope, and said so:** whether the DO should offer a second, colour
+layout for a laser printer. Today there is one DO layout and it is this one;
+the SO / PO / invoice PDFs keep the shared `pdf-common` letterhead untouched.
+
 ## A line added here reaches the account book (since 2026-08-31)
 
 Adding a line to a document AutoCount already holds used to refuse the WHOLE
@@ -2225,6 +2531,91 @@ Identity is asserted **before** the quantity cap wherever both run: a ceiling
 computed against the wrong line is a number about the wrong thing, and reporting
 it sends the operator to fix a quantity when the real fault is the source they
 picked.
+
+## The Create-DO form carries the SO's delivery date and branding (2026-09-08)
+
+`DeliveryOrderNewV2.tsx` prefills from `GET /so-source/:docNo` and posts to
+`POST /`. Until 2026-09-08 that prefill seeded the customer, salesperson and
+address but NOT `customerDeliveryDate`, and the form had no `branding` at all, so
+a DO raised here carried `customer_delivery_date`, `expected_delivery_at` and
+`branding` as NULL while its order named them — 12 company-1 and 35 company-2
+documents, measured by `backfill-migrated-do-sales-fields.mjs` with
+`scope=all` and filled by it (docs/bugs/0723). The form now seeds the customer
+date from the source and carries `branding` as a hidden header field, the way
+`/from-sos` does; Expected-at stays the operator's field and, left blank, the
+server falls back to the customer date. `missingSourceFields` names
+**Delivery Date** when the source order has none. Mobile is unaffected: its
+convert wizard posts to `/from-sos`, which copies server-side.
+
+## A migrated DO's sales / delivery fields come from the SO header too (2026-09-08)
+
+The customer block (phone, email, address, city, state, postcode, emergency
+contact) is the section above, *A migrated delivery order carries the customer
+block from its sales order* — docs/bugs/0714, repaired on production the same
+evening. The header block ABOVE that card on the same screen — **Salesperson,
+Customer ref, Delivery date, Expected at** — was blank for the same cause and is
+not in 0714's field map (`DO_CARRY` is deliberately "what a driver needs").
+
+`DO_SALES_CARRY` in `backend/scripts/lib/customer-block.mjs` is the list:
+`salesperson_id`, `agent`, `branding`, `ref` from the SO, and — **since
+2026-09-11 (owner 「全部要跟 autocount」, docs/bugs/0804)** — `customer_delivery_date`
+and `expected_delivery_at` both = the DO's own `do_date` (= AutoCount's DocDate),
+NOT the SO's customer date. A delivery order's delivery date follows AutoCount;
+the customer's original ask stays on the SO. This reverses the delivery-date half
+of the 2026-09-08 default above (which seeded them from `s.customer_delivery_date`);
+existing rows were repaired by `repair-do-delivery-dates-to-autocount.mjs`. The writer
+(`insertMigratedDo`) applies it in the SAME `UPDATE … FROM scm.mfg_sales_orders`
+as the customer block, so a new migrated document carries all of it at once.
+
+**Not in the list, on purpose.** `venue` / `venue_id` (a canonicalising trigger
+rewrites them on write — 0714's own reason) and `sales_location` /
+`warehouse_id` (the ship-from branch from the account book, owner 2026-09-07
+「记在单头就好」, `lib/ac-do-location.mjs` — never the SO's sales branch).
+
+The documents already written are filled by
+`backfill-migrated-do-sales-fields.mjs` (Actions → **Carry the sales / delivery
+fields onto migrated DO headers**; PLAN by default, apply needs `CONFIRM="I HAVE
+REVIEWED THE DRY-RUN"`; `scope` migrated|all; `do_number` for one document).
+Every SET re-asserts `IS NULL`, so a corrected header survives. What the plan
+lists under "order itself blank" is an SO-side gap: fix the SO and re-run, it
+is idempotent. docs/bugs/0716.
+
+## DO dates default to the SO's delivery date (2026-09-11)
+
+Owner rule, restated four times the same morning: 「我开 DO 之前我改 SO 就行 ……
+顾客每次换的话，我也会跟着换（SO 的），所以当我开 DO 的时候，你就跟着 default
+这个 date 来开 …… DO date 也是要用 SO delivery」. **Every date the DO form
+opens carrying is the SO's `customer_delivery_date`** — the DO date (header
+`do_date`), the customer delivery date (header `customer_delivery_date`), and
+every line's delivery date all seed from it. The operator changes the date on
+the SO once when the customer moves it, and every DO raised afterwards
+inherits.
+
+For a blank DO with no `?fromSo=` / `?fromPicks=1` in the URL the `useState`
+initial keeps `do_date = today`, so the "opened fresh" case still opens today.
+The `/from-sos` server route falls back to today when the source SO carries no
+`customer_delivery_date`.
+
+Three holes were closed together (docs/bugs/0807):
+
+- `DeliveryOrderNewV2.tsx`'s item POST payload was built with key
+  `deliveryDate`, and `backend/src/scm/lib/do-item-row.ts` reads
+  `lineDeliveryDate`. Every desktop DO create/edit silently dropped the line
+  date — the row saved with `line_delivery_date = NULL`, no error to the
+  client. The renamed key + a sibling `lineDeliveryDateOverridden` now round-trip.
+- `delivery-orders-mfg.ts` `/from-sos` (the mobile ConvertWizard path) inserted
+  `delivery_order_items` rows without `line_delivery_date` at all. Every
+  mobile-converted DO line landed NULL regardless of client. The item insert
+  now carries `line_delivery_date: head.customer_delivery_date`.
+- The desktop line seeders at both `?fromPicks=1` and `?fromSo=` used
+  `newDoLine(null)`. Both now seed `newDoLine(customerDelDate || null)` — the
+  header the SO pre-fill effect already loaded.
+
+**No cascade `useEffect`.** The default lands at OPEN time, per line, per the
+owner's rule 「如果我要更改的话 我再更改」. Changing the header on an already-open
+DO does not walk over per-line edits. Existing DOs on `main` (line_delivery_date
+NULL from before this PR) do not back-fill — a next edit or a new document is
+the point of change.
 
 ## A migrated DO line will NOT bind to a sales-order line colour cannot choose (2026-09-08)
 

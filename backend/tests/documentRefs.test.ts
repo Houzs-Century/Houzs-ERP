@@ -16,6 +16,7 @@ import {
   listDocumentTypes,
   mintDocumentRef,
   normaliseCode,
+  peekNextRefNo,
   voidDocumentRef,
   yymmFor,
 } from "../src/services/documentRefs";
@@ -148,5 +149,22 @@ describe("document reference numbers", () => {
     expect((await listDocumentTypes(env)).map((t) => t.code)).toEqual(["SOP"]);
     expect((await call(ADMIN, "/api/document-types/ZZZ", json("PATCH", { label: "x" }))).status).toBe(404);
     expect((await call(ADMIN, "/api/document-types/SOP", json("PATCH", {}))).status).toBe(400);
+  });
+
+  test("peek: the number the next mint would give — a preview that claims nothing; the route takes explicit codes or the caller's department", async () => {
+    const first = await peekNextRefNo(env as never, { deptCode: "QA", typeCode: "SOP", now: SEP });
+    expect(first.refNo).toBe("QA-SOP-2609-0001");
+    await mintDocumentRef(env as never, { deptCode: "QA", typeCode: "SOP", entityType: "t", entityId: "peek-1", createdBy: 1, now: SEP });
+    const second = await peekNextRefNo(env as never, { deptCode: "qa", typeCode: "sop", now: SEP });
+    expect(second.refNo).toBe("QA-SOP-2609-0002");
+    // Looking twice claims nothing.
+    expect((await peekNextRefNo(env as never, { deptCode: "QA", typeCode: "SOP", now: SEP })).seq).toBe(2);
+    // The month is part of the series: October starts over.
+    expect((await peekNextRefNo(env as never, { deptCode: "QA", typeCode: "SOP", now: OCT_BY_MYT })).refNo).toBe("QA-SOP-2610-0001");
+    const r = await call(STAFF, "/api/document-refs/next?typeCode=sop&deptCode=qa");
+    expect(r.status).toBe(200);
+    expect(r.body.data.refNo).toMatch(/^QA-SOP-\d{4}-0002$/);
+    expect((await call(STAFF, "/api/document-refs/next?typeCode=x&deptCode=qa")).status).toBe(400);
+    expect((await call(STAFF, "/api/document-refs/next?typeCode=SOP&deptCode=toolong")).status).toBe(400);
   });
 });

@@ -44,7 +44,20 @@ voided_at / void_reason`; the number keeps its place. `findRef(env, refNo)` and
 `findRefForEntity(env, type, id)` resolve either way round.
 
 Minting is not a route: the module that owns the record mints when the
-record reaches the state that deserves a number. **First consumer (2026-09-06,
+record reaches the state that deserves a number. **Second consumer
+(2026-09-09):** the document register (`docs/modules/memos.md`,
+`routes/memos.ts`) mints `entityType: "memo"` with the type the registrar
+picked — MEMO, SOP, WARN or NTC (mig `20260909T0800` seeds the last three) —
+AT CREATION, on the same `<DEPT>-<TYPE>-<YYMM>` series a notice of that type
+gets on approval, so the two count together. **The peek (2026-09-09, owner:
+需要显示目前档案号码):** `peekNextRefNo(env, { deptCode, typeCode, now? })` in
+`backend/src/services/documentRefs.ts` answers the number the next mint on a
+series would produce — the registry's floor or the shared counter's
+`next_n`, whichever is higher — claiming nothing; `GET
+/api/document-refs/next?typeCode=&deptCode=` (`backend/src/routes/documentRefs.ts`,
+the caller's own department when `deptCode` is omitted; `data: null` + a
+`reason` when that department has no code) serves it to the composer's
+"Number on approval" line and the register's "Next number". **First consumer (2026-09-06,
 mig `20260906T1509`):** the announcement approval —
 `backend/src/services/announcementApproval.ts` `approveAnnouncement()` mints
 `mintDocumentRef(env, { deptCode: <submitter's department code>, typeCode:
@@ -70,7 +83,14 @@ submit" rule reads. Since 2026-09-07 it is EDITED under Settings → Documents
 Required / Optional switch, Active, New type) and ENFORCED for the ANN type by
 `backend/src/services/announcementFiles.ts` on the two doors into the
 announcement approval queue (docs/modules/announcements.md §3 "Attachments").
-Other families pick it up as they join the scheme.
+Other families pick it up as they join the scheme. **Since 2026-09-08 the
+registry is also the composer's Type row**: every ACTIVE type is offered when
+composing a notice (`docType` on POST /api/announcements; mig
+`20260908T0300` seeds `MEMO` beside `ANN`), the pick becomes the [TYPE]
+segment when the approval mints (`OPS-MEMO-2609-0001`, its own sequence per
+department and month) and the type's own `attachment_required` is what the
+submit gate reads. Adding a type here is therefore a real change to what a
+department can number — see docs/modules/announcements.md §3 "Document type".
 
 ## 4. Database — mig `backend/src/db/migrations-pg/20260906T1417_departments_code_document_refs.sql`
 

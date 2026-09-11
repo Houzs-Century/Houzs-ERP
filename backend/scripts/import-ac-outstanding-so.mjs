@@ -29,10 +29,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bookCurrency } from "./lib/ac-currency.mjs";
 import postgres from "postgres";
-import { parseBedframe } from "./lib/parse-bedframe.mjs";
+import { bedframeVariants, parseBedframe } from "./lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 import { SALESLOC, salesLoc } from "./lib/ac-header-fields.mjs";
+/* The free-text line resolver moved to lib/ac-name-resolver.mjs, unchanged.
+   It decides GOODS vs the owner's blank-line rule below, and nothing could ask
+   it WHY it failed without a second copy of the matcher — docs/bugs/0711. */
+import { buildNameResolver } from "./lib/ac-name-resolver.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -91,33 +95,6 @@ function stateOf(pc) {
 
 
 // SOFA decomposition lives in scripts/lib/parse-sofa.mjs (shared with the PO import).
-// free-text name resolver against the live pick list
-function buildNameResolver(products) {
-  const byName = new Map(); // normalized name -> code
-  const byNameNoDim = new Map(); // name w/o (dims) -> code
-  const stripDim = (s) => norm(s).replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
-  for (const p of products) { byName.set(norm(p.name), p.code); const k = stripDim(p.name); if (!byNameNoDim.has(k)) byNameNoDim.set(k, p.code); }
-  const SIZE = [[/\b183\s*X\s*190|6\s*FT|\(K\)/i, "(K)"], [/\b152\s*X\s*190|5\s*FT|\(Q\)/i, "(Q)"], [/\b107\s*X\s*190|3\.5\s*FT|\(SS\)/i, "(SS)"], [/\b(?<!1)90\s*X\s*190|3\s*FT|\(S\)/i, "(S)"], [/\b200\s*X\s*200|\(SK\)/i, "(SK)"]];
-  return (desc) => {
-    if (!desc) return null;
-    const n = norm(desc);
-    if (byName.has(n)) return byName.get(n);
-    const k = stripDim(desc);
-    if (byNameNoDim.has(k)) return byNameNoDim.get(k);
-    if (/DELIVERY\s*FEE|DELIVERY\s*CHARGE|TRANSPORT/i.test(desc)) return "TRANSPORTATION CHARGES";
-    // token match: brand/model words + size suffix
-    let size = null; for (const [re, sz] of SIZE) if (re.test(desc)) { size = sz; break; }
-    if (size) {
-      const base = k.replace(/\bB\/?FRAME\b/g, "BEDFRAME").replace(/\bMATTRESS\b/g, "MATT").replace(/^NK-|^NB-|^DL-|^AK-/g, "").trim();
-      const words = base.split(" ").filter((w) => w.length > 2);
-      let best = null, bestScore = 0;
-      for (const p of products) { const pn = stripDim(p.name); if (!p.code.toUpperCase().endsWith(size)) continue; const score = words.filter((w) => pn.includes(w)).length; if (score > bestScore) { bestScore = score; best = p.code; } }
-      if (best && bestScore >= 2) return best;
-    }
-    return null;
-  };
-}
-
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}${LIMIT ? ` LIMIT=${LIMIT}` : ""}`);
 
@@ -263,17 +240,13 @@ async function main() {
         const fcHit = pending ? null : findColour(bf.color);
         if (bf.color && !pending && !fcHit) exceptions.push({ ac: acDoc, code: l.ItemCode, desc: `colour "${bf.color}" not in fabric_colours`, price: 0 });
         else if (fcHit) { const allow = allowedColour.get((erp || "").toUpperCase()); if (allow && !allow.has(norm(fcHit.colour_id))) exceptions.push({ ac: acDoc, code: l.ItemCode, desc: `colour ${fcHit.colour_id} not a configured option for ${erp}`, price: 0 }); }
-        const tot = (Number(bf.gap) || 0) + (Number(bf.divan) || 0) + (Number(bf.leg) || 0);
-        // key names MUST match a real UI-created line exactly (the Fabrics picker
-        // reads fabricCode; totalHeight is shown as "Total height (auto)")
-        variants = {
-          fabricId: fcHit ? fcHit.fabric_id : null, colourId: fcHit ? fcHit.colour_id : null,
-          fabricCode: fcHit ? fcHit.colour_id : null, colourLabel: fcHit ? fcHit.label : null,
-          fabricLabel: fcHit ? fcHit.fabric_id : null,
-          gap: bf.gap != null ? bf.gap + '"' : null, divanHeight: bf.divan != null ? bf.divan + '"' : null,
-          legHeight: bf.leg != null ? bf.leg + '"' : null, totalHeight: tot ? tot + '"' : null,
-          specials: bf.specials || [],
-        };
+        /* The block itself is lib/parse-bedframe.mjs's `bedframeVariants` — it
+           was written out identically here, in import-ac-outstanding-po.mjs and
+           in topup-ac-po-lines.mjs, and a fourth writer was about to add a
+           fourth copy. Key names MUST match a real UI-created line exactly (the
+           Fabrics picker reads fabricCode; totalHeight is shown as "Total
+           height (auto)"), which is exactly why it is stated once. */
+        variants = bedframeVariants(bf, findColour);
       }
       // description MUST be the ERP product name (what a picker-selected item stores),
       // not the AutoCount Description — else list shows item_code but Edit shows the AC text.

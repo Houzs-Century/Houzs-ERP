@@ -28,7 +28,7 @@ import { safeRate, toMyrSen } from '../lib/fx';
 import { todayMyt } from '../lib/my-time';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { postJournal, reverseJournal } from '../../acc/engine';
-import { backfillSoPayments, unbookedPayments } from '../../acc/payments';
+import { backfillSoPayments, paymentEntryDisagreements, unbookedPayments } from '../../acc/payments';
 import { computeDailyBank } from '../../acc/daily-bank';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
@@ -36,16 +36,20 @@ import { classifyJournal } from '../../acc/journal-class';
 import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched, settlementRowUnconfirm,
-  settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit,
+  settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit, settlementFindPayments,
   settlementBatchReceived, settlementReceiptUndo,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
 } from './accounting-settlement';
 import {
   bankSetup, bankUpload, bankStatements, bankStatementDetail,
   bankRulesList, bankRuleCreate, bankRuleUpdate,
-  bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
+  bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo, bankLinesMatchGroup, bankStatementPeriod,
 } from './accounting-bank';
-import { payoutUpload, payoutList } from './accounting-payouts';
+import { bankMonths, bankMonthDetail } from './accounting-bank-months';
+import { bankLocks, bankMonthLock, bankMonthUnlock } from './accounting-bank-locks';
+import { paymentCorrections } from './accounting-payment-corrections';
+import { bankConfigList, bankConfigSave } from './accounting-bank-config';
+import { payoutUpload, payoutList, payoutCharge, payoutChargeUndo } from './accounting-payouts';
 import {
   chartUnionHandler, chartTickHandler, chartImportHandler,
   chartRenameHandler, chartUpdateHandler, chartDeleteHandler, chartCreateHandler,
@@ -111,12 +115,18 @@ accounting.post('/settlement/receipts/:id/undo', settlementReceiptUndo);
 accounting.post('/settlement/rows/:id/confirm', settlementConfirmRow);
 accounting.post('/settlement/rows/:id/unconfirm', settlementRowUnconfirm);
 accounting.post('/settlement/rows/:id/ignore', settlementIgnoreRow);
+/* "Find the sale" — the card payments the window could not offer (docs/bugs/0792). */
+accounting.get('/settlement/rows/:id/find', settlementFindPayments);
 accounting.get('/settlement/watchlist', settlementWatchlist);
 accounting.get('/settlement/in-transit', settlementInTransit);
 /* The acquirer's own payment advice — Public Bank's IBG, which says which
    reports one bank credit pays (owner: 几份 excel 对一份 pdf). */
 accounting.post('/settlement/payouts', payoutUpload);
 accounting.get('/settlement/payouts', payoutList);
+/* A bank charge deducted from one day of an advice, booked to the account
+   Finance picks (docs/bugs/0787); and its undo. */
+accounting.post('/settlement/payouts/:id/days/:settledOn/charge', payoutCharge);
+accounting.delete('/settlement/payouts/:id/days/:settledOn/charge', payoutChargeUndo);
 
 /* Layer 4 — reconciling the BANK's own statement (brief §3.5). Registered the
    same way and for the same reason: one path each, every one in the matrix.
@@ -161,16 +171,37 @@ accounting.put('/chart/rename', chartRenameHandler);
 accounting.put('/chart/update', chartUpdateHandler);
 accounting.post('/chart/account', chartCreateHandler);
 accounting.delete('/chart/account', chartDeleteHandler);
+accounting.get('/bank/config', bankConfigList);
+accounting.post('/bank/config', bankConfigSave);
 accounting.get('/bank/rules', bankRulesList);
 accounting.post('/bank/rules', bankRuleCreate);
 accounting.patch('/bank/rules/:id', bankRuleUpdate);
 accounting.post('/bank/statements', bankUpload);
 accounting.get('/bank/statements', bankStatements);
 accounting.get('/bank/statements/:id', bankStatementDetail);
+/* An old file re-filed as its month's statement (docs/bugs/0806). */
+accounting.post('/bank/statements/:id/period', bankStatementPeriod);
+/* The same reconciliation asked of a MONTH rather than a file — registered
+   BEFORE nothing and after the file doors deliberately: `/bank/months` cannot
+   collide with `/bank/statements/:id`, and keeping the two families apart is
+   what lets a month be assembled out of however many files fed it. */
+accounting.get('/bank/months', bankMonths);
+accounting.get('/bank/months/:accountCode/:month', bankMonthDetail);
+/* Closing a reconciled month, and reopening one (owner: 还有lock 起来不可以随便
+   碰). The unlock asks a SECOND permission key inside its handler — reopening
+   undoes a document somebody filed. */
+accounting.get('/bank/locks', bankLocks);
+/* The Finance report of payment corrections made on the amend right
+   (docs/bugs/0785) — a filtered read of the SO audit log. */
+accounting.get('/payment-corrections', paymentCorrections);
+accounting.post('/bank/months/:accountCode/:month/lock', bankMonthLock);
+accounting.post('/bank/months/:accountCode/:month/unlock', bankMonthUnlock);
 accounting.post('/bank/lines/:id/receipt', bankLineReceipt);
 accounting.post('/bank/lines/:id/match', bankLineMatch);
 accounting.post('/bank/lines/:id/ignore', bankLineIgnore);
 accounting.post('/bank/lines/:id/undo', bankLineUndo);
+/* Several movements are one entry, or one movement is several (docs/bugs/0803). */
+accounting.post('/bank/lines/match-group', bankLinesMatchGroup);
 
 /* ════════════════════════════════════════════════════════════════════════
    Helpers
@@ -1234,6 +1265,14 @@ export const controlCheckHandler = async (c: any) => {
      returned so the screen can show which period it is speaking about. */
   const unbooked = await unbookedPayments(sb, companyId);
 
+  /* THE FOURTH FINDING: a payment that reached the ledger and then stopped
+     agreeing with it. `PATCH /:docNo/payments/:id` updates the row and never
+     re-posts, so an edited payment leaves its entry behind — silently. The
+     one-day edit window hides this today; Finance is about to be given the
+     power to correct old payments (owner + management, 2026-09-10), so the
+     divergence has to be visible BEFORE that window opens. Reads only. */
+  const drift = await paymentEntryDisagreements(sb, companyId);
+
   return c.json({
     checks,
     /* neverBooked rides along (docs/bugs/0654: it was computed and then
@@ -1245,6 +1284,9 @@ export const controlCheckHandler = async (c: any) => {
           ...(unbooked.neverBooked ? { neverBooked: unbooked.neverBooked } : {}),
         }
       : { since: null, rows: [], totalSen: 0, ok: false, error: unbooked.reason },
+    paymentDrift: drift.ok
+      ? { rows: drift.rows, scanned: drift.scanned, ok: drift.rows.length === 0 }
+      : { rows: [], scanned: 0, ok: false, error: drift.reason },
   });
 };
 

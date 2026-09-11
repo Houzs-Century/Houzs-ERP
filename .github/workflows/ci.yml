@@ -207,6 +207,12 @@ jobs:
       # header edit loses its inherited-field lock (see check-workflow-consistency.mjs).
       - run: npm run audit:workflow-consistency
       - run: npm run audit:doc-refs
+      # Also run on the BACKEND leg, and that is not duplication: the measured
+      # column width lives in backend/src/services/autocount-address-fit.ts, and
+      # a backend-only PR never runs `frontend-checks` (it is gated on
+      # `changes.outputs.frontend`). Widening the constant on this side alone
+      # would silently leave the input boxes disagreeing with the book.
+      - run: node ../frontend/scripts/check-ac-column-widths.mjs
       # The AutoCount write-back composes against two GENERATED files: the
       # cutover item map (D10) and the real Desc2 sofa corpus the collapse tests
       # run on (D9). Both are compiled from backend/scripts/data/ because the
@@ -829,6 +835,13 @@ jobs:
       # Not part of `npm test` (vitest only collects src/**), so they are run
       # explicitly here — a checker nobody runs is not a checker.
       - run: node --test ../scripts/check-coverage-verdict.mjs
+      # The sales-order address boxes stop at the account book's own column
+      # width, and a long PASTE spills into the next line rather than losing its
+      # tail. An address wider than 40 characters made AutoCount refuse the whole
+      # document (docs/bugs/0728); the owner asked for the limit to be on
+      # the input, and a limit kept by remembering is a limit the next address
+      # input will not have. Zero dependencies, reads two files and the tsx tree.
+      - run: node scripts/check-ac-column-widths.mjs
 
   # The typecheck half of what used to be one `frontend-checks` job.
   #

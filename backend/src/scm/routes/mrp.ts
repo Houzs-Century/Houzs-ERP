@@ -70,9 +70,11 @@ import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { resolveLineWarehouseId, type SoWarehouseMasters } from '../lib/so-warehouse';
 import {
   loadLeadTimeBase,
+  loadSupplierCategoryOverrides,
   resolveLeadDays,
   subtractCalendarDays,
   LEAD_TIME_SELECT,
+  LEAD_OVERRIDE_SELECT,
   NO_BUFFERS,
   type LeadBuffers,
 } from '../lib/lead-time';
@@ -84,6 +86,7 @@ import {
 import { collectBatchClaims, openBucketStock, drawBucketStock } from '../lib/batch-claimed-stock';
 import { WH_NONE, composite, loadCommittedShipments } from '../lib/committed-shipments';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { pgrestInList } from '../lib/pgrest-in-list';
 import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { mapBounded, eager } from '../lib/concurrency';
 import type { Env, Variables } from '../env';
@@ -551,6 +554,13 @@ export async function computeMrp(
   const leadBaseProm = eager(loadLeadTimeBase(
     scoped(sb.from('mrp_category_lead_times').select(LEAD_TIME_SELECT)),
   ));
+  /* The owner's MANUAL per-(supplier, category) overrides (owner 2026-09-11) —
+     loaded here beside the base so the order-by HINT this page shows can never
+     disagree with the date the convert commits (both read the same override).
+     Empty until he sets one, so the hint is unchanged today. */
+  const leadOverridesProm = eager(loadSupplierCategoryOverrides(
+    scoped(sb.from('mrp_supplier_category_lead_times').select(LEAD_OVERRIDE_SELECT)),
+  ));
   /* The category walk (section 2), the two warehouse masters (section 2) and the
      stock + PO-supply reads (sections 3 and 4). Each is byte-identical to the
      query that stood at its own site; only the moment it is ISSUED moved. */
@@ -589,24 +599,28 @@ export async function computeMrp(
   // for the whole plan. Fail loudly rather than emit a wrong-but-plausible
   // schedule.
   const leadBase = (await leadBaseProm)();
-  /* supplierCode is the SKU's MAIN supplier — an approximation, and a stated
-     one: the convert may end up on a different supplier via a per-pick or
-     per-SKU override, in which case that supplier's buffer applies instead and
+  const leadOverrides = (await leadOverridesProm)();
+  /* supplier (id + code) is the SKU's MAIN supplier — an approximation, and a
+     stated one: the convert may end up on a different supplier via a per-pick or
+     per-SKU override, in which case THAT supplier's override/buffer applies and
      the real PO date can differ from this hint. The main supplier is what this
      page shows and what the convert picks absent an override, so it is the
      honest default; the alternative (no supplier at all) would disagree with
-     EVERY buffered PO rather than just the overridden ones. */
+     EVERY overridden/buffered PO rather than just the ones that moved. The id
+     drives the manual per-supplier override, the code the learned buffer. */
   const orderByOf = (
     deliveryDate: string | null,
     category: string | null,
     whId: string | null,
+    supplierId: string | null,
     supplierCode: string | null,
   ): string | null =>
     subtractCalendarDays(
       deliveryDate,
-      resolveLeadDays(leadBase, leadBuffers, {
+      resolveLeadDays(leadBase, leadOverrides, leadBuffers, {
         warehouseId: whId,
         category,
+        supplierId,
         supplierCode,
         deliveryDate,
       }).total,
@@ -737,10 +751,17 @@ export async function computeMrp(
   // longer bounded by a 1000-row demand slice.
   const prodByCode = new Map<string, ProductRow>();
   const demandCodes = [...new Set(demand.map((d) => d.item_code).filter((c): c is string => !!c))];
+  /* `.filter(… 'in', pgrestInList(batch))`, not `.in('code', batch)` — this is
+     the read whose gap docs/bugs/0777 left open ("why prodByCode lacks those
+     eight codes at all"). It is the SAME batching over the SAME code list as the
+     supplier read, so it loses the SAME codes for the same reason: supabase-js
+     cannot serialise an item code carrying a `"`, and everything after such a
+     code in its batch silently matches nothing. All eight of 0777's codes are in
+     the 38 the supplier map lost (run 34457477642). See lib/pgrest-in-list.ts. */
   const { data: prods, error: prodErr } = await chunkIn<ProductRow>(demandCodes, (batch, from, to) => scoped(sb
     .from('mfg_products')
     .select('code, name, category')
-    .in('code', batch))
+    .filter('code', 'in', pgrestInList(batch)))
     // ORDER BY id, not code: `.range()` windows are only coherent under a TOTAL
     // order, and `code` is unique per COMPANY — with companyId null (the
     // no-scoping case) the same code appears once per company, so a tie at a
@@ -869,18 +890,44 @@ export async function computeMrp(
          outstanding quantity), and the units it takes from a receipt are
          DECREMENTED from the pooled bucket so nothing is counted twice.
 
-     SOFA IS DELIBERATELY NOT HERE, and the shared predicate is not being
-     redefined — only narrowed at this call site. Sofa demand never enters the
-     general walk (`cat === 'SOFA'` is skipped in section 6); it is planned as
-     colour-matched SETS in section 8, whose supply model is its own. Excluding
-     sofa PO lines from the pool without rewriting that walk would starve it. */
+     SOFA IS HERE TOO SINCE 2026-09-09, and the sentence that used to stand in
+     this paragraph — "SOFA IS DELIBERATELY NOT HERE … excluding sofa PO lines
+     from the pool without rewriting that walk would starve it" — was correct
+     about the mechanism and is what the rewrite in section 8 discharges. It read
+     as a design choice; it was a piece of work not yet done, and leaving it
+     undone made this page ask the owner to buy sofas standing in his warehouse.
+
+     WHAT IT COST, measured on the live page 2026-09-09 (owner: "你确定在 MRP 显
+     示出来的 sofa 跟 bed frame 都是 short、需要 order 的吗?"). The sofa tab asked
+     for 70 units across 28 sales orders. Only 42 were really missing. Eight of
+     those orders — 26 units — had their OWN purchase order fully received, and
+     26 of those very lines read READY on the sales-order screen at the same
+     moment. The STOCK column read 0 on all 136 sofa rows while 246 units of
+     company-1 sofa sat in the warehouse. Bedframe, which went dedicated in
+     docs/bugs/0736, was right to the unit on the same page: 50 short, and 50
+     lines with no purchase order.
+
+     The reason sofa was that much worse is the variant key. A fully received PO
+     leaves nothing outstanding (`left <= 0` below), so before this change its
+     receipt reached section 8 only through the pooled STOCK bucket — and sofa's
+     key is fabricCode|seatHeight|legHeight|specials, four free-text fields that
+     the order and the receipt spell differently far more often than not:
+
+       HC-SO-011008 asks   fabriccode=modenza-01|seatheight=32|special=nylon fabric
+       HC-PO-009881 landed fabriccode=modenza-06|seatheight=32|special=bottom wrap by nylon fabric,nylon fabric
+
+     THE READINESS ENGINE WAS ALREADY DOING THIS. `isHardBoundLine` has named
+     sofa a bound group since 2026-08-10 and `so-stock-allocation.ts` honours it.
+     Measured on prod: of 1,240 open company-1 sofa lines, ZERO read READY
+     without their own purchase order and ZERO carry a batch claim without one.
+     So this is MRP catching up with the allocator, not a new rule — and it can
+     take coverage away from no line the allocator currently lights. */
   const dedicatedReceivedByLine = new Map<string, number>();
   const dedicatedOpenByLine = new Map<string, PoSupply[]>();
   const boundCompany = companyId === HARD_BOUND_COMPANY_ID;
   const isDedicated = (r: PoLineRow): boolean =>
     boundCompany
     && !!r.so_item_id
-    && (r.item_group ?? '').trim().toLowerCase() !== 'sofa'
     && isHardBoundLine(r.item_group, r.item_code);
   for (const r of (poRaw ?? []) as unknown as PoLineRow[]) {
     if (!r.po || PO_DEAD.has(r.po.status)) continue;
@@ -1012,7 +1059,7 @@ export async function computeMrp(
   //       in-place before posting the PO, AutoCount-style). ────────────────
   type SupplierOpt = { supplierId: string; code: string; name: string; isMain: boolean };
   const codes = [...new Set(demand.map((d) => d.item_code))];
-  const mainByCode = new Map<string, { code: string; name: string }>();
+  const mainByCode = new Map<string, { id: string; code: string; name: string }>();
   const suppliersByCode = new Map<string, SupplierOpt[]>();
   /* CHUNKED + PAGED, and since 2026-08-19 through the SHARED reader
      (lib/supplier-bindings.ts) rather than a copy of the rule that lived only
@@ -1042,7 +1089,7 @@ export async function computeMrp(
       arr.push({ supplierId: b.supplier_id, code: s.code, name: s.name, isMain: b.is_main_supplier });
       suppliersByCode.set(b.item_code, arr);
       // First (is_main_supplier first via ORDER BY) wins as the default main.
-      if (!mainByCode.has(b.item_code)) mainByCode.set(b.item_code, { code: s.code, name: s.name });
+      if (!mainByCode.has(b.item_code)) mainByCode.set(b.item_code, { id: b.supplier_id, code: s.code, name: s.name });
     }
   }
 
@@ -1180,13 +1227,40 @@ export async function computeMrp(
              a shortage being reported for goods already received on its own PO.
            · A PURCHASE ORDER IS A PLAN. MRP exists to answer "what must I buy",
              and a purchase order already on order for this exact bucket is a
-             legitimate answer to "you do not need to buy this again". Its own
-             dedicated PO is offered FIRST, then the pooled queue.
+             legitimate answer to "you do not need to buy this again" — but ONLY
+             where that purchase order can actually become this line's supply.
 
-         The narrower rule was found by a test, not by taste: excluding the pooled
-         PO queue as well made `po-so-coverage` answer that an unlinked purchase
-         order serves nobody, which is the screen the buyer uses to see who a PO
-         is for. A planning engine may not quietly delete that. */
+         SO A BOUND LINE IS OFFERED ITS OWN DEDICATED PO AND NOTHING ELSE (owner
+         2026-09-09, "修,但只能动 Houzs Century"). This used to fall through to the
+         pooled queue after the dedicated one, and that produced the exact mirror
+         of bug 0572 on the other screen: MRP reported the line as covered by a
+         purchase order belonging to nobody, while the stored allocator — which
+         accepts only the line's OWN purchase order — left it PENDING for ever.
+         The buyer read "already on order", the order never moved, and nothing
+         said so. Measured on prod 2026-09-09: 10 of the 126 proceeded company-1
+         bedframe/sofa lines carrying no purchase order of their own were masked
+         this way.
+
+         THE OBJECTION THIS REPLACES, AND WHY IT NO LONGER STANDS. The previous
+         comment kept the pooled fallback because removing it made
+         `po-so-coverage` (layer c, the inverted MRP coverage) answer that an
+         unlinked purchase order serves nobody — the screen the buyer uses to see
+         who a PO is for. That reasoning was right about the mechanism and never
+         measured its scale. The population it protects is every company-1 OPEN,
+         UNLINKED purchase-order line on a hard-bound item, and on prod
+         2026-09-09 that is FIVE lines on TWO purchase orders — `HC-PO-009024`
+         and `HC-PO-010085` — neither carrying a "From SOs" provenance note, and
+         both already on the repair list for the same underlying reason (their
+         lines should be linked to the sales order they were raised for;
+         docs/mrp-stock-vs-bound-rules-2026-09-09.md §3). A layer-(c) guess that
+         the readiness engine will never honour is not worth keeping for two
+         documents that need a layer-(b) link anyway.
+
+         POOLED SUPPLY IS STILL REPORTED, which is the part that keeps the page
+         honest: `poOutstanding` on the SKU row still counts that purchase order.
+         What changes is only that it may no longer be named as THIS line's
+         cover, so the line reads as the shortage it is. Company 2 is untouched —
+         `boundCompany` gates the whole branch. */
       const bound = boundCompany && isHardBoundLine(r.item_group, r.item_code);
       const fromStock = bound
         ? Math.min(need, dedicatedReceivedByLine.get(r.id) ?? 0)
@@ -1196,7 +1270,7 @@ export async function computeMrp(
       let poNumber: string | null = null;
       let poEta: string | null = null;
       let poSupplierId: string | null = null;
-      const queues = bound ? [dedicatedOpenByLine.get(r.id) ?? [], poQueue] : [poQueue];
+      const queues = bound ? [dedicatedOpenByLine.get(r.id) ?? []] : [poQueue];
       for (const queue of queues) {
         while (need > 0 && queue.length > 0) {
           const front = queue[0];
@@ -1237,7 +1311,7 @@ export async function computeMrp(
         soDate: r.so?.so_date ?? null,
         deliveryDate: lineDelivery,
         processingDate: r.so?.processing_date ?? null,
-        orderByDate: orderByOf(lineDelivery, prod?.category ?? null, whId, mainByCode.get(code)?.code ?? null),
+        orderByDate: orderByOf(lineDelivery, prod?.category ?? null, whId, mainByCode.get(code)?.id ?? null, mainByCode.get(code)?.code ?? null),
         qty: eff,
         source,
         poNumber,
@@ -1271,7 +1345,24 @@ export async function computeMrp(
       variantKey: bucket.vkey,
       variantLabel: vlabel || null,
       description: prod?.name ?? rows[0]?.description ?? null,
-      category: prod?.category ?? null,
+      /* THE SAME EXPRESSION THE FILTER USED, and it has to be — §6 keeps a line
+         on `prod?.category ?? catFromGroup(d.item_group)`, so a line whose
+         item_code is not in mfg_products is kept on its GROUP and was then
+         emitted here as `?? null`. The frontend picks a tab's rows with
+         `s.category === VIEW_CATEGORY[view]`, so an uncategorised row belongs to
+         no tab and disappears from all four — while `qtyNeeded` on it proves the
+         engine had planned it the whole time.
+         Measured on prod 2026-09-10: EIGHT accessory codes, 62 dated open lines,
+         110 units, absent from the page and present in the stored snapshot
+         (docs/bugs/0777). Owner: 「除了 Category Service 不需要进来，其他基本上都
+         需要」 — and silent disappearance is the half that is only found on
+         delivery day.
+         catFromGroup exists for exactly this case; its own comment (Wei Siang
+         2026-06-16) says "so the demand still SHOWS under its category tab
+         instead of silently vanishing". This emit site simply never called it.
+         Still `null` when the group maps to nothing — that is honest, not a
+         guess, and the filter let such a line through on the same reasoning. */
+      category: prod?.category ?? rows.map((r) => catFromGroup(r.item_group)).find((c) => c !== null) ?? null,
       qtyNeeded,
       stock,
       poOutstanding,
@@ -1353,6 +1444,14 @@ export async function computeMrp(
        including why item_group is NOT re-derived from the product master. */
     const ownPo = poByKey.get(k) ?? [];
     const poQueue: PoSupply[] = ownPo.map((p) => ({ ...p })).sort((a, b) => byDateAsc(a.eta, b.eta));
+    /* COMPANY 1 SOFA IS HARD-BOUND — the twin of section 7's branch, added
+       2026-09-09 for the reason section 4a now records at length. A bound set
+       draws its OWN purchase order and nothing else: its receipt first
+       (`dedicatedReceivedByLine`, which is why a fully received PO still covers
+       even though it left `poQueue` empty), then its own outstanding quantity.
+       The pooled `bucketStock` / `poQueue` above stay exactly as they are for
+       company 2, which keeps the pooled model. */
+    const boundSofa = boundCompany;
 
     for (const d of rows) {
       const v = (d.variants ?? {}) as Record<string, unknown>;
@@ -1370,19 +1469,24 @@ export async function computeMrp(
       const setDelivery = deliveryOf(d);
 
       let need = eff;
-      const fromStock = drawBucketStock(bucketStock, batchClaims.qtyByLine.get(d.id) ?? 0, need);
+      /* Bound: the units RECEIVED on this set's own purchase order. Unbound
+         (company 2): the pooled on-hand carve, batch claims honoured. */
+      const fromStock = boundSofa
+        ? Math.min(need, dedicatedReceivedByLine.get(d.id) ?? 0)
+        : drawBucketStock(bucketStock, batchClaims.qtyByLine.get(d.id) ?? 0, need);
       need -= fromStock;
       let poNumber: string | null = null;
       let poEta: string | null = null;
       let poSupplierId: string | null = null;
-      while (need > 0 && poQueue.length > 0) {
-        const front = poQueue[0];
+      const queue = boundSofa ? (dedicatedOpenByLine.get(d.id) ?? []) : poQueue;
+      while (need > 0 && queue.length > 0) {
+        const front = queue[0];
         if (!front) break;
         const take = Math.min(front.qtyLeft, need);
         if (poNumber == null) { poNumber = front.poNumber; poEta = front.eta; poSupplierId = front.supplierId; }
         front.qtyLeft -= take;
         need -= take;
-        if (front.qtyLeft <= 0) poQueue.shift();
+        if (front.qtyLeft <= 0) queue.shift();
       }
       const ordered = eff - need;                     // covered by pooled stock+PO
 
@@ -1409,7 +1513,7 @@ export async function computeMrp(
         soDate: d.so?.so_date ?? null,
         deliveryDate: setDelivery,
         processingDate: d.so?.processing_date ?? null,
-        orderByDate: orderByOf(setDelivery, prod?.category ?? null, whId, mainByCode.get(d.item_code)?.code ?? null),
+        orderByDate: orderByOf(setDelivery, prod?.category ?? null, whId, mainByCode.get(d.item_code)?.id ?? null, mainByCode.get(d.item_code)?.code ?? null),
         itemCode: d.item_code,
         description: prod?.name ?? d.description ?? null,
         variantLabel: buildVariantSummary(d.item_group, v) || null,

@@ -24,7 +24,7 @@ const DATA: MaintenanceData = {
       ready: true, autoMatchable: true,
       /* His own case: the same merchant, two companies, two banks. */
       byCompany: {
-        '1': { enabled: true, linked: true, bankAccountCode: '310-0020' },
+        '1': { enabled: true, linked: true, bankAccountCode: '310-0020', feeAccountCode: '900-B001' },
         '2': { enabled: true, linked: true, bankAccountCode: '310-0010', transitAccountCode: '326-0010' },
       },
     },
@@ -57,6 +57,18 @@ const DATA: MaintenanceData = {
   ],
   /* One clearing account per bank (owner 2026-09-07): 2990 has them, HOUZS
      has only the generic one. */
+  /* Active EXPENSE leaves, server-filtered to what the posting gate accepts.
+     2990's chart carries the account the owner picked on 2026-09-09; HOUZS is
+     given a shorter list so a per-company list cannot be faked by a shared one. */
+  feeAccounts: {
+    '1': [{ account_code: '900-B001', account_name: 'BANK CHARGES' }],
+    '2': [
+      { account_code: '900-B001', account_name: 'BANK CHARGES' },
+      { account_code: '900-T009', account_name: 'TERMINAL INTEREST CHARGES' },
+    ],
+  },
+  /* One clearing account per bank (owner 2026-09-07): 2990 has them, HOUZS
+     has only the generic one. */
   clearings: {
     '1': [{ account_code: '326-0000', account_name: 'CARD MACHINE CLEARING (EDC)' }],
     '2': [
@@ -84,7 +96,14 @@ vi.mock('./bank-queries', () => ({
   ] }, isLoading: false }),
   useSaveBankRule: () => ({ mutate: saveRule, isPending: false }),
   useCreateBankRule: () => ({ mutate: createRule, isPending: false }),
+  /* The bank-statements card (2026-09-08): one account set up, the reader's
+     built-in headings for the placeholders. */
+  useBankConfigs: () => ({ data: { configs: [
+    { id: 7, account_code: '310-0010', bank_code: 'MBB', account_no: '0000564418610346', statement_format: 'CSV', delimiter: '|', amount_format: 'integer-sen', credit_indicator: 'CR', column_map: { date: ['EFFECT DATE'], description: ['TRX DESCRIPTION'], amount: ['AMOUNT'], indicator: ['AMOUNT IND'] }, is_active: true },
+  ], defaultHeadings: { date: ['Date', 'Transaction Date'], description: ['Transaction Description', 'Remarks'], reference: ['Ref. No.'], credit: ['Deposit', 'Credit Amount'], debit: ['Withdrawal', 'Payment Amount'], amount: ['Amount'], indicator: ['Amount Ind'], balance: ['Balance'] } }, isLoading: false }),
+  useSaveBankConfig: () => ({ mutate: saveConfig, isPending: false }),
 }));
+const saveConfig = vi.fn();
 
 const saveBankDefault = vi.fn();
 vi.mock('./accounting-phase1-queries', () => ({
@@ -249,5 +268,83 @@ describe('the clearing account per merchant', () => {
     /* HOUZS has only the generic account listed — the picker still shows it,
        reading the generic default. */
     expect((screen.getByLabelText('PBB clearing for Houzs Century') as HTMLSelectElement).value).toBe('326-0000');
+  });
+});
+
+/* ── The bank-statements card (2026-09-08: 别卡死读 column) ──────────────────── */
+describe('the bank statements card', () => {
+  test('lists the account already set up, and saves a new one with several headings per role as lists', () => {
+    saveConfig.mockClear();
+    draw();
+    expect(screen.getByText('Bank statements')).toBeTruthy();
+    expect(screen.getByText('0000564418610346')).toBeTruthy();
+    fireEvent.click(screen.getByText('+ Add account'));
+    fireEvent.change(screen.getByLabelText('Statement account'), { target: { value: '310-0010' } });
+    fireEvent.change(screen.getByLabelText('Bank'), { target: { value: 'HLB' } });
+    fireEvent.change(screen.getByLabelText('Account number'), { target: { value: '23600602788' } });
+    fireEvent.change(screen.getByLabelText('Date headings'), { target: { value: 'Date, Transaction Date' } });
+    fireEvent.change(screen.getByLabelText('Reference headings (joined)'), { target: { value: 'Ref. No., Sender / Receiver Name' } });
+    fireEvent.click(screen.getByText('Save statement setup'));
+    expect(saveConfig).toHaveBeenCalledTimes(1);
+    expect(saveConfig.mock.calls[0]![0]).toMatchObject({
+      accountCode: '310-0010', bankCode: 'HLB', accountNo: '23600602788', statementFormat: 'CSV', amountFormat: 'decimal',
+      columnMap: { date: ['Date', 'Transaction Date'], reference: ['Ref. No.', 'Sender / Receiver Name'] },
+    });
+    /* Roles left blank are not sent — the reader's built-in names apply. */
+    expect((saveConfig.mock.calls[0]![0] as { columnMap: Record<string, unknown> }).columnMap.description).toBeUndefined();
+  });
+});
+
+/* ── WHERE THE MERCHANT FEE GOES ──────────────────────────────────────────────
+   This had to be a migration once already (docs/bugs/0762): the fee account was
+   seeded at 930-0000, the AutoCount chart deactivated that code, and every
+   settlement confirm in BOTH companies refused — with nothing on any screen
+   able to repoint it. The owner, told that: 这个需要.
+
+   What is pinned here is the shape of the choice. WHICH accounts are offered is
+   the server's decision (active EXPENSE leaves — the same properties the
+   posting gate checks) and is pinned in tests/settlementRoutes.test.ts. */
+
+describe('the merchant fee account', () => {
+  test('is offered per company, from that company own chart', () => {
+    draw();
+    const row = merchantRow('PBB');
+    const houzs = within(row).getByLabelText('PBB fee account for Houzs Century') as HTMLSelectElement;
+    const c2990 = within(row).getByLabelText("PBB fee account for 2990's Home") as HTMLSelectElement;
+    /* HOUZS's chart offers one, 2990's offers two — a shared list would give
+       both the same options. */
+    expect([...houzs.options].map((o) => o.value).filter(Boolean)).toEqual(['900-B001']);
+    expect([...c2990.options].map((o) => o.value).filter(Boolean)).toEqual(['900-B001', '900-T009']);
+  });
+
+  test('shows what is set, and saves the pick against that company alone', () => {
+    merchantMutate.mockClear();
+    draw();
+    const row = merchantRow('PBB');
+    const houzs = within(row).getByLabelText('PBB fee account for Houzs Century') as HTMLSelectElement;
+    expect(houzs.value).toBe('900-B001');
+
+    fireEvent.change(within(row).getByLabelText("PBB fee account for 2990's Home"), {
+      target: { value: '900-T009' },
+    });
+    expect(merchantMutate).toHaveBeenCalledWith({ companyId: 2, code: 'PBB', feeAccountCode: '900-T009' });
+  });
+
+  /* THE ONE THAT MATTERS. A fee account the chart can no longer post to is
+     NAMED, not shown as an empty select — that silence is exactly how 930-0000
+     went unnoticed while every confirm in both companies refused. */
+  test('names a fee account this chart cannot post to', () => {
+    const was = DATA.merchants[0]!.byCompany['1']!;
+    DATA.merchants[0]!.byCompany['1'] = { ...was, feeAccountCode: '930-0000' };
+    draw();
+    const row = merchantRow('PBB');
+    expect(within(row).getByText(/930-0000, which this chart cannot post to/)).toBeTruthy();
+    DATA.merchants[0]!.byCompany['1'] = was;
+  });
+
+  test('says nothing of the sort when the account is one the chart offers', () => {
+    draw();
+    const row = merchantRow('PBB');
+    expect(within(row).queryByText(/cannot post to/)).toBeNull();
   });
 });

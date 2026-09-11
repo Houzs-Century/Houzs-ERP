@@ -116,9 +116,16 @@ export function currencyVerdict(header) {
     };
   }
   if (code !== LOCAL_CURRENCY || Math.abs(rate - 1) > 1e-9) {
-    return { kind: 'foreign', why: `the document is in ${code} at rate ${rate}, and the ERP holds ${LOCAL_CURRENCY}` };
+    /* `code` and `rate` are RETURNED so the caller can compare the book's
+       currency against the ERP's OWN column. This used to say "and the ERP
+       holds MYR" as a flat assertion — a sentence about a value nothing had
+       read. HC-PO-009335 was repaired to CNY on 2026-09-07 (run 34143840216
+       printed `verified HC-PO-009335 currency = 'CNY'`) and this text went on
+       calling it MYR the next day. Stating a side you did not read is the same
+       failure as counting a comparison that never ran (docs/bugs/0715). */
+    return { kind: 'foreign', code, rate, why: `the document is in ${code} at rate ${rate}` };
   }
-  return { kind: 'local', why: `${code} at rate ${rate}` };
+  return { kind: 'local', code, rate, why: `${code} at rate ${rate}` };
 }
 
 /** Decode `data/ac-reconcile-truth.json.gz` (already parsed) into typed maps.

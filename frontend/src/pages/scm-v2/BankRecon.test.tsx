@@ -73,6 +73,7 @@ vi.mock('./settlement-queries', () => ({
    bank-statement screen is stubbed rather than exercised here. Its own contract
    is BankStatementTab.test.tsx — and the payment-advice tab likewise has its
    own file, PayoutAdviceTab.test.tsx. */
+vi.mock('./BankMonthTab', () => ({ BankMonthTab: () => <div>by month tab</div> }));
 vi.mock('./BankStatementTab', () => ({ BankStatementTab: () => <div>bank statement tab</div> }));
 vi.mock('./PayoutAdviceTab', () => ({ PayoutAdviceTab: () => <div>payment advice tab</div> }));
 

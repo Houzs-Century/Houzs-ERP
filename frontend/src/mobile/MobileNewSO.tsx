@@ -4,11 +4,14 @@ import {
   cascadeMasterVariants,
   seedFollowerVariants,
   seedableMasterVariants,
+  CASCADE_CATEGORIES,
   FABRIC_IDENTITY_KEYS,
   type MasterVariantSnapshot,
 } from "../vendor/scm/lib/so-variant-cascade";
 import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
+import { lineWriteFailure, lineWriteSaveMessage, type LineWriteFailure } from "../vendor/scm/lib/line-write-failures";
+import { photoLabel, photoUploadFailure, photoUploadFailureMessage, unmatchedLinePhotos, type PhotoUploadFailure } from "../vendor/scm/lib/photo-upload-failures";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
 import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
 import { uploadSlipFull } from "../vendor/scm/lib/slip";
@@ -19,6 +22,8 @@ import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
+import { addressLineProps } from "../lib/acColumnWidths";
+import { deriveProcessingDate } from "../lib/processingDate";
 import { paymentMethodCodeForValue } from "../vendor/scm/lib/payment-methods";
 import { soDateGuardError, soStockLocationError, soErrorText } from "../vendor/scm/lib/so-form-validate";
 import { useBranding } from "../hooks/useBranding";
@@ -56,6 +61,7 @@ import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
+import { MobileSavedPhotoThumb, StagedPhotoThumb } from "./MobileSavedPhotoThumb";
 import { zeroPriceClaim } from "../vendor/scm/lib/zeroPriceClaim";
 import { invalidateSoShared } from "./sharedInvalidate";
 import { mobileLineAddHeaders } from "./mobile-so-line-save";
@@ -72,6 +78,7 @@ import {
   type ModelAllowedOptions,
   type SpecialAddonRow,
 } from "../vendor/scm/lib/mfg-products-queries";
+import { useSpecialOrderSurface } from "../vendor/scm/lib/special-order-surface";
 import { useFabricColoursSearch, type FabricColourRow } from "../vendor/scm/lib/fabric-queries";
 /* Owner 2026-07-16 — the recorded-payment ledger is the SHARED
    RecordedPaymentsList, the SAME component the scan-draft review screen
@@ -300,6 +307,13 @@ const LINE_CATS: Array<{ value: LineCat; label: string }> = [
    the LIVE catalog via useSoDropdownOptions/optionsOrFallback, so there is no
    remaining reader — and no static list left to drift from the DB values. */
 
+/* variants.specials -> trimmed code list. Was written out twice, identically. */
+const specialsList = (val: unknown): string[] => {
+  if (Array.isArray(val)) return val.map(String).filter(Boolean);
+  if (typeof val === "string" && val) return [val];
+  return [];
+};
+
 const uid = () => Math.random().toString(36).slice(2, 10);
 const num = (s: string) => parseFloat(String(s).replace(/,/g, "")) || 0;
 const toSen = (s: string) => Math.round(num(s) * 100);
@@ -314,9 +328,6 @@ const fmt = (n: number) => n.toLocaleString("en-MY", { minimumFractionDigits: 2,
    the compartments of one sofa. */
 const FABRIC_SYNC_KEYS: readonly string[] = FABRIC_IDENTITY_KEYS;
 
-/* Mobile renders variant panels for sofa + bedframe only, so the cascade is
-   scoped to those. Desktop passes null (every category). */
-const MOBILE_CASCADE_CATEGORIES: ReadonlySet<string> = new Set(["sofa", "bedframe"]);
 
 function newLine(): LineItem {
   return {
@@ -1315,7 +1326,7 @@ export function MobileNewSO({
      has any variants set — the PICK-TIME seed. Same shared helper the desktop
      form calls; this file used to carry its own copy of it. */
   const inheritVariantsByCategory = useMemo(
-    () => seedableMasterVariants(cascadeLines),
+    () => seedableMasterVariants(cascadeLines, CASCADE_CATEGORIES),
     [cascadeLines],
   );
 
@@ -1336,9 +1347,7 @@ export function MobileNewSO({
     const { variants, masters } = cascadeMasterVariants(
       cascadeLines,
       masterSnapshotRef.current,
-      /* Mobile only shows variant panels for sofa + bedframe, so only those
-         cascade here. Passed explicitly because desktop answers differently. */
-      MOBILE_CASCADE_CATEGORIES,
+      CASCADE_CATEGORIES,
     );
     masterSnapshotRef.current = masters;
     setLines((prev) => {
@@ -1533,26 +1542,25 @@ export function MobileNewSO({
       if (hit) { claimed.add(hit.id); return hit.id; }
       return null;
     };
-    let failed = 0;
+    /* COLLECTS THE REASONS, not a count: the photo half of the defect #3303
+       fixed for line writes. Wording and the retry/refusal decision are in
+       vendor/scm/lib/photo-upload-failures.ts, with the whole trace. */
+    const failures: PhotoUploadFailure[] = [];
     const uploadUnderLease = async (lease: string) => {
       for (const l of withFiles) {
         const itemId = resolveId(l);
-        if (!itemId) { failed += l.photoFiles.length; continue; }
+        const line = l.itemCode.trim() || l.name.trim();
+        if (!itemId) { failures.push(...unmatchedLinePhotos(line, l.photoFiles)); continue; }
         for (const file of l.photoFiles) {
-          try {
-            await uploadSoItemPhotoWithLease(soDocNo, itemId, file, lease);
-          } catch { failed += 1; }
+          try { await uploadSoItemPhotoWithLease(soDocNo, itemId, file, lease); }
+          catch (e) { failures.push(photoUploadFailure(photoLabel(line, file.name), e)); }
         }
       }
     };
-    if (existingLeaseToken) {
-      await uploadUnderLease(existingLeaseToken);
-    } else {
-      await runSoVersionedMutation(qc, soDocNo, "mobile-new-so-photo-upload", ({ leaseToken }) =>
-        uploadUnderLease(leaseToken));
-    }
-    if (failed > 0) {
-      void notify({ title: "Some photos didn't upload", body: `${failed} line photo(s) failed to upload. Add them again from the SO detail screen.`, tone: "error" });
+    if (existingLeaseToken) { await uploadUnderLease(existingLeaseToken); }
+    else { await runSoVersionedMutation(qc, soDocNo, "mobile-new-so-photo-upload", ({ leaseToken }) => uploadUnderLease(leaseToken)); }
+    if (failures.length > 0) {
+      void notify({ title: "Some photos didn't upload", body: photoUploadFailureMessage(failures), tone: "error" });
     }
   }
 
@@ -1616,15 +1624,18 @@ export function MobileNewSO({
     return false;
   };
 
-  async function applyLineDiff(soDocNo: string, leaseToken: string): Promise<number> {
+  /* RETURNS THE REASONS, not a count: a bare `catch { failed += 1; }` here is
+     what told the owner to "try Save again" against a 409 that never could —
+     the whole trace is in vendor/scm/lib/line-write-failures.ts. */
+  async function applyLineDiff(soDocNo: string, leaseToken: string): Promise<LineWriteFailure[]> {
     const base = `/mfg-sales-orders/${encodeURIComponent(soDocNo)}/items`;
     const leaseHeaders = { "X-SO-Edit-Lease": leaseToken };
-    let failed = 0;
+    const failures: LineWriteFailure[] = [];
     const liveIds = new Set(lines.map((l) => l.itemId).filter(Boolean));
     for (const snap of origItems) {
       if (liveIds.has(snap.id)) continue;
       try { await authedFetch(`${base}/${encodeURIComponent(snap.id)}`, { method: "DELETE", headers: leaseHeaders }); }
-      catch { failed += 1; }
+      catch (e) { failures.push(lineWriteFailure(snap.item_code || "A removed line", e)); }
     }
     const snapById = new Map(origItems.map((s) => [s.id, s]));
     for (const l of lines) {
@@ -1637,16 +1648,16 @@ export function MobileNewSO({
             body: JSON.stringify(itemBody(l)),
           });
         }
-        catch { failed += 1; }
+        catch (e) { failures.push(lineWriteFailure(l.itemCode.trim(), e)); }
         continue;
       }
       const snap = snapById.get(l.itemId);
       if (snap && lineChanged(l, snap)) {
         try { await authedFetch(`${base}/${encodeURIComponent(l.itemId)}`, { method: "PATCH", headers: leaseHeaders, body: JSON.stringify(itemPatchBody(l)) }); }
-        catch { failed += 1; }
+        catch (e) { failures.push(lineWriteFailure(l.itemCode.trim() || (snap.item_code ?? "A line"), e)); }
       }
     }
-    return failed;
+    return failures;
   }
 
   /* ── Amendment line builder (Phase 1-C) ──────────────────────────────────
@@ -2029,10 +2040,8 @@ export function MobileNewSO({
            rejects them 409 so_locked_processing anyway. */
         if (!lineEditingBlocked) {
           if (leaseToken) {
-            const failed = await applyLineDiff(docNo, leaseToken);
-            if (failed > 0) {
-              throw new Error(`${failed} line change(s) did not save. Your edits are still here; try Save again.`);
-            }
+            const failures = await applyLineDiff(docNo, leaseToken);
+            if (failures.length > 0) throw new Error(lineWriteSaveMessage(failures));
           }
           await uploadStagedPhotos(docNo, leaseToken);
         }
@@ -2356,7 +2365,8 @@ export function MobileNewSO({
                     value={delivDate}
                     disabled={scheduleDatesLocked}
                     min={today}
-                    onChange={(iso) => setDelivDate(iso)}
+                    /* Derives Processing — rule + why in lib/processingDate.ts. */
+                    onChange={(iso) => { setDelivDate(iso); if (iso && !procDate) setProcDate(deriveProcessingDate(iso)); }}
                   />
                 </Field>
                 <div style={{ fontSize: 10, color: "#9aa093", marginTop: -3 }}>
@@ -2380,7 +2390,6 @@ export function MobileNewSO({
               </div>
             </div>
 
-            {/* ── Delivery address ────────────────────────────────────── */}
             <div className="card" style={{ marginBottom: 11 }}>
               <div className="card-h"><span className="card-t">Delivery address</span></div>
               <div className="card-b" style={{ display: "flex", flexDirection: "column", gap: 9 }}>
@@ -2390,10 +2399,10 @@ export function MobileNewSO({
                   </div>
                 )}
                 <Field label={addressRequired ? "Address Line 1 *" : "Address Line 1"} error={touched && addressRequired && !addr1.trim()} scanned={scanned("addr1", addr1)}>
-                      <input className="fld-i" value={addr1} onChange={(e) => setAddr1(e.target.value)} placeholder="Unit, street, area" />
+                      <input className="fld-i" value={addr1} {...addressLineProps(setAddr1, { value: addr2, set: setAddr2 })} onChange={(e) => setAddr1(e.target.value)} placeholder="Unit, street, area" />
                     </Field>
                     <Field label="Address Line 2">
-                      <input className="fld-i" value={addr2} onChange={(e) => setAddr2(e.target.value)} placeholder="Apt, floor, building (optional)" />
+                      <input className="fld-i" value={addr2} {...addressLineProps(setAddr2, null)} onChange={(e) => setAddr2(e.target.value)} placeholder="Apt, floor, building (optional)" />
                     </Field>
                     {/* FIX A — cascading State → City → Postcode from my_localities
                         (desktop parity). When the dataset is present these are
@@ -2532,6 +2541,7 @@ export function MobileNewSO({
                           onOpenSpecialPicker={() => setSpecialPickerFor(l.key)}
                           showPrices={showSpecialPrices}
                           canEditPrice={canEditPrice}
+                          soDocNo={docNo}
                           onChange={(patch) => patchLine(l.key, patch)}
                           onDdateChange={(v) => setLineDdateManual(l.key, v)}
                           onRemove={async () => {
@@ -2905,6 +2915,7 @@ function LineCard({
   onOpenSpecialPicker,
   showPrices,
   canEditPrice,
+  soDocNo,
   onChange,
   onDdateChange,
   onRemove,
@@ -2924,6 +2935,10 @@ function LineCard({
   /* Unit-price lock (SO-SKU spec D4) — false for everyone below admin, so the
      price follows the SKU Master sell price and cannot be hand-typed. */
   canEditPrice: boolean;
+  /* The SO's doc_no when this card renders for a saved order (edit mode).
+     Undefined on the New SO path. Used by the saved-photo thumbnail to fetch
+     a signed URL and to route photo delete to the right document. */
+  soDocNo?: string;
   onChange: (patch: Partial<LineItem>) => void;
   /* FIX D1(b) — a manual Item Delivery Date edit routes through here so the
      parent can flag the line as an override the header cascade won't touch. */
@@ -3005,16 +3020,12 @@ function LineCard({
      one-line summary for the tappable "Special order" row. Presets live on
      variants.specials; the "Custom / other" free-text order on the UNCHANGED
      variants.extraAddonNote + extraAddonAmountRM. */
-  const specialsList = (val: unknown): string[] => {
-    if (Array.isArray(val)) return val.map(String).filter(Boolean);
-    if (typeof val === "string" && val) return [val];
-    return [];
-  };
   const pickedSpecials = specialsList(v.specials ?? v.special);
   const extraNote = String(v.extraAddonNote ?? "");
   const extraAmountRM = Number(v.extraAddonAmountRM ?? 0);
   const hasCustom = Boolean(extraNote.trim()) || extraAmountRM > 0;
   const specialCount = pickedSpecials.length + (hasCustom ? 1 : 0);
+  const specialSurface = useSpecialOrderSurface({ itemCode: line.itemCode, fallbackCategory: line.cat, pickedSpecialCount: pickedSpecials.length });
 
   const addPhotos = (files: File[]) => {
     if (files.length === 0) return;
@@ -3160,8 +3171,8 @@ function LineCard({
             opens the bottom sheet (presets + Custom / other). Replaces the old
             inline accordion + the standalone Extra input; the data path is
             unchanged (variants.specials + extraAddonNote/extraAddonAmountRM).
-            Shown for sofa + bedframe (where specials apply). */}
-        {picked && pools.ready && (line.cat === "sofa" || line.cat === "bedframe") && (
+            Shown for every goods line since 2026-09-10 (useSpecialOrderSurface). */}
+        {picked && pools.ready && (line.cat === "sofa" || line.cat === "bedframe" || specialSurface.block) && (
           <button
             type="button"
             onClick={onOpenSpecialPicker}
@@ -3211,13 +3222,19 @@ function LineCard({
           </button>
         </div>
 
-        {/* Photo thumbnails — already-saved (edit prefill) + staged (this session) */}
+        {/* Photo thumbnails — saved (edit prefill) + staged (this session).
+            Was a text-only "SAVED" placeholder with no image and no delete;
+            HC-SO-007678 mobile edit 2026-09-11. See docs/bugs/. */}
         {(line.photoKeys.length > 0 || line.photoFiles.length > 0) && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 1 }}>
-            {line.photoKeys.map((k) => (
-              <div key={k} style={photoTile}>
-                <div style={{ ...photoTileInner, background: "#e1efed", color: "#16695f", fontSize: 8, fontWeight: 700, letterSpacing: ".04em" }}>SAVED</div>
-              </div>
+            {soDocNo && line.itemId && line.photoKeys.map((k) => (
+              <MobileSavedPhotoThumb
+                key={k}
+                docNo={soDocNo}
+                itemId={line.itemId}
+                photoKey={k}
+                onDeleted={() => onChange({ photoKeys: line.photoKeys.filter((x) => x !== k) })}
+              />
             ))}
             {line.photoFiles.map((f, i) => (
               <StagedPhotoThumb key={`${f.name}-${i}`} file={f} onRemove={() => removeStagedPhoto(i)} />
@@ -3229,34 +3246,8 @@ function LineCard({
   );
 }
 
-/* Read-only tile style for a persisted (edit) photo — the full thumbnail lives
-   on the SO detail screen; here we show a compact marker so the operator knows
-   photos exist without a signed-URL round-trip. */
-const photoTile: React.CSSProperties = {
-  width: 52, height: 52, flex: "none", borderRadius: 9, overflow: "hidden",
-  border: "1px solid #d6d9d2", position: "relative",
-};
-const photoTileInner: React.CSSProperties = {
-  width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center",
-};
-
-/* Staged (this-session) photo — object-URL preview + a delete X. Revokes the
-   URL on unmount / file change (mirrors the desktop pendingPreviews). */
-function StagedPhotoThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
-  const url = useMemo(() => URL.createObjectURL(file), [file]);
-  useEffect(() => () => URL.revokeObjectURL(url), [url]);
-  return (
-    <div style={photoTile}>
-      <img src={url} alt={file.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-      <button
-        type="button"
-        onClick={onRemove}
-        title="Remove (not uploaded yet)"
-        style={{ position: "absolute", top: 2, right: 2, width: 16, height: 16, borderRadius: 999, border: "none", background: "rgba(17,20,15,.7)", color: "#fff", fontSize: 10, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-      >{"✕"}</button>
-    </div>
-  );
-}
+/* Tile chrome + StagedPhotoThumb + MobileSavedPhotoThumb moved to
+   ./MobileSavedPhotoThumb — see that file for the shared style constants. */
 
 /* FabricField — a tappable read-only row that opens the searchable FabricPicker
    modal (native <select> with 700+ options is unusable per owner). Shows the
@@ -3409,11 +3400,6 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
     onChange({ variants: { ...line.variants, ...patch }, overriddenKeys: overrides });
   };
 
-  const specialsList = (val: unknown): string[] => {
-    if (Array.isArray(val)) return val.map(String).filter(Boolean);
-    if (typeof val === "string" && val) return [val];
-    return [];
-  };
   const catUpper = line.itemGroup.toUpperCase();
   const specialOptions: SpecialAddonRow[] = useMemo(() => {
     // Owner 2026-07-14 — opt-out pool (mirrors SoLineCard/main): empty/absent
@@ -3427,6 +3413,20 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
     );
   }, [pools.specialAddons, catUpper, allow]);
   const pickedSpecials = specialsList(v.specials ?? v.special);
+  /* Mobile parity: SOFA and BEDFRAME lines get this sheet AS their special
+     picker (there is no separate mobile sofa/bedframe configurator that
+     hosts the checkboxes — LineCard opens THIS sheet for both categories
+     at MobileNewSO.tsx:3168). `useSpecialOrderSurface.optionPicker` is
+     written for desktop, where SoLineCard renders the checkboxes inside
+     the configurator and returns `false` here to avoid a duplicate — that
+     gate must not carry over to mobile or every sofa opens with "No
+     preset special orders" while the 19 codes sit in `specialOptions`
+     unrendered (owner 2026-09-11, PROVEN by check-sofa-specials-coverage).
+     Pooled goods (accessory/others) keep the guard: ticking an add-on
+     re-keys the stock bucket, which pooled categories must not do. */
+  const surface = useSpecialOrderSurface({ itemCode: line.itemCode, fallbackCategory: line.cat, pickedSpecialCount: pickedSpecials.length });
+  const showPresetsForMobile = surface.optionPicker || catUpper === "SOFA" || catUpper === "BEDFRAME";
+  const presets = showPresetsForMobile ? specialOptions : [];
   const specialChoicesMap: Record<string, string[]> =
     v.specialChoices && typeof v.specialChoices === "object"
       ? (v.specialChoices as Record<string, string[]>)
@@ -3455,7 +3455,7 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
      extraSen, so a special order MUST expose its groups — otherwise it silently
      locks to choices[0] (the default toggleSpecial seeds). */
   const changeChoice = (code: string, groupIdx: number, label: string) => {
-    const def = specialOptions.find((d) => d.code === code);
+    const def = presets.find((d) => d.code === code);
     const entry = [...(specialChoicesMap[code] ?? (def?.optionGroups ?? []).map(() => ""))];
     entry[groupIdx] = label;
     setVar({ specialChoices: { ...specialChoicesMap, [code]: entry } });
@@ -3465,7 +3465,7 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
   const extraAmountRM = Number(v.extraAddonAmountRM ?? 0);
   const hasCustom = Boolean(extraNote.trim()) || extraAmountRM > 0;
   const [customOpen, setCustomOpen] = useState(hasCustom);
-  const ghostPicks = pickedSpecials.filter((c) => !specialOptions.some((a) => a.code === c));
+  const ghostPicks = pickedSpecials.filter((c) => !presets.some((a) => a.code === c));
 
   return (
     <div className="sheet-bd" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -3482,12 +3482,12 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
         </div>
 
         <div className="sheet-scroll" style={{ gap: 9 }}>
-          {specialOptions.length === 0 && ghostPicks.length === 0 && (
+          {presets.length === 0 && ghostPicks.length === 0 && (
             <div style={{ fontSize: 12, color: "#767b6e" }}>
               No preset special orders for this model — use “Custom / other” below.
             </div>
           )}
-          {specialOptions.map((a) => {
+          {presets.map((a) => {
             const on = pickedSpecials.includes(a.code);
             return (
               <label
@@ -3521,7 +3521,7 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
               (owner 2026-07-20 parity with desktop SpecialOrders) — without these
               the special order silently locks to the first option even though each
               choice can carry its own surcharge. The RM delta rides showPrices. */}
-          {specialOptions.filter((a) => pickedSpecials.includes(a.code) && a.optionGroups.length > 0).map((a) =>
+          {presets.filter((a) => pickedSpecials.includes(a.code) && a.optionGroups.length > 0).map((a) =>
             a.optionGroups.map((g, gi) => (
               <Field key={`${a.code}-${gi}`} label={`${a.label} · ${g.label}${g.required ? " *" : ""}`}>
                 <select

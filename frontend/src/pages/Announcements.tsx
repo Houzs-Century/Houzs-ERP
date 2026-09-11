@@ -14,12 +14,14 @@ import type { TeamMember, Department, Position } from "../types";
 import { useAnnouncementBanner } from "../components/useAnnouncementBanner";
 import { InboxView } from "./announcements/InboxView";
 import { ManageView } from "./announcements/ManageView";
+import { RegisterView } from "./announcements/RegisterView";
 import { ComposerModal } from "./announcements/ComposerModal";
 import {
   bucketInbox,
   isApproved,
   isVoided,
   receiptsCsv,
+  type DocumentTypeOption,
   type AnnouncementFile,
   type AckSummary,
   type AcksData,
@@ -42,11 +44,14 @@ type AcksResponse = { success?: boolean; data?: AcksData };
 type SummaryResponse = { success?: boolean; data?: AckSummary };
 
 // ────────────────────────────────────────────────────────────────────────────
-// Page — two modes on one route (design handoff 2026-09-04): Reading (the
-// inbox every signed-in user gets) and Manage (ack rates + drill-down, behind
-// announcements.write). The selected notice is shared across both.
+// Page — three modes on one route: Reading (the inbox every signed-in user
+// gets) and Manage (ack rates + drill-down, behind announcements.write) from
+// the design handoff 2026-09-04, and Register (owner 2026-09-09: "memo — 放在
+// Announcement 里面") — the department document register, open to every
+// signed-in user like Reading, deep-linked as ?view=register. The selected
+// notice is shared across Reading and Manage.
 // ────────────────────────────────────────────────────────────────────────────
-type Mode = "read" | "manage";
+type Mode = "read" | "manage" | "register";
 
 export function Announcements() {
   const { can, user } = useAuth();
@@ -128,7 +133,7 @@ export function Announcements() {
   // ?id=<notice> deep link (the dashboard stack's "View details" / the bell):
   // read once at mount, then the page owns the selection.
   const [searchParams] = useSearchParams();
-  const [mode, setMode] = useState<Mode>("read");
+  const [mode, setMode] = useState<Mode>(() => (searchParams.get("view") === "register" ? "register" : "read"));
   const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get("id"));
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [search, setSearch] = useState("");
@@ -181,7 +186,7 @@ export function Announcements() {
   // The attachment policy for the ANN type (Settings → Documents): the
   // composer disables Submit while a required file is missing. The server
   // enforces it regardless.
-  const docTypesQ = useQuery<{ data: Array<{ code: string; attachmentRequired: boolean }> }>(
+  const docTypesQ = useQuery<{ data: DocumentTypeOption[] }>(
     "/api/document-types",
     () => api.get("/api/document-types"),
     [],
@@ -374,7 +379,8 @@ export function Announcements() {
     }
   }
 
-  const modeToggle = canOpenManage ? (
+  // Reading and Register for everyone; Manage only for a writer / approver.
+  const modeToggle = (
     <div
       role="tablist"
       aria-label="Announcements mode"
@@ -383,7 +389,8 @@ export function Announcements() {
       {(
         [
           ["read", "Reading"],
-          ["manage", "Manage"],
+          ...(canOpenManage ? [["manage", "Manage"]] : []),
+          ["register", "Register"],
         ] as Array<[Mode, string]>
       ).map(([m, label]) => (
         <button
@@ -401,7 +408,7 @@ export function Announcements() {
         </button>
       ))}
     </div>
-  ) : undefined;
+  );
 
   return (
     <div className="flex w-full flex-col">
@@ -421,7 +428,7 @@ export function Announcements() {
           </div>
         }
         primaryAction={
-          canWrite ? (
+          canWrite && mode !== "register" ? (
             <Button
               variant="primary"
               onClick={() => setComposerOpen(true)}
@@ -441,6 +448,7 @@ export function Announcements() {
           salesDirOnly={salesDirOnly}
           currentUserId={currentUserId}
           attachmentRequired={attachmentRequired}
+          docTypes={docTypesQ.data?.data ?? []}
           onClose={() => setComposerOpen(false)}
           onPosted={() => {
             listQ.reload();
@@ -486,7 +494,7 @@ export function Announcements() {
           receipts={receiptsQ.data?.data ?? null}
           receiptsLoading={receiptsQ.loading}
         />
-      ) : (
+      ) : mode === "manage" ? (
         <ManageView
           className="-mx-3 -mb-[calc(10rem+env(safe-area-inset-bottom))] h-[calc(100dvh-var(--page-header-offset,120px)-1.5rem)] min-h-[560px] sm:-mx-4 lg:-mx-4 lg:-mb-10"
           items={items}
@@ -522,6 +530,8 @@ export function Announcements() {
           onReject={(a) => void rejectNotice(a)}
           onVoid={(a) => void voidNotice(a)}
         />
+      ) : (
+        <RegisterView docTypes={docTypesQ.data?.data ?? []} />
       )}
     </div>
   );

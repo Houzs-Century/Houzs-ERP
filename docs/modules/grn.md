@@ -39,8 +39,8 @@ On POST, qty_received rolls up to PO items"* (`grns.ts:1-2`).
 |---------|------|-------|
 | Desktop list | `frontend/src/pages/scm-v2/GoodsReceivedListV2.tsx` | Server-paginated, `pageSize = 50` (`:455`). |
 | Desktop detail (read) | `frontend/src/pages/scm-v2/GoodsReceivedDetailV2.tsx` | Read-only shell; `?edit=1` forwards to the legacy editor (`:240-248`), lazily loaded. |
-| Desktop detail (edit) | `frontend/src/pages/scm-v2/GoodsReceivedDetail.tsx` | The inline editor. Lock logic at `:244-248`. |
-| Desktop new | `frontend/src/pages/scm-v2/GrnNew.tsx` | Uses `usePurchaseOrders()` (the legacy unpaginated PO hook, `:156`). |
+| Desktop detail (edit) | `frontend/src/pages/scm-v2/GoodsReceivedDetail.tsx` | The inline editor. Lock logic at `:244-248`. **"Add manual item" (Edit + `!isLocked`, owner 2026-09-10)** posts a free line — an item the source PO never ordered, a supplier extra, a sample — via `POST /:id/items` with `purchase_order_item_id` null, mirroring the New-GRN manual line (supplier-binding-aware picker); the primary path stays convert-from-PO ("From Purchase Order"). Refused by the same `unlinked_po_lines` guard (§6) when the material IS on the parent PO, and by the zero-cost gate (§7) — both surfaced inline. Softens the earlier in-code "never by free add-line" note. |
+| Desktop new | `frontend/src/pages/scm-v2/GrnNew.tsx` | Uses `usePurchaseOrders()` (the legacy unpaginated PO hook, `:156`). **"Add another item" now shows in EVERY mode (owner 2026-09-10)** — manual, from-PO-picks and single-PO — gated `canAddManualLine = isManual || !!supplierId`, so an item the PO never ordered can be received in the same create step (previously the button was `isManual`-only, hidden once you arrived from a PO). The extra line carries `purchase_order_item_id` null; the create path's `unlinked_po_lines` guard still refuses a hand-added material that IS on the header PO. |
 | Desktop from-PO | `frontend/src/pages/scm-v2/GrnFromPo.tsx` | Multi-select over `/outstanding-po-items`. Two display rules changed 2026-08-21, both shared and neither local: the Warehouse column reads through `warehouseLabel` (`frontend/src/vendor/scm/lib/warehouse-label.ts` — code first, then name; the picker rows carry FLAT columns, so a one-line adapter wraps them rather than a second rule), and the variant line under each row is now LABELLED `Description 2` by the shared `VariantDescription` component. Neither changes what is read or written. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS.grns` (`:1159-1192`). |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:324`; status actions `:535-542`. |
@@ -93,10 +93,20 @@ It also reads the IN-BAND failure: `PATCH /grns/:id/post` answers **200** with
 `docs/bugs/0495-post-grn-and-post-purchase-invoice-had-no-error-path-and-the.md`.
 
 **The stock-side invalidation rule:** every mutation that can move inventory also
-invalidates `['inventory']` — `usePostGrn` (`:146`) and `useCancelGrn` (`:222`).
-And because a GRN's stock IN changes the PO's `received_qty` and status,
-`useGrnFromPos` invalidates `['mfg-purchase-orders']` too (`:53`) and
-force-refetches the picker key (`:55`).
+invalidates `['inventory']`. That is `usePostGrn` and `useCancelGrn`, and — since
+2026-09-10 — the whole GRN CRUD block, each of which re-syncs stock server-side:
+`useGrnFromPos` (auto-posts a whole-PO convert → IN), `useUpdateGrnHeader`
+(warehouse relocation on a POSTED GRN → OUT+IN), and `useAddGrnItem` /
+`useUpdateGrnItem` / `useDeleteGrnItem` (POSTED GRN → IN / delta OUT+IN /
+reversing OUT). Until then those five invalidated only `['grn-detail']` +
+`['grns']`, so a mounted Stock Card / inventory list showed stale on-hand after a
+posted-GRN line change or a From-PO convert; pinned by
+`frontend/src/vendor/scm/lib/grn-stock-invalidation.test.tsx`, traced in
+`docs/bugs/0780-grn-stock-moving-mutations-did-not-invalidate-the-inventory.md`.
+`useCreateGrn` is NOT in the set: its only caller (`GrnNew.tsx`) follows a
+non-draft create with `usePostGrn`, which carries the invalidation. And because a
+GRN's stock IN changes the PO's `received_qty` and status, `useGrnFromPos`
+invalidates `['mfg-purchase-orders']` too and force-refetches the picker key.
 
 ### Caching / loading behaviour
 Three layers as in `docs/modules/sales-order.md` §1. GRN specifics:
@@ -727,11 +737,40 @@ one ERP row per compartment, so the two multisets are not commensurable — and
 they keep the existing declared-decomposition path.
 
 `docs/bugs/0693-the-reconcile-guesses-which-goods-receipt-line-is-which-and.md`
-carries the trace. **Stamping `linked_ac_dtlkey` from the reshape's own plan is
-the root fix and is not done**: it would make the pairing exact rather than
-guessed, and migration 0280 names a second thing it unblocks — without the key
-the AutoCount write-back refuses every edit of a migrated receipt, because the
-handle it addresses a detail row by does not exist.
+carries the trace.
+
+### THE KEYS LANDED — 2026-09-08 14:22 (+08), and everything above is now HALF true
+
+**The root fix named in the paragraph this replaces is DONE.**
+`backfill-ac-downstream-line-keys.mjs` (run `34194376108`) stamps
+`linked_ac_dtlkey` from the book, and `check-ac-erp-reconcile.mjs` reads the
+column instead of the `NULL::bigint` constant. Production, measured on run
+`34199483652` (2026-09-08 15:28 +08): **563 of 636** receipt lines carry a key,
+**371 of 400** documents are fully keyed, and **0 stored keys disagree with the
+derived one**. So a receipt's lines are now paired for real, not zipped, and the
+write-back can name the line an operator changed.
+
+**What did NOT go away is the reason to read this section: 73 lines are still
+unkeyed, and the backfill refuses them on purpose.** It stamps only where the
+book FORCES the pairing (`lib/ac-forced-line-pairing.mjs`), and the commonest
+refusal is the book's own doing — *"the book has 2 lines of this item at this
+quantity and they are NOT identical (2 distinct price/location/Desc2
+combinations), so which is which is unknowable"*. 29 receipts are in that state.
+
+**The state that did not exist before and now does is PARTIALLY keyed**, and it
+broke the classifier: `splitGuessedItemCodePairing` asked the DOCUMENT whether it
+had a key, so one keyed line answered for the unkeyed ones beside it and their
+guessed differences were counted as wrong products — silently, not even printed.
+It now asks the LINE. `docs/bugs/0704-*.md`; the whole goods-receipt / invoice
+remainder is classified one row per document in
+`docs/cutover-gr-iv-pi-remainder-2026-09-08.md`.
+
+**A receipt's MONEY is a separate debt and it is still open.** Four migrated
+receipts carry a non-zero total that is not the book's, three of them exactly
+4/3 of it, because `grn_items.unit_price_sen` comes from the purchase-ORDER line
+and AutoCount's line discount was dropped on import. **RM 2,119.50 more than the
+supplier billed.** `docs/bugs/0705-*.md` names the shape of the repair and why it
+is not this module's convert path.
 
 ---
 
@@ -1363,3 +1402,33 @@ Identity is asserted **before** the quantity cap wherever both run: a ceiling
 computed against the wrong line is a number about the wrong thing, and reporting
 it sends the operator to fix a quantity when the real fault is the source they
 picked.
+
+## The Special Order panel is not a bedframe/sofa feature (2026-09-10)
+
+The owner, the day the Custom / other free text opened on the Sales Order:
+「POGR 是不是也是要能看得到这些数据？…全部都是要带过去的哦，要不然你有 column 的话也
+带不过去」.
+
+Half of it already worked, and the halves are different things:
+
+- the text ALREADY reached the supplier's document. `description2` is stamped
+  server-side from `buildVariantSummary`, which appends the `SPECIAL:` segment
+  AFTER the per-group attribute branch — so a category contributing no
+  attributes still carries its note.
+- the text was NOT on this document's SCREEN. The editor was gated on bedframe
+  or sofa, and on `maint`, which `SpecialOrders` does not need — so a mattress,
+  accessory or dining line was excluded twice over, and the operator could
+  neither read the spec nor correct it.
+
+The gate is now the shared module `frontend/src/vendor/scm/lib/special-order-surface.ts`,
+read by the Sales Order, both mobile surfaces and every cost document, so the
+rule cannot drift per document. **The add-on pool passed here is EMPTY on
+purpose**: this document carries no catalogue for those categories, and choosing
+WHAT to build belongs to the sales order, not to the buyer or the receiver.
+
+Because of that empty pool, `SpecialOrders` no longer labels a carried pick
+*"retired — untick to remove"* when it has no options list to judge it against —
+a catalogue we do not have cannot call anything retired, and on a purchase order
+that label told the buyer to delete what the factory is building. With no pool
+the picks render read-only under *"from the Sales Order"*. See
+`docs/bugs/0779-the-special-order-text-reached-the-supplier-pdf-but-was-invi.md`.

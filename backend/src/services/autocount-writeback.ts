@@ -40,6 +40,7 @@ import {
   SO_PROCESSING_DATE_COLUMN,
 } from '../scm/shared/so-processing-date';
 import { buildVariantSummary } from '../scm/shared/variant-summary';
+import { abbreviateDesc2 } from './autocount-desc2-abbrev';
 
 /** Fixed AutoCount debtor account; the customer's real name is written over it. */
 export const AC_DEBTOR_CODE = '300-C002';
@@ -99,10 +100,12 @@ const norm = (s: string | null | undefined): string =>
 
 /** Whitespace-collapsed and trimmed, or null. `/ensure-masters` opens a master
  *  under EXACTLY the string it is given, so two spaces would open two of it. */
-export const tidy = (s: unknown): string | null => {
-  const v = String(s ?? '').replace(/\s+/g, ' ').trim();
-  return v || null;
-};
+/* The account book's own string rules live next door and are RE-EXPORTED, so
+   every caller and test keeps one import site (docs/repo-hygiene.md: this file
+   is at its ceiling and a ceiling only moves down). */
+import { tidy, soInvoiceAddress } from './autocount-address-fit';
+export { AC_ADDRESS_LINE_MAX, AC_ADDRESS_LINES, fitAddressLines, tidy, soInvoiceAddress } from './autocount-address-fit';
+
 
 /**
  * The ACCOUNT BOOK'S OWN SPELLING of a value it already knows — or null.
@@ -490,6 +493,26 @@ export class KeylessLineError extends Error {
  * as refusals on the sales side rather than as guesses.
  */
 export interface ComposeOptions {
+  /**
+   * AN EDIT DOES NOT SEND AN ITEMCODE FOR A LINE THE BOOK ALREADY HOLDS, so it
+   * must not refuse one it cannot resolve.
+   *
+   * `composeEdit` strips `ItemCode` from every keyed line — AUTOCOUNT OWNS THE
+   * ITEM ON A LINE IT ALREADY HOLDS, the owner's rule of 2026-08-13 — and then
+   * asked `composeDetails` to resolve that code first anyway. So an edit to
+   * HC-PO-006690 was refused for `DIVAN ONLY-(Q)` resolving to four book items,
+   * none under its creditor: a code the payload was never going to carry.
+   *
+   * `forTransfer` has said exactly this since it was written ("A TRANSFER KEEPS
+   * THE LINE. The ItemCode below is never sent"). This is the same statement for
+   * the edit path, and it is deliberately NOT folded into `forTransfer`: a
+   * transfer sends four fields, an edit sends the line.
+   *
+   * KEYED LINES ONLY. A keyless line on an edit is APPENDED and does carry its
+   * ItemCode, so it must still resolve or be refused — and a REBUILD puts every
+   * ItemCode back, so it must refuse too. Both are checked at the use site.
+   */
+  keyedLinesKeepTheBooksItem?: boolean;
   rebuild?: boolean;        // clear the details, lay these Lines down — 0607
   rebuildBlocked?: string;  // present = keyed path, never rebuild — 0609
   supplierCode?: string | null;
@@ -827,50 +850,6 @@ export function soBranding(
   return null;
 }
 
-/**
- * The customer's address, packed into AutoCount's FOUR numbered lines.
- *
- * FIVE ERP FIELDS, FOUR AUTOCOUNT LINES — this is the one decision that had to
- * be written down rather than derived, and this comment is where it lives (the
- * DO/SI note in `autocount-outbox.ts` declined to invent it and omitted the
- * keys instead; on a CREATE there is nothing to preserve, so the packing has to
- * be chosen).
- *
- * | AutoCount | ERP |
- * |---|---|
- * | `InvAddr1` | `address1` |
- * | `InvAddr2` | `address2` |
- * | `InvAddr3` | `address3`, else `postcode` + `city` |
- * | `InvAddr4` | `address4`, else `customer_state` |
- *
- * `address3` / `address4` WIN when they are populated: only the cutover import
- * ever wrote them, and that text is AutoCount's own. An ERP-created order has
- * both blank and keeps the same facts in `city` / `postcode` / `customer_state`
- * — measured 2026-08-14 on production, 94 of 115 unpushed sales orders are in
- * exactly that shape, so AutoCount's document carried the street lines and no
- * town, no postcode and no state, on the address a delivery is printed from.
- *
- * Postcode before town, state on its own line, is the Malaysian postal order
- * ("43300 SERI KEMBANGAN" / "SELANGOR"). Free text, no master, no foreign key.
- */
-export function soInvoiceAddress(h: {
-  /* `unknown` and optional for the same reason as soCustomerRef above. */
-  address1?: unknown; address2?: unknown; address3?: unknown; address4?: unknown;
-  city?: unknown; postcode?: unknown; customer_state?: unknown;
-}): {
-    InvAddr1: string | null;
-    InvAddr2: string | null;
-    InvAddr3: string | null;
-    InvAddr4: string | null;
-  } {
-  const town = [tidy(h.postcode), tidy(h.city)].filter(Boolean).join(' ');
-  return {
-    InvAddr1: tidy(h.address1),
-    InvAddr2: tidy(h.address2),
-    InvAddr3: tidy(h.address3) ?? (town || null),
-    InvAddr4: tidy(h.address4) ?? tidy(h.customer_state),
-  };
-}
 
 /**
  * The document's own AutoCount stock location, for a CREATE.
@@ -971,8 +950,13 @@ export class Desc2TooLongError extends Error {
  * when it is not). Re-deriving either from variants would be lossy.
  */
 export function composeDescription2(line: ErpLine): string | null {
-  if (line.description2 && line.description2.trim()) return line.description2.trim();
-  return buildVariantSummary(line.item_group ?? null, line.variants ?? null) || null;
+  const stored = line.description2 && line.description2.trim();
+  const text = stored || buildVariantSummary(line.item_group ?? null, line.variants ?? null);
+  if (!text) return null;
+  /* Shortened HERE and never in the data: `variants.specials` is priced by NAME
+     and a rename drops the surcharge — autocount-desc2-abbrev.ts has the trace.
+     A text that already fits comes back unchanged. */
+  return abbreviateDesc2(text, AC_DESC2_MAX);
 }
 
 /**
@@ -1009,7 +993,15 @@ export function composeDetails(
       index: opts.itemIndex,
       bindings: opts.bindings ?? null,
     });
-    if (!r.ok && !opts.forTransfer) {
+    /* A line whose ItemCode will not be SENT cannot be wrong, so it is not
+       refused. Two ways that happens: a transfer sends four fields and no code,
+       and an edit leaves the book's own item on a line the book already holds.
+       A keyless line is appended WITH its code, and a rebuild puts every code
+       back, so both of those still have to resolve. */
+    const keyed = l.linked_ac_dtlkey != null && String(l.linked_ac_dtlkey) !== '';
+    const codeWillBeSent = !opts.forTransfer
+      && !(opts.keyedLinesKeepTheBooksItem && keyed && !opts.rebuild);
+    if (!r.ok && codeWillBeSent) {
       failures.push({ index: i, erpItemCode: l.item_code, detail: r.detail });
       return;
     }
@@ -1417,7 +1409,14 @@ export function composeEdit(
   opts: ComposeOptions = {},
   retired: AcRetiredLine[] = [],
 ): AcEditPayload {
-  const effOpts: ComposeOptions = { ...opts, rebuild: shouldRebuild(opts, docType, retired) };  // 0608, authoritative - 0615
+  /* keyedLinesKeepTheBooksItem is set HERE and nowhere else: composeEdit is the
+     only caller that strips ItemCode from a keyed line, so it is the only one
+     entitled to skip resolving it. A create sends every code. */
+  const effOpts: ComposeOptions = {
+    ...opts,
+    rebuild: shouldRebuild(opts, docType, retired),  // 0608, authoritative - 0615
+    keyedLinesKeepTheBooksItem: true,
+  };
   const { details, collapsed } = composeDetails(lines, effOpts);
   /* The key is read off the COLLAPSED line, not the ERP line. One AutoCount
      line has one DtlKey, and a sofa build's compartments only carry line

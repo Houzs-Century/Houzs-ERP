@@ -1,0 +1,70 @@
+name: Probe the staff-reported flow classes (read-only)
+
+# The shop floor reported three sales orders on 2026-09-08. Each is an instance
+# of a class, and repairing three documents while twenty of the same shape stay
+# unfound is not the job. This sizes the classes:
+#
+#   A  a sofa's compartments disagree with the book's own decoded text - and,
+#      the part the completeness audit cannot answer, whether the order is LIVE
+#   B  a hard-bound sales line with no dedicated purchase order, split by
+#      whether the BOOK names one. A line in that split cannot reach READY.
+#   C  the SO->PO edges the book states at line grain that the ERP cannot
+#      resolve, and whether they are resolvable at COMPARTMENT grain
+#
+# READ-ONLY. The script takes no APPLY flag and every statement in it is a
+# SELECT. The AutoCount side is the committed snapshot
+# backend/scripts/data/ac-reconcile-truth.json.gz - the book itself is reachable
+# only over ZeroTier from the office and a hosted runner has no route to it.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+      docs_a:
+        description: "Comma-separated sales orders for section A; blank = the 2026-09-08 compartment audit's own list"
+        required: false
+        default: ""
+        type: string
+      top:
+        description: "Max rows printed per list"
+        required: false
+        default: "60"
+        type: string
+      max_snapshot_age_days:
+        description: "Refuse if the AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+        type: string
+
+# Deliberately NOT in the deploy concurrency group: it touches nothing and must
+# never queue behind - or displace - a release.
+concurrency:
+  group: probe-staff-reported-flow
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/probe-staff-reported-flow.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          DOCS_A: ${{ inputs.docs_a }}
+          TOP: ${{ inputs.top }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

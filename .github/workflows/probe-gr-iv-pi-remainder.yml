@@ -1,0 +1,52 @@
+name: Probe GR / IV / PI remainder (read-only)
+
+# The go-live reconcile prints a COUNT per axis for goods receipts and invoices
+# ("item code: 2; document total: 9"). A count cannot be repaired, and until
+# 2026-09-08 14:22 (+08) every goods-receipt verdict rested on the checker
+# GUESSING which of our rows answers which of the book's, because
+# scm.grn_items.linked_ac_dtlkey was empty on all 636 rows.
+# backfill-ac-downstream-line-keys.mjs filled 563 of them. This probe re-asks
+# each difference WITH the keys, so a wrong product can be told apart from a
+# pairing artefact, and names the cause of every money difference.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction. Manual trigger,
+# own concurrency group, exit 0 for every legitimate answer. The AutoCount side
+# is the committed snapshot backend/scripts/data/ac-reconcile-truth.json.gz —
+# the book itself is reachable only over ZeroTier from the office network and a
+# hosted runner has no route to it.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+
+# Deliberately NOT in the deploy concurrency group: it touches nothing and must
+# never queue behind - or displace - a release.
+concurrency:
+  group: probe-gr-iv-pi-remainder
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/probe-gr-iv-pi-remainder.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -1,0 +1,57 @@
+name: Enqueue SO write-back (re-push balance to AutoCount, dry-run by default)
+
+# Re-enqueues the AutoCount write-back for specific Sales Orders so their CORRECTED
+# outstanding balance reaches the account book. Needed after a raw-SQL data repair
+# (docs/bugs/0785) that edits the SO directly and so never triggers a write-back —
+# leaving AutoCount stale (HC-SO-2609-011: 288 vs 2488; -049: 1500 vs 2900).
+#
+# It runs the app's REAL enqueueEdit via lib/pgrest-shim.mjs (DATABASE_URL only, no
+# PostgREST creds — same access path as requeue-autocount-skipped). DRY-RUN by
+# default: reads + previews the balance, writes nothing. mode=apply enqueues; the
+# 5-minute outbox cron then sends it to AutoCount. Manual trigger only.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      mode:
+        description: "dry-run (preview) or apply (enqueue)"
+        required: true
+        default: "dry-run"
+        type: choice
+        options: [dry-run, apply]
+      docs:
+        description: "Comma-separated ERP SO doc_nos"
+        required: true
+        default: "HC-SO-2609-011,HC-SO-2609-049"
+        type: string
+
+concurrency:
+  group: enqueue-so-writeback
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/enqueue-so-writeback.mts
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          DOCS: ${{ inputs.docs }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

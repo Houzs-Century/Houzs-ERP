@@ -33,6 +33,14 @@ on:
         description: "ERP company to reconcile (AED_HOUZS is company 1)"
         required: false
         default: "1"
+      publish_verdict:
+        description: >-
+          Also PUBLISH the per-document sales-order verdict that the
+          migrated-SO lock reads (scm.so_reconcile_verdict). This WRITES.
+          It does not touch the scm.migrated_so_lock switch.
+        required: false
+        default: false
+        type: boolean
 
 # Deliberately NOT in the deploy concurrency group: this touches nothing and
 # must never queue behind - or displace - a release.
@@ -56,12 +64,49 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: node scripts/check-ac-erp-reconcile.mjs
+      # `npx tsx`, not `node`, since 2026-09-08: the checker imports
+      # scripts/lib/ac-erp-native.mjs, which imports the ONE statement of "did
+      # the cutover carry this document" out of src/scm/lib/so-is-migrated.ts
+      # rather than restating it. Every other script here that reaches into
+      # src/ runs the same way (ac-convert-symmetry-check.yml,
+      # autocount-field-alignment.yml, check-so-open-for-new.yml).
+      - run: npx tsx scripts/check-ac-erp-reconcile.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SHOW: ${{ inputs.show }}
           MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
           COMPANY_ID: ${{ inputs.company_id }}
+          # Always computed, so the verdict the publish step sees is the verdict
+          # THIS run measured. Writing it to a file is not a database write; the
+          # check above stays read-only, which is the CLAUDE.md rule.
+          VERDICT_OUT: ${{ runner.temp }}/so-verdict.json
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
           # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+      # ── THE ONLY WRITE IN THIS WORKFLOW ──────────────────────────────────
+      # Publishes the per-document verdict the migrated-sales-order lock reads,
+      # so it can open the orders that MATCH the account book and keep the ones
+      # that differ shut (owner 2026-09-08: 「他们是要开 SO 和 edit SO 来 proceed
+      # 单;purchasing 要开 PO;logistic 要 convert SO to DO」).
+      #
+      # IN THE SAME JOB AS THE MEASUREMENT, ON PURPOSE. The publisher reads the
+      # file the step above just wrote, so a published verdict can only ever be
+      # one this run measured — there is no path by which a stale or
+      # hand-assembled file reaches the table. It also refuses a file measured
+      # more than 48h ago, which is the same limit the guard expires a verdict
+      # at.
+      #
+      # It does NOT touch scm.migrated_so_lock. Publishing the verdict changes
+      # nothing on its own: while that switch reads '1' every migrated order
+      # stays shut exactly as it is today, and the owner times the flip to
+      # 'verdict:1'.
+      - name: Publish the per-document SO verdict (WRITES)
+        if: ${{ inputs.publish_verdict }}
+        run: node scripts/publish-so-reconcile-verdict.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          VERDICT_IN: ${{ runner.temp }}/so-verdict.json
+          MODE: apply
+          CONFIRM: publish-so-verdict
           NODE_OPTIONS: --dns-result-order=ipv4first

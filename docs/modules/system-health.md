@@ -445,11 +445,16 @@ detection is unchanged (a bare clone carries `"dev"`/an old sha). Pinned by
 
 ## Route mounts worth knowing (`backend/src/index.ts`)
 
-`/api/announcements` is served by TWO routers mounted on the same prefix, in
-order: `routes/announcements.ts` (the module, at its file-size ceiling) and
+`/api/announcements` is served by THREE routers mounted on the same prefix, in
+order: `routes/announcements.ts` (the module — list, banner, create, edit,
+remind, ack, attachments), `routes/announcementReceipts.ts` (2026-09-09 split:
+read receipts, ack-summary, ack-trend, team-pending, escalate) and
 `routes/announcementApproval.ts` (2026-09-07: submit / approve / reject /
 files). Hono tries them in mount order, so a path both could match belongs to
-the first; today none overlaps. See `docs/modules/announcements.md` §3.
+the first; today none overlaps (the main router has no bare `GET /:id`). See
+`docs/modules/announcements.md` §3.
+`/api/memos` (2026-09-09) is `routes/memos.ts`, the department memo register
+(`docs/modules/memos.md`), mounted right after the announcement routers.
 
 ## The cron slots (`backend/src/index.ts` `scheduled()`)
 

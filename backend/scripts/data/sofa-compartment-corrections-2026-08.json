@@ -24,12 +24,12 @@
    ],
    "model": "9058",
    "pieces": [
-    "2A(LHF)",
+    "1A(LHF)",
     "CNR",
-    "1A(RHF)"
+    "2A(RHF)"
    ],
    "seat": "28",
-   "why": "Desc2 2ER+C+1ER",
+   "why": "Desc2 2ER+C+1ER | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」.",
    "desc2Match": "{SIZE:2ER+C+1ER+(28\")}/{COL:CH141-12 MET"
   },
   {
@@ -69,13 +69,12 @@
    ],
    "model": "9058",
    "pieces": [
-    "1A(LHF)",
-    "1NA",
-    "CNR",
-    "1A(RHF)"
+    "2A(LHF)",
+    "1A(RHF)",
+    "STOOL"
    ],
    "seat": "30",
-   "why": "Desc2 1R+1NA+C+1R",
+   "why": "Desc2 1R+1NA+C+1R | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」. | SUPERSEDED 2026-09-11 by the SUPPLIER'S OWN LISTING (propose-supplier-sofa-corrections production run 34502972739). The owner ruled these four follow the supplier even though the two readings are different sofas, not a from-the-other-end reversal: 「ok 四张跟supplier的」. The supplier's system records what it BUILT; this entry was a reading of a photograph.",
    "desc2Match": "1R+1NA+C+1R/Size:30”/Col:GD2502#18-Grey/"
   },
   {
@@ -340,13 +339,13 @@
    "model": "8030",
    "pieces": [
     "1A(LHF)",
+    "1NA",
+    "1NA",
     "CNR",
-    "1NA",
-    "1NA",
     "1A(RHF)"
    ],
    "seat": "28",
-   "why": "photo at 5x, corner position corrected by the owner",
+   "why": "photo at 5x, corner position corrected by the owner | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」.",
    "desc2Match": "28 inch per seat \\nfully cover replace t"
   },
   {
@@ -388,10 +387,10 @@
    "pieces": [
     "1A(LHF)",
     "1NA",
-    "1A(RHF)"
+    "L(RHF)"
    ],
    "seat": "26",
-   "why": "photo: three boxes all marked 26, arms only at the two ends",
+   "why": "photo: three boxes all marked 26, arms only at the two ends | 2026-09-08 OWNER, re-reading his own slip: 1AL + 1NA + 1L(R). The right-hand piece is the CHAISE, not a one-seat arm. His 1L(R) is slip shorthand for one chaise on the right; the ERP code for that piece carries NO count prefix - scripts/lib/parse-sofa.mjs:602 emits L(LHF)/L(RHF) for the chaise token, and :545/:557 fold a 1L standing beside other pieces into ONE chaise - so 1L(R) is written here as L(RHF), never as a minted 1L(RHF). This is a CORRECTED READING, not a regression: the ERP's earlier value never drifted - he read the same slip again and changed his own answer. Recorded in docs/sofa-compartment-owner-rulings-2026-09-08.md. This document is already DELIVERED, so this is a records correction; its migrated delivery note follows the parent by the same paperwork-only rule the rest of this file rests on.",
    "desc2Match": "L shape \\nbottom Nilon \\nColour : modenz"
   },
   {
@@ -408,19 +407,6 @@
    "seat": "35",
    "why": "photo: [hatch|35][ ][35|hatch]",
    "desc2Match": "colour : B0315-2 feather \\nwrap bottom t"
-  },
-  {
-   "docs": [
-    "HC-SO-011099",
-    "HC-PO-009882"
-   ],
-   "pieces": [
-    "1A(LHF)",
-    "1A(RHF)"
-   ],
-   "seat": "30",
-   "why": "photo: two 30\" boxes, a small arm at each end | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-009882 added so the pair is corrected together, which is what this file's own rule says.",
-   "desc2Match": "2S / colour :BO315-4"
   },
   {
    "docs": [
@@ -453,13 +439,13 @@
    "model": "9058",
    "pieces": [
     "1A(LHF)",
-    "1NA",
     "CNR",
+    "1NA",
     "1A(RHF)"
    ],
    "seat": "30",
    "colour": "modenza 05",
-   "why": "owner read the original slip (our photo is cropped)",
+   "why": "owner read the original slip (our photo is cropped) | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」.",
    "desc2Match": "colour  : MODENZA 05- DARK OLIVE \\nchang"
   },
   {
@@ -494,8 +480,8 @@
    ],
    "seat": "30",
    "colour": "ch141-8S",
-   "why": "owner",
-   "desc2Match": "{COL:CH141-8 ARMY}/{SEAT HEIGHT: +1\"INCH"
+   "why": "owner | 2026-09-08 THE NEEDLE WAS REPAIRED, THE ANSWER WAS NOT TOUCHED. It read \"{COL:CH141-8 ARMY}/{SEAT HEIGHT: +1\\\"INCH\" and the fabric library RENUMBERED CH141-8 to CH141-08 on 2026-08-11, so production has held \"{COL:CH141-08 ARMY}\" ever since and this needle has matched nothing. A ruling nothing can find is a ruling the reconcile does not have, so a build the owner had personally answered kept reporting as CANNOT BE COMPARED - HC-SO-011733 is one of the 43 in the 2026-09-08 sales-order tally (run 34237658597), and it is PROCEEDED. Same class as docs/bugs/0718: a correction gone silently inert when the fabric library renumbered itself. The needle is now \"{SEAT HEIGHT: +1\", which both the account book and the ERP carry and no colour renumbering can move. Measured on prod, read-only probe run 34242061732: this document holds exactly one sofa build and its six compartments are 2A(LHF)+CNR+1NA+1NA+CONSOLE+1A(RHF) at seat 30 - the answer below, already written, so re-applying it is a no-op. HE RE-READ THE SAME SLIP ON 2026-09-08 and gave the same five seats and arms without mentioning the Console; that reading is recorded in sofa-compartment-corrections-2026-09.json's `_held` list with the one question it leaves open, and nothing is deleted until he answers it.",
+   "desc2Match": "{SEAT HEIGHT: +1"
   },
   {
    "docs": [
@@ -508,6 +494,18 @@
    "seat": "30",
    "why": "owner; ready stock, colour is the physical unit's",
    "desc2Match": "SL0095 Ready Stock"
+  },
+  {
+   "docs": [
+    "HC-SO-011099",
+    "HC-PO-009882"
+   ],
+   "pieces": [
+    "2S"
+   ],
+   "seat": "30",
+   "why": "photo: two 30\" boxes, a small arm at each end | 2026-09-08 OWNER, re-reading his own slip: 2S. It is ONE two-seater, not two one-seat arms - which is also what the book's own words say (2S / colour :BO315-4), so this ruling moves the ERP TOWARDS the book rather than away from it. This is a CORRECTED READING, not a regression: the ERP's earlier value never drifted - he read the same slip again and changed his own answer. Recorded in docs/sofa-compartment-owner-rulings-2026-09-08.md. The model resolves from the rows themselves (HOK-5530 aliases to 9028), so the target piece is 9028-2S. This build drops from two rows to one: the surviving row is UPDATED in place so its id, its dedication and its linked_ac_dtlkey all survive, and the second row is deleted ONLY if nothing downstream points at it - apply-sofa-compartment-corrections.mjs refuses the whole build otherwise. | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-009882 added so the pair is corrected together, which is what this file's own rule says. | 2026-09-08 UNHELD: the second repair this needed now exists. apply-sofa-compartment-corrections.mjs RELEASES a purchase dedication that a collapse strands (sets so_item_id = NULL in the same transaction as the delete) instead of refusing the build, under five conditions that are all refusals - sales side only, the build must collapse to ONE piece, nothing delivered against the dropped row, the purchase line free of goods receipts, and this entry must NAME the purchase order so the half that deletes the released line runs. It is released, never re-pointed: a second purchase line aimed at the surviving row would read as two incoming units of one ordered piece. See docs/bugs/0719.",
+   "desc2Match": "2S / colour :BO315-4"
   }
  ],
  "_held": [

@@ -1,5 +1,26 @@
 ## The two swapped delivery-note colours were attributed to the wrong writer, and the book carried the colour all along [high]
 
+<!-- status: superseded -->
+
+> **THE MECHANISM IS NO LONGER UNKNOWN, and there was never a swap.**
+> `docs/bugs/0709` traces it, 2026-09-08: **the ERP rows carried no AutoCount
+> line key, so `check-ac-erp-reconcile.mjs` had to GUESS which of our rows
+> answers which of the book's, and its keyless fallback buckets on
+> `(quantity, unit price)` with no item code at all** — which on a migrated
+> delivery order, where every line is RM 0.00, makes every unkeyed line of one
+> quantity interchangeable.
+>
+> Both of THESE documents were stamped by
+> `backfill-ac-downstream-line-keys.mjs` at 2026-09-08 14:22 +08 (their two
+> lines carry different item codes, so the pairing was forced), and **both
+> disappeared from the colour axis on the next run without anything writing a
+> colour**: 16 DIFFER at 06:19Z, 4 at 08:45Z; 60 "the ERP holds a colour the
+> book never stated", 1. The colours in this ERP were right the whole time.
+>
+> Read `0709` before acting on anything below. The lead this entry left — the
+> fabric matcher's bare-number series guess, `docs/bugs/0672` site 16 — was
+> never the cause and does not need chasing on account of these rows.
+
 **Symptom, unchanged and still OPEN.** `DO-011505` and `DO-011478` each carry two
 lines whose fabric colour is an exact swap of what the account book says
 (reconcile run 34130727594). Nothing here fixes those rows; this entry corrects

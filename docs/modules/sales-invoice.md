@@ -30,7 +30,7 @@ only document in it that leaves the building as a customer's own copy.
 |---------|------|-------|
 | Desktop list | `frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx` | Server-paginated, `pageSize = 50` (`:777`). Outstanding column / cards / drawer / KPI are all net of the source order's deposit, via `vendor/scm/lib/si-outstanding.ts`; a `dep` marker on the cell and an off-by-default **SO deposit** column say why the figure is smaller. **Mark paid** here opens the detail screen's payment editor rather than writing a status — see the section below. |
 | Desktop detail | `frontend/src/pages/scm-v2/SalesInvoiceDetailV2.tsx` | Header + lines + payments + a separate read-only **Collected on `<SO>`** panel. `outstandingOf` / `effectiveOf` both take the applied order deposit as a REQUIRED argument, so the Outstanding figure and the status pill cannot disagree. **Mark paid** records a receipt — it does not write a status; the rule is `frontend/src/pages/scm-v2/markPaidPlan.ts`, see the section below. Persisted payment rows carry an Official-Receipt printer button (GL redesign 9b): the page hands `receiptFor={{ source: 'SIPAY', persistedIds }}` to the shared `PaymentsTable`, because its rows ride DRAFT mode (`uid` = API row id) and the component cannot otherwise tell a saved payment from a typed one — see `docs/modules/accounting.md` §Official Receipts. |
-| Desktop new | `frontend/src/pages/scm-v2/SalesInvoiceNew.tsx` | Salesperson picker — see the note under this table. |
+| Desktop new | `frontend/src/pages/scm-v2/SalesInvoiceNew.tsx` | Salesperson picker — see the note under this table. Passes `seedSofaLegDefault={false}` to `SoLineCard`: an invoice bills what was sold and must not add a sofa Leg Height the sales order never carried, because that attribute is part of the stock bucket (`docs/bugs/0722-a-delivery-order-invented-the-sofa-s-leg-height-so-the-stock.md`). |
 | Desktop from-DO | `frontend/src/pages/scm-v2/SalesInvoiceFromDo.tsx` | Line-level picker over `/invoiceable-do-lines`. |
 | Desktop report | `frontend/src/pages/scm-v2/SalesInvoiceDetailListing.tsx` | Detail-listing report. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS["sales-invoices"]` (`:1113-1152`). Balance is `balanceSen`, which since 2026-08-23 also subtracts the source order's deposit through `vendor/scm/lib/si-outstanding.ts`. Shared with purchase invoices, whose rows carry no such key, so PI is untouched. |
@@ -573,7 +573,7 @@ The authoritative in-code column lists are `HEADER` (`sales-invoices.ts:187-198`
 | Table | Role |
 |-------|------|
 | `scm.sales_invoices` | SI header. `invoice_number`, `so_doc_no`, **`delivery_order_id`** (the DO link), `debtor_code/name`, `invoice_date`, `due_date`, `currency`, `subtotal_sen`, `discount_sen`, `tax_sen`, `total_sen`, **`paid_sen`**, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_sen`, `total_cost_sen`, `total_margin_sen`, `line_count`, `status`, `sent_at` / `paid_at` / `confirmed_at`, `company_id`. |
-| `scm.sales_invoice_items` | SI lines. `so_item_id`, **`do_item_id`** (what the remaining-pool maths joins on), `item_code`, `item_group`, `qty`, `unit_price_sen`, `discount_sen`, `tax_sen`, `line_total_sen`, `unit_cost_sen`, `line_cost_sen`, `line_margin_sen`, `variants`. |
+| `scm.sales_invoice_items` | SI lines. `so_item_id`, **`do_item_id`** (what the remaining-pool maths joins on), `item_code`, `item_group`, `qty`, `unit_price_sen`, `discount_sen`, `tax_sen`, `line_total_sen`, `unit_cost_sen`, `line_cost_sen`, `line_margin_sen`, `variants`, **`line_delivery_date`** (per-line delivery date, carried from the DO line on convert — mig `20260910T1251`; a DATE, no `_overridden` companion because the SI has no header->line date cascade). |
 | `scm.sales_invoice_payments` | Payments ledger. Same method vocabulary as the DO ledger. `recomputePaid` sums `amount_sen` over this table. |
 | `scm.mfg_sales_order_payments` | READ ONLY from here. The deposit taken on the source Sales Order, applied to this invoice by `scm/lib/si-order-deposit.ts`. No row is ever copied into `sales_invoice_payments` — see *The deposit taken on the SALES ORDER* above. |
 | `scm.customer_credits` | Overpay / cancelled-invoice credit. Written by `applyCustomerCreditToSi`, `creditFromCancelledSi`, `reverseCancelledSiCredit`, `reconcileSiOverpay` (`backend/src/scm/lib/customer-credits.ts`). |
@@ -667,6 +667,27 @@ refuses (`migrated_check_failed`) rather than proceeding. What is deliberately
 NOT blocked: a payment an operator records against a migrated invoice behaves
 normally, and cancelling it still turns the paid amount into credit — that money
 moved in THIS book and is ours to account for.
+
+### A SHORT DELIVERY ORDER IS A MISSING INVOICE, and it is silent (2026-09-08)
+
+`src/scm/lib/migrated-chain.ts` rule 4 writes a migrated invoice only when its
+total equals AutoCount's **to the sen**. That is right — a plausible wrong number
+is silent forever — but it means the invoice's absence is a symptom of the
+DELIVERY ORDER, and nothing on the invoice screens says so. The reconcile reports
+it as `IV absent`, which reads as an invoice problem and is not one.
+
+Measured on the dry run, run `34199062827` (2026-09-08 15:23 +08): of the six
+in-scope sales invoices the ERP does not hold, **four** are refused by that gate
+or by `nothing_to_invoice`, and every one of the four is a delivery order missing
+a line or a price the book states — `DO-001604` short RM 150.00, `DO-000097`
+short RM 50.00, `DO-001953` with nothing to bill, `DO-003699` at RM 0.00. Repair
+the delivery note and the invoice writes itself; there is nothing to fix on the
+invoice side.
+
+**When an absent migrated invoice is reported, run that dry run first.** It names
+the source document and the reason per invoice, in one line each, and it writes
+nothing. The whole classification is
+`docs/cutover-gr-iv-pi-remainder-2026-09-08.md`.
 
 ## 6. What locks and when
 

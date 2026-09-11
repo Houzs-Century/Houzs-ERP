@@ -63,6 +63,7 @@ import postgres from "postgres";
 import { normItemCode } from "./lib/ac-po-line.mjs";
 import { readMappingCsv } from "./lib/ac-mapping-csv.mjs";
 import { planSoItemCodeCorrections } from "./lib/so-item-code-correction.mjs";
+import { loadModelOverrideIndex } from "./lib/ac-model-override-apply.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(HERE, "data");
@@ -181,8 +182,14 @@ async function main() {
   const productByCode = new Map(products.map((p) => [normItemCode(p.code), p]));
   log(`company ${CO}: ${erpRows.length} sales-order line(s) carry one of those keys; pick list holds ${products.length} product(s)`);
 
+  /* The owner's DECLARED model overrides, read from the same owner-approved
+     file the compartment lane writes. Without it this planner undoes his own
+     ruling on HC-SO-011657 — measured on prod run 34258437955. */
+  const OV = loadModelOverrideIndex(DATA);
+  log(`owner model overrides: ${OV.index.size} document(s) carry a complete declaration (${OV.why})`);
   const { plan, refused, counts } = planSoItemCodeCorrections({
     edges: population, bookSoByDtl: book.soByDtl, acMapByCode: book.acMapByCode, erpRowsByDtl, productByCode,
+    overrideIndex: OV.index,
   });
 
   log("");
@@ -193,6 +200,7 @@ async function main() {
   log(`  our line names a DIFFERENT product  <- correct     ${plan.length}`);
   log(`  REFUSED, the key is claimed by >1 ERP row          ${counts.decomposed}   (decomposed sofa; linked_ac_dtlkey is not unique)`);
   log(`  REFUSED, our pick list has no such product         ${counts.noProduct}`);
+  log(`  LEFT ALONE, the owner DECIDED this product          ${counts.ownerDecided}   (a declared model override; correcting it would undo his ruling)`);
   log(`  the sales-order line is not in the ERP             ${counts.notInErp}`);
   log(`  the AutoCount line is not in this snapshot         ${counts.notInBook}`);
   log(`  the AutoCount code is not in the mapping sheet     ${counts.unmapped}   (says nothing either way)`);

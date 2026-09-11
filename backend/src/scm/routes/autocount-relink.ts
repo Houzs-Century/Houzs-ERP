@@ -47,8 +47,30 @@ const DOC = {
      column that does not exist, and PostgREST refused the whole read, so the
      operator's "Match up lines" reported `column mfg_sales_orders.id does not
      exist` and nothing was ever matched (docs/bugs/0601). */
-  SO: { lineTable: NEW_LINE_TABLE.SO, parentCol: 'doc_no', headerTable: 'mfg_sales_orders', headerKey: 'doc_no', headerCols: 'linked_ac_docno', parentFrom: 'docNo' },
-  PO: { lineTable: NEW_LINE_TABLE.PO, parentCol: 'purchase_order_id', headerTable: 'purchase_orders', headerKey: 'po_number', headerCols: 'id, linked_ac_docno', parentFrom: 'headerId' },
+  SO: { lineTable: NEW_LINE_TABLE.SO, parentCol: 'doc_no', headerTable: 'mfg_sales_orders', headerKey: 'doc_no', headerCols: 'linked_ac_docno', resolve: 'docNo' },
+  PO: { lineTable: NEW_LINE_TABLE.PO, parentCol: 'purchase_order_id', headerTable: 'purchase_orders', headerKey: 'po_number', headerCols: 'id, linked_ac_docno', resolve: 'headerId' },
+  /* THE FOUR DOWNSTREAM DOCUMENTS. They are built by CONVERSION, so their lines
+     are never inserted by hand — but a conversion that ran before the service
+     reported its keys, or a partial the ERP could not name, leaves them KEYLESS
+     all the same, and until now there was no way to match them up (the button
+     400'd). The book holds them — `/doc-read` serves all six types
+     (AcSyncService.cs:518) — and planLineRelink is document-type agnostic, so
+     the only thing missing was the header/line wiring here.
+
+     RESOLVE VIA THE OUTBOX `doc_id`, NOT the request's `doc_no`. A conversion's
+     queue `doc_no` is not a uniform shape — an unnumbered delivery order carries
+     its header uuid, a goods receipt carries its business number — so keying the
+     header on `doc_no` would be the docs/bugs/0601 trap again. `enqueueConvert`
+     always stores the header uuid in the outbox row's `doc_id`
+     (autocount-outbox.ts, `readConvertHeaderFacts(sb, docType, docId)`), so that
+     is the one identifier that is the same shape for every type. The lines link
+     by that same header id (`delivery_order_id` / `grn_id` / …), exactly as PO
+     lines link by the PO's id. Columns proven on all four in
+     autocount-convert-lines.ts DOWNSTREAM `itemCols`. */
+  DO: { lineTable: 'delivery_order_items', parentCol: 'delivery_order_id', headerTable: 'delivery_orders', headerKey: 'id', headerCols: 'id, linked_ac_docno', resolve: 'outboxDocId' },
+  GR: { lineTable: 'grn_items', parentCol: 'grn_id', headerTable: 'grns', headerKey: 'id', headerCols: 'id, linked_ac_docno', resolve: 'outboxDocId' },
+  IV: { lineTable: 'sales_invoice_items', parentCol: 'sales_invoice_id', headerTable: 'sales_invoices', headerKey: 'id', headerCols: 'id, linked_ac_docno', resolve: 'outboxDocId' },
+  PI: { lineTable: 'purchase_invoice_items', parentCol: 'purchase_invoice_id', headerTable: 'purchase_invoices', headerKey: 'id', headerCols: 'id, linked_ac_docno', resolve: 'outboxDocId' },
 } as const;
 
 type DocKind = keyof typeof DOC;
@@ -71,8 +93,7 @@ export const autocountRelinkLinesHandler = async (
   if (!spec) {
     return c.json({
       error: 'invalid_doc_type',
-      message: `docType must be one of ${Object.keys(DOC).join(', ')}. The other four are built by `
-        + 'conversion and their lines are never added by hand here.',
+      message: `docType must be one of ${Object.keys(DOC).join(', ')}.`,
     }, 400);
   }
   if (!docNo) return c.json({ error: 'invalid_doc_no', message: '`docNo` is required.' }, 400);
@@ -80,12 +101,33 @@ export const autocountRelinkLinesHandler = async (
   const sb = c.get('supabase');
   const companyId = activeCompanyId(c);
 
+  /* A conversion document's queue doc_no is not a uniform shape (unnumbered DO =
+     header uuid, GR = business number), so its header is found through the
+     outbox row's doc_id — the header uuid enqueueConvert always stores. SO/PO
+     key on the request's docNo directly. */
+  let headerKeyValue = docNo;
+  if (spec.resolve === 'outboxDocId') {
+    const { data: ob, error: obErr } = await sb.from('autocount_outbox')
+      .select('doc_id')
+      .eq('company_id', companyId)
+      .eq('doc_type', docType)
+      .eq('doc_no', docNo)
+      .not('doc_id', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (obErr) return c.json({ error: 'read_failed', reason: obErr.message }, 500);
+    const docId = (ob as { doc_id?: string | null } | null)?.doc_id ?? null;
+    if (!docId) return c.json({ error: 'not_found', message: 'no queued row carries a document id for this document.' }, 404);
+    headerKeyValue = docId;
+  }
+
   /* The document has to be OURS before we read it out of the book — the company
      predicate is the whole tenant boundary on this client (it is the service
      role, so no policy is evaluated). */
   const { data: header, error: headerErr } = await sb.from(spec.headerTable)
     .select(spec.headerCols)
-    .eq(spec.headerKey, docNo)
+    .eq(spec.headerKey, headerKeyValue)
     .eq('company_id', companyId)
     .maybeSingle();
   /* BOUND AND BRANCHED, not `?? null`. A failed read and "no such document" are
@@ -109,9 +151,9 @@ export const autocountRelinkLinesHandler = async (
   /* Read off the spec for the same reason `headerCols` is: a per-document fact
      settled by testing a column NAME silently takes the wrong branch the moment
      a third document type is added, and nothing fails to compile. */
-  const parentValue = spec.parentFrom === 'headerId'
-    ? String((header as { id?: unknown }).id ?? '')
-    : docNo;
+  const parentValue = spec.resolve === 'docNo'
+    ? docNo
+    : String((header as { id?: unknown }).id ?? '');
   const { data: rows, error: rowsErr } = await sb.from(spec.lineTable)
     .select('id, item_code, description2, linked_ac_dtlkey')
     .eq(spec.parentCol, parentValue);

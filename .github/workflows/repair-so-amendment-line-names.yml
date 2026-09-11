@@ -1,0 +1,57 @@
+name: Repair SO amendment line names (plan by default)
+
+# Dispatchable run of backend/scripts/repair-so-amendment-line-names.mjs — fixes
+# the stale product NAME an approved code-swap amendment left on a Sales Order
+# line (docs/bugs/0781). PLAN by default (reads only, prints every change it
+# would make); MODE=apply + CONFIRM writes `description` and re-verifies on a
+# fresh connection.
+#
+# Touches `description` only, and only lines that went through an applied SPEC
+# amendment — never a price, qty, variant, status or date. DATABASE_URL is the
+# only credential.
+#
+# Manual trigger only, own concurrency group — never queues behind or displaces
+# a release, never scheduled.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, no writes) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+      confirm:
+        description: 'required for apply: REPAIR SO AMENDMENT NAMES'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-so-amendment-line-names
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-so-amendment-line-names.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

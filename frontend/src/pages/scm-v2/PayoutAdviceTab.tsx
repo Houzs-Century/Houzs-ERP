@@ -20,7 +20,10 @@
 
 import { useState } from 'react';
 import { AlertTriangle, Upload } from 'lucide-react';
-import { usePayouts, useUploadPayoutAdvice, type Payout, type PayoutDay } from './settlement-queries';
+import {
+  usePayouts, useUploadPayoutAdvice, usePostPayoutCharge, useUndoPayoutCharge,
+  type Payout, type PayoutDay, type ChargeAccount,
+} from './settlement-queries';
 import {
   ICON, fmt, btn, cell, num, table, headRow, rowLine, softText, danger, good, panel, refusalText,
 } from './settlement-ui';
@@ -34,6 +37,10 @@ export const PayoutAdviceTab = () => {
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
 
   const payouts = q.data?.payouts ?? [];
+  /* What the bank-charge dialog needs (docs/bugs/0787): the accounts it may
+     offer, and each acquirer's fee account to start on. */
+  const chargeAccounts = q.data?.chargeAccounts ?? [];
+  const feeAccountByAcquirer = q.data?.feeAccountByAcquirer ?? {};
 
   /* The PDF goes up as base64, not text — a PDF read as text is mangled before
      the server ever sees it. readAsDataURL's prefix is fine; the server strips
@@ -101,7 +108,10 @@ export const PayoutAdviceTab = () => {
             it names is checked against the reports already reconciled.
           </div>
         )}
-        {payouts.map((p) => <AdviceCard key={p.id} payout={p} />)}
+        {payouts.map((p) => (
+          <AdviceCard key={p.id} payout={p} chargeAccounts={chargeAccounts}
+            defaultAccount={Object.hasOwn(feeAccountByAcquirer, p.acquirer_code) ? feeAccountByAcquirer[p.acquirer_code] : null} />
+        ))}
       </section>
     </div>
   );
@@ -111,7 +121,9 @@ export const PayoutAdviceTab = () => {
    Re-checked by the server on every read, not read back from upload time: a
    report uploaded since must count, and one re-opened since must block. */
 
-const AdviceCard = ({ payout }: { payout: Payout }) => {
+const AdviceCard = ({ payout, chargeAccounts, defaultAccount }: {
+  payout: Payout; chargeAccounts: ChargeAccount[]; defaultAccount: string | null;
+}) => {
   const s = payout.status;
   const reportCount = new Set(s.days.map((d) => d.batchId).filter((id) => id != null)).size;
 
@@ -163,7 +175,9 @@ const AdviceCard = ({ payout }: { payout: Payout }) => {
               <td style={num}>{fmt(d.adviceNetSen)}</td>
               <td style={cell}>{d.fileName ?? <span className={grid.sub}>—</span>}</td>
               <td style={num}>{d.reportNetSen == null ? '—' : fmt(d.reportNetSen)}</td>
-              <td style={cell}><DayStanding day={d} /></td>
+              <td style={cell}>
+                <DayStanding day={d} payoutId={payout.id} chargeAccounts={chargeAccounts} defaultAccount={defaultAccount} />
+              </td>
             </tr>
           ))}
         </tbody>
@@ -172,13 +186,49 @@ const AdviceCard = ({ payout }: { payout: Payout }) => {
   );
 };
 
-const DayStanding = ({ day }: { day: PayoutDay }) => {
+const DayStanding = ({ day, payoutId, chargeAccounts, defaultAccount }: {
+  day: PayoutDay; payoutId: number; chargeAccounts: ChargeAccount[]; defaultAccount: string | null;
+}) => {
+  const undo = useUndoPayoutCharge();
+  const [asking, setAsking] = useState(false);
   switch (day.state) {
     case 'AGREES':
-      return <span className={grid.good}>agrees</span>;
-    case 'DIFFERS':
-      /* BOTH numbers are already on the row; the finding is their distance. */
-      return <span className={grid.bad}>differs by {fmt(Math.abs(day.differenceSen ?? 0))}</span>;
+      /* A day that agrees BECAUSE a charge was booked says so, with the money
+         and where it went — and can be undone from here (docs/bugs/0787). */
+      return day.chargeSen > 0 ? (
+        <span className={grid.good}>
+          agrees · bank charge {fmt(day.chargeSen)} → {day.chargeAccountCode ?? '?'}
+          {day.chargeNote ? <span className={grid.sub}> ({day.chargeNote})</span> : null}
+          {' '}
+          <button type="button" style={linkBtn} disabled={undo.isPending}
+            onClick={() => undo.mutate({ payoutId, settledOn: day.settledOn })}>
+            {undo.isPending ? 'Undoing…' : 'Undo'}
+          </button>
+          {/* A refusal reaches the person who pressed Undo, in the server's own sentence. */}
+          {undo.isError && (
+            <span style={{ color: danger, fontSize: 'var(--fs-12)', marginLeft: 6 }}>{refusalText(undo.error, 'The charge could not be undone.')}</span>
+          )}
+        </span>
+      ) : <span className={grid.good}>agrees</span>;
+    case 'DIFFERS': {
+      /* BOTH numbers are already on the row; the finding is their distance.
+         When the bank paid LESS than the report, that distance may be a charge
+         it deducted — offered here, on the day, booked to the account Finance
+         picks (owner 2026-09-10: 可以让我点了后选这笔进什么户口吗). */
+      const short = day.differenceSen != null && day.differenceSen > 0 && day.chargeSen === 0;
+      return (
+        <span>
+          <span className={grid.bad}>differs by {fmt(Math.abs(day.differenceSen ?? 0))}</span>
+          {short && !asking && (
+            <button type="button" style={linkBtn} onClick={() => setAsking(true)}>Bank deducted a charge</button>
+          )}
+          {short && asking && (
+            <ChargeForm payoutId={payoutId} day={day} chargeAccounts={chargeAccounts}
+              defaultAccount={defaultAccount} onClose={() => setAsking(false)} />
+          )}
+        </span>
+      );
+    }
     case 'REPORT_MISSING':
       return <span style={{ color: danger }}>no report uploaded for this day</span>;
     case 'REPORT_NOT_RECONCILED':
@@ -188,4 +238,47 @@ const DayStanding = ({ day }: { day: PayoutDay }) => {
         </span>
       );
   }
+};
+
+const linkBtn: React.CSSProperties = {
+  marginLeft: 8, border: '1px solid var(--c-line, rgba(34,31,32,0.3))', background: 'none',
+  borderRadius: 6, padding: '2px 8px', cursor: 'pointer', fontSize: 'var(--fs-12)', fontWeight: 600,
+};
+
+/* The ask: how much the bank deducted (the whole difference unless told
+   otherwise), which account it goes to (Finance's choice, starting on the
+   acquirer's fee account), and what it was for (required — the corrections
+   report prints it). Every refusal is the server's own sentence. */
+const ChargeForm = ({ payoutId, day, chargeAccounts, defaultAccount, onClose }: {
+  payoutId: number; day: PayoutDay; chargeAccounts: ChargeAccount[]; defaultAccount: string | null; onClose: () => void;
+}) => {
+  const post = usePostPayoutCharge();
+  const difference = Math.max(0, day.differenceSen ?? 0);
+  const [amount, setAmount] = useState((difference / 100).toFixed(2));
+  const [account, setAccount] = useState(defaultAccount ?? (chargeAccounts.length > 0 ? chargeAccounts[0].accountCode : ''));
+  const [note, setNote] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const amountSen = Math.round(Number(amount) * 100);
+  const ready = Number.isFinite(amountSen) && amountSen > 0 && account !== '' && note.trim() !== '';
+  return (
+    <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginLeft: 8 }}>
+      <input aria-label="Charge amount" value={amount} onChange={(e) => setAmount(e.target.value)}
+        inputMode="decimal" style={{ width: 90, fontSize: 'var(--fs-12)', padding: '2px 6px' }} />
+      <select aria-label="Charge account" value={account} onChange={(e) => setAccount(e.target.value)}
+        style={{ fontSize: 'var(--fs-12)', padding: '2px 6px', maxWidth: 220 }}>
+        {chargeAccounts.map((a) => <option key={a.accountCode} value={a.accountCode}>{a.accountCode} · {a.accountName}</option>)}
+      </select>
+      <input aria-label="What the bank deducted this for" value={note} onChange={(e) => setNote(e.target.value)}
+        placeholder="PBB card-terminal application fee" style={{ width: 220, fontSize: 'var(--fs-12)', padding: '2px 6px' }} />
+      <button type="button" style={btn(true, !ready || post.isPending)} disabled={!ready || post.isPending}
+        onClick={() => post.mutate(
+          { payoutId, settledOn: day.settledOn, amountSen, accountCode: account, note: note.trim() },
+          { onSuccess: onClose, onError: (e) => setError(refusalText(e, 'The charge could not be booked.')) },
+        )}>
+        {post.isPending ? 'Booking…' : 'Book charge'}
+      </button>
+      <button type="button" style={linkBtn} onClick={onClose}>Cancel</button>
+      {error && <span style={{ color: danger, fontSize: 'var(--fs-12)' }}>{error}</span>}
+    </span>
+  );
 };

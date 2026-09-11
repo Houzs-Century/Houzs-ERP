@@ -103,6 +103,7 @@ import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2
 import { formatPhone } from "@2990s/shared/phone";
 import { clearPaymentRetryHandoff, completePaymentRetryDraft, consumePaymentRetryNavigationState, planPaymentDraftFlush, readPaymentRetryHandoff, readPaymentRetryNavigationState } from "../../lib/paymentRetryHandoff";
 import { transferFromColumnLabel } from "../../lib/convertScope";
+import { customerRefOf } from '../../lib/customer-ref';
 
 // ─── Row shapes (subset — see SalesInvoiceDetail.tsx for the full 40-field
 // header) ───────────────────────────────────────────────────────────────
@@ -187,6 +188,8 @@ type SiItem = {
   cancelled?: boolean;
   item_group?: string;
   variants?: Record<string, unknown> | null;
+  /* Per-line delivery date carried from the DO line. */
+  line_delivery_date?: string | null;
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -207,8 +210,7 @@ const daysPast = (iso: string | null | undefined): number => {
   return Math.floor((now - t) / 86_400_000);
 };
 
-const refOf = (h: SiHeader): string =>
-  h.po_doc_no || h.customer_so_no || h.ref || "—";
+const refOf = (h: SiHeader): string => customerRefOf(h) || "—";
 
 const soOf = (h: SiHeader): string => h.so_doc_no || "—";
 
@@ -875,6 +877,7 @@ export function SalesInvoiceDetailV2() {
             so_doc_no: salesInvoice.so_doc_no,
             customer_so_no: salesInvoice.customer_so_no,
             po_doc_no: salesInvoice.po_doc_no,
+            ref: salesInvoice.ref,
           }
         : null,
     [salesInvoice],
@@ -1056,6 +1059,18 @@ export function SalesInvoiceDetailV2() {
           </div>
         );
       },
+    },
+    {
+      key: "delivery",
+      label: "Delivery",
+      width: "104px",
+      align: "left",
+      getValue: (l) => l.line_delivery_date ?? "",
+      render: (l) => (
+        <span className="font-mono text-[12px] text-ink-secondary">
+          {l.line_delivery_date ? fmtDate(l.line_delivery_date) : "—"}
+        </span>
+      ),
     },
     {
       key: "qty",

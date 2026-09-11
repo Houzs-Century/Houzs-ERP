@@ -49,6 +49,7 @@ import { SoLineCard, emptySoLine, type SoLineDraft } from '../../vendor/scm/comp
 import {
   PaymentsTable, labelToApi, draftMethodFields, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
+import { useSalesOrderPayments } from '../../vendor/scm/lib/sales-order-queries';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtMoneySen } from '@2990s/shared';
@@ -147,6 +148,10 @@ export const SalesInvoiceNew = () => {
   // ── Items + payments ──
   const [lines, setLines] = useState<DraftLine[]>(() => [newLine()]);
   const [paymentDrafts, setPaymentDrafts] = useState<PaymentDraft[]>([]);
+  /* The source order's OWN collected payments (read-only) — shown so the operator
+     sees what already settles this invoice while transferring. #2681 applies it on
+     the CREATED invoice's detail; this is a preview that records nothing here. */
+  const soPaymentsQ = useSalesOrderPayments(soDocNo || null);
   const [createdInvoice, setCreatedInvoice] = useState<{ id: string; number: string } | null>(null);
 
   /* Prefill from the DO once its detail + payments load. Guarded so we only
@@ -194,7 +199,7 @@ export const SalesInvoiceNew = () => {
       doItemId: string; itemCode: string; itemGroup: string | null;
       description: string | null; uom: string | null; qty: number;
       unitPriceSen: number; discountSen: number; unitCostSen: number;
-      variants: unknown;
+      variants: unknown; lineDeliveryDate?: string | null;
     };
     const stash = fromPicks ? readScmHandoff<Stash[]>('siFromDoPicks') : null;
 
@@ -212,6 +217,10 @@ export const SalesInvoiceNew = () => {
         discountSen: Number(s.discountSen ?? 0),
         unitCostSen: Number(s.unitCostSen ?? 0),
         variants: (s.variants as Record<string, unknown>) ?? {},
+        /* Carry the DO line's delivery date onto the SI line; fall back to the DO
+           header's delivery date when the line has none (most DOs carry ONE
+           order-level date, not a per-line one — so this fills the column). */
+        lineDeliveryDate: s.lineDeliveryDate ?? (doc.customer_delivery_date as string | null) ?? null,
       })));
       removeScmHandoff('siFromDoPicks');
     } else if (doItems.length > 0) {
@@ -229,6 +238,7 @@ export const SalesInvoiceNew = () => {
         unitCostSen: Number(it.unit_cost_sen ?? 0),
         variants: (it.variants as Record<string, unknown>) ?? {},
         remark: (it.notes as string) ?? '',
+        lineDeliveryDate: (it.line_delivery_date as string | null) ?? (doc.customer_delivery_date as string | null) ?? null,
       })));
     }
 
@@ -406,6 +416,7 @@ export const SalesInvoiceNew = () => {
           discountSen: l.discountSen,
           unitCostSen: l.unitCostSen,
           variants: l.variants,
+          lineDeliveryDate: l.lineDeliveryDate ?? null,
         })),
       },
       {
@@ -578,6 +589,10 @@ export const SalesInvoiceNew = () => {
               <DateField className={styles.fieldInput} fullWidth value={dueDate ?? ''} onChange={(iso) => setDueDate(iso)} />
             </label>
             <label className={styles.field}>
+              <span className={styles.fieldLabel}>Delivery Date</span>
+              <DateField className={styles.fieldInput} fullWidth value={customerDeliveryDate} onChange={(iso) => setCustomerDeliveryDate(iso)} />
+            </label>
+            <label className={styles.field}>
               <span className={styles.fieldLabel}>Building Type</span>
               <span className={styles.selectWrap}>
                 <select className={styles.fieldSelect} value={buildingType} onChange={(e) => setBuildingType(e.target.value)}>
@@ -702,6 +717,7 @@ export const SalesInvoiceNew = () => {
               client-side invention - a red ring and a ` *` for a field the
               backend never asked for. */
               variantsRequired={false}
+              seedSofaLegDefault={false}
             />
           ))}
           <button type="button" onClick={addLine}
@@ -724,6 +740,27 @@ export const SalesInvoiceNew = () => {
       </section>
 
       </>)}
+
+      {soDocNo && (soPaymentsQ.data?.length ?? 0) > 0 && (
+        <section className={styles.card}>
+          <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Collected on {soDocNo}</h2></header>
+          <div className={styles.cardBody}>
+            <p style={{ margin: '0 0 var(--space-2)', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+              Taken on the Sales Order, not on this invoice — it settles what this invoice bills once you Create. Read-only preview.
+            </p>
+            {(soPaymentsQ.data ?? []).map((p) => (
+              <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-13)', padding: '3px 0', borderBottom: '1px solid var(--line)' }}>
+                <span>{String(p.paid_at).slice(0, 10)} · {p.method}{p.approval_code ? ` · ${p.approval_code}` : ''}{p.collected_by_name ? ` · ${p.collected_by_name}` : ''}</span>
+                <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(p.amount_sen)}</span>
+              </div>
+            ))}
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, marginTop: 6 }}>
+              <span>Order paid</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm((soPaymentsQ.data ?? []).reduce((s, p) => s + Number(p.amount_sen), 0))}</span>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* ── PAYMENTS (shared draft-mode ledger) ── */}
       <PaymentsTable

@@ -57,7 +57,6 @@ import {
   useAddPurchaseOrderItem,
   useUpdatePurchaseOrderItem,
   useDeletePurchaseOrderItem,
-  useCancelPurchaseOrder,
   useConfirmPurchaseOrder,
   useReopenPurchaseOrder,
   useSuppliers,
@@ -82,6 +81,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { RelationshipMapButton } from '../../vendor/scm/components/RelationshipMapButton';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
+import { usePoCancelAction } from './use-po-cancel-action';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { canOperatePurchaseOrders } from '../../auth/salesAccess';
@@ -210,7 +210,7 @@ export const PurchaseOrderDetail = () => {
   const detail = usePurchaseOrderDetail(id ?? null);
   const updateHeader = useUpdatePurchaseOrderHeader();
   // PR-DRAFT-removal — Submit button removed (POs are SUBMITTED on create).
-  const cancel = useCancelPurchaseOrder();
+  const { cancelPo, isPending: cancelling } = usePoCancelAction();
   const confirm = useConfirmPurchaseOrder();
   const reopen = useReopenPurchaseOrder();
   const addItem = useAddPurchaseOrderItem();
@@ -218,6 +218,13 @@ export const PurchaseOrderDetail = () => {
   const deleteItem = useDeletePurchaseOrderItem();
   const askConfirm = useConfirm();
   const notify = useNotify();
+  /* The cancel itself — ask why, then cancel. Owner 2026-09-09: no approval,
+     but no silent cancel either (./use-po-cancel-action.ts, shared with the
+     read page, the list menu and mobile). */
+  const executeCancel = (poNumber: string) => {
+    if (!id) return;
+    void cancelPo(id, poNumber);
+  };
   // PR #102 — PO PDF (AutoCount layout) needs the Purchase Location's
   // human-readable name; the header only carries the warehouse id. Load
   // warehouses once at the top so the print handler can resolve it.
@@ -997,17 +1004,16 @@ export const PurchaseOrderDetail = () => {
               The Delete half of that report no longer exists: the endpoint and
               both buttons were removed 2026-08-11 (#1939) under the owner rule
               不可以删只可以 cancel. Cancel + Reopen are the whole surface. */}
+          {/* Owner 2026-09-09 —「PO cancelled 不需要审批，只需要 remark 原因取消」:
+              the approval this button briefly routed through is gone, the
+              mandatory reason it introduced is not. Same for a DRAFT and a live
+              PO; the server refuses either without a reason. */}
           {(po.status === 'DRAFT' || po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && (
             <Button variant="ghost" size="md"
-              onClick={async () => {
-                if (!(await askConfirm({ title: `Cancel PO ${po.po_number}?`, body: 'This sets status to CANCELLED — line items + linked docs stay for audit.', confirmLabel: 'Cancel PO', danger: true }))) return;
-                cancel.mutate(po.id, {
-                  onError: (err) => notify({ title: 'Cancel failed', body: `${err instanceof Error ? err.message : 'Something went wrong.'}`, tone: 'error' }),
-                });
-              }}
-              disabled={cancel.isPending}>
+              onClick={() => executeCancel(po.po_number)}
+              disabled={cancelling}>
               <Ban {...ICON} />
-              <span>{cancel.isPending ? 'Cancelling…' : 'Cancel'}</span>
+              <span>{cancelling ? 'Cancelling…' : 'Cancel PO'}</span>
             </Button>
           )}
           {/* Reopen a cancelled PO (Commander 2026-06-16 — "PO cancel 了 不可以

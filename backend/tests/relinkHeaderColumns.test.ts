@@ -37,19 +37,24 @@ describe('the relink header read asks each table only for columns it has', () =>
   });
 
   /* The same root, one line further down: a per-document fact must be READ off
-     the spec, not re-derived by testing a column NAME. A third document type
+     the spec, not re-derived by testing a column NAME. A new document type
      would silently take the docNo branch with nothing failing to compile
-     (CLAUDE.md — a parameter that DECIDES is required, never inferred). */
+     (CLAUDE.md — a parameter that DECIDES is required, never inferred). The
+     discriminant is `resolve` since the map grew past SO/PO to the four
+     conversion documents (docs/bugs/0792). */
   test('which value the lines are looked up by is read off the spec', () => {
-    expect(SRC).toMatch(/spec\.parentFrom === 'headerId'/);
-    expect(SRC).not.toMatch(/spec\.parentCol === 'purchase_order_id'/);
+    expect(SRC).toMatch(/spec\.resolve === 'docNo'/);
+    expect(SRC).not.toMatch(/spec\.parentCol === '/);
   });
 
-  /* Every entry carries every per-document field, so adding one cannot half-land. */
-  test('both documents declare all four per-document facts', () => {
-    for (const kind of ['SO', 'PO']) {
-      const entry = SRC.slice(SRC.indexOf(`${kind}: {`), SRC.indexOf(`${kind}: {`) + 260);
-      for (const field of ['lineTable', 'parentCol', 'headerTable', 'headerKey', 'headerCols', 'parentFrom']) {
+  /* Every entry carries every per-document field, so adding one cannot half-land.
+     All six document types since the map grew to the conversion documents. */
+  test('every document type declares all six per-document facts', () => {
+    for (const kind of ['SO', 'PO', 'DO', 'GR', 'IV', 'PI']) {
+      const at = SRC.indexOf(`${kind}: {`);
+      expect(at, `${kind} entry not found`).toBeGreaterThan(-1);
+      const entry = SRC.slice(at, SRC.indexOf('},', at) + 2);
+      for (const field of ['lineTable', 'parentCol', 'headerTable', 'headerKey', 'headerCols', 'resolve']) {
         expect(entry, `${kind} is missing ${field}`).toContain(`${field}:`);
       }
     }

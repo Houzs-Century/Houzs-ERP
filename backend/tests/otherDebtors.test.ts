@@ -353,6 +353,51 @@ describe('the Receipt — four layers, partial knock-off, Dr bank / Cr control',
     expect(String(row.notes)).toContain('银行不对');
   });
 
+  /* The Receipts page's door (owner 2026-09-08: 不可能链接起来吗 … 用这个方式):
+     postNow raises AND books in one call — the same entry the fourth layer
+     writes, the three marks stamped by the one hand that keyed it. */
+  test('postNow books the receipt in the same call: POSTED, marks stamped, Dr bank / Cr control, the bill knocked off', async () => {
+    const tables = baseTables();
+    const app = harness(tables);
+    const bill = await makeBill(app, tables);
+    const billRow = tables.acc_debtor_bills.find((b) => b.bill_number === bill.billNumber)!;
+
+    const res = await post(app, '/d1/receipts', {
+      receiptDate: '2026-09-08', bankAccountCode: '310-0010', postNow: true,
+      allocations: [{ billId: billRow.id, amountSen: 50000 }],
+    });
+    expect(res.status, await res.clone().text()).toBe(201);
+    const body = await res.json() as { posted: boolean; jeNo: string; receipt: { id: string; receiptNumber: string; totalSen: number } };
+    expect(body.posted).toBe(true);
+    expect(body.receipt.totalSen).toBe(50000);
+
+    const row = tables.acc_debtor_receipts.find((x) => x.id === body.receipt.id)!;
+    expect(row.status).toBe('POSTED');
+    expect(row.submitted_at && row.checked_at && row.approved_at && row.posted_at).toBeTruthy();
+    expect(billRow.received_sen).toBe(50000);
+    expect(billRow.status).toBe('PAID');
+    const je = tables.journal_entries.find((j) => j.source_type === 'ODR' && j.source_doc_no === body.receipt.receiptNumber)!;
+    expect(je.je_no).toBe(body.jeNo);
+    const jl = tables.journal_entry_lines.filter((l) => l.journal_entry_id === je.id);
+    expect(jl.find((l) => l.account_code === '310-0010')).toMatchObject({ debit_sen: 50000 });
+    expect(jl.find((l) => l.account_code === '305-0000')).toMatchObject({ credit_sen: 50000 });
+    /* Already posted: the fourth layer has nothing left to do. */
+    expect((await post(app, `/receipts/${body.receipt.id}/approve`)).status).toBe(409);
+  });
+
+  test('without postNow nothing changes — the receipt starts at Draft as before', async () => {
+    const tables = baseTables();
+    const app = harness(tables);
+    const bill = await makeBill(app, tables);
+    const billRow = tables.acc_debtor_bills.find((b) => b.bill_number === bill.billNumber)!;
+    const receipt = await raise(app, 20000, billRow.id);
+    const row = tables.acc_debtor_receipts.find((x) => x.id === receipt.id)!;
+    expect(row.status).toBe('DRAFT');
+    expect(row.submitted_at ?? null).toBeNull();
+    expect(billRow.received_sen ?? 0).toBe(0);
+    expect(tables.journal_entries.filter((j) => j.source_type === 'ODR')).toHaveLength(0);
+  });
+
   test('the receipt lands on MONEY only', async () => {
     const tables = baseTables();
     const app = harness(tables);

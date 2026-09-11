@@ -61,48 +61,96 @@ export type ConfirmOpts = {
   cancelLabel?: string;
   /** Red Confirm button for destructive actions (delete / void). */
   danger?: boolean;
+  /** Ask for a line of text with the confirm (owner 2026-09-10: a payment
+      correction made on the amend right owes a reason). When `required`,
+      Confirm stays disabled until something is typed — the dialog does not
+      let an empty reason through and make the server refuse it instead. */
+  input?: { label: string; placeholder?: string; required?: boolean };
 };
 
 export type ConfirmDialogProps = ConfirmOpts & {
   onConfirm: () => void;
   onCancel: () => void;
+  /** The typed text, when `input` is set. Controlled by the provider. */
+  value?: string;
+  onValueChange?: (v: string) => void;
+};
+
+const inputStyle: CSSProperties = {
+  width: '100%', boxSizing: 'border-box', minHeight: 72, resize: 'vertical',
+  fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-13)', color: 'var(--c-ink)',
+  border: '1px solid var(--line-strong)', borderRadius: 'var(--radius-md)',
+  padding: 'var(--space-2)', margin: '0 0 var(--space-4)', background: 'var(--c-paper)',
+};
+const labelStyle: CSSProperties = {
+  display: 'block', fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-12)',
+  color: 'var(--c-ink)', fontWeight: 700, margin: '0 0 var(--space-1)',
 };
 
 export const ConfirmDialog = ({
-  title, body, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger, onConfirm, onCancel,
-}: ConfirmDialogProps) => (
-  <div style={backdrop} onClick={onCancel} role="presentation">
-    <div style={card} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-      <h2 style={titleStyle}>{title}</h2>
-      {body != null && <p style={bodyStyle}>{body}</p>}
-      <div style={actions}>
-        <button type="button" style={ghostBtn} onClick={onCancel}>{cancelLabel}</button>
-        <button type="button" style={danger ? dangerBtn : primaryBtn} onClick={onConfirm} autoFocus>
-          {confirmLabel}
-        </button>
+  title, body, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger, input,
+  value = '', onValueChange, onConfirm, onCancel,
+}: ConfirmDialogProps) => {
+  const blocked = Boolean(input?.required) && value.trim() === '';
+  return (
+    <div style={backdrop} onClick={onCancel} role="presentation">
+      <div style={card} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <h2 style={titleStyle}>{title}</h2>
+        {body != null && <p style={bodyStyle}>{body}</p>}
+        {input && (
+          <label style={labelStyle}>
+            {input.label}
+            <textarea
+              style={inputStyle}
+              value={value}
+              placeholder={input.placeholder}
+              onChange={(e) => onValueChange?.(e.target.value)}
+              autoFocus
+              aria-required={input.required === true}
+            />
+          </label>
+        )}
+        <div style={actions}>
+          <button type="button" style={ghostBtn} onClick={onCancel}>{cancelLabel}</button>
+          <button
+            type="button"
+            style={{ ...(danger ? dangerBtn : primaryBtn), ...(blocked ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+            onClick={onConfirm}
+            disabled={blocked}
+            autoFocus={!input}
+          >
+            {confirmLabel}
+          </button>
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
+/* One provider, two hooks. `confirm` answers yes/no; `prompt` answers with the
+   text typed, or null when dismissed. Both go through the same dialog so a
+   prompt supersedes an open confirm the way two confirms already do. */
+type Settled = { ok: boolean; text: string };
+type AskFn = (opts: ConfirmOpts) => Promise<Settled>;
 type ConfirmFn = (opts: ConfirmOpts) => Promise<boolean>;
+type PromptFn = (opts: ConfirmOpts & { input: NonNullable<ConfirmOpts['input']> }) => Promise<string | null>;
 
-const ConfirmContext = createContext<ConfirmFn | null>(null);
+const AskContext = createContext<AskFn | null>(null);
 
 /* Mount once at the app root. Holds the live prompt state, renders the modal,
-   and hands every descendant a confirm() through context. */
+   and hands every descendant a confirm() / prompt() through context. */
 export function ConfirmProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<(ConfirmOpts & { resolve: (v: boolean) => void }) | null>(null);
-  const confirm = useCallback<ConfirmFn>(
-    (opts) => new Promise<boolean>((resolve) => {
+  const [state, setState] = useState<(ConfirmOpts & { resolve: (v: Settled) => void; text: string }) | null>(null);
+  const ask = useCallback<AskFn>(
+    (opts) => new Promise<Settled>((resolve) => {
       // A new prompt supersedes any open one (resolve the old as cancelled).
-      setState((prev) => { prev?.resolve(false); return { ...opts, resolve }; });
+      setState((prev) => { prev?.resolve({ ok: false, text: '' }); return { ...opts, resolve, text: '' }; });
     }),
     [],
   );
-  const settle = (v: boolean) => setState((s) => { s?.resolve(v); return null; });
+  const settle = (ok: boolean) => setState((s) => { s?.resolve({ ok, text: s.text }); return null; });
   return (
-    <ConfirmContext.Provider value={confirm}>
+    <AskContext.Provider value={ask}>
       {children}
       {state && (
         <ConfirmDialog
@@ -111,17 +159,33 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
           confirmLabel={state.confirmLabel}
           cancelLabel={state.cancelLabel}
           danger={state.danger}
+          input={state.input}
+          value={state.text}
+          onValueChange={(text) => setState((s) => (s ? { ...s, text } : s))}
           onConfirm={() => settle(true)}
           onCancel={() => settle(false)}
         />
       )}
-    </ConfirmContext.Provider>
+    </AskContext.Provider>
   );
 }
 
 /* Gate an action behind an in-app confirm: `if (await confirm({…})) doIt()`. */
 export function useConfirm(): ConfirmFn {
-  const confirm = useContext(ConfirmContext);
-  if (!confirm) throw new Error('useConfirm must be used within <ConfirmProvider>');
-  return confirm;
+  const ask = useContext(AskContext);
+  if (!ask) throw new Error('useConfirm must be used within <ConfirmProvider>');
+  return useCallback<ConfirmFn>(async (opts) => (await ask(opts)).ok, [ask]);
+}
+
+/* Ask for a line of text: `const reason = await prompt({…, input: {…}})` —
+   the trimmed text on Confirm, null on Cancel / backdrop / supersession. A
+   required input that is blank cannot be confirmed, so a non-null answer is
+   never empty when `required` was set. */
+export function usePrompt(): PromptFn {
+  const ask = useContext(AskContext);
+  if (!ask) throw new Error('usePrompt must be used within <ConfirmProvider>');
+  return useCallback<PromptFn>(async (opts) => {
+    const r = await ask(opts);
+    return r.ok ? r.text.trim() : null;
+  }, [ask]);
 }

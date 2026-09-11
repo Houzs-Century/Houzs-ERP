@@ -1,0 +1,47 @@
+name: SO history check (read-only)
+
+# Answers "what actually happened to this Sales Order, in order?" without anyone
+# opening a SQL console. Actions already holds secrets.DATABASE_URL for the
+# deploy, so the check runs here and nobody handles the credential.
+#
+# Written 2026-09-09 for HC-SO-012312, where a rep set the Processing Date, saw
+# it come back empty, and only a second attempt stuck. Three explanations were
+# reasoned out and all three were refuted — the order's own recorded history is
+# what is left.
+#
+# Manual trigger only — it is a diagnostic, not a gate, and a production DB read
+# must never run on a schedule that turns it into routine CI noise.
+on:
+  workflow_dispatch:
+    inputs:
+      doc_no:
+        description: "Sales Order to inspect, e.g. HC-SO-012312"
+        required: true
+        type: string
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind (or displace) a release.
+concurrency:
+  group: so-history-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-so-history.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DOC_NO: ${{ inputs.doc_no }}

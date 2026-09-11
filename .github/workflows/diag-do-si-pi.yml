@@ -1,0 +1,140 @@
+name: DO / SI / PI — lay the book beside the ERP (read-only)
+
+# The delivery-order, sales-invoice and purchase-invoice lane's own eyes.
+#
+# WHY IT EXISTS RATHER THAN RE-USING po-gr-tally-verdict.yml: that workflow's
+# concurrency group is `po-gr-tally-verdict` with cancel-in-progress, and the
+# purchase-order / goods-receipt lane is working the same book at the same
+# time. Dispatching it to answer THIS lane's question would cancel theirs
+# mid-flight. Own question, own group.
+#
+# READ-ONLY. Two steps, both SELECTs:
+#   1. check-ac-erp-reconcile.mjs — the ONE instrument that decides "different",
+#      run at full verbosity so every offender is named rather than sampled, and
+#      asked to write its machine-readable per-document verdict for DO/IV/PI to
+#      a temp directory that is uploaded as an artifact. VERDICT_OUT is
+#      deliberately NOT set: that path is the SALES-ORDER payload the migrated-SO
+#      lock reads, and this lane must not be able to move it.
+#   2. diag-do-si-pi-offenders.mjs — dumps both sides of each named document.
+#      It compares nothing; it is evidence for a person, not a second opinion.
+#
+# The AutoCount side is the committed snapshot
+# backend/scripts/data/ac-reconcile-truth.json.gz. Both steps refuse a stale one.
+on:
+  workflow_dispatch:
+    inputs:
+      show:
+        description: "Offenders to print per axis (raised, because this lane adjudicates every one)"
+        required: false
+        default: "600"
+        type: string
+      docs:
+        description: "Documents to dump both sides of: ALL, or a comma-separated list of AutoCount numbers"
+        required: false
+        default: "ALL"
+        type: string
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+      max_snapshot_age_days:
+        description: "Refuse if the AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+
+concurrency:
+  group: diag-do-si-pi
+  cancel-in-progress: true
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+
+      # `npx tsx` and not `node`, because the checker imports
+      # scripts/lib/ac-erp-native.mjs, which reads the ONE statement of "did the
+      # cutover carry this document" out of src/. Same as ac-erp-reconcile.yml.
+      - name: The reconcile, at full verbosity (READ-ONLY)
+        run: |
+          mkdir -p "${{ runner.temp }}/verdicts"
+          npx tsx scripts/check-ac-erp-reconcile.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SHOW: ${{ inputs.show }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          VERDICT_DIR: ${{ runner.temp }}/verdicts
+          VERDICT_TYPES: DO,IV,PI
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+      - name: Both sides of every named document (READ-ONLY)
+        if: always()
+        run: node scripts/diag-do-si-pi-offenders.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          DOCS: ${{ inputs.docs }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+      # The purchase-invoice chain is the largest number this lane owns, and its
+      # remaining cause splits two ways that want OPPOSITE writes — see this
+      # script's own header and docs/bugs/0730. Run in the SAME dispatch so the
+      # split and the dump above describe one moment of the database.
+      - name: Why the purchase invoices differ on the chain, per line (READ-ONLY)
+        if: always()
+        run: npx tsx scripts/diag-pi-gr-links.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          SHOW: ${{ inputs.show }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+      # Whether a pointer write could become a quantity move. The owner's
+      # 「库存先不看」 makes this a precondition and not a curiosity: every repair
+      # this lane might ship writes a link column, and a trigger on the target
+      # table is the one way that becomes stock. Read from the LIVE database.
+      - name: What fires on the tables this lane would write (READ-ONLY)
+        if: always()
+        run: node scripts/diag-lane-triggers.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+      # Four in-scope sales invoices are ABSENT from the ERP (I-000213,
+      # I-2410-0192, I-2411-0275, I-2411-0323) and they are 4 of the 16 this
+      # lane owes. This is the tool that would create them, and its DRY-RUN
+      # names the refusal per source document — which is the answer to "why are
+      # they absent" without guessing at it from the source.
+      #
+      # APPLY is NOT set, so it writes nothing: without APPLY=1 and the confirm
+      # phrase the script plans and prints. Creating an invoice moves no stock
+      # in either direction by construction (PI is AP-only, SI is AR-only), so
+      # this is the one absence on this lane that 「库存先不看」 does not gate.
+      - name: Why the absent invoices were never created (DRY-RUN, writes nothing)
+        if: always()
+        run: npx tsx scripts/create-migrated-invoices.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          KIND: both
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+      - name: Keep the machine-readable verdicts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: do-si-pi-verdicts
+          path: ${{ runner.temp }}/verdicts
+          if-no-files-found: warn

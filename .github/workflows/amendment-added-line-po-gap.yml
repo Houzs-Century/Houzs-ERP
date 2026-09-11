@@ -1,0 +1,46 @@
+name: Amendment-added line PO gap (read-only)
+
+# Manual, read-only. Sizes the exposure of the amendment-added-line warning that
+# was suppressed on multi-PO sales orders: how many company sales orders right now
+# carry an amendment-ADDED line that reached no purchase order, in the population
+# where the buyer was told nothing (2+ live bound POs, where scopeCoversAll was
+# never true and so-revision.ts silenced both warnings).
+#
+# SELECTs only: no DDL, no writes, no transaction. Exits 0 for every legitimate
+# answer including "no rows", because the ANSWER is the output and a red job reads
+# as "the check broke".
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "Company (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+      sample:
+        description: "Max example rows to print"
+        required: false
+        default: "30"
+        type: string
+
+# Its own group — a diagnostic must never queue behind, or displace, a release.
+concurrency:
+  group: amendment-added-line-po-gap
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the one dependency the script needs
+        run: npm --prefix backend install postgres --no-audit --no-fund --no-save
+      - name: Report the amendment-added line PO gap
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          SAMPLE: ${{ inputs.sample }}
+        run: node backend/scripts/check-amendment-added-line-po-gap.mjs

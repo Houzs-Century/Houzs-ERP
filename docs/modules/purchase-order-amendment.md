@@ -101,6 +101,45 @@ retryable via the allocation editor.
 `poReceivedFloorViolation(line, po)` — a revised qty may never drop below what has
 already been received. Tests: `shared/po-amendment.test.ts`.
 
+**When a follow-up is raised at all, and against WHICH PO —
+`lib/amendment-po-followup.ts`.** Approving the LINES lane of an SO amendment
+raises follow-ups; three filters decide what, and where:
+
+1. `poRelevant` — QTY / ADD / REMOVE always reshape the PO; SPEC only when the
+   code or the variants moved (a sell-price-only edit is the customer's side).
+2. `serviceOnlyChange` — **SERVICE lines never escalate (owner, 2026-09-09).**
+   Storage / disposal / delivery charges ride the SO->DO->SI chain but are not
+   goods: they never become MRP demand and never become a PO line, so there is
+   nothing for the supplier to follow. Judged on the line's IDENTITY on BOTH
+   sides of the edit (`shared/service-sku` `isServiceLine`, over the live SO row
+   or — for a REMOVE, which hard-deletes it — the pre-apply snapshot), so a SPEC
+   edit that swaps a service SKU for real goods still escalates. An identity that
+   cannot be read is NOT treated as service: an extra follow-up the purchaser
+   withdraws beats a real change the supplier never hears about.
+3. **Only the PO that HOSTS a changed line** (owner, 2026-09-09) — it used to be
+   every PO bound to the SO, so a one-line change on a multi-PO order raised a
+   0-change amendment against each untouched PO too. **The narrowing applies only
+   when EVERY changed line already has a PO home.** A changed line with none may
+   still need one — an ADD by construction, and equally a line that was never
+   ordered — so there the full bound set stays in play and `reviseBoundPo` does
+   the supplier matching at confirm.
+
+**At confirm, an added line that reaches NO purchase order WARNS** — "no supplier
+set" or "supplier has no open PO on this sales order" — in the follow-up's
+response `warnings` (the confirm toast, desktop + mobile). The supplier match runs
+against the FULL bound set, so a line whose supplier owns a SIBLING PO the confirm
+did not scope is deferred to that PO's own confirm silently, never warned. Until
+2026-09-10 both warnings were gated on `scopeCoversAll`, which is never true on a
+sales order with 2+ live bound POs (the confirm is always scoped to one), so the
+gap was silent exactly where it was most likely — the missing order surfaced on
+delivery day. Fixed in `fix/amendment-po-warn`
+(`docs/bugs/0783-amendment-added-line-on-a-multi-po-sales-order-got-no-purcha.md`);
+it is a visibility fix only — no PO is auto-created.
+
+Nothing left after all three = no PO amendment, and the SO audit row says
+"No PO follow-up needed for this amendment." Tests:
+`lib/amendment-po-followup.test.ts`.
+
 **Barrel note:** this module is NOT re-exported through `shared/index.ts` — its
 `canTransition` / `nextStatus` names collide with `so-amendment`'s. Import it
 directly: `from '../shared/po-amendment'`.
@@ -177,6 +216,33 @@ amendment table in 0080.
 ---
 
 ## 6. Frontend
+
+### The sidebar count — SHIPPED 2026-09-09
+
+The **PO Amendments** nav entry carries a red count of amendments waiting for
+THIS user's confirmation. Owner asked for it on the SO entry first and then
+"PO Amendments 也一起加" — the follow-up rows an approved LINES-lane SO amendment
+auto-raises are exactly the ones nobody requested by hand, so the count is the
+only thing on screen that says they arrived.
+
+`GET /api/scm/po-amendments/pending-count`
+(`backend/src/scm/routes/po-amendments.ts`) answers it: `REQUESTED` rows for the
+active company, gated on `scm.po_amendment.approve` — asked LITERALLY, so the
+`*` wildcard does not put a count on the Owner account's menu (owner 2026-09-09;
+the reasoning, and why this is the one place in the SCM routes that ignores the
+wildcard, is in [`so-amendment.md`](./so-amendment.md) §5). Someone who can only
+RAISE one gets 0 and the badge never renders.
+
+**Deliberately simpler than its SO twin.** A PO amendment has ONE approver key
+and no lanes, so there is nothing to split. If the two endpoints are ever
+"unified", this is the property to keep: pretending a PO amendment is
+lane-routed would invent a distinction the approval gate does not make.
+
+The count is invalidated from `invalidatePoAmendmentSideEffects`
+(`frontend/src/vendor/scm/lib/po-amendment-queries.ts`) — every gate passes
+through there, so it drops the moment you confirm. The shared mechanism, the
+hook and the "no second visibility rule" reasoning live in
+[`so-amendment.md`](./so-amendment.md) §5.
 
 ### Printable amendment document — SHIPPED (both SO and PO)
 

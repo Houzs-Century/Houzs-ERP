@@ -223,7 +223,7 @@ async function columnsOf(sql, schema, table) {
   return new Set(rows.map((r) => r.column_name));
 }
 
-export async function loadErpFieldSide(sql, CO) {
+export async function loadErpFieldSide(sql, CO, { betweenReadsForTest } = {}) {
   const cols = {
     so: await columnsOf(sql, "scm", "mfg_sales_orders"),
     soi: await columnsOf(sql, "scm", "mfg_sales_order_items"),
@@ -297,35 +297,85 @@ export async function loadErpFieldSide(sql, CO) {
     pickI(cols.doi, "description"),
   ].join(", ");
 
-  /* No LIMIT anywhere, deliberately. A LIMIT 500 on a sibling check reported a
-     drift of 842 as 500 earlier today; the row count is the answer, so it may
-     never be capped. The counts are asserted against COUNT(*) below. */
-  const q = async (text) => sql.unsafe(text);
-  const out = {
-    SO: {
-      headers: await q(`SELECT ${soHead} FROM scm.mfg_sales_orders h WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`),
-      lines: await q(`SELECT ${soLine} FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`),
-    },
-    PO: {
-      headers: await q(`SELECT ${poHead} FROM scm.purchase_orders h LEFT JOIN scm.suppliers s ON s.id = h.supplier_id LEFT JOIN scm.warehouses w ON w.id = h.purchase_location_id WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`),
-      lines: await q(`SELECT ${poLine} FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`),
-    },
-    DO: {
-      headers: await q(`SELECT ${doHead} FROM scm.delivery_orders h LEFT JOIN scm.mfg_sales_orders so ON so.doc_no = h.so_doc_no WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`),
-      lines: await q(`SELECT ${doLine} FROM scm.delivery_order_items i JOIN scm.delivery_orders h ON h.id = i.delivery_order_id WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`),
-    },
-  };
-
-  /* The no-LIMIT claim, asserted rather than trusted. */
+  /* ONE SNAPSHOT FOR THE WHOLE READ, and this is not a nicety.
+   *
+   * The rows and the COUNT(*) they are asserted against are TWO STATEMENTS. On
+   * an autocommit connection each gets its own snapshot, and the SO array is
+   * statement 2 while the SO count is statement 7 — four more full-table reads
+   * apart. Any lane inserting sales-order lines in that gap moves the count
+   * without truncating anything, and the assertion below fires on a read that
+   * was complete when it was taken.
+   *
+   * That is what happened. Run 34325417734, 2026-09-09:
+   *
+   *     REFUSED: SO: the field query returned 15258 ERP lines but COUNT(*) says
+   *     15264. The answer is being truncated
+   *
+   * Nothing was truncated. probe-field-read-snapshot run 34328813129 proved it
+   * on production: the driver returns a 60,000-row result WHOLE, so no cap
+   * exists, and one snapshot makes the two statements agree. It also refuted
+   * the first explanation written here -- ZERO in-scope sales-order lines carry
+   * a created_at inside that run's own window, so the six were not INSERTED.
+   * Which committed write moved the population is UNKNOWN; a header gaining
+   * linked_ac_docno pulls its existing rows into this filter without creating
+   * one, and lanes were stamping those links that night. The class is what
+   * matters here and the class is proven: two honest reads of a moving table,
+   * compared to each other.
+   *
+   * REPEATABLE READ pins one snapshot for every statement in the block, so the
+   * array and its count describe the same database at the same instant, and the
+   * whole verdict — not just this assertion — is one coherent cut rather than
+   * seven. READ ONLY makes the server itself refuse a write here.
+   *
+   * THE ASSERTION IS NOT WEAKENED BY THIS. A real cap — a LIMIT, a driver row
+   * limit, a partial result — still returns fewer rows than COUNT(*) inside one
+   * snapshot, and still refuses. Only the false alarm is removed. Both
+   * directions are held by tests-pg/fieldReadSnapshot.pg.test.ts. */
   const counts = {};
-  for (const [t, spec] of [
-    ["SO", ["scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no"]],
-    ["PO", ["scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id"]],
-    ["DO", ["scm.delivery_order_items i JOIN scm.delivery_orders h ON h.id = i.delivery_order_id"]],
-  ]) {
-    const [{ n }] = await q(`SELECT COUNT(*)::int AS n FROM ${spec[0]} WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`);
-    counts[t] = n;
-  }
+  const out = await sql.begin("read only isolation level repeatable read", async (tx) => {
+    /* No LIMIT anywhere, deliberately. A LIMIT 500 on a sibling check reported a
+       drift of 842 as 500 earlier today; the row count is the answer, so it may
+       never be capped. The counts are asserted against COUNT(*) below. */
+    const q = async (text) => tx.unsafe(text);
+    const rows = {
+      SO: {
+        headers: await q(`SELECT ${soHead} FROM scm.mfg_sales_orders h WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`),
+        lines: await q(`SELECT ${soLine} FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`),
+      },
+      PO: {
+        headers: await q(`SELECT ${poHead} FROM scm.purchase_orders h LEFT JOIN scm.suppliers s ON s.id = h.supplier_id LEFT JOIN scm.warehouses w ON w.id = h.purchase_location_id WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`),
+        lines: await q(`SELECT ${poLine} FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`),
+      },
+      DO: {
+        headers: await q(`SELECT ${doHead} FROM scm.delivery_orders h LEFT JOIN scm.mfg_sales_orders so ON so.doc_no = h.so_doc_no WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`),
+        lines: await q(`SELECT ${doLine} FROM scm.delivery_order_items i JOIN scm.delivery_orders h ON h.id = i.delivery_order_id WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`),
+      },
+    };
+
+    /* TEST SEAM. The failure this block fixes is a WRITE ARRIVING HERE — after
+       the arrays, before the counts — which no test can schedule by sleeping.
+       tests-pg/fieldReadSnapshot.pg.test.ts inserts from a SECOND connection in
+       this callback and asserts the two numbers still agree; run against the
+       autocommit version, that same test goes red. It is handed THIS
+       transaction so the suite can also assert the mode this block really runs
+       under — postgres.js strips the options string before sending it, and a
+       mode that silently failed to apply would look exactly like a fix.
+       Nothing in production passes the seam, so it is inert outside the
+       suite. */
+    if (typeof betweenReadsForTest === "function") await betweenReadsForTest(tx);
+
+    /* The no-LIMIT claim, asserted rather than trusted. */
+    for (const [t, spec] of [
+      ["SO", ["scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no"]],
+      ["PO", ["scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id"]],
+      ["DO", ["scm.delivery_order_items i JOIN scm.delivery_orders h ON h.id = i.delivery_order_id"]],
+    ]) {
+      const [{ n }] = await q(`SELECT COUNT(*)::int AS n FROM ${spec[0]} WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`);
+      counts[t] = n;
+    }
+    return rows;
+  });
+
   return { ...out, cols, lineCounts: counts };
 }
 

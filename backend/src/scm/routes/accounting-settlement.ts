@@ -34,9 +34,11 @@ import { parseStatement, type StatementColumnMap } from '../../acc/settlement-pa
 import { matchStatement, recordedNotArrived, listOnce, UNTAGGED_LIST, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
 import {
   loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow, postStatementCharge,
-  postBatchReceipt, loadBatchReceipts, undoBatchReceipt, unconfirmSettlementRow, clearOrphanBatch,
+  postBatchReceipt, loadBatchReceipts, undoBatchReceipt, unconfirmSettlementRow, clearOrphanBatch, findPaymentsForRow,
 } from '../../acc/settlement';
 import { resolveRoles } from '../../acc/rules';
+import { loadLineMonth, loadLiveMonthLock } from '../../acc/bank';
+import { lockedRefusal } from '../../acc/bank-lock';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -57,6 +59,19 @@ async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
+
+/**
+ * Where a company books an acquirer's merchant fee when nobody has said
+ * otherwise. Matches the column DEFAULT set by migration 20260910T0147; the two
+ * must move together, which is why the code is written once here rather than
+ * spelled into each call site.
+ *
+ * Owner's choice, 2026-09-09: 900-T009 TERMINAL INTEREST CHARGES. It replaced
+ * 930-0000, which his AutoCount chart carries as a DEACTIVATED placeholder
+ * called MISCELLANEOUS EXPENSES XXX — every settlement confirm in both
+ * companies refused with "account 930-0000 is deactivated" until this moved.
+ */
+const MERCHANT_FEE_ACCOUNT = '900-T009';
 
 type StoredRow = {
   id: number; line_no: number; txn_date: string; ref: string | null;
@@ -143,7 +158,11 @@ export const settlementSetupSave = guard(async (c) => {
   const link: Record<string, unknown> = {};
   if (body.bankAccountCode !== undefined) link.bank_account_code = body.bankAccountCode || null;
   if (body.transitAccountCode !== undefined) link.transit_account_code = String(body.transitAccountCode || '326-0000');
-  if (body.feeAccountCode !== undefined) link.fee_account_code = String(body.feeAccountCode || '930-0000');
+  /* MERCHANT_FEE_ACCOUNT, not a literal repeated twice. 930-0000 was the seed
+     default until 2026-09-09, when the owner's AutoCount chart turned out to
+     have deactivated it — every settlement confirm refused with 'account
+     930-0000 is deactivated' (migration 20260910T0147). */
+  if (body.feeAccountCode !== undefined) link.fee_account_code = String(body.feeAccountCode || MERCHANT_FEE_ACCOUNT);
   if (body.isActive !== undefined) link.is_active = Boolean(body.isActive);
   if (Object.keys(link).length > 0) {
     link.updated_at = new Date().toISOString();
@@ -257,8 +276,37 @@ export const settlementMaintenance = guard(async (c) => {
     clearings[String(Number(r.company_id))]?.push({ account_code: String(r.account_code), account_name: String(r.account_name ?? r.account_code) });
   }
 
+  /* Every company's EXPENSE accounts a merchant fee could be booked to.
+     Offered because it had to be a migration once already: the fee account was
+     seeded at 930-0000, the AutoCount chart deactivated that code, and every
+     settlement confirm in both companies refused — with no way to repoint it
+     from a screen (docs/bugs/0762).
+
+     ACTIVE LEAVES ONLY, the same two properties the posting gate checks, so a
+     code offered here cannot be one the gate will refuse. A header account
+     (one with children) never appears. */
+  const { data: feeRaw, error: fErr } = await sb.from('accounts')
+    .select('company_id, account_code, account_name, parent_code')
+    .in('company_id', ids).eq('account_type', 'EXPENSE').eq('is_active', true)
+    .order('account_code');
+  if (fErr) return c.json({ error: 'load_failed', reason: fErr.message }, 500);
+  const feeRows = (feeRaw ?? []) as Array<Record<string, any>>;
+  const hasChild = new Set(
+    feeRows.filter((r) => r.parent_code).map((r) => `${Number(r.company_id)}:${String(r.parent_code)}`),
+  );
+  const feeAccounts: Record<string, Array<{ account_code: string; account_name: string }>> = {};
+  for (const id of ids) feeAccounts[String(id)] = [];
+  for (const r of feeRows) {
+    const co = Number(r.company_id);
+    if (hasChild.has(`${co}:${String(r.account_code)}`)) continue;
+    feeAccounts[String(co)]?.push({
+      account_code: String(r.account_code),
+      account_name: String(r.account_name ?? r.account_code),
+    });
+  }
+
   const merchants = ((cfgRaw ?? []) as Array<Record<string, any>>).map((g) => {
-    const byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null; transitAccountCode: string | null }> = {};
+    const byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null; transitAccountCode: string | null; feeAccountCode: string | null }> = {};
     for (const id of ids) {
       const link = linkOf.get(`${id}:${String(g.code)}`);
       byCompany[String(id)] = {
@@ -268,6 +316,7 @@ export const settlementMaintenance = guard(async (c) => {
         linked: Boolean(link),
         bankAccountCode: link?.bank_account_code ?? null,
         transitAccountCode: link?.transit_account_code ?? null,
+        feeAccountCode: link?.fee_account_code ?? null,
       };
     }
     return {
@@ -308,7 +357,7 @@ export const settlementMaintenance = guard(async (c) => {
     };
   });
 
-  return c.json({ companies, merchants, banks, clearings });
+  return c.json({ companies, merchants, banks, clearings, feeAccounts });
 });
 
 
@@ -349,12 +398,48 @@ export const settlementMaintenanceMerchant = guard(async (c) => {
     patch.transit_account_code = code;
   }
 
+  /* THE FEE ACCOUNT, which had to be a migration once already (docs/bugs/0762):
+     it was seeded at 930-0000, the AutoCount chart deactivated that code, and
+     every settlement confirm in both companies refused with no way to repoint
+     it from a screen.
+
+     Validated by the SAME three properties the posting gate checks — an EXPENSE,
+     ACTIVE, and a LEAF in this company's own chart. Anything else is refused
+     here, by name, rather than accepted and left to fail at the moment somebody
+     confirms a statement. Blank returns it to the default. */
+  if (body.feeAccountCode !== undefined) {
+    const fee = String(body.feeAccountCode ?? '').trim() || MERCHANT_FEE_ACCOUNT;
+    const { data: acct, error: aErr } = await sb.from('accounts')
+      .select('account_code, account_type, is_active').eq('company_id', companyId).eq('account_code', fee).maybeSingle();
+    if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
+    const a = acct as { account_type?: string; is_active?: boolean } | null;
+    if (!a) {
+      return c.json({ error: 'bad_fee_account', message: `${fee} is not in this company's chart.` }, 400);
+    }
+    if (a.is_active === false) {
+      return c.json({ error: 'bad_fee_account', message: `${fee} is switched off in this company's chart, so nothing could be booked to it.` }, 400);
+    }
+    if (a.account_type !== 'EXPENSE') {
+      return c.json({ error: 'bad_fee_account', message: `${fee} is ${String(a.account_type ?? 'not an expense account')} — a merchant fee is an expense.` }, 400);
+    }
+    const { data: kids, error: kErr } = await sb.from('accounts')
+      .select('account_code').eq('company_id', companyId).eq('parent_code', fee).limit(1);
+    if (kErr) return c.json({ error: 'load_failed', reason: kErr.message }, 500);
+    if ((kids ?? []).length > 0) {
+      return c.json({ error: 'bad_fee_account', message: `${fee} has sub-accounts, so nothing posts to it directly. Pick one of them.` }, 400);
+    }
+    patch.fee_account_code = fee;
+  }
+
   if (!existing) {
     const { error } = await sb.from('acc_company_acquirers').insert({
       company_id: companyId,
       acquirer_code: code,
       transit_account_code: (patch.transit_account_code as string | undefined) ?? '326-0000',
-      fee_account_code: '930-0000',
+      /* A first link takes the fee account the operator PICKED, when he picked
+         one in the same request — the default is what it falls back to, not
+         what it overrides. */
+      fee_account_code: (patch.fee_account_code as string | undefined) ?? MERCHANT_FEE_ACCOUNT,
       bank_account_code: body.bankAccountCode || null,
       is_active: body.enabled === undefined ? true : Boolean(body.enabled),
     });
@@ -485,7 +570,10 @@ export const settlementUpload = guard(async (c) => {
   };
 
   const [candidates, settled] = await Promise.all([
-    loadPaymentCandidates(sb, co.companyId, acq.acquirer, parsed.periodFrom, parsed.periodTo),
+    /* The file's own references travel with the request: a payment carrying an
+       exact reference must be found whatever its date (docs/bugs/0760). */
+    loadPaymentCandidates(sb, co.companyId, acq.acquirer, parsed.periodFrom, parsed.periodTo,
+      parsed.rows.map((r) => r.ref).filter((r): r is string => typeof r === 'string' && r !== '')),
     loadSettledKeys(sb, co.companyId),
   ]);
   if (!candidates.ok) { await abandonBatch(); return c.json({ error: 'load_failed', reason: candidates.reason }, 500); }
@@ -519,6 +607,22 @@ export const settlementUpload = guard(async (c) => {
      between the read above and now) drops its line to NEEDS_CONFIRM rather
      than clearing the same money twice. */
   const idByLine = new Map(((writtenRaw ?? []) as Array<{ id: number; line_no: number }>).map((r) => [r.line_no, r.id]));
+  /* THE INSERT SUCCEEDED AND TOLD US NOTHING BACK.
+     On prod, nine reference-matched lines were stored MATCHED and NOT ONE link
+     row was written, with no error anywhere: the rows insert reported no error,
+     its returning-select came back empty, so this map was empty, so every link
+     below hit its `continue` and was skipped in silence (docs/bugs/0760).
+     A count that cannot be reconciled to the decisions is the one thing that
+     would have said so, so it is checked here rather than trusted. */
+  if (idByLine.size !== decisions.length) {
+    await abandonBatch();
+    return c.json({
+      error: 'save_failed',
+      reason: `wrote ${decisions.length} line(s) but got ${idByLine.size} id(s) back`,
+      message: 'The statement\'s lines saved but did not report their ids, so their payments could not be'
+        + ' linked. Nothing was kept — upload the file again.',
+    }, 500);
+  }
   let autoMatched = 0;
   for (const d of decisions) {
     if (d.bucket !== 'MATCHED' || d.matched.length === 0) continue;
@@ -676,7 +780,12 @@ export const settlementBatchDetail = guard(async (c) => {
   const acq = await loadAcquirer(sb, co.companyId, b.acquirer_code);
   if (!acq.ok) return c.json({ error: 'acquirer_unavailable', message: acq.reason }, 400);
   const [candidates, settled] = await Promise.all([
-    loadPaymentCandidates(sb, co.companyId, acq.acquirer, b.period_from, b.period_to),
+    /* The stored lines' own references travel with the request, so a payment
+       carrying an exact reference is found whatever its date — the four PBB
+       lines that read "No payment recorded near …" while their payment sat in
+       the ERP, keyed a week late (docs/bugs/0760). */
+    loadPaymentCandidates(sb, co.companyId, acq.acquirer, b.period_from, b.period_to,
+      stored.map((r) => r.ref).filter((r): r is string => typeof r === 'string' && r !== '')),
     loadSettledKeys(sb, co.companyId),
   ]);
   if (!candidates.ok) return c.json({ error: 'load_failed', reason: candidates.reason }, 500);
@@ -736,11 +845,25 @@ export const settlementBatchDetail = guard(async (c) => {
           approval_code: p?.approvalCode ?? null,
         };
       }),
-      candidates: s?.candidates ?? [],
+      /* A REF-MATCHED LINE CARRIES ITS PAYMENT IN `matched`, NOT `candidates`.
+         matchStatement empties candidates/suggested for that bucket on purpose
+         — there is nothing to choose, it is decided — and this map used to read
+         only the two empty fields. So a line the matcher had answered arrived
+         with no payment at all, and when its link had not persisted either the
+         screen ran the last branch it has: "No payment in the ERP explains this
+         money", directly under the clue naming the very sale it matched. The
+         owner saw both sentences at once (2026-09-09), and pressing Confirm
+         sent an empty selection, which the server rightly refused.
+
+         Falling back to `matched` costs nothing when the link IS there — a
+         linked line is not recomputed at all — and is the whole answer when it
+         is not. Pre-ticked, still his to confirm: nothing posts until he
+         presses. */
+      candidates: (s?.candidates.length ? s.candidates : s?.matched) ?? [],
       comboHints: s?.comboHints ?? [],
       /* The system's own best answer, pre-ticked on screen. A suggestion, never
          a decision — nothing posts until he confirms. */
-      suggested: s?.suggested ?? [],
+      suggested: (s?.suggested.length ? s.suggested : s?.matched) ?? [],
       clue: s?.clue ?? r.notes,
     };
   });
@@ -816,7 +939,7 @@ export const settlementConfirmRow = guard(async (c) => {
   });
   if (!r.ok) {
     const status = r.status === 'not_found' ? 404
-      : ['amount_mismatch', 'no_payments', 'ignored', 'payment_already_settled'].includes(r.status) ? 409
+      : ['amount_mismatch', 'no_payments', 'ignored', 'payment_already_settled', 'payment_not_found', 'not_card_payment'].includes(r.status) ? 409
       : 500;
     return c.json({ error: r.status, message: r.reason }, status);
   }
@@ -833,10 +956,22 @@ export const settlementConfirmMatched = guard(async (c) => {
   if (!Number.isInteger(batchId)) return c.json({ error: 'bad_id' }, 400);
   const sb = c.get('supabase');
 
+  /* The batch itself, for the acquirer and the period the recompute below
+     needs. Read first so a missing batch is a 404 rather than an empty run
+     reporting that it confirmed nothing. */
+  const { data: batchRaw, error: bErr } = await sb.from('acc_settlement_batches')
+    .select('id, acquirer_code, period_from, period_to')
+    .eq('id', batchId).eq('company_id', co.companyId).maybeSingle();
+  if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
+  if (!batchRaw) return c.json({ error: 'not_found' }, 404);
+  const b = batchRaw as { acquirer_code: string; period_from: string; period_to: string };
+
   const { data: rowsRaw, error } = await sb.from('acc_settlement_rows')
-    .select('id, bucket, confirmed_at').eq('batch_id', batchId).eq('company_id', co.companyId);
+    .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, confirmed_at')
+    .eq('batch_id', batchId).eq('company_id', co.companyId);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const pending = ((rowsRaw ?? []) as StoredRow[]).filter((r) => r.bucket === 'MATCHED' && !r.confirmed_at);
+  const stored = (rowsRaw ?? []) as StoredRow[];
+  const pending = stored.filter((r) => r.bucket === 'MATCHED' && !r.confirmed_at);
 
   const { data: linkRaw, error: lErr } = await sb.from('acc_settlement_matches')
     .select('settlement_row_id, payment_source, payment_id, doc_no, amount_sen').eq('company_id', co.companyId);
@@ -848,22 +983,68 @@ export const settlementConfirmMatched = guard(async (c) => {
     else linksByRow.set(Number(l.settlement_row_id), [l]);
   }
 
+  /* A MATCHED ROW WHOSE LINK IS MISSING STILL KNOWS ITS PAYMENT.
+     This button reads the link table, and on prod nine reference-matched lines
+     had none: the upload's link insert was skipped in silence (docs/bugs/0760),
+     so every one of them sent an empty selection and was refused —
+     "Posted 0. 9 could not be" over nine lines whose payment the screen was by
+     then showing. The detail view already falls back to the matcher; this is
+     the same fallback on the bulk path, and confirming writes the link, so the
+     data heals itself as he works.
+
+     ONLY `matched`, never `suggested`. This button's promise is "post every
+     line the unique reference already matched", and nobody is reading each line
+     — a suggestion needs the eyes the detail screen gives it. Recomputed only
+     for rows that have no link, so a human's stored decision is never
+     overridden. */
+  const unlinked = pending.filter((r) => (linksByRow.get(r.id) ?? []).length === 0);
+  const rescued = new Map<number, Array<{ source: 'SOPAY' | 'SIPAY'; id: string; docNo: string | null; amountSen: number }>>();
+  if (unlinked.length > 0) {
+    const acq = await loadAcquirer(sb, co.companyId, b.acquirer_code);
+    if (!acq.ok) return c.json({ error: 'acquirer_unavailable', message: acq.reason }, 400);
+    const [cands, settled] = await Promise.all([
+      loadPaymentCandidates(sb, co.companyId, acq.acquirer, b.period_from, b.period_to,
+        stored.map((r) => r.ref).filter((r): r is string => typeof r === 'string' && r !== '')),
+      loadSettledKeys(sb, co.companyId),
+    ]);
+    if (!cands.ok) return c.json({ error: 'load_failed', reason: cands.reason }, 500);
+    if (!settled.ok) return c.json({ error: 'load_failed', reason: settled.reason }, 500);
+
+    const byLine = new Map(unlinked.map((r) => [r.line_no, r.id]));
+    for (const d of matchStatement(
+      { code: acq.acquirer.code, has_unique_ref: acq.acquirer.has_unique_ref, date_tolerance_days: acq.acquirer.date_tolerance_days },
+      unlinked.map((r) => ({ lineNo: r.line_no, txnDate: String(r.txn_date).slice(0, 10), ref: r.ref, grossSen: Number(r.gross_sen), feeSen: Number(r.fee_sen), netSen: Number(r.net_sen) })),
+      cands.payments,
+      settled.keys,
+    )) {
+      if (d.bucket !== 'MATCHED' || d.matched.length === 0) continue;
+      const rowId = byLine.get(d.row.lineNo);
+      if (rowId == null) continue;
+      rescued.set(rowId, d.matched.map((p) => ({
+        source: p.source, id: p.id, docNo: p.docNo, amountSen: p.amountSen,
+      })));
+    }
+  }
+
   const userName = (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
   let confirmed = 0;
   const failed: Array<{ rowId: number; reason: string }> = [];
   for (const row of pending) {
     const links = linksByRow.get(row.id) ?? [];
+    const payments = links.length > 0
+      ? links.map((l) => ({
+        source: (l.payment_source === 'SIPAY' ? 'SIPAY' : 'SOPAY') as 'SOPAY' | 'SIPAY',
+        id: String(l.payment_id),
+        docNo: (l.doc_no ?? null) as string | null,
+        amountSen: Number(l.amount_sen ?? 0),
+      }))
+      : rescued.get(row.id) ?? [];
     const r = await confirmSettlementRow(sb, {
       companyId: co.companyId,
       rowId: row.id,
       matchReason: 'ref',
       userName,
-      payments: links.map((l) => ({
-        source: l.payment_source === 'SIPAY' ? 'SIPAY' : 'SOPAY',
-        id: String(l.payment_id),
-        docNo: l.doc_no ?? null,
-        amountSen: Number(l.amount_sen ?? 0),
-      })),
+      payments,
     });
     if (r.ok) confirmed += 1;
     else failed.push({ rowId: row.id, reason: r.reason });
@@ -934,7 +1115,55 @@ export const settlementReceiptUndo = guard(async (c) => {
   const receiptId = Number(c.req.param('id'));
   if (!Number.isInteger(receiptId)) return c.json({ error: 'bad_id' }, 400);
 
-  const r = await undoBatchReceipt(c.get('supabase'), co.companyId, receiptId);
+  const sb = c.get('supabase');
+
+  /* THE BACK DOOR INTO A CLOSED MONTH, shut here (owner, 2026-09-08: 还有lock
+     起来不可以随便碰).
+
+     A credit booked FROM a bank statement carries `bank_line_id`, and reversing
+     it from this side would undo an entry that a closed bank month has already
+     counted and reported — the bank screen's own undo refuses, and without this
+     the same act would simply be done through the other door. A credit typed by
+     hand has no bank line and is none of the lock's business, which is why this
+     is a guard on the LINK rather than on the receipt. */
+  const { data: receiptRow, error: rErr } = await sb.from('acc_settlement_receipts')
+    .select('bank_line_id').eq('id', receiptId).eq('company_id', co.companyId).maybeSingle();
+  if (rErr) {
+    return c.json({
+      error: 'lock_check_failed',
+      reason: rErr.message,
+      message: 'Whether this credit belongs to a closed month could not be checked, so nothing was'
+        + ' changed. Try again.',
+    }, 500);
+  }
+  const bankLineId = (receiptRow as { bank_line_id?: number | null } | null)?.bank_line_id ?? null;
+  if (bankLineId != null) {
+    const where = await loadLineMonth(sb, co.companyId, Number(bankLineId));
+    if (!where.ok) {
+      return c.json({
+        error: 'lock_check_failed',
+        reason: where.reason,
+        message: 'Whether this credit belongs to a closed month could not be checked, so nothing was'
+          + ' changed. Try again.',
+      }, 500);
+    }
+    if (where.found) {
+      const held = await loadLiveMonthLock(sb, co.companyId, where.accountCode, where.month);
+      if (!held.ok) {
+        return c.json({
+          error: 'lock_check_failed',
+          reason: held.reason,
+          message: 'Whether this credit belongs to a closed month could not be checked, so nothing was'
+            + ' changed. Try again.',
+        }, 500);
+      }
+      if (held.lock) {
+        return c.json(lockedRefusal(held.lock, 'taking this credit back'), 409);
+      }
+    }
+  }
+
+  const r = await undoBatchReceipt(sb, co.companyId, receiptId);
   if (!r.ok) return c.json({ error: r.status, message: r.reason }, r.status === 'not_found' ? 404 : 500);
   return c.json(r);
 });
@@ -961,6 +1190,21 @@ export const settlementRowUnconfirm = guard(async (c) => {
 /* POST /rows/:id/ignore — set a line aside (or put it back). A confirmed line
    cannot be ignored: it is in the ledger, and the way out of the ledger is a
    journal, not a checkbox. */
+/* GET /rows/:id/find?q= — "Find the sale": the company's card payments the
+   window could not offer, searched by document / customer / approval / amount,
+   the exact gross ranked first (docs/bugs/0792). Reads only; confirming is the
+   same POST /rows/:id/confirm, which reads the chosen payments back. */
+export const settlementFindPayments = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const rowId = Number(c.req.param('id'));
+  if (!Number.isInteger(rowId)) return c.json({ error: 'bad_id' }, 400);
+  const q = String(c.req.query('q') ?? '').slice(0, 80);
+  const r = await findPaymentsForRow(c.get('supabase'), co.companyId, rowId, q);
+  if (!r.ok) return c.json({ error: r.status, message: r.reason }, r.status === 'not_found' ? 404 : 500);
+  return c.json({ q, payments: r.payments });
+});
+
 export const settlementIgnoreRow = guard(async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -1036,10 +1280,33 @@ export const settlementWatchlist = guard(async (c) => {
   if (sErr) return c.json({ error: 'load_failed', reason: sErr.message }, 500);
   const stranded = ((strandedRaw ?? []) as Array<Record<string, any>>).filter((r) => !only || r.acquirer_code === only);
 
+  /* WHO SOLD IT (owner 2026-09-10: 我想要看到 salesman 的名字) — the order's
+     salesperson, read off the order and then off the staff table in two plain
+     reads; a name that cannot be read is blank, never somebody else's. */
+  const salespersonOf = new Map<string, string>();
+  {
+    const docs = [...new Set(recorded.filter((p) => p.source === 'SOPAY').map((p) => p.docNo).filter(Boolean))];
+    const staffIdOf = new Map<string, string>();
+    for (let i = 0; i < docs.length; i += 200) {
+      const { data, error } = await sb.from('mfg_sales_orders').select('doc_no, salesperson_id').eq('company_id', co.companyId).in('doc_no', docs.slice(i, i + 200));
+      if (error) return c.json({ error: 'load_failed', reason: `salesperson: ${error.message}` }, 500);
+      for (const r of data as Array<{ doc_no: string; salesperson_id: string | null }>) if (r.salesperson_id) staffIdOf.set(r.doc_no, String(r.salesperson_id));
+    }
+    const staffIds = [...new Set(staffIdOf.values())];
+    const nameOf = new Map<string, string>();
+    for (let i = 0; i < staffIds.length; i += 200) {
+      const { data, error } = await sb.from('staff').select('id, name').in('id', staffIds.slice(i, i + 200));
+      if (error) return c.json({ error: 'load_failed', reason: `staff: ${error.message}` }, 500);
+      for (const r of data as Array<{ id: string; name: string | null }>) if (r.name) nameOf.set(String(r.id), r.name);
+    }
+    for (const [doc, sid] of staffIdOf) { const n = nameOf.get(sid); if (n) salespersonOf.set(doc, n); }
+  }
   return c.json({
     from,
     to,
-    recordedNotArrived: recorded.sort((a, b) => b.ageDays - a.ageDays),
+    recordedNotArrived: recorded
+      .sort((a, b) => b.ageDays - a.ageDays)
+      .map((p) => ({ ...p, salespersonName: p.source === 'SOPAY' ? (salespersonOf.get(p.docNo) ?? null) : null })),
     arrivedNotRecorded: stranded,
     clean: recorded.length === 0 && stranded.length === 0,
   });

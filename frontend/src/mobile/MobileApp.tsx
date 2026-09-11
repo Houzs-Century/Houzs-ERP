@@ -43,6 +43,7 @@ const MobileInbox = lazy(() => import("./MobileInbox").then((m) => ({ default: m
 const MobileServiceCase = lazy(() => import("./MobileServiceCase").then((m) => ({ default: m.MobileServiceCase })));
 const MobilePMS = lazy(() => import("./MobilePMS").then((m) => ({ default: m.MobilePMS })));
 const MobileMailCenter = lazy(() => import("./MobileMailCenter").then((m) => ({ default: m.MobileMailCenter })));
+const MobileRoles = lazy(() => import("./MobileRoles").then((m) => ({ default: m.MobileRoles })));
 const MobileAnnouncements = lazy(() => import("./MobileAnnouncements").then((m) => ({ default: m.MobileAnnouncements })));
 // The unacknowledged-notice pop-up. Lazy like every other mobile screen, and
 // only mounted once the unread badge says something IS waiting — that hook
@@ -61,6 +62,7 @@ const MobileStockCard = lazy(() => import("./MobileStockCard").then((m) => ({ de
 const MobileStockTransferNew = lazy(() => import("./MobileStockTransferNew").then((m) => ({ default: m.MobileStockTransferNew })));
 const MobileFairReport = lazy(() => import("./MobileFairReport").then((m) => ({ default: m.MobileFairReport })));
 const MobileAutoCountSync = lazy(() => import("./MobileAutoCountSync").then((m) => ({ default: m.MobileAutoCountSync })));
+const MobileChangeLog = lazy(() => import("./MobileChangeLog").then((m) => ({ default: m.MobileChangeLog })));
 // SO Maintenance is the SAME desktop page (/scm/sales-orders/maintenance) — the
 // director-only State→Warehouse / Localities / SO-dropdown CRUD surface. Mobile
 // has no route table, so the vendored desktop page is mounted directly inside
@@ -70,7 +72,9 @@ const MobileAutoCountSync = lazy(() => import("./MobileAutoCountSync").then((m) 
 const ScmSalesOrderMaintenance = lazy(() => import("../pages/scm-v2/SalesOrderMaintenance").then((m) => ({ default: m.SalesOrderMaintenance })));
 const Scm2990Shell = lazy(() => import("../pages/scm-v2/Scm2990Shell"));
 import "./mobile.css";
-import { MobileAssistant } from "./MobileAssistant";
+// MobileAssistant is intentionally not imported — see the comment near the
+// bottom of MobileAppInner's return for why (owner 2026-09-11).
+// import { MobileAssistant } from "./MobileAssistant";
 
 type Tab = "orders" | "service" | "calendar" | "profile";
 type Screen =
@@ -83,6 +87,7 @@ type Screen =
   | { t: "so-maintenance" }
   | { t: "fair-report" }
   | { t: "autocount-sync" }
+  | { t: "change-log" }
   | { t: "new-so"; mode: "new" | "edit" | "edit-draft"; docNo?: string; scanPrefill?: MobileScanPrefill }
   | { t: "scan" }
   | { t: "module"; key: string; title: string }
@@ -103,6 +108,7 @@ type Screen =
   | { t: "delivery-planning" }
   | { t: "pms"; projectId?: number }
   | { t: "mail" }
+  | { t: "roles" }
   | { t: "announcements" }
   | { t: "inbox" }
   /* A real mobile destination this user's position may not open. Reached only
@@ -127,6 +133,7 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/scm/sales-orders/maintenance") return { t: "so-maintenance" };
   if (path === "/reports/fair-report") return { t: "fair-report" };
   if (path === "/autocount-sync") return { t: "autocount-sync" };
+  if (path === "/change-log") return { t: "change-log" };
   if (path === "/scm/amendments") return { t: "amendments" };
   if (path === "/scm/po-amendments") return { t: "po-amendments" };
   if (path === "/assr") return { t: "service" };
@@ -134,6 +141,7 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/mail-center") return { t: "mail" };
   if (path === "/announcements") return { t: "announcements" };
   if (path === "/activity-inbox") return { t: "inbox" };
+  if (path === "/roles") return { t: "roles" };
   if (path === "/scm/delivery-planning") return { t: "delivery-planning" };
   // Fleet Health on a phone IS the driver's mileage capture; the desktop Fleet
   // Health dashboard (plans admin + board) is the same URL's desktop surface.
@@ -391,6 +399,11 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
      endpoint accepts. */
   { group: "System", items: [
     { to: "/autocount-sync", label: "AutoCount Sync" },
+    /* The go-live change log. Second row in this group, and it belongs on a
+       phone for the same reason the first one does: "who changed my sales
+       order" is a question the owner asks away from a desk. Gated by its own
+       live NAV_TABS entry at /change-log. */
+    { to: "/change-log", label: "Change Log" },
   ]},
 ];
 
@@ -426,6 +439,11 @@ export const PROFILE_ORG_ITEMS: MobileMenuItem[] = [
      members/departments modules until the handoff's mobile pass (S8). */
   { to: "/team?tab=directory", label: "Directory" },
   { to: "/team?tab=departments2", label: "Departments" },
+  /* Roles & Permissions admin — its own mobile screen (MobileRoles), single-role
+     edit. gateVia the /team hub tab (users.read/roles.read): roles has no nav
+     leaf to borrow, and a distinct /roles path keeps it out of the /team?tab=*
+     set mobileMenuGates.test pins. Screen mounts only for can("roles.read"). */
+  { to: "/roles", label: "Roles", gateVia: "/team?tab=hub" },
 ];
 
 /** Mobile app shell — bottom tab bar + slide-up module menu, permission-gated
@@ -487,7 +505,6 @@ export function MobileApp() {
             <IosInstallGuide />
             <AndroidInstallGuide />
             <MobileAppInner />
-            <MobileAssistant />
           </ChoiceProvider>
         </PromptProvider>
       </ConfirmProvider>
@@ -560,7 +577,9 @@ function MobileAppInner() {
   // Organisation rows shown inside the Profile screen — gated by the SAME
   // `allowed` check (+ Announcements' alwaysShow bypass) the menu used when
   // these items lived in its Organisation group.
-  const profileOrgItems = PROFILE_ORG_ITEMS.filter((it) => it.alwaysShow || allowed(it.to));
+  const profileOrgItems = PROFILE_ORG_ITEMS.filter((it) =>
+    it.capability ? capability(user, it.capability) : (it.alwaysShow || allowed(it.gateVia ?? it.to)),
+  );
 
   // What this user may open, and what the mobile app implements at all. The
   // difference between the two is the "your position can't open this" answer;
@@ -743,6 +762,13 @@ function MobileAppInner() {
     // Mirrors the desktop FairReport route guard; OFF, not hide.
     overlay = !canViewFairReport(user) ? <TabLocked title="Sales Report" /> : <MobileFairReport onBack={back} />;
   }
+  else if (screen.t === "change-log") {
+    /* Guard the SCREEN, not only the menu row — same two keys the desktop route
+       and the server accept, and the server is still the boundary. OFF, not
+       hidden. */
+    const maySee = can("*") || can("scm.changelog.read") || can("settings.manage");
+    overlay = !maySee ? <TabLocked title="Change Log" /> : <MobileChangeLog onBack={back} />;
+  }
   else if (screen.t === "autocount-sync") {
     /* Guard the SCREEN, not only the menu row: an /autocount-sync URL must not
        mount the page or fire its query for someone the endpoint would 403.
@@ -853,6 +879,7 @@ function MobileAppInner() {
   else if (screen.t === "delivery-planning") overlay = <MobileDeliveryPlanning onBack={back} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber) => setScreen({ t: "pod", docNo: doNumber, from: "delivery-planning" })} />;
   else if (screen.t === "pms") overlay = <MobilePMS onBack={back} initialProjectId={screen.projectId} />;
   else if (screen.t === "mail") overlay = <MobileMailCenter onBack={back} />;
+  else if (screen.t === "roles") overlay = can("roles.read") ? <MobileRoles onBack={back} /> : <TabLocked title="Roles" />;
   else if (screen.t === "announcements") overlay = <MobileAnnouncements onBack={back} />;
   else if (screen.t === "inbox") overlay = <MobileInbox onBack={back} onOpen={(n) => { const doc = (n as { doc_no?: string }).doc_no; if (doc) setScreen({ t: "so-detail", docNo: doc }); }} />;
   else if (screen.t === "locked") overlay = <UrlLocked label={screen.label} onHome={leaveUrlDeadEnd} />;
@@ -987,6 +1014,11 @@ function MobileAppInner() {
       )}
 
       {annPopup}
+      {/* MobileAssistant intentionally NOT rendered — owner 2026-09-11:
+          "那个 assistant 的功能是直接不要的". The whole surface is off on
+          mobile: no launcher, no sheet, no /api/assistant calls fire.
+          Component + backend service kept for now (desktop `/assistant`
+          page still uses them); ask owner before dropping those. */}
     </div>
   );
 }

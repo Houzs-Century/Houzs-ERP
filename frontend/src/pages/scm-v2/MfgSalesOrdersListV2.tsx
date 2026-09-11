@@ -76,6 +76,7 @@ import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/u
 import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows, useSoLineCoverage } from "../../vendor/scm/lib/sales-order-queries";
 import { useSetDocumentHold } from "../../vendor/scm/lib/document-hold-queries";
 import { holdPrompt } from "./use-hold-action";
+import { useCancelRequestAction } from "./use-cancel-request-action";
 import { makeCloseAction } from "./use-close-action";
 import { StatusWithHold, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { ScanOrderModal } from "../../vendor/scm/components/ScanOrderModal";
@@ -96,6 +97,7 @@ import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAcc
 import { capability } from "../../auth/capabilities";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
+import { customerRefOf } from '../../lib/customer-ref';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Minimal row shape the listing needs. The full SoRow (in MfgSalesOrdersList
@@ -209,10 +211,8 @@ const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
 
 // Customer's PO / Ref number — spec: "Every list must show the customer SO
-// Ref number". Prefer po_doc_no (populated by the SO New form's "Customer
-// PO #"), then customer_so_no, then the legacy `ref` column, then dash.
-const refOf = (r: SoRow): string =>
-  r.po_doc_no || r.customer_so_no || r.ref || "—";
+// Ref number". Resolution order is the ONE rule in lib/customer-ref.ts.
+const refOf = (r: SoRow): string => customerRefOf(r) || "—";
 
 // Branding badge tone. Spec: 2990 SOFA = success (green), AKEMI = neutral,
 // BEDFRAME = accent, other brands = warning (amber). brandOf's old `|| "—"`
@@ -1074,6 +1074,7 @@ export function MfgSalesOrdersListV2() {
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const updateStatus = useUpdateMfgSalesOrderStatus();
+  const requestCancel = useCancelRequestAction("so");
   const setHold = useSetDocumentHold("so");
 
   // The server already filtered (status + search) and sorted this page; the
@@ -1216,16 +1217,8 @@ export function MfgSalesOrdersListV2() {
   /* Not setSoStatus: the WORDS are the point — Close sits one menu entry from
      Cancel and they do opposite things to the money. Both live in ./use-close-action. */
   const doCloseSo = makeCloseAction({ askConfirm, notify, mutate: updateStatus.mutate });
-  const doCancelSo = async (r: SoRow) => {
-    if (!(await askConfirm({
-      title: `Cancel ${r.doc_no}?`,
-      body: "A cancelled sales order cannot be reactivated — any deposit becomes customer credit.",
-      confirmLabel: "Cancel Sales Order",
-    }))) return;
-    updateStatus.mutate({ docNo: r.doc_no, status: "CANCELLED", expectedStatus: r.status }, {
-      onError: (e) => notify({ title: "Cancel failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
-    });
-  };
+  /* Cancel is a REQUEST (owner 2026-09-08): reason + two approvals, in ./use-cancel-request-action. */
+  const doCancelSo = (r: SoRow) => void requestCancel(r.doc_no, r.doc_no);
   /* Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status. The
      wording lives in ./use-hold-action; this screen runs it through askConfirm
      because every other action here does. */

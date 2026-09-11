@@ -68,6 +68,32 @@ export function seatHeightToWrite(seat) {
 }
 
 /**
+ * The LEG height a correction may write, decided the same way `seatHeightToWrite`
+ * decides the seat and for the same reason: `variants.legHeight` holds BARE
+ * INCHES, so anything that is not a number of inches must be left alone rather
+ * than stored with its unit stripped off.
+ *
+ * It exists because the supplier's listing states a leg on 17 of the 21 sofa
+ * documents whose build already agreed with ours, and our rows hold nothing at
+ * all there (production run 34453751607). A blank leg height is what makes the
+ * factory guess.
+ *
+ * @param {string|number|null|undefined} leg
+ * @returns {{ write: boolean, value: string|null, why: string }}
+ */
+export function legHeightToWrite(leg) {
+  if (leg === null || leg === undefined || String(leg).trim() === "")
+    return { write: false, value: null, why: "no leg on this correction" };
+  const s = String(leg).trim();
+  if (/^\d{1,3}(\.\d+)?$/.test(s)) return { write: true, value: s, why: "inches" };
+  return {
+    write: false,
+    value: null,
+    why: `leg "${s}" is not a number of inches — legHeight holds bare inches, so it is left as it is rather than stored as ${s.replace(/[^\d.]/g, "") || "?"} inches`,
+  };
+}
+
+/**
  * Split the rows the matcher selected for ONE correction into the sofas they
  * actually are.
  *
@@ -238,4 +264,42 @@ export function pairRowsToPieces(rows, want, codeOf = (r) => r.code) {
      the dedication. */
   for (const p of pairs) if (!p.row && pool.length) p.row = pool.shift();
   return { pairs, surplus: pool };
+}
+
+/**
+ * WHICH VERIFY ENTRIES A LATER RULING HAS ALREADY OVERRULED.
+ *
+ * `CORRECTION_FILES` is ordered oldest first on purpose, so two files may rule
+ * on one build and the NEWER ruling is the answer. `lib/sofa-rulings.mjs`
+ * states that for the lookup path with `findLast` (docs/bugs/0722); this is the
+ * same rule for the applier's own verification, which kept one expectation per
+ * ENTRY and asserted every one of them — including the entry the next file had
+ * just overruled.
+ *
+ * SUPERSEDING IS DECIDED ON ROW IDS, NOT ON THE SELECTOR TEXT. The pair that
+ * bought this (`HC-SO-012929`, run 34301924900) carries two different
+ * `desc2Match` strings — "...Barley/Bottom wr" and "...Barley" — so any key
+ * built from the selector calls them separate builds and changes nothing. What
+ * makes them one build is that they select the same rows.
+ *
+ * An entry that selects NO rows is never superseded and never supersedes: an
+ * empty set intersects nothing, and a build whose rows vanished is a finding
+ * that must still be asserted rather than explained away.
+ *
+ * @param {string[]} docKeys one per entry, in file order; entries are only
+ *        compared within the same key
+ * @param {Array<Array<string|number>>} idSets the row ids each entry selects
+ * @returns {number[]} for each entry, the index of the LATER entry that
+ *        overrules it, or -1
+ */
+export function supersededBy(docKeys, idSets) {
+  const sets = idSets.map((ids) => new Set(ids.map((x) => String(x))));
+  return docKeys.map((key, n) => {
+    if (!sets[n].size) return -1;
+    for (let m = n + 1; m < docKeys.length; m++) {
+      if (docKeys[m] !== key) continue;
+      for (const id of sets[m]) if (sets[n].has(id)) return m;
+    }
+    return -1;
+  });
 }

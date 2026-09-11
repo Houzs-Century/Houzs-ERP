@@ -30,6 +30,14 @@ import { suppliers } from "./routes/suppliers";
 import { mfgPurchaseOrders } from "./routes/mfg-purchase-orders";
 import { mfgPurchaseOrdersListEnrichment } from "./routes/mfg-purchase-orders-list-enrichment";
 import { purchaseOrderItemPhotos } from "./routes/purchase-order-item-photos";
+import {
+  CANCEL_REQUEST_OPEN_READ_PATH,
+  cancelApprovalGuard,
+  cancelExecutionBypass,
+  cancelRequestsInbox,
+  poCancelRequests,
+  soCancelRequests,
+} from "./routes/document-cancel-routes";
 import { grns } from "./routes/grns";
 import { grnsListEnrichment } from "./routes/grns-list-enrichment";
 import { purchaseInvoices } from "./routes/purchase-invoices";
@@ -39,6 +47,7 @@ import { otherDebtors } from "./routes/other-debtors";
 import { apInvoices } from "./routes/ap-invoices";
 import { receipts } from "./routes/receipts";
 import { entityAuditLog } from "./routes/entity-audit-log";
+import { changeLog } from "./routes/change-log";
 import { autocountOutbox } from "./routes/autocount-outbox";
 import { currencies } from "./routes/currencies";
 import { mfgSalesOrders } from "./routes/mfg-sales-orders";
@@ -68,6 +77,7 @@ import { stockTakes } from "./routes/stock-takes";
 import { accounting } from "./routes/accounting";
 import { mrp } from "./routes/mrp";
 import { mrpLeadTimes } from "./routes/mrp-lead-times";
+import { mrpSupplierLeadTimes } from "./routes/mrp-supplier-lead-times";
 import { outstanding } from "./routes/outstanding";
 import { unbilledDeliveries } from "./routes/unbilled-deliveries";
 import { localities } from "./routes/localities";
@@ -280,12 +290,29 @@ scm.route("/quotes", quotes);
 scm.use("/suppliers/*", scmAreaGuard("scm.procurement.suppliers"));
 scm.route("/suppliers", suppliers);
 // ── Purchase Orders / GRN / PI (scm.procurement.*) ──────────────────────────
-scm.use("/mfg-purchase-orders/*", scmAreaGuard("scm.procurement.po"));
+// The cancel guard runs FIRST. On a Purchase Order it is what makes the REASON
+// mandatory (owner 2026-09-09:「PO cancelled 不需要审批，只需要 remark 原因取消」):
+// PATCH /:id/cancel without one is refused 400 before the router is reached,
+// and the cancellation is recorded with its reason afterwards. No approval, so
+// nothing here signs and the bypass below admits nobody on this prefix — it and
+// the open-read suffix stay because the mount is shared with the Sales Order's
+// approvers, whose keys DO open …/cancel-request (docs/bugs/0717,
+// routes/document-cancel-routes.ts).
+scm.use("/mfg-purchase-orders/:id/cancel", cancelApprovalGuard("PO"));
+scm.use("/mfg-purchase-orders/*", scmAreaGuard("scm.procurement.po", {
+  openReadPaths: [CANCEL_REQUEST_OPEN_READ_PATH],
+  writeBypass: cancelExecutionBypass("PO"),
+}));
 // Deferred list enrichment — the MRP-derived PO-list columns (Assigned SO /
 // Delivered) the list no longer computes on its critical path. Mounted BEFORE
 // the main router so its static `/list-mrp-enrichment` path resolves ahead of
 // `/:id`. Shares the guard above via the path prefix.
 scm.route("/mfg-purchase-orders", mfgPurchaseOrdersListEnrichment);
+// Cancellation needs a reason + the PO's one approval (owner 2026-09-08). The
+// request routes ride this prefix's area guard; the guard in front of
+// PATCH /:id/cancel is mounted above, ahead of the area guard.
+// routes/document-cancel-routes.ts — the PO router itself is not edited.
+scm.route("/mfg-purchase-orders", poCancelRequests);
 scm.route("/mfg-purchase-orders", mfgPurchaseOrders);
 // Per-line photo WRITES (upload / delete PO-owned keys) — separate file because
 // the main router is at its size ceiling; same prefix, same area guard.
@@ -310,7 +337,16 @@ scm.use("/purchase-invoices/*", scmAreaGuard("scm.procurement.pi"));
 scm.route("/purchase-invoices", purchaseInvoicesListEnrichment);
 scm.route("/purchase-invoices", purchaseInvoices);
 // ── Sales Orders (scm.sales.orders) ─────────────────────────────────────────
-scm.use("/mfg-sales-orders/*", scmAreaGuard("scm.sales.orders"));
+// Same key-not-area admission as the PO mount above: the Purchaser signs
+// level 2 on a Sales Order cancel with Sales Orders at `view`.
+// Cancel guard first, for the same reason as the PO mount above: the Purchaser
+// signs level 2 with Sales Orders at `view` and must still be able to run the
+// cancel they just approved (docs/bugs/0717).
+scm.use("/mfg-sales-orders/:docNo/status", cancelApprovalGuard("SO"));
+scm.use("/mfg-sales-orders/*", scmAreaGuard("scm.sales.orders", {
+  openReadPaths: [CANCEL_REQUEST_OPEN_READ_PATH],
+  writeBypass: cancelExecutionBypass("SO"),
+}));
 /* MIGRATED sales orders are READ-ONLY while the cutover finishes (owner
    2026-09-08, 「只开新单，旧单暂时不能改」). A NEW order saves normally; one
    carried across from AutoCount does not, because sync-ac-delta can still
@@ -330,6 +366,11 @@ scm.use("/mfg-sales-orders/*", migratedSoReadonly());
 // verdicts). Mounted BEFORE the main router so its static `/list-mrp-enrichment`
 // path resolves ahead of `/:docNo`. Shares the guard above via the path prefix.
 scm.route("/mfg-sales-orders", mfgSalesOrdersListEnrichment);
+// Cancellation needs a reason + TWO approvals (owner 2026-09-08). Request routes
+// on this prefix (behind the area guard AND the migrated-SO lock); the guard on
+// the status route — which only wakes when the body says CANCELLED — is mounted
+// above, ahead of the area guard. routes/document-cancel-routes.ts.
+scm.route("/mfg-sales-orders", soCancelRequests);
 scm.route("/mfg-sales-orders", mfgSalesOrders);
 // SO amendment / revision workflow — SO-centric, so it rides the same L2 area
 // guard as Sales Orders (GET=view, PATCH=edit); the finer scm.amendment.* gates
@@ -350,6 +391,10 @@ scm.route("/so-amendments", soAmendments);
 // both handlers.
 scm.use("/so-handover/*", scmAreaGuard("scm.sales.orders"));
 scm.route("/so-handover", soHandover);
+// The cancellation-request inbox — both documents, this company. Coarse
+// scm.access only: an inbox spanning the sales and procurement areas cannot
+// pick one of them; each row's actions still hit the per-document routes above.
+scm.route("/cancel-requests", cancelRequestsInbox);
 // state-warehouse-mappings: cross-area lookup (SO/DO warehouse routing) — left
 // on the coarse gate, see SHARED READ HELPERS note above.
 scm.route("/state-warehouse-mappings", stateWarehouseMappings);
@@ -526,6 +571,15 @@ scm.use("/payment-audit-log/*", scmAreaGuard("scm.finance.accounting"));
 // Narrowing later is safe; nothing consumes this endpoint yet (backend-only, no
 // UI in this PR).
 scm.route("/entity-audit-log", entityAuditLog);
+// Go-live CHANGE LOG (2026-09-08): the same two audit tables, read ACROSS
+// documents instead of one at a time, and split into what a PERSON changed and
+// what the system changed. NO scmAreaGuard, for /autocount-outbox's reason: an
+// L2 area key is a PAGE key and this page belongs to no SCM area — it spans
+// sales orders, deliveries, purchases and receipts at once. Authorization is the
+// flat scm.changelog.read / settings.manage keys checked inside the route
+// against the REAL caller, which is stricter than the coarse scm.access
+// umbrella, and has to be: it reports what every colleague did.
+scm.route("/change-log", changeLog);
 // AutoCount write-back queue, READ ONLY (scm.autocount_outbox, mig 0277). NO
 // scmAreaGuard, for hr's reason and not for the umbrella's: an L2 area key is a
 // PAGE key and this page belongs to no SCM area — it spans sales orders,
@@ -556,6 +610,8 @@ scm.use("/mrp/*", scmAreaGuard("scm.procurement.mrp"));
 scm.route("/mrp", mrp);
 scm.use("/mrp-lead-times/*", scmAreaGuard("scm.procurement.mrp"));
 scm.route("/mrp-lead-times", mrpLeadTimes);
+scm.use("/mrp-supplier-lead-times/*", scmAreaGuard("scm.procurement.mrp"));
+scm.route("/mrp-supplier-lead-times", mrpSupplierLeadTimes);
 // Ported 2026-06-20 — Outstanding dashboard (v_*_outstanding views), MY
 // State/City/Postcode reference (my_localities). /fabric-library already
 // mounted above — its GET list was added to the existing route, not remounted.

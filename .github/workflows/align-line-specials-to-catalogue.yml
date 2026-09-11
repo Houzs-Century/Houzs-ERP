@@ -1,0 +1,72 @@
+name: Align a line's special order to the picker's own code
+
+# Manual. A line carrying a special order as FREE TEXT where the picker already
+# has a code for exactly that option reads as a difference that is really a
+# spelling. 「没有的才用 customs others 那边写进去」 — free text is for what the
+# picker has no code for.
+#
+# The allow-list is backend/scripts/data/line-specials-spelling.json, one entry
+# per AutoCount line. The script REFUSES a target that does not exist, is not
+# active, is not in the line's own category, or is PRICED — a priced option
+# stamped onto a line can reprice the document on its next edit, which is the
+# owner's ruling 甲 territory and a different decision.
+#
+# PLAN unless mode=apply, and apply additionally needs the confirm phrase. An
+# apply run ends by re-reading every touched line on a FRESH connection and
+# asserting the SHAPE: the picker's code is on the line, the free-text spelling
+# is gone, and all three money columns are unchanged.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+      doc:
+        description: "one document (e.g. HC-SO-013496), or blank for every entry"
+        required: false
+        default: ""
+        type: string
+      mode:
+        description: "plan (default) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'type exactly: I HAVE REVIEWED THE PLAN (only needed when mode=apply)'
+        required: false
+        default: ""
+        type: string
+
+# Its OWN group, never the deploy's, and never another lane's.
+concurrency:
+  group: align-line-specials-to-catalogue
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/align-line-specials-to-catalogue.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          DOC: ${{ inputs.doc }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

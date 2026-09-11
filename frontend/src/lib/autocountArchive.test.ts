@@ -9,13 +9,15 @@ import { describe, expect, it } from "vitest";
 import {
   AC_ARCHIVED_TAB_NOTE,
   acDocCanArchive,
+  acListTotal,
   acDocCanRestore,
   acShelfDone,
   acShelfFailedNote,
   acShelfNote,
   type AcArchiveResult,
 } from "./autocountArchive";
-import { acGroupByDocument, type AcOutboxRow } from "./autocountOutbox";
+import { acGroupByDocument, type AcOutboxResponse, type AcOutboxRow } from "./autocountOutbox";
+import { acShowingLine } from "./autocountRegister";
 
 const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
   id: "ob-1",
@@ -150,5 +152,47 @@ describe("the Cleared tab explains itself", () => {
   it("says nothing was deleted, and that it can be undone", () => {
     expect(AC_ARCHIVED_TAB_NOTE).toContain("nothing here was deleted");
     expect(AC_ARCHIVED_TAB_NOTE).toContain("Put back");
+  });
+});
+
+/* THE DENOMINATOR — and the SECOND line that reads it.
+ *
+ * `acListTotal` shipped with no test of its own, and with one of the page's two
+ * count lines still reading `counts.total` directly on both surfaces. So the
+ * filter strip was corrected to "Cleared | 3 of 3" while the line that CLOSES
+ * the register underneath it went on saying "Showing 1-3 of 1 document" — the
+ * sentence the owner photographed. Two lines, one rule, and only one of them was
+ * holding it.
+ *
+ * These pin the rule AND the composition, because the rule alone was never what
+ * was broken. */
+describe("the denominator both count lines divide by", () => {
+  const resp = (total: number, archived: number): AcOutboxResponse =>
+    ({ counts: { pending: 0, sent: 0, failed: 0, skipped: 0, requeued: 0,
+                 attention: 0, archived, total } }) as AcOutboxResponse;
+
+  it("counts the Cleared tab against the cleared shelf", () => {
+    expect(acListTotal(resp(1, 3), "archived")).toBe(3);
+  });
+
+  it("counts every other tab against the live total", () => {
+    for (const s of ["all", "pending", "attention", "sent"] as const) {
+      expect(acListTotal(resp(1, 3), s), s).toBe(1);
+    }
+  });
+
+  /* The owner's screenshot, as a sentence, through the line that produced it. */
+  it("no longer closes the register with three of one", () => {
+    expect(acShowingLine(3, acListTotal(resp(1, 3), "archived"))).toBe(
+      "Showing 1–3 of 3 documents",
+    );
+  });
+
+  /* An untouched Cleared tab divides by its own shelf, which is zero — never by
+     the live total, which would read "none of 9" on a tab holding nothing. */
+  it("says none of zero on a Cleared tab nobody has used", () => {
+    expect(acShowingLine(0, acListTotal(resp(9, 0), "archived"))).toBe(
+      "Showing none of 0 documents",
+    );
   });
 });

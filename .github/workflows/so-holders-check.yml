@@ -1,0 +1,42 @@
+name: SO holders check (read-only)
+
+# Answers "who actually holds this company's Sales Orders, and can the
+# Salesperson Handover panel select them?" — without anyone opening a SQL
+# console. Actions already holds secrets.DATABASE_URL for the deploy, so the
+# check runs here and nobody handles the credential.
+#
+# Written 2026-09-09 after three resigned reps could not be found in the
+# handover picker: the roster that feeds it is company-scoped, and the scoping
+# rule buckets a staff row with no linked ERP login to the 2990 mirror. The
+# panel therefore hides exactly the people it exists to hand over.
+#
+# Manual trigger only — it is a diagnostic, not a gate, and a production DB read
+# must never run on a schedule that turns it into routine CI noise.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind (or displace) a release.
+concurrency:
+  group: so-holders-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-so-holders.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

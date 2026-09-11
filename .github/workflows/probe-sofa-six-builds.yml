@@ -1,0 +1,44 @@
+name: Probe the six SO/PO sofa build disagreements (read-only)
+
+# The six sales orders whose SALES side and PURCHASE side describe DIFFERENT
+# sofa builds, and the purchase order raised from each. Prints what the ERP
+# holds beside the committed AutoCount snapshot, plus whether each target piece
+# SKU is minted and what is dedicated to each row — the facts a correction has
+# to be addressed at, before one is written.
+#
+# READ-ONLY. scripts/probe-sofa-six-builds.mjs takes no APPLY flag and every
+# statement in it is a SELECT.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "ERP company (Houzs Century is company 1)"
+        required: false
+        default: "1"
+        type: string
+
+# Its OWN group. Other lanes run against this repo and a diagnostic must never
+# cancel one of their runs.
+concurrency:
+  group: probe-sofa-six-builds
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/probe-sofa-six-builds.mjs
+        env:
+          COMPANY_ID: ${{ inputs.company_id }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

@@ -255,11 +255,38 @@ date). Three shared components moved for this round and for every page
 that uses them: `frontend/src/vendor/scm/components/SearchCombo.tsx` scrolls
 the highlighted option into view as ↓ moves and opens ON the first option;
 `frontend/src/vendor/scm/components/DateField.tsx` selects a pre-filled date
-on focus and masks typed digits (31032026 → 31/03/2026, `maskDmy`);
+on focus and masks typed digits (31032026 → 31/03/2026, `maskDmy`) — but only
+while every `/` on screen is one the mask itself placed (`separatorsAreMaskOwn`);
+a separator the operator typed is left alone and read by `parseDmy`, so
+`7/9/2026` no longer collapses to `79/20/26`. On blur, text that does not parse
+STAYS on screen with `aria-invalid` and a `role="alert"` message rather than
+reverting in silence. **On a coarse pointer the field is SPLIT: the calendar
+icon is a real `<input type="date">`, the rest is the text box** —
+`useCoarsePointer` swaps the native input from a 20px strip (`.nativeHidden`) to
+a transparent 44 by 44 target pinned to the right-hand end (`.nativeIconTarget`,
+`pointer-events: auto`, `z-index: 3`, marked `data-touch-target` in the DOM), so
+a finger tap on the icon opens the OS picker with no script involved, while a
+tap anywhere else focuses the masked text box and raises the keyboard. Both
+entry methods work on a phone: pick a date, or type one. The day-first masked
+text stays visible underneath, so the display is still ours. `showPicker()` is
+the MOUSE path only, reached from the calendar button, which keeps its 44px hit
+area; the 44px target overflows the ~30px field vertically rather than growing
+it, so no form row re-flows (measured 30px on both pointers, before and after).
+Typing also stays on every fine pointer (`pointer: coarse` is the PRIMARY
+pointer, so a keyboard-case iPad and a touchscreen laptop both keep the text
+box) and on any hardware keyboard. Two earlier spellings are recorded and should
+not be re-tried: a `showPicker()` call fired from the text box's `onClick`,
+which worked on Chrome and did nothing at all on iOS
+(`docs/bugs/0725-the-touch-date-picker-called-showpicker-on-an-untappable-inp.md`),
+and a full-field `inset: 0` overlay, which reached the picker but covered the
+text box so a phone could not type at all — the owner asked for typing back the
+next day, 「可以保留手打」
+(`docs/bugs/0726-pr-3311-took-hand-typing-away-on-a-phone-the-date-input-cove.md`).
 `frontend/src/vendor/scm/components/MoneyInput.tsx` rests as 1,800.00
 (`fmtMoneyAtRest`) and edits plain. Pinned by `backend/tests/apInvoiceEdit.test.ts`,
 ApInvoices.test.tsx (pop-out, Edit, Copy, Insert / Enter, amounts),
-`SearchCombo.keys.test.tsx`, `DateField.mask.test.tsx`, `MoneyInput.test.tsx`.
+`SearchCombo.keys.test.tsx`, `DateField.mask.test.tsx`,
+`DateField.touch.test.tsx`, `MoneyInput.test.tsx`.
 
 **The AutoCount sections (2026-09-06).** Every account carries a `section`
 (`scm.accounts.section`, migration 20260906T0900) — the top node the
@@ -450,7 +477,33 @@ month" (`listReceiptsHandler`, `backend/src/scm/routes/receipts.ts`;
 `useReceipts` in `frontend/src/vendor/scm/lib/accounting-queries.ts`; the
 page keeps an "All months" button beside the picker,
 `frontend/src/pages/scm-v2/Receipts.tsx`). F3 or Ctrl+S posts the open
-receipt form once it is complete (`useSaveHotkey`, payment-voucher.md). Contracts:
+receipt form once it is complete (`useSaveHotkey`, payment-voucher.md). Since
+2026-09-08 the list is the voucher list's grid (owner, pointing at that
+header: Filter 我要这样的 filter function) — `DataGrid`
+(`frontend/src/vendor/scm/components/DataGrid.tsx`): every column sorts and
+funnels (Kind / Status by value, No. type-to-find, Date by preset or range,
+Amount by min/max), the search box finds a number, a payer or a bank, Export
+Excel; the month picker, the count and the total ride in its toolbar and the
+total follows what is filtered. New / Edit open in the pop-out over the list
+(`Modal`, the AP invoice's) — the form used to be pushed in above the table,
+which sent the operator to the top of a long list (如果我在下面我要滑到很上面).
+**The same New receipt takes an Other Debtor's money (2026-09-08, owner:
+不可能链接起来吗? 想 pv 也可以付 AP invoice, expense — receipt 页我也希望这样 →
+用这个方式).** A kind switch — Sundry income / Other Debtor — and in the
+debtor kind the registry (active debtors, what each owes), the debtor's open
+bills with tick-in-full or a typed partial (the Other Debtors page's own
+picker), Received into, date; Post raises the ODR through
+`POST /other-debtors/:id/receipts` with `postNow: true`
+(`createDebtorReceiptHandler`, `backend/src/scm/routes/other-debtors.ts`),
+which stamps the three marks with the one hand that keyed it and books the
+identical entry the fourth layer's Approve writes — `postDebtorReceipt`, Dr
+bank / Cr 305, bills knocked off — in the same call (录入即过账; no four layers
+on this door; the Other Debtors page's own raise still starts at Draft). The
+bill itself is still raised on Other Debtors. Contracts:
+`backend/tests/otherDebtors.test.ts` ("postNow books the receipt in the same
+call", "without postNow nothing changes"), `Receipts.test.tsx` ("an Other
+Debtor's money is received here").
+Contracts:
 `backend/tests/receipts.test.ts` ("no month asked for lists every month"),
 `Receipts.test.tsx` ("opens on every month").
 Handlers in `receipts.ts` (mounted beside other-debtors in
@@ -616,6 +669,126 @@ has, which is exactly how this shipped). The card's **Book N payments now**
 button, offered only after a dry run the gate refused nothing on and behind a
 confirm, is the same endpoint without dryRun — the owner presses it.
 
+**A payment that reached the ledger and then stopped agreeing with it
+(2026-09-10, docs/bugs/0774).** The card above answers "did the money reach
+the books". It had no answer for "does it still say what the books say".
+`PATCH /:docNo/payments/:id` writes the payment row and never re-posts its
+entry — only DELETE touches the ledger, through `afterSoPaymentRemoved`. The
+one thing holding the two in step is `paymentRowMutable`
+(`scm/shared/so-field-policy.ts`): a payment is editable only on the day it
+was keyed, so almost nothing survives long enough to drift (production
+2026-09-10: 0 amount disagreements, 3 date). The owner has confirmed with
+management that FINANCE should hold the power to correct a mis-keyed payment,
+which removes that accident — so the divergence is now watched before the
+window opens. `acc/payment-drift.ts` is the pure comparison (amount, date,
+and the method read back out of the poster's own narration
+`Payment {method} on {docNo}` — an unrecognised narration makes NO method
+claim); `paymentEntryDisagreements` in `acc/payments.ts` does the reads,
+paging both payment tables in full because the date is one of the things
+under suspicion; `/control-check` returns it as `paymentDrift`; the Self-check
+tab shows both sides of every difference. A changed acquirer is deliberately
+out of scope — it lives in the entry's LINES — and the card says so. It
+writes nothing and offers no fix button, because the fix is the next step:
+**make the edit reverse and re-post**, and only then the Finance permission,
+gated on "editable until the payment has been RECONCILED" rather than by time
+(`so-field-policy.ts` already reserves the one place that condition lands).
+Pinned by `acc/payment-drift.test.ts`,
+`scm/routes/controlCheckPaymentDrift.test.ts` and `PaymentDriftCard.test.tsx`.
+
+**The edit now moves the entry with it (2026-09-10, docs/bugs/0778) — step 2.**
+`acc/payment-repost.ts` reverses the old entry and books a fresh one, the
+pattern general receipts already use, and the PATCH route calls it through
+`repostSoPaymentBestEffort` (beside `bookSoPaymentBestEffort` in
+`scm/lib/so-payment-row.ts`, same never-blocks contract). Two decisions live in
+that module. **Which edits move the books:** four fields and only four —
+`amount_sen`, `paid_at`, `method` (picks the debit account) and
+`merchant_provider` (picks WHICH transit account); an approval code, account
+sheet, collector, installment term or online sub-type changes no line, and
+re-posting for one would spend a JE number rewriting the same entry.
+**Where the correcting contra is dated:** on the ORIGINAL entry's date, so the
+wrong entry and its reversal net to zero in the month they were made — dated
+today it would leave the money standing in one month's bank column and a
+matching negative in another. DELETE keeps its own hook and still dates its
+contra TODAY, because removing a payment is an event that happens today. A
+refusal is carried up and logged, never swallowed: it leaves the payment with
+no active entry, which is the unbooked card's finding and the backfill's to
+heal. SI payments have no edit route at all, so there is nothing to mirror.
+Pinned by `acc/payment-repost.test.ts` (through the real poster and the fake
+client) and `tests/soPaymentEditReposts.test.ts` (that the ROUTE calls it —
+RED against the unfixed route file).
+
+**Finance holds the correction right (2026-09-10, docs/bugs/0780) — step 3, the
+last.** `acc/payment-reconciled.ts` answers "has this payment been reconciled",
+and names WHICH of three places closed over it rather than collapsing them into
+one flag: `acc_settlement_matches` claims the payment ROW (the only one that
+speaks for a payment that never booked); `acc_bank_statement_matches` claims its
+ACTIVE entry by je_no; `acc_bank_month_locks` closes that entry's MONEY-leg
+account for the month — read off the DEBIT line, because the credit leg is Trade
+Debtors and a guard on the wrong line would find no lock and wave everything
+through. **Every read fails CLOSED**: an unreadable check refuses and says to
+retry, never "not reconciled", or the guard switches itself off exactly when the
+database is unhappy (the `loadLineMonth` rule, same reason). `paymentMayChange`
+is the one call the two SO payment routes make — loading the fact AND asking
+`paymentRowMutable`, because a route that did only the first half would read as
+if it had checked. The permission is `scm.so_payment.amend`, held by nobody but
+`*` until granted in Team > Positions, and it does NOT reach past a reconciled
+payment. Pinned by `scm/shared/soPaymentAmendRight.test.ts`,
+`acc/payment-reconciled.test.ts` (one case per read proving a failing read
+refuses) and `tests/soPaymentAmendRoutes.test.ts` (RED against the unfixed
+route file).
+
+**The reason, and the Corrections report (2026-09-10, docs/bugs/0785).** A
+correction made on the amend right owes a reason and is a Finance event; a
+same-day fix by whoever keyed the payment is neither (owner: 靠权限改的来决定).
+`paymentRowMutable` now says WHY a row may change — `via: 'draft' | 'same_day'
+| 'amend' | null` — and both payment routes act on `via === 'amend'`: refuse
+without a reason (`reason_required`), and audit the correction with
+`source = 'amend'`, the reason in `note`, and two extra field changes —
+`ledger: original → new` (what replaced what) and `ledgerReversal: null →
+contra` (the PATCH re-posts BEFORE it audits so the row can carry the numbers;
+`repostSoPaymentEdit` and `afterSoPaymentRemoved` hand all three back, and
+`reverseJournal`'s `reversed` result now names `originalJeNo`). The first
+version carried only the contra, as `ledger.from`, and the report printed
+"0099 reversed → 0100" — read as if 0099 were the entry reversed, when 0099 IS
+the reversal (owner: 不明白; docs/bugs/0786). The Ledger column now reads
+**"0047 → reversed by 0099 → 0100"**; the one legacy row is read as
+contra-only and never presents the contra as the original.
+
+**A bank charge deducted from a payout (2026-09-10, docs/bugs/0787).** Public
+Bank kept RM 324.00 of the 2026-06-06 settlement as a card-terminal application
+fee, so the advice said RM 3,024.18 for a day whose report nets RM 3,348.18 —
+and the Payment advice screen could only say "differs". The charge now lives on
+the ADVICE DAY row (`acc_settlement_payout_batches.charge_*`, migration
+`20260910T1200`): `statusOfPayout` treats a day as agreeing when **report net =
+advice net + charge** and carries the charge so the screen shows where it went.
+`acc/payout-charge.ts` books it — Dr the account **Finance picks** (owner:
+可以让我点了后选这笔进什么户口吗; any ACTIVE EXPENSE LEAF of this company, the
+merchant-fee account's four refusals now shared as `checkExpenseLeaf`,
+defaulting to the acquirer's fee account) / Cr the acquirer's transit, **dated
+the settlement day**, source `SETTLECHARGE` keyed on the day row; the amount
+defaults to the whole difference and may not exceed it; the note is required;
+a charged day refuses a second charge (undo first, through the engine).
+`loadBatchReceipts` reports what the bank deducted beside what it credited and
+`postBatchReceipt` counts both, so the short credit that follows a fee reads as
+fully received. Routes `POST`/`DELETE /settlement/payouts/:id/days/:settledOn/charge`;
+the list carries `chargeAccounts` (`expenseLeafAccounts`, shared with Setup)
+and `feeAccountByAcquirer`. On the tab, a day the bank paid LESS for offers
+**Bank deducted a charge**; a day it paid MORE for does not. Pinned by
+`acc/payout-charge.test.ts`, the charge cases in `acc/payout-advice.test.ts`,
+`acc/settlement-receipt-charge.test.ts`, `scm/routes/payoutChargeRoute.test.ts`
+and `PayoutAdviceTab.test.tsx`. No new table: `GET /accounting/payment-corrections?month=` is a
+filtered read of `mfg_so_audit_log` — `source = 'amend'`, the two payment
+actions, this company, this month — shaped by `acc/payment-corrections.ts`
+(newest first, the ledger pair pulled out, the summary added up). The Accounting
+page's **Corrections** tab shows month, a person filter, three cards (count,
+net effect on money received, deleted), the table with the reason and both JE
+numbers, and Print through `payment-corrections-pdf.ts` — built by
+`correctionsDocument`, the same pure-then-draw shape as the bank statement. The
+screens ask through `usePrompt` (an optional text input on the shared
+ConfirmDialog; a required input cannot be confirmed blank). A fake-client trap
+surfaced on the way: its `lt` compared numerically, so a timestamptz month
+window returned nothing against the fake — fixed to match `gte`/`lte`.
+
 **Phase 2B part 1 (2026-08-16): Daily Bank.** GET /accounting/daily-bank?date= answers the owner one question - today, where is the money and how much can actually move - live from the ledger (2.3: no caches): opening/in/out/closing per money account (scm.accounts.acc_money flag, migration 0299), settlement-in-transit balances per acquirer (visible, never counted movable), and — since phase 3 (2026-08-28, mig 0339) — pendingApprovalSen: every DRAFT payment voucher sitting in the approval queue, converted to MYR the way posting will, subtracted from available. Page /scm/daily-bank (Finance menu): date navigation + Get Image (canvas-drawn PNG to clipboard for WhatsApp, download fallback). Board arithmetic pinned in acc/daily-bank.test.ts. 946-0000 Cash Over/Short + OVER_SHORT role seeded for the coming daily cashup.
 
 **Phase 3 (2026-08-28): PV approval — money leaves only after a yes.** The full write-up lives in docs/modules/payment-voucher.md §0b (marker columns per the 0324 lesson, the pure rule table in scm/lib/pv-approval.ts, the post gate, the scm.payment_voucher.approve key, the audit verbs). What belongs to THIS module: the Daily Bank board's available figure now answers "closing minus what is already asked for", which is the question the owner's phase-3 placeholder was holding a seat for.
@@ -667,6 +840,93 @@ one exact-summing pair — it comes back as `suggested`, pre-ticked on screen wi
 the reason, for a human to confirm. Offered, never taken: two possible answers is
 a question, so nothing is ticked and he chooses;
 `acc/settlement.ts` confirms, which POSTS that moment.
+
+**A REFERENCE IS NOT BOUND BY THE DATE WINDOW (2026-09-09, docs/bugs/0760).**
+`loadPaymentCandidates` used to read the tolerance window only, and the
+reference was consulted afterwards — so a payment outside the window was never
+loaded and its reference never looked at. Four PBB lines on prod read "No
+payment recorded near …" while their payment sat in the ERP with the identical
+reference and the identical amount, keyed five to eleven days later because the
+sale was written up late. The window answers "which payments could plausibly be
+this amount on this day"; it is the wrong instrument for a reference, which is
+the acquirer's own identifier for the swipe. The loader now takes the
+statement's own refs and fetches them whatever their date (deduplicated against
+the window read, so one payment reaches the matcher once). The matcher **offers**
+such a payment pre-ticked with the distance named, rather than auto-taking it —
+a reference matching across two weeks is also the shape of a code mis-keyed onto
+a later sale, and this is the one path that books money without a human. Inside
+the tolerance the automatic match is unchanged.
+
+**A ref-matched line carries its payment in `matched`, not `candidates`
+(same bug).** matchStatement empties `candidates`/`suggested` for that bucket on
+purpose — there is nothing to choose. The batch detail read only those two
+fields, so a matched line whose link had not persisted arrived with no payment
+and the screen ran its last branch, "No payment in the ERP explains this money",
+directly under the clue naming the sale it had matched; Confirm then sent an
+empty selection and was refused. The detail now falls back to `matched` for
+both, and the upload REFUSES when its rows insert returns fewer ids than
+decisions — the silent skip that left nine MATCHED lines with zero links.
+
+**FIND THE SALE — THE WINDOW IS NOT THE ONLY INSTRUMENT (2026-09-10,
+docs/bugs/0792).** A GHL line of RM 2,865.00 read "no sale in the ERP" while
+2990-SO-2606-011 sat in the ERP at exactly that amount, keyed twelve days after
+the swipe with no bank on it: GHL's tolerance is 3 days and it files no unique
+reference, so the loader never reached it and the line's only door was Set
+aside. The window answers "what could plausibly be this money"; a person may
+simply KNOW which sale this is. `findPaymentsForRow` (`backend/src/acc/settlement.ts`)
+lists the company's card / instalment / migration-era payments whatever their
+date, searched by document number, customer, approval code or an amount typed
+as money, leaving out anything another line already claimed; the exact gross is
+marked `possible` and ranked first, the rest offered newest first — never
+withheld (owner: 可以注明 possible，但不能不让我选其他的). Cash and transfer are
+never listed: no merchant report is explained by them. Route
+`GET /accounting/settlement/rows/:id/find?q=` (`accounting-settlement.ts`).
+On screen every undecided line carries **Find the sale** (`FindTheSale` in
+`frontend/src/pages/scm-v2/MerchantRecon.tsx`, `useFindPayments` in
+`settlement-queries.ts`); a found payment joins the line's ticks and the same
+Confirm and post sends it. Because a person may now pick ANY payment,
+`confirmSettlementRow` READS THE CHOSEN PAYMENTS BACK: not in this company's
+books → `payment_not_found`; not a card payment → `not_card_payment`; and the
+amount that must equal the gross is the row's own, not the browser's
+(`amount_mismatch` compares database figures). The same PR names the
+salesperson on the "Card payments no merchant report has reported yet" table
+(`salespersonName`: order → `salesperson_id` → `staff.name`; owner: 我想要看到
+salesman 的名字). Contracts: `settlement-find.test.ts`,
+`backend/tests/settlementRoutes.test.ts`, `MerchantRecon.test.tsx`.
+
+**THE MERCHANT FEE ACCOUNT (2026-09-09, docs/bugs/0762).** Every acquirer link
+in both companies had `fee_account_code = '930-0000'`, seeded by migration 0332
+when the chart was the old one. The AutoCount relay (0346) and the 397-account
+seed replaced the chart underneath, and in the new one 930-0000 is
+"MISCELLANEOUS EXPENSES XXX" and **inactive** — so the posting gate refused
+every settlement confirm with *"account 930-0000 is deactivated"*, in both
+companies, and had done since the chart moved. It stayed hidden because nothing
+reads the fee account until a line is CONFIRMED, and confirms were blocked by
+0760/0761. Migration `20260910T0147` repoints the links and the column default
+to **900-T009 TERMINAL INTEREST CHARGES** (the owner's choice), guarded so only
+rows still on the placeholder move and the target must be an EXPENSE, ACTIVE and
+a LEAF in that same company. The route's fallbacks are now one
+`MERCHANT_FEE_ACCOUNT` constant so the code and the column default cannot drift.
+**And the Setup screen can now pick it** (owner: 这个需要). Reconciliation setup
+offers each company its own ACTIVE EXPENSE LEAVES — server-filtered to the same
+properties the posting gate checks, so a code on the list cannot be one the gate
+refuses — and the PATCH re-checks all four by name (in this chart, active, an
+EXPENSE, a leaf) rather than accepting a code that fails later at confirm time.
+A fee account the chart can no longer post to is NAMED on the cell, because that
+silence is how 930-0000 went unnoticed while every confirm in both companies
+refused.
+
+**AND THE BULK BUTTON IS ITS OWN PATH (docs/bugs/0761).** `settlementConfirmMatched`
+("Confirm all N matched") builds each line's payments from `acc_settlement_matches`
+alone, so the detail fix left it still answering *Posted 0* over lines whose
+payment the screen was by then showing. It now applies the same fallback — for a
+pending MATCHED row with **no link**, recompute and take the matcher's `matched`
+— recomputed only for unlinked rows, so a stored human decision is never
+overridden, and confirming writes the link back so the data heals as it is
+worked. **Only `matched` is rescued, never `suggested`:** nobody reads each line
+on this path, and an out-of-window reference or a lone amount match is offered on
+the detail screen precisely because it needs eyes. The handler also 404s on a
+missing batch rather than reporting an empty success.
 
 **Which payments are candidates (2026-09-04, the owner's first real uploads
 made the gap loud: four MBB lines all UNMATCHED while their sales sat in the
@@ -854,10 +1114,10 @@ deleting it. Layer 4 (bank reconciliation) will write these same rows from the
 bank statement itself, which is why the operator is never asked for a payout
 date at upload time — that is the one moment he cannot know it.
 
-Thirteen endpoints under `/accounting/settlement/*` (setup read/write, upload,
+Fourteen endpoints under `/accounting/settlement/*` (setup read/write, upload,
 batch list/detail, confirm one, confirm-all-matched, received, receipt undo,
-ignore, watchlist, in-transit, CSV export), each carrying its own permission
-check on top of the area guard.
+ignore, watchlist, in-transit, CSV export, find-the-sale), each carrying its own
+permission check on top of the area guard.
 
 **Two pages, named by the owner** (2026-08-17: 就不能分成 merchant
 reconciliation, bank statement reconciliation 吗？) — because it is two jobs on
@@ -914,6 +1174,279 @@ two days:
   money accounts — the chart is already maintained centrally (0297), which is the
   owner's own answer to where banks are defined ("chart of account 我也是会做成总
   维护不是？").
+
+**Reading the bank's file — headings, never positions (2026-09-08; owner, on
+the eight Hong Leong files for 2990's 310-0020 / account 23600602788: 别卡死
+读 column, 我怕未来 bank 可能换 format … 可能隔几天我就做一次).**
+`backend/src/acc/bank-parse.ts` finds every column by its heading text
+(case, spaces and punctuation folded): the names the config teaches first,
+then `DEFAULT_HEADINGS` — the captions banks are known to print for each
+role (Date / Transaction Date / Txn Date…, Deposit / Credit Amount…,
+Withdrawal / Payment Amount…) — so a re-captioned or reordered export still
+reads, and a file matching none of them is refused with its own headings
+quoted. A column map's values are one heading or SEVERAL (JSON arrays); the
+`reference` role JOINS every present heading (Hong Leong's any-day export
+splits the narrative into sender name, reference and "other details"). It
+strips Excel's `="…"` guard from every cell, reads the opening balance from
+the statement's own row ("Balance from previous statement", "Prior Day
+Balance :") instead of deriving it from a day's single printed balance, and
+hands lines back in DATE ORDER whichever way the bank printed them (the
+any-day export runs newest first), closing = the newest printed balance.
+Uploads overlap by design: `movementFingerprint` (day + amount + the
+narrative's WORDS in any order, a split word glued back — "MERCHAN T") keys
+what this account already carries on ANY earlier statement, counted, so a
+longer export marks what it repeats DUPLICATE/IGNORED (naming the entry or
+the statement it sits on) and adds only the movements beyond that count —
+two identical transfers on one day stay two
+(`bankUpload`, `backend/src/scm/routes/accounting-bank.ts`). Setup lives on
+Reconciliation setup's **Bank statements** card
+(`frontend/src/pages/scm-v2/SettlementSetup.tsx`, hooks in
+`frontend/src/pages/scm-v2/bank-queries.ts`): per company, the account, the
+bank, the account number the file must mention, format, delimiter, amount
+style, and each heading role as a comma-separated list, a blank role falling
+back to the built-in names — `GET/POST /accounting/bank/config`
+(`backend/src/scm/routes/accounting-bank-config.ts`; money accounts of this
+company's chart only, CSV/TXT only, an amount named one way only; the
+`ready` flag on `/bank/setup` is now always true for that reason).
+`backend/src/db/migrations-pg/20260908T2100_acc_bank_statement_hlb_2990.sql`
+seeds 2990's HLB account (both layouts' captions), adds the GHL recognition
+rule ("/GHL/<merchant> … (FOR GHL)" on an interbank GIRO credit) and loosens
+the HLB rule to the split word. Contracts: `backend/src/acc/bank-parse.test.ts`
+(both Hong Leong layouts on synthetic rows, the built-in headings, the
+fingerprint), `backend/src/acc/bank-match.test.ts` (GHL, HLB whole and
+split), `backend/tests/bankRoutes.test.ts` ("uploading overlapping exports",
+"setting up a statement account"), `SettlementSetup.test.tsx` (the card).
+
+**A MONTH, not a file at a time (2026-09-09; owner, uploading one a day: 每天我
+上传bank statement 和 merchant report 测试，但是有办法选这个是几月的？因为我发现
+好像没有).** Layer 4 reconciled one FILE, which is the right unit for a monthly
+statement and the wrong one for Hong Leong's any-day export — a file per day made
+September thirty separate answers and none of them the answer to "did September
+agree". `backend/src/acc/bank-month.ts` assembles the month by three rules and
+hands it to the SAME `reconcileBankStatement`, so nothing new judges money:
+(1) a MOVEMENT belongs to the month its own date falls in, never to the file it
+arrived in — a date cannot lie about its month, a filing label can, so a file
+straddling a month end feeds both and daily/monthly/both uploads build the same
+September; (2) a BALANCE speaks for a month only when its file lies wholly
+inside it — the opening on a 28 Aug–3 Sep file is August's, and using it as
+September's is wrong by four days of movement while looking authoritative, so
+such a file is listed and LABELLED rather than dropped; (3) the files are
+CHAINED and the chain is CHECKED — Hong Leong prints the prior day's balance, so
+each file should open where the previous closed, and a break is reported with
+both file names, both dates and the amount that moved between them (an
+overlapping longer export is NOT a break). The reconciliation window follows the
+days actually uploaded, not the calendar, so ten days of bank are never set
+against thirty of ledger. Doors: `GET /accounting/bank/months` (every account ×
+month, with whether it is covered end to end) and
+`GET /accounting/bank/months/:accountCode/:month`
+(`backend/src/scm/routes/accounting-bank-months.ts`, guarded by the same
+`bankGuard` exported from `accounting-bank.ts`). **By month** is the first tab of
+`/scm/bank-recon`; the per-file view stays one press away
+(`frontend/src/pages/scm-v2/BankMonthTab.tsx`, reusing the file screen's own
+reconciliation panel and movement rows so one movement has one set of buttons).
+What is MISSING prints above the verdict — a difference computed over a month
+short of four days is an answer about a different month.
+
+**The reconciliation statement on paper (2026-09-09; owner: 然后就是match 完了我
+要report).** `frontend/src/vendor/scm/lib/bank-reconciliation-pdf.ts` walks
+balance per bank statement − on the bank not in the books + in the books not on
+the bank − difference brought forward = balance per the books, which is the
+identity `acc/bank-reconcile` checks, written as lines. It TIES BY CONSTRUCTION
+and is then checked against the ledger balance the server sent; three refusals
+keep it from being filed when it should not be — the walk arriving anywhere but
+the ledger, the server having already found the figures inconsistent (no walk is
+drawn at all, because a tidy one would launder the error), and no file printing a
+closing balance (a zero is not an absence). Every step names the count behind it
+and every count has its list: unposted movements with the file they came off,
+ledger entries the bank never showed, movements POSTED, and — printed whether or
+not the month reconciles — everything LEFT OUT with the reason given, which is
+the only record that decision will ever have. Reached through the house's one
+print dialog (`PrintPreviewModal`) from the month view. Contracts:
+`backend/src/acc/bank-month.test.ts` (leap February, a missing day, an
+overlapping export that is not a break, a straddling file speaking only for its
+movements), `frontend/src/pages/scm-v2/BankMonthTab.test.tsx`,
+`frontend/src/vendor/scm/lib/bank-reconciliation-pdf.test.ts` (the walk ties, or
+it is not drawn).
+
+**Closing a reconciled month (2026-09-09; owner: 还有lock 起来不可以随便碰).**
+Until now every bank movement could be booked, ignored or UNDONE at any time,
+for ever — right while a month is being worked, wrong the moment it has been
+reconciled and its statement printed, because a reconciliation somebody filed is
+a claim and a month that can still move behind the paper makes the paper a lie.
+`backend/src/acc/bank-lock.ts` holds both rules. **May it close (since
+docs/bugs/0806):** only when a statement is filed for it, nothing is left to
+decide, its figures account for themselves, it is covered end to end, a file
+printed a closing balance, and it TALLIES — the books allowing for the
+outstanding items reach the bank's closing. Otherwise it cannot close at all:
+`not_tallied` names both figures and the gap. The reason escape that used to
+close a month over a known difference is gone (owner 2026-09-11: 当 closing bank
+statement amount 无法 tally 就无法 lock; 应该不会有银行错吧，毕竟怎样都要 tally
+bank statement) — `lock_note` is written null and stays for the locks closed
+with one. **What a closed month
+refuses:** booking, matching, ignoring, undoing, and uploading a statement whose
+movements land inside it — checked by the movement's OWN date (bank-month rule 1)
+so a straddling file cannot smuggle a write into a closed September, and a lock
+read that FAILS is a refusal rather than a pass. The refusal names the month, who
+closed it and when. Doors: `GET /accounting/bank/locks` and
+`POST /accounting/bank/months/:accountCode/:month/lock` | `/unlock`
+(`backend/src/scm/routes/accounting-bank-locks.ts`). Unlock asks a SECOND key —
+`scm.payment_voucher.approve`, because reopening undoes a document somebody filed
+— plus its own required reason. Migration `20260909T0243_acc_bank_month_lock.sql`
+adds `scm.acc_bank_month_locks`: one row per company × account × month, a partial
+unique index keeping one live lock at a time, and the two closing balances, the
+difference, the file count and `was_complete` SNAPSHOTTED at the moment of
+closing — deliberately frozen, because a claim that silently follows today's data
+is not a claim and a later disagreement with the ledger IS the finding. A lock is
+never deleted: releasing sets `released_at` and the row stays. **It is not a GL
+period close** — it stops the bank reconciliation screens from changing a closed
+month, not a journal entry posted into those dates from elsewhere. Contracts:
+`backend/src/acc/bank-lock.test.ts` (an unfinished month refuses even with a
+reason; each unclean month refuses without one and closes with one).
+
+**A month in which nothing moved (2026-09-10, docs/bugs/0794; owner: 我应该每一
+个月都要做 bank reconciliation 不是？没有 transaction 那么你就让我锁起来).**
+Hong Leong's March export for 2990 is one "Balance from previous statement
+3000.00" row and nothing under it; the reader refused it, March never appeared
+under By month, and the lock refused any month with zero movements — so the
+chain of closed months had a hole at March. A quiet month is still reconciled
+(bank 3,000 = books 3,000) and closed. `parseBankStatement` now reads a file
+that prints a balance and no movement as a statement of that balance (no lines,
+opening = closing, in/out 0) filed under the calendar month the operator names
+in the **Year and month** box — the file carries no date, so without the box it
+is refused with what to do; a file with neither movement nor balance is still
+refused. `feedersOf` (`accounting-bank-months.ts`) makes an empty statement
+(`line_count = 0`) whose period lies inside a month one of that month's files,
+for the list, the detail and `loadMonthForLock` alike; `assembleMonth` then
+finds it complete with both balances. `mayLockMonth` measures
+`statementCount`, not movements: `empty_month` means no statement filed, and
+a quiet month goes through the ordinary doubts — filed under the wrong month,
+its balance against the ledger gives it away and the close wants a reason. The
+upload writes no line rows for it and the screen says "No transactions in this
+statement — filed for 2026-03 at RM 3,000.00 throughout" (`BankStatementTab.tsx`).
+Contracts: `bank-parse.test.ts`, `bank-lock.test.ts`, `bank-month.test.ts`,
+`backend/tests/bankRoutes.test.ts` (which now also mounts the month list and
+the lock — their first route contract), `BankStatementTab.test.tsx`.
+
+**The reconciliation in the owner's form (2026-09-11, docs/bugs/0806).** April
+fully matched read "The bank and the books differ by RM 3,101.68" — the one
+payment the bank had not paid yet — and "brought forward — explained by 1
+entry from earlier months" over six April entries and a hard-coded count. The
+owner: 我觉得设计应该是这样: Closing — the books (−)/+ unreconciled items =
+Closing bank statement; 每当我一 match, closing 就一直变; 当 closing bank
+statement amount 无法 tally 就无法 lock. `reconcileBankStatement` now carries
+that walk: `outstandingPayments` / `outstandingReceipts` / `outstandingJeNos`
+(every unclaimed entry, this period's and earlier ones' alike, by sign — 全部就
+是 outstanding items), `computedClosingSen` = books − outstanding + what is on
+the bank and not in the books, `unexplainedSen` = the printed closing minus
+that, `tallies`, and `reconciled` = tallies with nothing left to decide; an
+entry the bank has not shown yet is what a reconciliation LISTS, not a
+difference. `ReconciliationPanel` (`BankStatementTab.tsx`, shared with the
+month view) is the walk as a table — Closing per the books / Add: payments the
+bank has not paid yet (N items) / Less: receipts not yet credited / On the
+bank, not in the books (N still to decide) / Closing per the books after
+outstanding items / Closing per bank statement — ending on ✓ Tallies or ✗ Off
+by, an Unexplained row only when there is one; the "brought forward" line and
+the "made up of" list are gone, and the two books tables are ONE ("Outstanding
+items — in the books, not yet on the bank", each with date and who). The
+printed statement (`bank-reconciliation-pdf.ts`) walks the same way from the
+books to the bank and refuses to be filed when it does not tally. The Close
+button (`BankMonthTab.tsx`) is off until the month can close and says which
+condition is missing — no reason box. An old file uploaded before the month
+box covered a month (April: 30/4 → 30/4) is re-filed as the month's statement
+in place by `POST /accounting/bank/statements/:id/period { month }`
+(`bankStatementPeriod`; a movement outside the month or a closed month
+refuses) — the header offers "This file is April 2026's statement". Contracts:
+`bank-reconcile.test.ts`, `bank-lock.test.ts` (rewritten), `bankRoutes.test.ts`,
+`BankStatementTab.test.tsx`, `BankMonthTab.test.tsx`, `bank-reconciliation-pdf.test.ts`.
+
+**Undo lets go; a dated statement covers the month it is named for; the
+books' list names who and carries earlier months (2026-09-11, docs/bugs/0802).**
+Three things off 2990's April Hong Leong statement. UNDO left the line's row in
+`acc_bank_statement_matches` standing, so the books counted the entry as
+claimed while the bank counted the movement as open — the identity broke
+("These numbers do not add up") and `acc_bank_je_once` refused every re-match.
+`bankLineUndo` now deletes the line's match rows, `bankLineMatch` first
+clears any row on that entry whose line is no longer POSTED (the rows an older
+undo left; prod's six clear themselves on the next match), and every read —
+statement detail, month detail, `loadMonthForLock` — counts a claim only from
+a POSTED line. THE MONTH A STATEMENT COVERS: fifteen movements all dated the
+30th gave a one-day period and the vouchers of the 28th fell off the "in the
+books" list; naming the month in the Year-and-month box for a DATED file now
+sets the period to the 1st–last day (a movement outside it refuses the file,
+`month_mismatch`), rule 1 untouched. CARRIED AND WHO (owner: 我要看到 pay to
+who; 之前 in book 还没有 recon 的也要带下来，因为可能下个月才过钱):
+`reconcileBankStatement` gains `carried` (entries before the period no
+statement of the account has ever claimed, and not older than the first
+statement ever filed — `loadClaimedElsewhere`/`claimedSetFor` in `acc/bank.ts`,
+`claimedOutside` in the month routes), `clearedFromBeforeSen` (an earlier
+entry a movement on this statement claims) and `broughtForwardExplained`; the
+identity carries the cleared term: difference = bank-not-in-books −
+books-not-on-bank + brought forward + cleared-from-before. The ledger read
+carries `party_name` and skips both sides of a reversal (`reversed` /
+`reversed_by_je`) — a correction was being listed and offered as two entries.
+The screens share `BooksNotOnBank` (`BankStatementTab.tsx`): a Who column, a
+second section "From earlier months, still not on any statement", the payee on
+candidate entries, and the brought-forward line saying when it is explained;
+the printed statement (`bank-reconciliation-pdf.ts`) adds the Who column, an
+"Add: still in the books from earlier months" step and prints the
+brought-forward only for its unexplained part. Contracts:
+`bank-reconcile.test.ts`, `backend/tests/bankRoutes.test.ts`,
+`BankStatementTab.test.tsx`, `bank-reconciliation-pdf.test.ts`.
+
+**Several movements are one entry, or one movement is several (2026-09-11,
+docs/bugs/0803; owner, on OR-2604-001 = RM 29,000 + RM 10,000: 他对应的是这两笔，
+你应该开发让我自由选).** Migration `20260911T1000_acc_bank_match_group.sql`
+moves the guarantee: `acc_bank_statement_matches` is unique on (company,
+je_no, bank_line_id) instead of (company, je_no), and "one entry cannot account
+for two" is now the ROUTE's refusal (`already_matched`, read off the match
+rows of that entry whose line is POSTED) in both `bankLineMatch` and the new
+`POST /accounting/bank/lines/match-group { lineIds, jeNos }`
+(`bankLinesMatchGroup`, `backend/src/scm/routes/accounting-bank.ts`). The
+group is several movements to ONE entry or one movement to SEVERAL —
+several-to-several is two decisions and is refused (`one_side_only`); every
+line must be OPEN, of this company, on one account and in an open month; every
+entry a posted entry of that account's ledger (`entry_not_found`); and the
+two sides must add up to the sen (`amount_mismatch`, naming both totals and
+the difference — owner: 勾的总额必须等于那个 entry 的金额). Rows carry each
+movement's amount (several→one) or each entry's (one→several);
+`StatementMovement.jeNos` carries every entry a POSTED line claims and the
+reconciliation's claimed set is the union (`loadMonthForLock` now reads the
+match rows for it). UNDO IS THE WHOLE GROUP: undoing one movement reopens every
+movement sharing its entries (`linesReopened`), because a half-claimed entry
+is not a state the identity can hold. On screen, `OpenLines`
+(`BankStatementTab.tsx`, shared with the month view) gives every open
+movement a tick box; ticking opens "Choose the entry these movements are"
+over every entry the books still hold for the account (this period's and the
+earlier months', named by who), and "These are that entry" fires only when the
+totals agree. Contracts: `backend/tests/bankRoutes.test.ts` (whose harness no
+longer carries the je_no unique — the route's refusal is what "only once"
+exercises), `bank-reconcile.test.ts`, `BankStatementTab.test.tsx`.
+
+**"This movement is already in the books" (2026-09-09; owner, on a RM 3,000
+transfer sitting beside the RM 3,000 receipt that posted it: the only button was
+"Not ours to reconcile", which is not true).** `POST /bank/lines/:id/match` has
+existed since layer 4 shipped and had NO user interface, so everything on a
+statement that is not card money — a customer's transfer, a bank charge, a
+deposit — had no correct action. `entryCandidatesFor`
+(`backend/src/acc/bank-match.ts`) now ranks the posted entries a movement could
+be, and both `/bank/statements/:id` and `/bank/months/...` return them per line
+as `entryCandidates` (open lines only). Deliberately narrow, because the
+operator is agreeing that two records are ONE FACT: the amount must agree **to
+the sen and in the same direction** (a tolerance would let RM 3,000.00 reconcile
+against RM 3,000.50 and lose the fifty sen for ever), the entry must be within
+`ENTRY_MATCH_WINDOW_DAYS` (7 — a cheque banked on Friday clears on Monday), and
+an entry another movement already claims is not offered at all rather than
+refused after choosing. Ranked closest-day first with a deterministic tie-break;
+**proposed, never auto-applied**. The row shows the entry number, its date, how
+many days apart it is, and the document behind it; nothing is pre-selected and
+the button will not fire until a choice is made.
+
+**Where a reconciliation is "saved" (same day, same question: 我也没有看到哪里可
+以save 这个recon).** There is no Save because there is no draft — every decision
+writes when pressed, and the reconciliation is recomputed from the ledger on
+every read (§2.3, no caches). What records one is **closing its month** (above).
+The file view now says both, and names the month its own dates fall in, because
+the difference between finding that and hunting for it is one sentence.
 
 On both reconciliation screens, working a statement REPLACES the list rather than stacking under it —
 the owner on the version that stacked: 就感觉很多东西挤在一页. Each page links to

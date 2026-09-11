@@ -61,7 +61,9 @@
 
 /* Hidden native date input — present for the picker + ISO emit, not for
    display. Kept in the DOM box (1px, opacity 0) so showPicker() anchors near
-   the calendar button. pointer-events:none so the button owns the click. */
+   the calendar button. pointer-events:none so the button owns the click.
+   This is the FINE-pointer geometry; a coarse pointer gets .nativeIconTarget
+   below instead, and only one of the two is ever on the element. */
 .nativeHidden {
   position: absolute;
   right: 4px;
@@ -73,4 +75,131 @@
   border: 0;
   opacity: 0;
   pointer-events: none;
+}
+
+/* TOUCH: the native input is the tap target for the PICKER, and it is confined
+   to the calendar icon at the right — not the whole field.
+   WHY IT EXISTS AT ALL. The only touch route to the picker used to be
+   showPicker() called from the text box's onClick (PR #3300) — fired against
+   THIS input while it was 20px wide, transparent and pointer-events:none.
+   Chrome honours showPicker() on such an element, which is why the owner's
+   desktop screenshot showed the calendar open; iOS Safari raises its date wheel
+   only for a real user tap on a real, hit-testable date control, so on his
+   iPhone nothing happened at all and he reported 「尝试了 手机还是看不到」
+   (2026-09-08, hours after #3300 deployed). Measured on Playwright WebKit 26.5:
+   showPicker() EXISTS there and does not throw, it simply engages nothing. So
+   the picker path must never go back to scripting; the finger has to land on
+   the real control.
+   WHY IT IS NO LONGER THE WHOLE FIELD. PR #3311 spelled that as `inset: 0`, and
+   the cost was the operator's keyboard: with the date input over the entire
+   field a phone user could not tap into the text box to hand-type a date. The
+   owner, 2026-09-09: 「可以保留手打」 — keep hand-typing. The field is now split.
+   The right 44px belong to this input, so a tap on the calendar icon still
+   reaches a genuine <input type=date> with no script in the path; everything
+   left of it is the masked text box again, so a tap there raises the keyboard
+   and typing works exactly as it does on a desktop.
+   44 by 44 is the Apple/Google minimum touch target, and it is reached by
+   OVERFLOWING the ~30px wrap vertically (top 50% + translateY) rather than by
+   making the field taller — the same trade-off .iconBtn::after below documents:
+   a 44px-tall child in flow would push .wrap from ~30px to ~52px and re-flow
+   every form row on every phone. `right: 0` keeps the horizontal overflow at
+   zero so the target cannot steal a tap from the control beside it.
+   The masked day-first text underneath stays the thing the operator READS, so
+   the OS-locale display bug PR #2390 fixed does not come back.
+   appearance:none + min-width:0 are load-bearing on iOS: without them Safari
+   keeps the date input's intrinsic width, and here that would spill the target
+   leftwards back across the text box — re-creating exactly the problem this
+   change exists to undo. */
+.nativeIconTarget {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  min-width: 0;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  box-sizing: border-box;
+  opacity: 0;
+  pointer-events: auto;
+  z-index: 3;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  /* iOS zooms the page when a focused control's text is under 16px. The
+     control is invisible, but the zoom is not. */
+  font-size: 16px;
+}
+
+/* Blur reported the draft as unparseable. Absolutely positioned so a field in
+   error does not change the height of the row it sits in — this component sits
+   in dense form grids on nearly two hundred screens, and pushing every one of
+   them down by a line is a bigger change than the fix.
+   It is drawn as an opaque chip on purpose: floated over the row beneath, plain
+   red text on a transparent ground rendered ON TOP of that row's own text and
+   neither could be read (observed in the browser, 2026-09-08). */
+.draftError {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 0;
+  z-index: 5;
+  white-space: nowrap;
+  padding: 2px 6px;
+  border: 1px solid var(--c-festive-b, #B8331F);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--c-paper, #fff);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.14);
+  font-family: var(--font-sans);
+  font-size: var(--fs-11, 11px);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--c-festive-b, #B8331F);
+  pointer-events: none;
+}
+
+/* TOUCH: cover the WHOLE field with the native input, so a tap anywhere on
+   the field opens the OS picker directly — no scripts in the path, no
+   split-field left/right ambiguity. Owner 2026-09-10: 「calender 点一下开点
+   一下关 就这样简单」 + 「remove 掉可以打字 force 只能用 calender」. This
+   retires the earlier "left 44px = picker, right = text box" split from
+   2026-09-09 「可以保留手打」 (which produced 「有时能点到，有时点不到」
+   because the tap target was a 44px sub-region of the field). appearance:none
+   stays load-bearing on iOS to prevent Safari's intrinsic-width spill.
+   Fine-pointer (mouse) is untouched — the calendar button and its showPicker
+   still handle desktop clicks, and the wrap's onClick in the .tsx catches
+   clicks on the visible text (now readOnly) too.
+   iconBtn::after keeps the 44px minimum for the visible icon in case the
+   overlay ever regresses. */
+@media (pointer: coarse) {
+  .iconBtn { position: relative; }
+  .iconBtn::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 44px;
+    height: 44px;
+  }
+  /* Every side of `inset` set explicitly. Owner 2026-09-11:
+     「有时能点到，有时点不到」. The previous shorthand `inset: 0` followed by
+     `top: auto; right: auto; left: auto` looked like it kept the four-sides
+     assignment plus reset unwanted sides — it does not. `top / right / left`
+     came AFTER `inset` in declaration order and override the shorthand's
+     three sides, leaving only `bottom: 0`. The native input was therefore
+     positioned at the BOTTOM of the wrap with no top/left/right anchor, so
+     a tap in the top half of the field missed it and read as 「calender
+     no reaction」. Write all four sides explicitly and drop `transform` (no
+     translate needed once the input covers the wrap). */
+  .nativeIconTarget {
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    transform: none;
+  }
 }

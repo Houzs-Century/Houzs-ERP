@@ -1,0 +1,89 @@
+name: Repair a migrated delivery line's colour from its sales order (plan by default)
+
+# The 2026-09-08 16:45 (+08) reconcile reports four delivery lines on PROCEEDED
+# orders where the account book states a fabric and the ERP carries none.
+# Probe run 34210225334 read the ERP side: the SALES ORDER behind every one of
+# them already carries exactly the colour the book states. Only the delivery
+# note is blank, and lib/migrated-do-writer.mjs's own rule is that a migrated
+# delivery line takes its variants from the sales-order line it delivers.
+#
+# So this is a COPY of a value the ERP already holds, guarded by the book: a
+# line is written only when, for its whole (document, item, quantity) bucket,
+# the set of colours the book states equals the set its sales-order lines carry.
+# A bucket whose two sets differ is refused by name.
+#
+# PLAN BY DEFAULT. mode=apply writes and REQUIRES the confirm phrase below,
+# which this workflow passes to the script — a sibling workflow shipped without
+# doing that and every apply refused (docs/bugs/0700).
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      mode:
+        description: "plan (default) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'For apply ONLY, type exactly: COPY DO COLOUR FROM SALES ORDER'
+        required: false
+        default: ""
+        type: string
+      max_snapshot_age_days:
+        description: "Refuse if the AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+        type: string
+
+# Its OWN group, never the deploy's: a cutover write must not queue behind - or
+# displace - a release.
+concurrency:
+  group: repair-migrated-do-line-colour-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-migrated-do-line-colour.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-migrated-do-line-colour.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          # PASSED, not merely declared as an input. Without this line every
+          # apply refuses with "MODE=apply requires CONFIRM=..." and the refusal
+          # reads like a bug in the script (docs/bugs/0700).
+          CONFIRM: ${{ inputs.confirm }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

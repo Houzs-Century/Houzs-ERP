@@ -1,0 +1,57 @@
+name: Repair PO carried photos (plan by default)
+
+# Dispatchable run of backend/scripts/repair-po-carried-photos.mjs — re-aligns a
+# PO line's CARRIED (`so-items/...`) photos to its source SO line's CURRENT
+# photos, so a stale/dead carried key stops rendering "err" on the PO
+# (docs/bugs/0789). PLAN by default (reads only, prints every change it would
+# make); MODE=apply + CONFIRM writes `photo_urls` and re-verifies on a fresh
+# connection.
+#
+# Touches `photo_urls` only, preserves the PO's own uploads (`po-items/...`), and
+# leaves a PO line whose SO link is gone. DATABASE_URL is the only credential.
+#
+# Manual trigger only, own concurrency group — never queues behind or displaces
+# a release, never scheduled.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, no writes) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+      confirm:
+        description: 'required for apply: REPAIR PO CARRIED PHOTOS'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-po-carried-photos
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-po-carried-photos.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

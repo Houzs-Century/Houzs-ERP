@@ -116,10 +116,21 @@
 //
 // MODE=plan (default) | MODE=apply, and apply also needs
 //   CONFIRM="SYNC AC DELTA"
-// LANES=desc,pay,links,recv,do,dedi,hdr,hdrstaff — the last two are OFF by
-// default. `hdr`
-// writes header master fields; `hdrstaff` CREATES master data (an inactive
-// salesperson row per unbound AutoCount agent) and must be asked for by name.
+// LANES=desc,pay,links,recv,do,dedi,hdr,hdrstaff,push — the last three are OFF by
+// default. `hdr` writes header master fields; `hdrstaff` CREATES master data (an
+// inactive salesperson row per unbound AutoCount agent); `push` enqueues an
+// AutoCount edit carrying a PERSON's value OUT to the account book. All three
+// must be asked for by name.
+//
+// THE PUSH LANE IS THE OTHER HALF OF THE OWNER'S RULE, and without it the
+// refusal is only half an answer. Since he opened sales, delivery, purchase and
+// receipt documents to staff (2026-09-08, 「都根据他们改的数据为最高标准」), the ERP is
+// MASTER on any row a person edited: the account book follows it. So where a
+// person owns a field and the book still disagrees, refusing to write the book
+// into the ERP is correct AND incomplete — the book is the side that has to
+// move. `push` enqueues one keyed AutoCount edit per such order through
+// enqueueEdit, the same composer the sales-order routes call, never a second
+// one. The refusals are printed on the PLAN path whether or not it is armed.
 // RE-RUN: convergent. A second run against the same snapshot re-reads the live
 // rows, finds every difference already applied and writes nothing; the refusal
 // list is recomputed from scratch each run and is never persisted. The three
@@ -128,6 +139,12 @@
 // qualifies; `dedi` plans only lines whose so_item_id is NULL; `do` skips every
 // AutoCount delivery the ERP already mirrors (linked_ac_docno), so a second run
 // creates nothing and cannot duplicate a delivery note.
+//
+// `push` is the one lane whose second run is not a no-op, and it is safe for a
+// different reason: it enqueues an EDIT, never a create, so re-running sends the
+// account book the same current state a second time and the book ends holding
+// exactly what the ERP holds either way. It cannot make a second document. Once
+// the book agrees, the field stops differing and the lane plans nothing.
 //
 // LANES=desc,pay,links,recv,do,dedi (all of them by default).
 // DO_SCOPE=since (default) | all — which unreflected deliveries lane `do`
@@ -181,12 +198,16 @@ import {
    lib/ac-human-edit.mjs carries the rule check-so-open-for-new.mjs proved
    against production, and the reasoning for every branch of it. */
 import {
-  MIGRATION_ACTOR_ID,
   formatHumanRefusal,
   humanEditIndex,
   humanTouchedDocs,
   isSystemAuditRow,
 } from "./lib/ac-human-edit.mjs";
+/* The write-back's OWN composer, not a second one — the same function the sales
+   order routes call. pgrest-shim is the documented way a script reaches it with
+   only DATABASE_URL (precedent: rebuild-ac-document.mjs). */
+import { enqueueEdit } from "../src/scm/lib/autocount-outbox.ts";
+import { pgrestShim } from "./lib/pgrest-shim.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -327,7 +348,7 @@ async function main() {
                          action: r.action, at: r.created_at, fieldChanges: r.field_changes });
     }
   }
-  const soHuman = humanTouchedDocs({ rows: soAuditRows, migrationActorId: MIGRATION_ACTOR_ID });
+  const soHuman = humanTouchedDocs({ rows: soAuditRows });
   /* `touchedByAudit` is the AUTHORSHIP answer and nothing else: the documents a
      PERSON edited. The three conversion lanes use exactly this. */
   const touchedByAudit = new Set(soHuman.byDoc.keys());
@@ -359,9 +380,10 @@ async function main() {
      person who renamed the supplier has not vetoed a received quantity. The
      HEADER fields have their own, wider needle set in section 6.
 
-     `migrationActorId` is null here on purpose: this table has no pinned
-     migration actor (src/scm/lib/entity-audit.ts resolves a real staff id or
-     leaves NULL), so there is no id to treat as the system's. */
+     Authorship is the row's own NAME and nothing else — see
+     src/scm/shared/audit-author.ts. There is no per-table actor argument any
+     more: the arm that took one matched every human sales-order edit and no
+     migration row at all (docs/bugs/0703). */
   const PO_TOUCHED_NEEDLES = ["received_qty", "receivedQty", "so_item_id", "soItemId"].map((n) => `%${n}%`);
   const allPoDocs = poHeaders.map((h) => h.po_number);
   const poAuditRows = [];
@@ -375,7 +397,7 @@ async function main() {
                          action: r.action, at: r.created_at, fieldChanges: r.field_changes });
     }
   }
-  const poHuman = humanTouchedDocs({ rows: poAuditRows, migrationActorId: null });
+  const poHuman = humanTouchedDocs({ rows: poAuditRows });
   const poTouched = new Set(poHuman.byDoc.keys());
   log(`ERP purchase orders a PERSON edited in the LINE fields this script writes: ${poTouched.size} (audit trail only; ${poHuman.systemRows} system row(s) ignored)`);
 
@@ -1236,6 +1258,9 @@ async function main() {
   const HDRFILE = "ac-doc-headers.json.gz";
   const hdrWrites = [];          // { table, pk, pkVal, doc, field, col, from, to }
   const hdrRefusals = [];        // one sentence per (document, field) a person owns
+  /* The same refusals, kept as data rather than as sentences, so LANES=push can
+     carry the ERP's own value OUT to the account book. */
+  const pushToBook = [];         // { doc, acNo, field, col, erp, book, who }
   const staffCreate = [];        // agent display names with no ERP staff row
   const staffRebind = [];        // ACIMP-* placeholder that a real staff row now shadows
   log("");
@@ -1312,7 +1337,7 @@ async function main() {
                             action: r.action, at: r.created_at, fieldChanges: r.field_changes });
         }
       }
-      const soHdrIx = humanEditIndex({ rows: soHdrAudit, fields: SO_HEADER_FIELDS, migrationActorId: MIGRATION_ACTOR_ID });
+      const soHdrIx = humanEditIndex({ rows: soHdrAudit, fields: SO_HEADER_FIELDS });
       const humanField = soHdrIx.byDocField;
 
       /* ── the PURCHASE-ORDER half of the same veto, which did not exist ──
@@ -1325,7 +1350,8 @@ async function main() {
          scm.entity_audit_log with entity_type = 'PURCHASE_ORDER'
          (migration 0139), which is what this reads.
 
-         migrationActorId is null: that table has no pinned migration actor. */
+         Authorship here is the row's NAME, exactly as on the sales-order side —
+         one rule, one home (docs/bugs/0703). */
       const PO_HDR_NEEDLES = headerAuditNeedles(PO_HEADER_FIELDS);
       const poHdrAudit = [];
       const poDocNos = erpPoRows.map((r) => r.po_number);
@@ -1340,7 +1366,7 @@ async function main() {
                             action: r.action, at: r.created_at, fieldChanges: r.field_changes });
         }
       }
-      const poHdrIx = humanEditIndex({ rows: poHdrAudit, fields: PO_HEADER_FIELDS, migrationActorId: null });
+      const poHdrIx = humanEditIndex({ rows: poHdrAudit, fields: PO_HEADER_FIELDS });
       const poHumanField = poHdrIx.byDocField;
 
       const versionWouldRefuse = soHeaders.filter((h) => Number(h.version) > 1).length;
@@ -1398,6 +1424,19 @@ async function main() {
                 doc: String(row[pk]), line: null, field: f.key,
                 erp: c.erp, book: c.book, who: veto.who, at: veto.at,
               }));
+              /* AND THE OTHER HALF OF THE OWNER'S RULE. Refusing to overwrite
+                 her leaves the two systems disagreeing with nobody told. Since
+                 he opened the system, the ERP is MASTER on a row a person
+                 edited — so this disagreement is a job for the write-back
+                 pointing the other way: the BOOK is brought to the ERP.
+                 Collected here, printed always, enqueued only under LANES=push.
+                 Sales orders only: SO is the type enqueueEdit composes a keyed
+                 edit for from a document NUMBER, and it is the type he
+                 opened first. */
+              if (table === "mfg_sales_orders" && f.erp) {
+                pushToBook.push({ doc: String(row[pk]), acNo, field: f.key, col: f.erp,
+                                  erp: c.erp, book: c.book, who: veto.who });
+              }
               continue;
             }
             st[c.verdict]++;
@@ -1531,6 +1570,7 @@ async function main() {
     log(`   desc  ${descUpdates.length} line(s)      pay   ${payUpdates.length} order(s)     links ${linkPlan.length} dedication(s)`);
     log(`   recv  ${recvPlan.length} line(s)      do    ${doPlan.length} document(s)  dedi  ${dediPlan.length} dedication(s)`);
     log(`LANES=hdr would write ${hdrWrites.length} header field value(s); LANES=hdrstaff would create ${staffCreate.length} inactive staff row(s).`);
+    log(`LANES=push would enqueue ${new Set(pushToBook.map((x) => x.doc)).size} AutoCount edit(s) carrying the ERP's own value OUT to the account book.`);
     log("The INSERT lane is NOT this script's: run the importers named above.");
     log("Section 5's CASE 4 (build text) stays REPORT-ONLY — a changed Desc2 can change the NUMBER of ERP lines.");
     await sql.end();
@@ -1693,6 +1733,52 @@ async function main() {
       });
     }
     log(`header master written: ${nHdr} of ${hdrWrites.length} intended; ${hdrMiss} skipped because the ERP value moved after the plan was read`);
+  }
+
+  /* ── the push lane: carry the PERSON's value OUT to the account book ──
+     The direction the owner reversed when he opened the system to staff. Where
+     a person owns a field and the book still holds the old value, the BOOK is
+     what is wrong, and the existing write-back is how it gets corrected. The
+     refusal above stops the damage; this is what finishes the job.
+
+     IT IS NOT A SECOND COMPOSER. `enqueueEdit` is the same function the sales
+     order routes call. Every refusal the composer already knows still applies
+     and is reported: a keyless line, a converted document, an unresolvable
+     item. Composing a payload here by hand is how two homes for one rule start.
+
+     ONE EDIT PER DOCUMENT, not per field: a keyed edit carries the document's
+     whole current state, so a second enqueue for the same order would send the
+     same thing twice. `touchedFields` names the columns a person set, which is
+     what tells the composer a cleared field is a deliberate clear rather than a
+     blank to skip.
+
+     OFF BY DEFAULT, like hdr and hdrstaff, because it writes into the queue
+     that feeds a LICENSED account book. */
+  let nPush = 0, pushRefused = 0;
+  if (LANES.has("push")) {
+    const colsByDoc = new Map();
+    const whoByDoc = new Map();
+    for (const x of pushToBook) {
+      if (!colsByDoc.has(x.doc)) colsByDoc.set(x.doc, new Set());
+      colsByDoc.get(x.doc).add(x.col);
+      if (!whoByDoc.has(x.doc)) whoByDoc.set(x.doc, x.who);
+    }
+    /* LANES=push exists to carry the ERP's own value OUT to the account book,
+       so this one client opts out of repair suppression. Every OTHER lane in
+       this script is a repair and must stay suppressed. See pgrest-shim.mjs. */
+    const sb = pgrestShim(sql, "scm", { writeback: "enqueue" });
+    for (const [docNo, cols] of colsByDoc) {
+      const queued = await enqueueEdit(sb, {
+        companyId: 1,
+        docType: "SO",
+        docNo,
+        touchedFields: [...cols],
+      });
+      if (queued) { nPush++; log(`   queued AutoCount edit for ${docNo} — ${[...cols].join(", ")} (${whoByDoc.get(docNo)})`); }
+      else { pushRefused++; log(`   REFUSED by the write-back composer: ${docNo} — the reason is on the row in the AutoCount Sync page`); }
+    }
+    log(`AutoCount edits enqueued from person-owned fields: ${nPush} of ${colsByDoc.size} order(s); ${pushRefused} refused by the composer.`);
+    if (sb.__gaps?.length) log(`   pgrest-shim gaps hit: ${sb.__gaps.join(", ")} — the enqueue above may be incomplete.`);
   }
 
   /* ── the staff lane: auto-creating a salesperson is a WRITE TO MASTER DATA ──

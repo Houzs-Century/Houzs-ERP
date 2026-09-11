@@ -31,8 +31,8 @@ import { AlertTriangle, ArrowLeft, ArrowRight, CheckCheck, Download, Undo2, Uplo
 import {
   useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch,
   useUploadStatement, useConfirmSettlementRow, useConfirmMatched, useIgnoreSettlementRow,
-  useSettlementWatchlist, useUnconfirmSettlementRow,
-  type AcquirerSetup, type SettlementRow, type SettlementBucket, type SettlementBatch, type BankAccount,
+  useSettlementWatchlist, useUnconfirmSettlementRow, useFindPayments,
+  type AcquirerSetup, type SettlementRow, type SettlementBucket, type SettlementBatch, type BankAccount, type SettlementCandidate,
 } from './settlement-queries';
 import {
   ICON, fmt, btn, cell, num, table, headRow, rowLine, softText, danger, good, panel,
@@ -358,7 +358,7 @@ const ReconcileTab = () => {
           <table className={grid.grid}>
             <thead>
               <tr>
-                <th>Merchant</th><th>Document</th><th>Customer paid on</th>
+                <th>Merchant</th><th>Document</th><th>Salesperson</th><th>Customer paid on</th>
                 <th className={grid.num}>Days</th><th className={grid.num}>Amount</th><th>Approval</th>
               </tr>
             </thead>
@@ -367,6 +367,7 @@ const ReconcileTab = () => {
                 <tr key={`${p.source}:${p.id}`}>
                   <td><span className={styles.codeChip}>{p.acquirerCode ?? '未标'}</span></td>
                   <td>{p.docNo}</td>
+                  <td>{p.salespersonName ?? '—'}</td>
                   <td>{p.paidOn}</td>
                   <td className={grid.num} style={{ color: p.ageDays > 14 ? danger : undefined, fontWeight: p.ageDays > 14 ? 700 : undefined }}>
                     {p.ageDays}
@@ -976,16 +977,89 @@ const HandOff = ({ batch, toConfirm, toDecide }: { batch: SettlementBatch; toCon
 
 /* ── One statement line, with its candidates ──────────────────────────────── */
 
+const key = (p: { source: string; id: string }) => `${p.source}:${p.id}`;
+
+/* ── "Find the sale" ──────────────────────────────────────────────────────────
+   The window offers what could plausibly be this line; a person may know which
+   sale it IS — keyed twelve days after the swipe, no bank on it, so the matcher
+   never loaded it (docs/bugs/0792; owner: 我要怎样选对应的 SO?). Here every
+   card payment of the company can be searched whatever its date, the exact
+   gross marked "possible" and ranked first, and any one of them ticked
+   (owner: 可以注明 possible，但不能不让我选其他的). The confirm reads the chosen
+   payments back, so the amount still has to add up before anything posts. */
+const FindTheSale = ({ rowId, grossSen, picked, shown, onToggle }: {
+  rowId: number; grossSen: number; picked: Set<string>;
+  /** Already offered above — not listed twice. */
+  shown: Set<string>;
+  onToggle: (p: SettlementCandidate) => void;
+}) => {
+  const [q, setQ] = useState('');
+  const found = useFindPayments(rowId, q);
+  const list = (found.data?.payments ?? []).filter((p) => !shown.has(key(p)));
+  return (
+    <div className="space-y-1" style={{ borderTop: '1px dashed var(--c-line, rgba(34,31,32,0.15))', paddingTop: 'var(--space-2)' }}>
+      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+        <input type="search" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Find the sale"
+          placeholder="SO number, customer, approval code or amount"
+          style={{ padding: '4px 8px', border: '1px solid var(--c-line, rgba(34,31,32,0.25))', borderRadius: 'var(--radius-sm)', minWidth: 260 }} />
+        <span style={softText}>Any card payment of this company, whatever its date — the exact {fmt(grossSen)} is marked possible.</span>
+      </div>
+      {found.isError && (
+        <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{refusalText(found.error, 'The search did not run.')}</div>
+      )}
+      {found.isLoading && <div style={softText}>Searching…</div>}
+      {found.data && list.length === 0 && (
+        <div style={softText}>No card payment of this company {q.trim() ? `matches "${q.trim()}"` : 'is waiting for a merchant report'}.</div>
+      )}
+      {list.length > 0 && (
+        <table style={table}>
+          <thead>
+            <tr style={headRow}>
+              <th style={cell} />
+              <th style={cell}>Document</th><th style={cell}>Customer</th><th style={cell}>Paid</th>
+              <th style={cell}>Approval</th><th style={num}>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((p) => (
+              <tr key={key(p)} style={p.possible ? { background: 'rgba(47, 93, 79, 0.08)' } : undefined}>
+                <td style={cell}>
+                  <input type="checkbox" checked={picked.has(key(p))} onChange={() => onToggle(p)} aria-label={`Select ${p.docNo}`} />
+                </td>
+                <td style={cell}>
+                  {p.docNo}
+                  {p.possible && <span className={styles.codeChip} style={{ marginLeft: 6 }}>possible</span>}
+                  {p.merchantProvider === null && (
+                    <span style={{ marginLeft: 6, fontSize: 'var(--fs-12)', color: 'var(--text-soft, #8a8578)' }}>未标 merchant</span>
+                  )}
+                </td>
+                <td style={cell}>{p.customerName ?? '—'}</td>
+                <td style={cell}>{p.paidOn}</td>
+                <td style={cell}>{p.approvalCode ?? '—'}</td>
+                <td style={num}>{fmt(p.amountSen)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+};
+
 const SettlementLine = ({ row }: { row: SettlementRow }) => {
   const confirm = useConfirmSettlementRow();
   const ignore = useIgnoreSettlementRow();
-  const key = (p: { source: string; id: string }) => `${p.source}:${p.id}`;
   /* Start on the system's own answer when it has one — the operator confirms
      instead of repeating the search (owner: 尽量根据日期金额去尝试自动匹配后让我
      知道，我 final confirm). Seeded once, so a refetch never undoes his ticks. */
   const [picked, setPicked] = useState<Set<string>>(() => new Set((row.suggested ?? []).map(key)));
 
-  const chosen = row.candidates.filter((p) => picked.has(key(p)));
+  /* Payments a person found beyond the window, kept by key so a new search
+     never drops a tick. */
+  const [extra, setExtra] = useState<Map<string, SettlementCandidate>>(() => new Map());
+  const [finding, setFinding] = useState(false);
+  const offered = [...row.candidates, ...[...extra.values()].filter((p) => !row.candidates.some((c) => key(c) === key(p)))];
+  const chosen = offered.filter((p) => picked.has(key(p)));
   const chosenSen = chosen.reduce((s, p) => s + p.amountSen, 0);
   const balanced = chosen.length > 0 && chosenSen === row.gross_sen;
   const hinted = new Set(row.comboHints.flat());
@@ -998,6 +1072,19 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
       return next;
     });
   };
+  const toggleFound = (p: SettlementCandidate) => {
+    setExtra((prev) => {
+      const next = new Map(prev);
+      if (next.has(key(p))) next.delete(key(p)); else next.set(key(p), p);
+      return next;
+    });
+    toggle(p);
+  };
+  const findButton = !row.confirmed_at && row.linked.length === 0 && (
+    <button type="button" style={btn()} onClick={() => setFinding((v) => !v)} aria-expanded={finding}>
+      {finding ? 'Hide the search' : 'Find the sale'}
+    </button>
+  );
 
   return (
     /* A section, not a div: each line is its own piece of the report, and the
@@ -1070,6 +1157,18 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {!row.confirmed_at && finding && (
+        <FindTheSale rowId={row.id} grossSen={row.gross_sen} picked={picked}
+          shown={new Set(row.candidates.map(key))} onToggle={toggleFound} />
+      )}
+
+      {/* The choice is confirmed here whether it came from the window or the
+          search — a found sale alone is a full selection. */}
+      {!row.confirmed_at && (row.candidates.length > 0 || extra.size > 0) && (
+        <div className="space-y-1">
           <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 'var(--fs-13)', color: balanced ? good : danger }}>
               Selected {fmt(chosenSen)} of {fmt(row.gross_sen)}
@@ -1084,6 +1183,7 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
               })}>
               Confirm and post
             </button>
+            {findButton}
             <button type="button" style={btn()} onClick={() => ignore.mutate({ rowId: row.id, restore: row.bucket === 'IGNORED' })}>
               {row.bucket === 'IGNORED' ? 'Put back' : 'Set aside'}
             </button>
@@ -1091,12 +1191,14 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
         </div>
       )}
 
-      {!row.confirmed_at && row.candidates.length === 0 && row.linked.length === 0 && (
-        <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
+      {!row.confirmed_at && row.candidates.length === 0 && row.linked.length === 0 && extra.size === 0 && (
+        <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ fontSize: 'var(--fs-13)', color: danger }}>
-            No payment in the ERP explains this money. Record the sale first — it must not be cleared out of
+            No payment within the matching window explains this money. If the sale IS in the ERP — keyed later,
+            or without a bank — find it below; otherwise record it first, because it must not be cleared out of
             in-transit without one.
           </span>
+          {findButton}
           <button type="button" style={btn()} onClick={() => ignore.mutate({ rowId: row.id, restore: row.bucket === 'IGNORED' })}>
             {row.bucket === 'IGNORED' ? 'Put back' : 'Set aside'}
           </button>

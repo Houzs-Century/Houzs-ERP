@@ -303,6 +303,13 @@ export const ConsignmentOrderNew = () => {
   const inheritVariantsByCategory = useMemo(
     () => seedableMasterVariants(
       lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown> })),
+      /* NULL = every category, i.e. UNCHANGED. The owner's 2026-09-09 ruling
+         that the cascade is 「只限于 sofa item」 was given about Sales Orders,
+         and a Consignment Order is a different document he has not been asked
+         about. Narrowing it here would be extending his ruling for him. The
+         parameter is required precisely so this stays a visible decision
+         instead of whatever the default happened to be. */
+      null,
     ),
     [lines],
   );
@@ -1016,6 +1023,7 @@ export const ConsignmentOrderNew = () => {
                  server would have accepted. Same conditional rule as
                  SalesOrderNew; the CO is an ORDER, not a downstream document. */
               variantsRequired={!!processingDate}
+              seedSofaLegDefault={true}
             />
           ))}
 

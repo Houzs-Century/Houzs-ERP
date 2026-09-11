@@ -25,6 +25,7 @@ import { describe, expect, test } from 'vitest';
 import { computeMrp, mrpStockAssignment, stockAssignmentKey, parseIncludeUndated, InvalidQueryFlag } from './mrp';
 import { NO_BUFFERS } from '../lib/lead-time';
 import { distributeAssignedToLots, isMakeToOrderCategory } from '../lib/inventory-movements';
+import { parsePgrestInList } from '../lib/pgrest-in-list';
 
 type Row = Record<string, unknown>;
 
@@ -49,6 +50,14 @@ function fakeSb(tables: Record<string, Row[]>) {
     select() { return this; }
     eq(col: string, val: unknown) { this.rows = this.rows.filter((r) => r[col] === val); return this; }
     in(col: string, vals: unknown[]) { this.rows = this.rows.filter((r) => (vals as unknown[]).includes(r[col])); return this; }
+    /* The ESCAPED in-list section 2 and the supplier reader now build —
+       supabase-js cannot serialise an item code carrying a `"`, which emptied
+       38 codes' suppliers in production (docs/bugs/0780). Parsed by the SAME
+       function the engine writes with, never a second split(','). */
+    filter(col: string, op: string, val: string) {
+      if (op !== 'in') throw new Error(`fake: filter(${op}) is not implemented`);
+      return this.in(col, parsePgrestInList(val));
+    }
     // No-op: the engine pushes status not-in filters into SQL as an under-the-cap
     // optimisation; the JS-side SO_DONE / PO_DEAD filters stay authoritative and
     // are what these tests exercise.
@@ -1231,6 +1240,30 @@ describe('company 1: a bound line is planned from its own purchase order only', 
     expect(row.shortage).toBe(5);
   });
 
+  test('an UNLINKED purchase order does not cover a bound line either (owner 2026-09-09)', async () => {
+    /* THE HOLE THIS CLOSES. The dedicated queue was tried first and the POOLED
+       queue second, so a purchase order belonging to nobody could report a bound
+       line as covered — while the readiness engine, which accepts only the
+       line's OWN purchase order, left it PENDING for ever. The buyer read
+       "already on order" and the order never moved.
+
+       Measured on prod 2026-09-09: 10 of the 126 proceeded company-1
+       bedframe/sofa lines with no purchase order of their own were masked this
+       way. A pooled purchase order is not a real answer for a bound line —
+       nothing can ever turn it into that line's supply. */
+    const sb = world({
+      mfg_sales_order_items: [demandRed(5)],
+      purchase_order_items: [poLine('PO-NOBODYS', 5, { fabricCode: 'RED' }, '2026-10-01')],
+    });
+
+    const res = await computeMrp(asSb(sb), co1);
+
+    const row = res.skus.find((s) => s.variantKey === 'fabriccode=red')!;
+    expect(row.lines[0]!.poNumber).toBeNull();   // not named as its cover
+    expect(row.shortage).toBe(5);                // it still has to be bought
+    expect(row.poOutstanding).toBe(5);           // and the PO is still REPORTED as supply
+  });
+
   test('company 2 keeps the pooled model — the rule is company-1 only, for now', async () => {
     const sb = world({
       mfg_sales_order_items: [demandRed(5)],
@@ -1241,5 +1274,203 @@ describe('company 1: a bound line is planned from its own purchase order only', 
 
     const row = res.skus.find((s) => s.variantKey === 'fabriccode=red')!;
     expect(row.shortage).toBe(0);   // pooled stock still covers it
+  });
+});
+
+/* SOFA IS BOUND TOO — the other half of the same ruling (owner 2026-09-09,
+   「修,但只能动 Houzs Century」, extended to sofa on 2026-09-09 after the sofa tab
+   was measured against the book).
+
+   `isHardBoundLine` has named SOFA a bound group since 2026-08-10, and
+   `so-stock-allocation.ts` honours that: on production, of 1,240 open company-1
+   sofa lines, ZERO read READY without their own purchase order and ZERO carry a
+   batch claim without one. MRP did not honour it. `isDedicated` excluded sofa,
+   so section 8 planned every sofa set on the pooled bucket key
+   (fabricCode|seatHeight|legHeight|specials) alone — and a fully received
+   purchase order leaves nothing outstanding, so its receipt was only visible if
+   the STOCK row happened to carry the identical key.
+
+   It rarely does. Measured on the live page 2026-09-09: the sofa tab asked the
+   owner to order 70 units across 28 sales orders; 42 were really missing, 8 of
+   those orders (26 units) had their own purchase order FULLY RECEIVED, and 26 of
+   those very lines read READY on the sales-order screen at the same moment. The
+   STOCK column read 0 on all 136 sofa rows while 246 units of company-1 sofa sat
+   in the warehouse.
+
+   Worked example from prod — HC-SO-011008, HC-PO-009881 received in full:
+     the order asks   fabriccode=modenza-01|seatheight=32|special=nylon fabric
+     the stock says   fabriccode=modenza-06|seatheight=32|special=bottom wrap by nylon fabric,nylon fabric
+   The first test below is that document, reduced. */
+describe('company 1: a sofa set is planned from its own purchase order only', () => {
+  const co1 = { ...opts, companyId: 1 };
+  /* A sofa PO line RAISED FOR one sales-order line — the `so_item_id` is what
+     makes it dedicated, exactly as on the bedframe side. */
+  const boundSofaPo = (
+    poNumber: string, qty: number, receivedQty: number, soItemId: string, variant: Row | null, eta: string,
+  ): Row => ({
+    item_code: 'SF-100', item_group: 'sofa', variants: variant ?? {}, qty, received_qty: receivedQty,
+    delivery_date: eta, supplier_delivery_date_2: null, supplier_delivery_date_3: null, supplier_delivery_date_4: null,
+    warehouse_id: 'W1', so_item_id: soItemId,
+    po: {
+      po_number: poNumber, status: 'SUBMITTED', expected_at: eta,
+      supplier_delivery_date_2: null, supplier_delivery_date_3: null, supplier_delivery_date_4: null,
+      purchase_location_id: 'W1', supplier_id: null,
+    },
+  });
+  const stamp = (co: number) => (rows: Row[]): Row[] => rows.map((r) => ({ company_id: co, ...r }));
+  const world = (tables: Record<string, Row[]>, co = 1) => {
+    const add = stamp(co);
+    return fakeSb(Object.fromEntries(Object.entries({
+      ...BASE_TABLES,
+      warehouses: [{ id: 'W1', code: 'W1', name: 'Main', is_active: true }],
+      ...tables,
+    }).map(([t, rows]) => [t, add(rows as Row[])])));
+  };
+  const set = (res: Awaited<ReturnType<typeof computeMrp>>) => res.sofaSets[0]!;
+
+  test('HC-SO-011008 reduced: its own PO is RECEIVED but the units landed under a different variant key', async () => {
+    /* THE BUG. The receipt is the evidence, not the stock row's spelling. */
+    const sb = world({
+      mfg_sales_order_items: [sofaDemand('si-sofa', 'SO-9', 5, '2026-12-01')],
+      purchase_order_items: [boundSofaPo('PO-OWN', 5, 5, 'si-sofa', { fabricCode: 'RED' }, '2026-10-01')],
+      inventory_balances: [{ item_code: 'SF-100', warehouse_id: 'W1', variant_key: 'fabriccode=maroon', qty: 5 }],
+    });
+
+    const res = await computeMrp(asSb(sb), co1);
+
+    expect(res.sofaSets).toHaveLength(1);
+    expect(set(res).shortageQty).toBe(0);
+    expect(set(res).orderedQty).toBe(5);
+    expect(res.totals.sofaSetShortageCount).toBe(0);
+  });
+
+  test('its own PO is still OUTSTANDING: covered on that PO, and the PO is named', async () => {
+    const sb = world({
+      mfg_sales_order_items: [sofaDemand('si-sofa', 'SO-9', 5, '2026-12-01')],
+      purchase_order_items: [boundSofaPo('PO-OWN', 5, 0, 'si-sofa', { fabricCode: 'RED' }, '2026-10-01')],
+    });
+
+    const res = await computeMrp(asSb(sb), co1);
+
+    expect(set(res).shortageQty).toBe(0);
+    expect(set(res).poNumber).toBe('PO-OWN');
+  });
+
+  test("another line's dedicated sofa PO is not free supply", async () => {
+    /* The exclusivity half. A sofa purchase order raised for somebody else's
+       order leaves the pool entirely — it can never become this set's supply,
+       and the readiness engine would never light this line from it. */
+    const sb = world({
+      mfg_sales_order_items: [sofaDemand('si-sofa', 'SO-9', 5, '2026-12-01')],
+      purchase_order_items: [boundSofaPo('PO-SOMEONE-ELSE', 5, 0, 'si-other', { fabricCode: 'RED' }, '2026-10-01')],
+    });
+
+    const res = await computeMrp(asSb(sb), co1);
+
+    expect(set(res).shortageQty).toBe(5);
+    expect(set(res).poNumber).toBeNull();
+  });
+
+  test('NO purchase order of its own: short, even with an exactly matching set in its bucket', async () => {
+    /* The same answer the bedframe side gives, and the same reason: company 1
+       buys for the order, and unattached stock belongs to nobody until a
+       purchase order says so. Measured on prod 2026-09-09, this changes FOUR
+       company-1 sofa lines from "stock" to "shortage" — every one of which the
+       sales-order screen already refuses to call READY. */
+    const sb = world({
+      mfg_sales_order_items: [sofaDemand('si-sofa', 'SO-9', 5, '2026-12-01')],
+      inventory_balances: [{ item_code: 'SF-100', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty: 5 }],
+    });
+
+    const res = await computeMrp(asSb(sb), co1);
+
+    expect(set(res).shortageQty).toBe(5);
+    expect(set(res).stockQty).toBe(0);
+  });
+
+  test('company 2 keeps the pooled sofa model — the rule is company-1 only', async () => {
+    const sb = world({
+      mfg_sales_order_items: [sofaDemand('si-sofa', 'SO-9', 5, '2026-12-01')],
+      inventory_balances: [{ item_code: 'SF-100', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty: 5 }],
+    }, 2);
+
+    const res = await computeMrp(asSb(sb), { ...opts, companyId: 2 });
+
+    expect(set(res).shortageQty).toBe(0);   // pooled stock still covers it
+  });
+});
+
+/* THE ROW MUST CARRY THE CATEGORY THE FILTER USED — they were two different
+ * expressions, and the difference made demand vanish from every tab.
+ *
+ * Owner, 2026-09-10, on the Accessories tab: 「为什么这个 order 是有 long pillow
+ * 要去 order，可是我的 S3 那边却没有 long pillow 让我 order 的？」
+ *
+ * Measured on production that day: EIGHT accessory item codes — 62 dated open
+ * lines, 110 units — were absent from the page. The engine was innocent: the
+ * stored plan snapshot CONTAINED all of them (LONG PILLOW at qty 43, matching
+ * the database exactly). What they carried was `category: null`, and the
+ * frontend picks a tab's rows with `s.category === VIEW_CATEGORY[view]`, so a
+ * null-category row belongs to NO tab and is invisible on all four.
+ *
+ * The asymmetry: the demand walk decides whether to KEEP a line with
+ *   prod?.category ?? catFromGroup(d.item_group)
+ * and the row it then EMITS was built with
+ *   prod?.category ?? null
+ * A line whose item_code is not in mfg_products therefore PASSES the filter on
+ * its item_group and is then emitted uncategorised. `catFromGroup` exists for
+ * exactly this case — its own comment says "so the demand still SHOWS under its
+ * category tab instead of silently vanishing" (Wei Siang 2026-06-16) — and the
+ * emit site never called it.
+ *
+ * Owner's rule, same day: 「除了 Category Service 不需要进来，其他基本上都需要」.
+ * Silent disappearance is the dangerous half — it is only found on delivery day.
+ */
+describe('an uncatalogued line keeps its category on the row, not just in the filter', () => {
+  const unlisted = (qty: number): Row => ({
+    id: 'si-unlisted', doc_no: 'SO-U1', item_code: 'LONG PILLOW', description: 'AMN-LONG PILLOW',
+    item_group: 'accessory', variants: {}, qty,
+    warehouse_id: 'W1', line_delivery_date: '2026-12-01', line_no: 1, created_at: '2026-07-01T00:00:00Z',
+    cancelled: false,
+    so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: null, customer_state: null },
+  });
+
+  test('mfg_products has no row for it: the SKU still says ACCESSORY', async () => {
+    /* mfg_products is deliberately EMPTY for this code — the production shape.
+       Before the fix the row came back with category null and the Accessories
+       tab dropped it, while qtyNeeded proved the engine had planned it. */
+    const sb = fakeSb({ ...BASE_TABLES, mfg_sales_order_items: [unlisted(3)] });
+
+    const res = await computeMrp(asSb(sb), opts);
+
+    expect(res.skus).toHaveLength(1);
+    expect(res.skus[0]!.qtyNeeded).toBe(3);          // the engine planned it all along
+    expect(res.skus[0]!.category).toBe('ACCESSORY');  // and the row now says which tab
+  });
+
+  test('the catalog still wins when it has a row', async () => {
+    const sb = fakeSb({
+      ...BASE_TABLES,
+      mfg_sales_order_items: [unlisted(3)],
+      mfg_products: [{ id: 'p9', code: 'LONG PILLOW', name: 'AMN-LONG PILLOW', category: 'ACCESSORY' }],
+    });
+
+    const res = await computeMrp(asSb(sb), opts);
+
+    expect(res.skus[0]!.category).toBe('ACCESSORY');
+  });
+
+  test('a group that maps to no category still emits null — not a guess', async () => {
+    /* catFromGroup answers null for anything it does not recognise. The row is
+       then honestly uncategorised rather than assigned a tab it does not belong
+       to; the filter above it already let it through for the same reason. */
+    const sb = fakeSb({
+      ...BASE_TABLES,
+      mfg_sales_order_items: [{ ...unlisted(3), item_group: 'others', item_code: 'MISC-THING' }],
+    });
+
+    const res = await computeMrp(asSb(sb), opts);
+
+    expect(res.skus[0]!.category).toBeNull();
   });
 });

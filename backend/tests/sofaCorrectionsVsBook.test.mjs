@@ -140,6 +140,62 @@ describe('grading one correction against the book', () => {
   });
 });
 
+/* ── AN OWNER OVERRIDE IS DECLARED, NEVER JUST TYPED ────────────────────────
+   docs/bugs/0693 is a model somebody TYPED that outranked the book for a month.
+   The fix was this grader, and it must keep catching exactly that. But the
+   owner may also decide, deliberately and out loud, that a line carries a
+   product the book does not name — HC-SO-011657 is one: the book's daybed is
+   discontinued and has no stool piece, and he answered 「那就放8030 daybed把」.
+
+   The two are told apart by a DECLARATION that names the book model it is
+   overriding. That is stricter than what it replaces, not looser:
+
+     - a typed model with no declaration is still DIFFER (0693 stays caught);
+     - a declaration that no longer matches what the book says is DIFFER too,
+       so an override cannot rot silently when the book cut is refreshed;
+     - only a declaration that still agrees with the book about what it is
+       overriding earns its own verdict, and that verdict is never counted as
+       agreement — the report prints it separately, because "he decided this"
+       and "these match" are different facts. */
+describe('an owner override of the model', () => {
+  const docs = { 'SO-9': [['91', 'TNS-9838 DB', 'TBC/DSL model/Default size']] };
+  const map = { 'TNS-9838 DB': '9838 DB-1S' };
+  const build = (extra) => [{ docs: ['HC-SO-9'], model: '8030', desc2Match: 'Default size', ...extra }];
+
+  it('is DIFFER when nothing declares it — a typed model is still the 0693 defect', () => {
+    const { tally } = grade(build({}), docs, map);
+    expect(tally).toEqual({ DIFFER: 1 });
+  });
+
+  it('is its OWN verdict when it declares the book model it overrides', () => {
+    const { rows, tally } = grade(build({ modelOverride: { book: '9838 DB', by: 'owner' } }), docs, map);
+    expect(tally).toEqual({ 'OWNER-OVERRIDE': 1 });
+    expect(rows[0].fileModel).toBe('8030');
+    expect(rows[0].bookRaw).toEqual(['9838 DB']);
+    expect(rows[0].overrideBook).toBe('9838 DB');
+  });
+
+  it('is DIFFER again once the declaration stops matching the book', () => {
+    /* The override named a model the book no longer carries on this line, so
+       nobody has decided what the line says NOW. Reported, not honoured. */
+    const { tally } = grade(build({ modelOverride: { book: '5540', by: 'owner' } }), docs, map);
+    expect(tally).toEqual({ DIFFER: 1 });
+  });
+
+  it('needs a named decider, so an unattributed override is not one', () => {
+    const { tally } = grade(build({ modelOverride: { book: '9838 DB' } }), docs, map);
+    expect(tally).toEqual({ DIFFER: 1 });
+  });
+
+  it('never turns a plain agreement into an override', () => {
+    const { tally } = grade(
+      [{ docs: ['HC-SO-9'], model: '9838 DB', desc2Match: 'Default size', modelOverride: { book: '9838 DB', by: 'owner' } }],
+      docs, map,
+    );
+    expect(tally).toEqual({ AGREE: 1 });
+  });
+});
+
 describe('the corrections files that ship, against the book cut that ships', () => {
   const DATA = path.join(__dirname, '..', 'scripts', 'data');
 
@@ -148,8 +204,15 @@ describe('the corrections files that ship, against the book cut that ships', () 
       zlib.gunzipSync(fs.readFileSync(path.join(DATA, 'ac-reconcile-truth.json.gz'))).toString('utf8'),
     );
     const F = Object.fromEntries(truth.line_fields.map((n, i) => [n, i]));
+    /* ALL SIX TYPES, not two. A correction entry now names the receipt, the
+       delivery note and the invoices of a build beside its order, so that the
+       whole chain is corrected in one operation. With only SO and PO loaded,
+       `GR-000287` was looked up in the PURCHASE ORDER book, found absent, and
+       silently contributed nothing to the grade — a document the grader claims
+       to check and does not. Loading every type means a wrong model on a receipt
+       line is a DIFFER like any other. */
     const byType = {};
-    for (const type of ['SO', 'PO']) {
+    for (const type of ['SO', 'PO', 'GR', 'DO', 'IV', 'PI']) {
       const t = truth.types[type];
       const d2 = new Map(t.desc2.map((r) => [String(r[0]), r[1]]));
       const byDoc = new Map();
@@ -164,10 +227,19 @@ describe('the corrections files that ship, against the book cut that ships', () 
     const { builds } = loadCorrections(DATA);
     return gradeCorrectionsAgainstBook({
       builds,
+      /* The ERP number says which book to open. `PI-` is tested before `I-`,
+         and `I-` maps to the book's own name for a sales invoice, `IV`. */
       bookLines: (doc) => {
         const key = String(doc).replace(/^HC-/, '');
-        const byDoc = byType[key.startsWith('SO') ? 'SO' : 'PO'];
-        return { present: byDoc.has(key), lines: byDoc.get(key) ?? [] };
+        const type = key.startsWith('SO-') ? 'SO'
+          : key.startsWith('GR-') ? 'GR'
+            : key.startsWith('DO-') ? 'DO'
+              : key.startsWith('PI-') ? 'PI'
+                : key.startsWith('I-') || key.startsWith('SI-') ? 'IV'
+                  : 'PO';
+        const bookKey = type === 'IV' ? key.replace(/^SI-/, 'I-') : key;
+        const byDoc = byType[type];
+        return { present: byDoc.has(bookKey), lines: byDoc.get(bookKey) ?? [] };
       },
       erpCodeFor: (ac) => mapping.get(normCode(ac))?.erp || null,
       desc2Contains,
@@ -200,5 +272,27 @@ describe('the corrections files that ship, against the book cut that ships', () 
     expect(of('HC-SO-011660').fileModel).toBe('9058');   // Sulaiman, book AMN-SF9058 SOFA
     expect(of('HC-SO-012629').fileModel).toBe('5535');   // KONG KIT YING, book HOK-5535 SOFA
     for (const d of ['HC-SO-010882', 'HC-SO-011660', 'HC-SO-012629']) expect(of(d).verdict).toBe('AGREE');
+  });
+
+  /* The two builds the previous round held, now answered. They are graded here
+     by NAME rather than left to the aggregate above, because each is a
+     different kind of answer and a later edit that quietly changed either one
+     would still pass a bare "no DIFFER" count. */
+  it('the two the owner answered on 2026-09-08 grade as what they are', () => {
+    const { rows } = realGrade();
+    const of = (doc) => rows.find((r) => r.docs.includes(doc));
+
+    /* Ordinary: his drawing decides the BUILD, the book still decides the
+       model, and the book's AMN-SF9050 SOFA is model 9050. */
+    expect(of('HC-SO-011601').fileModel).toBe('9050');
+    expect(of('HC-SO-011601').verdict).toBe('AGREE');
+
+    /* Deliberate: the book's own daybed is discontinued and has no stool
+       piece, so he put the 8030 daybed on the line instead. The ERP therefore
+       names a product the book does not, BY HIS DECISION, and the entry has to
+       declare the model it is overriding to be read that way at all. */
+    expect(of('HC-SO-011657').fileModel).toBe('8030');
+    expect(of('HC-SO-011657').bookRaw).toEqual(['9838 DB']);
+    expect(of('HC-SO-011657').verdict).toBe('OWNER-OVERRIDE');
   });
 });

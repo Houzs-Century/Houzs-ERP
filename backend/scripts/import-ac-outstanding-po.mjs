@@ -40,7 +40,7 @@ import { fileURLToPath } from "node:url";
 import { bookCurrency, currencyTally, sawCurrencyColumn } from "./lib/ac-currency.mjs";
 import postgres from "postgres";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
-import { parseBedframe } from "./lib/parse-bedframe.mjs";
+import { bedframeVariants, parseBedframe } from "./lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { acDeliveryDate, acDtlKey, acFromSoDtlKey } from "./lib/ac-po-line.mjs";
 import { makeSoLineTaker } from "./lib/so-line-dedication.mjs";
@@ -298,8 +298,10 @@ async function main() {
         const fc = pending ? null : findColour(bf.color);
         if (fc) bfCol++; else if (pending) bfPending++;
         else if (bf.color) exceptions.push({ po: acPo, code: l.ItemCode, reason: `colour "${bf.color}" not in fabric_colours` });
-        const tot = (Number(bf.gap) || 0) + (Number(bf.divan) || 0) + (Number(bf.leg) || 0);
-        variants = { fabricId: fc ? fc.fabric_id : null, colourId: fc ? fc.colour_id : null, fabricCode: fc ? fc.colour_id : null, colourLabel: fc ? fc.label : null, fabricLabel: fc ? fc.fabric_id : null, gap: bf.gap != null ? bf.gap + '"' : null, divanHeight: bf.divan != null ? bf.divan + '"' : null, legHeight: bf.leg != null ? bf.leg + '"' : null, totalHeight: tot ? tot + '"' : null, specials: bf.specials || [] };
+        /* One statement of the block, in lib/parse-bedframe.mjs beside the
+           parser that feeds it. It used to be written out here, in
+           import-ac-outstanding-so.mjs and in topup-ac-po-lines.mjs. */
+        variants = bedframeVariants(bf, findColour);
       }
       if (grp === "sofa" && SOFA) {
         /* One AutoCount sofa PO line -> one ERP line per compartment, exactly

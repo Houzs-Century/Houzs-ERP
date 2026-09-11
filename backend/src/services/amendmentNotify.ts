@@ -45,12 +45,36 @@ const cleanIds = (ids: Ids): number[] =>
     new Set(ids.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n > 0)),
   );
 
-/** Self + every manager above each seed, de-duped. Mirrors assrNotify's rule:
- *  the desk that must act, plus the line that answers for it. */
+/* How many levels at the TOP of a reporting chain are left OUT of an amendment
+   audience (owner 2026-09-09).
+
+   The wildcard exclusion in permissionHolders.ts was meant to keep the owner off
+   every amendment ever raised. It did not: the upline expansion put them back
+   through the front door. Six days of live data settled it — EVERY approver
+   audience in prod read [1, 4, 5, …], because every purchasing and logistics
+   desk chains up through the same two people to the Owner account. The channel
+   was on its way to being muted by the very people it exists to reach, which is
+   this file's own stated failure mode.
+
+   So the chain is cut two levels below its top. The desk still gets it, their
+   manager still gets it, and the two names above that do not. Trimming by
+   DEPTH rather than by naming ids keeps this true as the org chart moves. */
+const UPLINE_TOP_LEVELS_EXCLUDED = 2;
+
+/** Each seed plus the managers above it, MINUS the top two levels of each
+ *  chain, de-duped across seeds.
+ *
+ *  The seed itself is never trimmed. It is the person who has to sign; a short
+ *  chain (an approver reporting straight to the top) must still reach them,
+ *  even when trimming would otherwise empty the list. */
 async function withUpline(env: Env, seeds: number[]): Promise<number[]> {
   const out = new Set<number>();
   for (const id of seeds) {
-    for (const up of await uplineUserIds(env, id)) out.add(up);
+    // uplineUserIds returns [self, manager, manager's manager, …] in order, so
+    // the levels to drop are the TAIL.
+    const chain = await uplineUserIds(env, id);
+    const keepTo = Math.max(1, chain.length - UPLINE_TOP_LEVELS_EXCLUDED);
+    for (const up of chain.slice(0, keepTo)) out.add(up);
   }
   return [...out];
 }

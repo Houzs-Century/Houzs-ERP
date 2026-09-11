@@ -30,9 +30,10 @@ import {
 } from "../services/announcementApproval";
 import {
   ATTACHMENT_REQUIRED_MESSAGE,
-  attachmentRequiredForAnnouncements,
+  attachmentRequiredForType,
   listAttachmentLog,
 } from "../services/announcementFiles";
+import { readDocType } from "../lib/announcementAudience";
 import {
   actorOf,
   getScopedAnnouncement,
@@ -90,7 +91,7 @@ app.post("/:id/submit", requirePermissionOrSalesDirector("announcements.write"),
   }
   if (
     normalizeAttachments(existing.attachments ?? null).length === 0 &&
-    (await attachmentRequiredForAnnouncements(c.env))
+    (await attachmentRequiredForType(c.env, readDocType(existing)))
   ) {
     return c.json({ success: false, error: ATTACHMENT_REQUIRED_MESSAGE }, 400);
   }

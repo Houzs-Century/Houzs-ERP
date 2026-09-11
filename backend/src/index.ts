@@ -85,6 +85,7 @@ import { soMirror } from "./scm/routes/so-mirror";
 import { drainCommands } from "./scm/lib/amendment-command";
 import { drainStockAllocationRecompute } from "./scm/lib/stock-allocation-job";
 import { drainAutoCountOutbox } from "./scm/lib/autocount-outbox";
+import { relinkHeldBackSweep } from "./scm/lib/autocount-relink-sweep";
 import { refreshAllMrpSnapshots } from "./scm/lib/mrp-snapshot";
 import { amendmentMirror } from "./scm/routes/amendment-mirror";
 import { customerMirror } from "./scm/routes/customer-mirror";
@@ -96,7 +97,9 @@ import pos from "./routes/pos";
 // Announcements — office posts every logged-in user sees as a top banner with
 // a "Got it" ack. Ported from Hookka (single-tenant + office-only here).
 import announcements from "./routes/announcements";
+import announcementReceipts from "./routes/announcementReceipts";
 import announcementApproval from "./routes/announcementApproval";
+import memos from "./routes/memos";
 // Agent Console — owner-only fleet console for the HOOKKA-ported agents
 // (Delivery/Document/CS). Skeleton: controls + runs + config proposals +
 // feedback; the engines register themselves in services/agent-scheduler.ts.
@@ -108,6 +111,8 @@ import { dbInject, withPgDb } from "./middleware/db";
 import { companyContext } from "./middleware/companyContext";
 import { publicDoScan } from "./routes/publicDoScan";
 import { publicContractorCalendar } from "./routes/publicContractorCalendar";
+import { publicBrandCalendar } from "./routes/publicBrandCalendar";
+import { brandShare } from "./routes/brandShare";
 import { drainEmailOutbox } from "./services/email";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
@@ -334,6 +339,10 @@ app.route("/api/public/do-scan", publicDoScan);
 // dates) for the ONE contractor the token resolves to — never finance or any
 // other contractor's events. See routes/publicContractorCalendar.ts.
 app.route("/api/public/contractor-calendar", publicContractorCalendar);
+// PUBLIC no-login BRAND CALENDAR — same shape and the same reasons: a brand's
+// own confirmed events, its display floorplan, its own size and total sales,
+// scoped by the token's brand on every read. See routes/publicBrandCalendar.ts.
+app.route("/api/public/brand-calendar", publicBrandCalendar);
 
 app.use("/api/*", auth);
 
@@ -397,6 +406,9 @@ app.route("/api/notifications", notifications);
 app.route("/api/push", pushDevices);
 app.route("/api/presence", presence);
 app.route("/api/projects", projects);
+// The office side of a brand's share link (generate / revoke). Own file because
+// routes/projects.ts is at its size ceiling. See routes/brandShare.ts.
+app.route("/api/brand-share", brandShare);
 app.route("/api/sales", sales);
 app.route("/api/finance", finance);
 app.route("/api/stockitems", stockItems);
@@ -418,7 +430,12 @@ app.route("/api/mail-center", mailCenter);
 app.route("/api/announcements", announcements);
 // The approval + attachment-log routes (submit / approve / reject / files) —
 // same prefix, second router (routes/announcements.ts is at its size ceiling).
+// Read receipts + ack analytics (2026-09-09 split; no path overlaps the router above).
+app.route("/api/announcements", announcementReceipts);
 app.route("/api/announcements", announcementApproval);
+// The department memo register (mig 20260909T0500): numbered at creation on
+// the same <DEPT>-MEMO-<YYMM> series the notices use.
+app.route("/api/memos", memos);
 // Agent Console — owner-only (requirePermission("*") inside the router).
 // Deliberately in the public /api tree, NOT /api/scm (the scm subtree swaps
 // c.get('user') to scm.staff UUIDs — the known staff-UUID bigint trap).
@@ -586,6 +603,22 @@ export default {
             else if (r.processed) console.log(`[cron ac-writeback] ${JSON.stringify(r)}`);
           })
           .catch((e) => console.error("[cron ac-writeback]", e))
+      );
+      /* Keyless-conversion backlog sweep. Ships DARK: no-op unless
+         scm.app_config 'scm.autocount_relink_sweep' is 'plan' (report only) or
+         'apply' (stamp the book's line keys, then queue the keyed edit). Reads
+         the live book to match up delivery orders / goods receipts that were
+         converted before the book reported its keys back, so a person no longer
+         has to press "Match up lines" per document. Best-effort — a sweep
+         failure can never break the slot. */
+      ctx.waitUntil(
+        relinkHeldBackSweep(env)
+          .then((r) => {
+            if (r.mode !== "off" && (r.scanned || r.linesStamped || r.docsEnqueued)) {
+              console.log(`[cron ac-relink-sweep] ${JSON.stringify(r)}`);
+            }
+          })
+          .catch((e) => console.error("[cron ac-relink-sweep]", e))
       );
       /* SO allocation projection sweep.
 

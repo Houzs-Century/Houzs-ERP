@@ -1405,6 +1405,19 @@ here: `probe-link-identity` counted 5 at 2026-09-07 23:22 and
 across, touching no money and no link; the decision is pure in
 `scripts/lib/invoice-snapshot-repair.mjs`. `docs/bugs/0676` and `docs/bugs/0687`.
 
+**Two correction files may rule on one build, and the LATER one is the answer.**
+`CORRECTION_FILES` (`scripts/lib/sofa-corrections-source.mjs`) is ordered oldest
+first on purpose, so `apply-sofa-compartment-corrections.mjs` can be handed a
+round that revises an earlier one. Its verification asserts only the SURVIVING
+entry per build: `supersededBy()` in `scripts/lib/sofa-build-plan.mjs` overrules
+an entry when a later entry on the same document selects any of the same row
+ids, and the overruled one prints `SUPERSEDED` rather than disappearing. The
+test is ROW IDS, not the selector text — the pair that bought this rule,
+`HC-SO-012929`, carries two different `desc2Match` strings for one build, so a
+key built from the selector groups them apart and asserts both. `docs/bugs/0742`
+also records what is still open: the APPLY runs both entries, so the end state is
+correct only while the file order is.
+
 **Edit-side re-point guard (GAP-2), rows 9 & 11 — closed 2026-08-20.** The
 `Unlinked-line back door closed` column above is the CREATE / add-line half. A
 second half of the same door is EDITING an already-saved unlinked line's
@@ -1680,6 +1693,89 @@ cache makes real outstanding work invisible. The sales chain cannot fail this
 way by construction. The remedy shipped in 2026-07 was to stop swallowing the
 outcome (the failure now reaches the GRN's audit trail and the response), which
 makes the drift *visible* — it does not make the counter *authoritative*.
+
+#### G2a — The cache has a THIRD witness, and until 2026-09-08 nobody asked it (measurement shipped, verdict pending)
+
+**PROVEN.** `check-ac-convert-symmetry` asks the transfer-TO question twice and
+both times inside ONE system: section 3 compares the account book's counter to
+the book's own children, section 4b compares the ERP's counter to the ERP's own
+children. Neither compares the two systems to each other, so both can read clean
+while the ERP believes a different thing from AutoCount about the same line.
+
+On the migrated population that is the NORMAL case. The receipt that moved
+`received_qty` happened in AutoCount before the cutover, and mig `0280` states
+the design plainly — *"Nothing backfills it: the keys are stamped forward"* — so
+there is no ERP goods receipt behind it and section 4b's own-children comparison
+has nothing to find it with. Run `34198847720` (2026-09-08 15:20 Malaysia):
+
+| stored ceiling | disagrees with its own ERP children | direction |
+| --- | --- | --- |
+| `purchase_order_items.received_qty` | 140 of 1344 live PO lines | all 140 read HIGH |
+| `grn_items.invoiced_qty` | 80 of 792 live GRN lines | all 80 read HIGH |
+| `mfg_sales_order_items.po_qty_picked` | 22 of 15061 live SO lines | all 22 read LOW, all 22 on migrated `HC-*` orders |
+
+Reading HIGH with no ERP receipt behind it is either the migration faithfully
+copying a receipt the book already made — correct, and the only thing that lets
+a hard-bound sales line reach READY — or a ceiling wrongly closed. **The ERP
+cannot referee its own cache.** The book can.
+
+`backend/scripts/check-ac-transfer-counters.mjs` +
+`.github/workflows/ac-transfer-counter-check.yml` (read-only) put the question
+to it, matched by `linked_ac_dtlkey`:
+
+```
+scm.mfg_sales_order_items.po_qty_picked  vs  SODTL.TransferedPOQty   (SO -> PO)
+scm.purchase_order_items.received_qty    vs  PODTL.TransferedQty     (PO -> GR)
+scm.grn_items.invoiced_qty               vs  GRDTL.TransferedQty     (GR -> PI)
+```
+
+Two things about it are load-bearing and easy to get wrong:
+
+- **The comparison is a FRACTION, not a subtraction.** One book line can be
+  several ERP rows — a sofa is one `DtlKey` and six compartments (`0273`/`0280`)
+  — so summing the counter and subtracting reports the decomposition itself as a
+  defect. It compares `t/q` against `T/Q` cross-multiplied, which cannot round.
+  `backend/scripts/lib/transfer-counter-verdict.mjs` holds that rule and the
+  self-test drives the same function the check calls.
+- **SO -> DO and DO -> IV have no stored ERP counter at all.** How much of a
+  sales order has been delivered is computed off `delivery_order_items` every
+  time it is asked; how much of a delivery order has been invoiced off
+  `sales_invoice_items`. Nothing on those two edges can drift, and nothing on
+  them can be repaired — their only available failure is a missing LINK. The
+  checker says so out loud so the silence is not read as a clean measurement.
+
+**MEASURED — run `34203192972`, 2026-09-08 16:11 Malaysia.** (The first dispatch,
+`34201730668`, crashed on `min(uuid)` after one axis — `docs/bugs/0707`.)
+
+```
+    axis      | compared | agree | ERP LOW | ERP HIGH | ERP asserts | unkeyed rows
+    ------------------------------------------------------------------------------------
+    SO -> PO  |      761 |   735 |      25 |        1 |           0 |          244
+    PO -> GR  |     1137 |  1130 |       7 |        0 |           0 |           17
+    GR -> PI  |      504 |   142 |     362 |        0 |           0 |          229
+```
+
+**This settles the question G2 has carried since mig `0231`, and it settles it in
+our favour on two of the three counters.** Against AutoCount's own numbers,
+`received_qty` reads HIGH on **0** groups and `invoiced_qty` reads HIGH on **0**.
+The 140 and 80 that read HIGH against their own ERP children are the migration
+faithfully copying a receipt the book already made — 220 lines off the suspect
+list, no code changed to get there. `ERP asserts a transfer the book does not
+have` is **0** on all three axes, so nothing in the ERP claims a conversion
+AutoCount has no record of.
+
+What is left is all in the LOW direction:
+
+| axis | reading LOW | what it is |
+| --- | --- | --- |
+| SO -> PO | 25 | the book raised the purchase; our picker still shows 0 picked, so the line is offered again — a SECOND purchase order. Belongs to `fix/staff-reported-flow` (#3225), which writes `so_item_id` at compartment grain |
+| PO -> GR | 7 | ALL seven are sofa decompositions (`book 1 of 1 \| ERP 1 of 2 over 2 rows`). The book received the whole sofa, we received one compartment, so the bound sales line cannot go READY. Covered by the owner's 「除了 sofa compartment 而已啊」 exemption |
+| GR -> PI | 362 | the cutover's own scope decision made visible: AutoCount's 4,789 historical purchase invoices were deliberately not imported, so `invoiced_qty` is 0 on receipts the book has already invoiced. Those 362 lines can be invoiced AGAIN here |
+
+One over-convert: `SO-000870` `CODY-(K)`, book 1 of 1, ERP **2** of 1.
+
+`docs/bugs/0705` carries the entry and the reasoning for repairing none of them
+from that lane.
 
 ### G3 — DRAFT policy is decided three different ways, and where a DRAFT does not consume, two documents can be raised for the same line.
 

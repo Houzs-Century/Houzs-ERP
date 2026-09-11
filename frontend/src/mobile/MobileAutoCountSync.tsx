@@ -49,6 +49,7 @@ import {
 } from "../lib/autocountOutbox";
 import {
   acDocCanArchive,
+  acListTotal,
   acDocCanRestore,
   AC_ARCHIVE_LABEL,
   AC_ARCHIVE_BUSY_LABEL,
@@ -759,7 +760,7 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
                   here and "6 of 17 documents" there — two hand-written strings
                   making two different claims about one number. */}
               <span style={{ fontSize: 10.5, color: "var(--mut)", fontVariantNumeric: "tabular-nums" }}>
-                {acListCountLine(groups.length, d.counts.total)}
+                {acListCountLine(groups.length, acListTotal(d, state))}
               </span>
             </div>
 
@@ -834,7 +835,7 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  <span>{acShowingLine(live.length, d.counts.total)}</span>
+                  <span>{acShowingLine(live.length, acListTotal(d, state))}</span>
                 </div>
               </>
             )}

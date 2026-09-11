@@ -11,12 +11,13 @@ import { ComposerModal, buildPostBody, draftStorageKey, readDraft, type Composer
    → require-acknowledgement default and its guard against posting to nobody.
    ──────────────────────────────────────────────────────────────────────────── */
 
-const { apiPost, toastError, toastSuccess } = vi.hoisted(() => ({
+const { apiGet, apiPost, toastError, toastSuccess } = vi.hoisted(() => ({
+  apiGet: vi.fn(),
   apiPost: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
 }));
-vi.mock("../../api/client", () => ({ api: { post: apiPost } }));
+vi.mock("../../api/client", () => ({ api: { post: apiPost, get: apiGet } }));
 vi.mock("../../hooks/useToast", () => ({
   useToast: () => ({ error: toastError, success: toastSuccess }),
 }));
@@ -36,6 +37,8 @@ vi.mock("../../vendor/scm/components/DateTimeField", () => ({
 }));
 
 const base: Omit<ComposerDraft, "savedAt"> = {
+  docType: "ANN",
+  numberDeptId: null,
   category: "WARNING",
   requireAck: true,
   title: "Shipping marks",
@@ -186,6 +189,7 @@ describe("ComposerModal (rendered)", () => {
   beforeEach(() => {
     values.clear();
     apiPost.mockReset();
+  apiGet.mockReset();
     toastError.mockReset();
     toastSuccess.mockReset();
     vi.stubGlobal("localStorage", {
@@ -196,23 +200,95 @@ describe("ComposerModal (rendered)", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  function mount(extra: { attachmentRequired?: boolean } = {}) {
+  function mount(extra: { attachmentRequired?: boolean; docTypes?: Array<{ code: string; label: string; attachmentRequired: boolean }> } = {}) {
     const onPosted = vi.fn();
     const onClose = vi.fn();
     render(
       <ComposerModal
         users={[]}
-        departments={[{ id: 2, name: "Warehouse" } as Department]}
+        departments={[{ id: 2, name: "Warehouse", code: "WH" } as Department]}
         companies={[]}
         salesDirOnly={false}
         currentUserId={9}
         attachmentRequired={extra.attachmentRequired}
+        docTypes={extra.docTypes}
         onClose={onClose}
         onPosted={onPosted}
       />,
     );
     return { onPosted, onClose };
   }
+
+  it("with more than one registered type the composer offers a Type row; Memo is sent as docType and carries its own attachment policy (mig 20260908T0300)", async () => {
+    apiPost.mockResolvedValue({ success: true });
+    // The next-number preview follows the picked type (owner 2026-09-09).
+    apiGet.mockImplementation(async (url: string) => ({
+      data: { refNo: url.includes("typeCode=MEMO") ? "OPS-MEMO-2609-0003" : "OPS-ANN-2609-0012" },
+    }));
+    const { onPosted } = mount({
+      docTypes: [
+        { code: "ANN", label: "Announcement", attachmentRequired: false },
+        { code: "MEMO", label: "Memo", attachmentRequired: true },
+      ],
+    });
+    await waitFor(() => expect(screen.getByTestId("ref-no-preview").textContent).toContain("OPS-ANN-2609-0012"));
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Memo one" } });
+    fireEvent.click(screen.getByRole("button", { name: /Warehouse/ }));
+    // ANN by default: no file needed, Submit open.
+    expect(screen.queryByTestId("attachment-required-hint")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Change type" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Memo/ }));
+    await waitFor(() => expect(screen.getByTestId("ref-no-preview").textContent).toContain("OPS-MEMO-2609-0003"));
+    // Numbered under another department: the preview asks for that code and the pick rides the POST.
+    fireEvent.change(screen.getByLabelText("Numbered under"), { target: { value: "2" } });
+    await waitFor(() => expect(apiGet).toHaveBeenCalledWith(expect.stringContaining("deptCode=WH")));
+    // MEMO demands a file: the hint appears and Submit is held.
+    expect(screen.getByTestId("attachment-required-hint")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Submit for approval" }) as HTMLButtonElement).disabled).toBe(true);
+    // Save draft still goes, with the type.
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(onPosted).toHaveBeenCalled());
+    expect(apiPost).toHaveBeenCalledWith(
+      "/api/announcements",
+      expect.objectContaining({ title: "Memo one", docType: "MEMO", numberDeptId: 2, draft: true }),
+    );
+  });
+
+  it("the type follows the category until the writer picks one by hand (owner 2026-09-09); a hand-picked type sticks", async () => {
+    apiPost.mockResolvedValue({ success: true });
+    apiGet.mockResolvedValue({ data: { refNo: "OPS-ANY-2609-0001" } });
+    const { onPosted } = mount({
+      docTypes: [
+        { code: "ANN", label: "Announcement", attachmentRequired: false },
+        { code: "MEMO", label: "Memo", attachmentRequired: false },
+        { code: "SOP", label: "Standard operating procedure", attachmentRequired: false },
+        { code: "WARN", label: "Warning", attachmentRequired: false },
+        { code: "NTC", label: "Notice", attachmentRequired: false },
+      ],
+    });
+    // Warning is the default category → WARN; the radios stay folded away.
+    expect(screen.getByTestId("numbering-type").textContent).toContain("WARN");
+    expect(screen.queryByRole("radio", { name: /Memo/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "SOP" }));
+    expect(screen.getByTestId("numbering-type").textContent).toContain("SOP");
+    fireEvent.click(screen.getByRole("button", { name: "Notice" }));
+    expect(screen.getByTestId("numbering-type").textContent).toContain("NTC");
+    fireEvent.click(screen.getByRole("button", { name: "Learning" }));
+    expect(screen.getByTestId("numbering-type").textContent).toContain("ANN");
+    // Picked by hand: the category no longer moves it.
+    fireEvent.click(screen.getByRole("button", { name: "Change type" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Memo/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Warning" }));
+    expect(screen.getByTestId("numbering-type").textContent).toContain("MEMO");
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Sticky type" } });
+    fireEvent.click(screen.getByRole("button", { name: /Warehouse/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(onPosted).toHaveBeenCalled());
+    expect(apiPost).toHaveBeenCalledWith(
+      "/api/announcements",
+      expect.objectContaining({ docType: "MEMO", category: "WARNING", draft: true }),
+    );
+  });
 
   it("with the attachment policy on, Submit waits for a file while Save draft stays open (mig 20260907T0715)", () => {
     mount({ attachmentRequired: true });

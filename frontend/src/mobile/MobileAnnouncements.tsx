@@ -16,7 +16,7 @@ import {
 } from "./MobileAnnouncementMedia";
 import { MobileVirtualList } from "./MobileVirtualList";
 import { AnnouncementRichBody } from "../components/AnnouncementRichBody";
-import { CATEGORY_META, readCategory, requiresAcknowledgement } from "../components/announcementCategory";
+import { CATEGORY_META, docTypeForCategory, readCategory, requiresAcknowledgement } from "../components/announcementCategory";
 import { AnnouncementRichEditor } from "../components/AnnouncementRichEditor";
 import { richTextToPlain } from "../lib/announcementRichText";
 import { useIdempotencyKey } from "../lib/idempotency";
@@ -106,6 +106,8 @@ type Announcement = {
   /** Void (mig 20260907T1030). */
   voidedAt?: string | null;
   voidReason?: string | null;
+  /** Document type (mig 20260908T0300): ANN or e.g. MEMO. */
+  docType?: string | null;
 };
 
 const APPROVAL_CHIP: Record<"DRAFT" | "PENDING_APPROVAL" | "REJECTED", { label: string; bg: string; fg: string }> = {
@@ -131,7 +133,7 @@ type Company = { id: number; code: string; name: string };
 // desktop Announcements composer uses (/api/departments, /api/positions);
 // user-level targeting reuses /api/users (gated by users.read). Every field
 // optional so a leaner backend never crashes the picker.
-type Dept = { id: number; name: string };
+type Dept = { id: number; name: string; code?: string | null };
 type Position = { id: number; name: string; department_name?: string | null };
 type UserRow = { id: number; name: string | null; email: string; status?: string | null };
 
@@ -1073,6 +1075,7 @@ function Detail({
       <div className="scroll hz-scroll" style={{ padding: 14, paddingBottom: 40 }}>
         <div id="ann-d-meta" style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
           <CatChip ann={ann} />
+          {ann.docType && ann.docType !== "ANN" && <span className="spill" style={{ background: "#eceee9", color: "#4b5046" }}>{ann.docType}</span>}
           {(canManage || canApprove) && <ApprovalChip ann={ann} />}
           {canManage && approval === "APPROVED" && <StatusChip ann={ann} />}
           <CompanyChip ann={ann} companies={companies} />
@@ -1240,6 +1243,25 @@ function Compose({
 
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState(CATEGORY_OPTIONS[0].value);
+  // Document type (mig 20260908T0300): the registry's active types; ANN unless
+  // the writer picks Memo. The [TYPE] segment of the number.
+  const [docType, setDocType] = useState("ANN");
+  const docTypesQ = useQuery({
+    queryKey: ["document-types"],
+    queryFn: () => api.get<{ data: Array<{ code: string; label: string; attachmentRequired: boolean }> }>("/api/document-types"),
+    staleTime: 300_000,
+  });
+  const docTypeOptions = useMemo(() => docTypesQ.data?.data ?? [], [docTypesQ.data]);
+  // The type follows the category (docTypeForCategory, owner 2026-09-09)
+  // until the writer picks one by hand — the same rule the desktop applies.
+  const [typeTouched, setTypeTouched] = useState(false);
+  useEffect(() => {
+    if (typeTouched) return;
+    setDocType(docTypeForCategory(readCategory(category), docTypeOptions));
+  }, [category, typeTouched, docTypeOptions]);
+  // Numbered under (mig 20260909T0900): the department whose series the
+  // number is minted on; empty = the submitter's own.
+  const [numberDeptId, setNumberDeptId] = useState<number | null>(null);
   const [bucket, setBucket] = useState<Bucket>(salesDirOnly ? "DEPT" : "ALL");
   // Company target: "ALL" = every company (Both — sends no target, NULL = all);
   // a company id = that company only. Default "ALL". Only shown when >1 company.
@@ -1266,6 +1288,30 @@ function Compose({
   // answered by the server with the row the first request made, never a
   // second one (mig 20260907T0010; the desktop composer keys its draft).
   const clientKey = useIdempotencyKey();
+
+  // The number this notice gets on approval — a preview from
+  // GET /api/document-refs/next (nothing claimed), following the type and the
+  // department picked; the attachment policy of the picked type.
+  const numberDept = numberDeptId == null ? null : (lookups.depts.find((d) => d.id === numberDeptId) ?? null);
+  const numberDeptCode = numberDept?.code ?? null;
+  const nextQ = useQuery({
+    queryKey: ["document-refs-next", docType, numberDeptCode],
+    queryFn: () =>
+      api.get<{ data?: { refNo?: string } | null; reason?: string }>(
+        `/api/document-refs/next?typeCode=${encodeURIComponent(docType)}${numberDeptCode ? `&deptCode=${encodeURIComponent(numberDeptCode)}` : ""}`,
+      ),
+    enabled: numberDeptId == null || !!numberDeptCode,
+    staleTime: 10_000,
+  });
+  const nextRefNo = nextQ.data?.data?.refNo ?? null;
+  const nextReason =
+    numberDeptId != null && !numberDeptCode
+      ? `${numberDept?.name ?? "That department"} has no department code yet, so a notice cannot be numbered under it. Set one under Team → Departments.`
+      : nextQ.data && !nextRefNo
+        ? (nextQ.data.reason ?? null)
+        : null;
+  const pickedType = docTypeOptions.find((t) => t.code === docType) ?? null;
+  const missingAttachment = !!pickedType?.attachmentRequired && files.length === 0;
 
   const hasPhotos = files.some((f) => (f.type || "").startsWith("image/"));
   const hasVideos = files.some((f) => (f.type || "").startsWith("video/"));
@@ -1318,6 +1364,7 @@ function Compose({
     if (bucket === "DEPT" && selDepts.size === 0) { setErr("Pick at least one department, or choose All staff."); return; }
     if (bucket === "POSITION" && selPositions.size === 0) { setErr("Pick at least one position, or choose All staff."); return; }
     if (bucket === "USER" && selUsers.size === 0) { setErr("Pick at least one person, or choose All staff."); return; }
+    if (missingAttachment) { setErr(`A ${pickedType.label} must carry its file (Settings → Documents). Attach one first.`); return; }
     setErr(null);
     setSaving(true);
     try {
@@ -1346,8 +1393,10 @@ function Compose({
         title: t,
         body: richTextToPlain(body),
         bodyHtml: body,
+        docType,
         category,
         clientKey,
+        ...(numberDeptId != null ? { numberDeptId } : {}),
       };
       if (bucket === "DEPT") payload.targetDeptIds = Array.from(selDepts);
       if (bucket === "POSITION") payload.targetPositionIds = Array.from(selPositions);
@@ -1419,10 +1468,58 @@ function Compose({
 
         <label className="fld" style={{ marginBottom: 12 }}>
           <span className="fld-l">Category</span>
-          <select className="fld-i" value={category} onChange={(e) => setCategory(e.target.value)}>
+          <select className="fld-i" value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Category">
             {CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </label>
+        {/* Numbering (owner 2026-09-09): the family the number is minted as
+            (follows the category until picked by hand), the department it is
+            minted under, the number itself (previewed), and the picked type's
+            attachment policy. Mirrors the desktop composer. */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+          <label className="fld" style={{ flex: 1, minWidth: 0 }}>
+            <span className="fld-l">Numbered as</span>
+            <select
+              className="fld-i"
+              value={docType}
+              onChange={(e) => {
+                setTypeTouched(true);
+                setDocType(e.target.value);
+              }}
+              aria-label="Document type"
+              disabled={docTypeOptions.length <= 1}
+            >
+              {docTypeOptions.length === 0 && <option value={docType}>{docType}</option>}
+              {docTypeOptions.map((t) => <option key={t.code} value={t.code}>{t.label} ({t.code})</option>)}
+            </select>
+          </label>
+          <label className="fld" style={{ flex: 1, minWidth: 0 }}>
+            <span className="fld-l">Numbered under</span>
+            <select
+              className="fld-i"
+              value={numberDeptId ?? ""}
+              onChange={(e) => setNumberDeptId(e.target.value ? Number(e.target.value) : null)}
+              aria-label="Numbered under"
+            >
+              <option value="">My department</option>
+              {lookups.depts.map((d) => <option key={d.id} value={d.id}>{d.name}{d.code ? ` (${d.code})` : " — no code"}</option>)}
+            </select>
+          </label>
+        </div>
+        {(nextRefNo || nextReason) && (
+          <div style={{ fontSize: 11.5, color: "#5b6159", margin: "0 2px 12px", lineHeight: 1.45 }} data-testid="ref-no-preview">
+            {nextRefNo ? (
+              <>Number on approval: <b style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace", color: "var(--ink)" }}>{nextRefNo}</b></>
+            ) : (
+              nextReason
+            )}
+          </div>
+        )}
+        {missingAttachment && (
+          <div style={{ fontSize: 11.5, color: "#a16a2e", margin: "0 2px 12px", lineHeight: 1.45 }} data-testid="attachment-required-hint">
+            A {pickedType.label} must carry its file (Settings → Documents) — attach one below before submitting.
+          </div>
+        )}
 
         {/* Company target — only when more than one company exists. Hidden for
             a Sales Director (they post within their own department only). */}
@@ -1610,7 +1707,7 @@ function Compose({
       </div>
 
       <footer className="actbar">
-        <button onClick={publish} disabled={saving} className="btn" style={{ cursor: saving ? "default" : "pointer", opacity: saving ? 0.6 : 1 }}>
+        <button onClick={publish} disabled={saving || missingAttachment} className="btn" style={{ cursor: saving || missingAttachment ? "default" : "pointer", opacity: saving || missingAttachment ? 0.6 : 1 }}>
           {saving ? "Saving…" : "Submit for approval"}
         </button>
       </footer>

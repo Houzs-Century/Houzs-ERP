@@ -1,0 +1,91 @@
+name: Give the migrated goods receipt the account book's own money
+
+# 「这三个就跟着line item去跟着autocount就对了 autocount怎么写我们就怎么写」 —
+# the owner, 2026-09-09, about the three receipts that read exactly book x 4/3
+# and the one that is short by RM 55.00.
+#
+# WHAT IT DOES, plainly: AutoCount prices the RECEIPT (91.2% of its receipt
+# lines carry a price) and we priced the receipt from the ORDER instead (only
+# 42.8% of order lines carry one). So a receipt the book prices sits at RM 0.00
+# in the ERP, and where the order IS priced the book's own discount was dropped.
+# This copies the book's own figure onto the receipt line. Nothing is computed.
+#
+# PLAN IS THE DEFAULT AND IT WRITES NOTHING. `apply` additionally needs the
+# CONFIRM phrase, writes one transaction per receipt, and then re-reads on a
+# FRESH connection asserting the SHAPE — every line equals the book's SubTotal
+# for its own key and every header equals its lines — not a row count.
+#
+# 「库存先不看」 IS ENFORCED BY THE SCRIPT, NOT BY THE OPERATOR. A receipt that is
+# not `migrated_no_stock`, or that any `scm.inventory_movements` row names, is
+# REFUSED and the ringgit it would have moved is printed beside the refusal. A
+# receipt with costed layers hanging off its price is an on-hand VALUE, and this
+# lane does not move one.
+#
+# IT ENQUEUES NOTHING. No outbox row, no AutoCount call, no write-back —
+# 「写回autocount的你不需要理了」.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (read-only, default) or apply (writes)"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'For apply, type exactly: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+      doc:
+        description: "One ERP receipt number (e.g. HC-GR-005363), or blank for every one"
+        required: false
+        default: ""
+      max_snapshot_age_days:
+        description: "Refuse if the AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+
+# Its OWN group. Not the deploy's — a repair must not queue behind or displace a
+# release — and not another lane's either.
+concurrency:
+  group: repair-gr-money-from-book
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+
+      # The pure decision this repair calls, proved against the committed book
+      # cut before a single production row is read. If the rule has drifted, the
+      # run stops here rather than writing money.
+      - name: The rule, tested first
+        run: node --test scripts/lib/gr-money-from-book.test.mjs
+
+      - name: The repair
+        run: node scripts/repair-gr-money-from-book.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          DOC: ${{ inputs.doc }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

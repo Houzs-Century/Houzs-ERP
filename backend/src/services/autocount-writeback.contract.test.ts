@@ -56,6 +56,7 @@ import {
    moves — a hand-copied literal is how a test ends up proving yesterday. */
 import { AC_DEBTOR_CODE } from './autocount-writeback';
 import { resetWritebackFlagCache } from '../scm/lib/autocount-writeback-flag';
+import { parsePgrestInList } from '../scm/lib/pgrest-in-list';
 
 /* ?raw hands back the WORKING TREE bytes, which on Windows are CRLF. Normalise,
    or every anchor and every regex here means something different depending on
@@ -521,6 +522,13 @@ function fakeSb(tables: Record<string, Row[]>, omit: Record<string, string[]> = 
       eq(col: string, val: unknown) { filters.push((r) => String(r[col]) === String(val)); return builder; },
       neq(col: string, val: unknown) { filters.push((r) => String(r[col]) !== String(val)); return builder; },
       in(col: string, vals: unknown[]) { filters.push((r) => vals.map(String).includes(String(r[col]))); return builder; },
+      /* The ESCAPED in-list the shared readers now build (docs/bugs/0780). */
+      filter(col: string, op: string, val: string) {
+        if (op !== 'in') throw new Error(`fake: filter(${op}) is not implemented`);
+        const vals = parsePgrestInList(val);
+        filters.push((r: Record<string, unknown>) => vals.includes(String(r[col])));
+        return builder;
+      },
       lt(col: string, val: unknown) { filters.push((r) => Number(r[col] ?? 0) < Number(val)); return builder; },
       order() { return builder; },
       limit(n: number) { limitN = n; return builder; },

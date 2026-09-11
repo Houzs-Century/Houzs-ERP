@@ -37,12 +37,14 @@ import { Trash2 } from 'lucide-react';
 import type { MfgProductRow, MaintenanceConfig, SpecialAddonRow } from '../lib/mfg-products-queries';
 import { useModelAllowedOptionsByCode } from '../lib/mfg-products-queries';
 import { SpecialOrders } from './SpecialOrders';
+import { specialOrderSurface } from '../lib/special-order-surface';
 import type { BindingRow, MaterialKind } from '../lib/suppliers-queries';
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from '@2990s/shared';
 import { fabricOptionLabel, type FabricTrackingRow } from '../lib/fabric-queries';
 import { sortByText, sortByNumeric, byText } from '../lib/sort-options';
 import type { Warehouse } from '../lib/inventory-queries';
 import { MoneyInput } from './MoneyInput';
+import { DiscountInput } from './DiscountInput';
 import { SearchableSelect } from './SearchableSelect';
 import styles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 import { DateField } from "./DateField";
@@ -227,6 +229,26 @@ export const PoLineCard = ({
   // PR #135 — only sofa / bedframe carry a variant editor (mattress size +
   // branding are encoded in the SKU code itself).
   const showVariants = Boolean(l.category) && ['sofa', 'bedframe'].includes(l.category ?? '') && Boolean(maint);
+  /* THE SPECIAL ORDER IS NOT A BEDFRAME/SOFA FEATURE. Owner 2026-09-10, after
+     the field opened on the Sales Order: 「你确定是 CS order 有而已，还是全部吗？
+     我们的包括 DO 等等，全部都是要带过去的哦…POGR 是不是也是要能看得到这些数据？」
+     A mattress's SIZE and a custom pillow's COLOUR reached the supplier's
+     purchase-order PDF (description2 is stamped from buildVariantSummary, which
+     appends the SPECIAL segment for every category) — but this card rendered the
+     editor only inside its bedframe and sofa branches, so on screen the buyer
+     could neither see nor correct it, and `showVariants` above hid the whole box
+     for those categories anyway.
+     ONE rule, shared with the Sales Order and both mobile surfaces
+     (vendor/scm/lib/special-order-surface.ts). The pool is empty here on
+     purpose: this document carries no catalogue for those categories, and
+     choosing WHAT to build is the sales order's job, not the buyer's. Since
+     2026-09-10 SpecialOrders no longer calls a carried pick "retired" when it
+     has no pool to judge it against. */
+  const specialSurface = specialOrderSurface({
+    category: l.category ?? '',
+    hasItemCode: Boolean(l.itemCode),
+    pickedSpecialCount: 0,
+  });
   // T12 — identity (code/SKU/description) + variants lock for GRN-sourced PI
   // lines; the whole card's `disabled` (locked doc) still wins over everything.
   const identityLocked = disabled || identityReadOnly;
@@ -484,6 +506,27 @@ export const PoLineCard = ({
         </label>
       )}
 
+      {/* SPECIAL ORDER for the categories with no variant grid — mattress,
+          accessory, dining. Free text only; see specialSurface above. */}
+      {specialSurface.block && (
+        <div style={{
+          background: 'var(--c-cream)',
+          border: '1px solid var(--line)',
+          borderRadius: 'var(--radius-md)',
+          padding: 'var(--space-3)',
+        }}>
+          <SpecialOrders
+            options={[]}
+            variants={l.variants}
+            onPatch={(patch) => onChange({ variants: { ...l.variants, ...patch } })}
+            showPrices={false}
+            disabled={identityLocked}
+            sourceLinked={Boolean(l.soItemId)}
+            sourceLabel="Sales Order"
+          />
+        </div>
+      )}
+
       {/* Per-category variant editor (PR #126 logic, PR #129 card layout) */}
       {showVariants && (
         <div style={{
@@ -644,13 +687,15 @@ export const PoLineCard = ({
         </label>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Discount ({currency})</span>
-          <MoneyInput
+          <DiscountInput
             bare
             valueSen={l.discountSen ?? 0}
+            baseSen={l.qty * l.unitPriceSen}
             disabled={disabled}
             onCommit={(sen) => onChange({ discountSen: sen ?? 0 })}
             inputClassName={styles.fieldInput}
             selectOnFocus
+            currency={currency}
           />
         </label>
         {/* T12 — Delivery + Ship-to are PO-only; hidden on the PI card. */}

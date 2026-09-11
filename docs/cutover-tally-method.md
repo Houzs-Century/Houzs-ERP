@@ -151,6 +151,218 @@ reconstructing a per-line figure from GR details is not an option;
 | PO linkage | ERP PO `linked_ac_docno` == AutoCount PO DocNo; `so_item` link kept where present. |
 | Exceptions | SO colour/free-text exception list (~37, all AutoCount source-data truncation) consciously reviewed; nothing silently dropped. |
 
+## C2. THE ONE-LINE ANSWER, per document type (added 2026-09-08)
+
+Section C ties out COUNTS and VALUE. It does not answer 「都tally了吗」 for a
+document type, because a summary row can be right about its own column and still
+leave a document differing — see `docs/bugs/0715` (a comparison that never ran,
+counted as `differ`) and `docs/bugs/0720` (a purchase order that differed on
+CURRENCY while the gap total read `PO 0`).
+
+Two read-only workflows print that answer, one document at a time, and neither
+writes anything:
+
+| question | Actions -> workflow | script |
+|---|---|---|
+| 「SO 都tally了吗」 | **Are all the sales orders tallied? (read-only)** | `backend/scripts/check-so-tally.mjs` |
+| 「PO GR 也tally了吗」 | **Are the purchase orders and goods receipts tallied? (read-only)** | `backend/scripts/check-po-gr-tally.mjs` |
+
+Both classify the SAME comparison — `check-ac-erp-reconcile.mjs` — into four
+buckets, and **neither measures anything itself**. The second runs the reconcile
+ONCE for every requested type (`TYPES`, default `PO,GR,SO`) so purchase orders,
+goods receipts and the sales-order CONTROL all quote one run.
+
+**The four buckets, and why the third one has to exist.** A document whose sofa
+build the book's own text does not state is NEITHER agreeing NOR differing.
+Folding it into DIFFER invents a backlog nobody owes; folding it into IDENTICAL
+calls it checked when nothing checked it. It gets its own column, always.
+
+- `identical` — compared on every axis, and every axis agreed.
+- `work` — at least one axis where both sides state something different, or the
+  document is absent, or the ERP claims one the book does not have.
+- `unanswerable` — the only findings are axes the checker refused to answer.
+- `book-gap` — the ERP carries a value the BOOK never stated. Already accepted.
+
+**TALLIED means zero `work`**, and it is decided in exactly one place —
+`isTallied` in `backend/scripts/lib/so-tally-verdict.mjs`. Not "few", not "only
+the declared ones are left". No summary writer gets a vote.
+
+**A refusal PRINTS THE VALUE WE HOLD — added 2026-09-09.** The
+`CANNOT BE COMPARED` list used to print the document number and the axis name
+and stop, so an order the ERP already holds a perfectly good build for reached
+the owner as a blank to fill from memory:
+
+```
+HC-SO-013503 (SO-013503)  [PROCEEDED] — sofa build not verifiable
+```
+
+He pushed back — 「所以基本上model和sofa compartment基本上都有了啊？那为什么你说没
+有呢？」 — and he was right: the photograph and the book's `Desc2` had been
+checked, and **what our own database holds had not**. It now reads:
+
+```
+HC-SO-013503 (SO-013503)  [PROCEEDED] — sofa build not verifiable
+      sofa build not verifiable: … we hold "1A(LHF)+1NA+1A(RHF)" — the book's
+      Desc2 does not state the pieces
+```
+
+which is a one-word confirmation instead of a research task.
+
+Two notes for anyone extending this:
+
+- The build is **read, never recomputed**. `variant-reconcile.mjs` already sets
+  `cell.erp = have.join("+")` before the `UNREADABLE` branch;
+  `variant-report.mjs` records that value. A second computation of the piece
+  list is how two statements of one rule come to disagree (`docs/bugs/0708`).
+- It prints on the **cannot-compare list only**. A `work` row already names a
+  real difference on its axis; a refusal alone is the thing nobody can act on.
+  `bucketOf` and `isTallied` are untouched — this prints, it does not
+  reclassify, and `tests/soTallyVerdict.test.mjs` pins that the document stays
+  in `unanswerable`.
+
+To ask the same question about any document directly, without the reconcile:
+**What the ERP holds for a sales order (read-only)** ->
+`backend/scripts/diag-so-erp-build.mjs`, which takes `DOCS=` as ERP or AutoCount
+numbers and prints every line plus the piece list. It compares nothing.
+See `docs/bugs/0728`.
+
+### The `unanswerable` column is split BY CAUSE, and the split must cover the column
+
+"Cannot be compared" is not one thing, and the report says which of three it is
+per document. The registry is `backend/scripts/lib/unanswerable-causes.mjs`; it
+IMPORTS the sofa buckets from `backend/scripts/lib/sofa-unread-split.mjs` rather
+than restating them.
+
+| whose it is | what closes it |
+| --- | --- |
+| **MECHANICAL** | a line key we never stamped. A recording job — 「一律跟账本。除了sofa compartment而已啊」 reserves the owner's ruling for what the compartments ARE, not for which line they sit on |
+| **ABSENT SOURCE** | the account book states nothing to compare against and no drawing exists. Unanswerable by anyone, the owner included, and never a backlog |
+| **YOURS** | the book's own text does not decode into pieces and a drawing does. Only he can read it |
+
+Two traps this split was bought by, on run 34257873206
+(`docs/bugs/0729-*.md`):
+
+1. **The table must be fed by the COLUMN, not by every row.** A document with a
+   real difference on another axis is `work`, whatever its unreadable sofa turns
+   out to be. Counting its cause into the cannot-compare table made
+   `=> N of these can be made comparable WITHOUT you` a promise about a set the
+   owner was not being handed — GR read 6 against a column of 3, DO 7 against 5,
+   PI 5 against 2.
+2. **`sofa build not verifiable` is not the only unanswerable axis.**
+   `transfer chain not verifiable` is the other, and it is itself TWO
+   populations owed opposite things: `line_not_stamped` is MECHANICAL (a
+   backfill), `erp_parent_unstamped` is an ABSENT SOURCE (an ERP-native parent
+   the book has nothing to compare against). The causes are emitted in
+   `backend/scripts/lib/ac-transfer-chain-run.mjs` beside the refusal, from the
+   verdict it already holds, so a cause and its refusal cannot disagree.
+
+The report prints `documents in the column carrying NO named cause: N`, whether
+N is zero or not. "Every one is named" is a claim; the number that would be
+non-zero if it were false is what makes it evidence.
+
+### Why a document differs, per document — the read that was being thrown away
+
+`backend/scripts/diag-doc-differ-cause.mjs` (workflow **Why does each document
+differ, by cause (read-only)**) prints, for one document type, every document in
+the `work` and `unanswerable` buckets with the reconcile's OWN findings and the
+account book's own lines beside them. `buildVerdictRows` has always written that
+`detail` string; nothing printed it, so the next step after the tally was to read
+the axis name AS the cause and sweep the set — and a cause-mixed sweep overwrites
+the rows that were already right. It compares nothing and writes nothing.
+
+**Two things that are NOT differences, per type, and are printed with the ruling
+that made them so** — do not "repair" either into a difference:
+
+- PO: **241 lines where the BOOK states no price.** Houzs prices a purchase when
+  the goods arrive; copying the book's blank would ERASE a real price.
+- GR: **100 receipts carrying RM 0.00.** The owner, 2026-09-08: 「GR 0 没关系」.
+  Proved per document (`migrated_no_stock`, zero inventory movements), never
+  assumed.
+
+**Grain, for goods receipts.** One "document" is a
+(AutoCount receipt x purchase order) PAIR, written `GR-nnn|PO-nnn`. An ERP goods
+receipt belongs to ONE purchase order while an AutoCount receipt can span
+several, and 51 of the 214 in-scope receipts do. Counting receipts instead
+reports every one of those as short by the part raised against another order.
+
+### The 9 goods receipts that "differed on money" were a MEASURING ERROR — CORRECTED 2026-09-08
+
+> **This section previously said the opposite**, at length: that the nine were a
+> DECISION rather than a defect, that "no existing tool will close them", and
+> **"Do NOT repair this by copying the book's receipt price."** All of that was
+> built on one sentence that is false — *"our receipt mirrors ONE purchase order
+> and AutoCount's receipt spans several, so the invoice bills more than our lines
+> cover"* — and the owner rejected it:
+>
+> 「PI 是from multiple的PO 所以GR的吧? 没有啊 我们一张GR to 一张PI — 可是GR 会from
+> multiple PO啊 — 所以你要去GR 每个line的amount 都对齐啊 — PO GR PI的line
+> information去吧要对其啊」
+>
+> The old text is not reproduced here. Read `docs/bugs/0723-*.md` for the trace.
+
+**Not one sen is missing.** The gate in `stamp-migrated-source-prices.mjs`
+compared an ERP group's total against the WHOLE AutoCount invoice's `NetTotal`.
+Our documents mirror only the (receipt x purchase order) pairs the migration
+carried — the OUTSTANDING population, the owner's own rule — so the rest of the
+invoice belongs to purchase orders that were already fully received and were
+never imported. A partial mirror cannot reach a whole invoice, and no price can
+make it.
+
+**PROVEN from the committed snapshot** `backend/scripts/data/ac-reconcile-truth.json.gz`,
+attributed by document link only (`PIDTL.FromDocNo` -> receipt,
+`GRDTL.FromDocNo` -> order; nothing paired by position or by name — the
+`docs/bugs/0690` transposition hazard). Re-run the arithmetic rather than quoting
+it; `backend/tests/acChainLineGrain.test.mjs` pins all three:
+
+| invoice | book NetTotal | the pairs we HOLD | the pairs never carried |
+|---|---|---|---|
+| PI-007287 | RM 11,247.00 | `GR-004909\|PO-009017` **RM 3,200.00** | `GR-004909\|PO-009033` 3,070.00 + `GR-004914\|PO-008984` 3,300.00 + `GR-004914\|PO-009074` 1,677.00 |
+| PI-007765 | RM 4,580.00 | `GR-005169\|PO-009475` **RM 2,230.00** | `GR-005169\|PO-009469` 2,350.00 |
+| PI-007771 | RM 9,284.00 | `GR-005171\|PO-009344` 2,330.00 + `GR-005171\|PO-009553` 2,520.00 = **RM 4,850.00** | `GR-005171\|PO-009365` 1,444.00 + `GR-005171\|PO-009516` 2,990.00 |
+
+RM 3,200.00 / RM 2,230.00 / RM 4,850.00 are **exactly** what the stamper printed
+as "ours would be" on run `34231092897`. It had the right figure all along and
+was grading it against the wrong total.
+
+**How big the wrong yardstick is:** 131 of the 192 live purchase invoices that
+touch an in-scope receipt bill at least one line whose purchase order was never
+migrated — **RM 625,213.71 across 892 lines**. That is not a backlog; it is
+money that was never ours to hold.
+
+**Why those orders are out of scope, checked rather than assumed.**
+`PO-009033`, `PO-008984`, `PO-009074`, `PO-009469`, `PO-009365` and `PO-009516`
+each read `Qty == TransferedQty` on every line and none is raised for a line of
+an in-scope sales order, so each fails both lanes of `SCOPE.PO` in
+`backend/scripts/lib/ac-scope.mjs`.
+
+**Two facts found while proving this, which the arithmetic depends on:**
+
+- **Every one of the 189 in-scope receipts is billed for exactly what it holds.**
+  That is what lets the book's (receipt x order) split stand in for an
+  invoice-line split AutoCount never states. Book-wide it is 5,269 exact, 4
+  billed for slightly less, 0 for more. It is asserted at run time, not assumed —
+  where an invoice bills only part of a receipt, the share is reported as NOT
+  DETERMINABLE instead of as a number nobody can defend.
+- **20 live purchase invoices have a line sum that does not equal their header,
+  and every one is CNY** — the line export is DOCUMENT currency, the header
+  export LOCAL. `PI-001222`: lines 1,635,817 sen, header 2,641,055 sen,
+  `1,635,817 / 0.61938 = 2,641,055`, and both exports state that rate. It is a
+  RATE, not a discount, and it is refused rather than converted. None of the 20
+  touches an in-scope receipt.
+
+**The yardstick now lives in ONE place** — `backend/scripts/lib/ac-chain-line-grain.mjs`.
+The two-export cross-check that the old gate was reaching for is kept and is now
+MEASURED per document (`invoiceIdentity`) rather than assumed.
+
+**Currency is its own axis and it LOCKS.** A foreign purchase order's total is
+compared in the document's own currency, so the money can be right to the sen
+while the ERP's `currency` column reads MYR — which is wrong. It is deliberately
+NOT in the SUMMARY's gap total (comparing a local-currency total against a
+document-currency one is what wrote RM 13,068.55 of imaginary discount onto a
+CNY order, `docs/bugs/0665`), so the per-document verdict is the only place it
+shows. Never repair a foreign document's TOTAL by script: a discount and an
+exchange rate are not distinguishable from a total alone.
+
 ## D. The mapping/rules the tally depends on (so a re-run reproduces the same numbers)
 
 - SKU: `backend/scripts/data/autocount-erp-mapping-1561.csv` (ac_code -> erp_code); 0 non-sofa codes off the pick list after the `SVC-DELIVERY -> TRANSPORTATION CHARGES` company-1 alias.

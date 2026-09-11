@@ -1,0 +1,54 @@
+name: SO-SI deposit link check (read-only)
+
+# Answers "an order is fully paid, so why does the invoice raised from it still
+# show the whole balance owing?" without anyone opening a SQL console.
+#
+# The linkage lives only in production, so before this the question cost an owner
+# interruption AND put the DSN in front of a human for a SELECT. Actions already
+# holds secrets.DATABASE_URL for the deploy, so the check runs here and nobody
+# handles the credential.
+#
+# Manual trigger only — a diagnostic, never a schedule (a scheduled production DB
+# read is CI noise nobody reads).
+on:
+  workflow_dispatch:
+    inputs:
+      so_doc:
+        description: "Sales Order doc_no"
+        required: false
+        default: "HC-SO-013057"
+      do_num:
+        description: "Delivery Order number"
+        required: false
+        default: "HC-DO-2609-012"
+
+# NOT the deploy's group: this touches nothing and must never queue behind, or
+# displace, a release.
+concurrency:
+  group: so-si-deposit-link-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-so-si-deposit-link.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SO_DOC: ${{ inputs.so_doc }}
+          DO_NUM: ${{ inputs.do_num }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy for the full
+          # Happy-Eyeballs reasoning. Harmless on an IPv4-only host.
+          NODE_OPTIONS: --dns-result-order=ipv4first

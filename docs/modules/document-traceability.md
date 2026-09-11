@@ -82,7 +82,7 @@ whole point of this doc is to record which one answers which question.
 
 | # | Linkage | Where it lives | Semantics | Survives delivery? |
 |---|---------|----------------|-----------|--------------------|
-| A | **Floating MRP coverage** | `mrp.ts` `computeMrp()` → `mrpLineCoverage()` | Which outstanding PO currently covers which SO line, greedy by delivery date over a POOLED supply. `MrpLine.poNumber` is the forward map (SO line → PO). | **No** — computes over OUTSTANDING demand only; a delivered line is subtracted out (`effQtyOf` / `soDeliverableRemaining`) and `SO_DONE` statuses are excluded. The coverage evaporates the moment the line ships. |
+| A | **Floating MRP coverage** | `mrp.ts` `computeMrp()` → `mrpLineCoverage()` | Which outstanding PO currently covers which SO line, greedy by delivery date over a POOLED supply. `MrpLine.poNumber` is the forward map (SO line → PO). **Except a company-1 HARD-BOUND line** (bedframe / sofa / `(SP)` mattress): since 2026-09-09 it is covered by its OWN dedicated PO and never by the pool, because the readiness engine accepts only that PO — a pooled cover was a promise nothing could keep (`docs/bugs/0736`). So layer (c) of `po-so-coverage` has no floating answer for an UNLINKED PO line on such a SKU. | **No** — computes over OUTSTANDING demand only; a delivered line is subtracted out (`effQtyOf` / `soDeliverableRemaining`) and `SO_DONE` statuses are excluded. The coverage evaporates the moment the line ships. |
 | B | **Stored raise-link + document relationship** | `document-flow.ts` (`/document-flow/:type/:id`) | The SAP-B1 relationship graph. Real stored FKs: `purchase_order_items.so_item_id` (the SO line a PO line was RAISED from, 2026-07-09 onward), the PO provenance note (pre-MRP shared buys), `grns.purchase_order_id`, `purchase_invoices.grn_id`, `delivery_orders.so_doc_no`, `sales_invoices.*`. | **Yes** — they survive delivery, which floating coverage does not. But they are RECORDED, not ENFORCED: every one is nullable (an ad-hoc DO line is written with `so_item_id ?? null` straight from the client payload, `delivery-orders-mfg.ts:3752`), and several have been rewritten by repair scripts (`backfill-po-so-item-links.mjs`, `repair-2990-doc-refs.mjs`) — so they are not immutable either. |
 | C | **Physical batch/lot trail** | `soLineShippedSourcePos()` (`delivery-orders-mfg.ts`) | `batch_no = source PO number` (stamped by the GRN, mig 0120, copied onto the FIFO lot by the trigger). Recovers, for a SHIPPED SO line, the PO(s) its goods physically came from, via DO OUT movements ∪ `inventory_lot_consumptions` → `inventory_lots.batch_no`. | **Yes, but only for BATCHED stock** — plain-FIFO un-batched stock carries no batch, so the trail is best-effort and incomplete. |
 
@@ -929,15 +929,50 @@ all three, mirroring `so-relationship-map.ts`.
 > call `customerRefOf(header)` from `frontend/src/lib/customer-ref.ts`, which
 > resolves `ref || customer_so_no || po_doc_no`. Owner ruling: `ref` is the
 > customer-reference field; `customer_so_no` is a retired near-duplicate and
-> `po_doc_no`/`customer_po*` are dead columns dropped in a later migration. Each hook
+> `po_doc_no`/`customer_po*` are dead columns dropped in a later migration.
+>
+> **That rule was inert until 2026-09-09 (`docs/bugs/0726`).** The three
+> `*RelationshipHeader` types were written independently of it and listed only
+> `so_doc_no` / `po_doc_no` / `customer_so_no` — no `ref` — so the pages never
+> put `ref` into `relMapHeader` and the cell fell through to two columns that
+> are empty on live data. 174 of 246 delivery orders carry their reference in
+> `ref` and NOTHING else, and every one of them read "Not linked". The types are
+> now `CustomerRefHeader & { … }`, defined in terms of the rule's own input, so a
+> column the rule reads cannot again be missing from a type that feeds it.
+> Nothing warned: the pages build the header in a `useMemo`, so what reaches the
+> hook is a variable, not an object literal, and TypeScript's excess-property
+> check never fires. **If you add a fourth document type here, extend
+> `CustomerRefHeader` — do not re-list the columns.** Each hook
 (`useDoRelationshipMap` / `useSiRelationshipMap` / `useDrRelationshipMap`) reads
 `useDocumentFlow(type, id)` — linkage **B**, the same company-scoped graph the
 SO map, the vendor `DocumentFlowModal` and the purchase-side maps use — and a
-pure `build*ChainNodes(...)` fn maps the resolved family nodes to the 5-node
-canvas (unit-tested in `sales-doc-relationship-map.test.ts`). GRN opens are
-procurement-gated (same OR-shape as the SO map, so a sales-hatch reader is never
-handed a `<Forbidden>` node); the SI **Payments** node lists payments in an
-in-app notice (they live on that page) rather than navigating.
+pure `build*ChainNodes(...)` fn maps the resolved family nodes to the canvas
+(unit-tested in `sales-doc-relationship-map.test.ts`).
+
+> **The DO renders SEVEN nodes since 2026-09-10; the SI and DR still render
+> five.** The DO moved to the owner's two-chain shape (2026-07-23) — the same one
+> the SO map draws: sales row `Customer PO ▶ Sales Order ▶ Delivery Order ▶ Sales
+> Invoice`, purchase row `Purchase Order ▶ GRN ▶ Purchase Invoice` hanging off the
+> Sales Order. The five-node chain put the GRN in the sales row with no room for
+> the purchase order that produced it, so the DO could say goods were received and
+> never say what they were bought on. `document-flow` has emitted `po` and `pi`
+> nodes all along — only the DO builder never read them. On production 204 of 268
+> delivery orders resolve at least one PO, and 186 of those exactly one.
+>
+> **SI and DR did NOT move, deliberately.** The canvas positions come from a
+> hard-coded array with exactly two shapes, five entries or seven, switched on
+> `nodes.length >= 7`. The SI's fifth node is **Payments** and the DR's is the
+> **Delivery Return** itself; neither has a slot in the seven-node shape, so
+> converting them would drop a node that a previous audit deliberately added.
+> **Six is not a shape**: a six-node array falls through to the five-entry
+> positions and the sixth node is dropped SILENTLY — no throw, nothing logged
+> (pinned in `DocumentRelationshipMapModal.two-chain.test.tsx`). Adding "one more
+> cell" means adding a sixth position first.
+
+PO / GRN / PI opens are each procurement-gated (same OR-shape as the SO map, so a
+sales-hatch reader is never handed a `<Forbidden>` node — the tile reads
+"Procurement document" and answers in a notice); the SI **Payments** node lists
+payments in an in-app notice (they live on that page) rather than navigating.
 
 **CRITICAL — status untouched.** Only the DO/SI/DR *traceability* node source
 changed. The DO status strip, `computeDoLifecycle`, and delivery-planning state

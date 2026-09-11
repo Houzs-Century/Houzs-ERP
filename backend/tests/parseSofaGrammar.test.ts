@@ -21,6 +21,8 @@ const conf = (d2: string, model = '8030', recl = false): string =>
   (parseSofa(d2, model, recl) as { conf: string }).conf;
 const specials = (d2: string, model = '8030', recl = false): string[] =>
   (parseSofa(d2, model, recl) as { specials: string[] }).specials;
+const leg = (d2: string, model = '8030', recl = false): number | null =>
+  (parseSofa(d2, model, recl) as { leg: number | null }).leg;
 
 describe('parse-sofa: the single-letter tokens the grammar owns', () => {
   /* The regression this file exists for. C, L, P and R each have their own
@@ -465,19 +467,28 @@ describe('parse-sofa: a leg note written beside the build keeps the build', () =
     expect(pieces('2S+L(28") ADD 2 INCH LEG')).toEqual(['2A(LHF)', 'L(RHF)']);
   });
 
-  test('the leg request is still carried as a special order, never deleted', () => {
+  test('a leg REQUEST that carries no height is still a special order, never deleted', () => {
     expect(specials("2+C+1(35'INCH)FULLY COVER NO LEG/COL:BOOBOO315-1/25")
       .some((s) => /leg/i.test(s))).toBe(true);
+  });
+
+  /* A phrase that states a height AND asks for something keeps the request.
+     Dropping an instruction is the expensive direction — a sofa built wrong —
+     so the height is answered on its axis and the sentence stays a special. */
+  test('a leg height beside an instruction answers the axis AND keeps the special', () => {
+    expect(leg('2S+L(28") ADD 2 INCH LEG')).toBe(2);
     expect(specials('2S+L(28") ADD 2 INCH LEG').some((s) => /leg/i.test(s))).toBe(true);
   });
 
-  /* The shape that already worked keeps working: a leg note in its OWN segment
-     is lifted whole and the build is untouched. */
-  test('a leg note in its own segment is unchanged', () => {
-    expect(pieces('1EL+C+1NA+1ER(28")/ADD 1 INCH LEG/COL:TBC')).toEqual([
-      '1A(LHF)', 'CNR', '1NA', '1A(RHF)',
-    ]);
-    expect(specials('1EL+C+1NA+1ER(28")/ADD 1 INCH LEG/COL:TBC')).toContain('ADD 1 INCH LEG');
+  /* The build is untouched, and the leg note in its OWN segment is now ANSWERED
+     rather than filed as a special order (docs/bugs/0741). It is a leg height,
+     the ERP has a sofa leg picker for it, and reporting it as a special is what
+     made HC-SO-010284 differ on a line where the two systems agreed. */
+  test('a leg note in its own segment becomes the leg axis, not a special', () => {
+    const d2 = '1EL+C+1NA+1ER(28")/ADD 1 INCH LEG/COL:TBC';
+    expect(pieces(d2)).toEqual(['1A(LHF)', 'CNR', '1NA', '1A(RHF)']);
+    expect(leg(d2)).toBe(1);
+    expect(specials(d2).some((s) => /leg/i.test(s))).toBe(false);
   });
 
   /* And a leg segment that OPENS with a '+' is still a leg request, not a build. */

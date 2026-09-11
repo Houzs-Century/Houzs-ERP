@@ -46,6 +46,20 @@ import { REQUEUE_NOTE_PREFIX } from "./lib/autocount-skip-kinds.mjs";
    classification rule inline and got the priority order wrong — see
    docs/bugs/0606-the-outbox-health-report-counted-one-refusal-under-two-remed.md and tests/acSkipGrouping.test.mjs. */
 import { groupAcSkipsByKind } from "./lib/ac-skip-grouping.mjs";
+/* THE PAGE'S OWN RULE, IMPORTED — not mirrored, and not re-expressed in SQL.
+   A document that was refused and then ARRIVED is history: the page has skipped
+   it since docs/bugs/0727, and this report did not, so the same two delivery
+   orders read IN AUTOCOUNT on the screen and FAILED in the log. That is the
+   two-readers-two-copies failure this file's own header warns about, happening
+   to this file.
+
+   It is imported rather than copied because it CAN be: the canonical test says
+   this script "runs under node against postgres.js and cannot import
+   TypeScript", and that was true of how it was INVOKED, never of the script. It
+   runs under `npx tsx` now (autocount-outbox-health.yml), the same way
+   repair-address-to-forty.mjs already imports src/ in Actions. A rule with one
+   home needs no referee. */
+import { acDocKeyOf, newestArrivalByDoc, supersededFailureKeys } from "./lib/ac-failed-superseded.mjs";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -102,7 +116,7 @@ const notice = (msg) =>
 const pg = postgres(url, { ssl: "require", prepare: false, max: 1 });
 
 try {
-  const [flag, counts, byOp, oldest, failed, requeuedFailed, skipped] = await Promise.all([
+  const [flag, counts, byOp, oldest, failed, requeuedFailed, failedAll, skipped] = await Promise.all([
     /* THE SWITCH ITSELF, not a sentence about it. Until this line existed the
        script described `scm.autocount_writeback` in prose and never read it, so
        "is the write-back on" could only be answered from a document — and the
@@ -169,7 +183,18 @@ try {
          FROM scm.autocount_outbox
         WHERE status = 'failed' AND last_error LIKE ${`${REQUEUE_NOTE_PREFIX}%`}
         ORDER BY created_at DESC`,
-    pg`SELECT doc_type, doc_no, op, coalesce(last_error, '') AS last_error
+    /* EVERY outstanding failure, three columns, no LIMIT. The list above is
+       capped at 25 for the log; the COUNTS below are whole-table, and the
+       discounts subtracted from them were being computed off the capped list —
+       true only while there are fewer than 25 failures. Deciding what is still
+       outstanding needs the whole set, and doc/date is cheap. */
+    pg`SELECT doc_type, doc_no, created_at
+         FROM scm.autocount_outbox
+        WHERE status = 'failed'
+          AND (last_error IS NULL OR last_error NOT LIKE ${`${REQUEUE_NOTE_PREFIX}%`})`,
+    /* created_at, because a skip is discounted by the same ORDER the failures
+       are: a document that arrived AFTER this refusal is history. */
+    pg`SELECT doc_type, doc_no, op, created_at, coalesce(last_error, '') AS last_error
          FROM scm.autocount_outbox
         WHERE status = 'skipped'
         ORDER BY created_at DESC`,
@@ -216,7 +241,7 @@ try {
      act on.
 
      One query, six document types, keyed the way the outbox keys them. */
-  const liveDocs = failed.length
+  const liveDocs = failedAll.length
     ? await pg`
         SELECT 'SO' AS doc_type, doc_no          AS doc_no FROM scm.mfg_sales_orders
         UNION ALL SELECT 'PO', po_number              FROM scm.purchase_orders
@@ -227,8 +252,45 @@ try {
     : [];
   const liveKeys = new Set(liveDocs.map((r) => `${r.doc_type}:${r.doc_no}`));
   const stillInErp = (r) => liveKeys.has(`${r.doc_type}:${r.doc_no}`);
-  const failedLive = failed.filter(stillInErp);
   const failedGone = failed.filter((r) => !stillInErp(r));
+
+  /* ── DID THE DOCUMENT ARRIVE AFTER THIS REFUSAL? ───────────────────────
+     A row that failed and was then SENT is history. HC-DO-2609-004 and -009
+     were re-composed and accepted into AED_HOUZS, the page has shown them as
+     in the book since docs/bugs/0727 — and this report went on calling them
+     failures, because the page learned the rule and the report did not.
+
+     ORDER, NOT SET MEMBERSHIP, and acRefusalPredatesArrival is the whole of it:
+     a document that arrived and was THEN edited into a refusal is in the book
+     AND needs attention, so only the other order is discounted. The rule is
+     imported, so the screen and this log cannot answer differently.
+
+     Read by doc_no and matched on BOTH parts in JS: one document number is
+     enough of a predicate to keep the read small, and the key is the pair. */
+  /* BOTH POPULATIONS, or the rule is half a rule again. The arrivals are read
+     for every document that carries an outstanding refusal of ANY kind — a
+     failure or a skip — because both are discounted by the same order. Reading
+     only the failures' documents would leave `arrivedAt.get()` undefined for
+     every skip, and `acRefusalPredatesArrival` answers false on an undefined
+     arrival, so nothing would be discounted and the code would look right. */
+  const failedDocNos = [...new Set([
+    ...failedAll.map((r) => r.doc_no),
+    ...skipped.map((r) => r.doc_no),
+  ])];
+  const arrivals = failedDocNos.length
+    ? await pg`SELECT doc_type, doc_no, max(created_at) AS arrived_at
+                 FROM scm.autocount_outbox
+                WHERE status = 'sent' AND doc_no = ANY(${failedDocNos})
+                GROUP BY doc_type, doc_no`
+    : [];
+  const arrivedAt = newestArrivalByDoc(arrivals);
+  const failedArrivedKeys = supersededFailureKeys(failedAll, arrivedAt);
+  const isSuperseded = (r) => failedArrivedKeys.has(acDocKeyOf(r));
+  /* The PRINTED list follows the same rule as the count. A heading that says
+     "each is a document that is in the ERP and NOT in AutoCount" must not list
+     one that is. */
+  const failedArrived = failed.filter((r) => stillInErp(r) && failedArrivedKeys.has(acDocKeyOf(r)));
+  const failedLive = failed.filter((r) => stillInErp(r) && !failedArrivedKeys.has(acDocKeyOf(r)));
 
   const by = Object.fromEntries(counts.map((r) => [r.status, r.n]));
   const byRequeued = Object.fromEntries(counts.map((r) => [r.status, r.requeued]));
@@ -239,7 +301,13 @@ try {
   /* THE ALARM READS THE SAME TWO NUMBERS THE REPORT DOES, not its own query.
      A watchdog that asks a different question from the report it is attached to
      is a watchdog that can disagree with the page a human then opens. */
-  alarm.failedOutstanding = Math.max(0, failedOutstanding - failedGone.length);
+  /* DISCOUNTED OVER THE WHOLE SET, not over the 25 that get printed. Two
+     reasons a failure is not something a person can act on, and a row can carry
+     both, so they are counted once as rows rather than added as two numbers:
+     the ERP document is gone (a wipe, a deletion — nothing left to send), or
+     the document arrived after this refusal (already in the book). */
+  const failedNotActionable = failedAll.filter((r) => !stillInErp(r) || isSuperseded(r)).length;
+  alarm.failedOutstanding = Math.max(0, failedOutstanding - failedNotActionable);
   alarm.pending = oldest.map((r) => ({
     docType: r.doc_type, docNo: r.doc_no, op: r.op,
     ageS: Number(r.age_s ?? 0), age: String(r.age ?? ''),
@@ -257,7 +325,21 @@ try {
      still true that nothing was ever sent for it (or that it failed); what
      changed is that it is no longer the open question. */
   const settled = skipped.filter((r) => r.last_error.startsWith(REQUEUE_NOTE_PREFIX));
-  const outstanding = skipped.filter((r) => !r.last_error.startsWith(REQUEUE_NOTE_PREFIX));
+  /* AND THE SAME RULE THE FAILURES GET. A skip is a refusal like any other, and
+     one the account book has since answered is history — the document arrived
+     after it. The first version of this rule (docs/bugs/0743) covered `failed`
+     and stopped there, so three documents whose keys were long since backfilled
+     — HC-SO-001180, HC-SO-001463, HC-SO-001473 — kept telling an operator to go
+     and backfill a key that is already there. Half a rule reads exactly like a
+     finding. */
+  const skipArrivedKeys = supersededFailureKeys(
+    skipped.filter((r) => !r.last_error.startsWith(REQUEUE_NOTE_PREFIX)),
+    arrivedAt,
+  );
+  const answered = skipped.filter((r) => !r.last_error.startsWith(REQUEUE_NOTE_PREFIX)
+    && skipArrivedKeys.has(acDocKeyOf(r)));
+  const outstanding = skipped.filter((r) => !r.last_error.startsWith(REQUEUE_NOTE_PREFIX)
+    && !skipArrivedKeys.has(acDocKeyOf(r)));
 
   if (total === 0) {
     notice("QUEUE EMPTY — zero rows of any status.");
@@ -340,6 +422,19 @@ try {
         notice(`  ${r.doc_type} ${r.doc_no} (${r.op}): gone from the ERP`);
       }
     }
+    /* ITS OWN HEADING for the same reason: the document IS in the account book,
+       so there is nothing to send again. Printed rather than hidden, because
+       the row is still the record of an attempt that was refused. */
+    if (failedArrived.length) {
+      notice(
+        `FAILED — ARRIVED SINCE: ${failedArrived.length}. The document reached AutoCount AFTER this ` +
+          'refusal, so the row is the record of an attempt and not something to send again. ' +
+          'Nothing to do.',
+      );
+      for (const r of failedArrived) {
+        notice(`  ${r.doc_type} ${r.doc_no} (${r.op}): in the account book since ${arrivedAt.get(acDocKeyOf(r))}`);
+      }
+    }
   } else {
     notice(`FAILED: 0 outstanding${requeuedFailed.length ? ` (${requeuedFailed.length} re-queued, below)` : ""}`);
   }
@@ -411,6 +506,17 @@ try {
     }
   } else {
     notice(`SKIPPED: 0 outstanding${settled.length ? ` (${settled.length} re-queued, below)` : ""}`);
+  }
+  /* ITS OWN HEADING, like the failures' — printed because the row is still the
+     record of a refusal, and not counted because there is nothing left to do. */
+  if (answered.length) {
+    notice(
+      `SKIPPED — ARRIVED SINCE: ${answered.length}. The document reached AutoCount AFTER this ` +
+        'refusal, so the row is the record of an attempt and not something to act on. Nothing to do.',
+    );
+    for (const r of answered) {
+      notice(`  ${r.doc_type} ${r.doc_no} (${r.op}): in the account book since ${arrivedAt.get(acDocKeyOf(r))}`);
+    }
   }
 
   const requeuedAll = [...requeuedFailed, ...settled];

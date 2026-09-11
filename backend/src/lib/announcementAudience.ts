@@ -368,6 +368,10 @@ export type MediaLayout = { photo?: PhotoLayout; video?: VideoLayout };
 // snake_case -> camelCase on read — the #1 Hookka read-gotcha).
 export type AnnouncementRow = {
   id: string;
+  // Numbered under (mig 20260909T0900): the department whose series the
+  // number is minted on; NULL = the submitter's own department.
+  number_dept_id?: number | null;
+  numberDeptId?: number | null;
   title: string;
   body: string;
   // Rich body (mig 20260904T1700). Canonical HTML fragment — see
@@ -455,6 +459,10 @@ export type AnnouncementRow = {
   voidedAt?: string | null;
   void_reason?: string | null;
   voidReason?: string | null;
+  // Document type (mig 20260908T0300): the [TYPE] segment of the reference
+  // number — ANN (the DEFAULT) or MEMO, a code in document_types.
+  doc_type?: string | null;
+  docType?: string | null;
   category?: string | null;
   source?: string | null;
   company_id?: number | null;
@@ -507,6 +515,20 @@ const APPROVAL_STATUSES: ReadonlySet<string> = new Set(["DRAFT", "PENDING_APPROV
 export function readApprovalStatus(r: Pick<AnnouncementRow, "approval_status" | "approvalStatus">): ApprovalStatus {
   const v = String(r.approvalStatus ?? r.approval_status ?? "").trim().toUpperCase();
   return APPROVAL_STATUSES.has(v) ? (v as ApprovalStatus) : "APPROVED";
+}
+
+/** The notice's document type code (mig 20260908T0300). NULL / absent /
+ *  malformed reads as ANN — the column's DEFAULT and every pre-migration row. */
+export function readDocType(r: Pick<AnnouncementRow, "doc_type" | "docType">): string {
+  const v = String(r.docType ?? r.doc_type ?? "").trim().toUpperCase();
+  return /^[A-Z]{2,4}$/.test(v) ? v : "ANN";
+}
+
+/** The department the number is minted under (mig 20260909T0900), or null
+ *  for the rule before it — the submitter's own department. */
+export function readNumberDept(r: Pick<AnnouncementRow, "number_dept_id" | "numberDeptId">): number | null {
+  const v = Number(r.numberDeptId ?? r.number_dept_id ?? NaN);
+  return Number.isFinite(v) && v > 0 ? v : null;
 }
 
 /** True once the notice was voided (mig 20260907T1030). */

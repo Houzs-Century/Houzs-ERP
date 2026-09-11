@@ -39,6 +39,9 @@ import {
   splitErpZeroMoney,
   splitGuessedItemCodePairing,
   splitMigratedChainLineShape,
+  splitMigratedChainUnpairedBookLine,
+  splitUnmigratedOnwardTransfer,
+  splitUnmigratedSourceLine,
 } from '../scripts/lib/ac-not-a-difference.mjs';
 
 const rows = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `${tag}-${i}`);
@@ -368,6 +371,39 @@ describe('item code — a guessed pairing is not a wrong product, and a wrong pr
     expect(r.guessed).toBe(0);
     expect(r.differ).toBe(1);
   });
+
+  /* A PARTIALLY keyed document is the normal state since the 2026-09-08 14:22
+     backfill: it stamps only where the book FORCES the pairing and leaves the
+     rest NULL. Asking the DOCUMENT whether it has keys then answers "yes" for a
+     line that was still guessed. Production shape: GR-005334|PO-009887. */
+  test('a partially keyed document: the GUESSED line moves and the KEYED line beside it does not', () => {
+    const bags = new Map([
+      ['part', { book: 'IMMORTAL x1 | ULTIMATE x1', erp: 'IMMORTAL x1 | ULTIMATE x1', keyed: true }],
+    ]);
+    const guessed = { ...codeRow('part'), erpKeyed: false };
+    const read = { ...codeRow('part'), erpKeyed: true };
+    const r = splitGuessedItemCodePairing({ rows: [guessed, read], bags });
+    expect(r.guessed).toBe(1);
+    expect(r.differ).toBe(1);
+    expect(r.guessed + r.differ).toBe(2);
+  });
+
+  test('erpKeyed never overrides the multiset: an unkeyed line whose bags DIFFER stays a difference', () => {
+    const bags = new Map([
+      ['bad', { book: 'CELENE (A)-(K) x1', erp: 'CELENE (A)-(SS) x1', keyed: true }],
+    ]);
+    const r = splitGuessedItemCodePairing({ rows: [{ ...codeRow('bad'), erpKeyed: false }], bags });
+    expect(r.guessed).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('DIFFERENT goods');
+  });
+
+  test('a caller that carries no per-line fact still gets the document answer', () => {
+    const bags = new Map([['a', { book: 'A x1', erp: 'A x1', keyed: false }]]);
+    const r = splitGuessedItemCodePairing({ rows: [codeRow('a')], bags });
+    expect(r.guessed).toBe(1);
+    expect(r.differ).toBe(0);
+  });
 });
 
 /* ── line count: the migrated chain builds from OUR document ─────────────── */
@@ -413,5 +449,431 @@ describe('line count — a shape difference is not a missing line', () => {
     expect(r.lineShape).toBe(6);
     expect(r.differ).toBe(4);
     expect(r.lineShape + r.differ).toBe(10);
+  });
+});
+
+/* ── 5b. THE OTHER FACE OF THE SAME SHAPE ─────────────────────────────────
+ *
+ * A migrated invoice's lines come from OUR receipt / delivery, so the book can
+ * state a row we do not carry for exactly the reason the line COUNT differs.
+ * The line-count column was already split on that proof; the unpaired book line
+ * was not, so nine sales invoices carried `a book line we do not have` after
+ * `line count` had been measured as a shape on the same run and the same facts.
+ *
+ * THE PROOF IS THE SAME PROOF, and that is the point: one measurement, two
+ * axes. A document whose total moves, or whose goods do not reconcile per item
+ * code, fails BOTH — it can never be that only one of the two is waved through.
+ */
+
+describe('a book line we do not have — the other face of the migrated-chain shape', () => {
+  test('no facts: NOTHING moves, and the count is preserved', () => {
+    const r = splitMigratedChainUnpairedBookLine({ rows: [codeRow('a')], facts: null });
+    expect(r.applied).toBe(false);
+    expect(r.lineShape).toBe(0);
+    expect(r.differ).toBe(1);
+  });
+
+  test('totals identical and every code reconciles: moves', () => {
+    const facts = new Map([['I-2410-0082', { totalsEqual: true, perCode: [] }]]);
+    const r = splitMigratedChainUnpairedBookLine({ rows: [codeRow('I-2410-0082')], facts });
+    expect(r.lineShape).toBe(1);
+    expect(r.differ).toBe(0);
+  });
+
+  test('THE ONE THAT MATTERS: a document whose TOTAL differs stays counted', () => {
+    const facts = new Map([['I-x', { totalsEqual: false, perCode: [] }]]);
+    const r = splitMigratedChainUnpairedBookLine({ rows: [codeRow('I-x')], facts });
+    expect(r.lineShape).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('money gap');
+  });
+
+  test('THE OTHER ONE THAT MATTERS: a PRICED book line we do not carry stays counted', () => {
+    const facts = new Map([
+      ['I-y', { totalsEqual: true, perCode: [{ code: 'DSL-8050 SOFA', why: 'is in the book at RM 3250.00 and we do not carry it' }] }],
+    ]);
+    const r = splitMigratedChainUnpairedBookLine({ rows: [codeRow('I-y')], facts });
+    expect(r.lineShape).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('the goods do not');
+  });
+
+  test('a document with no measurement at all is UNPROVEN, never waved through', () => {
+    const facts = new Map([['other', { totalsEqual: true, perCode: [] }]]);
+    const r = splitMigratedChainUnpairedBookLine({ rows: [codeRow('I-z')], facts });
+    expect(r.lineShape).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('unproven');
+  });
+
+  test('a partial cover still reports differ: six of ten move, never ten', () => {
+    const facts = new Map<string, { totalsEqual: boolean; perCode: { code: string; why: string }[] }>();
+    const list = Array.from({ length: 10 }, (_, i) => codeRow(`d${i}`));
+    for (let i = 0; i < 10; i++) facts.set(`d${i}`, { totalsEqual: i < 6, perCode: [] });
+    const r = splitMigratedChainUnpairedBookLine({ rows: list, facts });
+    expect(r.lineShape).toBe(6);
+    expect(r.differ).toBe(4);
+    expect(r.lineShape + r.differ).toBe(10);
+  });
+});
+
+/* ── 6. THE ONWARD TRANSFER NOBODY MIGRATED ────────────────────────────────
+ *
+ * The account book holds 5,283 purchase invoices and the ERP holds 55, because
+ * the purchase-invoice HISTORY was deliberately never migrated. So AutoCount
+ * says a goods-receipt line has been fully invoiced and we say nothing has
+ * gone on — 283 of 400 receipt pairs, every one of them printing "we record 0".
+ *
+ * That is a DECISION, not a defect, and a decision belongs in a column of its
+ * own with the decision's name on it. It must not become an amnesty: the same
+ * sentence would cover a receipt whose invoice we DO hold and forgot to count,
+ * which is a real defect. So the proof is per document and it is measured —
+ * every onward document the book raised off this one must be ABSENT from ours.
+ */
+describe('onward transfer — the downstream document type was never migrated', () => {
+  const toRow = (
+    ac: string,
+    bookDocNo: string,
+    erpCounter: number,
+    verdict = 'erp_low',
+    bookTransfered = 10000,
+  ) => ({
+    key: `k-${ac}`, ac, erpNo: `HC-${ac}`, bookDocNo, verdict, bookTransfered, erpCounter,
+    line: `${ac}: book moved ${bookTransfered} and we record ${erpCounter}`, proceeded: true,
+  });
+  const DECISION = {
+    label: 'the purchase-invoice history was never migrated',
+    onwardType: 'PI',
+    ruling: 'the owner declined importing the purchase-invoice history',
+    consequence: 'our receipt can never show an invoiced quantity for a document we do not hold',
+  };
+  /* the book raised PI-100 off GR-1; we hold no purchase invoice at all */
+  const onwardOf = (d: string) => (d === 'GR-1' ? ['PI-100'] : d === 'GR-2' ? ['PI-200'] : []);
+
+  test('no decision declared: nothing moves', () => {
+    const r = splitUnmigratedOnwardTransfer({
+      rows: [toRow('GR-1', 'GR-1', 0)], decision: null, coverage: new Set<string>(), onwardOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.applied).toBe(false);
+  });
+
+  test('no coverage measurement: nothing moves — an unproven decision is not a decision', () => {
+    const r = splitUnmigratedOnwardTransfer({
+      rows: [toRow('GR-1', 'GR-1', 0)], decision: DECISION, coverage: null, onwardOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.applied).toBe(false);
+  });
+
+  test('the book invoiced it, we hold no such invoice, and we record 0: the decision covers it', () => {
+    const r = splitUnmigratedOnwardTransfer({
+      rows: [toRow('GR-1', 'GR-1', 0)], decision: DECISION, coverage: new Set<string>(), onwardOf,
+    });
+    expect(r.notMigrated).toBe(1);
+    expect(r.differ).toBe(0);
+    expect(r.impostors).toHaveLength(0);
+  });
+
+  test('WE HOLD THE ONWARD INVOICE: that is a real defect and it stays counted', () => {
+    const r = splitUnmigratedOnwardTransfer({
+      rows: [toRow('GR-1', 'GR-1', 0)], decision: DECISION, coverage: new Set(['PI-100']), onwardOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('PI-100');
+  });
+
+  test('we record SOME of it: not "we record 0", so the decision does not describe it', () => {
+    const r = splitUnmigratedOnwardTransfer({
+      rows: [toRow('GR-1', 'GR-1', 5000)], decision: DECISION, coverage: new Set<string>(), onwardOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('we record 5000');
+  });
+
+  test('we claim a transfer the book does not have: never covered, whatever the coverage says', () => {
+    const r = splitUnmigratedOnwardTransfer({
+      rows: [toRow('GR-1', 'GR-1', 10000, 'erp_asserts_untransferred', 0)],
+      decision: DECISION, coverage: new Set<string>(), onwardOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+  });
+
+  test('the book moved it and NO onward document names it: unexplained, stays counted', () => {
+    const r = splitUnmigratedOnwardTransfer({
+      rows: [toRow('GR-9', 'GR-9', 0)], decision: DECISION, coverage: new Set<string>(), onwardOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('no PI');
+  });
+
+  test('a partial cover still reports differ: two of five move, never five', () => {
+    const list = [
+      toRow('GR-1', 'GR-1', 0),          // covered
+      toRow('GR-2', 'GR-2', 0),          // covered
+      toRow('GR-3', 'GR-3', 0),          // no onward doc — unexplained
+      toRow('GR-4', 'GR-1', 400),        // we record some
+      toRow('GR-5', 'GR-2', 0),          // onward doc IS held
+    ];
+    const r = splitUnmigratedOnwardTransfer({
+      rows: list, decision: DECISION, coverage: new Set(['PI-200']), onwardOf,
+    });
+    /* GR-2 and GR-5 both point at PI-200, which we DO hold, so neither moves. */
+    expect(r.notMigrated).toBe(1);
+    expect(r.differ).toBe(4);
+    expect(r.notMigrated + r.differ).toBe(5);
+  });
+
+  test('THE COUNT IS NEVER LOST, on every path', () => {
+    const list = Array.from({ length: 9 }, (_, i) => toRow(`g${i}`, 'GR-1', i === 0 ? 0 : i * 100));
+    for (const args of [
+      { decision: null, coverage: new Set<string>() },
+      { decision: DECISION, coverage: null },
+      { decision: DECISION, coverage: new Set<string>() },
+      { decision: DECISION, coverage: new Set(['PI-100']) },
+    ]) {
+      const r = splitUnmigratedOnwardTransfer({ rows: list, onwardOf, ...args } as never);
+      expect(r.notMigrated + r.differ).toBe(9);
+    }
+  });
+});
+
+/**
+ * SOURCE LINE — the purchase order the book raised this line FROM was never
+ * migrated. The mirror of the block above, one level up the chain, and the
+ * distinction is the whole reason it could not share that code: the onward
+ * split keys on the DOCUMENT, this one keys on the SOURCE of an individual
+ * LINE. `GR-000201` carries 12 lines raised from TEN purchase orders, two of
+ * which are in scope — so the document is half-covered and only a per-line
+ * answer is honest.
+ *
+ * Measured 2026-09-09: 124 of the 211 in-scope goods receipts carry lines from
+ * a purchase order we never imported, 837 such lines against 587 in scope.
+ * The book's purchase invoice bills all of them; ours can only carry the ones
+ * whose order came in. Not a line we lost — a line we never had.
+ *
+ * The danger this file exists for applies here exactly: the same sentence
+ * would also cover a line raised from a purchase order we DO hold and simply
+ * failed to import, which is a real defect. So the proof is per LINE and it is
+ * measured — the book must name the source, it must be a purchase order, and
+ * that order must be ABSENT from ours.
+ */
+describe('source line — the purchase order the line was raised from was never migrated', () => {
+  /* `key` IS the AutoCount document number, exactly as the reconcile pushes it
+     (`key: ac`). The row carries no separate `ac` field, and naming one that
+     does not exist is how the first production run printed 78 refusals all
+     beginning `undefined:`. */
+  const toRow = (ac: string, bookDocNo: string, ...bookDtlKeys: string[]) => ({
+    key: ac, erpNo: `HC-${ac}`, bookDocNo, bookDtlKeys,
+    line: `${ac}: the book bills ${bookDtlKeys.length} line(s) we do not carry`,
+  });
+  const DECISION = {
+    label: 'the purchase orders outside the outstanding population were never migrated',
+    sourceType: 'PO',
+    ruling: 'only OUTSTANDING purchase orders were imported',
+    consequence: 'our invoice carries only the lines whose purchase order was migrated',
+  };
+  /* PI-1 line 11 came off PO-OUT (never imported), line 12 off PO-IN (we hold
+     it), line 13 off a SALES order, line 14 off nothing the book names. Line 15
+     is the AMBIGUOUS hop: the receipt took that item against two orders and the
+     book cannot say which, so both are carried. */
+  const SOURCES: Record<string, { type: string; docNo: string }[]> = {
+    'PI-1|11': [{ type: 'PO', docNo: 'PO-OUT' }],
+    'PI-1|12': [{ type: 'PO', docNo: 'PO-IN' }],
+    'PI-1|13': [{ type: 'SO', docNo: 'SO-9' }],
+    'PI-1|14': [],
+    'PI-1|15': [{ type: 'PO', docNo: 'PO-OUT' }, { type: 'PO', docNo: 'PO-OUT2' }],
+    'PI-1|16': [{ type: 'PO', docNo: 'PO-OUT' }, { type: 'PO', docNo: 'PO-IN' }],
+  };
+  const sourceOf = (d: string, k: string) => SOURCES[`${d}|${k}`] ?? [];
+  const COVERAGE = new Set(['PO-IN']);
+
+  test('no decision declared: nothing moves', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-1', 'PI-1', '11')], decision: null, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.applied).toBe(false);
+  });
+
+  test('no coverage measurement: nothing moves — an unproven decision is not a decision', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-1', 'PI-1', '11')], decision: DECISION, coverage: null, sourceOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.applied).toBe(false);
+  });
+
+  test('the line came off a purchase order we never imported: the decision covers it', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-1', 'PI-1', '11')], decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(1);
+    expect(r.differ).toBe(0);
+    expect(r.impostors).toHaveLength(0);
+    expect(r.moved[0].sources[0].docNo).toBe('PO-OUT');
+  });
+
+  test('WE HOLD THE SOURCE PURCHASE ORDER: a missing line there is a real defect', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-1', 'PI-1', '12')], decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('PO-IN');
+  });
+
+  test('the source is NOT a purchase order: this decision does not cover it', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-1', 'PI-1', '13')], decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('SO-9');
+  });
+
+  test('the book names NO source for the line: unexplained, stays counted', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-1', 'PI-1', '14')], decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('names no source document');
+  });
+
+  test('a source with a type but no document number is not a source', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-2', 'PI-2', '21')],
+      decision: DECISION,
+      coverage: COVERAGE,
+      sourceOf: () => [{ type: 'PO', docNo: '' }],
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+  });
+
+  test('the hop is AMBIGUOUS and every candidate is out of scope: still proven', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-5', 'PI-1', '15')], decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(1);
+    expect(r.differ).toBe(0);
+    expect(r.moved[0].sources).toHaveLength(2);
+  });
+
+  test('the hop is AMBIGUOUS and ONE candidate is a PO we hold: never proven', () => {
+    /* The checker cannot say which order the line came from, so it must not
+       pick the one that suits the answer — docs/bugs/0690. */
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-6', 'PI-1', '16')], decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('PO-IN');
+  });
+
+  test('no line key recorded at all: nothing to attribute, so nothing moves', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-3', 'PI-3')], decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('no unpaired book line key');
+  });
+
+  test('MANY LINES, ALL EXPLAINED: the document moves, and every source is kept', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-4', 'PI-4', 'a', 'b')],
+      decision: DECISION,
+      coverage: COVERAGE,
+      sourceOf: (_d: string, k: string) => [{ type: 'PO', docNo: k === 'a' ? 'PO-X' : 'PO-Y' }],
+    });
+    expect(r.notMigrated).toBe(1);
+    expect(r.differ).toBe(0);
+    expect(r.moved[0].sources.map((s: { docNo: string }) => s.docNo)).toEqual(['PO-X', 'PO-Y']);
+  });
+
+  test('ONE DOCUMENT, LINES BOTH WAYS: ONE real line keeps the whole document counted', () => {
+    /* `GR-000201`'s shape in miniature, and the property that matters most
+       here: a document carrying eleven migration gaps and one line we really
+       lost must NOT leave the difference column. That is docs/bugs/0668. */
+    const r = splitUnmigratedSourceLine({
+      rows: [toRow('PI-1', 'PI-1', '11', '12')],   // PO-OUT covered, PO-IN real
+      decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('PO-IN');
+  });
+
+  test('a mixed population: only the wholly-explained documents move', () => {
+    const r = splitUnmigratedSourceLine({
+      rows: [
+        toRow('PI-a', 'PI-1', '11'),         // wholly covered
+        toRow('PI-b', 'PI-1', '11', '12'),   // one line we hold the PO for
+        toRow('PI-c', 'PI-1', '13'),         // wrong source type
+        toRow('PI-d', 'PI-1', '14'),         // no source named
+      ],
+      decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.notMigrated).toBe(1);
+    expect(r.differ).toBe(3);
+    expect(r.impostors).toHaveLength(3);
+  });
+
+  test('EVERY refusal NAMES the document and carries its key', () => {
+    /* The first production run printed all 78 refusals as `undefined: ...`
+       because the message read a field the reconcile's rows do not carry. A
+       sentence that names no document is not a finding anyone can work, and the
+       report pairs the two passes' reasons BY KEY. */
+    const r = splitUnmigratedSourceLine({
+      rows: [
+        toRow('PI-a', 'PI-1', '12'),   // a PO we hold
+        toRow('PI-b', 'PI-1', '13'),   // wrong source type
+        toRow('PI-c', 'PI-1', '14'),   // no source named
+        toRow('PI-d', 'PI-1'),         // no line key at all
+      ],
+      decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(r.impostors).toHaveLength(4);
+    for (const i of r.impostors) {
+      expect(i.key).toBeTruthy();
+      expect(i.why.startsWith(`${i.key}:`)).toBe(true);
+      expect(i.why).not.toContain('undefined');
+    }
+  });
+
+  test('a refusal says whether the held order is CERTAIN or one of several', () => {
+    const one = splitUnmigratedSourceLine({
+      rows: [toRow('PI-a', 'PI-1', '12')], decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(one.impostors[0].why).toContain('was raised from');
+    const many = splitUnmigratedSourceLine({
+      rows: [toRow('PI-b', 'PI-1', '16')], decision: DECISION, coverage: COVERAGE, sourceOf,
+    });
+    expect(many.impostors[0].why).toContain('may have been raised from');
+    expect(many.impostors[0].why).toContain('2 orders');
+  });
+
+  test('THE COUNT IS NEVER LOST, on every path', () => {
+    const list = [['11'], ['12'], ['13'], ['14'], ['11', '12'], [], ['11']].map((k, i) =>
+      toRow(`p${i}`, 'PI-1', ...k));
+    for (const args of [
+      { decision: null, coverage: COVERAGE },
+      { decision: DECISION, coverage: null },
+      { decision: DECISION, coverage: new Set<string>() },
+      { decision: DECISION, coverage: COVERAGE },
+    ]) {
+      const r = splitUnmigratedSourceLine({ rows: list, sourceOf, ...args } as never);
+      expect(r.notMigrated + r.differ).toBe(7);
+    }
   });
 });

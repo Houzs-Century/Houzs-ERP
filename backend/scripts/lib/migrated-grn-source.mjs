@@ -47,6 +47,7 @@ export async function loadMigratedGrnSources(sql, { companyId, grToPi, isCancell
     SELECT i.id, i.grn_id, i.material_kind, i.item_code, i.material_name, i.item_group,
            i.description, i.description2, i.uom, i.unit_price_sen, i.discount_sen,
            i.qty_accepted, i.invoiced_qty, i.returned_qty, i.purchase_order_item_id,
+           i.linked_ac_dtlkey::text AS linked_ac_dtlkey,
            i.variants, i.gap_inches, i.divan_height_inches, i.divan_price_sen,
            i.leg_height_inches, i.leg_price_sen, i.custom_specials, i.line_suffix,
            i.special_order_price_sen
@@ -77,6 +78,16 @@ export async function loadMigratedGrnSources(sql, { companyId, grToPi, isCancell
       unitPriceSen: n(i.unit_price_sen),
       discountSen: n(i.discount_sen),
       sourceLineKey: i.purchase_order_item_id,
+      /* The BOOK's own key for the goods-receipt line this row is, stamped by
+         backfill-ac-downstream-line-keys.mjs. It is the only exact tie between
+         one of our rows and one of the book's lines — the item CODE is not one,
+         because ours is the Houzs code and the book's is the supplier's model
+         (`CASUAL-(K)` here is `NB-KHJ57(SS)` there). NULL on a row the backfill
+         could not single out, and a consumer must say so rather than fall back
+         to a guess. NOT unique across our rows: a sofa is ONE line in the book
+         and one row per compartment here, and every compartment carries the
+         same key by design. */
+      acLineKey: i.linked_ac_dtlkey ?? null,
       _row: i,
     }));
     return {
