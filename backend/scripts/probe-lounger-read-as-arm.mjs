@@ -59,8 +59,8 @@ try {
     log('');
     log(`================ ${doc} ================`);
     const items = await sql`
-      SELECT i.line_no, i.item_code, i.item_group, coalesce(i.qty,0) AS qty,
-             coalesce(i.received_qty,0) AS received, i.linked_ac_dtlkey::text AS dtlkey,
+      SELECT i.id, i.line_no, i.item_code, i.item_group, coalesce(i.qty,0) AS qty,
+             i.linked_ac_dtlkey::text AS dtlkey,
              coalesce(i.description2,'') AS d2, coalesce(i.cancelled,false) AS cancelled,
              i.variants
         FROM scm.mfg_sales_order_items i
@@ -68,27 +68,36 @@ try {
        ORDER BY i.line_no, i.id`;
     for (const it of items) {
       const leg = (it.variants ?? {}).legHeight ?? '';
-      log(`  L${it.line_no}  ${String(it.item_code).padEnd(16)} grp=${it.item_group||''} qty=${it.qty} recd=${it.received} leg="${leg}" key=${it.dtlkey||'-'}${it.cancelled?' [CANCELLED]':''}`);
+      log(`  L${it.line_no}  id=${it.id} ${String(it.item_code).padEnd(16)} grp=${it.item_group||''} qty=${it.qty} leg="${leg}" key=${it.dtlkey||'-'}${it.cancelled?' [CANCELLED]':''}`);
     }
     const sofa = items.filter((i) => String(i.item_group||'').toLowerCase() === 'sofa' && !i.cancelled);
     log(`  OUR sofa pieces: ${sofa.map((i) => suffix(i.item_code)).join('+') || '(none)'}`);
 
     /* the PO raised from it */
     const po = await sql`
-      SELECT p.id, p.po_number, p.linked_ac_docno,
-             (SELECT string_agg(suffix, '+' ORDER BY ord) FROM (
-                SELECT pi.id AS ord, upper(split_part(pi.item_code,'-',2)) AS suffix
-                  FROM scm.purchase_order_items pi
-                 WHERE pi.purchase_order_id = p.id
-                   AND lower(coalesce(pi.item_group,''))='sofa'
-                   AND coalesce(pi.cancelled,false)=false) s) AS po_pieces
+      SELECT DISTINCT p.id, p.po_number, p.linked_ac_docno
         FROM scm.purchase_orders p
         JOIN scm.purchase_order_items pi ON pi.purchase_order_id = p.id
         JOIN scm.mfg_sales_order_items si ON si.id = pi.so_item_id
        WHERE si.doc_no = ${doc} AND p.company_id = ${CO}
        LIMIT 1`;
     if (po[0]) {
-      log(`  PO: ${po[0].po_number}  linked_ac_docno=${po[0].linked_ac_docno||'-'}  pieces: ${po[0].po_pieces||'(none)'}`);
+      const prows = await sql`
+        SELECT pi.id, pi.item_code, coalesce(pi.received_qty,0) AS received,
+               pi.linked_ac_dtlkey::text AS dtlkey
+          FROM scm.purchase_order_items pi
+         WHERE pi.purchase_order_id = ${po[0].id}
+           AND lower(coalesce(pi.item_group,''))='sofa'
+         ORDER BY pi.id`;
+      const poRecd = prows.reduce((a, r) => a + Number(r.received || 0), 0);
+      log(`  PO: ${po[0].po_number}  linked_ac_docno=${po[0].linked_ac_docno||'-'}  received=${poRecd}`);
+      for (const r of prows) log(`      PO line id=${r.id} ${String(r.item_code).padEnd(16)} recd=${r.received} key=${r.dtlkey||'-'}`);
+      /* does the target lounger SKU exist to change into? */
+      const model = prows[0] ? String(prows[0].item_code).split('-')[0] : '';
+      const wantL = await sql`
+        SELECT code FROM scm.mfg_products
+         WHERE company_id = ${CO} AND code ILIKE ${model + '-L(%'}`;
+      log(`      lounger SKUs for ${model}: ${wantL.map((r) => r.code).join(', ') || 'NONE MINTED'}`);
       for (const ref of [po[0].linked_ac_docno, po[0].po_number]) {
         if (ref && byRef.has(String(ref))) {
           const sd = byRef.get(String(ref));
