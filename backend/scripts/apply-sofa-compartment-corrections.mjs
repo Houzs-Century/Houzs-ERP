@@ -76,6 +76,7 @@ import {
   pairRowsToPieces,
   planCopyMoney,
   seatHeightToWrite,
+  legHeightToWrite,
   splitBuildCopies,
   supersededBy,
 } from "./lib/sofa-build-plan.mjs";
@@ -430,6 +431,11 @@ async function applyDownstreamDoc(doc, kind, c, verify) {
   if (!APPLY) return { touched: true, keep: plan.keep.length, add: plan.add.length, refused: false };
 
   const seat = seatHeightToWrite(c.seat);
+  /* The LEG rides beside the seat, decided by the same rule and written to the
+     same jsonb. The supplier's listing states one on 17 documents whose build
+     already agreed with ours while our rows hold nothing (run 34453751607), and
+     a blank leg height is what makes the factory guess. */
+  const leg = legHeightToWrite(c.leg);
   const linkNotes = [];
 
   /* ── EVERY READ THIS WRITE NEEDS HAPPENS BEFORE THE TRANSACTION OPENS ──────
@@ -467,6 +473,7 @@ async function applyDownstreamDoc(doc, kind, c, verify) {
       const src = pick.rows.find((r) => String(r.id) === String(k.id));
       const v = { ...(src?.variants ?? {}) };
       if (seat.write) v.seatHeight = seat.value;
+      if (leg.write) v.legHeight = leg.value;
       const name = names.get(k.to);
       await tx.unsafe(
         `UPDATE ${spec.table} SET item_code = $1, variants = $2::text::jsonb${label ? `, ${ident(label)} = $4` : ""} WHERE id = $3`,
@@ -475,6 +482,7 @@ async function applyDownstreamDoc(doc, kind, c, verify) {
     for (const a of plan.add) {
       const v = { ...(plan.template?.variants ?? {}) };
       if (seat.write) v.seatHeight = seat.value;
+      if (leg.write) v.legHeight = leg.value;
       const over = { item_code: a.to, variants: JSON.stringify(v) };
       for (const m of money) over[m] = 0;
       if (links.has(a.to)) over[spec.link] = links.get(a.to);
@@ -684,6 +692,8 @@ async function main() {
 
       const seat = seatHeightToWrite(c.seat);
       if (c.seat && !seat.write) { log(`  ${doc}: ${seat.why}`); nNoSeat++; }
+      const leg = legHeightToWrite(c.leg);
+      if (c.leg && !leg.write) log(`  ${doc}: ${leg.why}`);
 
       /* Plan every sofa of this build before writing any of it: one bad sofa
          refuses the whole build rather than half-applying it. */

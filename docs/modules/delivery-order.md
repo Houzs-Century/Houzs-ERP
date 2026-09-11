@@ -587,6 +587,11 @@ The rule holds because the owner chose it, not because that argument covered it;
 `backend/tests/loadedStaysInvoiceable.test.ts` pins it, and pins that #2557's
 DELIVERED exclusion is still intact.
 
+The convert descriptor `DoRemainingLine` also carries each line's own
+`line_delivery_date` (mig `20260910T1251`, SI side): the DO->SI picker copies the
+DO line's delivery date onto the invoice line, which previously had nowhere to
+land. See `docs/modules/sales-invoice.md` and `docs/bugs/0788`.
+
 
 The shape, so the section still says something: `DO_SHIPPED_STATES` is the
 **write trigger** (first entry fires the OUT — `COMPLETED` is deliberately
@@ -2094,6 +2099,19 @@ which reaches the free-gift trigger (`backend/src/scm/shared/free-gift.ts`) and
 the PDF module grouping (`vendor/shared/so-line-display.ts`) — and its `remark`,
 which is per-line by nature. `seedFollowerVariants` strips both.
 `docs/bugs/0508-the-consignment-order-ran-its-own-copy-of-the-variant-cascad.md`.
+
+**What changed on 2026-09-09 — WHICH CATEGORIES seed, and it is still every
+one.** The owner ruled that the Sales Order cascade is 「只限于 sofa item」
+(`docs/bugs/0754-*`), and `seedableMasterVariants` gained a REQUIRED `categories`
+parameter so the compiler would name every call site rather than let a default
+decide. **This file passes an explicit `null` — every category, UNCHANGED.**
+
+The ruling was given about Sales Orders. Narrowing a Delivery Order because a
+Sales Order was narrowed would be extending it for him, and the open question at
+the top of this section (should a DO line follow line 1 at all?) is the same
+question one level up. The `null` is now a visible decision in the diff instead
+of whatever the parameter happened to default to — which is the whole point of
+the required-parameter rule.
 The rule itself, and which pages are on it, are documented in
 `docs/modules/sales-order.md`.
 
@@ -2538,10 +2556,14 @@ evening. The header block ABOVE that card on the same screen — **Salesperson,
 Customer ref, Delivery date, Expected at** — was blank for the same cause and is
 not in 0714's field map (`DO_CARRY` is deliberately "what a driver needs").
 
-`DO_SALES_CARRY` in `scripts/lib/customer-block.mjs` is the list:
-`salesperson_id`, `agent`, `branding`, `ref`, `customer_delivery_date`, and
-`expected_delivery_at` = the customer's date or, failing that, the DO's own
-`do_date` (what `/from-sos` does with the creation date). The writer
+`DO_SALES_CARRY` in `backend/scripts/lib/customer-block.mjs` is the list:
+`salesperson_id`, `agent`, `branding`, `ref` from the SO, and — **since
+2026-09-11 (owner 「全部要跟 autocount」, docs/bugs/0804)** — `customer_delivery_date`
+and `expected_delivery_at` both = the DO's own `do_date` (= AutoCount's DocDate),
+NOT the SO's customer date. A delivery order's delivery date follows AutoCount;
+the customer's original ask stays on the SO. This reverses the delivery-date half
+of the 2026-09-08 default above (which seeded them from `s.customer_delivery_date`);
+existing rows were repaired by `repair-do-delivery-dates-to-autocount.mjs`. The writer
 (`insertMigratedDo`) applies it in the SAME `UPDATE … FROM scm.mfg_sales_orders`
 as the customer block, so a new migrated document carries all of it at once.
 
@@ -2557,6 +2579,43 @@ REVIEWED THE DRY-RUN"`; `scope` migrated|all; `do_number` for one document).
 Every SET re-asserts `IS NULL`, so a corrected header survives. What the plan
 lists under "order itself blank" is an SO-side gap: fix the SO and re-run, it
 is idempotent. docs/bugs/0716.
+
+## DO dates default to the SO's delivery date (2026-09-11)
+
+Owner rule, restated four times the same morning: 「我开 DO 之前我改 SO 就行 ……
+顾客每次换的话，我也会跟着换（SO 的），所以当我开 DO 的时候，你就跟着 default
+这个 date 来开 …… DO date 也是要用 SO delivery」. **Every date the DO form
+opens carrying is the SO's `customer_delivery_date`** — the DO date (header
+`do_date`), the customer delivery date (header `customer_delivery_date`), and
+every line's delivery date all seed from it. The operator changes the date on
+the SO once when the customer moves it, and every DO raised afterwards
+inherits.
+
+For a blank DO with no `?fromSo=` / `?fromPicks=1` in the URL the `useState`
+initial keeps `do_date = today`, so the "opened fresh" case still opens today.
+The `/from-sos` server route falls back to today when the source SO carries no
+`customer_delivery_date`.
+
+Three holes were closed together (docs/bugs/0807):
+
+- `DeliveryOrderNewV2.tsx`'s item POST payload was built with key
+  `deliveryDate`, and `backend/src/scm/lib/do-item-row.ts` reads
+  `lineDeliveryDate`. Every desktop DO create/edit silently dropped the line
+  date — the row saved with `line_delivery_date = NULL`, no error to the
+  client. The renamed key + a sibling `lineDeliveryDateOverridden` now round-trip.
+- `delivery-orders-mfg.ts` `/from-sos` (the mobile ConvertWizard path) inserted
+  `delivery_order_items` rows without `line_delivery_date` at all. Every
+  mobile-converted DO line landed NULL regardless of client. The item insert
+  now carries `line_delivery_date: head.customer_delivery_date`.
+- The desktop line seeders at both `?fromPicks=1` and `?fromSo=` used
+  `newDoLine(null)`. Both now seed `newDoLine(customerDelDate || null)` — the
+  header the SO pre-fill effect already loaded.
+
+**No cascade `useEffect`.** The default lands at OPEN time, per line, per the
+owner's rule 「如果我要更改的话 我再更改」. Changing the header on an already-open
+DO does not walk over per-line edits. Existing DOs on `main` (line_delivery_date
+NULL from before this PR) do not back-fill — a next edit or a new document is
+the point of change.
 
 ## A migrated DO line will NOT bind to a sales-order line colour cannot choose (2026-09-08)
 

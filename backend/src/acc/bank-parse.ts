@@ -43,6 +43,7 @@
 // — is the matcher's job, not the reader's.
 // ----------------------------------------------------------------------------
 
+import { monthWindow } from './bank-month';
 import { splitCsvLine, toIsoDate, toSen } from './settlement-parse';
 
 /** One heading, or several the bank has used for the same column. */
@@ -184,6 +185,9 @@ const splitLine = (line: string, delimiter: string): string[] =>
 /** The row a statement prints for the balance it STARTED from — "Balance from
     previous statement", "Prior Day Balance :", "Balance b/f", "Opening balance". */
 const OPENING_ROW = /(?:prior\s*day|opening|previous|beginning|brought\s*forward|b\/f)\s*(?:day\s*)?balance|balance\s*(?:b\/f|brought\s*forward|from\s*previous|carried\s*from)/i;
+
+const rm = (sen: number) =>
+  `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export function parseBankStatement(cfg: BankParseConfig, text: string): BankParseResult {
   const fmt = (cfg.statement_format ?? 'CSV').toUpperCase();
@@ -344,6 +348,39 @@ export function parseBankStatement(cfg: BankParseConfig, text: string): BankPars
   }
 
   if (lines.length === 0) {
+    /* A MONTH IN WHICH NOTHING MOVED (docs/bugs/0794). Hong Leong's March
+       export is one "Balance from previous statement 3000.00" row and nothing
+       under it. The owner: 我应该每一个月都要做 bank reconciliation 不是？没有
+       transaction 那么你就让我锁起来. He is right — a quiet month is still
+       reconciled (bank 3,000 = books 3,000) and closed, and refusing the file
+       broke the chain of closed months at March. So a file that prints a
+       balance and no movement is a statement of that balance, opening and
+       closing at it. It carries no date, so the month it speaks for is the one
+       the operator named; without that there is nothing to file it under, and
+       the refusal says what to do. A file with neither movement nor balance
+       still proves nothing about any month and is still refused. */
+    if (openingExplicit != null) {
+      const window = hint && cfg.statementMonth ? monthWindow(cfg.statementMonth) : null;
+      if (!window) {
+        return {
+          ok: false,
+          reason: `The ${cfg.code} statement carries no transactions — it opens and closes at ${rm(openingExplicit)}.`
+            + ' Choose the year and month it is for and upload it again, so that month can be filed as reconciled.',
+        };
+      }
+      return {
+        ok: true,
+        lines: [],
+        periodFrom: window.from,
+        periodTo: window.to,
+        inSen: 0,
+        outSen: 0,
+        netSen: 0,
+        closingBalanceSen: openingExplicit,
+        openingBalanceSen: openingExplicit,
+        skippedLines: skipped,
+      };
+    }
     return {
       ok: false,
       reason: `The ${cfg.code} statement has a heading row but no transactions under it`

@@ -26,8 +26,15 @@ export type PayoutDay = {
   fileName: string | null;
   /** What the uploaded report itself nets, when there is one. */
   reportNetSen: number | null;
-  /** report − advice. Zero is agreement; anything else is the finding. */
+  /** report − (advice + charge). Zero is agreement; anything else is the finding. */
   differenceSen: number | null;
+  /** What the bank deducted from this day's payout and where it was booked
+      (docs/bugs/0787) — 0 / null when nothing was. Counted as paid: the money
+      left the acquirer's transit, just not into the bank. */
+  chargeSen: number;
+  chargeAccountCode: string | null;
+  chargeNote: string | null;
+  chargeJeNo: string | null;
   /** Whether that report has every line decided — a payout cannot be booked
       against a report whose fees are not in the books yet. */
   reportOpenLines: number | null;
@@ -66,23 +73,52 @@ const rm = (sen: number) =>
  * Bank's files are one day each, and the check below would catch anything else
  * as a difference rather than silently double-counting.
  */
+/** A day as the advice (or its stored day row) hands it over. The charge
+    fields ride on the STORED row — a freshly read advice carries none. */
+export type AdviceDayInput = {
+  settledOn: string;
+  netSen: number;
+  chargeSen?: number | null;
+  chargeAccountCode?: string | null;
+  chargeNote?: string | null;
+  chargeJeNo?: string | null;
+};
+
+type ChargeOnDay = Pick<AdviceDayInput, 'chargeSen' | 'chargeAccountCode' | 'chargeNote' | 'chargeJeNo'>;
+
 export function statusOfPayout(
-  advice: Pick<PbbAdvice, 'netSen' | 'batches'>,
+  advice: { netSen: number; batches: ReadonlyArray<AdviceDayInput> },
   reports: ReportForPayout[],
 ): PayoutStatus {
-  const byDate = new Map<string, number>();
-  for (const b of advice.batches) byDate.set(b.settledOn, (byDate.get(b.settledOn) ?? 0) + b.netSen);
+  const byDate = new Map<string, { netSen: number; charge: ChargeOnDay }>();
+  for (const b of advice.batches) {
+    const at = byDate.get(b.settledOn) ?? { netSen: 0, charge: {} };
+    at.netSen += b.netSen;
+    /* One charge per day row, and one day row per settled_on. */
+    if (b.chargeSen != null && b.chargeSen > 0) at.charge = b;
+    byDate.set(b.settledOn, at);
+  }
 
-  const days: PayoutDay[] = [...byDate.entries()].sort().map(([settledOn, adviceNetSen]) => {
+  const days: PayoutDay[] = [...byDate.entries()].sort().map(([settledOn, { netSen: adviceNetSen, charge }]) => {
+    const chargeSen = Number(charge.chargeSen ?? 0);
+    const chargeFields = {
+      chargeSen,
+      chargeAccountCode: chargeSen > 0 ? (charge.chargeAccountCode ?? null) : null,
+      chargeNote: chargeSen > 0 ? (charge.chargeNote ?? null) : null,
+      chargeJeNo: chargeSen > 0 ? (charge.chargeJeNo ?? null) : null,
+    };
     const report = reports.find((r) => settledOn >= r.periodFrom && settledOn <= r.periodTo) ?? null;
     if (!report) {
       return {
         settledOn, adviceNetSen, batchId: null, fileName: null,
         reportNetSen: null, differenceSen: null, reportOpenLines: null,
+        ...chargeFields,
         state: 'REPORT_MISSING' as const,
       };
     }
-    const differenceSen = report.payableSen - adviceNetSen;
+    /* A charge the bank deducted is money that left the transit account, just
+       not into the bank — so it counts toward what the advice paid for. */
+    const differenceSen = report.payableSen - (adviceNetSen + chargeSen);
     return {
       settledOn,
       adviceNetSen,
@@ -91,6 +127,7 @@ export function statusOfPayout(
       reportNetSen: report.payableSen,
       differenceSen,
       reportOpenLines: report.openLines,
+      ...chargeFields,
       state: differenceSen !== 0 ? 'DIFFERS' as const
         : report.openLines > 0 ? 'REPORT_NOT_RECONCILED' as const
           : 'AGREES' as const,

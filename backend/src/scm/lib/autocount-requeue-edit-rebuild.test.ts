@@ -18,7 +18,7 @@
 // where AutoCount records what it came from (docs/bugs/0611).
 // ----------------------------------------------------------------------------
 import { describe, expect, test, beforeEach } from 'vitest';
-import { requeueOneRow } from './autocount-requeue';
+import { requeueOneRow, requeueSkipped, REQUEUE_PUTS_IT_ON_ITS_WAY } from './autocount-requeue';
 import { enqueueEdit } from './autocount-outbox';
 import { newLineTargetOf } from './autocount-line-keys';
 import { fakeSb, type Row } from './fake-postgrest';
@@ -226,5 +226,113 @@ describe('after a rebuild the ERP has to learn the reissued keys', () => {
 
     expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: SO_DOC })).toBe(true);
     expect(newLineTargetOf('SO', rows(sb)[0].payload as { body?: unknown })).toBeNull();
+  });
+});
+
+// ----------------------------------------------------------------------------
+// ONE REBUILD PER DOCUMENT, however many times it was refused.
+//
+// HC-SO-012312 was saved twenty-one times while its Description 2 was over
+// AutoCount's 100 characters, so the queue holds twenty-one refused edits of one
+// sales order. Once the composer accepted it, the sweep climbed the ladder
+// twenty-one times and answered `would-requeue 21` — which APPLY would have made
+// twenty-one InternalSaves against a live licensed account book, each one
+// destroying and reissuing every DtlKey on the document.
+//
+// A rebuild does not accumulate. It lays down the ERP's lines AS THEY STAND, so
+// the first one already carries what all twenty-one saves added up to, and the
+// other twenty are the same instruction sent again.
+// ----------------------------------------------------------------------------
+describe('a document refused many times is re-queued ONCE', () => {
+  const manySkips = (n: number): Row[] => Array.from({ length: n }, (_, i) => editSkip({
+    id: `skip-${i + 1}`,
+    created_at: `2026-09-0${(i % 8) + 1}T02:00:00Z`,
+  }));
+
+  test('APPLY queues one pending row for twenty-one refusals', async () => {
+    const sb = world(manySkips(21));
+    const results = await requeueSkipped(sb as never, { docNo: SO_DOC, apply: true });
+
+    expect(results).toHaveLength(21);
+    expect(results.filter((r) => r.outcome === 'requeued')).toHaveLength(1);
+    expect(results.filter((r) => r.outcome === 'already-queued')).toHaveLength(20);
+    /* The measurement that matters is not the verdict, it is the QUEUE. */
+    expect(queued(sb)).toHaveLength(1);
+  });
+
+  test('the DRY RUN predicts the same one, not twenty-one', async () => {
+    /* The dry run writes no pending row, so the database guard cannot answer
+       for it. Without the sweep's own memory an operator would read
+       `would-requeue 21` for a run that lands 1 — and this file's promise is
+       that a dry run can only disagree with APPLY about whether the row lands. */
+    const sb = world(manySkips(21));
+    const results = await requeueSkipped(sb as never, { docNo: SO_DOC });
+
+    expect(results.filter((r) => r.outcome === 'would-requeue')).toHaveLength(1);
+    expect(results.filter((r) => r.outcome === 'already-queued')).toHaveLength(20);
+    expect(queued(sb)).toHaveLength(0);
+  });
+
+  test('a PENDING row already on the document refuses the rebuild outright', async () => {
+    const sb = world([
+      editSkip(),
+      { ...editSkip({ id: 'live-1' }), status: 'pending', last_error: null },
+    ]);
+    const r = await requeueOneRow(sb as never, editSkip() as never, { apply: true, resendingThisRow: false });
+
+    expect(r.outcome).toBe('already-queued');
+    expect(queued(sb)).toHaveLength(1);
+  });
+
+  test('a SENT edit in the document\'s history does NOT refuse it', async () => {
+    /* The rung this mirrors is `row-pending`, not `already-sent`. A document the
+       write-back has succeeded on carries a `sent` edit row for every save it
+       ever made — vetoing on those would refuse every document that has ever
+       worked. */
+    const sb = world([
+      editSkip(),
+      { ...editSkip({ id: 'old-1' }), status: 'sent', last_error: null },
+    ]);
+    const r = await requeueOneRow(sb as never, editSkip() as never, { apply: true, resendingThisRow: false });
+
+    expect(r.outcome).toBe('requeued');
+    expect(queued(sb)).toHaveLength(1);
+  });
+
+  test('the collapse is per DOCUMENT — a second order is still re-queued', async () => {
+    const OTHER = 'HC-SO-013395';
+    const sb = fakeSb({
+      app_config: [{ key: 'scm.autocount_writeback', value: '1' }],
+      autocount_outbox: [
+        editSkip({ id: 'a1' }),
+        editSkip({ id: 'a2' }),
+        editSkip({ id: 'b1', doc_no: OTHER }),
+        editSkip({ id: 'b2', doc_no: OTHER }),
+      ],
+      staff: [{ id: 'staff-1', name: 'Nurul Hidayah' }],
+      mfg_sales_orders: [soHeader(), { ...soHeader(), doc_no: OTHER, linked_ac_docno: 'SO-013395' }],
+      mfg_sales_order_items: [
+        ...soItems(),
+        ...soItems().map((r, i) => ({ ...r, id: `other-${i}`, doc_no: OTHER })),
+      ],
+      supplier_material_bindings: [],
+    });
+
+    const results = await requeueSkipped(sb as never, { docType: 'SO', apply: true });
+
+    expect(results.filter((r) => r.outcome === 'requeued').map((r) => r.docNo).sort())
+      .toEqual([OTHER, SO_DOC].sort());
+    expect(queued(sb)).toHaveLength(2);
+  });
+});
+
+describe('the outcomes that mean a document is on its way', () => {
+  test('every re-queue verdict is in the set the sweep dedupes on', () => {
+    /* Forgetting one is silent: the document is simply re-queued a second time,
+       which is the whole defect. `requeued-with-parent` is the one that reads
+       like a special case and would be the one left out. */
+    expect([...REQUEUE_PUTS_IT_ON_ITS_WAY].sort()).toEqual([
+      'requeued', 'requeued-as-recorded', 'requeued-with-parent', 'would-requeue',
+    ]);
   });
 });

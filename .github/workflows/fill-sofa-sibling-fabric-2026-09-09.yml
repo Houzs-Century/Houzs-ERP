@@ -1,0 +1,70 @@
+name: Give a sofa's other modules the colour the book gave it (2026-09-09)
+
+# The owner, 2026-09-09, on HC-SO-010120 (9058: 1A(LHF) + CNR + 2A(RHF)):
+# 「第一个 item 不是应该跟第三、第四个 item 全部一样的吗？」 He is right, and the
+# book agrees with him -- its description is IDENTICAL on all three rows, ending
+# "colour : HR805-31". Only the first row got it.
+#
+# WHAT IT COSTS, in plain terms. The factory sheet for the corner and the
+# two-seater carries no colour, so whoever builds them has to go and ask. And
+# stock is grouped by colour, so a corner asking for "seat 30" cannot be filled
+# from stock of the very same corner that is labelled with its fabric -- the
+# pieces of one sofa sit in different places.
+#
+# WHAT IT WILL NOT TOUCH. A sofa with TWO different colours on it is a real
+# two-tone build we sell, not a mistake, so it is listed and left alone. And
+# SPECIALS are not copied: they carry money (each line computes a specials
+# surcharge), so copying five of them onto two more rows changes what a migrated
+# order re-prices to. Those are reported per document for the owner to rule on.
+#
+# DEFAULT IS PLAN. Apply needs the confirm phrase. Every UPDATE carries
+# `coalesce(variants->>'fabricCode','') = ''`, so a row somebody filled in the
+# meantime is skipped. The verification asserts every line price and every order
+# total is unchanged -- this writes one field inside the specification.
+#
+# REVERSAL -- every touched row had no fabric before, and the apply log names
+# each id it wrote:
+#   UPDATE scm.mfg_sales_order_items
+#      SET variants = variants - 'fabricId' - 'colourId' - 'fabricCode'
+#                              - 'colourLabel' - 'fabricLabel'
+#    WHERE id IN (<ids from the run log>);
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "Required for apply: fill sofa sibling fabric 2026-09-09"
+        required: false
+        default: ""
+
+concurrency:
+  group: fill-sofa-sibling-fabric-2026-09-09
+  cancel-in-progress: false
+
+jobs:
+  fill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/fill-sofa-sibling-fabric-2026-09-09.mjs
+        env:
+          MODE: ${{ github.event.inputs.mode }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

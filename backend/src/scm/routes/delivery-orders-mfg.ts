@@ -3973,9 +3973,10 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     so_doc_no: firstSoDocNo,
     debtor_code: (head.debtor_code as string | null) ?? null,
     debtor_name: (head.debtor_name as string | null) ?? null,
-    do_date: today,
+    // Owner 2026-09-11 (0807 supersedes 0804): DO dates default to SO's.
+    do_date: (head.customer_delivery_date as string | null) ?? today,
     expected_delivery_at: (head.customer_delivery_date as string | null) ?? today,
-    customer_delivery_date: (head.customer_delivery_date as string | null) ?? null,
+    customer_delivery_date: (head.customer_delivery_date as string | null) ?? today,
     address1: (head.address1 as string | null) ?? null,
     address2: doAddress2,
     city: (head.city as string | null) ?? null,
@@ -4047,9 +4048,8 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
       line_cost_sen: lineCost,
       line_margin_sen: lineTotal - lineCost,
       variants,
-      /* Migration 0058 — carry the dedicated variant-breakdown columns from the
-         SO line onto the DO line (the picker previously dropped all 8, so sofa/
-         bedframe builds lost their breakdown on SO→DO convert). */
+      line_delivery_date: (head.customer_delivery_date as string | null) ?? null, // 0807
+      // Mig 0058 — variant breakdown columns carried onto the DO line.
       gap_inches: line.gapInches ?? null,
       divan_height_inches: line.divanHeightInches ?? null,
       divan_price_sen: line.divanPriceSen ?? 0,

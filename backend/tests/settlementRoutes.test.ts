@@ -17,7 +17,7 @@ import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import {
   settlementSetup, settlementUpload, settlementBatches, settlementBatchDetail,
-  settlementConfirmRow, settlementConfirmMatched, settlementIgnoreRow, settlementWatchlist,
+  settlementConfirmRow, settlementConfirmMatched, settlementIgnoreRow, settlementWatchlist, settlementFindPayments,
   settlementBatchReceived, settlementInTransit, settlementRowUnconfirm,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
 } from '../src/scm/routes/accounting-settlement';
@@ -90,6 +90,7 @@ function harness(tables: Record<string, Row[]>, perms: readonly string[] = [GL_P
   app.post('/settlement/rows/:id/ignore', settlementIgnoreRow as never);
   app.post('/settlement/batches/:id/received', settlementBatchReceived as never);
   app.get('/settlement/watchlist', settlementWatchlist as never);
+  app.get('/settlement/rows/:id/find', settlementFindPayments as never);
   app.get('/settlement/in-transit', settlementInTransit as never);
   app.get('/settlement/maintenance', settlementMaintenance as never);
   app.patch('/settlement/maintenance/merchant', settlementMaintenanceMerchant as never);
@@ -362,17 +363,61 @@ describe('confirming is the moment of posting', () => {
     expect(adjLines.find((l) => l.account_code === '326-0000')).toMatchObject({ credit_sen: 25416 });
   });
 
+  /* The RM 1,000.00 payment against the RM 777.00 line — and the screen's own
+     figure is not what is compared: the payment's amount in the books is
+     (docs/bugs/0792), so a browser claiming 777.00 changes nothing. */
   test('confirming a line whose selection does not add up is refused with the difference', async () => {
     const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
     await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
     const unmatched = sb.tables.acc_settlement_rows.find((r) => r.bucket === 'UNMATCHED')!;
 
     const res = await post(app, `/settlement/rows/${unmatched.id}/confirm`, {
-      payments: [{ source: 'SOPAY', id: 'px', docNo: 'SO-9', amountSen: 1000 }],
+      payments: [{ source: 'SOPAY', id: 'p1', docNo: 'SO-2608-001', amountSen: 77700 }],
     });
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ error: 'amount_mismatch' });
     expect(sb.tables.journal_entries).toHaveLength(0);
+  });
+
+  /* docs/bugs/0792 — "Find the sale" lets a person pick ANY card payment, so
+     the confirm reads each one back: not in this company's books, or not a
+     card payment, is a refusal the operator can read, not a 500. */
+  test('a payment the books do not hold, or a cash one, is refused by name', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment(), soPayment({ id: 'cash1', so_doc_no: 'SO-2608-002', method: 'cash', merchant_provider: null, amount_sen: 77700 })] });
+    await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
+    const unmatched = sb.tables.acc_settlement_rows.find((r) => r.bucket === 'UNMATCHED')!;
+
+    const ghost = await post(app, `/settlement/rows/${unmatched.id}/confirm`, {
+      payments: [{ source: 'SOPAY', id: 'px', docNo: 'SO-9', amountSen: 77700 }],
+    });
+    expect(ghost.status).toBe(409);
+    expect(await ghost.json()).toMatchObject({ error: 'payment_not_found' });
+
+    const cash = await post(app, `/settlement/rows/${unmatched.id}/confirm`, {
+      payments: [{ source: 'SOPAY', id: 'cash1', docNo: 'SO-2608-002', amountSen: 77700 }],
+    });
+    expect(cash.status).toBe(409);
+    expect(await cash.json()).toMatchObject({ error: 'not_card_payment' });
+    expect(sb.tables.journal_entries).toHaveLength(0);
+  });
+
+  test('GET rows/:id/find lists the company card payments by document, the exact gross marked possible', async () => {
+    const { app, sb } = harness({
+      mfg_sales_order_payments: [
+        soPayment({ id: 'late', so_doc_no: 'SO-2608-077', paid_at: '2026-08-20T10:00:00', amount_sen: 77700, approval_code: null, merchant_provider: null }),
+        soPayment(),
+      ],
+      mfg_sales_orders: [{ doc_no: 'SO-2608-077', company_id: CO, debtor_name: 'Chou Mun Yee' }, { doc_no: 'SO-2608-001', company_id: CO, debtor_name: 'Someone Else' }],
+      sales_invoices: [],
+    });
+    await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
+    const unmatched = sb.tables.acc_settlement_rows.find((r) => r.bucket === 'UNMATCHED')!;
+
+    const res = await app.request(`/settlement/rows/${unmatched.id}/find?q=chou`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { payments: Array<{ id: string; possible: boolean; customerName: string | null }> };
+    expect(body.payments).toEqual([expect.objectContaining({ id: 'late', possible: true, customerName: 'Chou Mun Yee' })]);
+    expect((await app.request('/settlement/rows/999999/find')).status).toBe(404);
   });
 
   test('a line with no payment behind it cannot be cleared out of in-transit', async () => {
@@ -567,7 +612,7 @@ describe('taking a confirmed line back — the door the ignore refusal points at
        time — the once-only unique would refuse this if the link survived. */
     const again = await post(app, `/settlement/rows/${confirmed.id}/confirm`, {
       matchReason: 'manual',
-      payments: [{ source: 'SOPAY', id: 'm1', docNo: 'SO-2608-001', amountSen: 100000 }],
+      payments: [{ source: 'SOPAY', id: 'p1', docNo: 'SO-2608-001', amountSen: 100000 }],
     });
     expect(again.status).toBe(200);
     expect(sb.tables.acc_settlement_rows.find((r) => r.id === confirmed.id)!.confirmed_at).toBeTruthy();
@@ -763,5 +808,239 @@ describe('maintenance — the clearing account per merchant', () => {
     const blank = await patch(app, '/settlement/maintenance/merchant', { companyId: 2, code: 'PBB', transitAccountCode: '' });
     expect(blank.status).toBe(200);
     expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ transit_account_code: '326-0000' });
+  });
+});
+
+/* ── WHAT THE OWNER SAW ON 2026-09-09 ────────────────────────────────────────
+   Nine PBB lines stood MATCHED, each carrying the clue "Reference 034766
+   matches 2990-SO-2606-046", and every one of them ALSO said "No payment in the
+   ERP explains this money". Pressing "Confirm all 9 matched" posted nothing.
+
+   Three separate faults produced that one screen, and each gets a test here:
+     • the detail read `candidates`/`suggested`, which matchStatement empties on
+       purpose for a ref match — the payment lives in `matched`;
+     • the link insert was skipped in silence when the rows insert returned no
+       ids, leaving nine MATCHED lines and zero links;
+     • a payment carrying the exact reference was never LOADED when it fell
+       outside the date window, so four other lines read "No payment recorded
+       near …" with the payment sitting in the ERP. */
+
+describe('a reference-matched line always arrives carrying its payment', () => {
+  test('the detail offers the matched payment, pre-ticked, even with no link stored', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+
+    /* Reproduce the prod state exactly: the line stands MATCHED and its link
+       row is gone. Before the fix this rendered "No payment in the ERP explains
+       this money" under a clue naming the sale. */
+    sb.tables.acc_settlement_matches = [];
+
+    const body = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as {
+      rows: Array<{ bucket: string; clue: string | null; candidates: Array<{ id: string }>; suggested: Array<{ id: string }>; linked: unknown[] }>;
+    };
+    const matched = body.rows.find((r) => r.bucket === 'MATCHED')!;
+    expect(matched.linked).toHaveLength(0);
+    expect(matched.candidates.map((p) => p.id)).toEqual(['p1']);
+    expect(matched.suggested.map((p) => p.id)).toEqual(['p1']);
+    /* The two sentences can no longer contradict each other. */
+    expect(matched.clue).toMatch(/Reference A1 matches SO-2608-001/);
+  });
+});
+
+describe('the link insert cannot fail in silence', () => {
+  /* On prod the rows insert reported no error and returned no ids, so every
+     link hit its `continue` and nine MATCHED lines kept zero links. A count
+     that cannot be reconciled to the decisions is the only thing that says so. */
+  test('an upload whose lines report no ids is refused, and keeps nothing', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const realFrom = sb.from.bind(sb);
+    sb.from = ((table: string) => {
+      const q = realFrom(table);
+      if (table !== 'acc_settlement_rows') return q;
+      const realInsert = q.insert.bind(q);
+      /* The shape of the failure: the write happens, the representation does
+         not come back. */
+      q.insert = (rows: unknown) => {
+        const ins = realInsert(rows);
+        ins.select = () => Promise.resolve({ data: [], error: null });
+        return ins;
+      };
+      return q;
+    }) as typeof sb.from;
+
+    const res = await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as Row;
+    expect(String(body.message)).toMatch(/could not be linked/);
+    /* Nothing kept: the batch is cleaned up so the file can come in again. */
+    expect(sb.tables.acc_settlement_batches).toHaveLength(0);
+  });
+});
+
+describe('an exact reference is not hidden by the date window', () => {
+  /* The owner's four PBB lines: same reference, same amount, keyed eleven days
+     late because the sale was written up late. MBB's tolerance here is 3. */
+  test('a payment keyed long after the swipe is found and offered', async () => {
+    const { app } = harness({
+      mfg_sales_order_payments: [soPayment({ paid_at: '2026-08-12T10:00:00' })],
+    });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    const body = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as {
+      rows: Array<{ ref: string | null; bucket: string; clue: string | null; suggested: Array<{ id: string }> }>;
+    };
+    const line = body.rows.find((r) => r.ref === 'A1')!;
+    /* Offered, not taken — a reference across eleven days is also the shape of
+       a mis-keyed code, and this is the path that books money. */
+    expect(line.bucket).toBe('NEEDS_CONFIRM');
+    expect(line.suggested.map((p) => p.id)).toEqual(['p1']);
+    expect(line.clue).toMatch(/outside the 3-day window/);
+    expect(line.clue).not.toMatch(/No payment recorded/);
+  });
+});
+
+/* ── "CONFIRM ALL 9 MATCHED" MUST NOT POST 0 ──────────────────────────────────
+   The detail screen was fixed to fall back to the matcher when a link is
+   missing (docs/bugs/0760), and the owner then saw the payment on screen — but
+   the bulk button reads the LINK TABLE, so it still sent an empty selection for
+   every one of those nine lines and answered "Posted 0. 9 could not be".
+
+   The same fallback belongs here, with one difference that is the whole point:
+   only `matched` is rescued, never `suggested`. Nobody is reading each line on
+   this path, and this button's promise is "post every line the unique reference
+   already matched". */
+
+describe('confirm-all posts a matched line whose link went missing', () => {
+  test('the payment is recovered from the matcher, and the link is written back', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+
+    /* Exactly the prod state: MATCHED bucket, no link. */
+    sb.tables.acc_settlement_matches = [];
+
+    const res = await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { attempted: number; confirmed: number; failed: unknown[] };
+    expect(body.attempted).toBe(1);
+    expect(body.confirmed).toBe(1);
+    expect(body.failed).toEqual([]);
+
+    /* Confirming writes the link, so the data heals as he works. */
+    expect((sb.tables.acc_settlement_matches as Row[]).length).toBe(1);
+    const row = (sb.tables.acc_settlement_rows as Row[]).find((r) => r.bucket === 'MATCHED')!;
+    expect(row.confirmed_at).toBeTruthy();
+    expect(row.posted_je_no).toBeTruthy();
+  });
+
+  /* THE LINE THAT MUST NOT MOVE. A payment the matcher only SUGGESTS — here an
+     out-of-window reference — is not something a bulk button may post: it is
+     offered on the detail screen for a human to look at. */
+  test('a merely suggested payment is not posted by the bulk button', async () => {
+    const { app, sb } = harness({
+      mfg_sales_order_payments: [soPayment({ paid_at: '2026-08-12T10:00:00' })],
+    });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    /* Eleven days out: NEEDS_CONFIRM with the payment pre-ticked, so the bulk
+       button has nothing to do — and must not invent something. */
+    const rows = sb.tables.acc_settlement_rows as Row[];
+    expect(rows.find((r) => r.ref === 'A1')!.bucket).toBe('NEEDS_CONFIRM');
+
+    const res = await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+    const body = (await res.json()) as { attempted: number; confirmed: number };
+    expect(body.attempted).toBe(0);
+    expect(body.confirmed).toBe(0);
+    expect(sb.tables.acc_settlement_matches).toHaveLength(0);
+  });
+
+  test('a batch that does not exist is a 404, not an empty success', async () => {
+    const { app } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const res = await post(app, '/settlement/batches/9999/confirm-matched');
+    expect(res.status).toBe(404);
+  });
+});
+
+/* ── WHERE THE MERCHANT FEE GOES, CHOOSABLE ──────────────────────────────────
+   It had to be a migration once (docs/bugs/0762): the fee account was seeded at
+   930-0000, the AutoCount chart deactivated that code, and every settlement
+   confirm in both companies refused with nothing on any screen able to repoint
+   it. The owner, told that: 这个需要.
+
+   What is pinned here is that the screen can only be OFFERED, and can only
+   SAVE, an account the posting gate would actually accept — because the whole
+   failure was a fee account the gate refuses. */
+
+describe('the merchant fee account is chosen, not assumed', () => {
+  const EXPENSES: Row[] = [
+    { account_code: '900-0000', account_name: 'EXPENSES', account_type: 'EXPENSE', parent_code: null, is_active: true, company_id: CO },
+    { account_code: '900-B001', account_name: 'BANK CHARGES', account_type: 'EXPENSE', parent_code: '900-0000', is_active: true, company_id: CO },
+    { account_code: '900-T009', account_name: 'TERMINAL INTEREST CHARGES', account_type: 'EXPENSE', parent_code: '900-0000', is_active: true, company_id: CO },
+    /* The shape that started all this: present, but switched off. */
+    { account_code: '930-0000', account_name: 'MISCELLANEOUS EXPENSES XXX', account_type: 'EXPENSE', parent_code: null, is_active: false, company_id: CO },
+    { account_code: '310-0010', account_name: 'Bank', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: CO },
+  ];
+  const CFG: Row[] = [
+    { code: 'MBB', display_name: 'MBB', statement_format: 'CSV', has_unique_ref: true, fee_method: 'stated', date_tolerance_days: 3, column_map: { date: 'Txn Date', gross: 'Gross', fee: 'MDR' }, is_active: true },
+  ];
+  const rig = () => harness({
+    accounts: EXPENSES, acc_acquirer_config: CFG,
+    acc_company_acquirers: [{ company_id: CO, acquirer_code: 'MBB', bank_account_code: '310-0010', fee_account_code: '930-0000', is_active: true }],
+  });
+
+  test('offers the active expense LEAVES, and never a header or a dead code', async () => {
+    const { app } = rig();
+    const body = await (await app.request('/settlement/maintenance')).json() as {
+      feeAccounts: Record<string, Array<{ account_code: string }>>;
+    };
+    const offered = (body.feeAccounts[String(CO)] ?? []).map((a) => a.account_code);
+    expect(offered).toEqual(['900-B001', '900-T009']);
+    /* 900-0000 has children — nothing posts to it. 930-0000 is switched off,
+       which is the exact account that refused every confirm. */
+    expect(offered).not.toContain('900-0000');
+    expect(offered).not.toContain('930-0000');
+  });
+
+  test('says what each company currently books the fee to', async () => {
+    const { app } = rig();
+    const body = await (await app.request('/settlement/maintenance')).json() as { merchants: Array<Record<string, any>> };
+    expect(body.merchants.find((m) => m.code === 'MBB')!.byCompany[String(CO)])
+      .toMatchObject({ feeAccountCode: '930-0000' });
+  });
+
+  test('saves a pick', async () => {
+    const { app, sb } = rig();
+    const res = await patch(app, '/settlement/maintenance/merchant', { companyId: CO, code: 'MBB', feeAccountCode: '900-T009' });
+    expect(res.status).toBe(200);
+    expect((sb.tables.acc_company_acquirers as Row[])[0]!.fee_account_code).toBe('900-T009');
+  });
+
+  /* THE ONES THAT MATTER. Each refusal is the posting gate's own rule, applied
+     where the choice is made rather than at the moment somebody confirms a
+     statement — which is where it was applied before, six days too late. */
+  test('refuses an account that is switched off', async () => {
+    const { app, sb } = rig();
+    const res = await patch(app, '/settlement/maintenance/merchant', { companyId: CO, code: 'MBB', feeAccountCode: '930-0000' });
+    expect(res.status).toBe(400);
+    expect(String(((await res.json()) as Row).message)).toMatch(/switched off/);
+    expect((sb.tables.acc_company_acquirers as Row[])[0]!.fee_account_code).toBe('930-0000');
+  });
+
+  test('refuses an account that is not an expense', async () => {
+    const { app } = rig();
+    const res = await patch(app, '/settlement/maintenance/merchant', { companyId: CO, code: 'MBB', feeAccountCode: '310-0010' });
+    expect(res.status).toBe(400);
+    expect(String(((await res.json()) as Row).message)).toMatch(/expense/i);
+  });
+
+  test('refuses a header account, and says to pick one of its children', async () => {
+    const { app } = rig();
+    const res = await patch(app, '/settlement/maintenance/merchant', { companyId: CO, code: 'MBB', feeAccountCode: '900-0000' });
+    expect(res.status).toBe(400);
+    expect(String(((await res.json()) as Row).message)).toMatch(/sub-accounts/);
+  });
+
+  test('refuses a code this company does not carry', async () => {
+    const { app } = rig();
+    const res = await patch(app, '/settlement/maintenance/merchant', { companyId: CO, code: 'MBB', feeAccountCode: '999-9999' });
+    expect(res.status).toBe(400);
+    expect(String(((await res.json()) as Row).message)).toMatch(/not in this company/);
   });
 });

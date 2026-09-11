@@ -1,0 +1,58 @@
+name: Close fee-only sales orders (goods all delivered)
+
+# Manual. Closes the company-1 sales orders whose GOODS are all delivered and
+# which stay open only on a charge line (transport / storage / dispose / repair
+# / misc). Owner 2026-09-10: 「货已经送完了的就可以关掉了，因为 Service 我们都不会
+# 进 MRP 里面去计算的」.
+#
+# ONLY the header status moves — DELIVERED when something shipped, CLOSED when
+# nothing ever did. No line, no quantity and no money is touched, so the
+# document's content stays byte-identical to the account book and the AutoCount
+# tally cannot start reporting a difference we invented. The write-back is
+# enqueued by the ROUTE layer, never by a database trigger, so this reaches
+# Postgres and stops there.
+#
+# RE-RUN: idempotent. Each UPDATE re-asserts the status the plan read, so a
+# second run reports 0 to change and an order somebody has since moved is
+# skipped rather than overwritten.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "On apply only — type CLOSE-FEE-ONLY-SO"
+        required: false
+        default: ""
+        type: string
+      company_id:
+        description: "Company (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: close-fee-only-sales-orders
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the one dependency the script needs
+        run: npm --prefix backend install postgres --no-audit --no-fund --no-save
+      - name: Close fee-only sales orders
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+        run: node backend/scripts/close-fee-only-sales-orders.mjs

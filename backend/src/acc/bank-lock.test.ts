@@ -22,84 +22,86 @@ import {
 
 const req = (over: Partial<LockRequest> = {}): LockRequest => ({
   accountCode: '310-0020', month: '2026-09',
-  openCount: 0, lineCount: 42,
-  differenceSen: 0, consistent: true, complete: true, note: null,
+  openCount: 0, lineCount: 42, statementCount: 3,
+  computedClosingSen: 1090000, closingStatementSen: 1090000, unexplainedSen: 0, tallies: true,
+  consistent: true, complete: true,
   ...over,
 });
 
-describe('a month that reconciles and is whole', () => {
+/* Owner, 2026-09-11: 当 closing bank statement amount 无法 tally 就无法 lock —
+   and, asked whether a bank error should ever be closed over with a reason:
+   应该不会有银行错吧，毕竟怎样都要 tally bank statement. So a month closes when
+   it tallies and is whole, and otherwise cannot close at all; there is no
+   reason that buys a way past (docs/bugs/0806). */
+describe('a month that tallies and is whole', () => {
   it('closes with no ceremony', () => {
-    const v = mayLockMonth(req());
-    expect(v.ok).toBe(true);
-    expect(v.ok && v.needsNote).toBe(false);
+    expect(mayLockMonth(req())).toEqual({ ok: true });
+  });
+
+  /* An unpresented payment is an outstanding item, not a difference: the
+     books allowing for it reach the bank's closing, and that is what tallies. */
+  it('closes with outstanding items in the books, as long as it tallies', () => {
+    expect(mayLockMonth(req({ computedClosingSen: 93837, closingStatementSen: 93837 }))).toEqual({ ok: true });
   });
 });
 
 describe('a month with work still in it', () => {
-  /* THE ONE THAT MATTERS. An unfinished month is not a month with a problem,
-     it is a month nobody has finished — so a reason must NOT buy a way past it. */
-  it('is refused, and a reason does not change that', () => {
-    const bare = mayLockMonth(req({ openCount: 3 }));
-    expect(bare.ok).toBe(false);
-    expect(!bare.ok && bare.error).toBe('still_open');
-    expect(!bare.ok && bare.message).toContain('3 movement(s)');
-
-    const excused = mayLockMonth(req({ openCount: 3, note: 'closing anyway, month end' }));
-    expect(excused.ok).toBe(false);
-    expect(!excused.ok && excused.error).toBe('still_open');
+  it('is refused', () => {
+    const v = mayLockMonth(req({ openCount: 3 }));
+    expect(v.ok).toBe(false);
+    expect(!v.ok && v.error).toBe('still_open');
+    expect(!v.ok && v.message).toContain('3 movement(s)');
   });
 });
 
+/* A month with no STATEMENT cannot be closed — closing it would claim
+   something no file supports. A month with a statement and no MOVEMENT is the
+   ordinary quiet month (docs/bugs/0794). */
 describe('a month with nothing in it', () => {
-  it('cannot be closed, because closing it would claim nothing', () => {
-    const v = mayLockMonth(req({ lineCount: 0 }));
+  it('cannot be closed when no statement was filed for it', () => {
+    const v = mayLockMonth(req({ lineCount: 0, statementCount: 0 }));
     expect(v.ok).toBe(false);
     expect(!v.ok && v.error).toBe('empty_month');
+    expect(!v.ok && v.message).toContain('no statement');
   });
 
-  /* Checked BEFORE the open count, so an empty month is named for what it is
-     rather than reported as "0 movements still undecided". */
-  it('is named as empty even though it also has nothing open', () => {
-    const v = mayLockMonth(req({ lineCount: 0, openCount: 0 }));
-    expect(!v.ok && v.message).toContain('no movements');
+  it('closes when a statement covers it and it tallies', () => {
+    expect(mayLockMonth(req({ lineCount: 0, statementCount: 1 }))).toEqual({ ok: true });
   });
 });
 
-describe('a month that is finished but not clean', () => {
-  const cases: Array<[string, Partial<LockRequest>, string]> = [
-    ['the bank and the books still differ', { differenceSen: 45000 }, 'still differ'],
-    ['a day was never uploaded', { complete: false }, 'not covered end to end'],
-    ['no file printed a closing balance', { differenceSen: null }, 'no file printed a closing balance'],
-    ['the figures do not account for themselves', { consistent: false }, 'do not account for themselves'],
-  ];
-
-  for (const [name, over, expected] of cases) {
-    it(`refuses without a reason when ${name}`, () => {
-      const v = mayLockMonth(req(over));
-      expect(v.ok).toBe(false);
-      expect(!v.ok && v.error).toBe('reason_required');
-      expect(!v.ok && v.message).toContain(expected);
-    });
-
-    it(`closes with a reason when ${name}`, () => {
-      const v = mayLockMonth(req({ ...over, note: 'known timing difference, agreed with the bank' }));
-      expect(v.ok).toBe(true);
-      expect(v.ok && v.needsNote).toBe(true);
-    });
-  }
-
-  it('names every doubt at once rather than one at a time', () => {
-    const v = mayLockMonth(req({ differenceSen: 45000, complete: false, consistent: false }));
-    expect(!v.ok && v.message).toContain('do not account for themselves');
-    expect(!v.ok && v.message).toContain('not covered end to end');
-    expect(!v.ok && v.message).toContain('still differ');
+describe('a month that does not tally', () => {
+  it('cannot be closed, and the refusal names both figures and the gap', () => {
+    const v = mayLockMonth(req({ computedClosingSen: 3601503, closingStatementSen: 93837, unexplainedSen: -3507666, tallies: false }));
+    expect(v.ok).toBe(false);
+    expect(!v.ok && v.error).toBe('not_tallied');
+    expect(!v.ok && v.message).toContain('RM 36,015.03');
+    expect(!v.ok && v.message).toContain('RM 938.37');
+    expect(!v.ok && v.message).toContain('RM 35,076.66');
   });
 
-  /* Whitespace is not a reason. */
-  it('does not accept a blank reason', () => {
-    const v = mayLockMonth(req({ differenceSen: 45000, note: '   ' }));
+  it('cannot be closed when no file printed a closing balance', () => {
+    const v = mayLockMonth(req({ closingStatementSen: null, unexplainedSen: null, tallies: false }));
     expect(v.ok).toBe(false);
-    expect(!v.ok && v.error).toBe('reason_required');
+    expect(!v.ok && v.error).toBe('no_closing');
+  });
+
+  it('cannot be closed when it is not covered end to end', () => {
+    const v = mayLockMonth(req({ complete: false }));
+    expect(v.ok).toBe(false);
+    expect(!v.ok && v.error).toBe('not_covered');
+  });
+
+  it('cannot be closed when the figures do not account for themselves', () => {
+    const v = mayLockMonth(req({ consistent: false, tallies: false }));
+    expect(v.ok).toBe(false);
+    expect(!v.ok && v.error).toBe('inconsistent');
+  });
+
+  /* No sentence buys a way past a month that does not tally. */
+  it('has no reason escape', () => {
+    const v = mayLockMonth({ ...req({ tallies: false, unexplainedSen: 100 }), note: 'known difference' } as LockRequest);
+    expect(v.ok).toBe(false);
   });
 });
 

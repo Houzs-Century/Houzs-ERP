@@ -361,6 +361,13 @@ export const DECLARED_LABEL = Object.freeze({
     "what has to agree is the money — and it does, to the sen, with every item code agreeing on quantity and " +
     "money too. The book rows we do not carry are the RM 0.00 ones AutoCount bills a free gift on. PROVED per " +
     "document; an invoice whose total moves, or that is short a PRICED line, is still counted as a difference",
+  "chain-source-not-migrated":
+    "the account book bills a line on this purchase invoice whose PURCHASE ORDER was never brought over — only " +
+    "the outstanding orders were imported, 474 of the book's 9,416 — so it is a line we never had, not a line " +
+    "we lost. One AutoCount receipt serves many orders, which is why a receipt we DO hold can still carry lines " +
+    "from orders we do not. PROVED per document: every book line we do not carry on it names a source order we " +
+    "do not hold, checked against our OWN purchase orders. If even one of them names an order we DO hold, the " +
+    "whole document is still counted as a difference",
   "owner-model-override":
     "the ERP names a different product from the account book because YOU decided it — 「那就放8030 daybed把」. " +
     "The decision is written down with the book's own model beside it, so if the book ever stops saying that, " +

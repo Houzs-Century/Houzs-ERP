@@ -90,6 +90,24 @@ mechanical reason: this route runs in the WORKER and a Worker bundle cannot
 import out of `backend/scripts`, while a script CAN import a `.ts`. That is the
 only direction in which all three callers get one answer.
 
+**And the push half now has to SAY it is a push (2026-09-09).** Every client
+`scripts/lib/pgrest-shim.mjs` builds is a *repair* client by default, and a
+repair client cannot queue an AutoCount write-back at all — a repair copies a
+value out of the account book, so sending it back overwrites the owner's source
+of truth (owner: 「你不可以有记录再这边啊 这是你import进来的错误」). That default
+would have silenced this module's push half too, so `sync-ac-delta.mjs` opts
+back in explicitly, and only on the lane that means it:
+
+```js
+// inside if (LANES.has("push")) — every OTHER lane stays suppressed
+const sb = pgrestShim(sql, "scm", { writeback: "enqueue" });
+```
+
+The direction of authority the owner set — a person's ERP edit is the highest
+standard and AutoCount follows it — is exactly what that opt-in preserves. It
+is pinned by `backend/tests/acWritebackPushAllowlist.test.mjs`; the mechanism is
+`docs/modules/autocount-writeback.md` §4b.
+
 ---
 
 ## The surface
@@ -161,9 +179,20 @@ hide the CREATION of a document from a change log.
    `changesBySystem` are both always present and are computed BEFORE the
    `author` filter is applied. That is the direct fix for the "50 staff actions"
    shape.
-2. **Stop silently.** `totals.truncated` is true when the database read hit its
-   own ceiling (`ROW_CAP`, 4000 rows), and both surfaces then print that every
+2. **Stop silently.** `totals.truncated` is true when a read came back with
+   fewer rows than the window holds, and both surfaces then print that every
    count is a floor and not a total.
+
+   **It is measured against the server's own exact count** (`count: 'exact'`,
+   i.e. Content-Range), per read, and OR'd across the two — never against
+   `ROW_CAP`. `ROW_CAP` (4,000) bounds our appetite; PostgREST enforces its own
+   `db-max-rows` underneath it, so a read can stop early far below 4,000. The
+   flag WAS `rows.length >= ROW_CAP`, and that could not fire: `rows` is the sum
+   of two reads each capped by the server, so at the 1,000 this repo assumes
+   (`lib/paginate-all.ts` PAGE, still unmeasured — `docs/bugs/0447`) the sum tops
+   out at 2,000. It was also wrong the other way for a larger ceiling, comparing
+   a two-read SUM with a one-read cap. Same device as `so-handover.ts`
+   `/preview`, which has always done it correctly.
 3. **Leak finance detail.** `stripAuditFinance` runs on the merged rows, exactly
    as `/entity-audit-log` runs it — stripping the detail while leaving the
    history just moves the leak one endpoint over.

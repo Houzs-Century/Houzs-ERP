@@ -76,10 +76,12 @@ describe("TeamRolesV2 — Roles section", () => {
     await waitFor(() => expect(screen.getByText("MD")).toBeTruthy());
     expect(screen.getByText("Owner")).toBeTruthy();
     expect(screen.getByRole("button", { name: /New Role/ })).toBeTruthy();
-    // The role editor is the classic one: opening a custom role shows the
-    // permission checkboxes, grouped by module.
-    fireEvent.click(screen.getByText("Edit permissions →"));
-    await waitFor(() => expect(screen.getByText("Approve announcements")).toBeTruthy());
+    // The rebuilt editor is a role list + a resource x verb matrix. Owner (a
+    // system role) auto-selects and shows the "All permissions" state, so pick
+    // the custom role to render the matrix; main's 5th verb, approve, is its own
+    // column header ("Approve").
+    fireEvent.click(screen.getByText("MD"));
+    await waitFor(() => expect(screen.getByText("Approve")).toBeTruthy());
   });
 
   it("New Role opens the create editor; without roles.manage the button is absent", async () => {
@@ -87,8 +89,8 @@ describe("TeamRolesV2 — Roles section", () => {
     render(<TeamRolesV2 />);
     await waitFor(() => expect(screen.getByText("MD")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: /New Role/ }));
-    await waitFor(() => expect(screen.getByText("New Role", { selector: "h2, h3, div, span" })).toBeTruthy());
-    expect(screen.getByRole("button", { name: /Create Role/ })).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("New role", { selector: "h2, h3, div, span" })).toBeTruthy());
+    expect(screen.getByRole("button", { name: /Create role/ })).toBeTruthy();
 
     cleanup();
     canValue.value = false;

@@ -80,9 +80,70 @@ export const usePaymentBookingDryRun = () => useMutation({
   }),
 });
 
+/** A payment that reached the ledger and then stopped agreeing with it. The
+    PATCH that edits a payment never re-posts, so an edited row leaves its
+    entry behind; `fields` names what moved (amount / date / method), and both
+    sides are carried so the difference can be read without opening the entry.
+    A changed acquirer is NOT in here — that lives in the entry's lines. */
+export type PaymentDriftRow = {
+  source: 'SOPAY' | 'SIPAY';
+  id: string;
+  docNo: string;
+  jeNo: string;
+  fields: Array<'amount' | 'date' | 'method'>;
+  paymentAmountSen: number;
+  entryAmountSen: number;
+  paidOn: string;
+  entryDate: string;
+  paymentMethod: string;
+  entryMethod: string | null;
+};
+export type PaymentDrift = {
+  rows: PaymentDriftRow[];
+  /** How many active payment entries were read — a clean answer over zero
+      entries is a different statement from a clean answer over 4,000. */
+  scanned: number;
+  ok: boolean;
+  /** Only when the check itself could not run. */
+  error?: string;
+};
+
+/** The Finance report of payment corrections made on the amend right (docs/bugs/0785):
+    a filtered read of the SO audit log, one row per correction, with the reason
+    typed at the time and what it did to the ledger. */
+export type PaymentCorrectionRow = {
+  id: string;
+  at: string;
+  by: string;
+  docNo: string;
+  customer: string | null;
+  kind: 'edited' | 'deleted';
+  changes: Array<{ field: string; from: unknown; to: unknown }>;
+  amountFromSen: number | null;
+  amountToSen: number | null;
+  reason: string;
+  /** The entry that was voided, the contra that voided it, the entry booked
+      in its place — any null when that part did not happen. */
+  originalJeNo: string | null;
+  contraJeNo: string | null;
+  jeNo: string | null;
+};
+export type PaymentCorrections = {
+  month: string;
+  rows: PaymentCorrectionRow[];
+  summary: { corrections: number; edited: number; deleted: number; netMovedSen: number; deletedSen: number };
+};
+export const usePaymentCorrections = (month: string) => useQuery({
+  queryKey: ['payment-corrections', month],
+  queryFn: () => authedFetch<PaymentCorrections>(`/accounting/payment-corrections?month=${encodeURIComponent(month)}`),
+  staleTime: 30_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
 export const useControlCheck = () => useQuery({
   queryKey: ['control-check'],
-  queryFn: () => authedFetch<{ checks: ControlCheckRow[]; payments: UnbookedPayments }>(`/accounting/control-check`),
+  queryFn: () => authedFetch<{ checks: ControlCheckRow[]; payments: UnbookedPayments; paymentDrift?: PaymentDrift }>(`/accounting/control-check`),
   staleTime: 30_000,
   retry: retryUnlessClientError,
   retryDelay: 800,

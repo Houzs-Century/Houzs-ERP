@@ -198,12 +198,6 @@ export function DateField({
   const showInvalid = invalid || draftInvalid;
   const errorId = `${inputId}-date-error`;
 
-  // MOUSE ONLY. showPicker() is the reliable opener on the desktop engines
-  // (Chrome 99+, Edge, Firefox 101+) and it is what the calendar button uses.
-  // It is NOT the touch path: see the .nativeIconTarget comment in the
-  // stylesheet — on a coarse pointer the native input sits over the calendar
-  // icon and IS the tap target, so no script runs at all. Measured on WebKit
-  // 26.5: showPicker() exists there and does not throw, and engages nothing.
   const openPicker = () => {
     const el = nativeRef.current;
     if (!el || disabled) return;
@@ -235,26 +229,14 @@ export function DateField({
         placeholder={placeholder}
         title={title}
         aria-label={ariaLabel}
-        // The red border above is the SEEN half of this state; without the
-        // attribute it was invisible to a screen reader and unassertable in a
-        // test. Painting and announcing must not be able to drift apart.
         aria-invalid={showInvalid || undefined}
         aria-describedby={draftInvalid ? errorId : undefined}
         disabled={disabled}
         required={required}
         value={display}
-        /* Select-all on focus (owner 2026-09-06: 日期我输入时希望不用自己打 "/"):
-           the field often arrives pre-filled — today's date on a new bill —
-           and typing into it APPENDED, so 31032026 became 06/09/202631032026,
-           parsed as nothing, and snapped back on blur. Typing now replaces. */
         onFocus={(e) => { setEditing(isoToDmy(value)); setDraftInvalid(false); e.currentTarget.select(); }}
         onChange={(e) => {
           const raw = e.target.value;
-          /* Digits typed straight through wear the mask as they land:
-             3103 → 31/03, 31032026 → 31/03/2026. Anything else (a pasted
-             31-03-2026, a stray letter) is left as typed for the parser — and
-             so is anything carrying a separator the OPERATOR placed, which the
-             mask used to strip and re-insert at the wrong slot. */
           const digits = raw.replace(/\D/g, '');
           const maskable = /^[\d/]*$/.test(raw) && digits.length <= 8 && separatorsAreMaskOwn(raw);
           const t = maskable ? maskDmy(digits) : raw;
@@ -263,14 +245,11 @@ export function DateField({
           const trimmed = t.trim();
           if (trimmed === '') { onChange(''); return; }
           const iso = parseDmy(trimmed);
-          if (iso) onChange(iso); // invalid/partial: hold until it parses or blur reports it
+          if (iso) onChange(iso);
         }}
         onBlur={() => {
           const text = (editing ?? '').trim();
           if (text !== '' && parseDmy(text) === null) {
-            // Keep what he typed on screen and SAY it was not understood. The
-            // old behaviour dropped it and restored the previous date, so a
-            // lost entry looked identical to no entry at all.
             setDraftInvalid(true);
           } else {
             setEditing(null);
@@ -321,25 +300,19 @@ export function DateField({
         data-touch-target={coarse ? 'true' : undefined}
         type="date"
         tabIndex={-1}
-        aria-hidden
+        {...(coarse
+          ? { 'aria-label': 'Choose date' }
+          : { 'aria-hidden': true })}
         disabled={disabled}
         value={value || ''}
         min={min}
         max={max}
         onChange={(e) => {
-          // A pick supersedes whatever draft the text box was holding, invalid
-          // or not; without this the flagged draft would sit on top of the
-          // date the operator just chose.
-          setEditing(null);
-          setDraftInvalid(false);
           onChange(e.target.value);
-          // A calendar pick is a COMPLETED entry, but it lands on this hidden
-          // input — the visible text box never focuses on this path, so it
-          // never blurs, and a blur-committing host (InlineEdit saves on blur)
-          // silently dropped the pick (2026-08-20: a Service-case Supplier
-          // Pickup Date chosen via the icon showed in the field, never saved).
-          // Fire the same completion signal, one tick later so the host sees
-          // this change's state flushed before it commits.
+          // A calendar pick is a COMPLETED entry but it lands on this hidden
+          // input; a blur-committing host (InlineEdit saves on blur) would
+          // otherwise miss it (2026-08-20: a Service-case Supplier Pickup
+          // Date chosen via the icon showed in the field, never saved).
           setTimeout(() => onBlur?.(), 0);
         }}
       />

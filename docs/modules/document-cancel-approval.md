@@ -158,6 +158,43 @@ the same way a screen is.
 
 ## 4. Who may do what
 
+### 4.0 WHERE the caller's identity comes from — and why it is read twice
+
+`actorOf` / `signerOf` resolve the caller through one helper, `houzsIdentityOf`,
+which reads **`houzsUser` first and `user` second**. Both halves are load-bearing
+and neither may be dropped.
+
+**Why `user` is read at all.** `houzsUser` is set by each SUB-ROUTER's own
+`supabaseAuth`, not globally (`scm/index.ts` — the area guards run *"before each
+sub-router's own supabaseAuth"*). `cancelApprovalGuard` and
+`cancelExecutionBypass` are mounted at the SCM level, AHEAD of the router:
+
+```ts
+scm.use("/mfg-purchase-orders/:id/cancel", cancelApprovalGuard("PO"));
+scm.route("/mfg-purchase-orders", mfgPurchaseOrders);   // supabaseAuth is in here
+```
+
+So at that moment `houzsUser` does not exist yet and the real Houzs user is still
+sitting in `user`. Reading only `houzsUser` there resolved to null and answered
+403 `caller_unknown` **to every caller** — nobody could cancel a purchase order
+(`docs/bugs/0774`). `lib/write-freeze.ts`'s `callerBypasses` records the same trap
+from 2026-08-11 and solves it the same way; `hasHouzsPerm` dual-reads too, which
+is why the PERMISSION half of this module kept working while the IDENTITY half
+did not.
+
+**Why `user` is nevertheless GATED.** After the bridge, `user` is the pinned
+`scm.staff` identity — one uuid for everybody — and using it as an actor id is how
+`mfg_so_audit_log` came to name the same person on every row (§ the module header).
+So `user` is accepted ONLY while it is still the Houzs shape: a numeric
+`public.users.id`. The staff uuid fails `Number.isInteger`, so after the bridge the
+helper falls through to null and the `caller_unknown` refusal stands.
+
+That boundary is pinned by a test — a context carrying only the staff uuid must
+still be refused — so a later "simplification" to a plain `?? c.get('user')` fails
+the suite rather than silently reviving the one-actor-for-everybody bug.
+
+### 4.1 The permission keys
+
 Three permission keys in `backend/src/services/permissions.ts`, verb `approve`:
 
 | key | signs |

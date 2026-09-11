@@ -314,9 +314,10 @@ describe('a file the reader cannot make sense of', () => {
   });
 
   /* The disease this whole guard exists for: a heading row that parses and a
-     table under it that does not, reported as a clean empty statement. */
+     table under it that does not, reported as a clean empty statement. A file
+     that prints neither a movement nor a balance proves nothing. */
   it('refuses a heading with nothing readable under it', () => {
-    const r = parseBankStatement(hlbCfg(), L(HLB_HEAD, 'Opening balance,,,,,"50,000.00"', 'Page 1 of 3,,,,,'));
+    const r = parseBankStatement(hlbCfg(), L(HLB_HEAD, 'Some memo,,,,,', 'Page 1 of 3,,,,,'));
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.reason).toMatch(/no transactions under it/);
@@ -328,6 +329,60 @@ describe('a file the reader cannot make sense of', () => {
     if (r.ok) return;
     expect(r.reason).toMatch(/PDF/);
     expect(r.reason).toMatch(/HLB-CA/);
+  });
+});
+
+/* ── A month in which nothing moved ───────────────────────────────────────────
+   Owner, 2026-09-10, on Hong Leong's March export — one "Balance from previous
+   statement 3000.00" row and nothing under it — being refused: 我应该每一个月
+   都要做 bank reconciliation 不是？没有 transaction 那么你就让我锁起来. He is
+   right: a month with no movement is still reconciled (bank 3,000 = books
+   3,000) and closed. Such a file carries its balance and no dates, so the
+   month it speaks for is the one the operator names (docs/bugs/0794). */
+describe('a statement with no transactions', () => {
+  const EMPTY = L(
+    'HLB PRIMEBIZ CURRENT ACCOUNT - 23600600000,',
+    'Date,Transaction Description,Cheque No.,Ref. No.,Deposit,Withdrawal,Balance',
+    '="",="Balance from previous statement",="",="",="",="",="3000.00"',
+  );
+  const cfg = (over: Partial<BankParseConfig> = {}) => hlbCfg({
+    columnMap: { date: 'Date', description: 'Transaction Description', reference: 'Ref. No.', debit: 'Withdrawal', credit: 'Deposit', balance: 'Balance' },
+    ...over,
+  });
+
+  it('is filed under the month the operator names, opening and closing at the balance it prints', () => {
+    const r = parseBankStatement(cfg({ statementMonth: '2026-03' }), EMPTY);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.lines).toEqual([]);
+    expect(r.periodFrom).toBe('2026-03-01');
+    expect(r.periodTo).toBe('2026-03-31');
+    expect(r.openingBalanceSen).toBe(300000);
+    expect(r.closingBalanceSen).toBe(300000);
+    expect(r.inSen).toBe(0);
+    expect(r.outSen).toBe(0);
+  });
+
+  /* Without a month there is nothing to file it under — and the refusal says
+     what to do, not just what went wrong. */
+  it('asks for the year and month when none was given', () => {
+    const r = parseBankStatement(cfg(), EMPTY);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toMatch(/no transactions/);
+    expect(r.reason).toMatch(/3,000\.00/);
+    expect(r.reason).toMatch(/year and month/i);
+  });
+
+  /* A file with no movement AND no balance proves nothing about any month. */
+  it('still refuses a file that prints no balance either', () => {
+    const r = parseBankStatement(cfg({ statementMonth: '2026-03' }), L(
+      'Date,Transaction Description,Cheque No.,Ref. No.,Deposit,Withdrawal,Balance',
+      'Page 1 of 1,,,,,,',
+    ));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toMatch(/no transactions under it/);
   });
 });
 

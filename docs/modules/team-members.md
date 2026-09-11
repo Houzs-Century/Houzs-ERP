@@ -51,6 +51,13 @@
 >   next request. Valid targets are the catalogue-derived SCM LEAF keys —
 >   exactly what `scmAreaGuard` reads; god positions are refused (wildcard
 >   bypasses the guard). Pinned by `backend/tests/positionPageOverrides.test.ts`.
+> * **Roles editor rebuilt (2026-09-10, design handoff):** the `permissions`
+>   tab's first "Roles" sub-view — `RolesTab` in `frontend/src/pages/Roles.tsx`,
+>   also mounted standalone at `?tab=roles` (`frontend/src/pages/Team.tsx`) and now
+>   on mobile (`frontend/src/mobile/MobileRoles.tsx`, wired into
+>   `frontend/src/mobile/MobileApp.tsx`) — was rebuilt from the card grid into a
+>   `resource × verb` master-detail matrix. The position-capability matrix (the
+>   section's OTHER sub-view) is untouched. Full guide: `docs/modules/roles.md`.
 > * Member profile / invite: `TeamMemberProfile.tsx` (drawer, inline
 >   assignment editing, activity log) and `TeamInviteModal.tsx` (assignment +
 >   position set before send; company toggle chips).
@@ -281,7 +288,7 @@ one is the owner's decision: the driver has no account, so the token printed on
 the paper is the credential. It is 10 characters since 2026-08-27 — the length is a print setting,
 see `docs/bugs/0552-…` — and the 64-hex form on every sheet already printed still
 resolves.
-Since 2026-09-08 the same file also serves two per-event routes behind the same token gate — `GET .../:token/events/:eventId/floorplan` (the files on the event's `Blank Floorplan` task, else the legacy project-level floorplan) and `.../floorplan/:fileId` (stream, `?download=1` = attachment) — so a contractor can tap an event and view/download ONLY its unfilled floorplan; and **`/b/:token`** is the same page in brand mode (`routes/publicBrandCalendar.ts`, `brand_share_tokens`) — a brand's own events, display floorplan, size and total sales, Excel export logged. Since 2026-09-09 both modes' `GET .../:token/export` takes `?month=YYYY-MM` and returns only the events touching that month (the month on screen; without it the whole schedule, so a tab loaded before the deploy keeps working; a malformed month is 400). Brand links also have `GET .../:token/floorplans?month=` — the display-floorplan manifest behind the page's "Display Floorplan (PDF)" export; contractor links have no such route. A contractor's list answer carries `exportScope` (`month` | `year`, from `project_contractors.share_export_scope`, the "Export whole year" toggle in Project Maintenance), and its export then takes `?year=YYYY` instead of `?month=` (owner 2026-09-09: three contractors export the whole year). Full rule and tests: `docs/modules/projects-pms.md`, contractor share links.
+Since 2026-09-08 the same file also serves two per-event routes behind the same token gate — `GET .../:token/events/:eventId/floorplan` (the files on the event's `Blank Floorplan` task, else the legacy project-level floorplan) and `.../floorplan/:fileId` (stream, `?download=1` = attachment) — so a contractor can tap an event and view/download ONLY its unfilled floorplan; and **`/b/:token`** is the same page in brand mode (`routes/publicBrandCalendar.ts`, `brand_share_tokens`) — a brand's own events, display floorplan, size and total sales, Excel export logged. Since 2026-09-09 both modes' `GET .../:token/export` takes `?month=YYYY-MM` and returns only the events touching that month (the month on screen; without it the whole schedule, so a tab loaded before the deploy keeps working; a malformed month is 400). Brand links also have `GET .../:token/floorplans?month=` — the display-floorplan manifest behind the page's "Display Floorplan (PDF)" export; contractor links have no such route. A contractor's list answer carries `exportScope` (`month` | `year`, from `project_contractors.share_export_scope`, the "Export whole year" toggle in Project Maintenance), and its export then takes `?year=YYYY` instead of `?month=` (owner 2026-09-09: three contractors export the whole year). Full rule and tests: `docs/modules/projects-pms.md`, contractor share links. To see what a link answers RIGHT NOW from outside the office, run Actions → **Probe share links (read-only)** (`.github/workflows/probe-share-links.yml`, `backend/scripts/probe-share-links.mjs`): it reads the active tokens with `DATABASE_URL`, calls each list route, and prints party, HTTP status and the error message, never the token.
 
 **`/d/scan` IS DECIDED BEFORE THE TOKEN BRANCH**, and that ordering is the whole
 of its correctness: `startsWith("/d/")` would otherwise classify it as a token

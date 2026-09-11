@@ -54,6 +54,9 @@ export const useGrnFromPos = () => {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['grns'] });
       qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
+      /* The whole-PO convert AUTO-POSTS, so stock IN is written on every success
+         (postGrnAndRollup); a mounted Stock Card / inventory list must refetch. */
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
       /* Force picker refetch so received PO lines drop off. */
       qc.invalidateQueries({ queryKey: ['grns', 'outstanding-po-items'], refetchType: 'all' });
     },
@@ -251,7 +254,11 @@ export const usePostGrn = () => {
 /* ── GRN PO-clone CRUD (mirror the PO header + line item hooks) ─────────────
    PATCH /grns/:id (header), POST/PATCH/DELETE /grns/:id/items[/:itemId].
    Each invalidates the GRN detail (['grn-detail', id]) + list (['grns']) —
-   the same query keys useGrnDetail + useGrns read. */
+   the same query keys useGrnDetail + useGrns read — plus ['inventory']: on a
+   POSTED GRN every one of these re-syncs stock server-side (header → warehouse
+   relocation OUT+IN, item add → IN, item edit → delta OUT/IN, item delete →
+   reversing OUT), so a mounted Stock Card / inventory list must refetch. Same
+   stock-side rule usePostGrn / useCancelGrn follow (docs/modules/grn.md §1). */
 export const useUpdateGrnHeader = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -264,6 +271,7 @@ export const useUpdateGrnHeader = () => {
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['grn-detail', vars.id] });
       qc.invalidateQueries({ queryKey: ['grns'] });
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
     },
   });
 };
@@ -278,6 +286,7 @@ export const useAddGrnItem = () => {
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['grn-detail', vars.grnId] });
       qc.invalidateQueries({ queryKey: ['grns'] });
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
     },
   });
 };
@@ -292,6 +301,7 @@ export const useUpdateGrnItem = () => {
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['grn-detail', vars.grnId] });
       qc.invalidateQueries({ queryKey: ['grns'] });
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
     },
   });
 };
@@ -304,6 +314,7 @@ export const useDeleteGrnItem = () => {
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['grn-detail', vars.grnId] });
       qc.invalidateQueries({ queryKey: ['grns'] });
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
     },
     onError: writeFailed,
   });

@@ -19,6 +19,8 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { readPbbAdvice } from '../../acc/pbb-advice';
 import { statusOfPayout, type ReportForPayout } from '../../acc/payout-advice';
+import { postPayoutCharge, undoPayoutCharge } from '../../acc/payout-charge';
+import { expenseLeafAccounts } from '../../acc/settlement';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -168,15 +170,34 @@ export const payoutList = guard(async (c) => {
   if (payouts.length === 0) return c.json({ payouts: [] });
 
   const { data: dayRaw, error: dErr } = await sb.from('acc_settlement_payout_batches')
-    .select('payout_id, settled_on, net_sen').eq('company_id', co.companyId);
+    .select('payout_id, settled_on, net_sen, charge_sen, charge_account_code, charge_note, charge_je_no').eq('company_id', co.companyId);
   if (dErr) return c.json({ error: 'load_failed', reason: dErr.message }, 500);
-  const daysByPayout = new Map<number, Array<{ settledOn: string; netSen: number }>>();
+  type DayIn = { settledOn: string; netSen: number; chargeSen: number; chargeAccountCode: string | null; chargeNote: string | null; chargeJeNo: string | null };
+  const daysByPayout = new Map<number, DayIn[]>();
   for (const d of (dayRaw ?? []) as Array<Record<string, any>>) {
     const id = Number(d.payout_id);
     const at = daysByPayout.get(id) ?? [];
-    at.push({ settledOn: String(d.settled_on).slice(0, 10), netSen: Number(d.net_sen ?? 0) });
+    at.push({
+      settledOn: String(d.settled_on).slice(0, 10), netSen: Number(d.net_sen ?? 0),
+      /* A charge the bank deducted from that day (docs/bugs/0787), so the
+         status can count it as paid and the screen can show where it went. */
+      chargeSen: Number(d.charge_sen ?? 0),
+      chargeAccountCode: d.charge_account_code == null ? null : String(d.charge_account_code),
+      chargeNote: d.charge_note == null ? null : String(d.charge_note),
+      chargeJeNo: d.charge_je_no == null ? null : String(d.charge_je_no),
+    });
     daysByPayout.set(id, at);
   }
+  /* The accounts a charge may be booked to — active expense leaves of this
+     company, the same list the Setup page offers for the merchant fee — and
+     each acquirer's fee account, which the dialog defaults to. */
+  const chargeAccounts = await expenseLeafAccounts(sb, co.companyId);
+  if (!chargeAccounts.ok) return c.json({ error: 'load_failed', reason: chargeAccounts.reason }, 500);
+  const { data: acqRaw, error: acqErr } = await sb.from('acc_acquirers')
+    .select('code, fee_account_code').eq('company_id', co.companyId);
+  if (acqErr) return c.json({ error: 'load_failed', reason: acqErr.message }, 500);
+  const feeAccountByAcquirer: Record<string, string | null> = {};
+  for (const a of (acqRaw ?? []) as Array<Record<string, any>>) feeAccountByAcquirer[String(a.code)] = a.fee_account_code == null ? null : String(a.fee_account_code);
 
   const out = [];
   for (const p of payouts) {
@@ -187,10 +208,58 @@ export const payoutList = guard(async (c) => {
        blocking it. The stored rows say what the ADVICE said; whether that is
        satisfied is a question about today. */
     const status = statusOfPayout(
-      { netSen: Number(p.net_sen ?? 0), batches: (daysByPayout.get(Number(p.id)) ?? []).map((d) => ({ settledOn: d.settledOn, netSen: d.netSen })) as never },
+      { netSen: Number(p.net_sen ?? 0), batches: daysByPayout.get(Number(p.id)) ?? [] },
       reports.reports,
     );
     out.push({ ...p, status });
   }
-  return c.json({ payouts: out });
+  return c.json({ payouts: out, chargeAccounts: chargeAccounts.accounts, feeAccountByAcquirer });
+});
+
+/* ── POST /settlement/payouts/:id/days/:settledOn/charge — the bank deducted a
+   charge from this day's payout (docs/bugs/0787). Owner 2026-09-10: 「银行的卡机
+   application fees … 可以让我点了后选这笔进什么户口吗」. The amount defaults to
+   the whole difference; the account is Finance's choice, checked the way the
+   merchant fee account is; the note is required because the corrections
+   report prints it. Everything that can go wrong is a named refusal from
+   acc/payout-charge, answered in a sentence. */
+const dayParams = (c: Ctx): { payoutId: number; settledOn: string } | null => {
+  const payoutId = Number(c.req.param('id'));
+  const settledOn = String(c.req.param('settledOn') ?? '').trim();
+  if (!Number.isInteger(payoutId) || !/^\d{4}-\d{2}-\d{2}$/.test(settledOn)) return null;
+  return { payoutId, settledOn };
+};
+
+export const payoutCharge = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const at = dayParams(c);
+  if (!at) return c.json({ error: 'bad_request', message: 'Say which advice and which settlement day.' }, 400);
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const r = await postPayoutCharge(c.get('supabase'), co.companyId, {
+    ...at,
+    amountSen: body.amountSen == null ? null : Number(body.amountSen),
+    accountCode: String(body.accountCode ?? ''),
+    note: String(body.note ?? ''),
+    userName: (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null,
+  });
+  if (!r.ok) {
+    const status = r.status === 'not_found' ? 404 : r.status === 'load_failed' || r.status === 'save_failed' ? 500 : 409;
+    return c.json({ error: r.status, message: r.reason }, status);
+  }
+  return c.json(r);
+});
+
+export const payoutChargeUndo = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const at = dayParams(c);
+  if (!at) return c.json({ error: 'bad_request', message: 'Say which advice and which settlement day.' }, 400);
+  const r = await undoPayoutCharge(c.get('supabase'), co.companyId, at);
+  if (!r.ok) {
+    const status = r.status === 'not_found' ? 404 : r.status === 'load_failed' || r.status === 'save_failed' ? 500 : 409;
+    return c.json({ error: r.status, message: r.reason }, status);
+  }
+  return c.json(r);
 });

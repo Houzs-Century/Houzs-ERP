@@ -160,6 +160,17 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "scm.payment_voucher.check", resource: "Supply Chain", verb: "manage", label: "Check payment voucher", description: "The first of the two yeses (owner 2026-09-02): check a prepared Payment Voucher — checking locks it and reserves it against Daily Bank's available money; a checker may also reject back to draft" },
   { key: "scm.payment_voucher.approve", resource: "Supply Chain", verb: "manage", label: "Approve payment voucher", description: "The second yes: approve a checked Payment Voucher — approval posts the GL entry in the same breath; an approver may also reject back to draft" },
 
+  // Correcting a customer payment after the day it was keyed (owner +
+  // management, 2026-09-10: 让权限在finance 这里更改). Sales records the money
+  // and may fix it the same day; from the next day only a holder of this key
+  // can, and the edit reverses and re-books its journal entry as it goes
+  // (acc/payment-repost.ts). It does NOT reach past a RECONCILED payment —
+  // matched on a merchant report, claimed by a bank statement, or sitting in a
+  // closed month is refused to everybody, this key included, because by then
+  // the figure is evidence somebody has signed off. Nobody holds it by default
+  // except '*'; grant the finance positions via Team > Positions.
+  { key: "scm.so_payment.amend", resource: "Supply Chain", verb: "manage", label: "Correct a recorded payment", description: "Change or remove a customer payment after the day it was keyed in — the journal entry is reversed and re-booked with it. Refused once the payment has been reconciled." },
+
   // Stock take supervision (owner-approved phase 1, 2026-08-08). A stock take
   // carries an ASSIGNEE (scm.stock_takes.assignee_staff_id — the person
   // responsible for the count); posting is allowed only for that assignee OR a

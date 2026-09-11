@@ -79,6 +79,18 @@ const BATCH = {
   status: 'OPEN', uploaded_by: null, created_at: '',
 };
 let batchList: Array<Record<string, unknown>> = [BATCH];
+
+/* A line the window could offer nothing for (docs/bugs/0792). */
+const LONELY_ROW: SettlementRow = {
+  id: 11, line_no: 9, txn_date: '2026-06-02', ref: '615318040666',
+  gross_sen: 286500, fee_sen: 11460, net_sen: 275040,
+  bucket: 'UNMATCHED', match_reason: null, confirmed_at: null,
+  posted_je_no: null, notes: null, linked: [], candidates: [], comboHints: [], clue: null,
+};
+const findResults = [
+  { source: 'SOPAY' as const, id: 'f1', docNo: '2990-SO-2606-011', customerName: 'Chou Mun Yee', paidOn: '2026-06-14', amountSen: 286500, approvalCode: '005751', merchantProvider: null, possible: true, method: 'installment' },
+  { source: 'SOPAY' as const, id: 'f2', docNo: '2990-SO-2606-013', customerName: 'Tan Ah Kow', paidOn: '2026-06-14', amountSen: 336500, approvalCode: '009577', merchantProvider: null, possible: false, method: 'installment' },
+];
 const setBatchList = (b: Array<Record<string, unknown>>) => { batchList = b; };
 
 vi.mock('./settlement-queries', () => ({
@@ -95,7 +107,7 @@ vi.mock('./settlement-queries', () => ({
       },
       acquirer: { code: 'MBB', hasUniqueRef: true, dateToleranceDays: 3 },
       buckets: { MATCHED: 1, NEEDS_CONFIRM: 1, UNMATCHED: 0, IGNORED: 0 },
-      rows: [ROW, MATCHED_ROW, SUGGESTED_ROW, DONE_ROW],
+      rows: [ROW, MATCHED_ROW, SUGGESTED_ROW, DONE_ROW, LONELY_ROW],
     },
     isLoading: false,
   }),
@@ -104,8 +116,14 @@ vi.mock('./settlement-queries', () => ({
   useUnconfirmSettlementRow: () => ({ mutate: unconfirmMutate, isPending: false }),
   useConfirmMatched: () => ({ mutate: confirmMatchedMutate, isPending: false, data: null }),
   useIgnoreSettlementRow: () => ({ mutate: vi.fn(), isPending: false }),
+  /* "Find the sale" (docs/bugs/0792): what the server would answer for the
+     lonely line — the sale keyed twelve days late, at the exact gross. */
+  useFindPayments: (rowId: number | null, q: string) => ({
+    data: rowId == null ? undefined : { q, payments: findResults.filter((p) => q === '' || p.docNo.includes(q) || p.customerName.toLowerCase().includes(q.toLowerCase())) },
+    isLoading: false, isError: false, error: null,
+  }),
   useSettlementWatchlist: () => ({ data: { from: '2026-05-18', to: '2026-08-16', clean: false, arrivedNotRecorded: [], recordedNotArrived: [
-    { source: 'SOPAY', id: 'w1', acquirerCode: 'MBB', docNo: 'SO-2607-088', paidOn: '2026-07-18', amountSen: 35000, approvalCode: 'A0900', ageDays: 29 },
+    { source: 'SOPAY', id: 'w1', acquirerCode: 'MBB', docNo: 'SO-2607-088', paidOn: '2026-07-18', amountSen: 35000, approvalCode: 'A0900', ageDays: 29, salespersonName: 'Kah Wai' },
     /* Keyed in without a bank — the server lists it once, under no acquirer (docs/bugs/0688). */
     { source: 'SOPAY', id: 'w2', acquirerCode: null, docNo: 'SO-2606-013', paidOn: '2026-06-14', amountSen: 336500, approvalCode: '009577', ageDays: 63 },
   ] }, isLoading: false }),
@@ -273,8 +291,9 @@ describe('the reconcile tab', () => {
     draw();
     fireEvent.click(screen.getByText('Reconcile'));
     /* Two kinds of not-done on this report, and the screen names both: one
-       matched by reference (a button) and one that needs a person. */
-    expect(screen.getByText('1 matched, waiting for you to confirm · 2 still to decide')).toBeTruthy();
+       matched by reference (a button) and the ones that need a person — ROW,
+       SUGGESTED_ROW, and the LONELY_ROW the window had nothing for. */
+    expect(screen.getByText('1 matched, waiting for you to confirm · 3 still to decide')).toBeTruthy();
     expect(screen.getByText(/pair\(s\) of payments add up/)).toBeTruthy();
     expect(screen.getByText('SO-2608-001')).toBeTruthy();
     // the list it came from is off the screen
@@ -504,5 +523,77 @@ describe('inside one report', () => {
   test('the "set aside" explanation is said once', () => {
     open();
     expect(screen.getAllByText(/just moves a line out of the working list/)).toHaveLength(1);
+  });
+});
+
+/* ── "Find the sale" — docs/bugs/0792 ────────────────────────────────────────
+   GHL line RM 2,865.00 of 2026-06-02: the screen said "no sale in the ERP"
+   over 2990-SO-2606-011, the same amount, keyed twelve days later with no bank.
+   The person knows which sale it is; the screen must let him say so. */
+describe('finding the sale the window could not offer', () => {
+  const open = () => { draw(); fireEvent.click(screen.getByText('Reconcile')); };
+  const lonely = () => screen.getByText('615318040666').closest('section') as HTMLElement;
+
+  test('a line with no candidate offers the search instead of a dead end', () => {
+    open();
+    const card = lonely();
+    expect(within(card).getByText(/find it below/)).toBeTruthy();
+    expect(within(card).queryByText('Confirm and post')).toBeNull();
+    fireEvent.click(within(card).getByText('Find the sale'));
+    expect(within(card).getByLabelText('Find the sale')).toBeTruthy();
+  });
+
+  test('the exact gross is marked possible, and the rest is still offered', () => {
+    open();
+    const card = lonely();
+    fireEvent.click(within(card).getByText('Find the sale'));
+    const hit = within(card).getByLabelText('Select 2990-SO-2606-011').closest('tr') as HTMLElement;
+    expect(within(hit).getByText('possible')).toBeTruthy();
+    expect(within(hit).getByText('Chou Mun Yee')).toBeTruthy();
+    expect(within(hit).getByText('未标 merchant')).toBeTruthy();
+    const other = within(card).getByLabelText('Select 2990-SO-2606-013').closest('tr') as HTMLElement;
+    expect(within(other).queryByText('possible')).toBeNull();
+  });
+
+  test('ticking the found sale confirms it with what the server will read back', () => {
+    open();
+    const card = lonely();
+    fireEvent.click(within(card).getByText('Find the sale'));
+    fireEvent.click(within(card).getByLabelText('Select 2990-SO-2606-011'));
+    expect(within(card).getByText(/Selected RM 2,865\.00 of RM 2,865\.00/)).toBeTruthy();
+    const go = within(card).getByText('Confirm and post') as HTMLButtonElement;
+    expect(go.disabled).toBe(false);
+    fireEvent.click(go);
+    expect(confirmMutate).toHaveBeenCalledWith({
+      rowId: 11, matchReason: 'manual',
+      payments: [{ source: 'SOPAY', id: 'f1', docNo: '2990-SO-2606-011', amountSen: 286500 }],
+    });
+  });
+
+  test('a found sale that does not add up cannot be confirmed', () => {
+    open();
+    const card = lonely();
+    fireEvent.click(within(card).getByText('Find the sale'));
+    fireEvent.click(within(card).getByLabelText('Select 2990-SO-2606-013'));
+    expect((within(card).getByText('Confirm and post') as HTMLButtonElement).disabled).toBe(true);
+    expect(within(card).getByText(/RM 500\.00 out/)).toBeTruthy();
+  });
+
+  test('a line that already has candidates can still look further', () => {
+    open();
+    const card = screen.getByLabelText('Select SO-2608-001').closest('section') as HTMLElement;
+    fireEvent.click(within(card).getByText('Find the sale'));
+    expect(within(card).getByLabelText('Find the sale')).toBeTruthy();
+  });
+});
+
+/* Owner 2026-09-10, on the "not yet reported" table: 我想要看到 salesman 的名字. */
+describe('the watchlist names the salesperson', () => {
+  test('a payment shows who sold it, and a dash when nobody is named', () => {
+    draw();
+    const w1 = screen.getByText('SO-2607-088').closest('tr') as HTMLElement;
+    expect(within(w1).getByText('Kah Wai')).toBeTruthy();
+    const w2 = screen.getByText('SO-2606-013').closest('tr') as HTMLElement;
+    expect(within(w2).getByText('—')).toBeTruthy();
   });
 });

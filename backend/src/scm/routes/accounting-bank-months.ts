@@ -24,7 +24,8 @@ import type { Env, Variables } from '../env';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { assembleMonth, monthOf, monthWindow, type MonthStatement } from '../../acc/bank-month';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
-import { loadPayableBatches, loadAccountLedger, loadLiveMonthLock } from '../../acc/bank';
+import { entryCandidatesFor } from '../../acc/bank-match';
+import { loadPayableBatches, loadAccountLedger, loadLiveMonthLock, claimedSetFor } from '../../acc/bank';
 import { bankGuard } from './accounting-bank';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -68,8 +69,33 @@ const asMonthStatement = (s: Row): MonthStatement => ({
   closingBalanceSen: s.closing_balance_sen == null ? null : Number(s.closing_balance_sen),
 });
 
+/** The files that speak for a month: the ones a line of the month came from,
+    and an EMPTY statement filed under it (docs/bugs/0794 — a quiet month's file
+    has no line to arrive by, so it is found by the period it was filed with,
+    which lies wholly inside the month by construction). A file with lines all
+    in other months still has no business speaking for this one. */
+const feedersOf = (all: Row[], lineStatementIds: Set<number>, window: { from: string; to: string }): Row[] =>
+  all.filter((s) => lineStatementIds.has(Number(s.id))
+    || (Number(s.line_count ?? 0) === 0
+      && (dayOf(s.period_from) ?? '') >= window.from && (dayOf(s.period_to) ?? '') <= window.to));
+
+/** What lines OUTSIDE the window have claimed (docs/bugs/0802): a POSTED
+    line's own entry, or its match row. Passed to the reconciliation so an
+    earlier entry reconciled on an earlier month is not "still waiting" here. */
+const claimedOutside = (
+  allLines: Row[], inWindow: Set<number>, matchesByLine: Map<number, Row[]>,
+): Set<string> => {
+  const out = new Set<string>();
+  for (const l of allLines) {
+    if (inWindow.has(Number(l.id)) || String(l.state) !== 'POSTED') continue;
+    const je = textOf(l.posted_je_no) ?? textOf(matchesByLine.get(Number(l.id))?.[0]?.je_no);
+    if (je) out.add(je);
+  }
+  return out;
+};
+
 /** The movement shape the reconciliation wants, off a line row. */
-const asMovement = (l: Row, jeNo: string | null): StatementMovement => ({
+const asMovement = (l: Row, jeNo: string | null, jeNos: string[] = []): StatementMovement => ({
   id: Number(l.id),
   bookedOn: dayOf(l.booked_on) ?? '',
   description: textOf(l.description) ?? '',
@@ -77,7 +103,22 @@ const asMovement = (l: Row, jeNo: string | null): StatementMovement => ({
   amountSen: Number(l.amount_sen ?? 0),
   state: String(l.state) as StatementMovement['state'],
   jeNo,
+  /* Every entry a POSTED line claims (docs/bugs/0803) — one movement can be
+     several vouchers, and the second is claimed too. */
+  jeNos: String(l.state) === 'POSTED' ? jeNos : [],
 });
+
+/** The entries a line's match rows name, by line. */
+const jeNosByLine = (matches: Row[]): Map<number, string[]> => {
+  const out = new Map<number, string[]>();
+  for (const m of matches) {
+    const key = Number(m.bank_line_id);
+    const at = out.get(key) ?? [];
+    at.push(String(m.je_no));
+    out.set(key, at);
+  }
+  return out;
+};
 
 /* ── GET /bank/months — every account × month that has anything in it ─────── */
 
@@ -172,6 +213,23 @@ export const bankMonths = bankGuard(async (c) => {
     buckets.set(key, at);
   }
 
+  /* A QUIET MONTH has no line to bucket by (docs/bugs/0794): its empty
+     statement is listed under the month it was filed with. */
+  for (const s of statements) {
+    if (Number(s.line_count ?? 0) !== 0) continue;
+    const from = dayOf(s.period_from);
+    const to = dayOf(s.period_to);
+    if (from === null || to === null || monthOf(from) !== monthOf(to)) continue;
+    const accountCode = textOf(s.account_code) ?? '';
+    const key = `${accountCode}|${monthOf(from)}`;
+    const at = buckets.get(key) ?? {
+      accountCode, month: monthOf(from), statementIds: new Set<number>(),
+      lines: 0, openCount: 0, openSen: 0, openPayouts: 0, inSen: 0, outSen: 0, movements: [],
+    };
+    at.statementIds.add(Number(s.id));
+    buckets.set(key, at);
+  }
+
   /* Newest first — the month he is working is the one he just uploaded into. */
   const months = [...buckets.values()]
     .sort((a, b) => b.month.localeCompare(a.month) || a.accountCode.localeCompare(b.accountCode))
@@ -241,14 +299,19 @@ export async function loadMonthForLock(
       .order('booked_on').order('line_no');
   if (linesRes.error) return { ok: false, reason: linesRes.error.message };
 
-  const lines = rowsOf(linesRes.data).filter((l) => {
+  const everyLine = rowsOf(linesRes.data);
+  const lines = everyLine.filter((l) => {
     const on = dayOf(l.booked_on);
     return on !== null && on >= window.from && on <= window.to;
   });
-  const movements = lines.map((l) => asMovement(l, textOf(l.posted_je_no)));
+  const matchRes = await sb.from('acc_bank_statement_matches')
+    .select('bank_line_id, je_no').eq('company_id', companyId);
+  if (matchRes.error) return { ok: false, reason: matchRes.error.message };
+  const jesOf = jeNosByLine(rowsOf(matchRes.data));
+  const movements = lines.map((l) => asMovement(l, textOf(l.posted_je_no), jesOf.get(Number(l.id)) ?? []));
+  const firstPeriodFrom = allStatements.map((s) => dayOf(s.period_from) ?? '').filter(Boolean).sort()[0] ?? null;
 
-  const fedIds = new Set(lines.map((l) => Number(l.statement_id)));
-  const fed = allStatements.filter((s) => fedIds.has(Number(s.id)));
+  const fed = feedersOf(allStatements, new Set(lines.map((l) => Number(l.statement_id))), window);
   const assembly = assembleMonth(month, fed.map(asMonthStatement), movements);
   if (!assembly) return { ok: false, reason: `${month} is not a month` };
 
@@ -265,6 +328,10 @@ export async function loadMonthForLock(
       statementClosingSen: assembly.statementClosingSen,
       movements,
       ledger: ledger.movements,
+      claimedElsewhere: claimedSetFor(
+        { claimed: claimedOutside(everyLine, new Set(lines.map((l) => Number(l.id))), new Map()), firstPeriodFrom },
+        ledger.movements,
+      ),
     }),
     openCount: lines.filter((l) => String(l.state) === 'OPEN').length,
     lineCount: lines.length,
@@ -326,7 +393,8 @@ export const bankMonthDetail = bankGuard(async (c) => {
 
   /* Rule 1: the month takes the lines whose own date is in it, from whichever
      file they arrived in. */
-  const lines = rowsOf(linesRes.data).filter((l) => {
+  const everyLine = rowsOf(linesRes.data);
+  const lines = everyLine.filter((l) => {
     const on = dayOf(l.booked_on);
     return on !== null && on >= window.from && on <= window.to;
   });
@@ -334,16 +402,19 @@ export const bankMonthDetail = bankGuard(async (c) => {
   /* The entry a movement claims: its own first, and the match table only where
      it has none. Two sources for one fact, in a fixed order, so the answer
      cannot depend on which read came back first. */
+  /* Only a POSTED line claims anything — a match row on an OPEN line is what
+     an older undo left behind (docs/bugs/0802), not a claim. */
   const jeOf = (l: Row): string | null =>
-    textOf(l.posted_je_no) ?? textOf(matchesByLine.get(Number(l.id))?.[0]?.je_no);
+    (String(l.state) === 'POSTED' ? (textOf(l.posted_je_no) ?? textOf(matchesByLine.get(Number(l.id))?.[0]?.je_no)) : null);
 
-  const movements = lines.map((l) => asMovement(l, jeOf(l)));
+  const jesOf = jeNosByLine(rowsOf(matchRes.data));
+  const movements = lines.map((l) => asMovement(l, jeOf(l), jesOf.get(Number(l.id)) ?? []));
 
-  /* The files that fed this month — the ones a line came from, and no others.
-     A file uploaded against this account whose every movement is in another
-     month has no business speaking for this one's balances. */
-  const fedIds = new Set(lines.map((l) => Number(l.statement_id)));
-  const fed = allStatements.filter((s) => fedIds.has(Number(s.id)));
+  /* The files that fed this month — the ones a line came from, plus an empty
+     statement filed under it. A file uploaded against this account whose every
+     movement is in another month has no business speaking for this one's
+     balances. */
+  const fed = feedersOf(allStatements, new Set(lines.map((l) => Number(l.statement_id))), window);
   const assembly = assembleMonth(month, fed.map(asMonthStatement), movements);
   if (!assembly) return c.json({ error: 'bad_month' }, 400);
 
@@ -358,6 +429,11 @@ export const bankMonthDetail = bankGuard(async (c) => {
      the server will then bounce. */
   if (!held.ok) return c.json({ error: 'load_failed', reason: held.reason }, 500);
 
+  const firstPeriodFrom = allStatements.map((s) => dayOf(s.period_from) ?? '').filter(Boolean).sort()[0] ?? null;
+  const claimedElsewhere = claimedSetFor(
+    { claimed: claimedOutside(everyLine, new Set(lines.map((l) => Number(l.id))), matchesByLine), firstPeriodFrom },
+    ledger.movements,
+  );
   const reconciliation = reconcileBankStatement({
     periodFrom: assembly.periodFrom,
     periodTo: assembly.periodTo,
@@ -365,12 +441,17 @@ export const bankMonthDetail = bankGuard(async (c) => {
     statementClosingSen: assembly.statementClosingSen,
     movements,
     ledger: ledger.movements,
+    claimedElsewhere,
   });
 
-  const claimed = new Set(movements.map((m) => m.jeNo).filter(Boolean));
+  const claimed = new Set(movements.flatMap((m) => [m.jeNo, ...(m.jeNos ?? [])]).filter(Boolean));
+  /* This month's, and the earlier ones still waiting for a bank to show them
+     (owner 2026-09-11: 之前 in book 还没有 recon 的也要带下来). */
   const unmatchedEntries = ledger.movements
-    .filter((l) => l.entryDate >= assembly.periodFrom && l.entryDate <= assembly.periodTo)
-    .filter((l) => !claimed.has(l.jeNo));
+    .filter((l) => l.entryDate <= assembly.periodTo)
+    .filter((l) => !claimed.has(l.jeNo))
+    .filter((l) => l.entryDate >= assembly.periodFrom || !claimedElsewhere.has(l.jeNo))
+    .map((l) => ({ ...l, carried: l.entryDate < assembly.periodFrom }));
 
   const fileNameOf = (statementId: number): string | null => {
     const s = allStatements.find((x) => Number(x.id) === statementId);
@@ -397,11 +478,21 @@ export const bankMonthDetail = bankGuard(async (c) => {
         /* Which file this movement came off — a month mixes them, and "line 12"
            means nothing until you know of what. */
         file_name: fileNameOf(Number(l.statement_id)),
-        matches: matchesByLine.get(Number(l.id)) ?? [],
+        matches: String(l.state) === 'POSTED' ? (matchesByLine.get(Number(l.id)) ?? []) : [],
         /* Recomputed live, exactly as the single-statement view does it: a
            batch paid since the upload must not still be offered. */
         candidates: String(l.kind).startsWith('PAYOUT')
           ? batches.batches.filter((b) => b.acquirerCode === acquirer)
+          : [],
+        /* And which LEDGER ENTRY it could be — the answer for everything on a
+           statement that is not card money, which is most of it. Same ranking
+           as the single-file view, from the same function. */
+        entryCandidates: String(l.state) === 'OPEN'
+          ? entryCandidatesFor(
+            { bookedOn: dayOf(l.booked_on) ?? '', amountSen: Number(l.amount_sen ?? 0) },
+            ledger.movements,
+            claimed as ReadonlySet<string>,
+          )
           : [],
       };
     }),

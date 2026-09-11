@@ -1,0 +1,49 @@
+name: Supplier binding visibility (read-only)
+
+# Manual, read-only. Answers "this SKU has suppliers bound, so why do the plan
+# and the purchase-order picker say it has none?" by asking the database the same
+# question in BOTH shapes the code asks it, and printing where they differ.
+#
+# Owner 2026-09-10, on model 9058. The suspected divergence is that the shared
+# reader (lib/supplier-bindings.ts) filters material_kind = 'mfg_product' and the
+# product page does not — but that is a hypothesis, and this job exists to settle
+# it rather than to confirm it. The script says so in both directions.
+#
+# SELECTs only: no DDL, no writes, no transaction. Exits 0 for every legitimate
+# answer including "no rows", because the ANSWER is the output and a red job
+# reads as "the check broke".
+on:
+  workflow_dispatch:
+    inputs:
+      codes:
+        description: "Item codes, comma separated. Matched exactly and by prefix."
+        required: false
+        default: "9058"
+        type: string
+      company_id:
+        description: "Company (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+
+# Its own group — a diagnostic must never queue behind, or displace, a release.
+concurrency:
+  group: supplier-binding-visibility
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the one dependency the script needs
+        run: npm --prefix backend install postgres --no-audit --no-fund --no-save
+      - name: Report supplier binding visibility
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          CODES: ${{ inputs.codes }}
+          COMPANY_ID: ${{ inputs.company_id }}
+        run: node backend/scripts/check-supplier-binding-visibility.mjs

@@ -27,42 +27,38 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft, ChevronDown, Plus, Layers, Search, X,
+  ArrowLeft, ChevronDown, Plus, Layers,
   ArrowDownToLine, ArrowUpFromLine, History,
 } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { StatCard } from '../../components/StatCard';
 import { fmtDate, fmtQty } from '@2990s/shared';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import {
   useRacks,
   useCreateRack,
   useUpdateRack,
-  useDeleteRack,
   useStockIn,
   useStockOut,
   useMovements,
   type Rack,
-  type RackItem,
-  type RackStatus,
   type RackMovement,
   type RackMovementType,
 } from '../../vendor/scm/lib/warehouse-queries';
+import { itemDescription, itemMeta } from '../../vendor/scm/lib/warehouse-floorplan';
+import { WarehouseFloorPlan } from './WarehouseFloorPlan';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
-import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
+import { buildSeedRackLabels, MAX_SEED_RACKS } from '../../vendor/shared/rack-labels';
 import styles from './WarehouseRacks.module.css';
 import formStyles from './Suppliers.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-const STATUS_LABEL: Record<RackStatus, string> = {
-  OCCUPIED: 'Occupied',
-  RESERVED: 'Reserved',
-  EMPTY: 'Empty',
-};
+/* Breakpoint from the design handoff: at/above it the floor plan always shows;
+   below it the operator gets a Floor plan / List switch. */
+const WIDE_BP = 1180;
 
 type TabKey = 'overview' | 'stockio' | 'history';
 const TABS: { key: TabKey; label: string }[] = [
@@ -71,16 +67,10 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'history', label: 'Movement History' },
 ];
 
-/* One clear description line for a rack item — never empty. */
-const itemDescription = (it: RackItem): string => {
-  const name = (it.product_name || it.item_code || '').trim();
-  const size = (it.size_label || '').trim();
-  return (size && !name.includes(size) ? `${name} ${size}`.trim() : name) || 'Item';
+/* The collapsed header stat strip — value colour per the design token table. */
+const STAT_INK: Record<'ink' | 'primary' | 'warn' | 'primaryInk', string> = {
+  ink: '#11140f', primary: '#16695f', warn: '#6e4d12', primaryInk: '#0c3f39',
 };
-
-/* customer · doc, whichever are present. */
-const itemMeta = (it: RackItem): string =>
-  [it.customer_name || '', it.source_doc_no || ''].filter(Boolean).join(' · ');
 
 /* ── Rack scope (shared across warehouses) ────────────────────────────────
    A rack can be created into just this warehouse, ALL warehouses, or a chosen
@@ -177,6 +167,22 @@ export const WarehouseRacks = () => {
     setParams(p, { replace: true });
   };
 
+  // Narrow-screen view is URL state ('plan' is the default, so it stays out of
+  // the URL); the switch only appears below the design breakpoint.
+  const view: 'plan' | 'list' = params.get('view') === 'list' ? 'list' : 'plan';
+  const selectView = (v: 'plan' | 'list') => {
+    const p = new URLSearchParams(params);
+    if (v === 'plan') p.delete('view'); else p.set('view', v);
+    setParams(p, { replace: true });
+  };
+  const [wide, setWide] = useState(() => (typeof window !== 'undefined' ? window.innerWidth >= WIDE_BP : true));
+  useEffect(() => {
+    const onResize = () => setWide(window.innerWidth >= WIDE_BP);
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   const racks = useRacks(warehouseId ? { warehouseId } : undefined);
   const rackList = useMemo(() => racks.data?.racks ?? [], [racks.data]);
   const summary = racks.data?.summary ?? { total: 0, occupied: 0, empty: 0, reserved: 0, occupancyRate: 0 };
@@ -193,92 +199,111 @@ export const WarehouseRacks = () => {
         eyebrow="Inventory"
         title="Warehouse"
         description="Rack overview, stock in / out and the full movement ledger for the selected warehouse."
-        primaryAction={
-          /* All three stay inline Buttons/Link rather than `secondaryActions`:
-             MenuItem has no `disabled`, and Seed racks / New rack must keep
-             their `disabled={!warehouseId}` guard. */
-          <div className="flex items-stretch gap-2">
-            <Link
-              to="/scm/warehouses"
-              className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-colors hover:border-primary/40 hover:bg-primary-soft hover:text-primary"
-            >
-              <ArrowLeft size={14} /> Warehouses
-            </Link>
-            <Button
-              variant="secondary"
-              icon={<Layers size={14} />}
-              onClick={() => { setEditing(null); setCreatingMode('seed'); }}
-              disabled={!warehouseId}
-            >
-              Seed racks
-            </Button>
-            <Button
-              variant="primary"
-              icon={<Plus size={14} />}
-              onClick={() => { setEditing(null); setCreatingMode('single'); }}
-              disabled={!warehouseId}
-            >
-              New rack
-            </Button>
+        actions={
+          /* Right column of the header: action row on top, the collapsed stat
+             strip below (was a five-tile grid that pushed the plan down). All
+             three actions stay inline Buttons/Link rather than
+             `secondaryActions`: MenuItem has no `disabled`, and Seed racks / New
+             rack must keep their `disabled={!warehouseId}` guard. */
+          <div className="flex flex-col items-end gap-3">
+            <div className="flex items-stretch gap-2">
+              <Link
+                to="/scm/warehouses"
+                className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-colors hover:border-primary/40 hover:bg-primary-soft hover:text-primary"
+              >
+                <ArrowLeft size={14} /> Warehouses
+              </Link>
+              <Button
+                variant="secondary"
+                icon={<Layers size={14} />}
+                onClick={() => { setEditing(null); setCreatingMode('seed'); }}
+                disabled={!warehouseId}
+              >
+                Seed racks
+              </Button>
+              <Button
+                variant="primary"
+                icon={<Plus size={14} />}
+                onClick={() => { setEditing(null); setCreatingMode('single'); }}
+                disabled={!warehouseId}
+              >
+                New rack
+              </Button>
+            </div>
+            <HeaderStatStrip summary={summary} />
           </div>
         }
       />
 
       <div className="space-y-4">
-        {/* Warehouse selector — Houzs racks are per-warehouse, so it's required. */}
+        {/* Warehouse selector — Houzs racks are per-warehouse, so it's required.
+            Styled as the design's picker pill; stays a native select. */}
         <div className="flex flex-wrap items-center gap-3">
-          <span className={styles.eyebrow}>Warehouse</span>
-          <span className={styles.selectWrap}>
-            <select
-              className={styles.fieldSelect}
-              value={warehouseId}
-              onChange={(e) => selectWarehouse(e.target.value)}
-            >
-              {(warehouses.data ?? []).map((w) => (
-                <option key={w.id} value={w.id}>{w.code}</option>
-              ))}
-            </select>
-            <ChevronDown className={styles.selectChevron} size={14} strokeWidth={1.75} />
+          <span className="inline-flex items-center gap-2 rounded-full border border-border-subtle bg-surface py-1.5 pl-3 pr-2">
+            <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-muted">WH</span>
+            <span className="relative inline-flex items-center">
+              <select
+                className="appearance-none border-none bg-transparent pr-5 text-[13px] font-semibold text-ink outline-none"
+                value={warehouseId}
+                onChange={(e) => selectWarehouse(e.target.value)}
+                aria-label="Warehouse"
+              >
+                {(warehouses.data ?? []).map((w) => (
+                  <option key={w.id} value={w.id}>{w.code}</option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-0 text-ink-muted" size={12} strokeWidth={2} />
+            </span>
           </span>
         </div>
 
-        {/* KPI tiles */}
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
-          <StatCard label="Total Slots" value={String(summary.total)} />
-          <StatCard label="Occupied" value={String(summary.occupied)} />
-          <StatCard label="Empty" value={String(summary.empty)} />
-          <StatCard label="Reserved" value={String(summary.reserved)} />
-          <StatCard label="Occupancy" value={`${summary.occupancyRate}%`} />
+        {/* Tabs + narrow-screen Floor plan / List switch */}
+        <div className="flex flex-wrap items-center gap-3">
+          <nav
+            className="inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-md border border-border bg-surface p-1 shadow-stone"
+            aria-label="Warehouse views"
+          >
+            {TABS.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                data-active={tab === t.key}
+                onClick={() => selectTab(t.key)}
+                className={
+                  tab === t.key
+                    ? 'whitespace-nowrap rounded bg-primary px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-white transition-all duration-150'
+                    : 'whitespace-nowrap rounded px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-all duration-150 hover:bg-primary-soft hover:text-primary'
+                }
+              >
+                {t.label}
+              </button>
+            ))}
+          </nav>
+          <div className="flex-1" />
+          {tab === 'overview' && !wide && (
+            <div className="flex items-center rounded-md border border-border-subtle bg-surface p-[3px]">
+              {(['plan', 'list'] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => selectView(v)}
+                  className="rounded-[6px] px-3 py-[5px] text-[11.5px] font-semibold transition-colors"
+                  style={view === v ? { background: '#16695f', color: '#ffffff' } : { color: '#767b6e' }}
+                >
+                  {v === 'plan' ? 'Floor plan' : 'List'}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Tabs */}
-        <nav
-          className="inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-md border border-border bg-surface p-1 shadow-stone"
-          aria-label="Warehouse views"
-        >
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              data-active={tab === t.key}
-              onClick={() => selectTab(t.key)}
-              className={
-                tab === t.key
-                  ? 'whitespace-nowrap rounded bg-primary px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-white transition-all duration-150'
-                  : 'whitespace-nowrap rounded px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-all duration-150 hover:bg-primary-soft hover:text-primary'
-              }
-            >
-              {t.label}
-            </button>
-          ))}
-        </nav>
-
         {tab === 'overview' && (
-          <OverviewTab
+          <WarehouseFloorPlan
             racks={rackList}
             warehouseId={warehouseId}
             isLoading={racks.isLoading}
-            summary={summary}
+            wide={wide}
+            view={view}
             onEditRack={(r) => { setEditing(r); setCreatingMode(null); }}
             onStockInHere={(rackId) => { setStockInRackId(rackId); selectTab('stockio'); }}
           />
@@ -318,248 +343,29 @@ export const WarehouseRacks = () => {
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Tab 1 — Rack Overview: legend + search + visual rack grid + detail popup.
-   ════════════════════════════════════════════════════════════════════════ */
-function OverviewTab({
-  racks, warehouseId, isLoading, summary, onEditRack, onStockInHere,
+/* Collapsed header stat strip — five compact cells replacing the old five-tile
+   grid, so the floor plan starts higher. Value colours per the design table:
+   occupied petrol, reserved brass-ink, occupancy dark petrol. */
+function HeaderStatStrip({
+  summary,
 }: {
-  racks: Rack[];
-  warehouseId: string;
-  isLoading: boolean;
   summary: { total: number; occupied: number; empty: number; reserved: number; occupancyRate: number };
-  onEditRack: (r: Rack) => void;
-  onStockInHere: (rackId: string) => void;
 }) {
-  const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState<Rack | null>(null);
-
-  const q = search.trim().toLowerCase();
-  const matches = (r: Rack): boolean => {
-    if (!q) return true;
-    if (r.rack.toLowerCase().includes(q)) return true;
-    return (r.items || []).some((it) =>
-      [it.source_doc_no || '', it.customer_name || '', it.product_name || '', it.item_code || '']
-        .join(' ').toLowerCase().includes(q));
-  };
-  const shown = useMemo(() => racks.filter(matches), [racks, q]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (!warehouseId) {
-    return <div className={styles.emptyRow}>Select a warehouse to view its racks.</div>;
-  }
-
+  const cells: { label: string; value: string; color: string }[] = [
+    { label: 'Total slots', value: String(summary.total), color: STAT_INK.ink },
+    { label: 'Occupied', value: String(summary.occupied), color: STAT_INK.primary },
+    { label: 'Empty', value: String(summary.empty), color: STAT_INK.ink },
+    { label: 'Reserved', value: String(summary.reserved), color: STAT_INK.warn },
+    { label: 'Occupancy', value: `${summary.occupancyRate}%`, color: STAT_INK.primaryInk },
+  ];
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-      {/* Legend */}
-      <div className={styles.legendRow}>
-        <span className={styles.legendItem}>
-          <span className={`${styles.legendSwatch} ${styles.swatchOccupied}`} /> Occupied ({summary.occupied})
-        </span>
-        <span className={styles.legendItem}>
-          <span className={`${styles.legendSwatch} ${styles.swatchEmpty}`} /> Empty ({summary.empty})
-        </span>
-        <span className={styles.legendItem}>
-          <span className={`${styles.legendSwatch} ${styles.swatchReserved}`} /> Reserved ({summary.reserved})
-        </span>
-      </div>
-
-      {/* Search — which rack is a piece in? Substring across every item's doc /
-          customer / product; client-side over the loaded racks. */}
-      <div className={styles.filterRow}>
-        <div className={styles.searchBox}>
-          <Search {...ICON} className={styles.searchIcon} />
-          <input
-            type="search"
-            className={styles.searchInput}
-            placeholder="Search by document no, customer, or product…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+    <div className="flex flex-wrap items-stretch overflow-hidden rounded-[10px] border border-border-subtle bg-surface">
+      {cells.map((c, i) => (
+        <div key={c.label} className={`flex min-w-[84px] flex-col gap-0.5 px-[18px] py-2 ${i > 0 ? 'border-l border-[#eceeea]' : ''}`}>
+          <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-muted">{c.label}</span>
+          <span className="text-[19px] font-bold leading-tight tabular-nums" style={{ color: c.color }}>{c.value}</span>
         </div>
-        {q && (
-          <p className={styles.hint}>
-            Showing {shown.length} of {racks.length} racks{shown.length === 0 ? ' — no item matches' : ''}
-          </p>
-        )}
-      </div>
-
-      {isLoading ? (
-        <div className={styles.emptyRow}>Loading racks…</div>
-      ) : racks.length === 0 ? (
-        <div className={styles.emptyRow}>No racks in this warehouse yet. Add one with New rack.</div>
-      ) : (
-        <div className={styles.rackGrid}>
-          {shown.map((r) => (
-            <RackCard key={r.id} rack={r} onClick={() => setSelected(r)} />
-          ))}
-        </div>
-      )}
-
-      {selected && (
-        <RackDetailModal
-          rack={selected}
-          warehouseId={warehouseId}
-          onClose={() => setSelected(null)}
-          onEdit={() => { onEditRack(selected); setSelected(null); }}
-          onStockInHere={() => { onStockInHere(selected.id); setSelected(null); }}
-        />
-      )}
-    </div>
-  );
-}
-
-/* A single colour-coded rack card. Occupied shows up to 3 items + "+N more". */
-function RackCard({ rack, onClick }: { rack: Rack; onClick: () => void }) {
-  const cls =
-    rack.status === 'OCCUPIED' ? styles.rackOccupied
-      : rack.status === 'RESERVED' ? styles.rackReserved
-        : styles.rackEmpty;
-  const items = rack.items || [];
-  const visible = items.slice(0, 3);
-  const extra = Math.max(0, items.length - 3);
-
-  return (
-    <div className={`${styles.rackCard} ${cls}`} onClick={onClick}>
-      <div className={styles.rackCardTop}>
-        <span className={styles.rackName}>{rack.rack}</span>
-        {rack.status === 'OCCUPIED' && (
-          <span className={styles.rackCount}>{items.length} item{items.length === 1 ? '' : 's'}</span>
-        )}
-      </div>
-      {rack.status === 'OCCUPIED' ? (
-        <div className={styles.rackItems}>
-          {visible.map((it) => {
-            const meta = itemMeta(it);
-            return (
-              <div key={it.id} className={styles.rackItemLine}>
-                <div className={styles.rackItemName}>{itemDescription(it)}</div>
-                {meta && <div className={styles.rackItemMeta}>{meta}</div>}
-              </div>
-            );
-          })}
-          {extra > 0 && <div className={styles.rackMore}>+ {extra} more</div>}
-        </div>
-      ) : (
-        <div className={styles.rackStateLabel}>{STATUS_LABEL[rack.status]}</div>
-      )}
-    </div>
-  );
-}
-
-/* Rack detail popup — contents + move history for THIS rack, plus Edit / Delete
-   (empty only) / Stock in here. Movements are filtered client-side out of the
-   warehouse ledger so no extra endpoint is needed. */
-function RackDetailModal({
-  rack, warehouseId, onClose, onEdit, onStockInHere,
-}: {
-  rack: Rack;
-  warehouseId: string;
-  onClose: () => void;
-  onEdit: () => void;
-  onStockInHere: () => void;
-}) {
-  const del = useDeleteRack();
-  const notify = useNotify();
-  const confirm = useConfirm();
-  const movements = useMovements(warehouseId ? { warehouseId } : undefined);
-  const rackMoves = useMemo(
-    () => (movements.data ?? []).filter((m) => m.rack_id === rack.id || m.to_rack_id === rack.id),
-    [movements.data, rack.id],
-  );
-  const items = rack.items || [];
-
-  const removeRack = async () => {
-    if (items.length > 0) {
-      notify({ title: 'This rack still has stock on it.', body: 'Move or stock out its items before deleting.', tone: 'error' });
-      return;
-    }
-    const ok = await confirm({
-      title: `Delete ${rack.rack}?`,
-      body: 'This removes the empty rack. This cannot be undone.',
-      confirmLabel: 'Delete',
-      danger: true,
-    });
-    if (!ok) return;
-    del.mutate(rack.id, {
-      onSuccess: onClose,
-      onError: (e) => notify({ title: 'Could not delete rack', body: (e as Error).message, tone: 'error' }),
-    });
-  };
-
-  return (
-    <div className={styles.modalBackdrop} onClick={onClose}>
-      <div className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
-        <div className={styles.modalHeader}>
-          <h3 className={styles.modalTitle}>{rack.rack}</h3>
-          <button type="button" className={styles.closeBtn} onClick={onClose}><X {...ICON} /></button>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
-          <span className={styles.eyebrow}>Status</span>
-          <span className={`${styles.movementPill} ${
-            rack.status === 'OCCUPIED' ? styles.movementIn
-              : rack.status === 'RESERVED' ? styles.movementTransfer
-                : styles.movementOut}`}>{STATUS_LABEL[rack.status]}</span>
-        </div>
-        {rack.position && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
-            <span className={styles.eyebrow}>Position</span>
-            <span className={styles.detailItemMeta}>{rack.position}</span>
-          </div>
-        )}
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-          <span className={styles.eyebrow}>Contents ({items.length})</span>
-          {items.length === 0 ? (
-            <p className={styles.detailItemMeta}>No items in this rack.</p>
-          ) : (
-            items.map((it) => (
-              <div key={it.id} className={styles.detailItem}>
-                <span className={styles.detailItemName}>{itemDescription(it)}</span>
-                {it.customer_name && <span className={styles.detailItemMeta}>Customer: {it.customer_name}</span>}
-                {it.source_doc_no && <span className={styles.detailItemMeta}>Document: {it.source_doc_no}</span>}
-                {(it.qty ?? 1) > 1 && <span className={styles.detailItemMeta}>Qty: {fmtQty(it.qty)}</span>}
-                {it.stocked_in_date && <span className={styles.detailItemMeta}>Stocked in: {fmtDate(it.stocked_in_date)}</span>}
-                {it.notes && <span className={styles.detailItemMeta}>Notes: {it.notes}</span>}
-              </div>
-            ))
-          )}
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-          <span className={styles.eyebrow}>Move history ({rackMoves.length})</span>
-          {movements.isLoading ? (
-            <p className={styles.detailItemMeta}>Loading history…</p>
-          ) : rackMoves.length === 0 ? (
-            <p className={styles.detailItemMeta}>No movements recorded for this rack.</p>
-          ) : (
-            rackMoves.slice(0, 12).map((m) => (
-              <div key={m.id} className={styles.detailItem}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                  <MovementPill type={m.movement_type} />
-                  <span className={styles.detailItemMeta}>Qty {fmtQty(m.quantity)} · {fmtDate(m.created_at)}</span>
-                </span>
-                {m.product_name && <span className={styles.detailItemMeta}>{m.product_name}</span>}
-                {m.source_doc_no && <span className={styles.detailItemMeta}>{m.source_doc_no}</span>}
-                {m.reason && <span className={styles.detailItemMeta}>{m.reason}</span>}
-              </div>
-            ))
-          )}
-        </div>
-
-        <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'space-between', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-            <Button variant="ghost" onClick={onEdit}>Edit</Button>
-            <Button variant="ghost" onClick={removeRack} disabled={items.length > 0 || del.isPending}>Delete</Button>
-          </div>
-          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-            <Button variant="secondary" onClick={onStockInHere}>
-              <ArrowDownToLine {...ICON} /><span>Stock in here</span>
-            </Button>
-            <Button variant="primary" onClick={onClose}>Close</Button>
-          </div>
-        </div>
-      </div>
+      ))}
     </div>
   );
 }
@@ -965,18 +771,32 @@ function SeedRacksModal({
   const create = useCreateRack();
   const notify = useNotify();
   const [prefix, setPrefix] = useState('Rack');
+  const [series, setSeries] = useState('');
   const [count, setCount] = useState(10);
+  const [levels, setLevels] = useState(1);
   const [scopeMode, setScopeMode] = useState<ScopeMode>('this');
   const [scopeChosen, setScopeChosen] = useState<string[]>([]);
+
+  /* The labels the server WILL write, from the shared generator — the preview
+     must not be a second guess at the rule (shared/rack-labels.ts). */
+  const preview = buildSeedRackLabels({
+    prefix: prefix.trim() || 'Rack', series, count: Number(count), levels: Number(levels),
+  });
 
   const submit = () => {
     const n = Math.floor(Number(count));
     if (!Number.isFinite(n) || n < 1) {
-      notify({ title: 'Enter how many racks to create (1–200).', tone: 'error' });
+      notify({ title: `Enter how many racks to create (1–${MAX_SEED_RACKS}).`, tone: 'error' });
       return;
     }
     create.mutate(
-      { ...scopeBody(scopeMode, warehouseId, scopeChosen), count: n, prefix: prefix.trim() || 'Rack' },
+      {
+        ...scopeBody(scopeMode, warehouseId, scopeChosen),
+        count: n,
+        prefix: prefix.trim() || 'Rack',
+        series: series.trim(),
+        levels: Math.max(1, Math.floor(Number(levels)) || 1),
+      },
       {
         onSuccess: (res) => {
           const made = res.created ?? res.racks?.length ?? 0;
@@ -997,7 +817,11 @@ function SeedRacksModal({
         </div>
         <div className={formStyles.modalBody}>
           <p className={formStyles.subtitle} style={{ margin: 0 }}>
-            Quickly create numbered racks (e.g. Rack 1 … Rack {Math.max(1, Math.floor(Number(count) || 0))}). Labels that already exist are skipped. Max 200 at a time.
+            {preview.length > 0
+              ? <>Creates {preview.length} rack{preview.length === 1 ? '' : 's'}: <strong>{preview[0]}</strong>
+                  {preview.length > 1 && <> … <strong>{preview[preview.length - 1]}</strong></>}.</>
+              : <>Enter how many racks to create.</>}
+            {' '}Labels that already exist are skipped. Max {MAX_SEED_RACKS} at a time.
           </p>
           <label className={formStyles.field}>
             <span className={formStyles.fieldLabel}>Prefix</span>
@@ -1005,9 +829,19 @@ function SeedRacksModal({
               onChange={(e) => setPrefix(e.target.value)} />
           </label>
           <label className={formStyles.field}>
-            <span className={formStyles.fieldLabel}>How many</span>
-            <input className={formStyles.fieldInput} type="number" min={1} max={200} value={count}
+            <span className={formStyles.fieldLabel}>Series (optional)</span>
+            <input className={formStyles.fieldInput} value={series} placeholder="e.g. L or R — leave blank for plain numbers"
+              onChange={(e) => setSeries(e.target.value)} />
+          </label>
+          <label className={formStyles.field}>
+            <span className={formStyles.fieldLabel}>How many {Number(levels) > 1 ? 'aisles' : 'racks'}</span>
+            <input className={formStyles.fieldInput} type="number" min={1} max={MAX_SEED_RACKS} value={count}
               onChange={(e) => setCount(Number(e.target.value))} />
+          </label>
+          <label className={formStyles.field}>
+            <span className={formStyles.fieldLabel}>Levels per aisle</span>
+            <input className={formStyles.fieldInput} type="number" min={1} max={20} value={levels}
+              onChange={(e) => setLevels(Number(e.target.value))} />
           </label>
           <RackScopeField
             warehouses={warehouses}

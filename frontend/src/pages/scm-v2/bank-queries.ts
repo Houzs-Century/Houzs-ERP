@@ -52,6 +52,24 @@ export type BankCandidate = {
   outstandingSen: number;
 };
 
+/** A posted ledger entry this movement could BE — the answer for everything on
+    a statement that is not card money. Ranked by the server (acc/bank-match):
+    the amount agrees to the sen and in the same direction, the entry is inside
+    a few days, and nothing else has claimed it. */
+export type BankEntryCandidate = {
+  jeNo: string;
+  entryDate: string;
+  sourceType: string | null;
+  sourceDocNo: string | null;
+  debitSen: number;
+  creditSen: number;
+  /** Signed the way the statement signs it: positive is money in. */
+  amountSen: number;
+  daysApart: number;
+  /** Who was paid / who paid, off the entry. */
+  partyName?: string | null;
+};
+
 export type BankLine = {
   id: number;
   line_no: number;
@@ -78,6 +96,7 @@ export type BankLine = {
   note: string | null;
   matches: Array<{ je_no: string; amount_sen: number; match_reason: string | null }>;
   candidates: BankCandidate[];
+  entryCandidates: BankEntryCandidate[];
 };
 
 export type Reconciliation = {
@@ -94,6 +113,19 @@ export type Reconciliation = {
   bankNotInBooks: { count: number; sen: number };
   booksNotOnBank: { count: number; sen: number };
   unmatchedJeNos: string[];
+  /** Earlier periods' entries still not on any statement — what the
+      brought-forward is made of. */
+  carried: { count: number; sen: number };
+  carriedJeNos: string[];
+  clearedFromBeforeSen?: number;
+  broughtForwardExplained: boolean | null;
+  /** The owner's form (docs/bugs/0806): books ± outstanding items = bank. */
+  outstandingPayments: { count: number; sen: number };
+  outstandingReceipts: { count: number; sen: number };
+  outstandingJeNos: string[];
+  computedClosingSen: number;
+  unexplainedSen: number | null;
+  tallies: boolean;
   consistent: boolean;
   inconsistency: string | null;
   reconciled: boolean;
@@ -106,6 +138,12 @@ export type LedgerEntry = {
   sourceDocNo: string | null;
   debitSen: number;
   creditSen: number;
+  /** Who was paid / who paid (owner 2026-09-11: 例如 pay to who). */
+  partyName?: string | null;
+  notes?: string | null;
+  /** Posted before this period and still not on any statement — carried
+      (owner: 之前 in book 还没有 recon 的也要带下来，因为可能下个月才过钱). */
+  carried?: boolean;
 };
 
 export const useBankSetup = () => useQuery({
@@ -199,6 +237,20 @@ export const useMatchBankLine = () => {
     mutationFn: ({ lineId, jeNo }: { lineId: number; jeNo: string }) =>
       authedFetch<{ ok: boolean; status: string; jeNo: string }>(
         `/accounting/bank/lines/${lineId}/match`, { method: 'POST', body: JSON.stringify({ jeNo }) },
+      ),
+    onSuccess: () => invalidateAfterBankPosting(qc),
+  });
+};
+
+/* Several movements are one entry, or one movement is several entries
+   (docs/bugs/0803; owner: 你应该开发让我自由选). The server checks the two sides
+   add up and that no entry is already accounted for. */
+export const useMatchBankGroup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { lineIds: number[]; jeNos: string[] }) =>
+      authedFetch<{ ok: boolean; status: string; lines: number; entries: number; jeNos: string[] }>(
+        '/accounting/bank/lines/match-group', { method: 'POST', body: JSON.stringify(body) },
       ),
     onSuccess: () => invalidateAfterBankPosting(qc),
   });
@@ -400,6 +452,23 @@ export type BankMonthLock = {
   differenceSen: number | null;
   statementCount: number;
   wasComplete: boolean;
+};
+
+/* An old file re-filed as its month's statement, in place (docs/bugs/0806). */
+export const useSetStatementPeriod = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, month }: { id: number; month: string }) =>
+      authedFetch<{ ok: boolean; periodFrom: string; periodTo: string }>(
+        `/accounting/bank/statements/${id}/period`, { method: 'POST', body: JSON.stringify({ month }) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['bank-statement'] });
+      void qc.invalidateQueries({ queryKey: ['bank-statements'] });
+      void qc.invalidateQueries({ queryKey: ['bank-month'] });
+      void qc.invalidateQueries({ queryKey: ['bank-months'] });
+    },
+  });
 };
 
 export const useLockBankMonth = () => {

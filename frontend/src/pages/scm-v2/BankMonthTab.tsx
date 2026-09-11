@@ -36,7 +36,7 @@ import {
   type Reconciliation,
 } from './bank-queries';
 import { ICON, fmt, btn, softText, danger, panel, refusalText } from './settlement-ui';
-import { ReconciliationPanel, OpenLine, DoneLine } from './BankStatementTab';
+import { ReconciliationPanel, OpenLines, DoneLine, BooksNotOnBank } from './BankStatementTab';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
@@ -250,24 +250,7 @@ const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) =
       {q.data && <ReconciliationPanel r={q.data.reconciliation} />}
       {q.data && <WhereTheFiguresCameFrom a={q.data.assembly} />}
 
-      {open.length > 0 && (
-        <section className="space-y-2">
-          <b>{`Still to decide (${open.length})`}</b>
-          <table className={grid.grid}>
-            <thead>
-              <tr>
-                <th>On the bank statement</th>
-                <th className={grid.num}>Amount</th>
-                <th>What it looks like</th>
-                <th>What to do</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ordered.map((l) => <OpenLine key={l.id} line={l} />)}
-            </tbody>
-          </table>
-        </section>
-      )}
+      {open.length > 0 && <OpenLines lines={ordered} entries={q.data?.unmatchedEntries ?? []} />}
 
       {done.length > 0 && (
         <div style={softText}>
@@ -290,30 +273,7 @@ const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) =
         </table>
       )}
 
-      {q.data && q.data.unmatchedEntries.length > 0 && (
-        <section className="space-y-2">
-          <b>{`In the books, not on this month's statements (${q.data.unmatchedEntries.length})`}</b>
-          <div style={softText}>
-            Posted in these days and the bank has not shown it: an uncleared cheque, a deposit still on its
-            way, or an entry belonging to a day not uploaded yet.
-          </div>
-          <table className={grid.grid}>
-            <thead>
-              <tr><th>Entry</th><th>Date</th><th>Source</th><th className={grid.num}>Amount</th></tr>
-            </thead>
-            <tbody>
-              {q.data.unmatchedEntries.map((e) => (
-                <tr key={e.jeNo}>
-                  <td>{e.jeNo}</td>
-                  <td>{e.entryDate}</td>
-                  <td>{[e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ') || '—'}</td>
-                  <td className={grid.num}>{fmt(e.debitSen - e.creditSen)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      )}
+      {q.data && <BooksNotOnBank entries={q.data.unmatchedEntries} />}
 
       {q.data && q.data.statements.length > 0 && <TheFiles data={q.data} />}
     </section>
@@ -385,29 +345,33 @@ const TheLock = ({ data, picked }: {
     );
   }
 
-  /* OPEN. The button offers itself; whether the month may actually close is the
-     server's judgement, and its refusal is the sentence shown below. */
-  const clean = data.assembly.complete
-    && data.reconciliation.consistent
-    && data.reconciliation.differenceSen === 0;
+  /* OPEN. The button is on only when the month can close — it tallies, is
+     whole, and has nothing left to decide (owner 2026-09-11: 当 closing bank
+     statement amount 无法 tally 就无法 lock) — and otherwise says which of those
+     is missing. There is no reason box: no sentence makes a month tally. The
+     server judges again on the press; its refusal is the sentence below. */
+  const r = data.reconciliation;
+  const open = r.bankNotInBooks.count;
+  const why = !r.consistent
+    ? 'Cannot close: these numbers do not add up.'
+    : open > 0
+      ? `Cannot close: ${open} movement${open === 1 ? '' : 's'} still to decide.`
+      : !data.assembly.complete
+        ? 'Cannot close: this month is not covered end to end by the files uploaded.'
+        : r.closingStatementSen == null
+          ? 'Cannot close: no file printed a closing balance to tally against.'
+          : !r.tallies
+            ? `Cannot close: it does not tally — the books and the outstanding items reach ${fmt(r.computedClosingSen)}, the bank statement says ${fmt(r.closingStatementSen)}.`
+            : null;
 
   return (
     <div style={{ display: 'grid', gap: 4, justifyItems: 'start' }}>
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <button type="button" style={btn(false, lock.isPending)} disabled={lock.isPending}
-          onClick={() => lock.mutate({
-            accountCode: picked.accountCode, month: picked.month, note: note.trim() || null,
-          }, { onSuccess: () => setNote('') })}>
+        <button type="button" style={btn(false, why != null || lock.isPending)} disabled={why != null || lock.isPending}
+          onClick={() => lock.mutate({ accountCode: picked.accountCode, month: picked.month })}>
           <Lock {...ICON} /> {lock.isPending ? 'Closing…' : 'Close this month'}
         </button>
-        {/* Said BEFORE the press when the month is not clean, so the reason box
-            is already there rather than appearing as the answer to a refusal. */}
-        {!clean && (
-          <input value={note} onChange={(e) => setNote(e.target.value)}
-            aria-label="Why this month is being closed anyway"
-            placeholder="This month is not clean — why close it anyway?"
-            style={{ padding: '5px 8px', fontSize: 'var(--fs-13)', minWidth: 320 }} />
-        )}
+        {why && <span style={{ fontSize: 'var(--fs-13)', color: danger }}>{why}</span>}
       </div>
       <div style={softText}>
         Closing fixes what this month says. Nothing in it can be booked, left out or undone afterwards

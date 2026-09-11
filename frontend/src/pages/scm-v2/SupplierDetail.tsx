@@ -31,6 +31,7 @@ import {
 // SofaComboTab from the vendored components. (Was ./SupplierDetailStubs.)
 import { MaintenanceTab, type MaintenanceSection } from './Products';
 import { SofaComboTab } from '../../vendor/scm/components/SofaComboTab';
+import { SupplierLeadTimes } from './SupplierLeadTimes';
 import { FabricTracking } from './FabricTracking';
 import { setActiveCompanyId } from '../../lib/activeCompany';
 import { Button } from '../../components/Button';
@@ -267,7 +268,7 @@ function mfgCategoryFromSupplierCategory(
   }
 }
 
-type SupplierDetailTab = 'overview' | 'sku-pricing' | 'maintenance' | 'combos' | 'fabric';
+type SupplierDetailTab = 'overview' | 'sku-pricing' | 'maintenance' | 'combos' | 'fabric' | 'lead-times';
 
 export const SupplierDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -445,6 +446,12 @@ export const SupplierDetail = () => {
             Fabric Converter
           </SupplierTabButton>
         )}
+        <SupplierTabButton
+          active={activeTab === 'lead-times'}
+          onClick={() => setActiveTab('lead-times')}
+        >
+          Lead Times
+        </SupplierTabButton>
       </div>
 
       {activeTab === 'overview' && (
@@ -469,6 +476,7 @@ export const SupplierDetail = () => {
           supplierCategory={supplierCategory}
         />
       )}
+      {activeTab === 'lead-times' && <SupplierLeadTimes supplierId={id!} />}
       {activeTab === 'combos' && showCombo && (
         <section className={styles.card}>
           <header className={styles.cardHeader}>

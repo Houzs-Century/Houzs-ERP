@@ -159,13 +159,19 @@
   pointer-events: none;
 }
 
-/* TOUCH TARGET. Apple and Google both specify 44px minimum; the button above
-   is 20px, which is why the picker was unreachable by finger. The hit area is
-   grown with a transparent overlay rather than by setting width/height, because
-   a 44px-tall child would push .wrap from ~30px to ~52px and re-flow every form
-   row on every phone and tablet. The overlay is part of the button, so a tap
-   anywhere in it activates the button; the icon keeps its 20px appearance.
-   Desktop (pointer: fine) is untouched. */
+/* TOUCH: cover the WHOLE field with the native input, so a tap anywhere on
+   the field opens the OS picker directly — no scripts in the path, no
+   split-field left/right ambiguity. Owner 2026-09-10: 「calender 点一下开点
+   一下关 就这样简单」 + 「remove 掉可以打字 force 只能用 calender」. This
+   retires the earlier "left 44px = picker, right = text box" split from
+   2026-09-09 「可以保留手打」 (which produced 「有时能点到，有时点不到」
+   because the tap target was a 44px sub-region of the field). appearance:none
+   stays load-bearing on iOS to prevent Safari's intrinsic-width spill.
+   Fine-pointer (mouse) is untouched — the calendar button and its showPicker
+   still handle desktop clicks, and the wrap's onClick in the .tsx catches
+   clicks on the visible text (now readOnly) too.
+   iconBtn::after keeps the 44px minimum for the visible icon in case the
+   overlay ever regresses. */
 @media (pointer: coarse) {
   .iconBtn { position: relative; }
   .iconBtn::after {
@@ -176,5 +182,24 @@
     transform: translate(-50%, -50%);
     width: 44px;
     height: 44px;
+  }
+  /* Every side of `inset` set explicitly. Owner 2026-09-11:
+     「有时能点到，有时点不到」. The previous shorthand `inset: 0` followed by
+     `top: auto; right: auto; left: auto` looked like it kept the four-sides
+     assignment plus reset unwanted sides — it does not. `top / right / left`
+     came AFTER `inset` in declaration order and override the shorthand's
+     three sides, leaving only `bottom: 0`. The native input was therefore
+     positioned at the BOTTOM of the wrap with no top/left/right anchor, so
+     a tap in the top half of the field missed it and read as 「calender
+     no reaction」. Write all four sides explicitly and drop `transform` (no
+     translate needed once the input covers the wrap). */
+  .nativeIconTarget {
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    transform: none;
   }
 }

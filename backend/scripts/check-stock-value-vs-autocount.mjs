@@ -1,0 +1,296 @@
+#!/usr/bin/env node
+/* check-stock-value-vs-autocount — does our inventory VALUE equal AutoCount's,
+ * and if not, exactly where does the difference sit?
+ *
+ * Owner, 2026-09-09: 「最重要的是一定要跟 AutoCount 一样，要不然我的 balance sheet
+ * 之后做的时候会不准、不一样。你只要跟 AutoCount 一样就没问题了」 — so the number
+ * that matters is the one his balance sheet will carry, and a total that agrees
+ * by coincidence is worth nothing. This reports the TOTAL and then every item
+ * that moves it, largest first.
+ *
+ * ── THE AUTOCOUNT SIDE: ITS OWN OPEN COST LAYERS ─────────────────────────
+ * `data/ac-stock-balance-2026-09-10.json.gz` is `UTDStockCostDTL` — AutoCount's
+ * own store of the cost layers a balance still holds — joined to
+ * `UTDStockCost` for item and location, beside the `StockDTL` balance quantity
+ * as at 2026-09-10.
+ *
+ * WHICH TABLE WAS NOT DECIDED BY READING. The owner's Stock Balance screenshot
+ * gives 16 cells with their exact Total Cost, and three candidates were tested
+ * against them: `SUM(Qty*Cost)` over StockDTL reproduced 7, `FIFOCost` joined to
+ * StockDTL reproduced 7 (failing on a different set), and `UTDStockCostDTL`
+ * reproduced 13. Whole-book it gives RM 1,602,654 against the screen's
+ * RM 1,707,332.
+ *
+ * THE 6% THAT IS STILL UNEXPLAINED IS FLAGGED, NOT ABSORBED. 112 cells hold
+ * cost layers that do not add up to their own balance — `AERO-MP (K)` KL has one
+ * layer of 245 units against a balance of 38, and the screen values those 38 at
+ * RM 30.0995 each where the layer says RM 30.00. Neither newest-layers-first nor
+ * adding `AdjustedCost` reproduces it. Those cells are reported as UNKNOWN and
+ * excluded from the comparison: calling them our difference would be inventing a
+ * finding. The other 961 cells (7,605 units, RM 1,485,503) are exact.
+ *
+ * It is NOT `data/ac-utd-stock-cost.json.gz`, which is already committed and is
+ * the file anyone would reach for first — 736 units and RM 100,169 across 1,352
+ * rows, led by `TRANSPORTATION CHARGES` at -373. Nor is it the first version of
+ * this export, which summed `Qty*Cost` over every movement and produced
+ * RM 4,130,404 — a number that exists nowhere in AutoCount.
+ *
+ * ── WHAT IS OUT OF SCOPE, ON THE OWNER'S WORD ─────────────────────────────
+ * SERVICE items. Owner, 2026-09-09: 「那个 Service 的东西，AutoCount 那边是不需要
+ * 进来的。因为那个 AutoCount 它还在算着库存，我们不用理它」. The book still
+ * carries a stock balance for them; we do not, and that is not a difference. The
+ * classification is `SERVICE_GROUPS` in `lib/ac-stock-compare.mjs`, shared with
+ * the quantity reconcile so one list decides it for both.
+ *
+ * ── THREE THINGS THAT ARE DEFINITIONAL, NOT DEFECTS ──────────────────────
+ * Each is separated and SUBTRACTED from the headline before any item is called
+ * a difference, because folding them in would make the total look wrong for
+ * reasons nobody needs to chase:
+ *
+ *   CONSIGNMENT   the owner's rule (2026-07-25) is that consignment stock shows
+ *                 QUANTITY and is excluded from VALUE. AutoCount values it.
+ *   LAYER GAP     112 cells whose cost layers do not add up to their own
+ *                 balance. UNKNOWN, reported, excluded — never called ours.
+ *                 (A NEGATIVE balance is NOT in this list: the owner ruled on
+ *                 2026-09-10 「如果是负库存，你也是要跟着负库存的」, so a negative
+ *                 cell is compared like any other and we are expected to match
+ *                 it.)
+ *   ZERO-COST     lots we could not price (the book never priced them either).
+ *                 They carry quantity and no value on our side.
+ *
+ * ── SOFA IS COUNTED APART, BECAUSE THE TWO SIDES COUNT DIFFERENT THINGS ───
+ * The book holds ONE row for a whole sofa; we hold one lot per compartment. The
+ * first version of this script summed our compartments and set the total beside
+ * the book's whole-sofa figure, and the owner caught it: 「我们那么多是因为
+ * breakdown compartment」. It reported `9028` as 13 in the book against 63 here
+ * and called the RM 66,266 between them a difference. It is a unit change, not a
+ * difference, and it made the headline say we hold 2,635 units more than the book
+ * when the quantity reconcile — which folds properly — says the opposite: 9,830
+ * against 9,731, and 103 whole sofas against 108.
+ *
+ * So sofa is NOT mixed into the like-for-like total any more. It gets its own
+ * block: whole sofas counted with `foldSofaPieces` (each build counted by its
+ * SMALLEST surviving piece, because a build missing a piece is not a sofa), and
+ * value compared only in TOTAL — the book has no compartment codes, so there is
+ * no per-item comparison to make.
+ *
+ * That leaves the non-sofa block as the number a balance sheet can use.
+ *
+ * READ-ONLY: SELECTs only, no DDL, no writes, no transaction. Every legitimate
+ * answer exits 0 — the answer is the output, not the exit code.
+ *
+ * RE-RUN: read-only, so a second run changes nothing and reports the same unless
+ * the data moved or a fresher AutoCount export was committed.
+ *
+ * Env: DATABASE_URL (required)   COMPANY_ID (default 1)   TOP (default 40)
+ */
+import fs from 'node:fs';
+import zlib from 'node:zlib';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import postgres from 'postgres';
+import { SERVICE_GROUPS, loadAcBinding } from './lib/ac-stock-compare.mjs';
+import { readMappingCsv, normCode } from './lib/ac-mapping-csv.mjs';
+import { sofaModelOf, makeModelMatcher, foldSofaPieces } from './lib/sofa-piece-fold.mjs';
+
+const CO = Number(process.env.COMPANY_ID ?? 1);
+const TOP = Number(process.env.TOP ?? 40);
+const here = path.dirname(fileURLToPath(import.meta.url));
+const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
+const norm = normCode;
+const rm = (sen) => `RM ${(sen / 100).toFixed(2)}`;
+
+if (!process.env.DATABASE_URL) {
+  console.error('DATABASE_URL is required.');
+  process.exit(2);
+}
+const SNAP = path.join(here, 'data', 'ac-stock-balance-2026-09-10.json.gz');
+if (!fs.existsSync(SNAP)) {
+  console.error(`REFUSED: ${SNAP} is missing — it is the AutoCount stock valuation and `
+    + 'this runner cannot reach the book. Nothing was compared.');
+  process.exit(1);
+}
+const snap = JSON.parse(zlib.gunzipSync(fs.readFileSync(SNAP)).toString('utf8').replace(/^﻿/, ''));
+
+const mapping = readMappingCsv(fs.readFileSync(path.join(here, 'data', 'autocount-erp-mapping-1561.csv'), 'utf8'));
+const { byAc } = loadAcBinding(fs.readFileSync(path.join(here, 'data', 'autocount-erp-mapping-1561.csv'), 'utf8'));
+const erpCodeOf = (ac) => norm(mapping.get(norm(ac))?.erp || ac);
+const groupOf = (ac) => (mapping.get(norm(ac))?.cat ?? '');
+const isService = (ac) => SERVICE_GROUPS.has(norm(groupOf(ac)));
+
+/* The sofa models, taken from the binding sheet's own SOFA rows: each maps to
+   our base code `<model>-1S`, so stripping that suffix IS the model list. The
+   matcher is longest-prefix, because `SOFA` and `SOFA-333 44` are both models
+   and `startsWith` alone would answer the shorter one (lib/sofa-piece-fold.mjs). */
+const sofaModels = new Set();
+for (const [acCode, erpCode] of byAc) {
+  if (norm(groupOf(acCode)) !== 'SOFA') continue;
+  const m = sofaModelOf(erpCode);
+  if (m) sofaModels.add(m);
+}
+const matchModel = makeModelMatcher(sofaModels);
+/* `matchModel` is the SOFA TEST, not a key builder: a code it recognises is a
+   sofa and goes to the sofa block; everything else is compared under its own ERP
+   code. It used to fold a compartment onto its model and let that key meet the
+   book's whole-sofa row, which is the bug this file was rewritten for. */
+
+const sql = postgres(process.env.DATABASE_URL, { ssl: 'require', max: 1, prepare: false });
+
+try {
+  log(`company ${CO}   AutoCount export ${snap.exported_at}`);
+  log(`mapping rows: ${byAc.size}`);
+
+  /* ── AutoCount side ────────────────────────────────────────────────────── */
+  const ac = new Map();
+  let acService = { qty: 0, sen: 0, cells: 0 };
+  let acGap = { qty: 0, sen: 0, cells: 0, codes: new Set() };
+  let acUnmapped = { qty: 0, sen: 0, codes: new Set() };
+  let acSofa = { sofas: 0, sen: 0, cells: 0 };
+  for (const c of snap.cells) {
+    if (isService(c.item)) { acService.qty += c.bal_qty; acService.sen += c.value_sen; acService.cells += 1; continue; }
+    /* A NEGATIVE balance is followed, not set aside. Owner 2026-09-10:
+       「如果是负库存，你也是要跟着负库存的」. */
+    if (c.layer_gap) {
+      /* AutoCount's own cost layers do not add up to its own balance on this
+         cell, so its value here is a number this channel cannot reproduce (see
+         the export header). Counted and named as UNKNOWN -- calling it our
+         difference would be inventing a finding. */
+      acGap.qty += c.bal_qty; acGap.sen += c.value_sen; acGap.cells += 1; acGap.codes.add(c.item);
+      continue;
+    }
+    if (!mapping.has(norm(c.item))) { acUnmapped.qty += c.bal_qty; acUnmapped.sen += c.value_sen; acUnmapped.codes.add(c.item); }
+    const erpCode = erpCodeOf(c.item);
+    if (matchModel(erpCode)) {
+      /* A whole sofa in the book. Counted and valued in its own block below —
+         never added to a total our compartments also feed. */
+      acSofa.sofas += c.bal_qty; acSofa.sen += c.value_sen; acSofa.cells += 1;
+      continue;
+    }
+    const e = ac.get(erpCode) ?? { qty: 0, sen: 0 };
+    e.qty += c.bal_qty; e.sen += c.value_sen; ac.set(erpCode, e);
+  }
+  const acTotal = [...ac.values()].reduce((a, e) => a + e.sen, 0);
+  const acQty = [...ac.values()].reduce((a, e) => a + e.qty, 0);
+
+  /* ── our side ──────────────────────────────────────────────────────────── */
+  const lots = await sql`
+    SELECT l.item_code, l.qty_remaining::numeric AS qty,
+           coalesce(l.unit_cost_sen, 0)::bigint AS cost,
+           l.source_doc_type, l.source_doc_no,
+           l.warehouse_id, l.batch_no
+      FROM scm.inventory_lots l
+     WHERE l.company_id = ${CO} AND l.qty_remaining <> 0`;
+  /* The consignment rule, copied from src/scm/lib/inventory-movements.ts:103 so
+     the two answers cannot drift on the classification. */
+  const isConsignment = (t, n) => {
+    const ty = String(t ?? '').toUpperCase();
+    if (ty === 'PC_RECEIVE' || ty === 'PC_RETURN' || ty === 'PURCHASE_CONSIGNMENT_NOTE') return true;
+    return /(?:^|-)PCR-/i.test(String(n ?? ''));
+  };
+
+  const erp = new Map();
+  let consign = { qty: 0, sen: 0, lots: 0 };
+  let zeroCost = { qty: 0, lots: 0, codes: new Set() };
+  const erpSofa = { sen: 0, pieces: 0, rows: [] };
+  for (const l of lots) {
+    const q = Number(l.qty);
+    const sen = Math.round(q * Number(l.cost));
+    if (isConsignment(l.source_doc_type, l.source_doc_no)) {
+      consign.qty += q; consign.sen += sen; consign.lots += 1;
+      continue;
+    }
+    if (Number(l.cost) === 0) { zeroCost.qty += q; zeroCost.lots += 1; zeroCost.codes.add(l.item_code); }
+    const model = matchModel(norm(l.item_code));
+    if (model) {
+      /* A sofa COMPARTMENT. Its value joins the sofa total; its quantity goes to
+         the fold, which counts whole sofas — summing compartments here is exactly
+         the mistake this block exists to stop. */
+      erpSofa.sen += sen;
+      erpSofa.pieces += q;
+      erpSofa.rows.push({ model, warehouseId: l.warehouse_id, batchNo: l.batch_no,
+        itemCode: l.item_code, qty: q });
+      continue;
+    }
+    const k = norm(l.item_code);
+    const e = erp.get(k) ?? { qty: 0, sen: 0 };
+    e.qty += q; e.sen += sen; erp.set(k, e);
+  }
+  const erpTotal = [...erp.values()].reduce((a, e) => a + e.sen, 0);
+  const erpQty = [...erp.values()].reduce((a, e) => a + e.qty, 0);
+
+  /* ── the headline, with every definitional line shown ─────────────────── */
+  /* Whole sofas, each build counted by its SMALLEST surviving piece: a build
+     missing a piece is not a sofa. Same module the quantity reconcile uses. */
+  const folded = foldSofaPieces(erpSofa.rows);
+  let whole = 0;
+  let ceiling = 0;
+  let incomplete = 0;
+  for (const cell of folded.values()) { whole += cell.whole; ceiling += cell.ceiling; incomplete += cell.incomplete; }
+
+  log('\n=== NON-SOFA — the number a balance sheet can use ===');
+  log(`  AutoCount                            ${String(Math.round(acQty)).padStart(7)}u   ${rm(acTotal).padStart(16)}`);
+  log(`  our system                           ${String(Math.round(erpQty)).padStart(7)}u   ${rm(erpTotal).padStart(16)}`);
+  log(`  DIFFERENCE (ours minus the book)     ${String(Math.round(erpQty - acQty)).padStart(7)}u   ${rm(erpTotal - acTotal).padStart(16)}`);
+
+  log('\n=== SOFA — counted apart, because the two sides count different things ===');
+  log(`  AutoCount   ${String(Math.round(acSofa.sofas)).padStart(5)} whole sofa(s) over ${acSofa.cells} cell(s)   ${rm(acSofa.sen)}`);
+  log(`  our system  ${String(Math.round(whole)).padStart(5)} whole sofa(s) folded from ${Math.round(erpSofa.pieces)} compartment(s)   ${rm(erpSofa.sen)}`);
+  log(`  DIFFERENCE  ${String(Math.round(whole - acSofa.sofas)).padStart(5)} sofa(s)   ${rm(erpSofa.sen - acSofa.sen)}`);
+  log(`  our count is COMPLETE sofas — every piece still on the shelf. Counting each`);
+  log(`  build by its biggest surviving piece instead gives ${Math.round(ceiling)}; the difference is`);
+  log(`  ${Math.round(ceiling - whole)} sofa(s) missing at least one piece (${incomplete} build(s) stand uneven).`);
+  log('  There is NO per-item sofa comparison below: the book has no compartment');
+  log('  codes, so nothing on our side has a counterpart to be set beside.');
+  log('');
+  log('  set aside before comparing, each for a stated reason:');
+  log(`    AutoCount SERVICE items — the owner's ruling, we do not carry them`);
+  log(`        ${String(acService.cells).padStart(5)} cell(s)  ${String(Math.round(acService.qty)).padStart(6)}u   ${rm(acService.sen)}`);
+  log(`    AutoCount cells whose own cost layers do not add up to its own balance`);
+  log(`        ${String(acGap.cells).padStart(5)} cell(s)  ${String(Math.round(acGap.qty)).padStart(6)}u   ${rm(acGap.sen)}  — UNKNOWN, not our difference`);
+  log(`        ${[...acGap.codes].slice(0, 8).join(', ')}${acGap.codes.size > 8 ? ' …' : ''}`);
+  log(`    our CONSIGNMENT stock — quantity yes, value no (owner rule 2026-07-25)`);
+  log(`        ${String(consign.lots).padStart(5)} lot(s)   ${String(Math.round(consign.qty)).padStart(6)}u   ${rm(consign.sen)} of value not counted`);
+  log(`    our lots still at ZERO cost — nothing prices them, the book included`);
+  log(`        ${String(zeroCost.lots).padStart(5)} lot(s)   ${String(Math.round(zeroCost.qty)).padStart(6)}u   across ${zeroCost.codes.size} code(s)`);
+  if (acUnmapped.codes.size) {
+    log(`    AutoCount items with NO row in the binding sheet — they cannot be matched`);
+    log(`        ${String(acUnmapped.codes.size).padStart(5)} code(s)  ${String(Math.round(acUnmapped.qty)).padStart(6)}u   ${rm(acUnmapped.sen)}`);
+    log(`        ${[...acUnmapped.codes].slice(0, 8).join(', ')}${acUnmapped.codes.size > 8 ? ' …' : ''}`);
+  }
+
+  /* ── every product that moves the total ───────────────────────────────── */
+  const keys = new Set([...ac.keys(), ...erp.keys()]);
+  const rows = [];
+  for (const k of keys) {
+    const a = ac.get(k) ?? { qty: 0, sen: 0 };
+    const e = erp.get(k) ?? { qty: 0, sen: 0 };
+    const dSen = e.sen - a.sen;
+    const dQty = e.qty - a.qty;
+    if (dSen === 0 && Math.abs(dQty) < 0.0001) continue;
+    rows.push({ k, aQty: a.qty, aSen: a.sen, eQty: e.qty, eSen: e.sen, dQty, dSen });
+  }
+  rows.sort((x, y) => Math.abs(y.dSen) - Math.abs(x.dSen));
+  const onlyBook = rows.filter((r) => r.eQty === 0);
+  const onlyOurs = rows.filter((r) => r.aQty === 0);
+
+  log(`\n=== PRODUCTS THAT DIFFER: ${rows.length} of ${keys.size} ===`);
+  log(`  the book has it and we do not: ${onlyBook.length}   we have it and the book does not: ${onlyOurs.length}`);
+  log(`  (the owner's rule: what AutoCount does not have, we do not need)`);
+  log('');
+  log(`  ${'product'.padEnd(34)} ${'qty book vs ours'.padStart(19)} ${'book value'.padStart(14)} ${'our value'.padStart(14)} ${'difference'.padStart(14)}`);
+  for (const r of rows.slice(0, TOP)) {
+    const q = `${Math.round(r.aQty)} vs ${Math.round(r.eQty)}`;
+    log(`  ${r.k.slice(0, 34).padEnd(34)} ${q.padStart(19)} `
+      + `${rm(r.aSen).padStart(14)} ${rm(r.eSen).padStart(14)} ${rm(r.dSen).padStart(14)}`);
+  }
+  if (rows.length > TOP) {
+    const tail = rows.slice(TOP).reduce((a, r) => a + r.dSen, 0);
+    log(`  … ${rows.length - TOP} more, together ${rm(tail)}`);
+  }
+
+  await sql.end();
+} catch (e) {
+  console.error(e);
+  try { await sql.end(); } catch { /* already closed */ }
+  process.exit(1);
+}

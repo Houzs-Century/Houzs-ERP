@@ -209,6 +209,36 @@ export function matchStatement(
     if (trustsRef && row.ref) {
       const hits = (byRef.get(normRef(row.ref)) ?? []).filter((p) => !claimed.has(key(p)));
       if (hits.length === 1) {
+        /* FAR FROM THE DAY IS STILL THE SAME SWIPE, but it is not something to
+           take without asking. Owner, 2026-09-09: four PBB lines read "No
+           payment recorded near …" while the payment sat in the ERP with the
+           identical reference and amount, keyed five to eleven days later
+           because the sale was written up late. The reference is the acquirer's
+           own identifier and does not become less true for that — so the
+           payment is now loaded whatever its date (acc/settlement
+           loadPaymentCandidates) and reaches here.
+
+           Auto-taking it would be a step too far: a reference matching across a
+           two-week gap is also the shape of a code mis-keyed onto a later sale,
+           and this is the one path that books money without a human. So inside
+           the tolerance it is taken as before; outside it, the SAME payment is
+           offered, pre-ticked, with the distance said out loud. */
+        const away = Math.round(dayGap(hits[0]!.paidOn, row.txnDate));
+        if (away > tolerance) {
+          decisions.push({
+            row,
+            bucket: 'NEEDS_CONFIRM',
+            matchReason: 'ref',
+            matched: [],
+            candidates: hits,
+            comboHints: [],
+            suggested: hits,
+            clue: `Reference ${row.ref} matches ${hits[0]!.docNo}, but it was recorded on `
+              + `${hits[0]!.paidOn} — ${away} days from this line, outside the ${tolerance}-day window. `
+              + 'Same reference and same amount usually means the sale was keyed late; check it and confirm.',
+          });
+          continue;
+        }
         claimed.add(key(hits[0]));
         decisions.push({
           row,

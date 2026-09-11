@@ -17,6 +17,7 @@
 //      .photo_urls is NOT NULL, so a null here is a failed insert in production.
 import { describe, expect, test } from 'vitest';
 import { convertSosToPosCore, type PoConvertContext } from './mfg-purchase-orders';
+import { parsePgrestInList } from '../lib/pgrest-in-list';
 
 type Row = Record<string, unknown>;
 
@@ -33,6 +34,11 @@ function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
     select() { return this; }
     eq(col: string, val: unknown) { this.rows = this.rows.filter((r) => r[col] === val); return this; }
     in(col: string, vals: unknown[]) { this.rows = this.rows.filter((r) => vals.includes(r[col])); return this; }
+    /* The ESCAPED in-list the shared readers now build (docs/bugs/0780). */
+    filter(col: string, op: string, val: string) {
+      if (op !== 'in') throw new Error(`fake: filter(${op}) is not implemented`);
+      return this.in(col, parsePgrestInList(val));
+    }
     not() { return this; }
     is(col: string, val: unknown) {
       if (val === null) this.rows = this.rows.filter((r) => r[col] == null);

@@ -284,6 +284,197 @@ is the `optional-param-noop` trap CLAUDE.md names, and the other ~15
   are born NULL in the first place. Read rule and write default live in one
   file on purpose: they must never disagree about the same order.
 
+### 2.1 A row's `category` — the fallback, and why the row disappears without it
+
+**The response field `skus[].category` is what puts a row on a tab.** The
+frontend picks a tab's rows with `s.category === apiCategory` — the active tab's
+own category (`frontend/src/pages/scm-v2/Mrp.tsx`; it read a hand-typed
+`VIEW_CATEGORY[view]` until 2026-09-10, see §2.2; the Sofa tab is the exception,
+§2.3) — so a row whose `category` is
+`null` belongs to NO tab and is invisible on every one of them, with no empty
+state, no count and no warning, because a missing row and a covered row look
+identical here.
+
+**The category is decided in ONE way, in two places, and they must stay the
+same expression:**
+
+```
+prod?.category ?? catFromGroup(<the line's item_group>)
+```
+
+- the FILTER — `mrp.ts:1099`, deciding whether a line enters demand at all;
+- the EMIT — `mrp.ts:1344`, the value that ships on the row (first non-null
+  `catFromGroup` across the bucket's own rows).
+
+`catFromGroup` (`mrp.ts:1087`) maps an `item_group` to
+BEDFRAME / SOFA / MATTRESS / ACCESSORY / SERVICE and returns `null` for anything
+else. It exists so a line whose `item_code` is not in `mfg_products` still shows
+under its tab; **`null` out of it is still `null` on the row** — an unrecognised
+group is not guessed at.
+
+Until 2026-09-10 the emit site read `prod?.category ?? null` while the filter had
+the fallback, so the engine kept those lines, planned them, and shipped them with
+no category: eight accessory codes / 62 lines / 110 units on prod were planned and
+shown nowhere (`docs/bugs/0777-mrp-dropped-8-accessory-codes-from-every-tab-because-the-row.md`).
+If a third reader of a line's category is ever added, it uses this expression too.
+
+### 2.2 The TAB LIST is the server's, not the page's — and the enum is OPEN
+
+**`skus[].category` puts a row on a tab; §2.1 is only half of that.** The other
+half is whether a tab for that category EXISTS, and until 2026-09-10 the page
+typed its own list of four while the catalogue could hold nine
+(`docs/bugs/0778-mrp-showed-four-tabs-while-the-product-catalogue-held-nine-c.md`).
+
+`public.mfg_product_category` and its `scm` twin carry NINE members: the five in
+the baseline DDL plus DINING / BEDLINES / DIFFUSER / CARPET, added by migrations
+`0258`-`0261` and `0262`-`0265`. `backend/src/scm/routes/mfg-products.ts` lists
+all nine as `MFG_PRODUCT_CATEGORIES` and rejects a product create outside them.
+A line on any of the four newer ones was dropped TWICE — by the section-6 filter
+because the page only ever sends one of its four tab values as `?category=`, and
+again by the page's own equality — and neither drop was counted. Measured from
+files committed in this repo: `backend/scripts/data/align-skus-houzs-century.json`
+opens **181 of 1,242** SKUs across those four, and the AutoCount outstanding-SO
+export carries **10 open lines / 15 units** on DINING codes.
+
+**The enum is deliberately OPEN.** `20260905T0900_acc_item_groups.sql` ships
+`scm.acc_register_item_group(text, text)`, `SECURITY DEFINER` and granted to
+`service_role`, which `ALTER TYPE ... ADD VALUE`s both enums at runtime so the
+owner can add a category himself; its header says *"every reader treats the enum
+as an open list"*. So a hard-coded tab list does not merely miss four members, it
+misses every future one.
+
+**The rule now.** `MrpResult.categories` — every product category in the
+company's catalogue, read in section 2, paged, company-scoped, and INDEPENDENT of
+`catFilter`, so every tab's response carries the same list — decides whether the
+page shows an Others tab. The derivation lives in one module,
+`frontend/src/pages/scm-v2/mrp-views.ts`:
+
+- the FOUR the owner works from — Sofa, Bedframe, Mattress, Accessories — always,
+  in that order, standing even when `categories` is absent so an in-flight
+  response cannot blank the tab bar;
+- ONE **Others** tab, now a PERMANENT fifth tab painted from the first frame
+  alongside the four — NOT derived from `categories` (owner 2026-09-11, watching
+  it blink in a beat after the others on every reload: 「loading 的时候它就不见了，
+  没有 loading 的时候就有」;
+  `docs/bugs/0795-mrp-others-tab-appears-only-after-data-loads-blinking-in-a-b.md`).
+  This SUPERSEDES the earlier "appended only when the catalogue holds a non-core
+  category" (`docs/bugs/0782-the-extra-mrp-categories-each-grew-their-own-tab-instead-of.md`):
+  the four core tabs are constants and were always painted, but Others was
+  DERIVED from the loaded list, so it popped in late — a tab bar that changes
+  shape mid-load is one nobody trusts. `mrpViews` now ignores its `categories`
+  argument (kept only so callers need not change) and always returns the five.
+  An occasional empty Others (a company selling only the four) is the fair price
+  for a shape that never flickers. It is still not one-tab-per-extra-category:
+  that shape would grow a column the day the owner registers a category at
+  runtime through `acc_register_item_group`;
+- `SERVICE` never gets a tab, and never falls into Others — `isServiceLine` skips
+  service lines BEFORE the category filter, so it could only ever be empty. Named,
+  not silently filtered.
+
+**Others is `category: null`, and that is a THIRD filter state, distinct from a
+category string and from `'all'`.** It asks the server for NO `?category=` — it
+stands for a SET, and a fake enum value in the query string would be filtered to
+nothing — then keeps the rows no other tab claims. Membership is decided by
+`rowBelongsToView`, which for Others claims **by EXCLUSION**: a row is Others' if
+its category is non-empty, not one of the four, and not SERVICE. Exclusion is the
+load-bearing choice — matching against the reported `categories` would strand a
+row whose category is not in that list (a product deleted from the catalogue, a
+category added between two requests, or a row the engine kept on its item GROUP,
+§2.1). A `null`-category row stays off every tab, INCLUDING Others, so the catch-
+all never becomes the bin that hides the §2.1 bug.
+
+`mrpCategoryOf(tabId)` and the tab id are a declared inverse pair (`others` maps
+to `null`), because the page must pick `?category=` before it has a response to
+derive tabs from. The round-trip is pinned by `mrp-views.test.ts`, which also
+asserts every enum member and every aligned-SKU category is claimed by SOME view
+— on MEMBERSHIP, not on a tab NAME, since a name assertion would pass while a row
+still fell through. Both tests read the vocabulary out of the SQL and the
+committed alignment payload rather than a typed list, because a typed list here
+would be the fault being tested.
+
+**STILL OPEN, and it is the owner's call.** A row whose category is `null`
+(§2.1's honest null) is dropped by the section-6 filter and counted nowhere. The
+`undated` tally forty lines below shows the shape the fix would take — count on
+the rows the `continue` removes, before it removes them — but it sits inside the
+section 0777 changed the same day.
+
+### 2.3 The SOFA tab asks for the FULL plan, so the cover rides with the sofa
+
+Every other tab sends `?category=<its tab>` (§2.1). The **Sofa** tab is the one
+exception: `apiCategory` is `null` there, so it requests the whole plan with no
+category filter. Two reasons, both load-bearing (owner 2026-09-11):
+
+1. **The cover (皮套) must reach the sofa's convert batch.** A sofa order's
+   leather cover / pillow is an ACCESSORY line, and the owner's rule is that it
+   ships on the SAME PO as the sofa. `gatherSofa` pulls those accessory shortage
+   lines off `data.skus` into the `/from-sos` batch so `po-grouping.ts` can
+   co-locate them (Combined) or split them to their own PO (Per-SO). With
+   `?category=SOFA` the engine drops every non-SOFA row, so `data.skus` held only
+   sofa and the pull matched nothing — the cover never rode, from the MRP page.
+   Dead since the 2026-06-15 per-category tab split; fixed 2026-09-11
+   (`docs/bugs/0801-mrp-sofa-cover-pull-in-was-dead-since-the-per-category-tab-s.md`).
+2. **It is the DEFAULT view, so it is FREE.** `catFilter === null && whFilter ===
+   null && !includeUndated` is `isDefaultMrpView`, which serves the stored
+   snapshot instantly (`mrp-snapshot.ts`). `?category=SOFA` was NOT the default
+   view, so the Sofa tab used to recompute the whole plan live on every open;
+   asking for the full plan makes the most-used tab read the snapshot instead.
+
+The sofa TABLE is unaffected either way — it renders from `data.sofaSets`, which
+`computeMrp` builds SOFA-by-construction and ignores `catFilter` for (§ the
+`sofaSets` array). `data.skus` on the Sofa tab is read ONLY by `gatherSofa` and
+the cover-rider display; it never leaks into the sofa rows.
+
+**Cover riders are SHOWN, not just ordered.** Under each sofa SO the page lists
+that order's accessory shortage lines as read-along rider rows (no checkbox —
+they follow the sofa's selection), with a caption that states where they land in
+the current mode: Combined = on the sofa PO when the supplier matches, Per-SO =
+their own PO. `gatherSofa`'s `setDocs` derives from the sofa picks actually being
+ordered, so selecting ONE order pulls only THAT order's cover.
+
+### 2.4 Search — a client-side find over the rows in view
+
+A **Search** box (owner 2026-09-11, 「MRP 也要有 search 的功能…那版太长了」)
+narrows the current tab's rows by a case-insensitive substring over item code,
+description, module / variant label, and each SO line's doc no + customer (a sofa
+row also matches its cover riders). It never changes the server request — purely
+a client-side filter of what is already loaded — and a non-empty query
+force-opens the matches so the hit is visible without a manual drill. It resets
+on a tab switch so a query narrowing one tab cannot blank the next.
+
+### 2.5 Lead times — the order-by date, and the per-supplier override
+
+A demand line's **order-by date** = its customer delivery date minus a lead-time,
+so a PO is raised early enough for the supplier to deliver ahead of the customer
+(Commander 2026-05-29). The SAME resolver computes the MRP page's order-by HINT
+and the real `purchase_order_items.delivery_date` the convert writes, so the two
+can never disagree — `scm/lib/lead-time.ts`, called from `mrp.ts` (hint) and
+`mfg-purchase-orders.ts` (the PO).
+
+The lead-time is layered, highest priority first:
+
+1. **override** — `scm.mrp_supplier_category_lead_times[(supplier, category)]`,
+   the owner's MANUAL per-supplier number (owner 2026-09-11: 「我会在每一个
+   Supplier 去 set 它的 Category lead time」). When a row exists for a line's
+   supplier + category it **replaces** the base — "this supplier's sofa takes N
+   days" is more specific than "sofa takes N days". A row's PRESENCE is the
+   override; its ABSENCE means "use the base", so an explicit 0 is a real
+   override (order same-day) and it is CLEARED by deleting the row, never by
+   saving 0.
+2. **base** — `scm.mrp_category_lead_times[(warehouse, category)]`, the owner's
+   per-(warehouse, category) table behind the MRP page's "Lead Times" dialog.
+   Cascade: (warehouse, category) -> (NULL, category) -> 0.
+3. **learned buffers** — the Procurement Agent's per-supplier punctuality and
+   per-season margins, ADDED on top (empty until approved on the agent console).
+
+`effectiveBase = override ?? base`, then `total = effectiveBase + supplier +
+season`. Empty override table = base wins, so the layer shipped as a pure no-op.
+
+**Endpoints + UI.** Base: `GET/PUT /api/scm/mrp-lead-times` (the MRP page dialog).
+Override: `GET/PUT/DELETE /api/scm/mrp-supplier-lead-times` (GET `?supplierId=`;
+PUT upserts; DELETE clears), gated `scm.procurement.mrp` like the base, edited on
+the supplier page's **Lead Times** tab (`SupplierLeadTimes.tsx`). Both writes
+invalidate the `mrp` query so the order-by dates recompute.
+
 ## 3. Supply
 
 - On-hand: `inventory_balances` summed per bucket.
@@ -319,6 +510,45 @@ places that ask the same question inherit it instead of re-deriving it.
 suppliers, each VARIANT does. All three groupers used to copy it off whichever
 child happened to be first, nothing read it, and the next renderer to want a
 supplier on a parent row would have shown one module's binding against all three.
+
+### And it is NOT `.in()` any more — an item code can carry a `"` (2026-09-10)
+
+Both the supplier read and section 2's `mfg_products` read now build their filter
+with `pgrestInList` (`backend/src/scm/lib/pgrest-in-list.ts`) and send it as
+`.filter(column, 'in', …)`. **Do not change either back to `.in()`.**
+
+`@supabase/postgrest-js` wraps a value in double quotes when it holds one of
+`, ( )` and escapes nothing inside them; PostgREST requires a backslash before a
+quote and a doubled backslash for a backslash. So an item code carrying an inch mark closes its own quote
+early, the next `)` closes the whole `in.(` list, and **every code after it in
+that batch matches nothing while the request answers 200.** Company 1's open
+demand carries two such codes — `DUNLOPILLO GENERASI 5" MATT (S)` and
+`… (SS)` — and on 2026-09-10 they were emptying the Supplier column on 38 item
+codes at once (run 34457477642; full measurement in `docs/bugs/0780-mrp-shows-no-supplier-on-a-line-whose-product-is-bound.md`).
+
+The payload is byte-identical to what `.in()` builds for any batch holding no
+quote and no backslash, which is pinned against the real library in
+`backend/src/scm/lib/pgrest-in-list.test.ts` — so adopting it changed nothing for
+the reads that already worked.
+
+Two consequences worth knowing before you touch this:
+
+- **A test fake must implement `filter(col, 'in', payload)`**, and must parse it
+  with `parsePgrestInList` rather than a second `split(',')` — a naive split
+  reproduces the bug and reports a clean run. The shared fakes
+  (`backend/src/scm/lib/fake-postgrest.ts`, `backend/tests/fakePostgrest.ts`) and
+  `backend/scripts/lib/pgrest-shim.mjs` already do.
+- **A test fake's comparison operators must compare by the column's type**,
+  NULL matching nothing — the way `fake-postgrest`'s `gte`/`lte` do, and the
+  way `lt` does since 2026-09-10 (docs/bugs/0785). Before that `lt` was
+  numeric-only with a `?? 0` fold, so the only correct shape for a timestamptz
+  month window — `gte(first) + lt(next-first)` — returned nothing against the
+  fake while the real database returned the rows. A fake that silently drops
+  rows on a string compare reports a clean run for the wrong reason.
+- **The other reads in this tree still use `.in()` on an item code** — 67 of
+  them outside these two as of 2026-09-10, counted by the enumeration block in
+  the PR — so any of them can lose the same two codes. Unfixed, deliberately;
+  the bug entry says why and what closing it takes.
 
 ## 4. Buckets and allocation
 
@@ -479,9 +709,29 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   bucket,
   every line in a company-1 bedframe bucket is bound, so nothing else can draw
   it, and leaving the units visible is what keeps the on-hand figure honest.
-  **SOFA is excluded at this call site** — sofa demand never enters section 7
-  (section 6 skips it) and section 8 has its own supply model; the shared
-  predicate is unchanged.
+- **AND SOFA JOINED THE RULE ON 2026-09-09** — the bullet above used to end
+  *"SOFA is excluded at this call site … section 8 has its own supply model"*,
+  and that sentence read as a design choice while describing work not yet done.
+  Section 8 planned every sofa SET on the pooled bucket key alone, which is
+  survivable for an OUTSTANDING purchase order (it sits in the pool under its own
+  key) and not survivable for a RECEIVED one: `left = qty − received_qty` is 0,
+  the line never enters the pool, and with no `dedicatedReceivedByLine` leg its
+  receipt could only arrive through the STOCK bucket — keyed on
+  `fabricCode|seatHeight|legHeight|specials`, four free-text fields the order and
+  the receipt spell differently far more often than not.
+
+  Measured on the live page 2026-09-09: the sofa tab asked for **70 units on 28
+  orders**; **42** were really missing, **8 of those orders (26 units) had their
+  own purchase order fully received**, and 26 of those lines read READY on the
+  sales-order screen at the same moment. STOCK read **0 on all 136 sofa rows**
+  while **246 units** of company-1 sofa sat in the warehouse. Bedframe, already
+  dedicated, was right to the unit on the same page (50 short, 50 lines with no
+  PO). `docs/bugs/0769`.
+
+  It was MRP catching up with the allocator, not a new rule: `isHardBoundLine`
+  has named sofa bound since 2026-08-10, and on prod **zero** of 1,240 open
+  company-1 sofa lines read READY without their own purchase order. Company 2
+  keeps the pooled sofa model.
 
 ### "If the variants are different, will it still match my goods?" (owner, 2026-08-16)
 
@@ -643,8 +893,36 @@ Frontend pair (one logic layer): desktop `pages/scm-v2/Inventory.tsx`
 | `backend/scripts/probe-undated-demand.mjs` | Read-only production probe: how much live demand is undated, BOTH companies, with the refutation tests for why. Dispatch via `.github/workflows/probe-undated-demand.yml` |
 | `backend/scripts/lib/undated-demand-queries.mjs` | That probe's SQL, in one home so a test can EXECUTE it. No shebang — a test imports it |
 | `backend/tests-pg/probeUndatedDemandSql.pg.test.ts` | Runs every one of those queries against real Postgres in `backend-postgres`. Exists because the probe's first production dispatch died on unexecuted SQL |
+| `frontend/src/pages/scm-v2/mrp-views.ts` | The page's TAB LIST, derived from `MrpResponse.categories` (§2.2). Holds the tab-id <-> category inverse pair, the SERVICE exclusion, and the Title-Case fallback for a category added to the enum at runtime |
+| `frontend/src/pages/scm-v2/mrp-views.test.ts` | Reads `mfg_product_category` out of the SQL and the SKU counts out of `backend/scripts/data/align-skus-houzs-century.json` — never a typed list — and asserts every member is reachable from a tab |
+| `frontend/src/pages/scm-v2/mrpCategoryTabs.test.tsx` | The same claim through the RENDERED page: the Dining tab exists, asks the server for `DINING`, and its row is on screen |
 
-## 7b. The page's frozen header (2026-09-09)
+## 7b. The page's frozen header (2026-09-09) — BUILT, THEN DISARMED THE SAME DAY
+
+> **THE FREEZE IS OFF ON THIS PAGE. `Mrp.tsx` calls
+> `useFrozenTableHeader(false)`** — owner 2026-09-09, hours after it shipped:
+> 「先把 MRP 的表头固定关掉」. Everything below still describes the wiring, which
+> is deliberately left in place; only the arming flag changed. What went wrong is
+> geometry, not integration, and the numbers are in `docs/bugs/0768`:
+>
+> ```
+> --page-header-offset  151px      box sticks at    388px
+> scroller max-height   443px      content        5,090px
+> main.scrollHeight       879   === main.clientHeight   -> the page cannot scroll
+> ```
+>
+> The design reserves the strip above the table and spends PAGE SCROLL to carry
+> the composition up. On MRP the capped table is the only thing that made the
+> page taller than the viewport, so capping it removed the very scroll the design
+> needs: 388px reserved permanently, 443px of rows in an 879px window, ~98px of
+> dead space below. **Before flipping the flag back, fix that** — give the
+> composition real runway, or mark a `data-freeze-anchor` below the filter row so
+> only the header strip is reserved — and measure those four numbers on the real
+> page, because `docs/bugs/0753` states plainly that no test asserts the freeze
+> and `#3430` was verified against a harness that had page scroll.
+>
+> `DataTable`'s use of the hook is untouched; every converted table still
+> freezes.
 
 Owner, 2026-09-09: "MRP 需要freeze row title" — the same rule he set on
 2026-07-24 for every table ("每个table的header都要freeze"). MRP kept its own
@@ -690,6 +968,12 @@ list keeps its plain flow and never grows an inner scrollbar.
   data with a truncation guard sitting right underneath it (§5). A cap is only
   loud if the number it compares against is the number the server will actually
   return. Prefer `paginateAll` / `chunkIn` over a bare `.limit()` and a guard.
+- **A row that is FILTERED IN must also be EMITTED with the value the filter
+  used.** Whenever a field decides both "does this line count" and "where does
+  this row appear", writing it twice is writing two rules. `category` did
+  exactly this and cost 110 planned units of silence (§2.1, docs/bugs/0777).
+  This class is worse than a crash: the page still renders, still looks
+  complete, and the gap is found on delivery day.
 - `companyId` is REQUIRED on `computeMrp` (typed `number | null | undefined`,
   key not optional) — see the #710/#712 incident comment at the signature.
 - Status columns are ENUMS in Postgres — any raw SQL must `::text` before

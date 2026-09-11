@@ -110,6 +110,11 @@ const ONLY = (process.env.DOC || '').trim().toUpperCase().replace(/^HC-/, '');
    lib/mislabelled-sofa-po-plan.mjs). Pair it with DOC= so it applies to the
    document you meant and not to every delivered build in the company. */
 const ALLOW_DELIVERED = process.env.ALLOW_DELIVERED === '1';
+/* When the purchase text and the sales order describe DIFFERENT sofas, take the
+   sales order's. The owner's standing rule made explicit and per-document; pair
+   it with DOC=. Unset, that disagreement is refused, which is what this script
+   did from the day it was written. */
+const FOLLOW_SALES_ORDER = process.env.FOLLOW_SALES_ORDER === '1';
 const STAMP = new Date().toISOString().slice(0, 10);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m = '') => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -232,9 +237,10 @@ async function main() {
     const plan = planMislabelledBuild({
       po: { doc: r.doc, code: r.code, qty: r.qty, soItemId: r.so_item_id, d2: r.d2, model },
       so, grns: grns.map((g) => ({ doc: g.doc, migrated: g.migrated, movements: g.movements })), doLines, decoded, codeSet, canonical,
-      allowDelivered: ALLOW_DELIVERED,
+      allowDelivered: ALLOW_DELIVERED, followSalesOrder: FOLLOW_SALES_ORDER,
     });
     if (plan.kind === 'refuse') { refuse(plan.why); continue; }
+    if (plan.overrode) log(`     ${label}: ${plan.overrode}`);
     builds.push({ label, row: r, so, grns, target: plan.target, model, acItem: acSofaItemOfSku(r.supplier_sku, sofaFurniture) });
   }
 

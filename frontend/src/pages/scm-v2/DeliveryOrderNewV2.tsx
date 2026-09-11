@@ -628,7 +628,12 @@ export function DeliveryOrderNewV2() {
     unitCostSen: l.unitCostSen,
     variants: l.variants,
     remark: l.remark,
-    deliveryDate: l.lineDeliveryDate ?? "",
+    /* Backend reads `lineDeliveryDate` (do-item-row.ts:136), never
+       `deliveryDate` — an owner-observed bug had this key silently dropped on
+       every DO create/edit. `lineDeliveryDateOverridden` carries the operator
+       intent so a header-change cascade skips lines they typed by hand. */
+    lineDeliveryDate: l.lineDeliveryDate ?? "",
+    lineDeliveryDateOverridden: l.lineDeliveryDateOverridden ?? false,
   });
 
   // ── SO→DO line stash (from the line-level picker) ──────────────────
@@ -645,7 +650,11 @@ export function DeliveryOrderNewV2() {
     if (Array.isArray(stash) && stash.length > 0) {
       setLines(
         stash.map((s) => ({
-          ...newDoLine(null),
+          /* Owner ruling 2026-09-11: DO delivery date DEFAULTS to the SO's.
+             `customerDelDate` was pre-filled from the SO by the header
+             effect above, so seeding line dates from it lands the SO's date
+             on every line — the operator can override per line. */
+          ...newDoLine(customerDelDate || null),
           soItemId: s.soItemId ? String(s.soItemId) : null,
           itemCode: String(s.itemCode ?? ""),
           itemGroup: String(s.itemGroup ?? "others"),
@@ -718,6 +727,11 @@ export function DeliveryOrderNewV2() {
        the operator's own field: blank posts as null and the server falls back
        to the customer date, exactly as /from-sos does. */
     setCustomerDelDate((so.customerDeliveryDate ?? "").slice(0, 10));
+    /* Owner 2026-09-11: the DO date on this form also defaults to the SO's
+       delivery date (not today), so the whole form opens carrying one date
+       across DO date + header customer delivery date + every line. A blank
+       DO with no SO source keeps today, seeded by the useState initial. */
+    if (so.customerDeliveryDate) setDoDate(String(so.customerDeliveryDate).slice(0, 10));
     setFlash(`Prefilled from ${soDocNo}`);
   }, [soSource.data, soDocNo, editId]);
 
@@ -735,7 +749,9 @@ export function DeliveryOrderNewV2() {
     if (!rows || rows.length === 0) return;
     setLines(
       rows.map((it) => ({
-        ...newDoLine(null),
+        /* Owner ruling 2026-09-11: default the line delivery date to the
+           SO's, same as the ?fromPicks= path above. */
+        ...newDoLine(customerDelDate || null),
         soItemId: it.soItemId,
         itemCode: it.itemCode,
         itemGroup: it.itemGroup ?? "others",
@@ -844,6 +860,12 @@ export function DeliveryOrderNewV2() {
         category: l.itemGroup ?? "",
         variants: (l.variants ?? {}) as Record<string, unknown>,
       })),
+      /* NULL = every category, i.e. UNCHANGED. A Delivery Order only ever
+         SEEDS (the header above says it never follows afterwards, and whether
+         it should is an owner decision). The 2026-09-09 sofa-only ruling was
+         about Sales Orders; applying it here would be a second quiet decision
+         on a document nobody asked about. Required parameter, visible answer. */
+      null,
     ),
     [lines]
   );

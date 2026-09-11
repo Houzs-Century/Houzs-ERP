@@ -5,7 +5,7 @@
 > 3. POST /bulk-supplier-date exists (mfg-purchase-orders.ts:2680, owner 2026-08-03) and is absent from the API table.
 > 4. Reopen is refused 409 cancel_is_final when the cancelled PO carries linked_ac_docno (:4392-4400). The guide contains zero mention of linked_ac_docno/linked_ac_dtlkey or the AutoCount outbox wired through every PO write (enqueuePoCreate :1382/:2416/:4055, queueAcPoEdit on PATCH/line CRUD/bulk-date/convert, retiredLineOf :3282, enqueueCancel :4353).
 > 5. outstanding-so-items is a pooled stock-aware MRP shortage view (:665-694); qty−po_qty_picked>0 is only the degraded fallback.
-> 6. /from-sos buckets by (warehouseId, supplierId) + per-category rules in po-grouping.ts (sofa/bedframe per-SO; mattress merges only within a Monday-anchored 7-day window) — same supplier routinely emits several POs.
+> 6. /from-sos buckets by (warehouseId, supplierId) + per-category rules in po-grouping.ts. RE-SPEC 2026-09-11 (supersedes 2026-07-17): under COMBINE a sofa order's accessories (皮套/pillow) ride ONTO the sofa's PO (batch context `sofaSoDocNos`); bedframe is per-SO either way; mattress merges within a Monday-anchored 7-day window; standalone accessory merges same-supplier across SOs. Under PER-SO every (SO, category) is its own PO — the sofa's accessories split off. Same supplier routinely emits several POs.
 > 7. A second revision engine exists: applyPoAmendment (po-revision.ts:98-341) driven by the standalone PO-amendments router; po_amendments tables appear nowhere in this guide.
 > 8. On the create paths the matrix/combo cost is written into unit_price_sen, not unit_cost_sen (:1229-1260, :2352-2385; autoCostCenti → unitPriceCenti :2164-2173).
 > 9. §9's “no second read” is false: after GRN enrichment the list runs a second Promise.all wave — resolvePoSoCoverageForPos (computeMrp inside) + resolveDeliveredDosForPos (:572-576); §3.4 already describes them.
@@ -258,7 +258,7 @@ with no per-area level consulted.
 | POST | `/:id/items/:itemId/photos` | | Upload a PO-authored add-on photo (owner 2026-08-28; multipart `file` + optional client `thumb`). Key minted under `po-items/<poId>/<itemId>/`. Refused on a CANCELLED PO. Lives in `purchase-order-item-photos.ts` (the main router is at its size ceiling), mounted in `backend/src/scm/index.ts` on the SAME `/mfg-purchase-orders` prefix as the main router — the separate-router-same-prefix construction the DO scan token uses. |
 | DELETE | `/:id/items/:itemId/photos/:photoKey` | | Delete a PO-OWNED (`po-items/...`) key + its R2 object/thumb. A carried `so-items/...` key is refused 403 `carried_photo_readonly` — same R2 object as the SO's photo; manage it on the Sales Order. |
 | POST | `/` | `:911` | Create (`asDraft: true` → DRAFT, else SUBMITTED). SO-sourced lines (carrying `soItemId`, e.g. the desktop New-PO-from-SO flow) are capped at the SO line's remaining (`qty - po_qty_picked`): over-convert → 409 `qty_exceeds_remaining` unless `confirmOverConvert: true` (pre-write guard, marks idempotency no-write). Manual lines (no `soItemId`) unaffected. |
-| POST | `/from-sos` | `:2139` | Batch convert whole SOs, emitting N POs. The bucket key is per-CATEGORY (owner 2026-07-17, `po-grouping.ts:69-90`): sofa/bedframe per (warehouse, supplier, SO), mattress per (warehouse, supplier, 7-day delivery window), everything else per the caller's `combined \| per-so` toggle. Warehouse is always in the key, which is what keeps the header's `purchase_location_id` unambiguous. |
+| POST | `/from-sos` | `:2139` | Batch convert whole SOs, emitting N POs. The bucket key is per-CATEGORY (owner RE-SPEC 2026-09-11, `po-grouping.ts` `groupKeyFor`). PER-SO: every `(warehouse, supplier, SO, category)` is its own PO — a sofa order's accessories split off. COMBINE: sofa per `(warehouse, supplier, SO)` with NO category tag so the SO's accessories (passed via `sofaSoDocNos`) merge onto it; bedframe per `(warehouse, supplier, SO)` regardless of toggle; mattress per `(warehouse, supplier, 7-day delivery window)`; standalone accessory per `(warehouse, supplier)` across SOs. Warehouse is always in the key, which keeps the header's `purchase_location_id` unambiguous, and a key only merges one supplier's lines so a different-supplier cover cannot land on the sofa's PO. |
 | POST | `/:id/convert-from-so` | `:2694` | Append SO lines onto an existing PO. |
 | PATCH | `/:id` | `:2219` | Header edit. |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:2400` / `:2504` / `:2619` | Line CRUD. A line carrying `soItemId` is capped at the SO line's remaining exactly like `POST /` — over-convert → 409 `qty_exceeds_remaining` unless `confirmOverConvert: true` (2026-08-11; see *Binding a PO line to its source SO line*). |
@@ -298,7 +298,7 @@ UUID**; use `houzsUser.id` for the public bigint.
 
 | # | Filter | Silent? | What survives |
 |---|---|---|---|
-| 1 | `.eq('cancelled', false)` + company scope + **`.limit(500)`**, ordered `doc_no` DESC | **yes** | at most 500 SO ITEM rows, newest doc numbers first. Newer orders are on the safe side of this cap; older ones fall off it with no message |
+| 1 | `.eq('cancelled', false)` + company scope, **PAGED** (`lib/outstanding-so-lines.ts`), ordered `doc_no` DESC then `id` | n/a | **every** live SO item row. Was `.limit(500)` — at most 500 rows, newest doc numbers first, with no message when older orders fell off. Company 1 held 15,050 live lines on 2026-09-08 (`docs/bugs/0677`), so 96.7% of them were unreachable |
 | 2 | SO header status not in `CANCELLED`, `DRAFT`, `ON_HOLD` | **yes** | a **DRAFT SO is never convertible.** This is the honest, common answer to "my new SO cannot be converted": confirm it first |
 | 3 | pooled MRP shortage `> 0` — `shortageBySoItem.get(id) ?? 0` | **yes, and it is the dangerous one** | see below |
 | 4 | client-side: category filter, date-range filter, draft-already-consumed subtraction, one-supplier-per-PO lock (greys rows out, with a visible banner) | no | the visible grid |
@@ -337,6 +337,14 @@ works and is multi-select at line level — but only for a line that is
 (a) confirmed or later, (b) inside the newest 500 item rows, and (c) one of the
 ~7% MRP happened to plan. Fixing (c) is PR #2304 (#2300, #2294 alongside);
 **none merged**.
+
+> **UPDATED.** (c) is closed — `computeMrp`'s demand read is paged
+> (`docs/bugs/0248`), so MRP plans the whole demand set. (b) is closed by
+> `lib/outstanding-so-lines.ts`: filter 1 pages instead of capping, so the
+> window no longer decides which orders are convertible. (a) stands and is
+> correct — a DRAFT order is not convertible on purpose. Filter 3's `?? 0`
+> ambiguity also stands: a line MRP never planned and a line MRP found fully
+> covered still read the same on this screen.
 
 ---
 
@@ -771,9 +779,11 @@ those are what the route actually selects.
 | Table | Role |
 |-------|------|
 | `scm.purchase_orders` | PO header. `po_number` (UNIQUE), `supplier_id`, `status`, `po_date`, `expected_at`, `purchase_location_id` (FK → `warehouses.id`), `currency`, `subtotal_sen` / `tax_sen` / `total_sen`, `submitted_at` / `received_at` / `cancelled_at`, `revision`, `supplier_delivery_date_2..4`, `company_id`. |
-| `scm.purchase_order_items` | PO lines. `binding_id`, `material_kind` / `item_code` / `material_name`, `supplier_sku`, `qty`, `received_qty`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, variant columns (`item_group`, `variants`, `gap_inches`, `divan_*`, `leg_*`, `custom_specials`, `line_suffix`, `special_order_price_sen`), `delivery_date`, `warehouse_id`, `supplier_delivery_date_2..4`, `so_item_id`, `from_mrp`, `photo_urls` (mig 0274 — see *Line photos* below), `linked_ac_dtlkey` (mig 0273 — AutoCount `PODTL.DtlKey`; indexed, NOT unique — one AutoCount sofa line becomes one ERP line per compartment and every one carries the same key). |
+| `scm.purchase_order_items` | PO lines. `line_no` (mig `20260910T0547_scm_po_item_line_no.sql` — the printed line order; see *A PO line's POSITION on the order* below), `binding_id`, `material_kind` / `item_code` / `material_name`, `supplier_sku`, `qty`, `received_qty`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, variant columns (`item_group`, `variants`, `gap_inches`, `divan_*`, `leg_*`, `custom_specials`, `line_suffix`, `special_order_price_sen`), `delivery_date`, `warehouse_id`, `supplier_delivery_date_2..4`, `so_item_id`, `from_mrp`, `photo_urls` (mig 0274 — see *Line photos* below), `linked_ac_dtlkey` (mig 0273 — AutoCount `PODTL.DtlKey`; indexed, NOT unique — one AutoCount sofa line becomes one ERP line per compartment and every one carries the same key). |
 | `scm.purchase_order_items`.`variants` ownership | The jsonb has several writers and no schema. The AutoCount re-parse sweep (`refresh-po-variants.mjs`) owns only `OWNED_VARIANT_KEYS` (`backend/scripts/lib/variant-merge.mjs`) — fabric/colour + gap/divan/leg/total + size — and MERGES them. `totalHeight` in that patch is `null` whenever `parseBedframe` reports an EXPLICIT `TBC` / `KIV` against the divan, the gap or the leg: nobody knows how tall `Divan: TBC / Gap: 12"` is, and the old expression answered `12"` because `Number(undefined) \|\| 0` counted "not chosen yet" as zero (`docs/bugs/0732`, finished in `docs/bugs/0734`). A component the text merely never MENTIONS is untouched — a divan with no leg mentioned still means no leg (`0`) (`variants = variants \|\| patch`); it must never rebuild the object, which deletes every key it has not heard of. `specials` (and the HOOKKA singular `special`) belong to `backfill-specials-into-variants.mjs`, the only writer with the money guard. `custom_specials` on a PO line is neither derived nor script-free: `POST /:id/items` and `PATCH /:id/items` store `it.customSpecials` VERBATIM from the request body with no recompute (`:3044`, `:3176` — unlike the SO / consignment routes), and three repair scripts write the column directly on `scm.purchase_order_items` (`backfill-sofa-special-orders.mjs`, `census-custom-specials-arrays.mjs`, `repair-custom-specials-double-encoded.mjs`). It has no single owner. |
 | `variants` — the reviewed hand-patch escape hatch | `apply-variant-patch.mjs` is the only writer allowed keys outside `OWNED_VARIANT_KEYS`, because its patch is a human-reviewed artifact submitted per batch through a workflow input (it exists to set things like `seatHeight` that no parser derives). It writes through `mergeReviewedVariantPatch` (`lib/variant-merge.mjs`): merged in the DATABASE, guarded on `jsonb_typeof(...) = 'object'`, counted from `RETURNING`, and re-read on a fresh connection. Geometry uses `COALESCE`, so a patch silent about `gap` leaves `gap_inches` alone — unlike the sweep, which is entitled to restamp all three from the text it just parsed. |
+| `variants` — the reviewed BOOK correction | *Added 2026-09-09.* `repair-so-variant-from-book.mjs` copies a value the ACCOUNT BOOK states onto a migrated line, from `data/variant-book-corrections.json` — entries a human reviewed one at a time, each stating `erp_now` and SKIPPED if the row no longer holds it. It owns `OWNED_BOOK_CORRECTION_KEYS` (`lib/variant-merge.mjs`): the sofa sweep's fabric/colour keys plus `seatHeight` **and `legHeight`**. The leg is deliberately NOT on `OWNED_SOFA_KEYS`, because that list arms the RECOMPUTE sweeps and a key there is overwritten on every run — "adding it here would make a colour sweep start writing heights". A reviewed list is not a sweep, so it gets its own list rather than widening theirs (`docs/bugs/0755`, `docs/bugs/0756`). Axes: `colour`, `seat`, `leg`; anything else is refused by name, because an unrecognised axis used to fall through to the scalar branch and write `seatHeight`. |
+| `scm.purchase_invoice_items`.`variants` — the receipt SNAPSHOT, taken back | *Added 2026-09-09.* A migrated purchase-invoice line is a COPY of the goods-receipt line it was raised from — `create-migrated-invoices.mjs` `writePi` writes `l._row.variants` verbatim. Some invoices took that snapshot while the receipt line was still EMPTY, and the fabric/height backfills that filled the receipt afterwards carried nothing onto the invoice: measured 2026-09-09 (run 34377138255) at **12 lines on 9 documents blank on the invoice while the receipt holds the full object** (of 137 invoice lines on the documents examined, 110 of which are linked to a receipt at all). `repair-migrated-invoice-variants-from-receipt.mjs` takes it back — applied 2026-09-09, run 34379825762, `APPLIED: 12 of 12` and verified on a fresh connection. It is a FILL, not a merge — the UPDATE carries `COALESCE(variants,'{}'::jsonb) = '{}'::jsonb`, so a line somebody has since filled keeps its value — and it owns `OWNED_PI_SNAPSHOT_KEYS` (`lib/variant-merge.mjs`), a THIRD list rather than a widening of the sweeps' or the book correction's (`docs/bugs/0755`). `specials` / `special` / `specialsRecorded` / `customSpecials` are WITHHELD by name with their reasons, which is the money guard: a priced add-on folds into the authoritative unit price. A parent key in neither list makes the row REFUSE. `description2` is reported and never written — the sofa decoder reads it. `purchase_invoice_items` is the only `MERGE_TABLES` entry that takes no geometry columns: an invoice line mirrors no geometry decision of its own. |
 | `scm.purchase_order_item_allocations` | mig 0235 — sub-line slices of ONE PO line across customers + stock: `company_id` (NOT NULL), `purchase_order_item_id` FK CASCADE, `seq` (1-based dense, UNIQUE per line), `qty` (>0, SUM <= line qty via triggers), `so_item_id` FK SET NULL (NULL = stock), `created_by`, `created_at`. Attribution only — no stock/money/quota. |
 | `scm.po_revisions` | Full header+items snapshot per revision, keyed `(po_id, revision)`. Written by `snapshotPo` / `reviseBoundPo` (`backend/src/scm/lib/so-revision.ts:861`, `:991`). |
 | `scm.mfg_sales_order_items` | Upstream. `po_qty_picked` is written by this module. |
@@ -1537,6 +1547,58 @@ builds NO entry (a live allocation binds nothing — the 2026-07-29 incident), a
 neither does a PRE-2026-07-31 bare-string GRN chip, which carries a number and
 no address. `document-conversion.md` §8b has both.
 
+## A PO line's POSITION on the order — `line_no` (owner ruling, 2026-09-10)
+
+**The rule, in his words.** 「我们的 Sales Order 都是从 L 到 R（L 在第一，R 在最
+后）」 — a sofa reads left-arm piece first, armless pieces in the middle,
+right-arm piece last — and 「照片是根据 line item 的顺序来的」: the printed PO's
+ITEM PHOTOS block follows the same order as the table, so a scrambled line list
+scrambles the photos with it.
+
+**A purchase order MIRRORS its sales order's line order.** It does not re-derive
+one. Where the SO is out of order, the PO faithfully follows; that is an SO-side
+question, not a PO-side bug.
+
+**The column.** `scm.purchase_order_items.line_no integer`, 1-based and dense
+per PO. NULL means the line predates the column and no source order was
+derivable (73 of 734 POs at migration time).
+
+**The one module that owns it: `backend/src/scm/lib/po-line-order.ts`** — same
+shape as `ac-line-order.ts`, and for the same reason (no unit test of a helper
+can see a caller that forgot to call it). `backend/tests/poLineOrderWiring.test.ts`
+enumerates the write sites and fails when a new one appears.
+
+| | |
+| --- | --- |
+| `inPoLineOrder(q)` | the READ order: `line_no` **NULLS FIRST**, `created_at`, `id`. Used by `GET /mfg-purchase-orders/:id` and by `snapshotPo`. |
+| `nextPoLineNo(sb, poId)` | what the next appended line takes: `max(line_no) + 1`, and **1** when the PO has none — which is why the read is NULLS FIRST, so an appended line lands after lines that predate the column. |
+| `stampPoLineNos(rows, startAt)` | numbers an insert payload in the order it is already in. |
+| `sortBySourceSoLine(lines)` | puts a converted payload into `(SO doc_no, SO line_no)` order first. Stable, so a line with no `line_no` keeps its place. |
+
+**Six write paths number their lines**, and all six are asserted by the wiring
+test: `POST /` (the New PO form — the request array order IS the operator's
+order), `convertSosToPosCore`'s create arm and its `targetPoId` append arm
+(which is also the MRP "Proceed PO" path), `POST /:id/convert-from-so`,
+`POST /:id/items`, the PO amendment ADD (`po-revision.ts`) and the SO
+amendment's added line (`so-revision.ts` step 12c).
+
+**The order is decided where lines are BORN and STORED — a display path never
+recomputes it.** That is the same boundary the owner drew for the sofa
+handedness rule (「只针对新的order生效 旧的就不理了」,
+`backend/tests/sofaOrderForNewLines.test.ts`): re-deriving at read time would
+re-sequence every existing document the next time somebody opened it.
+
+**The PDF re-sorts on it too**, and deliberately: `purchase-order-pdf.ts` builds
+`orderedItems` from `sortLinesByStoredLineNo` (shared, byte-identical in
+`backend/src/scm/shared/so-line-display.ts` and
+`frontend/src/vendor/shared/so-line-display.ts`) before the group-rank and
+sofa-module sorts, because the PDF is handed `items` by whichever page fetched
+them. **That one const drives BOTH the line table and the photo block** — which
+is why the photos scrambled with the lines, and why they must keep reading the
+same const.
+
+Trace: `docs/bugs/0776-a-purchase-order-printed-a-sofa-s-pieces-in-a-random-order-a.md`.
+
 ### The PO PDF's sofa diagram draws REAL compartment photos (2026-08-28)
 
 The sofa-layout schematic on the PO PDF (`drawSofaLayout` in
@@ -1698,3 +1760,33 @@ hard-binding rule with `allocated_batch_no` still NULL — in which case the shi
 goes through the drop-ship confirmation, which `buildDropshipOffenders` can only
 offer once every affected line has a bound PO. That is the difference the link
 makes; the guard itself does not move.
+
+## The Special Order panel is not a bedframe/sofa feature (2026-09-10)
+
+The owner, the day the Custom / other free text opened on the Sales Order:
+「POGR 是不是也是要能看得到这些数据？…全部都是要带过去的哦，要不然你有 column 的话也
+带不过去」.
+
+Half of it already worked, and the halves are different things:
+
+- the text ALREADY reached the supplier's document. `description2` is stamped
+  server-side from `buildVariantSummary`, which appends the `SPECIAL:` segment
+  AFTER the per-group attribute branch — so a category contributing no
+  attributes still carries its note.
+- the text was NOT on this document's SCREEN. The editor was gated on bedframe
+  or sofa, and on `maint`, which `SpecialOrders` does not need — so a mattress,
+  accessory or dining line was excluded twice over, and the operator could
+  neither read the spec nor correct it.
+
+The gate is now the shared module `frontend/src/vendor/scm/lib/special-order-surface.ts`,
+read by the Sales Order, both mobile surfaces and every cost document, so the
+rule cannot drift per document. **The add-on pool passed here is EMPTY on
+purpose**: this document carries no catalogue for those categories, and choosing
+WHAT to build belongs to the sales order, not to the buyer or the receiver.
+
+Because of that empty pool, `SpecialOrders` no longer labels a carried pick
+*"retired — untick to remove"* when it has no options list to judge it against —
+a catalogue we do not have cannot call anything retired, and on a purchase order
+that label told the buyer to delete what the factory is building. With no pool
+the picks render read-only under *"from the Sales Order"*. See
+`docs/bugs/0779-the-special-order-text-reached-the-supplier-pdf-but-was-invi.md`.

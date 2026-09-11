@@ -1,0 +1,48 @@
+name: Repair — archive HC-SO-013346 + HC-SO-009373 (DRY-RUN gated)
+
+# Owner ruling 2026-09-10: AutoCount is a parallel run; do not cancel a live PO
+# to make the book match on these two diverged sales orders. Archive their
+# outbox rows so they leave Not Accepted. The ERP stays correct; the book keeps
+# its old copy until a manual AC reconcile. Full reasoning in the script header.
+#
+# DRY-RUN by default. CONFIRM=ARCHIVE-013346-009373 to write.
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: '1 to write, anything else DRY-RUN'
+        required: false
+        default: '0'
+        type: string
+      confirm:
+        description: 'For apply ONLY, type exactly: ARCHIVE-013346-009373'
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: repair-archive-so-013346-009373
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-archive-so-013346-009373.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.apply == '1' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

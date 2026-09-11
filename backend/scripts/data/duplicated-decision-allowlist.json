@@ -167,8 +167,8 @@
     },
     {
       "check": "D1",
-      "key": "DO,GR,IV,PI,PO,SO|backend/src/scm/lib/autocount-outbox.ts backend/src/scm/lib/autocount-requeue.ts backend/src/scm/routes/autocount-outbox.ts frontend/src/lib/autocountOutbox.ts",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: REQUEUE_DOC_TYPES, DOC_TYPES, AC_DOC_TYPES, AC_DOC_TYPE_LABEL, AC_DOC_TYPE_PLURAL. Cost of divergence is a blank chip, not a wrong number. NEW HOME since this was recorded: AC_DOC_NOUN in backend/src/scm/lib/autocount-outbox.ts, which maps a doc type to its noun ('SO' -> 'Sales Order') for outbox messages. Presentation of the same vocabulary, exactly like the label and plural maps already listed here."
+      "key": "DO,GR,IV,PI,PO,SO|backend/src/scm/lib/autocount-outbox.ts backend/src/scm/lib/autocount-requeue.ts backend/src/scm/routes/autocount-outbox.ts backend/src/scm/routes/autocount-relink.ts frontend/src/lib/autocountOutbox.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: REQUEUE_DOC_TYPES, DOC_TYPES, AC_DOC_TYPES, AC_DOC_TYPE_LABEL, AC_DOC_TYPE_PLURAL. Cost of divergence is a blank chip, not a wrong number. NEW HOME since this was recorded: AC_DOC_NOUN in backend/src/scm/lib/autocount-outbox.ts, which maps a doc type to its noun ('SO' -> 'Sales Order') for outbox messages. Presentation of the same vocabulary, exactly like the label and plural maps already listed here. ALSO NEW: the DOC map in backend/src/scm/routes/autocount-relink.ts, which keys per-type header/line WIRING (line table, parent column, header resolution) by the same vocabulary so Match up lines works for all six types (docs/bugs/0792) — wiring keyed by the vocabulary, not a second answer to what the types are."
     },
     {
       "check": "D1",
@@ -517,7 +517,7 @@
     },
     {
       "check": "D1",
-      "key": "FULL,NONE,PARTIAL|backend/src/services/pageAccess.ts frontend/src/pages/Roles.tsx",
+      "key": "FULL,NONE,PARTIAL|backend/src/services/pageAccess.ts frontend/src/pages/roles/RoleSettingsDrawer.tsx",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: ACCESS_LEVELS. Cost of divergence is a blank chip, not a wrong number."
     },
     {

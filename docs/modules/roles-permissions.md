@@ -75,6 +75,19 @@ GL in the same request, so this key also opens the standalone post door
 (docs/modules/payment-voucher.md §0b). Declared like every key, deliberately granted to **no** seed role: only
 `*` (Owner / IT Admin) can approve until the owner assigns it to a position.
 
+**`scm.so_payment.amend`** (owner + management 2026-09-10:
+「让权限在finance 这里更改」) lets FINANCE correct or remove a customer payment
+after the day it was keyed in — sales records the money and may fix it the same
+day, and from the next day only a holder of this key can. The edit reverses and
+re-books the payment's journal entry as it goes (`acc/payment-repost.ts`), so
+the books follow the correction. **It does not reach past a RECONCILED
+payment**: matched on a merchant settlement report, claimed by a bank statement,
+or sitting in a closed month is refused to everybody, this key included, because
+by then the figure is evidence somebody has signed off. Declared like every key
+and granted to **no** seed role: only `*` (Owner / IT Admin) holds it until the
+owner assigns it to the finance positions. Contract: docs/modules/sales-order.md
+(*Who may correct an old payment*) and docs/bugs/0780.
+
 **`memos.manage`** (the department memo register, owner 2026-09-08, mig
 `20260909T0500`): the register is own-department for any signed-in user; this
 key registers a memo for ANY department and voids anyone's memo. Conferred by

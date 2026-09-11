@@ -58,41 +58,58 @@ export type LockRequest = {
   month: string;
   /** Movements still undecided. Anything above zero refuses. */
   openCount: number;
-  /** Movements the month has at all — closing a month with nothing in it is
-      closing nothing, and is refused so an empty month cannot be used to make
-      a claim. */
+  /** Movements the month has at all. Zero is the ordinary quiet month, not a
+      refusal (docs/bugs/0794) — what a close needs is a STATEMENT. */
   lineCount: number;
-  /** Statement minus ledger. Null when no file printed a closing balance. */
-  differenceSen: number | null;
+  /** Files filed for the month. Closing a month no file speaks for is closing
+      nothing, and is refused so an empty month cannot be used to make a
+      claim. */
+  statementCount: number;
+  /** The books, allowing for the outstanding items, plus what is on the bank
+      and not in the books — and the bank's printed closing it must reach.
+      Null when no file printed one. */
+  computedClosingSen: number;
+  closingStatementSen: number | null;
+  unexplainedSen: number | null;
+  /** Did the walk reach the bank's closing? */
+  tallies: boolean;
   /** Did the server's own identity check hold? */
   consistent: boolean;
   /** Covered end to end by the files uploaded? */
   complete: boolean;
-  /** The reason given, if any. */
-  note: string | null;
 };
 
 export type LockVerdict =
-  | { ok: true; needsNote: false }
-  /** Allowed, and the note supplied is what makes it allowed. */
-  | { ok: true; needsNote: true }
+  | { ok: true }
   | { ok: false; error: string; message: string };
+
+const rm = (sen: number) =>
+  `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /**
  * May this month be closed?
  *
  * Pure, and the only place the question is answered — the route asks this and
  * writes, so a rule cannot exist in two spellings.
+ *
+ * Owner, 2026-09-11 (docs/bugs/0806): 当 closing bank statement amount 无法
+ * tally 就无法 lock — and asked whether a month should ever close over a gap
+ * with a sentence: 应该不会有银行错吧，毕竟怎样都要 tally bank statement. So a
+ * month closes when it tallies and is whole, and otherwise cannot close at
+ * all. The reason box that used to buy a way past is gone: what must not
+ * happen is a closed month whose statement does not tie, and no sentence
+ * makes it tie.
  */
 export function mayLockMonth(req: LockRequest): LockVerdict {
   const where = `${req.accountCode} ${req.month}`;
 
-  if (req.lineCount === 0) {
+  if (req.statementCount === 0) {
     return {
       ok: false,
       error: 'empty_month',
-      message: `${where} has no movements, so there is nothing to close.`
-        + ' Upload the statements for this month first.',
+      message: `${where} has no statement filed, so there is nothing to close.`
+        + ' Upload the bank statement for this month first — one with no transactions in it still counts,'
+        + ' filed under the month it is for.',
     };
   }
 
@@ -106,27 +123,44 @@ export function mayLockMonth(req: LockRequest): LockVerdict {
     };
   }
 
-  /* The three things that make a month less than clean. Each is a real reason a
-     business still closes; none of them is a reason to close SILENTLY. */
-  const doubts: string[] = [];
-  if (!req.consistent) doubts.push('its figures do not account for themselves');
-  if (!req.complete) doubts.push('it is not covered end to end by the files uploaded');
-  if (req.differenceSen == null) doubts.push('no file printed a closing balance to compare against');
-  else if (req.differenceSen !== 0) doubts.push('the bank and the books still differ');
-
-  if (doubts.length === 0) return { ok: true, needsNote: false };
-
-  if (!req.note || req.note.trim().length === 0) {
+  if (!req.consistent) {
     return {
       ok: false,
-      error: 'reason_required',
-      message: `${where} can be closed, but ${doubts.join(', and ')}.`
-        + ' Give the reason for closing it anyway — that sentence is the only record of this'
-        + ' decision anyone will have later.',
+      error: 'inconsistent',
+      message: `${where} cannot be closed: its figures do not account for themselves — the statement`
+        + ' balances and the lines under them disagree. Check the file before trusting either.',
     };
   }
 
-  return { ok: true, needsNote: true };
+  if (!req.complete) {
+    return {
+      ok: false,
+      error: 'not_covered',
+      message: `${where} cannot be closed: it is not covered end to end by the files uploaded.`
+        + ' Upload the missing days first.',
+    };
+  }
+
+  if (req.closingStatementSen == null || req.unexplainedSen == null) {
+    return {
+      ok: false,
+      error: 'no_closing',
+      message: `${where} cannot be closed: no file printed a closing balance to tally against.`,
+    };
+  }
+
+  if (!req.tallies || req.unexplainedSen !== 0) {
+    return {
+      ok: false,
+      error: 'not_tallied',
+      message: `${where} does not tally: the books, allowing for the outstanding items, come to`
+        + ` ${rm(req.computedClosingSen)} and the bank statement says ${rm(req.closingStatementSen)}`
+        + ` — ${rm(Math.abs(req.unexplainedSen))} apart. Find what is missing (an entry not yet posted,`
+        + ' a bank movement left out, or a statement filed under the wrong month) before closing.',
+    };
+  }
+
+  return { ok: true };
 }
 
 /**

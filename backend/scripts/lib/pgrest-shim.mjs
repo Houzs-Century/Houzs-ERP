@@ -94,6 +94,14 @@ const IDENT = /^[a-z_][a-z0-9_]*$/;
    the allocator's own answer)". PROVEN on three separate production
    dispatches, all of them green: runs 34099835565, 34127825188, 34132871751
    (2026-09-07). Same composition as docs/bugs/0599, one layer lower. */
+/* The ONE parser for PostgREST's `in.(…)` list, imported rather than restated —
+   `filter(col,'in',…)` below is the escaped form of the same grammar the app now
+   WRITES with `pgrestInList`, and two implementations of one grammar is how the
+   bug being routed around got in. A `.ts` import is safe here: every script that
+   loads this shim runs under `npx tsx` (verified across .github/workflows), and
+   vitest resolves it for tests/pgrestShim.test.*. */
+import { parsePgrestInList } from '../../src/scm/lib/pgrest-in-list.ts';
+
 const EMBEDDED_FILTER = /^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/;
 
 /* Split on commas at parenthesis depth 0, so an embed's own column list stays
@@ -111,7 +119,39 @@ export function splitTopLevel(s) {
   return out.map((x) => x.trim()).filter((x) => x !== "");
 }
 
-export function pgrestShim(sql, schema = "scm") {
+/* THE MARK THAT STOPS A REPAIR REACHING THE ACCOUNT BOOK.
+   Spelled as a string here and as Symbol.for(...) in
+   src/scm/lib/ac-repair-suppression.ts — the registry key IS the contract
+   between the two files, because this module is plain ESM loaded by `node` as
+   well as by `tsx` and cannot import the TypeScript one. If you change it,
+   change it in both; ac-repair-suppression.test.ts pins the behaviour. */
+const REPAIR_CLIENT = Symbol.for("houzs.ac.repairClient");
+
+/**
+ * @param sql      a `postgres` connection
+ * @param schema   the Postgres schema these reads resolve in
+ * @param opts.writeback
+ *   "suppress" (DEFAULT) — nothing this client does may be written back to
+ *   AutoCount. A cutover repair COPIES a value out of the account book, so
+ *   sending it back is pointless where they agree and overwrites the owner's
+ *   source of truth where they do not (owner, 2026-09-09: 「正常来说你的这批更改
+ *   不应该是syncback autocount啊 应该remain啊」).
+ *
+ *   "enqueue" — this tool's PURPOSE is to push. Only the deliberate re-queue
+ *   tools pass it, by name, and it must stay a short list:
+ *     rebuild-ac-document.mjs · requeue-autocount-skipped.mjs
+ *     recompose-autocount-transfer.mjs · sync-ac-delta.mjs (LANES=push)
+ *
+ * The DEFAULT is the safe one on purpose. A repair that forgets gets
+ * suppression; pushing is the thing that has to be typed out, so it is the
+ * thing a reviewer can see. The opposite polarity puts the silent failure on
+ * the common path, which is backwards.
+ */
+export function pgrestShim(sql, schema = "scm", opts = {}) {
+  const writeback = opts.writeback ?? "suppress";
+  if (writeback !== "suppress" && writeback !== "enqueue") {
+    throw new Error(`pgrestShim: writeback must be "suppress" or "enqueue", got ${JSON.stringify(writeback)}`);
+  }
   const gaps = [];
   const q = (id) => {
     if (EMBEDDED_FILTER.test(String(id))) {
@@ -416,6 +456,20 @@ export function pgrestShim(sql, schema = "scm") {
         return proxied;
       },
       in(col, arr) { state.filters.push({ op: "in", col, v: arr }); return proxied; },
+      /* filter(col, 'in', '("a","b\\"c")') — the ESCAPED in-list. Four repair
+         scripts drive autocount-outbox.ts through this shim, and that file reads
+         supplier bindings through lib/supplier-bindings.ts, which stopped using
+         `.in()` because supabase-js cannot serialise a value carrying a `"`
+         (docs/bugs/0780). Parsed by the SAME function PostgREST's grammar is
+         written in, never by a second `split(",")` here — a naive split is the
+         very defect being routed around. Any other operator is a loud gap. */
+      filter(col, op, v) {
+        if (op === "in" && typeof v === "string" && v.startsWith("(") && v.endsWith(")")) {
+          state.filters.push({ op: "in", col, v: parsePgrestInList(v) });
+          return proxied;
+        }
+        return gap(`filter(${col}, ${op}, ${v}) — only the 'in' operator with a parenthesised list is implemented`);
+      },
       /* Scalar comparisons. The allocator filters open lots with .gt('qty', 0);
          these four are the same shape as .eq and carry no PostgREST-specific
          semantics, so they are safe to translate literally. */
@@ -475,7 +529,7 @@ export function pgrestShim(sql, schema = "scm") {
     return proxied;
   };
 
-  return {
+  const client = {
     from,
     rpc(name) {
       const msg = `pgrest-shim GAP: .rpc("${name}") is not implemented — call the function with sql.unsafe instead`;
@@ -484,4 +538,11 @@ export function pgrestShim(sql, schema = "scm") {
     },
     __gaps: gaps,
   };
+  /* Non-enumerable, so it never leaks into a spread or a JSON payload. */
+  if (writeback === "suppress") {
+    Object.defineProperty(client, REPAIR_CLIENT, {
+      value: true, enumerable: false, writable: false, configurable: false,
+    });
+  }
+  return client;
 }
