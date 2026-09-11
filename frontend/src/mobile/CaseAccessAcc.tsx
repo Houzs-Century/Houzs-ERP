@@ -7,6 +7,9 @@ const INK = "#11140f";
 const TEAL_DK = "#0c3f39";
 const BROWN = "#a16a2e";
 
+/** Access rows arrive snake_case from our SQL; the PG driver may camelCase them, so read both. */
+type AccessRow = { user_id?: number; userId?: number; user_name?: string | null; userName?: string | null };
+
 /**
  * Access — Nth-person visibility (owner 2026-09-09), mobile. Grants extra staff
  * read access WITHOUT touching sales_agent or the two assigned_to slots. Lives in
@@ -23,7 +26,7 @@ export function CaseAccessAcc({
   assignableUsers,
 }: {
   caseId: number;
-  access: any[];
+  access: AccessRow[];
   busy: boolean;
   runWrite: (fn: () => Promise<void>, failTitle: string) => Promise<void>;
   assignableUsers: { id: number; name: string }[];
@@ -31,7 +34,7 @@ export function CaseAccessAcc({
   const confirm = useConfirm();
   const notify = useNotify();
   const choose = useChoice();
-  const accessRows: any[] = Array.isArray(access) ? access : [];
+  const accessRows: AccessRow[] = Array.isArray(access) ? access : [];
 
   const grantAccess = async () => {
     if (busy) return;
@@ -71,7 +74,7 @@ export function CaseAccessAcc({
         </span>
         <span style={{ marginLeft: 8, display: "inline-flex" }}>
           <span
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (!busy) grantAccess(); }}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (!busy) void grantAccess(); }}
             className="tinybtn"
             style={{ color: BROWN, opacity: busy ? 0.5 : 1 }}
           >
@@ -97,7 +100,7 @@ export function CaseAccessAcc({
                 >
                   {name}
                   <span
-                    onClick={() => { if (!busy) revokeAccess(uid, name); }}
+                    onClick={() => { if (!busy) void revokeAccess(uid, name); }}
                     style={{ cursor: "pointer", opacity: busy ? 0.5 : 0.7, fontWeight: 700 }}
                     aria-label={`Remove ${name}`}
                   >

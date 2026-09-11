@@ -4,6 +4,9 @@ import { api } from "../api/client";
 import { UserMultiSelect, type UserOptionItem } from "./UserMultiSelect";
 import { PanelSection } from "./Panel";
 
+/** Access rows arrive snake_case from our SQL; the PG driver may camelCase them, so read both. */
+type AccessRow = { user_id?: number; userId?: number; user_name?: string | null; userName?: string | null };
+
 /**
  * Access — Nth-person visibility (owner 2026-09-09). Grants extra staff read
  * access to a service case WITHOUT changing the Salesperson or the two
@@ -20,16 +23,16 @@ export function CaseAccessSection({
   onChanged,
 }: {
   caseId: number;
-  access: any[];
+  access: AccessRow[];
   onChanged: () => void;
 }) {
   const toast = useToast();
   // Chips resolve from the access rows themselves (each carries user_name), so a
   // granted person always displays even if outside the loaded users list.
   const accessIds: number[] = access
-    .map((a: any) => Number(a.user_id ?? a.userId))
+    .map((a) => Number(a.user_id ?? a.userId))
     .filter((n: number) => Number.isFinite(n) && n > 0);
-  const accessItems: UserOptionItem[] = access.map((a: any) => ({
+  const accessItems: UserOptionItem[] = access.map((a) => ({
     id: Number(a.user_id ?? a.userId),
     name: (a.user_name ?? a.userName ?? `#${a.user_id ?? a.userId}`) as string,
   }));
@@ -42,8 +45,8 @@ export function CaseAccessSection({
     try {
       for (const uid of toAdd) await api.post(`/api/assr/${caseId}/access`, { user_id: uid });
       for (const uid of toRemove) await api.del(`/api/assr/${caseId}/access/${uid}`);
-    } catch (e: any) {
-      toast.error(e?.message || "Couldn't update access");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't update access");
     }
     onChanged();
   }
