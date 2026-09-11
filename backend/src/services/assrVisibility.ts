@@ -133,10 +133,22 @@ export function assrVisibilityPredicateSql(
     ` WHERE eo.doc_no IS NOT NULL AND eo.doc_no <> ''` +
     ` AND eo.status <> 'DRAFT' AND eo.status <> 'CANCELLED'` +
     ` AND es.user_id IN (${idList})`;
+  // Nth-person access list (mig 20260911T1600): a case is visible when any
+  // member of the caller's subtree holds an explicit grant - open-ended reach
+  // that keeps the salesperson (sales_agent) and the two assigned_to slots
+  // untouched. Read here as a 6th additive arm so it lives in ONE place with
+  // every other visibility term. UNCORRELATED, exactly like the doc arms above:
+  // the case's own column (`${prefix}id`) stays on the LEFT of the IN and the
+  // subquery names only its own alias - so it never hits the outer-column trap
+  // the header warns about, and Postgres evaluates it once. Backed by the PK
+  // (assr_id, user_id). Empty table = no id matches = no behaviour change.
+  const accessGrant =
+    `${prefix}id IN (SELECT assr_id FROM assr_case_access WHERE user_id IN (${idList}))`;
   return (
     `${prefix}created_by IN (${idList})` +
     ` OR ${prefix}assigned_to IN (${idList})` +
     ` OR ${prefix}assigned_to_2 IN (${idList})` +
+    ` OR ${accessGrant}` +
     ` OR ${doc} NOT IN (${erpDocs})` +
     ` OR ${doc} IN (${myErpDocs})`
   );

@@ -364,7 +364,7 @@ is the ones that matter; the full machine-checked gate list is
 | Method | Path | Gate | Purpose |
 |---|---|---|---|
 | GET | `/api/assr` | `requireServiceCaseAccess()` `:807` | Paginated list (stage / status / search / assigned_to / creditor / from+to / sort) |
-| GET | `/api/assr/:id` | `requireServiceCaseAccess()` `:1399` | Case + items + attachments + activity + logistics + related POs + stage history + portal token |
+| GET | `/api/assr/:id` | `requireServiceCaseAccess()` `:1399` | Case + items + attachments + activity + logistics + related POs + stage history + portal token + access list |
 | POST | `/api/assr` | `requireServiceCaseAccess(["service_cases.create","service_cases.write","service_cases.manage"])` `:1517-1528` | Create (see required fields above) |
 | PATCH | `/api/assr/:id` | `requirePermission("service_cases.write")` `:1657` | Field edits, whitelisted by `PATCH_FIELDS` |
 | POST | `/api/assr/:id/transition` | `service_cases.write` `:2570` | Move stage (any-to-any; fires the survey email on `completed`) |
@@ -376,6 +376,7 @@ is the ones that matter; the full machine-checked gate list is
 | GET | `/api/assr/my-cases` | `requireServiceCaseAccess()` `:1447` | Sales-side "my cases" list. Body is `listMyCases` (`services/assrVisibility.ts`) — keyed on WHO RAISED the case since 2026-08-21, see §6 |
 | GET | `/api/assr/export.csv`, `/:id/timeline.csv` | `requireServiceCaseAccess()` `:1103`, `:2714` | Exports |
 | POST/DELETE | `/:id/track-link`, `/:id/supplier-link`, `/:id/survey-token` | `service_cases.write` `:1765`, `:1842`, `:1890` | Mint / revoke portal tokens |
+| POST/DELETE | `/:id/access`, `/:id/access/:userId` | `service_cases.write` | Grant / revoke the Nth-person access list (§6). Idempotent; grant notifies the grantee + upline; keeps `sales_agent` and both `assigned_to` slots untouched |
 | PUT | `/:id/attachments`, `/:id/attachments/thumb` | `service_cases.write` `:2881`, `:2928` | R2 upload (+ thumb) |
 | GET | `/attachments/:key{.+}` | scope via `caseInCallerScope` `:3212` | Streams the R2 object. Sends `X-Content-Type-Options: nosniff` (PR #2522) so the server-derived content-type cannot be MIME-sniffed into html/svg — parity with `mail-center.ts`'s INLINE_SAFE serve. |
 | POST/PATCH | `/:id/logistics`, `/:id/items`, `/:id/notes` | `service_cases.write` `:3051`, `:2799`, `:2656` | Child records |
@@ -554,6 +555,7 @@ Schema `public` (not `scm`). Core table `assr_cases`; children keyed by
 | `assr_issue_categories`, `assr_resolution_methods`, `assr_ncr_categories` | Editable lookups |
 | `assr_alert_acks` | Alert ack / snooze / override |
 | `assr_supplier_tokens`, `assr_survey_tokens`, `case_track_tokens` | The three portal token families |
+| `assr_case_access` | Nth-person access list (mig `20260911T1600`): one row per `(assr_id, user_id)` granting a staff member (and upline) row visibility WITHOUT taking a `sales_agent` / `assigned_to` slot. Read as a 6th arm of `assrVisibilityPredicateSql` (see §6). FK to `assr_cases` ON DELETE CASCADE; `idx_assr_case_access_user` backs "which cases can user X reach" |
 
 Columns that were added late and are easy to miss (all in `migrations-pg/`):
 `0062` `qc_receipt_date` · `0063` supplier/goods-returned notes · `0064`
@@ -720,6 +722,22 @@ The asymmetry is about DATA QUALITY, not trust: "AutoCount 那一边，它的 Sy
 mirrored from AutoCount — which is what silently removed a batch of Sales Agents
 from their own cases. `assrVisibleAgentNames` is **gone**; `subtreeAgentNames`
 (`services/orgScope.ts`) stays, because `/my-cases` still uses it (below).
+
+**The Nth-person access list — a 6th arm (mig `20260911T1600`).** Two
+`assigned_to` slots + one salesperson could not express "keep Kingsley as the
+rep, let Stanley / Shawn (and more later) work it", so reps were overwriting the
+Salesperson field to grant reach — which silently dropped the original rep out of
+their own row visibility. `assr_case_access` (one row per `(assr_id, user_id)`,
+granted via `POST /api/assr/:id/access`, `service_cases.write`) fixes that: a case
+is visible when its id is in the set of cases granted to any subtree member —
+`${prefix}id IN (SELECT assr_id FROM assr_case_access WHERE user_id IN (<subtree
+ids>))`, an UNCORRELATED arm shaped exactly like the doc arms (case column on the
+LEFT of the IN). It NEVER touches `sales_agent` or the two `assigned_to` slots, and
+an empty table is byte-identical to today. Because it is a 6th arm INSIDE
+`assrVisibilityPredicateSql`, every reader below inherits it for free. Granting
+notifies the grantee + upline (`notifyServiceCaseResponsible`); the desktop
+Salesperson edit now confirms first, steering reassignment-for-reach to this list
+instead. Desktop = an unlimited multiselect; mobile = add/revoke chips.
 
 **One predicate, four readers.** `pushVisibilityScope` (list + CSV export),
 `assrVisibilitySql` (the five aggregate endpoints), `assrCaseRowInScope` (detail
