@@ -675,6 +675,10 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/other-debtors", label: "Other Debtors", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
           { to: "/scm/outstanding", label: "Outstanding", icon: AlertCircle, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
           { to: "/scm/unbilled-deliveries", label: "Not Yet Billed", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
+          // Credit and debit notes (owner 2026-09-12; docs/bugs/0827) — the
+          // customer's CN / DN and the supplier's SCN; the PV key family, like
+          // the AP invoice they sit beside.
+          { to: "/scm/credit-notes", label: "Credit / Debit Notes", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
         ],
       },
       {

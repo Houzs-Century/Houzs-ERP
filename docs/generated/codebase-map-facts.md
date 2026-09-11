@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-188 route modules (53 in `backend/src/routes`, 135 in `backend/src/scm/routes`), 1260 endpoint registrations.
+189 route modules (53 in `backend/src/routes`, 136 in `backend/src/scm/routes`), 1266 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -103,6 +103,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/consignment-notes.ts` | 12 | 1262 |
 | `backend/src/scm/routes/consignment-orders.ts` | 19 | 2332 |
 | `backend/src/scm/routes/consignment-returns.ts` | 9 | 1248 |
+| `backend/src/scm/routes/credit-notes.ts` | 6 | 329 |
 | `backend/src/scm/routes/currencies.ts` | 3 | 148 |
 | `backend/src/scm/routes/customer-mirror.ts` | 1 | 103 |
 | `backend/src/scm/routes/delivery-fees.ts` | 5 | 236 |
@@ -217,13 +218,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 153 | `154_assr_case_access.sql` (154) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 409 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 411 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2215 files, 753513 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2219 files, 754439 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -251,7 +252,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 
 ## 4. Frontend desktop routes
 
-158 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
+159 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
 `frontend/src/lib/routeAliases.ts` are expanded at runtime and not counted here).
 
 | path | page module |
@@ -303,6 +304,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `/scm/consignment-returns/:id` | `frontend/src/pages/scm-v2/ConsignmentReturnDetail` |
 | `/scm/consignment-returns/from-note` | `frontend/src/pages/scm-v2/ConsignmentReturnFromNote` |
 | `/scm/consignment-returns/new` | `frontend/src/pages/scm-v2/ConsignmentReturnNew` |
+| `/scm/credit-notes` | `frontend/src/pages/scm-v2/CreditNotes` |
 | `/scm/currencies` | `frontend/src/pages/scm-v2/Currencies` |
 | `/scm/daily-bank` | `frontend/src/pages/scm-v2/DailyBank` |
 | `/scm/delivery-maintenance` | `frontend/src/pages/scm-v2/DeliveryMaintenance` |
@@ -423,7 +425,7 @@ Page files by directory:
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 154 |
+| `frontend/src/pages/scm-v2` | 155 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 10 |

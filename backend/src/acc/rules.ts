@@ -41,7 +41,10 @@ import { accMastersCompanyId } from './masters-company';
 export type AccountRole =
   | 'AR' | 'AR_OTHER' | 'SALES' | 'INVENTORY' | 'AP' | 'AP_OTHER'
   | 'CASH' | 'BANK_DEFAULT' | 'TRANSIT_EDC' | 'TRANSIT_ONLINE' | 'CUSTOMER_DEPOSITS' | 'OVER_SHORT'
-  | 'CLOSING_STOCK';
+  | 'CLOSING_STOCK'
+  /* Where a credit note's lines land when the note names no account
+     (docs/bugs/0827): a customer's return, a supplier's return. */
+  | 'SALES_RETURNS' | 'PURCHASE_RETURNS';
 
 /* Fallback = the accountant's own AutoCount codes (migration 0344; owner
    decision 2026-09-02: 迁到 AutoCount 码). Every company carries these codes,
@@ -62,6 +65,8 @@ export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
   CUSTOMER_DEPOSITS: '400-0001', // DEPOSIT (under ACCOUNT PAYABLE)
   OVER_SHORT: '946-0000',        // Cash Over/Short (ERP extension)
   CLOSING_STOCK: '620-0000',     // STOCKS AT THE END OF YEAR (month-close P&L leg)
+  SALES_RETURNS: '510-0000',     // RETURN INWARDS (a customer credit note's default line)
+  PURCHASE_RETURNS: '612-0000',  // PURCHASES RETURN (a supplier credit note's default line)
 };
 
 /* Control accounts (brief §2.4): system-maintained, and a MANUAL journal may
@@ -94,6 +99,9 @@ export const REVERSAL_SOURCE: Record<string, string> = {
   SETTLECHARGE: 'SETTLECHARGE_REVERSAL',
   ODB: 'ODB_REVERSAL',
   ODR: 'ODR_REVERSAL',
+  CN: 'CN_REVERSAL',
+  DN: 'DN_REVERSAL',
+  SCN: 'SCN_REVERSAL',
   RCT: 'RCT_REVERSAL',
 };
 
@@ -179,6 +187,68 @@ export function siLines(
  * caller owns FX and the rounding remainder, because only it knows the
  * header total the entry must reconcile to.
  */
+/* ── Credit and debit notes (docs/bugs/0827) ──────────────────────────────
+   Three documents, one shape: the party's control on one side, the note's
+   own lines on the other. Amounts arrive in MYR sen and already sum to the
+   header total — the caller owns that. */
+export type NoteLine = { accountCode: string; amountSen: number; description: string | null };
+export type NoteParty = { code: string | null; name: string | null };
+
+/** Customer credit note posted: Dr each line's account (RETURN INWARDS by
+    default) / Cr AR, party the customer — the customer owes that much less. */
+export function creditNoteLines(roles: RoleCodes, note: { note_number: string }, party: NoteParty, lines: NoteLine[]): RuleLine[] {
+  const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
+  return [
+    ...lines.map((l) => ({
+      accountCode: l.accountCode, debitSen: l.amountSen, creditSen: 0,
+      partyType: null, partyCode: null, partyName: null,
+      notes: l.description ?? `Credit note ${note.note_number}`,
+    })),
+    {
+      accountCode: roles.AR, debitSen: 0, creditSen: totalSen,
+      partyType: 'CUSTOMER', partyCode: party.code, partyName: party.name,
+      notes: `Credit note ${note.note_number}`,
+    },
+  ];
+}
+
+/** Customer debit note posted: Dr AR, party the customer / Cr each line's
+    account — the customer owes that much more. */
+export function debitNoteLines(roles: RoleCodes, note: { note_number: string }, party: NoteParty, lines: NoteLine[]): RuleLine[] {
+  const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
+  return [
+    {
+      accountCode: roles.AR, debitSen: totalSen, creditSen: 0,
+      partyType: 'CUSTOMER', partyCode: party.code, partyName: party.name,
+      notes: `Debit note ${note.note_number}`,
+    },
+    ...lines.map((l) => ({
+      accountCode: l.accountCode, debitSen: 0, creditSen: l.amountSen,
+      partyType: null, partyCode: null, partyName: null,
+      notes: l.description ?? `Debit note ${note.note_number}`,
+    })),
+  ];
+}
+
+/** Supplier credit note posted: Dr the supplier's AP control (400 or 405 by
+    the supplier's code, the PI's and the PV's split) / Cr each line's account
+    (PURCHASES RETURN by default) — we owe that supplier that much less. */
+export function supplierCreditNoteLines(roles: RoleCodes, note: { note_number: string }, supplier: NoteParty, lines: NoteLine[]): RuleLine[] {
+  const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
+  return [
+    {
+      accountCode: roles[apControlRole(supplier.code)], debitSen: totalSen, creditSen: 0,
+      partyType: 'SUPPLIER', partyCode: supplier.code, partyName: supplier.name,
+      notes: `Supplier credit note ${note.note_number}`,
+    },
+    ...lines.map((l) => ({
+      accountCode: l.accountCode, debitSen: 0, creditSen: l.amountSen,
+      partyType: null, partyCode: null, partyName: null,
+      notes: l.description ?? `Supplier credit note ${note.note_number}`,
+    })),
+  ];
+}
+
 /** AP invoice posted (the non-stock supplier bill — AutoCount's A/P Invoice;
     owner 2026-09-06: other creditor 的 invoice 放过去,不影响 operation 那边的
     purchase invoice): Dr each line's OWN account (rent, service, whatever the

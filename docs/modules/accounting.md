@@ -865,6 +865,38 @@ the reason, for a human to confirm. Offered, never taken: two possible answers i
 a question, so nothing is ticked and he chooses;
 `acc/settlement.ts` confirms, which POSTS that moment.
 
+**Credit and debit notes (2026-09-12, docs/bugs/0827; owner 2026-09-05:
+CN/DN approved, sales CN + supplier CN first, DN second, prefixes CN / DN /
+SCN; 2026-09-12: 这个要做).** `scm.acc_credit_notes` + `_lines` (migration
+`backend/src/db/migrations-pg/20260912T0100_acc_credit_notes.sql`), routes
+`/scm/credit-notes` (`backend/src/scm/routes/credit-notes.ts`, mounted under
+the finance area guard in `backend/src/scm/index.ts`, the PV key family:
+create/edit on `scm.payment_voucher.create|write`, post on `.post`, cancel on
+`.cancel`); the page route is registered in `frontend/src/App.tsx` and
+`frontend/src/routing/routeManifest.ts`, its hooks live in
+`frontend/src/vendor/scm/lib/credit-note-queries.ts`. Three kinds, one shape: **CN** to a
+customer — Dr each line's account (role `SALES_RETURNS`, 510-0000 RETURN
+INWARDS by default) / Cr AR with the customer as party; **DN** to a customer —
+Dr AR (party) / Cr each line's account; **SCN** from a supplier — Dr the
+supplier's AP control (`apControlRole`: 405 for a 405-x code) / Cr each
+line's account (role `PURCHASE_RETURNS`, 612-0000 PURCHASES RETURN by
+default). The customer is the sales order's (`customerPartyCode`, the code a
+payment carries — one customer one code), else the invoice's, else the name
+typed; a supplier note names its supplier. Numbers `{co}-CN-YYMM-NNN`,
+`{co}-DN-YYMM-NNN`, `{co}-SCN-YYMM-NNN` (NEW series, `mintMonthlyDocNo`).
+DRAFT → POSTED by `postJournal` (source_type = kind, source_doc_no = the
+number; a second post echoes `already_posted`) → CANCELLED by
+`reverseJournal` (`REVERSAL_SOURCE` carries CN/DN/SCN); a posted note is not
+edited (`not_editable`) — cancel and raise again. The page
+(`frontend/src/pages/scm-v2/CreditNotes.tsx`, sidebar Money in → Credit /
+Debit Notes) lists by kind and status, raises a note (lines with a blank
+account land on the default), opens one to its lines, posts, cancels. Not
+yet: applying a note to a specific invoice's balance, printing, the automatic
+CN per deposit invoice (the deposit-invoice design keys it on
+`sales_invoice_id`). `fetchMonthlyDocNos` reads the named column first
+since this PR (a whole-row driver handed back the id and minted -001 twice).
+Contracts: `backend/tests/creditNotes.test.ts`, `CreditNotes.test.tsx`.
+
 **The Merchant charges report (2026-09-12, docs/bugs/0826; owner: 我需要知道
 merchant charge 多少%，就是 charge / received amount，每个月的然后每个 merchant …
 每个不同 merchant 都要能看到，我指的是 gross … 每个月全部 merchant 加起来的%).**
