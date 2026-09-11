@@ -897,6 +897,52 @@ CN per deposit invoice (the deposit-invoice design keys it on
 since this PR (a whole-row driver handed back the id and minted -001 twice).
 Contracts: `backend/tests/creditNotes.test.ts`, `CreditNotes.test.tsx`.
 
+**Deposit invoices (2026-09-12, docs/bugs/0828; owner: e-invoice 好像是根据收钱
+就认 sales 了 … 每个顾客不是有自己本身的 account code 吗 … 做成开关 … 可以自己选
+几时要开始自动开 deposit invoice).** A customer payment received BEFORE the
+order's final sales invoice gets an invoice of its own — Dr AR with the
+customer as party / Cr DEPOSIT PAY BY CUSTOMER (role `DEPOSIT_INCOME`,
+509-0000, `depositInvoiceLines` in `backend/src/acc/rules.ts`) — dated the
+payment's day, numbered `{co}-DI-YYMM-NNN` (NEW series), posted by
+`postJournal` keyed (`DI`, the number); `REVERSAL_SOURCE` carries DI. The
+payment has already booked Dr money / Cr AR, so the customer nets to nothing
+and the deposit stands as a sale; a payment after the final invoice settles
+the invoice and gets none. Tables `scm.acc_deposit_invoices` and
+`scm.acc_company_settings` (migration
+`backend/src/db/migrations-pg/20260912T0300_acc_deposit_invoices.sql`); the
+library is `backend/src/acc/deposit-invoices.ts`. WHERE IT IS BORN:
+`bookSoPaymentBestEffort` in `backend/src/scm/lib/so-payment-row.ts` — the
+hook the three payment writers pass (the panel, the scan job, both SO-create
+deposit inserts) — which asks `issueDepositInvoice`: the company's switch on,
+the day on or after the start, no live sales invoice on the order
+(`absorbsOrderDeposit`: a draft or a cancelled one is none), idempotent on the
+payment. The edit re-post (`repostSoPaymentBestEffort`) cancels a standing
+invoice whose amount or day moved by contra (`DI_REVERSAL`, dated the day
+of the cancel) and issues the next number; `afterSoPaymentRemoved` cancels
+it. One invoice STANDS per payment (a partial unique index). THE SWITCH is
+per company with a start day (`acc_company_settings.deposit_invoice_enabled`
+/ `_from`) — off until Finance turns it on, and switching on needs the day.
+Routes `/scm/deposit-invoices` (`backend/src/scm/routes/deposit-invoices.ts`,
+mounted under the finance area guard in `backend/src/scm/index.ts`, listed
+in `backend/src/scm/lib/scm-areas.ts`): the list (`?status&so`), one invoice
+with its payment, `GET|POST /settings` (the switch + how many payments
+since the start still have no invoice), `POST /issue-missing` (issues
+them, in payment-date order), `POST /:id/cancel` (a reason is required; the
+row stays on file with it), `POST /:id/post` (an invoice whose journal was
+refused at birth). The switch, the backlog and a re-post on
+`scm.payment_voucher.post`, cancel on `.cancel`. The page
+(`frontend/src/pages/scm-v2/DepositInvoices.tsx`, sidebar Money in →
+Deposit Invoices beside Official Receipts — `frontend/src/components/Sidebar.tsx`,
+pinned by `frontend/src/components/sidebarFinanceGroups.test.ts`; the route
+in `frontend/src/App.tsx` and `frontend/src/routing/routeManifest.ts`, the
+hooks in `frontend/src/vendor/scm/lib/deposit-invoice-queries.ts`) carries the
+switch line and the backlog button, the list, one invoice with its payment,
+cancel behind a reason, post again. 2990 on from the day the owner picks;
+HOUZS off. NEXT (④c): the final sales invoice at delivery and one credit
+note per deposit invoice at that moment (`credit_note_id` is the link);
+until then the sale stays on 509-0000. Contracts:
+`backend/tests/depositInvoices.test.ts`, `DepositInvoices.test.tsx`.
+
 **The Merchant charges report (2026-09-12, docs/bugs/0826; owner: 我需要知道
 merchant charge 多少%，就是 charge / received amount，每个月的然后每个 merchant …
 每个不同 merchant 都要能看到，我指的是 gross … 每个月全部 merchant 加起来的%).**
