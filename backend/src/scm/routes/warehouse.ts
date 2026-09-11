@@ -188,10 +188,11 @@ warehouse.get('/cross-company', async (c) => {
   if (rackErr) return c.json({ error: 'load_failed', reason: rackErr.message }, 500);
 
   // Warehouse code/name per warehouse_id, across the allowed companies.
-  const { data: whRows } = await scopeToAllowedCompanies(
+  const { data: whRows, error: whErr } = await scopeToAllowedCompanies(
     sb.from('warehouses').select('id, code, name, company_id'),
     c,
   );
+  if (whErr) return c.json({ error: 'load_failed', reason: whErr.message }, 500);
   const whById = new Map<string, { code: string; name: string }>(
     (whRows ?? []).map((w: { id: string; code: string; name: string }) => [w.id, { code: w.code, name: w.name }]),
   );

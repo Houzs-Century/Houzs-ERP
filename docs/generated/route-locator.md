@@ -992,13 +992,13 @@ Total: 1238 route registrations across 160 files.
 ## backend/src/scm/routes/warehouse.ts  (9)
 - L91  GET    /
 - L174  GET    /cross-company
-- L390  POST   /racks
-- L393  PATCH  /racks/:id
-- L426  DELETE /racks/:id
-- L446  POST   /stock-in
-- L513  POST   /stock-out
-- L575  POST   /transfer
-- L676  GET    /movements
+- L391  POST   /racks
+- L394  PATCH  /racks/:id
+- L427  DELETE /racks/:id
+- L447  POST   /stock-in
+- L514  POST   /stock-out
+- L576  POST   /transfer
+- L677  GET    /movements
 
 ## backend/src/routes/announcements.ts  (8)
 - L553  GET    /
