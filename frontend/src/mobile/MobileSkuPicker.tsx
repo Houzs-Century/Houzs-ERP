@@ -244,7 +244,11 @@ export function MobileSkuPicker({
                 onPickMany?.(picked.map((x) => x.sku));
                 onClose();
               }}
-              style={{ flex: "none", opacity: picked.length === 0 ? 0.5 : 1, padding: "10px 16px" }}
+              /* width:auto overrides the shared `.hz-m .btn`'s width:100% —
+                 without it the button forces itself to the whole sheet's
+                 content width, squishes "N selected" to a strip and overflows
+                 past the viewport's right edge (owner screenshot 2026-09-11). */
+              style={{ flex: "none", width: "auto", opacity: picked.length === 0 ? 0.5 : 1, padding: "10px 16px" }}
             >
               {picked.length <= 1 ? "Add product" : `Add ${picked.length} products`}
             </button>

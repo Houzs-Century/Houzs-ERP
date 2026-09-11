@@ -77,6 +77,7 @@ import { stockTakes } from "./routes/stock-takes";
 import { accounting } from "./routes/accounting";
 import { mrp } from "./routes/mrp";
 import { mrpLeadTimes } from "./routes/mrp-lead-times";
+import { mrpSupplierLeadTimes } from "./routes/mrp-supplier-lead-times";
 import { outstanding } from "./routes/outstanding";
 import { unbilledDeliveries } from "./routes/unbilled-deliveries";
 import { localities } from "./routes/localities";
@@ -609,6 +610,8 @@ scm.use("/mrp/*", scmAreaGuard("scm.procurement.mrp"));
 scm.route("/mrp", mrp);
 scm.use("/mrp-lead-times/*", scmAreaGuard("scm.procurement.mrp"));
 scm.route("/mrp-lead-times", mrpLeadTimes);
+scm.use("/mrp-supplier-lead-times/*", scmAreaGuard("scm.procurement.mrp"));
+scm.route("/mrp-supplier-lead-times", mrpSupplierLeadTimes);
 // Ported 2026-06-20 — Outstanding dashboard (v_*_outstanding views), MY
 // State/City/Postcode reference (my_localities). /fabric-library already
 // mounted above — its GET list was added to the existing route, not remounted.

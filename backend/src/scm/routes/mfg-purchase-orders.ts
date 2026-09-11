@@ -57,9 +57,11 @@ import { loadSoWarehouseMasters, type SoWarehouseMasters, type SoWarehouseSource
 import { computeSoDrift, type DriftLine } from '../lib/so-po-drift';
 import {
   loadLeadTimeBase,
+  loadSupplierCategoryOverrides,
   resolveLeadDays,
   subtractCalendarDays,
   LEAD_TIME_SELECT,
+  LEAD_OVERRIDE_SELECT,
 } from '../lib/lead-time';
 import { groupKeyFor } from '../lib/po-grouping';
 import { findOverConvertOffender, soLineHeadroom, type OverConvertOffender } from '../lib/po-over-convert';
@@ -1591,6 +1593,14 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   const leadBase = await loadLeadTimeBase(
     scopeToCompany(supabase.from('mrp_category_lead_times').select(LEAD_TIME_SELECT), c),
   );
+  /* The owner's MANUAL per-(supplier, category) overrides (owner 2026-09-11).
+     When a row exists for a line's supplier + category it REPLACES the category
+     base — highest priority — when this convert computes the PO delivery date.
+     Empty until he sets one, so no change to any existing PO. Throws on a read
+     error for the same reason as the base above. */
+  const leadOverrides = await loadSupplierCategoryOverrides(
+    scopeToCompany(supabase.from('mrp_supplier_category_lead_times').select(LEAD_OVERRIDE_SELECT), c),
+  );
   /* The buffers the owner has APPROVED on top of his table — per-supplier
      punctuality and per-season, learned by the Procurement Agent from actual
      receipts (owner 2026-07-17: "要根据不同的供应商准时程度、不同的季节... 来制定
@@ -2159,9 +2169,10 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
        An explicit caller override still wins outright, unchanged: if the
        operator typed a date, that is the date. */
     const supplierCode = supplierCodeById.get(effectiveSupplierId) ?? null;
-    const lead = resolveLeadDays(leadBase, leadBuffers, {
+    const lead = resolveLeadDays(leadBase, leadOverrides, leadBuffers, {
       warehouseId: lineWarehouseId,
       category: it.itemGroup,
+      supplierId: effectiveSupplierId,
       supplierCode,
       deliveryDate: it.rawDeliveryDate,
     });

@@ -59,6 +59,11 @@ export type ReconInput = {
   differenceSen: number | null;
   bankNotInBooks: { count: number; sen: number };
   booksNotOnBank: { count: number; sen: number };
+  /** Earlier periods' entries still not on any statement, and what cleared
+      from before the period on this statement (docs/bugs/0802). Optional so a
+      server that predates them still prints. */
+  carried?: { count: number; sen: number };
+  clearedFromBeforeSen?: number;
   consistent: boolean;
   inconsistency: string | null;
   reconciled: boolean;
@@ -96,6 +101,9 @@ export type ReconLedgerEntry = {
   sourceDocNo: string | null;
   debitSen: number;
   creditSen: number;
+  partyName?: string | null;
+  notes?: string | null;
+  carried?: boolean;
 };
 
 export type ReconReportInput = {
@@ -204,7 +212,15 @@ export function reconciliationStatement(input: ReconReportInput): ReconReport {
     const bankNot = r.bankNotInBooks.sen;
     const booksNot = r.booksNotOnBank.sen;
     const bf = r.broughtForwardSen ?? 0;
-    const arrived = r.closingStatementSen - bankNot + booksNot - bf;
+    /* The earlier months' entries still waiting are a step of their own — the
+       conventional "outstanding from prior periods" — and the brought-forward
+       is printed only for the part of it they do NOT explain. Same arithmetic
+       as before once the two are put together: bf + cleared + carried is the
+       unexplained remainder (docs/bugs/0802). */
+    const carriedSen = r.carried?.sen ?? 0;
+    const carriedCount = r.carried?.count ?? 0;
+    const unexplained = bf + (r.clearedFromBeforeSen ?? 0) + carriedSen;
+    const arrived = r.closingStatementSen - bankNot + booksNot + carriedSen - unexplained;
 
     steps.push({ label: 'Balance per bank statement', sen: r.closingStatementSen, rule: 'total' });
     steps.push({
@@ -215,8 +231,11 @@ export function reconciliationStatement(input: ReconReportInput): ReconReport {
       label: 'Add: in the books, not on the bank',
       sen: booksNot, count: r.booksNotOnBank.count,
     });
-    if (bf !== 0) {
-      steps.push({ label: 'Less: difference brought forward', sen: -bf });
+    if (carriedCount > 0) {
+      steps.push({ label: 'Add: still in the books from earlier months', sen: carriedSen, count: carriedCount });
+    }
+    if (unexplained !== 0) {
+      steps.push({ label: 'Less: difference brought forward, unexplained', sen: -unexplained });
     }
     steps.push({ label: 'Balance per the books', sen: arrived, rule: 'grand' });
 
@@ -255,14 +274,25 @@ export function reconciliationStatement(input: ReconReportInput): ReconReport {
       ]),
     },
     {
-      title: `In the books, not on the bank (${unmatchedEntries.length})`,
-      note: unmatchedEntries.length === 0
+      title: `In the books, not on the bank (${unmatchedEntries.filter((e) => !e.carried).length})`,
+      note: unmatchedEntries.filter((e) => !e.carried).length === 0
         ? 'Nothing — every entry posted in these days appears on the statement.'
         : 'Posted in these days and the bank has not shown it: an uncleared cheque, a deposit'
           + ' still on its way, or an entry belonging to a day not uploaded yet.',
-      head: ['Entry', 'Date', 'Source', 'Amount'],
-      body: unmatchedEntries.map((e) => [
-        e.jeNo, fmtDocDate(e.entryDate), sourceOf(e), signed(e.debitSen - e.creditSen),
+      head: ['Entry', 'Date', 'Source', 'Who', 'Amount'],
+      body: unmatchedEntries.filter((e) => !e.carried).map((e) => [
+        e.jeNo, fmtDocDate(e.entryDate), sourceOf(e), e.partyName ?? e.notes ?? '', signed(e.debitSen - e.creditSen),
+      ]),
+    },
+    {
+      title: `From earlier months, still not on any statement (${unmatchedEntries.filter((e) => e.carried).length})`,
+      note: unmatchedEntries.filter((e) => e.carried).length === 0
+        ? 'Nothing — every earlier entry has appeared on a statement.'
+        : 'Posted before this period and no bank statement has shown it yet. These make up the difference'
+          + ' brought forward.',
+      head: ['Entry', 'Date', 'Source', 'Who', 'Amount'],
+      body: unmatchedEntries.filter((e) => e.carried).map((e) => [
+        e.jeNo, fmtDocDate(e.entryDate), sourceOf(e), e.partyName ?? e.notes ?? '', signed(e.debitSen - e.creditSen),
       ]),
     },
     {

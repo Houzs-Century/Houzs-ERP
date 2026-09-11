@@ -34,6 +34,7 @@ import {
   resolveLeadDays,
   addCalendarDays,
   LEAD_TIME_SELECT,
+  NO_OVERRIDES,
   type LeadBuffers,
   type LeadTimeBase,
   type LeadTimeBreakdown,
@@ -89,7 +90,13 @@ export function estimateReadyDate(
   const asOf = String(asOfDate ?? '').slice(0, 10);
 
   const perItem: ReadyDateItemResult[] = items.map((it) => {
-    const leadDays = resolveLeadDays(base, buffers, {
+    /* NO_OVERRIDES here, deliberately: the owner's manual per-(supplier,
+       category) override (scm.mrp_supplier_category_lead_times) is threaded into
+       the PO convert and the MRP hint, not this agent ready-date estimate — the
+       estimate keys items by supplier CODE, and adding the supplier id to
+       ReadyDateItem to honour the override is a separate change. No-op today: the
+       override table is empty until the owner sets one. */
+    const leadDays = resolveLeadDays(base, NO_OVERRIDES, buffers, {
       warehouseId: it.warehouseId ?? null,
       category: it.category ?? null,
       supplierCode: it.supplierCode ?? null,

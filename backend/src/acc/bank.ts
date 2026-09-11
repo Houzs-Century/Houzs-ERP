@@ -217,7 +217,7 @@ export async function loadAccountLedger(
   sb: any, companyId: number, accountCode: string, upTo: string,
 ): Promise<{ ok: true; movements: LedgerMovement[] } | Fail> {
   const { data, error } = await sb.from('v_gl_entries')
-    .select('je_no, entry_date, source_type, source_doc_no, debit_sen, credit_sen, notes')
+    .select('je_no, entry_date, source_type, source_doc_no, debit_sen, credit_sen, notes, party_name, reversed, reversed_by_je')
     .eq('company_id', companyId)
     .eq('account_code', accountCode)
     .lte('entry_date', upTo);
@@ -228,6 +228,11 @@ export async function loadAccountLedger(
      entries. Summed rather than deduplicated, so nothing is lost either way. */
   const byJe = new Map<string, LedgerMovement>();
   for (const r of (data ?? []) as Array<Record<string, any>>) {
+    /* A REVERSED entry and the contra that undid it are one correction, not
+       two bank movements: they net to nothing and no statement will ever show
+       either. Both sides carry reversed_by_je; neither is the bank's business
+       (docs/bugs/0802 — they were being listed, and offered, as two entries). */
+    if (r.reversed === true || r.reversed_by_je != null) continue;
     const jeNo = String(r.je_no ?? '');
     const at = byJe.get(jeNo);
     if (at) {
@@ -242,11 +247,62 @@ export async function loadAccountLedger(
         debitSen: Number(r.debit_sen ?? 0),
         creditSen: Number(r.credit_sen ?? 0),
         notes: r.notes ?? null,
+        partyName: (r.party_name as string | null | undefined) ?? null,
       });
     }
   }
   return { ok: true, movements: [...byJe.values()].sort((a, b) => a.entryDate.localeCompare(b.entryDate)) };
 }
+
+/**
+ * What the account's OTHER statements have claimed, for the carried list
+ * (docs/bugs/0802): every je_no a POSTED line of any statement of this account
+ * points at (its own posted_je_no, or a match row on a POSTED line), except the
+ * statement being looked at — plus the day the first statement ever filed for
+ * the account begins, before which nothing was reconciled here and so nothing
+ * is "still waiting". Fails closed: a read that fails is a refusal.
+ */
+export async function loadClaimedElsewhere(
+  sb: Parameters<typeof loadAccountLedger>[0], companyId: number, accountCode: string, exceptStatementId: number | null,
+): Promise<{ ok: true; claimed: Set<string>; firstPeriodFrom: string | null } | Fail> {
+  const { data: stmts, error: sErr } = await sb.from('acc_bank_statements')
+    .select('id, period_from').eq('company_id', companyId).eq('account_code', accountCode);
+  if (sErr) return { ok: false, reason: sErr.message };
+  const all = (stmts ?? []) as Array<{ id: number; period_from: string | null }>;
+  const firstPeriodFrom = all.map((s) => String(s.period_from ?? '').slice(0, 10)).filter(Boolean).sort()[0] ?? null;
+  const ids = all.map((s) => Number(s.id)).filter((id) => id !== exceptStatementId);
+  const claimed = new Set<string>();
+  if (ids.length === 0) return { ok: true, claimed, firstPeriodFrom };
+
+  const { data: lines, error: lErr } = await sb.from('acc_bank_statement_lines')
+    .select('id, posted_je_no, state').eq('company_id', companyId).in('statement_id', ids).eq('state', 'POSTED');
+  if (lErr) return { ok: false, reason: lErr.message };
+  const posted = (lines ?? []) as Array<{ id: number; posted_je_no: string | null }>;
+  for (const l of posted) if (l.posted_je_no) claimed.add(String(l.posted_je_no));
+
+  const postedIds = posted.map((l) => Number(l.id));
+  if (postedIds.length > 0) {
+    const { data: matches, error: mErr } = await sb.from('acc_bank_statement_matches')
+      .select('bank_line_id, je_no').eq('company_id', companyId).in('bank_line_id', postedIds);
+    if (mErr) return { ok: false, reason: mErr.message };
+    for (const m of (matches ?? []) as Array<{ je_no: string }>) claimed.add(String(m.je_no));
+  }
+  return { ok: true, claimed, firstPeriodFrom };
+}
+
+/** Everything the reconciliation should treat as already claimed: what other
+    statements claimed, and every ledger entry older than the first statement
+    ever filed for the account. */
+export const claimedSetFor = (
+  elsewhere: { claimed: Set<string>; firstPeriodFrom: string | null },
+  ledger: Array<{ jeNo: string; entryDate: string }>,
+): Set<string> => {
+  const out = new Set(elsewhere.claimed);
+  if (elsewhere.firstPeriodFrom) {
+    for (const l of ledger) if (l.entryDate < elsewhere.firstPeriodFrom) out.add(l.jeNo);
+  }
+  return out;
+};
 
 /**
  * The LIVE lock on one month of one account, or null.

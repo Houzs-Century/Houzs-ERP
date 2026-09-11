@@ -289,7 +289,8 @@ is the `optional-param-noop` trap CLAUDE.md names, and the other ~15
 **The response field `skus[].category` is what puts a row on a tab.** The
 frontend picks a tab's rows with `s.category === apiCategory` — the active tab's
 own category (`frontend/src/pages/scm-v2/Mrp.tsx`; it read a hand-typed
-`VIEW_CATEGORY[view]` until 2026-09-10, see §2.2) — so a row whose `category` is
+`VIEW_CATEGORY[view]` until 2026-09-10, see §2.2; the Sofa tab is the exception,
+§2.3) — so a row whose `category` is
 `null` belongs to NO tab and is invisible on every one of them, with no empty
 state, no count and no warning, because a missing row and a covered row look
 identical here.
@@ -396,6 +397,83 @@ would be the fault being tested.
 `undated` tally forty lines below shows the shape the fix would take — count on
 the rows the `continue` removes, before it removes them — but it sits inside the
 section 0777 changed the same day.
+
+### 2.3 The SOFA tab asks for the FULL plan, so the cover rides with the sofa
+
+Every other tab sends `?category=<its tab>` (§2.1). The **Sofa** tab is the one
+exception: `apiCategory` is `null` there, so it requests the whole plan with no
+category filter. Two reasons, both load-bearing (owner 2026-09-11):
+
+1. **The cover (皮套) must reach the sofa's convert batch.** A sofa order's
+   leather cover / pillow is an ACCESSORY line, and the owner's rule is that it
+   ships on the SAME PO as the sofa. `gatherSofa` pulls those accessory shortage
+   lines off `data.skus` into the `/from-sos` batch so `po-grouping.ts` can
+   co-locate them (Combined) or split them to their own PO (Per-SO). With
+   `?category=SOFA` the engine drops every non-SOFA row, so `data.skus` held only
+   sofa and the pull matched nothing — the cover never rode, from the MRP page.
+   Dead since the 2026-06-15 per-category tab split; fixed 2026-09-11
+   (`docs/bugs/0801-mrp-sofa-cover-pull-in-was-dead-since-the-per-category-tab-s.md`).
+2. **It is the DEFAULT view, so it is FREE.** `catFilter === null && whFilter ===
+   null && !includeUndated` is `isDefaultMrpView`, which serves the stored
+   snapshot instantly (`mrp-snapshot.ts`). `?category=SOFA` was NOT the default
+   view, so the Sofa tab used to recompute the whole plan live on every open;
+   asking for the full plan makes the most-used tab read the snapshot instead.
+
+The sofa TABLE is unaffected either way — it renders from `data.sofaSets`, which
+`computeMrp` builds SOFA-by-construction and ignores `catFilter` for (§ the
+`sofaSets` array). `data.skus` on the Sofa tab is read ONLY by `gatherSofa` and
+the cover-rider display; it never leaks into the sofa rows.
+
+**Cover riders are SHOWN, not just ordered.** Under each sofa SO the page lists
+that order's accessory shortage lines as read-along rider rows (no checkbox —
+they follow the sofa's selection), with a caption that states where they land in
+the current mode: Combined = on the sofa PO when the supplier matches, Per-SO =
+their own PO. `gatherSofa`'s `setDocs` derives from the sofa picks actually being
+ordered, so selecting ONE order pulls only THAT order's cover.
+
+### 2.4 Search — a client-side find over the rows in view
+
+A **Search** box (owner 2026-09-11, 「MRP 也要有 search 的功能…那版太长了」)
+narrows the current tab's rows by a case-insensitive substring over item code,
+description, module / variant label, and each SO line's doc no + customer (a sofa
+row also matches its cover riders). It never changes the server request — purely
+a client-side filter of what is already loaded — and a non-empty query
+force-opens the matches so the hit is visible without a manual drill. It resets
+on a tab switch so a query narrowing one tab cannot blank the next.
+
+### 2.5 Lead times — the order-by date, and the per-supplier override
+
+A demand line's **order-by date** = its customer delivery date minus a lead-time,
+so a PO is raised early enough for the supplier to deliver ahead of the customer
+(Commander 2026-05-29). The SAME resolver computes the MRP page's order-by HINT
+and the real `purchase_order_items.delivery_date` the convert writes, so the two
+can never disagree — `scm/lib/lead-time.ts`, called from `mrp.ts` (hint) and
+`mfg-purchase-orders.ts` (the PO).
+
+The lead-time is layered, highest priority first:
+
+1. **override** — `scm.mrp_supplier_category_lead_times[(supplier, category)]`,
+   the owner's MANUAL per-supplier number (owner 2026-09-11: 「我会在每一个
+   Supplier 去 set 它的 Category lead time」). When a row exists for a line's
+   supplier + category it **replaces** the base — "this supplier's sofa takes N
+   days" is more specific than "sofa takes N days". A row's PRESENCE is the
+   override; its ABSENCE means "use the base", so an explicit 0 is a real
+   override (order same-day) and it is CLEARED by deleting the row, never by
+   saving 0.
+2. **base** — `scm.mrp_category_lead_times[(warehouse, category)]`, the owner's
+   per-(warehouse, category) table behind the MRP page's "Lead Times" dialog.
+   Cascade: (warehouse, category) -> (NULL, category) -> 0.
+3. **learned buffers** — the Procurement Agent's per-supplier punctuality and
+   per-season margins, ADDED on top (empty until approved on the agent console).
+
+`effectiveBase = override ?? base`, then `total = effectiveBase + supplier +
+season`. Empty override table = base wins, so the layer shipped as a pure no-op.
+
+**Endpoints + UI.** Base: `GET/PUT /api/scm/mrp-lead-times` (the MRP page dialog).
+Override: `GET/PUT/DELETE /api/scm/mrp-supplier-lead-times` (GET `?supplierId=`;
+PUT upserts; DELETE clears), gated `scm.procurement.mrp` like the base, edited on
+the supplier page's **Lead Times** tab (`SupplierLeadTimes.tsx`). Both writes
+invalidate the `mrp` query so the order-by dates recompute.
 
 ## 3. Supply
 

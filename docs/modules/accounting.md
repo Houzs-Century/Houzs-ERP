@@ -1325,6 +1325,40 @@ Contracts: `bank-parse.test.ts`, `bank-lock.test.ts`, `bank-month.test.ts`,
 `backend/tests/bankRoutes.test.ts` (which now also mounts the month list and
 the lock — their first route contract), `BankStatementTab.test.tsx`.
 
+**Undo lets go; a dated statement covers the month it is named for; the
+books' list names who and carries earlier months (2026-09-11, docs/bugs/0802).**
+Three things off 2990's April Hong Leong statement. UNDO left the line's row in
+`acc_bank_statement_matches` standing, so the books counted the entry as
+claimed while the bank counted the movement as open — the identity broke
+("These numbers do not add up") and `acc_bank_je_once` refused every re-match.
+`bankLineUndo` now deletes the line's match rows, `bankLineMatch` first
+clears any row on that entry whose line is no longer POSTED (the rows an older
+undo left; prod's six clear themselves on the next match), and every read —
+statement detail, month detail, `loadMonthForLock` — counts a claim only from
+a POSTED line. THE MONTH A STATEMENT COVERS: fifteen movements all dated the
+30th gave a one-day period and the vouchers of the 28th fell off the "in the
+books" list; naming the month in the Year-and-month box for a DATED file now
+sets the period to the 1st–last day (a movement outside it refuses the file,
+`month_mismatch`), rule 1 untouched. CARRIED AND WHO (owner: 我要看到 pay to
+who; 之前 in book 还没有 recon 的也要带下来，因为可能下个月才过钱):
+`reconcileBankStatement` gains `carried` (entries before the period no
+statement of the account has ever claimed, and not older than the first
+statement ever filed — `loadClaimedElsewhere`/`claimedSetFor` in `acc/bank.ts`,
+`claimedOutside` in the month routes), `clearedFromBeforeSen` (an earlier
+entry a movement on this statement claims) and `broughtForwardExplained`; the
+identity carries the cleared term: difference = bank-not-in-books −
+books-not-on-bank + brought forward + cleared-from-before. The ledger read
+carries `party_name` and skips both sides of a reversal (`reversed` /
+`reversed_by_je`) — a correction was being listed and offered as two entries.
+The screens share `BooksNotOnBank` (`BankStatementTab.tsx`): a Who column, a
+second section "From earlier months, still not on any statement", the payee on
+candidate entries, and the brought-forward line saying when it is explained;
+the printed statement (`bank-reconciliation-pdf.ts`) adds the Who column, an
+"Add: still in the books from earlier months" step and prints the
+brought-forward only for its unexplained part. Contracts:
+`bank-reconcile.test.ts`, `backend/tests/bankRoutes.test.ts`,
+`BankStatementTab.test.tsx`, `bank-reconciliation-pdf.test.ts`.
+
 **"This movement is already in the books" (2026-09-09; owner, on a RM 3,000
 transfer sitting beside the RM 3,000 receipt that posted it: the only button was
 "Not ours to reconcile", which is not true).** `POST /bank/lines/:id/match` has
