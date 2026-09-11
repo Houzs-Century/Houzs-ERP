@@ -1224,6 +1224,11 @@
       "check": "D2",
       "key": "DO,GRN,PO ~ DO,GRN,PO,SO",
       "why": "THE CHANGE LOG'S DOCUMENT TYPES VERSUS THE ONES THAT LIVE IN scm.entity_audit_log, differing by SO — and that difference IS the schema, not a drift. Sales orders record into their own table (scm.mfg_so_audit_log); every other SCM document records into scm.entity_audit_log (migration 0139). ENTITY_DOC_TYPES is deliberately the three that table carries, and the route reads both tables to answer as one. The sets are meant to differ and they differ in exactly the right place."
+    },
+    {
+      "check": "D1",
+      "key": "CLOSED,DELIVERED,INVOICED|backend/src/scm/routes/accounting-collection.ts backend/src/services/agents/cs-agent.ts",
+      "why": "DELIVERED-OR-BEYOND, asked twice: the CS agent answers \"has the customer got it\" for a chat reply; the Collection report (docs/bugs/0825) answers \"is this order at the balance stage\" for Finance. Both read the SO status enum as the same three words today. Recorded rather than collapsed: the report is due to move to \"has a sales invoice\" once delivery raises the invoice (the deposit-invoice design), while the agent stays on delivery — they are about to diverge on purpose."
     }
   ]
 }

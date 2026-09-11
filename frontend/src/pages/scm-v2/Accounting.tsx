@@ -17,7 +17,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
-import { ArrowLeftRight, BookOpen, Boxes, CalendarClock, FileText, LineChart, ListTree, Receipt, Scale, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
+import { ArrowLeftRight, BookOpen, Boxes, CalendarClock, FileText, HandCoins, LineChart, ListTree, Receipt, Scale, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
 import {
   useJournalEntries,
   useJournalEntryDetail,
@@ -52,6 +52,7 @@ import { StockCloseTab } from './StockClose';
 import { PnLTab, BalanceSheetTab } from './Reports';
 import { ReceiptsPaymentsTab } from './ReceiptsPayments';
 import { PaymentCorrectionsTab } from './PaymentCorrectionsTab';
+import { CollectionTab } from './CollectionReport';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
@@ -103,6 +104,7 @@ export const Accounting = () => {
         <TabBtn label="AP Aging"        icon={<TrendingDown {...ICON} />} active={tab === 'ap'} onClick={() => setTab('ap')} />
         <TabBtn label="Self-check"      icon={<ShieldCheck {...ICON} />} active={tab === 'check'} onClick={() => setTab('check')} />
         <TabBtn label="Corrections"     icon={<FileText {...ICON} />} active={tab === 'corrections'} onClick={() => setTab('corrections')} />
+        <TabBtn label="Collection"      icon={<HandCoins {...ICON} />} active={tab === 'collection'} onClick={() => setTab('collection')} />
       </div>
 
       {tab === 'coa'   && <CoaTab />}
@@ -118,6 +120,7 @@ export const Accounting = () => {
       {tab === 'ap'    && <ApAgingTab />}
       {tab === 'check' && <SelfCheckTab />}
       {tab === 'corrections' && <PaymentCorrectionsTab />}
+      {tab === 'collection' && <CollectionTab />}
     </div>
   );
 };

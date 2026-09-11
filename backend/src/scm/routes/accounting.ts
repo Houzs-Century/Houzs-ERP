@@ -59,6 +59,7 @@ import { piPeriodicBackfill } from './accounting-pi-backfill';
 import { stockCloseStatus, stockCloseRun } from './accounting-stock-close';
 import { pnlReport, balanceSheetReport } from './accounting-reports';
 import { receiptsPaymentsReport } from './accounting-rp';
+import { collectionReport } from './accounting-collection';
 import { numberingGet, numberingPut } from './accounting-numbering';
 import { receiptsList, receiptEnsure, receiptFormalise } from './accounting-receipts';
 import { ACCOUNT_SECTIONS, defaultSectionFor } from '../lib/account-sections';
@@ -151,6 +152,8 @@ accounting.post('/stock-close/run', stockCloseRun);
    AutoCount arithmetic; handlers in accounting-reports.ts. */
 accounting.get('/reports/pnl', pnlReport);
 accounting.get('/reports/receipts-payments', receiptsPaymentsReport);
+/* Deposit and balance collected per salesman (owner 2026-09-12; docs/bugs/0825). */
+accounting.get('/reports/collection', collectionReport);
 accounting.get('/reports/balance-sheet', balanceSheetReport);
 /* Voucher numbering — the owner's own levers (GL redesign item 8a): per-bank
    letters + suffix width. Handlers in accounting-numbering.ts. */
