@@ -49,8 +49,7 @@ const fePo = n(fePoRaw);
 const doRoute = n(doRouteRaw);
 const grnRoute = n(grnRouteRaw);
 const piRoute = n(piRouteRaw);
-const siRoute = n(siRouteRaw) + '
-' + n(siFromDoRaw);
+const siRoute = `${n(siRouteRaw)}\n${n(siFromDoRaw)}`;
 const preflight = n(preflightRaw);
 const feDo = n(feDoRaw);
 const feGrn = n(feGrnRaw);
