@@ -32,6 +32,7 @@ import {
   type SpecialAddonDef,
 } from '../shared/mfg-pricing';
 import { chunkIn } from './paginate-all';
+import { pgrestInList } from './pgrest-in-list';
 import {
   computeSofaSellingSen,
   comboChargedPrices,
@@ -805,10 +806,24 @@ export async function loadProductsByCodes(sb: any, codes: Array<string | null | 
   if (uniq.length === 0) return new Map();
   let q = sb
     .from('mfg_products')
-    .select('code, category, base_price_sen, price1_sen, cost_price_sen, seat_height_prices, sell_price_sen, pwp_price_sen, model_id, size_code, base_model, branding, default_free_gifts')
-    .in('code', uniq);
+    .select('code, category, base_price_sen, price1_sen, cost_price_sen, seat_height_prices, sell_price_sen, pwp_price_sen, model_id, size_code, base_model, branding, default_free_gifts');
+  /* postgrest-js `.in()` quotes reserved chars but never ESCAPES, so a code
+     carrying a `"` (inch mark) or `\` closes the in-list early and every code
+     after it in the batch silently reads as absent (docs/bugs/0780, and the
+     amendment-submit refusal it also caused). Escape via pgrestInList — which is
+     byte-identical to `.in()` for a clean list — ONLY when a code actually
+     carries one of those two characters, so the ordinary read keeps the plain
+     `.in()` path unchanged. */
+  q = uniq.some((code) => /["\\]/.test(code))
+    ? q.filter('code', 'in', pgrestInList(uniq))
+    : q.in('code', uniq);
   if (companyId != null) q = q.eq('company_id', companyId);
-  const { data } = await q;
+  const { data, error } = await q;
+  /* A read that failed is not "no products": say so rather than pricing/gating
+     on a silent empty (the swallowed error was why 0780 stayed invisible). */
+  if (error) {
+    console.error(`[mfg-pricing] loadProductsByCodes read failed (company=${companyId ?? 'unscoped'}):`, (error as { message?: unknown }).message ?? error);
+  }
   const rows = ((data as ProductRowLite[]) ?? []);
   /* More rows than codes means a code still resolves to two products in this
      scope — the Map below would silently keep one. Say so; the pricing that
