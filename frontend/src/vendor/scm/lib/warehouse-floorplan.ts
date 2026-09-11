@@ -4,45 +4,59 @@
 // a rack label, sort NATURALLY (the L1/L10/L2 fix), group slots into rack
 // columns and physical banks, and match a slot against the toolbar filters.
 //
-// A backend `Rack` row IS one physical slot (its `rack` string is the slot id,
-// e.g. "L1.1"); the design's "rack" (a column holding two levels) and "bank"
-// (a row of racks along the aisle) are DERIVED here by parsing that label:
+// A backend `Rack` row IS one physical slot. Its `rack` string is stored WITH a
+// leading word — the real KL racks are "Rack L1.1", not "L1.1" — so the design's
+// "rack" (a column of two levels) and "bank" (a row of racks) are DERIVED by
+// parsing the TRAILING token of that label:
 //
-//   "L1.1"  ->  prefix "L"  ·  rackNo 1  ·  level 1
-//               column key "L1"          bank "L"
+//   "Rack L1.1"  ->  prefix "L"  ·  rackNo 1  ·  level 1
+//                    column key "L1"          series "L"
 //
-// The prefix letter is the physical bank — the KL warehouse is an "L" row and an
-// "R" row with one aisle between them — so banks come from the prefix, never
-// from splitting the rack count in half.
+// A ZONE groups racks by (series, rackNo range): the KL warehouse is ZONE A
+// (L1–L8, R1–R8) and ZONE B (L9–L21, R9–R17), each drawn as an L row and an R
+// row with one aisle between. WAREHOUSE_ZONES is the single edit point.
 // ----------------------------------------------------------------------------
 
 import type { Rack, RackItem, RackStatus } from './warehouse-queries';
 
 export type SlotStatus = 'occupied' | 'reserved' | 'empty';
 
-/* ── Zone config — PLACEHOLDER names ──────────────────────────────────────
-   `BANK A` / `BANK B` / `AISLE 01` are placeholders pending the owner's real
-   zone names. Zones are keyed by rack-label PREFIX (the letters before the
-   number). This constant is the single edit point: rename a `label` to rename a
-   bank, add an entry to onboard a new physical prefix. The aisle strip renders
-   AFTER the zone that carries it (the design shows one aisle, under BANK A). */
+/* ── Zone config (owner 2026-09-11) ───────────────────────────────────────
+   The KL warehouse is split into two zones by rack NUMBER, each holding both
+   series (L and R). Listed LEFT→RIGHT as the plan draws them: the LOADING BAY is
+   the left strip at the LOW-number end (L1 / R1), the MAIN ENTRANCE / DOCK is the
+   right strip at the HIGH-number end (L21 / R17) — so ZONE A (L1–L8) is nearest
+   the loading bay and comes first, ZONE B (L9–L21) is nearest the entrance and
+   comes last. Racks ascend left→right within each row. Single edit point: rename
+   a zone, move a boundary, reorder, or add a series/zone. Each zone stacks its
+   banks (L over R) with the aisle between. */
 export type ZoneAisle = { name: string; flow: string; arrows: string };
-export type ZoneConfig = { prefix: string; label: string; aisle?: ZoneAisle };
+export type ZoneBankConfig = { prefix: string; from: number; to: number };
+export type ZoneConfig = { label: string; banks: ZoneBankConfig[]; aisle?: ZoneAisle };
+
+const AISLE_01: ZoneAisle = { name: 'AISLE 01', flow: 'two-way · loading bay ⇄ entrance', arrows: '⇄ ⇄ ⇄' };
 
 export const WAREHOUSE_ZONES: ZoneConfig[] = [
   {
-    prefix: 'L',
-    label: 'BANK A',
-    aisle: { name: 'AISLE 01', flow: 'single aisle · two-way · dock ⇄ loading bay', arrows: '⇄ ⇄ ⇄' },
+    label: 'ZONE A',
+    banks: [{ prefix: 'L', from: 1, to: 8 }, { prefix: 'R', from: 1, to: 8 }],
+    aisle: AISLE_01,
   },
-  { prefix: 'R', label: 'BANK B' },
+  {
+    label: 'ZONE B',
+    banks: [{ prefix: 'L', from: 9, to: 21 }, { prefix: 'R', from: 9, to: 17 }],
+    aisle: AISLE_01,
+  },
 ];
 
 /* ── Rack label parsing ───────────────────────────────────────────────────
-   `<letters?><number>[sep<number>]` — "L1.1", "R17.2", "12.1", also tolerant of
-   "L1-2" / "L1 2" / bare "L1". A label that carries no leading number does not
-   parse (rackNo NaN) and sinks to the bottom of any sort by its raw text. */
-const RACK_LABEL_RE = /^\s*([A-Za-z]*)\s*(\d+)(?:\s*[.\-/ ]\s*(\d+))?\s*$/;
+   Reads the TRAILING `<letters><number>[sep<number>]` token, so a stored label
+   with a leading word — the real KL racks are "Rack L1.1", not "L1.1" — still
+   yields prefix "L", rackNo 1, level 1. Also handles "R17.2", "12.1", "L1-2",
+   bare "L1". A label with no number does not parse (rackNo NaN) and sinks to the
+   bottom of any sort. NOT `^`-anchored, on purpose: the token is matched at the
+   END so a "Rack " prefix is skipped. */
+const RACK_LABEL_RE = /([A-Za-z]*)\s*(\d+)(?:\s*[.\-/ ]\s*(\d+))?\s*$/;
 
 export type ParsedRackLabel = {
   prefix: string;
@@ -221,11 +235,9 @@ export function statusCounts(slots: Slot[]): Record<SlotStatus, number> {
   return out;
 }
 
-/* ── Banks + rack columns ─────────────────────────────────────────────────
-   Group the flat slot list into rack columns (two levels each) and physical
-   banks (by prefix), each with utilisation. Bank order follows WAREHOUSE_ZONES;
-   any prefix not in the config is appended (label = prefix), so unexpected data
-   still renders. */
+/* ── Zones, banks, rack columns ───────────────────────────────────────────
+   A rack column holds a rack's levels; a bank is one series' row of columns
+   within a zone; a zone groups its banks (L then R) and carries the aisle. */
 export type RackColumn = {
   key: string;
   name: string;
@@ -238,12 +250,19 @@ export type RackColumn = {
 export type Bank = {
   prefix: string;
   label: string;
-  range: string;
+  used: number;
+  total: number;
+  utilPct: number;
+  racks: RackColumn[];
+};
+
+export type Zone = {
+  label: string;
   used: number;
   total: number;
   utilPct: number;
   aisle?: ZoneAisle;
-  racks: RackColumn[];
+  banks: Bank[];
 };
 
 function pct(n: number, d: number): number {
@@ -273,43 +292,51 @@ function buildRackColumns(slots: Slot[]): RackColumn[] {
     });
 }
 
-export function buildBanks(slots: Slot[], zones: ZoneConfig[] = WAREHOUSE_ZONES): Bank[] {
-  const byPrefix = new Map<string, Slot[]>();
-  for (const s of slots) {
-    const arr = byPrefix.get(s.prefix);
-    if (arr) arr.push(s);
-    else byPrefix.set(s.prefix, [s]);
+function buildBank(prefix: string, group: Slot[]): Bank {
+  const racks = buildRackColumns(group);
+  const nums = group.map((s) => s.rackNo).filter((n) => Number.isFinite(n));
+  const label = nums.length > 0 ? `${prefix}${Math.min(...nums)} – ${prefix}${Math.max(...nums)}` : prefix || 'UNZONED';
+  const occupied = group.filter((s) => s.status === 'occupied').length;
+  return { prefix, label, used: occupied, total: group.length, utilPct: pct(occupied, group.length), racks };
+}
+
+/* Group slots into the configured zones (by series + rackNo range). Anything
+   outside every zone — an unexpected series, an out-of-range or unparseable
+   number — still renders under a trailing UNZONED zone, so nothing disappears. */
+export function buildZones(slots: Slot[], zones: ZoneConfig[] = WAREHOUSE_ZONES): Zone[] {
+  const assigned = new Set<Slot>();
+  const out: Zone[] = [];
+
+  for (const zone of zones) {
+    const banks: Bank[] = [];
+    for (const bc of zone.banks) {
+      const group = slots.filter(
+        (s) => s.prefix === bc.prefix && Number.isFinite(s.rackNo) && s.rackNo >= bc.from && s.rackNo <= bc.to,
+      );
+      if (group.length === 0) continue;
+      group.forEach((s) => assigned.add(s));
+      banks.push(buildBank(bc.prefix, group));
+    }
+    if (banks.length === 0) continue;
+    const total = banks.reduce((a, b) => a + b.total, 0);
+    const used = banks.reduce((a, b) => a + b.used, 0);
+    out.push({ label: zone.label, used, total, utilPct: pct(used, total), aisle: zone.aisle, banks });
   }
 
-  const configured = zones.map((z) => z.prefix);
-  const extras = [...byPrefix.keys()].filter((p) => !configured.includes(p)).sort((a, b) => a.localeCompare(b));
-  const ordered: ZoneConfig[] = [
-    ...zones,
-    ...extras.map((prefix) => ({ prefix, label: prefix || 'UNZONED' })),
-  ];
-
-  const banks: Bank[] = [];
-  for (const zone of ordered) {
-    const group = byPrefix.get(zone.prefix);
-    if (!group || group.length === 0) continue;
-    const racks = buildRackColumns(group);
-    const total = group.length;
-    const used = group.filter((s) => s.status === 'occupied').length;
-    const nums = racks.map((r) => r.slots[0]?.rackNo).filter((n) => Number.isFinite(n)) as number[];
-    const range =
-      nums.length > 0
-        ? `${zone.prefix}${Math.min(...nums)} – ${zone.prefix}${Math.max(...nums)}`
-        : `${racks.length} rack${racks.length === 1 ? '' : 's'}`;
-    banks.push({
-      prefix: zone.prefix,
-      label: zone.label,
-      range,
-      used,
-      total,
-      utilPct: pct(used, total),
-      aisle: zone.aisle,
-      racks,
-    });
+  const leftover = slots.filter((s) => !assigned.has(s));
+  if (leftover.length > 0) {
+    const byPrefix = new Map<string, Slot[]>();
+    for (const s of leftover) {
+      const arr = byPrefix.get(s.prefix);
+      if (arr) arr.push(s);
+      else byPrefix.set(s.prefix, [s]);
+    }
+    const banks = [...byPrefix.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([prefix, group]) => buildBank(prefix, group));
+    const total = leftover.length;
+    const used = leftover.filter((s) => s.status === 'occupied').length;
+    out.push({ label: 'UNZONED', used, total, utilPct: pct(used, total), banks });
   }
-  return banks;
+  return out;
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Rack, RackItem, RackStatus } from './warehouse-queries';
 import {
-  buildBanks,
+  buildZones,
   compareRackLabels,
   distinctCustomers,
   distinctProducts,
@@ -47,6 +47,11 @@ describe('parseRackLabel', () => {
   it('splits prefix, rackNo and level', () => {
     expect(parseRackLabel('L1.1')).toMatchObject({ prefix: 'L', rackNo: 1, level: 1, parsed: true });
     expect(parseRackLabel('R17.2')).toMatchObject({ prefix: 'R', rackNo: 17, level: 2, parsed: true });
+  });
+  it('reads the real "Rack L1.1" label — leading word ignored (the vertical-list bug)', () => {
+    expect(parseRackLabel('Rack L1.1')).toMatchObject({ prefix: 'L', rackNo: 1, level: 1, parsed: true });
+    expect(parseRackLabel('Rack R17.2')).toMatchObject({ prefix: 'R', rackNo: 17, level: 2, parsed: true });
+    expect(rackKeyOf('Rack L10.2')).toBe('L10');
   });
   it('uppercases the prefix and tolerates bare / alt-separator labels', () => {
     expect(parseRackLabel('l3')).toMatchObject({ prefix: 'L', rackNo: 3, level: null });
@@ -135,30 +140,35 @@ describe('matchSlot + filter helpers', () => {
   });
 });
 
-describe('buildBanks', () => {
-  // Two-bank mixed set given out of order — L bank (2 racks) + R bank (1 rack).
-  const slots = ['R1.2', 'L2.1', 'L1.1', 'L1.2', 'R1.1', 'L2.2'].map((l) =>
-    toSlot(rack(l, l === 'L1.1' ? 'OCCUPIED' : 'EMPTY', l === 'L1.1' ? [item()] : [])),
+describe('buildZones', () => {
+  // Real "Rack …" labels spanning both zones and both series, out of order.
+  const labels = ['Rack R1.1', 'Rack L2.1', 'Rack L1.1', 'Rack L1.2', 'Rack L10.1', 'Rack R9.1'];
+  const slots = labels.map((l) =>
+    toSlot(rack(l, l === 'Rack L1.1' ? 'OCCUPIED' : 'EMPTY', l === 'Rack L1.1' ? [item()] : [])),
   );
-  const banks = buildBanks(slots);
+  const zones = buildZones(slots);
 
-  it('splits into L and R banks in zone order, with placeholder labels', () => {
-    expect(banks.map((b) => b.prefix)).toEqual(['L', 'R']);
-    expect(banks.map((b) => b.label)).toEqual(['BANK A', 'BANK B']);
-    expect(banks[0].aisle?.name).toBe('AISLE 01');
-    expect(banks[1].aisle).toBeUndefined();
+  it('lists ZONE A (loading-bay/L1 end) before ZONE B (entrance/L21 end), each an L bank then an R bank', () => {
+    expect(zones.map((z) => z.label)).toEqual(['ZONE A', 'ZONE B']);
+    expect(zones[0].banks.map((b) => b.prefix)).toEqual(['L', 'R']);
+    expect(zones[0].aisle?.name).toBe('AISLE 01');
   });
-  it('builds rack columns in natural order, each with its two levels', () => {
-    expect(banks[0].racks.map((r) => r.key)).toEqual(['L1', 'L2']);
-    expect(banks[0].racks[0].slots.map((s) => s.id)).toEqual(['L1.1', 'L1.2']);
+  it('routes racks by number range: 1–8 to ZONE A, 9+ to ZONE B', () => {
+    expect(zones[0].banks[0].racks.map((r) => r.key)).toEqual(['L1', 'L2']);
+    expect(zones[0].banks[1].racks.map((r) => r.key)).toEqual(['R1']);
+    expect(zones[1].banks[0].racks.map((r) => r.key)).toEqual(['L10']);
+    expect(zones[1].banks[1].racks.map((r) => r.key)).toEqual(['R9']);
   });
-  it('computes utilisation and range per bank', () => {
-    expect(banks[0]).toMatchObject({ used: 1, total: 4, utilPct: 25, range: 'L1 – L2' });
-    expect(banks[1]).toMatchObject({ used: 0, total: 2, range: 'R1 – R1' });
+  it('parses the real "Rack L1.1" label and orders levels within a column', () => {
+    expect(zones[0].banks[0].racks[0].name).toBe('L1');
+    expect(zones[0].banks[0].racks[0].slots.map((s) => s.id)).toEqual(['Rack L1.1', 'Rack L1.2']);
   });
-  it('appends an unconfigured prefix as its own trailing bank', () => {
-    const extra = buildBanks([...slots, toSlot(rack('Z9.1'))]);
-    expect(extra.map((b) => b.prefix)).toEqual(['L', 'R', 'Z']);
-    expect(extra[2].label).toBe('Z');
+  it('computes utilisation per zone and a range label per bank', () => {
+    expect(zones[0]).toMatchObject({ used: 1, total: 4 });
+    expect(zones[0].banks[0].label).toBe('L1 – L2');
+  });
+  it('puts an out-of-zone rack under a trailing UNZONED zone', () => {
+    const extra = buildZones([...slots, toSlot(rack('Rack Z9.1'))]);
+    expect(extra.map((z) => z.label)).toEqual(['ZONE A', 'ZONE B', 'UNZONED']);
   });
 });
