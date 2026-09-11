@@ -43,6 +43,8 @@ import { SO_STATUSES, SO_STATUS_RANK, soStatusTransitionError, soDiscardBlocked 
 import { HELD_OR_TERM, HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
 import { mountHoldRoute } from './document-hold-routes';
 import { enqueueSoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { fitSoAddress } from '../../services/autocount-address-fit';
+import { fitAddressIfTouched } from '../lib/so-address-on-save';
 import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
 /* The payment insert core, the Account Sheet rule and the payment column list
    moved to scm/lib so scan-so.ts's background writer reaches the same rules
@@ -5041,10 +5043,9 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        to, resolved above via the active-fair resolver. NULL when the salesperson
        has no active fair; never blocks creation. */
     project_id: projectIdToStamp,
-    address1: (body.address1 as string) ?? null,
-    address2: (body.address2 as string) ?? null,
-    address3: (body.address3 as string) ?? null,
-    address4: (body.address4 as string) ?? null,
+    /* Fitted to the book's 40-char columns on save — scm/lib/so-address-on-save.ts, docs/bugs/0738. */
+    ...fitSoAddress([(body.address1 as string) ?? null, (body.address2 as string) ?? null,
+      (body.address3 as string) ?? null, (body.address4 as string) ?? null]),
     /* Task #91 — defensively normalize to E.164 storage form. The UI does this
        on blur via <PhoneInput>, but a misbehaving client could still POST a
        raw "+60 12 345 6789" — normalize once on the server so the DB never
@@ -6711,6 +6712,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       updates[to] = isDateColumn(to) ? dateOrNull(body[from]) : body[from]; // "" -> NULL
     }
   }
+  await fitAddressIfTouched(sb, c, docNo, updates);
   /* Mig 0175 (owner 2026-07-22) — canonicalize customer_state at write so a
      PATCH that sends 'PENANG' / 'Kl' / 'W.P. Kuala Lumpur' lands as the exact
      my_localities spelling. Foreign state names (China, SG) round-trip

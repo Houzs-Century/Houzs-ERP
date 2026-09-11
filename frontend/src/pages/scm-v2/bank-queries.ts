@@ -119,6 +119,13 @@ export type Reconciliation = {
   carriedJeNos: string[];
   clearedFromBeforeSen?: number;
   broughtForwardExplained: boolean | null;
+  /** The owner's form (docs/bugs/0806): books ± outstanding items = bank. */
+  outstandingPayments: { count: number; sen: number };
+  outstandingReceipts: { count: number; sen: number };
+  outstandingJeNos: string[];
+  computedClosingSen: number;
+  unexplainedSen: number | null;
+  tallies: boolean;
   consistent: boolean;
   inconsistency: string | null;
   reconciled: boolean;
@@ -445,6 +452,23 @@ export type BankMonthLock = {
   differenceSen: number | null;
   statementCount: number;
   wasComplete: boolean;
+};
+
+/* An old file re-filed as its month's statement, in place (docs/bugs/0806). */
+export const useSetStatementPeriod = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, month }: { id: number; month: string }) =>
+      authedFetch<{ ok: boolean; periodFrom: string; periodTo: string }>(
+        `/accounting/bank/statements/${id}/period`, { method: 'POST', body: JSON.stringify({ month }) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['bank-statement'] });
+      void qc.invalidateQueries({ queryKey: ['bank-statements'] });
+      void qc.invalidateQueries({ queryKey: ['bank-month'] });
+      void qc.invalidateQueries({ queryKey: ['bank-months'] });
+    },
+  });
 };
 
 export const useLockBankMonth = () => {

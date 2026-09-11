@@ -46,6 +46,8 @@ const RECON: Reconciliation = {
   booksNotOnBank: { count: 0, sen: 0 },
   unmatchedJeNos: [],
   carried: { count: 0, sen: 0 }, carriedJeNos: [], broughtForwardExplained: null,
+  outstandingPayments: { count: 0, sen: 0 }, outstandingReceipts: { count: 0, sen: 0 }, outstandingJeNos: [],
+  computedClosingSen: 1090000, unexplainedSen: 0, tallies: true,
   consistent: true, inconsistency: null, reconciled: false,
 };
 
@@ -257,17 +259,29 @@ describe('closing a month', () => {
     expect(screen.getByText(/Nothing in it can be booked, left out or undone afterwards/)).toBeTruthy();
   });
 
-  /* The reason box is there BEFORE the press when the month is not clean, so it
-     is a question asked up front rather than the answer to a refusal. */
-  test('asks for a reason up front when the month is not clean', () => {
-    setUp({ assembly: { ...ASSEMBLY, complete: false, gaps: ['a day is missing'] } });
+  /* Owner, 2026-09-11: 当 closing bank statement amount 无法 tally 就无法 lock.
+     The button is OFF until the month tallies, is whole and has nothing left
+     to decide — and it says which of those is missing. No reason box. */
+  test('the close button is off, and says why, while the month does not tally', () => {
+    setUp({ recon: { ...RECON, bankNotInBooks: { count: 0, sen: 0 }, computedClosingSen: 1060000, unexplainedSen: 30000, tallies: false } });
     openMonth();
-    expect(screen.getByLabelText('Why this month is being closed anyway')).toBeTruthy();
+    const go = screen.getByText('Close this month').closest('button')!;
+    expect(go.disabled).toBe(true);
+    expect(screen.getByText(/does not tally/)).toBeTruthy();
+    expect(screen.queryByLabelText('Why this month is being closed anyway')).toBeNull();
   });
 
-  test('asks for nothing when the month reconciles and is whole', () => {
-    setUp({ recon: { ...RECON, differenceSen: 0, closingLedgerSen: 1090000, bankNotInBooks: { count: 0, sen: 0 }, reconciled: true } });
+  test('the close button is off while movements are still to decide, or a day is missing', () => {
+    setUp();   // RECON has two movements still to decide
     openMonth();
+    expect(screen.getByText('Close this month').closest('button')!.disabled).toBe(true);
+    expect(screen.getByText(/2 movements still to decide/)).toBeTruthy();
+  });
+
+  test('the close button is on when the month tallies, is whole and no movement is still to decide', () => {
+    setUp({ recon: { ...RECON, bankNotInBooks: { count: 0, sen: 0 }, closingLedgerSen: 1090000, differenceSen: 0, reconciled: true } });
+    openMonth();
+    expect(screen.getByText('Close this month').closest('button')!.disabled).toBe(false);
     expect(screen.queryByLabelText('Why this month is being closed anyway')).toBeNull();
   });
 
@@ -350,8 +364,8 @@ describe('the movements of the month', () => {
   test('shows the reconciliation the same way the file screen does', () => {
     setUp();
     openMonth();
-    expect(screen.getByText(/The bank and the books differ by RM 900\.00/)).toBeTruthy();
-    expect(screen.getByText(/on the bank and not in the books/)).toBeTruthy();
+    expect(screen.getByText(/2 movements on the bank still to decide/)).toBeTruthy();
+    expect(screen.getByText(/On the bank, not in the books/)).toBeTruthy();
   });
 
   test('refuses to publish a difference it cannot account for', () => {
