@@ -40,6 +40,13 @@ serves the same list from the same view without error.
 > rehearsal's build-report step fails closed on any role other than
 > `service_role`, so this cannot hide again.
 >
+> **Final evidence, from the Workers themselves after #3718 deployed
+> (2026-09-12):**
+> staging `/health` → `{"rest_role":"anon","rest_ref":"minnapsemfzjmtvnnvdd","rest_key_ref":"minnapsemfzjmtvnnvdd"}`;
+> production `/health` → `{"rest_role":"service_role","rest_ref":"anogrigyjbduyzclzjgn","rest_key_ref":"anogrigyjbduyzclzjgn"}`.
+> The staging Worker's service-role secret IS the staging project's anon key.
+> Status stays `open` until the owner re-sets it and a rehearsal goes green.
+>
 > Also seen and not yet explained: `anon` and `authenticated` hold SELECT on
 > `scm` base tables on staging. Whether production grants the same is
 > **UNKNOWN** (no prod probe has been run); it belongs to the tenant-isolation
