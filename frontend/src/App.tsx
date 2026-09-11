@@ -25,11 +25,20 @@ import { PageSkeleton, RouteCrashBoundary } from "./components/RouteFallback";
 // mount in this file reaches no mobile screen at all.
 import { IosInstallGuide } from "./components/IosInstallGuide";
 import { AndroidInstallGuide } from "./components/AndroidInstallGuide";
+import { LazySlot } from "./components/LazySlot";
 
 /* LAZY, and it costs nothing: this is a modal nobody sees until after the
    digest request answers, so it has no business in the chunk that has to arrive
    before the first paint. Eager, it put initial JS at 168.0 KB against a 167.0 KB
-   ceiling and failed frontend-build. */
+   ceiling and failed frontend-build.
+
+   A LazySlot, never a bare Suspense element — lazySlotAudit.test.ts gates the
+   class, and MobileCrashBoundary.test.tsx forbids a bare one in the mobile
+   shell by name (it reads the file as text, so even naming the tag here would
+   trip it). The resetKey is CONSTANT, for the reason AuthGate's mobile shell gives
+   for its own: there is no navigation above a global reminder to clear a crash
+   with, so keying on anything would be theatre. What the boundary buys here is
+   containment — a failed chunk takes the reminder, not the whole app. */
 const PendingTasksReminder = lazy(() =>
   import("./components/PendingTasksReminder").then((m) => ({ default: m.PendingTasksReminder })));
 
@@ -427,7 +436,7 @@ export default function App() {
       <BreadcrumbsProvider>
       <BrowserPushSink />
       <AnnouncementBanner />
-      <Suspense fallback={null}><PendingTasksReminder /></Suspense>
+      <LazySlot resetKey="pending-reminder" fallback={null}><PendingTasksReminder /></LazySlot>
       <QuickActionsFAB />
       <BackToTopFAB />
       <AssistantPanelProvider>
