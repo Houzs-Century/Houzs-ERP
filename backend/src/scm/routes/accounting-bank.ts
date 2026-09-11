@@ -24,7 +24,7 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { parseBankStatement, movementFingerprint } from '../../acc/bank-parse';
 import { monthWindow } from '../../acc/bank-month';
 import {
-  groupBankMovements, matchBankMovements, entryCandidatesFor, obviousEntryFor,
+  groupBankMovements, matchBankMovements, entryCandidatesFor, obviousEntryFor, bankReversalPairs,
   type BankRecognitionRule, type PayableBatch, type PayoutAdviceForMatch,
 } from '../../acc/bank-match';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
@@ -392,7 +392,7 @@ export const bankUpload = guard(async (c) => {
 
   /* THE OBVIOUS ONES, before the operator sees the list (docs/bugs/0814). */
   const obvious = decisions.length === 0
-    ? { ok: true as const, matched: 0, jeNos: [] as string[] }
+    ? { ok: true as const, matched: 0, jeNos: [] as string[], contraPairs: 0 }
     : await applyObviousMatches(sb, co.companyId, { id: statementId, account_code: accountCode, period_to: periodTo });
   if (!obvious.ok) return c.json({ error: 'match_failed', reason: obvious.reason, message: `The file was read, but the obvious matches could not be applied: ${obvious.reason}` }, 500);
 
@@ -414,6 +414,8 @@ export const bankUpload = guard(async (c) => {
     alreadyRecorded: counts.DUPLICATE ?? 0,
     /* Matched by amount and name on the way in (docs/bugs/0814). */
     autoMatched: obvious.matched,
+    /* Pairs the bank itself reversed, left out on the way in (docs/bugs/0817). */
+    contraPairs: obvious.contraPairs,
     periodFrom,
     periodTo,
     inSen: parsed.inSen,
@@ -470,17 +472,45 @@ export function freshDecisions(
    "amount+name", the line POSTED, listed under "already dealt with" with Undo.
    Runs on upload and on demand for a statement uploaded before the rule
    existed. Reads fail closed: a ledger or claim read that fails matches
-   nothing and says so. */
+   nothing and says so.
+
+   THE BANK'S OWN CONTRAS COME FIRST (docs/bugs/0817). A transfer the bank
+   reversed under the same reference is not looking for an entry — the entry
+   belongs to the retry, if there was one — and the rule below would have
+   matched it anyway wherever the bank's text named the payee. Both halves
+   leave as a pair, IGNORED and each naming the other; undo of either reopens
+   both (bankLineUndo). A POSTED half is somebody's decision and is left alone
+   until that match is undone. */
 async function applyObviousMatches(
   sb: Parameters<typeof loadAccountLedger>[0], companyId: number, statement: { id: number; account_code: string; period_to: string },
-): Promise<{ ok: true; matched: number; jeNos: string[] } | { ok: false; reason: string }> {
+): Promise<{ ok: true; matched: number; jeNos: string[]; contraPairs: number } | { ok: false; reason: string }> {
   const { data: linesRaw, error: lErr } = await sb.from('acc_bank_statement_lines')
-    .select('id, booked_on, description, reference, amount_sen, state, kind')
+    .select('id, line_no, booked_on, description, reference, amount_sen, state, kind')
     .eq('statement_id', statement.id).eq('company_id', companyId).eq('state', 'OPEN');
   if (lErr) return { ok: false, reason: lErr.message };
-  const lines = (Array.isArray(linesRaw) ? linesRaw : []) as Array<{ id: number; booked_on: string; description: string | null; reference: string | null; amount_sen: number; kind: string }>;
-  const open = lines.filter((l) => String(l.kind) === 'OTHER');
-  if (open.length === 0) return { ok: true, matched: 0, jeNos: [] };
+  const lines = (Array.isArray(linesRaw) ? linesRaw : []) as Array<{ id: number; line_no: number | null; booked_on: string; description: string | null; reference: string | null; amount_sen: number; kind: string }>;
+
+  const pairs = bankReversalPairs(lines.map((l) => ({
+    id: Number(l.id), lineNo: Number(l.line_no ?? 0), bookedOn: String(l.booked_on).slice(0, 10),
+    description: String(l.description ?? ''), reference: l.reference ?? null, amountSen: Number(l.amount_sen),
+  })));
+  const paired = new Set<number>();
+  for (const p of pairs) {
+    const halves = [
+      { id: p.original.id, note: `Reversed by the bank on line ${p.reversal.lineNo}`, twin: p.reversal.id },
+      { id: p.reversal.id, note: `Bank reversal of line ${p.original.lineNo}`, twin: p.original.id },
+    ];
+    for (const h of halves) {
+      const { error: upErr } = await sb.from('acc_bank_statement_lines')
+        .update({ state: 'IGNORED', note: h.note, contra_line_id: h.twin, updated_at: new Date().toISOString() })
+        .eq('id', h.id).eq('company_id', companyId);
+      if (upErr) return { ok: false, reason: upErr.message };
+      paired.add(h.id);
+    }
+  }
+
+  const open = lines.filter((l) => String(l.kind) === 'OTHER' && !paired.has(Number(l.id)));
+  if (open.length === 0) return { ok: true, matched: 0, jeNos: [], contraPairs: pairs.length };
 
   const [ledger, elsewhere] = await Promise.all([
     loadAccountLedger(sb, companyId, statement.account_code, String(statement.period_to).slice(0, 10)),
@@ -510,7 +540,7 @@ async function applyObviousMatches(
     claimed.add(hit.jeNo);
     jeNos.push(hit.jeNo);
   }
-  return { ok: true, matched: jeNos.length, jeNos };
+  return { ok: true, matched: jeNos.length, jeNos, contraPairs: pairs.length };
 }
 
 /* POST /bank/statements/:id/auto-match — the same rule, for a statement
@@ -532,7 +562,7 @@ export const bankStatementAutoMatch = guard(async (c) => {
   }
   const r = await applyObviousMatches(sb, co.companyId, statement);
   if (!r.ok) return c.json({ error: 'match_failed', reason: r.reason, message: `The obvious matches could not be applied: ${r.reason}` }, 500);
-  return c.json({ ok: true, matched: r.matched, jeNos: r.jeNos });
+  return c.json({ ok: true, matched: r.matched, jeNos: r.jeNos, contraPairs: r.contraPairs });
 });
 
 /* ── POST /bank/statements/:id/period — this file is the month's statement ──
@@ -901,7 +931,7 @@ export const bankLineUndo = guard(async (c) => {
   const sb = c.get('supabase');
 
   const { data: lineRaw, error } = await sb.from('acc_bank_statement_lines')
-    .select('id, state').eq('id', lineId).eq('company_id', co.companyId).maybeSingle();
+    .select('id, state, contra_line_id').eq('id', lineId).eq('company_id', co.companyId).maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (!lineRaw) return c.json({ error: 'not_found' }, 404);
   const line = lineRaw as Record<string, any>;
@@ -948,6 +978,11 @@ export const bankLineUndo = guard(async (c) => {
   if (mErr) return c.json({ error: 'load_failed', reason: mErr.message }, 500);
   const myJes = [...new Set(((Array.isArray(mineRaw) ? mineRaw : []) as Array<{ je_no: string }>).map((m) => String(m.je_no)))];
   const groupLineIds = new Set<number>([lineId]);
+  /* A PAIR THE BANK REVERSED is one decision about two lines (docs/bugs/0817):
+     undoing either half reopens both, or the tally would carry one half of a
+     movement that cancelled itself. */
+  const twin = line.contra_line_id == null ? null : Number(line.contra_line_id);
+  if (twin != null && Number.isInteger(twin)) groupLineIds.add(twin);
   if (myJes.length > 0) {
     const { data: sharedRaw, error: sErr } = await sb.from('acc_bank_statement_matches')
       .select('bank_line_id').eq('company_id', co.companyId).in('je_no', myJes);
@@ -956,7 +991,9 @@ export const bankLineUndo = guard(async (c) => {
   }
   for (const other of groupLineIds) {
     if (other === lineId) continue;
-    const shut = await refuseIfLineLocked(c, co.companyId, other, 'undoing this movement (it shares an entry with a movement in a closed month)');
+    const shut = await refuseIfLineLocked(c, co.companyId, other, other === twin
+      ? "undoing this movement (the bank's reversal it pairs with is in a closed month)"
+      : 'undoing this movement (it shares an entry with a movement in a closed month)');
     if (shut) return shut;
   }
   const ids = [...groupLineIds];
@@ -966,6 +1003,9 @@ export const bankLineUndo = guard(async (c) => {
 
   const { error: upErr } = await sb.from('acc_bank_statement_lines').update({
     state: 'OPEN', posted_je_no: null, posted_je_id: null,
+    /* The pairing's words come off with the pairing; a reopened line saying
+       "reversed by the bank" would be the screen contradicting itself. */
+    ...(twin != null ? { note: null, contra_line_id: null } : {}),
     updated_at: new Date().toISOString(),
   }).in('id', ids).eq('company_id', co.companyId);
   if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);

@@ -620,3 +620,51 @@ export function obviousEntryFor(
   const text = `${movement.description} ${movement.reference ?? ''}`;
   return namesAgree(text, only.partyName ?? only.notes ?? null) ? only : null;
 }
+
+/* ── A movement the bank itself reversed (docs/bugs/0817) ─────────────────────
+   Hong Leong, 04/06/2026: 2990's RM 2,872.75 instant transfer to its own
+   Alliance account failed, and the bank put the money back the same day —
+   description "CIB Instant Transfer Reversal", the SAME transaction reference
+   as the transfer it undid. A second transfer under a fresh reference went
+   through. The pair is the bank's own business: no entry in the books is
+   either half of it, and the transfer voucher is the retry's (owner: 这两笔是
+   contra 的，bank transaction fail).
+
+   The bank's word, the bank's reference, the money cancelling to the sen, and
+   the reversal no earlier than what it reverses — the four together, or no
+   pair. A reversal takes ONE original, the earliest still unpaired; an
+   original is never paired twice. Within one statement only: the two lines
+   sit on the same page the operator is holding. */
+export type ReversalSource = {
+  id: number; lineNo: number; bookedOn: string; description: string; reference: string | null; amountSen: number;
+};
+export type ReversalPair<T> = { original: T; reversal: T };
+
+const isBankReversal = (description: string): boolean => /\breversal\b/i.test(description);
+/* The reference as the bank wrote it, with only the spacing and the case
+   forgiven; blank is not a reference two lines can share. */
+const referenceKey = (reference: string | null): string | null => {
+  const key = String(reference ?? '').replace(/\s+/g, ' ').trim().toUpperCase();
+  return key.length > 0 ? key : null;
+};
+
+export function bankReversalPairs<T extends ReversalSource>(lines: readonly T[]): ReversalPair<T>[] {
+  const ordered = [...lines].sort((a, b) => a.bookedOn.localeCompare(b.bookedOn) || a.lineNo - b.lineNo);
+  const taken = new Set<number>();
+  const pairs: ReversalPair<T>[] = [];
+  for (const reversal of ordered) {
+    if (!isBankReversal(reversal.description) || reversal.amountSen === 0) continue;
+    const key = referenceKey(reversal.reference);
+    if (key === null) continue;
+    const original = ordered.find((l) =>
+      l.id !== reversal.id && !taken.has(l.id) && !isBankReversal(l.description)
+      && referenceKey(l.reference) === key
+      && l.amountSen === -reversal.amountSen
+      && l.bookedOn <= reversal.bookedOn);
+    if (!original) continue;
+    taken.add(original.id);
+    taken.add(reversal.id);
+    pairs.push({ original, reversal });
+  }
+  return pairs;
+}

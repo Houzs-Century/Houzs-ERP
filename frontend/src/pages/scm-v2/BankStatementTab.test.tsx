@@ -69,7 +69,7 @@ let unmatched: LedgerEntry[] = [];
 let statementPeriod = { period_from: '2026-08-01', period_to: '2026-08-12' };
 const periodMutate = vi.fn();
 const autoMatchMutate = vi.fn();
-let autoMatchResult: { matched: number; jeNos: string[] } | undefined;
+let autoMatchResult: { matched: number; jeNos: string[]; contraPairs: number } | undefined;
 afterEach(() => { unmatched = []; recon = RECON; lines = [LINE, SPLIT, OTHER]; statementPeriod = { period_from: '2026-08-01', period_to: '2026-08-12' }; });
 
 vi.mock('./bank-queries', () => ({
@@ -252,11 +252,13 @@ describe('amounts in two columns', () => {
    uploaded before the rule can have it run. */
 describe('matching the obvious ones', () => {
   test('a statement with movements still to decide offers to run the rule, and says what it did', () => {
-    autoMatchResult = { matched: 3, jeNos: ['JE-1', 'JE-2', 'JE-3'] };
+    autoMatchResult = { matched: 3, jeNos: ['JE-1', 'JE-2', 'JE-3'], contraPairs: 1 };
     openStatement();
     fireEvent.click(screen.getByText('Match the obvious ones now'));
     expect(autoMatchMutate.mock.calls[0]?.[0]).toBe(1);
     expect(screen.getByText(/3 matched by amount and name/)).toBeTruthy();
+    /* And the pair the bank reversed (docs/bugs/0817). */
+    expect(screen.getByText(/1 pair the bank reversed left out/)).toBeTruthy();
     autoMatchResult = undefined;
   });
 

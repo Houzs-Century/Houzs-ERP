@@ -1468,6 +1468,26 @@ totals agree. Contracts: `backend/tests/bankRoutes.test.ts` (whose harness no
 longer carries the je_no unique — the route's refusal is what "only once"
 exercises), `bank-reconcile.test.ts`, `BankStatementTab.test.tsx`.
 
+**A transfer the bank itself reversed is its own contra (2026-09-11,
+docs/bugs/0817; owner, on Hong Leong's 04/06 pair: 这两笔是 contra 的，bank
+transaction fail).** A failed instant transfer and the bank's same-day
+"Reversal" of it carry the bank's transaction reference; the retry carries a
+fresh one. `bankReversalPairs` (`backend/src/acc/bank-match.ts`) pairs a
+movement whose description carries the bank's word *Reversal* with the
+earliest unpaired movement of the same statement carrying the same reference
+(spacing and case forgiven, blank never), the opposite amount to the sen, and
+a day no later — the four together, or no pair. `applyObviousMatches`
+(`accounting-bank.ts`) runs it BEFORE the amount-and-name rule, on upload
+and under "Match the obvious ones now": both halves go IGNORED naming each
+other (`note` "Reversed by the bank on line N" / "Bank reversal of line N",
+`contra_line_id` each the other's id — migration `20260911T1900`), the
+reply says `contraPairs`, and neither half is offered an entry, so the
+voucher stays for the transfer that went through. A POSTED half is not the
+rule's to take — undo the match first. Undo of either half reopens both
+(`linesReopened: 2`, note and link cleared). Contracts: `bank-match.test.ts`
+("a movement the bank itself reversed"), `backend/tests/bankRoutes.test.ts`
+("a transfer the bank itself reversed"), `BankStatementTab.test.tsx`.
+
 **The obvious ones are matched without a hand (2026-09-11, docs/bugs/0814;
 owner, on a RM 45,000 rental transfer beside the one RM 45,000 voucher to
 NAVINDER SINGH GILL: 你看着 45,000 为什么我还需要自己 manual 匹配？只要名字金额一样
