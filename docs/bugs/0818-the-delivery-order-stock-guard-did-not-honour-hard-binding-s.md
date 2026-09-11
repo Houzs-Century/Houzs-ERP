@@ -69,12 +69,16 @@ ships.
   THIS line's warehouse and a line's warehouse is `resolveDoLineWarehouses`'s
   answer, not a field on the request. The first cut computed cover first, asked
   about warehouse `null`, and covered nothing — a fix that typechecks and tests
-  clean while doing exactly nothing.
+  clean while doing exactly nothing. The two steps are now one exported helper,
+  `uncoveredStockCheckLines`, which takes the resolved warehouse map as a
+  REQUIRED argument — so the order is a property of the module rather than
+  something a route has to remember, and writing it the wrong way round no
+  longer compiles.
 
 **Proved RED.** Removing the one filter clause and re-running
 `backend/tests/stockCheckableLines.test.ts` fails two of the five new cases,
 first among them *"a line whose own purchase order covers it is not a pool
-question"*. Restored: **19 passed**. Removing the ON-HAND half alone fails *"NOT covered when the warehouse holds nothing — the old warning was right"*, so both halves are pinned separately. `npm --prefix backend run typecheck` clean.
+question"*. Restored: **21 passed**. Removing the ON-HAND half alone fails *"NOT covered when the warehouse holds nothing — the old warning was right"*, so both halves are pinned separately. Making the helper ignore the map — the ordering bug in one line — fails *"kept when the map is empty"*. `npm --prefix backend run typecheck` clean.
 
 **What this does NOT do, said rather than implied:** it does not repair the 57
 negative buckets already created, and it does not touch the separate

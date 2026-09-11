@@ -97,7 +97,7 @@ import { resolveItemGroups } from '../lib/sku-category';
 import { buildDoItemRow as buildItemRow, loadCarriedSoLinePhotos, carriedPhotoUrls } from '../lib/do-item-row';
 import { soRemainingByItemId } from '../lib/so-remaining-by-item';
 import { lineLinkItemMismatch, assertLinkedLineItemsMatch } from '../lib/line-link-item-identity';
-import { checkStockAvailability, shortStockResponse, stockCheckableLines, dedicatedlyCoveredSoItemIds, type StockShortage } from '../lib/check-stock-availability';
+import { checkStockAvailability, shortStockResponse, stockCheckableLines, uncoveredStockCheckLines, type StockShortage } from '../lib/check-stock-availability';
 import { findSofaLinesWithoutCompleteBatch, sofaNoCompleteBatchResponse, findIncompleteSofaSets, sofaIncompleteSetResponse, detectSofaSoItemIds } from '../lib/sofa-batch-guard';
 import { resolveExpectedBatchBySoItem, buildDropshipOffenders } from '../lib/dropship-batch';
 import {
@@ -1026,28 +1026,10 @@ async function checkDoStockAvailability(
   headerWarehouseId: string | null,
   companyId: number | undefined,
 ): Promise<StockShortage[]> {
-  /* Warehouses are resolved BEFORE the dedicated-cover test, not after: that
-     test asks whether THIS line's warehouse actually holds the goods, and a
-     line's warehouse is `resolveDoLineWarehouses`'s answer, not a field on the
-     request. Computing cover first would have asked about warehouse `null` and
-     quietly covered nothing — a fix that types and tests clean while doing
-     exactly nothing. */
   const shippable = stockCheckableLines(lines, new Set());
   if (shippable.length === 0) return [];
-  const lineWh = await resolveDoLineWarehouses(
-    sb,
-    shippable.map((l) => ({ id: l.lineRef, so_item_id: l.soItemId })),
-    headerWarehouseId,
-    companyId,
-  );
-  const active = stockCheckableLines(
-    shippable,
-    await dedicatedlyCoveredSoItemIds(
-      sb,
-      shippable.map((l) => ({ ...l, warehouseId: lineWh.get(l.lineRef) ?? null })),
-      companyId,
-    ),
-  );
+  const lineWh = await resolveDoLineWarehouses(sb, shippable.map((l) => ({ id: l.lineRef, so_item_id: l.soItemId })), headerWarehouseId, companyId);
+  const active = await uncoveredStockCheckLines(sb, shippable, lineWh, companyId);
   if (active.length === 0) return [];
   const byWh = new Map<string, Array<{ itemCode: string; productName: string | null; variantKey: string; qty: number }>>();
   for (const l of active) {

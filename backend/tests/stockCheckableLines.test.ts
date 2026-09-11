@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { stockCheckableLines, dedicatedlyCoveredSoItemIds, checkStockAvailability } from "../src/scm/lib/check-stock-availability";
+import { stockCheckableLines, dedicatedlyCoveredSoItemIds, uncoveredStockCheckLines, checkStockAvailability } from "../src/scm/lib/check-stock-availability";
 
 /* The pre-flight short-stock guard must measure EXACTLY the lines the inventory
    OUT will touch. Every failure of this guard has been the same asymmetry: the
@@ -199,5 +199,32 @@ describe('dedicatedlyCoveredSoItemIds — receipt AND on-hand, never one of them
   test('a pooled group is never covered, whatever its PO did', async () => {
     const mattress = { ...LINE, itemGroup: 'mattress', itemCode: 'AKEMI ULTIMATE MATT (Q)' };
     expect([...await dedicatedlyCoveredSoItemIds(sbWith(1, 3), [mattress], 1)]).toEqual([]);
+  });
+});
+
+/* THE ORDERING BUG, PINNED. The cover test asks about THIS line's warehouse, so
+   an empty warehouse map means "we do not know where this ships from" and the
+   line stays a pool question — which is what the first cut of the fix did to
+   EVERY line, silently, by computing cover before the warehouses were resolved. */
+describe('uncoveredStockCheckLines — the warehouse map is what decides', () => {
+  const LINE = {
+    lineRef: 'l-1', soItemId: 'so-1', itemCode: 'JAGER-(Q)', itemGroup: 'bedframe', qty: 1,
+  };
+  const sb = {
+    from(table: string) {
+      const rows = table === 'purchase_order_items'
+        ? [{ so_item_id: 'so-1', received_qty: 1, po: { status: 'RECEIVED' } }]
+        : [{ item_code: 'JAGER-(Q)', warehouse_id: 'wh-pg', qty: 3 }];
+      return { select: () => ({ in: async () => ({ data: rows, error: null }) }) };
+    },
+  };
+
+  test('dropped when the map puts the line at the warehouse that holds the goods', async () => {
+    const wh = new Map<string, string | null>([['l-1', 'wh-pg']]);
+    expect(await uncoveredStockCheckLines(sb, [LINE], wh, 1)).toEqual([]);
+  });
+
+  test('kept when the map is empty — the warehouse is unknown, so it stays a pool question', async () => {
+    expect(await uncoveredStockCheckLines(sb, [LINE], new Map(), 1)).toEqual([LINE]);
   });
 });

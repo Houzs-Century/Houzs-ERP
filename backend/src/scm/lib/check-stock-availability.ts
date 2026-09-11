@@ -318,3 +318,29 @@ export async function dedicatedlyCoveredSoItemIds(
   }
   return covered;
 }
+
+/* THE TWO-STEP THE DO PRE-FLIGHT RUNS, AND THE ORDER IS THE POINT — which is
+   why it lives here rather than in the route. The cover test above asks whether
+   THIS line's warehouse holds the goods, and a line's warehouse is
+   `resolveDoLineWarehouses`'s answer, not a field on the request. So the caller
+   resolves warehouses FIRST and hands the map in. The first cut of this fix
+   computed cover before the warehouses were known, asked about warehouse
+   `null`, and covered nothing — it typechecked, it passed its tests, and it did
+   exactly nothing. Taking the map as a REQUIRED argument is what makes that
+   mistake unwritable. */
+export async function uncoveredStockCheckLines<
+  T extends { lineRef: string; soItemId: string | null; itemCode: string; itemGroup?: string | null; qty: number },
+>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm PostgREST client is untyped throughout this file
+  sb: any,
+  shippable: T[],
+  lineWh: Map<string, string | null>,
+  companyId: number | undefined,
+): Promise<T[]> {
+  const covered = await dedicatedlyCoveredSoItemIds(
+    sb,
+    shippable.map((l) => ({ ...l, warehouseId: lineWh.get(l.lineRef) ?? null })),
+    companyId,
+  );
+  return stockCheckableLines(shippable, covered);
+}
