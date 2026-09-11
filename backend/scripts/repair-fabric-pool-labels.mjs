@@ -120,8 +120,13 @@ async function main() {
   let n = 0;
   await sql.begin(async (tx) => {
     for (const f of fixes) {
+      /* tx.json, NOT JSON.stringify. postgres.js runs its own serializer over
+         any parameter the server types as jsonb, so a value that is already a
+         string is encoded TWICE and lands as a jsonb STRING - the UPDATE still
+         reports a rowcount and every reader then sees nothing.
+         docs/jsonb-double-encoding-coe.md; caught here by audit:jsonb-binds. */
       await tx`UPDATE scm.product_models
-                  SET allowed_options = jsonb_set(allowed_options, '{fabrics}', ${JSON.stringify(f.pool)}::jsonb),
+                  SET allowed_options = jsonb_set(allowed_options, '{fabrics}', ${tx.json(f.pool)}),
                       updated_at = now()
                 WHERE company_id = ${f.company} AND model_code = ${f.model_code}`;
       n++;
