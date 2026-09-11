@@ -56,6 +56,14 @@ GREEN nobody verified; this is a RED nobody read.
 > UPDATE a view. Fixed in `fix/staging-refresh-mask-base-tables-only` (join
 > `information_schema.tables`, `table_type = 'BASE TABLE'`).
 >
+> Fourth run 34634964650 (after #3711): restore + sequences done again, mask
+> died on `column reference "table_name" is ambiguous` — the BASE TABLE join
+> left three predicates unqualified. Fixed in
+> `fix/staging-refresh-mask-qualify-columns`. Four runs, four one-step
+> advances, each with its own log line; the lesson for the ledger is that a
+> restore workflow needs a dry run against a throwaway database before its
+> first real dispatch, which this repo has no facility for yet.
+>
 > And the grant hypothesis for the red fell too: migration 20260912T0130 printed
 > on staging `BEFORE: hyperdrive_staging, postgres, service_role` — the view
 > already carried every role. The mechanism behind "permission denied for view"
