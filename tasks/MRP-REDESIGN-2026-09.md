@@ -7,7 +7,25 @@ PR. A stranger should be able to take over from this file alone.
 Owner rulings captured in memory: `~/.claude/.../memory/mrp-combine-perso-rules-2026-09-11.md`.
 Proposal + UI mockup artifact (owner-facing): the "MRP 整单转 PO" artifact.
 
-## The two tracks the owner approved (2026-09-11), to run in parallel
+## STATUS AT A GLANCE (2026-09-11)
+
+**Everything the owner approved is MERGED and on production.** Confirmed by
+`gh pr view` (not memory) and a successful deploy whose head contains the
+lead-time work. What is NOT built is the fuller sales-order *view* the mockup
+(§06) drew — see "What is left for the next person". The readiness verification
+the owner asked for ("确定没问题吗") is Track D below.
+
+| PR | What it shipped | Merged |
+|---|---|---|
+| #3596 | Others becomes a permanent 5th tab (stops the blink-in on load) | 2026-09-10 |
+| #3602 | Per-category Combine/Per-SO PO grouping (owner re-spec) | 2026-09-10 |
+| #3606 | Revive dead sofa-cover pull-in, show riders, add MRP search | 2026-09-10 |
+| #3601 | Read-only MRP grouping-facts diagnostic | 2026-09-10 |
+| #3608 | Manual per-supplier x category lead time (highest priority) | 2026-09-10 |
+| #3612 | Read-only SO-readiness check (mattress + accessory) | 2026-09-11 |
+| #3616 | Fix: SO-readiness check crashed on an enum coercion | 2026-09-11 |
+
+## The two tracks the owner approved (2026-09-11)
 
 ### Track A — Combine/Per-SO re-spec + Sales-Order view
 
@@ -20,71 +38,148 @@ Owner's per-category rule (supersedes 2026-07-17). One global toggle:
 
 | Step | State | Where |
 |---|---|---|
-| A1. Grouping logic rewrite (`po-grouping.ts` `groupKeyFor` + convert wiring `sofaSoDocNos`) + tests | **MERGED — PR #3602 on main (47ffa2644)** | was worktree `mrp-sofa-cover` (removed) |
-| A2. MRP search + sofa cover rides VISIBLY + the pull-in bug fix | **DONE — PR #3606, worktree `mrp-so-view`** | `frontend/src/pages/scm-v2/Mrp.tsx` |
-| A3. Bedframe "two POs" diagnosis | check built (PR #3601), awaiting merge+dispatch | see Track C |
+| A1. Grouping logic rewrite (`po-grouping.ts` `groupKeyFor` + convert wiring `sofaSoDocNos`) + tests | **MERGED + DEPLOYED — PR #3602** | `backend/src/scm/lib/po-grouping.ts` |
+| A2. MRP search + sofa cover rides VISIBLY + the pull-in bug fix | **MERGED + DEPLOYED — PR #3606** | `frontend/src/pages/scm-v2/Mrp.tsx` |
 
-**A2 finding (the crux).** The A1 note below was HALF WRONG. `gatherSofa`'s
-accessory pull reads `data.skus`, but the Sofa tab requested `?category=SOFA`,
-which strips every non-sofa row — so the pull matched NOTHING and the cover
-never rode from the MRP page. Dead since the 2026-06-15 per-category tab split.
-A2 fixes it: the Sofa tab now requests the full plan (no category filter), which
-also serves the stored snapshot instantly. Bug ledger
-`docs/bugs/0801-mrp-sofa-cover-pull-in-was-dead-since-the-per-category-tab-s.md`.
+**A2 finding (the crux).** `gatherSofa`'s accessory pull read `data.skus`, but the
+Sofa tab requested `?category=SOFA`, which strips every non-sofa row — so the
+pull matched NOTHING and the cover never rode from the MRP page. Dead since the
+2026-06-15 per-category tab split. A2 fixes it: the Sofa tab now requests the
+full plan (no category filter), which also serves the stored snapshot instantly.
+Bug ledger `docs/bugs/0801-mrp-sofa-cover-pull-in-was-dead-since-the-per-category-tab-s.md`.
 
 A2 delivers: search box (all tabs); cover/pillow riders SHOWN under each sofa SO
 with a Combined/Per-SO caption; selection scoped so ONE sofa order pulls only
 THAT order's cover; the existing Proceed-PO on a selected sofa SO now converts
-the whole order (sofa + cover) — the "整单转 PO" the owner wanted. NOT built: a
-brand-new cross-category all-SO grouping VIEW, and the mobile MRP (a read-only
-`MobileModuleList`); both deferred — see notes.
+the whole order (sofa + cover) — the "整单转 PO" the owner wanted, delivered
+surgically. NOT built: the standalone cross-category all-SO grouping VIEW the
+mockup drew — see "What is left".
 
 ### Track B — Lead time: supplier × category manual override (highest priority)
 
-Owner 2026-09-11: he will set, per supplier, that supplier's per-category lead
-time; it takes PRIORITY over the category base table. `PO delivery date =
-customer date − lead days`. Verified from source: the base + supplier(learned) +
-season resolver is WIRED and already writes `purchase_order_items.delivery_date`
-(agent trace, `scm/lib/lead-time.ts`). Change needed: a MANUAL per-(supplier,
-category) value that OVERRIDES the base (today the supplier layer is a learned
-additive buffer, approved on the agent console).
+Owner 2026-09-11: he sets, per supplier, that supplier's per-category lead time;
+it takes PRIORITY over the category base table. `PO delivery date = customer date
+- lead days`.
 
 | Step | State | Where |
 |---|---|---|
-| B1. New table for supplier×category lead days (migration, migrations-pg) | **DONE — Track B PR** | `20260911T0900_scm_mrp_supplier_category_lead_times.sql` |
-| B2. Resolver: supplier×category OVERRIDES base (highest priority) | **DONE — Track B PR** | `scm/lib/lead-time.ts` (`loadSupplierCategoryOverrides` + override layer in `resolveLeadDays`); both call sites (`mrp.ts`, `mfg-purchase-orders.ts`) pass it; agent estimate passes `NO_OVERRIDES` |
-| B3. Supplier page UI + endpoints | **DONE — Track B PR** | route `mrp-supplier-lead-times` (GET/PUT/DELETE); FE `SupplierLeadTimes.tsx` on a new supplier-page "Lead Times" tab |
-| B4. Confirm base table has data (read-only) | DONE — see diagnostic §1 (sofa/bedframe=7, accessory/mattress=0, no per-warehouse overrides) | Track C |
+| B1. New table for supplier×category lead days | **MERGED + DEPLOYED — PR #3608** | `migrations-pg/20260911T0900_scm_mrp_supplier_category_lead_times.sql` |
+| B2. Resolver: supplier×category OVERRIDES base (highest priority) | **MERGED + DEPLOYED — PR #3608** | `scm/lib/lead-time.ts` (`loadSupplierCategoryOverrides` + override layer in `resolveLeadDays`); call sites `mrp.ts`, `mfg-purchase-orders.ts` |
+| B3. Supplier page UI + endpoints | **MERGED + DEPLOYED — PR #3608** | route `mrp-supplier-lead-times` (GET/PUT/DELETE); FE `SupplierLeadTimes.tsx`, a "Lead Times" tab on the supplier page |
+| B4. Confirm base table has data (read-only) | DONE — diagnostic §1 (sofa/bedframe=7, accessory/mattress=0, no per-warehouse overrides) | Track C |
 
 Track B ships as a NO-OP until the owner enters a supplier override (empty table
 = base wins). The override REPLACES the base layer; learned buffers still add on
-top. Worktree `mrp-supplier-lead` = branch `feat/mrp-supplier-lead-time`.
+top. The mockup's "要新建" chip for this is now STALE — it is built.
 
 ### Track C — Read-only diagnostics (owner asked to "run the check")
 
-`PR #3601` (`diag/mrp-grouping-facts`, worktree `mrp-grouping-diag`) — read-only.
-Reports: (1) base lead-time table contents; (2) which category sofa covers/
-pillows sit in (answers "皮套 in accessories?"); (3) bedframe SOs split across POs,
-classified different-supplier (correct) vs same-supplier (the separate-batch
-limitation). **Needs: my review of the SQL -> merge -> dispatch (workflow_dispatch
-only works once on main).**
+PR #3601 (`diag/mrp-grouping-facts`) — read-only. Reports: (1) base lead-time
+table contents; (2) which category sofa covers/pillows sit in (answers "皮套 in
+accessories?" — yes, ACCESSORY); (3) bedframe SOs split across POs, classified
+different-supplier (correct) vs same-supplier (the separate-batch limitation).
+**MERGED + dispatched.** Findings recorded in memory `mrp-grouping-facts-2026-09-11.md`.
 
-## Shipped / in flight
-- A1 grouping — `PR #3602` **MERGED** to main.
-- Others tab flicker fix — `PR #3596` (area-tag fix pushed, auto-merge armed).
-- Track C read-only diagnostic — `PR #3601` (completeness-claim reworded, auto-merge armed).
-- A2 (this) — `PR #3606` (search + sofa cover riders + pull-in fix).
+### Track D — Readiness verification: "确定没问题吗" (owner, 2026-09-11)
 
-## Worktrees in play
-- `mrp-so-view` = `feat/mrp-so-view` (Track A2 — PR #3606)
-- `mrp-grouping-diag` = `diag/mrp-grouping-facts` (Track C — PR #3601)
-- `others-tab-stable` = `fix/others-tab-always` (PR #3596)
-- (removed after merge: `mrp-sofa-cover` = `feat/mrp-combine-perso-grouping`)
+Owner's two-part question: (1) if a MATTRESS/ACCESSORY line already has stock
+allocated, does the SO line turn READY? (2) if the item line has been received,
+by right it should turn READY — are you sure?
+
+Verified against LIVE production, not assumption, with a read-only check.
+
+| Step | State | Where |
+|---|---|---|
+| D1. Read-only check + workflow | **MERGED — PR #3612** | `backend/scripts/check-so-readiness-facts.mjs`, `.github/workflows/so-readiness-facts.yml` |
+| D2. Enum-coercion crash fix (first prod run was RED) | **MERGED — PR #3616** | one-line SQL: `r.status IS DISTINCT FROM 'CANCELLED'` |
+| D2b. Fix a 2nd enum coercion (warehouse_type) | **MERGED — PR #3618** | same class as #3616 |
+| D2c. Model the processing-date gate + FIFO contention (raw check over-counted 8,328) | **MERGED — PR #3620** | `check-so-readiness-facts.mjs` |
+| D3. Dispatch + read the answer | **DONE — run 34559704923, green, 2026-09-11** | see Result below |
+
+**What the check answers.** SECTION 2 is THE answer: pooled (mattress+accessory,
+non-SP) lines that are PENDING/PARTIAL while enough matching stock already sits
+in their own SELLING warehouse under a blank variant key — i.e. lines that
+*should* have flipped READY but did not. 0 = the engine keeps up (yes, a stocked
+mattress/accessory line does turn ready). >0 = the list of stuck lines. SECTION
+3 classifies the rest by the legitimate reasons a stocked line stays PENDING
+(genuinely short / non-selling warehouse / no warehouse / has specials).
+
+**Why the first run (34556592005) was RED and produced no answer.** The check's
+`returned` CTE guarded cancelled returns with `COALESCE(r.status, '') <>
+'CANCELLED'`. `delivery_returns.status` is enum `delivery_return_status` (NOT
+NULL), so COALESCE cast the `''` literal to the enum at plan time — `''` is not a
+label — and the whole statement errored before touching a row. Because a red job
+means "the check broke" (not "0 stuck"), it was NOT an answer. PR #3616 replaced
+it with `IS DISTINCT FROM`. Bug ledger `docs/bugs/0804-*`.
+
+**How to re-run it (owner-safe, no console):** GitHub -> Actions -> "SO readiness
+facts (read-only)" -> Run workflow (company defaults to 1). Read-only, own
+concurrency group, never displaces a deploy. It reads `main`, so any fix to the
+script must merge before the run reflects it (that is why the enum fix needed
+its own merge before D3).
+
+**Result (PROVEN — run 34559704923, company 1, 2026-09-11).** The engine is
+working. Of 10,298 live pooled mattress/accessory lines: READY 1,356, PARTIAL
+10, PENDING 8,932 → 8,942 not-ready. Those 8,942 break down as:
+
+- **8,481** — SO has NO processing date yet → allocator skips it by the owner's
+  own 2026-08-10 rule. Correctly PENDING, not a fault.
+- **447** — bucket demand exceeds on-hand (FIFO / waiting for restock). Not an
+  engine fault; not enough stock.
+- **0** non-selling warehouse, **0** no-warehouse, **0** special-order.
+- **14** — SECTION 2, the ONLY genuine anomaly: processing-dated, non-special,
+  selling warehouse, bucket NOT contended (own-warehouse on-hand covers all its
+  non-gated demand), yet still PENDING. 0.14% of live pooled lines. These are
+  the lines the allocator should have flipped. The 14 (doc — item — need/have —
+  wh): HC-SO-009735 ERGOTEX ERGOLITE (Q) 2/4 PG; HC-SO-004928 DUNLOPILLO
+  GENERASI 5" (SS) 2/6 PG + OTHOREST GENERASI 3.0 (SS) 1/4 PG; HC-SO-013498
+  GENERASI 5" (SS) 1/6 PG; HC-SO-013504 GENERASI 5" (S) 1/3 PG; HC-SO-011423 /
+  HC-SO-013181 ERGOLITE (Q) 1/4 PG; HC-SO-010073 GENERASI 5" (S) 1/3 PG;
+  HC-SO-010690 ERGOLITE (Q) 1/2 + FLEXICARE-S (K) 1/2 KL; HC-SO-012733 ERGOLITE
+  (Q) 1/2 KL; HC-SO-013332 FLEXICARE-S (K) 1/2 KL; HC-SO-011114 STOOL 1/1 PG;
+  HC-SO-013341 STOOL 1 1/4 KL.
+
+**NEXT STEP for the 14 (handoff — UNTESTED).** LIKELY these are stale: stock
+arrived / a processing date was set AFTER the allocator last walked those buckets,
+and no re-walk fired. The standard, idempotent engine re-walk
+(`recompute-so-allocation.yml` / `recomputeSoStockAllocation`) would flip any that
+are merely stale; whichever DON'T flip after a clean recompute are a real bug to
+trace (start at `grns.ts` re-walk trigger + `so-stock-allocation.ts`). It is a
+production WRITE, so it needs the owner's go-ahead — not run here. Do NOT read
+"run the recompute" as done: it has not been run.
+
+## What is left for the next person (the mockup's fuller UI — owner to decide)
+
+The sofa+cover-on-one-PO PAIN is solved (A2). What the §06 mockup drew and is NOT
+built — none is a defect; each is a bigger UI the owner has not committed to:
+
+1. **A standalone "分类 ⇄ 销售单" global view toggle.** Today MRP is five
+   category tabs; the mockup adds a whole-SO view where one card shows every
+   category of a sales order together. Needs backend all-category aggregation per
+   SO (today the plan is fetched per category). File: `frontend/src/pages/scm-v2/Mrp.tsx`
+   + a new `/mrp/plan` shape. Effort: medium-large.
+2. **Per-SO "整单转 PO" cards in that SO view.** The convert-the-whole-order
+   action exists surgically on the Sofa tab; the mockup makes it a first-class
+   card action in the SO view above. Depends on #1.
+3. **Bedframe multi-select "合并转" button.** Bedframe merging is done
+   automatically by the backend (same supplier + one SO -> one PO); the mockup
+   adds an explicit multi-select "merge convert" control. Effort: small-medium,
+   FE only, once #1 exists.
+4. **Mobile MRP convert flow.** `frontend/src/mobile` MRP is a read-only
+   `MobileModuleList` (variant "mrp") with no convert flow, so A2's sofa-cover UX
+   is desktop-only. Per the "desktop and mobile are one product" rule this is a
+   real gap if the owner wants convert-on-mobile. Effort: medium.
+
+## Worktrees
+
+All feature/diag worktrees for the above were removed after their PRs merged.
+This handoff PR uses `mrp-redesign-handoff` = `docs/mrp-redesign-handoff`; remove
+it after merge (`git worktree remove ../houzs-work-worktrees/mrp-redesign-handoff`).
 
 ## Open decisions / notes
 - Mattress window KEPT (owner picker 2026-09-11).
 - Under Per-SO the 皮套 splits off the sofa PO — co-location is a COMBINE feature. Owner is aware.
-- Cover category (ACCESSORY vs Others) still to be confirmed by PR #3601; A2 handles both — it pulls ACCESSORY lines, and A1 grouping co-locates any non-core line of a sofa SO onto the sofa PO.
-- DEFERRED: a cross-category "one card per SO across all categories" view (needs backend all-category aggregation) — A2 gave the sofa-cover payoff without it, since the Sofa tab is already grouped by SO and the cover now rides visibly. Raise as a separate proposal if the owner wants bedframe/mattress folded into the same SO card.
-- DEFERRED: mobile MRP is a read-only `MobileModuleList` (variant "mrp"); it has no convert flow, so A2's sofa-cover UX is desktop-only for now.
-- Track B (supplier×category lead time) — DONE, this PR (feat/mrp-supplier-lead-time). All of A/B/C now shipped or in flight.
+- 皮套 is ACCESSORY (confirmed by PR #3601). A1 grouping co-locates any non-core line of a sofa SO onto the sofa PO.
+- The mockup (§03 supplier×category chip "要新建"; §02 "床垫同一周 window 待定")
+  is now STALE on both points: the lead-time is built (#3608) and the window is
+  KEPT in code. Do not re-open either from the artifact.

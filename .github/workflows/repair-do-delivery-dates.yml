@@ -1,0 +1,45 @@
+name: Repair DO delivery dates to follow AutoCount
+
+# Sets an AutoCount-linked delivery order's expected_delivery_at and
+# customer_delivery_date to its own do_date (= AutoCount's DocDate), for every DO
+# where they differ. Owner 2026-09-11: DO dates follow AutoCount. PLAN by default.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes NOTHING) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: ["plan", "apply"]
+      confirm:
+        description: "Required for apply: DO-DATES-FOLLOW-AUTOCOUNT"
+        required: false
+        default: ""
+
+concurrency:
+  group: repair-do-delivery-dates
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-do-delivery-dates-to-autocount.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

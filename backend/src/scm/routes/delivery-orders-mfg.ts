@@ -3974,8 +3974,8 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     debtor_code: (head.debtor_code as string | null) ?? null,
     debtor_name: (head.debtor_name as string | null) ?? null,
     do_date: today,
-    expected_delivery_at: (head.customer_delivery_date as string | null) ?? today,
-    customer_delivery_date: (head.customer_delivery_date as string | null) ?? null,
+    expected_delivery_at: today, // both delivery dates = the DO's own date (AutoCount DocDate), not the SO's customer ask which stays on the SO — owner 2026-09-11, docs/bugs/0804
+    customer_delivery_date: today,
     address1: (head.address1 as string | null) ?? null,
     address2: doAddress2,
     city: (head.city as string | null) ?? null,

@@ -167,6 +167,10 @@ export const DO_SALES_CARRY = [
   ['agent', 's.agent'],
   ['branding', 's.branding'],
   ['ref', 's.ref'],
-  ['customer_delivery_date', 's.customer_delivery_date'],
-  ['expected_delivery_at', 'COALESCE(s.customer_delivery_date, d.do_date)'],
+  /* The DELIVERY dates FOLLOW THE DO's OWN DATE (d.do_date = AutoCount's DocDate),
+     never the SO's customer date — owner 2026-09-11 「全部要跟 autocount」. The
+     other fields above legitimately come from the SO; only these two changed
+     (reverses the 2026-09-08 s.customer_delivery_date source). */
+  ['customer_delivery_date', 'd.do_date'],
+  ['expected_delivery_at', 'd.do_date'],
 ];
