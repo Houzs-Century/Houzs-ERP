@@ -25,10 +25,20 @@ the DO's, so this was a DISPLAY defect on the delivery order (the "Scheduled" /
 **Fix.** Both sources now use the DO's own `do_date` (= AutoCount's DocDate) for
 both date fields. The customer's original ask is NOT lost — it still lives on the
 sales order (`scm.mfg_sales_orders.customer_delivery_date`). A one-time repair
-(`repair-do-delivery-dates-to-autocount.mjs`, workflow "Repair DO delivery dates
-to follow AutoCount", PLAN by default, apply needs `CONFIRM=DO-DATES-FOLLOW-AUTOCOUNT`)
+(`repair-do-delivery-dates-to-autocount.mjs` [gone], workflow "Repair DO delivery
+dates to follow AutoCount", PLAN by default, apply needs `CONFIRM=DO-DATES-FOLLOW-AUTOCOUNT`)
 sets existing AutoCount-linked DOs (`linked_ac_docno IS NOT NULL`) to their own
 `do_date` where they differ, and verifies zero remain on a fresh connection.
+
+> **SUPERSEDED 2026-09-11 — the caveat below was the whole bug. See
+> docs/bugs/0810.** The repair was never applied and is DELETED. Measured against
+> the live book, AutoCount's line delivery date differs from its document date on
+> **65 of 235** linked delivery orders, so `do_date` is not a faithful proxy and
+> this repair would have written a wrong date on 65 live documents. The premise
+> was written down as "the norm" and never measured; measuring it took one query.
+> The real source is `SODTL/DODTL.DeliveryDate`, exported by
+> `backend/scripts/export-ac-delivery-dates.py` and applied by
+> `backend/scripts/repair-delivery-dates-from-book.mjs`.
 
 **Caveat (known).** AutoCount's per-LINE delivery date is not mirrored (the DO
 header pull carries only `DocDate`); `do_date` is used as the faithful proxy,

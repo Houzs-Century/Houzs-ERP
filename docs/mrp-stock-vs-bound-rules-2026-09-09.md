@@ -169,15 +169,84 @@ a PO already linked to the SAME sales order proves anything.
 
 | # | item | whose call |
 | --- | --- | --- |
-| 1 | Should the MRP page's gate be the **Processing Date** instead of the delivery date? Today 30 released lines are hidden and 86 unreleased ones are shown | owner |
+| 1 | ~~Should the MRP page's gate be the **Processing Date** instead of the delivery date?~~ — **CLOSED. Ruled keep-as-is twice**: 2026-09-09, and again 2026-09-11 when the purchaser escalated the consequence. See *Addendum 2* below | done |
 | 2 | ~~A pooled PO masks a shortage on 10 hard-bound lines~~ — **FIXED**, `docs/bugs/0736` | done |
-| 3 | `HC-SO-012025` / `HC-PO-009024` — 3 sofa lines to link; content already matches | repairable now |
+| 3 | ~~`HC-SO-012025` / `HC-PO-009024` — 3 sofa lines to link~~ — **DONE**; re-read on prod 2026-09-11, all six lines of that PO now carry an `so_item_id` | done |
 | 4 | `HC-SO-010287` / `HC-PO-010085` — arms mirrored; owner ruled 2026-09-09 *「全部跟着销售单」* | repair to the SALES ORDER's pieces |
 
-Item 1 was ruled **keep as is** — the delivery date stays the gate. Item 2 was
-ruled **fix, company 1 only**, and is done. Items 3 and 4 are specific documents
-with a customer behind each.
+Item 1 was ruled **keep as is** — the delivery date stays the gate — and ruled
+that way a second time on 2026-09-11 (*Addendum 2*). Item 2 was ruled **fix,
+company 1 only**, and is done. Item 3 is done. Item 4 is a specific document
+with a customer behind it.
 
 **Ref.** Measured 2026-09-09 against prod, read-only. Rules read from
 `so-stock-allocation.ts`, `routes/mrp.ts` and `shared/so-processing-date.ts` —
 not from summaries.
+
+---
+
+## Addendum 2026-09-11 — the same class, found from the other end
+
+The owner reported two orders reading SHORT with a purchase order already open.
+Both are this document's class, and the census is now complete rather than
+incidental: on live company-1 purchase orders there are **6** hard-bound lines
+with no `so_item_id` (all created 2026-08-28, `from_mrp=false`, NULL `line_no` —
+one batch of hand-opened POs) and **1** line that is linked but sits on a
+non-hard-bound `item_group` (`HC-PO-010087`, `others` on a `sofa`). That second
+shape is new to this document: failing condition (b) hides a purchase order just
+as completely as failing (a).
+
+Tooling: `backend/scripts/repair-mrp-po-line-links.mjs` (plan/apply) and
+`.github/workflows/mrp-po-link-repair.yml`. It repairs only what the §3 evidence
+bar admits — the PO's other lines resolve to exactly ONE sales order, and that
+order has exactly ONE live uncovered line with this item code and warehouse.
+On the 2026-09-11 plan that admits 3 of the 7 and refuses 4 with a per-row
+reason. Details and the full row list: `tasks/MRP-REDESIGN-2026-09.md` Track E.
+
+---
+
+## Addendum 2, 2026-09-11 — §2 was ruled again, this time against the person who uses it
+
+The purchaser escalated the exact consequence §2 describes:
+
+> SO-013496 have not proceed yet, why at MRP to order, please update system
+
+She is right about the fact and the page is right about the rule.
+`HC-SO-013496` is `CONFIRMED` with `processing_date` NULL and a 2026-10-15
+delivery date, so it is released to nobody and visible to everybody — the
+delivery-date gate working as ruled, not a defect.
+
+**Re-measured on prod the same day rather than quoting §2's figures**, because
+the point of this addendum is that the numbers moved barely at all in two days
+and the complaint arrived anyway. Live company-1 lines, default MRP page:
+
+| population | lines | orders |
+| --- | ---: | ---: |
+| on the default page at all | 2,942 | — |
+| shown while **not proceeded** | 87 | 14 |
+| …of those, with no purchase order of their own | 81 | — |
+| **proceeded but hidden** (no delivery date) | 30 | 6 |
+
+**The fact that changes what to do about it: 12 of those 14 orders are OVERDUE
+and were never proceeded** — the oldest is `HC-SO-000015`, delivery 2024-07-31.
+Only `HC-SO-013496` and `HC-SO-011042` are future-dated. So **82 of the 87 lines
+are stale sales orders, not the gate.** Whatever the gate is set to, those 12
+documents are the noise.
+
+Four options were put to the owner: keep as is; switch the gate to the
+processing date; keep the gate and add a "not proceeded" chip plus a filter,
+collapsed by default; or clean up the 12 stale orders. The recommendation was
+the last two — the clean-up removes 94% of what the purchaser sees today without
+touching a rule, and a filter is the owner's standing preference over a wall.
+
+**He ruled 「什么都不改」. Nothing ships.** Recorded here so it is not re-proposed
+a third time: the answer to this complaint is the explanation above, not a
+change. The stale-order clean-up stays available as pure data hygiene whenever
+he wants it, and does not need this ruling revisited.
+
+**Industry note, for whoever asks next.** Mainstream ERPs gate MRP demand on two
+things, not one: an order must be *released* to count as demand (Odoo only
+plans confirmed sales orders), and a planning horizon bounds how far ahead the
+buyer looks. We have the horizon-ish half via the delivery date and no release
+gate at all, which is structurally why an unreleased order reaches a purchaser.
+That is the shape of option 2 if it is ever wanted; it is not wanted now.

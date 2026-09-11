@@ -13,6 +13,23 @@
 //  - recliners are per-unit mechanisms: R819 "2S + RECLINER" = 1A(R) pair.
 //  - PROCESSED orders must decompose fully or fall back (never guess pieces).
 const SOFA_MODEL_ALIAS = { "5530": "9028", "5536": "9058", "5537": "8030", "5540": "8030" };
+/* The SUPPLIER'S name for a piece vs OURS. The supplier writes `CSL`, our
+   catalogue mints `CONSOLE`, and they are the same part (owner 2026-09-11,
+   「CSL 就是 console」). PR #3613 rewrote the CSL spellings sitting in the three
+   correction FILES; this map is for the readers that meet the supplier's own
+   export at run time, so a listing that still says CSL does not read as a
+   different sofa. Keyed on the piece suffix, upper-cased, after the model. */
+const SOFA_PIECE_ALIAS = { CSL: "CONSOLE" };
+/* `5540-1A(LHF)` -> `1A(LHF)`, with the supplier's spelling folded onto ours.
+   ONE definition of "what piece is this line", used by the supplier checker and
+   by the leg backfill, because two readers that disagree about a piece is how
+   this repo got two different answers for one sofa. */
+const pieceSuffix = (code) => {
+  const s = String(code ?? "").trim().toUpperCase();
+  const i = s.indexOf("-");
+  const piece = i < 0 ? s : s.slice(i + 1);
+  return SOFA_PIECE_ALIAS[piece] || piece;
+};
 const CM_TO_INCH = { 60: 24, 66: 26, 70: 28, 75: 30, 80: 32 };
 /* Vocabulary of the special-order sweep below. Built by reading every slash
    segment of all 716 sofa Desc2 in the three cutover exports and checking that
@@ -895,4 +912,4 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
 }
 
 
-export { SOFA_MODEL_ALIAS, CM_TO_INCH, parseSofa };
+export { SOFA_MODEL_ALIAS, SOFA_PIECE_ALIAS, pieceSuffix, CM_TO_INCH, parseSofa };

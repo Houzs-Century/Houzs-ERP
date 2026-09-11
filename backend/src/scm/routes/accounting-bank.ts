@@ -28,7 +28,7 @@ import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-r
 import {
   loadBankConfigs, loadBankConfig, parseConfigFrom,
   loadRecognitionRules, loadPayableBatches, loadPayoutAdvices, loadAccountLedger,
-  loadLiveMonthLock, loadLineMonth, loadClaimedElsewhere, claimedSetFor } from '../../acc/bank';
+  loadLiveMonthLock, loadLineMonth, loadClaimedElsewhere, claimedSetFor, jeNosOf } from '../../acc/bank';
 import { lockedRefusal, lockMonthOf } from '../../acc/bank-lock';
 import { postBatchReceipt, undoBatchReceipt } from '../../acc/settlement';
 
@@ -552,8 +552,12 @@ export const bankStatementDetail = guard(async (c) => {
     reference: l.reference ?? null,
     amountSen: Number(l.amount_sen ?? 0),
     state: String(l.state) as StatementMovement['state'],
-    jeNo: String(l.state) === 'POSTED' ? (l.posted_je_no ?? liveMatches(l)[0]?.je_no ?? null) : null,
-    jeNos: liveMatches(l).map((m) => String(m.je_no)),
+    jeNo: String(l.state) === 'POSTED' ? (jeNosOf(l.posted_je_no).at(0) ?? liveMatches(l)[0]?.je_no ?? null) : null,
+    /* Every entry the line names — a split's "A, B" is two (docs/bugs/0809) —
+       and every match row it carries. */
+    jeNos: String(l.state) === 'POSTED'
+      ? [...new Set([...jeNosOf(l.posted_je_no), ...liveMatches(l).map((m) => String(m.je_no))])]
+      : [],
   }));
 
   const reconciliation = reconcileBankStatement({

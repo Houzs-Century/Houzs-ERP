@@ -1,0 +1,52 @@
+name: Complete the half-done leg-default repair (DRY-RUN gated)
+
+# Finishes what a first apply of the leg-default repair left half-done
+# (docs/bugs/0722). That run committed its raw-SQL half — stripped legHeight from
+# the delivery lines and deleted the phantom (zero-consumption) OUT movements —
+# then failed at the canonical re-ship because it passed a non-UUID string for
+# performed_by. No money or stock moved, but three DOs are now shipped with clean
+# lines and no stock OUT. This targets those three by number and does only the
+# remaining half — resyncInventoryForDo + restampSiFromDo with a valid (null)
+# performer — after asserting the partial state is exactly as expected.
+#
+# DRY-RUN by default. APPLY writes only with apply=1 AND the confirm phrase.
+# Manual trigger only; own concurrency group.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to WRITE. Anything else = dry-run."
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: 'Must equal COMPLETE THE FIVE STRANDED LINES to write.'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: complete-do-leg-default-stock
+  cancel-in-progress: false
+
+jobs:
+  complete:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/complete-do-leg-default-stock.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -363,6 +363,8 @@ class AcSyncService {
       /* READ-ONLY, one SELECT on sys.columns. See TableColumns(). */
       /* READ-ONLY, one SELECT. See LineFingerprints(). */
       case "/line-fingerprints": Json(ctx, 200, LineFingerprints(p)); return;
+      /* READ-ONLY, one SELECT. See DeliveryDates(). */
+      case "/delivery-dates": Json(ctx, 200, DeliveryDates(p)); return;
       case "/table-columns": Json(ctx, 200, TableColumns(p)); return;
       default: Json(ctx, 404, Err("unknown route " + path)); return;
     }
@@ -849,6 +851,98 @@ class AcSyncService {
     return new Dictionary<string, object> {
       { "ok", true }, { "type", type }, { "count", docs.Count },
       { "truncated", truncated }, { "docs", docs },
+    };
+  }
+
+  /* -- /delivery-dates -- the one column the INBOUND pull cannot see ----------
+
+     WHY IT EXISTS. AutoCount keeps a document's delivery date on the LINE
+     (SODTL.DeliveryDate, DODTL.DeliveryDate). There is no header delivery date
+     on SO or DO and no UDF holding one -- checked against the live book
+     2026-09-11. The read middleware the ERP pulls through serves a NINE-COLUMN
+     HEADER projection (/DeliveryOrder/getSince), so a delivery date changed in
+     AutoCount after a document was imported never reaches the ERP, while the
+     ERP's own edits DO flow the other way (autocount-outbox maps
+     line_delivery_date onto SODTL.DeliveryDate). One-directional sync on one
+     field is drift by construction, and it was reported as a real defect:
+     HC12445, where the book said 19/09 and the ERP said 05/09 for three months.
+
+     The middleware's source is not in this repository (see
+     docs/autocount-read-relay-exposure-coe.md), so this service -- which IS --
+     serves the column instead. docs/bugs/0810.
+
+     WINDOWED, not a full dump. Measured on the 2026-09-11 export: the book holds
+     51,041 SO lines and 48,291 DO lines with a delivery date, which no single
+     Worker request should carry. Filtering on the DELIVERY DATE itself is both
+     the bound and the right semantics -- a date staff still move belongs to a
+     document delivering soon or delivered recently -- and at SinceDeliveryDate =
+     2026-06-01 it is 8,522 SO lines and 6,075 DO lines.
+
+     READ-ONLY, and mechanically so: one SELECT on one connection, no SDK
+     session, no transaction, and the table names come from an ALLOW-LIST keyed
+     by document type rather than from the caller's string. */
+  static readonly Dictionary<string, string[]> DeliveryDateTables = new Dictionary<string, string[]> {
+    { "SO", new[] { "SO", "SODTL" } },
+    { "DO", new[] { "DO", "DODTL" } },
+  };
+  /* A ceiling so one call cannot make the service build an unbounded response.
+     20,000 is ~2.3x the measured 120-day SO window above, and the caller is TOLD
+     when it bites rather than silently reading a short list. */
+  const int MaxDeliveryDateRows = 20000;
+
+  static Dictionary<string, object> DeliveryDates(Dictionary<string, object> p) {
+    var type = Or(Str(p, "Type"), "SO").ToUpperInvariant();
+    if (!DeliveryDateTables.ContainsKey(type))
+      return Err("Type must be one of SO, DO (got '" + type + "')");
+    var since = Str(p, "SinceDeliveryDate");
+    /* An ISO date or nothing. Parsed here rather than interpolated, so a
+       malformed value is a refusal and never reaches the SELECT. */
+    DateTime sinceDt;
+    if (string.IsNullOrEmpty(since)) return Err("SinceDeliveryDate is required (YYYY-MM-DD)");
+    if (!DateTime.TryParseExact(since, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+                                System.Globalization.DateTimeStyles.None, out sinceDt))
+      return Err("SinceDeliveryDate must be YYYY-MM-DD (got '" + since + "')");
+
+    var hdr = DeliveryDateTables[type][0];
+    var dtl = DeliveryDateTables[type][1];
+    var rows = new List<object>();
+    var truncated = false;
+    try {
+      __DBLINE__
+      using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+        cn.Open();
+        using (var cmd = cn.CreateCommand()) {
+          cmd.CommandTimeout = 120;
+          /* DtlKey is the join the ERP already keeps (linked_ac_dtlkey), so the
+             caller needs no item-code matching -- which could not pair a sofa
+             anyway: the book keeps one line where the ERP keeps one per
+             compartment. */
+          cmd.CommandText =
+            "SELECT TOP (" + (MaxDeliveryDateRows + 1) + ") h.DocNo, d.DtlKey, d.DeliveryDate, h.DocDate " +
+            "FROM " + dtl + " d JOIN " + hdr + " h ON h.DocKey = d.DocKey " +
+            "WHERE d.DeliveryDate IS NOT NULL AND d.DeliveryDate >= @since " +
+            "ORDER BY h.DocNo, d.Seq";
+          var ps = cmd.CreateParameter(); ps.ParameterName = "@since"; ps.Value = sinceDt;
+          cmd.Parameters.Add(ps);
+          using (var rd = cmd.ExecuteReader()) {
+            while (rd.Read()) {
+              if (rows.Count >= MaxDeliveryDateRows) { truncated = true; break; }
+              rows.Add(new Dictionary<string, object> {
+                { "DocNo", rd.IsDBNull(0) ? "" : rd.GetString(0) },
+                { "DtlKey", rd.IsDBNull(1) ? 0L : System.Convert.ToInt64(rd.GetValue(1)) },
+                { "DeliveryDate", rd.IsDBNull(2) ? null : rd.GetDateTime(2).ToString("yyyy-MM-dd") },
+                { "DocDate", rd.IsDBNull(3) ? null : rd.GetDateTime(3).ToString("yyyy-MM-dd") },
+              });
+            }
+          }
+        }
+      }
+    } catch (Exception ex) {
+      return Err("delivery-dates failed: " + ex.Message);
+    }
+    return new Dictionary<string, object> {
+      { "ok", true }, { "type", type }, { "since", since },
+      { "count", rows.Count }, { "truncated", truncated }, { "rows", rows },
     };
   }
 

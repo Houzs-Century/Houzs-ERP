@@ -4344,6 +4344,15 @@ Two things worth carrying forward:
 
 `backend/scripts/lib/parse-sofa.mjs` answers `pieces`, `size`, `color`,
 `perPieceColor`, `specials` and — since 2026-09-09 — **`leg`**.
+
+**It also owns what a PIECE is — `pieceSuffix` and `SOFA_PIECE_ALIAS` (2026-09-11).**
+`pieceSuffix('5540-CSL')` is `CONSOLE`: the supplier writes `CSL`, our catalogue
+mints `CONSOLE`, and they are the same part (owner 2026-09-11). It lives here
+rather than in each reader because two readers that disagree about a piece is how
+this repo got two answers for one sofa — `check-supplier-listing-vs-erp.mjs` and
+`apply-supplier-sofa-leg.mjs` both call it, and before they did, two sofas that
+agree sat in the checker's "DIFFERENT PIECES — costs money" bucket
+(`docs/bugs/0807`).
 `lib/variant-reconcile.mjs`'s `decodeBook` copies each onto the BOOK side, and
 `AXES` decides which item group asks for which.
 
@@ -5991,3 +6000,30 @@ the committed snapshot `scripts/data/ac-reconcile-truth.json.gz` carries straigh
 ones and flattens the line's newline to a space. The same sentence in two
 renderings compares unequal — that is what made the retracted tool think 1,650
 already-done lines still needed doing.
+
+## The address is fitted to 40 characters ON SAVE (2026-09-09)
+
+Owner ruling: 「把我们的 address lock成 40 个字」. AutoCount's four address
+columns are 40 characters and it refuses the WHOLE document when one is over, so
+an over-long line kept a sales order out of the accounts entirely
+(`docs/bugs/0728`).
+
+Both write paths call `fitSoAddress` (`services/autocount-address-fit.ts`):
+
+- **Create** spreads it over the four body fields.
+- **Edit** fits them **together, after** the field map. A line cannot be fitted
+  on its own — an over-long first line spills into the second — so a PATCH
+  carrying only `address1` reads the other three AS STORED, merges, fits, and
+  writes all four. Fitting inside the map loop would blank the lines the caller
+  never mentioned.
+- **A read failure leaves the address alone.** Without the stored lines the merge
+  would blank what it cannot see; the value is still fitted on the way out, so
+  the cost is a wide stored line, not a refused document.
+
+**An address that already fits is stored exactly as typed.** Only an overflowing
+one is re-packed, at word boundaries, so a save unrelated to the address never
+re-flows one.
+
+**Not done:** the frontend inputs carry no `maxLength`, so a person can still
+type past forty and see it re-flowed on save rather than being stopped as they
+type.

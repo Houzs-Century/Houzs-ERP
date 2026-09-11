@@ -25,7 +25,7 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { assembleMonth, monthOf, monthWindow, type MonthStatement } from '../../acc/bank-month';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
 import { entryCandidatesFor } from '../../acc/bank-match';
-import { loadPayableBatches, loadAccountLedger, loadLiveMonthLock, claimedSetFor } from '../../acc/bank';
+import { loadPayableBatches, loadAccountLedger, loadLiveMonthLock, claimedSetFor, jeNosOf } from '../../acc/bank';
 import { bankGuard } from './accounting-bank';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -88,8 +88,9 @@ const claimedOutside = (
   const out = new Set<string>();
   for (const l of allLines) {
     if (inWindow.has(Number(l.id)) || String(l.state) !== 'POSTED') continue;
-    const je = textOf(l.posted_je_no) ?? textOf(matchesByLine.get(Number(l.id))?.[0]?.je_no);
-    if (je) out.add(je);
+    /* Every entry the line names — a split's "A, B" is two (docs/bugs/0809). */
+    for (const je of jeNosOf(l.posted_je_no)) out.add(je);
+    for (const m of matchesByLine.get(Number(l.id)) ?? []) { const je = textOf(m.je_no); if (je) out.add(je); }
   }
   return out;
 };
@@ -104,8 +105,9 @@ const asMovement = (l: Row, jeNo: string | null, jeNos: string[] = []): Statemen
   state: String(l.state) as StatementMovement['state'],
   jeNo,
   /* Every entry a POSTED line claims (docs/bugs/0803) — one movement can be
-     several vouchers, and the second is claimed too. */
-  jeNos: String(l.state) === 'POSTED' ? jeNos : [],
+     several vouchers, and the second is claimed too; a split payout's "A, B"
+     in posted_je_no is two as well (docs/bugs/0809). */
+  jeNos: String(l.state) === 'POSTED' ? [...new Set([...jeNosOf(l.posted_je_no), ...jeNos])] : [],
 });
 
 /** The entries a line's match rows name, by line. */
@@ -308,7 +310,7 @@ export async function loadMonthForLock(
     .select('bank_line_id, je_no').eq('company_id', companyId);
   if (matchRes.error) return { ok: false, reason: matchRes.error.message };
   const jesOf = jeNosByLine(rowsOf(matchRes.data));
-  const movements = lines.map((l) => asMovement(l, textOf(l.posted_je_no), jesOf.get(Number(l.id)) ?? []));
+  const movements = lines.map((l) => asMovement(l, jeNosOf(l.posted_je_no)[0] ?? null, jesOf.get(Number(l.id)) ?? []));
   const firstPeriodFrom = allStatements.map((s) => dayOf(s.period_from) ?? '').filter(Boolean).sort()[0] ?? null;
 
   const fed = feedersOf(allStatements, new Set(lines.map((l) => Number(l.statement_id))), window);
@@ -405,7 +407,7 @@ export const bankMonthDetail = bankGuard(async (c) => {
   /* Only a POSTED line claims anything — a match row on an OPEN line is what
      an older undo left behind (docs/bugs/0802), not a claim. */
   const jeOf = (l: Row): string | null =>
-    (String(l.state) === 'POSTED' ? (textOf(l.posted_je_no) ?? textOf(matchesByLine.get(Number(l.id))?.[0]?.je_no)) : null);
+    (String(l.state) === 'POSTED' ? (jeNosOf(l.posted_je_no)[0] ?? textOf(matchesByLine.get(Number(l.id))?.[0]?.je_no)) : null);
 
   const jesOf = jeNosByLine(rowsOf(matchRes.data));
   const movements = lines.map((l) => asMovement(l, jeOf(l), jesOf.get(Number(l.id)) ?? []));

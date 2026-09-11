@@ -1379,8 +1379,8 @@ Total: 1235 route registrations across 159 files.
 - L93  DELETE /:state
 
 ## backend/src/index.ts  (2)
-- L237  GET    /
-- L245  GET    /health
+- L238  GET    /
+- L246  GET    /health
 
 ## backend/src/routes/brandShare.ts  (2)
 - L36  POST   /:id/share-link

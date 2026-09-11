@@ -1035,6 +1035,29 @@ describe('splitting one credit across several statements', () => {
     expect(receipts.every((r) => Number(r.bank_line_id) === line.id)).toBe(true);
   });
 
+  /* docs/bugs/0809 — June on 2990's Hong Leong: two split payouts (RM 3,590.38
+     and RM 3,716.14, each paying two reports) left the screen red — "These
+     numbers do not add up" by exactly RM 7,306.52. A split line stores its
+     two entries as "A, B" in posted_je_no, and every reader compared that
+     string as ONE entry number, so the four receipts sat in "in the books, not
+     on the bank" while the bank side counted the movements as posted. */
+  test('the two entries a split wrote are both claimed by the movement, so the books and the bank agree', async () => {
+    const { app, sb, line } = await openSplit();
+    expect((await post(app, `/bank/lines/${line.id}/receipt`, { allocations: line.split })).status).toBe(200);
+    const jes = (sb.tables.acc_settlement_receipts as Row[]).map((r) => String(r.je_no));
+    expect(jes).toHaveLength(2);
+    /* The ledger view the reconciliation reads, with the two receipts on it. */
+    for (const [i, je] of jes.entries()) {
+      sb.tables.v_gl_entries.push({ company_id: CO, account_code: '330-0000', je_no: je, entry_date: '2026-08-15', source_type: 'SETTLEBANK', source_doc_no: `SETTLEBANK-${i}`, debit_sen: Number((sb.tables.acc_settlement_receipts as Row[])[i]!.amount_sen), credit_sen: 0, notes: null });
+    }
+    const detail = await (await app.request(`/bank/statements/${line.statement_id}`)).json() as any;
+    const posted = detail.lines.find((l: any) => l.id === line.id);
+    expect(posted.state).toBe('POSTED');
+    for (const je of jes) expect(detail.reconciliation.unmatchedJeNos).not.toContain(je);
+    expect(detail.reconciliation.booksNotOnBank.count).toBe(0);
+    expect(detail.reconciliation.consistent).toBe(true);
+  });
+
   /* The same discipline the merchant side applies to a swipe covering two
      orders: a leftover is a difference, and a difference is what this module
      exists to surface. */

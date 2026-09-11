@@ -69,7 +69,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
-import { parseSofa } from './lib/parse-sofa.mjs';
+import { parseSofa, pieceSuffix } from './lib/parse-sofa.mjs';
 import { loadCorrections } from './lib/sofa-corrections-source.mjs';
 
 const CO = Number(process.env.COMPANY_ID || 1);
@@ -82,7 +82,10 @@ const gz = (f) => JSON.parse(
 );
 
 const norm = (s) => String(s ?? '').trim().toUpperCase();
-const suffix = (code) => { const s = norm(code); const i = s.indexOf('-'); return i < 0 ? s : s.slice(i + 1); };
+/* parse-sofa owns what a piece is, CSL -> CONSOLE included (docs/bugs/0807).
+   Proposing from a reader that does not fold it would emit a "correction" that
+   renames CONSOLE to CSL - a SKU we deliberately do not mint. */
+const suffix = pieceSuffix;
 const modelOf = (code) => { const s = norm(code); const i = s.indexOf('-'); return i < 0 ? s : s.slice(0, i); };
 const bag = (xs) => xs.slice().sort().join('|');
 /* One run written from the other end is the SAME SOFA - reversing moves no hand.
@@ -97,7 +100,7 @@ const oneOf = (values) => {
   return seen.length === 1 ? seen[0] : null;
 };
 
-const book = gz('supplier-so-detail-2026-09-10.json.gz');
+const book = gz('supplier-so-detail-2026-09-11.json.gz');
 
 /* Builds an earlier round already answered, indexed by document. A round that
    read the OWNER'S OWN drawing is not overridden on ORDER alone: this file
@@ -140,7 +143,16 @@ try {
     let po = (await sql`SELECT id, po_number FROM scm.purchase_orders
                          WHERE company_id = ${CO} AND linked_ac_docno = ${ref}`)[0]
       ?? (await sql`SELECT id, po_number FROM scm.purchase_orders
-                     WHERE company_id = ${CO} AND po_number = ${ref}`)[0];
+                     WHERE company_id = ${CO} AND po_number = ${ref}`)[0]
+      /* ...and our own number with the company prefix dropped, which is how the
+         Customer PO column writes it on a new order: `PO-2609-051` is our
+         `HC-PO-2609-051`. Only for the OUR-doc shape, never for an AutoCount
+         number, so it cannot invent a match for a migrated order we do not hold
+         (docs/bugs/0807). */
+      ?? (/^PO-\d{4}-\d+$/.test(String(ref || ''))
+        ? (await sql`SELECT id, po_number FROM scm.purchase_orders
+                      WHERE company_id = ${CO} AND po_number = ${`HC-${ref}`}`)[0]
+        : undefined);
     if (!po) { stats.noPo += 1; continue; }
 
     /* The owner's exception: a PO we amended after their export was cut is
@@ -266,7 +278,7 @@ try {
         + `the supplier ${theirs.join('+')}`
         + `${sameBag && sameSeq ? ' (pieces already agree; this entry carries the seat/leg only)' : ''}`
         + `${received > 0 ? `. ${received} unit(s) already received against this purchase order.` : '.'}`,
-      source: 'supplier-2026-09-10',
+      source: 'supplier-2026-09-11',
     };
     entries.push({ ...common, docs: [po.po_number], lineKeys: keys });
     if (soDoc && soKeys.length) entries.push({ ...common, docs: [soDoc], lineKeys: soKeys });

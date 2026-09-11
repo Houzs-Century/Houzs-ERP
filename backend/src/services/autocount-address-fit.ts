@@ -165,3 +165,29 @@ export function soInvoiceAddress(h: {
     InvAddr4: lines[3] ?? null,
   };
 }
+
+/**
+ * The four address columns of a sales order, fitted, as an object ready to
+ * spread into a write.
+ *
+ * The SAVE-side twin of `soInvoiceAddress`, which fits on the way OUT. Fitting
+ * on the way IN is what the owner asked for on 2026-09-09 — 「把我们的 address
+ * lock成 40 个字」 — and it is the better half: the ERP then holds what the
+ * account book holds, so the two never disagree about where a customer lives,
+ * and a person reading the sales order sees the same lines the invoice will
+ * carry.
+ *
+ * An address that already fits is returned EXACTLY as typed. Only an
+ * overflowing one is re-packed.
+ */
+export function fitSoAddress(
+  lines: ReadonlyArray<string | null>,
+): { address1: string | null; address2: string | null; address3: string | null; address4: string | null } {
+  const { lines: out } = fitAddressLines(lines);
+  return {
+    address1: out[0] ?? null,
+    address2: out[1] ?? null,
+    address3: out[2] ?? null,
+    address4: out[3] ?? null,
+  };
+}
