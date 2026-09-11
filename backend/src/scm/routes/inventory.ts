@@ -49,6 +49,7 @@ import { computeMrp, mrpStockAssignment, stockAssignmentKey } from './mrp';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import type { Env, Variables } from '../env';
 import { canViewScmFinance } from '../lib/houzs-perms';
+import { pgrestIn } from '../lib/pgrest-in-list';
 
 /* FINANCE GATE — owner decision 2026-08-13, asked directly: "加财务门,仓管看
    不到成本".
@@ -605,9 +606,13 @@ inventory.get('/products', async (c) => {
     // warehouse only. Value is (re)computed from the open lots below for BOTH
     // scopes, so it no longer reads v_inventory_value (which counts consignment).
     if (warehouseId) {
-      const { data: bal } = await chunkIn(codes, (batch, from, to) => scopeToCompany(sb
+      const { data: bal, error: balErr } = await chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
         .from('inventory_balances').select('item_code, qty'), c)
-        .eq('warehouse_id', warehouseId).in('item_code', batch).range(from, to));
+        .eq('warehouse_id', warehouseId), 'item_code', batch).range(from, to));
+      if (balErr) {
+        // eslint-disable-next-line no-console
+        console.error('[inventory] warehouse balances read failed:', (balErr as { message?: unknown }).message ?? balErr);
+      }
       for (const r of (bal ?? []) as Array<{ item_code: string; qty: number }>) {
         whStock.set(r.item_code, (whStock.get(r.item_code) ?? 0) + Number(r.qty ?? 0));
       }
@@ -623,9 +628,13 @@ inventory.get('/products', async (c) => {
       ? (nonSellingIds.has(warehouseId) ? [warehouseId] : [])
       : [...nonSellingIds];
     if (scopedNonSelling.length > 0) {
-      const { data: nsBal } = await chunkIn(codes, (batch, from, to) => scopeToCompany(sb
+      const { data: nsBal, error: nsErr } = await chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
         .from('inventory_balances').select('item_code, qty'), c)
-        .in('warehouse_id', scopedNonSelling).in('item_code', batch).range(from, to));
+        .in('warehouse_id', scopedNonSelling), 'item_code', batch).range(from, to));
+      if (nsErr) {
+        // eslint-disable-next-line no-console
+        console.error('[inventory] non-selling balances read failed:', (nsErr as { message?: unknown }).message ?? nsErr);
+      }
       for (const r of (nsBal ?? []) as Array<{ item_code: string; qty: number }>) {
         nonSellingQty.set(r.item_code, (nonSellingQty.get(r.item_code) ?? 0) + Number(r.qty ?? 0));
       }
@@ -637,14 +646,18 @@ inventory.get('/products', async (c) => {
     // and the open-lots query below are already company-scoped, so leaving demand
     // un-scoped would subtract OTHER companies' claims on a shared SKU from THIS
     // company's stock (mfg_sales_order_items carries company_id, mig 0083).
-    const { data: demand } = await chunkIn(codes, (batch, from, to) => {
-      let dq = scopeToCompany(sb
+    const { data: demand, error: demandErr } = await chunkIn(codes, (batch, from, to) => {
+      let dq = pgrestIn(scopeToCompany(sb
         .from('mfg_sales_order_items')
-        .select('id, item_code, qty, warehouse_id, line_delivery_date, cancelled, so:mfg_sales_orders!inner(status, customer_delivery_date)'), c)
-        .in('item_code', batch).eq('cancelled', false);
+        .select('id, item_code, qty, warehouse_id, line_delivery_date, cancelled, so:mfg_sales_orders!inner(status, customer_delivery_date)'), c), 'item_code', batch)
+        .eq('cancelled', false);
       if (warehouseId) dq = dq.eq('warehouse_id', warehouseId); // ask A — scope demand to this warehouse (mig 0118)
       return dq.range(from, to);
     });
+    if (demandErr) {
+      // eslint-disable-next-line no-console
+      console.error('[inventory] SO demand read failed:', (demandErr as { message?: unknown }).message ?? demandErr);
+    }
     const demandRows = ((demand ?? []) as Array<{ id: string; item_code: string; qty: number; line_delivery_date: string | null; so: { status: string; customer_delivery_date: string | null } | Array<{ status: string; customer_delivery_date: string | null }> | null }>)
       .map((r) => ({ id: r.id, item_code: r.item_code, qty: Number(r.qty ?? 0), line_delivery_date: r.line_delivery_date, so: Array.isArray(r.so) ? r.so[0] : r.so }))
       .filter((r) => r.so != null && !SO_DONE.has(r.so.status) && r.qty > 0);
@@ -675,10 +688,13 @@ inventory.get('/products', async (c) => {
     // cross-company leak. Undated / >30-day PO lines are intentionally excluded
     // from the near-term figure (the owner framed Incoming as "arriving within
     // ~30 days").
-    const { data: poItems } = await chunkIn(codes, (batch, from, to) => scopeToCompany(sb
+    const { data: poItems, error: poErr } = await chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
       .from('purchase_order_items')
-      .select('item_code, qty, received_qty, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, warehouse_id, po:purchase_orders!inner(po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id)'), c)
-      .in('item_code', batch).range(from, to));
+      .select('item_code, qty, received_qty, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, warehouse_id, po:purchase_orders!inner(po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id)'), c), 'item_code', batch).range(from, to));
+    if (poErr) {
+      // eslint-disable-next-line no-console
+      console.error('[inventory] incoming PO lines read failed:', (poErr as { message?: unknown }).message ?? poErr);
+    }
     for (const r of (poItems ?? []) as Array<{ item_code: string; qty: number; received_qty: number | null; delivery_date: string | null; supplier_delivery_date_2: string | null; supplier_delivery_date_3: string | null; supplier_delivery_date_4: string | null; warehouse_id: string | null; po: { po_number: string; status: string; expected_at: string | null; supplier_delivery_date_2: string | null; supplier_delivery_date_3: string | null; supplier_delivery_date_4: string | null; purchase_location_id: string | null } | Array<{ po_number: string; status: string; expected_at: string | null; supplier_delivery_date_2: string | null; supplier_delivery_date_3: string | null; supplier_delivery_date_4: string | null; purchase_location_id: string | null }> | null }>) {
       const po = Array.isArray(r.po) ? r.po[0] : r.po;
       if (!po || !PO_LIVE.has(po.status)) continue;
@@ -703,17 +719,20 @@ inventory.get('/products', async (c) => {
       incomingPos.set(r.item_code, arr);
     }
 
-    const { data: lots } = await chunkIn(codes, (batch, from, to) => {
-      let lq = scopeToCompany(sb
+    const { data: lots, error: lotsErr } = await chunkIn(codes, (batch, from, to) => {
+      let lq = pgrestIn(scopeToCompany(sb
         .from('v_inventory_lots_open')
         // source_doc_type/no classify each lot OWNED vs CONSIGNMENT; remaining_value_sen
         // (= qty_remaining * unit_cost_sen) is the per-lot owned-value basis, identical
         // to the drawer's buildStockBreakdown formula.
-        .select('item_code, received_at, qty_remaining, remaining_value_sen, source_doc_type, source_doc_no'), c) // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
-        .in('item_code', batch);
+        .select('item_code, received_at, qty_remaining, remaining_value_sen, source_doc_type, source_doc_no'), c), 'item_code', batch); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
       if (warehouseId) lq = lq.eq('warehouse_id', warehouseId); // ask A — oldest lot within this warehouse
       return lq.range(from, to);
     });
+    if (lotsErr) {
+      // eslint-disable-next-line no-console
+      console.error('[inventory] open lots read failed:', (lotsErr as { message?: unknown }).message ?? lotsErr);
+    }
     for (const r of (lots ?? []) as Array<{ item_code: string; received_at: string | null; qty_remaining: number | null; remaining_value_sen: number | null; source_doc_type: string | null; source_doc_no: string | null }>) {
       // Owner rule (BUG-HISTORY 2026-07-25): consignment stock shows QUANTITY but
       // is EXCLUDED from inventory VALUE. Classify by the lot SOURCE (never the
@@ -1598,9 +1617,12 @@ inventory.get('/reservations', async (c) => {
   const lotCodes = [...new Set(lots.map((l) => l.item_code).filter(Boolean))];
   const categoryByCode = new Map<string, string | null>();
   if (lotCodes.length > 0) {
-    const { data: prods } = await chunkIn(lotCodes, (batch, from, to) => scopeToCompany(sb
-      .from('mfg_products').select('code, category'), c)
-      .in('code', batch).range(from, to));
+    const { data: prods, error: prodErr } = await chunkIn(lotCodes, (batch, from, to) => pgrestIn(scopeToCompany(sb
+      .from('mfg_products').select('code, category'), c), 'code', batch).range(from, to));
+    if (prodErr) {
+      // eslint-disable-next-line no-console
+      console.error('[inventory] lot-code category read failed:', (prodErr as { message?: unknown }).message ?? prodErr);
+    }
     for (const p of (prods ?? []) as Array<{ code: string; category: string | null }>) {
       categoryByCode.set(p.code, p.category ?? null);
     }

@@ -16,6 +16,7 @@
 
 import { isServiceLine } from '../shared';
 import { isHardBoundLine, HARD_BOUND_COMPANY_ID } from './so-stock-allocation';
+import { pgrestIn } from './pgrest-in-list';
 
 export type StockLineRequest = {
   itemCode: string;
@@ -135,11 +136,14 @@ export async function checkStockAvailability(
 
   // Pull live qty at THIS warehouse per requested bucket.
   const itemCodes = [...new Set(buckets.map((b) => b.item_code))];
-  const { data: balRows } = await sb
+  const { data: balRows, error: balErr } = await pgrestIn(sb
     .from('inventory_balances')
     .select('item_code, variant_key, qty')
-    .eq('warehouse_id', warehouseId)
-    .in('item_code', itemCodes);
+    .eq('warehouse_id', warehouseId), 'item_code', itemCodes);
+  if (balErr) {
+    // eslint-disable-next-line no-console
+    console.error('[check-stock-availability] warehouse balances read failed:', (balErr as { message?: unknown }).message ?? balErr);
+  }
   const balByBucket = new Map<string, number>();
   for (const r of (balRows ?? []) as Array<{ item_code: string; variant_key: string | null; qty: number }>) {
     balByBucket.set(`${r.item_code}::${r.variant_key ?? ''}`, Number(r.qty ?? 0));
@@ -171,14 +175,17 @@ export async function checkStockAvailability(
   const shortCodes = [...new Set(shortBuckets.map((s) => s.b.item_code))];
   const altByBucket = new Map<string, WarehouseAlt[]>();
   if (shortCodes.length > 0) {
-    let altQuery = sb
+    let altQuery = pgrestIn(sb
       .from('inventory_balances')
       .select('warehouse_id, item_code, variant_key, qty')
-      .neq('warehouse_id', warehouseId)
-      .in('item_code', shortCodes)
+      .neq('warehouse_id', warehouseId), 'item_code', shortCodes)
       .gt('qty', 0);
     if (scoped) altQuery = altQuery.eq('company_id', companyId);
-    const { data: altRows } = await altQuery;
+    const { data: altRows, error: altErr } = await altQuery;
+    if (altErr) {
+      // eslint-disable-next-line no-console
+      console.error('[check-stock-availability] alt-warehouse balances read failed:', (altErr as { message?: unknown }).message ?? altErr);
+    }
     for (const r of (altRows ?? []) as Array<{ warehouse_id: string; item_code: string; variant_key: string | null; qty: number }>) {
       const wh = whById.get(r.warehouse_id);
       const k = `${r.item_code}::${r.variant_key ?? ''}`;
@@ -296,10 +303,9 @@ export async function dedicatedlyCoveredSoItemIds(
   if (candidates.length === 0) return covered;
   const byLine = new Map(lines.filter((l) => l.soItemId).map((l) => [l.soItemId as string, l]));
   const codes = [...new Set(candidates.map(([id]) => byLine.get(id)?.itemCode).filter((c): c is string => !!c))];
-  const { data: bal, error: balError } = await sb
+  const { data: bal, error: balError } = await pgrestIn(sb
     .from('inventory_balances')
-    .select('item_code, warehouse_id, qty')
-    .in('item_code', codes);
+    .select('item_code, warehouse_id, qty'), 'item_code', codes);
   if (balError) {
     /* eslint-disable-next-line no-console */
     console.warn('[do-stock] on-hand read failed, falling back to the pooled check:', balError.message);

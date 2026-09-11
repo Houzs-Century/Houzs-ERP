@@ -3,6 +3,7 @@
    predicate, and its answer is a refusal or null — no row is returned and none
    is written, so there is nothing here for a company predicate to protect. */
 import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
+import { pgrestIn } from './pgrest-in-list';
 
 /* ── Downstream-consumption guard (bug #2) ─────────────────────────────────
    Moved out of grns.ts on 2026-09-07, when the migrated-document guard pushed
@@ -71,11 +72,10 @@ export async function grnReverseWouldGoNegative(
   if (needByBucket.size === 0) return null;
 
   const itemCodes = [...new Set([...needByBucket.values()].map((b) => b.item_code))];
-  const { data: balRows, error } = await sb
+  const { data: balRows, error } = await pgrestIn(sb
     .from('inventory_balances')
     .select('item_code, variant_key, qty')
-    .eq('warehouse_id', warehouseId)
-    .in('item_code', itemCodes);
+    .eq('warehouse_id', warehouseId), 'item_code', itemCodes);
   if (error) return null; // best-effort: don't block on a balance read failure
   const onHand = new Map<string, number>();
   for (const r of (balRows ?? []) as Array<{ item_code: string; variant_key: string | null; qty: number | null }>) {

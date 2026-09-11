@@ -282,6 +282,7 @@ import {
   applySoCancelVouchers, planSoCancelVouchers, soCancelVoucherAuditChanges,
 } from '../lib/so-cancel-vouchers';
 import { deferAllocationRecompute, scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
+import { pgrestIn } from '../lib/pgrest-in-list';
 
 export const mfgSalesOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
 mfgSalesOrders.use('*', supabaseAuth);
@@ -1578,10 +1579,9 @@ mfgSalesOrders.get('/', async (c) => {
       const chunk = codeList.slice(i, i + 300);
       if (chunk.length === 0) continue;
       const { data: prodRows } = await scopeToCompany(
-        sb
+        pgrestIn(sb
           .from('mfg_products')
-          .select('code, category, branding')
-          .in('code', chunk),
+          .select('code, category, branding'), 'code', chunk),
         c,
       );
       for (const p of (prodRows ?? []) as Array<{ code: string; category: string | null; branding: string | null }>) {
@@ -3727,10 +3727,9 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   const pwpRowByCode = new Map<string, Record<string, any>>();
   let pwpPrefetchFailed = false;
   if (allPwpCodes.length > 0) {
-    const { data: codeRows, error: codeReadErr } = await sb
+    const { data: codeRows, error: codeReadErr } = await pgrestIn(sb
       .from('pwp_codes')
-      .select('code, status, owner_staff_id, reward_category, eligible_reward_model_ids, reward_combo_ids, reward_size_codes, reward_compartments, customer_id, source_doc_no, redeemed_doc_no, type')
-      .in('code', allPwpCodes).eq('company_id', pwpCompanyId);
+      .select('code, status, owner_staff_id, reward_category, eligible_reward_model_ids, reward_combo_ids, reward_size_codes, reward_compartments, customer_id, source_doc_no, redeemed_doc_no, type'), 'code', allPwpCodes).eq('company_id', pwpCompanyId);
     if (codeReadErr) {
       // A failed read is NOT "code not found" (same honesty rule as the
       // cross-category lookup) — reject as retryable, burn nothing.
@@ -5389,7 +5388,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     // Per-company: a taken code in the OTHER company is not taken here (0233
     // makes uniqueness per (company_id, code)), and treating it as taken would
     // skip a perfectly free suffix.
-    let probeQ = admin.from('mfg_products').select('code').in('code', probe);
+    let probeQ = pgrestIn(admin.from('mfg_products').select('code'), 'code', probe);
     if (companyId != null) probeQ = probeQ.eq('company_id', companyId);
     const { data: existing } = await probeQ;
     const taken = new Set((existing ?? []).map((x) => (x as { code: string }).code));
@@ -5537,9 +5536,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     const restampCompanyId = activeCompanyId(c);
     for (const [lead, codes] of codesByLead) {
       if (restampCompanyId == null) break; // unresolved company: skip, never write half-keyed
-      const { error: stampErr } = await sb.from('pwp_codes')
-        .update({ trigger_item_code: lead, updated_at: new Date().toISOString() })
-        .in('code', codes).eq('company_id', restampCompanyId);
+      const { error: stampErr } = await pgrestIn(sb.from('pwp_codes')
+        .update({ trigger_item_code: lead, updated_at: new Date().toISOString() }), 'code', codes).eq('company_id', restampCompanyId);
       // eslint-disable-next-line no-console
       if (stampErr) console.error('[so-create] pwp trigger restamp failed:', lead, stampErr.message);
     }
@@ -6432,7 +6430,7 @@ async function recomputeDeliveryFeeAttempt(
   let specialModels: { standaloneFee: number; crossCategoryFollowupFee: number }[] = [];
   if (goodsCodes.length > 0) {
     const { data: prodRows } = await scopeToCompany(
-      sb.from('mfg_products').select('code, category, model_id, size_code').in('code', goodsCodes),
+      pgrestIn(sb.from('mfg_products').select('code, category, model_id, size_code'), 'code', goodsCodes),
       c,
     );
     const prodByCode = new Map(
@@ -9337,9 +9335,8 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     if (e1) console.error('[tbc-swap] reward code restamp failed:', e1.message); // eslint-disable-line no-console
   }
   if (triggerCodesToRestamp.length > 0) {
-    const { error: e2 } = await sb.from('pwp_codes')
-      .update({ trigger_item_code: newCode, updated_at: new Date().toISOString() })
-      .in('code', triggerCodesToRestamp).eq('company_id', voucherCompanyId);
+    const { error: e2 } = await pgrestIn(sb.from('pwp_codes')
+      .update({ trigger_item_code: newCode, updated_at: new Date().toISOString() }), 'code', triggerCodesToRestamp).eq('company_id', voucherCompanyId);
     throwAtomicCommandWrite(sb, e2, 'TBC trigger code restamp failed');
     if (e2) console.error('[tbc-swap] trigger code restamp failed:', e2.message); // eslint-disable-line no-console
   }
@@ -9407,8 +9404,8 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     //    HAZARD 2: this DESTROYS a voucher. Half a key deletes theirs.
     const toDelete = [...pwpDeleteCodes, ...pwpRevertCodes];
     if (toDelete.length > 0) {
-      const { error } = await sb.from('pwp_codes').delete()
-        .in('code', toDelete).eq('company_id', voucherCompanyId);
+      const { error } = await pgrestIn(sb.from('pwp_codes').delete(), 'code', toDelete)
+        .eq('company_id', voucherCompanyId);
       throwAtomicCommandWrite(sb, error, 'TBC code delete failed');
       if (error) console.error('[tbc-swap] code delete failed:', error.message); // eslint-disable-line no-console
     }
@@ -9423,8 +9420,7 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
          bridge's pin, which records every voucher as minted by "System". */
       const mintOwnerStaffId = await resolveOwnerStaffId(sb, c.get('houzsUser')?.id, user.id);
       const { data: keptRows } = triggerCodesToRestamp.length > 0
-        ? await sb.from('pwp_codes').select('code, rule_id')
-            .in('code', triggerCodesToRestamp).eq('company_id', voucherCompanyId)
+        ? await pgrestIn(sb.from('pwp_codes').select('code, rule_id'), 'code', triggerCodesToRestamp).eq('company_id', voucherCompanyId)
         : { data: [] };
       const keptByRule = new Map<string, number>();
       for (const k of ((keptRows ?? []) as Array<{ rule_id: string | null }>)) {
@@ -10174,9 +10170,8 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   {
     // 1. Surviving vouchers re-point at the new lead SKU.
     if (pwpKeepCodes.length > 0) {
-      const { error } = await sb.from('pwp_codes')
-        .update({ trigger_item_code: newLeadCode, updated_at: new Date().toISOString() })
-        .in('code', pwpKeepCodes).eq('company_id', rewardCompanyId);
+      const { error } = await pgrestIn(sb.from('pwp_codes')
+        .update({ trigger_item_code: newLeadCode, updated_at: new Date().toISOString() }), 'code', pwpKeepCodes).eq('company_id', rewardCompanyId);
       throwAtomicCommandWrite(sb, error, 'TBC sofa keep-code restamp failed');
       if (error) console.error('[tbc-swap-sofa] keep-code restamp failed:', error.message); // eslint-disable-line no-console
     }
@@ -10220,8 +10215,8 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     // 3. Dead vouchers go (un-redeemed + the reverted ones — Loo: delete).
     const toDelete = [...pwpDeleteCodes, ...pwpRevertCodes];
     if (toDelete.length > 0) {
-      const { error } = await sb.from('pwp_codes').delete()
-        .in('code', toDelete).eq('company_id', rewardCompanyId);
+      const { error } = await pgrestIn(sb.from('pwp_codes').delete(), 'code', toDelete)
+        .eq('company_id', rewardCompanyId);
       throwAtomicCommandWrite(sb, error, 'TBC sofa code delete failed');
       if (error) console.error('[tbc-swap-sofa] code delete failed:', error.message); // eslint-disable-line no-console
     }
@@ -10234,8 +10229,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
          swap above for why this must not be the bridge's pinned system uuid. */
       const mintOwnerStaffId = await resolveOwnerStaffId(sb, c.get('houzsUser')?.id, user.id);
       const { data: keptRows } = pwpKeepCodes.length > 0
-        ? await sb.from('pwp_codes').select('code, rule_id')
-            .in('code', pwpKeepCodes).eq('company_id', rewardCompanyId)
+        ? await pgrestIn(sb.from('pwp_codes').select('code, rule_id'), 'code', pwpKeepCodes).eq('company_id', rewardCompanyId)
         : { data: [] };
       const keptByRule = new Map<string, number>();
       for (const k of ((keptRows ?? []) as Array<{ rule_id: string | null }>)) {

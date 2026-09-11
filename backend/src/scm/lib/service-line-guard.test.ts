@@ -7,6 +7,7 @@
 // from "none of these codes are SERVICE".
 import { describe, expect, test } from 'vitest';
 import { findServiceLineCodes } from './service-line-guard';
+import { parsePgrestInList } from './pgrest-in-list';
 
 /** PostgREST stand-in: `rows` when it works, `error` when it does not. */
 const sbWith = (result: { data?: unknown; error?: { message: string } | null }) => ({
@@ -63,5 +64,49 @@ describe('findServiceLineCodes', () => {
   test('with nothing to look up, no read happens and the verdict stands', async () => {
     const r = await findServiceLineCodes(sbWith({ error: { message: 'would have failed' } }), [], 1);
     expect(r).toEqual({ ok: true, codes: [] });
+  });
+
+  /* docs/bugs/0819 — the by-code sweep. A SERVICE line whose code carries an inch
+     mark (`"`) must still be caught. postgrest-js `.in()` quotes `[,()]` without
+     escaping, so the raw read dropped such a code and the guard let a phantom
+     stock-IN through; the escaped `.filter` read finds it. This fake models the
+     wire (quote-without-escape on `.in`, parse on `.filter`), so a revert of the
+     catalog read to `.in('code', …)` fails this test. */
+  const INCH = 'DUNLOPILLO GENERASI 5" MATT (SS)';
+  const wireIn = (vs: readonly unknown[]): unknown[] =>
+    vs.some((v) => typeof v === 'string' && /["\\]/.test(v))
+      ? parsePgrestInList(`(${[...new Set(vs)].map((s) => (typeof s === 'string' && /[,()]/.test(s) ? `"${s}"` : `${s}`)).join(',')})`)
+      : [...vs];
+  const catalogSb = (rows: Array<{ code: string; category: string | null; company_id: number }>) => ({
+    from: () => {
+      const eqs: Array<[string, unknown]> = [];
+      const ins: Array<[string, unknown[]]> = [];
+      const run = () => ({
+        data: rows
+          .filter((r) => eqs.every(([col, v]) => (r as Record<string, unknown>)[col] === v))
+          .filter((r) => ins.every(([col, vs]) => vs.includes((r as Record<string, unknown>)[col]))),
+        error: null,
+      });
+      const b: Record<string, unknown> = {
+        select: () => b,
+        eq: (col: string, v: unknown) => { eqs.push([col, v]); return b; },
+        in: (col: string, vs: unknown[]) => { ins.push([col, wireIn(vs)]); return b; },
+        filter: (col: string, op: string, payload: string) => {
+          if (op === 'in') ins.push([col, parsePgrestInList(payload)]);
+          return b;
+        },
+        then: (res: (v: unknown) => unknown) => Promise.resolve(run()).then(res),
+      };
+      return b;
+    },
+  }) as never;
+
+  test('a SERVICE line whose code carries an inch mark is still caught (docs/bugs/0819)', async () => {
+    const r = await findServiceLineCodes(
+      catalogSb([{ code: INCH, category: 'SERVICE', company_id: 1 }]),
+      [{ itemCode: INCH, itemGroup: 'BEDFRAME' }],
+      1,
+    );
+    expect(r.ok && r.codes).toEqual([INCH]);
   });
 });

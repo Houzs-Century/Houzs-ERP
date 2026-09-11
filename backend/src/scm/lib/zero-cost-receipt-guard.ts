@@ -48,6 +48,7 @@
 import type { Context } from 'hono';
 import { refuseWithoutWriting } from './no-write-refusal';
 import { isServiceLine } from '../shared/service-sku';
+import { pgrestIn } from './pgrest-in-list';
 
 /** One receipt line, as the guard needs to see it. `unitCostSen` is the LANDED
  *  MYR cost the post path would stamp on the movement — already through the FX
@@ -266,14 +267,17 @@ export async function loadKnownPurchaseCostSen(
   const known = new Map<string, number>();
   if (codes.length === 0) return known;
   try {
-    let q = sb.from('inventory_lots')
-      .select('item_code, unit_cost_sen, received_at')
-      .in('item_code', codes)
+    let q = pgrestIn(sb.from('inventory_lots')
+      .select('item_code, unit_cost_sen, received_at'), 'item_code', codes)
       .gt('unit_cost_sen', 0)
       .order('received_at', { ascending: false })
       .limit(2000);
     if (companyId != null) q = q.eq('company_id', companyId);
-    const { data } = await q;
+    const { data, error } = await q;
+    if (error) {
+      // eslint-disable-next-line no-console
+      console.error('[zero-cost-receipt-guard] inventory_lots priced-receipt read failed:', (error as { message?: unknown }).message ?? error);
+    }
     for (const r of (data ?? []) as Array<{ item_code: string; unit_cost_sen: number | null }>) {
       const k = normalizeMaterialCode(r.item_code);
       // Rows arrive newest-first, so the first sighting of a code IS its most

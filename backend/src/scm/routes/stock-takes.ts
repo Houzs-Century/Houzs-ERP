@@ -58,6 +58,7 @@ import {
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { resolveCallerStaffId } from '../lib/salesScope';
 import { hasHouzsPerm } from '../lib/houzs-perms';
+import { pgrestIn } from '../lib/pgrest-in-list';
 
 export const stockTakes = new Hono<{ Bindings: Env; Variables: Variables }>();
 stockTakes.use('*', supabaseAuth);
@@ -173,10 +174,9 @@ const fetchScopedSkus = async (
   for (let i = 0; i < codes.length; i += 200) {
     const chunk = codes.slice(i, i + 200);
     const { data: balData, error: balErr } = await scopeToCompany(
-      sb.from('inventory_balances')
+      pgrestIn(sb.from('inventory_balances')
         .select('item_code, variant_key, product_name, qty')
-        .eq('warehouse_id', warehouseId)
-        .in('item_code', chunk),
+        .eq('warehouse_id', warehouseId), 'item_code', chunk),
       c,
     );
     if (balErr) return { rows: [], error: balErr.message };
@@ -922,13 +922,16 @@ export const postStockTakeHandler = async (c: any) => {
   for (let i = 0; i < codes.length; i += 200) {
     const chunk = codes.slice(i, i + 200);
     if (chunk.length === 0) break;
-    const { data: bal } = await scopeToCompany(
-      sb.from('inventory_balances')
+    const { data: bal, error: balErr } = await scopeToCompany(
+      pgrestIn(sb.from('inventory_balances')
         .select('item_code, variant_key, qty')
-        .eq('warehouse_id', header.warehouse_id)
-        .in('item_code', chunk),
+        .eq('warehouse_id', header.warehouse_id), 'item_code', chunk),
       c,
     );
+    if (balErr) {
+      // eslint-disable-next-line no-console
+      console.error('[stock-takes] live balances read failed:', (balErr as { message?: unknown }).message ?? balErr);
+    }
     for (const b of (bal as Array<{ item_code: string; variant_key: string | null; qty: number | null }>) ?? []) {
       liveByKey.set(`${b.item_code} ${b.variant_key ?? ''}`, Number(b.qty ?? 0));
     }
@@ -963,13 +966,16 @@ export const postStockTakeHandler = async (c: any) => {
   for (let i = 0; i < upCodes.length; i += 200) {
     const chunk = upCodes.slice(i, i + 200);
     if (chunk.length === 0) break;
-    const { data: lots } = await scopeToCompany(
-      sb.from('inventory_lots')
+    const { data: lots, error: lotsErr } = await scopeToCompany(
+      pgrestIn(sb.from('inventory_lots')
         .select('item_code, variant_key, unit_cost_sen, qty_remaining, source_doc_type, received_at')
-        .eq('warehouse_id', header.warehouse_id)
-        .in('item_code', chunk),
+        .eq('warehouse_id', header.warehouse_id), 'item_code', chunk),
       c,
     );
+    if (lotsErr) {
+      // eslint-disable-next-line no-console
+      console.error('[stock-takes] lot cost read failed:', (lotsErr as { message?: unknown }).message ?? lotsErr);
+    }
     for (const l of (lots as Array<{ item_code: string; variant_key: string | null } & LotCostRow>) ?? []) {
       const key = `${l.item_code} ${l.variant_key ?? ''}`;
       (lotsByKey.get(key) ?? lotsByKey.set(key, []).get(key)!).push(l);

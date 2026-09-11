@@ -32,6 +32,7 @@ import { scopeToCompany, activeCompanyId, stampCompany,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
   detailMissResponse } from '../lib/companyScope';
 import type { Env, Variables } from '../env';
+import { pgrestIn } from '../lib/pgrest-in-list';
 
 /* Task #91 — small helper: normalize a body field to E.164 phone storage,
    passing through nullish + non-string values untouched. */
@@ -657,11 +658,14 @@ export const createSupplierBindingsBatchHandler = async (c: any) => {
 
   // Pre-check: drop rows already bound for this supplier (avoid 23505).
   const codes = list.map((b) => String(b.itemCode ?? '')).filter(Boolean);
-  const { data: existing } = await supabase
+  const { data: existing, error: existingErr } = await pgrestIn(supabase
     .from('supplier_material_bindings')
     .select('item_code, material_kind')
-    .eq('supplier_id', supplierId)
-    .in('item_code', codes);
+    .eq('supplier_id', supplierId), 'item_code', codes);
+  if (existingErr) {
+    // eslint-disable-next-line no-console
+    console.error('[suppliers] existing bindings read failed:', (existingErr as { message?: unknown }).message ?? existingErr);
+  }
   const seen = new Set<string>(
     ((existing ?? []) as Array<{ item_code: string; material_kind: string }>)
       .map((r) => `${r.material_kind}|${r.item_code}`),

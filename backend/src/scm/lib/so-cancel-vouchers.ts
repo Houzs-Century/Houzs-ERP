@@ -51,6 +51,8 @@
  */
 
 /** Status written to a voucher whose issuing order was cancelled. */
+import { pgrestIn } from './pgrest-in-list';
+
 export const PWP_VOID_STATUS = 'VOID';
 
 /** Status a voucher earned elsewhere returns to when the order it was spent on
@@ -151,14 +153,13 @@ export async function applySoCancelVouchers(
   if (plan.toRestore.length > 0) {
     const byStatus = groupByStatus(plan.toRestore);
     for (const [status, codes] of byStatus) {
-      const { error } = await sb.from('pwp_codes')
+      const { error } = await pgrestIn(sb.from('pwp_codes')
         .update({
           status: PWP_RESTORED_STATUS,
           redeemed_doc_no: null,
           redeemed_item_code: null,
           updated_at: now,
-        })
-        .in('code', codes)
+        }), 'code', codes)
         .eq('redeemed_doc_no', docNo)
         .eq('status', status);
       if (error) throw new Error(`PWP voucher restore failed: ${error.message}`);
@@ -172,9 +173,8 @@ export async function applySoCancelVouchers(
   if (plan.toVoid.length > 0) {
     const byStatus = groupByStatus(plan.toVoid);
     for (const [status, codes] of byStatus) {
-      const { error } = await sb.from('pwp_codes')
-        .update({ status: PWP_VOID_STATUS, updated_at: now })
-        .in('code', codes)
+      const { error } = await pgrestIn(sb.from('pwp_codes')
+        .update({ status: PWP_VOID_STATUS, updated_at: now }), 'code', codes)
         .eq('source_doc_no', docNo)
         .eq('status', status);
       if (error) throw new Error(`PWP voucher void failed: ${error.message}`);

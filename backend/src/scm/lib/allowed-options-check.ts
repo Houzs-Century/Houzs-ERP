@@ -23,6 +23,7 @@
 
 import { normalizeCompartmentCode } from '../shared/sofa-build';
 import { normaliseTypographicQuotes } from '../shared/mfg-pricing';
+import { pgrestIn } from './pgrest-in-list';
 
 export type AllowedOptionsLite = {
   sizes?:                 string[] | null;
@@ -462,10 +463,9 @@ export async function loadProductsAndModels(
   const codes = Array.from(new Set(itemCodes.map((c) => (c ?? '').trim()).filter(Boolean)));
   if (codes.length === 0) return { byCode: out, lookupError: null };
 
-  let pq = sb
+  let pq = pgrestIn(sb
     .from('mfg_products')
-    .select('code, category, model_id, size_code')
-    .in('code', codes);
+    .select('code, category, model_id, size_code'), 'code', codes);
   if (companyId != null) pq = pq.eq('company_id', companyId);
   const { data: productRows, error: pErr } = await pq;
   if (pErr) return { byCode: out, lookupError: `mfg_products: ${pErr.message}` };

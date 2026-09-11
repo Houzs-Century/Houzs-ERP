@@ -116,6 +116,7 @@ import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange } from '../lib/entity-audit';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
+import { pgrestIn } from '../lib/pgrest-in-list';
 
 export const deliveryOrdersMfg = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryOrdersMfg.use('*', supabaseAuth);
@@ -1177,10 +1178,9 @@ async function resolveDoLineRacks(
     );
 
     // Placements for those racks limited to the codes this DO ships.
-    const { data: items, error: iErr } = await sb.from('warehouse_rack_items')
+    const { data: items, error: iErr } = await pgrestIn(sb.from('warehouse_rack_items')
       .select('rack_id, item_code, variant_key')
-      .in('rack_id', [...rackById.keys()])
-      .in('item_code', [...codes]);
+      .in('rack_id', [...rackById.keys()]), 'item_code', [...codes]);
     if (iErr) return new Map();
     for (const ri of (items ?? []) as Array<{ rack_id: string; item_code: string; variant_key: string | null }>) {
       const r = rackById.get(ri.rack_id) as { rack: string | null; warehouse_id: string | null } | undefined;
