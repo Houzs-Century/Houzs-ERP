@@ -49,6 +49,8 @@
        as the fifth is named.
    -------------------------------------------------------------------------- */
 
+import { splitSofaCode } from '../../services/autocount-sofa-collapse';
+
 /** One line as the account book holds it (the fields `/doc-read` returns). */
 export interface BookLine {
   DtlKey: number | string | null;
@@ -99,6 +101,7 @@ export function planLineRelink(input: {
   const assign: RelinkPlan['assign'] = [];
   const refused: string[] = [];
   const taken = new Set<number>();
+  const unmatched: ErpLineForRelink[] = [];
 
   for (const row of keyless) {
     const want = norm(row.acItemCode);
@@ -108,7 +111,9 @@ export function planLineRelink(input: {
     }
     const sameCode = candidates.filter((c) => !taken.has(c.key) && c.code === want);
     if (sameCode.length === 0) {
-      refused.push(`'${row.acItemCode}' — the account book has no unclaimed line with that item code`);
+      /* HELD, not refused yet. The book may hold this row as part of a FOLDED
+         sofa line instead of under its own compartment code — pass 2 below. */
+      unmatched.push(row);
       continue;
     }
     if (sameCode.length === 1) {
@@ -133,6 +138,86 @@ export function planLineRelink(input: {
     refused.push(
       `'${row.acItemCode}' — ${sameCode.length} unclaimed lines in the account book carry that item `
       + `code and ${mine ? 'none of their descriptions matches this one' : 'this line has no description to tell them apart'}`,
+    );
+  }
+
+  /* ── PASS 2: A SOFA THE BOOK KEEPS AS ONE LINE ──────────────────────────────
+     composeEdit folds a build's compartments into a single AutoCount detail
+     (`collapseSofaLines`) and sends it under `<model>-1S`. Pass 1 compares one
+     ERP row to one book row, so where the book took the fold, a build the ERP
+     holds as eight compartments met a book holding ONE line: `8060-CNR` never
+     matched `8060-1S`, and every compartment was refused. That is the whole of
+     HC-GRN-2609-008, and the unexplained `stamped 0` the relink sweep reported
+     on 2026-09-11.
+
+     IT IS A FALLBACK, AND THAT ORDERING IS THE POINT. The book does NOT always
+     fold: `autocountRelinkSweep.test.ts` carries a live delivery order whose
+     9028 compartments are three separate book lines under their own codes, and
+     pass 1 matches all three exactly. Folding first would have refused them and
+     lost three provable stamps. So only a row pass 1 could find NO line for is
+     offered here.
+
+     `<model>-1S` IS THE FOLDED CODE, NOT A COMPARTMENT TO FOLD. A row already
+     carrying it is already at the book's grain — a sales order holds one row per
+     build, and two builds of one model are two rows Desc2 tells apart. `1S` is
+     in the compartment table (a one-seater is a real compartment), so this has
+     to be said out loud: everything BUT `1S` folds.
+
+     It refuses on the same rule as pass 1. The Desc2 that separates two builds
+     of one model is composed from variant and colour columns this planner does
+     not read, so a repeated `<model>-1S` refuses the group rather than guessing.
+     A wrong DtlKey rewrites somebody else's line in a live account book. */
+  const foldModel = (code: string | null): string | null => {
+    const split = splitSofaCode(String(code ?? ''));
+    if (!split || split.compartment.trim().toUpperCase() === '1S') return null;
+    return split.model;
+  };
+  const missing = (row: ErpLineForRelink) =>
+    refused.push(`'${row.acItemCode}' — the account book has no unclaimed line with that item code`);
+
+  const groups = new Map<string, ErpLineForRelink[]>();
+  for (const row of unmatched) {
+    const model = foldModel(row.acItemCode);
+    if (model == null) { missing(row); continue; }
+    const g = groups.get(model);
+    if (g) g.push(row); else groups.set(model, [row]);
+  }
+
+  for (const [model, rows] of groups) {
+    /* THE BUILD'S OWN KEPT ROWS ANSWER FIRST. One AutoCount line has one DtlKey,
+       so a single distinct value across this build's other compartments IS the
+       key these are missing. A kept `<model>-1S` row is a different build at
+       book grain and does not get a say. */
+    const sibling = new Set(
+      erpLines
+        .filter((l) => foldModel(l.acItemCode) === model
+          && Number.isFinite(Number(l.dtlKey)) && Number(l.dtlKey) > 0)
+        .map((l) => Number(l.dtlKey)),
+    );
+    if (sibling.size === 1) {
+      const key = [...sibling][0];
+      for (const r of rows) assign.push({ id: r.id, dtlKey: key, itemCode: r.acItemCode ?? '' });
+      continue;
+    }
+    if (sibling.size > 1) {
+      refused.push(
+        `sofa ${model} — ${rows.length} compartment(s) carry no key and this build's other lines already `
+        + `point at ${sibling.size} different book lines, so which one these belong to is not stated`,
+      );
+      continue;
+    }
+
+    const folded = candidates.filter((c) => !taken.has(c.key) && c.code === norm(`${model}-1S`));
+    if (folded.length === 1) {
+      for (const r of rows) assign.push({ id: r.id, dtlKey: folded[0].key, itemCode: r.acItemCode ?? '' });
+      taken.add(folded[0].key);
+      continue;
+    }
+    if (folded.length === 0) { for (const r of rows) missing(r); continue; }
+    refused.push(
+      `sofa ${model} — ${rows.length} compartment(s) fold to one book line '${model}-1S', and the account `
+      + `book has ${folded.length} unclaimed lines with that item code; telling two builds of one model `
+      + `apart needs the composed build text, which this planner does not hold`,
     );
   }
 
