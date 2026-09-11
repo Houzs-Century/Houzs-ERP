@@ -143,3 +143,55 @@ describe('relink sweep — apply mode', () => {
     expect(enqueueEditMock).not.toHaveBeenCalled();
   });
 });
+
+/* THE RUN HAS TO BE READABLE BY A PERSON (docs/bugs/0815).
+ *
+ * This sweep reads and writes a LIVE account book and its only output was a
+ * console.log in a Worker log this account's token cannot read (`wrangler tail`
+ * is DENIED for it). It was run in `apply` three times on 2026-09-11, stamped
+ * ZERO keys every time, and the cause could not be established at all — the
+ * reason was guessed at twice and the guess was wrong twice. The refusals it
+ * already computes are the answer; they just had nowhere to go.
+ */
+describe('the sweep writes its run down', () => {
+  it('records counts AND the per-document refusals', async () => {
+    /* The book has none of this document's item codes, so every line refuses —
+       exactly the shape that produced an unexplained "stamped 0". */
+    bookLines = [{ DtlKey: 9001, ItemCode: 'SOMETHING-ELSE', Desc2: null }];
+    const sb = setup('plan', keylessDo());
+
+    await relinkHeldBackSweep(env);
+
+    const saved = (sb.tables.app_config as Row[])
+      .find((r) => r.key === 'scm.autocount_relink_sweep_last_run');
+    expect(saved, 'the sweep recorded nothing').toBeTruthy();
+
+    const run = JSON.parse(String(saved!.value));
+    expect(run.mode).toBe('plan');
+    expect(run.scanned).toBe(1);
+    expect(run.linesStamped).toBe(0);
+    /* The part nobody could see: WHY it was zero. */
+    expect(run.docs).toHaveLength(1);
+    expect(run.docs[0].keylessBefore).toBeGreaterThan(0);
+    expect(run.docs[0].refused.join(' ')).toContain('no unclaimed line with that item code');
+  });
+
+  /* A candidate read that fails used to look exactly like a quiet day: both
+     returned scanned 0 and said nothing at all. */
+  it('a failed candidate read is recorded, not silent', async () => {
+    /* `missing` is fakeSb's second argument: asking for a column the table does
+       not have fails the WHOLE query with 42703, which is the real edge this
+       fake exists to reproduce. The sweep selects last_error. */
+    currentSb = fakeSb(
+      { app_config: [{ key: 'scm.autocount_relink_sweep', value: 'plan' }], autocount_outbox: [] },
+      { autocount_outbox: ['last_error'] },
+    );
+
+    await relinkHeldBackSweep(env);
+
+    const saved = ((currentSb as ReturnType<typeof fakeSb>).tables.app_config as Row[])
+      .find((r) => r.key === 'scm.autocount_relink_sweep_last_run');
+    expect(saved, 'a failed candidate read recorded nothing').toBeTruthy();
+    expect(JSON.parse(String(saved!.value)).docs[0].skipped).toContain('candidate read failed');
+  });
+});
