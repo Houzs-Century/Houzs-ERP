@@ -1,0 +1,46 @@
+name: Duplicate item-code impact (read-only)
+
+# Manual, read-only. Counts, per item code, every place the code is a key
+# (SO/PO/DO/GRN/PI lines, supplier bindings, product master, stock balances and
+# movements) so a code MERGE is decided on its blast radius, not a leap. Owner
+# 2026-09-10: merge 9058-CONSOLE into 9058-Console. SELECTs only.
+on:
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: "survivor code"
+        required: false
+        default: "9058-Console"
+        type: string
+      drop:
+        description: "code merged away"
+        required: false
+        default: "9058-CONSOLE"
+        type: string
+      company_id:
+        description: "Company (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: dup-code-impact
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the one dependency the script needs
+        run: npm --prefix backend install postgres --no-audit --no-fund --no-save
+      - name: Report the duplicate-code impact
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          KEEP: ${{ inputs.keep }}
+          DROP: ${{ inputs.drop }}
+          COMPANY_ID: ${{ inputs.company_id }}
+        run: node backend/scripts/check-dup-code-impact.mjs
