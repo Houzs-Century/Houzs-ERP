@@ -278,10 +278,10 @@ jobs:
                  -- Only base tables hold data to mask; a view reads the masked rows.
                  and t.table_type = 'BASE TABLE'
                  and c.data_type in ('text','character varying')
-                 and (column_name ~* 'phone|mobile' or column_name ~* 'email')
-                 and not (column_name ~* 'email' and table_name in ('users','members','sales_reps','user_companies','invitations'))
-                 and column_name !~* '_at$|_status$|_muted$|_required$|_log$|_access$|template|alias'
-                 and table_name <> '_pg_migrations'
+                 and (c.column_name ~* 'phone|mobile' or c.column_name ~* 'email')
+                 and not (c.column_name ~* 'email' and c.table_name in ('users','members','sales_reps','user_companies','invitations'))
+                 and c.column_name !~* '_at$|_status$|_muted$|_required$|_log$|_access$|template|alias'
+                 and c.table_name <> '_pg_migrations'
             loop
               execute format(
                 'update %I.%I set %I = %L || left(md5(%I), 8) where %I is not null and %I <> %L and %I not like %L',
