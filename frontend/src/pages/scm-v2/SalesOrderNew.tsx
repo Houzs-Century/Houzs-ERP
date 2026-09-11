@@ -25,6 +25,7 @@
 //   • react-router → react-router-dom.
 //   • flow-queries hooks → the vendored sales-order-queries slice.
 //   • The dead `supabase` import is dropped; flushPendingPhotos reads the
+import { cascadeLineDeliveryDate } from '../../vendor/scm/lib/line-delivery-date-cascade';
 import { postScanLearningSample, reportScanLearningSkipped } from '../../vendor/scm/lib/scan-learning';
 import {
   cascadeMasterVariants,
@@ -733,19 +734,12 @@ export const SalesOrderNew = () => {
   };
 
   /* PR-E — Client-side master-follower cascade for delivery date. Mirrors
-     the server-side cascade in PATCH /mfg-sales-orders/:docNo. */
+     the server-side cascade in PATCH /mfg-sales-orders/:docNo. The rule itself
+     moved to vendor/scm/lib/line-delivery-date-cascade on 2026-09-11: it was
+     written HERE and not on the delivery order, and the owner found the gap on
+     a DO whose header and lines disagreed. */
   useEffect(() => {
-    setLines((prev) => {
-      let didUpdate = false;
-      const target = deliveryDate || null;
-      const next = prev.map((l) => {
-        if (l.lineDeliveryDateOverridden) return l;
-        if ((l.lineDeliveryDate ?? null) === target) return l;
-        didUpdate = true;
-        return { ...l, lineDeliveryDate: target };
-      });
-      return didUpdate ? next : prev;
-    });
+    setLines((prev) => cascadeLineDeliveryDate(prev, deliveryDate) ?? prev);
   }, [deliveryDate]);
 
   /* Master-follower cascade for line variants — LINE 1 of each category drives

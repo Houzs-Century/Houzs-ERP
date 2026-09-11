@@ -264,7 +264,7 @@ const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) =
         <table className={grid.grid}>
           <thead>
             <tr>
-              <th>On the bank statement</th><th className={grid.num}>Amount</th><th>What happened</th><th />
+              <th>On the bank statement</th><th className={grid.num}>Deposit</th><th className={grid.num}>Withdrawal</th><th>What happened</th><th />
             </tr>
           </thead>
           <tbody>

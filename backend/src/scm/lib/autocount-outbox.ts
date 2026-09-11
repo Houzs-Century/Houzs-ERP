@@ -109,7 +109,7 @@ import { backfillSoToPoKeys, poBodyForShape } from './autocount-so-to-po-keys';
 import { acParentlessCreateReason, acNotCarriedReason } from './autocount-outbox-status';
 /* Line identity, split out 2026-08-17 for the same cap reason as the two
    imports above. Same function, same call site in dispatchOne. */
-import { persistLineKeys, persistNewLineKeys, newLineTargetOf } from './autocount-line-keys';
+import { lineIdentityGap, persistNewLineKeys, newLineTargetOf } from './autocount-line-keys';
 import { readMfgProductBindings } from './supplier-bindings';
 import {
   soLine,
@@ -1890,11 +1890,16 @@ export async function dispatchOne(
   const result = await callAcService(env, row.op, body, fetchImpl);
 
   if (result.ok) {
+    /* Line identity is a second question and this file does not own it:
+       docs/bugs/0813, and `lineIdentityGap` in autocount-line-keys.ts. Recorded
+       BEFORE the mark so the two facts arrive together. */
+    const identityGap = await lineIdentityGap(sb, row, payload, result.lines);
+
     await mark(sb, row.id, {
       ...stamp,
       status: 'sent',
       attempts,
-      last_error: null,
+      last_error: identityGap,
       ac_doc_no: result.docNo,
       sent_at: new Date().toISOString(),
     });
@@ -1904,12 +1909,6 @@ export async function dispatchOne(
       await sb.from(payload.writeback.table)
         .update({ linked_ac_docno: result.docNo })
         .eq(payload.writeback.keyCol, payload.writeback.key);
-    }
-    /* The same map one level down. Without it a document the ERP creates has
-       NULL line identity forever, and its first edit is refused by composeEdit
-       (or, before that refusal existed, appended duplicates into the book). */
-    if (payload.lineWriteback) {
-      await persistLineKeys(sb, row, payload.lineWriteback, result.lines);
     }
     /* AN EDIT THAT ADDED A LINE LEARNS THAT LINE'S KEY (docs/bugs/0583-*).
        Without it the added row stays keyless and every LATER edit is refused. */

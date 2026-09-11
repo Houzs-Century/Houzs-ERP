@@ -275,7 +275,7 @@ const StatementView = ({ id, onBack }: { id: number; onBack: () => void }) => {
         <table className={grid.grid}>
           <thead>
             <tr>
-              <th>On the bank statement</th><th className={grid.num}>Amount</th><th>What happened</th><th />
+              <th>On the bank statement</th><th className={grid.num}>Deposit</th><th className={grid.num}>Withdrawal</th><th>What happened</th><th />
             </tr>
           </thead>
           <tbody>
@@ -288,6 +288,24 @@ const StatementView = ({ id, onBack }: { id: number; onBack: () => void }) => {
     </section>
   );
 };
+
+/* ── Two columns, not a signed figure ─────────────────────────────────────────
+   Owner, 2026-09-11: 为了方便看，你可以把这个金额分成 debit 和 credit 吗. An entry
+   in the books reads Debit | Credit the way a ledger does (a payment out is a
+   credit to the bank account); a movement on the statement reads Deposit |
+   Withdrawal, the words the bank prints (docs/bugs/0813). */
+export const DrCr = ({ debitSen, creditSen }: { debitSen: number; creditSen: number }) => (
+  <>
+    <td className={grid.num}>{debitSen > 0 ? fmt(debitSen) : ''}</td>
+    <td className={grid.num}>{creditSen > 0 ? fmt(creditSen) : ''}</td>
+  </>
+);
+export const DepWd = ({ amountSen, children }: { amountSen: number; children?: React.ReactNode }) => (
+  <>
+    <td className={grid.num}>{amountSen > 0 ? fmt(amountSen) : ''}{amountSen > 0 ? children : null}</td>
+    <td className={grid.num}>{amountSen < 0 ? fmt(-amountSen) : ''}{amountSen < 0 ? children : null}</td>
+  </>
+);
 
 /* ── What the books hold that the bank has not shown ─────────────────────────
    Two lists, not one (owner 2026-09-11): this period's own entries, and the
@@ -310,7 +328,7 @@ export const BooksNotOnBank = ({ entries }: { entries: LedgerEntry[] }) => {
       </div>
       <table className={grid.grid}>
         <thead>
-          <tr><th>Entry</th><th>Date</th><th>Source</th><th>Who</th><th className={grid.num}>Amount</th></tr>
+          <tr><th>Entry</th><th>Date</th><th>Source</th><th>Who</th><th className={grid.num}>Debit</th><th className={grid.num}>Credit</th></tr>
         </thead>
         <tbody>
           {entries.map((e) => (
@@ -319,7 +337,7 @@ export const BooksNotOnBank = ({ entries }: { entries: LedgerEntry[] }) => {
               <td>{e.entryDate}</td>
               <td>{[e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ') || '—'}</td>
               <td>{e.partyName ?? e.notes ?? '—'}</td>
-              <td className={grid.num}>{fmt(e.debitSen - e.creditSen)}</td>
+              <DrCr debitSen={e.debitSen} creditSen={e.creditSen} />
             </tr>
           ))}
         </tbody>
@@ -524,7 +542,7 @@ export const OpenLines = ({ lines, entries }: { lines: BankLine[]; entries: Ledg
           {entries.length > 0 && (
             <table className={grid.grid}>
               <thead>
-                <tr><th /><th>Entry</th><th>Date</th><th>Source</th><th>Who</th><th className={grid.num}>Amount</th></tr>
+                <tr><th /><th>Entry</th><th>Date</th><th>Source</th><th>Who</th><th className={grid.num}>Debit</th><th className={grid.num}>Credit</th></tr>
               </thead>
               <tbody>
                 {entries.map((e) => (
@@ -537,7 +555,7 @@ export const OpenLines = ({ lines, entries }: { lines: BankLine[]; entries: Ledg
                     <td>{e.entryDate}</td>
                     <td>{[e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ') || '—'}</td>
                     <td>{e.partyName ?? e.notes ?? '—'}</td>
-                    <td className={grid.num}>{fmt(e.debitSen - e.creditSen)}</td>
+                    <DrCr debitSen={e.debitSen} creditSen={e.creditSen} />
                   </tr>
                 ))}
               </tbody>
@@ -564,7 +582,8 @@ export const OpenLines = ({ lines, entries }: { lines: BankLine[]; entries: Ledg
           <tr>
             <th />
             <th>On the bank statement</th>
-            <th className={grid.num}>Amount</th>
+            <th className={grid.num}>Deposit</th>
+            <th className={grid.num}>Withdrawal</th>
             <th>What it looks like</th>
             <th>What to do</th>
           </tr>
@@ -630,14 +649,13 @@ export const OpenLine = ({ line, isPicked = false, onPick }: { line: BankLine; i
         <div className={grid.sub} style={{ wordBreak: 'break-word' }}>{line.description}</div>
         <div className={grid.sub}>line {line.line_no}</div>
       </td>
-      <td className={grid.num}>
-        <div className={line.amount_sen < 0 ? grid.bad : undefined}>{fmt(line.amount_sen)}</div>
+      <DepWd amountSen={line.amount_sen}>
         {/* The gross the bank actually credited, when it split the payout —
             otherwise the number here matches no line on his page. */}
         {line.charge_sen > 0 && (
           <div className={grid.sub}>{fmt(line.amount_sen + line.charge_sen)} less {fmt(line.charge_sen)} charge</div>
         )}
-      </td>
+      </DepWd>
       <td>
         <div>{KIND_LABEL[line.kind]}</div>
         {line.acquirer_code && (
@@ -772,7 +790,7 @@ export const DoneLine = ({ line }: { line: BankLine }) => {
         <div>{line.booked_on}{line.reference ? <> · ref <b>{line.reference}</b></> : null}</div>
         <div className={grid.sub} style={{ wordBreak: 'break-word' }}>{line.description}</div>
       </td>
-      <td className={grid.num}>{fmt(line.amount_sen)}</td>
+      <DepWd amountSen={line.amount_sen} />
       <td>
         {line.state === 'IGNORED'
           ? <span style={softText}>left out — {line.note ?? 'no reason given'}</span>

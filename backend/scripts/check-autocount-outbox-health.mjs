@@ -439,6 +439,33 @@ try {
     notice(`FAILED: 0 outstanding${requeuedFailed.length ? ` (${requeuedFailed.length} re-queued, below)` : ""}`);
   }
 
+  /* ── SENT, BUT THE LINES KEPT NO IDENTITY (docs/bugs/0813) ─────────────────
+     A `sent` row with a last_error is not a failure — the document IS in the
+     account book. It is a document whose DtlKeys were never stored, so its NEXT
+     edit will be refused whole with "The ERP cannot tell which lines AutoCount
+     already has". Until the drain recorded this, the only trace was a
+     console.error in a Worker log this account's token cannot read, and the
+     first anyone knew was an operator being refused days later. It is reported
+     and NOT alarmed, for the reason the header gives about skips: it is a
+     statement about the document's shape, it does not change on its own, and
+     the remedy is a person pressing "Match up lines". */
+  const identityGaps = await pg`
+    SELECT doc_type, doc_no, op, last_error, sent_at
+      FROM scm.autocount_outbox
+     WHERE status = 'sent' AND last_error IS NOT NULL
+     ORDER BY sent_at DESC
+     LIMIT 40`;
+  if (identityGaps.length) {
+    notice(
+      `IN AUTOCOUNT, BUT WITH NO LINE IDENTITY: ${identityGaps.length}. The document arrived; its ` +
+        "lines did not keep the account book's keys, so its next edit will be refused whole. " +
+        'Press "Match up lines" on each, then save it again.',
+    );
+    for (const r of identityGaps) {
+      notice(`  ${r.doc_type} ${r.doc_no} (${r.op}): ${r.last_error}`);
+    }
+  }
+
   if (oldest.length) {
     const o = oldest[0];
     notice(`PENDING: ${oldest.length} row(s). Oldest ${o.doc_type} ${o.doc_no} (${o.op}), waiting ${o.age}, ${o.attempts} attempt(s)`);
