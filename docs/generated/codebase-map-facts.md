@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-184 route modules (52 in `backend/src/routes`, 132 in `backend/src/scm/routes`), 1256 endpoint registrations.
+185 route modules (53 in `backend/src/routes`, 132 in `backend/src/scm/routes`), 1256 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -24,7 +24,8 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/announcementReceipts.ts` | 5 | 362 |
 | `backend/src/routes/announcements.ts` | 10 | 1664 |
 | `backend/src/routes/assistant.ts` | 4 | 225 |
-| `backend/src/routes/assr.ts` | 64 | 3452 |
+| `backend/src/routes/assr.ts` | 62 | 3366 |
+| `backend/src/routes/assrAccess.ts` | 2 | 113 |
 | `backend/src/routes/assrFormIntake.ts` | 6 | 965 |
 | `backend/src/routes/assrPortal.ts` | 14 | 540 |
 | `backend/src/routes/assr_print.ts` | 1 | 1218 |
@@ -219,14 +220,14 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2192 files, 749731 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2195 files, 749831 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15144 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 11947 |
-| `frontend/src/pages/ServiceCases.tsx` | 8878 |
+| `frontend/src/pages/ServiceCases.tsx` | 8840 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 8581 |
 | `frontend/src/pages/Team.tsx` | 5686 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5589 |
@@ -239,9 +240,9 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4206 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3747 |
 | `backend/src/scm/routes/grns.ts` | 3564 |
-| `frontend/src/mobile/MobileServiceCase.tsx` | 3454 |
-| `backend/src/routes/assr.ts` | 3452 |
 | `frontend/src/components/DataTable.tsx` | 3394 |
+| `frontend/src/mobile/MobileServiceCase.tsx` | 3387 |
+| `backend/src/routes/assr.ts` | 3366 |
 | `backend/src/services/projects.ts` | 3137 |
 | `frontend/src/pages/MailCenter/Inbox.tsx` | 3013 |
 
@@ -476,7 +477,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileSavedPhotoThumb.tsx` | 82 |
 | `frontend/src/mobile/MobileScan.tsx` | 1467 |
 | `frontend/src/mobile/MobileSearch.tsx` | 285 |
-| `frontend/src/mobile/MobileServiceCase.tsx` | 3454 |
+| `frontend/src/mobile/MobileServiceCase.tsx` | 3387 |
 | `frontend/src/mobile/MobileSkuPicker.tsx` | 260 |
 | `frontend/src/mobile/MobileStockCard.tsx` | 335 |
 | `frontend/src/mobile/MobileStockTransferNew.tsx` | 255 |
