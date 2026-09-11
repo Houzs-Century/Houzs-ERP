@@ -67,7 +67,9 @@ describe("executable route contract", () => {
     // 156 again since 2026-09-09: the owner moved the register INTO the
     // Announcements page (its Register mode, /announcements?view=register —
     // docs/modules/memos.md), so /memos is no route.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(156);
+    // 157 since 2026-09-12: /scm/credit-notes — credit and debit notes to a
+    // customer, supplier credit notes (docs/bugs/0827).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(157);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -101,7 +103,8 @@ describe("executable route contract", () => {
     // 165 since 2026-09-08 — /scm/cancel-requests; see the staff-route count above.
     // 166 for a few hours on 2026-09-09 (/memos), 165 again the same day; see
     // the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(165);
+    // 166 since 2026-09-12 — /scm/credit-notes; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(166);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {
