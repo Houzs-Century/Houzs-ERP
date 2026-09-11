@@ -61,7 +61,8 @@ that same batch may carry the same error. Pull every `confidence: owner` entry
 dated 2026-09-10 and re-verify against its drawing.
 
 **SYSTEMIC GAP 2 — the supplier export is INCOMPLETE.** `HC-PO-2609-053` (supplier
-PO ref `R04533/ZNT6330`) is NOT in `supplier-so-detail-2026-09-10.xlsx` at all.
+PO ref `R04533/ZNT6330`) is NOT in the supplier export at all — not in the 09-10
+workbook, and not in the 09-11 one either.
 So "aligned to the supplier file" is NOT "all POs correct" — a whole population of
 proceeded orders is outside that file (esp. new `HC-PO-2609-0xx` with non-standard
 refs). Build a check that lists proceeded sofa POs with NO supplier-export match
