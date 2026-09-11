@@ -13,7 +13,6 @@ import { GlobalSearchProvider } from "./components/GlobalSearch";
 import { NotificationsProvider } from "./hooks/useNotifications";
 import { BrowserPushSink } from "./components/BrowserPushSink";
 import { AnnouncementBanner } from "./components/AnnouncementBanner";
-import { PendingTasksReminder } from "./components/PendingTasksReminder";
 import { QuickActionsFAB } from "./components/QuickActionsFAB";
 import { BackToTopFAB } from "./components/BackToTopFAB";
 import { AssistantLauncher } from "./components/AssistantLauncher";
@@ -26,6 +25,13 @@ import { PageSkeleton, RouteCrashBoundary } from "./components/RouteFallback";
 // mount in this file reaches no mobile screen at all.
 import { IosInstallGuide } from "./components/IosInstallGuide";
 import { AndroidInstallGuide } from "./components/AndroidInstallGuide";
+
+/* LAZY, and it costs nothing: this is a modal nobody sees until after the
+   digest request answers, so it has no business in the chunk that has to arrive
+   before the first paint. Eager, it put initial JS at 168.0 KB against a 167.0 KB
+   ceiling and failed frontend-build. */
+const PendingTasksReminder = lazy(() =>
+  import("./components/PendingTasksReminder").then((m) => ({ default: m.PendingTasksReminder })));
 
 // Route-level code splitting: every page becomes its own chunk, fetched on
 // first visit, so the initial bundle carries only the shell. The .then()
@@ -421,7 +427,7 @@ export default function App() {
       <BreadcrumbsProvider>
       <BrowserPushSink />
       <AnnouncementBanner />
-      <PendingTasksReminder />
+      <Suspense fallback={null}><PendingTasksReminder /></Suspense>
       <QuickActionsFAB />
       <BackToTopFAB />
       <AssistantPanelProvider>

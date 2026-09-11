@@ -1,4 +1,4 @@
-import { lazy, useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
@@ -16,7 +16,6 @@ import { useApplyHtmlLang } from "./mobileI18n";
 import { useAnnouncementUnread } from "./useAnnouncementUnread";
 import { MobileCrashBoundary } from "./MobileCrashBoundary";
 import { IosInstallGuide } from "../components/IosInstallGuide";
-import { PendingTasksReminder } from "../components/PendingTasksReminder";
 import { AndroidInstallGuide } from "../components/AndroidInstallGuide";
 // Heavy mobile screens are lazy-loaded so the initial mobile chunk stays small
 // (desktop routes were already lazy — this closes the mobile gap that made the
@@ -73,6 +72,13 @@ const MobileChangeLog = lazy(() => import("./MobileChangeLog").then((m) => ({ de
 const ScmSalesOrderMaintenance = lazy(() => import("../pages/scm-v2/SalesOrderMaintenance").then((m) => ({ default: m.SalesOrderMaintenance })));
 const Scm2990Shell = lazy(() => import("../pages/scm-v2/Scm2990Shell"));
 import "./mobile.css";
+
+/* LAZY, and it costs nothing: this is a modal nobody sees until after the
+   digest request answers, so it has no business in the chunk that has to arrive
+   before the first paint. Eager, it put initial JS at 168.0 KB against a 167.0 KB
+   ceiling and failed frontend-build. */
+const PendingTasksReminder = lazy(() =>
+  import("../components/PendingTasksReminder").then((m) => ({ default: m.PendingTasksReminder })));
 // MobileAssistant is intentionally not imported — see the comment near the
 // bottom of MobileAppInner's return for why (owner 2026-09-11).
 // import { MobileAssistant } from "./MobileAssistant";
@@ -893,7 +899,7 @@ function MobileAppInner() {
         {overlay}
       </MobileCrashBoundary>
       {annPopup}
-      <PendingTasksReminder />
+      <Suspense fallback={null}><PendingTasksReminder /></Suspense>
     </>
   );
 
@@ -1016,7 +1022,7 @@ function MobileAppInner() {
       )}
 
       {annPopup}
-      <PendingTasksReminder />
+      <Suspense fallback={null}><PendingTasksReminder /></Suspense>
       {/* MobileAssistant intentionally NOT rendered — owner 2026-09-11:
           "那个 assistant 的功能是直接不要的". The whole surface is off on
           mobile: no launcher, no sheet, no /api/assistant calls fire.
