@@ -1,0 +1,60 @@
+name: Clear orphan line delivery dates (plan / apply)
+
+# Manual. Clears a sales-order LINE's delivery date when its HEADER carries no
+# date at all — no processing date, no customer delivery date, no amended date.
+# Owner 2026-09-11: 「如果你看到 order info 的 processing date 跟 delivery date
+# 是空的，就直接把它的 item delivery date 清空」.
+#
+# WHY THAT REMOVES IT FROM MRP. The effective delivery date falls back to the
+# line's own date when the header has none, so the line date is standing in for
+# a promise nobody made. Clearing it leaves the order with no date anywhere, and
+# MRP's default page hides undated demand.
+#
+# NARROW BY DESIGN: on production this is 2 lines on 1 order. The other 174
+# lines that show without a processing date have a REAL header delivery date and
+# are NOT this shape — clearing their line dates would change nothing, because
+# the header date is what MRP reads for them.
+#
+# Plan writes nothing. Apply needs the confirm phrase, writes ONE column, never
+# touches a header, and verifies on a FRESH connection.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (read-only, default) or apply (writes)"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'Type CLEAR LINE DATES to allow apply (ignored for plan)'
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "Company (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: orphan-line-delivery-dates
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the one dependency the script needs
+        run: npm --prefix backend install postgres --no-audit --no-fund --no-save
+      - name: Clear orphan line delivery dates
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+        run: node backend/scripts/repair-orphan-line-delivery-dates.mjs
