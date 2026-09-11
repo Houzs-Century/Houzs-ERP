@@ -102,6 +102,14 @@ export async function recordSweepRun(sb: Sb, summary: SweepSummary): Promise<voi
         keylessBefore: d.keylessBefore,
         stamped: d.stamped,
         wouldStamp: d.wouldStamp,
+        /* WILL THIS DOCUMENT ACTUALLY MOVE. A run can match every line it is
+           able to and still queue nothing, and without this the report showed
+           "1 matched" for a document that was about to be released and for one
+           that was still stuck — the same two words for opposite outcomes.
+           `enqueued` in apply, `wouldEnqueue` in plan, so a plan run answers it
+           before anything is written (docs/bugs/0819). */
+        enqueued: d.enqueued,
+        wouldEnqueue: d.wouldEnqueue,
         /* THE ANSWER TO "why zero", and the reason this whole key exists. */
         refused: d.refused,
         skipped: d.skipped ?? null,

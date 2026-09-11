@@ -316,3 +316,35 @@ describe('declaring the line the book never had', () => {
     expect(enqueueEditMock).not.toHaveBeenCalled();
   });
 });
+
+/* THE VERDICT, RECORDED (docs/bugs/0819). "1 matched" was the same two words for
+   a document about to be released and one still stuck. */
+describe('the run says whether each document moves', () => {
+  it('records wouldEnqueue in plan when the absent row can be declared', async () => {
+    bookLines = [{ DtlKey: 5001, ItemCode: 'AK-ARMOUR MATT (SK)', Desc2: null }];
+    const sb = setup('plan', keylessDo({
+      erpLines: [
+        { id: 'matt', company_id: 1, delivery_order_id: 'do-uuid-1', item_code: 'AK-ARMOUR MATT (SK)', description2: null, linked_ac_dtlkey: null },
+        { id: 'pillow', company_id: 1, delivery_order_id: 'do-uuid-1', item_code: 'AK-SLEEP ESSENTIAL 7 HOLES', description2: null, linked_ac_dtlkey: null },
+      ],
+    }));
+
+    await relinkHeldBackSweep(env);
+
+    const run = JSON.parse(String((sb.tables.app_config as Row[])
+      .find((r) => r.key === 'scm.autocount_relink_sweep_last_run')!.value));
+    expect(run.docs[0].wouldEnqueue, 'a released document must say so').toBe(true);
+    expect(run.docs[0].enqueued).toBe(false);
+  });
+
+  it('records wouldEnqueue false for a document that stays held', async () => {
+    bookLines = [];
+    const sb = setup('plan', keylessDo());
+
+    await relinkHeldBackSweep(env);
+
+    const run = JSON.parse(String((sb.tables.app_config as Row[])
+      .find((r) => r.key === 'scm.autocount_relink_sweep_last_run')!.value));
+    expect(run.docs[0].wouldEnqueue).toBe(false);
+  });
+});
