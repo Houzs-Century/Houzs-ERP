@@ -321,13 +321,24 @@ try {
     let docLines = 0;
     let stockRows = 0;
     for (const p of writable) {
-      const patch = JSON.stringify(p.set);
+      /* TEXT parameters through jsonb_object, never a pre-serialized string on a
+         jsonb parameter: the driver types that as json, `variants || $1`
+         appends rather than merges, and the block becomes an ARRAY
+         (docs/jsonb-double-encoding-coe.md, docs/bugs/0814). */
+      const patchKeys = Object.keys(p.set);
+      const patchVals = Object.values(p.set).map((v) => String(v));
       /* One transaction per LINE: the documents and the stock rows move
          together or not at all, so no window exists in which a line names a
          bucket that is not there. */
       await sql.begin(async (t) => {
         const bump = async (table, id) => {
-          await t.unsafe(`UPDATE scm.${table} SET variants = coalesce(variants, '{}'::jsonb) || $1::jsonb WHERE id = $2`, [patch, id]);
+          const res = await t.unsafe(
+            `UPDATE scm.${table}
+                SET variants = coalesce(variants, '{}'::jsonb) || jsonb_object($1::text[], $2::text[])
+              WHERE id = $3 AND jsonb_typeof(coalesce(variants, '{}'::jsonb)) = 'object'`,
+            [patchKeys, patchVals, id],
+          );
+          if (Number(res.count ?? 0) === 0) throw new Error(`${table} ${id}: variants is not an object — refusing to merge into a shape this tool does not understand`);
           docLines += 1;
         };
         await bump('purchase_order_items', p.poItemId);
