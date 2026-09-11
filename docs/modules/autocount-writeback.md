@@ -320,6 +320,45 @@ with the **Set AutoCount relink sweep** workflow
 `MODE=apply CONFIRM=set-relink-sweep`. Ledger:
 `docs/bugs/0796-keyless-conversion-documents-needed-a-person-to-match-up-lin.md`.
 
+### A THIRD switch — the delivery-date sweep (2026-09-11), and it runs INWARD
+
+`scm.app_config` key `scm.autocount_delivery_date_sweep`, read by
+`scm/lib/autocount-delivery-date-sweep.ts`, drives a cron sweep that writes the
+account book's own per-line delivery date onto OUR rows:
+
+```
+'off' / '' / row absent  -> no-op (the unset state)
+'plan'                   -> read the book, REPORT the differences, write nothing
+'apply'                  -> write the book's delivery date onto our SO / DO rows
+```
+
+**It is the only thing on this page that writes INTO the ERP rather than out to
+the book**, and that is the point: this sync was one-directional on one field.
+AutoCount keeps a document's delivery date on the LINE
+(`SODTL.DeliveryDate` / `DODTL.DeliveryDate`) — there is no header delivery date
+on `SO` or `DO` and no UDF holding one, checked against the live book — while the
+read middleware serves a nine-column HEADER projection. So a date changed in
+AutoCount after a document was imported never reached us, though our own edits
+flowed the other way through `line_delivery_date` -> `SODTL.DeliveryDate`. The
+middleware's source is not in this repo
+(`docs/autocount-read-relay-exposure-coe.md`), so the column is served by the
+service that IS: `/delivery-dates` in `scripts/autocount-service/AcSyncService.cs`,
+one SELECT, windowed on the delivery date and capped at 20,000 rows.
+
+**Two independent reasons it ships with no effect**: the switch is absent, AND
+the host route does not exist until `deploy-on-host.ps1` swaps the rebuilt
+service — which the sweep reports as `hostRouteMissing` rather than an error.
+Set the switch with the **Set AutoCount delivery-date sweep** workflow
+(`.github/workflows/set-delivery-date-sweep.yml` ->
+`scripts/set-delivery-date-sweep.mjs`), `plan` first.
+
+It matches lines by `linked_ac_dtlkey`, never by item code — the book keeps a
+sofa as ONE line where the ERP keeps one per compartment. It leaves alone: an
+operator-overridden line, any BLANK date (a blank is not a change, and MRP gates
+on this field), a header carrying `amended_delivery_date`, and the header of a
+document whose book lines disagree. Bounded to 200 writes per slot. Ledger:
+`docs/bugs/0809-the-autocount-pull-never-carried-the-book-s-line-delivery-da.md`.
+
 ---
 
 ## 4b. The repair gate — a script's write never reaches the book (2026-09-09)

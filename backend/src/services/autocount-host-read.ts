@@ -44,6 +44,12 @@ export const AC_READ_ROUTE = {
      single Worker request survives; this is what makes a whole-population sweep
      possible at all (owner: 「之后有问题吗？我不要每次都来 fix 啊」). */
   line_fingerprints: '/line-fingerprints',
+  /* The ONE column the inbound pull cannot see. AutoCount keeps a document's
+     delivery date on the LINE (SODTL/DODTL.DeliveryDate) and the read
+     middleware serves a nine-column HEADER projection, so a date changed in
+     the book after import never reached us while our own edits flowed the
+     other way. Windowed on the delivery date itself. docs/bugs/0810. */
+  delivery_dates: '/delivery-dates',
 } as const;
 
 export type AcReadOp = keyof typeof AC_READ_ROUTE;

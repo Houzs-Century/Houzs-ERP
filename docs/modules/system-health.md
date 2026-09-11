@@ -463,7 +463,31 @@ job is `ctx.waitUntil`-guarded so no failure can break its slot-mates:
 
 | cron | what runs |
 |---|---|
-| `*/5` | Hyperdrive keep-warm ping, email-outbox drain, AutoCount SO pull, amendment write-back drain, ERP→AutoCount outbox drain |
+| `*/5` | Hyperdrive keep-warm ping, email-outbox drain, AutoCount SO pull, amendment write-back drain, ERP→AutoCount outbox drain, keyless-conversion relink sweep, **AutoCount delivery-date sweep** |
 | `*/15`, `*/30` | trip/TMS sweeps; ASSR per-stage alerts + lead-time activations; announcement overdue escalation (`services/announcementEscalation.ts` `runOverdueEscalation`, 2026-09-06 — supervisors notified once a must-acknowledge notice has been live 48h, stamped in `announcements.escalated_at`) |
 | `0 2` (10:00 MYT) | daily batch: SLA escalation, DO-mirror + PO pulls, ASSR digest, project reminders, client-error digest, idempotency-key TTL sweep, AR-aging MV refresh, Sunday scan-so distill |
 | `5 16` (00:05 MYT) | **month-end stock close sweep** (GL redesign item 4, 2026-09-05): `sweepStockClose` re-checks the two most recent closed months for every company — posting the closing/reversal pair the night a month ends, re-posting when a late-keyed document changed a replayed value. Every outcome lands in `scm.acc_stock_close_runs`; the Month-end tab on /scm/accounting is the visible log. Logic in `backend/src/acc/stock-close.ts` — which also exports `stockBreakdownAsOf`, the per-item replay behind `GET /inventory/valuation` (the Inventory page's 选日期 view), so the page and the ledger read one engine. |
+
+### The two AutoCount sweeps in the `*/5` slot both ship DARK
+
+Neither does anything until an `scm.app_config` switch is set, and both fail
+CLOSED to `off` on any value they cannot read — they end in writes, so a typo
+must never start one. Logged as `[cron ac-relink-sweep]` and
+`[cron ac-delivery-dates]`.
+
+| switch | direction | what `apply` does |
+|---|---|---|
+| `scm.autocount_relink_sweep` | ERP -> book | stamps the book's line keys onto our rows, then queues the keyed edit |
+| `scm.autocount_delivery_date_sweep` | book -> ERP | writes the book's own per-line delivery date onto our sales-order / delivery-order rows |
+
+The delivery-date one has a SECOND dark gate: it calls `/delivery-dates` on the
+office host, a route that does not exist until `deploy-on-host.ps1` swaps the
+rebuilt `AcSyncService`. That 404 is reported as `hostRouteMissing`, never
+raised, so the sweep can be switched on before the host is rebuilt and simply
+reports nothing. Why it exists at all: AutoCount keeps a document's delivery
+date on the LINE and the inbound pull carries headers only, so a date changed in
+the book after import never reached us — `docs/modules/autocount-writeback.md`
+has the full mechanism and
+`docs/bugs/0809-the-autocount-pull-never-carried-the-book-s-line-delivery-da.md`
+the trace.
+
