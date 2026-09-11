@@ -2556,7 +2556,7 @@ evening. The header block ABOVE that card on the same screen — **Salesperson,
 Customer ref, Delivery date, Expected at** — was blank for the same cause and is
 not in 0714's field map (`DO_CARRY` is deliberately "what a driver needs").
 
-`DO_SALES_CARRY` in `scripts/lib/customer-block.mjs` is the list:
+`DO_SALES_CARRY` in `backend/scripts/lib/customer-block.mjs` is the list:
 `salesperson_id`, `agent`, `branding`, `ref` from the SO, and — **since
 2026-09-11 (owner 「全部要跟 autocount」, docs/bugs/0804)** — `customer_delivery_date`
 and `expected_delivery_at` both = the DO's own `do_date` (= AutoCount's DocDate),
