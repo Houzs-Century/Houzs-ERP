@@ -153,12 +153,19 @@ export type RuleLine = {
   notes?: string | null;
 };
 
-/** Sales invoice issued: Dr AR / Cr SALES for the invoice total. */
+/** Sales invoice issued (docs/bugs/0829): Dr AR for the invoice total, the
+    customer as party / Cr one line per PRODUCT GROUP to that group's own
+    sales account (scm.acc_item_group_accounts.sales_account — 2990 keeps
+    SALES OF SOFA / BEDDING / DINING / … as separate leaves and its 500-0000
+    is inactive). The credits arrive in MYR sen already summing EXACTLY to the
+    total (acc/item-group-split owns the rounding remainder), the mirror of
+    piLines below. */
 export function siLines(
   roles: RoleCodes,
   si: { invoice_number: string; debtor_code: string | null; debtor_name: string | null },
-  totalSen: number,
+  groupCredits: Array<{ groupCode: string; accountCode: string; myrSen: number }>,
 ): RuleLine[] {
+  const totalSen = groupCredits.reduce((s, g) => s + g.myrSen, 0);
   return [
     {
       accountCode: roles.AR,
@@ -169,15 +176,15 @@ export function siLines(
       partyName: si.debtor_name,
       notes: `AR for ${si.invoice_number}`,
     },
-    {
-      accountCode: roles.SALES,
+    ...groupCredits.map((g) => ({
+      accountCode: g.accountCode,
       debitSen: 0,
-      creditSen: totalSen,
+      creditSen: g.myrSen,
       partyType: null,
       partyCode: null,
       partyName: null,
-      notes: `Revenue from ${si.invoice_number}`,
-    },
+      notes: `Sales — ${g.groupCode} on ${si.invoice_number}`,
+    })),
   ];
 }
 
