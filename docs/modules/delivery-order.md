@@ -2580,6 +2580,43 @@ Every SET re-asserts `IS NULL`, so a corrected header survives. What the plan
 lists under "order itself blank" is an SO-side gap: fix the SO and re-run, it
 is idempotent. docs/bugs/0716.
 
+## DO dates default to the SO's delivery date (2026-09-11)
+
+Owner rule, restated four times the same morning: 「我开 DO 之前我改 SO 就行 ……
+顾客每次换的话，我也会跟着换（SO 的），所以当我开 DO 的时候，你就跟着 default
+这个 date 来开 …… DO date 也是要用 SO delivery」. **Every date the DO form
+opens carrying is the SO's `customer_delivery_date`** — the DO date (header
+`do_date`), the customer delivery date (header `customer_delivery_date`), and
+every line's delivery date all seed from it. The operator changes the date on
+the SO once when the customer moves it, and every DO raised afterwards
+inherits.
+
+For a blank DO with no `?fromSo=` / `?fromPicks=1` in the URL the `useState`
+initial keeps `do_date = today`, so the "opened fresh" case still opens today.
+The `/from-sos` server route falls back to today when the source SO carries no
+`customer_delivery_date`.
+
+Three holes were closed together (docs/bugs/0807):
+
+- `DeliveryOrderNewV2.tsx`'s item POST payload was built with key
+  `deliveryDate`, and `backend/src/scm/lib/do-item-row.ts` reads
+  `lineDeliveryDate`. Every desktop DO create/edit silently dropped the line
+  date — the row saved with `line_delivery_date = NULL`, no error to the
+  client. The renamed key + a sibling `lineDeliveryDateOverridden` now round-trip.
+- `delivery-orders-mfg.ts` `/from-sos` (the mobile ConvertWizard path) inserted
+  `delivery_order_items` rows without `line_delivery_date` at all. Every
+  mobile-converted DO line landed NULL regardless of client. The item insert
+  now carries `line_delivery_date: head.customer_delivery_date`.
+- The desktop line seeders at both `?fromPicks=1` and `?fromSo=` used
+  `newDoLine(null)`. Both now seed `newDoLine(customerDelDate || null)` — the
+  header the SO pre-fill effect already loaded.
+
+**No cascade `useEffect`.** The default lands at OPEN time, per line, per the
+owner's rule 「如果我要更改的话 我再更改」. Changing the header on an already-open
+DO does not walk over per-line edits. Existing DOs on `main` (line_delivery_date
+NULL from before this PR) do not back-fill — a next edit or a new document is
+the point of change.
+
 ## A migrated DO line will NOT bind to a sales-order line colour cannot choose (2026-09-08)
 
 `backend/scripts/lib/migrated-do-writer.mjs` `buildMigratedDoPlan` buckets
