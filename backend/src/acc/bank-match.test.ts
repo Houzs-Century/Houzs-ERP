@@ -16,7 +16,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   groupBankMovements, recogniseAcquirer, matchBankMovements, exactCombination,
-  type BankRecognitionRule, type PayableBatch, type PayoutAdviceForMatch, namesAgree, obviousEntryFor } from './bank-match';
+  type BankRecognitionRule, type PayableBatch, type PayoutAdviceForMatch, namesAgree, obviousEntryFor,
+  bankReversalPairs, type ReversalSource } from './bank-match';
 import type { BankLine } from './bank-parse';
 
 let seq = 0;
@@ -572,5 +573,59 @@ describe('the obvious entry for a movement', () => {
 
   it('is nothing when the only entry is already claimed', () => {
     expect(obviousEntryFor(mv(), ledger, new Set(['JE-1']))).toBeNull();
+  });
+});
+
+/* ── A movement the bank itself reversed (docs/bugs/0817) ─────────────────────
+   Hong Leong, 04/06/2026: 2990's RM 2,872.75 instant transfer to its own
+   Alliance account failed and the bank put it back the same day — "CIB
+   Instant Transfer Reversal", the SAME transaction reference — while a second
+   transfer under a fresh reference went through. The pair is the bank's own
+   business; the retry is what the books' transfer voucher is for (owner:
+   这两笔是 contra 的，bank transaction fail). */
+describe('a movement the bank itself reversed', () => {
+  const ref = (id: string) => `Alliance PV-000035 2990 HOME SDN. BHD. 20260604HLBBMYKL010OCB${id}`;
+  const mv = (id: number, over: Partial<ReversalSource> = {}): ReversalSource => ({
+    id, lineNo: id, bookedOn: '2026-06-04', description: 'CIB Instant Transfer at DIO',
+    reference: ref('02763120'), amountSen: -287275, ...over,
+  });
+  const reversal = (id: number, over: Partial<ReversalSource> = {}) =>
+    mv(id, { description: 'CIB Instant Transfer Reversal at DIO', amountSen: 287275, ...over });
+  const ids = (pairs: ReturnType<typeof bankReversalPairs<ReversalSource>>) => pairs.map((p) => [p.original.id, p.reversal.id]);
+
+  it('pairs the reversal with the movement carrying its reference, not with the retry', () => {
+    expect(ids(bankReversalPairs([
+      mv(14),
+      mv(18, { reference: '2990 Fund Tranfer 2990 HOME SDN. BHD. 20260604HLBBMYKL010OCB03546681' }),
+      reversal(20),
+    ]))).toEqual([[14, 20]]);
+  });
+
+  it('forgives the spacing and the case of the reference, and the order the lines arrive in', () => {
+    expect(ids(bankReversalPairs([
+      reversal(20, { reference: `  ${ref('02763120').toLowerCase()}  ` }),
+      mv(14),
+    ]))).toEqual([[14, 20]]);
+  });
+
+  it("refuses a pair without the bank's word, a shared reference, or the money cancelling", () => {
+    /* A credit that is not called a reversal is a credit. */
+    expect(bankReversalPairs([mv(1), mv(2, { amountSen: 287275 })])).toEqual([]);
+    /* A blank reference is not one two lines can share. */
+    expect(bankReversalPairs([mv(1, { reference: null }), reversal(2, { reference: null })])).toEqual([]);
+    expect(bankReversalPairs([mv(1, { reference: '   ' }), reversal(2, { reference: '   ' })])).toEqual([]);
+    /* Another reference is another transaction. */
+    expect(bankReversalPairs([mv(1, { reference: ref('03546681') }), reversal(2)])).toEqual([]);
+    /* The money must cancel to the sen. */
+    expect(bankReversalPairs([mv(1), reversal(2, { amountSen: 287200 })])).toEqual([]);
+    /* A reversal booked before what it reverses is not one. */
+    expect(bankReversalPairs([mv(1, { bookedOn: '2026-06-05' }), reversal(2)])).toEqual([]);
+    /* Two reversals never pair with each other. */
+    expect(bankReversalPairs([reversal(1, { amountSen: -287275 }), reversal(2)])).toEqual([]);
+  });
+
+  it('gives each reversal one original, the earliest still unpaired, and never an original twice', () => {
+    expect(ids(bankReversalPairs([mv(1), mv(2), reversal(3), reversal(4)]))).toEqual([[1, 3], [2, 4]]);
+    expect(ids(bankReversalPairs([mv(1), reversal(3), reversal(4)]))).toEqual([[1, 3]]);
   });
 });

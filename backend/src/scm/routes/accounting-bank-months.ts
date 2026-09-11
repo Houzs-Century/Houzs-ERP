@@ -57,7 +57,7 @@ const STATEMENT_FIELDS =
 const LINE_FIELDS =
   'id, statement_id, line_no, booked_on, description, reference, amount_sen, charge_sen,'
   + ' kind, state, posted_je_no, note, acquirer_code, trading_date, merchant_no,'
-  + ' matched_batch_id, split';
+  + ' matched_batch_id, split, contra_line_id';
 
 /** The statement shape acc/bank-month wants, off a database row. */
 const asMonthStatement = (s: Row): MonthStatement => ({

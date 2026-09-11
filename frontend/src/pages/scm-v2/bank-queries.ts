@@ -205,6 +205,8 @@ export const useUploadBankStatement = () => {
         alreadyRecorded: number;
         /** Matched by amount and name on the way in (docs/bugs/0814). */
         autoMatched: number;
+        /** Pairs the bank itself reversed, left out on the way in (docs/bugs/0817). */
+        contraPairs: number;
         periodFrom: string; periodTo: string; inSen: number; outSen: number;
         openingBalanceSen: number | null; closingBalanceSen: number | null;
         kinds: Record<string, number>;
@@ -462,7 +464,7 @@ export const useAutoMatchStatement = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) =>
-      authedFetch<{ ok: boolean; matched: number; jeNos: string[] }>(
+      authedFetch<{ ok: boolean; matched: number; jeNos: string[]; contraPairs: number }>(
         `/accounting/bank/statements/${id}/auto-match`, { method: 'POST', body: '{}' },
       ),
     onSuccess: () => invalidateAfterBankPosting(qc),
