@@ -58,20 +58,24 @@ const RECON: Reconciliation = {
   booksNotOnBank: { count: 0, sen: 0 },
   unmatchedJeNos: [],
   carried: { count: 0, sen: 0 }, carriedJeNos: [], broughtForwardExplained: null,
+  outstandingPayments: { count: 0, sen: 0 }, outstandingReceipts: { count: 0, sen: 0 }, outstandingJeNos: [],
+  computedClosingSen: 5312306, unexplainedSen: 0, tallies: true,
   consistent: true, inconsistency: null, reconciled: false,
 };
 
 let recon: Reconciliation = RECON;
 let lines: BankLine[] = [LINE, SPLIT, OTHER];
 let unmatched: LedgerEntry[] = [];
-afterEach(() => { unmatched = []; recon = RECON; lines = [LINE, SPLIT, OTHER]; });
+let statementPeriod = { period_from: '2026-08-01', period_to: '2026-08-12' };
+const periodMutate = vi.fn();
+afterEach(() => { unmatched = []; recon = RECON; lines = [LINE, SPLIT, OTHER]; statementPeriod = { period_from: '2026-08-01', period_to: '2026-08-12' }; });
 
 vi.mock('./bank-queries', () => ({
   useBankSetup: () => ({ data: { accounts: [{ account_code: '310-0010', bank_code: 'MBB', account_no: '0000564418610346', statement_format: 'CSV', is_active: true, ready: true }], recognises: ['MBB', 'PBB', 'AEON', 'HLB'] }, isLoading: false }),
   useBankStatements: () => ({ data: { statements: [{ id: 1, account_code: '310-0010', file_name: 'aug.csv', period_from: '2026-08-01', period_to: '2026-08-12', line_count: 9, skipped_lines: 1, in_sen: 3032963, out_sen: 352894, opening_balance_sen: null, closing_balance_sen: null, status: 'OPEN', uploaded_by: 'Tester', created_at: '', open_count: 3, open_sen: 312306, open_payout_count: 2 }] }, isLoading: false }),
   useBankStatement: () => ({
     data: {
-      statement: { id: 1, account_code: '310-0010', file_name: 'aug.csv', period_from: '2026-08-01', period_to: '2026-08-12', line_count: 9, skipped_lines: 1, in_sen: 3032963, out_sen: 352894, opening_balance_sen: 5000000, closing_balance_sen: 5312306, status: 'OPEN', uploaded_by: null, created_at: '' },
+      statement: { id: 1, account_code: '310-0010', file_name: 'aug.csv', ...statementPeriod, line_count: 9, skipped_lines: 1, in_sen: 3032963, out_sen: 352894, opening_balance_sen: 5000000, closing_balance_sen: 5312306, status: 'OPEN', uploaded_by: null, created_at: '' },
       reconciliation: recon,
       lines,
       unmatchedEntries: unmatched,
@@ -82,6 +86,7 @@ vi.mock('./bank-queries', () => ({
   useBookBankReceipt: () => ({ mutate: bookMutate, isPending: false, isError: false, error: null }),
   useMatchBankLine: () => ({ mutate: matchMutate, isPending: false, isError: false, error: null }),
   useMatchBankGroup: () => ({ mutate: groupMutate, isPending: false, isError: false, error: null }),
+  useSetStatementPeriod: () => ({ mutate: periodMutate, isPending: false, isError: false, error: null }),
   useIgnoreBankLine: () => ({ mutate: ignoreMutate, isPending: false, isError: false, error: null }),
   useUndoBankLine: () => ({ mutate: vi.fn(), isPending: false }),
 }));
@@ -99,20 +104,21 @@ const openStatement = () => {
 /* Owner, 2026-09-11: in the books, not on this statement 我要看到 payment
    detail, 例如 pay to who; and 之前 in book 还没有 recon 的也要带下来. */
 describe('what the books hold that the bank has not shown', () => {
-  test('names who each entry was paid to or received from, and keeps earlier months\' entries apart', () => {
+  test('names who each entry was paid to or received from, this month\'s and earlier months\' in one table', () => {
     unmatched = [
       { jeNo: '2990-JE-2604-0024', entryDate: '2026-04-30', sourceType: 'PV', sourceDocNo: '2990-HPV-2604-007', debitSen: 0, creditSen: 310168, partyName: 'HOUZS VENTURE HOLDING SDN BHD', carried: false },
       { jeNo: '2990-JE-2603-0009', entryDate: '2026-03-28', sourceType: 'PV', sourceDocNo: '2990-HPV-2603-009', debitSen: 0, creditSen: 45000, partyName: 'TENAGA NASIONAL BERHAD', carried: true },
     ];
     recon = { ...RECON, booksNotOnBank: { count: 1, sen: -310168 }, carried: { count: 1, sen: -45000 }, carriedJeNos: ['2990-JE-2603-0009'], broughtForwardSen: 45000, broughtForwardExplained: true };
     openStatement();
-    const now = screen.getByText(/In the books, not on this statement \(1\)/).closest('section') as HTMLElement;
-    expect(within(now).getByText('HOUZS VENTURE HOLDING SDN BHD')).toBeTruthy();
-    const earlier = screen.getByText(/From earlier months, still not on any statement \(1\)/).closest('section') as HTMLElement;
-    expect(within(earlier).getByText('TENAGA NASIONAL BERHAD')).toBeTruthy();
-    expect(within(earlier).getByText('2990-JE-2603-0009')).toBeTruthy();
-    /* And the brought-forward line says those entries are what it is made of. */
-    expect(screen.getByText(/explained by 1 entry from earlier months still not on any statement/)).toBeTruthy();
+    /* One table (owner: 全部就是 outstanding items，一张表列完), this month's and
+       the earlier one alike, each with who. */
+    const table = screen.getByText(/Outstanding items — in the books, not yet on the bank \(2\)/).closest('section') as HTMLElement;
+    expect(within(table).getByText('HOUZS VENTURE HOLDING SDN BHD')).toBeTruthy();
+    expect(within(table).getByText('TENAGA NASIONAL BERHAD')).toBeTruthy();
+    expect(within(table).getByText('2990-JE-2603-0009')).toBeTruthy();
+    expect(screen.queryByText(/From earlier months/)).toBeNull();
+    expect(screen.queryByText(/brought forward/)).toBeNull();
     unmatched = [];
     recon = RECON;
   });
@@ -173,6 +179,25 @@ describe('choosing an entry for several movements at once', () => {
   });
 });
 
+/* An old file uploaded before the month box covered a month reads 30/4 → 30/4.
+   It can be re-filed as the month's statement in place (owner: 可以，没有问题，
+   这只是显示问题吧) — docs/bugs/0806. */
+describe('re-filing an old statement as its month\'s', () => {
+  test('offers the button when the file does not cover its month, and sends the month', () => {
+    statementPeriod = { period_from: '2026-04-30', period_to: '2026-04-30' };
+    openStatement();
+    const go = screen.getByText("This file is April 2026's statement");
+    fireEvent.click(go);
+    expect(periodMutate.mock.calls[0]?.[0]).toEqual({ id: 1, month: '2026-04' });
+  });
+
+  test('offers nothing when the file already covers the month', () => {
+    statementPeriod = { period_from: '2026-04-01', period_to: '2026-04-30' };
+    openStatement();
+    expect(screen.queryByText(/'s statement$/)).toBeNull();
+  });
+});
+
 describe('the year-and-month box', () => {
   test('says it also files a statement that carries no transactions', () => {
     render(<BankStatementTab />);
@@ -193,47 +218,66 @@ describe('the list of statements read', () => {
   });
 });
 
+/* ── The owner's form (2026-09-11, docs/bugs/0806) ─────────────────────────
+   Closing — the books (−)/+ unreconciled items = closing bank statement. The
+   panel lays that walk out, says whether it TALLIES, and calls a month whose
+   only difference is an unpresented payment reconciled — not "differing". */
 describe('the reconciliation panel', () => {
-  test('breaks the difference into the two sides that make it up', () => {
+  /* April on 2990's Hong Leong account: books −2,163.31, one payment of
+     3,101.68 the bank has not paid yet, bank 938.37. */
+  const APRIL: Reconciliation = {
+    ...RECON,
+    closingStatementSen: 93837, closingLedgerSen: -216331, differenceSen: 310168,
+    bankNotInBooks: { count: 0, sen: 0 },
+    booksNotOnBank: { count: 1, sen: -310168 }, unmatchedJeNos: ['2990-JE-2604-0024'],
+    outstandingPayments: { count: 1, sen: -310168 }, outstandingReceipts: { count: 0, sen: 0 }, outstandingJeNos: ['2990-JE-2604-0024'],
+    computedClosingSen: 93837, unexplainedSen: 0, tallies: true, reconciled: true,
+  };
+
+  test('walks from the books through the outstanding items to the bank, and says it tallies', () => {
+    recon = APRIL;
     openStatement();
-    expect(screen.getByText(/The bank and the books differ by RM 3,123\.06/)).toBeTruthy();
-    expect(screen.getByText(/on the bank and not in the books/)).toBeTruthy();
-    expect(screen.getByText(/in the books and not on the bank/)).toBeTruthy();
+    expect(screen.getByText(/^Reconciled/)).toBeTruthy();
+    const row = (label: string | RegExp) => screen.getByText(label).closest('tr') as HTMLElement;
+    expect(within(row('Closing per the books')).getByText('RM -2,163.31')).toBeTruthy();
+    expect(within(row(/^Add: payments in the books the bank has not paid yet/)).getByText('RM 3,101.68')).toBeTruthy();
+    expect(screen.getByText(/Add: payments in the books the bank has not paid yet \(1 item\)/)).toBeTruthy();
+    expect(within(row('Closing per the books after outstanding items')).getByText('RM 938.37')).toBeTruthy();
+    expect(within(row('Closing per bank statement')).getByText('RM 938.37')).toBeTruthy();
+    expect(screen.getByText('✓ Tallies')).toBeTruthy();
+    expect(screen.queryByText(/differ by/)).toBeNull();
+    expect(screen.queryByText(/brought forward/)).toBeNull();
   });
 
-  /* A gap that predates the statement gets its own line — this period's work
-     cannot close it, and folding it into the difference hides that. */
-  test('names a difference brought forward separately', () => {
-    recon = { ...RECON, broughtForwardSen: 30000 };
+  test('says by how much it is off when the bank\'s closing is not reached', () => {
+    recon = { ...APRIL, closingStatementSen: 93837 + 777, unexplainedSen: 777, tallies: false, reconciled: false };
     openStatement();
-    recon = RECON;
+    expect(screen.getByText(/Does not tally/)).toBeTruthy();
+    expect(screen.getByText('✗ Off by RM 7.77')).toBeTruthy();
+    expect(screen.queryByText(/^Reconciled/)).toBeNull();
   });
 
-  /* THE ONE THAT MATTERS: numbers that cannot account for themselves must
-     REPLACE the verdict, not sit under it. */
-  test('refuses to show a difference it cannot account for', () => {
-    recon = { ...RECON, consistent: false, inconsistency: 'The difference of 100 sen does not equal what is unmatched on either side.' };
+  test('a movement still to decide is its own line, and the month is not reconciled until it is', () => {
+    recon = { ...APRIL, closingStatementSen: 93837 + 5000, computedClosingSen: 93837 + 5000, bankNotInBooks: { count: 1, sen: 5000 }, reconciled: false };
     openStatement();
-    expect(screen.getByText('These numbers do not add up')).toBeTruthy();
-    expect(screen.queryByText(/The bank and the books differ by/)).toBeNull();
-    expect(screen.queryByText(/Made up of/)).toBeNull();
-    recon = RECON;
+    expect(screen.getByText(/On the bank, not in the books \(1 still to decide\)/)).toBeTruthy();
+    expect(screen.getByText('✓ Tallies')).toBeTruthy();
+    expect(screen.queryByText(/^Reconciled/)).toBeNull();
+    expect(screen.getByText(/1 movement on the bank still to decide/)).toBeTruthy();
   });
 
-  test('says reconciled only when it is', () => {
-    recon = { ...RECON, differenceSen: 0, closingLedgerSen: 5312306, bankNotInBooks: { count: 0, sen: 0 }, reconciled: true };
+  test('refuses to show a walk it cannot account for', () => {
+    recon = { ...APRIL, consistent: false, inconsistency: 'The statement balances and the lines under them disagree — check the file before trusting either.', reconciled: false, tallies: false };
     openStatement();
-    expect(screen.getByText(/Reconciled — the bank and the books agree/)).toBeTruthy();
-    recon = RECON;
+    expect(screen.getByText(/These numbers do not add up/)).toBeTruthy();
+    expect(screen.getByText(/check the file before trusting either/)).toBeTruthy();
+    expect(screen.queryByText(/Closing per the books/)).toBeNull();
   });
 
-  /* A file with no balances has nothing to compare — and a null must never
-     render as a reconciled zero. */
   test('says there is nothing to compare when the file prints no balances', () => {
-    recon = { ...RECON, closingStatementSen: null, differenceSen: null, broughtForwardSen: null };
+    recon = { ...APRIL, closingStatementSen: null, openingStatementSen: null, differenceSen: null, unexplainedSen: null, tallies: false, reconciled: false };
     openStatement();
     expect(screen.getByText(/prints no balances/)).toBeTruthy();
-    recon = RECON;
   });
 });
 
