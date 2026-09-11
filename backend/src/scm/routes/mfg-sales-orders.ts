@@ -11804,24 +11804,24 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
      lines → Purchasing) or DELIVERY (schedule/location, service lines →
      Logistics) — and, when the submission mixes both, SPLIT it into two
      amendment documents that live independent lives. Line classification keys
-     off the item code the change targets, resolved SERVER-SIDE from the order
-     (an ADD has no persisted line, so its requested new_item_code is used). */
+     off the line's IDENTITY (item_code + item_group — item_group routes a
+     bare-code service line to Logistics), resolved SERVER-SIDE from the order. */
   const referencedIds = [...new Set(submittedLines
     .map((l) => l.salesOrderItemId)
     .filter((x): x is string => typeof x === 'string' && x.length > 0))];
-  const itemCodeById = new Map<string, string | null>();
+  const identityById = new Map<string, { itemCode: string | null; itemGroup: string | null }>();
   if (referencedIds.length > 0) {
     const { data: codeRows, error: codeErr } = await sb.from('mfg_sales_order_items')
-      .select('id, item_code').eq('doc_no', docNo).in('id', referencedIds);
+      .select('id, item_code, item_group').eq('doc_no', docNo).in('id', referencedIds);
     if (codeErr) return c.json(LINE_BUILD_ERRORS.unreadable, 500);
-    for (const r of (codeRows ?? []) as Array<{ id: string; item_code: string | null }>) {
-      itemCodeById.set(r.id, r.item_code);
+    for (const r of (codeRows ?? []) as Array<{ id: string; item_code: string | null; item_group: string | null }>) {
+      identityById.set(r.id, { itemCode: r.item_code, itemGroup: r.item_group });
     }
   }
   const split = splitAmendmentByLane(
     headerChanges,
     submittedLines,
-    (l) => (l.salesOrderItemId ? itemCodeById.get(l.salesOrderItemId) : l.newItemCode),
+    (l) => (l.salesOrderItemId ? identityById.get(l.salesOrderItemId) ?? {} : { itemCode: l.newItemCode }),
   );
 
   // Guard 4b — per-lane openness: each lane admits ONE amendment awaiting its
