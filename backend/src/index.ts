@@ -4,6 +4,7 @@ import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
 import type { Env } from "./types";
 import { GIT_SHA, resolveBuildSha } from "./build-info";
+import { restKeyClaims, restUrlRef } from "./db/rest-key-claims";
 import { auth, requirePermission, requireAnyPermission, requireScmAccess } from "./middleware/auth";
 import { TRANSIENT_CONN_RE } from "./db/d1-compat";
 // Ported 2990's SCM modules (furniture supply chain). Talk to the `scm` Postgres
@@ -244,7 +245,22 @@ app.get("/", (c) => c.json({ ok: true, service: "autocount-sync-api" }));
 // (see build-info.ts for the 2026-09-01 null-stamp incident). The env var is
 // kept as a fallback for any Worker still on the old mechanism; "dev" is the
 // un-stamped local placeholder and reports as no stamp (null).
-app.get("/health", (c) => c.json({ ok: true, sha: resolveBuildSha(GIT_SHA, c.env.GIT_SHA) }));
+// `rest_role` / `rest_ref` say what the configured PostgREST key IS — the role
+// claim and project ref read off the key itself (db/rest-key-claims.ts). On
+// staging the service-role secret held an anon-role key for three weeks and
+// every table read worked while every VIEW read said "permission denied";
+// nothing on any surface named the role (docs/bugs/0824). A rehearsal now
+// refuses a key whose role is not service_role. Neither field is the key.
+app.get("/health", (c) => {
+  const claims = restKeyClaims(c.env.SUPABASE_SERVICE_ROLE_KEY);
+  return c.json({
+    ok: true,
+    sha: resolveBuildSha(GIT_SHA, c.env.GIT_SHA),
+    rest_role: claims.role,
+    rest_ref: restUrlRef(c.env.SUPABASE_URL),
+    rest_key_ref: claims.ref,
+  });
+});
 
 // /api/auth/* is unauthenticated (login, bootstrap, accept-invite, status,
 // me, logout). It must be mounted BEFORE the auth middleware below.

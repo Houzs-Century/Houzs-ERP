@@ -11,6 +11,40 @@ shows the Sales Orders page with the grid reading **"Failed to load —
 permission denied for view mfg_sales_orders_with_payment_totals"**. Production
 serves the same list from the same view without error.
 
+> **ROOT CAUSE PROVEN 2026-09-12, by the read-only catalog probe
+> (`staging-catalog-probe.yml`, run 34644526231).** Inside the staging database,
+> `SET ROLE service_role; SELECT count(*) FROM scm.mfg_sales_orders_with_payment_totals`
+> answered **3110** — service_role CAN read the view. `has_table_privilege`
+> per role: `service_role` view t / table t; `anon` and `authenticated` view
+> **f** / table **t**; `authenticator` can become anon, authenticated,
+> service_role. The staging API, with the seeded account, answers the table
+> reads (`?summary=1`, products) with 200 and the view read (`/api/scm/mfg-sales-orders`)
+> with `{"error":"load_failed","reason":"permission denied for view
+> mfg_sales_orders_with_payment_totals"}` — exactly and only the privilege
+> shape of `anon` / `authenticated`. There is one PostgREST client in the
+> Worker (`db/supabase.ts`, `createClient(url, SUPABASE_SERVICE_ROLE_KEY)`),
+> so the **staging Worker's `SUPABASE_SERVICE_ROLE_KEY` secret holds a key
+> whose JWT `role` is not `service_role`** — most likely the anon key, pasted
+> when the staging secrets were re-set around 2026-08-22/24 (the rehearsal's
+> last green is 2026-08-21; the Cloudflare token was re-minted 2026-08-24).
+>
+> The grant migration below was therefore a no-op on staging too (its NOTICE
+> printed `BEFORE: hyperdrive_staging, postgres, service_role`) and stays as
+> hygiene; the gate it shipped with stands on its own.
+>
+> **Owner action #2 (Cloudflare account that owns the Worker):** copy the
+> staging project's (`minnapsemfzjmtvnnvdd`) `service_role` key from the
+> Supabase dashboard and `wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+> --env staging`. `/health` now reports `rest_role` / `rest_ref` /
+> `rest_key_ref` (the key's role claim and project — never the key), and the
+> rehearsal's build-report step fails closed on any role other than
+> `service_role`, so this cannot hide again.
+>
+> Also seen and not yet explained: `anon` and `authenticated` hold SELECT on
+> `scm` base tables on staging. Whether production grants the same is
+> **UNKNOWN** (no prod probe has been run); it belongs to the tenant-isolation
+> review, not to this entry.
+
 **What was RULED OUT first.** The first hypothesis, written into
 docs/bugs/0824 (the staging-data entry, #3701), was that an EMPTY staging list
 never rendered its empty state. The screenshot refuted it: the request came

@@ -94,6 +94,27 @@ jobs:
           elif [ "$deployed" != "$tested" ]; then
             echo "::warning title=Staging is not running the commit this suite tested::deployed=$deployed tested=$tested. The assertions below are true about the DEPLOYED build, not about the checked-out source."
           fi
+
+          # The one thing that CAN fail this step: the Worker's PostgREST key is not
+          # a service-role key. With an anon-role key every table read succeeds and
+          # every VIEW read answers "permission denied", and no spec can tell that
+          # apart from a real bug — measured 2026-08-21..09-12, three weeks red,
+          # docs/bugs/0824 (probe run 34644526231). /health reports the key's role
+          # claim; an older Worker without the field reports nothing and is only
+          # warned about, so this cannot go red on a build that predates it.
+          rest_role=$(printf '%s' "$health" | sed -n 's/.*"rest_role":"\([^"]*\)".*/\1/p')
+          rest_ref=$(printf '%s' "$health" | sed -n 's/.*"rest_ref":"\([^"]*\)".*/\1/p')
+          rest_key_ref=$(printf '%s' "$health" | sed -n 's/.*"rest_key_ref":"\([^"]*\)".*/\1/p')
+          echo "| REST key role | \`${rest_role:-unreported}\` (project \`${rest_ref:-?}\`, key minted for \`${rest_key_ref:-?}\`) |" >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$rest_role" ]; then
+            echo "::warning title=REST key role unreported::/health carries no rest_role — this Worker predates the field; the key's role is unknown to this run."
+          elif [ "$rest_role" != "service_role" ]; then
+            echo "::error title=Staging Worker's PostgREST key is role '$rest_role', not service_role::Every view read will answer 'permission denied' and every table read will still succeed. Set SUPABASE_SERVICE_ROLE_KEY on the staging Worker to the staging project's service_role key (docs/bugs/0824). The specs below are not run: they would measure the wrong thing."
+            exit 1
+          elif [ -n "$rest_ref" ] && [ -n "$rest_key_ref" ] && [ "$rest_ref" != "$rest_key_ref" ]; then
+            echo "::error title=REST key minted for another project::SUPABASE_URL is project $rest_ref but the key was minted for $rest_key_ref."
+            exit 1
+          fi
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test
         env:
