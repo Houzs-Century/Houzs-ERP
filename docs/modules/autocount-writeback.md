@@ -5371,6 +5371,26 @@ not-folded-into-agree property, the unwritten ruling that stays `DIFFER`, the
 no-ruling control, and the assertion that a ruling cannot rescue an ERP carrying
 no compartments at all.
 
+## A corrected code carries its printed NAME (2026-09-11)
+
+New SURFACE on `backend/scripts/apply-sofa-compartment-corrections.mjs`: it now
+writes EVERY label column a line table carries, not the first one it finds.
+
+`labelColumnName()` returned one column and preferred `material_name`. Every
+document prints `description ?? material_name` — `sales-order-pdf.ts:572`,
+`grn-pdf.ts:133` — so a purchase or receipt line that HAS a description had its
+code corrected and went on printing the old piece: a lounger and an arm on one
+row. The owner found it in an export the same day he asked for the corrections
+(「正常来说我的 sku 是什么就显示什么啊？」), on `HC-PO-2609-053`, the urgent one.
+
+`labelColumnNames()` returns `description` AND `material_name` where both exist,
+and the applier sets them together — the only state in which the print cannot be
+wrong whichever column it reaches for. `rename-sofa-line-in-place.mjs` does the
+same in its single statement. A name that states NO piece is the supplier's own
+product name ("HOK SOFA - 5536") and is left alone: 373 purchase and 47 receipt
+lines read that way by design. Cleanup of the 17 stale names: run 34593820024,
+`APPLIED — 17 of 17` · `VERIFY OK`. Trace in `docs/bugs/0818`.
+
 ## A collapse RELEASES the purchase dedication it strands (2026-09-08)
 
 New SURFACE on `backend/scripts/apply-sofa-compartment-corrections.mjs`: a new
