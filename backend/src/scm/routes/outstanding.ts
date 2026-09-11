@@ -31,7 +31,13 @@ import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";
 import type { Env, Variables } from "../env";
 import { paginateAll } from "../lib/paginate-all";
-import { scopeToCompany, activeCompanyId } from "../lib/companyScope";
+import {
+  scopeToCompany,
+  activeCompanyId,
+  scopeToAllowedCompanies,
+  companyCodeMap,
+  withCompanyCode,
+} from "../lib/companyScope";
 import { stampOrderDeposit } from "../lib/si-list-stamps";
 import {
   summariseSiOutstanding, unavailableSiSummary, SI_SUMMARY_COLS,
@@ -113,6 +119,63 @@ for (const [slug, { view, dateCol }] of Object.entries(MODULES)) {
     return c.json({ rows: data ?? [] });
   });
 }
+
+/* ── LINE-LEVEL PO chasing list (GET /outstanding/po-lines, 2026-09-12) ───────
+   The six MODULES endpoints above are PER-COMPANY and HEADER-grained. The
+   procurement chasing list differs on BOTH axes and so is its own handler:
+
+     • LINE-grained — one row per outstanding PO line, backed by
+       scm.v_po_outstanding_lines (mig 20260912T1000). The existing
+       v_po_outstanding is a per-PO roll-up (qty + money) for AP; this is the
+       AutoCount "PO chasing list" shape (item / spec / warehouse / delivery
+       date per line) for a buyer chasing each supplier.
+
+     • CROSS-COMPANY — the owner wants HOUZS + 2990 in ONE list with a company
+       column (the TMS / delivery-planning pattern, companyScope.ts), NOT the
+       active-company isolation the money tabs use. So it widens with
+       scopeToAllowedCompanies (the caller's GRANTED companies — a rep pinned to
+       one still sees only that one; nothing leaks) and tags each row with
+       company_code via withCompanyCode so the UI can render the column.
+
+   Same ?outstanding=true|false|all + ?from/&to (po_date) contract and the same
+   missing-view graceful degradation as its siblings. Rolling sofa component
+   lines up into one "set" row is a PRESENTATION concern — there is no set key on
+   the line (binding_id is null; each component carries its own so_item_id) — so
+   it lives in the frontend, not here. */
+outstanding.get("/po-lines", async (c) => {
+  const sb = c.get("supabase");
+  const outstandingParam = c.req.query("outstanding");
+  const from = c.req.query("from");
+  const to = c.req.query("to");
+
+  const { data, error } = await paginateAll((pFrom, pTo) => {
+    let q = sb
+      .from("v_po_outstanding_lines")
+      .select("*")
+      .order("po_date", { ascending: false });
+    q = scopeToAllowedCompanies(q, c); // CROSS-COMPANY: both books in one list
+    if (outstandingParam === "true" || outstandingParam == null) {
+      q = q.eq("is_outstanding", true);
+    } else if (outstandingParam === "false") {
+      q = q.eq("is_outstanding", false);
+    }
+    // else 'all' → no is_outstanding filter, return both
+    if (from) q = q.gte("po_date", from);
+    if (to) q = q.lte("po_date", to);
+    return q.range(pFrom, pTo);
+  });
+  if (error) {
+    if (/relation .* does not exist/i.test(error.message)) {
+      return c.json({ rows: [] });
+    }
+    return c.json({ error: "load_failed", reason: error.message }, 500);
+  }
+  const codes = companyCodeMap(c);
+  const rows = (data ?? []).map((r) =>
+    withCompanyCode(r as Record<string, unknown>, codes),
+  );
+  return c.json({ rows });
+});
 
 /* Per-module aggregate shape for /summary. The JS reducer this replaces sums
    `Number(r.total_sen ?? r.local_total_sen ?? 0)` and

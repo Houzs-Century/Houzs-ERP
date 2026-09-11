@@ -13,13 +13,20 @@ import { todayMyt } from '../../vendor/scm/lib/dates';
 import { fmtSen } from '../../vendor/shared/format';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ClipboardList, FileText, Receipt, Truck, Undo2, ScrollText, PackagePlus } from 'lucide-react';
+import { ClipboardList, FileText, Receipt, Truck, Undo2, ScrollText, PackagePlus, PackageSearch } from 'lucide-react';
 import {
   useOutstanding,
   useOutstandingSummary,
+  useOutstandingPoLines,
   type OutstandingModule,
   type OutstandingFilterMode,
 } from '../../vendor/scm/lib/outstanding-queries';
+import {
+  rollUpToSets,
+  companyCodesPresent,
+  type PoOutstandingLineRow,
+  type PoOutstandingSetRow,
+} from '../../vendor/scm/lib/po-outstanding-rollup';
 import { DataTable, type Column } from '../../components/DataTable';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
@@ -41,6 +48,11 @@ const MODULES: { value: OutstandingModule; label: string; icon: React.ReactNode;
 // Guarded centi→"RM …" — "—" for an absent/non-finite amount, never "RM NaN".
 const fmtRm = (centi: number | null | undefined): string => fmtSen(centi);
 
+/* The tab bar carries the seven money modules plus one extra: 'po-lines', the
+   line-level PO chasing list. It is NOT an OutstandingModule (no summary money
+   tile, cross-company, its own endpoint), so it rides a wider union here. */
+type OutstandingTab = OutstandingModule | 'po-lines';
+
 export const Outstanding = () => {
   const today = todayMyt();
   const yearAgo = todayMyt(-365);
@@ -48,11 +60,19 @@ export const Outstanding = () => {
   const [mode, setMode] = useState<OutstandingFilterMode>('outstanding');
   const [from, setFrom] = useState(yearAgo);
   const [to, setTo] = useState(today);
-  const [activeModule, setActiveModule] = useState<OutstandingModule>('so');
+  const [activeModule, setActiveModule] = useState<OutstandingTab>('so');
 
   const summary = useOutstandingSummary({ from, to });
-  const rowsQ = useOutstanding(activeModule, { mode, from, to });
+  // The generic per-module hook only knows the seven money modules; when the
+  // chasing tab is active fall it back to 'po' (cached, cheap) and read the
+  // dedicated cross-company hook below instead.
+  const genericModule: OutstandingModule = activeModule === 'po-lines' ? 'po' : activeModule;
+  const rowsQ = useOutstanding(genericModule, { mode, from, to });
   const rows = rowsQ.data?.rows ?? [];
+
+  const poLinesQ = useOutstandingPoLines({ mode, from, to });
+  const poLinesRows = poLinesQ.data?.rows ?? [];
+  const isPoLines = activeModule === 'po-lines';
 
   return (
     <div className="space-y-4">
@@ -128,22 +148,54 @@ export const Outstanding = () => {
             </button>
           );
         })}
+
+        {/* PO Chasing — line-level, cross-company (HOUZS + 2990). Not a money
+            module, so it carries a line count, not an outstanding value. */}
+        <button type="button"
+          onClick={() => setActiveModule('po-lines')}
+          style={{
+            padding: 'var(--space-3) var(--space-4)',
+            background: '#ffffff',
+            color: 'var(--c-ink)',
+            border: `1px solid ${isPoLines ? '#16695f' : 'var(--c-line, rgba(34,31,32,0.12))'}`,
+            boxShadow: isPoLines ? 'inset 0 0 0 1px #16695f' : 'none',
+            borderRadius: 'var(--radius-md)',
+            cursor: 'pointer',
+            textAlign: 'left',
+          }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-12)', opacity: 0.8 }}>
+            <PackageSearch size={14} strokeWidth={1.75} />
+            <span>PO Chasing</span>
+          </div>
+          <div style={{ fontSize: 'var(--fs-22)', fontWeight: 900, marginTop: 4 }}>
+            {poLinesQ.isLoading ? '—' : poLinesRows.length}
+          </div>
+          <div style={{ fontSize: 'var(--fs-11)', opacity: 0.7, marginTop: 2 }}>
+            outstanding lines
+          </div>
+        </button>
       </section>
 
       <p className={styles.eyebrow} style={{ marginTop: 'var(--space-3)' }}>
-        {rowsQ.isLoading
-          ? `Loading ${activeModule}…`
-          : `${rows.length} ${activeModule.toUpperCase()} rows (${mode})`}
+        {isPoLines
+          ? (poLinesQ.isLoading ? 'Loading PO chasing…' : `${poLinesRows.length} PO lines (${mode})`)
+          : rowsQ.isLoading
+            ? `Loading ${activeModule}…`
+            : `${rows.length} ${activeModule.toUpperCase()} rows (${mode})`}
       </p>
 
       {/* key= remounts the table per module — columns AND search reset with
           the tab, so a PI search never filters the SO list. */}
-      <ModuleTable
-        key={activeModule}
-        module={activeModule}
-        rows={rows}
-        isLoading={rowsQ.isLoading}
-      />
+      {isPoLines ? (
+        <PoChasingView rows={poLinesRows} isLoading={poLinesQ.isLoading} />
+      ) : (
+        <ModuleTable
+          key={activeModule}
+          module={genericModule}
+          rows={rows}
+          isLoading={rowsQ.isLoading}
+        />
+      )}
     </div>
   );
 };
@@ -318,5 +370,150 @@ const ModuleTable = ({
         placeholder: `Search ${module.toUpperCase()} rows…`,
       }}
     />
+  );
+};
+
+/* ── PO Chasing — line-level, cross-company outstanding PO list ───────────────
+   The AutoCount "PO chasing list" shape: one row per outstanding PO line,
+   grouped by supplier, with a Detail (component lines) / By set toggle and an
+   Excel export. Reads the cross-company /outstanding/po-lines (HOUZS + 2990),
+   so it carries a Company column and an optional company filter the money tabs
+   don't have. Rolling sofa components into one "set" row is a heuristic — see
+   po-outstanding-rollup.ts. */
+type ChaseSpec = {
+  key: string;
+  label: string;
+  width?: string;
+  align?: 'right';
+  kind?: 'date' | 'qty';
+  get: (r: PoOutstandingLineRow) => string | number;
+};
+
+const chaseText = (spec: ChaseSpec, r: PoOutstandingLineRow): string => {
+  const v = spec.get(r);
+  if (spec.kind === 'qty') return (Number(v) || 0).toLocaleString();
+  if (spec.kind === 'date') return v ? String(v) : '—';
+  const s = String(v).trim();
+  return s === '' ? '—' : s;
+};
+
+const PoChasingView = ({ rows, isLoading }: { rows: PoOutstandingLineRow[]; isLoading: boolean }) => {
+  const [granularity, setGranularity] = useState<'detail' | 'set'>('detail');
+  const [companyFilter, setCompanyFilter] = useState('');
+  const [search, setSearch] = useState('');
+
+  const companyCodes = useMemo(() => companyCodesPresent(rows), [rows]);
+
+  const scoped = useMemo(
+    () => (companyFilter ? rows.filter((r) => String(r.company_code ?? '') === companyFilter) : rows),
+    [rows, companyFilter],
+  );
+
+  const display = useMemo<PoOutstandingLineRow[]>(
+    () => (granularity === 'set' ? rollUpToSets(scoped) : scoped),
+    [scoped, granularity],
+  );
+
+  const specs = useMemo<ChaseSpec[]>(() => [
+    { key: 'company_code',  label: 'Company',        get: (r) => String(r.company_code ?? '') },
+    { key: 'po_number',     label: 'PO No',          get: (r) => String(r.po_number ?? '') },
+    { key: 'ac_po_no',      label: 'AC PO No',       get: (r) => String(r.ac_po_no ?? '') },
+    { key: 'so_doc_no',     label: 'SO Doc No',      get: (r) => String(r.so_doc_no ?? '') },
+    { key: 'creditor_code', label: 'Creditor Code',  get: (r) => String(r.creditor_code ?? '') },
+    { key: 'creditor_name', label: 'Creditor', width: '200px', get: (r) => String(r.creditor_name ?? '') },
+    {
+      key: 'item_code',
+      label: granularity === 'set' ? 'Set / Item Code' : 'Item Code',
+      width: '160px',
+      get: (r) => String((granularity === 'set' ? (r as PoOutstandingSetRow).set_code : r.item_code) ?? ''),
+    },
+    ...(granularity === 'set'
+      ? [{
+          key: 'component_count', label: 'Components', align: 'right' as const, kind: 'qty' as const,
+          get: (r: PoOutstandingLineRow) => Number((r as PoOutstandingSetRow).component_count),
+        }]
+      : []),
+    { key: 'item_desc',  label: 'Item Description',   width: '220px', get: (r) => String(r.item_desc ?? '') },
+    { key: 'item_desc2', label: 'Item Description 2', width: '240px', get: (r) => String(r.item_desc2 ?? '') },
+    { key: 'location_code', label: 'Location',        get: (r) => String(r.location_code ?? '') },
+    { key: 'item_group', label: 'Item Group',         get: (r) => String(r.item_group ?? '') },
+    { key: 'po_date',    label: 'Doc Date', kind: 'date', get: (r) => String(r.po_date ?? '') },
+    { key: 'remaining_qty', label: 'Remaining Qty', align: 'right', kind: 'qty', get: (r) => Number(r.remaining_qty ?? 0) },
+    { key: 'delivery_date', label: 'Delivery Date', kind: 'date', get: (r) => String(r.delivery_date ?? '') },
+    // The AutoCount UDF dates — kept as columns per owner (2026-09-12) though
+    // the ERP does not sync them yet, so they read blank for now.
+    { key: 'est_delivery_date',        label: 'Estimate Delivery Date', kind: 'date', get: () => '' },
+    { key: 'supplier_delivery_date_2', label: 'Supplier Delivery Date 2', kind: 'date', get: (r) => String(r.supplier_delivery_date_2 ?? '') },
+    { key: 'supplier_delivery_date_3', label: 'Supplier Delivery Date 3', kind: 'date', get: (r) => String(r.supplier_delivery_date_3 ?? '') },
+  ], [granularity]);
+
+  type KeyedRow = PoOutstandingLineRow & { __rk: string };
+  const keyed: KeyedRow[] = useMemo(
+    () => display.map((r, i) => ({
+      ...r,
+      __rk: `${r.company_id ?? ''}:${r.po_number ?? ''}:${(granularity === 'set' ? (r as PoOutstandingSetRow).set_code : r.po_item_id) ?? i}:${i}`,
+    })),
+    [display, granularity],
+  );
+
+  const columns = useMemo<Column<KeyedRow>[]>(
+    () => specs.map((spec) => ({
+      key: spec.key,
+      label: spec.label,
+      width: spec.width ?? (spec.kind === 'qty' ? '110px' : spec.kind === 'date' ? '150px' : '130px'),
+      align: spec.align,
+      getValue: (r: KeyedRow) => (spec.kind === 'qty' ? Number(spec.get(r)) || 0 : String(spec.get(r))),
+      render: (r: KeyedRow) => chaseText(spec, r),
+    })),
+    [specs],
+  );
+
+  const visible = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return keyed;
+    return keyed.filter((r) => specs.some((s) => chaseText(s, r).toLowerCase().includes(term)));
+  }, [keyed, specs, search]);
+
+  const onExport = async () => {
+    const XLSX = await import('../../lib/xlsx-runtime');
+    const header = specs.map((s) => s.label);
+    const aoa: (string | number)[][] = [header, ...visible.map((r) => specs.map((s) => chaseText(s, r)))];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = specs.map((s) => ({ wch: Math.min(42, Math.max(10, s.label.length + 2)) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'PO Chasing');
+    XLSX.writeFileXLSX(wb, `PO-Chasing-${granularity}-${todayMyt()}.xlsx`);
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className={styles.actionsRow} style={{ marginBottom: 'var(--space-2)' }}>
+        <div className={styles.statusChips}>
+          <FilterChip label="Detail (lines)" active={granularity === 'detail'} onClick={() => setGranularity('detail')} />
+          <FilterChip label="By set" active={granularity === 'set'} onClick={() => setGranularity('set')} />
+        </div>
+        {companyCodes.length > 1 && (
+          <div className={styles.statusChips}>
+            <FilterChip label="All companies" active={companyFilter === ''} onClick={() => setCompanyFilter('')} />
+            {companyCodes.map((code) => (
+              <FilterChip key={code} label={code} active={companyFilter === code} onClick={() => setCompanyFilter(code)} />
+            ))}
+          </div>
+        )}
+      </div>
+      <DataTable<KeyedRow>
+        tableId="outstanding-po-lines"
+        layoutFamily="outstanding-po-lines"
+        exportName={`PO-Chasing-${granularity}`}
+        rows={isLoading ? null : visible}
+        loading={isLoading}
+        emptyLabel="No outstanding PO lines match the filters."
+        getRowKey={(r) => r.__rk}
+        columns={columns}
+        groupBy={{ key: 'creditor_name', label: (v) => v || '—' }}
+        onExport={onExport}
+        search={{ value: search, onChange: setSearch, placeholder: 'Search PO / item / supplier…' }}
+      />
+    </div>
   );
 };
