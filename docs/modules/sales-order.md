@@ -4687,6 +4687,20 @@ match on the row, a bank-statement match on its ACTIVE entry, or a closed month
 on the entry's MONEY-leg account. **Every read fails CLOSED** — an unreadable
 check refuses and says to retry, never "not reconciled".
 
+**A merchant link is not a reconciliation (2026-09-11, docs/bugs/0821).**
+`acc/payment-reconciled.ts` closes a payment for the merchant report only once
+the settlement LINE behind its `acc_settlement_matches` link is confirmed
+(`confirmed_at` or `posted_je_no`); the link the upload writes for a line it
+matched by reference leaves the payment correctable, so a mis-keyed amount can
+be fixed before the line is confirmed and `confirmSettlementRow` settles on the
+corrected row. The refusal sentence (`paymentReconciledMessage`, in both copies
+of `so-field-policy.ts`) now stays under the 200 characters `humanApiError`
+keeps, and `payment_edit_locked` is curated in `authed-fetch.ts` (and in
+`SERVER_SENTENCE_WINS`) so the server's reason reaches the operator instead of
+the generic 409. The full account is in `docs/modules/accounting.md`; contracts
+`acc/payment-reconciled.test.ts`, `so-field-policy.test.ts`,
+`authed-fetch.payment-locked.test.ts`.
+
 The two screens that render the edit and delete controls —
 `frontend/src/vendor/scm/components/PaymentsTable.tsx` (desktop) and
 `frontend/src/mobile/RecordedPayments.tsx` (mobile) — pass `mayAmend` and

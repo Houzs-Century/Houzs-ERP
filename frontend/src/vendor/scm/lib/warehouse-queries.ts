@@ -71,6 +71,34 @@ export function useRacks(opts?: { warehouseId?: string }) {
   });
 }
 
+/* ── Cross-company rack view (READ ONLY) ──────────────────────────────────
+   The same physical warehouse exists as one record per company; this feed
+   WIDENS across every company the caller may see and tags each rack with its
+   company + warehouse code, so the UI can show one combined list. Writes stay
+   on the per-company endpoints. */
+export type CrossCompanyRack = Rack & {
+  company_id: number | null;
+  company_code: string | null;
+  warehouse_code: string | null;
+  warehouse_name: string | null;
+};
+
+export type CrossCompanyRacks = {
+  racks: CrossCompanyRack[];
+  warehouses: { code: string; name: string }[];
+  companies: { id: number; code: string | null }[];
+  summary: RackSummary;
+};
+
+export function useCrossCompanyRacks() {
+  return useQuery({
+    queryKey: ['warehouse', 'cross-company'],
+    queryFn: () => authedFetch<CrossCompanyRacks>('/warehouse/cross-company'),
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
+  });
+}
+
 /* ── Rack CRUD ────────────────────────────────────────────────────────────
    HOUZS VENDOR — Desktop Racks & Bins page (feat/desktop-rack-management). The
    original slice pulled in only the useRacks() READ hook (the GRN pages never

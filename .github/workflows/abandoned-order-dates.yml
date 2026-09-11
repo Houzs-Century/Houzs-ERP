@@ -1,0 +1,65 @@
+name: Clear abandoned order dates (plan / apply)
+
+# Manual. Clears the delivery dates of an expired sales order that has shipped
+# NOTHING, so it leaves the MRP page and the delivery board. Owner 2026-09-11.
+#
+# WHAT IT DOES NOT TOUCH, and both are deliberate:
+#   - an order that shipped SOMETHING keeps its date. That surviving date is the
+#     signal the owner asked for: 「我就会看到『哇，这个 delivery date 已经有了』，
+#     然后我再去看它的 DO，我就懂它是 partial delivery 了」.
+#   - anything on or after BEFORE (default 2026-01-01). Of the 21 never-shipped
+#     expired orders, six are from 2026-08/09 and one was four days late — those
+#     are live orders running late, not rubbish, and hiding them would be worse
+#     than leaving them. Raise BEFORE only when that is the call.
+#
+# IT CLEARS DATES. It does not cancel an order and does not touch a quantity.
+#
+# THE PLAN'S TABLE IS THE RESTORE RECORD — these columns keep no history. Keep
+# the run log of any apply.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (read-only, default) or apply (writes)"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'Type CLEAR ABANDONED DATES to allow apply (ignored for plan)'
+        required: false
+        default: ""
+        type: string
+      before:
+        description: "Only orders whose delivery date is BEFORE this (YYYY-MM-DD). Default 2026-01-01."
+        required: false
+        default: "2026-01-01"
+        type: string
+      company:
+        description: "Company (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: abandoned-order-dates
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the one dependency the script needs
+        run: npm --prefix backend install postgres --no-audit --no-fund --no-save
+      - name: Clear abandoned order dates
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          BEFORE: ${{ inputs.before }}
+          COMPANY: ${{ inputs.company }}
+        run: node backend/scripts/repair-abandoned-order-dates.mjs

@@ -2753,3 +2753,18 @@ negative stock buckets Ship-anyway has already created, and the lines whose own
 purchase order was received while the warehouse holds nothing. The second list is
 a physical question — the goods left on another delivery or were never keyed in —
 so the delivery screen is right to keep warning on them. `docs/bugs/0818`.
+
+## The stock check counts by SKU, not by spec (2026-09-11)
+
+`checkStockAvailability` asks whether THIS WAREHOUSE HOLDS THIS ITEM CODE. Every
+spec bucket at that warehouse is summed, and the "other warehouses have it" hint
+sums each warehouse's specs into one row. Lines sharing an item code are one ask,
+so two specs of the same SKU cannot both pass on one unit.
+
+Why: stock that came from the AutoCount cutover carries no fabric / gap / divan /
+leg, so it sits under a blank variant key, while a delivery order asks for the
+order's full spec — the two buckets never meet and goods standing in the warehouse
+read as "available 0". Owner's decision 2026-09-11.
+
+The OUT movement and the FIFO cost lots still key on the spec. Shipping blind and
+deducting blind are different changes; the second moves money. `docs/bugs/0819`.

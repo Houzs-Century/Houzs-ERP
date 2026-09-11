@@ -108,7 +108,11 @@ describe('a compartment row added to a receipt, delivery note or invoice is guar
     expect(body).not.toMatch(/[^.\w]sql[`.(]/);
     /* And the reads it needs really are hoisted above it. */
     const before = FN.slice(0, open);
-    expect(before).toMatch(/const label = await labelColumnName\(/);
+    /* Renamed 2026-09-11 (docs/bugs/0818): the label is now labelS — the document
+       prints `description ?? material_name`, so writing only one of them left the
+       corrected line printing the old piece. The GUARD is unchanged: whichever it
+       is, it is resolved ABOVE the transaction, on `sql`. */
+    expect(before).toMatch(/const labels = await labelColumnNames\(/);
     expect(before).toMatch(/spec\.parentOf\(/);
   });
 

@@ -103,11 +103,43 @@ export type StockShortage = {
 
 /**
  * Resolve which requested lines exceed available qty at the given warehouse.
- * Aggregates lines that share the same (item_code, variant_key) bucket so
- * two lines of the same SKU don't each pass the check on full bucket qty.
  *
- * Returns [] when everything fits, or one shortage per under-stocked bucket
- * with alternative-warehouse hints attached.
+ * THE QUESTION IS "DOES THIS WAREHOUSE HOLD THIS SKU", NOT "DOES THIS SPEC
+ * BUCKET HOLD IT". Owner 2026-09-11, choosing this: the delivery check looks
+ * at warehouse + item code and stops caring about the spec.
+ *
+ * Stock reaches company 1 almost entirely from the AutoCount snapshot (3,478
+ * movements against 157 of our own goods receipts, measured on production
+ * 2026-09-11), and AutoCount holds no fabric / gap / divan / leg, so those
+ * units land under a BLANK variant key. A delivery order asks for the order's
+ * full spec. The two never meet: the spec bucket has never had anything in it,
+ * the blank bucket beside it is full, and the screen says "need 1, available
+ * 0" about goods that are physically standing there. Measured on the live
+ * orders the same day:
+ *
+ *   bedframe co1   2,236 short today, 1,632 of them have that SKU at that very
+ *                  warehouse under another key
+ *   sofa co1       1,087 short today,   693 the same
+ *   mattress / accessory / service / others   0 change — they carry no
+ *                  variants, so the spec-blind total IS their bucket total
+ *
+ * So this is not a loosening for the pooled groups. It changes exactly the two
+ * groups where our own two keyings disagree with each other.
+ *
+ * Lines that share an item_code are aggregated, so two lines of the same SKU
+ * in different specs are ONE ask and cannot both pass on the same units.
+ * `variantKey` is still reported on the shortage — the operator needs to know
+ * which spec was asked for; it just no longer decides whether goods exist.
+ *
+ * WHAT THIS DELIBERATELY DOES NOT DO: the OUT movement still writes to the
+ * spec bucket and the FIFO cost lots are still keyed by spec
+ * (fifo-out-consume.ts). Checking blind here and deducting blind there are
+ * different changes, and the second one moves money. The real repair is the
+ * DATA — put the spec back on the migrated stock — and this keeps the screen
+ * honest until that lands.
+ *
+ * Returns [] when everything fits, or one shortage per under-stocked SKU with
+ * alternative-warehouse hints attached.
  */
 export async function checkStockAvailability(
   sb: any,
@@ -115,27 +147,27 @@ export async function checkStockAvailability(
   lines: StockLineRequest[],
   companyId: number | null | undefined,
 ): Promise<StockShortage[]> {
-  // Aggregate requested per bucket. Drop zero-qty lines (not shipped).
-  type Bucket = { item_code: string; variant_key: string; product_name: string | null; needed: number };
-  const byBucket = new Map<string, Bucket>();
+  // Aggregate requested per SKU. Drop zero-qty lines (not shipped).
+  type Ask = { item_code: string; variant_key: string; product_name: string | null; needed: number };
+  const byItem = new Map<string, Ask>();
   for (const l of lines) {
     const qty = Number(l.qty || 0);
     if (qty <= 0) continue;
-    const k = `${l.itemCode}::${l.variantKey ?? ''}`;
-    const cur = byBucket.get(k);
+    const cur = byItem.get(l.itemCode);
     if (cur) { cur.needed += qty; }
-    else byBucket.set(k, {
+    else byItem.set(l.itemCode, {
       item_code: l.itemCode,
       variant_key: l.variantKey ?? '',
       product_name: l.productName ?? null,
       needed: qty,
     });
   }
-  const buckets = [...byBucket.values()];
-  if (buckets.length === 0) return [];
+  const asks = [...byItem.values()];
+  if (asks.length === 0) return [];
 
-  // Pull live qty at THIS warehouse per requested bucket.
-  const itemCodes = [...new Set(buckets.map((b) => b.item_code))];
+  // Pull live qty at THIS warehouse per requested SKU — every spec bucket
+  // summed, because the units under the blank key are the same furniture.
+  const itemCodes = [...new Set(asks.map((b) => b.item_code))];
   const { data: balRows, error: balErr } = await pgrestIn(sb
     .from('inventory_balances')
     .select('item_code, variant_key, qty')
@@ -144,14 +176,14 @@ export async function checkStockAvailability(
     // eslint-disable-next-line no-console
     console.error('[check-stock-availability] warehouse balances read failed:', (balErr as { message?: unknown }).message ?? balErr);
   }
-  const balByBucket = new Map<string, number>();
+  const balByItem = new Map<string, number>();
   for (const r of (balRows ?? []) as Array<{ item_code: string; variant_key: string | null; qty: number }>) {
-    balByBucket.set(`${r.item_code}::${r.variant_key ?? ''}`, Number(r.qty ?? 0));
+    balByItem.set(r.item_code, (balByItem.get(r.item_code) ?? 0) + Number(r.qty ?? 0));
   }
 
-  const shortBuckets: Array<{ b: Bucket; available: number }> = [];
-  for (const b of buckets) {
-    const available = balByBucket.get(`${b.item_code}::${b.variant_key}`) ?? 0;
+  const shortBuckets: Array<{ b: Ask; available: number }> = [];
+  for (const b of asks) {
+    const available = balByItem.get(b.item_code) ?? 0;
     if (available < b.needed) shortBuckets.push({ b, available });
   }
   if (shortBuckets.length === 0) return [];
@@ -173,7 +205,7 @@ export async function checkStockAvailability(
   // buckets. A single inventory_balances scan filtered to the same product
   // codes + > 0 qty avoids the N+1.
   const shortCodes = [...new Set(shortBuckets.map((s) => s.b.item_code))];
-  const altByBucket = new Map<string, WarehouseAlt[]>();
+  const altByItem = new Map<string, Map<string, WarehouseAlt>>();
   if (shortCodes.length > 0) {
     let altQuery = pgrestIn(sb
       .from('inventory_balances')
@@ -186,17 +218,22 @@ export async function checkStockAvailability(
       // eslint-disable-next-line no-console
       console.error('[check-stock-availability] alt-warehouse balances read failed:', (altErr as { message?: unknown }).message ?? altErr);
     }
+    /* ONE ROW PER WAREHOUSE, summed across specs. Keyed per spec, this hint was
+       blind in exactly the case it exists for: the goods sit at the other
+       warehouse under the blank key, so "3 at Balakong" was never shown and the
+       operator's only visible way forward was Ship anyway. */
     for (const r of (altRows ?? []) as Array<{ warehouse_id: string; item_code: string; variant_key: string | null; qty: number }>) {
       const wh = whById.get(r.warehouse_id);
-      const k = `${r.item_code}::${r.variant_key ?? ''}`;
-      const arr = altByBucket.get(k) ?? [];
-      arr.push({
+      const perWh = altByItem.get(r.item_code) ?? new Map<string, WarehouseAlt>();
+      const cur = perWh.get(r.warehouse_id);
+      if (cur) cur.available += Number(r.qty ?? 0);
+      else perWh.set(r.warehouse_id, {
         warehouseId: r.warehouse_id,
         warehouseCode: wh?.code ?? null,
         warehouseName: wh?.name ?? null,
         available: Number(r.qty ?? 0),
       });
-      altByBucket.set(k, arr);
+      altByItem.set(r.item_code, perWh);
     }
   }
 
@@ -209,7 +246,7 @@ export async function checkStockAvailability(
     needed: b.needed,
     available,
     short: b.needed - available,
-    alternatives: (altByBucket.get(`${b.item_code}::${b.variant_key}`) ?? [])
+    alternatives: [...(altByItem.get(b.item_code)?.values() ?? [])]
       .sort((a, c) => c.available - a.available), // highest-qty alternative first
   }));
 }
