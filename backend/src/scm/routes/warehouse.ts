@@ -26,7 +26,8 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId,
-  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
+  scopeToAllowedCompanies, companyCodeMap } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { buildSeedRackLabels } from '../shared/rack-labels';
 
@@ -160,6 +161,99 @@ warehouse.get('/', async (c) => {
   return c.json({
     racks: data,
     warehouses: warehouses ?? [],
+    summary: { total, occupied, empty, reserved, occupancyRate },
+  });
+});
+
+// ── GET /warehouse/cross-company — READ-ONLY view across every company the
+// caller may see. The same physical warehouse exists as one record per company
+// (same `code`), so this WIDENS to the caller's allowed companies
+// (scopeToAllowedCompanies, not scopeToCompany) and tags each rack with its
+// company + its warehouse code, letting the UI show one combined list with a
+// company column. No writes here — edits/stock/zone stay per-company.
+warehouse.get('/cross-company', async (c) => {
+  const sb = c.get('supabase');
+
+  // Racks across the allowed companies (company_id carried so we can tag them).
+  type CcRackRow = {
+    id: string; warehouse_id: string; rack: string; position: string | null;
+    zone: string | null; reserved: boolean; notes: string | null; company_id: number | null;
+  };
+  const { data: racks, error: rackErr } = await paginateAll<CcRackRow>((from, to) =>
+    scopeToAllowedCompanies(
+      sb.from('warehouse_racks').select(`${RACK_COLS}, company_id`).order('rack'),
+      c,
+    ).range(from, to),
+  );
+  if (rackErr) return c.json({ error: 'load_failed', reason: rackErr.message }, 500);
+
+  // Warehouse code/name per warehouse_id, across the allowed companies.
+  const { data: whRows, error: whErr } = await scopeToAllowedCompanies(
+    sb.from('warehouses').select('id, code, name, company_id'),
+    c,
+  );
+  if (whErr) return c.json({ error: 'load_failed', reason: whErr.message }, 500);
+  const whById = new Map<string, { code: string; name: string }>(
+    (whRows ?? []).map((w: { id: string; code: string; name: string }) => [w.id, { code: w.code, name: w.name }]),
+  );
+
+  // Items, grouped under their rack (same two-step fetch the per-company grid uses).
+  const rackIds = (racks ?? []).map((r) => r.id);
+  let items: RackItemRow[] = [];
+  if (rackIds.length > 0) {
+    const { data: itemRows, error: itemErr } = await chunkIn<RackItemRow>(rackIds, (batch, from, to) => sb
+      .from('warehouse_rack_items')
+      .select(ITEM_COLS)
+      .in('rack_id', batch)
+      .order('stocked_in_date', { ascending: true })
+      .range(from, to));
+    if (itemErr) return c.json({ error: 'load_failed', reason: itemErr.message }, 500);
+    items = (itemRows ?? []) as RackItemRow[];
+  }
+  const itemsByRack = new Map<string, RackItemRow[]>();
+  for (const it of items) {
+    const arr = itemsByRack.get(it.rack_id) ?? [];
+    arr.push(it);
+    itemsByRack.set(it.rack_id, arr);
+  }
+
+  const codes = companyCodeMap(c);
+  const data = (racks ?? []).map((r) => {
+    const rackItems = itemsByRack.get(r.id) ?? [];
+    const wh = whById.get(r.warehouse_id);
+    return {
+      ...r,
+      company_code: r.company_id != null ? codes.get(Number(r.company_id)) ?? null : null,
+      warehouse_code: wh?.code ?? null,
+      warehouse_name: wh?.name ?? null,
+      status: deriveStatus(rackItems.length, r.reserved),
+      items: rackItems,
+    };
+  });
+
+  const total = data.length;
+  const occupied = data.filter((r) => r.status === 'OCCUPIED').length;
+  const empty = data.filter((r) => r.status === 'EMPTY').length;
+  const reserved = data.filter((r) => r.status === 'RESERVED').length;
+  const occupancyRate = total > 0 ? Math.round((occupied / total) * 100) : 0;
+
+  // The physical-warehouse picker (distinct code among racks) and the companies
+  // present — both derived from what actually came back, so empty ones drop out.
+  const warehouseByCode = new Map<string, string>();
+  for (const r of data) if (r.warehouse_code && !warehouseByCode.has(r.warehouse_code)) warehouseByCode.set(r.warehouse_code, r.warehouse_name ?? r.warehouse_code);
+  const warehouses = [...warehouseByCode.entries()]
+    .map(([code, name]) => ({ code, name }))
+    .sort((a, b) => a.code.localeCompare(b.code));
+  const companyById = new Map<number, string | null>();
+  for (const r of data) if (r.company_id != null) companyById.set(Number(r.company_id), r.company_code);
+  const companies = [...companyById.entries()]
+    .map(([id, code]) => ({ id, code }))
+    .sort((a, b) => (a.code ?? '').localeCompare(b.code ?? ''));
+
+  return c.json({
+    racks: data,
+    warehouses,
+    companies,
     summary: { total, occupied, empty, reserved, occupancyRate },
   });
 });

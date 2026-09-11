@@ -48,6 +48,7 @@ import {
 } from '../../vendor/scm/lib/warehouse-queries';
 import { itemDescription, itemMeta, rackKeyOf, ZONE_LABELS } from '../../vendor/scm/lib/warehouse-floorplan';
 import { WarehouseFloorPlan } from './WarehouseFloorPlan';
+import { CrossCompanyRacks } from './CrossCompanyRacks';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { buildSeedRackLabels, MAX_SEED_RACKS } from '../../vendor/shared/rack-labels';
 import styles from './WarehouseRacks.module.css';
@@ -60,11 +61,12 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
    below it the operator gets a Floor plan / List switch. */
 const WIDE_BP = 1180;
 
-type TabKey = 'overview' | 'stockio' | 'history';
+type TabKey = 'overview' | 'stockio' | 'history' | 'crosscompany';
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: 'Rack Overview' },
   { key: 'stockio', label: 'Stock In/Out' },
   { key: 'history', label: 'Movement History' },
+  { key: 'crosscompany', label: 'All Companies' },
 ];
 
 /* The collapsed header stat strip — value colour per the design token table. */
@@ -237,7 +239,9 @@ export const WarehouseRacks = () => {
 
       <div className="space-y-4">
         {/* Warehouse selector — Houzs racks are per-warehouse, so it's required.
-            Styled as the design's picker pill; stays a native select. */}
+            Styled as the design's picker pill; stays a native select. Hidden on
+            the All Companies tab, which spans companies and picks by code. */}
+        {tab !== 'crosscompany' && (
         <div className="flex flex-wrap items-center gap-3">
           <span className="inline-flex items-center gap-2 rounded-full border border-border-subtle bg-surface py-1.5 pl-3 pr-2">
             <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-muted">WH</span>
@@ -256,6 +260,7 @@ export const WarehouseRacks = () => {
             </span>
           </span>
         </div>
+        )}
 
         {/* Tabs + narrow-screen Floor plan / List switch */}
         <div className="flex flex-wrap items-center gap-3">
@@ -320,6 +325,10 @@ export const WarehouseRacks = () => {
 
         {tab === 'history' && (
           <HistoryTab warehouseId={warehouseId} />
+        )}
+
+        {tab === 'crosscompany' && (
+          <CrossCompanyRacks />
         )}
       </div>
 

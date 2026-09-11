@@ -159,8 +159,10 @@ prefix added at render time. KL WAREHOUSE's rows therefore read literally
 
 | Method | Path | Effect |
 |---|---|---|
-| POST | `/warehouse/racks` | Create one rack (`{ rack }`) **or** seed many (`{ count, prefix, series?, levels? }`). |
-| PATCH | `/warehouse/racks/:id` | Edit label / position / notes, toggle `reserved`. |
+| GET | `/warehouse` | Per-company rack grid (with items) + KPI summary; `?warehouseId=` narrows. Company-scoped. |
+| GET | `/warehouse/cross-company` | READ-ONLY rack list across every company the caller may see — the "All Companies" tab (see below). |
+| POST | `/warehouse/racks` | Create one rack (`{ rack }`) **or** seed many (`{ count, prefix, series?, levels? }`). Accepts `zone?`. |
+| PATCH | `/warehouse/racks/:id` | Edit label / position / notes / `zone`, toggle `reserved`. |
 | DELETE | `/warehouse/racks/:id` | Remove an empty rack. |
 
 **Scope fans out.** Every create takes a `RackScope`: `warehouseId` (one),
@@ -190,6 +192,31 @@ x 2 levels stops at 200, not 300.
 Owner 2026-09-09: KL WAREHOUSE's real numbering is `L1.1 … L21.2` plus
 `R1.1 … R17.2` — 76 racks. Before the grid shape existed, the seed could only
 produce `Rack 1..N`, so that warehouse had to be typed in one label at a time.
+
+### Zone override (2026-09-11)
+
+`zone` (mig `20260911T1530_scm_warehouse_rack_zone.sql`) is a nullable text
+column on `scm.warehouse_racks`. The Rack Overview floor plan groups racks into
+ZONE A / ZONE B by rack NUMBER (`WAREHOUSE_ZONES` in
+`frontend/src/vendor/scm/lib/warehouse-floorplan.ts`, `resolvedZoneLabel`);
+`zone` is a per-rack OVERRIDE of that default — the zone LABEL (`"ZONE A"`), or
+NULL to follow the number. PATCH accepts it (empty/absent clears the override).
+The detail drawer, the multi-select batch bar and the new/edit rack form all set
+it, and each writes BOTH levels sharing a rack column so the two levels never
+resolve to different zones.
+
+### Cross-company view — `GET /warehouse/cross-company` (2026-09-11)
+
+The same physical warehouse exists as one record PER company (same `code` — e.g.
+"KL WAREHOUSE" is both HOUZS's 76-rack record and 2990's). This READ-ONLY feed
+backs the "All Companies" tab: it WIDENS across the caller's allowed companies
+(`scopeToAllowedCompanies`, **not** `scopeToCompany`) and tags each rack with its
+`company_code` + `warehouse_code` (`companyCodeMap`), so the UI
+(`frontend/src/pages/scm-v2/CrossCompanyRacks.tsx`) shows one combined list with
+a Company column, filterable by physical warehouse code. There is **no
+cross-company write** — editing, stock and zone all stay on the per-company
+endpoints. The owner chose this "keep separate + a read-only cross-company view"
+over merging the two companies' warehouses (2026-09-11).
 
 ## 4. Downstream reads
 
