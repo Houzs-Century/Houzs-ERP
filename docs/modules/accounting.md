@@ -1327,6 +1327,18 @@ Contracts: `bank-parse.test.ts`, `bank-lock.test.ts`, `bank-month.test.ts`,
 `backend/tests/bankRoutes.test.ts` (which now also mounts the month list and
 the lock — their first route contract), `BankStatementTab.test.tsx`.
 
+**A split payout names two entries, and both are claimed (2026-09-11,
+docs/bugs/0809).** June on 2990's Hong Leong account read "These numbers do
+not add up" by exactly RM 7,306.52 — the two PAYOUT_SPLIT movements. Booking
+a split writes one receipt per report and `bankLineReceipt` stores them on the
+line as `posted_je_no = "A, B"`; every reader compared that string as one
+entry number, so neither receipt was claimed and all four sat in "in the books,
+not on the bank" while the bank counted both movements as posted. `jeNosOf`
+(`backend/src/acc/bank.ts`) reads every number a line names, and the statement
+detail (`jeNos`), the month detail, `loadMonthForLock`, `claimedOutside` and
+`loadClaimedElsewhere` all use it. Contract: `backend/tests/bankRoutes.test.ts`
+("the two entries a split wrote are both claimed by the movement").
+
 **The reconciliation in the owner's form (2026-09-11, docs/bugs/0806).** April
 fully matched read "The bank and the books differ by RM 3,101.68" — the one
 payment the bank had not paid yet — and "brought forward — explained by 1
