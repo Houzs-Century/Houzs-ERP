@@ -1,0 +1,80 @@
+name: The printed name must state the piece the code states
+
+# Manual. A sofa line prints its item code and its name side by side — the sales
+# order PDF prints `description ?? item_code`, the GRN PDF prints
+# `description ?? material_name` beside the code, and the customer-facing fold
+# composes "1B(LHF) + CNR + 2A(RHF)" from the codes. A line whose code was
+# corrected while its text kept the old piece therefore prints two different
+# sofas on one row — which is what the owner saw in the export on 2026-09-11.
+#
+# It rewrites ONLY the piece token, and only where the name states a DIFFERENT
+# piece. A name that states no piece is the supplier's own product name
+# ("HOK SOFA - 5536") and is left exactly as it is — on a purchase document that
+# is what belongs there.
+#
+# Text only: no code, no quantity, no money, no stock. MODE=plan unless told
+# otherwise; apply needs the confirm phrase and re-reads every row it wrote on a
+# FRESH connection.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      mode:
+        description: "plan or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'type exactly: NAME THE PIECE THE CODE STATES (only needed for apply)'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-sofa-line-name-to-code-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-sofa-line-name-to-code.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-sofa-line-name-to-code.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
