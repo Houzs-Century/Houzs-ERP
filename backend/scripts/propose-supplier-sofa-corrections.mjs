@@ -97,7 +97,7 @@ const oneOf = (values) => {
   return seen.length === 1 ? seen[0] : null;
 };
 
-const book = gz('supplier-so-detail-2026-09-10.json.gz');
+const book = gz('supplier-so-detail-2026-09-11.json.gz');
 
 /* Builds an earlier round already answered, indexed by document. A round that
    read the OWNER'S OWN drawing is not overridden on ORDER alone: this file

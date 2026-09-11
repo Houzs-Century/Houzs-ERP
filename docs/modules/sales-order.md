@@ -4344,6 +4344,15 @@ Two things worth carrying forward:
 
 `backend/scripts/lib/parse-sofa.mjs` answers `pieces`, `size`, `color`,
 `perPieceColor`, `specials` and — since 2026-09-09 — **`leg`**.
+
+**It also owns what a PIECE is — `pieceSuffix` and `SOFA_PIECE_ALIAS` (2026-09-11).**
+`pieceSuffix('5540-CSL')` is `CONSOLE`: the supplier writes `CSL`, our catalogue
+mints `CONSOLE`, and they are the same part (owner 2026-09-11). It lives here
+rather than in each reader because two readers that disagree about a piece is how
+this repo got two answers for one sofa — `check-supplier-listing-vs-erp.mjs` and
+`apply-supplier-sofa-leg.mjs` both call it, and before they did, two sofas that
+agree sat in the checker's "DIFFERENT PIECES — costs money" bucket
+(`docs/bugs/0807`).
 `lib/variant-reconcile.mjs`'s `decodeBook` copies each onto the BOOK side, and
 `AXES` decides which item group asks for which.
 

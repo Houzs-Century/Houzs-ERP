@@ -32,7 +32,7 @@ const log = (s = '') => console.log(`::notice::${s}`);
 const suffix = (c) => { const s = String(c ?? '').toUpperCase(); const i = s.indexOf('-'); return i < 0 ? s : s.slice(i + 1); };
 
 const book = JSON.parse(
-  zlib.gunzipSync(fs.readFileSync(path.join(here, 'data', 'supplier-so-detail-2026-09-10.json.gz')))
+  zlib.gunzipSync(fs.readFileSync(path.join(here, 'data', 'supplier-so-detail-2026-09-11.json.gz')))
     .toString('utf8').replace(/^﻿/, ''),
 );
 /* index supplier docs by our PO ref */
