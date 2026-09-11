@@ -53,9 +53,7 @@ export async function grantCaseAccess(c: Ctx, caseInCallerScope: CaseInScope) {
   )
     .bind(id, grantee, userId)
     .run();
-  // company-scope: caseInCallerScope(c, id) above already proved company + row
-  // scope (404 out of scope), so this read can only reach a case this caller
-  // owns. It only builds the notify payload.
+  // company-scope: caseInCallerScope(c, id) above already proved company + row scope (404 out of scope); this read only builds the notify payload.
   const caseRow = await c.env.DB.prepare(
     `SELECT assr_no, customer_name FROM assr_cases WHERE id = ?`,
   )
