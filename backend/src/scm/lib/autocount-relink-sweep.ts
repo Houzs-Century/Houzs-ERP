@@ -56,6 +56,65 @@ const SWEEP_TYPES = Object.keys(DOWNSTREAM) as SweepDocType[];
 
 export const RELINK_SWEEP_KEY = 'scm.autocount_relink_sweep';
 
+/**
+ * WHERE THE LAST RUN WRITES ITSELF DOWN, and why it has to.
+ *
+ * This sweep reads and writes a LIVE account book, and until 2026-09-11 its only
+ * output was `console.log("[cron ac-relink-sweep] …")` in index.ts — a Worker log
+ * this account's token cannot read, because `wrangler tail` on
+ * autocount-sync-api is DENIED for it. So when the sweep ran in `apply` on
+ * 2026-09-11 and stamped ZERO keys on all five held-back documents, the cause
+ * could not be established at all: the handoff of that day filed it UNKNOWN and
+ * named making this observable as the next action. It was then run twice more,
+ * after a real fix to the matcher (docs/bugs/0812), and stamped zero again —
+ * still with nothing to read. Two rounds of guessing is the cost this key pays
+ * off.
+ *
+ * `scm.app_config` and not a new table: this module already reads its switch
+ * from there, it is flippable without a deploy, and a run summary is operational
+ * state of exactly that kind. The value is a trimmed JSON — counts always, and
+ * the per-document refusals that say WHY, which is the part nobody could see.
+ */
+export const RELINK_SWEEP_RUN_KEY = 'scm.autocount_relink_sweep_last_run';
+
+/** How many documents' detail the summary keeps. The counts are never trimmed. */
+const RUN_DOCS_KEPT = 25;
+
+/**
+ * Write the run down where a read-only workflow can find it.
+ *
+ * BEST-EFFORT, and deliberately so: this is a report about a repair, and a
+ * report that fails must never cost the repair. It is awaited rather than
+ * fired-and-forgotten only so the row is there before the slot ends.
+ */
+export async function recordSweepRun(sb: Sb, summary: SweepSummary): Promise<void> {
+  try {
+    const value = JSON.stringify({
+      at: new Date().toISOString(),
+      mode: summary.mode,
+      scanned: summary.scanned,
+      linesStamped: summary.linesStamped,
+      docsEnqueued: summary.docsEnqueued,
+      docs: summary.docs.slice(0, RUN_DOCS_KEPT).map((d) => ({
+        docType: d.docType,
+        bookDocNo: d.bookDocNo,
+        keylessBefore: d.keylessBefore,
+        stamped: d.stamped,
+        wouldStamp: d.wouldStamp,
+        /* THE ANSWER TO "why zero", and the reason this whole key exists. */
+        refused: d.refused,
+        skipped: d.skipped ?? null,
+      })),
+    });
+    await sb.from('app_config').upsert(
+      { key: RELINK_SWEEP_RUN_KEY, value, description: 'Last AutoCount relink sweep run (read-only report)' },
+      { onConflict: 'key' },
+    );
+  } catch {
+    /* Reporting must not break the repair. */
+  }
+}
+
 export type SweepMode = 'off' | 'plan' | 'apply';
 
 /**
@@ -131,7 +190,17 @@ export async function relinkHeldBackSweep(env: Env): Promise<SweepSummary> {
     .not('doc_id', 'is', null)
     .order('created_at', { ascending: true })
     .limit(200);
-  if (error) return { mode, scanned: 0, linesStamped: 0, docsEnqueued: 0, docs: [] };
+  if (error) {
+    /* A CANDIDATE READ THAT FAILS USED TO LOOK EXACTLY LIKE A QUIET DAY —
+       both returned scanned:0 and said nothing. Written down, they differ. */
+    const summary: SweepSummary = { mode, scanned: 0, linesStamped: 0, docsEnqueued: 0, docs: [] };
+    await recordSweepRun(sb, { ...summary, docs: [{
+      companyId: 0, docType: 'GR' as SweepDocType, docId: '', bookDocNo: '',
+      keylessBefore: 0, stamped: 0, wouldStamp: 0, refused: [], enqueued: false,
+      wouldEnqueue: false, skipped: `candidate read failed: ${error.message}`,
+    }] });
+    return summary;
+  }
 
   /* One document, however many queue rows it left. Keyed by company+type+id —
      the id is the header uuid enqueueConvert always stores. */
@@ -161,7 +230,9 @@ export async function relinkHeldBackSweep(env: Env): Promise<SweepSummary> {
     if (res.enqueued) docsEnqueued += 1;
   }
 
-  return { mode, scanned: targets.length, linesStamped, docsEnqueued, docs };
+  const summary: SweepSummary = { mode, scanned: targets.length, linesStamped, docsEnqueued, docs };
+  await recordSweepRun(sb, summary);
+  return summary;
 }
 
 async function relinkOneHeldBackDoc(
