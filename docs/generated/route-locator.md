@@ -1032,13 +1032,13 @@ Total: 1238 route registrations across 160 files.
 
 ## backend/src/scm/routes/warehouse.ts  (8)
 - L90  GET    /
-- L296  POST   /racks
-- L299  PATCH  /racks/:id
-- L329  DELETE /racks/:id
-- L349  POST   /stock-in
-- L416  POST   /stock-out
-- L478  POST   /transfer
-- L579  GET    /movements
+- L297  POST   /racks
+- L300  PATCH  /racks/:id
+- L333  DELETE /racks/:id
+- L353  POST   /stock-in
+- L420  POST   /stock-out
+- L482  POST   /transfer
+- L583  GET    /movements
 
 ## backend/src/scm/routes/delivery-planning-regions.ts  (7)
 - L79  GET    /
@@ -1277,8 +1277,8 @@ Total: 1238 route registrations across 160 files.
 ## backend/src/scm/routes/localities.ts  (4)
 - L60  GET    /
 - L160  POST   /
-- L200  PATCH  /:id
-- L248  DELETE /:id
+- L208  PATCH  /:id
+- L256  DELETE /:id
 
 ## backend/src/scm/routes/pwp-rules.ts  (4)
 - L118  GET    /
@@ -1522,7 +1522,7 @@ Total: 1238 route registrations across 160 files.
 - L59  GET    /:entityType/:entityId
 
 ## backend/src/scm/routes/fabric-colours.ts  (1)
-- L34  GET    /
+- L57  GET    /
 
 ## backend/src/scm/routes/grns-list-enrichment.ts  (1)
 - L46  GET    /list-mrp-enrichment
