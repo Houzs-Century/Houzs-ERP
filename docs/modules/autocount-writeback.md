@@ -566,6 +566,19 @@ delivery to an invoice call `refuseMigratedSources`
 `backend/tests/migratedConvertGuard.test.mjs` asserts the ORDER, not merely the
 presence — a refusal placed after the enqueue is no refusal at all.
 
+Since 2026-09-12 (docs/bugs/0830) the DO → SI conversion behind
+`POST /sales-invoices/from-dos` is a CORE in `backend/src/scm/lib/si-from-do.ts`
+(`createSalesInvoiceFromDoLines`) — the delivery reconciler raises the final
+invoice through it with no request to hand — and the route is a door that
+returns the core's outcome as-is. The guard, the enqueue and the response
+shape for that flow therefore live in the lib, and the three referees read it
+there: `migratedConvertGuard.test.mjs` follows a door into its named core
+(`CORES`) and accepts the core's `refuse(status, body)` spelling of the same
+two refusals; `autocountWritebackWiring.test.ts` reads flow 5's anchors from
+the lib; `acNotSentWiring.test.ts` reads the sales-invoice surface as the
+route and its core together. `scripts/check-conversion-guards.mjs` learned
+the same shape (`core: { file, fn }` on the registry entry).
+
 Since 2026-08-20 it asserts the ANSWER rather than one spelling of the call. A
 refusal may be returned through `c.json(...)` or through
 `refuseWithoutWriting(c, ...)`; the second additionally releases the request's

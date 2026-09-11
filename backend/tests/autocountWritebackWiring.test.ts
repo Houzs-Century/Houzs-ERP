@@ -8,7 +8,11 @@ import rawSdk from '../scripts/autocount-service/sdk-api-reference.txt?raw';
 import rawPo from '../src/scm/routes/mfg-purchase-orders.ts?raw';
 import rawDo from '../src/scm/routes/delivery-orders-mfg.ts?raw';
 import rawGrn from '../src/scm/routes/grns.ts?raw';
-import rawSi from '../src/scm/routes/sales-invoices.ts?raw';
+/* The DO -> SI conversion lives below the route layer since docs/bugs/0830 —
+   the delivery reconciler raises the final invoice through it with no request
+   context — so its enqueue is read from the lib, as the payment insert's is;
+   the router itself no longer carries a flow this file pins. */
+import rawSiFromDo from '../src/scm/lib/si-from-do.ts?raw';
 import rawPi from '../src/scm/routes/purchase-invoices.ts?raw';
 import rawCron from '../src/index.ts?raw';
 
@@ -21,7 +25,7 @@ const paymentRowSource = lf(rawPaymentRow);
 const poSource = lf(rawPo);
 const doSource = lf(rawDo);
 const grnSource = lf(rawGrn);
-const siSource = lf(rawSi);
+const siFromDoSource = lf(rawSiFromDo);
 const piSource = lf(rawPi);
 const cronSource = lf(rawCron);
 
@@ -97,7 +101,7 @@ describe('the six flows are hooked at the point the document becomes permanent',
   });
 
   test('5. DO -> Sales Invoice', () => {
-    const conv = between(siSource, 'Converted from ${distinctDoNumbers.length > 1', '/* LEAK GUARD (DRAFT)');
+    const conv = between(siFromDoSource, 'Converted from ${distinctDoNumbers.length > 1', '/* LEAK GUARD (DRAFT)');
     expect(conv).toContain("op: 'do_to_iv'");
     // Every delivery order the invoice bills.
     expect(conv).toContain('doIds.map(');

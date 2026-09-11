@@ -25,6 +25,11 @@ import doRouteRaw from '../src/scm/routes/delivery-orders-mfg.ts?raw';
 import grnRouteRaw from '../src/scm/routes/grns.ts?raw';
 import piRouteRaw from '../src/scm/routes/purchase-invoices.ts?raw';
 import siRouteRaw from '../src/scm/routes/sales-invoices.ts?raw';
+/* The DO -> SI conversion shapes its response in lib/si-from-do.ts since
+   docs/bugs/0830 (the delivery reconciler runs it with no request to hand) and
+   the route returns that outcome as-is — so the sales-invoice surface is the
+   route AND its core, read together. */
+import siFromDoRaw from '../src/scm/lib/si-from-do.ts?raw';
 import preflightRaw from '../src/scm/lib/ac-preflight.ts?raw';
 import feDoRaw from '../../frontend/src/pages/scm-v2/DeliveryOrderNewV2.tsx?raw';
 import feGrnRaw from '../../frontend/src/pages/scm-v2/GrnNew.tsx?raw';
@@ -44,7 +49,7 @@ const fePo = n(fePoRaw);
 const doRoute = n(doRouteRaw);
 const grnRoute = n(grnRouteRaw);
 const piRoute = n(piRouteRaw);
-const siRoute = n(siRouteRaw);
+const siRoute = `${n(siRouteRaw)}\n${n(siFromDoRaw)}`;
 const preflight = n(preflightRaw);
 const feDo = n(feDoRaw);
 const feGrn = n(feGrnRaw);

@@ -19,6 +19,7 @@ import { todayMyt } from './my-time';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { resolveRoles, siLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 import { splitByItemGroup } from '../../acc/item-group-split';
+import { customerPartyCode } from '../../acc/payments';
 
 export type PostSiResult =
   | { ok: true; status: 'posted'; jeNo: string; jeId: string; totalSen: number }
@@ -40,7 +41,7 @@ export type PostSiResult =
 export async function postSiRevenue(sb: any, invoiceNumber: string): Promise<PostSiResult> {
   const { data: si, error } = await sb
     .from('sales_invoices')
-    .select('id, invoice_number, invoice_date, debtor_code, debtor_name, total_sen, company_id, migrated_no_stock')
+    .select('id, invoice_number, invoice_date, debtor_code, debtor_name, total_sen, company_id, migrated_no_stock, so_doc_no')
     .eq('invoice_number', invoiceNumber)
     .single();
   if (error || !si) return { ok: false, status: 'invoice_not_found' };
@@ -80,6 +81,21 @@ export async function postSiRevenue(sb: any, invoiceNumber: string): Promise<Pos
   });
   if (!split.ok) return { ok: false, status: split.status, reason: split.reason };
 
+  /* THE CUSTOMER'S CODE on the AR leg (docs/bugs/0830): the debtor code when
+     the business keeps one (HOUZS), else the order's customer_id (2990 keeps
+     no debtor codes) — the rule the payment, the deposit invoice and the
+     credit note already follow, so the customer's sub-ledger nets across all
+     four documents instead of the invoice sitting under no party. */
+  let partyCode: string | null = customerPartyCode(si.debtor_code, null);
+  const soDocNo = (si as { so_doc_no?: string | null }).so_doc_no ?? null;
+  if (!partyCode && soDocNo) {
+    const { data: so, error: soErr } = await sb.from('mfg_sales_orders')
+      .select('customer_id, debtor_code').eq('doc_no', soDocNo).maybeSingle();
+    if (soErr) return { ok: false, status: 'post_failed', reason: `order: ${soErr.message}` };
+    const order = so as { customer_id?: string | null; debtor_code?: string | null } | null;
+    partyCode = customerPartyCode(order?.debtor_code, order?.customer_id);
+  }
+
   const roles = await resolveRoles(sb, companyId);
   const r = await postJournal(sb, {
     companyId,
@@ -87,7 +103,7 @@ export async function postSiRevenue(sb: any, invoiceNumber: string): Promise<Pos
     sourceType: 'SI',
     sourceDocNo: si.invoice_number,
     narration: `Sales invoice ${si.invoice_number} — ${si.debtor_name}`,
-    lines: siLines(roles, si, split.groups),
+    lines: siLines(roles, { invoice_number: si.invoice_number, debtor_code: partyCode, debtor_name: si.debtor_name }, split.groups),
   });
 
   if (r.ok) {
