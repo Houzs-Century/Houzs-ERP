@@ -1397,6 +1397,17 @@ line had, because `apply-sofa-compartment-corrections.mjs` carried the corrected
 code to `purchase_order_items`, `grn_items` and `delivery_order_items` and not to
 the two invoice tables.
 
+**And a corrected code carries its printed NAME with it — since 2026-09-11.** The
+applier used to write ONE label column, preferring `material_name`, while every
+document prints `description ?? material_name` (`sales-order-pdf.ts:572`,
+`grn-pdf.ts:133`). A purchase or receipt line that HAS a description therefore had
+its code corrected and went on printing the old piece — a lounger and an arm on
+one row, which is how the owner found it (`docs/bugs/0818`). `labelColumnNames()`
+now returns every label column the table carries and the applier writes them all;
+`rename-sofa-line-in-place.mjs` rewrites the piece token in the printed name in
+the same statement as the code. A name that states no piece is the supplier's own
+product name and is left alone.
+
 The count moved while it was being measured, which is why no number is quoted
 here: `probe-link-identity` counted 5 at 2026-09-07 23:22 and
 `probe-invoice-link-facts` run 34178911176 (2026-09-08 10:08 local) counted 4 —

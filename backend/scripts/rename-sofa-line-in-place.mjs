@@ -65,6 +65,17 @@ if (WANTS_APPLY && process.env.CONFIRM !== DOC) {
 const APPLY = WANTS_APPLY;
 
 const K = (s) => String(s ?? '').trim().toUpperCase();
+/** `9058-2A(RHF)` -> `2A(RHF)`, and a piece token inside free text. No trailing
+ *  word boundary: a token ending in `)` has none after it, which is the miss
+ *  that made the first name audit report 0 of 17 (docs/bugs/0818). */
+const pieceOf = (code) => { const s = K(code); const i = s.indexOf('-'); return i < 0 ? s : s.slice(i + 1); };
+const PIECE_RX = /(\d?[ABL]?\d?[A-Z]{0,3}\((?:LHF|RHF)\)|\bCNR\b|\bCONSOLE\b|\bSTOOL\b|\b\dS\b|\b\dNA\b)/i;
+{
+  const ok = ['SOFA VERANO 2A(LHF)', 'SOFA SOFFIO 1S'].every((x) => PIECE_RX.test(x))
+    && !['AMN SOFA - SF9058', 'HOK SOFA - 5536'].some((x) => PIECE_RX.test(x))
+    && 'SOFA VERANO 2A(LHF)'.replace(PIECE_RX, 'L(RHF)') === 'SOFA VERANO L(RHF)';
+  if (!ok) { console.error('SELF-TEST FAILED on the piece matcher. Refusing to run.'); process.exit(1); }
+}
 const isPo = /-PO-/i.test(DOC);
 const sql = postgres(DST, { ssl: 'require', max: 1, prepare: false });
 
@@ -74,11 +85,12 @@ async function readRows() {
     if (!po) return null;
     return {
       rows: await sql`SELECT id, item_code, qty, received_qty, unit_price_sen, so_item_id,
-                             coalesce(item_group, '') AS item_group
+                             description, material_name, coalesce(item_group, '') AS item_group
                         FROM scm.purchase_order_items WHERE purchase_order_id = ${po.id} ORDER BY id`,
     };
   }
   const rows = await sql`SELECT i.id, i.item_code, i.qty, 0 AS received_qty, i.unit_price_sen,
+                                i.description, NULL::text AS material_name,
                                 NULL::text AS so_item_id, coalesce(i.item_group, '') AS item_group
                            FROM scm.mfg_sales_order_items i
                            JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no
@@ -122,17 +134,38 @@ try {
       else if (K(row.item_group) !== 'SOFA') refuse(`that line's item group is "${row.item_group}", not sofa`);
       else {
         line(`   RENAME  row ${row.id}  ${row.item_code} -> ${TO}   qty ${row.qty} · RM ${(Number(row.unit_price_sen) / 100).toFixed(2)} · dedication ${row.so_item_id ? 'kept' : 'none'}`);
-        line('   money, quantity, dedication, variants and description all stay as they are.');
+        line('   money, quantity, dedication and variants all stay as they are.');
+        /* THE NAME MOVES WITH THE CODE. A document prints `description ??
+           material_name` beside the code (sales-order-pdf.ts:572,
+           grn-pdf.ts:133), so renaming the code alone leaves the row printing
+           two different pieces — which is what the owner found on the very
+           document this tool was written for (docs/bugs/0818). Only the piece
+           TOKEN is rewritten; the model word keeps whatever it says, and a name
+           that states no piece (the supplier's own product name) is left alone. */
+        const nameCols = isPo ? ['description', 'material_name'] : ['description'];
+        const renames = [];
+        for (const col of nameCols) {
+          const before = row[col];
+          if (before === null || before === undefined || String(before).trim() === '') continue;
+          if (!PIECE_RX.test(String(before))) continue;          // the supplier's own product name
+          const after = String(before).replace(PIECE_RX, pieceOf(TO));
+          if (after !== String(before)) renames.push({ col, before: String(before), after });
+        }
+        for (const r of renames) line(`   RENAME  ${r.col}: ${JSON.stringify(r.before)} -> ${JSON.stringify(r.after)}`);
+        if (!renames.length) line('   the printed name states no piece (or already states this one) — left as it is.');
 
         if (!APPLY) {
           line(`DRY-RUN — nothing was written. To write: APPLY=1 CONFIRM="${DOC}"`);
         } else {
-          if (isPo) {
-            await sql`UPDATE scm.purchase_order_items SET item_code = ${TO} WHERE id = ${row.id}`;
-          } else {
-            await sql`UPDATE scm.mfg_sales_order_items SET item_code = ${TO} WHERE id = ${row.id}`;
-          }
-          line('APPLIED — 1 line renamed.');
+          const table = isPo ? 'purchase_order_items' : 'mfg_sales_order_items';
+          /* The code and every printed name in ONE statement: no window exists
+             in which the row says two different pieces. */
+          const sets = ['item_code = $1', ...renames.map((r, i) => `${r.col} = $${i + 3}`)].join(', ');
+          await sql.unsafe(
+            `UPDATE scm.${table} SET ${sets} WHERE id = $2`,
+            [TO, row.id, ...renames.map((r) => r.after)],
+          );
+          line(`APPLIED — 1 line renamed${renames.length ? `, and ${renames.length} printed name(s) with it` : ''}.`);
 
           /* VERIFY on a FRESH connection, and assert the SHAPE — the document's
              whole piece list — not just that one row reads the new code. The
