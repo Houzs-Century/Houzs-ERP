@@ -60,6 +60,16 @@ const gz = (f) => JSON.parse(
   zlib.gunzipSync(fs.readFileSync(path.join(here, 'data', f))).toString('utf8').replace(/^﻿/, ''),
 );
 const norm = (s) => String(s ?? '').trim().toUpperCase();
+/* Compare div/gap/leg as NUMBERS, not strings. The supplier writes 10, our
+   stored variant writes 10" (or "10 inch") - the same measurement. Comparing the
+   raw strings reported 296 documents "different" on 2026-09-11 (run 34555472901)
+   almost all of which were the inch mark alone. Strip everything but the number,
+   then compare; a real difference (8 vs 10, or a value vs blank) survives. */
+const inches = (v) => {
+  if (v === null || v === undefined) return null;
+  const m = String(v).match(/([0-9]+(?:\.[0-9]+)?)/);
+  return m ? String(parseFloat(m[1])) : null;
+};
 
 /* `1007-(K)` -> `(K)`, `2038(A)-(SS)` -> `(SS)`. The LAST dash, because a model
    may itself contain one. */
@@ -91,7 +101,8 @@ const bedSpecials = (d2) => String(d2 ?? '')
 /* Self-test both readers before reporting anything. */
 {
   const v = bedVariants('div:8inch / leg:1inch / gap:16inch');
-  const ok = v.div === '8' && v.leg === '1' && v.gap === '16'
+  const inchOk = inches('10"') === '10' && inches('10 inch') === '10' && inches('10') === '10' && inches(null) === null && inches('8') !== inches('10');
+  const ok = inchOk && v.div === '8' && v.leg === '1' && v.gap === '16'
     && Object.keys(bedVariants('div:10inch')).join() === 'div'
     && bedSpecials('div:8inch / hb fully cover').join('|') === 'hb fully cover'
     && sizeOf('2038(A)-(SS)') === '(SS)' && sizeOf('1007-(K)') === '(K)';
@@ -166,7 +177,7 @@ try {
       for (const [k, names] of Object.entries(map)) {
         if (!(k in want)) continue;
         const mine = names.map((n) => got[n]).find((x) => x !== undefined && x !== null && String(x) !== '');
-        if (norm(mine) !== norm(want[k])) {
+        if (inches(mine) !== inches(want[k])) {
           diffs.push(`${sizeOf(l.code)} ${k}: supplier ${want[k]} vs ours ${mine ?? '(blank)'}`);
         }
       }
