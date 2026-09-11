@@ -50,7 +50,7 @@ type RackItemRow = {
 };
 
 const RACK_COLS =
-  'id, warehouse_id, rack, position, status, reserved, notes, created_at, updated_at';
+  'id, warehouse_id, rack, position, zone, status, reserved, notes, created_at, updated_at';
 const ITEM_COLS =
   'id, rack_id, item_code, variant_key, product_name, size_label, customer_name, source_doc_no, qty, stocked_in_date, notes';
 const MOVE_COLS =
@@ -93,7 +93,7 @@ warehouse.get('/', async (c) => {
 
   // Page through so PostgREST's default 1000-row cap can't silently truncate the
   // rack grid (a large warehouse can exceed 1000 racks).
-  const { data: racks, error: rackErr } = await paginateAll<{ id: string; warehouse_id: string; rack: string; position: string | null; reserved: boolean; notes: string | null }>((from, to) => {
+  const { data: racks, error: rackErr } = await paginateAll<{ id: string; warehouse_id: string; rack: string; position: string | null; zone: string | null; reserved: boolean; notes: string | null }>((from, to) => {
     let rackQ = sb.from('warehouse_racks').select(RACK_COLS).order('rack');
     if (warehouseId) rackQ = rackQ.eq('warehouse_id', warehouseId);
     rackQ = scopeToCompany(rackQ, c); // multi-company: isolate to the active company
@@ -132,7 +132,7 @@ warehouse.get('/', async (c) => {
 
   const data = (racks ?? []).map((r: {
     id: string; warehouse_id: string; rack: string; position: string | null;
-    reserved: boolean; notes: string | null;
+    zone: string | null; reserved: boolean; notes: string | null;
   }) => {
     const rackItems = itemsByRack.get(r.id) ?? [];
     return {
@@ -273,6 +273,7 @@ export const createWarehouseRacksHandler = async (c: any) => {
       warehouse_id: warehouseId,
       rack,
       position: (body.position as string) ?? null,
+      zone: typeof body.zone === 'string' && body.zone.trim() ? body.zone.trim() : null,
       reserved: body.reserved === true,
       status: body.reserved === true ? 'RESERVED' : 'EMPTY',
       notes: (body.notes as string) ?? null,
@@ -307,6 +308,9 @@ warehouse.patch('/racks/:id', async (c) => {
   if (typeof body.position === 'string') updates.position = body.position;
   if (typeof body.notes === 'string')    updates.notes = body.notes;
   if (typeof body.reserved === 'boolean') updates.reserved = body.reserved;
+  // zone: an explicit null / "" clears the manual override (back to the
+  // number-range rule), so key the write on PRESENCE, not on a string value.
+  if ('zone' in body) updates.zone = typeof body.zone === 'string' && body.zone.trim() ? body.zone.trim() : null;
 
   // Multi-company: scope the write (and the read-back) to the active company so
   // a blind rack id from another company matches nothing.

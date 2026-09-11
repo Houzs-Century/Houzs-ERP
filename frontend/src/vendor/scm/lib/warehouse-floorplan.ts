@@ -49,6 +49,11 @@ export const WAREHOUSE_ZONES: ZoneConfig[] = [
   },
 ];
 
+/* The assignable zone labels, in plan order — derived from WAREHOUSE_ZONES so the
+   UI zone pickers (drawer / batch bar / rack form) never hard-code the names and
+   stay a single source of truth with the layout. */
+export const ZONE_LABELS: string[] = WAREHOUSE_ZONES.map((z) => z.label);
+
 /* ── Rack label parsing ───────────────────────────────────────────────────
    Reads the TRAILING `<letters><number>[sep<number>]` token, so a stored label
    with a leading word — the real KL racks are "Rack L1.1", not "L1.1" — still
@@ -115,6 +120,8 @@ export type Slot = {
   rackKey: string;
   rackName: string;
   level: number | null;
+  /* Manual zone override from the rack row (null = derive from the number). */
+  zone: string | null;
   status: SlotStatus;
   itemCount: number;
   productCode: string;
@@ -174,6 +181,7 @@ export function toSlot(rack: Rack): Slot {
     rackKey: rackKeyOf(rack.rack),
     rackName: p.parsed && !Number.isNaN(p.rackNo) ? `${p.prefix}${p.rackNo}` : rack.rack,
     level: p.level,
+    zone: rack.zone,
     status,
     itemCount: items.length,
     productCode: items.length > 0 ? primary.item_code : '',
@@ -300,21 +308,43 @@ function buildBank(prefix: string, group: Slot[]): Bank {
   return { prefix, label, used: occupied, total: group.length, utilPct: pct(occupied, group.length), racks };
 }
 
-/* Group slots into the configured zones (by series + rackNo range). Anything
-   outside every zone — an unexpected series, an out-of-range or unparseable
-   number — still renders under a trailing UNZONED zone, so nothing disappears. */
+/* The zone a slot belongs to. A manual `zone` override wins — but only when it
+   names a configured zone that actually has a bank for this slot's series, so a
+   stray value can never strand a slot in a zone with nowhere to draw it.
+   Otherwise the number-range rule decides (series + rackNo in a bank's [from,to]).
+   Returns null when neither assigns it (unparseable / out-of-range and no valid
+   override) — those fall to the trailing UNZONED zone. */
+export function resolvedZoneLabel(slot: Slot, zones: ZoneConfig[] = WAREHOUSE_ZONES): string | null {
+  const override = (slot.zone ?? '').trim();
+  if (override) {
+    const target = zones.find((z) => z.label === override);
+    if (target && target.banks.some((bc) => bc.prefix === slot.prefix)) return override;
+  }
+  for (const z of zones) {
+    for (const bc of z.banks) {
+      if (slot.prefix === bc.prefix && Number.isFinite(slot.rackNo) && slot.rackNo >= bc.from && slot.rackNo <= bc.to) {
+        return z.label;
+      }
+    }
+  }
+  return null;
+}
+
+/* Group slots into the configured zones. Each slot's zone is resolved once (a
+   manual override, else the series + rackNo range). Anything that resolves to no
+   zone — an unexpected series, an out-of-range or unparseable number with no
+   valid override — still renders under a trailing UNZONED zone, so nothing
+   disappears. Within a zone a slot joins the bank matching its series. */
 export function buildZones(slots: Slot[], zones: ZoneConfig[] = WAREHOUSE_ZONES): Zone[] {
-  const assigned = new Set<Slot>();
+  const zoneOf = new Map<Slot, string | null>();
+  for (const s of slots) zoneOf.set(s, resolvedZoneLabel(s, zones));
   const out: Zone[] = [];
 
   for (const zone of zones) {
     const banks: Bank[] = [];
     for (const bc of zone.banks) {
-      const group = slots.filter(
-        (s) => s.prefix === bc.prefix && Number.isFinite(s.rackNo) && s.rackNo >= bc.from && s.rackNo <= bc.to,
-      );
+      const group = slots.filter((s) => zoneOf.get(s) === zone.label && s.prefix === bc.prefix);
       if (group.length === 0) continue;
-      group.forEach((s) => assigned.add(s));
       banks.push(buildBank(bc.prefix, group));
     }
     if (banks.length === 0) continue;
@@ -323,7 +353,7 @@ export function buildZones(slots: Slot[], zones: ZoneConfig[] = WAREHOUSE_ZONES)
     out.push({ label: zone.label, used, total, utilPct: pct(used, total), aisle: zone.aisle, banks });
   }
 
-  const leftover = slots.filter((s) => !assigned.has(s));
+  const leftover = slots.filter((s) => zoneOf.get(s) == null);
   if (leftover.length > 0) {
     const byPrefix = new Map<string, Slot[]>();
     for (const s of leftover) {

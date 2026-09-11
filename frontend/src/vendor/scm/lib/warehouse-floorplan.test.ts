@@ -9,6 +9,7 @@ import {
   matchSlot,
   parseRackLabel,
   rackKeyOf,
+  resolvedZoneLabel,
   statusCounts,
   toSlot,
   EMPTY_FILTERS,
@@ -30,11 +31,12 @@ const item = (over: Partial<RackItem> = {}): RackItem => ({
   ...over,
 });
 
-const rack = (label: string, status: RackStatus = 'EMPTY', items: RackItem[] = []): Rack => ({
+const rack = (label: string, status: RackStatus = 'EMPTY', items: RackItem[] = [], zone: string | null = null): Rack => ({
   id: `id-${label}`,
   warehouse_id: 'wh',
   rack: label,
   position: null,
+  zone,
   status,
   reserved: status === 'RESERVED',
   notes: null,
@@ -170,5 +172,47 @@ describe('buildZones', () => {
   it('puts an out-of-zone rack under a trailing UNZONED zone', () => {
     const extra = buildZones([...slots, toSlot(rack('Rack Z9.1'))]);
     expect(extra.map((z) => z.label)).toEqual(['ZONE A', 'ZONE B', 'UNZONED']);
+  });
+});
+
+describe('resolvedZoneLabel — manual zone override', () => {
+  it('derives from the number range when there is no override', () => {
+    expect(resolvedZoneLabel(toSlot(rack('Rack L3.1')))).toBe('ZONE A');
+    expect(resolvedZoneLabel(toSlot(rack('Rack L10.1')))).toBe('ZONE B');
+    expect(resolvedZoneLabel(toSlot(rack('Rack R9.1')))).toBe('ZONE B');
+  });
+  it('honours a valid override, even against the number rule', () => {
+    expect(resolvedZoneLabel(toSlot(rack('Rack L3.1', 'EMPTY', [], 'ZONE B')))).toBe('ZONE B');
+    expect(resolvedZoneLabel(toSlot(rack('Rack L10.1', 'EMPTY', [], 'ZONE A')))).toBe('ZONE A');
+  });
+  it('ignores an override that names no configured zone (falls back to the range)', () => {
+    expect(resolvedZoneLabel(toSlot(rack('Rack L3.1', 'EMPTY', [], 'ZONE Q')))).toBe('ZONE A');
+  });
+  it('returns null for an out-of-range / unparseable rack with no override', () => {
+    expect(resolvedZoneLabel(toSlot(rack('Rack Z9.1')))).toBeNull();
+    expect(resolvedZoneLabel(toSlot(rack('DOCK')))).toBeNull();
+  });
+});
+
+describe('buildZones — manual override moves a rack between zones', () => {
+  it('moves an L10 rack (default ZONE B) into ZONE A and out of ZONE B', () => {
+    const slots = [
+      toSlot(rack('Rack L1.1')),
+      toSlot(rack('Rack L10.1', 'EMPTY', [], 'ZONE A')),
+      toSlot(rack('Rack L10.2', 'EMPTY', [], 'ZONE A')),
+    ];
+    const zones = buildZones(slots);
+    const zoneA = zones.find((z) => z.label === 'ZONE A');
+    // L10 now sorts in after L1 inside ZONE A's L bank; ZONE B has no L rack left.
+    expect(zoneA?.banks[0].racks.map((r) => r.key)).toEqual(['L1', 'L10']);
+    expect(zones.find((z) => z.label === 'ZONE B')).toBeUndefined();
+  });
+  it('keeps the two levels of a reassigned rack together in one column', () => {
+    const zoneA = buildZones([
+      toSlot(rack('Rack L10.2', 'EMPTY', [], 'ZONE A')),
+      toSlot(rack('Rack L10.1', 'EMPTY', [], 'ZONE A')),
+    ]).find((z) => z.label === 'ZONE A');
+    expect(zoneA?.banks[0].racks).toHaveLength(1);
+    expect(zoneA?.banks[0].racks[0].slots.map((s) => s.id)).toEqual(['Rack L10.1', 'Rack L10.2']);
   });
 });
