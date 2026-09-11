@@ -469,6 +469,20 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
      snapshot; the pair must be adjacent, so a real size elsewhere in the same
      text is untouched. */
   d2 = d2.replace(/\d{2,3}\s*[x*]\s*\d{2,3}\s*(?:['"]{0,2}\s*inch(?:es)?\b|"|''|cm\b)/gi, " ");
+
+  /* AN ARM MEASUREMENT IS NOT THE SEAT. The supplier writes the arm on its own
+     segment - `leg:1inch / Nylon Fabric; OTHER: ARM 12"` (PO-009630) - and the
+     size reader below takes ANY two-digit number carrying an inch mark, so that
+     12 became the seat height on all three lines of that purchase order. A sofa
+     seat is 24-35 inches here; 12 is an arm. Measured on the 2026-09-11 supplier
+     export: 3 rows state an arm measurement, all on that one document, and they
+     are the only 3 sofa purchase lines in the company whose seat height reads
+     under 20 (docs/bugs/0823).
+
+     Blanked for the SIZE read only. `d2raw` still carries the text, so the
+     specials sweep keeps the arm instruction - the information is not lost, it
+     just stops being mistaken for the seat. */
+  d2 = d2.replace(/\bARM(?:REST)?\s*\d{1,3}\s*(?:['"]{0,2}\s*inch(?:es)?\b|"|'')/gi, " ");
   // seat size: inches or cm anywhere (also "(28'Inch)" / "28''" / "28'" / "Size:28")
   const sm = /(\d{2,3})\s*(cm)\b/i.exec(d2) || /(\d{2})\s*(?:['"]{1,2}\s*inch(?:es)?\b|"|''|'(?!\w)|\s*inch(?:es)?\b)/i.exec(d2) || /size\s*[:：]\s*(\d{2})/i.exec(d2);
   if (sm) {

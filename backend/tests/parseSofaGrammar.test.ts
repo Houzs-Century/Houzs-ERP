@@ -566,3 +566,25 @@ describe('parse-sofa: the shorthand the floor writes (owner 2026-09-04)', () => 
     expect((r.why as string[]).some((w) => /structure split across segments/.test(w))).toBe(true);
   });
 });
+
+/* An ARM measurement is not the seat — docs/bugs/0823.
+   The supplier writes the arm on its own segment; the size reader took any
+   two-digit number carrying an inch mark, so `OTHER: ARM 12"` became a 12-inch
+   SEAT on all three lines of HC-PO-009630. A sofa seat here is 24-35 inches. */
+describe('an arm measurement is not the seat height', () => {
+  it('does not read ARM 12" as a seat size', () => {
+    expect(parseSofa('leg:1inch / Nylon Fabric; OTHER: ARM 12"', '5535').size).toBeNull();
+    expect(parseSofa('OTHER: ARM 10"', '5535').size).toBeNull();
+    expect(parseSofa('ARMREST 14"', '5535').size).toBeNull();
+    expect(parseSofa('ARM 12inch', '5535').size).toBeNull();
+  });
+
+  it('still reads a real seat size stated beside an arm measurement', () => {
+    expect(parseSofa('ARM 12" / 32 inch', '5535').size).toBe('32');
+  });
+
+  it('leaves an ordinary seat size alone', () => {
+    expect(parseSofa('32 inch / Nylon', '5535').size).toBe('32');
+    expect(parseSofa("(28'Inch)", '5535').size).toBe('28');
+  });
+});
