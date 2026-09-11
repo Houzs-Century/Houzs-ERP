@@ -72,7 +72,9 @@ const MobileChangeLog = lazy(() => import("./MobileChangeLog").then((m) => ({ de
 const ScmSalesOrderMaintenance = lazy(() => import("../pages/scm-v2/SalesOrderMaintenance").then((m) => ({ default: m.SalesOrderMaintenance })));
 const Scm2990Shell = lazy(() => import("../pages/scm-v2/Scm2990Shell"));
 import "./mobile.css";
-import { MobileAssistant } from "./MobileAssistant";
+// MobileAssistant is intentionally not imported — see the comment near the
+// bottom of MobileAppInner's return for why (owner 2026-09-11).
+// import { MobileAssistant } from "./MobileAssistant";
 
 type Tab = "orders" | "service" | "calendar" | "profile";
 type Screen =
@@ -502,10 +504,6 @@ export function MobileApp() {
                 the Android one defers to PwaBanners' one-tap Install. */}
             <IosInstallGuide />
             <AndroidInstallGuide />
-            {/* MobileAssistant renders inside MobileAppInner (where the
-                `screen` state lives) so it can hide itself on the New/Edit
-                Sales Order form — its inline sheet used to sit right under
-                "Create Sales Order" (owner 2026-09-11). */}
             <MobileAppInner />
           </ChoiceProvider>
         </PromptProvider>
@@ -1016,7 +1014,11 @@ function MobileAppInner() {
       )}
 
       {annPopup}
-      <MobileAssistant hidden={screen.t === "new-so"} />
+      {/* MobileAssistant intentionally NOT rendered — owner 2026-09-11:
+          "那个 assistant 的功能是直接不要的". The whole surface is off on
+          mobile: no launcher, no sheet, no /api/assistant calls fire.
+          Component + backend service kept for now (desktop `/assistant`
+          page still uses them); ask owner before dropping those. */}
     </div>
   );
 }

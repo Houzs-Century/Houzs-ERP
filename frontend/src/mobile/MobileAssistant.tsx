@@ -25,13 +25,7 @@ const PETROL = "#1e8071";
    the app. */
 const shortWhen = fmtDateTime;
 
-/* `hidden` gates the whole launcher + sheet away from screens where the
-   Assistant's bottom-right disc + inline sheet would cover a primary CTA
-   (owner 2026-09-11: on the mobile New/Edit Sales Order the "Ask about your
-   ops" panel sat right under "Create Sales Order" and had to go). Screens
-   still get the Assistant elsewhere — the flag is per-invocation. */
-export function MobileAssistant({ hidden = false }: { hidden?: boolean }) {
-  if (hidden) return null;
+export function MobileAssistant() {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
