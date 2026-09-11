@@ -48,8 +48,26 @@ export const listDepositInvoicesHandler = async (c: Ctx): Promise<Response> => {
   if (so) q = q.eq('so_doc_no', so);
   const { data, error } = await q.order('invoice_date', { ascending: false }).order('di_number', { ascending: false }).limit(500);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ rows: (Array.isArray(data) ? data : []) as Row[] });
+  const rows = (Array.isArray(data) ? data : []) as Row[];
+  const numbered = await withNoteNumbers(c, rows);
+  if ('resp' in numbered) return numbered.resp;
+  return c.json({ rows: numbered.rows });
 };
+
+/** The number of the credit note that closed each invoice (docs/bugs/0831),
+    read once for the page — the row carries only the id. */
+async function withNoteNumbers(c: Ctx, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
+  const ids = [...new Set(rows.map((r) => r.credit_note_id).filter((x): x is string => typeof x === 'string' && x !== ''))];
+  const numberOf = new Map<string, string>();
+  if (ids.length > 0) {
+    const co = requireActiveCompanyId(c);
+    if (!co.ok) return { resp: c.json(co.refusal, 409) };
+    const { data, error } = await c.get('supabase').from('acc_credit_notes').select('id, note_number').eq('company_id', co.companyId).in('id', ids);
+    if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
+    for (const n of (Array.isArray(data) ? data : []) as Array<{ id: string; note_number: string }>) numberOf.set(String(n.id), String(n.note_number));
+  }
+  return { rows: rows.map((r) => ({ ...r, credit_note_number: typeof r.credit_note_id === 'string' ? numberOf.get(r.credit_note_id) ?? null : null })) };
+}
 
 export const depositInvoiceDetailHandler = async (c: Ctx): Promise<Response> => {
   const co = requireActiveCompanyId(c);
@@ -62,7 +80,9 @@ export const depositInvoiceDetailHandler = async (c: Ctx): Promise<Response> => 
     .eq('id', found.di.payment_id), c)
     .maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ invoice: found.di, payment: (payment as Row | null) ?? null });
+  const numbered = await withNoteNumbers(c, [found.di as unknown as Row]);
+  if ('resp' in numbered) return numbered.resp;
+  return c.json({ invoice: numbered.rows[0], payment: (payment as Row | null) ?? null });
 };
 
 /** The switch, and how many payments since the start still have no invoice. */

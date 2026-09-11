@@ -13,6 +13,7 @@ import type { Env, Variables } from '../env';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { paginateAll } from '../lib/paginate-all';
+import { absorbsOrderDeposit } from '../lib/si-order-deposit';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 const requirePerm = (c: Ctx): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
@@ -21,10 +22,14 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Orders that never became orders, or were taken back, are not collection. */
 const NOT_AN_ORDER = new Set(['DRAFT', 'CANCELLED']);
-/** Delivered or beyond: the balance stage. Until the delivery raises the
-    invoice (docs/bugs/0821's neighbour, the deposit-invoice design), the
-    status is the fact the report has. */
+/** Delivered or beyond: the balance stage by STATUS. An order with a live
+    sales invoice is at the balance stage whatever its status says, and its
+    balance is measured against what was BILLED — the invoice's total — not
+    the order's (docs/bugs/0831: the owner's "balance paid / convert to sales
+    invoice"). Until every delivery raises its invoice, the status keeps the
+    delivered-but-uninvoiced orders in view. */
 const DELIVERED = new Set(['DELIVERED', 'INVOICED', 'CLOSED']);
+type SiRow = { so_doc_no: string | null; invoice_number: string; status: string | null; total_sen: number | null };
 
 type SoRow = {
   doc_no: string; so_date: string; status: string; debtor_name: string | null;
@@ -36,11 +41,13 @@ export type CollectionOrder = {
   docNo: string; soDate: string; status: string; customer: string | null;
   totalSen: number; depositSen: number; balancePaidSen: number; collectedSen: number; outstandingSen: number;
   depositPct: number; balanceDueSen: number; balancePct: number; delivered: boolean; belowThreshold: boolean;
+  /** The live sales invoice on the order, when one exists, and what was billed (the invoice's total, else the order's). */
+  invoiceNumber: string | null; billedSen: number;
 };
 export type CollectionRow = {
   salespersonId: string | null; salesperson: string;
   orders: number; totalSen: number; depositSen: number; depositPct: number; belowCount: number;
-  delivered: { orders: number; totalSen: number; depositSen: number; balanceDueSen: number; balancePaidSen: number; balancePct: number; outstandingSen: number };
+  delivered: { orders: number; totalSen: number; billedSen: number; depositSen: number; balanceDueSen: number; balancePaidSen: number; balancePct: number; outstandingSen: number };
   sos: CollectionOrder[];
 };
 
@@ -93,6 +100,26 @@ export const collectionReport = async (c: Ctx): Promise<Response> => {
     }
   }
 
+  /* The final invoice, when one exists: several live invoices on one order
+     add up; the first number is the one named. */
+  const invoiceOf = new Map<string, { number: string; totalSen: number }>();
+  for (let i = 0; i < docs.length; i += 150) {
+    const chunk = docs.slice(i, i + 150);
+    const sis = await paginateAll<SiRow>((f, t) =>
+      sb.from('sales_invoices')
+        .select('so_doc_no, invoice_number, status, total_sen')
+        .eq('company_id', companyId).in('so_doc_no', chunk)
+        .order('invoice_number').range(f, t));
+    if (sis.error) return c.json({ error: 'load_failed', reason: String((sis.error as { message?: string }).message ?? sis.error) }, 500);
+    for (const inv of (sis.data ?? []) as SiRow[]) {
+      if (!inv.so_doc_no || !absorbsOrderDeposit(inv.status)) continue;
+      const at = invoiceOf.get(inv.so_doc_no);
+      invoiceOf.set(inv.so_doc_no, at
+        ? { number: at.number, totalSen: at.totalSen + Number(inv.total_sen ?? 0) }
+        : { number: String(inv.invoice_number), totalSen: Number(inv.total_sen ?? 0) });
+    }
+  }
+
   /* Who sold it: the staff row by id, else the agent text, else unassigned. */
   const staffIds = [...new Set(orders.map((s) => s.salesperson_id).filter((x): x is string => typeof x === 'string' && x !== ''))];
   const nameOf = new Map<string, string>();
@@ -106,13 +133,16 @@ export const collectionReport = async (c: Ctx): Promise<Response> => {
   const perOrder: CollectionOrder[] = orders.map((s) => {
     const p = paid.get(s.doc_no) ?? { deposit: 0, balance: 0 };
     const totalSen = Number(s.local_total_sen ?? 0);
+    const inv = invoiceOf.get(s.doc_no) ?? null;
+    const billedSen = inv ? inv.totalSen : totalSen;
     const collectedSen = p.deposit + p.balance;
-    const balanceDueSen = Math.max(totalSen - p.deposit, 0);
+    const balanceDueSen = Math.max(billedSen - p.deposit, 0);
     return {
       docNo: s.doc_no, soDate: String(s.so_date).slice(0, 10), status: String(s.status), customer: s.debtor_name ?? null,
-      totalSen, depositSen: p.deposit, balancePaidSen: p.balance, collectedSen, outstandingSen: totalSen - collectedSen,
+      totalSen, depositSen: p.deposit, balancePaidSen: p.balance, collectedSen, outstandingSen: billedSen - collectedSen,
       depositPct: pct(p.deposit, totalSen), balanceDueSen, balancePct: pct(p.balance, balanceDueSen),
-      delivered: DELIVERED.has(String(s.status)), belowThreshold: totalSen > 0 && pct(p.deposit, totalSen) < thresholdPct,
+      delivered: inv != null || DELIVERED.has(String(s.status)), belowThreshold: totalSen > 0 && pct(p.deposit, totalSen) < thresholdPct,
+      invoiceNumber: inv?.number ?? null, billedSen,
     };
   });
 
@@ -136,7 +166,7 @@ export const collectionReport = async (c: Ctx): Promise<Response> => {
       salespersonId: id, salesperson: name,
       orders: sos.length, totalSen, depositSen, depositPct: pct(depositSen, totalSen), belowCount: sos.filter((o) => o.belowThreshold).length,
       delivered: {
-        orders: dl.length, totalSen: sum(dl, (o) => o.totalSen), depositSen: sum(dl, (o) => o.depositSen),
+        orders: dl.length, totalSen: sum(dl, (o) => o.totalSen), billedSen: sum(dl, (o) => o.billedSen), depositSen: sum(dl, (o) => o.depositSen),
         balanceDueSen: dlDue, balancePaidSen: dlPaid, balancePct: pct(dlPaid, dlDue), outstandingSen: sum(dl, (o) => o.outstandingSen),
       },
       sos,

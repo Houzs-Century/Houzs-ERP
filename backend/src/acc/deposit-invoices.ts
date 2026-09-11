@@ -38,6 +38,7 @@ import { companyCodeById, docMonthTag, mintMonthlyDocNo } from '../scm/lib/doc-n
 import { docPrefixForCode } from '../scm/lib/companyScope';
 import { absorbsOrderDeposit } from '../scm/lib/si-order-deposit';
 import { todayMyt } from '../scm/lib/my-time';
+import { CREDIT_NOTE_HEADER, cancelCreditNote, insertCreditNote, postCreditNote } from './credit-notes';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
 type Db = any;
@@ -449,4 +450,130 @@ export async function issueMissingDepositInvoices(
     else issued.push(r.diNumber);
   }
   return { ok: true, issued, skipped };
+}
+
+/* ── The close-out: one credit note per deposit invoice at the final invoice ─ */
+
+type NoteRow = Record<string, any>;
+
+export type CloseoutResult =
+  | { ok: true; applied: Array<{ diNumber: string; noteNumber: string; jeNo: string | null }>; skipped: Array<{ diNumber: string; why: string }> }
+  | { ok: false; reason: string };
+
+/**
+ * At the FINAL invoice (docs/bugs/0831): every deposit invoice still standing
+ * on the order is closed by a credit note of its own — Dr DEPOSIT PAY BY
+ * CUSTOMER / Cr AR (party the customer) for the deposit's amount, dated the
+ * invoice's day, raised and posted through the note core, and linked on
+ * `credit_note_id`. The sale then stands ONCE, on the final invoice's group
+ * accounts; the customer's AR nets to the balance still owed. Idempotent: a
+ * linked deposit invoice is left alone, and a note already raised for the
+ * pair (a retry after the link failed to write) is linked, not duplicated.
+ */
+export async function applyDepositInvoicesToInvoice(
+  sb: Db,
+  p: { companyId: number; siId: string; siNumber: string; soDocNo: string | null; invoiceDate: string; actor: string | null },
+): Promise<CloseoutResult> {
+  if (!p.soDocNo) return { ok: true, applied: [], skipped: [] };
+  const { data: dis, error } = await sb.from('acc_deposit_invoices')
+    .select(DI_COLS).eq('company_id', p.companyId).eq('so_doc_no', p.soDocNo).neq('status', 'CANCELLED').order('di_number');
+  if (error) return { ok: false, reason: `deposit invoices: ${error.message}` };
+  const open = ((dis ?? []) as DepositInvoiceRow[]).filter((d) => !d.credit_note_id);
+  if (open.length === 0) return { ok: true, applied: [], skipped: [] };
+  const code = await companyCodeById(sb, p.companyId);
+  if (!code) return { ok: false, reason: `company ${p.companyId} has no code to number under` };
+  const roles = await resolveRoles(sb, p.companyId);
+  const applied: Array<{ diNumber: string; noteNumber: string; jeNo: string | null }> = [];
+  const skipped: Array<{ diNumber: string; why: string }> = [];
+  for (const di of open) {
+    const { data: prior, error: priorErr } = await sb.from('acc_credit_notes')
+      .select(CREDIT_NOTE_HEADER)
+      .eq('company_id', p.companyId).eq('kind', 'CN').eq('source_doc_no', di.di_number).eq('sales_invoice_id', p.siId)
+      .neq('status', 'CANCELLED')
+      .maybeSingle();
+    if (priorErr) { skipped.push({ diNumber: di.di_number, why: `prior note read: ${priorErr.message}` }); continue; }
+    let note = (prior as NoteRow | null) ?? null;
+    if (!note) {
+      const raised = await insertCreditNote(sb, {
+        companyId: p.companyId,
+        docPrefix: docPrefixForCode(code),
+        kind: 'CN',
+        party: { code: di.party_code, name: di.party_name },
+        soDocNo: di.so_doc_no,
+        salesInvoiceId: p.siId,
+        sourceDocNo: di.di_number,
+        noteDate: p.invoiceDate,
+        reason: `Deposit invoice ${di.di_number} closed by final invoice ${p.siNumber}`,
+        lines: [{ description: `Deposit invoice ${di.di_number} applied to ${p.siNumber}`, code: roles.DEPOSIT_INCOME, amountSen: Number(di.amount_sen) }],
+        createdBy: p.actor,
+      });
+      if (!raised.ok) { skipped.push({ diNumber: di.di_number, why: `note not raised: ${raised.reason}` }); continue; }
+      note = raised.note;
+    }
+    const posted = await postCreditNote(sb, { companyId: p.companyId, note, actor: p.actor });
+    if (!posted.ok) log(`close-out: ${String(note.note_number)} raised for ${di.di_number} but not posted:`, posted.status, posted.reason);
+    /* The link is the fact that the pair exists — written even when the
+       posting was refused, so the note is found (and posted from the notes
+       page) rather than raised a second time. */
+    const { error: linkErr } = await sb.from('acc_deposit_invoices').update({ credit_note_id: note.id }).eq('id', di.id);
+    if (linkErr) { skipped.push({ diNumber: di.di_number, why: `link: ${linkErr.message}` }); continue; }
+    applied.push({ diNumber: di.di_number, noteNumber: String(note.note_number), jeNo: posted.ok ? posted.jeNo : null });
+  }
+  return { ok: true, applied, skipped };
+}
+
+/** The hook the revenue posting calls (best-effort): never throws. */
+export async function applyDepositInvoicesBestEffort(
+  sb: Db,
+  p: { companyId: number | null; siId: string; siNumber: string; soDocNo: string | null; invoiceDate: string; actor: string | null },
+): Promise<void> {
+  if (p.companyId == null) return;
+  try {
+    const r = await applyDepositInvoicesToInvoice(sb, { ...p, companyId: p.companyId });
+    if (!r.ok) log(`close-out for ${p.siNumber} did not run:`, r.reason);
+    else for (const s of r.skipped) log(`close-out for ${p.siNumber}: ${s.diNumber} skipped —`, s.why);
+  } catch (e) {
+    log(`close-out for ${p.siNumber} threw:`, e);
+  }
+}
+
+/**
+ * When the final invoice is CANCELLED: the notes that closed its deposit
+ * invoices are cancelled by contra and the deposit invoices stand again —
+ * the deposits are deposits once more until a new final invoice. A note
+ * Finance raised against the invoice by hand (no deposit invoice points at
+ * it) is Finance's, and stays.
+ */
+export async function releaseDepositInvoicesFromInvoice(
+  sb: Db,
+  p: { companyId: number; siId: string; actor: string | null },
+): Promise<{ ok: true; released: string[] } | { ok: false; reason: string }> {
+  const { data: notes, error } = await sb.from('acc_credit_notes')
+    .select(CREDIT_NOTE_HEADER).eq('company_id', p.companyId).eq('kind', 'CN').eq('sales_invoice_id', p.siId).neq('status', 'CANCELLED');
+  if (error) return { ok: false, reason: `notes: ${error.message}` };
+  const released: string[] = [];
+  for (const note of (notes ?? []) as NoteRow[]) {
+    const { data: dis, error: diErr } = await sb.from('acc_deposit_invoices')
+      .select('id, di_number').eq('company_id', p.companyId).eq('credit_note_id', note.id);
+    if (diErr) return { ok: false, reason: `deposit invoices: ${diErr.message}` };
+    const linked = (dis ?? []) as Array<{ id: string; di_number: string }>;
+    if (linked.length === 0) continue;
+    const c = await cancelCreditNote(sb, { companyId: p.companyId, note, actor: p.actor });
+    if (!c.ok) return { ok: false, reason: `${String(note.note_number)}: ${c.reason}` };
+    const { error: unlinkErr } = await sb.from('acc_deposit_invoices').update({ credit_note_id: null }).eq('company_id', p.companyId).eq('credit_note_id', note.id);
+    if (unlinkErr) return { ok: false, reason: `unlink ${String(note.note_number)}: ${unlinkErr.message}` };
+    released.push(...linked.map((d) => d.di_number));
+  }
+  return { ok: true, released };
+}
+
+/** The hook the invoice cancel calls (best-effort): never throws. */
+export async function releaseDepositInvoicesBestEffort(sb: Db, p: { companyId: number | null; siId: string; siNumber: string; actor: string | null }): Promise<void> {
+  if (p.companyId == null) return;
+  try {
+    const r = await releaseDepositInvoicesFromInvoice(sb, { companyId: p.companyId, siId: p.siId, actor: p.actor });
+    if (!r.ok) log(`release for ${p.siNumber} did not run:`, r.reason);
+  } catch (e) {
+    log(`release for ${p.siNumber} threw:`, e);
+  }
 }

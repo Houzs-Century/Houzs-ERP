@@ -48,7 +48,7 @@ export const DepositInvoices = () => {
   return (
     <div className="space-y-4">
       <PageHeader eyebrow="Finance" title="Deposit Invoices"
-        description="One invoice per customer payment received before the order's final invoice — issued by itself when the switch is on, booked Dr the customer / Cr Deposit pay by customer. An edited payment cancels its invoice and takes the next number; a deleted one cancels it." />
+        description="One invoice per customer payment received before the order's final invoice — issued by itself when the switch is on, booked Dr the customer / Cr Deposit pay by customer. An edited payment cancels its invoice and takes the next number; a deleted one cancels it. At the final invoice each one is closed by a credit note of its own." />
 
       <SwitchCard />
 
@@ -70,7 +70,7 @@ export const DepositInvoices = () => {
             <thead>
               <tr>
                 <th style={th}>Number</th><th style={th}>Date</th><th style={th}>Customer</th><th style={th}>Order</th><th style={th}>Method</th>
-                <th style={{ ...th, textAlign: 'right' }}>Amount</th><th style={th}>Status</th><th style={th}>Journal</th>
+                <th style={{ ...th, textAlign: 'right' }}>Amount</th><th style={th}>Status</th><th style={th}>Journal</th><th style={th}>Closed by</th>
               </tr>
             </thead>
             <tbody>
@@ -84,6 +84,7 @@ export const DepositInvoices = () => {
                   <td style={{ ...td, ...num }}>{fmtSen(d.amount_sen)}</td>
                   <td style={td}><StatusPill status={d.status} /></td>
                   <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{d.je_no ?? '—'}</td>
+                  <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{d.credit_note_number ?? (d.credit_note_id ? 'CN' : '—')}</td>
                 </tr>
               ))}
             </tbody>
@@ -187,7 +188,7 @@ const InvoiceDetail = ({ id, onClose }: { id: string; onClose: () => void }) => 
               {pay ? `${pay.method ?? '—'}${pay.merchant_provider ? ` · ${pay.merchant_provider}` : ''}${pay.online_type ? ` · ${pay.online_type}` : ''} · ${fmtDateOrDash(pay.paid_at)} · ${fmtSen(pay.amount_sen)}` : 'the payment row is gone'}
             </div>
             <div><div style={soft}>Status</div><StatusPill status={inv.status} />{inv.je_no ? <span style={soft}> · {inv.je_no}</span> : <span style={{ ...soft, color: danger }}> · not posted</span>}</div>
-            {inv.credit_note_id && <div><div style={soft}>Credit note</div>{inv.credit_note_id}</div>}
+            {inv.credit_note_id && <div><div style={soft}>Closed by credit note</div><span style={{ fontFamily: 'var(--font-mono)' }}>{inv.credit_note_number ?? inv.credit_note_id}</span></div>}
             {inv.status === 'CANCELLED' && (
               <div style={{ gridColumn: '1 / -1' }}><div style={soft}>Cancelled</div>{inv.cancel_reason ?? '—'}{inv.cancelled_by ? <span style={soft}> · {inv.cancelled_by}</span> : null}{inv.cancelled_at ? <span style={soft}> · {fmtDateOrDash(inv.cancelled_at)}</span> : null}</div>
             )}

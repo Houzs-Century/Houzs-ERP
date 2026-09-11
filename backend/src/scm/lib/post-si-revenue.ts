@@ -20,6 +20,7 @@ import { postJournal, reverseJournal } from '../../acc/engine';
 import { resolveRoles, siLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 import { splitByItemGroup } from '../../acc/item-group-split';
 import { customerPartyCode } from '../../acc/payments';
+import { applyDepositInvoicesBestEffort } from '../../acc/deposit-invoices';
 
 export type PostSiResult =
   | { ok: true; status: 'posted'; jeNo: string; jeId: string; totalSen: number }
@@ -107,6 +108,13 @@ export async function postSiRevenue(sb: any, invoiceNumber: string): Promise<Pos
   });
 
   if (r.ok) {
+    /* THE DEPOSIT INVOICES CLOSE HERE (docs/bugs/0831): the revenue posting
+       is the one gate every issued invoice passes (create, from-DO, confirm,
+       resync, the backfill), so the credit note per deposit invoice is
+       raised from it — once, idempotent, never blocking the posting. */
+    await applyDepositInvoicesBestEffort(sb, {
+      companyId, siId: (si as { id: string }).id, siNumber: si.invoice_number, soDocNo, invoiceDate: si.invoice_date, actor: null,
+    });
     if (r.status === 'already_posted') return { ok: true, status: 'already_posted', jeNo: r.jeNo, jeId: r.jeId };
     return { ok: true, status: 'posted', jeNo: r.jeNo, jeId: r.jeId, totalSen };
   }

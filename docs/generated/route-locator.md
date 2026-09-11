@@ -565,21 +565,21 @@ Total: 1256 route registrations across 163 files.
 - L1410  PATCH  /:id/photos/:photoId
 
 ## backend/src/scm/routes/sales-invoices.ts  (15)
-- L452  GET    /
-- L555  GET    /invoiceable-do-lines
-- L571  GET    /:id
-- L910  POST   /
-- L932  POST   /from-dos
-- L1077  POST   /:id/items/from-do/:doId
-- L1080  PATCH  /:id
-- L1277  POST   /:id/items
-- L1279  PATCH  /:id/items/:itemId
-- L1423  DELETE /:id/items/:itemId
-- L1487  GET    /:id/payments
-- L1600  POST   /:id/payments
-- L1602  DELETE /:id/payments/:paymentId
-- L1987  PATCH  /:id/status
-- L1991  PATCH  /:id/payment
+- L453  GET    /
+- L556  GET    /invoiceable-do-lines
+- L572  GET    /:id
+- L911  POST   /
+- L933  POST   /from-dos
+- L1078  POST   /:id/items/from-do/:doId
+- L1081  PATCH  /:id
+- L1278  POST   /:id/items
+- L1280  PATCH  /:id/items/:itemId
+- L1424  DELETE /:id/items/:itemId
+- L1488  GET    /:id/payments
+- L1601  POST   /:id/payments
+- L1603  DELETE /:id/payments/:paymentId
+- L1994  PATCH  /:id/status
+- L1998  PATCH  /:id/payment
 
 ## backend/src/scm/routes/trips.ts  (15)
 - L150  GET    /
@@ -1054,13 +1054,13 @@ Total: 1256 route registrations across 163 files.
 - L310  PUT    /states/:stateKey
 
 ## backend/src/scm/routes/deposit-invoices.ts  (7)
-- L143  GET    /
-- L144  GET    /settings
-- L145  POST   /settings
-- L146  POST   /issue-missing
-- L147  GET    /:id
-- L148  POST   /:id/cancel
-- L149  POST   /:id/post
+- L163  GET    /
+- L164  GET    /settings
+- L165  POST   /settings
+- L166  POST   /issue-missing
+- L167  GET    /:id
+- L168  POST   /:id/cancel
+- L169  POST   /:id/post
 
 ## backend/src/scm/routes/po-amendments.ts  (7)
 - L106  GET    /
@@ -1105,12 +1105,12 @@ Total: 1256 route registrations across 163 files.
 - L130  GET    /:token/floorplans
 
 ## backend/src/scm/routes/credit-notes.ts  (6)
-- L324  GET    /
-- L325  POST   /
-- L326  GET    /:id
-- L327  PATCH  /:id
-- L328  POST   /:id/post
-- L329  POST   /:id/cancel
+- L279  GET    /
+- L280  POST   /
+- L281  GET    /:id
+- L282  PATCH  /:id
+- L283  POST   /:id/post
+- L284  POST   /:id/cancel
 
 ## backend/src/scm/routes/lorry-service-records.ts  (6)
 - L87  GET    /

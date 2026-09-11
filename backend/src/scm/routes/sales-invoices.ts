@@ -51,6 +51,7 @@ import { recomputeSiPaid as recomputePaid, readOrderDepositForInvoice } from '..
 import { stampSoDates, stampDoNumber, stampOrderDeposit } from '../lib/si-list-stamps';
 import { postSiRevenue, reverseSiRevenue, resyncSiRevenue } from '../lib/post-si-revenue';
 import { buildItemRow, createSalesInvoiceFromDoLines, migratedRefusalForDeliveries, nextSiNumber, recomputeTotals, recordSiCreate } from '../lib/si-from-do';
+import { releaseDepositInvoicesBestEffort } from '../../acc/deposit-invoices';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
 import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
@@ -1881,6 +1882,12 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
       // eslint-disable-next-line no-console
       console.error(`[si-revenue] reversal failed for ${d.invoice_number}:`, rev.status, rev.reason);
     }
+    /* The notes that closed this invoice's deposit invoices go with it: the
+       deposits stand again until a new final invoice (docs/bugs/0831). */
+    await releaseDepositInvoicesBestEffort(sb, {
+      companyId: auditCompanyId ?? null, siId: id, siNumber: d.invoice_number,
+      actor: String((c.get('houzsUser') as { name?: string } | undefined)?.name ?? '') || null,
+    });
 
     /* A SEPARATE row from the CANCEL above, not a duplicate of it: that was a
        document-status event, this is the AR/GL contra, and a cancel whose

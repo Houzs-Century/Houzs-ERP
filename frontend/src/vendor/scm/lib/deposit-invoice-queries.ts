@@ -14,7 +14,7 @@ export type DepositInvoiceStatus = 'ISSUED' | 'CANCELLED';
 export type DepositInvoice = {
   id: string; company_id: number; di_number: string; payment_source: string; payment_id: string; so_doc_no: string;
   party_code: string | null; party_name: string | null; invoice_date: string; amount_sen: number; method: string | null;
-  status: DepositInvoiceStatus; je_no: string | null; credit_note_id: string | null; cancel_reason: string | null;
+  status: DepositInvoiceStatus; je_no: string | null; credit_note_id: string | null; credit_note_number?: string | null; cancel_reason: string | null;
   created_at: string; created_by: string | null; cancelled_at: string | null; cancelled_by: string | null;
 };
 export type DepositInvoicePayment = {
