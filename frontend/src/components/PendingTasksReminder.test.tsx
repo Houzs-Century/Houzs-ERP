@@ -42,7 +42,7 @@ describe("PendingTasksReminder", () => {
   it("renders nothing when there is nothing owed", () => {
     state = { digest: null, open: false };
     const { container } = show();
-    expect(container).toBeEmptyDOMElement();
+    expect(container.innerHTML).toBe("");
   });
 
   it("leads with the event count and lists the worst tier first", () => {
