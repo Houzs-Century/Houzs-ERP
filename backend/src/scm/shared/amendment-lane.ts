@@ -24,14 +24,23 @@
 // proc ≤ delivery") validates the COMBINED submission before the split; a
 // both-dates reschedule then becomes two one-signature documents.
 //
-// LANE OF A LINE CHANGE — by the line's ITEM CODE: a SERVICE line (the SVC-
-// family — delivery fees, disposal, lifting) is transport/execution charges
-// wearing a line's clothes, so it routes to DELIVERY (the owner's category 2
-// names "disposal add on" and "transportation charges" explicitly); every real
-// product line routes to LINES. Service lines are never PO'd to a furniture
-// supplier, so this split also keeps the PO follow-up purely product-side.
+// LANE OF A LINE CHANGE — by WHETHER THE LINE IS A SERVICE LINE: a service line
+// (delivery fees, disposal, lifting, storage, transport) is transport/execution
+// charges wearing a line's clothes, so it routes to DELIVERY (the owner's
+// category 2 names "disposal add on" and "transportation charges" explicitly);
+// every real product line routes to LINES. Service lines are never PO'd to a
+// furniture supplier, so this split also keeps the PO follow-up purely
+// product-side.
+//
+// Service-ness is the FULL isServiceLine signal (item_group / category / SVC-
+// code), NOT the SVC- prefix alone: the go-live / AutoCount lines carry BARE
+// codes (DISPOSE, STORAGE, TRANSPORTATION CHARGES) with item_group='service' and
+// no SVC- prefix, and a prefix-only test mis-routed all of them to LINES — a
+// Logistics charge landed in Purchasing's queue and (once approved) spawned an
+// empty PO follow-up (owner 2026-09-11, docs/bugs). The caller resolves the SO
+// line's item_group server-side and passes it alongside the code.
 
-import { isServiceSkuCode } from './service-sku';
+import { isServiceLine } from './service-sku';
 
 export type AmendmentLane = 'LINES' | 'DELIVERY';
 
@@ -89,14 +98,19 @@ export function classifyHeaderKey(payloadKey: string): AmendmentLane {
   return lane;
 }
 
-/** Lane of one line change, by the item code that identifies what the line IS.
- *  For an ADD the code is the requested new_item_code; for SPEC/QTY/REMOVE the
- *  caller passes the EXISTING SO line's item_code (resolved server-side — never
- *  trusted from the client). A missing/unknown code defaults to LINES: a
- *  product change mis-routed to purchasing is reviewable noise, a product
- *  change mis-routed AWAY from purchasing is an unreviewed spec change. */
-export function classifyLineItemCode(itemCode: string | null | undefined): AmendmentLane {
-  return isServiceSkuCode(itemCode ?? null) ? 'DELIVERY' : 'LINES';
+/** Lane of one line change, by whether the line is a SERVICE line. For an ADD
+ *  only the requested new_item_code is known; for SPEC/QTY/REMOVE the caller
+ *  ALSO passes the EXISTING SO line's item_group (resolved server-side — never
+ *  trusted from the client), which is the authoritative signal for a service
+ *  line whose bare code (DISPOSE / STORAGE / TRANSPORTATION CHARGES) predates
+ *  the SVC- vocabulary. A missing/unknown identity defaults to LINES: a product
+ *  change mis-routed to purchasing is reviewable noise, a product change
+ *  mis-routed AWAY from purchasing is an unreviewed spec change. */
+export function classifyLineItemCode(
+  itemCode: string | null | undefined,
+  itemGroup?: string | null,
+): AmendmentLane {
+  return isServiceLine({ itemCode: itemCode ?? null, itemGroup: itemGroup ?? null }) ? 'DELIVERY' : 'LINES';
 }
 
 export type LaneSplitLine<L> = { line: L; lane: AmendmentLane };
@@ -114,12 +128,16 @@ export type LaneSplit<L> = {
 /**
  * Split one validated submission into its lane halves. `lineItemCode` resolves
  * the item code a line change targets (ADD → newItemCode, others → the SO
- * line's current code, looked up by the caller).
+ * line's current code, looked up by the caller). `lineItemGroup` optionally
+ * resolves that line's item_group — pass it so a bare-code service line
+ * (item_group='service', no SVC- prefix) is recognised and routed to DELIVERY;
+ * omit it and classification falls back to the code alone.
  */
 export function splitAmendmentByLane<L>(
   headerChanges: Record<string, string | null>,
   lines: L[],
   lineItemCode: (line: L) => string | null | undefined,
+  lineItemGroup?: (line: L) => string | null | undefined,
 ): LaneSplit<L> {
   const mk = () => ({ headerChanges: {} as Record<string, string | null>, headerKeys: [] as string[], lines: [] as L[] });
   const perLane: LaneSplit<L>['perLane'] = { LINES: mk(), DELIVERY: mk() };
@@ -130,7 +148,7 @@ export function splitAmendmentByLane<L>(
     perLane[lane].headerKeys.push(k);
   }
   for (const line of lines) {
-    perLane[classifyLineItemCode(lineItemCode(line))].lines.push(line);
+    perLane[classifyLineItemCode(lineItemCode(line), lineItemGroup?.(line))].lines.push(line);
   }
 
   const lanes = (['LINES', 'DELIVERY'] as AmendmentLane[]).filter(

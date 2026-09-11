@@ -66,6 +66,21 @@ describe('classifyLineItemCode', () => {
     expect(classifyLineItemCode('SVC-DISPOSE')).toBe('DELIVERY');
     expect(classifyLineItemCode('svc-lift')).toBe('DELIVERY');
   });
+
+  it('routes a BARE-code service line to DELIVERY by item_group (go-live / AutoCount codes lack the SVC- prefix)', () => {
+    // owner 2026-09-11: DISPOSE / STORAGE / TRANSPORTATION CHARGES carry
+    // item_group='service' but no SVC- prefix — the code-only test used to
+    // mis-route them to LINES (Purchasing).
+    expect(classifyLineItemCode('DISPOSE', 'service')).toBe('DELIVERY');
+    expect(classifyLineItemCode('TRANSPORTATION CHARGES', 'service')).toBe('DELIVERY');
+    expect(classifyLineItemCode('STORAGE', 'service')).toBe('DELIVERY');
+  });
+
+  it('keeps a real product line on LINES regardless of its group', () => {
+    expect(classifyLineItemCode('9028-L(RHF)', 'sofa')).toBe('LINES');
+    expect(classifyLineItemCode('PC151-01', null)).toBe('LINES');
+    expect(classifyLineItemCode('JAGER-(Q)', 'bedframe')).toBe('LINES');
+  });
 });
 
 describe('splitAmendmentByLane', () => {
@@ -112,6 +127,22 @@ describe('splitAmendmentByLane', () => {
       byCode,
     );
     expect(split.lanes).toEqual(['DELIVERY']);
+  });
+
+  it('splits a bare-code service line into DELIVERY via the item_group resolver', () => {
+    // The go-live shape that mis-routed to Purchasing: a real product line plus a
+    // DISPOSE service line whose code has no SVC- prefix. With the group resolver
+    // the DISPOSE line lands in its own DELIVERY (Logistics) document.
+    type LG = { id: string; code: string | null; group: string | null };
+    const split = splitAmendmentByLane<LG>(
+      {},
+      [{ id: 'a', code: '9028-L(RHF)', group: 'sofa' }, { id: 'b', code: 'DISPOSE', group: 'service' }],
+      (l) => l.code,
+      (l) => l.group,
+    );
+    expect(split.lanes).toEqual(['LINES', 'DELIVERY']);
+    expect(split.perLane.LINES.lines.map((l) => l.id)).toEqual(['a']);
+    expect(split.perLane.DELIVERY.lines.map((l) => l.id)).toEqual(['b']);
   });
 });
 

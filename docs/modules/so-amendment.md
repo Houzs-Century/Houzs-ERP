@@ -35,7 +35,7 @@ The owner's 2026-07-27 rework split approval in two
 | Lane | Covers | Signed by | Touches a PO? |
 |---|---|---|---|
 | `LINES` | SKU/spec, colour/fabric, qty, sell price, added/removed product lines, **Processing Date** | `scm.amendment.approve_lines` (Purchasing) | yes — approving auto-raises a follow-up PO Amendment |
-| `DELIVERY` | schedule Delivery Date, State/Postcode/City, the address block, disposal, customer contact, **service lines** (the SVC- family) | `scm.amendment.approve_delivery` (Logistics) | never |
+| `DELIVERY` | schedule Delivery Date, State/Postcode/City, the address block, disposal, customer contact, **service lines** (disposal / storage / transport — identified by `item_group='service'`, not the `SVC-` prefix alone) | `scm.amendment.approve_delivery` (Logistics) | never |
 
 Two rules that are easy to get wrong:
 
@@ -43,12 +43,17 @@ Two rules that are easy to get wrong:
   one per lane, each with its own approver and lifecycle. They never wait for
   each other. Numbering stays one `/A{n}` sequence per SO, so a mixed
   submission mints `/A3` and `/A4`.
-- **The lane of a LINE change is decided by its ITEM CODE**, not by what changed:
-  a service SKU routes to `DELIVERY` (delivery fees, disposal, lifting are
-  transport charges wearing a line's clothes), every real product line to
-  `LINES`. An unknown code defaults to `LINES` — a product change mis-routed to
-  purchasing is reviewable noise; mis-routed *away* from purchasing it is an
-  unreviewed spec change.
+- **The lane of a LINE change is decided by whether it is a SERVICE line**, not
+  by what changed: a service line routes to `DELIVERY` (delivery fees, disposal,
+  storage, transport are transport/execution charges wearing a line's clothes),
+  every real product line to `LINES`. Service-ness is the full `isServiceLine`
+  signal (`item_group` / catalog category / `SVC-` code), resolved server-side —
+  NOT the `SVC-` prefix alone, because the go-live / AutoCount lines (DISPOSE,
+  STORAGE, TRANSPORTATION CHARGES) carry `item_group='service'` with no prefix
+  and used to mis-route to Purchasing (owner 2026-09-11, docs/bugs). An unknown
+  identity defaults to `LINES` — a product change mis-routed to purchasing is
+  reviewable noise; mis-routed *away* from purchasing it is an unreviewed spec
+  change.
 
 **Legacy rows** (`lane IS NULL`, raised before the rework) keep the original
 supplier-confirm two-gate chain and its original keys
