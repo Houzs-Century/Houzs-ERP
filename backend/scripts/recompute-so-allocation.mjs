@@ -206,6 +206,68 @@ async function main() {
   }
   if (flips === 0) notice("  (no line changed — the projection already matches the allocator's own answer; idempotent re-run lands here)");
   notice("");
+
+  /* ── APPLY ONLY: did the COMMIT actually land? ─────────────────────────────
+     EVERYTHING PRINTED ABOVE WAS READ INSIDE THE TRANSACTION. `after` is taken
+     between the recompute and the COMMIT, so the per-line list and `flips`
+     describe what this transaction INTENDED, not what the database now holds.
+     Nothing re-read afterwards, which means a commit that did not stick was
+     structurally invisible — the run would print a full, detailed, confident
+     report of work that is not there.
+
+     That is not hypothetical. On 2026-09-11 an APPLY dispatch printed
+     `linesFlipped=710` and a 710-row per-line list; re-reading those same rows
+     from a separate connection found **8** of them changed. The 702 were
+     recovered by the Worker-cron path instead. WHY the commit did not stick is
+     still UNKNOWN — but this is why nobody could see that it had not.
+
+     So: re-open a SEPARATE connection (the repo's release-discipline rule 3 —
+     a fresh one, because the reporting connection is exactly the one that
+     cannot tell you this) and compare the rows the report claims it changed
+     against what the database says now. Exit non-zero when they disagree: a
+     verdict computed over nothing must never read as a pass. */
+  if (APPLY && flips > 0) {
+    const claimed = [];
+    for (const [id, b] of before) {
+      const a = after.get(id);
+      if (!a) continue;
+      if (a.stock_status !== b.stock_status || Number(a.stock_qty_ready ?? 0) !== Number(b.stock_qty_ready ?? 0)) {
+        claimed.push({ id, doc_no: b.doc_no, item_code: b.item_code, status: a.stock_status, qty: Number(a.stock_qty_ready ?? 0) });
+      }
+    }
+    const verify = postgres(DATABASE_URL, { ssl: "require", prepare: false, max: 1 });
+    let landed = 0;
+    const missed = [];
+    try {
+      const ids = claimed.map((r) => r.id);
+      const live = await verify`
+        SELECT id::text AS id, stock_status, coalesce(stock_qty_ready, 0)::int AS qty
+          FROM scm.mfg_sales_order_items WHERE id::text = ANY(${ids})`;
+      const liveById = new Map(live.map((r) => [r.id, r]));
+      for (const c of claimed) {
+        const got = liveById.get(c.id);
+        if (got && got.stock_status === c.status && Number(got.qty) === c.qty) landed += 1;
+        else missed.push(`${c.doc_no} ${c.item_code}: claimed ${c.status}(${c.qty}), database says ${got ? `${got.stock_status}(${got.qty})` : "row not found"}`);
+      }
+    } finally {
+      await verify.end({ timeout: 5 });
+    }
+    notice(`================ COMMIT VERIFICATION (fresh connection) ================`);
+    notice(`claimed ${claimed.length} changed line(s); ${landed} read back as claimed, ${missed.length} did not`);
+    if (missed.length > 0) {
+      for (const m of missed.slice(0, 25)) console.error(`::error::${m}`);
+      if (missed.length > 25) console.error(`::error::… and ${missed.length - 25} more`);
+      console.error("");
+      console.error("THE REPORT ABOVE IS NOT WHAT THE DATABASE HOLDS. The transaction reported success and its");
+      console.error("changes are not all there. Do NOT treat this run as a completed recompute; the production");
+      console.error("path that does land is the enqueue workflow (the Worker cron drains it).");
+      await pg.end({ timeout: 5 });
+      process.exit(4);
+    }
+    notice("every claimed change reads back from a separate connection — the commit landed.");
+    notice("");
+  }
+
   notice("================ SO HEADER flips ================");
   let hFlips = 0;
   for (const [doc, b] of headersBefore) {

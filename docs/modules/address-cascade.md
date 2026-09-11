@@ -30,6 +30,15 @@ Rows are maintained through **SO Maintenance → Localities**
 surface. There is no free-text fallback on any document form: a state, city or
 postcode that is not in the table must be added there first.
 
+Since 2026-09-11 the table carries a UNIQUE index on `(country, state, city,
+postcode)` (mig `20260911T1730`), so the same locality cannot exist twice —
+`POST /localities` returns **409** on a duplicate instead of silently creating
+one. The index was added after the MY set was found seeded twice (every postcode
+held two identical rows; `docs/bugs/0816-scm-my-localities-was-seeded-twice-so-every-malaysian-postco.md`).
+A city/postcode carries at most one row per state now, so a postcode that legibly
+spans several neighbourhoods (53300 = Wangsa Maju / Danau Kota / Setapak Jaya)
+still resolves to a single stored `city` until the set is enriched.
+
 (That page also hosts the Salesperson Handover section since 2026-08-17 — an
 unrelated tool behind `scm.so.attribute_other`, documented in `so-handover.md`.
 It touches no locality data.)
