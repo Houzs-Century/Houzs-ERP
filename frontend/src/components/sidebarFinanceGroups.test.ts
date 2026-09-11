@@ -40,8 +40,8 @@ describe('the Finance sidebar', () => {
       '/scm/settlement-setup', '/scm/chart-of-accounts', '/scm/other-debtors', '/scm/ap-invoices',
       '/scm/receipts', '/scm/payment-vouchers', '/scm/outstanding', '/scm/unbilled-deliveries',
       '/scm/currencies', '/reports/fair-report',
-      /* And the one added since (docs/bugs/0827). */
-      '/scm/credit-notes',
+      /* And the ones added since (docs/bugs/0827, 0828). */
+      '/scm/credit-notes', '/scm/deposit-invoices',
     ]) expect(tos, `${to} is still reachable`).toContain(to);
     /* The Accounting page's tabs, now reachable by name. */
     for (const tab of ['je', 'gl', 'tb', 'close', 'check', 'pnl', 'bs', 'rp', 'ar', 'ap', 'corrections', 'collection', 'charges', 'groups']) {
