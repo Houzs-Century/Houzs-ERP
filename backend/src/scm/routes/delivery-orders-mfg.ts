@@ -3974,12 +3974,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     debtor_code: (head.debtor_code as string | null) ?? null,
     debtor_name: (head.debtor_name as string | null) ?? null,
     do_date: today,
-    /* The DO's delivery dates FOLLOW THE DO's OWN DATE, not the SO's customer
-       date — owner 2026-09-11 「全部要跟 autocount」: AutoCount holds one delivery
-       date per DO (= its DocDate), so the ERP DO must show the same, never the
-       customer's original ask (which stays on the SO). Reverses the 2026-09-08
-       "carry the SO's customer date" default (docs/bugs/0716/0723). */
-    expected_delivery_at: today,
+    expected_delivery_at: today, // both delivery dates = the DO's own date (AutoCount DocDate), not the SO's customer ask which stays on the SO — owner 2026-09-11, docs/bugs/0804
     customer_delivery_date: today,
     address1: (head.address1 as string | null) ?? null,
     address2: doAddress2,
