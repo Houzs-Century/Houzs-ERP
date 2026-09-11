@@ -41,14 +41,42 @@ export type StockLineRequest = {
  * could have cleared.
  *
  * Zero-qty lines drop out for the same reason: nothing ships, nothing moves.
+ *
+ * AND A HARD-BOUND LINE WHOSE OWN PURCHASE ORDER HAS BEEN RECEIVED IS NOT A
+ * POOL QUESTION. `dedicatedlyCovered` carries those sales-order line ids, and
+ * they are dropped here for the same reason service lines are: the pool is the
+ * wrong thing to measure them against.
+ *
+ * Company 1 binds a bedframe / sofa / (SP) mattress line to the purchase order
+ * raised from it — readiness lights that line off its OWN
+ * `purchase_order_items.received_qty` and never consults `inventory_balances`
+ * (so-stock-allocation.ts step 6b). This guard did not know that, and measured
+ * every line against the shared bucket. The two halves then disagreed by
+ * design: the order read READY and its delivery order read "need 1, available
+ * 0" — because another order's delivery had drawn the physical units out of a
+ * bucket this line's receipt had put in. Owner 2026-09-11: 「哪一张 Sales Order
+ * 出货，它就会拿哪一张 PO，它们之间的 relationship 都是 hard binding，不是吗?」
+ * — yes, and now both halves say so.
+ *
+ * Worked case: HC-SO-013065 JAGER-(Q). Its own PO HC-PO-009766 received 1/1
+ * through HC-GR-005232-PO-009766 with the full variant, the line read READY,
+ * and the PG bucket for that exact variant stood at -1 because other shipments
+ * had drained it. The operator's only way out was Ship anyway, which pushes the
+ * bucket further negative and makes the next line worse — the loop this closes.
+ *
+ * `dedicatedlyCovered` is REQUIRED, never defaulted: a caller that says nothing
+ * would keep the old pooled answer with no compile error and no runtime signal
+ * (CLAUDE.md, BUG CLASS optional-param-noop). Pass an EMPTY set to mean "this
+ * caller has no binding to honour" — company 2 pools, and that is what it sends.
  */
 export function stockCheckableLines<
-  T extends { itemCode: string; itemGroup?: string | null; qty: number },
->(lines: T[]): T[] {
+  T extends { itemCode: string; itemGroup?: string | null; qty: number; soItemId?: string | null },
+>(lines: T[], dedicatedlyCovered: ReadonlySet<string>): T[] {
   return lines.filter(
     (l) =>
       Number(l.qty) > 0
-      && !isServiceLine({ itemGroup: l.itemGroup ?? null, itemCode: l.itemCode }),
+      && !isServiceLine({ itemGroup: l.itemGroup ?? null, itemCode: l.itemCode })
+      && !(l.soItemId != null && dedicatedlyCovered.has(l.soItemId)),
   );
 }
 

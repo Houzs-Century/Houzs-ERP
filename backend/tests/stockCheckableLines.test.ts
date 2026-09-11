@@ -15,32 +15,32 @@ describe("stockCheckableLines", () => {
   const goods = { itemCode: "XAMMAR-L(LHF)", itemGroup: "sofa", qty: 1 };
 
   test("goods lines are measured", () => {
-    expect(stockCheckableLines([goods])).toEqual([goods]);
+    expect(stockCheckableLines([goods], new Set())).toEqual([goods]);
   });
 
   test("a SERVICE line is dropped by its SVC- code even when item_group says otherwise", () => {
     // The exact pair that blocked 2606-034: one carries item_group 'others'.
     const dispose = { itemCode: "SVC-DISPOSE-SOFA", itemGroup: "others", qty: 1 };
     const delivery = { itemCode: "SVC-DELIVERY-CROSS", itemGroup: "service", qty: 1 };
-    expect(stockCheckableLines([goods, dispose, delivery])).toEqual([goods]);
+    expect(stockCheckableLines([goods, dispose, delivery], new Set())).toEqual([goods]);
   });
 
   test("a SERVICE line is dropped by its item_group even when the code is not SVC-", () => {
     const line = { itemCode: "LEGACY-FEE", itemGroup: "service", qty: 2 };
-    expect(stockCheckableLines([line])).toEqual([]);
+    expect(stockCheckableLines([line], new Set())).toEqual([]);
   });
 
   test("zero-qty lines are dropped — nothing ships, nothing moves", () => {
-    expect(stockCheckableLines([{ ...goods, qty: 0 }])).toEqual([]);
+    expect(stockCheckableLines([{ ...goods, qty: 0 }], new Set())).toEqual([]);
   });
 
   test("negative qty is dropped too (never a shortage to waive)", () => {
-    expect(stockCheckableLines([{ ...goods, qty: -1 }])).toEqual([]);
+    expect(stockCheckableLines([{ ...goods, qty: -1 }], new Set())).toEqual([]);
   });
 
   test("a missing item_group does not smuggle a service SKU through", () => {
     const line = { itemCode: "SVC-LIFT-CARRY-F3", qty: 1 };
-    expect(stockCheckableLines([line])).toEqual([]);
+    expect(stockCheckableLines([line], new Set())).toEqual([]);
   });
 
   test("an all-service pick yields nothing to check, not a shortage", () => {
@@ -48,7 +48,7 @@ describe("stockCheckableLines", () => {
       { itemCode: "SVC-DELIVERY", itemGroup: "service", qty: 1 },
       { itemCode: "SVC-DISPOSE-MATTRESS", itemGroup: "service", qty: 1 },
     ];
-    expect(stockCheckableLines(lines)).toEqual([]);
+    expect(stockCheckableLines(lines, new Set())).toEqual([]);
   });
 });
 
@@ -125,5 +125,36 @@ describe("checkStockAvailability company scope", () => {
       c.chain.some(([m, a]) => m === "eq" && a[0] === "company_id"),
     );
     expect(scopedAny).toBe(false);
+  });
+  /* Owner 2026-09-11: 「哪一张 Sales Order 出货，它就会拿哪一张 PO，它们之间的
+     relationship 都是 hard binding，不是吗?」 — readiness already honoured that
+     and this guard did not, so an order could read READY while its own delivery
+     read "need 1, available 0". Worked case HC-SO-013065 JAGER-(Q): own PO
+     received 1/1 with the full variant, line READY, and the PG bucket at -1
+     because other shipments had drained it. */
+  test('a line whose own purchase order covers it is not a pool question', () => {
+    const bound = { itemCode: 'JAGER-(Q)', itemGroup: 'bedframe', qty: 1, soItemId: 'so-line-1' };
+    expect(stockCheckableLines([bound], new Set(['so-line-1']))).toEqual([]);
+  });
+
+  test('an uncovered line beside a covered one is still checked', () => {
+    const covered = { itemCode: 'JAGER-(Q)', itemGroup: 'bedframe', qty: 1, soItemId: 'so-line-1' };
+    const uncovered = { itemCode: 'JAGER-(K)', itemGroup: 'bedframe', qty: 1, soItemId: 'so-line-2' };
+    expect(stockCheckableLines([covered, uncovered], new Set(['so-line-1']))).toEqual([uncovered]);
+  });
+
+  test('an EMPTY set means every line stays a pool question — what company 2 sends', () => {
+    const bound = { itemCode: 'JAGER-(Q)', itemGroup: 'bedframe', qty: 1, soItemId: 'so-line-1' };
+    expect(stockCheckableLines([bound], new Set())).toEqual([bound]);
+  });
+
+  test('a line with no source SO line can never be covered, whatever the set holds', () => {
+    const orphan = { itemCode: 'JAGER-(Q)', itemGroup: 'bedframe', qty: 1, soItemId: null };
+    expect(stockCheckableLines([orphan], new Set(['so-line-1']))).toEqual([orphan]);
+  });
+
+  test('covered does not rescue a SERVICE line — it never moved stock to begin with', () => {
+    const svc = { itemCode: 'SVC-DELIVERY', itemGroup: 'service', qty: 1, soItemId: 'so-line-1' };
+    expect(stockCheckableLines([svc], new Set(['so-line-1']))).toEqual([]);
   });
 });
