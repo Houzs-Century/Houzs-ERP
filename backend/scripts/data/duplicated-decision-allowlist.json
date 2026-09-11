@@ -1228,7 +1228,7 @@
     {
       "check": "D1",
       "key": "CLOSED,DELIVERED,INVOICED|backend/src/scm/routes/accounting-collection.ts backend/src/services/agents/cs-agent.ts",
-      "why": "DELIVERED-OR-BEYOND, asked twice: the CS agent answers \"has the customer got it\" for a chat reply; the Collection report (docs/bugs/0825) answers \"is this order at the balance stage\" for Finance. Both read the SO status enum as the same three words today. Recorded rather than collapsed: the report is due to move to \"has a sales invoice\" once delivery raises the invoice (the deposit-invoice design), while the agent stays on delivery — they are about to diverge on purpose."
+      "why": "DELIVERED-OR-BEYOND, asked twice: the CS agent answers \"has the customer got it\" for a chat reply; the Collection report (docs/bugs/0825) answers \"is this order at the balance stage\" for Finance. Both read the SO status enum as the same three words today. Recorded rather than collapsed: since docs/bugs/0831 the report ALSO counts an order with a live sales invoice as at the balance stage and measures the balance against the invoice's total; the status set stays for the delivered-but-uninvoiced orders, while the agent stays on delivery alone — they diverge on purpose."
     },
     {
       "check": "D1",

@@ -5,8 +5,10 @@
 // paid). Two views over the orders opened in a period (by SO date):
 //   DEPOSIT — per salesman: orders, order value, deposit collected, deposit %,
 //             and how many orders sit under the threshold (default 50%);
-//   BALANCE — of the delivered orders: balance due after deposit, balance
-//             collected, balance %, outstanding.
+//   BALANCE — of the delivered (or invoiced) orders: balance due after
+//             deposit, balance collected, balance %, outstanding — measured
+//             against the FINAL INVOICE's total when one exists (docs/bugs/
+//             0831), the order's otherwise.
 // A salesman opens to the orders behind the figures; "only below" narrows to
 // the orders under the line; Export writes the open view as CSV.
 // ----------------------------------------------------------------------------
@@ -49,15 +51,15 @@ export const collectionCsv = (r: CollectionReport, view: View, onlyBelow: boolea
       lines.push([row.salesperson, o.docNo, o.customer, o.soDate, o.status, fmtRm(o.totalSen), fmtRm(o.depositSen), fmtPct(o.depositPct), fmtRm(o.outstandingSen)].map(esc).join(','));
     }
   } else {
-    lines.push(['Salesman', 'Delivered orders', 'Order value', 'Deposit', 'Balance due', 'Balance paid', 'Balance %', 'Outstanding'].map(esc).join(','));
+    lines.push(['Salesman', 'Delivered orders', 'Invoiced value', 'Deposit', 'Balance due', 'Balance paid', 'Balance %', 'Outstanding'].map(esc).join(','));
     for (const row of [...r.rows, r.totals]) {
       const d = row.delivered;
-      lines.push([row.salesperson, d.orders, fmtRm(d.totalSen), fmtRm(d.depositSen), fmtRm(d.balanceDueSen), fmtRm(d.balancePaidSen), fmtPct(d.balancePct), fmtRm(d.outstandingSen)].map(esc).join(','));
+      lines.push([row.salesperson, d.orders, fmtRm(d.billedSen), fmtRm(d.depositSen), fmtRm(d.balanceDueSen), fmtRm(d.balancePaidSen), fmtPct(d.balancePct), fmtRm(d.outstandingSen)].map(esc).join(','));
     }
     lines.push('');
-    lines.push(['Salesman', 'SO', 'Customer', 'SO date', 'Status', 'Order value', 'Deposit', 'Balance due', 'Balance paid', 'Balance %', 'Outstanding'].map(esc).join(','));
+    lines.push(['Salesman', 'SO', 'Invoice', 'Customer', 'SO date', 'Status', 'Invoiced value', 'Deposit', 'Balance due', 'Balance paid', 'Balance %', 'Outstanding'].map(esc).join(','));
     for (const row of r.rows) for (const o of row.sos.filter((x) => x.delivered)) {
-      lines.push([row.salesperson, o.docNo, o.customer, o.soDate, o.status, fmtRm(o.totalSen), fmtRm(o.depositSen), fmtRm(o.balanceDueSen), fmtRm(o.balancePaidSen), fmtPct(o.balancePct), fmtRm(o.outstandingSen)].map(esc).join(','));
+      lines.push([row.salesperson, o.docNo, o.invoiceNumber ?? '', o.customer, o.soDate, o.status, fmtRm(o.billedSen), fmtRm(o.depositSen), fmtRm(o.balanceDueSen), fmtRm(o.balancePaidSen), fmtPct(o.balancePct), fmtRm(o.outstandingSen)].map(esc).join(','));
     }
   }
   return `${lines.join('\n')}\n`;
@@ -135,7 +137,7 @@ export const CollectionTab = () => {
         <span style={soft}>
           {view === 'deposit'
             ? 'Deposit collected against order value, for the orders opened in the period. A salesman opens to the orders.'
-            : 'Of the delivered orders: the balance after deposit and how much of it has come in.'}
+            : 'Of the delivered or invoiced orders: the balance after deposit and how much of it has come in — against the final invoice when there is one.'}
         </span>
       </div>
 
@@ -159,7 +161,7 @@ export const CollectionTab = () => {
                 <tr>
                   <th style={{ ...th, textAlign: 'left' }}>Salesman</th>
                   <th style={{ ...th, textAlign: 'right' }}>Delivered</th>
-                  <th style={{ ...th, textAlign: 'right' }}>Order value</th>
+                  <th style={{ ...th, textAlign: 'right' }}>Invoiced value</th>
                   <th style={{ ...th, textAlign: 'right' }}>Deposit</th>
                   <th style={{ ...th, textAlign: 'right' }}>Balance due</th>
                   <th style={{ ...th, textAlign: 'right' }}>Balance paid</th>
@@ -208,7 +210,7 @@ const SellerLines = ({ row, view, thresholdPct, onlyBelow, open, onToggle }: {
         ) : (
           <>
             <td style={{ ...cell, ...num }}>{d.orders}</td>
-            <td style={{ ...cell, ...num }}>{fmtRm(d.totalSen)}</td>
+            <td style={{ ...cell, ...num }}>{fmtRm(d.billedSen)}</td>
             <td style={{ ...cell, ...num }}>{fmtRm(d.depositSen)}</td>
             <td style={{ ...cell, ...num }}>{fmtRm(d.balanceDueSen)}</td>
             <td style={{ ...cell, ...num }}>{fmtRm(d.balancePaidSen)}</td>
@@ -230,7 +232,7 @@ const OrderLine = ({ o, view }: { o: CollectionOrder; view: View }) => {
   return (
     <tr data-order={o.docNo} style={{ background: 'var(--c-cream, #faf7f0)' }}>
       <td style={{ ...cell, paddingLeft: 28 }}>
-        <span style={{ fontFamily: 'var(--font-mono)' }}>{o.docNo}</span> · {o.customer ?? '—'} · {fmtDateOrDash(o.soDate)} · {o.status.replace(/_/g, ' ').toLowerCase()}
+        <span style={{ fontFamily: 'var(--font-mono)' }}>{o.docNo}</span>{o.invoiceNumber ? <> · <span style={{ fontFamily: 'var(--font-mono)' }}>{o.invoiceNumber}</span></> : null} · {o.customer ?? '—'} · {fmtDateOrDash(o.soDate)} · {o.status.replace(/_/g, ' ').toLowerCase()}
       </td>
       {view === 'deposit' ? (
         <>
@@ -243,7 +245,7 @@ const OrderLine = ({ o, view }: { o: CollectionOrder; view: View }) => {
       ) : (
         <>
           <td style={{ ...cell, ...num }} />
-          <td style={{ ...cell, ...num }}>{fmtRm(o.totalSen)}</td>
+          <td style={{ ...cell, ...num }}>{fmtRm(o.billedSen)}</td>
           <td style={{ ...cell, ...num }}>{fmtRm(o.depositSen)}</td>
           <td style={{ ...cell, ...num }}>{fmtRm(o.balanceDueSen)}</td>
           <td style={{ ...cell, ...num }}>{fmtRm(o.balancePaidSen)}</td>

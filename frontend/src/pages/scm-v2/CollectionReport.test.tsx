@@ -12,28 +12,28 @@ import type { CollectionReport } from '../../vendor/scm/lib/collection-report-qu
 const order = (docNo: string, over: Partial<CollectionReport['rows'][number]['sos'][number]> = {}) => ({
   docNo, soDate: '2026-07-02', status: 'CONFIRMED', customer: 'Ah Meng',
   totalSen: 500000, depositSen: 200000, balancePaidSen: 0, collectedSen: 200000, outstandingSen: 300000,
-  depositPct: 40, balanceDueSen: 300000, balancePct: 0, delivered: false, belowThreshold: true, ...over,
+  depositPct: 40, balanceDueSen: 300000, balancePct: 0, delivered: false, belowThreshold: true, invoiceNumber: null, billedSen: 500000, ...over,
 });
 const report: CollectionReport = {
   from: '2026-07-01', to: '2026-07-31', thresholdPct: 50,
   rows: [
     {
       salespersonId: 'A', salesperson: 'Scarlett Chong Kar Yin', orders: 2, totalSen: 800000, depositSen: 350000, depositPct: 43.8, belowCount: 1,
-      delivered: { orders: 1, totalSen: 300000, depositSen: 150000, balanceDueSen: 150000, balancePaidSen: 100000, balancePct: 66.7, outstandingSen: 50000 },
+      delivered: { orders: 1, totalSen: 300000, billedSen: 300000, depositSen: 150000, balanceDueSen: 150000, balancePaidSen: 100000, balancePct: 66.7, outstandingSen: 50000 },
       sos: [
         order('SO-1'),
-        order('SO-2', { status: 'DELIVERED', totalSen: 300000, depositSen: 150000, balancePaidSen: 100000, collectedSen: 250000, outstandingSen: 50000, depositPct: 50, balanceDueSen: 150000, balancePct: 66.7, delivered: true, belowThreshold: false }),
+        order('SO-2', { status: 'DELIVERED', totalSen: 300000, billedSen: 300000, invoiceNumber: '2990-SI-2607-004', depositSen: 150000, balancePaidSen: 100000, collectedSen: 250000, outstandingSen: 50000, depositPct: 50, balanceDueSen: 150000, balancePct: 66.7, delivered: true, belowThreshold: false }),
       ],
     },
     {
       salespersonId: 'B', salesperson: 'Kah Wai', orders: 1, totalSen: 200000, depositSen: 200000, depositPct: 100, belowCount: 0,
-      delivered: { orders: 1, totalSen: 200000, depositSen: 200000, balanceDueSen: 0, balancePaidSen: 0, balancePct: 0, outstandingSen: 0 },
-      sos: [order('SO-4', { status: 'DELIVERED', totalSen: 200000, depositSen: 200000, collectedSen: 200000, outstandingSen: 0, depositPct: 100, balanceDueSen: 0, delivered: true, belowThreshold: false })],
+      delivered: { orders: 1, totalSen: 200000, billedSen: 200000, depositSen: 200000, balanceDueSen: 0, balancePaidSen: 0, balancePct: 0, outstandingSen: 0 },
+      sos: [order('SO-4', { status: 'DELIVERED', totalSen: 200000, billedSen: 200000, depositSen: 200000, collectedSen: 200000, outstandingSen: 0, depositPct: 100, balanceDueSen: 0, delivered: true, belowThreshold: false })],
     },
   ],
   totals: {
     salespersonId: null, salesperson: 'Total', orders: 3, totalSen: 1000000, depositSen: 550000, depositPct: 55, belowCount: 1,
-    delivered: { orders: 2, totalSen: 500000, depositSen: 350000, balanceDueSen: 150000, balancePaidSen: 100000, balancePct: 66.7, outstandingSen: 50000 },
+    delivered: { orders: 2, totalSen: 500000, billedSen: 500000, depositSen: 350000, balanceDueSen: 150000, balancePaidSen: 100000, balancePct: 66.7, outstandingSen: 50000 },
     sos: [],
   },
 };
@@ -86,6 +86,7 @@ describe('the Collection tab', () => {
     expect(within(scarlett).getByText('500.00')).toBeTruthy();     // outstanding
     fireEvent.click(screen.getByLabelText('Show the orders of Scarlett Chong Kar Yin'));
     expect(screen.getByText('SO-2')).toBeTruthy();
+    expect(screen.getByText('2990-SI-2607-004')).toBeTruthy();    // the final invoice it is measured against
     expect(screen.queryByText('SO-1')).toBeNull();                 // not delivered
   });
 
