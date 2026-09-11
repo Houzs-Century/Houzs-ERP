@@ -23,7 +23,7 @@ import {
   bankLinesMatchGroup, bankStatementPeriod, bankStatementAutoMatch,
 } from '../src/scm/routes/accounting-bank';
 import { bankConfigList, bankConfigSave } from '../src/scm/routes/accounting-bank-config';
-import { bankMonths } from '../src/scm/routes/accounting-bank-months';
+import { bankMonths, bankMonthDetail } from '../src/scm/routes/accounting-bank-months';
 import { bankMonthLock } from '../src/scm/routes/accounting-bank-locks';
 /* Layer 3's own undo is registered on this rig too: it can reverse an entry a
    closed bank month has already reported, so it is a door into the same room
@@ -153,6 +153,7 @@ function harness(tables: Record<string, Row[]> = {}, perms: readonly string[] = 
   app.patch('/bank/rules/:id', bankRuleUpdate as never);
   app.post('/settlement/receipts/:id/undo', settlementReceiptUndo as never);
   app.get('/bank/months', bankMonths as never);
+  app.get('/bank/months/:accountCode/:month', bankMonthDetail as never);
   app.post('/bank/months/:accountCode/:month/lock', bankMonthLock as never);
   return { app, sb };
 }
@@ -993,6 +994,61 @@ describe('a report the bank charged', () => {
     /* Nothing is owed any more: it is off the payable list. */
     const after = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
     expect(after.lines[0].state).toBe('POSTED');
+  });
+});
+
+/* ── A decision is re-made on every read (docs/bugs/0815) ─────────────────────
+   June's statement was uploaded before the charge fix (docs/bugs/0812), so
+   its 8 June credit was stored as "check which" — and stayed that way after
+   the fix, because what a card movement LOOKS LIKE was decided once, at
+   upload, and written on the line. The owner, after the fix: 这个还是没有修吗?
+   The candidates under it were already recomputed live; the decision above
+   them now is too, against today's reports and advices. Nothing is written. */
+describe('what a card movement looks like is re-decided on every read', () => {
+  const CHARGED = [
+    HEAD,
+    row('20260803', '000000000696048', 'CR', 'CR/CARD SALES MN 32410011 DATED 31072026', '00113107'),
+  ].join('\n');
+  const ADVICE = { id: 9, company_id: CO, acquirer_code: 'MBB', file_name: 'adv-0803.pdf', advice_date: '2026-08-03', net_sen: 696048 };
+  const DAY = { id: 1, company_id: CO, payout_id: 9, batch_id: 1, settled_on: '2026-07-31', net_sen: 696048, charge_sen: 32400, charge_account_code: '900-T003', charge_note: 'terminal fee' };
+
+  test('a credit stored as "check which" reads as the advice\'s answer once the advice and the charge are in', async () => {
+    const { app, sb } = harness({ acc_settlement_batches: [BATCH], acc_settlement_rows: [CONFIRMED_ROW] });
+    /* Uploaded when the report still read as owed its full net: unsure. */
+    const up = await (await upload(app, { fileName: 'aug-charged.csv', content: CHARGED })).json() as any;
+    expect(up.kinds.PAYOUT_UNSURE).toBe(1);
+    const stored = (sb.tables.acc_bank_statement_lines as Row[])[0]!;
+    expect(stored.kind).toBe('PAYOUT_UNSURE');
+
+    /* Then Finance books the charge and files the advice. */
+    sb.tables.acc_settlement_payouts = [ADVICE];
+    sb.tables.acc_settlement_payout_batches = [DAY];
+
+    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    const line = detail.lines[0];
+    expect(line.kind).toBe('PAYOUT');
+    expect(line.matched_batch_id).toBe(1);
+    expect(String(line.note)).toMatch(/payment advice/);
+    expect(line.candidates[0]).toMatchObject({ id: 1, outstandingSen: 696048 });
+    /* Read, not written: the row on disk still says what the upload said. */
+    expect((sb.tables.acc_bank_statement_lines as Row[])[0]!.kind).toBe('PAYOUT_UNSURE');
+
+    /* The month view reads the same fresh decision. */
+    const month = await (await app.request('/bank/months/330-0000/2026-08')).json() as any;
+    expect(month.lines.find((l: any) => l.id === line.id)).toMatchObject({ kind: 'PAYOUT', matched_batch_id: 1 });
+  });
+
+  test('a movement already dealt with keeps what it was booked as', async () => {
+    const { app, sb } = harness({ acc_settlement_batches: [BATCH], acc_settlement_rows: [CONFIRMED_ROW] });
+    const up = await (await upload(app)).json() as any;
+    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    const payout = detail.lines.find((l: any) => l.kind === 'PAYOUT');
+    expect((await post(app, `/bank/lines/${payout.id}/receipt`, { batchId: 1 })).status).toBe(200);
+    /* The report is paid now; a fresh decision would find no report waiting.
+       A POSTED line is not re-decided. */
+    const after = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    expect(after.lines.find((l: any) => l.id === payout.id)).toMatchObject({ state: 'POSTED', kind: 'PAYOUT', matched_batch_id: 1 });
+    expect(sb.tables.acc_settlement_receipts).toHaveLength(1);
   });
 });
 

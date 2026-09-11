@@ -25,8 +25,8 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { assembleMonth, monthOf, monthWindow, type MonthStatement } from '../../acc/bank-month';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
 import { entryCandidatesFor } from '../../acc/bank-match';
-import { loadPayableBatches, loadAccountLedger, loadLiveMonthLock, claimedSetFor, jeNosOf } from '../../acc/bank';
-import { bankGuard } from './accounting-bank';
+import { loadPayableBatches, loadAccountLedger, loadLiveMonthLock, claimedSetFor, jeNosOf, loadRecognitionRules, loadPayoutAdvices } from '../../acc/bank';
+import { bankGuard, freshDecisions } from './accounting-bank';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -379,12 +379,14 @@ export const bankMonthDetail = bankGuard(async (c) => {
   const matchP = sb.from('acc_bank_statement_matches')
     .select('bank_line_id, je_no, amount_sen, match_reason').eq('company_id', co.companyId);
 
-  const [linesRes, matchRes, batches] = await Promise.all([
-    linesP, matchP, loadPayableBatches(sb, co.companyId),
+  const [linesRes, matchRes, batches, rules, payouts] = await Promise.all([
+    linesP, matchP, loadPayableBatches(sb, co.companyId), loadRecognitionRules(sb), loadPayoutAdvices(sb, co.companyId),
   ]);
   if (linesRes.error) return c.json({ error: 'load_failed', reason: linesRes.error.message }, 500);
   if (matchRes.error) return c.json({ error: 'load_failed', reason: matchRes.error.message }, 500);
   if (!batches.ok) return c.json({ error: 'load_failed', reason: batches.reason }, 500);
+  if (!rules.ok) return c.json({ error: 'load_failed', reason: rules.reason }, 500);
+  if (!payouts.ok) return c.json({ error: 'load_failed', reason: payouts.reason }, 500);
 
   const matchesByLine = new Map<number, Row[]>();
   for (const m of rowsOf(matchRes.data)) {
@@ -394,12 +396,16 @@ export const bankMonthDetail = bankGuard(async (c) => {
   }
 
   /* Rule 1: the month takes the lines whose own date is in it, from whichever
-     file they arrived in. */
+     file they arrived in. Each OPEN card movement is decided again against
+     today's reports and advices (docs/bugs/0815). */
   const everyLine = rowsOf(linesRes.data);
-  const lines = everyLine.filter((l) => {
-    const on = dayOf(l.booked_on);
-    return on !== null && on >= window.from && on <= window.to;
-  });
+  const fresh = freshDecisions(everyLine, rules.rules, batches.batches, payouts.payouts);
+  const lines = everyLine
+    .filter((l) => {
+      const on = dayOf(l.booked_on);
+      return on !== null && on >= window.from && on <= window.to;
+    })
+    .map((l): Row => ({ ...l, ...(fresh.get(Number(l.id)) ?? {}) }));
 
   /* The entry a movement claims: its own first, and the match table only where
      it has none. Two sources for one fact, in a fixed order, so the answer
