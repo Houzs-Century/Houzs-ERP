@@ -118,6 +118,13 @@ export type Env = {
   // Email (Resend). Leave RESEND_API_KEY unset to run in no-op mode —
   // send() will log + skip, never throw.
   RESEND_API_KEY?: string;
+  // Singapore postcode lookup via OneMap (scm/routes/sg-postcode.ts). Leave
+  // BOTH unset to run in no-op mode — the endpoint returns { configured: false }
+  // and every SG address form keeps the seeded 55-area picker. Set as Worker
+  // secrets (`wrangler secret put ONEMAP_EMAIL` / `ONEMAP_PASSWORD`) with a free
+  // OneMap account to activate live 6-digit postcode -> address autofill.
+  ONEMAP_EMAIL?: string;
+  ONEMAP_PASSWORD?: string;
   // APNs push (services/apns.ts). All unset = no-op mode, same as Resend.
   // Values come from an App Store Connect auth KEY (.p8) once the Apple
   // Developer enrolment completes — see docs/ios-app-store.md.

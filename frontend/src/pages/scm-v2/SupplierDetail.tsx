@@ -73,6 +73,7 @@ import {
   postcodesInState,
   PAYMENT_TERMS_OPTIONS,
 } from '../../vendor/scm/lib/localities-queries';
+import { SgPostcodeField } from '../../vendor/scm/components/SgPostcodeField';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import { composeSupplierSku, looksAmbiguous } from '../../vendor/scm/lib/supplier-sku-helpers';
 import { parseSupplierCategories, displaySupplierCategories } from '../../vendor/scm/lib/supplier-categories';
@@ -89,7 +90,6 @@ import styles from './SupplierDetail.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
-const LG_ICON = { size: 20, strokeWidth: 1.75 } as const;
 
 /* CROSS-COMPANY MISS — when the supplier lives in another company the user is
    allowed to see, the backend answers { error: 'in_other_company', companyId,
@@ -3060,7 +3060,7 @@ const SupplierInfoCard = ({
             </label>
             <EditField label="Area" value={form.area} onChange={(v) => setF('area', v)} />
             <CitySelect state={form.state} value={form.city} onChange={(v) => setF('city', v)} />
-            <PostcodeSelect state={form.state} city={form.city} value={form.postcode} onChange={(v) => setF('postcode', v)} />
+            {form.country === 'Singapore' ? <SgPostcodeField value={form.postcode} onChange={(v) => setF('postcode', v)} onResolveAddress={(a) => setF('address', a)} fieldClassName={styles.field} labelClassName={styles.fieldLabel} inputClassName={styles.fieldInput} /> : <PostcodeSelect state={form.state} city={form.city} value={form.postcode} onChange={(v) => setF('postcode', v)} />}
             <EditField label="Billing Address" value={form.address} onChange={(v) => setF('address', v)} multiline />
             <EditField label="Notes" value={form.notes} onChange={(v) => setF('notes', v)} multiline />
           </div>
