@@ -951,6 +951,51 @@ describe('the obvious ones', () => {
   });
 });
 
+/* ── A report the bank charged (docs/bugs/0812) ───────────────────────────────
+   Public Bank kept RM 324.00 off 2990's 2026-06-06 payout as a terminal fee;
+   Finance booked it on the advice day (docs/bugs/0787). The bank side still
+   said that report was owed its full net, so the 8 June credit — three days
+   less the fee, RM 8,143.29 — matched nothing: the advice was distrusted (its
+   day figure did not equal the report's "owed") and the operator was shown
+   "check which" over a credit the advice had already explained. Owner: 我不是
+   给你 payment advice 了吗? bank recon 这边只需要对 payment advice 罢了啊. */
+describe('a report the bank charged', () => {
+  const CHARGED = [
+    HEAD,
+    /* The credit is the report's net less the RM 324.00 the bank kept. */
+    row('20260803', '000000000696048', 'CR', 'CR/CARD SALES MN 32410011 DATED 31072026', '00113107'),
+  ].join('\n');
+  const charged = () => harness({
+    acc_settlement_batches: [BATCH], acc_settlement_rows: [CONFIRMED_ROW],
+    acc_settlement_payouts: [{ id: 9, company_id: CO, acquirer_code: 'MBB', file_name: 'adv-0803.pdf', advice_date: '2026-08-03', net_sen: 696048 }],
+    acc_settlement_payout_batches: [{ id: 1, company_id: CO, payout_id: 9, batch_id: 1, settled_on: '2026-07-31', net_sen: 696048, charge_sen: 32400, charge_account_code: '900-T003', charge_note: 'terminal fee' }],
+  });
+
+  test('is owed its net less the charge, and the advice for that figure is trusted', async () => {
+    const { app } = charged();
+    const up = await (await upload(app, { fileName: 'aug-charged.csv', content: CHARGED })).json() as any;
+    expect(up.kinds.PAYOUT).toBe(1);
+    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    const line = detail.lines[0];
+    expect(line.kind).toBe('PAYOUT');
+    expect(line.matched_batch_id).toBe(1);
+    expect(line.candidates[0]).toMatchObject({ id: 1, outstandingSen: 696048 });
+    expect(String(line.note)).toMatch(/payment advice/);
+  });
+
+  test('books the credit, and the report is then fully received — credit plus charge', async () => {
+    const { app, sb } = charged();
+    const up = await (await upload(app, { fileName: 'aug-charged.csv', content: CHARGED })).json() as any;
+    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    const res = await post(app, `/bank/lines/${detail.lines[0].id}/receipt`, { batchId: 1 });
+    expect(res.status).toBe(200);
+    expect((sb.tables.acc_settlement_receipts as Row[])[0]).toMatchObject({ batch_id: 1, amount_sen: 696048 });
+    /* Nothing is owed any more: it is off the payable list. */
+    const after = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    expect(after.lines[0].state).toBe('POSTED');
+  });
+});
+
 /* ── Overlapping uploads (owner 2026-09-08: 可能隔几天我就做一次) ─────────────── */
 describe('uploading overlapping exports of the same account', () => {
   /* The first file again, plus one movement the bank posted since, plus a
