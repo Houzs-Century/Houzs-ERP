@@ -80,8 +80,13 @@ async function getToken(email: string, password: string, f: typeof fetch): Promi
     body: JSON.stringify({ email, password }),
   });
   if (!res.ok) return null;
-  const j = (await res.json().catch(() => null)) as { access_token?: string; expiry_timestamp?: string } | null;
-  if (!j?.access_token) return null;
+  let j: { access_token?: string; expiry_timestamp?: string };
+  try {
+    j = (await res.json()) as { access_token?: string; expiry_timestamp?: string };
+  } catch {
+    return null; // malformed token response -> caller reports auth_failed
+  }
+  if (!j.access_token) return null;
   // expiry_timestamp is a unix time in SECONDS; fall back to +2 days if absent.
   const expiresAt = j.expiry_timestamp ? Number(j.expiry_timestamp) * 1000 : Date.now() + 2 * 86_400_000;
   cachedToken = { token: j.access_token, expiresAt };
@@ -106,8 +111,13 @@ export async function lookupSgPostcode(
   const url = `${SEARCH_URL}?searchVal=${want}&returnGeom=Y&getAddrDetails=Y&pageNum=1`;
   const res = await f(url, { headers: { authorization: token } });
   if (!res.ok) return { configured: true, results: [], error: "lookup_failed" };
-  const j = (await res.json().catch(() => null)) as { results?: Array<Record<string, unknown>> } | null;
-  const results = (j?.results ?? [])
+  let j: { results?: Array<Record<string, unknown>> };
+  try {
+    j = (await res.json()) as { results?: Array<Record<string, unknown>> };
+  } catch {
+    return { configured: true, results: [], error: "lookup_failed" };
+  }
+  const results = (j.results ?? [])
     .filter((r) => String(r.POSTAL ?? "").trim() === want)
     .map(normalizeSearchResult);
   return { configured: true, results };
