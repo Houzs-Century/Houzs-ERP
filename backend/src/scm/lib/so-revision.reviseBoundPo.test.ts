@@ -437,6 +437,52 @@ describe('reviseBoundPo — unchanged contracts still hold', () => {
   });
 });
 
+describe('reviseBoundPo — a SPEC change syncs the surviving PO line identity', () => {
+  /* One surviving line whose SO item_code SWAPPED (e.g. LHF -> RHF). Before the
+     fix, reviseBoundPo re-derived cost/variants but left item_code, so the PO
+     kept ordering and printing the old SKU and its so_drift never cleared. */
+  function swapStore(soDescription: string | null): Record<string, Row[]> {
+    const store = baseStore();
+    store.so_revisions = [{
+      amendment_id: AMD, revision: 1, po_id: null,
+      snapshot: { lines: [{ id: 'L1' }], poLinks: { L1: ['POI-1'] } },
+    }];
+    store.mfg_sales_order_items = [
+      soLine({ id: 'L1', item_code: 'BF-1-RHF', qty: 1, description: soDescription }),
+    ];
+    store.purchase_order_items = [
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', material_name: 'Bed One LHF', qty: 1, line_total_sen: 1000 }),
+    ];
+    store.supplier_material_bindings = [binding('BF-1-RHF', 'S1', 1200)];
+    return store;
+  }
+
+  it('rewrites item_code + material_name and re-prices on the new SKU', async () => {
+    const store = swapStore('Bed One RHF');
+    const cNew = await cost(store, 'BF-1-RHF');
+
+    const res = await reviseBoundPo(fakeSb(store), AMD, 'user-1');
+
+    const line = store.purchase_order_items.find((i) => i.id === 'POI-1');
+    expect(line).toBeDefined();
+    expect(line!.item_code).toBe('BF-1-RHF');        // the fix: SKU now reaches the PO line
+    expect(line!.material_name).toBe('Bed One RHF');  // identity pair synced together
+    expect(line!.unit_price_sen).toBe(cNew);          // re-priced on the new SKU
+    expect(cNew).toBeGreaterThan(0);                  // guard: the seed really priced it
+    expect(res.warnings).toEqual([]);
+  });
+
+  it('never downgrades material_name to the bare code when the revised SO line has no description', async () => {
+    const store = swapStore(null);
+
+    await reviseBoundPo(fakeSb(store), AMD, 'user-1');
+
+    const line = store.purchase_order_items.find((i) => i.id === 'POI-1');
+    expect(line!.item_code).toBe('BF-1-RHF');         // code still syncs
+    expect(line!.material_name).toBe('Bed One LHF');   // existing name kept, not blanked to the code
+  });
+});
+
 /* A SURVIVING line re-derived here used to keep its STALE carried SO photo, so a
    code-swap that REPLACED the SO line left the PO showing a dead so-items/<old>
    key (docs/bugs/0789). The ADD path already carried the current photo; the
