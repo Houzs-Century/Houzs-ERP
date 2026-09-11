@@ -69,6 +69,7 @@ import postgres from "postgres";
 import { selectBuildRows } from "./lib/sofa-desc2-match.mjs";
 import { loadCorrections } from "./lib/sofa-corrections-source.mjs";
 import { planDownstreamParity } from "./lib/sofa-downstream-parity.mjs";
+import { alignPieceColumns, pieceColumnsOn } from "./lib/align-sofa-piece-columns.mjs";
 import {
   K,
   compartmentOf,
@@ -468,6 +469,15 @@ async function applyDownstreamDoc(doc, kind, c, verify) {
     }
   }
 
+  /* EVERY column that states a piece, not just the labels this function writes.
+     `supplier_sku` is the one the FACTORY reads (the PO PDF's "Supplier Code"),
+     and no writer touched it until 2026-09-11 - docs/bugs/0822. Resolved from
+     the table, never assumed, and applied to each row INSIDE the transaction
+     that moved its code, so no window exists in which the row states two
+     different pieces. */
+  const pieceCols = await pieceColumnsOn(sql, spec.table);
+  const aligned = [];
+
   await sql.begin(async (tx) => {
     for (const k of plan.keep) {
       const src = pick.rows.find((r) => String(r.id) === String(k.id));
@@ -480,6 +490,7 @@ async function applyDownstreamDoc(doc, kind, c, verify) {
           + labels.map((c) => `, ${ident(c)} = $4`).join("")
           + ` WHERE id = $3`,
         labels.length ? [k.to, JSON.stringify(v), k.id, name] : [k.to, JSON.stringify(v), k.id]);
+      aligned.push(...(await alignPieceColumns(tx, spec.table, k.id, pieceCols)));
     }
     for (const a of plan.add) {
       const v = { ...(plan.template?.variants ?? {}) };
@@ -491,9 +502,14 @@ async function applyDownstreamDoc(doc, kind, c, verify) {
       for (const c of labels) over[c] = names.get(a.to);
       const lineNo = await nextLineNo(tx, spec, head.id);
       if (lineNo !== null) over.line_no = lineNo;
-      await cloneRow(tx, spec.table, plan.template.id, over, ["variants"]);
+      /* `cloneRow` RETURNs id, so this is a row array, not a row. */
+      const [cloned] = await cloneRow(tx, spec.table, plan.template.id, over, ["variants"]);
+      /* A clone carries the TEMPLATE's supplier code, which names the template's
+         piece, not this one's. */
+      if (cloned?.id) aligned.push(...(await alignPieceColumns(tx, spec.table, cloned.id, pieceCols)));
     }
   });
+  for (const a of aligned) log(`      ALIGNED ${a.col}: ${JSON.stringify(a.from)} -> ${JSON.stringify(a.to)}`);
   for (const n of linkNotes) log(`      NOTE ${n}`);
 
   const after = await sumMoney(sql, spec.table, null, money, { spec, headId: head.id, needle: c.desc2Match, lineKeys: c.lineKeys, exclude: c.desc2Exclude });

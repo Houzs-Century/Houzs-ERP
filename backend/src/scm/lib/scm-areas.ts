@@ -144,6 +144,9 @@ export const SCM_UNGUARDED_PREFIXES: readonly string[] = [
   "/currencies",
   "/hr",
   "/localities",
+  // SG postcode -> address via OneMap (2026-09-11): a shared reference lookup
+  // like /localities — read-only, cross-area, on the coarse gate.
+  "/sg-postcode",
   "/staff",
   "/fabric-colours",
   "/document-flow",

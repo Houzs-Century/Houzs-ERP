@@ -81,6 +81,7 @@ import { mrpSupplierLeadTimes } from "./routes/mrp-supplier-lead-times";
 import { outstanding } from "./routes/outstanding";
 import { unbilledDeliveries } from "./routes/unbilled-deliveries";
 import { localities } from "./routes/localities";
+import { sgPostcode } from "./routes/sg-postcode";
 import { staff } from "./routes/staff";
 import { fabricColours } from "./routes/fabric-colours";
 import { addons } from "./routes/addons";
@@ -629,6 +630,10 @@ scm.route("/unbilled-deliveries", unbilledDeliveries);
 // localities: MY State/City/Postcode reference — cross-area lookup, left on the
 // coarse gate (see SHARED READ HELPERS note above).
 scm.route("/localities", localities);
+// sg-postcode: live Singapore 6-digit postcode -> address via OneMap. Same
+// shared-read rationale as localities (a postcode resolves the same for every
+// caller); inert until the ONEMAP_* Worker secrets are set.
+scm.route("/sg-postcode", sgPostcode);
 // Wired 2026-06-20 — SCM stub-wiring wave: SO Salesperson dropdown (staff),
 // SoLineCard fabric-colour picker (fabric-colours). /product-models gained a
 // GET /by-code/:code for the SoLineCard saved-line allowed_options resolve.
