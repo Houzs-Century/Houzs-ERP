@@ -44,6 +44,7 @@
 //   LINE_ID        optional — the row, when FROM matches more than one
 //   APPLY=1 + CONFIRM=<DOC>   to write
 import postgres from 'postgres';
+import { PIECE_RX, assertMatcherSane, movePieceTo, pieceOf } from './lib/sofa-piece-token.mjs';
 
 const CO = Number(process.env.COMPANY_ID || 1);
 const DOC = String(process.env.DOC || '').trim();
@@ -68,14 +69,11 @@ const K = (s) => String(s ?? '').trim().toUpperCase();
 /** `9058-2A(RHF)` -> `2A(RHF)`, and a piece token inside free text. No trailing
  *  word boundary: a token ending in `)` has none after it, which is the miss
  *  that made the first name audit report 0 of 17 (docs/bugs/0818). */
-const pieceOf = (code) => { const s = K(code); const i = s.indexOf('-'); return i < 0 ? s : s.slice(i + 1); };
-const PIECE_RX = /(\d?[ABL]?\d?[A-Z]{0,3}\((?:LHF|RHF)\)|\bCNR\b|\bCONSOLE\b|\bSTOOL\b|\b\dS\b|\b\dNA\b)/i;
-{
-  const ok = ['SOFA VERANO 2A(LHF)', 'SOFA SOFFIO 1S'].every((x) => PIECE_RX.test(x))
-    && !['AMN SOFA - SF9058', 'HOK SOFA - 5536'].some((x) => PIECE_RX.test(x))
-    && 'SOFA VERANO 2A(LHF)'.replace(PIECE_RX, 'L(RHF)') === 'SOFA VERANO L(RHF)';
-  if (!ok) { console.error('SELF-TEST FAILED on the piece matcher. Refusing to run.'); process.exit(1); }
-}
+/* The rule and its self-test live in lib/sofa-piece-token.mjs - this file used
+   to carry a private copy, which is how three writers ended up each moving a
+   different subset of the columns (docs/bugs/0822). */
+try { assertMatcherSane(); } catch (e) { console.error(String(e.message)); process.exit(1); }
+
 const isPo = /-PO-/i.test(DOC);
 const sql = postgres(DST, { ssl: 'require', max: 1, prepare: false });
 
@@ -85,12 +83,12 @@ async function readRows() {
     if (!po) return null;
     return {
       rows: await sql`SELECT id, item_code, qty, received_qty, unit_price_sen, so_item_id,
-                             description, material_name, coalesce(item_group, '') AS item_group
+                             description, material_name, supplier_sku, coalesce(item_group, '') AS item_group
                         FROM scm.purchase_order_items WHERE purchase_order_id = ${po.id} ORDER BY id`,
     };
   }
   const rows = await sql`SELECT i.id, i.item_code, i.qty, 0 AS received_qty, i.unit_price_sen,
-                                i.description, NULL::text AS material_name,
+                                i.description, NULL::text AS material_name, NULL::text AS supplier_sku,
                                 NULL::text AS so_item_id, coalesce(i.item_group, '') AS item_group
                            FROM scm.mfg_sales_order_items i
                            JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no
@@ -142,17 +140,21 @@ try {
            document this tool was written for (docs/bugs/0818). Only the piece
            TOKEN is rewritten; the model word keeps whatever it says, and a name
            that states no piece (the supplier's own product name) is left alone. */
-        const nameCols = isPo ? ['description', 'material_name'] : ['description'];
+        /* `supplier_sku` is on this list because the FACTORY reads it - the PO
+           PDF's "Supplier Code" column, which the document itself labels as the
+           code they act on. It was missing until 2026-09-11, and HC-PO-2609-053
+           went to Hookka naming the other end piece of the build. */
+        const nameCols = isPo ? ['description', 'material_name', 'supplier_sku'] : ['description'];
         const renames = [];
         for (const col of nameCols) {
           const before = row[col];
           if (before === null || before === undefined || String(before).trim() === '') continue;
           if (!PIECE_RX.test(String(before))) continue;          // the supplier's own product name
-          const after = String(before).replace(PIECE_RX, pieceOf(TO));
+          const after = movePieceTo(String(before), pieceOf(TO));
           if (after !== String(before)) renames.push({ col, before: String(before), after });
         }
         for (const r of renames) line(`   RENAME  ${r.col}: ${JSON.stringify(r.before)} -> ${JSON.stringify(r.after)}`);
-        if (!renames.length) line('   the printed name states no piece (or already states this one) — left as it is.');
+        if (!renames.length) line('   every sibling column states no piece (or already states this one) — left as it is.');
 
         if (!APPLY) {
           line(`DRY-RUN — nothing was written. To write: APPLY=1 CONFIRM="${DOC}"`);
@@ -165,7 +167,7 @@ try {
             `UPDATE scm.${table} SET ${sets} WHERE id = $2`,
             [TO, row.id, ...renames.map((r) => r.after)],
           );
-          line(`APPLIED — 1 line renamed${renames.length ? `, and ${renames.length} printed name(s) with it` : ''}.`);
+          line(`APPLIED — 1 line renamed${renames.length ? `, and ${renames.length} sibling column(s) with it` : ''}.`);
 
           /* VERIFY on a FRESH connection, and assert the SHAPE — the document's
              whole piece list — not just that one row reads the new code. The

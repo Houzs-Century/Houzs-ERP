@@ -32,10 +32,10 @@ DIFFERENT piece from its code: purchase **6**, goods-received **11**, sales
 used `\b` after the piece token, and `2A(LHF)` ends in `)` — no word boundary
 follows, so it matched nothing and the first run reported 0 real mismatches out of
 17. That is the CLAUDE.md trap "a checker that cannot match reports a clean run",
-and it is why `repair-sofa-line-name-to-code.mjs` self-tests its matcher against
+and it is why `repair-sofa-line-name-to-code.mjs` [gone] self-tests its matcher against
 four real names and three supplier product names before it reports anything.
 
-**Fix.** `repair-sofa-line-name-to-code.mjs` (+ workflow) rewrites ONLY the piece
+**Fix.** `repair-sofa-line-name-to-code.mjs` [gone] (+ workflow) rewrites ONLY the piece
 token, in the column the row actually prints, and only where the name states a
 different piece. A name that states NO piece is the supplier's own product name —
 "AMN SOFA - SF9058", "HOK SOFA - 5536", "DSL SOFA - 8030" — and on a purchase
@@ -51,3 +51,10 @@ things at once. Any future tool that changes a sofa's code must write the name i
 the same transaction.
 
 **Ref.** fix/sofa-line-name, 2026-09-11.
+
+**SUPERSEDED 2026-09-11, same day.** This fix moved the printed NAME and left a
+THIRD column stale: `supplier_sku`, the code the factory builds from. Both the
+script and its workflow are replaced by
+`backend/scripts/repair-sofa-line-shown-vs-code.mjs`, which sweeps all 14
+printed line tables and EVERY column on them that can state a piece. See
+docs/bugs/0822-the-purchase-order-told-the-factory-to-build-the-other-end-p.md.

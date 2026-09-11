@@ -5371,6 +5371,41 @@ not-folded-into-agree property, the unwritten ruling that stays `DIFFER`, the
 no-ruling control, and the assertion that a ruling cannot rescue an ERP carrying
 no compartments at all.
 
+## A corrected code carries its SUPPLIER code too (2026-09-11)
+
+New SURFACE on `backend/scripts/apply-sofa-compartment-corrections.mjs` and
+`backend/scripts/rename-sofa-line-in-place.mjs`: both now align EVERY column
+that can state a sofa piece, inside the transaction that moves the code.
+
+The section below taught them the printed NAME. It left a third column stale —
+`supplier_sku`, which is the column the FACTORY builds from (the PO PDF's
+"Supplier Code", and the document labels it as such). The owner found it the same
+day on the same document: `HC-PO-2609-053` showed our `8030-1A(LHF)` on screen
+and told Hookka `5540-L(LHF)`, the build's two end pieces exchanged.
+
+Measured across 14 printed line tables, company 1: 24 purchase-order and 13
+goods-received `supplier_sku` values, 7 purchase-invoice names (that table had no
+arm at all), and 4 purchase-order `material_name` values the earlier sweep could
+not see because it examined one column per row.
+
+Three changes of shape, not just of scope:
+
+- the rule lives in `backend/scripts/lib/sofa-piece-token.mjs`, once, and
+  `assertMatcherSane()` throws before any caller reads a row. The rename tool's
+  private copy is gone; a fourth copy is what let each writer cover a different
+  subset;
+- `backend/scripts/lib/align-sofa-piece-columns.mjs` is the step a WRITER calls
+  with the row whose code it just changed, resolving the columns from the table —
+  so a new sibling column is added in ONE place;
+- `backend/scripts/repair-sofa-line-shown-vs-code.mjs` (+ its workflow) is the
+  system-wide sweep, replacing `repair-sofa-line-name-to-code.mjs` [gone].
+
+ONLY the piece token moves: a supplier code keeps the supplier's own spelling
+(`HOK-5540 SOFA 2A(LHF)` -> `HOK-5540 SOFA 1A(LHF)`), because a document is a
+snapshot of what was sent and the master row's spelling has since changed.
+Closed documents are corrected too, by the owner's decision the same day. Trace
+in docs/bugs/0822-the-purchase-order-told-the-factory-to-build-the-other-end-p.md.
+
 ## A corrected code carries its printed NAME (2026-09-11)
 
 New SURFACE on `backend/scripts/apply-sofa-compartment-corrections.mjs`: it now
