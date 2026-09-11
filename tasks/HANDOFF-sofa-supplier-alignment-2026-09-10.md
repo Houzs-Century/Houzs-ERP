@@ -1,8 +1,9 @@
 # HANDOFF — sofa alignment to the supplier listing, 2026-09-10 / updated 2026-09-11
 
 If you are picking this up: the first apply to production in this whole line of
-work is IN FLIGHT or JUST DONE — see "State of the apply" below before anything
-else. Everything before that was read-only.
+work is DONE and VERIFIED (run 34507126629, VERIFY OK — 249 entries over 241
+documents, piece multiset + both money columns, 0 money moved). Everything
+before it was read-only. What remains is listed under STILL OPEN.
 
 ## The owner's task list, in his order
 
@@ -27,7 +28,7 @@ else. Everything before that was read-only.
 | a reversal is the SAME sofa | 「一样的东西啊 只是LHF 在第一个item而已」 | reverse ≠ mirror; only reverse-AND-swap-hands is different |
 | the goods are right, the migrated docket is wrong | 「我做GR的时候…docket entry是错的（旧的单）」 | this whole exercise is so his GR can be received |
 
-## State of the apply (THE important section)
+## State of the apply (DONE — run 34507126629, VERIFY OK)
 
 `apply-sofa-compartment-corrections.yml`, target=prod, apply=1, run **34507126629**,
 dispatched 2026-09-11 ~01:2x. The DRY-RUN that preceded it (run 34504568090) was:
