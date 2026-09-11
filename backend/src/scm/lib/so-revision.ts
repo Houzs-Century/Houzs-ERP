@@ -1402,7 +1402,7 @@ export async function reviseBoundPo(
       // supplier binding is keyed on).
       const { data: existing, error: exErr } = await sb
         .from('purchase_order_items')
-        .select('item_code, discount_sen, photo_urls')
+        .select('item_code, material_name, discount_sen, photo_urls')
         .eq('id', pi.id)
         .maybeSingle();
       if (exErr) throw new Error(`reviseBoundPo: PO line load failed: ${exErr.message}`);
@@ -1414,8 +1414,20 @@ export async function reviseBoundPo(
       // line's spec (SAME cost-anchor "Create PO from SO" runs). The SKU the cost
       // is keyed on = the revised SO line's item_code (a SPEC change may swap it),
       // falling back to the PO line's existing item_code.
-      const itemCode = revised.item_code
-        ?? String((existing as { item_code?: string } | null)?.item_code ?? '');
+      const itemCode = (revised.item_code || '').trim()
+        || String((existing as { item_code?: string } | null)?.item_code ?? '');
+      // Persist the revised SKU + name onto the PO line, not just use them for
+      // costing (docs/bugs). Before this, reviseBoundPo re-derived cost/variants
+      // but left item_code untouched, so an SO SPEC swap (e.g. an LHF->RHF sofa
+      // swap that swaps the code) left the PO ordering -- and PRINTING (the PDF
+      // derives the sofa orientation from item_code) -- the OLD SKU, and its
+      // so_drift never cleared. material_name follows the SO description like the
+      // convert / ADD paths, never downgrading to the bare code when the revised
+      // SO line has no description.
+      const itemName =
+        (revised.description || '').trim()
+        || String((existing as { material_name?: string } | null)?.material_name ?? '').trim()
+        || itemCode;
       const unitPriceSen = await deriveMfgPoUnitCost(sb, {
         supplierId: po.supplier_id ?? '',
         itemCode:   itemCode,
@@ -1437,6 +1449,8 @@ export async function reviseBoundPo(
 
       const { error: updErr } = await sb.from('purchase_order_items').update({
         qty,
+        item_code:        itemCode,
+        material_name:    itemName,
         unit_price_sen: unitPriceSen,
         line_total_sen: qty * unitPriceSen - discountSen,
         item_group:       itemGroup,
