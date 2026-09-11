@@ -73,7 +73,7 @@ import {
   postcodesInState,
   PAYMENT_TERMS_OPTIONS,
 } from '../../vendor/scm/lib/localities-queries';
-import { useSgPostcodeLookup, isValidSgPostcode } from '../../vendor/scm/lib/sg-postcode-queries';
+import { SgPostcodeField } from '../../vendor/scm/components/SgPostcodeField';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import { composeSupplierSku, looksAmbiguous } from '../../vendor/scm/lib/supplier-sku-helpers';
 import { parseSupplierCategories, displaySupplierCategories } from '../../vendor/scm/lib/supplier-categories';
@@ -3062,10 +3062,13 @@ const SupplierInfoCard = ({
             <EditField label="Area" value={form.area} onChange={(v) => setF('area', v)} />
             <CitySelect state={form.state} value={form.city} onChange={(v) => setF('city', v)} />
             {form.country === 'Singapore' ? (
-              <SgPostcodeInput
+              <SgPostcodeField
                 value={form.postcode}
                 onChange={(v) => setF('postcode', v)}
                 onResolveAddress={(address) => setF('address', address)}
+                fieldClassName={styles.field}
+                labelClassName={styles.fieldLabel}
+                inputClassName={styles.fieldInput}
               />
             ) : (
               <PostcodeSelect state={form.state} city={form.city} value={form.postcode} onChange={(v) => setF('postcode', v)} />
@@ -4287,46 +4290,6 @@ const PostcodeSelect = ({
         </select>
         <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
       </span>
-    </label>
-  );
-};
-
-/* SgPostcodeInput — Singapore's ~150k per-building postcodes are NOT seeded in
-   my_localities (only 55 area-representative codes are), so for country =
-   Singapore the Postcode field is a free text input with a LIVE OneMap lookup
-   (GET /sg-postcode/:code) instead of the 55-code dropdown. On a valid 6-digit
-   code we offer the resolved address for one-tap fill into Billing Address.
-   Degrades silently when the backend has no OneMap credentials
-   (configured:false): the field still accepts the typed code. */
-const SgPostcodeInput = ({
-  value, onChange, onResolveAddress,
-}: { value: string; onChange: (v: string) => void; onResolveAddress: (address: string) => void }) => {
-  const lookup = useSgPostcodeLookup(value);
-  const data = lookup.data;
-  const hit = data?.configured && data.results.length > 0 ? data.results[0] : null;
-  const hintStyle: React.CSSProperties = { fontSize: 11, color: 'var(--fg-muted, #888)', marginTop: 4 };
-  return (
-    <label className={styles.field}>
-      <span className={styles.fieldLabel}>Postcode</span>
-      <input
-        className={styles.fieldInput}
-        value={value}
-        inputMode="numeric"
-        maxLength={6}
-        placeholder="6-digit SG postcode"
-        onChange={(e) => onChange(e.target.value.replace(/\D/g, '').slice(0, 6))}
-      />
-      {isValidSgPostcode(value) && lookup.isFetching && <span style={hintStyle}>Looking up address…</span>}
-      {hit && (
-        <button
-          type="button"
-          onClick={() => onResolveAddress(hit.address)}
-          style={{ marginTop: 4, padding: 0, background: 'none', border: 'none', textAlign: 'left', color: 'var(--accent, #0a7a5a)', cursor: 'pointer', fontSize: 12 }}
-        >
-          Use: {hit.address}
-        </button>
-      )}
-      {data && !data.configured && <span style={hintStyle}>Live lookup not enabled — enter the address manually.</span>}
     </label>
   );
 };
