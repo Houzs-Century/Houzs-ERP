@@ -85,6 +85,7 @@ import { drainCommands } from "./scm/lib/amendment-command";
 import { drainStockAllocationRecompute } from "./scm/lib/stock-allocation-job";
 import { drainAutoCountOutbox } from "./scm/lib/autocount-outbox";
 import { relinkHeldBackSweep } from "./scm/lib/autocount-relink-sweep";
+import { deliveryDateSweep } from "./scm/lib/autocount-delivery-date-sweep";
 import { refreshAllMrpSnapshots } from "./scm/lib/mrp-snapshot";
 import { amendmentMirror } from "./scm/routes/amendment-mirror";
 import { customerMirror } from "./scm/routes/customer-mirror";
@@ -611,6 +612,23 @@ export default {
             }
           })
           .catch((e) => console.error("[cron ac-relink-sweep]", e))
+      );
+      /* Delivery-date sweep. Ships DARK twice over: no-op unless
+         scm.app_config 'scm.autocount_delivery_date_sweep' is 'plan' or
+         'apply', AND the host route /delivery-dates only exists once
+         AcSyncService is rebuilt on the office machine. It closes the
+         one-directional half of the sync: AutoCount keeps the delivery date on
+         the LINE, the inbound pull carries headers only, so a date changed in
+         the book after import never reached us (docs/bugs/0810). Best-effort —
+         a sweep failure can never break the slot. */
+      ctx.waitUntil(
+        deliveryDateSweep(env)
+          .then((r) => {
+            if (r.mode !== "off" && (r.linesWritten || r.headersWritten || r.remaining || r.hostError)) {
+              console.log(`[cron ac-delivery-dates] ${JSON.stringify(r)}`);
+            }
+          })
+          .catch((e) => console.error("[cron ac-delivery-dates]", e))
       );
       /* SO allocation projection sweep.
 
