@@ -1327,6 +1327,18 @@ Contracts: `bank-parse.test.ts`, `bank-lock.test.ts`, `bank-month.test.ts`,
 `backend/tests/bankRoutes.test.ts` (which now also mounts the month list and
 the lock — their first route contract), `BankStatementTab.test.tsx`.
 
+**What a charged report is owed on the bank side (2026-09-11, docs/bugs/0812).**
+`loadPayableBatches` (`backend/src/acc/bank.ts`) — the one read of "what each
+reconciled report is still owed" behind the bank matcher and the bank screens
+— now takes off the charge Finance booked on the payout day
+(`acc_settlement_payout_batches.charge_sen`, docs/bugs/0787): outstanding =
+payable − received − charged. Before, PBB's 8 June credit for 2990 (three
+trading days, the 6th less a RM 324.00 terminal fee) matched nothing: the
+advice's day figure did not equal the report's "owed", so `adviceAllocation`
+distrusted the advice and the line fell to "check which" (owner: 我不是给你
+payment advice 了吗? bank recon 这边只需要对 payment advice 罢了啊). Contract:
+`backend/tests/bankRoutes.test.ts` ("a report the bank charged").
+
 **A split payout names two entries, and both are claimed (2026-09-11,
 docs/bugs/0809).** June on 2990's Hong Leong account read "These numbers do
 not add up" by exactly RM 7,306.52 — the two PAYOUT_SPLIT movements. Booking

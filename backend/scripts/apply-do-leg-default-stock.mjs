@@ -65,7 +65,10 @@ const WANTS_APPLY = process.env.APPLY === "1";
 // so `APPLY` here is simply "wanted apply and got past the guard" — past it, a
 // true WANTS_APPLY means the phrase matched.
 const APPLY = WANTS_APPLY;
-const ACTOR = (process.env.ACTOR || "repair:do-leg-default-0722").trim();
+// performed_by (inventory_movements) is uuid + nullable; null is the system-write
+// norm (most live movements carry it). A non-uuid string fails the insert — the
+// bug that left the first apply half-done. Pass null.
+const ACTOR = null;
 
 const notice = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const warn = (m) => console.log(process.env.GITHUB_ACTIONS ? `::warning::${m}` : m);
@@ -226,7 +229,7 @@ async function main() {
 
       /* 3. Re-ship: the canonical resync books the missing OUT at the clean key
             (FIFO consumes the real lot at real cost) and restamps the DO lines. */
-      await resyncInventoryForDo(sb, g.docId, ACTOR);
+      await resyncInventoryForDo(sb, g.docId, ACTOR); // ACTOR === null
       assertNoShimGaps(`resyncInventoryForDo(${g.docNo})`);
 
       /* 4. Cascade the corrected cost onto the Sales Invoice. */

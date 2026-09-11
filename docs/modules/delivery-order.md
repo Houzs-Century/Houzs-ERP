@@ -2585,7 +2585,17 @@ committed export of that column instead:
 `backend/scripts/repair-delivery-dates-from-book.mjs` (Actions → **Repair
 delivery dates from the AutoCount book**; PLAN by default, apply needs
 `CONFIRM="DELIV-DATES-FROM-BOOK"`) sets headers and lines from it, keyed by
-`linked_ac_dtlkey`. It is a STOPGAP: until the middleware carries the field, the
+`linked_ac_dtlkey`.
+
+**`INCLUDE_BLANKS` is the one input that changes WHO decides.** Without it the
+repair only corrects a date we hold and the book disagrees with; with it, it also
+FILLS a blank. Filling blanks moves what MRP waits for on thousands of orders, so
+it is the owner's call and not a default — the workflow exposes it as a checkbox.
+Blank DELIVERY-ORDER LINE dates are the exception and are filled either way:
+every one of them is bug
+0807-do-line-delivery-date-silently-dropped-by-payload-key-mismat.md's residue.
+As of 2026-09-11 both halves have been applied and a plan run reports zero
+remaining, so the flag now changes nothing until the book gains a date we lack. It is a STOPGAP: until the middleware carries the field, the
 drift comes back, and the durable fix lives on the AutoCount host
 (`scripts/autocount-service/`, `deploy-on-host.ps1`).
 

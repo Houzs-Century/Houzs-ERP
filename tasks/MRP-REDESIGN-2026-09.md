@@ -148,6 +148,64 @@ trace (start at `grns.ts` re-walk trigger + `so-stock-allocation.ts`). It is a
 production WRITE, so it needs the owner's go-ahead — not run here. Do NOT read
 "run the recompute" as done: it has not been run.
 
+### Track E — "already have PO, why still SHORT?" (owner, 2026-09-11)
+
+Owner sent two screenshots: `HC-SO-011114` ("already have PO:010045, please
+update why only item 3 no show PO?") and `HC-SO-013389` ("this already have
+PO-010087, please update it"). BOTH are real, and they are two DIFFERENT
+defects — neither is an engine fault.
+
+Traced on LIVE prod, read-only, against the rule as it is written:
+
+- Since 2026-09-09 a company-1 hard-bound line (sofa / bedframe / `(SP)`
+  mattress) is covered ONLY by a PO line that (a) carries its `so_item_id` and
+  (b) is itself on a hard-bound `item_group` — `isDedicated` in `routes/mrp.ts`,
+  `boundSofa` in section 8, `isHardBoundLine` + `HARD_BOUND_COMPANY_ID` in
+  `lib/so-stock-allocation.ts`. The rule is the owner's and is right; what it
+  exposed is dirty PO-line data.
+- **`HC-SO-011114` / `9058-STOOL`** — `HC-PO-010045` DOES carry the stool, right
+  warehouse, right variant, nothing received, but that PO line's `so_item_id` is
+  NULL. Its two siblings (2A/1A) are linked, which is exactly why only item 3
+  reads SHORT.
+- **`HC-SO-013389` / `8030-1A(LHF)`** — `HC-PO-010087`'s line IS linked to the
+  right SO line, but its own `item_group` is `others`, not `sofa`. Not
+  hard-bound → not dedicated → invisible to the set.
+- **`HC-SO-013389` / `8030-1A(RHF)`** — NOT a defect. No PO anywhere carries it.
+  That half genuinely has to be ordered.
+
+**Census (prod, company 1, live POs).** Class A (hard-bound PO line, no
+`so_item_id`): **6 lines**, every one created 2026-08-28, all `from_mrp=false`
+with a NULL `line_no` — one batch of hand-opened POs. Class B (linked, but PO
+group not hard-bound): **exactly 1 line**, `HC-PO-010087`. The known gap in
+`docs/mrp-stock-vs-bound-rules-2026-09-09.md` §3 (`HC-PO-009024` /
+`HC-SO-012025`) is now fully linked — that item is CLOSED.
+
+| Step | State | Where |
+|---|---|---|
+| E1. `repair-mrp-po-line-links.mjs` — plan/apply, two classes, per-row refusal reasons | THIS PR | `backend/scripts/repair-mrp-po-line-links.mjs` |
+| E2. Workflow (default plan; apply needs the confirm phrase) | THIS PR | `.github/workflows/mrp-po-link-repair.yml` |
+| E3. Run PLAN | **DONE — ran against the read-only prod DSN 2026-09-11**: 2 link repairs, 1 category repair, 4 refused | output in the PR body |
+| E4. Run APPLY | **NOT RUN** — production write, owner's call | Actions → "MRP PO-line link repair" |
+| E5. Recompute after apply | **NOT RUN** | Actions → "Recompute SO stock allocation" |
+
+**What the plan will change (2 + 1).** `HC-PO-009718 / 9028-1A(RHF)` →
+`HC-SO-012913` line 2; `HC-PO-010045 / 9058-STOOL` → `HC-SO-011114` line 5;
+`HC-PO-010087 / 8030-1A(LHF)` `others` → `sofa`.
+
+**What it REFUSES, and why that is the point (4).** `HC-PO-009630 /
+5535-L(RHF)` (→ `HC-SO-012046`), `HC-PO-009940 / 5535-1NA` (→ `HC-SO-013224`),
+and both `HC-PO-010041` lines (→ `HC-SO-013312`): on each of those sales orders
+there is no live, still-uncovered line with that item code in that warehouse —
+the order was amended after the PO was raised, or another PO already covers it.
+A looser match is NOT safe here: §3 of the 2026-09-09 doc measured it — "an open
+PO somewhere carries this item code" returned 10 lines and paired four unrelated
+customers, because sofa compartment codes repeat across orders. These four need
+a human to say which piece the PO actually buys.
+
+**UNTESTED, stated as such:** nobody has run APPLY, so "the two screenshots will
+go green" is a prediction from the rule as read, not an observation. E4 then E5,
+then re-read the MRP page, is what turns it into one.
+
 ## What is left for the next person (the mockup's fuller UI — owner to decide)
 
 The sofa+cover-on-one-PO PAIN is solved (A2). What the §06 mockup drew and is NOT

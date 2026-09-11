@@ -1,0 +1,55 @@
+name: MRP PO-line link repair (plan / apply)
+
+# Manual. Repairs the two data defects that make a company-1 sofa / bedframe
+# sales-order line read SHORT on the MRP page even though its purchase order
+# exists: a purchase-order line with no `so_item_id`, and a purchase-order line
+# whose `item_group` is not hard-bound while its sales-order line is.
+#
+# DEFAULT IS PLAN, and plan writes NOTHING — it prints exactly what apply would
+# do, row by row, with a reason for every row it refuses. `apply` additionally
+# needs the confirm phrase typed in; a wrong phrase fails before connecting.
+#
+# AFTER AN APPLY the allocator has NOT re-walked the touched orders — run
+# "Recompute SO stock allocation" before reading MRP or the sales-order screen.
+# The script says so on its way out; it is not done for you.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (read-only, default) or apply (writes)"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'Type REPAIR PO LINKS to allow apply (ignored for plan)'
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "Company (1 = Houzs Century; the hard-bound rule is company-1 only)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: mrp-po-link-repair
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the one dependency the script needs
+        run: npm --prefix backend install postgres --no-audit --no-fund --no-save
+      - name: Repair PO line links
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+        run: node backend/scripts/repair-mrp-po-line-links.mjs
