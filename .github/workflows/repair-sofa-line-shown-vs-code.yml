@@ -1,14 +1,20 @@
-name: The printed name must state the piece the code states
+name: Every column must state the piece the code states
 
-# Manual. A sofa line prints its item code and its name side by side — the sales
-# order PDF prints `description ?? item_code`, the GRN PDF prints
-# `description ?? material_name` beside the code, and the customer-facing fold
-# composes "1B(LHF) + CNR + 2A(RHF)" from the codes. A line whose code was
-# corrected while its text kept the old piece therefore prints two different
-# sofas on one row — which is what the owner saw in the export on 2026-09-11.
+# Manual. A sofa line states its piece in more columns than one, and every one of
+# them is read by somebody: the printed name (`description ?? material_name`,
+# which the sales-order and GRN PDFs print beside the code) and the SUPPLIER's
+# own code, `supplier_sku` — the PO PDF's "Supplier Code" column, which the
+# document itself labels as the code they act on. A line whose code was
+# corrected while a sibling column kept the old piece therefore prints, or
+# ORDERS, a different sofa.
 #
-# It rewrites ONLY the piece token, and only where the name states a DIFFERENT
-# piece. A name that states no piece is the supplier's own product name
+# Broadened 2026-09-11 (owner: 「你查看一下全套系统，看有没有类似的问题，都要同一时间解决掉」) from
+# 4 line tables and one column per row to ALL 14 printed line tables and EVERY
+# column on them that can state a piece — the purchase invoice had no arm at all,
+# and `supplier_sku` had never been swept anywhere. docs/bugs/0822.
+#
+# It rewrites ONLY the piece token, and only where a column states a DIFFERENT
+# piece. A column that states no piece is the supplier's own product name
 # ("HOK SOFA - 5536") and is left exactly as it is — on a purchase document that
 # is what belongs there.
 #
@@ -42,7 +48,7 @@ on:
         type: string
 
 concurrency:
-  group: repair-sofa-line-name-to-code-${{ inputs.target }}
+  group: repair-sofa-line-shown-vs-code-${{ inputs.target }}
   cancel-in-progress: false
 
 jobs:
@@ -56,7 +62,7 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node scripts/repair-sofa-line-name-to-code.mjs
+      - run: node scripts/repair-sofa-line-shown-vs-code.mjs
         env:
           MODE: ${{ inputs.mode }}
           CONFIRM: ${{ inputs.confirm }}
@@ -72,7 +78,7 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node scripts/repair-sofa-line-name-to-code.mjs
+      - run: node scripts/repair-sofa-line-shown-vs-code.mjs
         env:
           MODE: ${{ inputs.mode }}
           CONFIRM: ${{ inputs.confirm }}
