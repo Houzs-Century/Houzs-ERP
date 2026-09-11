@@ -123,6 +123,58 @@ describe('it refuses rather than guessing', () => {
     expect(r.refusals[0].why).toMatch(/carries a cost/);
   });
 
+  describe('allowCostedRetire (the costed write-off opt-in, docs/bugs/0721)', () => {
+    const runWO = (lots, poLines, soBindings = []) =>
+      planDuplicateSofaLots({ lots, poLines, soBindings, computeKey: KEY, allowCostedRetire: true });
+
+    test('a costed surplus lot is RETIRED when the opt-in is set (default still refuses)', () => {
+      const lots = [lot({ id: 'costed', unitCostSen: 195000 }), lot({ id: 'current', variantKey: KEY('sofa', UMBRELLA_NYLON) })];
+      // default (the existing tool): refuses, money does not move.
+      expect(run(lots, [poLine()]).retire).toEqual([]);
+      // opt-in (the write-off tool): retires the costed surplus, carrying its cost.
+      const r = runWO(lots, [poLine()]);
+      expect(r.retire.map((x) => x.lotId)).toEqual(['costed']);
+      expect(r.retire[0].unitCostSen).toBe(195000);
+      expect(r.refusals).toEqual([]);
+    });
+
+    test('it keeps the purchase-line lot, never retires BOTH of a pair', () => {
+      const r = runWO(
+        [lot({ id: 'stale', unitCostSen: 195000 }), lot({ id: 'keep', variantKey: KEY('sofa', UMBRELLA_NYLON), unitCostSen: 195000 })],
+        [poLine()],
+      );
+      expect(r.retire.map((x) => x.lotId)).toEqual(['stale']);
+    });
+
+    test('the opt-in does NOT loosen the other refusals — a consumed lot still stays', () => {
+      const r = runWO(
+        [lot({ id: 'costed-consumed', unitCostSen: 195000, consumptions: 1 }), lot({ id: 'current', variantKey: KEY('sofa', UMBRELLA_NYLON) })],
+        [poLine()],
+      );
+      expect(r.retire).toEqual([]);
+      expect(r.refusals[0].why).toMatch(/already been consumed/);
+    });
+
+    test('the opt-in does NOT loosen the part-consumed refusal', () => {
+      const r = runWO(
+        [lot({ id: 'costed-part', unitCostSen: 195000, qtyReceived: 2, qtyRemaining: 1 }), lot({ id: 'current', variantKey: KEY('sofa', UMBRELLA_NYLON) })],
+        [poLine()],
+      );
+      expect(r.retire).toEqual([]);
+      expect(r.refusals[0].why).toMatch(/part-consumed/);
+    });
+
+    test('the opt-in does NOT touch a MODEL-NOT-ON-ORDER cell (the 0723 nine)', () => {
+      // an 8030 piece under a 5535 order, carrying cost — still only reported.
+      const r = runWO(
+        [lot({ id: 'x1', itemCode: '8030-CNR', unitCostSen: 195000 })],
+        [poLine()], // order's only sofa line is 5535-CNR
+      );
+      expect(r.retire).toEqual([]);
+      expect(r.refusals[0].why).toMatch(/MODEL NOT ON THE ORDER/);
+    });
+  });
+
   test('a lot a live sales order is allocated to by its EXACT key', () => {
     const r = run(
       [lot({ id: 'bound' }), lot({ id: 'current', variantKey: KEY('sofa', UMBRELLA_NYLON) })],

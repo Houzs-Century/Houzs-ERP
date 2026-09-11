@@ -1,0 +1,80 @@
+name: Supplier measurements on RECEIVED goods (moves stock with the line)
+
+# Manual. Writes the supplier's measurement onto every document in a chain —
+# purchase line, sales line, goods-received line(s), delivery line(s) — and
+# re-keys that chain's stock rows in the SAME transaction, so at no moment does a
+# line name an inventory bucket that is not there.
+#
+# Owner 2026-09-11: 「已经收货了的 也是要改的 跟 SO 一起改整个 transaction flow」.
+# The two plain fill tools hold these lines on purpose (docs/bugs/0722); this is
+# the other half they were waiting for.
+#
+# It REFUSES a bucket shared with any document outside the chain — moving that
+# would point the others at stock that is no longer there.
+#
+# MODE=plan unless told otherwise, and apply is refused without the confirm
+# phrase. An apply re-reads every line on a FRESH connection and asserts both
+# halves: the document keys to the new bucket AND nothing is left in the old one.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      mode:
+        description: "plan or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'type exactly: MOVE THE STOCK WITH THE LINE (only needed for apply)'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: apply-supplier-variants-with-stock-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/apply-supplier-variants-with-stock.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/apply-supplier-variants-with-stock.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

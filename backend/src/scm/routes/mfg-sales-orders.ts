@@ -720,12 +720,12 @@ async function selfScopedSalesBlocked(c: any, docNo: string): Promise<boolean> {
   if (canViewAllSales(c)) return false; // view-all tier (director / office / *)
   const { data, error } = await sb
     .from('mfg_sales_orders')
-    .select('salesperson_id, access_staff_ids')
+    .select('salesperson_id, access_staff_ids, open_to_all')
     .eq('doc_no', docNo)
     .maybeSingle();
   if (error || !data) return true; // fail closed - unknown/unreadable doc is out of scope
-  const r = data as { salesperson_id?: number | string | null; access_staff_ids?: string[] | null };
-  return soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, false, { salespersonId: r.salesperson_id, accessStaffIds: r.access_staff_ids });
+  const r = data as { salesperson_id?: number | string | null; access_staff_ids?: string[] | null; open_to_all?: boolean | null };
+  return soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, false, { salespersonId: r.salesperson_id, accessStaffIds: r.access_staff_ids, openToAll: r.open_to_all });
 }
 
 /* THE venue_id coercion — every writer of mfg_sales_orders.venue_id goes
@@ -2599,7 +2599,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        LIST route reads that view, so the base-table detail read is the only
        place they are valid. (`proceeded_at` was appended here until 2026-08-18,
        feeding a "Proceed Date" the desktop deleted on 2026-06-05.) */
-    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno, collaborator_staff_ids, access_staff_ids`).eq('doc_no', docNo), c).maybeSingle(),
+    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno, collaborator_staff_ids, access_staff_ids, open_to_all`).eq('doc_no', docNo), c).maybeSingle(),
     /* line_no = the persisted listing order (0165); NULLS LAST so pre-0165
        docs fall back to created_at + the rule re-derive below. */
     sb.from('mfg_sales_order_items').select(ITEM).eq('doc_no', docNo)
@@ -2618,8 +2618,8 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     // Same tiering as the list (lib/salesScope.ts): view-all roles pass; POS
     // sellers pass only their own; other reps are held to their subtree. An
     // out-of-scope doc_no answers 404 — indistinguishable from a missing one.
-    const d = h.data as { salesperson_id?: number | string | null; access_staff_ids?: string[] | null };
-    if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: d.salesperson_id, accessStaffIds: d.access_staff_ids })) {
+    const d = h.data as { salesperson_id?: number | string | null; access_staff_ids?: string[] | null; open_to_all?: boolean | null };
+    if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: d.salesperson_id, accessStaffIds: d.access_staff_ids, openToAll: d.open_to_all })) {
       return c.json({ error: 'not_found' }, 404);
     }
   }
@@ -2968,7 +2968,7 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
     // Header read is company-scoped + minimal — we only need it to exist,
     // resolve salesperson_id for the same self-scoped-sales gate the detail
     // uses, and carry processing_date for the promotion gate below.
-    scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id, access_staff_ids, processing_date').eq('doc_no', docNo), c).maybeSingle(),
+    scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id, access_staff_ids, processing_date, open_to_all').eq('doc_no', docNo), c).maybeSingle(),
     // Same ITEM select + line_no ordering as the detail (nulls last → pre-0165
     // fallback to created_at, then the rule re-order below).
     sb.from('mfg_sales_order_items').select(ITEM).eq('doc_no', docNo)
@@ -2981,8 +2981,8 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
      sellers pass only their own; other reps are held to their subtree. An
      out-of-scope doc_no answers 404 — indistinguishable from a missing one. */
   {
-    const d = h.data as { salesperson_id?: number | string | null; access_staff_ids?: string[] | null };
-    if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: d.salesperson_id, accessStaffIds: d.access_staff_ids })) {
+    const d = h.data as { salesperson_id?: number | string | null; access_staff_ids?: string[] | null; open_to_all?: boolean | null };
+    if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: d.salesperson_id, accessStaffIds: d.access_staff_ids, openToAll: d.open_to_all })) {
       return c.json({ error: 'not_found' }, 404);
     }
   }
@@ -8153,8 +8153,10 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
         ],
       });
 
-      try { await recomputeSoStockAllocation(sb); }
-      catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-line-add failed:', e); }
+      /* Adding a sofa is new demand → recompute may flip this SO into READY.
+         Deferred: the compartment rows are committed; the global sweep runs in
+         the background (waitUntil) so the save returns without blocking ~8s. */
+      deferAllocationRecompute(c, sb, 'post-line-add');
 
       /* The sofa branch RETURNED here and queued nothing, so adding a sofa to
          an order AutoCount already holds never reached the account book at all.
@@ -8208,10 +8210,10 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     ],
   });
 
-  /* New line = new demand → recompute may flip this SO into READY (or
-     bump another SO out). Best-effort. */
-  try { await recomputeSoStockAllocation(sb); }
-  catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-line-add failed:', e); }
+  /* New line = new demand → recompute may flip this SO into READY (or bump
+     another SO out). Deferred: the INSERT is committed; the global sweep runs in
+     the background (waitUntil) so the save returns without blocking ~8s on it. */
+  deferAllocationRecompute(c, sb, 'post-line-add');
 
   await queueAcSoEdit(c, docNo, [], data?.id ? [String(data.id)] : []);
 
@@ -8643,9 +8645,10 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     });
   }
 
-  /* Line qty / variants / category may have changed → recompute. */
-  try { await recomputeSoStockAllocation(sb); }
-  catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-line-patch failed:', e); }
+  /* Line qty / variants / category may have changed → recompute. Deferred: the
+     UPDATE is committed; the global sweep runs in the background (waitUntil) so
+     the save returns without blocking ~8s on it (matches the header PATCH). */
+  deferAllocationRecompute(c, sb, 'post-line-edit');
 
   await queueAcSoEdit(c, docNo);
 
@@ -8753,9 +8756,10 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
     });
   }
 
-  /* Line delete = demand drops → other queued SOs may move into READY. */
-  try { await recomputeSoStockAllocation(sb); }
-  catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-line-delete failed:', e); }
+  /* Line delete = demand drops → other queued SOs may move into READY.
+     Deferred: the delete is committed; the global sweep runs in the background
+     (waitUntil) so the save returns without blocking ~8s on it. */
+  deferAllocationRecompute(c, sb, 'post-line-delete');
 
   await queueAcSoEdit(c, docNo, retire);
 
@@ -11611,7 +11615,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   // salesperson_id for the ownership scope check below, plus the amendable
   // header columns for the header-change snapshot / date checks.
   const { data: soRow } = await scopeToCompany(sb.from('mfg_sales_orders')
-    .select('doc_no, status, revision, processing_date, salesperson_id, access_staff_ids, ' +
+    .select('doc_no, status, revision, processing_date, salesperson_id, access_staff_ids, open_to_all, ' +
       'customer_delivery_date, customer_state, postcode')
     .eq('doc_no', docNo), c).maybeSingle();
   if (!soRow) return c.json({ error: 'not_found' }, 404);
@@ -11622,8 +11626,8 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   // their own + downline subtree. An out-of-scope doc_no answers 404 —
   // indistinguishable from a nonexistent one, exactly like the detail route.
   {
-    const d = soRow as { salesperson_id?: number | string | null; access_staff_ids?: string[] | null };
-    if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: d.salesperson_id, accessStaffIds: d.access_staff_ids })) {
+    const d = soRow as { salesperson_id?: number | string | null; access_staff_ids?: string[] | null; open_to_all?: boolean | null };
+    if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: d.salesperson_id, accessStaffIds: d.access_staff_ids, openToAll: d.open_to_all })) {
       return c.json({ error: 'not_found' }, 404);
     }
   }
