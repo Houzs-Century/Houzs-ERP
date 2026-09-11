@@ -4409,6 +4409,14 @@ Two things worth carrying forward:
 
 #### The sofa reader's axes, and the two the book writes that it could not read
 
+**An ARM measurement is not the `size` — since 2026-09-11.** The supplier states
+the arm on its own segment (`leg:1inch / Nylon Fabric; OTHER: ARM 12"`), and the
+size reader took any two-digit number carrying an inch mark wherever it sat, so
+that 12 became a 12-inch SEAT on all three lines of `HC-PO-009630` — the only 3
+sofa purchase lines in the company reading under 20 inches. The arm is now
+blanked before the size is read; a real seat stated beside one still reads
+(`ARM 12" / 32 inch` -> 32). Trace and blast radius in `docs/bugs/0823`.
+
 `backend/scripts/lib/parse-sofa.mjs` answers `pieces`, `size`, `color`,
 `perPieceColor`, `specials` and — since 2026-09-09 — **`leg`**.
 
