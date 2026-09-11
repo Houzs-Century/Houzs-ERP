@@ -865,6 +865,27 @@ the reason, for a human to confirm. Offered, never taken: two possible answers i
 a question, so nothing is ticked and he chooses;
 `acc/settlement.ts` confirms, which POSTS that moment.
 
+**The Collection report (2026-09-12, docs/bugs/0825; owner: collection
+report … salesman 开了多少单，deposit 收了多少%，below 50% 的我也需要知道; 分主要看
+两个，deposit / sales order amount，一个是看 balance paid).** `GET
+/accounting/reports/collection?from&to&threshold&salesperson`
+(`backend/src/scm/routes/accounting-collection.ts`, the financial-statements
+permission) reads the orders opened in the period BY SO DATE — DRAFT and
+CANCELLED are not orders — and the payments recorded on them: a payment
+flagged deposit is deposit (topped up later, in several pieces, whenever
+paid), the rest is balance; the SO's own balance columns are not read. Per
+salesman (`staff` by `salesperson_id`, else the agent text, else
+"Unassigned"): orders, order value, deposit, deposit % and how many orders sit
+under the threshold (default 50%, the caller's); and for the DELIVERED ones
+(DELIVERED / INVOICED / CLOSED — until the delivery raises the invoice, the
+status is the fact) the balance due after deposit, balance collected, balance
+% and outstanding; totals across salesmen; the orders themselves under each.
+The tab (`CollectionReport.tsx`, `/scm/accounting?tab=collection`, Reports
+group of the sidebar) shows the two views, opens a salesman to the orders,
+narrows to the orders under the line, and exports the open view as CSV.
+Contracts: `backend/tests/collectionReport.test.ts`,
+`frontend/src/pages/scm-v2/CollectionReport.test.tsx`.
+
 **The Finance sidebar is six groups (2026-09-12, docs/bugs/0824; owner:
 finance 的 function 分到很散 … report 全部集中在一个 side bar).** In
 `frontend/src/components/Sidebar.tsx` the Finance group's children are
