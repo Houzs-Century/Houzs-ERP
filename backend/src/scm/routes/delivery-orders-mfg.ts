@@ -1026,14 +1026,29 @@ async function checkDoStockAvailability(
   headerWarehouseId: string | null,
   companyId: number | undefined,
 ): Promise<StockShortage[]> {
-  const active = stockCheckableLines(lines, await dedicatedlyCoveredSoItemIds(sb, lines, companyId));
-  if (active.length === 0) return [];
+  /* Warehouses are resolved BEFORE the dedicated-cover test, not after: that
+     test asks whether THIS line's warehouse actually holds the goods, and a
+     line's warehouse is `resolveDoLineWarehouses`'s answer, not a field on the
+     request. Computing cover first would have asked about warehouse `null` and
+     quietly covered nothing — a fix that types and tests clean while doing
+     exactly nothing. */
+  const shippable = stockCheckableLines(lines, new Set());
+  if (shippable.length === 0) return [];
   const lineWh = await resolveDoLineWarehouses(
     sb,
-    active.map((l) => ({ id: l.lineRef, so_item_id: l.soItemId })),
+    shippable.map((l) => ({ id: l.lineRef, so_item_id: l.soItemId })),
     headerWarehouseId,
     companyId,
   );
+  const active = stockCheckableLines(
+    shippable,
+    await dedicatedlyCoveredSoItemIds(
+      sb,
+      shippable.map((l) => ({ ...l, warehouseId: lineWh.get(l.lineRef) ?? null })),
+      companyId,
+    ),
+  );
+  if (active.length === 0) return [];
   const byWh = new Map<string, Array<{ itemCode: string; productName: string | null; variantKey: string; qty: number }>>();
   for (const l of active) {
     const wh = lineWh.get(l.lineRef) ?? null;

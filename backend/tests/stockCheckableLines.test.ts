@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { stockCheckableLines, checkStockAvailability } from "../src/scm/lib/check-stock-availability";
+import { stockCheckableLines, dedicatedlyCoveredSoItemIds, checkStockAvailability } from "../src/scm/lib/check-stock-availability";
 
 /* The pre-flight short-stock guard must measure EXACTLY the lines the inventory
    OUT will touch. Every failure of this guard has been the same asymmetry: the
@@ -156,5 +156,48 @@ describe("checkStockAvailability company scope", () => {
   test('covered does not rescue a SERVICE line — it never moved stock to begin with', () => {
     const svc = { itemCode: 'SVC-DELIVERY', itemGroup: 'service', qty: 1, soItemId: 'so-line-1' };
     expect(stockCheckableLines([svc], new Set(['so-line-1']))).toEqual([]);
+  });
+});
+
+/* The RESOLVER, and specifically its second half. `dedicatedlyCoveredSoItemIds`
+   answers two questions and the answer is the AND of them: did this line's own
+   purchase order receive what we are shipping, AND does the warehouse actually
+   hold the goods. The first half alone would have waved through 30 of 462 live
+   lines whose warehouse holds nothing at all — trading a false "no stock" for a
+   silent over-ship, the worse of the two errors. That measurement is the reason
+   the second half exists, so it is pinned here rather than trusted. */
+describe('dedicatedlyCoveredSoItemIds — receipt AND on-hand, never one of them', () => {
+  const LINE = {
+    soItemId: 'so-1', itemCode: 'JAGER-(Q)', itemGroup: 'bedframe', qty: 1, warehouseId: 'wh-pg',
+  };
+  /** Minimal PostgREST-shaped stub: one canned answer per table. */
+  const sbWith = (received: number, onHand: number | null) => ({
+    from(table: string) {
+      const rows = table === 'purchase_order_items'
+        ? [{ so_item_id: 'so-1', received_qty: received, po: { status: 'RECEIVED' } }]
+        : onHand === null ? [] : [{ item_code: 'JAGER-(Q)', warehouse_id: 'wh-pg', qty: onHand }];
+      return { select: () => ({ in: async () => ({ data: rows, error: null }) }) };
+    },
+  });
+
+  test('covered when the PO received it AND the warehouse holds it', async () => {
+    expect([...await dedicatedlyCoveredSoItemIds(sbWith(1, 3), [LINE], 1)]).toEqual(['so-1']);
+  });
+
+  test('NOT covered when the warehouse holds nothing — the old warning was right', async () => {
+    expect([...await dedicatedlyCoveredSoItemIds(sbWith(1, 0), [LINE], 1)]).toEqual([]);
+  });
+
+  test('NOT covered when the line’s own PO received less than this delivery ships', async () => {
+    expect([...await dedicatedlyCoveredSoItemIds(sbWith(0, 5), [LINE], 1)]).toEqual([]);
+  });
+
+  test('company 2 is never covered — 2990 pools, and that is the whole gate', async () => {
+    expect([...await dedicatedlyCoveredSoItemIds(sbWith(1, 3), [LINE], 2)]).toEqual([]);
+  });
+
+  test('a pooled group is never covered, whatever its PO did', async () => {
+    const mattress = { ...LINE, itemGroup: 'mattress', itemCode: 'AKEMI ULTIMATE MATT (Q)' };
+    expect([...await dedicatedlyCoveredSoItemIds(sbWith(1, 3), [mattress], 1)]).toEqual([]);
   });
 });

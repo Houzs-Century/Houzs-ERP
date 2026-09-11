@@ -282,9 +282,39 @@ export async function dedicatedlyCoveredSoItemIds(
     if ((po?.status ?? '') === 'CANCELLED') continue;
     receivedBySoItem.set(r.so_item_id, (receivedBySoItem.get(r.so_item_id) ?? 0) + Number(r.received_qty ?? 0));
   }
+  /* AND THE WAREHOUSE MUST ACTUALLY HOLD THE GOODS — the earmark says which
+     units are this line's, not that they exist. Measured before shipping this:
+     of 462 lines the receipt test alone would wave through, 432 have the stock
+     sitting in that warehouse under SOME variant key (the bucket is the wrong
+     place to look, which is the whole point) and **30 do not** — for those the
+     goods are genuinely not there and the old warning was RIGHT. Waving those
+     through would trade a false "no stock" for a silent over-ship, which is the
+     worse of the two errors. So the bucket-blind total is the second half of
+     the test: skip the variant bucket, never skip the warehouse. */
   const covered = new Set<string>();
-  for (const [soItemId, need] of needBySoItem) {
-    if ((receivedBySoItem.get(soItemId) ?? 0) >= need) covered.add(soItemId);
+  const candidates = [...needBySoItem].filter(([id, need]) => (receivedBySoItem.get(id) ?? 0) >= need);
+  if (candidates.length === 0) return covered;
+  const byLine = new Map(lines.filter((l) => l.soItemId).map((l) => [l.soItemId as string, l]));
+  const codes = [...new Set(candidates.map(([id]) => byLine.get(id)?.itemCode).filter((c): c is string => !!c))];
+  const { data: bal, error: balError } = await sb
+    .from('inventory_balances')
+    .select('item_code, warehouse_id, qty')
+    .in('item_code', codes);
+  if (balError) {
+    /* eslint-disable-next-line no-console */
+    console.warn('[do-stock] on-hand read failed, falling back to the pooled check:', balError.message);
+    return covered;
+  }
+  const onHand = new Map<string, number>();
+  for (const b of (bal ?? []) as Array<{ item_code: string; warehouse_id: string | null; qty: number }>) {
+    const k = `${b.warehouse_id ?? ''}::${b.item_code}`;
+    onHand.set(k, (onHand.get(k) ?? 0) + Number(b.qty ?? 0));
+  }
+  for (const [soItemId, need] of candidates) {
+    const l = byLine.get(soItemId);
+    if (!l) continue;
+    const wh = (l as { warehouseId?: string | null }).warehouseId ?? null;
+    if ((onHand.get(`${wh ?? ''}::${l.itemCode}`) ?? 0) >= need) covered.add(soItemId);
   }
   return covered;
 }

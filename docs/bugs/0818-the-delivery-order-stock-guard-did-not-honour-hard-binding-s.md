@@ -56,11 +56,25 @@ ships.
   stricter behaviour rather than waving a line through — the safe direction when
   we cannot tell.
 - A service line stays excluded even when covered: it never moved stock at all.
+- **AND THE WAREHOUSE MUST ACTUALLY HOLD THE GOODS.** The earmark says which
+  units are this line's, not that they exist. Measured before shipping this: of
+  **462** live lines the receipt test alone would wave through, **432** have the
+  stock sitting in that warehouse under some variant key — the bucket is the
+  wrong place to look, which is the point — and **30 do not**. For those 30 the
+  goods are genuinely missing and the old warning was RIGHT; waving them through
+  would trade a false "no stock" for a silent over-ship, the worse of the two
+  errors. So cover is receipt AND bucket-blind on-hand: skip the variant bucket,
+  never skip the warehouse.
+- **Warehouses are resolved BEFORE the cover test**, because the test asks about
+  THIS line's warehouse and a line's warehouse is `resolveDoLineWarehouses`'s
+  answer, not a field on the request. The first cut computed cover first, asked
+  about warehouse `null`, and covered nothing — a fix that typechecks and tests
+  clean while doing exactly nothing.
 
 **Proved RED.** Removing the one filter clause and re-running
 `backend/tests/stockCheckableLines.test.ts` fails two of the five new cases,
 first among them *"a line whose own purchase order covers it is not a pool
-question"*. Restored: **14 passed**. `npm --prefix backend run typecheck` clean.
+question"*. Restored: **19 passed**. Removing the ON-HAND half alone fails *"NOT covered when the warehouse holds nothing — the old warning was right"*, so both halves are pinned separately. `npm --prefix backend run typecheck` clean.
 
 **What this does NOT do, said rather than implied:** it does not repair the 57
 negative buckets already created, and it does not touch the separate
