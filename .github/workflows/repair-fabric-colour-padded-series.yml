@@ -1,0 +1,47 @@
+name: Repair fabric colours on a padded series id
+
+# Three fabric colours sit on a library row whose id is the same code with a
+# trailing space, while the clean row exists beside it - one of them
+# (GARFIELD-03) on a row whose own label says it was MERGED into the clean one
+# on 2026-08-11 and left behind. Finishes that merge. PLAN by default.
+# See docs/bugs/0816.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes NOTHING) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: ["plan", "apply"]
+      confirm:
+        description: "Required for apply: FABRIC-PADDED-SERIES"
+        required: false
+        default: ""
+
+concurrency:
+  group: repair-fabric-colour-padded-series
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-fabric-colour-padded-series.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
