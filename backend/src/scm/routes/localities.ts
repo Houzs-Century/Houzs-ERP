@@ -192,7 +192,15 @@ localities.post("/", async (c) => {
     })
     .select("id, state, state_code, city, postcode, country")
     .single();
-  if (error) return c.json({ error: "insert_failed", reason: error.message }, 500);
+  if (error) {
+    /* mig 20260911T1730 added UNIQUE(country,state,city,postcode). A re-add of
+       an existing locality from the maintenance UI is a 409, not a raw 500 —
+       the row the editor is trying to create is already there. */
+    if (error.code === "23505") {
+      return c.json({ error: "duplicate", reason: "This locality already exists." }, 409);
+    }
+    return c.json({ error: "insert_failed", reason: error.message }, 500);
+  }
   return c.json({ locality: data });
 });
 
