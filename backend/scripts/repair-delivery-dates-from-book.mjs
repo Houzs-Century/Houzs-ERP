@@ -166,10 +166,17 @@ async function main() {
   log("");
   log(`SALES ORDERS     linked=${soRows.length}  to fix=${soFix.length}  skipped=${JSON.stringify(soSkip)}`);
   for (const f of soFix.slice(0, 10)) log(`   ${f.doc} [${f.status}] ${f.from ?? "(blank)"} -> ${f.to}`);
-  log(`SO LINES         scanned=${soL.scanned}  to fix=${soL.out.length}  blank=${soL.blanks} (left blank: MRP gates on this, needs INCLUDE_BLANKS=1)  operator-overridden=${soL.overridden}`);
+  /* The blank note has to change with the FLAG. It used to read "needs
+     INCLUDE_BLANKS=1" unconditionally, so a run WITH the flag printed an
+     instruction to set the flag it was already running under - output the owner
+     reads, saying the opposite of what happened. */
+  const blankNote = (n, fillingText) => (n === 0 ? '' : INCLUDE_BLANKS
+    ? `  blank=${n} (${fillingText})`
+    : `  blank=${n} (left blank: MRP gates on this - re-run with INCLUDE_BLANKS=1 to fill them)`);
+  log(`SO LINES         scanned=${soL.scanned}  to fix=${soL.out.length}${blankNote(soL.blanks, 'filled from the book')}  operator-overridden=${soL.overridden}`);
   log(`DELIVERY ORDERS  linked=${doRows.length}  to fix=${doFix.length}  skipped=${JSON.stringify(doSkip)}`);
   for (const f of doFix.slice(0, 10)) log(`   ${f.doc} [${f.status}] ${f.from} -> both ${f.to}`);
-  log(`DO LINES         scanned=${doL.scanned}  to fix=${doL.out.length}  of which were blank=${doL.blanks} (filled: bug 0807-do-line-delivery-date residue)  operator-overridden=${doL.overridden}`);
+  log(`DO LINES         scanned=${doL.scanned}  to fix=${doL.out.length}${blankNote(doL.blanks, 'filled - bug 0807-do-line-delivery-date residue, filled by default')}  operator-overridden=${doL.overridden}`);
   log(`FYI: linked DOs whose do_date differs from the book's DocDate: ${doDocDateMismatch} — NOT touched here, the document date is a separate fact.`);
 
   if (MODE !== "apply") {
