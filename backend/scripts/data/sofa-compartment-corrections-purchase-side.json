@@ -225,14 +225,14 @@
    "model": "8030",
    "pieces": [
     "1A(LHF)",
-    "CSL",
+    "CONSOLE",
     "1A(RHF)"
    ],
    "seat": "35",
    "lineKeys": [
     "924286"
    ],
-   "why": "CONFIDENT, AND THE ERP IS ALREADY RIGHT - prod holds CONSOLE+1A(RHF)+1A(LHF), the same multiset. This entry records the reading so the line stops reporting as unanswerable. The book's text spells it out - '1EL + CS + 1EL' - and the slip PO-010145__924286_1.jpg draws it: a box marked 35 hatched inside its left edge, a narrow empty box between (two verticals, no hatching) with an arrow from the handwritten word 'conso' pointing at it, and a box marked 35 hatched inside its right edge. The slip is headed 8030, which is the owner's confirmed alias of the book's HOK-5540, so the model agrees. The slip says 'colour tbc' where the book records B0315-21 PEARL - the colour was chosen after the slip was written, so that is not evidence against the book. | SUPERSEDED 2026-09-11 by the SUPPLIER'S OWN LISTING (propose-supplier-sofa-corrections production run 34502972739). The owner ruled these four follow the supplier even though the two readings are different sofas, not a from-the-other-end reversal: 「ok 四张跟supplier的」. The supplier's system records what it BUILT; this entry was a reading of a photograph."
+   "why": "CONFIDENT, AND THE ERP IS ALREADY RIGHT - prod holds CONSOLE+1A(RHF)+1A(LHF), the same multiset. This entry records the reading so the line stops reporting as unanswerable. The book's text spells it out - '1EL + CS + 1EL' - and the slip PO-010145__924286_1.jpg draws it: a box marked 35 hatched inside its left edge, a narrow empty box between (two verticals, no hatching) with an arrow from the handwritten word 'conso' pointing at it, and a box marked 35 hatched inside its right edge. The slip is headed 8030, which is the owner's confirmed alias of the book's HOK-5540, so the model agrees. The slip says 'colour tbc' where the book records B0315-21 PEARL - the colour was chosen after the slip was written, so that is not evidence against the book. | SUPERSEDED 2026-09-11 by the SUPPLIER'S OWN LISTING (propose-supplier-sofa-corrections production run 34502972739). The owner ruled these four follow the supplier even though the two readings are different sofas, not a from-the-other-end reversal: 「ok 四张跟supplier的」. The supplier's system records what it BUILT; this entry was a reading of a photograph. | CSL=CONSOLE per owner 2026-09-11 (「CSL 就是console啊」); the supplier writes CSL for what our catalogue mints as CONSOLE."
   }
  ],
  "_held": []
