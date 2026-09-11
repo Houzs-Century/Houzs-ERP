@@ -1,0 +1,68 @@
+name: Probe lounger-read-as-arm (read-only)
+
+# Find the sales order whose END piece is a lounger drawn as a taller box but
+# recorded as an ARM (owner 2026-09-11), show its full state and PO, cross-check
+# its PO ref against the supplier export, and list the whole error class.
+# SELECT only. No writes, no DDL, no transaction. Manual trigger. Own group.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      doc:
+        description: "one SO doc number (e.g. HC-SO-013xxx), or blank to search by needle"
+        required: false
+        default: ""
+      needle:
+        description: "text to find the doc when doc is blank"
+        required: false
+        default: "Seat Base Fully Cover with no Leg"
+      company_id:
+        description: "Company. Blank = 1."
+        required: false
+        default: ""
+
+concurrency:
+  group: probe-lounger-read-as-arm-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-lounger-read-as-arm.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DOC: ${{ inputs.doc }}
+          NEEDLE: ${{ inputs.needle }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-lounger-read-as-arm.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          DOC: ${{ inputs.doc }}
+          NEEDLE: ${{ inputs.needle }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
