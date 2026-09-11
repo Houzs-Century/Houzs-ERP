@@ -14,6 +14,27 @@ dead `staging` branch (3,866 commits stale) or by hand. This is
 `docs/staging-bench-rot-coe.md` / docs/bugs/0083 in its mirror form: 0083 was a
 GREEN nobody verified; this is a RED nobody read.
 
+> **CORRECTED 2026-09-12, same day, by observation.** Two claims below were
+> wrong and are kept so the refutation stays on the record.
+> 1. *"The red itself — the empty list renders no empty state."* Refuted by
+>    the Playwright screenshot on run 34627320170: the grid reads **"Failed to
+>    load — permission denied for view mfg_sales_orders_with_payment_totals"**.
+>    A grant problem, not an empty-state problem. Traced and fixed in the OTHER
+>    0824 entry (`0824-the-staging-sales-orders-list-said-permission-denied-on-the.md`,
+>    PR #3704).
+> 2. *"The staging database has been seeded only with a login account."*
+>    Refuted by the first refresh run 34628200896, whose BEFORE counts read
+>    `mfg_sales_orders: 2377 · purchase_orders: 44 · grns: 22 ·
+>    delivery_orders: 16 · purchase_invoices: 17 · sales_invoices: 0`. Staging
+>    held data; the list was not empty, it was refused.
+>
+> That first run also found a third fact: production carries tables no
+> migration creates — the restore died on `COPY public.ac_snapshot_purchase_orders`
+> ("relation does not exist" on staging) AFTER truncating 467 tables, so
+> staging stood empty until the re-run. The workflow now drops COPY blocks for
+> tables staging lacks, prints them, and lists them in the run summary as
+> schema drift to reconcile. Fixed in `fix/staging-refresh-skip-missing-tables`.
+
 **Root cause (traced, two halves).**
 
 *The red itself — LIKELY, not yet proven.* Run 34526187376, `so-list.spec.ts:73`:

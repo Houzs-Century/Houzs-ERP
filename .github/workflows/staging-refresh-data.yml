@@ -178,12 +178,46 @@ jobs:
         run: |
           set -euo pipefail
           gunzip -f prod-data.sql.gz
+          # Production carries tables that no migration created and staging does
+          # not have (first run 34628200896 died on `public.ac_snapshot_purchase_orders`
+          # after truncating staging — docs/bugs/0824). A COPY into a table that is
+          # not there is not an error worth aborting a full reload for: drop those
+          # blocks, SAY which, and keep ON_ERROR_STOP for every other statement so a
+          # real failure still stops the load instead of half-loading.
+          /usr/lib/postgresql/17/bin/psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "
+            select table_schema || '.' || table_name from information_schema.tables
+             where table_schema in ('public','scm') and table_type = 'BASE TABLE'" > staging-tables.txt
+          echo "staging has $(wc -l < staging-tables.txt) base tables"
+          node - <<'JS'
+            const fs = require('fs');
+            const have = new Set(fs.readFileSync('staging-tables.txt', 'utf8').split('\n').map((s) => s.trim()).filter(Boolean));
+            const src = fs.readFileSync('prod-data.sql', 'utf8').split('\n');
+            const out = []; const skipped = new Set(); let kept = 0;
+            let skipping = false;
+            for (const line of src) {
+              const m = /^COPY\s+("?[a-z0-9_]+"?)\.("?[a-z0-9_]+"?)\s/i.exec(line);
+              if (m) {
+                const key = `${m[1].replace(/"/g, '')}.${m[2].replace(/"/g, '')}`;
+                skipping = !have.has(key);
+                if (skipping) skipped.add(key); else kept++;
+              }
+              if (!skipping) out.push(line);
+              if (skipping && line === '\\.') skipping = false; // end of the COPY block
+            }
+            fs.writeFileSync('prod-data.filtered.sql', out.join('\n'));
+            console.log(`COPY blocks kept: ${kept}; skipped (table absent on staging): ${skipped.size}`);
+            for (const k of [...skipped].sort()) console.log(`  skipped ${k}`);
+            fs.writeFileSync('skipped-tables.txt', [...skipped].sort().join('\n'));
+          JS
           # One session: relax FK/trigger enforcement for the load, then restore in
           # the order pg_dump wrote it. If the role may not set replica mode this
           # fails LOUDLY on the first statement instead of half-loading.
-          { echo "set session_replication_role = replica;"; cat prod-data.sql; } \
+          { echo "set session_replication_role = replica;"; cat prod-data.filtered.sql; } \
             | /usr/lib/postgresql/17/bin/psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q
           echo "restore: done"
+          if [ -s skipped-tables.txt ]; then
+            { echo "Tables in the production dump that staging does not have (schema drift — no migration creates them):"; sed 's/^/- /' skipped-tables.txt; } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Reset sequences to max(id)
         env:
