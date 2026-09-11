@@ -1,0 +1,61 @@
+name: Retire merged duplicate fabric series (plan by default)
+
+# Dispatchable run of backend/scripts/retire-merged-padded-fabric-series.mjs —
+# switches off an EMPTIED duplicate `scm.fabric_library` row (a padded id whose
+# trimmed twin is active and holds the colours) and stamps its label with the
+# same merge tombstone GARFIELD's row already carries, so the fabric list stops
+# showing the same fabric twice. Owner 2026-09-11: 「这种有异样的 fabric 全部
+# merge 起来」. docs/bugs/0820.
+#
+# PLAN by default: reads only, prints every row it would retire and every row it
+# REFUSES (a row with colours still on it, or one whose clean twin is itself
+# switched off — retiring either would hide a sellable fabric). MODE=apply +
+# CONFIRM writes, then re-verifies on a FRESH connection that the padded row is
+# off, carries its merge note, and that the clean twin is still active with
+# colours to offer.
+#
+# DATABASE_URL is the only credential. Manual trigger only, own concurrency
+# group — never queues behind or displaces a release, never scheduled.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, no writes) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+      confirm:
+        description: 'required for apply: RETIRE MERGED SERIES'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: retire-merged-padded-fabric-series
+  cancel-in-progress: false
+
+jobs:
+  retire:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/retire-merged-padded-fabric-series.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
