@@ -158,11 +158,20 @@ export async function raisePoFollowUps(
   type PoItem = {
     id: string; purchase_order_id: string | null; so_item_id: string | null;
     item_code: string | null; material_name: string | null;
+    // The full "before" the reviewer's preview diff renders against. Without the
+    // spec fields (qty / variants / item_group / description2) the PO-amendment
+    // card could not show what a SPEC change actually moved, and an unrecorded
+    // old qty rendered as a phantom "Qty - -> N" (docs/bugs).
+    qty: number | null; unit_price_sen: number | null; delivery_date: string | null;
+    variants: unknown; item_group: string | null; description2: string | null;
   };
+  const PO_ITEM_COLS =
+    'id, purchase_order_id, so_item_id, item_code, material_name, ' +
+    'qty, unit_price_sen, delivery_date, variants, item_group, description2';
   let livePoItems: PoItem[] = [];
   if (soItemIds.length > 0) {
     const { data: poItemRows, error: poItemErr } = await sb.from('purchase_order_items')
-      .select('id, purchase_order_id, so_item_id, item_code, material_name')
+      .select(PO_ITEM_COLS)
       .in('so_item_id', soItemIds);
     if (poItemErr) throw new Error(`raisePoFollowUps: PO items load failed: ${poItemErr.message}`);
     livePoItems = (poItemRows ?? []) as PoItem[];
@@ -174,7 +183,7 @@ export async function raisePoFollowUps(
   let orphanItems: PoItem[] = [];
   if (orphanPoItemIds.length > 0) {
     const { data: oRows, error: oErr } = await sb.from('purchase_order_items')
-      .select('id, purchase_order_id, so_item_id, item_code, material_name')
+      .select(PO_ITEM_COLS)
       .in('id', orphanPoItemIds);
     if (oErr) throw new Error(`raisePoFollowUps: orphan PO lines load failed: ${oErr.message}`);
     orphanItems = (oRows ?? []) as PoItem[];
@@ -242,6 +251,24 @@ export async function raisePoFollowUps(
     arr.push(pi);
     poItemsByPo.set(pi.purchase_order_id, arr);
   }
+
+  /* The PO line's CURRENT state, the "before" the reviewer's diff renders
+     against. Carries the spec fields (variants / item_group / description2) so
+     the card can show what a SPEC change moved -- the SO-amendment card reads the
+     same shape (so-amendment-line-diff.ts: variants + item_group + description2).
+     preview:true marks these rows advisory: the confirm re-derives from the SO. */
+  const beforeSnapshot = (item: PoItem) => ({
+    preview: true as const,
+    source_so_amendment_no: args.soAmendmentNo,
+    item_code: item.item_code,
+    material_name: item.material_name,
+    qty: item.qty,
+    unit_price_sen: item.unit_price_sen,
+    delivery_date: item.delivery_date,
+    variants: item.variants,
+    item_group: item.item_group,
+    description2: item.description2,
+  });
 
   for (const po of livePos) {
     // (6) One OPEN request per PO — the module's own rule. An open follow-up
@@ -318,10 +345,7 @@ export async function raisePoFollowUps(
             amendment_id: amendmentId,
             purchase_order_item_id: poItemId,
             change_type: 'REMOVE',
-            old_snapshot: {
-              preview: true, source_so_amendment_no: args.soAmendmentNo,
-              item_code: item.item_code, material_name: item.material_name,
-            },
+            old_snapshot: beforeSnapshot(item),
           });
         }
         continue;
@@ -335,11 +359,11 @@ export async function raisePoFollowUps(
         change_type: t === 'QTY' ? 'QTY' : 'SPEC',
         new_item_code: l.new_item_code,
         new_variants: l.new_variants ?? null,
-        new_qty: l.new_qty,
-        old_snapshot: {
-          preview: true, source_so_amendment_no: args.soAmendmentNo,
-          item_code: item.item_code, material_name: item.material_name,
-        },
+        // Only a QTY change moves the qty. Carrying the unchanged qty on a SPEC
+        // row made the preview render a phantom "Qty - -> N" and misroute the
+        // change as Quantity (docs/bugs).
+        new_qty: t === 'QTY' ? l.new_qty : null,
+        old_snapshot: beforeSnapshot(item),
       });
     }
     if (previewRows.length > 0) {

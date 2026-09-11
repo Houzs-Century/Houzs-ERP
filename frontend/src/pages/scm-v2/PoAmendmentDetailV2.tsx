@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { generateAmendmentPdf } from "../../vendor/scm/lib/amendment-pdf";
 import { amendmentPrintedStatus, poAmendmentToPdfInput } from "../../vendor/scm/lib/amendment-pdf-map";
+import { amendmentVariantSummaries } from "../../vendor/scm/lib/so-amendment-line-diff";
 import { fmtDateTime, fmtMoneySen } from "@2990s/shared";
 import { Button } from "../../components/Button";
 import {
@@ -97,6 +98,11 @@ type PoOldSnapshot = {
   qty?: number | null;
   unit_price_sen?: number | null;
   delivery_date?: string | null;
+  // Spec fields — the follow-up preview records these so the card can show what a
+  // SPEC change moved (variant summary), rendered via amendmentVariantSummaries.
+  variants?: unknown;
+  item_group?: string | null;
+  description2?: string | null;
 };
 const oldOf = (l: PoAmendmentLine): PoOldSnapshot =>
   (l.old_snapshot as PoOldSnapshot | null) ?? {};
@@ -284,6 +290,17 @@ function DiffCard({ line }: { line: PoAmendmentLine }) {
   const priceChanged = !isAdd && !isRemove && line.new_unit_price_sen != null && line.new_unit_price_sen !== (old.unit_price_sen ?? null);
   const deliveryChanged = !isAdd && !isRemove && line.new_delivery_date != null && line.new_delivery_date !== (old.delivery_date ?? null);
 
+  /* The variant SUMMARY each side renders — a colour/fabric/special change (the
+     common SO-driven follow-up) moves no item_code, so it only shows here.
+     Group-aware via the shared SO helper so a bedframe line reads its own axes.
+     Guarded on new_variants so a QTY row's null blob never reads as a cleared spec. */
+  const spec = amendmentVariantSummaries({
+    change_type: line.change_type,
+    new_variants: line.new_variants,
+    old_snapshot: line.old_snapshot,
+  });
+  const specChanged = !isAdd && !isRemove && line.new_variants != null && spec.from !== spec.to;
+
   const wasCls = (changed: boolean, base: string): string =>
     cn(base, changed && "line-through decoration-ink-muted/60");
   const nowCls = (changed: boolean, base: string): string =>
@@ -327,6 +344,9 @@ function DiffCard({ line }: { line: PoAmendmentLine }) {
                   Delivery {formatDate(old.delivery_date)}
                 </div>
               )}
+              {specChanged && (
+                <div className={wasCls(specChanged, "mt-1 text-[11px] text-ink-secondary")}>{spec.from || "—"}</div>
+              )}
             </>
           )}
         </div>
@@ -358,6 +378,9 @@ function DiffCard({ line }: { line: PoAmendmentLine }) {
                 <div className={nowCls(deliveryChanged, "mt-1 text-[11px]")}>
                   Delivery {formatDate(line.new_delivery_date)}
                 </div>
+              )}
+              {specChanged && (
+                <div className={nowCls(specChanged, "mt-1 text-[11px]")}>{spec.to || "—"}</div>
               )}
             </>
           )}
