@@ -192,7 +192,7 @@ jobs:
             const fs = require('fs');
             const have = new Set(fs.readFileSync('staging-tables.txt', 'utf8').split('\n').map((s) => s.trim()).filter(Boolean));
             const src = fs.readFileSync('prod-data.sql', 'utf8').split('\n');
-            const out = []; const skipped = new Set(); let kept = 0;
+            const out = []; const skipped = new Set(); let kept = 0; let setvals = 0;
             let skipping = false;
             for (const line of src) {
               const m = /^COPY\s+("?[a-z0-9_]+"?)\.("?[a-z0-9_]+"?)\s/i.exec(line);
@@ -201,11 +201,17 @@ jobs:
                 skipping = !have.has(key);
                 if (skipping) skipped.add(key); else kept++;
               }
+              // pg_dump appends `SELECT pg_catalog.setval('<seq>', n, true);` for every
+              // serial, including those of the tables skipped above — run 34630978074
+              // died on `public.ac_snapshot_runs_id_seq does not exist` after every
+              // COPY had already landed. The next step recomputes every serial from
+              // max(id) anyway, so no setval line from the dump is needed at all.
+              if (/^SELECT\s+pg_catalog\.setval\(/i.test(line)) { setvals++; continue; }
               if (!skipping) out.push(line);
               if (skipping && line === '\\.') skipping = false; // end of the COPY block
             }
             fs.writeFileSync('prod-data.filtered.sql', out.join('\n'));
-            console.log(`COPY blocks kept: ${kept}; skipped (table absent on staging): ${skipped.size}`);
+            console.log(`COPY blocks kept: ${kept}; skipped (table absent on staging): ${skipped.size}; setval lines dropped: ${setvals}`);
             for (const k of [...skipped].sort()) console.log(`  skipped ${k}`);
             fs.writeFileSync('skipped-tables.txt', [...skipped].sort().join('\n'));
           JS

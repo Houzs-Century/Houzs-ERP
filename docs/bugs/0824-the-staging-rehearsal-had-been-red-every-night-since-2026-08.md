@@ -34,6 +34,25 @@ GREEN nobody verified; this is a RED nobody read.
 > staging stood empty until the re-run. The workflow now drops COPY blocks for
 > tables staging lacks, prints them, and lists them in the run summary as
 > schema drift to reconcile. Fixed in `fix/staging-refresh-skip-missing-tables`.
+>
+> Second run 34630978074 (after #3705): 462 COPY blocks kept, **6 tables skipped**
+> — `public.ac_snapshot_purchase_orders`, `public.ac_snapshot_runs`,
+> `public.ac_snapshot_sales_orders`, `public.assr_case_categories`,
+> `public.table_layouts`, `public.tmp_sheet_capture` — production tables no
+> migration creates. Then it died on `SELECT pg_catalog.setval('public.ac_snapshot_runs_id_seq', …)`:
+> pg_dump appends a setval for every serial, including the skipped tables'. Every
+> COPY had already committed (psql runs statement by statement), so staging held
+> the production copy UNMASKED and without the re-seeded login until the next
+> run. Fixed in `fix/staging-refresh-drop-setval`: every dump setval line is
+> dropped — the workflow's own "Reset sequences to max(id)" step recomputes
+> them all anyway.
+>
+> And the grant hypothesis for the red fell too: migration 20260912T0130 printed
+> on staging `BEFORE: hyperdrive_staging, postgres, service_role` — the view
+> already carried every role. The mechanism behind "permission denied for view"
+> is therefore still **UNKNOWN**; the next observation is an authenticated
+> read-only probe of the staging API with the seeded account (sales-order list
+> vs product list) once the refresh lands.
 
 **Root cause (traced, two halves).**
 
