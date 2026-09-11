@@ -235,7 +235,7 @@ mfgSalesOrdersListEnrichment.get('/:docNo/coverage', async (c) => {
   const [h, i, nonSellingWh] = await Promise.all([
     // Header read is company-scoped + minimal — exist check, salesperson_id for
     // the same self-scoped-sales gate, and processing_date for the promotion gate.
-    scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id, access_staff_ids, processing_date').eq('doc_no', docNo), c).maybeSingle(),
+    scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id, access_staff_ids, processing_date, open_to_all').eq('doc_no', docNo), c).maybeSingle(),
     // Only the columns the MRP per-line rule needs, in line_no order (nulls last
     // → pre-0165 fallback to created_at). `warehouse_id` joined the list on
     // 2026-09-08: the non-selling-warehouse rule decides per line, so the line
@@ -255,8 +255,8 @@ mfgSalesOrdersListEnrichment.get('/:docNo/coverage', async (c) => {
      sellers pass only their own; other reps are held to their subtree. An
      out-of-scope doc_no answers 404 — indistinguishable from a missing one. */
   {
-    const d = h.data as { salesperson_id?: number | string | null; access_staff_ids?: string[] | null };
-    if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: d.salesperson_id, accessStaffIds: d.access_staff_ids })) {
+    const d = h.data as { salesperson_id?: number | string | null; access_staff_ids?: string[] | null; open_to_all?: boolean | null };
+    if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: d.salesperson_id, accessStaffIds: d.access_staff_ids, openToAll: d.open_to_all })) {
       return c.json({ error: 'not_found' }, 404);
     }
   }

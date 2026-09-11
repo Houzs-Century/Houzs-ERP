@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { applySoScope, soDocOutOfScope } from '../src/scm/lib/salesScope';
 import mfgSalesOrders from '../src/scm/routes/mfg-sales-orders.ts?raw';
 import listEnrichment from '../src/scm/routes/mfg-sales-orders-list-enrichment.ts?raw';
 import soAmendments from '../src/scm/routes/so-amendments.ts?raw';
@@ -86,6 +87,59 @@ describe('shared Sales Orders — the downstream documents do NOT inherit it', (
     expect(
       code(source).some((l) => l.includes('applySoScope') || l.includes('access_staff_ids')),
       'a downstream document must not widen to SO collaborators — commission is booked off its own snapshot',
+    ).toBe(false);
+  });
+});
+
+/* OPEN-TO-ALL (owner 2026-09-11) — the same two helpers gain an `open_to_all`
+ * bypass so the AutoCount-imported historical batch is visible to everyone. It
+ * has the SAME reach as sharing (Sales Orders only) and the SAME silent-failure
+ * shape: a gate that forgot to thread `openToAll` keeps open orders hidden, and
+ * nothing on screen says so — so it is pinned here, not left to review. */
+describe('open-to-all — the helpers bypass scope for flagged orders', () => {
+  it('applySoScope leaves a view-all (null) scope unfiltered', () => {
+    const q = { tag: 'unfiltered' };
+    expect(applySoScope(q, null)).toBe(q);
+  });
+
+  it('applySoScope ORs the access_staff_ids overlap with open_to_all', () => {
+    let captured = '';
+    const q: { or: (s: string) => typeof q } = { or: (s: string) => { captured = s; return q; } };
+    applySoScope(q, ['11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222']);
+    expect(captured).toContain(
+      'access_staff_ids.ov.{11111111-1111-1111-1111-111111111111,22222222-2222-2222-2222-222222222222}',
+    );
+    expect(captured).toContain('open_to_all.is.true');
+  });
+
+  it('soDocOutOfScope: an open order is in scope for everyone, without a scope lookup', async () => {
+    // openToAll short-circuits BEFORE resolveSalesScopeIds, so sb is never read;
+    // a from() that throws proves the lookup did not run.
+    const sb = { from: () => { throw new Error('scope lookup must not run for an open order'); } };
+    const out = await soDocOutOfScope(sb, {} as never, 999, false, {
+      salespersonId: 'a-stranger-uuid',
+      accessStaffIds: [],
+      openToAll: true,
+    });
+    expect(out).toBe(false);
+  });
+});
+
+describe('open-to-all — reach is Sales Orders only, exactly like sharing', () => {
+  it('every SO-side soDocOutOfScope gate threads openToAll', () => {
+    for (const [name, source] of SO_SIDE) {
+      const gates = code(source).filter((l) => l.includes('soDocOutOfScope('));
+      for (const g of gates) {
+        expect(g, `${name}: a gate that never passes openToAll keeps open orders hidden`)
+          .toContain('openToAll');
+      }
+    }
+  });
+
+  it.each(DOWNSTREAM)('%s does not gain open_to_all reach', (_name, source) => {
+    expect(
+      code(source).some((l) => l.includes('open_to_all') || l.includes('openToAll')),
+      'opening an order must not widen its downstream documents',
     ).toBe(false);
   });
 });

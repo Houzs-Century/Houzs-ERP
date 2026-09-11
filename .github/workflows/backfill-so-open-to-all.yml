@@ -1,0 +1,57 @@
+name: Backfill SO open-to-all
+
+# One-shot: mark the AutoCount-imported HISTORICAL Sales Orders (doc_no
+# HC-SO-<6+ digits>) `open_to_all = true` so every user can see/edit them.
+# Owner 2026-09-11. Requires migration 20260911T1500 to have deployed first
+# (the column must exist). Safe to re-run — the script is idempotent.
+#
+# Run it DRY first (default): Actions -> this workflow -> Run workflow, leave
+# "apply" unchecked. Read the counts on the run summary (matched ~2882, and how
+# many would flip). Then Run workflow again with "apply" checked to write.
+#
+# Checking "apply" both passes --apply AND supplies the script's CONFIRM phrase:
+# the checkbox IS the deliberate confirmation here (the script refuses a bare
+# --apply with no CONFIRM, for someone running it by hand). After writing, the
+# script re-reads on a fresh connection and asserts the values — a failure there
+# fails the job.
+#
+# Manual trigger only — a production write must never run on a schedule.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Write the flag (unchecked = dry run, report only)"
+        type: boolean
+        default: false
+
+# Deliberately NOT the deploy concurrency group: a one-shot admin write must
+# never queue behind — or displace — a release.
+concurrency:
+  group: backfill-so-open-to-all
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/backfill-so-open-to-all.mjs ${{ inputs.apply && '--apply' || '' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # The script's CONFIRM gate; supplied only when "apply" is checked, so a
+          # dry run cannot accidentally write and the checkbox is the confirmation.
+          CONFIRM: ${{ inputs.apply && 'open historical sales orders' || '' }}
+          # GitHub-hosted runners have no IPv6 egress (see deploy-staging.yml /
+          # soak-gate-check.yml). Harmless on an IPv4-only host.
+          NODE_OPTIONS: --dns-result-order=ipv4first
