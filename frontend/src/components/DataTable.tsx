@@ -307,6 +307,14 @@ interface Props<T> {
     render: (row: T) => ReactNode;
     /** Stable id for expansion state. Defaults to `getRowKey`. */
     rowKey?: (row: T) => string;
+    /** Controlled expansion (opt-in). When BOTH are provided, DataTable renders
+     *  exactly `expandedIds` instead of its own transient state and reports every
+     *  chevron toggle through `onExpandedChange` — so a page can drive
+     *  Expand/Collapse-all or auto-open its search hits (MRP). Omit both for the
+     *  default transient behaviour (drill-downs reset on reload), byte-identical
+     *  to before this option existed. */
+    expandedIds?: Set<string>;
+    onExpandedChange?: (next: Set<string>) => void;
   };
   /**
    * Opt-in row selection (2990 DataGrid `selectable` parity). When set, a
@@ -374,6 +382,18 @@ interface Props<T> {
     /** Pretty-print a raw group value for the header. */
     label?: (val: string) => string;
   };
+  /**
+   * Fixed-width column layout (opt-in, default off = byte-identical to before).
+   * OFF: the table is `w-full` and column widths are suggestions the auto layout
+   * redistributes to fill 100%, so resizing one column re-flows its neighbours.
+   * ON: the table is `table-layout: fixed`, exactly as wide as the sum of the
+   * column widths — each column holds its size, resizing one changes ONLY that
+   * column (the table grows and the scroll container scrolls horizontally) and
+   * nothing squeezes its neighbours (owner 2026-09-11, MRP). Every column
+   * resolves to a px width (its own `width`, a user drag, else the 160 default),
+   * so a caller turning this on should give its wide columns an explicit `width`.
+   */
+  fixedColumnWidths?: boolean;
 }
 
 type SortDir = "asc" | "desc";
@@ -621,6 +641,7 @@ function DataTableInner<T>({
   onSortChange,
   mobileCard,
   expandable,
+  fixedColumnWidths,
   contextMenu,
   groupBy,
   selection,
@@ -843,19 +864,33 @@ function DataTableInner<T>({
   // Expanded drill-down rows (opt-in `expandable`). Transient — a Set of
   // expansion ids so the chevron toggle is O(1) and reloads start collapsed.
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  // Controlled expansion (opt-in): when the caller supplies `expandedIds`, that
+  // Set is the source of truth everywhere below; otherwise the transient
+  // `expandedRows` above is. `onExpandedChange` reports toggles in controlled
+  // mode. A caller that passes neither is byte-identical to before.
+  const expandedRowsEffective = expandable?.expandedIds ?? expandedRows;
   const expansionId = useCallback(
     (row: T) =>
       expandable?.rowKey ? expandable.rowKey(row) : String(getRowKey(row)),
     [expandable, getRowKey]
   );
   const toggleExpand = useCallback((id: string) => {
+    const controlled = expandable?.expandedIds;
+    // `controlled` truthy already narrows `expandable` to non-null.
+    if (controlled && expandable.onExpandedChange) {
+      const next = new Set(controlled);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      expandable.onExpandedChange(next);
+      return;
+    }
     setExpandedRows((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  }, []);
+  }, [expandable]);
 
   // Row right-click menu (opt-in `contextMenu`). Transient — anchor point
   // plus the items resolved at open time. null = closed.
@@ -1191,6 +1226,16 @@ function DataTableInner<T>({
     },
     [widths]
   );
+
+  /* Total table width for the fixed-width layout (opt-in `fixedColumnWidths`):
+     the leading select/expand gutters plus every display column's resolved px
+     width. Recomputes as a drag mutates `widths` (via resolveWidth), so the
+     table grows live while a column is resized. undefined when the flag is off. */
+  const fixedTableWidth = useMemo(() => {
+    if (!fixedColumnWidths) return undefined;
+    const lead = (selection ? 36 : 0) + (expandable ? 32 : 0);
+    return lead + displayColumns.reduce((acc, c) => acc + resolveWidth(c), 0);
+  }, [fixedColumnWidths, selection, expandable, displayColumns, resolveWidth]);
 
   /* How many TRAILING display columns are frozen to the right. Mirror image
      of stickyCount: a contiguous run, because a gap in it would let an
@@ -2077,7 +2122,7 @@ function DataTableInner<T>({
   // returns it to the windowed path.
   const canVirtualize =
     showTable && !effectiveLoading && !error && !groupBy &&
-    (!expandable || expandedRows.size === 0) &&
+    (!expandable || expandedRowsEffective.size === 0) &&
     renderList.length > VIRTUAL_ROW_THRESHOLD;
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
   const rowHeightRef = useRef(ROW_HEIGHT_ESTIMATE);
@@ -2305,7 +2350,15 @@ function DataTableInner<T>({
             className="thin-scroll overflow-x-auto overflow-y-auto"
             style={freezeScrollStyle}
           >
-          <table className="w-full border-separate border-spacing-0 text-sm">
+          <table
+            className={cn(
+              "border-separate border-spacing-0 text-sm",
+              // Fixed layout sizes the table to the sum of its columns (below);
+              // otherwise fill the container and let the auto layout distribute.
+              !fixedColumnWidths && "w-full",
+            )}
+            style={fixedColumnWidths ? { tableLayout: "fixed", width: fixedTableWidth } : undefined}
+          >
             <thead className="sticky top-0 z-10">
               <tr>
                 {selection && (
@@ -2360,7 +2413,16 @@ function DataTableInner<T>({
                   // actually holds the size instead of the browser
                   // redistributing free space.
                   const cellStyle: React.CSSProperties = {};
-                  if (typeof userW === "number") {
+                  if (fixedColumnWidths) {
+                    // Fixed layout: pin every column to its resolved width so the
+                    // table-layout:fixed grid honours it exactly (widths come from
+                    // this header row) and a resize grows ONLY this column, never
+                    // its neighbours. resolveWidth already folds in a user drag.
+                    const w = resolveWidth(c);
+                    cellStyle.width = w;
+                    cellStyle.minWidth = w;
+                    cellStyle.maxWidth = w;
+                  } else if (typeof userW === "number") {
                     cellStyle.width = userW;
                     cellStyle.minWidth = userW;
                     cellStyle.maxWidth = userW;
@@ -2642,7 +2704,7 @@ function DataTableInner<T>({
                   const stickyBg =
                     rowIdx % 2 === 0 ? "#ffffff" : "#f8f8f5";
                   const expId = expandable ? expansionId(row) : null;
-                  const isExpanded = expId != null && expandedRows.has(expId);
+                  const isExpanded = expId != null && expandedRowsEffective.has(expId);
                   const selKey = selection ? String(getRowKey(row)) : null;
                   const isRowSelected =
                     selKey != null && selection!.selectedIds.has(selKey);

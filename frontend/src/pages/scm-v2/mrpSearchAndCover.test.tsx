@@ -117,7 +117,7 @@ describe('MRP search — narrows the rows in view', () => {
 
     // Force-opening the match repeats its SO no across child module rows, so
     // assert presence with getAllByText and absence with queryByText.
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'SO-COVER-2' } });
+    fireEvent.change(screen.getByPlaceholderText(/customer/i), { target: { value: 'SO-COVER-2' } });
     expect(screen.queryByText('SO-COVER-1')).toBeNull();
     expect(screen.getAllByText('SO-COVER-2').length).toBeGreaterThan(0);
   });
@@ -131,7 +131,7 @@ describe('MRP search — narrows the rows in view', () => {
       skus: [],
     });
     render(<MemoryRouter><Mrp /></MemoryRouter>);
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'beta' } });
+    fireEvent.change(screen.getByPlaceholderText(/customer/i), { target: { value: 'beta' } });
     expect(screen.queryByText('SO-COVER-1')).toBeNull();
     expect(screen.getAllByText('SO-COVER-2').length).toBeGreaterThan(0);
   });
@@ -139,7 +139,7 @@ describe('MRP search — narrows the rows in view', () => {
   test('a query matching nothing shows the no-match empty state', () => {
     mrpData = base({ sofaSets: [sofaSet('SO-COVER-1', 'si-sofa-1', 'ALPHA CUSTOMER')], skus: [] });
     render(<MemoryRouter><Mrp /></MemoryRouter>);
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'zzz-nothing' } });
+    fireEvent.change(screen.getByPlaceholderText(/customer/i), { target: { value: 'zzz-nothing' } });
     expect(screen.getByText(/No rows match/i)).toBeTruthy();
   });
 });

@@ -280,3 +280,44 @@ it after merge (`git worktree remove ../houzs-work-worktrees/mrp-redesign-handof
 - The mockup (§03 supplier×category chip "要新建"; §02 "床垫同一周 window 待定")
   is now STALE on both points: the lead-time is built (#3608) and the window is
   KEPT in code. Do not re-open either from the artifact.
+
+## Track F — MRP table onto the shared DataTable (owner 2026-09-11, "合并上线")
+
+Owner asked for MRP to have the same table features the other lists have ("freeze
+row title, filter, 这些"). MRP was still on a hand-built Model → Variant → SO
+`<table>` (docs/bugs/0753, 0768 — the standalone frozen header fought this page
+twice and was left DISARMED). Fixed by MIGRATING the report table onto the shared
+`DataTable`, which brings the freeze + column funnels + sort + column show/hide +
+CSV export + Reset layout together and retires the odd-table-out.
+
+| Step | State | Where |
+|---|---|---|
+| F1. Top-level rows → `DataTable` columns; Model→Variant→SO drilldown → `expandable.render` (ModelDrilldown); selection stays per SO-line (soItemId) via a custom leading column | THIS PR | `frontend/src/pages/scm-v2/Mrp.tsx`, `Mrp.module.css` |
+| F2. `DataTable` opt-in CONTROLLED expansion (`expandable.expandedIds`/`onExpandedChange`) so MRP keeps Collapse/Expand-all + search-auto-expand | THIS PR | `frontend/src/components/DataTable.tsx` |
+| F3. `DataTable` opt-in `fixedColumnWidths` (table-layout fixed, width = Σ columns) so resizing one column grows only it + scrolls horizontally instead of squeezing neighbours | THIS PR | `frontend/src/components/DataTable.tsx` |
+| F4. Description column wraps (long bedframe specs) + every non-sofa tab gains a Sales-Order column (owner: bedframe/mattress/accessory/others 也要显示 SO no) | THIS PR | `Mrp.tsx` |
+
+**Freeze is RE-ENABLED and the 0768 half-screen root cause is gone.** DataTable
+anchors its frozen composition on its OWN component root, so the page header /
+tabs / filter row sit ABOVE it and scroll away — only the column-header strip
+freezes. That is exactly the "mark a data-freeze-anchor below the filter row so
+only the header strip is reserved" fix 0768 deferred; the old wiring reserved the
+whole 244px of tabs+filters, which is why it half-screened. `useFrozenTableHeader`
+is unchanged — MRP just reaches it through DataTable now.
+
+**Both DataTable additions are opt-in and OFF by default** — the other list pages
+are byte-identical (DataTable.test 50/50, DataTableLayoutSync + ColumnsDrawer
+green). MRP behaviour verified: mrpCategoryTabs / mrpSearchAndCover /
+mrpSofaSupplier / mrpUndated green, tsc -b clean, lint-ratchet clean, and the
+owner eyeballed it on PROD data via a worktree dev server before 合并上线.
+
+**Selection note.** PO-raising / idempotency / gather* logic is UNCHANGED. The
+model-row checkbox is a custom leading column (keeps the parent indeterminate +
+select-all); the fine per-line checkboxes live in the drilldown, both driving the
+same soItemId `selected` set as before.
+
+**Deferred (next person).** Column-funnel filters narrow the rows DataTable
+renders, but Proceed-PO / select-all still scope to the DOMAIN-filtered set (date
+window / warehouse / only-shortages), NOT the per-column funnels — wiring
+`onFilteredRowsChange` to scope Proceed-PO to funnel-visible rows is the follow-up
+(DataTable already exposes the prop for exactly this).

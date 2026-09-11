@@ -23,7 +23,7 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { ChevronRight, ChevronDown, RefreshCw, Truck, ShoppingCart, CalendarRange, Clock } from 'lucide-react';
-import { useFrozenTableHeader } from '../../components/useFrozenTableHeader';
+import { DataTable, type Column } from '../../components/DataTable';
 import {
   useMrp, useRegenerateMrp, useCategoryLeadTimes, useUpdateCategoryLeadTime, GLOBAL_LEAD_KEY,
   type MrpSku, type MrpLine, type MrpResponse, type SofaSet, type LeadCategory,
@@ -400,14 +400,14 @@ function groupBySo(skus: MrpSku[]): ModelGroup[] {
    each colour VARIANT becomes its own top row (its Description 2 read straight
    at L1), and expanding jumps straight to the SO orders. No model → variant →
    orders middle level. We emit ONE single-variant ModelGroup per variant SKU so
-   ModelRows' existing 2-level "single" path renders L1 → orders with no extra
-   click. Mattress / Accessory keep groupByModel (one model, one variant). */
+   ModelDrilldown's existing 2-level "single" path renders L1 → orders with no
+   extra click. Mattress / Accessory keep groupByModel (one model, one variant). */
 function groupByVariant(skus: MrpSku[]): ModelGroup[] {
   const groups: ModelGroup[] = skus.map((s) => ({
     groupKey: rowKey(s),               // warehouse|itemCode|variantKey — unique per variant
     warehouseId: s.warehouseId, warehouseCode: s.warehouseCode, warehouseName: s.warehouseName,
     itemCode: s.itemCode, description: s.description, category: s.category,
-    variants: [s],                     // single → ModelRows jumps straight to orders
+    variants: [s],                     // single → ModelDrilldown jumps straight to orders
     qtyNeeded: s.qtyNeeded, stock: s.stock, poOutstanding: s.poOutstanding, shortage: s.shortage,
   }));
   // Same ordering as the other groupers: shortage (orange) first, then warehouse,
@@ -675,12 +675,10 @@ export const Mrp = () => {
   // A search hit is force-opened so the matching line is visible without a drill.
   const forceOpen = Boolean(searchQ);
 
-  const toggleModel = (code: string) =>
-    setExpandedModels((prev) => {
-      const next = new Set(prev);
-      if (next.has(code)) next.delete(code); else next.add(code);
-      return next;
-    });
+  /* Model-row expansion is driven by DataTable via its controlled-expansion API
+     (expandable.expandedIds = expandedModels, onExpandedChange = setExpandedModels);
+     Collapse/Expand-all and a search hit set that state directly. Variant-level
+     expansion stays the page's own (the drilldown is custom content). */
   const toggleVariant = (key: string) =>
     setExpandedVariants((prev) => {
       const next = new Set(prev);
@@ -957,43 +955,130 @@ export const Mrp = () => {
   const basisLabel = dateBasis === 'processing' ? 'Processing Date' : dateBasis === 'soDate' ? 'SO Date' : dateBasis === 'orderBy' ? 'Order-by' : 'Delivery';
   const windowLabel = hasWindow ? `${basisLabel} ${dateFrom || '…'} → ${dateTo || '…'}` : '';
 
-  /* Frozen header — owner 2026-07-24 "每个table的header都要freeze", and again on
-     2026-09-09 for this page ("MRP 需要freeze row title"). MRP keeps its own
-     hand-built Model -> Variant -> SO tree instead of <DataTable>, so it never
-     inherited the freeze; #3430 pointed it at the SAME hook rather than a second
-     copy of that geometry.
+  /* The report table is now the shared <DataTable> (owner 2026-09-11 — "MRP
+     table 也要有其他 table 那些功能": freeze row title, per-column filter, sort,
+     column show/hide, export, Reset layout). MRP was the last list keeping a
+     hand-built Model -> Variant -> SO <table>, which is exactly why the frozen
+     header never worked here (docs/bugs/0753, 0768 — the standalone hook fought
+     this page's no-page-scroll layout twice). Migrating onto DataTable inherits
+     its proven freeze + funnel filters at once and retires the odd-table-out.
 
-     DISARMED THE SAME DAY (owner 2026-09-09, shown the measurement below and
-     asked with a picker: 「先把 MRP 的表头固定关掉」). The geometry is sound but
-     its central assumption does not hold on THIS page: it reserves the strip
-     above the table under the pinned page header and relies on PAGE SCROLL to
-     carry the composition up. Measured live on erp.houzscentury.com/scm/mrp,
-     sofa tab, in a 879px window:
+     The TOP-LEVEL row (one per Model / SO / colour variant) is a DataTable row
+     described by `columns` below; the Model -> Variant -> SO drilldown renders
+     inside `expandable.render` (ModelDrilldown), unchanged. Selection stays at
+     the SO-LINE level (soItemId) exactly as before — the leading `select` column
+     is a custom cell + header so it keeps the parent indeterminate state and the
+     select-all; the fine per-line checkboxes live in the drilldown. Nothing in
+     the Proceed-PO / idempotency path changed. */
+  const isSofa = view === 'sofa';
+  const columns: Column<ModelGroup>[] = [
+    {
+      key: 'select', label: '', width: '38px', align: 'center',
+      alwaysVisible: true, disableSort: true, disableFilter: true,
+      renderHeader: () => (
+        <input
+          type="checkbox"
+          aria-label="Select all shortage rows"
+          title="Select all shortage rows"
+          disabled={shortCount === 0}
+          checked={allShortSelected}
+          ref={(el) => { if (el) el.indeterminate = someShortSelected; }}
+          onChange={toggleSelectAll}
+          onClick={(e) => e.stopPropagation()}
+        />
+      ),
+      render: (g) => {
+        const ids = g.variants.flatMap(shortageLineIdsOf);
+        if (ids.length === 0) return null;
+        const sel = ids.filter((id) => selected.has(id));
+        const all = sel.length === ids.length;
+        const some = sel.length > 0 && !all;
+        return (
+          <input
+            type="checkbox"
+            checked={all}
+            ref={(el) => { if (el) el.indeterminate = some; }}
+            onChange={(e) => setLinesSelected(ids, e.target.checked)}
+            onClick={(e) => e.stopPropagation()}
+            aria-label={`Select all shortage lines under ${g.itemCode}`}
+          />
+        );
+      },
+    },
+    {
+      key: 'warehouse', label: 'Warehouse', width: '150px',
+      getValue: (g) => g.warehouseCode ?? g.warehouseName ?? '',
+      render: (g) => (g.warehouseCode
+        ? <span className={styles.whTag} title={g.warehouseName ?? undefined}>{g.warehouseCode}</span>
+        : <span className={styles.whNone}>—</span>),
+    },
+    {
+      key: 'itemCode', label: isSofa ? 'Sales Order' : 'Item Code', width: '160px',
+      getValue: (g) => g.itemCode,
+      render: (g) => <span className={styles.codeCell}>{g.itemCode}</span>,
+    },
+    /* Every non-sofa tab shows the SO no beside the item code (owner 2026-09-11:
+       "bedframe 需要和 sofa 一样显示 SO no", then "mattress, accessories, other 也要
+       加上 sales order"). Sofa's lead column already IS the SO (groupBySo). The
+       other tabs group by item/variant and a row can serve MORE THAN ONE order
+       (bedframe pools by colour; mattress/accessory pool by model), so this shows
+       the first SO doc no + "+N" when shared, with the full list in the drilldown. */
+    ...(!isSofa
+      ? [{
+          key: 'soNo', label: 'Sales Order', width: '150px',
+          getValue: (g: ModelGroup) =>
+            [...new Set(g.variants.flatMap((v) => v.lines.map((l) => l.soDocNo)))].join(', '),
+          render: (g: ModelGroup) => {
+            const docs = [...new Set(g.variants.flatMap((v) => v.lines.map((l) => l.soDocNo)))];
+            return docs.length === 0
+              ? '—'
+              : <span className={styles.codeCell}>{docs[0]}{docs.length > 1 ? ` +${docs.length - 1}` : ''}</span>;
+          },
+        }] satisfies Column<ModelGroup>[]
+      : []),
+    {
+      key: 'description', label: 'Description',
+      // Bounded + wrapping: bedframe variant specs (fabric / divan / gap / seat
+      // heights / special notes) are long, and DataTable cells default to
+      // nowrap+ellipsis (2026-05-08). Without a width Description was the elastic
+      // column — it stretched to the longest line and absorbed every other
+      // column's resize. A fixed width + `whitespace-normal` wraps the text and
+      // stops the row from running off the right edge (owner 2026-09-11).
+      width: '360px', className: 'whitespace-normal break-words align-top',
+      getValue: (g) => g.description ?? '',
+      render: (g) => {
+        const named = g.variants.some((v) => v.variantKey !== '');
+        const count = g.variants.length;
+        return (
+          <span className={styles.descCell}>
+            {g.description ?? '—'}
+            {view === 'bedframe'
+              ? (g.variants[0]?.variantLabel ? <span className={styles.variantTag}>{g.variants[0]!.variantLabel}</span> : null)
+              : (named ? <span className={styles.countTag}>{count} variant{count === 1 ? '' : 's'}</span> : null)}
+          </span>
+        );
+      },
+    },
+    { key: 'qtyNeeded', label: 'Qty Needed', width: '120px', align: 'right', className: styles.num, getValue: (g) => g.qtyNeeded, render: (g) => g.qtyNeeded },
+    { key: 'stock', label: 'Stock', width: '110px', align: 'right', className: styles.num, getValue: (g) => g.stock, render: (g) => g.stock },
+    { key: 'poOutstanding', label: 'PO Outstanding', width: '150px', align: 'right', className: styles.num, getValue: (g) => g.poOutstanding, render: (g) => g.poOutstanding || '—' },
+    {
+      key: 'shortage', label: 'Shortage', width: '120px', align: 'right', className: styles.num,
+      getValue: (g) => g.shortage,
+      render: (g) => (g.shortage > 0 ? <span className={styles.shortNum}>{g.shortage}</span> : '—'),
+    },
+  ];
 
-       --page-header-offset      151px
-       box sticks at top         388px   (151 + 244px of title / tabs / filters)
-       scroller max-height       443px   <- the rows the operator can see
-       content height          5,090px
-       main.scrollHeight           879   === main.clientHeight
-
-     The capped table makes the page exactly viewport-height, so there is NO page
-     scroll to spend: the 388px is reserved permanently and the list is half a
-     screen, with ~98px of dead space under it. That is the failure mode the
-     hook's own comments already record from earlier rounds ("看的list就很少了").
-
-     `false` returns the page to plain flow — the hook sets no cap, renders no
-     runway spacer, and `.tableScroll` is inert uncapped (its CSS says so). The
-     wiring below is LEFT IN PLACE deliberately: re-freezing this page is a
-     geometry fix (give the composition real scroll runway, or mark a
-     `data-freeze-anchor` below the filter row so only the header strip is
-     reserved), not a re-integration. Flip this back to `true` in the same PR
-     that fixes it, and measure the four numbers above on the real page before
-     claiming it works — #3430 shipped verified against a HARNESS, and its own
-     bug doc states that no test asserts the freeze. */
-  const freeze = useFrozenTableHeader(false);
+  /* A non-empty search force-opens every shown model so the match is visible
+     without a manual drill (the drilldown searches child lines too). Otherwise
+     the page's own expand/collapse state (Collapse/Expand-all, chevrons) drives
+     DataTable through its controlled-expansion API. */
+  const modelExpandedIds = forceOpen
+    ? new Set(displayModels.map((m) => m.groupKey))
+    : expandedModels;
 
   return (
-    <div className="space-y-4" ref={freeze.rootRef}>
+    <div className="space-y-4">
       <PageHeader
         eyebrow="Planning"
         title="MRP · Stock Status Report"
@@ -1120,26 +1205,12 @@ export const Mrp = () => {
       {/* Filters — switchable date basis drives the window; Warehouse over
           Category on the right. Category sub-filter only on the General tab. */}
       <div className={styles.filterRow}>
-        {/* Search (owner 2026-09-11) — find a row in a long list. Client-side
-            narrowing of the current tab; matches code, description, module /
-            variant label, and each SO line's doc no + customer. */}
-        <label className={styles.filterField}>
-          <span className={styles.filterLabel}>Search</span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <input
-              type="search"
-              className={styles.filterSelect}
-              style={{ minWidth: 220 }}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={view === 'sofa' ? 'SO no, customer, model…' : 'Code, description, SO no, customer…'}
-              aria-label="Search the rows in view"
-            />
-            {search && (
-              <button type="button" className={TOOLBAR_BTN} onClick={() => setSearch('')}>Clear</button>
-            )}
-          </span>
-        </label>
+        {/* Search (owner 2026-09-11) moved into the DataTable toolbar (its
+            `search` slot) so it sits with the column funnels / Reset, like every
+            other list. Still client-side narrowing of the current tab — the
+            matching still runs through matchModel over code / description /
+            module label / each SO line's doc no + customer, and a hit force-opens
+            the row (modelExpandedIds). */}
         <label className={styles.filterField}>
           <span className={styles.filterLabel}>Date</span>
           <select className={styles.filterSelect} value={dateBasis}
@@ -1187,90 +1258,61 @@ export const Mrp = () => {
         {/* Category sub-filter removed — each tab IS its own category now (M1). */}
       </div>
 
-      {/* Table — 3-level Model → Variant → SO orders, identical for both tabs.
-          Sofa feeds the same renderer via the sofaSetsToSkus adapter; only the
-          select handlers differ (sofa selects the whole same-SO set). */}
-      <div className={styles.tableWrap} style={freeze.boxStyle}>
-        <div ref={freeze.scrollWrapRef} className={`thin-scroll ${styles.tableScroll}`} style={freeze.scrollStyle}>
-        <table className={styles.table}>
-          <thead className={styles.stickyHead}>
-            <tr>
-              <th className={styles.colSelect}>
-                <input
-                  type="checkbox"
-                  aria-label="Select all shortage rows"
-                  title="Select all shortage rows"
-                  disabled={shortCount === 0}
-                  checked={allShortSelected}
-                  ref={(el) => { if (el) el.indeterminate = someShortSelected; }}
-                  onChange={toggleSelectAll}
-                />
-              </th>
-              <th className={styles.colCaret} />
-              {/* Commander 2026-05-31 — per-warehouse MRP: each Model row is
-                  scoped to one warehouse (no cross-WH pooling). */}
-              <th>Warehouse</th>
-              {/* Sofa tab is one row per SALES ORDER (F5), so the lead column is
-                  the SO No there, not an item code — label it honestly per tab. */}
-              <th>{view === 'sofa' ? 'Sales Order' : 'Item Code'}</th>
-              <th>Description</th>
-              <th className={styles.num}>Qty Needed</th>
-              <th className={styles.num}>Stock</th>
-              <th className={styles.num}>PO Outstanding</th>
-              <th className={styles.num}>Shortage</th>
-              {/* Delivery date + supplier dropped from the Model rows (Commander
-                  2026-05-31): both vary PER SO LINE, so showing one value on the
-                  SKU rollup is misleading. Warehouse + supplier now live on each
-                  SO order row in the expanded child table below. Lead time still
-                  drives the sort. */}
-            </tr>
-          </thead>
-          <tbody>
-            {q.isLoading && (
-              <tr><td colSpan={9} className={styles.stateCell}>Loading MRP…</td></tr>
-            )}
-            {q.isError && (
-              <tr><td colSpan={9} className={styles.stateCell}>Failed to load: {(q.error as Error)?.message}</td></tr>
-            )}
-            {data && displayModels.length === 0 && (
-              <tr><td colSpan={9} className={styles.stateCell}>
-                {searchQ ? `No rows match "${search.trim()}" on this tab.`
-                  : onlyShort ? 'Nothing needs ordering — everything in view is covered.'
-                  : hasWindow ? 'No demand delivering in this window.'
-                  : 'No open Sales-Order demand for this filter.'}
-              </td></tr>
-            )}
-            {displayModels.map((g) => (
-              <ModelRows
-                key={g.groupKey}
-                group={g}
-                modelOpen={forceOpen || expandedModels.has(g.groupKey)}
-                onToggleModel={() => toggleModel(g.groupKey)}
-                expandedVariants={expandedVariants}
-                onToggleVariant={toggleVariant}
-                forceOpen={forceOpen}
-                selected={selected}
-                onToggleLine={toggleSelectLine}
-                onSetLinesSelected={setLinesSelected}
-                lineSupplier={lineSupplier}
-                onLineSupplierChange={setLineSupplierId}
-                flatModules={view === 'sofa'}
-                variantAtL1={view === 'bedframe'}
-                accessoryRiders={view === 'sofa' ? (accessoryBySoDoc.get(g.itemCode) ?? []) : []}
-                poMode={poMode}
-              />
-            ))}
-          </tbody>
-        </table>
-        </div>
-      </div>
-      {/* The runway spacer: capping the table's height shortens the page, so
-          page scroll would stop just short of carrying the composition up to
-          the pinned header. This gives that scroll back. Rendered only while
-          the freeze is armed. */}
-      {freeze.freezeBox && freeze.freezeBox.runway > 0 && (
-        <div ref={freeze.spacerRef} aria-hidden style={{ height: freeze.freezeBox.runway }} />
-      )}
+      {/* Report table — the shared DataTable. Top-level rows are Models / SOs /
+          colour variants (the `columns` above); the Model -> Variant -> SO
+          drilldown renders inside expandable.render (ModelDrilldown). Frozen
+          header, per-column funnel filters, sort, column show/hide, CSV export
+          and Reset layout all come from DataTable — the parity the owner asked
+          for, and the freeze that never worked on the hand-built table. */}
+      <DataTable<ModelGroup>
+        tableId="mrp"
+        documentLabel="MRP · Stock Status"
+        /* Fixed column widths (owner 2026-09-11): resizing a column grows only
+           that column and scrolls horizontally, instead of squeezing the others. */
+        fixedColumnWidths
+        columns={columns}
+        rows={data ? displayModels : null}
+        loading={q.isLoading}
+        error={q.isError ? (q.error instanceof Error ? q.error.message : 'Failed to load') : null}
+        getRowKey={(g) => g.groupKey}
+        getRowClassName={(g) => (g.shortage > 0 ? styles.rowShort : undefined)}
+        exportName={`mrp-${view}`}
+        search={{
+          value: search,
+          onChange: setSearch,
+          placeholder: isSofa ? 'SO no, customer, model…' : 'Code, description, SO no, customer…',
+          debounceMs: 0,
+          scope: 'loaded',
+        }}
+        expandable={{
+          rowKey: (g) => g.groupKey,
+          expandedIds: modelExpandedIds,
+          onExpandedChange: setExpandedModels,
+          render: (g) => (
+            <ModelDrilldown
+              group={g}
+              expandedVariants={expandedVariants}
+              onToggleVariant={toggleVariant}
+              forceOpen={forceOpen}
+              selected={selected}
+              onToggleLine={toggleSelectLine}
+              onSetLinesSelected={setLinesSelected}
+              lineSupplier={lineSupplier}
+              onLineSupplierChange={setLineSupplierId}
+              flatModules={isSofa}
+              variantAtL1={view === 'bedframe'}
+              accessoryRiders={isSofa ? (accessoryBySoDoc.get(g.itemCode) ?? []) : []}
+              poMode={poMode}
+            />
+          ),
+        }}
+        emptyLabel={
+          searchQ ? `No rows match "${search.trim()}" on this tab.`
+          : onlyShort ? 'Nothing needs ordering — everything in view is covered.'
+          : hasWindow ? 'No demand delivering in this window.'
+          : 'No open Sales-Order demand for this filter.'
+        }
+      />
 
       {/* In-app result dialog — Commander 2026-05-29: confirm/result inside the
           page, not a browser alert. The 'confirm' kind is the Proceed-PO step
@@ -1378,22 +1420,22 @@ const shortageLineIdsOf = (s: MrpSku): string[] =>
    its owning SKU so the row can show the supplier + code alongside the SO line. */
 type AccessoryRider = { sku: MrpSku; line: MrpLine };
 
-/* General tab — one Model and its variants. Multi-variant models expand into
-   variant sub-rows (each expandable to its SO orders). Single-variant models
-   (mattress, accessory) expand straight to their SO orders. Selection + supplier
-   live on each SO ORDER LINE; the Model / Variant checkboxes are parent toggles. */
-const ModelRows = ({
-  group, modelOpen, onToggleModel, expandedVariants, onToggleVariant, forceOpen,
+/* The drilldown body under a Model / SO / colour-variant row — rendered inside
+   DataTable's full-width expanded cell (the top-level row itself is a DataTable
+   row now, drawn by `columns`). Sofa = one SofaSoTable; single-variant model =
+   its SO orders directly; multi-variant model = variant sub-rows, each
+   expandable to its SO orders. Selection + supplier stay on each SO ORDER LINE;
+   the Variant checkboxes are parent toggles, exactly as before. */
+const ModelDrilldown = ({
+  group, expandedVariants, onToggleVariant, forceOpen,
   selected, onToggleLine, onSetLinesSelected, lineSupplier, onLineSupplierChange,
   flatModules, variantAtL1, accessoryRiders, poMode,
 }: {
   group: ModelGroup;
-  modelOpen: boolean;
-  onToggleModel: () => void;
   expandedVariants: Set<string>;
   onToggleVariant: (key: string) => void;
-  /* A search hit force-opens every level so the match is visible without a
-     drill. OR'd into each expand check below. */
+  /* A search hit force-opens every variant so the match is visible without a
+     second drill (the Model row itself is opened via modelExpandedIds). */
   forceOpen?: boolean;
   selected: Set<string>;
   onToggleLine: (soItemId: string) => void;
@@ -1401,158 +1443,109 @@ const ModelRows = ({
   lineSupplier: Record<string, string>;
   onLineSupplierChange: (soItemId: string, supplierId: string) => void;
   flatModules?: boolean;
-  /* BF-FLAT — bedframe groups are single-variant (one colour each). Show the
-     variant (Description 2) right on the L1 row so colours of the same model are
-     distinguishable, and skip the redundant spec label inside the expand. */
+  /* BF-FLAT — bedframe groups are single-variant (one colour each); its colour
+     already shows on the Model row, so skip the redundant spec label here. */
   variantAtL1?: boolean;
   /* Sofa only — the cover / pillow shortage lines on this SO, shown under the
      sofa modules so the operator sees them ride onto the order (empty otherwise). */
   accessoryRiders?: AccessoryRider[];
   poMode?: 'combined' | 'per-so';
 }) => {
-  const short = group.shortage > 0;
-  // Parent (Model) checkbox state — over every shortage line beneath the model.
-  const modelLineIds = group.variants.flatMap(shortageLineIdsOf);
-  const modelSel = modelLineIds.filter((id) => selected.has(id));
-  const allSel = modelLineIds.length > 0 && modelSel.length === modelLineIds.length;
-  const someSel = modelSel.length > 0 && !allSel;
-  /* Single-variant models (mattress, single-variant bedframe, single-config
-     sofa) collapse to 2 levels: expanding the model jumps straight to its SO
-     orders (Commander 2026-05-30 — bedframe must show which SO needs it without
-     a second click). The variant's spec still shows as a label above the
-     orders. A "N variants" pill appears whenever the model has named variants. */
-  const variantCount = group.variants.length;
-  const hasNamedVariant = group.variants.some((v) => v.variantKey !== '');
-  const single = variantCount === 1;
+  // Sofa (M-S1): one table per SO, module + its order-line detail on one row.
+  if (flatModules) {
+    return (
+      <div className={styles.drilldown}>
+        <SofaSoTable group={group} selected={selected} onToggleLine={onToggleLine}
+          lineSupplier={lineSupplier} onLineSupplierChange={onLineSupplierChange}
+          accessoryRiders={accessoryRiders ?? []} poMode={poMode ?? 'combined'} />
+      </div>
+    );
+  }
+  const single = group.variants.length === 1;
   const onlyVariant = group.variants[0]!;
-
+  // Single-variant model (mattress / accessory / one bedframe colour) → its SO
+  // orders directly (2-level). The variant spec shows as a label above them.
+  if (single) {
+    return (
+      <div className={styles.drilldown}>
+        {!variantAtL1 && onlyVariant.variantLabel && (
+          <div className={styles.singleSpec}>
+            <span className={styles.variantBranch}>↳</span>
+            <span className={styles.variantTag}>{onlyVariant.variantLabel}</span>
+          </div>
+        )}
+        <OrderLines sku={onlyVariant} selected={selected} onToggleLine={onToggleLine}
+          lineSupplier={lineSupplier} onLineSupplierChange={onLineSupplierChange} />
+      </div>
+    );
+  }
+  // Multi-variant model → variant sub-rows, each expandable to its SO orders.
+  // Its own labelled sub-table (the Model row's numbers live one level up now).
   return (
-    <>
-      <tr className={`${styles.skuRow} ${short ? styles.skuRowShort : ''}`} onClick={onToggleModel}>
-        <td className={styles.colSelect} onClick={(e) => e.stopPropagation()}>
-          {modelLineIds.length > 0 && (
-            <input
-              type="checkbox"
-              checked={allSel}
-              ref={(el) => { if (el) el.indeterminate = someSel; }}
-              onChange={(e) => onSetLinesSelected(modelLineIds, e.target.checked)}
-              aria-label={`Select all shortage lines under ${group.itemCode}`}
-            />
-          )}
-        </td>
-        <td className={styles.colCaret}>
-          {modelOpen ? <ChevronDown {...ICON} /> : <ChevronRight {...ICON} />}
-        </td>
-        <td className={styles.whCell}>
-          {group.warehouseCode
-            ? <span className={styles.whTag} title={group.warehouseName ?? undefined}>{group.warehouseCode}</span>
-            : <span className={styles.whNone}>—</span>}
-        </td>
-        <td className={styles.codeCell}>{group.itemCode}</td>
-        <td className={styles.descCell}>
-          {group.description ?? '—'}
-          {variantAtL1
-            ? (onlyVariant.variantLabel
-                ? <span className={styles.variantTag}>{onlyVariant.variantLabel}</span>
-                : null)
-            : (hasNamedVariant
-                ? <span className={styles.countTag}>{variantCount} variant{variantCount === 1 ? '' : 's'}</span>
-                : null)}
-        </td>
-        <td className={styles.num}>{group.qtyNeeded}</td>
-        <td className={styles.num}>{group.stock}</td>
-        <td className={styles.num}>{group.poOutstanding || '—'}</td>
-        <td className={`${styles.num} ${short ? styles.shortNum : ''}`}>{short ? group.shortage : '—'}</td>
-        {/* Supplier column removed from the Model row (Commander 2026-05-31):
-            different SO lines under one SKU can pick different suppliers, so a
-            single value here was misleading. Supplier lives per SO line below. */}
-      </tr>
-
-      {/* Sofa flat view (M-S1): one table per SO, one row per module — module +
-          its order-line detail (coverage / supplier / delivery) on the same row,
-          no second drill. */}
-      {modelOpen && flatModules && (
-        <tr className={styles.detailRow}>
-          <td /><td />
-          <td colSpan={7}>
-            <SofaSoTable group={group} selected={selected} onToggleLine={onToggleLine}
-              lineSupplier={lineSupplier} onLineSupplierChange={onLineSupplierChange}
-              accessoryRiders={accessoryRiders ?? []} poMode={poMode ?? 'combined'} />
-          </td>
-        </tr>
-      )}
-
-      {/* Single-variant model → orders directly (2-level). Show the variant
-          spec as a label above the orders when there is one (bedframe/sofa). */}
-      {modelOpen && !flatModules && single && (
-        <tr className={styles.detailRow}>
-          <td /><td />
-          <td colSpan={7}>
-            {/* variantAtL1 (bedframe): the variant already shows on the L1 row,
-                so don't repeat it as a spec label above the orders. */}
-            {!variantAtL1 && onlyVariant.variantLabel && (
-              <div className={styles.singleSpec}>
-                <span className={styles.variantBranch}>↳</span>
-                <span className={styles.variantTag}>{onlyVariant.variantLabel}</span>
-              </div>
-            )}
-            <OrderLines sku={onlyVariant} selected={selected} onToggleLine={onToggleLine}
-              lineSupplier={lineSupplier} onLineSupplierChange={onLineSupplierChange} />
-          </td>
-        </tr>
-      )}
-
-      {/* Multi-variant model → variant sub-rows (each expandable to orders). */}
-      {modelOpen && !flatModules && !single && group.variants.map((v) => {
-        const k = rowKey(v);
-        const vShort = v.shortage > 0;
-        const vOpen = forceOpen || expandedVariants.has(k);
-        // Variant parent checkbox — over this variant's shortage lines.
-        const vLineIds = shortageLineIdsOf(v);
-        const vSel = vLineIds.filter((id) => selected.has(id));
-        const vAllSel = vLineIds.length > 0 && vSel.length === vLineIds.length;
-        const vSomeSel = vSel.length > 0 && !vAllSel;
-        return (
-          <FragmentRow key={k}>
-            <tr className={`${styles.variantRow} ${vShort ? styles.variantRowShort : ''}`} onClick={() => onToggleVariant(k)}>
-              <td className={styles.colSelect} onClick={(e) => e.stopPropagation()}>
-                {vLineIds.length > 0 && (
-                  <input
-                    type="checkbox"
-                    checked={vAllSel}
-                    ref={(el) => { if (el) el.indeterminate = vSomeSel; }}
-                    onChange={(e) => onSetLinesSelected(vLineIds, e.target.checked)}
-                    aria-label={`Select all shortage lines under ${v.variantLabel ?? v.itemCode}`}
-                  />
+    <div className={styles.drilldown}>
+      <table className={styles.childTable}>
+        <thead>
+          <tr>
+            <th className={styles.colSelect} />
+            <th className={styles.colCaret} />
+            <th>Variant</th>
+            <th className={styles.num}>Qty Needed</th>
+            <th className={styles.num}>Stock</th>
+            <th className={styles.num}>PO Outstanding</th>
+            <th className={styles.num}>Shortage</th>
+          </tr>
+        </thead>
+        <tbody>
+          {group.variants.map((v) => {
+            const k = rowKey(v);
+            const vShort = v.shortage > 0;
+            const vOpen = forceOpen || expandedVariants.has(k);
+            // Variant parent checkbox — over this variant's shortage lines.
+            const vLineIds = shortageLineIdsOf(v);
+            const vSel = vLineIds.filter((id) => selected.has(id));
+            const vAllSel = vLineIds.length > 0 && vSel.length === vLineIds.length;
+            const vSomeSel = vSel.length > 0 && !vAllSel;
+            return (
+              <FragmentRow key={k}>
+                <tr className={`${styles.variantRow} ${vShort ? styles.variantRowShort : ''}`} onClick={() => onToggleVariant(k)}>
+                  <td className={styles.colSelect} onClick={(e) => e.stopPropagation()}>
+                    {vLineIds.length > 0 && (
+                      <input
+                        type="checkbox"
+                        checked={vAllSel}
+                        ref={(el) => { if (el) el.indeterminate = vSomeSel; }}
+                        onChange={(e) => onSetLinesSelected(vLineIds, e.target.checked)}
+                        aria-label={`Select all shortage lines under ${v.variantLabel ?? v.itemCode}`}
+                      />
+                    )}
+                  </td>
+                  <td className={styles.colCaret}>
+                    {vOpen ? <ChevronDown {...ICON} /> : <ChevronRight {...ICON} />}
+                  </td>
+                  <td className={styles.variantDescCell}>
+                    <span className={styles.variantBranch}>↳</span>
+                    <span className={styles.variantTag}>{v.variantLabel ?? '(no variant)'}</span>
+                  </td>
+                  <td className={styles.num}>{v.qtyNeeded}</td>
+                  <td className={styles.num}>{v.stock}</td>
+                  <td className={styles.num}>{v.poOutstanding || '—'}</td>
+                  <td className={`${styles.num} ${vShort ? styles.shortNum : ''}`}>{vShort ? v.shortage : '—'}</td>
+                </tr>
+                {vOpen && (
+                  <tr className={styles.detailRow}>
+                    <td /><td />
+                    <td colSpan={5}>
+                      <OrderLines sku={v} selected={selected} onToggleLine={onToggleLine}
+                        lineSupplier={lineSupplier} onLineSupplierChange={onLineSupplierChange} />
+                    </td>
+                  </tr>
                 )}
-              </td>
-              <td className={styles.colCaret}>
-                {vOpen ? <ChevronDown {...ICON} /> : <ChevronRight {...ICON} />}
-              </td>
-              <td />{/* warehouse — inherited from parent model row */}
-              <td />
-              <td className={styles.variantDescCell}>
-                <span className={styles.variantBranch}>↳</span>
-                <span className={styles.variantTag}>{v.variantLabel ?? '(no variant)'}</span>
-              </td>
-              <td className={styles.num}>{v.qtyNeeded}</td>
-              <td className={styles.num}>{v.stock}</td>
-              <td className={styles.num}>{v.poOutstanding || '—'}</td>
-              <td className={`${styles.num} ${vShort ? styles.shortNum : ''}`}>{vShort ? v.shortage : '—'}</td>
-            </tr>
-            {vOpen && (
-              <tr className={styles.detailRow}>
-                <td /><td />
-                <td colSpan={7}>
-                  <OrderLines sku={v} selected={selected} onToggleLine={onToggleLine}
-                    lineSupplier={lineSupplier} onLineSupplierChange={onLineSupplierChange} />
-                </td>
-              </tr>
-            )}
-          </FragmentRow>
-        );
-      })}
-    </>
+              </FragmentRow>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 };
 
