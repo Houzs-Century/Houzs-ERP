@@ -1327,6 +1327,16 @@ Contracts: `bank-parse.test.ts`, `bank-lock.test.ts`, `bank-month.test.ts`,
 `backend/tests/bankRoutes.test.ts` (which now also mounts the month list and
 the lock — their first route contract), `BankStatementTab.test.tsx`.
 
+**Two columns, not a signed figure (2026-09-11, docs/bugs/0813; owner: 为了方便
+看，你可以把这个金额分成 debit 和 credit 吗).** The books' tables on the bank
+screens — Outstanding items, and the chooser under a ticked movement — show
+Debit | Credit off the entry's own figures (a payment is a credit to the bank
+account); the bank's tables — Still to decide, already dealt with, on both the
+statement and the month views — show Deposit | Withdrawal, the words the bank
+prints (`DrCr` / `DepWd` in `frontend/src/pages/scm-v2/BankStatementTab.tsx`).
+The reconciliation walk and the printed statement are untouched. Contract:
+`BankStatementTab.test.tsx` ("amounts in two columns").
+
 **A split payout names two entries, and both are claimed (2026-09-11,
 docs/bugs/0809).** June on 2990's Hong Leong account read "These numbers do
 not add up" by exactly RM 7,306.52 — the two PAYOUT_SPLIT movements. Booking
