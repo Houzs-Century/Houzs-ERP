@@ -38,6 +38,7 @@ import type { FabricLite } from '../lib/fabric-queries';
 import type { Warehouse } from '../lib/inventory-queries';
 import { PcVariantEditor } from './PcVariantEditor';
 import { MoneyInput } from './MoneyInput';
+import { DiscountInput } from './DiscountInput';
 import styles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 import { DateField } from "./DateField";
 
@@ -368,13 +369,15 @@ export const PcLineCard = ({
         </label>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Discount ({currency})</span>
-          <MoneyInput
+          <DiscountInput
             bare
             valueSen={l.discountSen ?? 0}
+            baseSen={l.qty * l.unitPriceSen}
             disabled={disabled}
             onCommit={(sen) => onChange({ discountSen: sen ?? 0 })}
             inputClassName={styles.fieldInput}
             selectOnFocus
+            currency={currency}
           />
         </label>
         <label className={styles.field}>
