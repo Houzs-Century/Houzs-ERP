@@ -63,7 +63,15 @@ on:
     # This workflow still owns the Worker + Pages deploy, and restoring `main`
     # here still requires the new token first; the shared `deploy-staging`
     # concurrency group keeps the two off the tracker table at the same time.
-    branches: [staging]
+    #
+    # RESTORED 2026-09-12: `main` is back. The precondition above ("prove the
+    # new token with workflow_dispatch first") is met — dispatches on main
+    # succeeded on 2026-09-08 (c9d3ea6) and 2026-09-12 (run 34626351932,
+    # 72c21a2, both Worker and Pages). Without `main` here staging had drifted
+    # 430 commits behind production and the nightly rehearsal was proving a
+    # three-day-old build (docs/bugs/0824). A rehearsal that does not track
+    # what ships is the 0083 shape again.
+    branches: [main, staging]
   workflow_dispatch:
     inputs:
       skip_migrate:

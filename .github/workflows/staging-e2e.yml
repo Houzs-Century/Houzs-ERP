@@ -24,6 +24,11 @@ concurrency:
   group: staging-e2e
   cancel-in-progress: false
 
+# `issues: write` is for the notify job below and nothing else.
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   smoke:
     runs-on: ubuntu-latest
@@ -113,3 +118,41 @@ jobs:
           name: playwright-report
           path: frontend/e2e/playwright-report/
           retention-days: 14
+
+  # A red rehearsal that reaches nobody is not a rehearsal. Measured 2026-09-12:
+  # this workflow had concluded `failure` on every run since 2026-08-21 and no
+  # person had been told (docs/bugs/0824; the mirror of docs/bugs/0083, where a
+  # GREEN nobody verified hid a stale build for two weeks). One open issue is the
+  # signal: created on the first red, appended on every later red, closed by hand
+  # once green is confirmed. No secret needed — GITHUB_TOKEN with issues:write.
+  notify:
+    needs: smoke
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open or update the "Staging rehearsal RED" issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TRIGGER: ${{ github.event_name }}
+          SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          title="Staging rehearsal RED — staging-e2e is failing"
+          body="Staging E2E failed.
+
+          - Run: $RUN_URL
+          - Trigger: $TRIGGER
+          - Commit under test: $SHA
+          - Date (UTC): $(date -u +%FT%TZ)
+
+          Read the Playwright report artifact on the run before assuming a flake. Close this issue only after a GREEN run is confirmed on the Actions tab (docs/bugs/0824)."
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body "$body"
+            echo "appended to issue #$existing"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --label "staging" --body "$body" \
+              || gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+            echo "opened a new issue"
+          fi
