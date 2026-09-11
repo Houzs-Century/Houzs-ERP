@@ -322,6 +322,13 @@ move landed, the **reader flip** was left pending. It is still pending.
 `processing_date` and `customer_delivery_date` CONTROLLED, and the file's own rule
 is *"every other patchable header column is FREE by omission"*.
 
+**The reconciled refusal's sentence (2026-09-11, docs/bugs/0821).**
+`paymentReconciledMessage` in `so-field-policy.ts` (server and vendored copy)
+is reworded to stay under 200 characters with the date, entry number or account
+code inside — the length past which the client drops a server sentence — and
+now names what to undo first. The same-day window sentence and the MYT day
+rule are unchanged. Detail in `docs/modules/accounting.md`.
+
 > The other date rule in that file is `paymentRowMutable`'s, and it is worth
 > reading beside this section because it gets the same question right: a payment
 > is editable on the day its ROW was keyed (`created_at`), never the day printed
