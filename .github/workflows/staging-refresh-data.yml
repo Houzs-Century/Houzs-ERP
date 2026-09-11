@@ -1,0 +1,279 @@
+name: Staging Refresh Data (prod -> staging, masked)
+
+# Copies PRODUCTION data into the STAGING database so the staging rehearsal runs
+# against real-shaped documents instead of an empty seed (owner, 2026-09-12:
+# 「data 也是要部署过去」).
+#
+# Two jobs, two environments, on purpose:
+#   dump     runs in `Production` and can see only DATABASE_URL (read-only pg_dump)
+#   restore  runs in `Staging`    and can see only STAGING_DATABASE_URL
+# Neither job holds both secrets, so a mis-scoped step cannot write prod. The
+# dump crosses between them as a 1-day artifact.
+#
+# SAFETY BY CONSTRUCTION, not by configuration: every phone / mobile / email
+# column in the copy is MASKED before the job ends (staff login emails kept so
+# the E2E account still works). Even if a messaging secret is ever set on the
+# staging Worker, no real customer is reachable from staging data.
+#
+# Manual trigger only. Own concurrency group — never queues behind a deploy.
+# RE-RUN: idempotent — every run truncates staging and reloads from the dump.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type REFRESH-STAGING to confirm (staging data will be replaced)'
+        required: true
+        type: string
+      mask_pii:
+        description: 'Mask customer phone / email after restore (leave ON)'
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: staging-refresh-data
+  cancel-in-progress: false
+
+jobs:
+  dump:
+    name: Dump production data (read-only)
+    if: ${{ inputs.confirm == 'REFRESH-STAGING' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: Install PostgreSQL 17 client
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          /usr/lib/postgresql/17/bin/pg_dump --version
+
+      - name: Assert the source is PRODUCTION
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          # Production is project anogrigyjbduyzclzjgn (CLAUDE.md, "The Supabase MCP
+          # lists THREE projects"). Refuse anything else rather than dump the wrong book.
+          case "$DATABASE_URL" in
+            *anogrigyjbduyzclzjgn*) echo "source: production (anogrigyjbduyzclzjgn)";;
+            *) echo "::error::DATABASE_URL is not the production project — refusing to dump"; exit 1;;
+          esac
+
+      - name: pg_dump public + scm (data only)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          PG_DUMP=/usr/lib/postgresql/17/bin/pg_dump
+          # Data only: staging already carries the schema (staging-migrate.yml keeps
+          # it current). The migration tracker is excluded so staging keeps its own
+          # applied-list. Plain SQL so the restore can prepend one session setting.
+          "$PG_DUMP" "$DATABASE_URL" \
+            --data-only --no-owner --no-privileges \
+            --schema=public --schema=scm \
+            --exclude-table-data='public._pg_migrations' \
+            --format=plain --file=prod-data.sql
+          ls -la prod-data.sql
+          echo "rows of COPY blocks: $(grep -c '^COPY ' prod-data.sql)"
+          gzip -1 prod-data.sql
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prod-data
+          path: prod-data.sql.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  restore:
+    name: Restore into staging + mask
+    needs: dump
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+
+      - name: Install PostgreSQL 17 client
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          /usr/lib/postgresql/17/bin/psql --version
+
+      - name: Assert the target is STAGING
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          case "$DATABASE_URL" in
+            *anogrigyjbduyzclzjgn*) echo "::error::STAGING_DATABASE_URL points at PRODUCTION — refusing"; exit 1;;
+          esac
+          case "$DATABASE_URL" in
+            *minnapsemfzjmtvnnvdd*) echo "target: staging (minnapsemfzjmtvnnvdd)";;
+            *) echo "::error::STAGING_DATABASE_URL is not the staging project — refusing"; exit 1;;
+          esac
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: prod-data
+          path: backend/
+
+      - name: Row counts BEFORE (staging)
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          /usr/lib/postgresql/17/bin/psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "
+            select 'before ' || t || ': ' || n from (
+              select 'scm.mfg_sales_orders' t, count(*) n from scm.mfg_sales_orders union all
+              select 'scm.purchase_orders',   count(*) from scm.purchase_orders   union all
+              select 'scm.grns',              count(*) from scm.grns              union all
+              select 'scm.delivery_orders',   count(*) from scm.delivery_orders   union all
+              select 'scm.purchase_invoices', count(*) from scm.purchase_invoices union all
+              select 'scm.sales_invoices',    count(*) from scm.sales_invoices
+            ) x;"
+
+      - name: Truncate staging tables (public + scm, keep _pg_migrations)
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          /usr/lib/postgresql/17/bin/psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At <<'SQL'
+          do $$
+          declare stmt text;
+          begin
+            select 'truncate table ' || string_agg(format('%I.%I', table_schema, table_name), ', ') || ' cascade'
+              into stmt
+              from information_schema.tables
+             where table_schema in ('public','scm')
+               and table_type = 'BASE TABLE'
+               and table_name <> '_pg_migrations';
+            raise notice 'truncating % tables', (select count(*) from information_schema.tables
+               where table_schema in ('public','scm') and table_type='BASE TABLE' and table_name <> '_pg_migrations');
+            execute stmt;
+          end $$;
+          SQL
+
+      - name: Restore data
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          gunzip -f prod-data.sql.gz
+          # One session: relax FK/trigger enforcement for the load, then restore in
+          # the order pg_dump wrote it. If the role may not set replica mode this
+          # fails LOUDLY on the first statement instead of half-loading.
+          { echo "set session_replication_role = replica;"; cat prod-data.sql; } \
+            | /usr/lib/postgresql/17/bin/psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q
+          echo "restore: done"
+
+      - name: Reset sequences to max(id)
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          # docs/bugs/0532: a data load that leaves identity sequences behind their
+          # tables makes the next insert die on duplicate key.
+          /usr/lib/postgresql/17/bin/psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At <<'SQL'
+          do $$
+          declare r record; mx bigint;
+          begin
+            for r in
+              select n.nspname as sch, c.relname as tbl, a.attname as col,
+                     pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname) as seq
+                from pg_attribute a
+                join pg_class c on c.oid = a.attrelid
+                join pg_namespace n on n.oid = c.relnamespace
+               where n.nspname in ('public','scm') and c.relkind = 'r' and a.attnum > 0 and not a.attisdropped
+                 and pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname) is not null
+            loop
+              execute format('select coalesce(max(%I),0) from %I.%I', r.col, r.sch, r.tbl) into mx;
+              execute format('select setval(%L, greatest(%s,1), %s)', r.seq, mx, case when mx > 0 then 'true' else 'false' end);
+            end loop;
+          end $$;
+          SQL
+          echo "sequences: reset"
+
+      - name: Mask customer phone / email
+        if: ${{ inputs.mask_pii }}
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          # Every text column whose NAME says phone / mobile / email, in public + scm.
+          # Staff login identity is kept: users / members / sales_reps email stays,
+          # so STAGING_E2E_EMAIL and the seeded owner still sign in. Everything else
+          # becomes a stable, non-dialable token (same input -> same token, so joins
+          # by phone still line up inside staging).
+          /usr/lib/postgresql/17/bin/psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At <<'SQL'
+          do $$
+          declare r record; n bigint; total bigint := 0;
+          begin
+            for r in
+              select table_schema sch, table_name tbl, column_name col
+                from information_schema.columns
+               where table_schema in ('public','scm')
+                 and data_type in ('text','character varying')
+                 and (column_name ~* 'phone|mobile' or column_name ~* 'email')
+                 and not (column_name ~* 'email' and table_name in ('users','members','sales_reps','user_companies','invitations'))
+                 and column_name !~* '_at$|_status$|_muted$|_required$|_log$|_access$|template|alias'
+                 and table_name <> '_pg_migrations'
+            loop
+              execute format(
+                'update %I.%I set %I = %L || left(md5(%I), 8) where %I is not null and %I <> %L and %I not like %L',
+                r.sch, r.tbl, r.col,
+                case when r.col ~* 'email' then 'masked-' else '+60000' end,
+                r.col, r.col, r.col, '', r.col,
+                case when r.col ~* 'email' then 'masked-%' else '+60000%' end);
+              get diagnostics n = row_count;
+              total := total + n;
+              if n > 0 then raise notice 'masked %.%.%: % rows', r.sch, r.tbl, r.col, n; end if;
+            end loop;
+            raise notice 'masked total: % values', total;
+          end $$;
+          SQL
+
+      - name: Re-seed the staging login + showroom
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: node scripts/staging-seed-account.mjs
+
+      - name: Row counts AFTER (staging) — fail if any document table is empty
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          out=$(/usr/lib/postgresql/17/bin/psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "
+            select t || ': ' || n from (
+              select 'scm.mfg_sales_orders' t, count(*) n from scm.mfg_sales_orders union all
+              select 'scm.purchase_orders',   count(*) from scm.purchase_orders   union all
+              select 'scm.grns',              count(*) from scm.grns              union all
+              select 'scm.delivery_orders',   count(*) from scm.delivery_orders   union all
+              select 'scm.purchase_invoices', count(*) from scm.purchase_invoices union all
+              select 'scm.sales_invoices',    count(*) from scm.sales_invoices
+            ) x;")
+          echo "$out" | sed 's/^/after /'
+          if echo "$out" | grep -qE ': 0$'; then
+            echo "::error::a document table is EMPTY after restore — the copy did not land"; exit 1
+          fi
+          echo "staging refreshed from production at $(date -u +%FT%TZ) (masked: ${{ inputs.mask_pii }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "$out" | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"
