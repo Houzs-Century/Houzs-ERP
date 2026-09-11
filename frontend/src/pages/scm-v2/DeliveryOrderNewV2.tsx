@@ -54,6 +54,7 @@ import {
 import { useIdempotencyKey } from "../../lib/idempotency";
 import { readScmHandoff, removeScmHandoff } from "../../lib/scmHandoffStorage";
 import { useSoDropdownOptions, optionsOrFallback } from "../../vendor/scm/lib/so-dropdown-options-queries";
+import { cascadeLineDeliveryDate } from "../../vendor/scm/lib/line-delivery-date-cascade";
 import {
   SoLineCard,
   emptySoLine,
@@ -635,6 +636,21 @@ export function DeliveryOrderNewV2() {
     lineDeliveryDate: l.lineDeliveryDate ?? "",
     lineDeliveryDateOverridden: l.lineDeliveryDateOverridden ?? false,
   });
+
+  /* Header -> line delivery-date cascade. The SALES ORDER has had this since
+     PR-E (SalesOrderNew.tsx: the same effect, same three guards); the DELIVERY
+     ORDER never got it, so changing "Customer delivery date" on the header left
+     every line on its old date and the operator had to retype all ten. Owner
+     2026-09-11, looking at a DO whose header read 24/09 and whose ten lines all
+     read 19/09: 「如果我上面customer delivery date 更改下面不能自动跟吗」.
+
+     A line the operator typed by hand is NEVER moved: SoLineCard sets
+     `lineDeliveryDateOverridden` the moment its date field is edited (that flag
+     exists for exactly this, and the comment on the payload builder below has
+     promised this cascade since 0807 without one existing). */
+  useEffect(() => {
+    setLines((prev) => cascadeLineDeliveryDate(prev, customerDelDate) ?? prev);
+  }, [customerDelDate]);
 
   // ── SO→DO line stash (from the line-level picker) ──────────────────
   // DeliveryOrderFromSo stashes the picked SO lines — variants and all — under
