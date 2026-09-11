@@ -461,8 +461,12 @@ try {
           `document(s), stamped ${run.linesStamped} line key(s), queued ${run.docsEnqueued} edit(s).`,
       );
       for (const d of run.docs ?? []) {
+        /* "1 matched" alone said nothing about whether the document MOVES: a
+           run can match all it can and still queue nothing. The verdict is the
+           part a person is actually reading for. */
+        const moves = d.enqueued ? ' — RELEASED' : d.wouldEnqueue ? ' — WOULD BE RELEASED' : ' — still held';
         const head = `  ${d.docType} ${d.bookDocNo || '(no book number)'}: ${d.keylessBefore} keyless, ` +
-          `${d.stamped || d.wouldStamp || 0} matched`;
+          `${d.stamped || d.wouldStamp || 0} matched${moves}`;
         notice(d.skipped ? `${head} — SKIPPED: ${d.skipped}` : head);
         for (const r of d.refused ?? []) notice(`      refused: ${r}`);
       }
