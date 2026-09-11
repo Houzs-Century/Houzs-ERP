@@ -671,6 +671,10 @@ export const NAV_TABS: NavTab[] = [
         groupId: "scm-finance-in",
         children: [
           { to: "/scm/official-receipts", label: "Official Receipts", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.accounting"] },
+          // Deposit invoices (owner 2026-09-12; docs/bugs/0828) — born with a
+          // customer payment when the company's switch is on; beside the
+          // receipt the same payment is born with.
+          { to: "/scm/deposit-invoices", label: "Deposit Invoices", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.accounting"] },
           { to: "/scm/receipts", label: "Receipts", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
           { to: "/scm/other-debtors", label: "Other Debtors", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
           { to: "/scm/outstanding", label: "Outstanding", icon: AlertCircle, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },

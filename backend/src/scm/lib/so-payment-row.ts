@@ -18,6 +18,7 @@ import { recordSoAudit, type FieldChange } from './so-audit';
 import { postSoPayment, reverseSoPayment, type SoPaymentRow } from '../../acc/payments';
 import { ledgerFactsOf, repostSoPaymentEdit } from '../../acc/payment-repost';
 import { createReceiptForPayment } from '../../acc/receipts';
+import { cancelDepositInvoiceForPaymentBestEffort, issueDepositInvoiceBestEffort, reissueDepositInvoiceBestEffort } from '../../acc/deposit-invoices';
 import { companyCodeById } from './doc-no';
 import { recomputeSiPaidForOrder } from './si-order-deposit';
 
@@ -95,6 +96,13 @@ export async function bookSoPaymentBestEffort(sb: any, row: Record<string, unkno
     /* eslint-disable-next-line no-console */
     console.error(`[acc] SO ${where} not booked:`, (row as { id?: string }).id, booked.status, booked.reason);
   }
+  /* THE DEPOSIT INVOICE IS BORN HERE TOO (docs/bugs/0828) — every payment
+     row reaches this hook (the panel, the scan job, both SO-create deposit
+     inserts), so the rule "a deposit gets its invoice" is written once. It
+     decides for itself whether the company's switch is on, the date is on or
+     after the start, and the order has no final invoice yet. Best-effort like
+     the booking above: the money is recorded either way. */
+  await issueDepositInvoiceBestEffort(sb, row, where);
 }
 
 /** Every column of a payment row an edit may move. `before` is the stored row;
@@ -161,6 +169,12 @@ export async function repostSoPaymentBestEffort(
     company_id: p.companyId,
   };
   const out = await repostSoPaymentEdit(sb, { before: ledgerFactsOf(p.before), after });
+  /* The deposit invoice follows the edit the way the ledger does (docs/bugs/
+     0828): a moved amount or date cancels the standing invoice by contra and
+     issues the next number — cancelled and re-issued, never rewritten. */
+  await reissueDepositInvoiceBestEffort(sb, {
+    paymentId: p.id, docNo: p.docNo, paidAt: p.next.paid_at, amountSen: p.next.amount_sen, method: p.next.method,
+  });
   if (!out.ok) {
     /* eslint-disable-next-line no-console */
     console.error('[acc] SO payment edit not re-posted:', p.id, out.status, out.reason);
@@ -339,6 +353,9 @@ export async function afterSoPaymentRemoved(
     console.error('[acc] SO payment reversal failed:', p.paymentId, unbooked.status, unbooked.reason);
   }
   const voided = unbooked.ok && unbooked.status === 'reversed' ? unbooked : null;
+  /* Its deposit invoice goes with it — cancelled by contra, kept on file
+     (docs/bugs/0828). */
+  await cancelDepositInvoiceForPaymentBestEffort(sb, { paymentId: p.paymentId, reason: `payment on ${p.docNo} deleted` });
   /* The deposit just shrank, so an invoice it was settling may owe money again.
      This is the direction that matters: an invoice left reading PAID after the
      payment behind it was reversed tells the office to collect nothing. */

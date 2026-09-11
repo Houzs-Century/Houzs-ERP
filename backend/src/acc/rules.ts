@@ -44,7 +44,12 @@ export type AccountRole =
   | 'CLOSING_STOCK'
   /* Where a credit note's lines land when the note names no account
      (docs/bugs/0827): a customer's return, a supplier's return. */
-  | 'SALES_RETURNS' | 'PURCHASE_RETURNS';
+  | 'SALES_RETURNS' | 'PURCHASE_RETURNS'
+  /* A deposit invoice's credit side (docs/bugs/0828): money received before
+     the final invoice is a sale the day it arrives — the owner's e-invoice
+     reading, 2026-09-12 — booked on the DEPOSIT PAY BY CUSTOMER sales
+     account, never on the deposit LIABILITY (CUSTOMER_DEPOSITS above). */
+  | 'DEPOSIT_INCOME';
 
 /* Fallback = the accountant's own AutoCount codes (migration 0344; owner
    decision 2026-09-02: 迁到 AutoCount 码). Every company carries these codes,
@@ -67,6 +72,7 @@ export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
   CLOSING_STOCK: '620-0000',     // STOCKS AT THE END OF YEAR (month-close P&L leg)
   SALES_RETURNS: '510-0000',     // RETURN INWARDS (a customer credit note's default line)
   PURCHASE_RETURNS: '612-0000',  // PURCHASES RETURN (a supplier credit note's default line)
+  DEPOSIT_INCOME: '509-0000',    // DEPOSIT PAY BY CUSTOMER (a deposit invoice's credit side)
 };
 
 /* Control accounts (brief §2.4): system-maintained, and a MANUAL journal may
@@ -103,6 +109,7 @@ export const REVERSAL_SOURCE: Record<string, string> = {
   DN: 'DN_REVERSAL',
   SCN: 'SCN_REVERSAL',
   RCT: 'RCT_REVERSAL',
+  DI: 'DI_REVERSAL',
 };
 
 export type RoleCodes = Record<AccountRole, string>;
@@ -146,12 +153,19 @@ export type RuleLine = {
   notes?: string | null;
 };
 
-/** Sales invoice issued: Dr AR / Cr SALES for the invoice total. */
+/** Sales invoice issued (docs/bugs/0829): Dr AR for the invoice total, the
+    customer as party / Cr one line per PRODUCT GROUP to that group's own
+    sales account (scm.acc_item_group_accounts.sales_account — 2990 keeps
+    SALES OF SOFA / BEDDING / DINING / … as separate leaves and its 500-0000
+    is inactive). The credits arrive in MYR sen already summing EXACTLY to the
+    total (acc/item-group-split owns the rounding remainder), the mirror of
+    piLines below. */
 export function siLines(
   roles: RoleCodes,
   si: { invoice_number: string; debtor_code: string | null; debtor_name: string | null },
-  totalSen: number,
+  groupCredits: Array<{ groupCode: string; accountCode: string; myrSen: number }>,
 ): RuleLine[] {
+  const totalSen = groupCredits.reduce((s, g) => s + g.myrSen, 0);
   return [
     {
       accountCode: roles.AR,
@@ -162,15 +176,15 @@ export function siLines(
       partyName: si.debtor_name,
       notes: `AR for ${si.invoice_number}`,
     },
-    {
-      accountCode: roles.SALES,
+    ...groupCredits.map((g) => ({
+      accountCode: g.accountCode,
       debitSen: 0,
-      creditSen: totalSen,
+      creditSen: g.myrSen,
       partyType: null,
       partyCode: null,
       partyName: null,
-      notes: `Revenue from ${si.invoice_number}`,
-    },
+      notes: `Sales — ${g.groupCode} on ${si.invoice_number}`,
+    })),
   ];
 }
 
@@ -378,6 +392,39 @@ export function customerRefundLines(
  * in, Cr AR. The debit account follows the sales panel's own 3-method model —
  * see the rules table above.
  */
+/** Deposit invoice issued (docs/bugs/0828): Dr AR with the customer as party
+    / Cr DEPOSIT PAY BY CUSTOMER. The payment it answers has already booked
+    Dr money / Cr AR (customerPaymentLines below), so the customer's
+    sub-ledger nets to nothing and the deposit stands as a sale — the
+    e-invoice reading the owner asked for. At the final invoice a credit
+    note per deposit invoice books the mirror. */
+export function depositInvoiceLines(
+  roles: RoleCodes,
+  p: { diNumber: string; docNo: string; customerCode?: string | null; customerName?: string | null },
+  amountSen: number,
+): RuleLine[] {
+  return [
+    {
+      accountCode: roles.AR,
+      debitSen: amountSen,
+      creditSen: 0,
+      partyType: 'CUSTOMER',
+      partyCode: p.customerCode ?? null,
+      partyName: p.customerName ?? null,
+      notes: `Deposit invoice ${p.diNumber} — ${p.docNo}`,
+    },
+    {
+      accountCode: roles.DEPOSIT_INCOME,
+      debitSen: 0,
+      creditSen: amountSen,
+      partyType: null,
+      partyCode: null,
+      partyName: null,
+      notes: `Deposit received on ${p.docNo}`,
+    },
+  ];
+}
+
 export function customerPaymentLines(
   roles: RoleCodes,
   p: {

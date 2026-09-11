@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-189 route modules (53 in `backend/src/routes`, 136 in `backend/src/scm/routes`), 1266 endpoint registrations.
+190 route modules (53 in `backend/src/routes`, 137 in `backend/src/scm/routes`), 1273 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -89,7 +89,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-rp.ts` | 0 | 319 |
 | `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1571 |
 | `backend/src/scm/routes/accounting-stock-close.ts` | 0 | 53 |
-| `backend/src/scm/routes/accounting.ts` | 91 | 1556 |
+| `backend/src/scm/routes/accounting.ts` | 91 | 1518 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ap-invoice-files.ts` | 0 | 50 |
@@ -118,6 +118,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
 | `backend/src/scm/routes/delivery-returns.ts` | 11 | 1879 |
 | `backend/src/scm/routes/delivery-zones.ts` | 9 | 794 |
+| `backend/src/scm/routes/deposit-invoices.ts` | 7 | 149 |
 | `backend/src/scm/routes/document-cancel-routes.ts` | 11 | 692 |
 | `backend/src/scm/routes/document-flow.ts` | 2 | 1069 |
 | `backend/src/scm/routes/document-hold-routes.ts` | 0 | 96 |
@@ -218,13 +219,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 153 | `154_assr_case_access.sql` (154) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 411 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 412 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2219 files, 754439 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2225 files, 755648 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -252,7 +253,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 
 ## 4. Frontend desktop routes
 
-159 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
+160 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
 `frontend/src/lib/routeAliases.ts` are expanded at runtime and not counted here).
 
 | path | page module |
@@ -321,6 +322,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `/scm/delivery-returns/from-do` | `frontend/src/pages/scm-v2/DeliveryReturnFromDo` |
 | `/scm/delivery-returns/new` | `frontend/src/pages/scm-v2/DeliveryReturnNew` |
 | `/scm/delivery-zones` | `frontend/src/pages/scm-v2/DeliveryZones` |
+| `/scm/deposit-invoices` | `frontend/src/pages/scm-v2/DepositInvoices` |
 | `/scm/do-load` | `frontend/src/pages/scm-v2/DoLoadScan` |
 | `/scm/dp-orders` | `frontend/src/pages/scm-v2/DpOrders` |
 | `/scm/driver-leave` | `frontend/src/pages/scm-v2/DriverLeave` |
@@ -425,7 +427,7 @@ Page files by directory:
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 155 |
+| `frontend/src/pages/scm-v2` | 156 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 10 |
