@@ -378,6 +378,160 @@ describe('booking a credit against the merchant statement it pays', () => {
   });
 });
 
+/* ── Undo must let go of the entry ────────────────────────────────────────────
+   Owner, 2026-09-11, after undoing six matched payments on April's Hong Leong
+   statement: the screen went red — "These numbers do not add up" — and the six
+   could not be matched again. Undo had put the lines back to OPEN and left
+   their rows in acc_bank_statement_matches, so the ledger side still counted
+   the six entries as claimed while the bank side counted the six movements as
+   open. */
+describe('undoing a matched movement', () => {
+  const booked = () => harness({
+    v_gl_entries: [
+      { company_id: CO, account_code: '330-0000', je_no: 'JE-2608-0001', entry_date: '2026-08-12', source_type: 'PV', source_doc_no: 'HPV-2608-001', debit_sen: 0, credit_sen: 2500, party_name: 'MAYBANK', notes: 'Payment to MAYBANK — HPV-2608-001' },
+    ],
+  });
+  const chargeLine = async (app: Hono, statementId: number) => {
+    const detail = await (await app.request(`/bank/statements/${statementId}`)).json() as any;
+    return detail.lines.find((l: any) => Number(l.amount_sen) === -2500);
+  };
+
+  test('lets go of the entry, so the books no longer count it as claimed and it can be matched again', async () => {
+    const { app, sb } = booked();
+    const up = await (await upload(app)).json() as any;
+    const line = await chargeLine(app, up.statementId);
+    expect((await post(app, `/bank/lines/${line.id}/match`, { jeNo: 'JE-2608-0001' })).status).toBe(200);
+    expect(sb.tables.acc_bank_statement_matches).toHaveLength(1);
+
+    expect((await post(app, `/bank/lines/${line.id}/undo`)).status).toBe(200);
+    expect(sb.tables.acc_bank_statement_matches).toHaveLength(0);
+
+    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    expect(detail.reconciliation.consistent).toBe(true);
+    expect(detail.reconciliation.unmatchedJeNos).toContain('JE-2608-0001');
+    expect(detail.lines.find((l: any) => l.id === line.id).matches).toEqual([]);
+
+    expect((await post(app, `/bank/lines/${line.id}/match`, { jeNo: 'JE-2608-0001' })).status).toBe(200);
+    expect(sb.tables.acc_bank_statement_matches).toHaveLength(1);
+  });
+
+  /* The rows an older undo left behind (prod, 2026-09-11: six of them). A
+     match on a line that is not POSTED is nobody's claim: the reads ignore it
+     and the next match on that entry clears it. */
+  test('a match row left on an OPEN line by an older undo is ignored, and cleared by the next match', async () => {
+    const { app, sb } = booked();
+    const up = await (await upload(app)).json() as any;
+    const line = await chargeLine(app, up.statementId);
+    sb.tables.acc_bank_statement_matches.push({ id: 99, bank_line_id: line.id, company_id: CO, je_no: 'JE-2608-0001', amount_sen: -2500, match_reason: 'manual' });
+
+    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    expect(detail.reconciliation.consistent).toBe(true);
+    expect(detail.reconciliation.booksNotOnBank.count).toBe(1);
+    expect(detail.reconciliation.unmatchedJeNos).toContain('JE-2608-0001');
+    expect(detail.lines.find((l: any) => l.id === line.id).matches).toEqual([]);
+
+    expect((await post(app, `/bank/lines/${line.id}/match`, { jeNo: 'JE-2608-0001' })).status).toBe(200);
+    expect(sb.tables.acc_bank_statement_matches).toHaveLength(1);
+    expect(sb.tables.acc_bank_statement_matches[0]).toMatchObject({ bank_line_id: line.id, je_no: 'JE-2608-0001' });
+  });
+});
+
+/* ── The month a statement is for, and what the books still hold ────────────
+   Owner, 2026-09-11, on April: every line of Hong Leong's monthly statement
+   was dated the 30th, so the screen took the period to be one day and the two
+   payments posted on the 28th were not on the "in the books" list. Naming the
+   month in the Year-and-month box now says this file covers the whole month.
+   And: 之前 in book 还没有 recon 的也要带下来，因为可能下个月才过钱. */
+describe('the month a dated statement covers', () => {
+  test('naming the month makes the statement cover it from the 1st to the last day', async () => {
+    const { app, sb } = harness();
+    const res = await upload(app, { statementMonth: '2026-08' });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.periodFrom).toBe('2026-08-01');
+    expect(body.periodTo).toBe('2026-08-31');
+    expect(sb.tables.acc_bank_statements[0]).toMatchObject({ period_from: '2026-08-01', period_to: '2026-08-31' });
+  });
+
+  test('a movement dated outside the named month refuses the file, and names the date', async () => {
+    const { app, sb } = harness();
+    const res = await upload(app, { statementMonth: '2026-07' });
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.error).toBe('month_mismatch');
+    expect(body.message).toContain('2026-08-03');
+    expect(body.message).toContain('2026-07');
+    expect(sb.tables.acc_bank_statements).toHaveLength(0);
+  });
+
+  test('without a month named, the period is still the days the file carries', async () => {
+    const { app } = harness();
+    const body = await (await upload(app)).json() as any;
+    expect(body.periodFrom).toBe('2026-08-03');
+    expect(body.periodTo).toBe('2026-08-12');
+  });
+});
+
+describe('what the books hold that no statement has shown', () => {
+  /* Reconciliation here began with July's statement; an entry older than the
+     first statement ever filed is the opening balance, not something waiting. */
+  const JULY = [HEAD, row('20260720', '000000000002500', 'DR', 'SERVICE CHARGE', 'BCHARGE0')].join('\n');
+  const ledgered = () => harness({
+    v_gl_entries: [
+      /* Paid in July, still not on any statement by August. */
+      { company_id: CO, account_code: '330-0000', je_no: 'JE-2607-0031', entry_date: '2026-07-28', source_type: 'PV', source_doc_no: 'HPV-2607-031', debit_sen: 0, credit_sen: 45000, party_name: 'TENAGA NASIONAL BERHAD', notes: 'Payment to TENAGA NASIONAL BERHAD — HPV-2607-031' },
+      /* Posted in the period. */
+      { company_id: CO, account_code: '330-0000', je_no: 'JE-2608-0007', entry_date: '2026-08-10', source_type: 'PV', source_doc_no: 'HPV-2608-007', debit_sen: 0, credit_sen: 310168, party_name: 'HOUZS VENTURE HOLDING SDN BHD', notes: null },
+      /* A reversed entry and the contra that undid it: not the bank's business. */
+      { company_id: CO, account_code: '330-0000', je_no: 'JE-2608-0008', entry_date: '2026-08-11', source_type: 'PV', source_doc_no: 'HPV-2608-008', debit_sen: 0, credit_sen: 99900, party_name: 'WRONG', notes: null, reversed: true, reversed_by_je: 'uuid-contra' },
+      { company_id: CO, account_code: '330-0000', je_no: 'JE-2608-0009', entry_date: '2026-08-11', source_type: 'PV_REVERSAL', source_doc_no: 'HPV-2608-008', debit_sen: 99900, credit_sen: 0, party_name: 'WRONG', notes: null, reversed: false, reversed_by_je: 'uuid-original' },
+    ],
+  });
+
+  test('lists this period\'s entries and the earlier ones still waiting, each with who it was paid to', async () => {
+    const { app } = ledgered();
+    /* Reconciliation began with July: the July cheque is on or after that. */
+    expect((await upload(app, { fileName: 'jul.csv', content: JULY })).status).toBe(200);
+    const up = await (await upload(app)).json() as any;
+    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    const byJe = Object.fromEntries((detail.unmatchedEntries as any[]).map((e) => [e.jeNo, e]));
+    expect(byJe['JE-2608-0007']).toMatchObject({ carried: false, partyName: 'HOUZS VENTURE HOLDING SDN BHD' });
+    expect(byJe['JE-2607-0031']).toMatchObject({ carried: true, partyName: 'TENAGA NASIONAL BERHAD' });
+    expect(detail.reconciliation.carried).toEqual({ count: 1, sen: -45000 });
+    expect(detail.reconciliation.booksNotOnBank).toEqual({ count: 1, sen: -310168 });
+  });
+
+  test('an entry older than the first statement ever filed is the opening balance, not something waiting', async () => {
+    const { app } = ledgered();
+    const up = await (await upload(app)).json() as any;   // August is the first statement here
+    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    expect((detail.unmatchedEntries as any[]).map((e) => e.jeNo)).not.toContain('JE-2607-0031');
+    expect(detail.reconciliation.carried).toEqual({ count: 0, sen: 0 });
+  });
+
+  test('a reversed entry and its contra are on neither list, and not offered', async () => {
+    const { app } = ledgered();
+    const up = await (await upload(app)).json() as any;
+    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    const jes = (detail.unmatchedEntries as any[]).map((e) => e.jeNo);
+    expect(jes).not.toContain('JE-2608-0008');
+    expect(jes).not.toContain('JE-2608-0009');
+    for (const l of detail.lines as any[]) {
+      expect((l.entryCandidates as any[]).map((e) => e.jeNo)).not.toContain('JE-2608-0008');
+    }
+  });
+
+  test('the candidates offered for a movement name who was paid', async () => {
+    const { app } = harness({
+      v_gl_entries: [{ company_id: CO, account_code: '330-0000', je_no: 'JE-2608-0012', entry_date: '2026-08-12', source_type: 'PV', source_doc_no: 'HPV-2608-012', debit_sen: 0, credit_sen: 2500, party_name: 'MAYBANK', notes: 'Payment to MAYBANK — HPV-2608-012' }],
+    });
+    const up = await (await upload(app)).json() as any;
+    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    const charge = detail.lines.find((l: any) => Number(l.amount_sen) === -2500);
+    expect(charge.entryCandidates).toEqual([expect.objectContaining({ jeNo: 'JE-2608-0012', partyName: 'MAYBANK', daysApart: 0 })]);
+  });
+});
+
 describe('the rest of banking life', () => {
   test('a movement can be matched to a journal entry, but only once', async () => {
     const { app } = harness();

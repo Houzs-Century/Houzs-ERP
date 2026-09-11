@@ -22,13 +22,13 @@ import type { Env, Variables } from '../env';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { parseBankStatement, movementFingerprint } from '../../acc/bank-parse';
+import { monthWindow } from '../../acc/bank-month';
 import { groupBankMovements, matchBankMovements, entryCandidatesFor } from '../../acc/bank-match';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
 import {
   loadBankConfigs, loadBankConfig, parseConfigFrom,
   loadRecognitionRules, loadPayableBatches, loadPayoutAdvices, loadAccountLedger,
-  loadLiveMonthLock, loadLineMonth,
-} from '../../acc/bank';
+  loadLiveMonthLock, loadLineMonth, loadClaimedElsewhere, claimedSetFor } from '../../acc/bank';
 import { lockedRefusal, lockMonthOf } from '../../acc/bank-lock';
 import { postBatchReceipt, undoBatchReceipt } from '../../acc/settlement';
 
@@ -187,13 +187,38 @@ export const bankUpload = guard(async (c) => {
   );
   if (!parsed.ok) return c.json({ error: 'unreadable_statement', message: parsed.reason }, 400);
 
+  /* THE MONTH A STATEMENT COVERS (docs/bugs/0802). Hong Leong's April statement
+     for 2990 carried fifteen movements, every one dated the 30th, so its
+     period read as one day and the two payments posted on the 28th were not
+     on the "in the books" list — the books were being compared over one day
+     of a month's statement. Naming the month in the Year-and-month box now
+     says: this file IS the month's statement, the 1st to the last day. The
+     movements keep their own dates (bank-month rule 1); what changes is the
+     span the books are compared over. A movement dated outside the named
+     month gives the lie to the claim and refuses the file. */
+  const named = /^\d{4}-\d{2}$/.test(String(body.statementMonth ?? '')) ? String(body.statementMonth) : null;
+  const window = named ? monthWindow(named) : null;
+  let periodFrom = parsed.periodFrom;
+  let periodTo = parsed.periodTo;
+  if (window && parsed.lines.length > 0) {
+    const outside = parsed.lines.find((l) => l.bookedOn < window.from || l.bookedOn > window.to);
+    if (outside) {
+      return c.json({
+        error: 'month_mismatch',
+        message: `This file carries a movement dated ${outside.bookedOn}, outside ${named}. A statement filed for a month must lie inside it — choose the month it is for, or clear the box so the file's own dates set its period.`,
+      }, 400);
+    }
+    periodFrom = window.from;
+    periodTo = window.to;
+  }
+
   /* A CLOSED MONTH TAKES NO NEW MOVEMENTS. Checked here, after the file has been
      read and before a single row is written, because the answer depends on the
      DATES the file turned out to carry — a file is refused for the months it
      lands in, not for the month somebody meant it for. Both ends are checked:
      one file can straddle a close, and a September that is shut must refuse a
      28 Aug – 3 Sep export even though August is open. */
-  for (const edge of new Set([parsed.periodFrom, parsed.periodTo])) {
+  for (const edge of new Set([periodFrom, periodTo])) {
     const shut = await refuseIfLocked(
       c, co.companyId, accountCode, edge,
       `loading a statement carrying movements dated ${edge}`,
@@ -281,8 +306,8 @@ export const bankUpload = guard(async (c) => {
     account_code: accountCode,
     file_name: fileName,
     file_hash: fileHash,
-    period_from: parsed.periodFrom,
-    period_to: parsed.periodTo,
+    period_from: periodFrom,
+    period_to: periodTo,
     line_count: movements.length,
     skipped_lines: parsed.skippedLines,
     in_sen: parsed.inSen,
@@ -378,8 +403,8 @@ export const bankUpload = guard(async (c) => {
        re-upload that quietly settles half its own lines is a surprise, even
        when every one of them is right. */
     alreadyRecorded: counts.DUPLICATE ?? 0,
-    periodFrom: parsed.periodFrom,
-    periodTo: parsed.periodTo,
+    periodFrom,
+    periodTo,
     inSen: parsed.inSen,
     outSen: parsed.outSen,
     openingBalanceSen: parsed.openingBalanceSen,
@@ -443,16 +468,19 @@ export const bankStatementDetail = guard(async (c) => {
   if (!stmt) return c.json({ error: 'not_found' }, 404);
   const statement = stmt as Record<string, any>;
 
-  const [linesRes, matchRes, ledger, batches] = await Promise.all([
+  const [linesRes, matchRes, ledger, batches, elsewhere] = await Promise.all([
     sb.from('acc_bank_statement_lines').select('*').eq('statement_id', id).eq('company_id', co.companyId).order('line_no'),
     sb.from('acc_bank_statement_matches').select('bank_line_id, je_no, amount_sen, match_reason').eq('company_id', co.companyId),
     loadAccountLedger(sb, co.companyId, String(statement.account_code), String(statement.period_to)),
     loadPayableBatches(sb, co.companyId),
+    loadClaimedElsewhere(sb, co.companyId, String(statement.account_code), id),
   ]);
   if (linesRes.error) return c.json({ error: 'load_failed', reason: linesRes.error.message }, 500);
   if (matchRes.error) return c.json({ error: 'load_failed', reason: matchRes.error.message }, 500);
   if (!ledger.ok) return c.json({ error: 'load_failed', reason: ledger.reason }, 500);
   if (!batches.ok) return c.json({ error: 'load_failed', reason: batches.reason }, 500);
+  if (!elsewhere.ok) return c.json({ error: 'load_failed', reason: elsewhere.reason }, 500);
+  const claimedElsewhere = claimedSetFor(elsewhere, ledger.movements);
 
   const lines = (linesRes.data ?? []) as Array<Record<string, any>>;
   const matchesByLine = new Map<number, Array<Record<string, any>>>();
@@ -462,6 +490,10 @@ export const bankStatementDetail = guard(async (c) => {
     if (at) at.push(m); else matchesByLine.set(key, [m]);
   }
 
+  /* A match row on a line that is not POSTED is nobody's claim — an older
+     undo left such rows behind (docs/bugs/0802) and the books counted six
+     entries as claimed while the bank counted six movements as open. */
+  const liveMatches = (l: { id?: unknown; state?: unknown }) => (String(l.state) === 'POSTED' ? (matchesByLine.get(Number(l.id)) ?? []) : []);
   const movements: StatementMovement[] = lines.map((l) => ({
     id: Number(l.id),
     bookedOn: String(l.booked_on).slice(0, 10),
@@ -469,7 +501,7 @@ export const bankStatementDetail = guard(async (c) => {
     reference: l.reference ?? null,
     amountSen: Number(l.amount_sen ?? 0),
     state: String(l.state) as StatementMovement['state'],
-    jeNo: l.posted_je_no ?? matchesByLine.get(Number(l.id))?.[0]?.je_no ?? null,
+    jeNo: String(l.state) === 'POSTED' ? (l.posted_je_no ?? liveMatches(l)[0]?.je_no ?? null) : null,
   }));
 
   const reconciliation = reconcileBankStatement({
@@ -479,21 +511,26 @@ export const bankStatementDetail = guard(async (c) => {
     statementClosingSen: statement.closing_balance_sen == null ? null : Number(statement.closing_balance_sen),
     movements,
     ledger: ledger.movements,
+    claimedElsewhere,
   });
 
   /* The ledger entries nothing on this statement claims, named — a count is not
-     something anybody can chase. */
+     something anybody can chase. This period's, and the EARLIER ones still
+     waiting for a bank to show them (owner: 之前 in book 还没有 recon 的也要带
+     下来), each marked which it is. */
   const claimed = new Set(movements.map((m) => m.jeNo).filter(Boolean));
   const unmatchedEntries = ledger.movements
-    .filter((l) => l.entryDate >= String(statement.period_from) && l.entryDate <= String(statement.period_to))
-    .filter((l) => !claimed.has(l.jeNo));
+    .filter((l) => l.entryDate <= String(statement.period_to))
+    .filter((l) => !claimed.has(l.jeNo))
+    .filter((l) => l.entryDate >= String(statement.period_from) || !claimedElsewhere.has(l.jeNo))
+    .map((l) => ({ ...l, carried: l.entryDate < String(statement.period_from) }));
 
   return c.json({
     statement,
     reconciliation,
     lines: lines.map((l) => ({
       ...l,
-      matches: matchesByLine.get(Number(l.id)) ?? [],
+      matches: liveMatches(l),
       /* Which statements this line COULD settle, recomputed live: a batch that
          was paid since the upload must not still be offered. */
       candidates: String(l.kind).startsWith('PAYOUT')
@@ -712,6 +749,13 @@ export const bankLineUndo = guard(async (c) => {
     }, 409);
   }
 
+  /* LET GO OF THE ENTRY (docs/bugs/0802). The link is what makes the books
+     count the entry as claimed; a line put back to OPEN with its link still
+     standing left the two sides disagreeing and the entry unmatchable. */
+  const { error: unlinkErr } = await sb.from('acc_bank_statement_matches')
+    .delete().eq('company_id', co.companyId).eq('bank_line_id', lineId);
+  if (unlinkErr) return c.json({ error: 'save_failed', reason: unlinkErr.message }, 500);
+
   const { error: upErr } = await sb.from('acc_bank_statement_lines').update({
     state: 'OPEN', posted_je_no: null, posted_je_id: null,
     updated_at: new Date().toISOString(),
@@ -790,6 +834,28 @@ export const bankLineMatch = guard(async (c) => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (!lineRaw) return c.json({ error: 'not_found' }, 404);
   const line = lineRaw as Record<string, any>;
+
+  /* ROWS AN OLDER UNDO LEFT BEHIND (docs/bugs/0802). A match on a line that is
+     no longer POSTED is nobody's claim, and it must not be the reason this
+     entry "cannot account for two". Cleared here, by what the line says now,
+     before the unique index is asked. */
+  {
+    const { data: staleRaw, error: sErr } = await sb.from('acc_bank_statement_matches')
+      .select('id, bank_line_id').eq('company_id', co.companyId).eq('je_no', jeNo);
+    if (sErr) return c.json({ error: 'load_failed', reason: sErr.message }, 500);
+    const stale = (Array.isArray(staleRaw) ? staleRaw : []) as Array<{ id: number; bank_line_id: number }>;
+    if (stale.length > 0) {
+      const { data: theirLines, error: lErr } = await sb.from('acc_bank_statement_lines')
+        .select('id, state').eq('company_id', co.companyId).in('id', stale.map((m) => Number(m.bank_line_id)));
+      if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+      const posted = new Set(((Array.isArray(theirLines) ? theirLines : []) as Array<{ id: number; state: string }>).filter((l) => String(l.state) === 'POSTED').map((l) => Number(l.id)));
+      const dead = stale.filter((m) => !posted.has(Number(m.bank_line_id)) || Number(m.bank_line_id) === lineId).map((m) => Number(m.id));
+      if (dead.length > 0) {
+        const { error: dErr } = await sb.from('acc_bank_statement_matches').delete().eq('company_id', co.companyId).in('id', dead);
+        if (dErr) return c.json({ error: 'save_failed', reason: dErr.message }, 500);
+      }
+    }
+  }
 
   const { error: insErr } = await sb.from('acc_bank_statement_matches').insert({
     bank_line_id: lineId,

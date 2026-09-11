@@ -226,6 +226,24 @@ describe('the sections behind the figures', () => {
     expect(books.body[0]).toContain('JE-2609-0011');
     expect(books.body[0]?.[2]).toBe('PV · HPV-2609-006');
     /* Money OUT of the account reads as a bracket, like every other statement. */
-    expect(books.body[0]?.[3]).toBe('(MYR 450.00)');
+    expect(books.body[0]?.[4]).toBe('(MYR 450.00)');
+  });
+
+  /* Owner, 2026-09-11: pay to who, and the earlier months' entries carried. */
+  test('names who was paid, and lists entries carried from earlier months under their own heading', () => {
+    const r = reconciliationStatement(input({
+      unmatchedEntries: [
+        { jeNo: 'JE-2609-0011', entryDate: '2026-09-28', sourceType: 'PV', sourceDocNo: 'HPV-2609-006', debitSen: 0, creditSen: 45000, partyName: 'TENAGA NASIONAL BERHAD', carried: false },
+        { jeNo: 'JE-2608-0031', entryDate: '2026-08-28', sourceType: 'PV', sourceDocNo: 'HPV-2608-031', debitSen: 0, creditSen: 12000, partyName: 'AIR SELANGOR', carried: true },
+      ],
+    }));
+    const books = r.sections.find((s) => s.title.startsWith('In the books, not on the bank'))!;
+    expect(books.head).toEqual(['Entry', 'Date', 'Source', 'Who', 'Amount']);
+    expect(books.body).toHaveLength(1);
+    expect(books.body[0]?.[3]).toBe('TENAGA NASIONAL BERHAD');
+    const carried = r.sections.find((s) => s.title.startsWith('From earlier months, still not on any statement'))!;
+    expect(carried.body).toHaveLength(1);
+    expect(carried.body[0]?.[0]).toBe('JE-2608-0031');
+    expect(carried.body[0]?.[3]).toBe('AIR SELANGOR');
   });
 });
