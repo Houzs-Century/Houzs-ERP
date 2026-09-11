@@ -85,6 +85,7 @@ export type PoAmendmentDetail = {
     new_qty?: number | null;
     new_unit_price_sen?: number | null;
     new_delivery_date?: string | null;
+    new_variants?: unknown;
     old_snapshot?: Record<string, unknown> | null;
   }>;
   purchaseOrder: { po_number?: string | null; revision?: number | null } | null;
@@ -187,6 +188,16 @@ function buildPoRows(lines: PoAmendmentDetail['lines']): AmendmentChangeRow[] {
     }
     if (change === 'SPEC' && l.new_item_code && String(l.new_item_code) !== String(snap.item_code ?? '')) {
       rows.push({ item, field: 'Spec', before: str(snap.item_code), after: str(l.new_item_code), kind: 'CHANGE' });
+    }
+    // Colour / fabric (variant / special) — moves no item_code, so it shows only
+    // here. Same shared alias-aware summary the on-screen PO card renders, so the
+    // printed document and the screen never disagree. Guard on a present blob so a
+    // QTY row's null does not read as a cleared spec.
+    if (l.new_variants != null) {
+      const vs = amendmentVariantSummaries({ change_type: change, new_variants: l.new_variants, old_snapshot: l.old_snapshot });
+      if (vs.from !== vs.to) {
+        rows.push({ item, field: 'Colour / fabric', before: str(vs.from), after: str(vs.to), kind: 'CHANGE' });
+      }
     }
     if (l.new_qty != null && String(l.new_qty) !== String(snap.qty ?? '')) {
       rows.push({ item, field: 'Quantity', before: str(snap.qty), after: str(l.new_qty), kind: 'CHANGE' });

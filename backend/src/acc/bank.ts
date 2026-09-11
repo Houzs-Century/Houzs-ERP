@@ -255,6 +255,15 @@ export async function loadAccountLedger(
 }
 
 /**
+ * The entry numbers a line's posted_je_no names. A split payout writes one
+ * receipt per report and stores them as "A, B" (docs/bugs/0809) — read as one
+ * number, neither was found, and a split's receipts sat in "in the books, not
+ * on the bank" while the bank counted the movement as posted.
+ */
+export const jeNosOf = (value: unknown): string[] =>
+  String(value ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+
+/**
  * What the account's OTHER statements have claimed, for the carried list
  * (docs/bugs/0802): every je_no a POSTED line of any statement of this account
  * points at (its own posted_je_no, or a match row on a POSTED line), except the
@@ -278,7 +287,7 @@ export async function loadClaimedElsewhere(
     .select('id, posted_je_no, state').eq('company_id', companyId).in('statement_id', ids).eq('state', 'POSTED');
   if (lErr) return { ok: false, reason: lErr.message };
   const posted = (lines ?? []) as Array<{ id: number; posted_je_no: string | null }>;
-  for (const l of posted) if (l.posted_je_no) claimed.add(String(l.posted_je_no));
+  for (const l of posted) for (const je of jeNosOf(l.posted_je_no)) claimed.add(je);
 
   const postedIds = posted.map((l) => Number(l.id));
   if (postedIds.length > 0) {
