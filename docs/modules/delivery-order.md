@@ -2556,10 +2556,14 @@ evening. The header block ABOVE that card on the same screen — **Salesperson,
 Customer ref, Delivery date, Expected at** — was blank for the same cause and is
 not in 0714's field map (`DO_CARRY` is deliberately "what a driver needs").
 
-`DO_SALES_CARRY` in `scripts/lib/customer-block.mjs` is the list:
-`salesperson_id`, `agent`, `branding`, `ref`, `customer_delivery_date`, and
-`expected_delivery_at` = the customer's date or, failing that, the DO's own
-`do_date` (what `/from-sos` does with the creation date). The writer
+`DO_SALES_CARRY` in `backend/scripts/lib/customer-block.mjs` is the list:
+`salesperson_id`, `agent`, `branding`, `ref` from the SO, and — **since
+2026-09-11 (owner 「全部要跟 autocount」, docs/bugs/0804)** — `customer_delivery_date`
+and `expected_delivery_at` both = the DO's own `do_date` (= AutoCount's DocDate),
+NOT the SO's customer date. A delivery order's delivery date follows AutoCount;
+the customer's original ask stays on the SO. This reverses the delivery-date half
+of the 2026-09-08 default above (which seeded them from `s.customer_delivery_date`);
+existing rows were repaired by `repair-do-delivery-dates-to-autocount.mjs`. The writer
 (`insertMigratedDo`) applies it in the SAME `UPDATE … FROM scm.mfg_sales_orders`
 as the customer block, so a new migrated document carries all of it at once.
 

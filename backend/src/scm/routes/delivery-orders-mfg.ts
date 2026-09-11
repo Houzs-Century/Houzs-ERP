@@ -3973,11 +3973,13 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     so_doc_no: firstSoDocNo,
     debtor_code: (head.debtor_code as string | null) ?? null,
     debtor_name: (head.debtor_name as string | null) ?? null,
-    /* Owner 2026-09-11 (docs/bugs/0807): do_date also defaults to SO's
-       delivery date when there is one; falls back to today on a blank SO. */
+    /* Owner 2026-09-11 (docs/bugs/0807, supersedes 0804): every DO date
+       defaults to the SO's customer_delivery_date; falls back to today on
+       a blank SO. Confirmed after two contradictory readings on the same
+       morning — this is the current rule. */
     do_date: (head.customer_delivery_date as string | null) ?? today,
     expected_delivery_at: (head.customer_delivery_date as string | null) ?? today,
-    customer_delivery_date: (head.customer_delivery_date as string | null) ?? null,
+    customer_delivery_date: (head.customer_delivery_date as string | null) ?? today,
     address1: (head.address1 as string | null) ?? null,
     address2: doAddress2,
     city: (head.city as string | null) ?? null,
