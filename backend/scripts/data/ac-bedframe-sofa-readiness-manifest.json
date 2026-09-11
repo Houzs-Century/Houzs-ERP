@@ -1,0 +1,11 @@
+{
+  "exported_at": "2026-09-11T17:24:17",
+  "source": "AED_HOUZS live (read-only)",
+  "rows": 3178,
+  "by_group": {
+    "BEDFRAME": 2414,
+    "SOFA": 764
+  },
+  "bound_lines": 519,
+  "bound_po_received_lines": 357
+}

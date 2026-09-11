@@ -1,18 +1,18 @@
 {
-  "exported_at": "2026-09-09T10:24:26",
+  "exported_at": "2026-09-11T17:20:38",
   "source": "AED_HOUZS live (read-only)",
   "post_cutoff_activity": {
     "DO": {
-      "docs": 350,
+      "docs": 401,
       "latest": "2026-09-19"
     },
     "GR": {
-      "docs": 170,
-      "latest": "2026-09-07"
+      "docs": 215,
+      "latest": "2026-09-11"
     },
     "IV": {
-      "docs": 147,
-      "latest": "2026-08-29"
+      "docs": 148,
+      "latest": "2026-09-10"
     },
     "ADJ": {
       "docs": 5,
@@ -53,7 +53,7 @@
       "latest": null
     }
   },
-  "balance_cells": 2689,
-  "so_rows": 13373,
-  "items": 1591
+  "balance_cells": 2695,
+  "so_rows": 13424,
+  "items": 1623
 }
