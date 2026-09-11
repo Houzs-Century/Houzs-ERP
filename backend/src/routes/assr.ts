@@ -50,7 +50,7 @@ import {
   assrCaseRowInScope, assrCallerIsScoped, stripCreditorFields, listMyCases,
 } from "../services/assrVisibility";
 import { notifyServiceCaseResponsible } from "../services/assrNotify";
-import { registerAssrAccessRoutes } from "./assrAccess";
+import { grantCaseAccess, revokeCaseAccess } from "./assrAccess";
 import { isDirectorUser } from "../services/pmsAccess";
 import type { AuthUser } from "../services/auth";
 import type { Context, MiddlewareHandler } from "hono";
@@ -1606,10 +1606,11 @@ app.get("/:id{[0-9]+}", requireServiceCaseAccess(), async (c) => {
   return c.json(detail);
 });
 
-// Access list (Nth-person visibility) — handlers live in routes/assrAccess.ts so
-// this file does not grow past its size ceiling; they mount on THIS app + the
-// /api/assr path. caseInCallerScope is passed in (a local guard here).
-registerAssrAccessRoutes(app, caseInCallerScope);
+// Access list (Nth-person visibility). Registrations stay here so the path + gate
+// stay visible to the route-capability generator; the bodies live in
+// routes/assrAccess.ts to keep this file under its size ceiling. See §6.
+app.post("/:id{[0-9]+}/access", requirePermission("service_cases.write"), (c) => grantCaseAccess(c, caseInCallerScope));
+app.delete("/:id{[0-9]+}/access/:userId{[0-9]+}", requirePermission("service_cases.write"), (c) => revokeCaseAccess(c, caseInCallerScope));
 
 // ── Supplier rating ──────────────────────────────────────────
 // Posted from the Close-Case prompt when the case had a supplier
