@@ -865,6 +865,27 @@ the reason, for a human to confirm. Offered, never taken: two possible answers i
 a question, so nothing is ticked and he chooses;
 `acc/settlement.ts` confirms, which POSTS that moment.
 
+**A transaction already on another report is left out (2026-09-11,
+docs/bugs/0823; owner: 可以我觉得要).** Maybank's portal exports one CSV per
+merchant, day and programme (DVS04A credit, DVS04E debit, T41AX Amex, EP41
+EzyPay), and an Amex card sold on an EzyPay instalment is printed on BOTH the
+EP41 and the T41AX report — one swipe, two files, the bank pays once. The
+upload's hash gate knows the same file; `linesAlreadyOnFile`
+(`backend/src/acc/settlement.ts`) knows the same LINE: for an acquirer with
+unique references, each parsed line is compared — trading day, reference,
+gross to the sen — with the acquirer's lines already stored; a line already on
+file is left out of the new batch (its share of the fee with it, the stated net
+reduced by its net so the adjustment is unchanged), and `settlementUpload`
+says so in its reply (`alreadyOnReport`, `alreadyOnReportDetail` naming the
+earlier file and line — shown beside the upload result). A file with nothing
+new is refused before a batch head is written: `409 already_on_report`, its
+sentence naming the earlier report (curated in `authed-fetch.ts` as the floor
+and listed in `SERVER_SENTENCE_WINS`). A different amount under the same day
+and reference is another transaction; an acquirer without unique references
+(GHL) is never deduplicated this way. Contract:
+`backend/tests/settlementRoutes.test.ts` ("a transaction already on another
+report").
+
 **A REFERENCE IS NOT BOUND BY THE DATE WINDOW (2026-09-09, docs/bugs/0760).**
 `loadPaymentCandidates` used to read the tolerance window only, and the
 reference was consulted afterwards — so a payment outside the window was never

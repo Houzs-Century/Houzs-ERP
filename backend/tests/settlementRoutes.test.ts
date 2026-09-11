@@ -327,6 +327,73 @@ describe('POST /settlement/batches — the four piles', () => {
   });
 });
 
+/* ── A transaction already on another report (docs/bugs/0823) ─────────────────
+   Maybank prints an Amex card sold on an EzyPay instalment on BOTH the EP41
+   and the T41AX report of the day — one swipe, two files, the bank pays
+   once. The same FILE twice was already refused by its hash; the same LINE on
+   a second file was not, and would have made a batch waiting for a payout
+   that never comes. */
+describe('a transaction already on another report', () => {
+  const FIRST = { acquirerCode: 'MBB', fileName: '027012896718_EP41_713_20260801.CSV', content: STATEMENT };
+  const second = (content: string) => ({ acquirerCode: 'MBB', fileName: '027012896718_T41AX_467_20260801.CSV', content });
+  const HEAD = 'Txn Date,Approval Code,Gross,MDR';
+
+  test('the second report keeps only its new line, and names the first report for the rest', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    expect((await upload(app, FIRST)).status).toBe(200);
+    const res = await upload(app, second(`${HEAD}\n01/08/2026,A1,1000.00,15.00\n01/08/2026,B7,500.00,7.50`));
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.rows).toBe(1);
+    expect(body.alreadyOnReport).toBe(1);
+    expect(body.alreadyOnReportDetail).toEqual([expect.objectContaining({
+      /* File line numbers: the heading is line 1, the first transaction line 2. */
+      lineNo: 2, txnDate: '2026-08-01', ref: 'A1', grossSen: 100000,
+      fileName: '027012896718_EP41_713_20260801.CSV', lineNoThere: 2,
+    })]);
+    /* The left-out line takes its share of the fee with it. */
+    expect(body).toMatchObject({ grossSen: 50000, feeSen: 750, netSen: 49250 });
+    const batches = sb.tables.acc_settlement_batches as Row[];
+    expect(batches).toHaveLength(2);
+    expect(batches[1]).toMatchObject({ row_count: 1, gross_sen: 50000, fee_sen: 750, net_sen: 49250 });
+    const rows = (sb.tables.acc_settlement_rows as Row[]).filter((r) => r.batch_id === batches[1]!.id);
+    expect(rows.map((r) => r.ref)).toEqual(['B7']);
+  });
+
+  test('a report with nothing new is refused, and stores nothing', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    expect((await upload(app, FIRST)).status).toBe(200);
+    const res = await upload(app, second(`${HEAD}\n01/08/2026,A1,1000.00,15.00`));
+    expect(res.status).toBe(409);
+    const body = await res.json() as any;
+    expect(body.error).toBe('already_on_report');
+    expect(body.alreadyOnReport).toBe(1);
+    expect(body.message).toMatch(/027012896718_EP41_713_20260801\.CSV/);
+    expect(body.message.length).toBeLessThan(200);
+    expect(sb.tables.acc_settlement_batches).toHaveLength(1);
+    expect(sb.tables.acc_settlement_rows).toHaveLength(2);
+  });
+
+  test('a different amount under the same day and reference is another transaction', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    expect((await upload(app, FIRST)).status).toBe(200);
+    const res = await upload(app, second(`${HEAD}\n01/08/2026,A1,1200.00,18.00`));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ rows: 1, alreadyOnReport: 0 });
+    expect(sb.tables.acc_settlement_batches).toHaveLength(2);
+  });
+
+  test('an acquirer without unique references is never deduplicated this way', async () => {
+    const { app, sb } = harness({ acc_acquirers: [GHL], mfg_sales_order_payments: [soPayment({ merchant_provider: 'GHL' })] });
+    const ghl = (name: string, extra: string) => ({ acquirerCode: 'GHL', fileName: name, content: `Txn Date,Gross,MDR\n01/08/2026,1000.00,15.00${extra}` });
+    expect((await upload(app, ghl('ghl-a.csv', ''))).status).toBe(200);
+    const res = await upload(app, ghl('ghl-b.csv', '\n02/08/2026,50.00,1.00'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ rows: 2, alreadyOnReport: 0 });
+    expect(sb.tables.acc_settlement_batches).toHaveLength(2);
+  });
+});
+
 describe('confirming is the moment of posting', () => {
   test('bulk-confirming the auto-matched pile books the FEE, and leaves the bank alone', async () => {
     const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });

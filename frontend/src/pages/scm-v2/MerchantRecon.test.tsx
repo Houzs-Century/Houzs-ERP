@@ -191,6 +191,9 @@ describe('the reconcile tab', () => {
       grossSen: 177700, feeSen: 2600, netSen: 175100,
       periodFrom: '2026-08-01', periodTo: '2026-08-03',
       buckets: { MATCHED: 1, NEEDS_CONFIRM: 1, UNMATCHED: 1, IGNORED: 0 },
+      /* One line the bank pays once, already on another report (docs/bugs/0823). */
+      alreadyOnReport: 1,
+      alreadyOnReportDetail: [{ lineNo: 1, txnDate: '2026-08-01', ref: 'A1', grossSen: 100000, batchId: 7, fileName: '027012896718_EP41_713_20260801.CSV', lineNoThere: 1 }],
     });
     draw();
     fireEvent.change(screen.getByLabelText('Acquirer'), { target: { value: 'MBB' } });
@@ -203,6 +206,9 @@ describe('the reconcile tab', () => {
     fireEvent.click(screen.getByText(/^Upload merchant report/));
 
     await waitFor(() => expect(screen.getByText(/report read/)).toBeTruthy());
+    /* What was left out, and where it already is (docs/bugs/0823). */
+    expect(screen.getByText(/1 line\(s\) already on 027012896718_EP41_713_20260801\.CSV left out/)).toBeTruthy();
+    expect(screen.getByText(/the bank pays a card transaction once/)).toBeTruthy();
     /* The three counts come from the batch list, which the fixture answers. */
     /* The three tallies… */
     expect(screen.getAllByText('matched by reference').length).toBeGreaterThan(0);

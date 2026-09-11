@@ -29,6 +29,7 @@
 // ----------------------------------------------------------------------------
 
 import { postJournal, reverseJournal } from './engine';
+import type { ParseResult } from './settlement-parse';
 import { resolveRoles, settlementLines, settlementReceiptLines, statementChargeLines, clearingMoveLines } from './rules';
 import { formaliseReceiptsForSettlement } from './receipts';
 import { companyCodeById } from '../scm/lib/doc-no';
@@ -473,6 +474,81 @@ export async function findPaymentsForRow(
 
   hit.sort((a, b) => Number(b.possible) - Number(a.possible) || b.paidOn.localeCompare(a.paidOn) || a.docNo.localeCompare(b.docNo));
   return { ok: true, payments: hit.slice(0, limit) };
+}
+
+/* ── A transaction already on another report (docs/bugs/0823) ─────────────────
+   Maybank prints an Amex card sold on an EzyPay instalment on BOTH the EP41
+   and the T41AX report of the day — one swipe, two files, the bank pays once.
+   The upload's hash gate knows the same FILE; this knows the same LINE:
+   trading day, reference and gross to the sen, for an acquirer whose
+   references are unique (GHL's are not, and two sales of one amount on one
+   day are two sales). A line already on file is left out of the new batch —
+   its share of the fee with it, and the stated net reduced by its net so the
+   adjustment is unchanged — and named, with the report it is on. */
+export type AlreadyOnReport = {
+  lineNo: number; txnDate: string; ref: string; grossSen: number;
+  batchId: number; fileName: string | null; lineNoThere: number;
+};
+type ParsedOk = Extract<ParseResult, { ok: true }>;
+export async function linesAlreadyOnFile(
+  sb: Parameters<typeof loadSettledKeys>[0],
+  companyId: number,
+  acquirer: { code: string; has_unique_ref: boolean | null },
+  parsed: ParsedOk,
+): Promise<{ ok: true; kept: ParsedOk; alreadyOn: AlreadyOnReport[] } | { ok: false; reason: string }> {
+  const untouched = { ok: true as const, kept: parsed, alreadyOn: [] as AlreadyOnReport[] };
+  if (!acquirer.has_unique_ref) return untouched;
+  const refs = [...new Set(parsed.rows.map((r) => r.ref).filter((r): r is string => typeof r === 'string' && r.trim() !== ''))];
+  if (refs.length === 0) return untouched;
+
+  const { data: onFileRaw, error } = await sb.from('acc_settlement_rows')
+    .select('batch_id, line_no, txn_date, ref, gross_sen')
+    .eq('company_id', companyId)
+    .eq('acquirer_code', acquirer.code)
+    .in('ref', refs);
+  if (error) return { ok: false, reason: `earlier lines: ${error.message}` };
+  const keyOf = (day: string, ref: string, grossSen: number) => `${day}|${ref.trim()}|${grossSen}`;
+  const onFile = new Map<string, { batchId: number; lineNo: number }>();
+  for (const r of (onFileRaw ?? []) as Array<{ batch_id: number; line_no: number; txn_date: string; ref: string | null; gross_sen: number }>) {
+    const key = keyOf(String(r.txn_date).slice(0, 10), String(r.ref ?? ''), Number(r.gross_sen));
+    if (!onFile.has(key)) onFile.set(key, { batchId: Number(r.batch_id), lineNo: Number(r.line_no) });
+  }
+  if (onFile.size === 0) return untouched;
+
+  const alreadyOn: AlreadyOnReport[] = [];
+  const dropped: ParsedOk['rows'] = [];
+  const keptRows: ParsedOk['rows'] = [];
+  for (const row of parsed.rows) {
+    const hit = row.ref ? onFile.get(keyOf(row.txnDate, row.ref, row.grossSen)) : undefined;
+    if (hit && row.ref) {
+      alreadyOn.push({ lineNo: row.lineNo, txnDate: row.txnDate, ref: row.ref, grossSen: row.grossSen, batchId: hit.batchId, fileName: null, lineNoThere: hit.lineNo });
+      dropped.push(row);
+    } else keptRows.push(row);
+  }
+  if (alreadyOn.length === 0) return untouched;
+
+  const { data: batchesRaw, error: bErr } = await sb.from('acc_settlement_batches')
+    .select('id, file_name')
+    .eq('company_id', companyId)
+    .in('id', [...new Set(alreadyOn.map((a) => a.batchId))]);
+  if (bErr) return { ok: false, reason: `earlier batches: ${bErr.message}` };
+  const nameOf = new Map(((batchesRaw ?? []) as Array<{ id: number; file_name: string | null }>).map((b) => [Number(b.id), b.file_name ?? null]));
+  for (const a of alreadyOn) a.fileName = nameOf.get(a.batchId) ?? null;
+
+  const total = (rows: ParsedOk['rows'], pick: (r: ParsedOk['rows'][number]) => number) => rows.reduce((acc, r) => acc + pick(r), 0);
+  const droppedNet = total(dropped, (r) => r.netSen);
+  const days = keptRows.map((r) => r.txnDate).sort();
+  const kept: ParsedOk = {
+    ...parsed,
+    rows: keptRows,
+    grossSen: parsed.grossSen - total(dropped, (r) => r.grossSen),
+    feeSen: parsed.feeSen - total(dropped, (r) => r.feeSen),
+    netSen: parsed.netSen - droppedNet,
+    statedNetSen: parsed.statedNetSen == null ? null : parsed.statedNetSen - droppedNet,
+    periodFrom: days.at(0) ?? parsed.periodFrom,
+    periodTo: days.at(-1) ?? parsed.periodTo,
+  };
+  return { ok: true, kept, alreadyOn };
 }
 
 export async function loadSettledKeys(

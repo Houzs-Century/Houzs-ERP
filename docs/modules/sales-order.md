@@ -4695,6 +4695,14 @@ match on the row, a bank-statement match on its ACTIVE entry, or a closed month
 on the entry's MONEY-leg account. **Every read fails CLOSED** — an unreadable
 check refuses and says to retry, never "not reconciled".
 
+**A merchant report with nothing new is refused (2026-09-11, docs/bugs/0823).**
+`authed-fetch.ts` curates `already_on_report` — the merchant upload's refusal
+of a file whose lines are all on a report uploaded earlier (Maybank prints an
+Amex-instalment swipe on both its EP41 and T41AX reports) — and lists it in
+`SERVER_SENTENCE_WINS`, so the server's sentence naming the earlier file is
+what the operator sees; the curated line is the floor. The rule itself lives
+in `docs/modules/accounting.md`.
+
 **A merchant link is not a reconciliation (2026-09-11, docs/bugs/0821).**
 `acc/payment-reconciled.ts` closes a payment for the merchant report only once
 the settlement LINE behind its `acc_settlement_matches` link is confirmed
