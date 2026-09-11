@@ -47,6 +47,18 @@ The table is **not Malaysia-only** — mig 0181 seeded CN and SG rows, so
 `country` is a real dimension and `statesInCountry` / `distinctCountries` exist
 for the country-first surfaces (Warehouse, Supplier, Venue).
 
+**Singapore postcodes are LIVE-resolved, not seeded (2026-09-11).** The 55 SG
+rows are one representative code per URA planning area; Singapore's real ~150k
+per-building 6-digit postcodes are NOT in the table, so a real SG postcode shows
+"No match" against the seeded set. `GET /api/scm/sg-postcode/:code`
+(`backend/src/scm/routes/sg-postcode.ts`; testable logic in
+`backend/src/scm/lib/onemap-sg.ts`) resolves a real SG code to its address via
+Singapore's official OneMap API. It is **INERT until configured**: with no
+`ONEMAP_EMAIL` / `ONEMAP_PASSWORD` Worker secret it returns
+`{ configured: false }` and the SG address forms keep the seeded 55-area picker —
+the same no-op contract `RESEND_API_KEY` uses. Front-end callers must degrade on
+`configured: false`, never assume a live lookup.
+
 ## 2. The two directions
 
 **Top-down** (`由上往下`) — each pick narrows the next field:
