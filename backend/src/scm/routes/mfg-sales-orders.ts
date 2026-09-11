@@ -7339,32 +7339,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      a key when the request body carried it. */
   await queueAcSoEdit(c, docNo, [], [], Object.keys(updates));
 
-  /* THE PROCESSING DATE IS THE ALLOCATOR'S GATE, and until 2026-09-11 setting it
-     fired nothing. `so-stock-allocation.ts` skips any order without one
-     (`allocGated`, the owner's 2026-08-10 rule «它明明都没有 Processing Date,
-     干嘛分配呢»), so an order acquires its claim on stock at the moment this
-     PATCH writes the date — and the only things that re-walked were the LINE
-     routes (add / edit / delete) and two manual endpoints. Nobody watched the
-     gate itself open.
-
-     WHAT THAT COST, measured rather than reasoned. On 2026-09-11 a full re-walk
-     moved 702 company-1 lines from PENDING to READY — stock that was already in
-     the warehouse, for orders that were already released, sitting unlit because
-     no event had fired since. Some had waited over a year. It also corrected two
-     lines the other way (READY with no stock behind them), which is the same
-     staleness pointing the other direction.
-
-     GLOBAL, not scoped to this doc — the same choice the create path makes at
-     :5587 and for the same stated reason: an order that starts competing can
-     STEAL stock from a lower-priority one, and the loser must regress in the
-     SAME pass rather than lag. `recomputeSoStockAllocation(sb, docNo)` would
-     light this order and leave the order it took from reading READY.
-
-     Fires when the request CARRIED the field, not only when the value changed:
-     the walk is idempotent, and a cheap extra pass is worth more than a missed
-     one. Best-effort, exactly like every other call site — a failure must never
-     sink a header save, and the function enqueues its own retry when it cannot
-     finish. */
+  /* The processing date is the allocator's GATE, and until 2026-09-11 writing
+     it here re-walked nothing — 702 lines sat PENDING on stock already in the
+     warehouse. GLOBAL like the create path at :5587 (a newly-competing order can
+     steal from a lower-priority one, which must regress in the SAME pass), and
+     best-effort because the header CAS has already committed.
+     docs/bugs/0814-*, docs/modules/sales-order.md 0.2. */
   if (Object.prototype.hasOwnProperty.call(updates, 'processing_date')) {
     try { await recomputeSoStockAllocation(sb); }
     catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-processing-date failed:', docNo, e); }

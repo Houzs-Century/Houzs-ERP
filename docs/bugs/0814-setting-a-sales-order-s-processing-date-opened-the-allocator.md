@@ -1,6 +1,6 @@
 ## Setting a sales order's processing date opened the allocator's gate and re-walked nothing [high]
 
-<!-- area: Sales orders -->
+<!-- area: Sales orders + pricing -->
 
 **Symptom.** Owner, 2026-09-11, after a full re-walk moved 702 lines at once:
 「为什么会没有重算呢」. Orders sat PENDING with the goods physically in the
