@@ -1,0 +1,27 @@
+{
+ "_note": "Owner-directed corrections for PROCEEDED sofa orders that are NOT in the supplier export the owner gave on 2026-09-10 (that file is a snapshot and omits some orders, e.g. new HC-PO-2609-0xx ones whose supplier PO ref is a non-standard code like R04533/ZNT6330). The supplier-listing round could not reach these. Each target is the owner's own drawing + his statement of what his supplier record holds. Applied through apply-sofa-compartment-corrections.mjs (SO and PO together).",
+ "_authority": "Owner 2026-09-11, with the drawing, the ERP screen, and the goods for GR in front of him. He OVERRODE his own 2026-09-10 reading of this same drawing: the THIRD piece is a LOUNGER L(RHF) (the taller box, hatched on the right), not an arm. Confirmed in chat: 「用今天的SO-013503 / Po2609-053 确定」.",
+ "_source": "owner drawing + statement + GR mismatch 2026-09-11; live state from probe-lounger-read-as-arm run 34561370209",
+ "entries": [
+  {
+   "model": "8030",
+   "pieces": ["1A(LHF)", "1NA", "L(RHF)"],
+   "seat": "35",
+   "confidence": "owner",
+   "why": "Owner 2026-09-11, OVERRIDING his own 2026-09-10 reading. On 2026-09-10 he read this drawing himself as 1A(LHF)+1NA+1A(RHF) (recorded verbatim in sofa-compartment-corrections-tv-direction.json, key 926872, confidence owner), and that arm reading is what production held. On 2026-09-11, with the goods in front of him for GR, he re-read it: the third box is the TALLER one (a chaise/lounger, hatched on the right) = L(RHF), and his supplier record reads 1A+1NA+1L too; the GR would not match an arm SKU. Three signals agree (drawing, supplier, physical goods). The superseded 2026-09-10 tv-direction entry for 926872 is removed in this same change so one address carries one answer. Production (probe run 34561370209): HC-SO-013503, received n/a on SO side, the build's three sofa rows all carry line key 926872, 8030-L(RHF) is minted.",
+   "source": "owner-not-in-file-2026-09-11",
+   "docs": ["HC-SO-013503"],
+   "lineKeys": ["926872"]
+  },
+  {
+   "model": "8030",
+   "pieces": ["1A(LHF)", "1NA", "L(RHF)"],
+   "seat": "35",
+   "confidence": "owner",
+   "why": "The purchase order raised from HC-SO-013503, corrected with it so the pair cannot drift. Same owner override as the SO entry above. Production (probe run 34561370209): HC-PO-2609-053, received=0 (safe to change codes), three sofa lines keyed 928403 (1NA), 928404 (1A(RHF)->L(RHF)), 928405 (1A(LHF)). Not in the supplier export.",
+   "source": "owner-not-in-file-2026-09-11",
+   "docs": ["HC-PO-2609-053"],
+   "lineKeys": ["928403", "928404", "928405"]
+  }
+ ]
+}
