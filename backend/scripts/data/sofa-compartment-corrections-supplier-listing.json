@@ -1274,12 +1274,12 @@
    "pieces": [
     "1A(LHF)",
     "1NA",
-    "CSL",
+    "CONSOLE",
     "1A(RHF)"
    ],
    "leg": "6",
    "confidence": "certain",
-   "why": "SUPPLIER LISTING SO-2608-258 (houzs-century-ALL-SO-detail-2026-09-10.xlsx, exported from the SUPPLIER system and given by the owner 2026-09-10). The supplier records the build by compartment with every variant; the owner named it the authority on a proceeded order (「supplier的肯定对的 基本上你可以跟」). Ours reads 1A(LHF)+1A(RHF)+CONSOLE+1NA, the supplier 1A(LHF)+1NA+CSL+1A(RHF).",
+   "why": "SUPPLIER LISTING SO-2608-258 (houzs-century-ALL-SO-detail-2026-09-10.xlsx, exported from the SUPPLIER system and given by the owner 2026-09-10). The supplier records the build by compartment with every variant; the owner named it the authority on a proceeded order (「supplier的肯定对的 基本上你可以跟」). Ours reads 1A(LHF)+1A(RHF)+CONSOLE+1NA, the supplier 1A(LHF)+1NA+CSL+1A(RHF). | CSL=CONSOLE per owner 2026-09-11 (「CSL 就是console啊」); the supplier writes CSL for what our catalogue mints as CONSOLE.",
    "source": "supplier-2026-09-10",
    "docs": [
     "HC-PO-009986"
@@ -1293,12 +1293,12 @@
    "pieces": [
     "1A(LHF)",
     "1NA",
-    "CSL",
+    "CONSOLE",
     "1A(RHF)"
    ],
    "leg": "6",
    "confidence": "certain",
-   "why": "SUPPLIER LISTING SO-2608-258 (houzs-century-ALL-SO-detail-2026-09-10.xlsx, exported from the SUPPLIER system and given by the owner 2026-09-10). The supplier records the build by compartment with every variant; the owner named it the authority on a proceeded order (「supplier的肯定对的 基本上你可以跟」). Ours reads 1A(LHF)+1A(RHF)+CONSOLE+1NA, the supplier 1A(LHF)+1NA+CSL+1A(RHF).",
+   "why": "SUPPLIER LISTING SO-2608-258 (houzs-century-ALL-SO-detail-2026-09-10.xlsx, exported from the SUPPLIER system and given by the owner 2026-09-10). The supplier records the build by compartment with every variant; the owner named it the authority on a proceeded order (「supplier的肯定对的 基本上你可以跟」). Ours reads 1A(LHF)+1A(RHF)+CONSOLE+1NA, the supplier 1A(LHF)+1NA+CSL+1A(RHF). | CSL=CONSOLE per owner 2026-09-11 (「CSL 就是console啊」); the supplier writes CSL for what our catalogue mints as CONSOLE.",
    "source": "supplier-2026-09-10",
    "docs": [
     "HC-SO-012693"
@@ -1555,11 +1555,11 @@
    "model": "8030",
    "pieces": [
     "1A(LHF)",
-    "CSL",
+    "CONSOLE",
     "1A(RHF)"
    ],
    "confidence": "certain",
-   "why": "SUPPLIER LISTING SO-2609-073 (houzs-century-ALL-SO-detail-2026-09-10.xlsx, exported from the SUPPLIER system and given by the owner 2026-09-10). The supplier records the build by compartment with every variant; the owner named it the authority on a proceeded order (「supplier的肯定对的 基本上你可以跟」). Ours reads CONSOLE+1A(RHF)+1A(LHF), the supplier 1A(LHF)+CSL+1A(RHF).",
+   "why": "SUPPLIER LISTING SO-2609-073 (houzs-century-ALL-SO-detail-2026-09-10.xlsx, exported from the SUPPLIER system and given by the owner 2026-09-10). The supplier records the build by compartment with every variant; the owner named it the authority on a proceeded order (「supplier的肯定对的 基本上你可以跟」). Ours reads CONSOLE+1A(RHF)+1A(LHF), the supplier 1A(LHF)+CSL+1A(RHF). | CSL=CONSOLE per owner 2026-09-11 (「CSL 就是console啊」); the supplier writes CSL for what our catalogue mints as CONSOLE.",
    "source": "supplier-2026-09-10",
    "docs": [
     "HC-PO-010145"
@@ -1572,11 +1572,11 @@
    "model": "8030",
    "pieces": [
     "1A(LHF)",
-    "CSL",
+    "CONSOLE",
     "1A(RHF)"
    ],
    "confidence": "certain",
-   "why": "SUPPLIER LISTING SO-2609-073 (houzs-century-ALL-SO-detail-2026-09-10.xlsx, exported from the SUPPLIER system and given by the owner 2026-09-10). The supplier records the build by compartment with every variant; the owner named it the authority on a proceeded order (「supplier的肯定对的 基本上你可以跟」). Ours reads CONSOLE+1A(RHF)+1A(LHF), the supplier 1A(LHF)+CSL+1A(RHF).",
+   "why": "SUPPLIER LISTING SO-2609-073 (houzs-century-ALL-SO-detail-2026-09-10.xlsx, exported from the SUPPLIER system and given by the owner 2026-09-10). The supplier records the build by compartment with every variant; the owner named it the authority on a proceeded order (「supplier的肯定对的 基本上你可以跟」). Ours reads CONSOLE+1A(RHF)+1A(LHF), the supplier 1A(LHF)+CSL+1A(RHF). | CSL=CONSOLE per owner 2026-09-11 (「CSL 就是console啊」); the supplier writes CSL for what our catalogue mints as CONSOLE.",
    "source": "supplier-2026-09-10",
    "docs": [
     "HC-SO-011633"
