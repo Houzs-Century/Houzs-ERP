@@ -22,6 +22,8 @@
 //                         current value so an edit form still shows it)
 // ----------------------------------------------------------------------------
 
+import { normaliseTypographicQuotes } from './mfg-pricing';
+
 export type MaintPoolEntry = string | { value: string; active?: boolean };
 
 /** Unwrap one entry to its value string. */
@@ -84,23 +86,50 @@ export const maintPickerValues = (
  *  re-adds an off-pool stored value as "<value> (current)" at the render layer
  *  and so calls these without `keep`. Check the caller's render before assuming
  *  a missing `keep` is a bug. */
+/* THE COMPARISON FOLDS TYPOGRAPHIC QUOTES, because the two sides of it are
+   spelled by different hands. A maintenance pool is TYPED BY A PERSON into the
+   Modular drawer, and Windows / Word / a phone keyboard turn an inch mark into
+   U+201C or U+201D; the editors emit U+0022 (`${d + l + g}"`,
+   SoLineCard.tsx). A raw `includes` therefore drops an option the Model plainly
+   lists.
+
+   MEASURED on production 2026-09-11: of company 1's pools, `gaps` holds TEN
+   curly-spelled values (11” 12“ 13” 14“ 15” 16“ 17” 18“ 19” 20“) and
+   `total_heights` SIX (17“ 19“ 21” 23“ 25” 27“), across 10 bedframe Models. So
+   Gap 11 through 20 inch were invisible in the picker on BOTH surfaces while
+   the SERVER would have accepted every one of them - `inPool` in
+   allowed-options-check.ts has folded since 2026-08-17.
+
+   That asymmetry was known and left: SoLineCard carried the comment "these two
+   filters deliberately still do not [fold], because widening them CHANGES
+   WHICH OPTIONS APPEAR - an owner's call, not a bug fix". The owner's call came
+   on 2026-09-11: 「不止 fabric，divan gap 等等也是」. docs/bugs/0814.
+
+   Folding only normalises the GLYPH, never the number or the word, so no pool
+   gains a value it does not list. */
+const foldPool = (pool: readonly string[]) => new Set(pool.map((v) => normaliseTypographicQuotes(String(v)).trim()));
+const inFolded = (folded: Set<string>, value: string) =>
+  folded.has(normaliseTypographicQuotes(String(value)).trim());
+
 export const restrictPricedToPool = <T extends { value: string }>(
   opts: readonly T[],
   pool?: readonly string[] | null,
   keep?: string | null,
-): T[] =>
-  Array.isArray(pool) && pool.length > 0
-    ? opts.filter((o) => pool.includes(o.value) || (!!keep && o.value === keep))
-    : [...opts];
+): T[] => {
+  if (!Array.isArray(pool) || pool.length === 0) return [...opts];
+  const folded = foldPool(pool);
+  return opts.filter((o) => inFolded(folded, o.value) || (!!keep && o.value === keep));
+};
 
 export const restrictStringsToPool = (
   opts: readonly string[],
   pool?: readonly string[] | null,
   keep?: string | null,
-): string[] =>
-  Array.isArray(pool) && pool.length > 0
-    ? opts.filter((o) => pool.includes(o) || (!!keep && o === keep))
-    : [...opts];
+): string[] => {
+  if (!Array.isArray(pool) || pool.length === 0) return [...opts];
+  const folded = foldPool(pool);
+  return opts.filter((o) => inFolded(folded, o) || (!!keep && o === keep));
+};
 
 /** Editor helper — rewrite an entry's value, preserving its active flag. */
 export const maintEntryWithValue = (e: MaintPoolEntry, value: string): MaintPoolEntry =>

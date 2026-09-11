@@ -1,0 +1,47 @@
+name: Repair fabric pool labels
+
+# Ten entries in the sofa fabric allow-list are the fabric's LABEL
+# ("GD2034 (HIVE)") where the list holds codes, so those ten fabrics are
+# offered by nothing. Each maps to exactly one fabric code by label, so this is
+# a rename; an ambiguous label is refused and listed. PLAN by default.
+# See docs/bugs/0814.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes NOTHING) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: ["plan", "apply"]
+      confirm:
+        description: "Required for apply: FABRIC-POOL-LABELS"
+        required: false
+        default: ""
+
+concurrency:
+  group: repair-fabric-pool-labels
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-fabric-pool-labels.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

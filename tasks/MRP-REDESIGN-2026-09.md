@@ -223,10 +223,49 @@ built — none is a defect; each is a bigger UI the owner has not committed to:
    automatically by the backend (same supplier + one SO -> one PO); the mockup
    adds an explicit multi-select "merge convert" control. Effort: small-medium,
    FE only, once #1 exists.
-4. **Mobile MRP convert flow.** `frontend/src/mobile` MRP is a read-only
-   `MobileModuleList` (variant "mrp") with no convert flow, so A2's sofa-cover UX
-   is desktop-only. Per the "desktop and mobile are one product" rule this is a
-   real gap if the owner wants convert-on-mobile. Effort: medium.
+4. ~~**Mobile MRP convert flow.**~~ **CLOSED — owner ruled 2026-09-11:
+   「手机版不需要MRP」.** Not built and not to be built. `frontend/src/mobile`
+   MRP stays the read-only `MobileModuleList` (variant "mrp") it is.
+
+   **This is a deliberate, NAMED exception to the repo's "desktop and mobile are
+   one product" rule**, recorded here so the next sweep does not read the gap as
+   a defect and re-open it. MRP is a buyer's desk tool: the purchasing decision
+   is taken sitting down against a supplier list and lead times, not on a phone.
+   Do not re-propose it; if the answer ever changes it will change because the
+   owner says so, not because a parity check noticed the asymmetry.
+
+## The mockup's fuller UI — what is BUILT vs what is not (re-checked in code 2026-09-11)
+
+Owner asked directly: 「我记得它有一个是可以看 By Sales Order 的？」 Read off the
+tree, not off this file's earlier prose:
+
+| the mockup drew | state | evidence |
+| --- | --- | --- |
+| `COMBINED / PER SO` toggle (how POs GROUP on convert) | **BUILT** | `poMode: 'combined' \| 'per-so'` in `frontend/src/pages/scm-v2/Mrp.tsx`; rules in `scm/lib/po-grouping.ts` `groupKeyFor`, PR #3602 merged + deployed |
+| Sofa tab rows grouped by sales order | **BUILT** | `groupBySo` in `Mrp.tsx` — sofa tab ONLY |
+| A global "分类 ⇄ 销售单" VIEW toggle | **NOT BUILT** | no view state in `Mrp.tsx`; and no backend shape for it — `grep` for `/mrp/plan` / `bySalesOrder` in `scm/routes/mrp.ts` returns nothing |
+| Per-SO "整单转 PO" cards in that view | NOT BUILT | depends on the row above |
+| Bedframe multi-select "合并转" | NOT BUILT | the backend already merges automatically; what is missing is the explicit control |
+| Mobile MRP convert | **CLOSED, will not be built** | owner 2026-09-11 — see item 4 above |
+
+**The two things whose names collide, because a reader will conflate them and
+one of them is done:** `COMBINED / PER SO` decides **how purchase orders are
+grouped when converting**. The "By Sales Order" view decides **how the page is
+laid out** — one card carrying a sales order's sofa AND mattress AND accessories
+together. The first is shipped; the second is not.
+
+**Why the second is not a front-end afternoon.** MRP fetches ONE CATEGORY PER
+REQUEST (five tabs). A whole-order view needs the backend to answer "every
+category of this sales order" in one shape, which does not exist. Assembling it
+in the browser from five responses is possible and was offered, but it makes the
+page wait for all five — and this page has already had one round of work spent
+on being slow.
+
+**Standing recommendation (owner has not picked): do nothing yet.** The painful
+case — a sofa set spread over many module lines — is already served by the sofa
+tab's per-SO grouping, and mattress / accessories are pooled from stock where
+per-order reading earns little. The question that would settle it is for the
+buyer, not for us: does she work by category or by customer?
 
 ## Worktrees
 

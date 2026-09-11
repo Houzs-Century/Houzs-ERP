@@ -28,6 +28,7 @@ import poRoutesSrc from '../src/scm/routes/mfg-purchase-orders.ts?raw';
 import poRevisionSrc from '../src/scm/lib/po-revision.ts?raw';
 import soRevisionSrc from '../src/scm/lib/so-revision.ts?raw';
 import poPdfSrc from '../../frontend/src/vendor/scm/lib/purchase-order-pdf.ts?raw';
+import poConvertLineSrc from '../src/scm/lib/po-convert-line.ts?raw';
 
 /** Comments quote the shapes this file forbids, so they are stripped. */
 const code = (s: string): string =>
@@ -66,11 +67,27 @@ describe('every write that borns a PO line numbers it', () => {
     expect(insertSites(src).length).toBe(EXPECTED_SITES[name]);
   });
 
+  /* `poConvertLineRows` is the THIRD accepted numbering construct, added
+     2026-09-11 when the convert arms moved resolve -> map -> stamp into one
+     helper. It is accepted here ONLY because the test directly below proves
+     that helper calls `stampPoLineNos` — the guard is transferred, not
+     loosened. Delete it from this list the day that assertion is deleted. */
+  test('poConvertLineRows really numbers what it builds', () => {
+    const src = code(poConvertLineSrc);
+    expect(src.includes('export async function poConvertLineRows'),
+      'po-convert-line.ts no longer exports poConvertLineRows — retire it from the needle below')
+      .toBe(true);
+    const body = src.slice(src.indexOf('export async function poConvertLineRows'));
+    expect(/stampPoLineNos\(/.test(body),
+      'poConvertLineRows stopped numbering its rows, and the route sites trust it to')
+      .toBe(true);
+  });
+
   test.each(SOURCES)('%s: every insert site numbers its lines', (name, src) => {
     for (const at of insertSites(src)) {
       const window = src.slice(Math.max(0, at - 1400), at + 400);
       expect(
-        /stampPoLineNos\(|line_no:/.test(window),
+        /stampPoLineNos\(|poConvertLineRows\(|line_no:/.test(window),
         `${name}: a purchase_order_items insert near offset ${at} carries no line_no`,
       ).toBe(true);
     }

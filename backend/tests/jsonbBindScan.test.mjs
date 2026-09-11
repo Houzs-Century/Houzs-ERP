@@ -157,3 +157,52 @@ test('a params array containing objects and arrays is indexed correctly', () => 
   assert.equal(found.length, 1);
   assert.match(found[0].snippet, /^\$3 <-/);
 });
+
+// -- the two holes docs/bugs/0814 went through, with CI green ---------------
+
+test('flags the transaction handle `t` — the tag the allowlist did not have (2026-09-11, apply-supplier-bedframe-variants.mjs)', () => {
+  /* postgres.js names the transaction handle `t` (`sql.begin(async (t) => …)`),
+     and `t` was not in SQL_TAGS, so the scanner never entered the template and
+     the bind inside it was never examined. Two production variants blocks became
+     ARRAYS before anything noticed. */
+  const found = scan(`
+    await sql.begin(async (t) => {
+      await t\`UPDATE scm.purchase_order_items
+                 SET variants = coalesce(variants, '{}'::jsonb) || \${JSON.stringify(set)}::jsonb
+               WHERE id = \${id}\`;
+    });
+  `);
+  assert.equal(found.length, 1);
+  assert.equal(found[0].kind, 'template');
+});
+
+test('flags a NAME assigned from JSON.stringify, not only the call itself (2026-09-11)', () => {
+  /* The other half of the same miss: one line of detour past a variable and the
+     guard saw nothing. */
+  const found = scan(`
+    const patch = JSON.stringify(w.set);
+    await t\`UPDATE scm.grn_items SET variants = coalesce(variants, '{}'::jsonb) || \${patch}::jsonb WHERE id = \${id}\`;
+  `);
+  assert.equal(found.length, 1);
+  assert.match(found[0].snippet, /patch/);
+});
+
+test('the name rule stops at a PARAMETER of the same name, so a true report stays true', () => {
+  /* This scanner has no scopes. `const v = JSON.stringify(x)` in one function and
+     `async (v) => sql\`… = \${v}\`` in another are different things, and reporting
+     the second as the first made 4 of the 9 hits false on the run that added the
+     rule. A name used as a parameter is dropped. */
+  const found = scan(`
+    const v = JSON.stringify(bedVariants(l.desc2));
+    const byNumber = async (v) => sql\`SELECT id FROM scm.purchase_orders WHERE po_number = \${v}\`;
+  `);
+  assert.equal(found.length, 0);
+});
+
+test('the text funnel is still the way out, through a variable too', () => {
+  const found = scan(`
+    const patch = JSON.stringify(set);
+    await t\`UPDATE t SET variants = variants || \${patch}::text::jsonb WHERE id = \${id}\`;
+  `);
+  assert.equal(found.length, 0);
+});

@@ -1327,6 +1327,19 @@ Contracts: `bank-parse.test.ts`, `bank-lock.test.ts`, `bank-month.test.ts`,
 `backend/tests/bankRoutes.test.ts` (which now also mounts the month list and
 the lock — their first route contract), `BankStatementTab.test.tsx`.
 
+**What a card movement looks like is decided on every read (2026-09-11,
+docs/bugs/0815; owner, after 0812 shipped and June's 8 June credit still read
+"check which": 这个还是没有修吗?).** The upload writes its decision on the line;
+until now that was the last word, so a statement uploaded before a fix could
+never see it. `freshDecisions` (`backend/src/scm/routes/accounting-bank.ts`)
+rebuilds every OPEN money-in line as a movement and runs the same
+`matchBankMovements` against today's rules, reports and advices; the statement
+detail and the month detail overlay `kind`, acquirer, trading day,
+`matched_batch_id`, `split` and clue over the stored columns, writing nothing
+— a POSTED or IGNORED line keeps what it was booked as. Contract:
+`backend/tests/bankRoutes.test.ts` ("what a card movement looks like is
+re-decided on every read").
+
 **What a charged report is owed on the bank side (2026-09-11, docs/bugs/0812).**
 `loadPayableBatches` (`backend/src/acc/bank.ts`) — the one read of "what each
 reconciled report is still owed" behind the bank matcher and the bank screens

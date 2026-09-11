@@ -35,7 +35,7 @@ import {
 } from '../shared/mfg-pricing';
 import { orderSofaModuleRowsWithinBuilds, sortLinesByStoredLineNo, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { inPoLineOrder, nextPoLineNo, sortBySourceSoLine, stampPoLineNos } from '../lib/po-line-order';
-import { poConvertLineRow } from '../lib/po-convert-line';
+import { poConvertLineRows } from '../lib/po-convert-line';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { changedPoIdentityLockCols, poIdentityLockedRefusal } from '../shared/po-identity-lock';
 import { poVariantGaps, poVariantCheckFailedBody, poVariantConfirmRefusal, poWarehouseGap, PO_WAREHOUSE_REQUIRED } from './po-gates';
@@ -2269,8 +2269,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       return c.json({ error: 'supplier_mismatch', reason: 'None of the picked SO lines belong to this PO’s supplier.' }, 409);
     }
     const appendFrom = await nextPoLineNo(supabase, target.id);
-    const rows = stampPoLineNos(
-      targetLines.map((l) => poConvertLineRow(target.id, l, fromMrp)), appendFrom);
+    const rows = await poConvertLineRows(
+      supabase, target.id, targetLines, fromMrp, activeCompanyId(c) ?? null, appendFrom);
     const { error: iErr } = await supabase.from('purchase_order_items').insert(stampCompany(rows, c));
     if (iErr) return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500);
     await recomputePoTotals(supabase, target.id);
@@ -2382,8 +2382,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
 
     // A fresh PO numbers from 1, in the sales orders' order, not the picks'.
     // Both arms build the same row — lib/po-convert-line.ts owns its shape.
-    const rows = stampPoLineNos(
-      sortBySourceSoLine(bucket.lines).map((l) => poConvertLineRow(header.id, l, fromMrp)), 1);
+    const rows = await poConvertLineRows(
+      supabase, header.id, sortBySourceSoLine(bucket.lines), fromMrp, activeCompanyId(c) ?? null, 1);
     const { error: iErr } = await supabase.from('purchase_order_items').insert(stampCompany(rows, c));
     if (iErr) {
       await supabase.from('purchase_orders').delete().eq('id', header.id);

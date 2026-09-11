@@ -212,16 +212,30 @@ try {
     for (const [poNumber, group] of byPo) {
       await sql.begin(async (t) => {
         for (const w of group) {
-          const patch = JSON.stringify(w.set);
-          await t`UPDATE scm.purchase_order_items
-                     SET variants = coalesce(variants, '{}'::jsonb) || ${patch}::jsonb
-                   WHERE id = ${w.poItemId}`;
+          /* jsonb_build_object over TEXT parameters, never a pre-serialized
+             string bound to a jsonb parameter. The driver types that string as
+             json, so `variants || $1` appends instead of merging and the block
+             becomes an ARRAY — docs/jsonb-double-encoding-coe.md, and it caught
+             this tool on its first production run (docs/bugs/0814). A line whose
+             variants is not an OBJECT is left alone and reported: merging into a
+             shape we do not understand is how the damage spreads. */
+          const pairs = Object.entries(w.set);
+          const keys = pairs.map(([k]) => k);
+          const vals = pairs.map(([, v]) => String(v));
+          const patchSql = `jsonb_object(${'$1::text[]'}, ${'$2::text[]'})`;
+          const upd = async (table, id) => t.unsafe(
+            `UPDATE scm.${table}
+                SET variants = coalesce(variants, '{}'::jsonb) || ${patchSql}
+              WHERE id = $3 AND jsonb_typeof(coalesce(variants, '{}'::jsonb)) = 'object'`,
+            [keys, vals, id],
+          );
+          const a = await upd('purchase_order_items', w.poItemId);
+          if (Number(a.count ?? 0) === 0) { line(`   SKIPPED ${w.poNumber} ${w.itemCode}: its variants block is not an object`); continue; }
           poWritten += 1;
           if (w.soItemId) {
-            await t`UPDATE scm.mfg_sales_order_items
-                       SET variants = coalesce(variants, '{}'::jsonb) || ${patch}::jsonb
-                     WHERE id = ${w.soItemId}`;
-            soWritten += 1;
+            const b = await upd('mfg_sales_order_items', w.soItemId);
+            if (Number(b.count ?? 0) > 0) soWritten += 1;
+            else line(`   SKIPPED ${w.soDocNo} ${w.itemCode}: the sales line's variants block is not an object`);
           }
         }
       });
