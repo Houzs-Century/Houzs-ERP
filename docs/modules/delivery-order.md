@@ -2576,14 +2576,21 @@ Every SET re-asserts `IS NULL`, so a corrected header survives. What the plan
 lists under "order itself blank" is an SO-side gap: fix the SO and re-run, it
 is idempotent. docs/bugs/0716.
 
-## DO LINE delivery dates default to the SO header's date (2026-09-11)
+## DO dates default to the SO's delivery date (2026-09-11)
 
-Owner rule, restated three times the same morning: 「我开 DO 之前我改 SO 就行 ……
+Owner rule, restated four times the same morning: 「我开 DO 之前我改 SO 就行 ……
 顾客每次换的话，我也会跟着换（SO 的），所以当我开 DO 的时候，你就跟着 default
-这个 date 来开」. The delivery-date column on the DO line editor now opens
-carrying the SO's `customer_delivery_date`, not blank; the operator changes the
-date on the SO once when the customer moves it, and every DO raised afterwards
+这个 date 来开 …… DO date 也是要用 SO delivery」. **Every date the DO form
+opens carrying is the SO's `customer_delivery_date`** — the DO date (header
+`do_date`), the customer delivery date (header `customer_delivery_date`), and
+every line's delivery date all seed from it. The operator changes the date on
+the SO once when the customer moves it, and every DO raised afterwards
 inherits.
+
+For a blank DO with no `?fromSo=` / `?fromPicks=1` in the URL the `useState`
+initial keeps `do_date = today`, so the "opened fresh" case still opens today.
+The `/from-sos` server route falls back to today when the source SO carries no
+`customer_delivery_date`.
 
 Three holes were closed together (docs/bugs/0807):
 
