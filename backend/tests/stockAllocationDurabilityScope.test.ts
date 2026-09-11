@@ -95,7 +95,21 @@ const LEDGER: Array<{
      docs/ALLOCATION-DURABILITY-PLAN.md. */
   { module: 'routes/grns.ts', source: grns, inline: 4, durable: 2, deferred: 0 },
   { module: 'routes/inventory-adjustments.ts', source: inventoryAdjustments, inline: 1, durable: 0, deferred: 0 },
-  { module: 'routes/mfg-sales-orders.ts', source: mfgSalesOrders, inline: 7, durable: 3, deferred: 1 },
+  /* 7 -> 8 inline on 2026-09-11: the header PATCH now re-walks when it writes
+     `processing_date`. That write is what lifts an order out of `allocGated`, and
+     until then NOTHING re-walked at that moment — 702 company-1 lines sat PENDING
+     on stock already in the warehouse (docs/bugs/0814-*).
+
+     IT IS INLINE, AND THAT IS A STOPGAP, NAMED AS ONE. The durable shape wants
+     the header route on `runScmPgCommand` so the queue row commits with the
+     header CAS; that route is a long optimistic-lock flow and moving it is its
+     own change, tracked in docs/ALLOCATION-DURABILITY-PLAN.md. What inline gives
+     up, precisely: a Worker that dies between the header commit and this call
+     loses the re-walk, and the order waits for the next event — which is the old
+     behaviour, so this is strictly better than before and strictly worse than
+     durable. A re-walk that STARTS and cannot finish is already covered:
+     `recomputeSoStockAllocation` enqueues its own retry. */
+  { module: 'routes/mfg-sales-orders.ts', source: mfgSalesOrders, inline: 8, durable: 3, deferred: 1 },
   { module: 'routes/purchase-consignment-receives.ts', source: purchaseConsignmentReceives, inline: 1, durable: 0, deferred: 0 },
   { module: 'routes/purchase-consignment-returns.ts', source: purchaseConsignmentReturns, inline: 1, durable: 0, deferred: 0 },
   { module: 'routes/purchase-returns.ts', source: purchaseReturns, inline: 3, durable: 0, deferred: 0 },
@@ -116,17 +130,23 @@ describe('durable allocation coverage is stated honestly', () => {
     });
   }
 
-  test('the totals match the documented scope: 6 durable of 38 triggers', () => {
+  test('the totals match the documented scope: 6 durable of 39 triggers', () => {
     const durable = LEDGER.reduce((sum, entry) => sum + entry.durable, 0);
     const inline = LEDGER.reduce((sum, entry) => sum + entry.inline, 0);
     const deferred = LEDGER.reduce((sum, entry) => sum + entry.deferred, 0);
     expect(durable).toBe(6);
-    expect(inline).toBe(31);
+    expect(inline).toBe(32);
     expect(deferred).toBe(1);
-    /* The trigger count is unchanged: deferring one moved it between columns,
-       it did not remove it. 32 are still best-effort (31 inline + 1 deferred). */
-    expect(inline + deferred).toBe(32);
-    expect(durable + inline + deferred).toBe(38);
+    /* 38 -> 39 on 2026-09-11, and the new one went into the BEST-EFFORT column:
+       the SO header PATCH re-walks when it writes `processing_date`, which is
+       the write that lets an order claim stock at all. A trigger that did not
+       exist is not a regression in this ledger's terms — but it is honestly an
+       inline one, so the best-effort share got worse (32 of 39, was 32 of 38)
+       and this test is the place that has to say so rather than quietly absorb
+       it. The durable shape needs the header route on runScmPgCommand;
+       docs/ALLOCATION-DURABILITY-PLAN.md tracks it. */
+    expect(inline + deferred).toBe(33);
+    expect(durable + inline + deferred).toBe(39);
   });
 
   test('the code says out loud that the other triggers are still best-effort', () => {
