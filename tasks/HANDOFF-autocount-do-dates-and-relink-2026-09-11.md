@@ -100,6 +100,29 @@ so the DOCUMENT date is fine; it is the DELIVERY date that drifted.
   `backend/tests/migratedDoSalesFields.test.mjs`.
 - Ledger `docs/bugs/0810-*.md`, guide `docs/modules/delivery-order.md`.
 
+### The repair is APPLIED (2026-09-11)
+
+Actions -> **Repair delivery dates from the AutoCount book**, `mode=apply`,
+`CONFIRM=DELIV-DATES-FROM-BOOK`. Plan run **34567150379** (success) reported the
+same numbers as the local plan; apply run **34567236846** (success) wrote
+**1,541 rows** in one transaction and re-read on a fresh connection: *"VERIFIED
+on a fresh connection: 100 SO + 81 DO now hold the book's delivery date."*
+
+Checked independently afterwards with the read-only DSN, on the document the
+owner reported:
+
+| | before | after |
+|---|---|---|
+| `HC-SO-011302` `customer_delivery_date` | 2026-09-05 | **2026-09-19** |
+| `HC-DO-011559` expected + customer | 2026-09-05 | **2026-09-19** |
+| its three line delivery dates | NULL | **2026-09-19** |
+| `HC-DO-011559` `do_date` | 2026-09-19 | 2026-09-19 (untouched, already the book's) |
+
+It took ~9 minutes: 1,541 statements, each its own round trip inside one
+transaction. Nothing was blocked on it. **Do not re-run it to "check"** — it is
+idempotent, but a second apply is nine more minutes of write locks for zero
+rows; the plan mode answers the same question for free.
+
 ### What it deliberately does NOT touch
 
 - rows with `amended_delivery_date` — a deliberate ERP amendment; if it disagrees
