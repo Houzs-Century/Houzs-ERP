@@ -26,7 +26,7 @@ import { useState } from 'react';
 import { AlertTriangle, ArrowLeft, CheckCheck, Landmark, Link2, Undo2, Upload } from 'lucide-react';
 import {
   useBankSetup, useBankStatements, useBankStatement, useUploadBankStatement,
-  useBookBankReceipt, useMatchBankLine, useIgnoreBankLine, useUndoBankLine,
+  useBookBankReceipt, useMatchBankLine, useMatchBankGroup, useIgnoreBankLine, useUndoBankLine,
   type BankLine, type BankStatement, type Reconciliation, type LedgerEntry } from './bank-queries';
 import { ICON, fmt, btn, softText, danger, good, panel, refusalText } from './settlement-ui';
 import styles from './Suppliers.module.css';
@@ -236,24 +236,7 @@ const StatementView = ({ id, onBack }: { id: number; onBack: () => void }) => {
       {q.data && <ReconciliationPanel r={q.data.reconciliation} />}
       {statement && <WhereItIsSaved statement={statement} openCount={open.length} lineCount={lines.length} />}
 
-      {open.length > 0 && (
-        <section className="space-y-2">
-          <b>{`Still to decide (${open.length})`}</b>
-          <table className={grid.grid}>
-            <thead>
-              <tr>
-                <th>On the bank statement</th>
-                <th className={grid.num}>Amount</th>
-                <th>What it looks like</th>
-                <th>What to do</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ordered.map((l) => <OpenLine key={l.id} line={l} />)}
-            </tbody>
-          </table>
-        </section>
-      )}
+      {open.length > 0 && <OpenLines lines={ordered} entries={q.data?.unmatchedEntries ?? []} />}
 
       {done.length > 0 && (
         <div style={softText}>
@@ -476,7 +459,101 @@ const KIND_LABEL: Record<BankLine['kind'], string> = {
   OTHER: 'not card money',
 };
 
-export const OpenLine = ({ line }: { line: BankLine }) => {
+/* ── The movements still to decide, and choosing one entry for several ───────
+   Owner, 2026-09-11, on OR-2604-001 — RM 39,000 received, shown by the bank as
+   RM 29,000 + RM 10,000, each line able only to say "Not ours to reconcile":
+   他对应的是这两笔，你应该开发让我自由选. Tick the movements, and a chooser
+   opens over the entries the books still hold for this account (this period's
+   and the earlier months' still waiting), named by who; the button fires only
+   when the two totals agree to the sen (勾的总额必须等于那个 entry 的金额).
+   One movement may also be several entries the same way. Shared by the
+   statement view and the month view (docs/bugs/0803). */
+export const OpenLines = ({ lines, entries }: { lines: BankLine[]; entries: LedgerEntry[] }) => {
+  const group = useMatchBankGroup();
+  const [pickedLines, setPickedLines] = useState<number[]>([]);
+  const [pickedEntries, setPickedEntries] = useState<string[]>([]);
+  const toggleLine = (id: number) => setPickedLines((was) => (was.includes(id) ? was.filter((x) => x !== id) : [...was, id]));
+  const toggleEntry = (je: string) => setPickedEntries((was) => (was.includes(je) ? was.filter((x) => x !== je) : [...was, je]));
+
+  const chosenLines = lines.filter((l) => pickedLines.includes(l.id));
+  const linesSen = chosenLines.reduce((s, l) => s + l.amount_sen, 0);
+  const chosenEntries = entries.filter((e) => pickedEntries.includes(e.jeNo));
+  const entriesSen = chosenEntries.reduce((s, e) => s + (e.debitSen - e.creditSen), 0);
+  const oneSide = chosenLines.length <= 1 || chosenEntries.length <= 1;
+  const agrees = chosenLines.length > 0 && chosenEntries.length > 0 && linesSen === entriesSen && oneSide;
+
+  return (
+    <section className="space-y-2">
+      <b>{`Still to decide (${lines.length})`}</b>
+      {pickedLines.length > 0 && (
+        <section className="space-y-2" style={{ padding: 'var(--space-3)', border: '1px solid var(--c-line, rgba(34,31,32,0.15))', borderRadius: 'var(--radius-md)' }}>
+          <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'baseline', flexWrap: 'wrap' }}>
+            <b>Choose the entry these movements are</b>
+            <span>{pickedLines.length} movement{pickedLines.length === 1 ? '' : 's'} picked · <b>{fmt(linesSen)}</b></span>
+            <button type="button" style={{ ...btn(), padding: '2px 8px' }} onClick={() => { setPickedLines([]); setPickedEntries([]); }}>Clear</button>
+          </div>
+          <div style={softText}>
+            Every entry the books still hold for this account — this period's and the earlier months' still
+            waiting. Tick the one they are (or, for one movement, the several it paid); the totals must agree.
+          </div>
+          {entries.length === 0 && <div style={softText}>The books hold no entry that is not already on a statement.</div>}
+          {entries.length > 0 && (
+            <table className={grid.grid}>
+              <thead>
+                <tr><th /><th>Entry</th><th>Date</th><th>Source</th><th>Who</th><th className={grid.num}>Amount</th></tr>
+              </thead>
+              <tbody>
+                {entries.map((e) => (
+                  <tr key={e.jeNo}>
+                    <td>
+                      <input type="checkbox" checked={pickedEntries.includes(e.jeNo)} onChange={() => toggleEntry(e.jeNo)}
+                        aria-label={`Entry ${e.jeNo} for the picked movements`} />
+                    </td>
+                    <td>{e.jeNo}{e.carried ? <span className={grid.sub}> · earlier month</span> : null}</td>
+                    <td>{e.entryDate}</td>
+                    <td>{[e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ') || '—'}</td>
+                    <td>{e.partyName ?? e.notes ?? '—'}</td>
+                    <td className={grid.num}>{fmt(e.debitSen - e.creditSen)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 'var(--fs-13)', color: agrees ? good : danger }}>
+              Movements {fmt(linesSen)} · entries {fmt(entriesSen)}
+              {chosenEntries.length > 0 && linesSen !== entriesSen && ` — ${fmt(linesSen - entriesSen)} out`}
+              {!oneSide && ' — several movements to several entries is two matches; do one side at a time'}
+            </span>
+            <button type="button" style={btn(true, !agrees || group.isPending)} disabled={!agrees || group.isPending}
+              onClick={() => group.mutate({ lineIds: pickedLines, jeNos: pickedEntries }, { onSuccess: () => { setPickedLines([]); setPickedEntries([]); } })}>
+              <Link2 {...ICON} /> {group.isPending ? 'Matching…' : 'These are that entry'}
+            </button>
+          </div>
+          {group.isError && (
+            <div style={{ fontSize: 'var(--fs-12)', color: danger }}>{refusalText(group.error, 'That was not accepted.')}</div>
+          )}
+        </section>
+      )}
+      <table className={grid.grid}>
+        <thead>
+          <tr>
+            <th />
+            <th>On the bank statement</th>
+            <th className={grid.num}>Amount</th>
+            <th>What it looks like</th>
+            <th>What to do</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((l) => <OpenLine key={l.id} line={l} isPicked={pickedLines.includes(l.id)} onPick={() => toggleLine(l.id)} />)}
+        </tbody>
+      </table>
+    </section>
+  );
+};
+
+export const OpenLine = ({ line, isPicked = false, onPick }: { line: BankLine; isPicked?: boolean; onPick?: () => void }) => {
   const book = useBookBankReceipt();
   const match = useMatchBankLine();
   const ignore = useIgnoreBankLine();
@@ -519,6 +596,11 @@ export const OpenLine = ({ line }: { line: BankLine }) => {
 
   return (
     <tr>
+      <td>
+        {onPick && (
+          <input type="checkbox" checked={isPicked} onChange={onPick} aria-label={`Pick line ${line.line_no}`} />
+        )}
+      </td>
       <td>
         <div>{line.booked_on}{line.reference ? <> · ref <b>{line.reference}</b></> : null}</div>
         <div className={grid.sub} style={{ wordBreak: 'break-word' }}>{line.description}</div>

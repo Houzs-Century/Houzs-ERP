@@ -235,6 +235,20 @@ export const useMatchBankLine = () => {
   });
 };
 
+/* Several movements are one entry, or one movement is several entries
+   (docs/bugs/0803; owner: 你应该开发让我自由选). The server checks the two sides
+   add up and that no entry is already accounted for. */
+export const useMatchBankGroup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { lineIds: number[]; jeNos: string[] }) =>
+      authedFetch<{ ok: boolean; status: string; lines: number; entries: number; jeNos: string[] }>(
+        '/accounting/bank/lines/match-group', { method: 'POST', body: JSON.stringify(body) },
+      ),
+    onSuccess: () => invalidateAfterBankPosting(qc),
+  });
+};
+
 export const useIgnoreBankLine = () => {
   const qc = useQueryClient();
   return useMutation({

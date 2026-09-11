@@ -200,6 +200,30 @@ describe('entries carried from earlier periods', () => {
   });
 });
 
+/* Owner, 2026-09-11: one transfer paid two vouchers; two transfers paid one
+   receipt (OR-2604-001 = RM 29,000 + RM 10,000). A movement claims EVERY entry
+   it was matched to, and every one of them leaves the "books, not on bank"
+   list (docs/bugs/0803). */
+describe('a movement matched to several entries', () => {
+  it('claims all of them, and the identity holds', () => {
+    const r = reconcileBankStatement(input({
+      statementClosingSen: 5100000,
+      movements: [mov({ jeNo: 'JE-2608-0001', jeNos: ['JE-2608-0001', 'JE-2608-0002'] })],
+      ledger: [
+        led({ entryDate: '2026-07-20', jeNo: 'JE-2607-9', debitSen: 5000000 }),
+        led({ debitSen: 60000 }),
+        led({ jeNo: 'JE-2608-0002', debitSen: 40000 }),
+      ],
+      claimedElsewhere: new Set(['JE-2607-9']),
+    }));
+    expect(r.booksNotOnBank).toEqual({ count: 0, sen: 0 });
+    expect(r.unmatchedJeNos).toEqual([]);
+    expect(r.differenceSen).toBe(0);
+    expect(r.consistent).toBe(true);
+    expect(r.reconciled).toBe(true);
+  });
+});
+
 describe('numbers that do not add up', () => {
   /* The guard that makes the whole thing worth trusting: a closing balance
      that disagrees with the lines under it. Real cause — a statement whose
