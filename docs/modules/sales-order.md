@@ -1244,9 +1244,11 @@ apply, so the line **discount is the only reduction that survives** — typing
 125 over a derived RM 250 books `discount_sen = 12500`. On an unlocked SO that
 saves directly; on a locked SO it now rides the amendment (clamped to
 `[0, qty * unit]` at apply, rendered on the approver's card). The LANE is
-decided by item code (`shared/amendment-lane.ts`): the fee is a service line,
-so its amendment waits on **Logistics**; a product-line discount waits on
-Purchasing.
+decided by whether the line is a SERVICE line (`shared/amendment-lane.ts`
+`classifyLine` → `isServiceLine`: item_group / category / SVC- code, NOT the
+SVC- prefix alone — so a bare-code DISPOSE / STORAGE / TRANSPORTATION CHARGES
+routes right too; owner 2026-09-11, docs/bugs): a service line waits on
+**Logistics**, a product-line discount on Purchasing.
 Fields still without a channel: `lineDeliveryDate`, `description`, `uom`,
 `itemGroup`, cost fields — an edit to those on a locked SO still goes nowhere.
 

@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   classifyHeaderKey,
+  classifyLine,
   classifyLineItemCode,
   splitAmendmentByLane,
   canLaneTransition,
@@ -71,21 +72,21 @@ describe('classifyLineItemCode', () => {
     // owner 2026-09-11: DISPOSE / STORAGE / TRANSPORTATION CHARGES carry
     // item_group='service' but no SVC- prefix — the code-only test used to
     // mis-route them to LINES (Purchasing).
-    expect(classifyLineItemCode('DISPOSE', 'service')).toBe('DELIVERY');
-    expect(classifyLineItemCode('TRANSPORTATION CHARGES', 'service')).toBe('DELIVERY');
-    expect(classifyLineItemCode('STORAGE', 'service')).toBe('DELIVERY');
+    expect(classifyLine({ itemCode: 'DISPOSE', itemGroup: 'service' })).toBe('DELIVERY');
+    expect(classifyLine({ itemCode: 'TRANSPORTATION CHARGES', itemGroup: 'service' })).toBe('DELIVERY');
+    expect(classifyLine({ itemCode: 'STORAGE', itemGroup: 'service' })).toBe('DELIVERY');
   });
 
   it('keeps a real product line on LINES regardless of its group', () => {
-    expect(classifyLineItemCode('9028-L(RHF)', 'sofa')).toBe('LINES');
-    expect(classifyLineItemCode('PC151-01', null)).toBe('LINES');
-    expect(classifyLineItemCode('JAGER-(Q)', 'bedframe')).toBe('LINES');
+    expect(classifyLine({ itemCode: '9028-L(RHF)', itemGroup: 'sofa' })).toBe('LINES');
+    expect(classifyLine({ itemCode: 'PC151-01', itemGroup: null })).toBe('LINES');
+    expect(classifyLine({ itemCode: 'JAGER-(Q)', itemGroup: 'bedframe' })).toBe('LINES');
   });
 });
 
 describe('splitAmendmentByLane', () => {
   type L = { id: string; code: string | null };
-  const byCode = (l: L) => l.code;
+  const byCode = (l: L) => ({ itemCode: l.code });
 
   it('splits a mixed submission into both lanes (proc date rides LINES)', () => {
     const split = splitAmendmentByLane<L>(
@@ -129,16 +130,15 @@ describe('splitAmendmentByLane', () => {
     expect(split.lanes).toEqual(['DELIVERY']);
   });
 
-  it('splits a bare-code service line into DELIVERY via the item_group resolver', () => {
+  it('splits a bare-code service line into DELIVERY via item_group', () => {
     // The go-live shape that mis-routed to Purchasing: a real product line plus a
-    // DISPOSE service line whose code has no SVC- prefix. With the group resolver
-    // the DISPOSE line lands in its own DELIVERY (Logistics) document.
+    // DISPOSE service line whose code has no SVC- prefix. The item_group in the
+    // identity lands the DISPOSE line in its own DELIVERY (Logistics) document.
     type LG = { id: string; code: string | null; group: string | null };
     const split = splitAmendmentByLane<LG>(
       {},
       [{ id: 'a', code: '9028-L(RHF)', group: 'sofa' }, { id: 'b', code: 'DISPOSE', group: 'service' }],
-      (l) => l.code,
-      (l) => l.group,
+      (l) => ({ itemCode: l.code, itemGroup: l.group }),
     );
     expect(split.lanes).toEqual(['LINES', 'DELIVERY']);
     expect(split.perLane.LINES.lines.map((l) => l.id)).toEqual(['a']);

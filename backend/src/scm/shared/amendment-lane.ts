@@ -98,19 +98,25 @@ export function classifyHeaderKey(payloadKey: string): AmendmentLane {
   return lane;
 }
 
-/** Lane of one line change, by whether the line is a SERVICE line. For an ADD
- *  only the requested new_item_code is known; for SPEC/QTY/REMOVE the caller
- *  ALSO passes the EXISTING SO line's item_group (resolved server-side — never
- *  trusted from the client), which is the authoritative signal for a service
- *  line whose bare code (DISPOSE / STORAGE / TRANSPORTATION CHARGES) predates
- *  the SVC- vocabulary. A missing/unknown identity defaults to LINES: a product
- *  change mis-routed to purchasing is reviewable noise, a product change
- *  mis-routed AWAY from purchasing is an unreviewed spec change. */
-export function classifyLineItemCode(
-  itemCode: string | null | undefined,
-  itemGroup?: string | null,
-): AmendmentLane {
-  return isServiceLine({ itemCode: itemCode ?? null, itemGroup: itemGroup ?? null }) ? 'DELIVERY' : 'LINES';
+/** The identity that decides a line's lane. item_group is the authoritative
+ *  signal for a service line whose bare code (DISPOSE / STORAGE / TRANSPORTATION
+ *  CHARGES) predates the SVC- vocabulary; for an ADD only the requested
+ *  new_item_code is known. Resolved SERVER-SIDE — never trusted from the client. */
+export type LineLaneIdentity = { itemCode?: string | null; itemGroup?: string | null };
+
+/** Lane of one line change, by whether it is a SERVICE line — the FULL
+ *  isServiceLine signal (item_group / category / SVC- code), NOT the prefix
+ *  alone. A missing/unknown identity defaults to LINES: a product change
+ *  mis-routed to purchasing is reviewable noise, a product change mis-routed
+ *  AWAY from purchasing is an unreviewed spec change. */
+export function classifyLine(identity: LineLaneIdentity): AmendmentLane {
+  return isServiceLine({ itemCode: identity.itemCode ?? null, itemGroup: identity.itemGroup ?? null })
+    ? 'DELIVERY' : 'LINES';
+}
+
+/** Code-only convenience — an ADD carries no server-resolved item_group. */
+export function classifyLineItemCode(itemCode: string | null | undefined): AmendmentLane {
+  return classifyLine({ itemCode });
 }
 
 export type LaneSplitLine<L> = { line: L; lane: AmendmentLane };
@@ -126,18 +132,15 @@ export type LaneSplit<L> = {
 };
 
 /**
- * Split one validated submission into its lane halves. `lineItemCode` resolves
- * the item code a line change targets (ADD → newItemCode, others → the SO
- * line's current code, looked up by the caller). `lineItemGroup` optionally
- * resolves that line's item_group — pass it so a bare-code service line
- * (item_group='service', no SVC- prefix) is recognised and routed to DELIVERY;
- * omit it and classification falls back to the code alone.
+ * Split one validated submission into its lane halves. `lineIdentity` resolves
+ * the item_code + item_group of the line a change targets (ADD → the requested
+ * new_item_code; SPEC/QTY/REMOVE → the SO line's current identity, looked up by
+ * the caller). item_group is what routes a bare-code service line to DELIVERY.
  */
 export function splitAmendmentByLane<L>(
   headerChanges: Record<string, string | null>,
   lines: L[],
-  lineItemCode: (line: L) => string | null | undefined,
-  lineItemGroup?: (line: L) => string | null | undefined,
+  lineIdentity: (line: L) => LineLaneIdentity,
 ): LaneSplit<L> {
   const mk = () => ({ headerChanges: {} as Record<string, string | null>, headerKeys: [] as string[], lines: [] as L[] });
   const perLane: LaneSplit<L>['perLane'] = { LINES: mk(), DELIVERY: mk() };
@@ -148,7 +151,7 @@ export function splitAmendmentByLane<L>(
     perLane[lane].headerKeys.push(k);
   }
   for (const line of lines) {
-    perLane[classifyLineItemCode(lineItemCode(line), lineItemGroup?.(line))].lines.push(line);
+    perLane[classifyLine(lineIdentity(line))].lines.push(line);
   }
 
   const lanes = (['LINES', 'DELIVERY'] as AmendmentLane[]).filter(
