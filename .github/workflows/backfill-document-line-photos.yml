@@ -1,0 +1,68 @@
+name: Backfill document line photos (plan by default)
+
+# Dispatchable run of backend/scripts/backfill-document-line-photos.mjs — puts
+# the sales order line's photograph onto the AutoCount-imported purchase and
+# delivery order lines that show none, so the printed document carries the
+# sketch the sales order carries (owner 2026-09-11, docs/bugs/0819).
+#
+# PLAN by default: reads only, prints every line it would fill. MODE=apply +
+# CONFIRM writes `photo_urls` and re-verifies on a FRESH connection that each
+# line now carries every source key and lost none of its own.
+#
+# Touches `photo_urls` only. Uploads nothing and deletes nothing — the R2
+# objects are SHARED between the documents (mig 0274). A line that already shows
+# its own photograph is HELD BACK by default and only written with
+# include_mirror, because a second sketch on an already-received purchase order
+# is the owner's printing decision, not a repair.
+#
+# DATABASE_URL is the only credential. Manual trigger only, own concurrency
+# group — never queues behind or displaces a release, never scheduled.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, no writes) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+      confirm:
+        description: 'required for apply: CARRY DOCUMENT PHOTOS'
+        required: false
+        default: ""
+        type: string
+      include_mirror:
+        description: "also top up lines that already show their own photo (the owner must have asked)"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: backfill-document-line-photos
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/backfill-document-line-photos.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          INCLUDE_MIRROR: ${{ inputs.include_mirror && '1' || '0' }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
