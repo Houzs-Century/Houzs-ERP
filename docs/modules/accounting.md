@@ -737,6 +737,30 @@ payment. Pinned by `scm/shared/soPaymentAmendRight.test.ts`,
 refuses) and `tests/soPaymentAmendRoutes.test.ts` (RED against the unfixed
 route file).
 
+**A link is the matcher's word, not a reconciliation (2026-09-11,
+docs/bugs/0821; owner, refused while correcting a card payment keyed
+RM 3,053.00 for a swipe of RM 3,052.00: 我改的时候出现这个).** The merchant
+upload writes an `acc_settlement_matches` link for every line it matched by
+reference BEFORE anybody has looked; `paymentReconciliation` counted the link
+itself as "matched on a merchant settlement report" and shut the payment. It
+now reads the settlement LINE behind the link and answers `merchant` only
+when that line is confirmed (`confirmed_at`, or `posted_je_no`), dated by the
+confirmation; an unconfirmed link leaves the payment correctable, and
+`confirmSettlementRow` reads the amount back from the row, so the correction
+is what settles. The read of the line fails closed like the rest. And the
+sentence itself: `paymentReconciledMessage` (server and vendored copies) was
+209–219 characters with a date, entry or account inside, over the client
+filter's 200, so all three kinds rendered as the generic "That clashes with
+something already in the system" — now "This payment is locked: … Undo that
+confirmation first, or record a new payment." under 200, with
+`payment_edit_locked` curated in `authed-fetch.ts` as the floor and listed in
+`SERVER_SENTENCE_WINS` so the server's sentence is what is shown. Contracts:
+`acc/payment-reconciled.test.ts` (a link nobody confirmed does not lock; the
+day is the confirmation's; the line read fails closed),
+`soPaymentAmendRight.test.ts` and `so-field-policy.test.ts` (under 200),
+`authed-fetch.payment-locked.test.ts`; `tests/soPaymentAmendRoutes.test.ts` still pins
+that both routes ask `paymentMayChange`.
+
 **The reason, and the Corrections report (2026-09-10, docs/bugs/0785).** A
 correction made on the amend right owes a reason and is a Finance event; a
 same-day fix by whoever keyed the payment is neither (owner: 靠权限改的来决定).
@@ -1467,6 +1491,19 @@ earlier months', named by who), and "These are that entry" fires only when the
 totals agree. Contracts: `backend/tests/bankRoutes.test.ts` (whose harness no
 longer carries the je_no unique — the route's refusal is what "only once"
 exercises), `bank-reconcile.test.ts`, `BankStatementTab.test.tsx`.
+
+**The lock reads what the screen reads (2026-09-11, docs/bugs/0818; owner,
+on June refusing to close at "RM 45,000.00 apart" under a panel that said ✓
+Tallies: 什么意思？).** `loadMonthForLock` (`accounting-bank-months.ts`) and
+`bankMonthDetail` are two readers of one month, and the lock's reader handed
+`claimedOutside` an EMPTY match index, so an earlier month's line matched to
+two entries (docs/bugs/0803 — May's RM 55,000 deposit = the RM 100,000
+receipt less the RM 45,000 rental; the line names only the first) claimed only
+the entry named on the line, and the rental was carried into June as still
+outstanding. Both readers now index the match rows through one helper,
+`matchesByLineOf`, and hand the same index to `claimedOutside`; the lock's
+figure is the panel's figure. Contract: `backend/tests/bankRoutes.test.ts` ("a
+month whose earlier entry is claimed only by the match table").
 
 **A transfer the bank itself reversed is its own contra (2026-09-11,
 docs/bugs/0817; owner, on Hong Leong's 04/06 pair: 这两笔是 contra 的，bank

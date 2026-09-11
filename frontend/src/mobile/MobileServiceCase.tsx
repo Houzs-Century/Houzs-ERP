@@ -17,6 +17,7 @@ import { useSearchResultTransition } from "../hooks/useServerSearch";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../vendor/scm/components/ChoiceDialog";
+import { CaseAccessAcc } from "./CaseAccessAcc";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import { DateField } from "../vendor/scm/components/DateField";
 import {
@@ -1588,6 +1589,9 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                   <KV label="Co-assignee" value={assignedTo2 ? String(assignedTo2) : "None"} />
                   <KV label="Created by" value={String(get(c, "createdByName", "created_by_name") ?? "—")} />
                 </Acc>
+
+                {/* Access — Nth-person visibility; own component (size ceiling), see CaseAccessAcc.tsx */}
+                <CaseAccessAcc caseId={id} access={data?.access ?? []} busy={busy} runWrite={runWrite} assignableUsers={assignableUsers} />
 
                 {/* Print copy + Portal link + Sales link. Links carry the
                     ASSR slug for readability; tokens are permanent. */}

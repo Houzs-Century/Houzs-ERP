@@ -2131,6 +2131,32 @@ passes `seedSofaLegDefault={false}`; the prop is mandatory so no delivery-side
 form can inherit the sales-side answer by saying nothing.
 `docs/bugs/0722-a-delivery-order-invented-the-sofa-s-leg-height-so-the-stock.md`.
 
+**A HARD-BOUND LINE IS NOT A POOL QUESTION (2026-09-11).** The pre-flight above
+measured EVERY line against `inventory_balances`, including the company-1 lines
+whose goods are earmarked. Readiness has bound those since 2026-08-10: a
+bedframe / sofa / `(SP)` mattress line lights off its OWN
+`purchase_order_items.received_qty` and never reads `inventory_balances`
+(`so-stock-allocation.ts` step 6b). The guard did not know, so the two halves
+disagreed **by design** — the order read READY and its delivery order read
+"need 1, available 0", because another order's delivery had drawn the physical
+units out of a bucket this line's own receipt had put in.
+
+Worked case: `HC-SO-013065` `JAGER-(Q)`. Its own PO `HC-PO-009766` received 1/1
+through `HC-GR-005232-PO-009766` with the full variant; the line read READY; the
+PG bucket for that exact variant stood at **-1**. The only way past was Ship
+anyway, which pushes the bucket further negative and makes the next line worse.
+Measured the same day: 57 negative bedframe buckets.
+
+`stockCheckableLines` now takes a REQUIRED `dedicatedlyCovered` set and drops
+those lines, the same way it drops service lines — the pool is the wrong thing
+to measure them against. `checkDoStockAvailability` builds the set from the
+lines' own purchase orders (cancelled POs excluded, `received_qty` summed across
+split lines), and **company 2 is handed an EMPTY set**: 2990 pools, and that is
+the whole of the company gate. Owner 2026-09-11, on why this had to change:
+「哪一张 Sales Order 出货，它就会拿哪一张 PO，它们之间的 relationship 都是 hard
+binding，不是吗?」 — and 「这个针对 co1 houzscentury only」.
+`docs/bugs/0818-the-delivery-order-stock-guard-did-not-honour-hard-binding-s.md`.
+
 ## `migrated_no_stock` — a DELIVERED order with no OUT behind it (mig 0276)
 
 The delivery orders carried over from AutoCount are created **DELIVERED with no
@@ -2718,3 +2744,27 @@ line off its `-1S` placeholder it now carries the new code onto
 lines — guarded by `migrated_no_stock`, with a typed invoice HELD and reported by
 number rather than overwritten. Four production invoice lines were left quoting a
 parent that had already changed; `docs/bugs/0687` has the trace and the repair.
+
+## Checking what the hard-binding guard cannot fix
+
+`backend/scripts/check-hard-bound-stock-gap.mjs`, run from Actions as **Hard-bound
+stock gap (read-only)**, lists the two populations the guard leaves behind: the
+negative stock buckets Ship-anyway has already created, and the lines whose own
+purchase order was received while the warehouse holds nothing. The second list is
+a physical question — the goods left on another delivery or were never keyed in —
+so the delivery screen is right to keep warning on them. `docs/bugs/0818`.
+
+## The stock check counts by SKU, not by spec (2026-09-11)
+
+`checkStockAvailability` asks whether THIS WAREHOUSE HOLDS THIS ITEM CODE. Every
+spec bucket at that warehouse is summed, and the "other warehouses have it" hint
+sums each warehouse's specs into one row. Lines sharing an item code are one ask,
+so two specs of the same SKU cannot both pass on one unit.
+
+Why: stock that came from the AutoCount cutover carries no fabric / gap / divan /
+leg, so it sits under a blank variant key, while a delivery order asks for the
+order's full spec — the two buckets never meet and goods standing in the warehouse
+read as "available 0". Owner's decision 2026-09-11.
+
+The OUT movement and the FIFO cost lots still key on the spec. Shipping blind and
+deducting blind are different changes; the second moves money. `docs/bugs/0819`.

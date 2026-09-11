@@ -776,6 +776,19 @@ export async function getAssrDetail(env: Env, id: number) {
   // link on panel-open instead of forcing a regenerate each time.
   const portalToken = await getActiveStaffToken(env, id);
 
+  // Nth-person access list (mig 20260911T1600): staff granted row visibility on
+  // this case WITHOUT taking a sales_agent / assigned_to slot. The UI renders
+  // these as chips and manages them via POST/DELETE /api/assr/:id/access.
+  const access = await env.DB.prepare(
+    `SELECT ac.user_id, u.name as user_name, ac.added_by, ac.created_at
+       FROM assr_case_access ac
+       LEFT JOIN users u ON u.id = ac.user_id
+      WHERE ac.assr_id = ?
+      ORDER BY ac.created_at ASC, ac.user_id ASC`
+  )
+    .bind(id)
+    .all();
+
   return {
     case: caseRow,
     // The multi-select form needs the categories as a list; the flat
@@ -788,6 +801,7 @@ export async function getAssrDetail(env: Env, id: number) {
     related_pos: relatedPOs.results ?? [],
     portal_token: portalToken,
     stage_history: stageHistory.results ?? [],
+    access: access.results ?? [],
   };
 }
 

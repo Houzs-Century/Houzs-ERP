@@ -609,6 +609,10 @@ export const NAV_TABS: NavTab[] = [
           // Warehouses master sits at the TOP of the group (2990 parity) — it's
           // the location registry every other warehouse doc binds against.
           { to: "/scm/warehouses", label: "Warehouses", icon: Warehouse, anyPerm: ["*", "scm.access"], anyAccess: ["scm.warehouse.inventory"], hideForSalesRep: true },
+          // Racks & Bins (owner 2026-09-11) — promoted from a button on the
+          // Warehouses page to its own nav item, sitting under Warehouses. Same
+          // gate as Inventory (the rack overview / floor plan + stock I/O page).
+          { to: "/scm/warehouses/racks", label: "Racks & Bins", icon: Boxes, anyPerm: ["*", "scm.access"], anyAccess: ["scm.warehouse.inventory"], hideForSalesRep: true },
           { to: "/scm/inventory", label: "Inventory", icon: Package, anyPerm: ["*", "scm.access"], anyAccess: ["scm.warehouse.inventory"], hideForSalesRep: true },
           // Stock ADJUSTMENT is its own permission now (owner 2026-07-18):
           // POST /inventory/adjustments is gated on scm.warehouse.adjustments by a

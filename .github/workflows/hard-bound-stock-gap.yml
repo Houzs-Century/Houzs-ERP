@@ -1,0 +1,30 @@
+name: Hard-bound stock gap (read-only)
+
+# Manual only. A production read must never sit on a schedule — it turns a real
+# question into CI noise nobody reads.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: 'Company id (1 = Houzs Century; the binding rule is company 1 only)'
+        required: false
+        default: '1'
+
+concurrency:
+  group: hard-bound-stock-gap
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci --prefix backend --ignore-scripts
+      - name: Measure
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+        run: node backend/scripts/check-hard-bound-stock-gap.mjs

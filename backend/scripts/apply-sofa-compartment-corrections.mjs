@@ -448,7 +448,7 @@ async function applyDownstreamDoc(doc, kind, c, verify) {
      was cancelled; nothing was written, because the transaction never
      committed. So the label column and every parent link are resolved HERE, and
      the block below touches `tx` only. docs/bugs/0749. */
-  const label = await labelColumnName(spec.table);
+  const labels = await labelColumnNames(spec.table);
   const names = new Map();
   for (const code of [...plan.keep.map((k) => k.to), ...plan.add.map((a) => a.to)]) {
     if (names.has(code)) continue;
@@ -476,8 +476,10 @@ async function applyDownstreamDoc(doc, kind, c, verify) {
       if (leg.write) v.legHeight = leg.value;
       const name = names.get(k.to);
       await tx.unsafe(
-        `UPDATE ${spec.table} SET item_code = $1, variants = $2::text::jsonb${label ? `, ${ident(label)} = $4` : ""} WHERE id = $3`,
-        label ? [k.to, JSON.stringify(v), k.id, name] : [k.to, JSON.stringify(v), k.id]);
+        `UPDATE ${spec.table} SET item_code = $1, variants = $2::text::jsonb`
+          + labels.map((c) => `, ${ident(c)} = $4`).join("")
+          + ` WHERE id = $3`,
+        labels.length ? [k.to, JSON.stringify(v), k.id, name] : [k.to, JSON.stringify(v), k.id]);
     }
     for (const a of plan.add) {
       const v = { ...(plan.template?.variants ?? {}) };
@@ -486,7 +488,7 @@ async function applyDownstreamDoc(doc, kind, c, verify) {
       const over = { item_code: a.to, variants: JSON.stringify(v) };
       for (const m of money) over[m] = 0;
       if (links.has(a.to)) over[spec.link] = links.get(a.to);
-      if (label) over[label] = names.get(a.to);
+      for (const c of labels) over[c] = names.get(a.to);
       const lineNo = await nextLineNo(tx, spec, head.id);
       if (lineNo !== null) over.line_no = lineNo;
       await cloneRow(tx, spec.table, plan.template.id, over, ["variants"]);
@@ -504,15 +506,23 @@ async function applyDownstreamDoc(doc, kind, c, verify) {
   return { touched: true, keep: plan.keep.length, add: plan.add.length, refused: false };
 }
 
-/** `material_name` on the receipt tables, `description` on the rest; null when
- *  the table carries neither. Read from the table, never assumed. */
-async function labelColumnName(table) {
+/** EVERY label column the table has, not the first one — `description` AND
+ *  `material_name` where both exist. Read from the table, never assumed.
+ *
+ *  It used to return ONE, preferring `material_name`, and that is what the owner
+ *  caught on 2026-09-11: the document PRINTS `description ?? material_name`
+ *  (sales-order-pdf.ts:572, grn-pdf.ts:133), so a purchase or receipt line that
+ *  HAS a description had its code corrected and went on printing the old piece —
+ *  a lounger and an arm on one row (docs/bugs/0818). Writing both keeps the two
+ *  columns saying the same thing, which is the only state in which the print
+ *  cannot be wrong whichever one it reaches for. */
+async function labelColumnNames(table) {
   const [schema, name] = table.split(".");
   const cols = await sql`SELECT column_name FROM information_schema.columns
                           WHERE table_schema = ${schema} AND table_name = ${name}
                             AND column_name IN ('material_name', 'description')`;
   const have = cols.map((c) => c.column_name);
-  return have.includes("material_name") ? "material_name" : (have.includes("description") ? "description" : null);
+  return ["description", "material_name"].filter((c) => have.includes(c));
 }
 
 /** The next free `line_no` on this document, or null where the table has none

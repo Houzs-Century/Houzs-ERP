@@ -1095,6 +1095,17 @@ reads and names what matches nothing. Run it after filling a pool.
    no longer what hides a retired fabric, so clearing one is now safe in that
    respect. docs/bugs/0816-a-discontinued-fabric-kept-offering-every-shade-because-noth.md.
 
+4. **"Retired" is asked per CODE, never per ROW, on both tables** — and the rule
+   lives on the SERVER so the desktop and the mobile sheet cannot disagree
+   (owner 2026-09-11: 「它只要有启用，就有打开」). `scm.fabric_trackings` is keyed
+   by `id`, so 21 codes carry an active row beside a retired TOMBSTONE from a
+   2026-08-11 de-duplication pass; the desktop used to filter row-by-row and the
+   dead twin hid the live fabric — 21 active colours hidden, all 21 wrongly,
+   while mobile (which never filtered) showed them. `retiredByCode` serves both
+   `fabric_trackings` and `fabric_library`. Do NOT delete the tombstones: they
+   carry no unique data and they are somebody's deliberate record.
+   docs/bugs/0818-a-retired-tombstone-row-hid-the-live-fabric-it-had-been-merg.md.
+
 **Sofa follower-line cascade — ONE module, and the master's LATEST change
 wins.** The rule is `frontend/src/vendor/scm/lib/so-variant-cascade.ts`, imported
 by `SalesOrderNew.tsx`, `mobile/MobileNewSO.tsx`, `SoLineCard.tsx` and — since
@@ -4675,6 +4686,20 @@ names WHICH of three places closed over the payment: a merchant settlement
 match on the row, a bank-statement match on its ACTIVE entry, or a closed month
 on the entry's MONEY-leg account. **Every read fails CLOSED** — an unreadable
 check refuses and says to retry, never "not reconciled".
+
+**A merchant link is not a reconciliation (2026-09-11, docs/bugs/0821).**
+`acc/payment-reconciled.ts` closes a payment for the merchant report only once
+the settlement LINE behind its `acc_settlement_matches` link is confirmed
+(`confirmed_at` or `posted_je_no`); the link the upload writes for a line it
+matched by reference leaves the payment correctable, so a mis-keyed amount can
+be fixed before the line is confirmed and `confirmSettlementRow` settles on the
+corrected row. The refusal sentence (`paymentReconciledMessage`, in both copies
+of `so-field-policy.ts`) now stays under the 200 characters `humanApiError`
+keeps, and `payment_edit_locked` is curated in `authed-fetch.ts` (and in
+`SERVER_SENTENCE_WINS`) so the server's reason reaches the operator instead of
+the generic 409. The full account is in `docs/modules/accounting.md`; contracts
+`acc/payment-reconciled.test.ts`, `so-field-policy.test.ts`,
+`authed-fetch.payment-locked.test.ts`.
 
 The two screens that render the edit and delete controls —
 `frontend/src/vendor/scm/components/PaymentsTable.tsx` (desktop) and
