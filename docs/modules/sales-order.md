@@ -1874,7 +1874,8 @@ re-attribute, with the Salesperson field as the only live control. Bulk handover
 > Full reasoning: **`so-handover.md` §8**.
 
 > **OPEN TO ALL — the imported historical batch (owner 2026-09-11).** A boolean
-> `open_to_all` on `mfg_sales_orders` (mig `20260911T1500`) adds a SECOND bypass
+> `open_to_all` on `mfg_sales_orders`
+> (`backend/src/db/migrations-pg/20260911T1500_scm_so_open_to_all.sql`) adds a SECOND bypass
 > to the SAME two helpers: `applySoScope` ORs `open_to_all.is.true` onto the
 > `access_staff_ids` overlap, and `soDocOutOfScope` short-circuits to in-scope
 > when it is set. It is **visibility only** — who may SEE and (subject to the
