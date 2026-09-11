@@ -212,7 +212,12 @@ const CEILINGS = {
   // line to the shell — +0.3 KB gzip, no new eager module (its icon is one the
   // shell already loads). The bell popover body is STILL the next diet; this
   // bump buys 1 KB, not a policy.
-  INITIAL_JS_GZIP: 167 * KB,
+  // 167 -> 168 on 2026-09-12: main sat at 166.8 and the Finance sidebar
+  // regroup (six groups, twelve deep-linked Accounting tabs; docs/bugs/0824)
+  // added +0.4 KB to the entry chunk the sidebar lives in. Deliberate: the
+  // sidebar is initial by nature. Next candidate to lazy-load is still the
+  // same as the note above.
+  INITIAL_JS_GZIP: 168 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT
