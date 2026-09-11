@@ -66,6 +66,8 @@ export type BankEntryCandidate = {
   /** Signed the way the statement signs it: positive is money in. */
   amountSen: number;
   daysApart: number;
+  /** Who was paid / who paid, off the entry. */
+  partyName?: string | null;
 };
 
 export type BankLine = {
@@ -111,6 +113,12 @@ export type Reconciliation = {
   bankNotInBooks: { count: number; sen: number };
   booksNotOnBank: { count: number; sen: number };
   unmatchedJeNos: string[];
+  /** Earlier periods' entries still not on any statement — what the
+      brought-forward is made of. */
+  carried: { count: number; sen: number };
+  carriedJeNos: string[];
+  clearedFromBeforeSen?: number;
+  broughtForwardExplained: boolean | null;
   consistent: boolean;
   inconsistency: string | null;
   reconciled: boolean;
@@ -123,6 +131,12 @@ export type LedgerEntry = {
   sourceDocNo: string | null;
   debitSen: number;
   creditSen: number;
+  /** Who was paid / who paid (owner 2026-09-11: 例如 pay to who). */
+  partyName?: string | null;
+  notes?: string | null;
+  /** Posted before this period and still not on any statement — carried
+      (owner: 之前 in book 还没有 recon 的也要带下来，因为可能下个月才过钱). */
+  carried?: boolean;
 };
 
 export const useBankSetup = () => useQuery({

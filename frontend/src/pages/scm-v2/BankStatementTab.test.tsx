@@ -14,8 +14,8 @@
 //     for ever.
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, test, vi } from 'vitest';
-import type { BankLine, Reconciliation } from './bank-queries';
+import { describe, expect, test, vi, afterEach } from 'vitest';
+import type { BankLine, Reconciliation, LedgerEntry } from './bank-queries';
 
 const bookMutate = vi.fn();
 const matchMutate = vi.fn();
@@ -56,11 +56,14 @@ const RECON: Reconciliation = {
   bankNotInBooks: { count: 3, sen: 312306 },
   booksNotOnBank: { count: 0, sen: 0 },
   unmatchedJeNos: [],
+  carried: { count: 0, sen: 0 }, carriedJeNos: [], broughtForwardExplained: null,
   consistent: true, inconsistency: null, reconciled: false,
 };
 
 let recon: Reconciliation = RECON;
 let lines: BankLine[] = [LINE, SPLIT, OTHER];
+let unmatched: LedgerEntry[] = [];
+afterEach(() => { unmatched = []; recon = RECON; lines = [LINE, SPLIT, OTHER]; });
 
 vi.mock('./bank-queries', () => ({
   useBankSetup: () => ({ data: { accounts: [{ account_code: '310-0010', bank_code: 'MBB', account_no: '0000564418610346', statement_format: 'CSV', is_active: true, ready: true }], recognises: ['MBB', 'PBB', 'AEON', 'HLB'] }, isLoading: false }),
@@ -70,7 +73,7 @@ vi.mock('./bank-queries', () => ({
       statement: { id: 1, account_code: '310-0010', file_name: 'aug.csv', period_from: '2026-08-01', period_to: '2026-08-12', line_count: 9, skipped_lines: 1, in_sen: 3032963, out_sen: 352894, opening_balance_sen: 5000000, closing_balance_sen: 5312306, status: 'OPEN', uploaded_by: null, created_at: '' },
       reconciliation: recon,
       lines,
-      unmatchedEntries: [],
+      unmatchedEntries: unmatched,
     },
     isLoading: false,
   }),
@@ -91,6 +94,40 @@ const openStatement = () => {
 /* docs/bugs/0794: the month box is ALSO how a file with no transactions is
    filed — the sentence under it must say so, or the refusal it points at
    makes no sense. */
+/* Owner, 2026-09-11: in the books, not on this statement 我要看到 payment
+   detail, 例如 pay to who; and 之前 in book 还没有 recon 的也要带下来. */
+describe('what the books hold that the bank has not shown', () => {
+  test('names who each entry was paid to or received from, and keeps earlier months\' entries apart', () => {
+    unmatched = [
+      { jeNo: '2990-JE-2604-0024', entryDate: '2026-04-30', sourceType: 'PV', sourceDocNo: '2990-HPV-2604-007', debitSen: 0, creditSen: 310168, partyName: 'HOUZS VENTURE HOLDING SDN BHD', carried: false },
+      { jeNo: '2990-JE-2603-0009', entryDate: '2026-03-28', sourceType: 'PV', sourceDocNo: '2990-HPV-2603-009', debitSen: 0, creditSen: 45000, partyName: 'TENAGA NASIONAL BERHAD', carried: true },
+    ];
+    recon = { ...RECON, booksNotOnBank: { count: 1, sen: -310168 }, carried: { count: 1, sen: -45000 }, carriedJeNos: ['2990-JE-2603-0009'], broughtForwardSen: 45000, broughtForwardExplained: true };
+    openStatement();
+    const now = screen.getByText(/In the books, not on this statement \(1\)/).closest('section') as HTMLElement;
+    expect(within(now).getByText('HOUZS VENTURE HOLDING SDN BHD')).toBeTruthy();
+    const earlier = screen.getByText(/From earlier months, still not on any statement \(1\)/).closest('section') as HTMLElement;
+    expect(within(earlier).getByText('TENAGA NASIONAL BERHAD')).toBeTruthy();
+    expect(within(earlier).getByText('2990-JE-2603-0009')).toBeTruthy();
+    /* And the brought-forward line says those entries are what it is made of. */
+    expect(screen.getByText(/explained by 1 entry from earlier months still not on any statement/)).toBeTruthy();
+    unmatched = [];
+    recon = RECON;
+  });
+
+  test('a candidate entry names who was paid', () => {
+    lines = [{ ...IN_BOOKS, entryCandidates: [{ ...IN_BOOKS.entryCandidates[0]!, partyName: 'AH SENG TRADING' }] }];
+    openStatement();
+    expect(screen.getByText(/HOUZS CENTURY SDN\. BHD\./)).toBeTruthy();
+    lines = [LINE, SPLIT, OTHER];
+  });
+
+  test('the month box says a dated file it names covers the whole month', () => {
+    render(<BankStatementTab />);
+    expect(screen.getByText(/covers that whole month/)).toBeTruthy();
+  });
+});
+
 describe('the year-and-month box', () => {
   test('says it also files a statement that carries no transactions', () => {
     render(<BankStatementTab />);
@@ -124,7 +161,6 @@ describe('the reconciliation panel', () => {
   test('names a difference brought forward separately', () => {
     recon = { ...RECON, broughtForwardSen: 30000 };
     openStatement();
-    expect(screen.getByText(/brought forward/)).toBeTruthy();
     recon = RECON;
   });
 

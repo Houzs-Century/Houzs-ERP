@@ -36,7 +36,7 @@ import {
   type Reconciliation,
 } from './bank-queries';
 import { ICON, fmt, btn, softText, danger, panel, refusalText } from './settlement-ui';
-import { ReconciliationPanel, OpenLine, DoneLine } from './BankStatementTab';
+import { ReconciliationPanel, OpenLine, DoneLine, BooksNotOnBank } from './BankStatementTab';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
@@ -290,30 +290,7 @@ const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) =
         </table>
       )}
 
-      {q.data && q.data.unmatchedEntries.length > 0 && (
-        <section className="space-y-2">
-          <b>{`In the books, not on this month's statements (${q.data.unmatchedEntries.length})`}</b>
-          <div style={softText}>
-            Posted in these days and the bank has not shown it: an uncleared cheque, a deposit still on its
-            way, or an entry belonging to a day not uploaded yet.
-          </div>
-          <table className={grid.grid}>
-            <thead>
-              <tr><th>Entry</th><th>Date</th><th>Source</th><th className={grid.num}>Amount</th></tr>
-            </thead>
-            <tbody>
-              {q.data.unmatchedEntries.map((e) => (
-                <tr key={e.jeNo}>
-                  <td>{e.jeNo}</td>
-                  <td>{e.entryDate}</td>
-                  <td>{[e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ') || '—'}</td>
-                  <td className={grid.num}>{fmt(e.debitSen - e.creditSen)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      )}
+      {q.data && <BooksNotOnBank entries={q.data.unmatchedEntries} what="this month's statements" />}
 
       {q.data && q.data.statements.length > 0 && <TheFiles data={q.data} />}
     </section>

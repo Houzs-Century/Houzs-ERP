@@ -25,7 +25,7 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { assembleMonth, monthOf, monthWindow, type MonthStatement } from '../../acc/bank-month';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
 import { entryCandidatesFor } from '../../acc/bank-match';
-import { loadPayableBatches, loadAccountLedger, loadLiveMonthLock } from '../../acc/bank';
+import { loadPayableBatches, loadAccountLedger, loadLiveMonthLock, claimedSetFor } from '../../acc/bank';
 import { bankGuard } from './accounting-bank';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -78,6 +78,21 @@ const feedersOf = (all: Row[], lineStatementIds: Set<number>, window: { from: st
   all.filter((s) => lineStatementIds.has(Number(s.id))
     || (Number(s.line_count ?? 0) === 0
       && (dayOf(s.period_from) ?? '') >= window.from && (dayOf(s.period_to) ?? '') <= window.to));
+
+/** What lines OUTSIDE the window have claimed (docs/bugs/0802): a POSTED
+    line's own entry, or its match row. Passed to the reconciliation so an
+    earlier entry reconciled on an earlier month is not "still waiting" here. */
+const claimedOutside = (
+  allLines: Row[], inWindow: Set<number>, matchesByLine: Map<number, Row[]>,
+): Set<string> => {
+  const out = new Set<string>();
+  for (const l of allLines) {
+    if (inWindow.has(Number(l.id)) || String(l.state) !== 'POSTED') continue;
+    const je = textOf(l.posted_je_no) ?? textOf(matchesByLine.get(Number(l.id))?.[0]?.je_no);
+    if (je) out.add(je);
+  }
+  return out;
+};
 
 /** The movement shape the reconciliation wants, off a line row. */
 const asMovement = (l: Row, jeNo: string | null): StatementMovement => ({
@@ -269,11 +284,13 @@ export async function loadMonthForLock(
       .order('booked_on').order('line_no');
   if (linesRes.error) return { ok: false, reason: linesRes.error.message };
 
-  const lines = rowsOf(linesRes.data).filter((l) => {
+  const everyLine = rowsOf(linesRes.data);
+  const lines = everyLine.filter((l) => {
     const on = dayOf(l.booked_on);
     return on !== null && on >= window.from && on <= window.to;
   });
   const movements = lines.map((l) => asMovement(l, textOf(l.posted_je_no)));
+  const firstPeriodFrom = allStatements.map((s) => dayOf(s.period_from) ?? '').filter(Boolean).sort()[0] ?? null;
 
   const fed = feedersOf(allStatements, new Set(lines.map((l) => Number(l.statement_id))), window);
   const assembly = assembleMonth(month, fed.map(asMonthStatement), movements);
@@ -292,6 +309,10 @@ export async function loadMonthForLock(
       statementClosingSen: assembly.statementClosingSen,
       movements,
       ledger: ledger.movements,
+      claimedElsewhere: claimedSetFor(
+        { claimed: claimedOutside(everyLine, new Set(lines.map((l) => Number(l.id))), new Map()), firstPeriodFrom },
+        ledger.movements,
+      ),
     }),
     openCount: lines.filter((l) => String(l.state) === 'OPEN').length,
     lineCount: lines.length,
@@ -353,7 +374,8 @@ export const bankMonthDetail = bankGuard(async (c) => {
 
   /* Rule 1: the month takes the lines whose own date is in it, from whichever
      file they arrived in. */
-  const lines = rowsOf(linesRes.data).filter((l) => {
+  const everyLine = rowsOf(linesRes.data);
+  const lines = everyLine.filter((l) => {
     const on = dayOf(l.booked_on);
     return on !== null && on >= window.from && on <= window.to;
   });
@@ -361,8 +383,10 @@ export const bankMonthDetail = bankGuard(async (c) => {
   /* The entry a movement claims: its own first, and the match table only where
      it has none. Two sources for one fact, in a fixed order, so the answer
      cannot depend on which read came back first. */
+  /* Only a POSTED line claims anything — a match row on an OPEN line is what
+     an older undo left behind (docs/bugs/0802), not a claim. */
   const jeOf = (l: Row): string | null =>
-    textOf(l.posted_je_no) ?? textOf(matchesByLine.get(Number(l.id))?.[0]?.je_no);
+    (String(l.state) === 'POSTED' ? (textOf(l.posted_je_no) ?? textOf(matchesByLine.get(Number(l.id))?.[0]?.je_no)) : null);
 
   const movements = lines.map((l) => asMovement(l, jeOf(l)));
 
@@ -385,6 +409,11 @@ export const bankMonthDetail = bankGuard(async (c) => {
      the server will then bounce. */
   if (!held.ok) return c.json({ error: 'load_failed', reason: held.reason }, 500);
 
+  const firstPeriodFrom = allStatements.map((s) => dayOf(s.period_from) ?? '').filter(Boolean).sort()[0] ?? null;
+  const claimedElsewhere = claimedSetFor(
+    { claimed: claimedOutside(everyLine, new Set(lines.map((l) => Number(l.id))), matchesByLine), firstPeriodFrom },
+    ledger.movements,
+  );
   const reconciliation = reconcileBankStatement({
     periodFrom: assembly.periodFrom,
     periodTo: assembly.periodTo,
@@ -392,12 +421,17 @@ export const bankMonthDetail = bankGuard(async (c) => {
     statementClosingSen: assembly.statementClosingSen,
     movements,
     ledger: ledger.movements,
+    claimedElsewhere,
   });
 
   const claimed = new Set(movements.map((m) => m.jeNo).filter(Boolean));
+  /* This month's, and the earlier ones still waiting for a bank to show them
+     (owner 2026-09-11: 之前 in book 还没有 recon 的也要带下来). */
   const unmatchedEntries = ledger.movements
-    .filter((l) => l.entryDate >= assembly.periodFrom && l.entryDate <= assembly.periodTo)
-    .filter((l) => !claimed.has(l.jeNo));
+    .filter((l) => l.entryDate <= assembly.periodTo)
+    .filter((l) => !claimed.has(l.jeNo))
+    .filter((l) => l.entryDate >= assembly.periodFrom || !claimedElsewhere.has(l.jeNo))
+    .map((l) => ({ ...l, carried: l.entryDate < assembly.periodFrom }));
 
   const fileNameOf = (statementId: number): string | null => {
     const s = allStatements.find((x) => Number(x.id) === statementId);
@@ -424,7 +458,7 @@ export const bankMonthDetail = bankGuard(async (c) => {
         /* Which file this movement came off — a month mixes them, and "line 12"
            means nothing until you know of what. */
         file_name: fileNameOf(Number(l.statement_id)),
-        matches: matchesByLine.get(Number(l.id)) ?? [],
+        matches: String(l.state) === 'POSTED' ? (matchesByLine.get(Number(l.id)) ?? []) : [],
         /* Recomputed live, exactly as the single-statement view does it: a
            batch paid since the upload must not still be offered. */
         candidates: String(l.kind).startsWith('PAYOUT')
