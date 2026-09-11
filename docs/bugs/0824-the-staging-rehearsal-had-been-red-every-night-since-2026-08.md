@@ -47,6 +47,15 @@ GREEN nobody verified; this is a RED nobody read.
 > dropped — the workflow's own "Reset sequences to max(id)" step recomputes
 > them all anyway.
 >
+> Third run 34632903129 (after #3709): BEFORE counts `mfg_sales_orders: 3110 ·
+> purchase_orders: 765 · grns: 585 · delivery_orders: 304 · purchase_invoices:
+> 251 · sales_invoices: 48` (the unmasked copy the second run left), 462 COPY
+> blocks, 6 skipped, 108 setval lines dropped, restore + sequence reset done —
+> then the MASK died: `cannot update view "mfg_sales_orders_with_payment_totals"`.
+> `information_schema.columns` lists view columns too, and the loop tried to
+> UPDATE a view. Fixed in `fix/staging-refresh-mask-base-tables-only` (join
+> `information_schema.tables`, `table_type = 'BASE TABLE'`).
+>
 > And the grant hypothesis for the red fell too: migration 20260912T0130 printed
 > on staging `BEFORE: hyperdrive_staging, postgres, service_role` — the view
 > already carried every role. The mechanism behind "permission denied for view"
