@@ -865,6 +865,25 @@ the reason, for a human to confirm. Offered, never taken: two possible answers i
 a question, so nothing is ticked and he chooses;
 `acc/settlement.ts` confirms, which POSTS that moment.
 
+**The Finance sidebar is six groups (2026-09-12, docs/bugs/0824; owner:
+finance 的 function 分到很散 … report 全部集中在一个 side bar).** In
+`frontend/src/components/Sidebar.tsx` the Finance group's children are
+Money in (Official Receipts, Receipts, Other Debtors, Outstanding, Not Yet
+Billed), Money out (Payment Vouchers, AP Invoices), Bank & cards (Daily Bank,
+Merchant Recon, Bank Recon), Books (Journal Entries, General Ledger, Trial
+Balance, Month-end, Self-check), Reports (P&L, Balance Sheet, Receipts &
+Payments, AR Aging, AP Aging, Corrections, Sales Report) and Setup (Chart of
+Accounts, Item Groups, Recon Setup, Currencies). Every entry keeps the gates it
+had; a group has none of its own (`makeNavFilter` shows it when any entry is
+visible). The Accounting page's tabs are deep-linked as
+`/scm/accounting?tab=<name>` — the names live in
+`frontend/src/pages/scm-v2/accounting-tabs.ts`, the page opens on the tab the
+URL names and writes its tab back to the URL, and the plain "Accounting"
+entry is gone. A new finance report joins the Reports group; a new
+maintenance screen joins Setup. Contracts:
+`frontend/src/components/sidebarFinanceGroups.test.ts`,
+`frontend/src/pages/scm-v2/accounting-tabs.test.ts`.
+
 **A transaction already on another report is left out (2026-09-11,
 docs/bugs/0823; owner: 可以我觉得要).** Maybank's portal exports one CSV per
 merchant, day and programme (DVS04A credit, DVS04E debit, T41AX Amex, EP41
