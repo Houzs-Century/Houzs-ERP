@@ -45,7 +45,11 @@
 // `/from-x`, `/convert-from-x`, `/:id/items/from-x/:y` — must appear in the
 // SOURCES registry below naming the source TABLE(s) it reads by id, and each of
 // those tables must be read through `scopeToCompany(...)` / `scopeToCompanyId(...)`
-// inside the handler, its named delegate, or a same-file function it calls.
+// / `scopeToCompanyIdOrOpen(...)` inside the handler, its named delegate, a
+// same-file function it calls, or — since docs/bugs/0830 — the CORE the entry
+// names in another file (`core: { file, fn }`): a conversion lifted into a lib
+// so a headless caller can run it (the delivery reconciler raising the final
+// invoice) is scoped iff that core is, and the check reads it there.
 //
 // A conversion route with NO registry entry is a FINDING, not a pass. That is
 // deliberate: the registry is where the next author has to answer the one
@@ -160,8 +164,9 @@ const SOURCES = {
     source: ["grns", "grn_items"],
   },
   "backend/src/scm/routes/sales-invoices.ts::POST /from-dos": {
-    doc: "DO -> SI (picked lines)",
+    doc: "DO -> SI (picked lines). The route is a door on the lib core, which does every source read (scopeToCompanyIdOrOpen: scoped when a company is active, open in the legacy no-company case, exactly as scopeToCompany behaves)",
     source: ["delivery_order_items", "delivery_orders"],
+    core: { file: "backend/src/scm/lib/si-from-do.ts", fn: "createSalesInvoiceFromDoLines" },
   },
   "backend/src/scm/routes/sales-invoices.ts::POST /:id/items/from-do/:doId": {
     doc: "DO -> SI, PARTIAL form: a second delivery folded into an existing invoice",
@@ -196,7 +201,7 @@ const NAMED_DELEGATE =
    is the re-assignment idiom (grns.ts list handlers), where the table sits in an
    EARLIER statement and reading forward would credit the wrong query. That false
    pass is precisely the failure this repo has produced in three checkers. */
-const SCOPE_CALL = /\bscopeToCompany(?:Id)?\s*\(/g;
+const SCOPE_CALL = /\bscopeToCompany(?:Id(?:OrOpen)?)?\s*\(/g;
 function scopedTables(text) {
   const found = new Set();
   for (const m of text.matchAll(SCOPE_CALL)) {
@@ -226,6 +231,7 @@ function scopedTables(text) {
     // the extractor finds the wrapped table, on one line and across lines
     st("await scopeToCompany(sb.from('grns').select('id'), c)") === "grns" &&
     st("await scopeToCompanyId(sb\n  .from('purchase_orders')\n  .select('id')\n  .eq('id', x), co.companyId)") === "purchase_orders" &&
+    st("await scopeToCompanyIdOrOpen(sb\n  .from('delivery_order_items')\n  .select('id'), companyId)") === "delivery_order_items" &&
     // ...and does NOT credit a query in a LATER statement
     st("q = scopeToCompany(q, c);\nconst r = sb.from('grns').select('id');") === "" &&
     // ...and an unscoped read contributes nothing
@@ -275,14 +281,14 @@ for (const dir of ROUTE_DIRS) {
        `createPurchaseInvoiceFromGrnHandler`. A body-text scan alone calls all
        three unscoped, which is the confident-and-wrong number every checker here
        has produced at least once. */
-    const bodyOf = (name) => {
+    const bodyOf = (name, inLines = lines) => {
       const decl = new RegExp(`(?:async\\s+function|function|const)\\s+${name}\\b`);
-      const start = lines.findIndex((l) => decl.test(l));
+      const start = inLines.findIndex((l) => decl.test(l));
       if (start === -1) return null;
       let braces = 0, opened = false;
       const body = [];
-      for (let i = start; i < lines.length; i++) {
-        const l = lines[i] ?? "";
+      for (let i = start; i < inLines.length; i++) {
+        const l = inLines[i] ?? "";
         body.push(l);
         for (const ch of l) {
           if (ch === "{") { braces++; opened = true; }
@@ -292,7 +298,7 @@ for (const dir of ROUTE_DIRS) {
       }
       return body.join("\n");
     };
-    const reachableText = (seedText, depth = 0, seenFns = new Set()) => {
+    const reachableText = (seedText, depth = 0, seenFns = new Set(), inLines = lines) => {
       let text = seedText;
       if (depth >= 2) return text;
       const called = [...new Set(
@@ -301,8 +307,8 @@ for (const dir of ROUTE_DIRS) {
       for (const fn of called) {
         if (seenFns.has(fn)) continue;
         seenFns.add(fn);
-        const b = bodyOf(fn);
-        if (b) text += "\n" + reachableText(b, depth + 1, seenFns);
+        const b = bodyOf(fn, inLines);
+        if (b) text += "\n" + reachableText(b, depth + 1, seenFns, inLines);
       }
       return text;
     };
@@ -341,6 +347,29 @@ for (const dir of ROUTE_DIRS) {
       seenKeys.add(key);
       const entry = SOURCES[key];
       const row = { file: rel, line: i + 1, route, doc: entry?.doc ?? null };
+
+      /* THE CORE IN ANOTHER FILE. A conversion lifted into a lib (so a headless
+         caller can run it) is scoped iff the core is; the entry names it and the
+         check reads it there, comments stripped, its same-file callees included.
+         A core the entry names but the file does not hold is a finding, never a
+         silent pass — a renamed function must not leave a checker reporting on
+         code that is not there. */
+      if (entry?.core) {
+        const corePath = path.join(backendRoot, "..", entry.core.file);
+        const coreLines = fs.existsSync(corePath)
+          ? stripComments(fs.readFileSync(corePath, "utf8").split("\n"))
+          : [];
+        const coreBody = bodyOf(entry.core.fn, coreLines);
+        if (coreBody === null) {
+          findings.push({
+            ...row,
+            problem: "core_not_found",
+            detail: `the registry names ${entry.core.fn} in ${entry.core.file} as this conversion's core, and it is not there`,
+          });
+          continue;
+        }
+        text += "\n" + reachableText(coreBody, 0, new Set(), coreLines);
+      }
 
       if (!entry) {
         findings.push({
