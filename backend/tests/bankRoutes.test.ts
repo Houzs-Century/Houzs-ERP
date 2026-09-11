@@ -952,6 +952,105 @@ describe('the obvious ones', () => {
   });
 });
 
+/* ── A transfer the bank itself reversed (docs/bugs/0817) ─────────────────────
+   Hong Leong, 04/06/2026: 2990's RM 2,872.75 transfer to its own Alliance
+   account failed and the bank put it back the same day — "CIB Instant
+   Transfer Reversal", the SAME transaction reference — while a second transfer
+   under a fresh reference went through. The books hold one transfer voucher
+   whose name (ALLIANCE) the failed line's text carried, so the rule of
+   docs/bugs/0814 matched the voucher to a transfer that never happened and
+   left the reversal and the real transfer for a hand (owner: 这两笔是 contra
+   的，bank transaction fail). */
+describe('a transfer the bank itself reversed', () => {
+  const FAILED_REF = 'Alliance PV-000035 2990 HOME SDN. BHD. 20260604HLBBMYKL010OCB02763120';
+  const RETRY_REF = '2990 Fund Tranfer 2990 HOME SDN. BHD. 20260604HLBBMYKL010OCB03546681';
+  const HLB_JUNE = [
+    'HLB PRIMEBIZ CURRENT ACCOUNT - 23600600000,',
+    'Date,Transaction Description,Cheque No.,Ref. No.,Deposit,Withdrawal,Balance',
+    '="",="Balance from previous statement",="",="",="",="",="10000.00"',
+    `="04-06-2026",="CIB Instant Transfer at DIO",="",="${FAILED_REF}",="",="2872.75",="7127.25"`,
+    `="04-06-2026",="CIB Instant Transfer at DIO",="",="${RETRY_REF}",="",="2872.75",="4254.50"`,
+    `="04-06-2026",="CIB Instant Transfer Reversal at DIO",="",="${FAILED_REF}",="2872.75",="",="7127.25"`,
+  ].join('\n');
+  const LEDGER = [
+    { company_id: CO, account_code: '310-0020', je_no: 'JE-2602-0001', entry_date: '2026-02-07', source_type: 'PV', source_doc_no: 'HPV-2602-028', debit_sen: 1000000, credit_sen: 0, party_name: null, notes: null },
+    { company_id: CO, account_code: '310-0020', je_no: 'JE-2606-0058', entry_date: '2026-06-03', source_type: 'PV', source_doc_no: 'HPV-2606-003', debit_sen: 0, credit_sen: 287275, party_name: 'Internal transfer to 310-0030 CASH AT BANK - ALLIANCE', notes: null },
+  ];
+  const june = () => harness({ acc_bank_statement_config: [MBB_ACCOUNT, HLB_ACCOUNT], v_gl_entries: LEDGER.map((e) => ({ ...e })) });
+  const uploadJune = async (app: Hono) =>
+    (await post(app, '/bank/statements', { accountCode: '310-0020', fileName: 'acs_23600600000_30062026.csv', content: HLB_JUNE, statementMonth: '2026-06' })).json() as Promise<any>;
+  const lineByRef = (sb: ReturnType<typeof harness>['sb'], id: string, reversal = false) =>
+    (sb.tables.acc_bank_statement_lines as Row[]).find((l) => String(l.reference).endsWith(id) && String(l.description).includes('Reversal') === reversal)!;
+  const candidatesOf = async (app: Hono, statementId: number, lineId: number) => {
+    const detail = await (await app.request(`/bank/statements/${statementId}`)).json() as any;
+    return { detail, jeNos: detail.lines.find((l: any) => l.id === lineId).entryCandidates.map((e: any) => e.jeNo) as string[] };
+  };
+
+  test("on upload the pair leaves as the bank's own contra, and the voucher waits for the transfer that went through", async () => {
+    const { app, sb } = june();
+    const up = await uploadJune(app);
+    expect(up.lines).toBe(3);
+    expect(up).toMatchObject({ contraPairs: 1, autoMatched: 0 });
+    const failed = lineByRef(sb, '02763120');
+    const reversal = lineByRef(sb, '02763120', true);
+    const retry = lineByRef(sb, '03546681');
+    expect(failed).toMatchObject({ state: 'IGNORED', contra_line_id: reversal.id, note: `Reversed by the bank on line ${reversal.line_no}` });
+    expect(reversal).toMatchObject({ state: 'IGNORED', contra_line_id: failed.id, note: `Bank reversal of line ${failed.line_no}` });
+    expect(retry.state).toBe('OPEN');
+    expect(sb.tables.acc_bank_statement_matches).toEqual([]);
+
+    const { detail, jeNos } = await candidatesOf(app, up.statementId, retry.id as number);
+    expect(jeNos).toEqual(['JE-2606-0058']);
+    /* The pair is no part of the difference: the retry is what the bank shows
+       and the books have not yet been told is that voucher. */
+    expect(detail.reconciliation.consistent).toBe(true);
+    expect(detail.reconciliation.bankNotInBooks).toEqual({ count: 1, sen: -287275 });
+    expect(detail.reconciliation.tallies).toBe(true);
+    expect(detail.reconciliation.reconciled).toBe(false);
+
+    expect((await post(app, `/bank/lines/${retry.id}/match`, { jeNo: 'JE-2606-0058' })).status).toBe(200);
+    const after = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    expect(after.reconciliation.reconciled).toBe(true);
+    expect((await post(app, '/bank/months/310-0020/2026-06/lock', {})).status).toBe(200);
+  });
+
+  test('a statement up before the rule: undo the wrong match, then the rule takes the pair out and leaves the retry its voucher', async () => {
+    const { app, sb } = june();
+    const up = await uploadJune(app);
+    /* As June stood in production on 2026-09-11: the pair still open, the
+       failed transfer matched to the voucher by amount and name. */
+    for (const l of sb.tables.acc_bank_statement_lines as Row[]) Object.assign(l, { state: 'OPEN', note: null, contra_line_id: null });
+    const failed = lineByRef(sb, '02763120');
+    expect((await post(app, `/bank/lines/${failed.id}/match`, { jeNo: 'JE-2606-0058' })).status).toBe(200);
+
+    /* A POSTED half is not the rule's to take: the pair waits until the match is undone. */
+    expect(await (await post(app, `/bank/statements/${up.statementId}/auto-match`)).json()).toMatchObject({ ok: true, matched: 0, contraPairs: 0 });
+    expect(lineByRef(sb, '02763120', true).state).toBe('OPEN');
+
+    expect((await post(app, `/bank/lines/${failed.id}/undo`)).status).toBe(200);
+    expect(await (await post(app, `/bank/statements/${up.statementId}/auto-match`)).json()).toMatchObject({ ok: true, matched: 0, contraPairs: 1 });
+    expect(lineByRef(sb, '02763120').state).toBe('IGNORED');
+    expect(lineByRef(sb, '02763120', true).state).toBe('IGNORED');
+    const retry = lineByRef(sb, '03546681');
+    expect(retry.state).toBe('OPEN');
+    expect((await candidatesOf(app, up.statementId, retry.id as number)).jeNos).toEqual(['JE-2606-0058']);
+    /* Run again: the pair is already out. */
+    expect(await (await post(app, `/bank/statements/${up.statementId}/auto-match`)).json()).toMatchObject({ contraPairs: 0 });
+  });
+
+  test('undoing either half reopens both, and the rule can take them again', async () => {
+    const { app, sb } = june();
+    const up = await uploadJune(app);
+    const reversal = lineByRef(sb, '02763120', true);
+    const res = await post(app, `/bank/lines/${reversal.id}/undo`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, status: 'undone', linesReopened: 2 });
+    expect(lineByRef(sb, '02763120')).toMatchObject({ state: 'OPEN', note: null, contra_line_id: null });
+    expect(lineByRef(sb, '02763120', true)).toMatchObject({ state: 'OPEN', note: null, contra_line_id: null });
+    expect(await (await post(app, `/bank/statements/${up.statementId}/auto-match`)).json()).toMatchObject({ contraPairs: 1 });
+  });
+});
+
 /* ── A report the bank charged (docs/bugs/0812) ───────────────────────────────
    Public Bank kept RM 324.00 off 2990's 2026-06-06 payout as a terminal fee;
    Finance booked it on the advice day (docs/bugs/0787). The bank side still

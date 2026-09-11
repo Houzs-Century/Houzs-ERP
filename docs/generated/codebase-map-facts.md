@@ -74,7 +74,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-bank-config.ts` | 0 | 126 |
 | `backend/src/scm/routes/accounting-bank-locks.ts` | 0 | 230 |
 | `backend/src/scm/routes/accounting-bank-months.ts` | 0 | 509 |
-| `backend/src/scm/routes/accounting-bank.ts` | 0 | 1315 |
+| `backend/src/scm/routes/accounting-bank.ts` | 0 | 1355 |
 | `backend/src/scm/routes/accounting-chart.ts` | 0 | 787 |
 | `backend/src/scm/routes/accounting-item-groups.ts` | 0 | 259 |
 | `backend/src/scm/routes/accounting-numbering.ts` | 0 | 134 |
@@ -121,7 +121,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/driver-leave.ts` | 3 | 163 |
 | `backend/src/scm/routes/drivers.ts` | 3 | 198 |
 | `backend/src/scm/routes/entity-audit-log.ts` | 1 | 101 |
-| `backend/src/scm/routes/fabric-colours.ts` | 1 | 71 |
+| `backend/src/scm/routes/fabric-colours.ts` | 1 | 133 |
 | `backend/src/scm/routes/fabric-library.ts` | 2 | 99 |
 | `backend/src/scm/routes/fabric-tier-addon.ts` | 8 | 322 |
 | `backend/src/scm/routes/fabric-tracking.ts` | 10 | 714 |
@@ -135,7 +135,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/inventory-valuation.ts` | 0 | 71 |
 | `backend/src/scm/routes/inventory.ts` | 17 | 1751 |
 | `backend/src/scm/routes/loading-list.ts` | 1 | 182 |
-| `backend/src/scm/routes/localities.ts` | 4 | 265 |
+| `backend/src/scm/routes/localities.ts` | 4 | 273 |
 | `backend/src/scm/routes/lorries.ts` | 3 | 329 |
 | `backend/src/scm/routes/lorry-capacity.ts` | 3 | 493 |
 | `backend/src/scm/routes/lorry-service-records.ts` | 6 | 327 |
@@ -201,7 +201,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/unbilled-deliveries.ts` | 1 | 422 |
 | `backend/src/scm/routes/venues.ts` | 4 | 283 |
 | `backend/src/scm/routes/warehouse-mirror.ts` | 1 | 185 |
-| `backend/src/scm/routes/warehouse.ts` | 8 | 601 |
+| `backend/src/scm/routes/warehouse.ts` | 8 | 605 |
 | `backend/src/scm/routes/write-freeze-status.ts` | 1 | 122 |
 
 ## 2. Migration trees
@@ -213,13 +213,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 152 | `153_sessions_stay_signed_in.sql` (153) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 404 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 407 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2190 files, 748695 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2192 files, 749620 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
