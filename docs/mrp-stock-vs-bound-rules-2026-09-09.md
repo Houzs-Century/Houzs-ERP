@@ -171,7 +171,7 @@ a PO already linked to the SAME sales order proves anything.
 | --- | --- | --- |
 | 1 | Should the MRP page's gate be the **Processing Date** instead of the delivery date? Today 30 released lines are hidden and 86 unreleased ones are shown | owner |
 | 2 | ~~A pooled PO masks a shortage on 10 hard-bound lines~~ — **FIXED**, `docs/bugs/0736` | done |
-| 3 | `HC-SO-012025` / `HC-PO-009024` — 3 sofa lines to link; content already matches | repairable now |
+| 3 | ~~`HC-SO-012025` / `HC-PO-009024` — 3 sofa lines to link~~ — **DONE**; re-read on prod 2026-09-11, all six lines of that PO now carry an `so_item_id` | done |
 | 4 | `HC-SO-010287` / `HC-PO-010085` — arms mirrored; owner ruled 2026-09-09 *「全部跟着销售单」* | repair to the SALES ORDER's pieces |
 
 Item 1 was ruled **keep as is** — the delivery date stays the gate. Item 2 was
@@ -181,3 +181,23 @@ with a customer behind each.
 **Ref.** Measured 2026-09-09 against prod, read-only. Rules read from
 `so-stock-allocation.ts`, `routes/mrp.ts` and `shared/so-processing-date.ts` —
 not from summaries.
+
+---
+
+## Addendum 2026-09-11 — the same class, found from the other end
+
+The owner reported two orders reading SHORT with a purchase order already open.
+Both are this document's class, and the census is now complete rather than
+incidental: on live company-1 purchase orders there are **6** hard-bound lines
+with no `so_item_id` (all created 2026-08-28, `from_mrp=false`, NULL `line_no` —
+one batch of hand-opened POs) and **1** line that is linked but sits on a
+non-hard-bound `item_group` (`HC-PO-010087`, `others` on a `sofa`). That second
+shape is new to this document: failing condition (b) hides a purchase order just
+as completely as failing (a).
+
+Tooling: `backend/scripts/repair-mrp-po-line-links.mjs` (plan/apply) and
+`.github/workflows/mrp-po-link-repair.yml`. It repairs only what the §3 evidence
+bar admits — the PO's other lines resolve to exactly ONE sales order, and that
+order has exactly ONE live uncovered line with this item code and warehouse.
+On the 2026-09-11 plan that admits 3 of the 7 and refuses 4 with a per-row
+reason. Details and the full row list: `tasks/MRP-REDESIGN-2026-09.md` Track E.
