@@ -944,6 +944,19 @@ export async function readConvertTargetLines(
  * and the alternative — a second hand-written list of ops — is the duplicated
  * -list bug this repo keeps paying for.
  */
+/**
+ * Is this op a CONVERSION — a document AutoCount builds from a parent, and
+ * therefore one whose line keys the ERP can only learn by being told?
+ *
+ * Derived from CONVERT_TARGET rather than listed again, for the reason
+ * SALES_CONVERSION gives right below: a fifth conversion added to that map
+ * joins this predicate on its own, and a second hand-written list of ops is the
+ * duplicated-list bug this repo keeps paying for.
+ */
+export function isConvertOp(op: string): boolean {
+  return Object.prototype.hasOwnProperty.call(CONVERT_TARGET, op);
+}
+
 export const SALES_CONVERSION = new Set(
   (Object.keys(CONVERT_TARGET) as Array<keyof typeof CONVERT_TARGET>)
     .filter((op) => CONVERT_TARGET[op] === 'DO' || CONVERT_TARGET[op] === 'IV'),
