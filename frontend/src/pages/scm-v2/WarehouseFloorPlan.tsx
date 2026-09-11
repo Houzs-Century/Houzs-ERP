@@ -30,7 +30,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import {
   buildZones, distinctCustomers, distinctProducts, isFiltering, itemDescription,
-  itemMeta, matchSlot, statusCounts, toSlot,
+  itemMeta, matchSlot, resolvedZoneLabel, statusCounts, toSlot, ZONE_LABELS,
   type FloorFilters, type Slot, type SlotStatus,
 } from '../../vendor/scm/lib/warehouse-floorplan';
 
@@ -112,6 +112,25 @@ export function WarehouseFloorPlan({
     }
   };
 
+  // A rack lives in a zone, so a zone change writes EVERY level sharing the rack
+  // column (both L10.1 and L10.2), never a lone slot row — otherwise the two
+  // levels could resolve to different zones and the column would split. `null`
+  // clears the override back to the rack-number default.
+  const assignZone = async (rackKeys: Set<string>, zone: string | null) => {
+    try {
+      const targets = slots.filter((s) => rackKeys.has(s.rackKey));
+      for (const s of targets) await updateRack.mutateAsync({ id: s.rack.id, zone });
+      void notify({ title: zone ? `Moved to ${zone}.` : 'Zone set to auto.' });
+    } catch (e) {
+      void notify({ title: 'Could not update the zone', body: (e as Error).message, tone: 'error' });
+    }
+  };
+
+  const batchSetZone = async (zone: string | null) => {
+    await assignZone(new Set(pickedSlots.map((s) => s.rackKey)), zone);
+    setPicked([]);
+  };
+
   const exportSelection = () => {
     const head = ['Slot', 'Status', 'Product', 'Customer', 'Qty', 'In date', 'Document'];
     const esc = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
@@ -151,6 +170,7 @@ export function WarehouseFloorPlan({
           count={picked.length}
           onReserve={() => setReserved(true)}
           onRelease={() => setReserved(false)}
+          onSetZone={(zone) => void batchSetZone(zone)}
           onExport={exportSelection}
           busy={updateRack.isPending}
           onClear={() => setPicked([])}
@@ -180,6 +200,8 @@ export function WarehouseFloorPlan({
             slot={sel}
             warehouseId={warehouseId}
             onClose={() => setSelId(null)}
+            onSetZone={(zone) => void assignZone(new Set([sel.rackKey]), zone)}
+            zoneBusy={updateRack.isPending}
             onEdit={() => { onEditRack(sel.rack); setSelId(null); }}
             onStockInHere={() => { onStockInHere(sel.rack.id); setSelId(null); }}
             onDelete={async () => {
@@ -274,11 +296,12 @@ function Toolbar({
 
 /* ── Batch bar (≥1 selected) ────────────────────────────────────────────── */
 function BatchBar({
-  count, onReserve, onRelease, onExport, busy, onClear,
+  count, onReserve, onRelease, onSetZone, onExport, busy, onClear,
 }: {
   count: number;
   onReserve: () => void;
   onRelease: () => void;
+  onSetZone: (zone: string | null) => void;
   onExport: () => void;
   busy: boolean;
   onClear: () => void;
@@ -290,6 +313,13 @@ function BatchBar({
       <div className="flex items-center gap-2.5 border-r border-white/20 pr-3.5">
         <span className="text-[15px] font-bold tabular-nums text-white">{count}</span>
         <span className="text-[12.5px] text-[#cfe0dc]">slots selected</span>
+      </div>
+      <div className="flex items-center gap-1.5 border-r border-white/20 pr-3.5">
+        <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[#cfe0dc]">Move to</span>
+        {ZONE_LABELS.map((z) => (
+          <button key={z} type="button" className={ghost} onClick={() => onSetZone(z)} disabled={busy}>{z}</button>
+        ))}
+        <button type="button" className={ghost} onClick={() => onSetZone(null)} disabled={busy} title="Clear the manual zone — fall back to the rack-number default">Auto</button>
       </div>
       <button type="button" className={ghost} disabled title="Not available yet — moving stock between slots is coming in a later phase">Move to slot…</button>
       <button type="button" className={primary} onClick={onReserve} disabled={busy}>Mark reserved</button>
@@ -533,17 +563,24 @@ const MOVE_TAG: Record<RackMovementType, { label: string; bg: string; fg: string
 };
 
 function SlotDrawerBody({
-  slot, warehouseId, onClose, onEdit, onStockInHere, onDelete, deleting,
+  slot, warehouseId, onClose, onSetZone, zoneBusy, onEdit, onStockInHere, onDelete, deleting,
 }: {
   slot: Slot;
   warehouseId: string;
   onClose: () => void;
+  onSetZone: (zone: string | null) => void;
+  zoneBusy: boolean;
   onEdit: () => void;
   onStockInHere: () => void;
   onDelete: () => void;
   deleting: boolean;
 }) {
   const p = PAL[slot.status];
+  const effectiveZone = resolvedZoneLabel(slot);
+  const zoneChip = (active: boolean) =>
+    `h-8 rounded-md border px-3 text-[12.5px] font-semibold disabled:opacity-50 ${
+      active ? 'border-primary bg-primary-soft text-primary-ink' : 'border-border-subtle bg-surface text-ink-secondary hover:bg-surface-2'
+    }`;
   const movements = useMovements(warehouseId ? { warehouseId } : undefined);
   const rackMoves = useMemo(
     () => (movements.data ?? []).filter((m) => m.rack_id === slot.rack.id || m.to_rack_id === slot.rack.id).slice(0, 12),
@@ -575,6 +612,19 @@ function SlotDrawerBody({
               <span className="text-[14px] font-semibold tabular-nums text-ink">{value}</span>
             </div>
           ))}
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <span className="font-mono text-[10.5px] uppercase tracking-[0.1em] text-ink-muted">Zone</span>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button type="button" className={zoneChip(!slot.zone)} onClick={() => onSetZone(null)} disabled={zoneBusy}>Auto</button>
+            {ZONE_LABELS.map((z) => (
+              <button key={z} type="button" className={zoneChip(slot.zone === z)} onClick={() => onSetZone(z)} disabled={zoneBusy}>{z}</button>
+            ))}
+          </div>
+          <span className="text-[11.5px] text-ink-muted">
+            {slot.zone ? `Pinned to ${slot.zone} — applies to the whole rack (${slot.rackName})` : `Auto — follows the rack number (${effectiveZone ?? 'unzoned'})`}
+          </span>
         </div>
 
         {slot.itemCount > 1 && (
