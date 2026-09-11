@@ -1,7 +1,18 @@
 ## The staging rehearsal had been red every night since 2026-08-21 and nobody was told — an empty staging list renders no empty state, and staging carried no production-shaped data [high]
 
 <!-- area: Deploy, CI, migrations -->
-<!-- status: open -->
+<!-- status: fixed -->
+
+> **CLOSED 2026-09-12 for what this entry owns.** The data copy works: run
+> 34642385228 (fifth dispatch, after #3705 #3709 #3711 #3712) restored 3,110
+> sales orders / 765 purchase orders / 585 receipts / 304 delivery orders / 251
+> purchase invoices / 48 sales invoices, masked 12,324 phone / email values, and
+> re-seeded the login. Staging auto-deploys on every merge to `main` (first
+> push-triggered run 34628320098 succeeded) and a red rehearsal opens an issue
+> (#3707 was opened by the first red after #3703). The rehearsal is 7 of 8
+> green; the remaining red — the Sales Orders list — is the OTHER 0824 entry
+> (`0824-the-staging-sales-orders-list-said-permission-denied-on-the.md`),
+> proven to be a mis-set PostgREST key on the staging Worker, owner action.
 
 **Symptom.** Owner, 2026-09-12: 「有没有什么办法模拟和 prevent 有问题先？…还是你
 查看我们有没有 staging」. Checked with `gh run list --workflow=staging-e2e.yml`
