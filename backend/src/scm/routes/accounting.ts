@@ -43,7 +43,7 @@ import {
 import {
   bankSetup, bankUpload, bankStatements, bankStatementDetail,
   bankRulesList, bankRuleCreate, bankRuleUpdate,
-  bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo, bankLinesMatchGroup, bankStatementPeriod,
+  bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo, bankLinesMatchGroup, bankStatementPeriod, bankStatementAutoMatch,
 } from './accounting-bank';
 import { bankMonths, bankMonthDetail } from './accounting-bank-months';
 import { bankLocks, bankMonthLock, bankMonthUnlock } from './accounting-bank-locks';
@@ -181,6 +181,8 @@ accounting.get('/bank/statements', bankStatements);
 accounting.get('/bank/statements/:id', bankStatementDetail);
 /* An old file re-filed as its month's statement (docs/bugs/0806). */
 accounting.post('/bank/statements/:id/period', bankStatementPeriod);
+/* The obvious matches, run over a statement uploaded before the rule (docs/bugs/0814). */
+accounting.post('/bank/statements/:id/auto-match', bankStatementAutoMatch);
 /* The same reconciliation asked of a MONTH rather than a file — registered
    BEFORE nothing and after the file doors deliberately: `/bank/months` cannot
    collide with `/bank/statements/:id`, and keeping the two families apart is

@@ -502,6 +502,10 @@ export type EntryCandidateSource = {
   sourceDocNo: string | null;
   debitSen: number;
   creditSen: number;
+  /** Who was paid / who paid, and the entry's own note — what the bank's text
+      is read against (docs/bugs/0814). */
+  partyName?: string | null;
+  notes?: string | null;
 };
 
 export type EntryCandidate = EntryCandidateSource & {
@@ -557,4 +561,62 @@ export function entryCandidatesFor(
     a.daysApart - b.daysApart
     || a.entryDate.localeCompare(b.entryDate)
     || a.jeNo.localeCompare(b.jeNo));
+}
+
+/* ── The obvious ones (docs/bugs/0814) ────────────────────────────────────────
+   Owner, 2026-09-11, on a RM 45,000 rental transfer beside the one RM 45,000
+   voucher in the books, to NAVINDER SINGH GILL, the bank line reading "Rental
+   - Jun'26 PARVEEN AND NAVINDER": 你看着 45,000 为什么我还需要自己 manual 匹配？
+   And the rule he set: 只要名字金额一样就自动都对，名字不一样不确定我可以 manual 对.
+
+   So "never auto-applied" above gets one exception, and it is narrow: exactly
+   ONE same-amount entry within the window, AND the bank's own words for the
+   movement carry a word of that entry's payee. The amount alone is a
+   coincidence waiting to happen (two vouchers of RM 1,000 in a week); the
+   name alone matches half the ledger; the two together, with no other
+   candidate, is what a person would have pressed without thinking. Days apart
+   do not matter — a cheque clears when it clears. */
+
+/** Words that name nobody: company boilerplate, the bank's own vocabulary,
+    the words every transfer carries. */
+const NAME_STOP = new Set([
+  'SDN', 'BHD', 'BERHAD', 'SDNBHD', 'ENTERPRISE', 'TRADING', 'HOLDING', 'HOLDINGS', 'PLT', 'LTD', 'LIMITED',
+  'THE', 'AND', 'FOR', 'FROM', 'TO', 'AT', 'OF', 'MR', 'MRS', 'MS', 'MDM', 'MALAYSIA',
+  'PAYMENT', 'PAYMENTS', 'TRANSFER', 'FUND', 'INSTANT', 'DIO', 'CIB', 'BANK', 'CASH', 'INTERNAL',
+  'RENTAL', 'REFUND', 'BILL', 'JOMPAY', 'GIRO', 'ADV', 'CREDIT', 'DEBIT', 'ADVICE', 'RECEIVED',
+]);
+
+/** The words of a name or a bank line that could name somebody. */
+export const nameTokens = (text: string): string[] =>
+  String(text).toUpperCase().replace(/[^A-Z0-9]+/g, ' ').split(' ')
+    .filter((t) => t.length >= 3 && !NAME_STOP.has(t) && !/^\d+$/.test(t));
+
+/**
+ * Does the bank's text for a movement name the entry's party? A word in
+ * common — or, because Hong Leong cuts names short ("PENGURUSAN AIR SELANGO"),
+ * one word being the start of the other at five letters or more.
+ */
+export function namesAgree(bankText: string, partyName: string | null | undefined): boolean {
+  const bank = nameTokens(bankText);
+  const party = nameTokens(partyName ?? '');
+  if (party.length === 0) return false;
+  return party.some((p) => bank.some((b) =>
+    b === p || (p.length >= 5 && b.length >= 5 && (b.startsWith(p) || p.startsWith(b)))));
+}
+
+/**
+ * The entry a movement obviously is — or null, in which case a person
+ * decides. `claimed` is every je_no already accounted for (other statements'
+ * and this pass's), so the one candidate cannot be one somebody already took.
+ */
+export function obviousEntryFor(
+  movement: { bookedOn: string; amountSen: number; description: string; reference: string | null },
+  ledger: EntryCandidateSource[],
+  claimed: ReadonlySet<string>,
+): EntryCandidate | null {
+  const candidates = entryCandidatesFor(movement, ledger, claimed);
+  if (candidates.length !== 1) return null;
+  const only = candidates[0]!;
+  const text = `${movement.description} ${movement.reference ?? ''}`;
+  return namesAgree(text, only.partyName ?? only.notes ?? null) ? only : null;
 }

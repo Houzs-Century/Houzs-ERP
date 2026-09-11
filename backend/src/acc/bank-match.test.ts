@@ -16,8 +16,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   groupBankMovements, recogniseAcquirer, matchBankMovements, exactCombination,
-  type BankRecognitionRule, type PayableBatch, type PayoutAdviceForMatch,
-} from './bank-match';
+  type BankRecognitionRule, type PayableBatch, type PayoutAdviceForMatch, namesAgree, obviousEntryFor } from './bank-match';
 import type { BankLine } from './bank-parse';
 
 let seq = 0;
@@ -517,5 +516,61 @@ describe('a credit the payment advice answers for', () => {
       rules: RULES, batches: twoOfEach, payouts: [august, september],
     })[0]!;
     expect(undecided.kind).toBe('PAYOUT_UNSURE');
+  });
+});
+
+/* ── The obvious ones (docs/bugs/0814) ────────────────────────────────────────
+   Owner, 2026-09-11, on a RM 45,000 rental transfer with exactly one entry of
+   RM 45,000 in the books, to NAVINDER SINGH GILL, the bank line reading
+   "Rental - Jun'26 PARVEEN AND NAVINDER": 你看着 45,000 为什么我还需要自己
+   manual 匹配？ And the rule he set: 只要名字金额一样就自动都对，名字不一样不
+   确定我可以 manual 对. So: exactly one same-amount entry within the window AND
+   the bank's text names the payee → matched without a hand. */
+describe('names on the bank and in the books', () => {
+  it('agree when the bank\'s text carries a word of the payee', () => {
+    expect(namesAgree("Rental - Jun'26 PARVEEN AND NAVINDER 20260606HLBBMYKL", 'NAVINDER SINGH GILL')).toBe(true);
+    expect(namesAgree('JomPAY Bill Payment TENAGA NASIONAL BERHAD CIBJOM3004', 'TENAGA NASIONAL BERHAD')).toBe(true);
+    expect(namesAgree('2990 Home PV-000050 HOUZS VENTURE HOLDING SDN. BHD.', 'HOUZS VENTURE HOLDING SDN BHD')).toBe(true);
+  });
+
+  /* Hong Leong truncates: "PENGURUSAN AIR SELANGO". A word that is the start
+     of the other, five letters or more, still agrees. */
+  it('survive the bank cutting a name short', () => {
+    expect(namesAgree('6598159943 PENGURUSAN AIR SELANGO CIBJOM', 'AIR SELANGOR')).toBe(true);
+  });
+
+  it('do not agree on company boilerplate alone, or when the books name nobody', () => {
+    expect(namesAgree('Fund Transfer SDN BHD PAYMENT', 'CATRON TRADING SDN BHD')).toBe(false);
+    expect(namesAgree('LAU LEE YEN', null)).toBe(false);
+    expect(namesAgree('LAU LEE YEN', 'Payment received (transfer) — 2990-SO-2606-001')).toBe(false);
+  });
+});
+
+describe('the obvious entry for a movement', () => {
+  const ledger = [
+    { jeNo: 'JE-1', entryDate: '2026-06-06', sourceType: 'PV', sourceDocNo: 'HPV-2606-023', debitSen: 0, creditSen: 4500000, partyName: 'NAVINDER SINGH GILL' },
+    { jeNo: 'JE-2', entryDate: '2026-06-03', sourceType: 'PV', sourceDocNo: 'HPV-2606-003', debitSen: 0, creditSen: 287212, partyName: 'Internal transfer to 310-0030' },
+    { jeNo: 'JE-3', entryDate: '2026-06-10', sourceType: 'PV', sourceDocNo: 'HPV-2606-008', debitSen: 0, creditSen: 100000, partyName: 'VIVIAN CHOW WAI MAN' },
+    { jeNo: 'JE-4', entryDate: '2026-06-11', sourceType: 'PV', sourceDocNo: 'HPV-2606-009', debitSen: 0, creditSen: 100000, partyName: 'LOO WEN WEI' },
+  ];
+  const mv = (over: Partial<{ bookedOn: string; amountSen: number; description: string; reference: string | null }> = {}) => ({
+    bookedOn: '2026-06-06', amountSen: -4500000, description: 'CIB Instant Transfer at DIO', reference: "Rental - Jun'26 PARVEEN AND NAVINDER", ...over,
+  });
+
+  it('is the one same-amount entry the bank names, days apart or not', () => {
+    expect(obviousEntryFor(mv(), ledger, new Set())?.jeNo).toBe('JE-1');
+    expect(obviousEntryFor(mv({ bookedOn: '2026-06-10' }), ledger, new Set())?.jeNo).toBe('JE-1');
+  });
+
+  it('is nothing when the amount agrees but the name does not — that is a hand\'s call', () => {
+    expect(obviousEntryFor(mv({ reference: 'Rental - PARVEEN' }), ledger, new Set())).toBeNull();
+  });
+
+  it('is nothing when two entries carry the amount, even if one is named', () => {
+    expect(obviousEntryFor(mv({ bookedOn: '2026-06-10', amountSen: -100000, reference: 'VIVIAN CHOW' }), ledger, new Set())).toBeNull();
+  });
+
+  it('is nothing when the only entry is already claimed', () => {
+    expect(obviousEntryFor(mv(), ledger, new Set(['JE-1']))).toBeNull();
   });
 });
