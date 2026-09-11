@@ -278,7 +278,7 @@ describe('closing a month', () => {
     expect(screen.getByText(/2 movements still to decide/)).toBeTruthy();
   });
 
-  test('the close button is on when the month tallies, is whole and has nothing left to decide', () => {
+  test('the close button is on when the month tallies, is whole and no movement is still to decide', () => {
     setUp({ recon: { ...RECON, bankNotInBooks: { count: 0, sen: 0 }, closingLedgerSen: 1090000, differenceSen: 0, reconciled: true } });
     openMonth();
     expect(screen.getByText('Close this month').closest('button')!.disabled).toBe(false);
