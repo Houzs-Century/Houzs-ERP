@@ -33,6 +33,7 @@ import { generateAmendmentPdf } from "../vendor/scm/lib/amendment-pdf";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../vendor/scm/lib/pdf-common";
 import { amendmentPrintedStatus, poAmendmentToPdfInput } from "../vendor/scm/lib/amendment-pdf-map";
+import { amendmentVariantSummaries } from "../vendor/scm/lib/so-amendment-line-diff";
 import "./mobile.css";
 
 /* ------------------------------------------------------------------ *
@@ -55,6 +56,9 @@ type PoOldSnapshot = {
   qty?: number | null;
   unit_price_sen?: number | null;
   delivery_date?: string | null;
+  variants?: unknown;
+  item_group?: string | null;
+  description2?: string | null;
 };
 const oldOf = (l: PoAmendmentLine): PoOldSnapshot => (l.old_snapshot as PoOldSnapshot | null) ?? {};
 
@@ -117,6 +121,15 @@ function DiffRow({ line }: { line: PoAmendmentLine }) {
   const isAdd = line.change_type === "ADD";
   const isRemove = line.change_type === "REMOVE";
   const newCode = line.new_item_code ?? old.item_code ?? null;
+  /* Variant SUMMARY per side — a colour/fabric/special change shows only here (it
+     moves no item_code). Group-aware via the shared SO helper; guarded on
+     new_variants so a QTY row's null blob never reads as a cleared spec. */
+  const spec = amendmentVariantSummaries({
+    change_type: line.change_type,
+    new_variants: line.new_variants,
+    old_snapshot: line.old_snapshot,
+  });
+  const specChanged = !isAdd && !isRemove && line.new_variants != null && spec.from !== spec.to;
   return (
     <div style={{ padding: "9px 0", borderTop: "1px solid var(--line2)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
@@ -151,6 +164,12 @@ function DiffRow({ line }: { line: PoAmendmentLine }) {
               {line.new_delivery_date ? ` · ${formatDate(line.new_delivery_date)}` : ""}
             </span>
           </div>
+          {specChanged && (
+            <div style={{ marginTop: 3, fontSize: 12 }}>
+              <span style={{ textDecoration: "line-through", color: "var(--mut)" }}>{spec.from || "—"}</span>
+              <span style={{ color: "var(--ink)", fontWeight: 600 }}>{"  →  "}{spec.to || "—"}</span>
+            </div>
+          )}
         </div>
       )}
     </div>
