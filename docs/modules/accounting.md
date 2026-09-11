@@ -1359,6 +1359,35 @@ brought-forward only for its unexplained part. Contracts:
 `bank-reconcile.test.ts`, `backend/tests/bankRoutes.test.ts`,
 `BankStatementTab.test.tsx`, `bank-reconciliation-pdf.test.ts`.
 
+**Several movements are one entry, or one movement is several (2026-09-11,
+docs/bugs/0803; owner, on OR-2604-001 = RM 29,000 + RM 10,000: 他对应的是这两笔，
+你应该开发让我自由选).** Migration `20260911T1000_acc_bank_match_group.sql`
+moves the guarantee: `acc_bank_statement_matches` is unique on (company,
+je_no, bank_line_id) instead of (company, je_no), and "one entry cannot account
+for two" is now the ROUTE's refusal (`already_matched`, read off the match
+rows of that entry whose line is POSTED) in both `bankLineMatch` and the new
+`POST /accounting/bank/lines/match-group { lineIds, jeNos }`
+(`bankLinesMatchGroup`, `backend/src/scm/routes/accounting-bank.ts`). The
+group is several movements to ONE entry or one movement to SEVERAL —
+several-to-several is two decisions and is refused (`one_side_only`); every
+line must be OPEN, of this company, on one account and in an open month; every
+entry a posted entry of that account's ledger (`entry_not_found`); and the
+two sides must add up to the sen (`amount_mismatch`, naming both totals and
+the difference — owner: 勾的总额必须等于那个 entry 的金额). Rows carry each
+movement's amount (several→one) or each entry's (one→several);
+`StatementMovement.jeNos` carries every entry a POSTED line claims and the
+reconciliation's claimed set is the union (`loadMonthForLock` now reads the
+match rows for it). UNDO IS THE WHOLE GROUP: undoing one movement reopens every
+movement sharing its entries (`linesReopened`), because a half-claimed entry
+is not a state the identity can hold. On screen, `OpenLines`
+(`BankStatementTab.tsx`, shared with the month view) gives every open
+movement a tick box; ticking opens "Choose the entry these movements are"
+over every entry the books still hold for the account (this period's and the
+earlier months', named by who), and "These are that entry" fires only when the
+totals agree. Contracts: `backend/tests/bankRoutes.test.ts` (whose harness no
+longer carries the je_no unique — the route's refusal is what "only once"
+exercises), `bank-reconcile.test.ts`, `BankStatementTab.test.tsx`.
+
 **"This movement is already in the books" (2026-09-09; owner, on a RM 3,000
 transfer sitting beside the RM 3,000 receipt that posted it: the only button was
 "Not ours to reconcile", which is not true).** `POST /bank/lines/:id/match` has

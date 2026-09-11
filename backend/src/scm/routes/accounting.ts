@@ -43,7 +43,7 @@ import {
 import {
   bankSetup, bankUpload, bankStatements, bankStatementDetail,
   bankRulesList, bankRuleCreate, bankRuleUpdate,
-  bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
+  bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo, bankLinesMatchGroup,
 } from './accounting-bank';
 import { bankMonths, bankMonthDetail } from './accounting-bank-months';
 import { bankLocks, bankMonthLock, bankMonthUnlock } from './accounting-bank-locks';
@@ -198,6 +198,8 @@ accounting.post('/bank/lines/:id/receipt', bankLineReceipt);
 accounting.post('/bank/lines/:id/match', bankLineMatch);
 accounting.post('/bank/lines/:id/ignore', bankLineIgnore);
 accounting.post('/bank/lines/:id/undo', bankLineUndo);
+/* Several movements are one entry, or one movement is several (docs/bugs/0803). */
+accounting.post('/bank/lines/match-group', bankLinesMatchGroup);
 
 /* ════════════════════════════════════════════════════════════════════════
    Helpers
