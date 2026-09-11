@@ -352,6 +352,17 @@ Set the switch with the **Set AutoCount delivery-date sweep** workflow
 (`.github/workflows/set-delivery-date-sweep.yml` ->
 `scripts/set-delivery-date-sweep.mjs`), `plan` first.
 
+> **IT IS MEANT TO STAY ASLEEP, owner 2026-09-11.** 「autocount是没用了的」 —
+> nobody KEYS DOCUMENTS in AutoCount any more, so there is no stream of
+> book-side delivery-date changes for this to chase, and **nobody should visit
+> the office machine to finish it.** The one-time backfill was the whole ask
+> (「我只是要 backfill 一次啊」) and it is done. This exists for the case where a
+> person edits the book again — a parallel run, a cutover month, an audit
+> correction — and it is two steps away from working if that happens. The
+> OUTBOUND half of this page is unaffected and stays live: measured 2026-09-11,
+> the ERP sent 29 conversions and 44 edits to the book in three hours. See
+> `tasks/HANDOFF-autocount-do-dates-and-relink-2026-09-11.md`.
+
 It matches lines by `linked_ac_dtlkey`, never by item code — the book keeps a
 sofa as ONE line where the ERP keeps one per compartment. It leaves alone: an
 operator-overridden line, any BLANK date (a blank is not a change, and MRP gates
