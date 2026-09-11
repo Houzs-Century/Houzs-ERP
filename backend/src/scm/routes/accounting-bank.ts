@@ -23,7 +23,10 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { parseBankStatement, movementFingerprint } from '../../acc/bank-parse';
 import { monthWindow } from '../../acc/bank-month';
-import { groupBankMovements, matchBankMovements, entryCandidatesFor, obviousEntryFor } from '../../acc/bank-match';
+import {
+  groupBankMovements, matchBankMovements, entryCandidatesFor, obviousEntryFor,
+  type BankRecognitionRule, type PayableBatch, type PayoutAdviceForMatch,
+} from '../../acc/bank-match';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
 import {
   loadBankConfigs, loadBankConfig, parseConfigFrom,
@@ -421,6 +424,45 @@ export const bankUpload = guard(async (c) => {
   });
 });
 
+/* ── What a card movement looks like, decided again on every read ─────────────
+   (docs/bugs/0815). The upload writes its decision on the line — kind, the
+   acquirer, the trading day, the report it settles or the split — and until
+   now that was the last word: June's 8 June credit stayed "check which" after
+   the charge fix (docs/bugs/0812) because it had been decided before it. The
+   candidates under a line were already recomputed live; so is the decision
+   now. OPEN money-in lines are run through the same matcher against today's
+   reports and advices, and the response carries the fresh answer. Nothing is
+   written: the line on disk is what the upload said, the screen is what is
+   true now, and booking it writes what the person confirmed. */
+export type FreshDecision = {
+  kind: string; acquirer_code: string | null; trading_date: string | null; merchant_no: string | null;
+  matched_batch_id: number | null; split: Array<{ batchId: number; amountSen: number }> | null; note: string | null;
+};
+export function freshDecisions(
+  lines: Array<Record<string, unknown>>,
+  rules: BankRecognitionRule[], batches: PayableBatch[], payouts: PayoutAdviceForMatch[],
+): Map<number, FreshDecision> {
+  const open = lines.filter((l) => String(l.state) === 'OPEN' && Number(l.amount_sen ?? 0) > 0);
+  const out = new Map<number, FreshDecision>();
+  if (open.length === 0) return out;
+  const movements = open.map((l) => ({
+    lines: [{ lineNo: Number(l.line_no ?? 0), bookedOn: String(l.booked_on).slice(0, 10), description: String(l.description ?? ''), reference: (l.reference as string | null) ?? null, amountSen: Number(l.amount_sen ?? 0) + Number(l.charge_sen ?? 0), balanceSen: null }],
+    bookedOn: String(l.booked_on).slice(0, 10),
+    description: String(l.description ?? ''),
+    reference: (l.reference as string | null) ?? null,
+    amountSen: Number(l.amount_sen ?? 0),
+    chargeSen: Number(l.charge_sen ?? 0),
+  }));
+  const decisions = matchBankMovements({ movements, rules, batches, payouts });
+  decisions.forEach((d, i) => {
+    out.set(Number(open[i]!.id), {
+      kind: d.kind, acquirer_code: d.acquirerCode, trading_date: d.tradingDate, merchant_no: d.merchantNo,
+      matched_batch_id: d.batchId, split: d.split.length > 0 ? d.split : null, note: d.clue,
+    });
+  });
+  return out;
+}
+
 /* ── The obvious ones, matched without a hand (docs/bugs/0814) ────────────────
    Every OPEN movement of one statement that is not card money, against the
    account's ledger: exactly one same-amount entry within the window whose
@@ -599,21 +641,28 @@ export const bankStatementDetail = guard(async (c) => {
   if (!stmt) return c.json({ error: 'not_found' }, 404);
   const statement = stmt as Record<string, any>;
 
-  const [linesRes, matchRes, ledger, batches, elsewhere] = await Promise.all([
+  const [linesRes, matchRes, ledger, batches, elsewhere, rules, payouts] = await Promise.all([
     sb.from('acc_bank_statement_lines').select('*').eq('statement_id', id).eq('company_id', co.companyId).order('line_no'),
     sb.from('acc_bank_statement_matches').select('bank_line_id, je_no, amount_sen, match_reason').eq('company_id', co.companyId),
     loadAccountLedger(sb, co.companyId, String(statement.account_code), String(statement.period_to)),
     loadPayableBatches(sb, co.companyId),
     loadClaimedElsewhere(sb, co.companyId, String(statement.account_code), id),
+    loadRecognitionRules(sb),
+    loadPayoutAdvices(sb, co.companyId),
   ]);
   if (linesRes.error) return c.json({ error: 'load_failed', reason: linesRes.error.message }, 500);
   if (matchRes.error) return c.json({ error: 'load_failed', reason: matchRes.error.message }, 500);
   if (!ledger.ok) return c.json({ error: 'load_failed', reason: ledger.reason }, 500);
   if (!batches.ok) return c.json({ error: 'load_failed', reason: batches.reason }, 500);
   if (!elsewhere.ok) return c.json({ error: 'load_failed', reason: elsewhere.reason }, 500);
+  if (!rules.ok) return c.json({ error: 'load_failed', reason: rules.reason }, 500);
+  if (!payouts.ok) return c.json({ error: 'load_failed', reason: payouts.reason }, 500);
   const claimedElsewhere = claimedSetFor(elsewhere, ledger.movements);
 
-  const lines = (linesRes.data ?? []) as Array<Record<string, any>>;
+  const stored = (linesRes.data ?? []) as Array<Record<string, any>>;
+  /* Decided again against today's reports and advices (docs/bugs/0815). */
+  const fresh = freshDecisions(stored, rules.rules, batches.batches, payouts.payouts);
+  const lines = stored.map((l) => ({ ...l, ...(fresh.get(Number(l.id)) ?? {}) }) as (typeof stored)[number]);
   const matchesByLine = new Map<number, Array<Record<string, any>>>();
   for (const m of (matchRes.data ?? []) as Array<Record<string, any>>) {
     const key = Number(m.bank_line_id);
