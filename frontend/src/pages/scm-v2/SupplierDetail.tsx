@@ -90,7 +90,6 @@ import styles from './SupplierDetail.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
-const LG_ICON = { size: 20, strokeWidth: 1.75 } as const;
 
 /* CROSS-COMPANY MISS — when the supplier lives in another company the user is
    allowed to see, the backend answers { error: 'in_other_company', companyId,
