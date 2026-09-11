@@ -23,7 +23,7 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { parseBankStatement, movementFingerprint } from '../../acc/bank-parse';
 import { monthWindow } from '../../acc/bank-month';
-import { groupBankMovements, matchBankMovements, entryCandidatesFor } from '../../acc/bank-match';
+import { groupBankMovements, matchBankMovements, entryCandidatesFor, obviousEntryFor } from '../../acc/bank-match';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
 import {
   loadBankConfigs, loadBankConfig, parseConfigFrom,
@@ -387,6 +387,12 @@ export const bankUpload = guard(async (c) => {
   );
   if (linesErr) return c.json({ error: 'save_failed', reason: linesErr.message }, 500);
 
+  /* THE OBVIOUS ONES, before the operator sees the list (docs/bugs/0814). */
+  const obvious = decisions.length === 0
+    ? { ok: true as const, matched: 0, jeNos: [] as string[] }
+    : await applyObviousMatches(sb, co.companyId, { id: statementId, account_code: accountCode, period_to: periodTo });
+  if (!obvious.ok) return c.json({ error: 'match_failed', reason: obvious.reason, message: `The file was read, but the obvious matches could not be applied: ${obvious.reason}` }, 500);
+
   const counts = decisions.reduce<Record<string, number>>((acc, d, idx) => {
     const kind = alreadyRecorded[idx] ? 'DUPLICATE' : d.kind;
     acc[kind] = (acc[kind] ?? 0) + 1;
@@ -403,6 +409,8 @@ export const bankUpload = guard(async (c) => {
        re-upload that quietly settles half its own lines is a surprise, even
        when every one of them is right. */
     alreadyRecorded: counts.DUPLICATE ?? 0,
+    /* Matched by amount and name on the way in (docs/bugs/0814). */
+    autoMatched: obvious.matched,
     periodFrom,
     periodTo,
     inSen: parsed.inSen,
@@ -411,6 +419,78 @@ export const bankUpload = guard(async (c) => {
     closingBalanceSen: parsed.closingBalanceSen,
     kinds: counts,
   });
+});
+
+/* ── The obvious ones, matched without a hand (docs/bugs/0814) ────────────────
+   Every OPEN movement of one statement that is not card money, against the
+   account's ledger: exactly one same-amount entry within the window whose
+   payee the bank's text names is matched here — a match row with reason
+   "amount+name", the line POSTED, listed under "already dealt with" with Undo.
+   Runs on upload and on demand for a statement uploaded before the rule
+   existed. Reads fail closed: a ledger or claim read that fails matches
+   nothing and says so. */
+async function applyObviousMatches(
+  sb: Parameters<typeof loadAccountLedger>[0], companyId: number, statement: { id: number; account_code: string; period_to: string },
+): Promise<{ ok: true; matched: number; jeNos: string[] } | { ok: false; reason: string }> {
+  const { data: linesRaw, error: lErr } = await sb.from('acc_bank_statement_lines')
+    .select('id, booked_on, description, reference, amount_sen, state, kind')
+    .eq('statement_id', statement.id).eq('company_id', companyId).eq('state', 'OPEN');
+  if (lErr) return { ok: false, reason: lErr.message };
+  const lines = (Array.isArray(linesRaw) ? linesRaw : []) as Array<{ id: number; booked_on: string; description: string | null; reference: string | null; amount_sen: number; kind: string }>;
+  const open = lines.filter((l) => String(l.kind) === 'OTHER');
+  if (open.length === 0) return { ok: true, matched: 0, jeNos: [] };
+
+  const [ledger, elsewhere] = await Promise.all([
+    loadAccountLedger(sb, companyId, statement.account_code, String(statement.period_to).slice(0, 10)),
+    /* Every statement's claims, this one's included. */
+    loadClaimedElsewhere(sb, companyId, statement.account_code, null),
+  ]);
+  if (!ledger.ok) return { ok: false, reason: ledger.reason };
+  if (!elsewhere.ok) return { ok: false, reason: elsewhere.reason };
+  const claimed = claimedSetFor(elsewhere, ledger.movements);
+
+  const jeNos: string[] = [];
+  for (const l of open) {
+    const hit = obviousEntryFor(
+      { bookedOn: String(l.booked_on).slice(0, 10), amountSen: Number(l.amount_sen), description: String(l.description ?? ''), reference: l.reference ?? null },
+      ledger.movements,
+      claimed,
+    );
+    if (!hit) continue;
+    const { error: insErr } = await sb.from('acc_bank_statement_matches').insert({
+      bank_line_id: Number(l.id), company_id: companyId, je_no: hit.jeNo, amount_sen: Number(l.amount_sen), match_reason: 'amount+name',
+    });
+    if (insErr) return { ok: false, reason: insErr.message };
+    const { error: upErr } = await sb.from('acc_bank_statement_lines')
+      .update({ state: 'POSTED', posted_je_no: hit.jeNo, updated_at: new Date().toISOString() })
+      .eq('id', Number(l.id)).eq('company_id', companyId);
+    if (upErr) return { ok: false, reason: upErr.message };
+    claimed.add(hit.jeNo);
+    jeNos.push(hit.jeNo);
+  }
+  return { ok: true, matched: jeNos.length, jeNos };
+}
+
+/* POST /bank/statements/:id/auto-match — the same rule, for a statement
+   uploaded before it existed (owner: June was already up). */
+export const bankStatementAutoMatch = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id)) return c.json({ error: 'bad_id' }, 400);
+  const sb = c.get('supabase');
+  const { data: stmt, error } = await sb.from('acc_bank_statements')
+    .select('id, account_code, period_from, period_to').eq('id', id).eq('company_id', co.companyId).maybeSingle();
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (!stmt) return c.json({ error: 'not_found' }, 404);
+  const statement = stmt as { id: number; account_code: string; period_from: string; period_to: string };
+  for (const edge of new Set([String(statement.period_from).slice(0, 10), String(statement.period_to).slice(0, 10)])) {
+    const shut = await refuseIfLocked(c, co.companyId, statement.account_code, edge, 'matching movements on this statement');
+    if (shut) return shut;
+  }
+  const r = await applyObviousMatches(sb, co.companyId, statement);
+  if (!r.ok) return c.json({ error: 'match_failed', reason: r.reason, message: `The obvious matches could not be applied: ${r.reason}` }, 500);
+  return c.json({ ok: true, matched: r.matched, jeNos: r.jeNos });
 });
 
 /* ── POST /bank/statements/:id/period — this file is the month's statement ──

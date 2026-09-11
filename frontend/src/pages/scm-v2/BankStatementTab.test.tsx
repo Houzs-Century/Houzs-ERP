@@ -68,6 +68,8 @@ let lines: BankLine[] = [LINE, SPLIT, OTHER];
 let unmatched: LedgerEntry[] = [];
 let statementPeriod = { period_from: '2026-08-01', period_to: '2026-08-12' };
 const periodMutate = vi.fn();
+const autoMatchMutate = vi.fn();
+let autoMatchResult: { matched: number; jeNos: string[] } | undefined;
 afterEach(() => { unmatched = []; recon = RECON; lines = [LINE, SPLIT, OTHER]; statementPeriod = { period_from: '2026-08-01', period_to: '2026-08-12' }; });
 
 vi.mock('./bank-queries', () => ({
@@ -87,6 +89,7 @@ vi.mock('./bank-queries', () => ({
   useMatchBankLine: () => ({ mutate: matchMutate, isPending: false, isError: false, error: null }),
   useMatchBankGroup: () => ({ mutate: groupMutate, isPending: false, isError: false, error: null }),
   useSetStatementPeriod: () => ({ mutate: periodMutate, isPending: false, isError: false, error: null }),
+  useAutoMatchStatement: () => ({ mutate: autoMatchMutate, isPending: false, isError: false, error: null, data: autoMatchResult }),
   useIgnoreBankLine: () => ({ mutate: ignoreMutate, isPending: false, isError: false, error: null }),
   useUndoBankLine: () => ({ mutate: vi.fn(), isPending: false }),
 }));
@@ -242,6 +245,26 @@ describe('amounts in two columns', () => {
     const heads = within(chooser).getAllByRole('columnheader').map((h) => h.textContent);
     expect(heads).toEqual(['', 'Entry', 'Date', 'Source', 'Who', 'Debit', 'Credit']);
     expect(cellsOf(within(chooser).getByText('2990-JE-2604-0024').closest('tr') as HTMLElement).slice(5)).toEqual(['', 'RM 3,101.68']);
+  });
+});
+
+/* docs/bugs/0814 — the obvious ones are matched without a hand; a statement
+   uploaded before the rule can have it run. */
+describe('matching the obvious ones', () => {
+  test('a statement with movements still to decide offers to run the rule, and says what it did', () => {
+    autoMatchResult = { matched: 3, jeNos: ['JE-1', 'JE-2', 'JE-3'] };
+    openStatement();
+    fireEvent.click(screen.getByText('Match the obvious ones now'));
+    expect(autoMatchMutate.mock.calls[0]?.[0]).toBe(1);
+    expect(screen.getByText(/3 matched by amount and name/)).toBeTruthy();
+    autoMatchResult = undefined;
+  });
+
+  test('a movement matched by the rule says so where it is listed as dealt with', () => {
+    lines = [{ ...OTHER, state: 'POSTED', posted_je_no: '2990-JE-2606-0060', matches: [{ je_no: '2990-JE-2606-0060', amount_sen: -2500, match_reason: 'amount+name' }] }];
+    openStatement();
+    fireEvent.click(screen.getByText('Show'));
+    expect(screen.getByText(/matched by amount and name/)).toBeTruthy();
   });
 });
 

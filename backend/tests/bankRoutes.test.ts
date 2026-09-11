@@ -20,7 +20,7 @@ import {
   bankSetup, bankUpload, bankStatements, bankStatementDetail,
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
   bankRulesList, bankRuleCreate, bankRuleUpdate,
-  bankLinesMatchGroup, bankStatementPeriod,
+  bankLinesMatchGroup, bankStatementPeriod, bankStatementAutoMatch,
 } from '../src/scm/routes/accounting-bank';
 import { bankConfigList, bankConfigSave } from '../src/scm/routes/accounting-bank-config';
 import { bankMonths } from '../src/scm/routes/accounting-bank-months';
@@ -147,6 +147,7 @@ function harness(tables: Record<string, Row[]> = {}, perms: readonly string[] = 
   app.post('/bank/lines/:id/undo', bankLineUndo as never);
   app.post('/bank/lines/match-group', bankLinesMatchGroup as never);
   app.post('/bank/statements/:id/period', bankStatementPeriod as never);
+  app.post('/bank/statements/:id/auto-match', bankStatementAutoMatch as never);
   app.get('/bank/rules', bankRulesList as never);
   app.post('/bank/rules', bankRuleCreate as never);
   app.patch('/bank/rules/:id', bankRuleUpdate as never);
@@ -375,10 +376,19 @@ describe('a month with an outstanding payment', () => {
     expect(sb.tables.acc_bank_month_locks[0]).toMatchObject({ difference_sen: 310168, was_complete: true, lock_note: null });
   });
 
+  /* An entry the books name NOBODY for is not obvious, so the movement waits
+     for a hand (docs/bugs/0814) — and the month stays open. */
   test('a movement still to decide keeps the month open', async () => {
-    const { app } = april();
+    const { app } = harness({
+      acc_bank_statement_config: [MBB_ACCOUNT, HLB_ACCOUNT],
+      v_gl_entries: [
+        { company_id: CO, account_code: '310-0020', je_no: 'JE-2602-0001', entry_date: '2026-02-07', source_type: 'PV', source_doc_no: 'HPV-2602-028', debit_sen: 300000, credit_sen: 0, notes: null },
+        { company_id: CO, account_code: '310-0020', je_no: 'JE-2604-0022', entry_date: '2026-04-28', source_type: 'PV', source_doc_no: 'HPV-2604-005', debit_sen: 0, credit_sen: 16100, party_name: null, notes: null },
+      ],
+    });
     const up = await (await post(app, '/bank/statements', { accountCode: '310-0020', fileName: 'acs_23600600000_30042026.csv', content: HLB_APRIL, statementMonth: '2026-04' })).json() as any;
     expect(up.lines).toBe(1);
+    expect(up.autoMatched).toBe(0);
     const res = await post(app, '/bank/months/310-0020/2026-04/lock', {});
     expect(res.status).toBe(409);
     expect((await res.json() as any).error).toBe('still_open');
@@ -883,6 +893,64 @@ describe('the matcher decision survives the round trip', () => {
    for three trading days — and the shape the owner named on the merchant side:
    顾客可能刷一次卡，但是还两个单. Before this the operator was told his credit was
    too big for the statement he picked, and given no way to do the right thing. */
+/* ── The obvious ones are matched without a hand (docs/bugs/0814) ─────────────
+   Owner, 2026-09-11: 只要名字金额一样就自动都对，名字不一样不确定我可以 manual 对.
+   A movement with exactly one same-amount entry in the books whose payee the
+   bank's text names is matched on upload — reason "amount+name", under
+   "already dealt with" with Undo. Anything less certain stays for a hand. */
+describe('the obvious ones', () => {
+  /* The customer transfer "LAU LEE YEN" has one RM 1,710.00 receipt in the
+     books from LAU LEE YEN; the RM 25.00 SERVICE CHARGE has one RM 25.00
+     voucher — to MAYBANK, a name the bank's line does not carry. */
+  const LEDGER = [
+    { company_id: CO, account_code: '330-0000', je_no: 'JE-2608-0002', entry_date: '2026-08-04', source_type: 'RCT', source_doc_no: 'OR-2608-002', debit_sen: 171000, credit_sen: 0, party_name: 'LAU LEE YEN', notes: null },
+    { company_id: CO, account_code: '330-0000', je_no: 'JE-2608-0003', entry_date: '2026-08-12', source_type: 'PV', source_doc_no: 'HPV-2608-003', debit_sen: 0, credit_sen: 2500, party_name: 'MAYBANK', notes: null },
+  ];
+
+  test('on upload, the named one is matched and the unnamed one waits', async () => {
+    const { app, sb } = harness({ v_gl_entries: LEDGER });
+    const up = await (await upload(app)).json() as any;
+    expect(up.autoMatched).toBe(1);
+    const lines = sb.tables.acc_bank_statement_lines as Row[];
+    const lau = lines.find((l) => String(l.description).includes('LAU LEE YEN'))!;
+    expect(lau).toMatchObject({ state: 'POSTED', posted_je_no: 'JE-2608-0002' });
+    expect(sb.tables.acc_bank_statement_matches).toEqual([expect.objectContaining({ bank_line_id: lau.id, je_no: 'JE-2608-0002', amount_sen: 171000, match_reason: 'amount+name' })]);
+    const charge = lines.find((l) => Number(l.amount_sen) === -2500)!;
+    expect(charge.state).toBe('OPEN');
+    /* And the detail shows it dealt with, saying how. */
+    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    const shown = detail.lines.find((l: any) => l.id === lau.id);
+    expect(shown.state).toBe('POSTED');
+    expect(shown.matches[0].match_reason).toBe('amount+name');
+    expect(detail.reconciliation.unmatchedJeNos).not.toContain('JE-2608-0002');
+  });
+
+  test('a statement uploaded earlier can have the same rule run over it', async () => {
+    const { app, sb } = harness();
+    const up = await (await upload(app)).json() as any;
+    expect(up.autoMatched).toBe(0);
+    for (const e of LEDGER) sb.tables.v_gl_entries.push({ ...e });
+    const res = await post(app, `/bank/statements/${up.statementId}/auto-match`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body).toMatchObject({ ok: true, matched: 1, jeNos: ['JE-2608-0002'] });
+    expect(sb.tables.acc_bank_statement_matches).toHaveLength(1);
+    /* Running it again finds nothing new. */
+    expect(await (await post(app, `/bank/statements/${up.statementId}/auto-match`)).json()).toMatchObject({ matched: 0 });
+  });
+
+  test('a closed month refuses it', async () => {
+    const { app, sb } = harness();
+    const up = await (await upload(app)).json() as any;
+    for (const e of LEDGER) sb.tables.v_gl_entries.push({ ...e });
+    sb.tables.acc_bank_month_locks = [LOCK('2026-08')];
+    const res = await post(app, `/bank/statements/${up.statementId}/auto-match`);
+    expect(res.status).toBe(409);
+    expect((await res.json() as any).error).toBe('month_locked');
+    expect(sb.tables.acc_bank_statement_matches).toHaveLength(0);
+  });
+});
+
 /* ── A report the bank charged (docs/bugs/0812) ───────────────────────────────
    Public Bank kept RM 324.00 off 2990's 2026-06-06 payout as a terminal fee;
    Finance booked it on the advice day (docs/bugs/0787). The bank side still
