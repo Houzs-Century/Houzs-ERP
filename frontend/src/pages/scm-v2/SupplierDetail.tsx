@@ -3061,18 +3061,7 @@ const SupplierInfoCard = ({
             </label>
             <EditField label="Area" value={form.area} onChange={(v) => setF('area', v)} />
             <CitySelect state={form.state} value={form.city} onChange={(v) => setF('city', v)} />
-            {form.country === 'Singapore' ? (
-              <SgPostcodeField
-                value={form.postcode}
-                onChange={(v) => setF('postcode', v)}
-                onResolveAddress={(address) => setF('address', address)}
-                fieldClassName={styles.field}
-                labelClassName={styles.fieldLabel}
-                inputClassName={styles.fieldInput}
-              />
-            ) : (
-              <PostcodeSelect state={form.state} city={form.city} value={form.postcode} onChange={(v) => setF('postcode', v)} />
-            )}
+            {form.country === 'Singapore' ? <SgPostcodeField value={form.postcode} onChange={(v) => setF('postcode', v)} onResolveAddress={(a) => setF('address', a)} fieldClassName={styles.field} labelClassName={styles.fieldLabel} inputClassName={styles.fieldInput} /> : <PostcodeSelect state={form.state} city={form.city} value={form.postcode} onChange={(v) => setF('postcode', v)} />}
             <EditField label="Billing Address" value={form.address} onChange={(v) => setF('address', v)} multiline />
             <EditField label="Notes" value={form.notes} onChange={(v) => setF('notes', v)} multiline />
           </div>
