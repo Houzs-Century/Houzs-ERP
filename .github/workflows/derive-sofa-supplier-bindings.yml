@@ -1,0 +1,56 @@
+name: Derive sofa supplier bindings (plan / apply)
+
+# Manual. Gives a sofa module SKU the supplier its own MODEL already names, so
+# the MRP Supplier column stops reading "— none —" (owner 2026-09-11, on
+# `822-2A(LHF)`). Copies a fact the master already holds; it never invents one.
+#
+# DEFAULT IS PLAN, and plan writes NOTHING — it prints every row it would create
+# and every one it refuses, with the reason. `apply` additionally needs the
+# confirm phrase typed in, INSERTS only (never updates or deletes an existing
+# binding), and verifies each new row on a FRESH connection before reporting.
+#
+# PRICE IS NOT COPIED. New rows carry unit_price_sen = 0 on purpose: a corner
+# and a one-seater are the same model and not the same money, so a copied price
+# would be plausibly wrong and would feed straight into a purchase order's line
+# total. Set the real price before these SKUs are priced onto a PO.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (read-only, default) or apply (writes)"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'Type DERIVE SOFA SUPPLIERS to allow apply (ignored for plan)'
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "Company (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: derive-sofa-supplier-bindings
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the one dependency the script needs
+        run: npm --prefix backend install postgres --no-audit --no-fund --no-save
+      - name: Derive sofa supplier bindings
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+        run: node backend/scripts/derive-sofa-supplier-bindings.mjs
