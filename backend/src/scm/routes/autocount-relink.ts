@@ -30,6 +30,8 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { activeCompanyId } from '../lib/companyScope';
 import { callAcRead } from '../../services/autocount-host-read';
 import { planLineRelink, type BookLine } from '../lib/autocount-relink-lines';
+import { bindingsFor } from '../lib/autocount-outbox';
+import { resolveAcItemCode } from '../../services/autocount-item-code';
 import { NEW_LINE_TABLE } from '../lib/autocount-line-keys';
 
 /* The same keys as Send again and /book-doc, for the same reason: this reads a
@@ -162,19 +164,34 @@ export const autocountRelinkLinesHandler = async (
      matched" — a sentence that is indistinguishable from the honest answer. */
   if (rowsErr) return c.json({ error: 'read_failed', reason: rowsErr.message }, 500);
 
-  const erpLines = ((rows ?? []) as Array<Record<string, unknown>>).map((r) => ({
-    id: String(r.id),
-    /* THE RAW ERP CODE, deliberately. The write-back resolves a supplier's own
-       spelling through the bindings, and where that resolution applies the raw
-       code will simply not match the book's — which this planner treats as
-       "cannot be proven" and REFUSES. Fail-closed is the right direction here: a
-       refusal is a line the operator is told about, a wrong match is a line
-       somebody else loses. Resolving properly is the follow-up, not a silent
-       widening. */
-    acItemCode: (r.item_code as string | null) ?? null,
-    desc2: (r.description2 as string | null) ?? null,
-    dtlKey: r.linked_ac_dtlkey == null ? null : Number(r.linked_ac_dtlkey),
-  }));
+  const rowsIn = (rows ?? []) as Array<Record<string, unknown>>;
+  /* THE BOOK'S SPELLING, and this is the follow-up the comment that stood here
+     promised (docs/bugs/0816). It used to pass the RAW ERP code and say
+     "Resolving properly is the follow-up, not a silent widening."
+
+     The ERP holds `AKEMI ARMOUR MATT (SK)`; the book holds
+     `AK-ARMOUR MATT (SK)`, because composeEdit resolves every code through the
+     cutover bindings before sending it. Comparing our spelling to theirs
+     refused every line of every document a supplier spells differently — which
+     is what the first readable relink-sweep report showed on all 13 documents
+     (docs/bugs/0815).
+
+     STILL FAIL-CLOSED: an unresolvable code falls back to the raw one, which
+     refuses exactly as before. Resolution can turn a guaranteed miss into a
+     possible match; it cannot turn a wrong match into a confident one. */
+  const bindings = await bindingsFor(
+    sb, companyId, rowsIn.map((r) => String(r.item_code ?? '')),
+  ).catch(() => new Map<string, string>());
+  const erpLines = rowsIn.map((r) => {
+    const own = (r.item_code as string | null) ?? null;
+    const res = own ? resolveAcItemCode(own, { bindings }) : null;
+    return {
+      id: String(r.id),
+      acItemCode: res?.ok ? res.acItemCode : own,
+      desc2: (r.description2 as string | null) ?? null,
+      dtlKey: r.linked_ac_dtlkey == null ? null : Number(r.linked_ac_dtlkey),
+    };
+  });
 
   const plan = planLineRelink({ bookLines, erpLines });
 
