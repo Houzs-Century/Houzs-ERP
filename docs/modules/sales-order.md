@@ -349,6 +349,28 @@ Two things gate it that are easy to miss:
   Date will sit at PENDING / CONFIRMED however much stock is on the shelf. That
   much is intended.
 
+  > **AND WHO RE-WALKS WHEN THE GATE OPENS — added 2026-09-11, because until
+  > that date the answer was NOBODY.** The allocator ran as a side effect of the
+  > LINE routes (`POST/PATCH/DELETE /:docNo/items`), the create path and two
+  > manual endpoints. `patchMfgSalesOrderHeaderHandler` — the one route that
+  > writes `processing_date` — called it nowhere. So the moment an order became
+  > eligible to claim stock, nothing looked, and it stayed PENDING until some
+  > unrelated edit happened to touch a line.
+  >
+  > Measured, not reasoned: a full re-walk on 2026-09-11 moved **702** company-1
+  > lines PENDING -> READY — stock already in the warehouse, orders already
+  > released, some waiting over a year — and corrected 2 the other way (READY
+  > with nothing behind them).
+  >
+  > The header PATCH now re-walks when the request carried `processing_date`.
+  > **GLOBAL, not scoped to the doc**, the same choice the create path makes and
+  > for the same stated reason: an order that starts competing can STEAL stock
+  > from a lower-priority one, and the loser must regress in the same pass rather
+  > than lag. Best-effort — the header CAS has already committed by then, so a
+  > throw would report failure for a save that succeeded. Pinned by
+  > `backend/tests/soHeaderRecomputeWiring.test.ts`; trace in
+  > `docs/bugs/0814-setting-a-sales-order-s-processing-date-opened-the-allocator.md`.
+
   > **CORRECTION (2026-08-18) — the previous version of this bullet described a
   > BUG and called it intended, which is why the bug survived.**
   >
