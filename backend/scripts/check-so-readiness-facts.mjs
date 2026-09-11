@@ -86,7 +86,7 @@ try {
       FROM scm.delivery_return_items dr
       JOIN scm.delivery_returns r ON r.id = dr.delivery_return_id
       JOIN scm.delivery_order_items d ON d.id = dr.do_item_id
-      WHERE COALESCE(r.status, '') <> 'CANCELLED'
+      WHERE r.status IS DISTINCT FROM 'CANCELLED'
       GROUP BY d.so_item_id
     ),
     onhand AS (
