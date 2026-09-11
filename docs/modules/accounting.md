@@ -865,6 +865,26 @@ the reason, for a human to confirm. Offered, never taken: two possible answers i
 a question, so nothing is ticked and he chooses;
 `acc/settlement.ts` confirms, which POSTS that moment.
 
+**The Merchant charges report (2026-09-12, docs/bugs/0826; owner: 我需要知道
+merchant charge 多少%，就是 charge / received amount，每个月的然后每个 merchant …
+每个不同 merchant 都要能看到，我指的是 gross … 每个月全部 merchant 加起来的%).**
+`GET /accounting/reports/merchant-charges?from=YYYY-MM&to=YYYY-MM&acquirer&confirmed`
+(`backend/src/scm/routes/accounting-merchant-charges.ts`, the
+financial-statements permission) reads the merchant reports' lines
+(`acc_settlement_rows`, by trading day) and the bank's own payout charges
+(`acc_settlement_payout_batches.charge_sen`, by the day the payout landed —
+docs/bugs/0787) and answers per month, per acquirer: lines, gross, merchant
+fee, net, fee % of gross, bank charge, the two together and their % of gross;
+a line per month across acquirers; a grand total; and under each
+month-and-acquirer the reports (files) behind it with the same figures.
+`confirmed=1` keeps only confirmed lines; `acquirer` keeps one merchant.
+The tab (`MerchantChargesReport.tsx`, `/scm/accounting?tab=charges`, Reports
+group of the sidebar) shows a month as a block — all merchants first, then
+each merchant, opening to its reports — with month pickers, the merchant
+filter, the confirmed-only tick and an Export of the table as CSV.
+Contracts: `backend/tests/merchantChargesReport.test.ts`,
+`frontend/src/pages/scm-v2/MerchantChargesReport.test.tsx`.
+
 **The Collection report (2026-09-12, docs/bugs/0825; owner: collection
 report … salesman 开了多少单，deposit 收了多少%，below 50% 的我也需要知道; 分主要看
 两个，deposit / sales order amount，一个是看 balance paid).** `GET
