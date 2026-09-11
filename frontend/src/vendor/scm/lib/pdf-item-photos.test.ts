@@ -9,6 +9,7 @@ import {
   buildPhotoGroups,
   collectPhotoImages,
   drawItemPhotosBlock,
+  fetchLinePhotoForPdf,
   GROUP_GAP_X_MM,
   GROUP_HEADER_MM,
   groupBoxSize,
@@ -215,6 +216,42 @@ describe('blobToSquarePdfImage', () => {
     // per-photo best-effort contract is "skip, never fail".
     const out = await blobToSquarePdfImage(new Blob([new Uint8Array([1, 2, 3])]));
     expect(out).toBeNull();
+  });
+});
+
+describe('fetchLinePhotoForPdf (thumb-first, base-on-404)', () => {
+  const thumbBlob = new Blob(['thumb-bytes']);
+  const baseBlob = new Blob(['original-bytes']);
+
+  it('returns the .thumb sibling and never touches the original when the thumb resolves', async () => {
+    const asked: string[] = [];
+    const got = await fetchLinePhotoForPdf((key) => {
+      asked.push(key);
+      return Promise.resolve(thumbBlob);
+    }, 'so-items/SO-1/line-1/pic.jpg');
+    expect(asked).toEqual(['so-items/SO-1/line-1/pic.jpg.thumb']);
+    expect(got).toBe(thumbBlob);
+  });
+
+  it('falls back to the base key when the thumb 404s — the AutoCount cutover case', async () => {
+    const asked: string[] = [];
+    const got = await fetchLinePhotoForPdf((key) => {
+      asked.push(key);
+      return key.endsWith('.thumb')
+        ? Promise.reject(new Error('404'))
+        : Promise.resolve(baseBlob);
+    }, 'so-items/SO-1/line-1/ac-758952-1.jpg');
+    expect(asked).toEqual([
+      'so-items/SO-1/line-1/ac-758952-1.jpg.thumb',
+      'so-items/SO-1/line-1/ac-758952-1.jpg',
+    ]);
+    expect(got).toBe(baseBlob);
+  });
+
+  it('rejects when the original is missing too, so collectPhotoImages skips it', async () => {
+    await expect(
+      fetchLinePhotoForPdf(() => Promise.reject(new Error('gone')), 'k'),
+    ).rejects.toThrow('gone');
   });
 });
 

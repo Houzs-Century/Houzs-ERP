@@ -62,6 +62,7 @@ import {
   buildPhotoGroups,
   collectPhotoImages,
   drawItemPhotosBlock,
+  fetchLinePhotoForPdf,
   PHOTO_MARKER,
   photoKeyOwners,
   photoKeysOf,
@@ -69,7 +70,6 @@ import {
   type PhotoRegion,
 } from './pdf-item-photos';
 import { fetchPoItemPhotoBlob } from './sales-order-queries';
-import { THUMB_KEY_SUFFIX } from '../../../lib/imagePipeline';
 
 type PoHeader = {
   po_number:     string;
@@ -292,9 +292,10 @@ async function renderPurchaseOrderInto(
 
   /* Owner spec 2026-08 — photos follow the line onto the supplier PO. The
      code beside each row chip is the SUPPLIER code (the code they act on).
-     Only `.thumb` siblings are fetched (never originals — PDF size), each
-     photo best-effort: a key whose fetch or decode fails is skipped and the
-     PDF renders without it. */
+     The `.thumb` sibling is fetched first and a line whose thumb 404s falls
+     back to its original (fetchLinePhotoForPdf — the AutoCount cutover keys
+     have no thumb; docs/bugs/0815), each photo best-effort: a key whose fetch
+     or decode fails is skipped and the PDF renders without it. */
   const poId = (header.id ?? '').trim();
   const photoGroups = buildPhotoGroups(orderedItems.map((it) => ({
     code: supplierCodeFor(it, skuMap),
@@ -310,7 +311,7 @@ async function renderPurchaseOrderInto(
         (key) => {
           const ownerId = photoOwners.get(key);
           if (!ownerId) return Promise.reject(new Error('photo_owner_missing'));
-          return fetchPoItemPhotoBlob(poId, ownerId, key + THUMB_KEY_SUFFIX);
+          return fetchLinePhotoForPdf((k) => fetchPoItemPhotoBlob(poId, ownerId, k), key);
         },
         blobToSquarePdfImage,
       )
