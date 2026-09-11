@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   classifyHeaderKey,
+  classifyLine,
   classifyLineItemCode,
   splitAmendmentByLane,
   canLaneTransition,
@@ -66,11 +67,26 @@ describe('classifyLineItemCode', () => {
     expect(classifyLineItemCode('SVC-DISPOSE')).toBe('DELIVERY');
     expect(classifyLineItemCode('svc-lift')).toBe('DELIVERY');
   });
+
+  it('routes a BARE-code service line to DELIVERY by item_group (go-live / AutoCount codes lack the SVC- prefix)', () => {
+    // owner 2026-09-11: DISPOSE / STORAGE / TRANSPORTATION CHARGES carry
+    // item_group='service' but no SVC- prefix — the code-only test used to
+    // mis-route them to LINES (Purchasing).
+    expect(classifyLine({ itemCode: 'DISPOSE', itemGroup: 'service' })).toBe('DELIVERY');
+    expect(classifyLine({ itemCode: 'TRANSPORTATION CHARGES', itemGroup: 'service' })).toBe('DELIVERY');
+    expect(classifyLine({ itemCode: 'STORAGE', itemGroup: 'service' })).toBe('DELIVERY');
+  });
+
+  it('keeps a real product line on LINES regardless of its group', () => {
+    expect(classifyLine({ itemCode: '9028-L(RHF)', itemGroup: 'sofa' })).toBe('LINES');
+    expect(classifyLine({ itemCode: 'PC151-01', itemGroup: null })).toBe('LINES');
+    expect(classifyLine({ itemCode: 'JAGER-(Q)', itemGroup: 'bedframe' })).toBe('LINES');
+  });
 });
 
 describe('splitAmendmentByLane', () => {
   type L = { id: string; code: string | null };
-  const byCode = (l: L) => l.code;
+  const byCode = (l: L) => ({ itemCode: l.code });
 
   it('splits a mixed submission into both lanes (proc date rides LINES)', () => {
     const split = splitAmendmentByLane<L>(
@@ -112,6 +128,21 @@ describe('splitAmendmentByLane', () => {
       byCode,
     );
     expect(split.lanes).toEqual(['DELIVERY']);
+  });
+
+  it('splits a bare-code service line into DELIVERY via item_group', () => {
+    // The go-live shape that mis-routed to Purchasing: a real product line plus a
+    // DISPOSE service line whose code has no SVC- prefix. The item_group in the
+    // identity lands the DISPOSE line in its own DELIVERY (Logistics) document.
+    type LG = { id: string; code: string | null; group: string | null };
+    const split = splitAmendmentByLane<LG>(
+      {},
+      [{ id: 'a', code: '9028-L(RHF)', group: 'sofa' }, { id: 'b', code: 'DISPOSE', group: 'service' }],
+      (l) => ({ itemCode: l.code, itemGroup: l.group }),
+    );
+    expect(split.lanes).toEqual(['LINES', 'DELIVERY']);
+    expect(split.perLane.LINES.lines.map((l) => l.id)).toEqual(['a']);
+    expect(split.perLane.DELIVERY.lines.map((l) => l.id)).toEqual(['b']);
   });
 });
 

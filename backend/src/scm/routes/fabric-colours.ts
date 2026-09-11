@@ -46,20 +46,27 @@ export const fabricColours = new Hono<{ Bindings: Env; Variables: Variables }>()
  *  within minutes of the deploy. The padded twin must resolve to the same code
  *  (that is why the trim is here at all) AND the live row must win, so the
  *  question is per CODE, not per row. */
-export const retiredSeriesSet = (
-  rows: readonly { id?: unknown; active?: unknown }[],
+export const retiredByCode = (
+  rows: readonly Record<string, unknown>[],
+  codeField: string,
+  activeField: string,
 ): Set<string> => {
   const seen = new Set<string>();
   const live = new Set<string>();
   for (const r of rows) {
-    const id = String(r.id ?? "").trim();
-    if (!id) continue;
-    seen.add(id);
-    if (r.active === true) live.add(id);
+    const code = String(r[codeField] ?? "").trim();
+    if (!code) continue;
+    seen.add(code);
+    if (r[activeField] === true) live.add(code);
   }
-  for (const id of live) seen.delete(id);
+  for (const code of live) seen.delete(code);
   return seen;
 };
+
+/** The fabric_library flavour: `id` + `active`. */
+export const retiredSeriesSet = (
+  rows: readonly { id?: unknown; active?: unknown }[],
+): Set<string> => retiredByCode(rows as readonly Record<string, unknown>[], "id", "active");
 
 /** Is this colour's SERIES switched off in the fabric library?
  *
@@ -127,6 +134,32 @@ fabricColours.get("/", async (c) => {
      and never blanks a selection, and the allowed-options gate reads the
      Model's pool, not this flag. 26 live sales-order lines already carry a
      discontinued series and keep displaying it. docs/bugs/0816. */
+  /* A RETIRED FABRIC CODE, asked per CODE and not per ROW. `fabric_trackings`
+     is keyed by `id`, not by `fabric_code`, and 21 codes on production carry TWO
+     rows for the same code - one active beside one retired, usually a plain id
+     next to a `FABRIC_`-prefixed twin (`HR805-90` retired alongside
+     `FABRIC_HR805-90` active; same for HR805-10 and AVANI-01..12).
+
+     THE DESKTOP PICKER USED TO DO THIS CLIENT-SIDE, row by row, and the dead
+     twin hid the live one: MEASURED 2026-09-11 it hid 21 active colours and ALL
+     21 were hidden WRONGLY. Mobile did not filter at all, so the same fabric was
+     pickable on a phone and missing on a computer - which is how the owner found
+     it ("HR805-90 找不到").
+
+     It lives HERE, not in the two clients, for the reason the owner gave:
+     one rule. The desktop no longer filters and the mobile sheet gets the rule
+     for free, with no extra fetch on a phone. Owner 2026-09-11:
+     「它只要有启用，就有打开」. docs/bugs/0818. */
+  let retiredCodes = new Set<string>();
+  {
+    let trk = supabase.from("fabric_trackings").select("fabric_code, is_active");
+    trk = scopeToCompany(trk, c);
+    const { data: trkRows, error: trkErr } = await trk;
+    /* Same degradation rule as the series read below: an unreadable stock
+       register must not empty the picker. */
+    if (!trkErr) retiredCodes = retiredByCode(trkRows ?? [], "fabric_code", "is_active");
+  }
+
   let retiredSeries = new Set<string>();
   {
     let lib = supabase.from("fabric_library").select("id, active");
@@ -141,6 +174,7 @@ fabricColours.get("/", async (c) => {
   // Dual-read camelCase ?? snake_case — cover the PostgREST casing either way.
   const colours = (data ?? [])
     .filter((r: Record<string, unknown>) => !seriesIsRetired(retiredSeries, r.fabricId ?? r.fabric_id))
+    .filter((r: Record<string, unknown>) => !seriesIsRetired(retiredCodes, r.colourId ?? r.colour_id))
     .map((r: Record<string, unknown>) => ({
     fabricId: r.fabricId ?? r.fabric_id ?? "",
     colourId: r.colourId ?? r.colour_id ?? "",

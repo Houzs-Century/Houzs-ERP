@@ -110,6 +110,18 @@ const asMovement = (l: Row, jeNo: string | null, jeNos: string[] = []): Statemen
   jeNos: String(l.state) === 'POSTED' ? [...new Set([...jeNosOf(l.posted_je_no), ...jeNos])] : [],
 });
 
+/** The match rows by line — ONE index for both readers of a month
+    (docs/bugs/0818: the lock indexed nothing and carried a claimed entry). */
+const matchesByLineOf = (matches: Row[]): Map<number, Row[]> => {
+  const out = new Map<number, Row[]>();
+  for (const m of matches) {
+    const key = Number(m.bank_line_id);
+    const at = out.get(key);
+    if (at) at.push(m); else out.set(key, [m]);
+  }
+  return out;
+};
+
 /** The entries a line's match rows name, by line. */
 const jeNosByLine = (matches: Row[]): Map<number, string[]> => {
   const out = new Map<number, string[]>();
@@ -309,7 +321,9 @@ export async function loadMonthForLock(
   const matchRes = await sb.from('acc_bank_statement_matches')
     .select('bank_line_id, je_no').eq('company_id', companyId);
   if (matchRes.error) return { ok: false, reason: matchRes.error.message };
-  const jesOf = jeNosByLine(rowsOf(matchRes.data));
+  const matchRows = rowsOf(matchRes.data);
+  const matchesByLine = matchesByLineOf(matchRows);
+  const jesOf = jeNosByLine(matchRows);
   const movements = lines.map((l) => asMovement(l, jeNosOf(l.posted_je_no)[0] ?? null, jesOf.get(Number(l.id)) ?? []));
   const firstPeriodFrom = allStatements.map((s) => dayOf(s.period_from) ?? '').filter(Boolean).sort()[0] ?? null;
 
@@ -330,8 +344,15 @@ export async function loadMonthForLock(
       statementClosingSen: assembly.statementClosingSen,
       movements,
       ledger: ledger.movements,
+      /* What EARLIER months' lines claim — by the entry the line names AND by
+         the match table, the same two sources the month screen reads. A line
+         matched to two entries names only the first on itself (May 2026's
+         RM 55,000 deposit: the receipt, with the RM 45,000 rental in the match
+         table alone); reading the line alone carried that rental into June as
+         still outstanding and the lock refused a month the screen said tallied
+         (docs/bugs/0818). */
       claimedElsewhere: claimedSetFor(
-        { claimed: claimedOutside(everyLine, new Set(lines.map((l) => Number(l.id))), new Map()), firstPeriodFrom },
+        { claimed: claimedOutside(everyLine, new Set(lines.map((l) => Number(l.id))), matchesByLine), firstPeriodFrom },
         ledger.movements,
       ),
     }),
@@ -388,12 +409,7 @@ export const bankMonthDetail = bankGuard(async (c) => {
   if (!rules.ok) return c.json({ error: 'load_failed', reason: rules.reason }, 500);
   if (!payouts.ok) return c.json({ error: 'load_failed', reason: payouts.reason }, 500);
 
-  const matchesByLine = new Map<number, Row[]>();
-  for (const m of rowsOf(matchRes.data)) {
-    const key = Number(m.bank_line_id);
-    const at = matchesByLine.get(key);
-    if (at) at.push(m); else matchesByLine.set(key, [m]);
-  }
+  const matchesByLine = matchesByLineOf(rowsOf(matchRes.data));
 
   /* Rule 1: the month takes the lines whose own date is in it, from whichever
      file they arrived in. Each OPEN card movement is decided again against
