@@ -2568,9 +2568,11 @@ changed — that is the HC12445 report. The 2026-09-11 version (#3615, 0804) use
 `d.do_date` as a proxy for the book's delivery date; MEASURED against the live
 book, the book's line delivery date differs from its own document date on **65 of
 235** linked delivery orders, so that repair would have written a wrong date on
-65 live documents. It was deleted along with its workflow
-(`repair-do-delivery-dates-to-autocount.mjs` [gone],
-`.github/workflows/repair-do-delivery-dates.yml` [gone]).
+65 live documents. Both it and its workflow ("Repair DO delivery dates to follow
+AutoCount") are DELETED, so neither can be dispatched from an older copy of the
+handoff. Their paths are not cited here on purpose: `audit:doc-refs` resolves
+every repo path a CURRENT doc names and has no [gone] escape, unlike
+`audit:docs-drift`.
 
 The book's real field is `SODTL/DODTL.DeliveryDate`, per LINE. **The inbound pull
 does not carry it** — `/DeliveryOrder/getSince` is a nine-column header
