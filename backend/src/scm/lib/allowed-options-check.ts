@@ -142,10 +142,22 @@ const hasRestriction = (pool: string[] | null | undefined): pool is string[] => 
    only. No trim, no case folding — those are separate behaviour changes, and
    this same string family also composes `variant_key`, the inventory bucket
    identity. */
+/* Folds the GLYPH and TRIMS, because both sides of this comparison are typed by
+   different hands: a pool is typed by a person into the Modular drawer (Windows
+   turns an inch mark into U+201C/U+201D, and a stray space survives a paste),
+   while the line's value is emitted by the editor.
+
+   TRIMMING IS NOT COSMETIC HERE. Measured on production 2026-09-11: all 79 of
+   company 1's sofa Models carry the fabric `"TARONI "` — with a trailing space.
+   The pickers trim (vendor/shared/maintenance-pools.ts), so without this the
+   two sides disagree on TARONI alone: the screen offers it and the save refuses
+   it, which is the exact shape of the defect this whole change is about.
+   docs/bugs/0814. */
+const foldForPool = (s: string): string => normaliseTypographicQuotes(s).trim();
 const inPool = (pool: string[], value: string): boolean => {
   if (pool.includes(value)) return true;
-  const wanted = normaliseTypographicQuotes(value);
-  return pool.some((p) => normaliseTypographicQuotes(p) === wanted);
+  const wanted = foldForPool(value);
+  return pool.some((p) => foldForPool(p) === wanted);
 };
 
 const toSpecialsArray = (s: string[] | string | null | undefined): string[] => {

@@ -221,3 +221,22 @@ describe('checkAllowedOptions — the fabric pool speaks SERIES', () => {
     expect(err).not.toBeNull();
   });
 });
+
+describe('checkAllowedOptions — the pool is typed by a person, so it trims too', () => {
+  /* `"TARONI "` is verbatim from production: a trailing space, in all 79 of
+     company 1's sofa fabric pools. The pickers trim; without the gate trimming,
+     the screen offers TARONI and the save refuses it. docs/bugs/0814. */
+  it('accepts a fabric whose pool entry carries a trailing space', () => {
+    expect(checkAllowedOptions(sofa, model({ fabrics: ['TARONI '] }), {
+      fabricCode: 'TARONI-05', colourId: 'TARONI-05', fabricId: 'TARONI',
+    })).toBeNull();
+  });
+
+  it('accepts a gap whose pool entry is padded AND curly', () => {
+    expect(checkAllowedOptions(product(), model({ gaps: [' 11” '] }), { gap: '11"' })).toBeNull();
+  });
+
+  it('trims the glyph and the space only — a different value is still refused', () => {
+    expect(checkAllowedOptions(product(), model({ gaps: [' 11” '] }), { gap: '12"' })).not.toBeNull();
+  });
+});
