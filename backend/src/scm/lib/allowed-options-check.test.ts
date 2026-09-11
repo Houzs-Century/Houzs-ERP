@@ -150,3 +150,74 @@ describe('checkAllowedOptions — unchanged behaviour', () => {
     expect(err!.allowed).toEqual(PROD_TOTAL_HEIGHTS);
   });
 });
+
+/* ── The fabric pool holds SERIES, and the line sends a COLOUR ──────────────
+   The owner opened every sofa Model's fabric allow-list and his staff still
+   could not pick a fabric. Cause: the screen that FILLS the pool
+   (ProductModelDetail's Modular drawer) offers `fabric_library.id` - a fabric
+   SERIES - while this gate compared the line's `fabricCode`/`colourId`, a
+   COLOUR. One field, two vocabularies.
+
+   MEASURED on production 2026-09-11, company 1: all 79 sofa Models carry the
+   SAME 101-entry pool; 91 entries are library ids, 3 are colour ids, 10 are
+   library LABELS ("GD2034 (HIVE)"); 851 colours are active. Three of 851 could
+   be picked. The pool values and the line shape below are copied from that
+   measurement, not invented - `BO315` is in the real pool and
+   `{"colourId":"BO315-23","fabricId":"BO315"}` is a real saved line.
+   docs/bugs/0814. */
+const REAL_POOL_HEAD = ['311', 'A201', 'AH', 'ALPINE-5311', 'AM275', 'AMBER', 'AVANI', 'BN125', 'BO315', 'BYD'];
+const sofa = product({ code: '8030-1A(LHF)', category: 'SOFA' });
+
+describe('checkAllowedOptions — the fabric pool speaks SERIES', () => {
+  const pool = model({ fabrics: REAL_POOL_HEAD });
+
+  it('accepts a colour whose SERIES is in the pool (the case that was refused)', () => {
+    expect(checkAllowedOptions(sofa, pool, {
+      fabricCode: 'BO315-23', colourId: 'BO315-23', fabricId: 'BO315',
+    })).toBeNull();
+  });
+
+  it('still accepts a pool entry that is a COLOUR, so a per-shade allow keeps working', () => {
+    expect(checkAllowedOptions(sofa, model({ fabrics: ['BO315-23'] }), {
+      fabricCode: 'BO315-23', colourId: 'BO315-23', fabricId: 'BO315',
+    })).toBeNull();
+  });
+
+  it('STILL REFUSES a fabric whose series is not in the pool — the gate is not switched off', () => {
+    const err = checkAllowedOptions(sofa, pool, {
+      fabricCode: 'GD2502-11', colourId: 'GD2502-11', fabricId: 'GD2502',
+    });
+    expect(err).not.toBeNull();
+    expect(err!.field).toBe('fabric');
+    expect(err!.value).toBe('GD2502-11');
+    expect(err!.allowed).toEqual(REAL_POOL_HEAD);
+  });
+
+  it('refuses when the line carries NO series and the colour is not in the pool', () => {
+    // A line written before pickFabricColour sent fabricId. Nothing to resolve
+    // by, so the old answer stands - the gate must not guess a series from the
+    // colour's spelling.
+    expect(checkAllowedOptions(sofa, pool, { fabricCode: 'BO315-23' })).not.toBeNull();
+  });
+
+  it('an EMPTY pool still gates nothing, series or not', () => {
+    expect(checkAllowedOptions(sofa, model({ fabrics: [] }), {
+      fabricCode: 'GD2502-11', fabricId: 'GD2502',
+    })).toBeNull();
+  });
+
+  it('a series that matches nothing does not accidentally pass an unrelated colour', () => {
+    expect(checkAllowedOptions(sofa, pool, {
+      fabricCode: 'ZZZ-01', colourId: 'ZZZ-01', fabricId: 'ZZZ',
+    })).not.toBeNull();
+  });
+
+  it('a pool entry stored as a LABEL matches neither colour nor series — the 10 rows a repair must fix', () => {
+    // "GD2034 (HIVE)" is fabric_library.label, not .id. Accepting labels here
+    // would make the gate guess at display text; the data is repaired instead.
+    const err = checkAllowedOptions(sofa, model({ fabrics: ['GD2034 (HIVE)'] }), {
+      fabricCode: 'GD2034-01', colourId: 'GD2034-01', fabricId: 'GD2034',
+    });
+    expect(err).not.toBeNull();
+  });
+});

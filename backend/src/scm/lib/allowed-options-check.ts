@@ -77,6 +77,12 @@ export type VariantsLite = {
    *  carries the same code from the POS picker. Validated against opts.fabrics. */
   fabricCode?:    string | null;
   colourId?:      string | null;
+  /** The fabric SERIES behind that colour (`fabric_library.id`, e.g. 'BO315'
+   *  for the colour 'BO315-23'). SoLineCard's pickFabricColour has written it on
+   *  every pick since the selling fabric-tier add-on needed it, and 3,732 live
+   *  sales-order lines carry it. The fabric gate reads it because the Modular
+   *  drawer's pool is a list of SERIES, not colours — see the block below. */
+  fabricId?:      string | null;
 } | null | undefined;
 
 /** One input BEHIND a refused field that the operator can actually edit.
@@ -335,11 +341,33 @@ export function checkAllowedOptions(
     }
   }
 
-  // Fabric (SOFA + BEDFRAME) — the chosen colour code must be enabled on this
-  // Model. opts.fabrics holds fabric_colours.colour_id values; the line carries
-  // it as fabricCode (canonical) or colourId (POS picker). Empty pool = no gate.
+  /* Fabric (SOFA + BEDFRAME) — the chosen fabric must be enabled on this Model.
+     Empty pool = no gate.
+
+     THE POOL IS A LIST OF SERIES, NOT COLOURS, AND BOTH ARE ACCEPTED. This
+     comment used to read "opts.fabrics holds fabric_colours.colour_id values",
+     and the code matched the comment — but the SCREEN THAT FILLS THE POOL offers
+     SERIES: ProductModelDetail hands the drawer
+     `fabricLibQ.data.filter(active).map(f => f.id)`, i.e. fabric_library ids.
+     One field, two vocabularies, and the owner found it the only way anybody
+     could: he opened the allow and his staff still could not pick.
+
+     MEASURED on production 2026-09-11 (company 1): all 79 sofa Models carry the
+     SAME 101-entry pool, 91 of those entries are fabric_library ids and 3 are
+     colour ids, while 851 fabric colours are active. So of 851 colours exactly
+     THREE could be picked, and `GD2502-11` — active, and the one he reported —
+     was refused by every Model.
+
+     Accepting both is the fix rather than rewriting the pool, because the two
+     readings are not in conflict: a SERIES in the pool means "this Model offers
+     this fabric", which is how the business approves a fabric (you approve the
+     cloth, not each shade), and it keeps working when the supplier adds a shade.
+     A COLOUR in the pool still means that one shade. docs/bugs/0814. */
   const fabricPick = v.fabricCode ?? v.colourId ?? null;
-  if (fabricPick && hasRestriction(opts.fabrics) && !inPool(opts.fabrics, fabricPick)) {
+  const fabricSeries = v.fabricId ?? null;
+  if (fabricPick && hasRestriction(opts.fabrics)
+      && !inPool(opts.fabrics, fabricPick)
+      && !(fabricSeries && inPool(opts.fabrics, fabricSeries))) {
     return {
       error: 'variant_not_allowed',
       field: 'fabric',
