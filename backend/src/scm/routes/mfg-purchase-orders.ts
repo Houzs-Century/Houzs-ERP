@@ -2269,8 +2269,19 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       return c.json({ error: 'supplier_mismatch', reason: 'None of the picked SO lines belong to this PO’s supplier.' }, 409);
     }
     const appendFrom = await nextPoLineNo(supabase, target.id);
+    /* SKU wins — the same rule create and add-item already run. Convert used to
+       trust the caller's itemGroup, which is how a sofa reached a PO as
+       `others` and stopped covering its own sales-order line (docs/bugs/0808). */
+    const convGroupOf = await skuCategoryResolver(
+      supabase,
+      targetLines.map((l) => ({ materialKind: 'mfg_product', itemCode: l.itemCode })),
+      activeCompanyId(c) ?? null,
+    );
     const rows = stampPoLineNos(
-      targetLines.map((l) => poConvertLineRow(target.id, l, fromMrp)), appendFrom);
+      targetLines.map((l) => poConvertLineRow(
+        target.id, l, fromMrp,
+        convGroupOf({ materialKind: 'mfg_product', itemCode: l.itemCode, itemGroup: l.itemGroup }),
+      )), appendFrom);
     const { error: iErr } = await supabase.from('purchase_order_items').insert(stampCompany(rows, c));
     if (iErr) return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500);
     await recomputePoTotals(supabase, target.id);
@@ -2382,8 +2393,18 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
 
     // A fresh PO numbers from 1, in the sales orders' order, not the picks'.
     // Both arms build the same row — lib/po-convert-line.ts owns its shape.
+    const bucketLines = sortBySourceSoLine(bucket.lines);
+    /* Same SKU-decides-the-category rule as the append arm above. */
+    const bucketGroupOf = await skuCategoryResolver(
+      supabase,
+      bucketLines.map((l) => ({ materialKind: 'mfg_product', itemCode: l.itemCode })),
+      activeCompanyId(c) ?? null,
+    );
     const rows = stampPoLineNos(
-      sortBySourceSoLine(bucket.lines).map((l) => poConvertLineRow(header.id, l, fromMrp)), 1);
+      bucketLines.map((l) => poConvertLineRow(
+        header.id, l, fromMrp,
+        bucketGroupOf({ materialKind: 'mfg_product', itemCode: l.itemCode, itemGroup: l.itemGroup }),
+      )), 1);
     const { error: iErr } = await supabase.from('purchase_order_items').insert(stampCompany(rows, c));
     if (iErr) {
       await supabase.from('purchase_orders').delete().eq('id', header.id);

@@ -46,6 +46,7 @@ export function poConvertLineRow(
   purchaseOrderId: string,
   l: PoConvertLine,
   fromMrp: boolean,
+  resolvedItemGroup: string | null,
 ): Record<string, unknown> {
   return {
     purchase_order_id: purchaseOrderId,
@@ -63,9 +64,24 @@ export function poConvertLineRow(
     warehouse_id: l.warehouseId,
     /* Commander 2026-05-29 — carry the variant through to the PO so the line
        shows its config + the MRP can match outstanding PO supply by variant. */
-    item_group: l.itemGroup,
+    /* THE SKU DECIDES THE CATEGORY, and this arm used to be the exception.
+       `create` and `add-item` both run `lineIdentityFields(skuCategoryResolver…)`
+       (docs/bugs/0514); convert copied `l.itemGroup` from whatever reached the
+       route, so the same sofa could land as `others` here and as `sofa` there.
+       That is not cosmetic: `item_group` composes the variant key AND decides
+       `isHardBoundLine`, so a company-1 sofa PO line written as `others` is not
+       "dedicated" — the MRP page reports its sales-order line as SHORT while the
+       purchase order sits open, and the buyer is told to order goods that are
+       already on order (HC-PO-010087 / HC-SO-013389, owner-reported 2026-09-11).
+
+       REQUIRED, not defaulted, for the same reason `fromMrp` is: a decision that
+       changes the stored row must fail to COMPILE when a new caller forgets it,
+       never fall back to one arm's answer (CLAUDE.md, BUG CLASS
+       optional-param-noop). Pass `groupOf(line)` from `skuCategoryResolver` — it
+       already falls back to the line's own group when the SKU is not catalogued. */
+    item_group: resolvedItemGroup,
     variants: l.variants,
-    description2: buildVariantSummary(String(l.itemGroup ?? ''), l.variants ?? null) || null,
+    description2: buildVariantSummary(String(resolvedItemGroup ?? ''), l.variants ?? null) || null,
     // Release-on-delete link (migration 0098) — every from-SO line carries its
     // source SO line so recomputeSoPicked can release it on delete/cancel.
     so_item_id: l.soItemId,
