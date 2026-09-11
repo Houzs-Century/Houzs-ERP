@@ -203,6 +203,12 @@ type DoItem = {
      deliberately carries NO so_item_id, so this flag is the only thing that
      tells it apart from an ordinary ad-hoc line. Owner ruling 2026-09-07. */
   ac_substituted?: boolean;
+  /* Per-line delivery date + whether an operator typed it (as opposed to it
+     following the header). Both have been on the detail GET's ITEM select since
+     the column existed; this page had no field for them, which is why the date
+     was editable in the form and invisible on the document. */
+  line_delivery_date?: string | null;
+  line_delivery_date_overridden?: boolean | null;
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -1018,6 +1024,41 @@ export function DeliveryOrderDetailV2() {
           </span>
         </span>
       ),
+    },
+    /* Delivery date, per line. The API has returned `line_delivery_date` on
+       every detail GET since the column went in (the ITEM select above), and
+       this page simply never rendered it — so the date an operator could see
+       and edit in the DO form was invisible on the document itself. Owner
+       2026-09-11: 「我看到是有的 可是外面没有」.
+
+       getValue is the ISO string so the column sorts, filters and exports as a
+       date; `render` formats it. An inherited date (the header's, not typed on
+       this line) is shown muted, the same distinction the form's date field
+       makes with its "Auto-inherited" styling. */
+    {
+      key: "lineDeliveryDate",
+      label: "Delivery date",
+      width: "132px",
+      getValue: (l) => l.line_delivery_date ?? "",
+      render: (l) =>
+        l.line_delivery_date ? (
+          <span
+            className={
+              l.line_delivery_date_overridden
+                ? "text-[13px] text-ink"
+                : "text-[13px] text-ink-secondary"
+            }
+            title={
+              l.line_delivery_date_overridden
+                ? "Set on this line"
+                : "Follows the header's customer delivery date"
+            }
+          >
+            {fmtDate(l.line_delivery_date)}
+          </span>
+        ) : (
+          <span className="text-[13px] text-ink-muted">—</span>
+        ),
     },
     /* Photos (mig 20260828T0746) — the line's carried SO reference shots,
        openable. Same column idiom as the SO detail's Photos column: getValue is
