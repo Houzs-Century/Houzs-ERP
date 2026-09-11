@@ -212,8 +212,14 @@ try {
 
     if (!ours.length) { buckets.noLines.push({ ...d, po, why: `purchase order ${po.po_number} holds no line in that group` }); continue; }
 
-    const theirs = d.lines.map((l) => suffix(l.code));
-    const mine = ours.map((r) => suffix(r.item_code));
+    /* EXPANDED BY QUANTITY, because the two systems write one sofa two ways:
+       the supplier bills two single seats as TWO rows of 1, we hold ONE row of
+       qty 2 (HC-PO-009989: supplier `1S` + `1S`, ours `8030-1S x2`). Comparing
+       rows made that read as "the supplier built something else" - the bucket
+       that costs money - on a document that agrees exactly. */
+    const expand = (piece, qty) => Array.from({ length: Math.max(1, Math.round(Number(qty) || 1)) }, () => piece);
+    const theirs = d.lines.flatMap((l) => expand(suffix(l.code), l.qty));
+    const mine = ours.flatMap((r) => expand(suffix(r.item_code), r.qty));
     const rec = {
       ...d, po,
       theirs, mine,
@@ -237,7 +243,11 @@ try {
        Where they do not, the variant question is answered after the pieces are
        corrected, and saying so is better than comparing the wrong pair. */
     const diffs = [];
-    for (let i = 0; i < d.lines.length && sameBag && sameSeq; i += 1) {
+    /* Row-for-row, not piece-for-piece: a quantity-collapsed row (one line of
+       qty 2 against two lines of 1) agrees on pieces but has no line i to pair,
+       so the variants are answered once the rows are split, not guessed here. */
+    const rowsPair = d.lines.length === ours.length;
+    for (let i = 0; i < d.lines.length && sameBag && sameSeq && rowsPair; i += 1) {
       const raw = d.lines[i].desc2;
       if (!raw) continue;
       /* parseSofa(d2, model) - the module that owns this grammar. Its shape is
@@ -261,7 +271,8 @@ try {
     if (!sameBag) buckets.multiset.push(rec);
     else if (!sameSeq) buckets.sequence.push(rec);
     if (sameBag && sameSeq && diffs.length) buckets.variants.push({ ...rec, diffs });
-    if (sameBag && sameSeq && !diffs.length) buckets.agree.push(rec);
+    if (sameBag && sameSeq && !diffs.length && rowsPair) buckets.agree.push(rec);
+    if (sameBag && sameSeq && !rowsPair) buckets.variantsDeferred.push(rec);
     if (!(sameBag && sameSeq)) buckets.variantsDeferred.push(rec);
   }
 

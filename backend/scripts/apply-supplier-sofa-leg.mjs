@@ -113,8 +113,16 @@ try {
        ORDER BY i.id`;
     if (!ours.length) { skipped.push(`${po.po_number}: no sofa line`); continue; }
 
-    const theirs = lines.map((l) => pieceSuffix(l.code));
-    const mine = ours.map((r) => pieceSuffix(r.item_code));
+    /* Expanded by quantity — the supplier bills two single seats as two rows,
+       we may hold one row of qty 2 (HC-PO-009989). Pieces are compared expanded;
+       the line-for-line mapping below then needs the ROWS to line up too. */
+    const expand = (piece, qty) => Array.from({ length: Math.max(1, Math.round(Number(qty) || 1)) }, () => piece);
+    const theirs = lines.flatMap((l) => expand(pieceSuffix(l.code), l.qty));
+    const mine = ours.flatMap((r) => expand(pieceSuffix(r.item_code), r.qty));
+    if (lines.length !== ours.length) {
+      skipped.push(`${po.po_number}: ${lines.length} supplier row(s) against ${ours.length} of ours — a quantity-collapsed row has no line to pair with`);
+      continue;
+    }
     if (bag(theirs) !== bag(mine)) {
       skipped.push(`${po.po_number}: pieces differ — supplier ${theirs.join('+')} vs ours ${mine.join('+')}`);
       continue;
