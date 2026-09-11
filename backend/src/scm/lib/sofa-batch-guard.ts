@@ -20,6 +20,7 @@
 
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { loadSofaBatchStock, sofaStockKey } from './sofa-set-coverage';
+import { pgrestIn } from './pgrest-in-list';
 
 export type SofaGuardLine = {
   itemCode: string;
@@ -46,9 +47,13 @@ export async function findSofaLinesWithoutCompleteBatch(
   const codes = [...new Set(lines.map((l) => l.itemCode).filter(Boolean))];
   const batchedCodes = new Set<string>();
   if (codes.length > 0) {
-    let catQ = sb.from('mfg_products').select('code, category').in('code', codes);
+    let catQ = pgrestIn(sb.from('mfg_products').select('code, category'), 'code', codes);
     if (companyId != null) catQ = catQ.eq('company_id', companyId);
-    const { data: catRows } = await catQ;
+    const { data: catRows, error: catErr } = await catQ;
+    if (catErr) {
+      // eslint-disable-next-line no-console
+      console.error('[sofa-batch-guard] mfg_products category read failed:', (catErr as { message?: unknown }).message ?? catErr);
+    }
     for (const p of (catRows ?? []) as Array<{ code: string; category: string | null }>) {
       if ((p.category ?? '').toUpperCase() === 'SOFA') batchedCodes.add(p.code);
     }
@@ -132,9 +137,13 @@ export async function detectSofaSoItemIds(
   const codes = [...new Set(rows.map((r) => r.itemCode).filter(Boolean))];
   const sofaCodes = new Set<string>();
   if (codes.length > 0) {
-    let catQ = sb.from('mfg_products').select('code, category').in('code', codes);
+    let catQ = pgrestIn(sb.from('mfg_products').select('code, category'), 'code', codes);
     if (companyId != null) catQ = catQ.eq('company_id', companyId);
-    const { data: cats } = await catQ;
+    const { data: cats, error: catErr } = await catQ;
+    if (catErr) {
+      // eslint-disable-next-line no-console
+      console.error('[sofa-batch-guard] mfg_products category read failed:', (catErr as { message?: unknown }).message ?? catErr);
+    }
     for (const p of (cats ?? []) as Array<{ code: string; category: string | null }>) {
       if ((p.category ?? '').toUpperCase() === 'SOFA') sofaCodes.add(p.code);
     }
@@ -157,9 +166,13 @@ async function detectSofa(
   const codes = [...new Set(rows.map((r) => r.item_code).filter(Boolean))];
   const sofaCodes = new Set<string>();
   if (codes.length > 0) {
-    let catQ = sb.from('mfg_products').select('code, category').in('code', codes);
+    let catQ = pgrestIn(sb.from('mfg_products').select('code, category'), 'code', codes);
     if (companyId != null) catQ = catQ.eq('company_id', companyId);
-    const { data: cats } = await catQ;
+    const { data: cats, error: catErr } = await catQ;
+    if (catErr) {
+      // eslint-disable-next-line no-console
+      console.error('[sofa-batch-guard] mfg_products category read failed:', (catErr as { message?: unknown }).message ?? catErr);
+    }
     for (const p of (cats ?? []) as Array<{ code: string; category: string | null }>) {
       if ((p.category ?? '').toUpperCase() === 'SOFA') sofaCodes.add(p.code);
     }

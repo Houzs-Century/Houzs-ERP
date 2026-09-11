@@ -52,6 +52,7 @@ import { isServiceLine } from '../shared/service-sku';
 import { resolveExpectedBatchBySoItem } from './dropship-batch';
 import { chunkIn, UUID_CHUNK } from './paginate-all';
 import type { MrpResult } from '../routes/mrp';
+import { pgrestIn } from './pgrest-in-list';
 
 /* One bucket's forward trace: the source PO numbers (sorted, GRN-healed) plus
    how many of its shipped units came out of a PO-less stock ADJUSTMENT. */
@@ -648,15 +649,18 @@ export async function soLineReadySourcePos(
     };
     const lots: LotRow[] = [];
     for (let i = 0; i < codes.length; i += CHUNK) {
-      let q = sb.from('inventory_lots')
-        .select('id, warehouse_id, item_code, variant_key, qty_remaining, batch_no, source_doc_type, source_doc_id, received_at')
-        .in('item_code', codes.slice(i, i + CHUNK))
+      let q = pgrestIn(sb.from('inventory_lots')
+        .select('id, warehouse_id, item_code, variant_key, qty_remaining, batch_no, source_doc_type, source_doc_id, received_at'), 'item_code', codes.slice(i, i + CHUNK))
         .in('warehouse_id', whIds)
         .gt('qty_remaining', 0)
         .order('received_at', { ascending: true })
         .order('id', { ascending: true });
       if (companyId != null) q = q.eq('company_id', companyId);
-      const { data } = await q;
+      const { data, error } = await q;
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error('[source-po-trace] inventory_lots read failed:', (error as { message?: unknown }).message ?? error);
+      }
       for (const l of (data ?? []) as LotRow[]) lots.push(l);
     }
     if (lots.length === 0) return out;

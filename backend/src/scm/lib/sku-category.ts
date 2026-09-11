@@ -27,6 +27,8 @@
    -------------------------------------------------------------------------- */
 
 /** The shape this helper needs off a request line. */
+import { pgrestIn } from './pgrest-in-list';
+
 export type CategoryResolvableLine = {
   materialKind?: unknown;
   itemCode?: unknown;
@@ -65,7 +67,7 @@ export async function skuCategoryMap(
   )];
   if (codes.length === 0) return out;
   try {
-    let q = sb.from('mfg_products').select('code, category').in('code', codes);
+    let q = pgrestIn(sb.from('mfg_products').select('code, category'), 'code', codes);
     if (companyId != null) q = q.eq('company_id', companyId);
     const { data, error } = await q;
     /* FAIL SOFT, BUT NEVER SILENT. An empty map sends every line back to the

@@ -41,6 +41,7 @@ import { chunkIn } from './paginate-all';
 import { scopeToCompany } from './companyScope';
 import type { CompanyScopeCtx } from './companyScope';
 import { normCategory } from './so-readiness';
+import { pgrestIn } from './pgrest-in-list';
 
 const MAIN_CATS = new Set(['SOFA', 'BEDFRAME', 'MATTRESS']);
 
@@ -140,10 +141,14 @@ export async function deriveDisplayBrandingRowByDoc(
   const productBranding = new Map<string, string>();
   for (let i = 0; i < codes.length; i += 300) {
     const chunk = codes.slice(i, i + 300);
-    const { data: prodRows } = await scopeToCompany(
-      sb.from('mfg_products').select('code, category, branding').in('code', chunk),
+    const { data: prodRows, error: prodErr } = await scopeToCompany(
+      pgrestIn(sb.from('mfg_products').select('code, category, branding'), 'code', chunk),
       c,
     );
+    if (prodErr) {
+      // eslint-disable-next-line no-console
+      console.error('[so-display-branding] mfg_products read failed:', (prodErr as { message?: unknown }).message ?? prodErr);
+    }
     for (const p of (prodRows ?? []) as Array<{ code: string; category: string | null; branding: string | null }>) {
       if (p.category) productCategory.set(p.code, normCategory(p.category));
       if (!isBlank(p.branding)) productBranding.set(p.code, p.branding!.trim());
