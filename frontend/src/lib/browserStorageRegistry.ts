@@ -159,6 +159,7 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "components/useAnnouncementBanner.ts",
   "hooks/useIdentityPreference.ts",
   "hooks/useLocalStorage.ts",
+  "hooks/usePendingReminder.ts",
   "hooks/useStickyFilters.ts",
   "lib/activeCompany.ts",
   "lib/authToken.ts",
