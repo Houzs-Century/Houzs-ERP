@@ -502,8 +502,11 @@ export function MobileApp() {
                 the Android one defers to PwaBanners' one-tap Install. */}
             <IosInstallGuide />
             <AndroidInstallGuide />
+            {/* MobileAssistant renders inside MobileAppInner (where the
+                `screen` state lives) so it can hide itself on the New/Edit
+                Sales Order form — its inline sheet used to sit right under
+                "Create Sales Order" (owner 2026-09-11). */}
             <MobileAppInner />
-            <MobileAssistant />
           </ChoiceProvider>
         </PromptProvider>
       </ConfirmProvider>
@@ -1013,6 +1016,7 @@ function MobileAppInner() {
       )}
 
       {annPopup}
+      <MobileAssistant hidden={screen.t === "new-so"} />
     </div>
   );
 }
