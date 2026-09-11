@@ -100,7 +100,7 @@ try {
            p.warehouse_id,
            w.code AS wh_code, w.type AS wh_type,
            (p.warehouse_id IS NULL) AS no_wh,
-           (lower(COALESCE(w.type, '')) = ANY(${NON_SELLING})) AS non_selling,
+           COALESCE(lower(w.type::text) = ANY(${NON_SELLING}), false) AS non_selling,
            COALESCE(oh.qty, 0) AS on_hand_blank
     FROM pooled p
     LEFT JOIN delivered dl ON dl.so_item_id = p.id
