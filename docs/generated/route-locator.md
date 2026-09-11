@@ -527,22 +527,22 @@ Total: 1239 route registrations across 160 files.
 - L1452  GET    /reservations
 
 ## backend/src/scm/routes/delivery-orders-mfg.ts  (16)
-- L2659  GET    /
-- L2893  GET    /deliverable-so-lines
-- L2982  GET    /so-source/:docNo
-- L3008  GET    /:id
-- L3198  POST   /
-- L4162  POST   /from-sos
-- L4173  PUT    /:id/crew
-- L4318  PATCH  /:id
-- L4753  POST   /:id/items
-- L4755  PATCH  /:id/items/:itemId
-- L5073  DELETE /:id/items/:itemId
-- L5163  GET    /:id/payments
-- L5219  POST   /:id/payments
-- L5261  DELETE /:id/payments/:paymentId
-- L5585  PATCH  /:id/status
-- L5586  POST   /:id/revert
+- L2656  GET    /
+- L2890  GET    /deliverable-so-lines
+- L2979  GET    /so-source/:docNo
+- L3005  GET    /:id
+- L3195  POST   /
+- L4159  POST   /from-sos
+- L4170  PUT    /:id/crew
+- L4315  PATCH  /:id
+- L4750  POST   /:id/items
+- L4752  PATCH  /:id/items/:itemId
+- L5070  DELETE /:id/items/:itemId
+- L5160  GET    /:id/payments
+- L5216  POST   /:id/payments
+- L5258  DELETE /:id/payments/:paymentId
+- L5582  PATCH  /:id/status
+- L5583  POST   /:id/revert
 
 ## backend/src/scm/routes/product-models.ts  (16)
 - L93  GET    /:id/photo/:key

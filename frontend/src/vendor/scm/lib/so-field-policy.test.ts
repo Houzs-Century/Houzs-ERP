@@ -164,6 +164,24 @@ describe('so-field-policy — payment same-day window (Owner 2026-07-19)', () =>
     expect((msg as string).length).toBeLessThan(200);
     expect(msg as string).toMatch(/day it was keyed in/i);
   });
+
+  /* The three RECONCILED sentences travel the same filter, with a date, an
+     entry number or an account code inside them. At 209–219 characters they
+     were dropped and the operator saw the generic 409 (docs/bugs/0821). */
+  it('every reconciled refusal stays under the sentence filter\'s 200 characters', () => {
+    const kinds = [
+      { kind: 'merchant' as const, on: '2026-09-11' },
+      { kind: 'bank' as const, jeNo: '2990-JE-2607-0052' },
+      { kind: 'month' as const, month: '2026-06', accountCode: '310-0020' },
+    ];
+    for (const reconciled of kinds) {
+      const msg = paymentRowMutable('2026-07-18', TODAY, false, { mayAmend: true, reconciled }).problem;
+      expect(msg).not.toBeNull();
+      expect((msg as string).length).toBeLessThan(200);
+      expect(msg as string).not.toMatch(/[{}]|\bnull\b|\bundefined\b|payment_edit_locked|\b\d{5}\b/);
+      expect(msg as string).toMatch(/undo|reopen/i);
+    }
+  });
 });
 
 /* The vendored copy carries the SAME rule as the server's, and this file is

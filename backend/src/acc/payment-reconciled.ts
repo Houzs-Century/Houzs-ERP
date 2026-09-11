@@ -9,10 +9,14 @@
    all three are named rather than collapsed into one "reconciled" flag: an
    operator told only that cannot go and look at the one that did.
 
-     merchant — `acc_settlement_matches` claims the payment ROW itself. Its fee
-                is booked and the report has been reconciled against a payout.
-                This is the only one that speaks for a payment that never
-                reached the ledger, because it keys on the row, not the entry.
+     merchant — `acc_settlement_matches` claims the payment ROW itself, and
+                the settlement LINE it points at has been CONFIRMED — its fee
+                booked, `confirmed_at` set. The link alone is the matcher's
+                word (the upload writes one for every line it matched by
+                reference, before anybody has looked) and locks nothing
+                (docs/bugs/0821). This is the only one that speaks for a
+                payment that never reached the ledger, because it keys on the
+                row, not the entry.
      bank     — `acc_bank_statement_matches` claims its ACTIVE journal entry by
                 number. One entry cannot account for two movements.
      month    — that entry's MONEY account has its month closed in
@@ -55,14 +59,33 @@ export async function paymentReconciliation(
         (the table's unique index is on the payment itself) and the only one
         that answers for a payment with no ledger entry at all. */
   const { data: matched, error: matchErr } = await sb.from('acc_settlement_matches')
-    .select('created_at')
+    .select('settlement_row_id, created_at')
     .eq('company_id', companyId)
     .eq('payment_source', source)
-    .eq('payment_id', paymentId)
-    .limit(1);
+    .eq('payment_id', paymentId);
   if (matchErr) return { ok: false, reason: `settlement match: ${matchErr.message}` };
-  const merchant = ((matched ?? []) as Array<{ created_at: string | null }>).at(0);
-  if (merchant) return { ok: true, by: { kind: 'merchant', on: dayOf(merchant.created_at) } };
+  const links = (matched ?? []) as Array<{ settlement_row_id: number | null; created_at: string | null }>;
+  /* A LINK IS THE MATCHER'S WORD, NOT A RECONCILIATION (docs/bugs/0821). The
+     upload writes one for every line it matched by reference, before anybody
+     has looked; only a line somebody CONFIRMED — its fee booked, confirmed_at
+     set — has closed the books over the payment. So the LINE is read, not the
+     link: under an unconfirmed one the payment stays correctable, which is
+     exactly when a mis-keyed amount gets fixed (bank 3,052.00, keyed 3,053.00,
+     2990-SO-2607-012). Confirming reads the amount back from the row, so the
+     correction is what settles. */
+  const lineIds = [...new Set(links.map((l) => Number(l.settlement_row_id)).filter((n) => Number.isInteger(n)))];
+  if (lineIds.length > 0) {
+    const { data: linesRaw, error: lineErr } = await sb.from('acc_settlement_rows')
+      .select('id, confirmed_at, posted_je_no')
+      .eq('company_id', companyId)
+      .in('id', lineIds);
+    if (lineErr) return { ok: false, reason: `settlement line: ${lineErr.message}` };
+    const confirmed = ((linesRaw ?? []) as Array<{ id: number; confirmed_at: string | null; posted_je_no: string | null }>)
+      .find((r) => r.confirmed_at != null || r.posted_je_no != null);
+    if (confirmed) {
+      return { ok: true, by: { kind: 'merchant', on: dayOf(confirmed.confirmed_at ?? links.at(0)?.created_at) } };
+    }
+  }
 
   /* 2. THE ENTRY the other two speak through. `reversed` is filtered in
         JavaScript, not in the query: it defaults to FALSE in Postgres but is
