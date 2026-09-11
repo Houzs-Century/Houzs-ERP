@@ -413,6 +413,57 @@ export const bankUpload = guard(async (c) => {
   });
 });
 
+/* ── POST /bank/statements/:id/period — this file is the month's statement ──
+   A file uploaded before the month box covered a month reads by its
+   movements' dates — 30/4 → 30/4 for a monthly statement whose lines all fell
+   on the 30th. Re-filed here as the month's statement in place: the period
+   becomes the 1st to the last day and nothing else moves — not a line, not a
+   match (owner 2026-09-11: 可以，没有问题，这只是显示问题吧; docs/bugs/0806). A
+   movement outside the month gives the lie to the claim, and a closed month
+   refuses. */
+export const bankStatementPeriod = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id)) return c.json({ error: 'bad_id' }, 400);
+  let body: Record<string, unknown> = {};
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { body = {}; }
+  const month = String(body.month ?? '').trim();
+  const window = monthWindow(month);
+  if (!window) return c.json({ error: 'bad_month', message: `${month || '(nothing)'} is not a month. Use YYYY-MM.` }, 400);
+  const sb = c.get('supabase');
+
+  const { data: stmt, error } = await sb.from('acc_bank_statements')
+    .select('id, account_code, period_from, period_to').eq('id', id).eq('company_id', co.companyId).maybeSingle();
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (!stmt) return c.json({ error: 'not_found' }, 404);
+  const statement = stmt as { account_code: string; period_from: string; period_to: string };
+
+  const { data: linesRaw, error: lErr } = await sb.from('acc_bank_statement_lines')
+    .select('booked_on').eq('statement_id', id).eq('company_id', co.companyId);
+  if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+  const outside = ((Array.isArray(linesRaw) ? linesRaw : []) as Array<{ booked_on: string }>)
+    .map((l) => String(l.booked_on).slice(0, 10))
+    .find((d) => d < window.from || d > window.to);
+  if (outside) {
+    return c.json({
+      error: 'month_mismatch',
+      message: `This file carries a movement dated ${outside}, outside ${month}. A statement filed for a month must lie inside it.`,
+    }, 400);
+  }
+
+  for (const edge of [window.from, window.to, String(statement.period_from).slice(0, 10), String(statement.period_to).slice(0, 10)]) {
+    const shut = await refuseIfLocked(c, co.companyId, String(statement.account_code), edge, `re-filing a statement for ${month}`);
+    if (shut) return shut;
+  }
+
+  const { error: upErr } = await sb.from('acc_bank_statements')
+    .update({ period_from: window.from, period_to: window.to, updated_at: new Date().toISOString() })
+    .eq('id', id).eq('company_id', co.companyId);
+  if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+  return c.json({ ok: true, periodFrom: window.from, periodTo: window.to });
+});
+
 /* ── GET /bank/statements — the list ──────────────────────────────────────── */
 
 export const bankStatements = guard(async (c) => {

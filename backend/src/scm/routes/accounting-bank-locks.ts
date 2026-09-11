@@ -128,10 +128,12 @@ export const bankMonthLock = bankGuard(async (c) => {
     openCount: state.openCount,
     lineCount: state.lineCount,
     statementCount: state.statementCount,
-    differenceSen: state.reconciliation.differenceSen,
+    computedClosingSen: state.reconciliation.computedClosingSen,
+    closingStatementSen: state.reconciliation.closingStatementSen,
+    unexplainedSen: state.reconciliation.unexplainedSen,
+    tallies: state.reconciliation.tallies,
     consistent: state.reconciliation.consistent,
     complete: state.assembly.complete,
-    note,
   });
   if (!verdict.ok) return c.json({ error: verdict.error, message: verdict.message }, 409);
 
@@ -146,7 +148,10 @@ export const bankMonthLock = bankGuard(async (c) => {
     statement_count: state.statementCount,
     was_complete: state.assembly.complete,
     locked_by: userName(c),
-    lock_note: note,
+    /* No reason is taken any more (docs/bugs/0806): a month closes because it
+       tallies, and the snapshot above is the whole record. The column stays
+       for the locks that were closed with one. */
+    lock_note: null,
   }).select(LOCK_FIELDS).single();
   if (insert.error) {
     /* The unique index is the last word, and a race loses to it rather than to
@@ -160,7 +165,7 @@ export const bankMonthLock = bankGuard(async (c) => {
     }, twice ? 409 : 500);
   }
 
-  return c.json({ ok: true, lock: asLock(insert.data as unknown as Row), reasonRecorded: verdict.needsNote });
+  return c.json({ ok: true, lock: asLock(insert.data as unknown as Row) });
 });
 
 /* ── POST /bank/months/:accountCode/:month/unlock ─────────────────────────── */

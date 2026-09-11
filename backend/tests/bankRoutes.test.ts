@@ -20,7 +20,7 @@ import {
   bankSetup, bankUpload, bankStatements, bankStatementDetail,
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
   bankRulesList, bankRuleCreate, bankRuleUpdate,
-  bankLinesMatchGroup,
+  bankLinesMatchGroup, bankStatementPeriod,
 } from '../src/scm/routes/accounting-bank';
 import { bankConfigList, bankConfigSave } from '../src/scm/routes/accounting-bank-config';
 import { bankMonths } from '../src/scm/routes/accounting-bank-months';
@@ -146,6 +146,7 @@ function harness(tables: Record<string, Row[]> = {}, perms: readonly string[] = 
   app.post('/bank/lines/:id/ignore', bankLineIgnore as never);
   app.post('/bank/lines/:id/undo', bankLineUndo as never);
   app.post('/bank/lines/match-group', bankLinesMatchGroup as never);
+  app.post('/bank/statements/:id/period', bankStatementPeriod as never);
   app.get('/bank/rules', bankRulesList as never);
   app.post('/bank/rules', bankRuleCreate as never);
   app.patch('/bank/rules/:id', bankRuleUpdate as never);
@@ -298,13 +299,16 @@ describe('a month with no bank movement', () => {
   });
 
   /* Filed under a month whose books say otherwise, the quiet file does not
-     close silently: the balance it printed is the check. */
-  test('filed under the wrong month, the balance gives it away and the close wants a reason', async () => {
+     tally — the balance it printed is the check — and the month cannot close
+     (docs/bugs/0806: no reason buys a way past). */
+  test('filed under the wrong month, the balance gives it away and the month cannot close', async () => {
     const { app } = quiet();
     await empty(app, { statementMonth: '2026-01' });
     const res = await post(app, '/bank/months/310-0020/2026-01/lock', {});
     expect(res.status).toBe(409);
-    expect((await res.json() as any).error).toBe('reason_required');
+    const body = await res.json() as any;
+    expect(body.error).toBe('not_tallied');
+    expect(body.message).toContain('RM 3,000.00');
   });
 
   test('a month nobody filed a statement for cannot be closed', async () => {
@@ -314,6 +318,103 @@ describe('a month with no bank movement', () => {
     const body = await res.json() as any;
     expect(body.error).toBe('empty_month');
     expect(body.message).toMatch(/no statement/);
+  });
+});
+
+/* ── Books ± outstanding items = bank (docs/bugs/0806) ──────────────────────
+   Owner, 2026-09-11: a month whose only difference is a payment the bank has
+   not paid yet is reconciled and closes; a month whose bank closing the books
+   and the listed items cannot reach cannot close. And an old file uploaded
+   before the month box covered a month can be re-filed as the month's
+   statement without re-uploading (这只是显示问题吧). */
+describe('a month with an outstanding payment', () => {
+  /* Hong Leong, April: the account holds RM 3,000; TNB RM 161 posted on the
+     28th and paid on the 30th; HPV-007 RM 3,101.68 posted on the 30th and not
+     paid by the bank until May. */
+  const HLB_APRIL = [
+    'HLB PRIMEBIZ CURRENT ACCOUNT - 23600600000,',
+    'Date,Transaction Description,Cheque No.,Ref. No.,Deposit,Withdrawal,Balance',
+    '="",="Balance from previous statement",="",="",="",="",="3000.00"',
+    '="30-04-2026",="JomPAY Bill Payment at DIO",="",="TENAGA NASIONAL BERHAD",="",="161.00",="2839.00"',
+  ].join('\n');
+  const april = () => harness({
+    acc_bank_statement_config: [MBB_ACCOUNT, HLB_ACCOUNT],
+    v_gl_entries: [
+      { company_id: CO, account_code: '310-0020', je_no: 'JE-2602-0001', entry_date: '2026-02-07', source_type: 'PV', source_doc_no: 'HPV-2602-028', debit_sen: 300000, credit_sen: 0, notes: null },
+      { company_id: CO, account_code: '310-0020', je_no: 'JE-2604-0022', entry_date: '2026-04-28', source_type: 'PV', source_doc_no: 'HPV-2604-005', debit_sen: 0, credit_sen: 16100, party_name: 'TENAGA NASIONAL BERHAD', notes: null },
+      { company_id: CO, account_code: '310-0020', je_no: 'JE-2604-0024', entry_date: '2026-04-30', source_type: 'PV', source_doc_no: 'HPV-2604-007', debit_sen: 0, credit_sen: 310168, party_name: 'HOUZS VENTURE HOLDING SDN BHD', notes: null },
+    ],
+  });
+  const filed = async (app: Hono) => {
+    const up = await (await post(app, '/bank/statements', { accountCode: '310-0020', fileName: 'acs_23600600000_30042026.csv', content: HLB_APRIL, statementMonth: '2026-04' })).json() as any;
+    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    const tnb = detail.lines.find((l: any) => Number(l.amount_sen) === -16100);
+    expect((await post(app, `/bank/lines/${tnb.id}/match`, { jeNo: 'JE-2604-0022' })).status).toBe(200);
+    return up.statementId as number;
+  };
+
+  test('the statement lays the books, the outstanding item and the bank out, and tallies', async () => {
+    const { app } = april();
+    const id = await filed(app);
+    const detail = await (await app.request(`/bank/statements/${id}`)).json() as any;
+    const r = detail.reconciliation;
+    expect(r.closingLedgerSen).toBe(300000 - 16100 - 310168);
+    expect(r.outstandingPayments).toEqual({ count: 1, sen: -310168 });
+    expect(r.computedClosingSen).toBe(283900);
+    expect(r.closingStatementSen).toBe(283900);
+    expect(r.tallies).toBe(true);
+    expect(r.reconciled).toBe(true);
+    expect((detail.unmatchedEntries as any[]).map((e) => e.jeNo)).toEqual(['JE-2604-0024']);
+  });
+
+  test('and the month closes without a word of excuse', async () => {
+    const { app, sb } = april();
+    await filed(app);
+    const res = await post(app, '/bank/months/310-0020/2026-04/lock', {});
+    expect(res.status).toBe(200);
+    expect(sb.tables.acc_bank_month_locks[0]).toMatchObject({ difference_sen: 310168, was_complete: true, lock_note: null });
+  });
+
+  test('a movement still to decide keeps the month open', async () => {
+    const { app } = april();
+    const up = await (await post(app, '/bank/statements', { accountCode: '310-0020', fileName: 'acs_23600600000_30042026.csv', content: HLB_APRIL, statementMonth: '2026-04' })).json() as any;
+    expect(up.lines).toBe(1);
+    const res = await post(app, '/bank/months/310-0020/2026-04/lock', {});
+    expect(res.status).toBe(409);
+    expect((await res.json() as any).error).toBe('still_open');
+  });
+});
+
+describe('re-filing an old statement as its month\'s', () => {
+  test('sets the period to the whole month without touching the movements', async () => {
+    const { app, sb } = harness();
+    const up = await (await upload(app)).json() as any;
+    expect(sb.tables.acc_bank_statements[0]).toMatchObject({ period_from: '2026-08-03', period_to: '2026-08-12' });
+    const res = await post(app, `/bank/statements/${up.statementId}/period`, { month: '2026-08' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, periodFrom: '2026-08-01', periodTo: '2026-08-31' });
+    expect(sb.tables.acc_bank_statements[0]).toMatchObject({ period_from: '2026-08-01', period_to: '2026-08-31' });
+    expect(sb.tables.acc_bank_statement_lines).toHaveLength(4);
+  });
+
+  test('refuses a month the file\'s movements do not fall in, and names the date', async () => {
+    const { app, sb } = harness();
+    const up = await (await upload(app)).json() as any;
+    const res = await post(app, `/bank/statements/${up.statementId}/period`, { month: '2026-07' });
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.error).toBe('month_mismatch');
+    expect(body.message).toContain('2026-08-03');
+    expect(sb.tables.acc_bank_statements[0]).toMatchObject({ period_from: '2026-08-03' });
+  });
+
+  test('refuses when the month is closed', async () => {
+    const { app, sb } = harness();
+    const up = await (await upload(app)).json() as any;
+    sb.tables.acc_bank_month_locks = [LOCK('2026-08')];
+    const res = await post(app, `/bank/statements/${up.statementId}/period`, { month: '2026-08' });
+    expect(res.status).toBe(409);
+    expect((await res.json() as any).error).toBe('month_locked');
   });
 });
 

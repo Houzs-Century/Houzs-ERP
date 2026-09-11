@@ -15,7 +15,7 @@
 //     balance per bank statement
 //   − on the bank, not in the books
 //   + in the books, not on the bank
-//   − difference brought forward
+//   ± outstanding items, ± what is on the bank and not in the books
 //   = balance per the books
 //
 // It TIES BY CONSTRUCTION, because the last line is computed by doing that
@@ -59,11 +59,12 @@ export type ReconInput = {
   differenceSen: number | null;
   bankNotInBooks: { count: number; sen: number };
   booksNotOnBank: { count: number; sen: number };
-  /** Earlier periods' entries still not on any statement, and what cleared
-      from before the period on this statement (docs/bugs/0802). Optional so a
-      server that predates them still prints. */
-  carried?: { count: number; sen: number };
-  clearedFromBeforeSen?: number;
+  /** The owner's form (docs/bugs/0806): books ± outstanding items = bank. */
+  outstandingPayments: { count: number; sen: number };
+  outstandingReceipts: { count: number; sen: number };
+  computedClosingSen: number;
+  unexplainedSen: number | null;
+  tallies: boolean;
   consistent: boolean;
   inconsistency: string | null;
   reconciled: boolean;
@@ -195,7 +196,11 @@ export function reconciliationStatement(input: ReconReportInput): ReconReport {
     );
   }
 
-  /* THE WALK, or the reason there is none. */
+  /* THE WALK, or the reason there is none. The owner's form (2026-09-11,
+     docs/bugs/0806): balance per the books, plus the payments the bank has
+     not paid, less the receipts it has not credited, plus or minus what is on
+     the bank and not in the books, equals the balance per the bank statement
+     — and the report says whether it does. */
   const steps: StatementStep[] = [];
   let filable = false;
 
@@ -205,48 +210,45 @@ export function reconciliationStatement(input: ReconReportInput): ReconReport {
       + ' reconcile from. The movements are listed below; the statement itself cannot be drawn.',
     );
   } else if (!r.consistent) {
-    /* The server already refused to stand behind the difference. Drawing a
-       tidy walk over figures that do not satisfy the identity would launder
-       exactly the error it caught. */
+    /* The server already refused to stand behind the figures. Drawing a tidy
+       walk over figures that do not satisfy the identity would launder exactly
+       the error it caught. */
   } else {
+    const pays = -r.outstandingPayments.sen;
+    const rcts = -r.outstandingReceipts.sen;
     const bankNot = r.bankNotInBooks.sen;
-    const booksNot = r.booksNotOnBank.sen;
-    const bf = r.broughtForwardSen ?? 0;
-    /* The earlier months' entries still waiting are a step of their own — the
-       conventional "outstanding from prior periods" — and the brought-forward
-       is printed only for the part of it they do NOT explain. Same arithmetic
-       as before once the two are put together: bf + cleared + carried is the
-       unexplained remainder (docs/bugs/0802). */
-    const carriedSen = r.carried?.sen ?? 0;
-    const carriedCount = r.carried?.count ?? 0;
-    const unexplained = bf + (r.clearedFromBeforeSen ?? 0) + carriedSen;
-    const arrived = r.closingStatementSen - bankNot + booksNot + carriedSen - unexplained;
+    const unexplained = r.unexplainedSen ?? 0;
+    const arrived = r.closingLedgerSen + pays + rcts + bankNot;
 
-    steps.push({ label: 'Balance per bank statement', sen: r.closingStatementSen, rule: 'total' });
-    steps.push({
-      label: 'Less: on the bank, not in the books',
-      sen: -bankNot, count: r.bankNotInBooks.count,
-    });
-    steps.push({
-      label: 'Add: in the books, not on the bank',
-      sen: booksNot, count: r.booksNotOnBank.count,
-    });
-    if (carriedCount > 0) {
-      steps.push({ label: 'Add: still in the books from earlier months', sen: carriedSen, count: carriedCount });
+    steps.push({ label: 'Balance per the books', sen: r.closingLedgerSen, rule: 'total' });
+    steps.push({ label: 'Add: payments in the books the bank has not paid yet', sen: pays, count: r.outstandingPayments.count });
+    if (r.outstandingReceipts.count > 0) {
+      steps.push({ label: 'Less: receipts in the books the bank has not credited yet', sen: rcts, count: r.outstandingReceipts.count });
+    }
+    if (r.bankNotInBooks.count > 0) {
+      steps.push({ label: 'On the bank, not in the books (still to decide)', sen: bankNot, count: r.bankNotInBooks.count });
     }
     if (unexplained !== 0) {
-      steps.push({ label: 'Less: difference brought forward, unexplained', sen: -unexplained });
+      steps.push({ label: 'Unexplained — on the statement, in neither list', sen: unexplained });
     }
-    steps.push({ label: 'Balance per the books', sen: arrived, rule: 'grand' });
+    steps.push({ label: 'Balance per bank statement', sen: arrived + unexplained, rule: 'grand' });
 
-    /* THE CHECK. The walk is arithmetic on four numbers; the ledger balance is
-       a fifth, read off the posted entries. If they part company, something
-       upstream is wrong and this is not a document anybody should file. */
-    if (arrived !== r.closingLedgerSen) {
+    /* THE CHECK. The walk is arithmetic on the ledger balance and three lists;
+       the server's own figure for the same walk is a fifth number. If they
+       part company, something upstream is wrong and this is not a document
+       anybody should file. And a walk that needs an "unexplained" step to
+       reach the bank does not tally, whatever else is true. */
+    if (arrived !== r.computedClosingSen) {
       warnings.push(
-        `The statement walks to ${money(arrived)} and the general ledger says ${money(r.closingLedgerSen)}.`
+        `The statement walks to ${money(arrived)} from the books and the bank statement says ${money(r.closingStatementSen)}.`
         + ' These must agree before this reconciliation can be filed — the figures behind it disagree'
         + ' with each other.',
+      );
+    } else if (!r.tallies || unexplained !== 0) {
+      warnings.push(
+        `This month does not tally: the books and the outstanding items reach ${money(r.computedClosingSen)}`
+        + ` and the bank statement says ${money(r.closingStatementSen)} — ${money(Math.abs(unexplained))} apart.`
+        + ' It cannot be filed until it does.',
       );
     } else {
       filable = assembly.complete && r.consistent;
@@ -274,24 +276,15 @@ export function reconciliationStatement(input: ReconReportInput): ReconReport {
       ]),
     },
     {
-      title: `In the books, not on the bank (${unmatchedEntries.filter((e) => !e.carried).length})`,
-      note: unmatchedEntries.filter((e) => !e.carried).length === 0
-        ? 'Nothing — every entry posted in these days appears on the statement.'
-        : 'Posted in these days and the bank has not shown it: an uncleared cheque, a deposit'
-          + ' still on its way, or an entry belonging to a day not uploaded yet.',
+      /* ONE TABLE, this month's and the earlier months' alike (owner: 全部就是
+         outstanding items，一张表列完). */
+      title: `Outstanding items — in the books, not yet on the bank (${unmatchedEntries.length})`,
+      note: unmatchedEntries.length === 0
+        ? 'Nothing — every entry in the books appears on a statement.'
+        : 'Posted and the bank has not shown it yet: a payment not yet paid, a receipt not yet credited,'
+          + ' or an entry belonging to a statement not uploaded yet.',
       head: ['Entry', 'Date', 'Source', 'Who', 'Amount'],
-      body: unmatchedEntries.filter((e) => !e.carried).map((e) => [
-        e.jeNo, fmtDocDate(e.entryDate), sourceOf(e), e.partyName ?? e.notes ?? '', signed(e.debitSen - e.creditSen),
-      ]),
-    },
-    {
-      title: `From earlier months, still not on any statement (${unmatchedEntries.filter((e) => e.carried).length})`,
-      note: unmatchedEntries.filter((e) => e.carried).length === 0
-        ? 'Nothing — every earlier entry has appeared on a statement.'
-        : 'Posted before this period and no bank statement has shown it yet. These make up the difference'
-          + ' brought forward.',
-      head: ['Entry', 'Date', 'Source', 'Who', 'Amount'],
-      body: unmatchedEntries.filter((e) => e.carried).map((e) => [
+      body: unmatchedEntries.map((e) => [
         e.jeNo, fmtDocDate(e.entryDate), sourceOf(e), e.partyName ?? e.notes ?? '', signed(e.debitSen - e.creditSen),
       ]),
     },
