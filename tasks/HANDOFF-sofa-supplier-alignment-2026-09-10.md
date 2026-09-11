@@ -1,7 +1,14 @@
 # HANDOFF — sofa/bedframe alignment to the supplier listing
 
-**Updated 2026-09-11 ~04:35Z, at the owner's request to hand over.**
+**Updated 2026-09-11 ~13:20Z — second round, on the owner's FULLER export.**
 Read this top-to-bottom; it is written so a stranger can continue without the chat.
+
+The owner handed over `houzs-century-ALL-SO-detail-with-CustomerPO-2026-09-11.xlsx`
+(sha256 `b2b1561c…`), which is the 2026-09-10 export PLUS a **Customer PO column**
+— on the older file our own new-style orders carried a SALES order number where
+the PO belongs, so every one of them read as "PO not found". It is committed as
+`backend/scripts/data/supplier-so-detail-2026-09-11.json.gz`; the 09-10 file is
+deleted so there is one authority, not two.
 
 ---
 
@@ -61,28 +68,79 @@ refs). Build a check that lists proceeded sofa POs with NO supplier-export match
 AND still-to-receive, and work them from drawings — that is the real remaining
 GR-risk surface, and it is what my earlier "80 not-found = ignore" wrongly buried.
 
+> **GAP 2 IS NOW BUILT — see §0b.** `check-supplier-listing-vs-erp` ends with a
+> per-supplier reverse pass, and on production it names `HC-PO-2609-053` among 9
+> Hookka orders and 1 Ohana one. It also settles the export question above: the
+> owner's 2026-09-11 file (with the Customer PO column) still does not carry that
+> document, and the reason is not the ref format — the 4 Hookka POs raised the
+> same day ARE in it. GAP 1 (re-check the 09-10 self-read batch) is still open.
+
 ---
 
-## 0. The one question the owner keeps asking: 「现在去做 GR 行不行？」
+## 0. 「现在去做 GR 行不行？」 — the answer, re-measured on the fuller file
 
-**PROVEN, plain answer (run 34556640759, read-only, prod, 2026-09-11 03:00Z):**
+**PROVEN, read-only against production 2026-09-11 (`check-supplier-listing-vs-erp`,
+GROUPS=SOFA, after apply run 34557669854 landed VERIFY OK):**
 
-- **Sofa COMPARTMENTS (pieces) are aligned.** Of 139 supplier sofa documents,
-  only **4** still differ on pieces, and **2 of those 4 are just the word CSL vs
-  CONSOLE** (same part — see §2), now fixed on `main` and waiting for one
-  re-apply. So GR on sofa **pieces** is safe for the vast majority today.
-- **Sofa SPEC (leg height) is NOT fully aligned.** **35** documents show the
-  supplier's leg height (mostly `6`, some `1`/`2` inch) while OUR line is
-  **blank**. If your GR checks leg height as part of the spec, those 35 will
-  still look wrong. The corrections for these EXIST in our files but did not land
-  — see §3 for exactly why and what to do.
-- **Direction (line order):** 13 documents list the same pieces in a different
-  order. This does **not** change item codes or quantities, so it does **not**
-  block a GR; it is cosmetic ordering. Most are already-received stock anyway.
+| bucket | count | what it means |
+|---|---|---|
+| supplier sofa documents compared | 144 | the 09-10 file saw 139 |
+| agree on pieces, order AND variants | 10 | done |
+| **DIFFERENT PIECES** | **4** | the only "costs money" bucket — §2 |
+| same pieces, different ORDER | 15 | direction only; does NOT block a GR |
+| same build, **leg height blank on our side** | 35 docs / **68 lines** | §3 |
+| our purchase order not found | 79 | §2b — NOT work, and now classified |
+| purchase order has no sofa line | 1 | HC-PO-010087 |
 
-**So: sofa GR is safe on pieces now; the remaining blocker a receiver will see
-is the blank leg-height on those 35 docs.** Bedframe/accessory GR is NOT yet
-aligned (§5, §6).
+**Two of the four "different pieces" the 09-10 round reported were never
+different** — the supplier writes `CSL`, our catalogue mints `CONSOLE`, and the
+CHECKER did not know it (PR #3613 fixed the correction FILES, not the reader).
+That is now fixed in code (`SOFA_PIECE_ALIAS` in `lib/parse-sofa.mjs`), together
+with two documents that differed on the inch mark alone (`1` vs `1"`), so the
+table above is the real divergence. Bug ledger `docs/bugs/0807`.
+
+**So: sofa GR is safe on pieces except the 4 in §2.** The blank leg heights do
+not block a receipt — they make the paperwork understate the spec — and they are
+now fillable by tool, but only where it is safe (§3).
+
+---
+
+## 0b. THE MISS THE OWNER FOUND — and the check that would have caught it
+
+Owner, 2026-09-11: *"做完之后我发现又有一张单是没有的 — SO-013503 / PO-2609-053"*.
+
+`HC-PO-2609-053` (raised 2026-09-10, three 8030 compartments, supplier HOOKKA
+INDUSTRIES) **is not in the supplier's export at all**. Nothing was wrong with our
+alignment: every check we had walked the SUPPLIER's documents and asked whether we
+hold them, so a purchase order of OURS that they do not hold was invisible by
+construction.
+
+`check-supplier-listing-vs-erp` now ends with **THE OTHER DIRECTION**, per
+supplier. Measured on production, our 167 sofa purchase orders across 9 suppliers:
+
+| supplier | in this listing | NOT in it |
+|---|---|---|
+| OHANA STUDIO MARKETING | 59 | **1** — HC-PO-009554 (2026-08-28, RECEIVED) |
+| HOOKKA INDUSTRIES | 4 | **9** — 2609-043/044/045/046/**053**/054/062/063/064, all raised 09-10 or 09-11 |
+| HOOKKA MANUFACTURING | 1 | 0 |
+| ARMANI (32), DORSETTLOFT (56), RED SOFA (2), TODERN (1), LAVEO (1), T.H.L. (1) | 0 | this file is not their book — out of its scope |
+
+**The 10 on the chase list are a question for the supplier, not a repair here:**
+either they have not keyed those orders in yet, or they never received them. Until
+they are in their book, nothing can say whether what they build will match what we
+ordered. Ohana's single one (HC-PO-009554) is already RECEIVED, so it is the older
+kind of gap; the nine Hookka ones are all two days old.
+
+**Also found the same way — 2 orders the supplier BUILT that our ERP has no
+purchase order for at all** (the customer order is here, CONFIRMED, not proceeded):
+
+- `HC-SO-012062` (ZNT6709, supplier SO-2605-273, `5535-L(LHF)+5535-2A(RHF)`, leg 1")
+- `HC-SO-012343` (ZNT6009, supplier SO-2604-265, `5530-L(LHF)+5530-2A(RHF)`, leg 6")
+  — and **ours is the MIRROR**: we hold `9028-L(RHF)+9028-2A(LHF)`. The supplier is
+  the authority on a proceeded order, so ours is the one that is wrong.
+
+Both need the owner: raise the missing purchase order, or say they are pre-cutover
+and closed. The other 77 not-found references are neither — see §2b.
 
 ---
 
@@ -97,7 +155,16 @@ aligned (§5, §6).
 
 ---
 
-## 2. Current PROVEN sofa divergence (run 34556640759, prod, SOFA only)
+## 2. Sofa divergence — the 09-10 reading, kept for its itemisation
+
+> **Superseded by §0 for the COUNTS** (that run predates both the CSL fold and the
+> fuller export). What is still current here is the itemisation of the piece
+> differences below. Of the four, `HC-PO-009986` and `HC-PO-010145` turned out NOT
+> to be piece differences at all — CSL is CONSOLE — and they now sit in the
+> direction bucket. The two that survive are `HC-PO-010086` and `HC-PO-010041`,
+> joined by two the fuller export brought in: `HC-PO-2609-051` (supplier
+> `1A(LHF)+1A(RHF)+1A(LHF)+1NA+1A(RHF)`, ours `1A(RHF)+1NA+2S+1A(LHF)`) and
+> `HC-PO-009989` (supplier `1S+1S`, ours `1S`, 2 already received).
 
 139 supplier sofa documents compared:
 
@@ -126,7 +193,31 @@ aligned (§5, §6).
 
 ---
 
-## 3. THE LEG-HEIGHT GAP — the 35, why they did not land, and the fix (MOST IMPORTANT REMAINING SOFA WORK)
+## 2b. THE 79 "our purchase order not found" — classified, not waved away
+
+The 09-10 round wrote these off as "all below the migration floor (PO-009122) or
+another supplier". **There is no floor.** The check was printing a TEXT min/max
+over mixed document shapes (`HC-PO-2609-001` sorts before `PO-000254`) and it was
+being read as one. Our AutoCount numbers are SPARSE — we hold 574 of the 9,917
+between the lowest and the highest — because the cutover took OUTSTANDING
+documents only, whatever their number.
+
+Re-measured 2026-09-11: of the 79, **0 are below our lowest, 77 sit INSIDE our
+span, 1 is another company (2990-PO-2607-018, out of scope per the owner's ruling)
+and 1 is unreadable (`EXPO-007767`)**.
+
+**The evidence that the 77 are still not work:** for 77 of the 79, neither the
+purchase order NOR the customer's sales order is in our ERP — the whole
+transaction predates the cutover and was closed when we cut over. The exception is
+the 2 in §0b, where the customer order IS here; those two are real.
+
+## 3. THE LEG-HEIGHT GAP — why the correction files could not land it
+
+> **Answered by §10.** The diagnosis below (the applier cannot identify the line)
+> is right and still worth reading, but the conclusion — re-run the applier — was
+> wrong: the corrections channel addresses a BUILD, and a leg is a per-LINE fact
+> the supplier's own export already carries line-for-line. §10 is the tool that
+> uses it, and it also explains why 40 of the 68 lines must NOT be filled.
 
 **Symptom:** 35 documents show `leg height: supplier "6" vs ours ""`.
 
@@ -166,7 +257,7 @@ aligned (§5, §6).
 
 ---
 
-## 4. THE RE-APPLY — ready NOW, do this first
+## 4. THE RE-APPLY — DONE (run 34557669854, 2026-09-11)
 
 CSL=CONSOLE is on `main`. A re-apply is idempotent (per-build transactions,
 RE-RUN header) — the 293 already-applied builds are inert; the console builds and
@@ -176,8 +267,11 @@ anything newly writable land.
   lines updated 784, added 1, **piece-SKU-not-minted 0** (was 6 — CSL now mints
   as CONSOLE), **0 money moved**, refusals all by-design (19 real-stock, 3
   downstream, 1 seat).
-- **APPLY dispatched 03:14Z: run 34557669854 (apply=1, prod).** [status folded in
-  below once VERIFY is read — check `gh run view 34557669854 --log | grep VERIF`.]
+- **APPLY run 34557669854 (apply=1, prod) FINISHED — `VERIFY OK — 245 entries over
+  237 document(s), piece multiset and both money columns · 47 superseded by a later
+  ruling`.** 34m21s, no VERIFY FAILED. The CSL builds landed as CONSOLE; what it
+  did NOT fix is the CHECKER, which is why §0 had to be re-measured after
+  `docs/bugs/0807`.
 - **To re-apply later** (Actions → "Apply sofa compartment + seat-size corrections" → Run):
   - `target=prod`, `apply=1`, `confirm=I HAVE REVIEWED THE DRY-RUN`
   - or CLI:
@@ -266,3 +360,45 @@ Then: `gh run view <id> --log | grep "::notice::"` for the buckets.
 - `so-revision.ts:694` — `applySoAmendment` updates item_code, not description.
 - `so-revision.ts:1386` — `reviseBoundPo` writes neither item_code nor
   material_name to the bound PO.
+
+
+---
+
+## 10. THE LEG BACKFILL — shipped as a tool, and why it fills only 28 of 68
+
+`backend/scripts/apply-supplier-sofa-leg.mjs` (+ workflow **"Fill sofa leg height
+from the supplier listing"**, + unit tests) writes the supplier's stated leg onto
+BOTH our purchase line and its sales line. DRY-RUN by default; `apply=1` needs
+`confirm = FILL THE SUPPLIER LEG HEIGHTS`; an APPLY re-reads every line it wrote
+on a FRESH connection and prints VERIFY OK / VERIFY FAILED.
+
+**Dry-run against production 2026-09-11: 28 lines over 15 purchase orders TO
+FILL, 40 lines over 22 purchase orders HELD.**
+
+**Why the 40 are held, and why that is not timidity.** A sofa's leg height is part
+of its INVENTORY IDENTITY — `computeVariantKey` emits `legheight=…` for a sofa —
+and of every sofa lot on production, not one carries a leg segment. So writing a
+leg onto a line whose goods are already IN moves that line to a stock bucket no
+lot has ever been stored under. That is exactly `docs/bugs/0722`: three delivery
+orders shipped on "Ship anyway" against an invented `legheight=default`, consumed
+no lot and carried no COGS — repaired only yesterday by PR #3624. The gate is
+therefore the defect, not caution: a line is filled only while NOTHING has been
+keyed off its blank identity (no receipt, no GRN line, no DO line, no allocated
+stock). Every held line is printed with which of those pins it.
+
+**To finish the other 40** you need a stock-aware tool that moves the lot,
+balance, movement and allocation rows to the new key in the same transaction as
+the line — the same tool §6 already owes for the 11 received-stock builds. Do
+MEASURE-first → plan → show the owner → apply. Do NOT "just fill them".
+
+## 11. What this round did NOT touch
+
+- The **4 different-piece documents** (§2) — still the owner's call.
+- The **15 direction-only documents** — cosmetic; 9 of them carry received stock,
+  so correcting the order means touching received lines.
+- **Bedframe and accessory** — the owner narrowed this round to sofa
+  (「针对 sofa alignment 的就行了」, 2026-09-11).
+- The **GRN side**: `check-sofa-chain-alignment` (run 34563508136) shows the
+  PO→GRN leg is clean on codes and variants — 0 code mismatches, 0 variant
+  mismatches over 654 linked pairs; its 17 build-level differences are partial
+  receipts and split deliveries, not disagreements. Nothing to repair there.
