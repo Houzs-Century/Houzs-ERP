@@ -64,6 +64,7 @@ import { Pagination } from "../components/Pagination";
 import { EmptyState } from "../components/EmptyState";
 import { Badge } from "../components/Badge";
 import { Panel, PanelSection, FieldRow } from "../components/Panel";
+import { CaseAccessSection } from "../components/CaseAccessSection";
 import { InlineEdit } from "../components/InlineEdit";
 import { ExpandableText } from "../components/ExpandableText";
 import { StatCard } from "../components/StatCard";
@@ -4552,7 +4553,20 @@ function DetailContent({
               <InlineEdit
                 label="Agent"
                 value={c.sales_agent}
-                onSave={(v) => patch({ sales_agent: v })}
+                onSave={async (v) => {
+                  // Salesperson stays editable, but changing it reassigns sales
+                  // attribution AND row visibility (the original rep loses the
+                  // case unless re-added). Confirm first (owner 2026-09-09); to
+                  // keep the rep and just let others in, use the Access section.
+                  if (
+                    !(await dialog.confirm(
+                      "Change the Salesperson? This reassigns sales attribution and case visibility — the original rep loses access unless re-added. To keep the rep and just give other people access, cancel and use the Access section instead.",
+                    ))
+                  ) {
+                    throw new Error("Salesperson unchanged");
+                  }
+                  await patch({ sales_agent: v });
+                }}
                 placeholder="Sales rep"
               />
               {/* SO + Ref side by side — mirrors the read view's twin
@@ -4707,6 +4721,15 @@ function DetailContent({
               </div>
             )}
           </PanelSection>
+
+          <CaseAccessSection
+            caseId={id}
+            access={detail.data?.access ?? []}
+            onChanged={() => {
+              detail.reload();
+              onUpdated();
+            }}
+          />
 
           {/* SLA — Design PR 2. Full red card + big mono countdown +
               progress bar when overdue. The subtitle keeps the deadline

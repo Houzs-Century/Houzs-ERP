@@ -1095,6 +1095,17 @@ reads and names what matches nothing. Run it after filling a pool.
    no longer what hides a retired fabric, so clearing one is now safe in that
    respect. docs/bugs/0816-a-discontinued-fabric-kept-offering-every-shade-because-noth.md.
 
+4. **"Retired" is asked per CODE, never per ROW, on both tables** — and the rule
+   lives on the SERVER so the desktop and the mobile sheet cannot disagree
+   (owner 2026-09-11: 「它只要有启用，就有打开」). `scm.fabric_trackings` is keyed
+   by `id`, so 21 codes carry an active row beside a retired TOMBSTONE from a
+   2026-08-11 de-duplication pass; the desktop used to filter row-by-row and the
+   dead twin hid the live fabric — 21 active colours hidden, all 21 wrongly,
+   while mobile (which never filtered) showed them. `retiredByCode` serves both
+   `fabric_trackings` and `fabric_library`. Do NOT delete the tombstones: they
+   carry no unique data and they are somebody's deliberate record.
+   docs/bugs/0818-a-retired-tombstone-row-hid-the-live-fabric-it-had-been-merg.md.
+
 **Sofa follower-line cascade — ONE module, and the master's LATEST change
 wins.** The rule is `frontend/src/vendor/scm/lib/so-variant-cascade.ts`, imported
 by `SalesOrderNew.tsx`, `mobile/MobileNewSO.tsx`, `SoLineCard.tsx` and — since

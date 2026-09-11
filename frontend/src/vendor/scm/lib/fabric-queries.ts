@@ -72,6 +72,36 @@ export type FabricTrackingRow = {
    tiers, NO cost/stock. Everything the SO fabric dropdown + PC-Order detail need
    to pick a fabric and price a line, and safe to read without products access
    (the full FabricTrackingRow carries cost/stock and stays gated). */
+/* WHICH FABRIC CODES ARE RETIRED — asked per CODE, never per ROW.
+   `scm.fabric_trackings` is keyed by `id`, not by `fabric_code`, and 21 codes on
+   production carry TWO rows for the same code: one active and one retired,
+   usually a plain id beside a `FABRIC_`-prefixed twin (`HR805-90` retired
+   alongside `FABRIC_HR805-90` active; the same for HR805-10 and AVANI-01..12).
+
+   Built from the retired ROWS alone, the dead twin hides the live one - so a
+   fabric the floor sells disappears from the picker. MEASURED 2026-09-11: the
+   filter hid 21 active colours and ALL 21 were hidden WRONGLY, an active row
+   existing for every one. Zero legitimate hides; the filter was doing nothing
+   but harm.
+
+   Same mistake, third table in one day (docs/bugs/0817 for the fabric library,
+   0814 for the option pools), which is why this is a shared helper and not a
+   `filter` at the call site. docs/bugs/0818. */
+export const inactiveFabricCodeSet = (
+  rows: readonly { fabric_code?: string | null; is_active?: boolean | null }[],
+): Set<string> => {
+  const retired = new Set<string>();
+  const live = new Set<string>();
+  for (const r of rows) {
+    const code = (r.fabric_code ?? '').trim();
+    if (!code) continue;
+    if (r.is_active === false) retired.add(code);
+    else live.add(code);
+  }
+  for (const code of live) retired.delete(code);
+  return retired;
+};
+
 export type FabricLite = Pick<
   FabricTrackingRow,
   | 'id'
