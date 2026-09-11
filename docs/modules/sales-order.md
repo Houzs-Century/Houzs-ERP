@@ -1081,6 +1081,20 @@ before touching a pool (docs/bugs/0814-one-option-field-two-vocabularies-the-fab
 option-pool vocabulary**) resolves every pool value against the table its gate
 reads and names what matches nothing. Run it after filling a pool.
 
+3. **A DISCONTINUED fabric offers nothing, and that is enforced at the source
+   now** (owner 2026-09-11: 「inactive的就不需要了」). `GET /fabric-colours`
+   filters on `fabric_colours.active` AND drops any colour whose SERIES is
+   switched off in `fabric_library`. Before this, nothing on the selling path
+   read the series flag: 32 active colours of discontinued series (`FG66151`,
+   `J9226`, `GARFIELD `) were kept out of the picker only because no Model
+   listed those series — so clearing a pool to "open everything" would have
+   leaked them. An unreadable library degrades to the OLD behaviour (every
+   active colour), never to an empty picker.
+
+   **Consequence to know before clearing a fabric pool:** the per-Model list is
+   no longer what hides a retired fabric, so clearing one is now safe in that
+   respect. docs/bugs/0816-a-discontinued-fabric-kept-offering-every-shade-because-noth.md.
+
 **Sofa follower-line cascade — ONE module, and the master's LATEST change
 wins.** The rule is `frontend/src/vendor/scm/lib/so-variant-cascade.ts`, imported
 by `SalesOrderNew.tsx`, `mobile/MobileNewSO.tsx`, `SoLineCard.tsx` and — since
