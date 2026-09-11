@@ -1,8 +1,9 @@
-// The sales / delivery fields on a MIGRATED delivery order — salesperson,
-// agent, branding, customer ref, customer delivery date, expected-at — come
-// from the sales order's header, the way /from-sos copies them. docs/bugs/0714
-// carried the customer block (phone / address); the header block above it on
-// the same screen was blank for the same cause (docs/bugs/0716).
+// The sales fields on a MIGRATED delivery order — salesperson, agent, branding,
+// customer ref — come from the sales order's header, the way /from-sos copies
+// them. The two DELIVERY dates (customer delivery date, expected-at) follow the
+// DO's OWN do_date (= AutoCount's DocDate) instead, owner 2026-09-11 (0804).
+// docs/bugs/0714 carried the customer block (phone / address); the header block
+// above it on the same screen was blank for the same cause (docs/bugs/0716).
 //
 // `insertMigratedDo` writes to a live database and cannot be exercised from
 // vitest, so what is pinned is the SOURCE, the same way 0714's cases pin the
@@ -41,9 +42,13 @@ describe('DO_SALES_CARRY', () => {
     for (const [c] of DO_SALES_CARRY) expect(stmt).toMatch(new RegExp(`\\b${c}:\\s`));
   });
 
-  it("expected_delivery_at falls back to the document's own date, never a literal", () => {
-    const expr = Object.fromEntries(DO_SALES_CARRY).expected_delivery_at;
-    expect(expr).toBe('COALESCE(s.customer_delivery_date, d.do_date)');
+  it("both delivery dates follow the document's own do_date, never the SO or a literal", () => {
+    // owner 2026-09-11 「全部要跟 autocount」 (docs/bugs/0804): AutoCount's DocDate is
+    // the DO's own date, so the DO's delivery dates equal d.do_date, not the SO's
+    // customer date. Reverses the 2026-09-08 s.customer_delivery_date source.
+    const carry = Object.fromEntries(DO_SALES_CARRY);
+    expect(carry.expected_delivery_at).toBe('d.do_date');
+    expect(carry.customer_delivery_date).toBe('d.do_date');
     for (const [, e] of DO_SALES_CARRY) expect(e).not.toMatch(/'[A-Za-z0-9]/);
   });
 });

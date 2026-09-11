@@ -14,11 +14,12 @@
 
    THE SOURCE. A delivery order is a snapshot of its sales order at dispatch,
    and /from-sos (delivery-orders-mfg.ts) copies salesperson_id / agent /
-   branding / ref / customer_delivery_date from the SO header and sets
-   expected_delivery_at to the customer's date or, failing that, the creation
-   date — which for a migrated document is its own do_date. That list is
-   `DO_SALES_CARRY` in lib/customer-block.mjs, the SAME list the writer now
-   applies to a new document, so the two cannot answer differently.
+   branding / ref from the SO header. The two DELIVERY dates
+   (customer_delivery_date, expected_delivery_at) follow the DO's OWN do_date
+   (= AutoCount's DocDate) instead — owner 2026-09-11 「全部要跟 autocount」
+   (docs/bugs/0804). That list is `DO_SALES_CARRY` in lib/customer-block.mjs,
+   the SAME list the writer now applies to a new document, so the two cannot
+   answer differently.
 
    NOT TOUCHED, on purpose: venue / venue_id (a canonicalising trigger rewrites
    them on write, so a repair must not move a value it did not measure —
