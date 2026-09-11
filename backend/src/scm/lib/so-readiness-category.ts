@@ -15,6 +15,7 @@
 
 import { chunkIn } from './paginate-all';
 import type { ReadinessLine } from './so-readiness';
+import { pgrestIn } from './pgrest-in-list';
 
 type CategoryRow = { code: string; category: string | null };
 
@@ -58,7 +59,7 @@ export async function resolveLineCategories(
 
   const { data, error } = await chunkIn<CategoryRow>(codes, (batch, from, to) => {
     /* eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access -- `sb` is the untyped client above. */
-    const q = sb.from('mfg_products').select('code, category').in('code', batch);
+    const q = pgrestIn(sb.from('mfg_products').select('code, category'), 'code', batch);
     return (scope ? scope(q) : q).range(from, to) as PromiseLike<{ data: CategoryRow[] | null; error: { message: string; code?: string } | null }>;
   });
   if (error) return { error };

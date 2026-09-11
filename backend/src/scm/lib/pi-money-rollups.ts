@@ -23,6 +23,7 @@
 
 import { isServiceLine } from '../shared';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
+import { pgrestIn } from './pgrest-in-list';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- the untyped supabase-js client this tree passes around */
 /* ── Recompute PI header money rollups (mirror recomputeGrnTotals) ─────────
@@ -154,7 +155,7 @@ export async function reallocatePiCharges(
     if (codes.length > 0) {
       // Company-scoped: `code` is shared, and the other company's volume would
       // shift every goods line's share of the landed charge.
-      let volQ = sb.from('mfg_products').select('code, unit_m3_milli').in('code', codes);
+      let volQ = pgrestIn(sb.from('mfg_products').select('code, unit_m3_milli'), 'code', codes);
       if (companyId != null) volQ = volQ.eq('company_id', companyId);
       /* BIND THE ERROR. Unbound, a failed volume read blanked every m3 and the
          allocator silently fell back to the QTY basis — a different split of the

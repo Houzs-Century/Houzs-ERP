@@ -72,6 +72,7 @@ import { GRN_LINE_AUDIT_FIELDS, GRN_LINE_AUDIT_SELECT } from '../lib/entity-audi
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { eager } from '../lib/concurrency';
 import { keyedVariantWithWarning, skuCategoryResolver, lineIdentityFields } from '../lib/sku-category';
+import { pgrestIn } from '../lib/pgrest-in-list';
 
 export const grns = new Hono<{ Bindings: Env; Variables: Variables }>();
 grns.use('*', supabaseAuth);
@@ -284,9 +285,8 @@ async function computeAndStoreGrnAllocation(
   if (codes.length > 0) {
     // Company-scoped: `code` is shared, and the other company's volume would
     // shift every goods line's share of the landed charge.
-    let volQ = sb.from('mfg_products').select('code, unit_m3_milli').in('code', codes);
-    if (companyId != null) volQ = volQ.eq('company_id', companyId);
-    const { data: prods } = await volQ;
+    const volQ = pgrestIn(sb.from('mfg_products').select('code, unit_m3_milli'), 'code', codes);
+    const { data: prods } = await (companyId != null ? volQ.eq('company_id', companyId) : volQ);
     for (const p of (prods ?? []) as Array<{ code: string; unit_m3_milli: number | null }>) {
       m3ByCode.set(p.code, Number(p.unit_m3_milli ?? 0));
     }

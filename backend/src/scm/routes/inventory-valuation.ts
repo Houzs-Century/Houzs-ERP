@@ -12,6 +12,7 @@
 import { stockBreakdownAsOf } from '../../acc/stock-close';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { paginateAll } from '../lib/paginate-all';
+import { pgrestIn } from '../lib/pgrest-in-list';
 
 export const inventoryValuationHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
@@ -33,10 +34,9 @@ export const inventoryValuationHandler = async (c: any): Promise<Response> => {
   const nameOf = new Map<string, { name: string | null; category: string | null }>();
   for (let i = 0; i < codes.length; i += 200) {
     const slice = codes.slice(i, i + 200);
-    const { data, error } = await paginateAll((from, to) => sb
+    const { data, error } = await paginateAll((from, to) => pgrestIn(sb
       .from('mfg_products')
-      .select('code, name, category')
-      .in('code', slice)
+      .select('code, name, category'), 'code', slice)
       .range(from, to));
     if (error) return c.json({ error: 'load_failed', reason: (error as { message?: string }).message ?? String(error) }, 500);
     for (const p of (data ?? []) as Array<{ code: string; name: string | null; category: string | null }>) {

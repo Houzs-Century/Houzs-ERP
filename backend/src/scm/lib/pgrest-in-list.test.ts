@@ -13,7 +13,7 @@
 // the library instead of to a literal.
 import { describe, expect, test } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
-import { pgrestInList, parsePgrestInList } from './pgrest-in-list';
+import { pgrestInList, parsePgrestInList, pgrestIn } from './pgrest-in-list';
 
 /** The `item_code=` query-string value the library builds for `.in()`. */
 function libraryFilter(values: readonly string[]): string {
@@ -106,5 +106,59 @@ describe('pgrestInList / parsePgrestInList — the grammar round-trips', () => {
 
   test('numbers pass through unquoted, as the library sends them', () => {
     expect(pgrestInList([1, 2, 3])).toBe('(1,2,3)');
+  });
+});
+
+/* pgrestIn is what the docs/bugs/0819 sweep dropped in at every by-code read. It
+   must be a NO-OP on the wire for a clean list (so replacing `.in()` changed
+   nothing for the ~50 reads that already worked) and take the escaped path only
+   when a value carries `"` / `\`. Captured through the REAL client, same as the
+   parity block above. */
+function pgrestInFilter(values: readonly string[]): string {
+  let seen = '';
+  const sb = createClient('http://postgrest.test', 'k', {
+    global: {
+      fetch: (async (input: RequestInfo | URL) => {
+        seen = new URL(String(input)).searchParams.get('item_code') ?? '';
+        return new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } });
+      }) as typeof fetch,
+    },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  return pgrestIn(sb.from('t').select('item_code'), 'item_code', values)
+    .then(() => seen) as unknown as string;
+}
+
+describe('pgrestIn — the escape-when-needed applicator', () => {
+  test('byte-identical to .in() for a clean list (the ~50-site no-op guarantee)', async () => {
+    expect(await pgrestInFilter(UNAFFECTED)).toBe(await libraryFilter(UNAFFECTED));
+  });
+
+  test('an inch-mark code takes the escaped path and every code survives', async () => {
+    const withQuote = ['9058-1NA', 'DUNLOPILLO GENERASI 5" MATT (S)', '9058-1S'];
+    const via = await pgrestInFilter(withQuote);
+    /* NOT what the raw library would emit — that dropped the third code. */
+    expect(via).toBe(await ourFilter(withQuote));
+    expect(via).not.toBe(await libraryFilter(withQuote));
+    expect(parsePgrestInList(via.slice('in.'.length))).toEqual(withQuote);
+  });
+
+  test('returns the builder so predicates still chain after it', async () => {
+    let seenCode = '';
+    let seenCompany = '';
+    const sb = createClient('http://postgrest.test', 'k', {
+      global: {
+        fetch: (async (input: RequestInfo | URL) => {
+          const u = new URL(String(input));
+          seenCode = u.searchParams.get('code') ?? '';
+          seenCompany = u.searchParams.get('company_id') ?? '';
+          return new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } });
+        }) as typeof fetch,
+      },
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    await pgrestIn(sb.from('mfg_products').select('code'), 'code', ['A', 'B']).eq('company_id', 1);
+    expect(seenCode).toBe('in.(A,B)');
+    expect(seenCompany).toBe('eq.1');
   });
 });
