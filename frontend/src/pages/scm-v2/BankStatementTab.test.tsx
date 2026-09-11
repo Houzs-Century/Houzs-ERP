@@ -245,6 +245,9 @@ describe('amounts in two columns', () => {
     const heads = within(chooser).getAllByRole('columnheader').map((h) => h.textContent);
     expect(heads).toEqual(['', 'Entry', 'Date', 'Source', 'Who', 'Debit', 'Credit']);
     expect(cellsOf(within(chooser).getByText('2990-JE-2604-0024').closest('tr') as HTMLElement).slice(5)).toEqual(['', 'RM 3,101.68']);
+  });
+});
+
 /* docs/bugs/0814 — the obvious ones are matched without a hand; a statement
    uploaded before the rule can have it run. */
 describe('matching the obvious ones', () => {
