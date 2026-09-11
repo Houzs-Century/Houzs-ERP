@@ -1,0 +1,46 @@
+name: Write-off plan — costed duplicate sofa lots (read-only)
+
+# What would a costed retire of the duplicate sofa cutover lots remove?
+# (docs/bugs/0721.) The existing retire tool refuses costed lots — "the money
+# does not move" — and after the costing lane (#3486, #3495) that means it now
+# refuses almost everything. This plan uses the SAME planner with its
+# allowCostedRetire opt-in to show the surplus lots, their cost, and the total
+# inventory value a write-off would remove. It writes NOTHING; the apply that
+# removes the value is a separate gated tool built only if this figure is
+# approved.
+#
+# Manual trigger only; a production DB read must never be routine CI noise. Own
+# concurrency group so it can neither queue behind nor displace a release.
+on:
+  workflow_dispatch:
+    inputs:
+      batch:
+        description: "Optional single PO batch to scope to (blank = all)."
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: plan-writeoff-duplicate-sofa-lots
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/plan-writeoff-duplicate-sofa-lots.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BATCH: ${{ inputs.batch }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

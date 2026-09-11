@@ -55,8 +55,16 @@ export function modelOfCompartment(itemCode) {
  *                  pass the REAL computeVariantKey rather than the mirror.
  * @returns { retire: [...], refusals: [...], groups: number }
  */
-export function planDuplicateSofaLots({ lots, poLines, soBindings, computeKey }) {
+export function planDuplicateSofaLots({ lots, poLines, soBindings, computeKey, allowCostedRetire = false }) {
   if (typeof computeKey !== "function") throw new Error("computeKey is required");
+
+  /* allowCostedRetire OPT-IN (default false keeps every existing caller and the
+     16 pinned tests unchanged). When true, a surplus lot that carries a cost is
+     RETIRED instead of refused — a deliberate inventory WRITE-OFF, only for the
+     costed-duplicate decision the owner takes with the figure in front of them
+     (docs/bugs/0721). It changes NOTHING else: a consumed, part-consumed,
+     live-SO-bound, or model-not-on-order lot is still refused, because those are
+     not "money moves" refusals — they are "this is not surplus" refusals. */
 
   /** `${batch}|${itemCode}` -> the purchase line that governs it. */
   const poByCell = new Map();
@@ -141,7 +149,7 @@ export function planDuplicateSofaLots({ lots, poLines, soBindings, computeKey })
         refuse(batchNo, itemCode, `lot ${lot.id} is part-consumed (${lot.qtyRemaining} of ${lot.qtyReceived} left) — something took goods from it`, [lot.id]);
         continue;
       }
-      if (Number(lot.unitCostSen ?? 0) !== 0) {
+      if (Number(lot.unitCostSen ?? 0) !== 0 && !allowCostedRetire) {
         refuse(batchNo, itemCode, `lot ${lot.id} carries a cost (${lot.unitCostSen} sen) — retiring it moves money, which this tool may not do`, [lot.id]);
         continue;
       }

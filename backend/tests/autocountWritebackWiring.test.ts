@@ -154,15 +154,17 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
     // Header CAS save.
     expect(between(soSource, 'header saved but edit lease was no longer ours', 'version: savedVersion,'))
       .toContain('queueAcSoEdit(c, docNo');
-    // Line add / edit / delete.
-    expect(between(soSource, 'post-line-add failed', 'return c.json({ item: data }, 201);'))
+    // Line add / edit / delete. Anchored on the deferAllocationRecompute label
+    // that ends each handler's work (was the old inline console.error string,
+    // removed when these routes moved off the blocking recompute 2026-09-11).
+    expect(between(soSource, "post-line-add", 'return c.json({ item: data }, 201);'))
       .toContain('queueAcSoEdit(c, docNo');
-    expect(between(soSource, 'post-line-patch failed', 'return c.json({ ok: true });'))
+    expect(between(soSource, "post-line-edit", 'return c.json({ ok: true });'))
       .toContain('queueAcSoEdit(c, docNo');
     /* The delete also RETIRES the removed line in AutoCount — without naming it
        the account book keeps it live, because /edit applies only the lines it
        is given. See autocountWritebackCells.test.ts for the all-six version. */
-    expect(between(soSource, 'post-line-delete failed', 'return c.body(null, 204);'))
+    expect(between(soSource, "post-line-delete", 'return c.body(null, 204);'))
       .toContain('queueAcSoEdit(c, docNo, retire)');
     /* Variant / SKU changes. These run inside runScmPgCommand, so the queue
        call must sit OUTSIDE the transaction and fire only on a 2xx. */

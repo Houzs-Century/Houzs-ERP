@@ -95,7 +95,7 @@ export async function salesDocOutOfScope(
   return salespersonId == null || !ids.includes(String(salespersonId));
 }
 
-/* ── SALES ORDERS ONLY: shared orders ───────────────────────────────────────
+/* ── SALES ORDERS ONLY: shared orders + open-to-all ─────────────────────────
    Owner 2026-09-09: a Sales Order can be shared with several salespeople, who
    all see and edit it equally ("接手的几位 sales person 都有权限"). Migration
    20260909T1000 added `collaborator_staff_ids` (what was granted) and the
@@ -105,7 +105,14 @@ export async function salesDocOutOfScope(
    consignment, quotes, reports, AR reconciliation — deliberately keeps
    `.in('salesperson_id', …)`: those documents snapshot the rep who sold the
    order, which is what commission is booked from. See docs/modules/
-   so-handover.md §"Reach".                                                    */
+   so-handover.md §"Reach".
+
+   Owner 2026-09-11: the same two helpers also honour `open_to_all` (boolean,
+   mig 20260911T1500) — an order flagged open is visible to (and, subject to the
+   unchanged state locks, editable by) EVERY caller, bypassing access_staff_ids.
+   It is visibility only: attribution, commission and the per-person money
+   endpoints (/mine, /my-mtd — which scope on the caller's own staff uuid, not
+   these helpers) are untouched. See docs/modules/sales-order.md.              */
 
 /**
  * Apply the caller's row-level scope to a query over `mfg_sales_orders` or its
@@ -118,8 +125,18 @@ export async function salesDocOutOfScope(
  */
 export function applySoScope<T>(q: T, scopeIds: string[] | null): T {
   if (!scopeIds) return q;
+  /* "in my scope OR open to all". A single PostgREST or= of one array-overlap
+     (access_staff_ids && scope) plus one scalar (open_to_all is true) — NOT the
+     two-array `in.(…) , ov.{…}` nesting 20260909T1000 deliberately avoided; the
+     only commas here are the array literal's. open_to_all is a boolean on both
+     the base table and the payment-totals VIEW (mig 20260911T1500), so this is
+     valid whether `q` reads the table or the view. The match-nothing sentinel
+     still matches nothing on the overlap term (no order carries the all-zeros
+     uuid); such a caller now additionally sees open orders, which is the point. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped throughout this module.
-  return (q as any).overlaps("access_staff_ids", scopeIds) as T;
+  return (q as any).or(
+    `access_staff_ids.ov.{${scopeIds.join(",")}},open_to_all.is.true`,
+  ) as T;
 }
 
 /**
@@ -130,6 +147,10 @@ export function applySoScope<T>(q: T, scopeIds: string[] | null): T {
  * `accessStaffIds` absent or empty falls back to the `salespersonId` test, so a
  * gate whose read has not been given the column keeps TODAY's behaviour rather
  * than opening up: a collaborator would be refused, never a stranger admitted.
+ *
+ * `openToAll` true short-circuits to in-scope for everyone (mig 20260911T1500).
+ * A gate whose read has not been given the column passes `undefined`, which is
+ * falsy, so it keeps TODAY's behaviour — fail-safe, never fail-open.
  */
 export async function soDocOutOfScope(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped throughout this module (see the four functions around it); typing it here alone would describe a contract the rest of the file does not keep.
@@ -140,8 +161,10 @@ export async function soDocOutOfScope(
   doc: {
     salespersonId?: number | string | null;
     accessStaffIds?: readonly (string | null)[] | null;
+    openToAll?: boolean | null;
   },
 ): Promise<boolean> {
+  if (doc.openToAll) return false; // open to all — in scope for everyone
   const ids = await resolveSalesScopeIds(sb, env, houzsUserId, canViewAll);
   if (ids === null) return false; // unrestricted
   const access = (doc.accessStaffIds ?? []).filter((x): x is string => !!x);

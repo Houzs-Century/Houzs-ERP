@@ -494,16 +494,16 @@ soAmendments.get('/:id', async (c) => {
   // SO header summary — doc_no, status, revision (+ salesperson_id for the scope
   // check below).
   const { data: soRow } = await sb.from('mfg_sales_orders')
-    .select('doc_no, status, revision, salesperson_id, access_staff_ids')
+    .select('doc_no, status, revision, salesperson_id, access_staff_ids, open_to_all')
     .eq('doc_no', amendment.so_doc_no).maybeSingle();
   const salesOrder = (soRow ?? null) as
-    { doc_no: string; status: string; revision: number; salesperson_id?: number | string | null; access_staff_ids?: string[] | null } | null;
+    { doc_no: string; status: string; revision: number; salesperson_id?: number | string | null; access_staff_ids?: string[] | null; open_to_all?: boolean | null } | null;
 
   /* Row-level scope (Owner 2026-07-16) — a scoped salesperson may open only an
      amendment for a Sales Order in their own+downline scope; anything else 404s
      (indistinguishable from a nonexistent id), mirroring the SO detail read.
      View-all callers pass. */
-  if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: salesOrder?.salesperson_id, accessStaffIds: salesOrder?.access_staff_ids })) {
+  if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: salesOrder?.salesperson_id, accessStaffIds: salesOrder?.access_staff_ids, openToAll: salesOrder?.open_to_all })) {
     return c.json({ error: 'not_found' }, 404);
   }
 

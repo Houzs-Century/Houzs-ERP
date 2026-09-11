@@ -52,11 +52,20 @@ import stockTransfers from '../src/scm/routes/stock-transfers.ts?raw';
    "inline: 33" without the deferred column would look like a call site was
    made safe when nothing about its guarantee moved.
 
+   EXTENDED 2026-09-11: the SO LINE add / edit / delete routes were deferred the
+   same way, for the same reason — each awaited the ~8s sweep before returning,
+   and one "save edited SO" fans out to one line write per changed row, so the
+   sweeps stacked and the save took tens of seconds and had to be retried. Four
+   call sites moved INLINE -> DEFERRED (add has two branches, sofa and non-sofa);
+   guarantee unchanged, latency down.
+
    THIS TEST IS A RATCHET, NOT A TARGET. It pins the exact inventory. Moving a
    call site between any two columns, or adding one, fails this test, which
    forces the follow-up PR to state which line it changed instead of letting the
-   numbers drift quietly. Follow-up work: convert by module, highest count first
-   (grns 6, mfg-sales-orders 7), each with its own move to `runScmPgCommand`.
+   numbers drift quietly. Follow-up work (DURABLE conversion): convert by module,
+   highest remaining inline count first (grns 4, then delivery-orders /
+   delivery-returns / purchase-returns at 3 each and mfg-sales-orders 3), each
+   with its own move to `runScmPgCommand`.
    ══════════════════════════════════════════════════════════════════════════ */
 
 /* THE NEEDLES COUNT THE CALL, NOT ITS ARGUMENT NAME. Until 2026-08-20 two of
@@ -95,7 +104,15 @@ const LEDGER: Array<{
      docs/ALLOCATION-DURABILITY-PLAN.md. */
   { module: 'routes/grns.ts', source: grns, inline: 4, durable: 2, deferred: 0 },
   { module: 'routes/inventory-adjustments.ts', source: inventoryAdjustments, inline: 1, durable: 0, deferred: 0 },
-  { module: 'routes/mfg-sales-orders.ts', source: mfgSalesOrders, inline: 7, durable: 3, deferred: 1 },
+  /* mfg-sales-orders.ts moved 7 -> 3 inline and 1 -> 5 deferred on 2026-09-11:
+     the SO line ADD (sofa + non-sofa branches), EDIT and DELETE routes now defer
+     the global sweep under ctx.waitUntil instead of awaiting it. Each had blocked
+     the response on the ~8s recompute, and one "save edited SO" fans out to one
+     line write per changed row, so a multi-line save stacked several ~8s waits
+     and timed out into repeated retries. Same guarantee (best-effort, no queue
+     row), lower latency — the header PATCH was already deferred. The 3 inline
+     that remain are status / proceed / cancel. docs/ALLOCATION-DURABILITY-PLAN.md. */
+  { module: 'routes/mfg-sales-orders.ts', source: mfgSalesOrders, inline: 3, durable: 3, deferred: 5 },
   { module: 'routes/purchase-consignment-receives.ts', source: purchaseConsignmentReceives, inline: 1, durable: 0, deferred: 0 },
   { module: 'routes/purchase-consignment-returns.ts', source: purchaseConsignmentReturns, inline: 1, durable: 0, deferred: 0 },
   { module: 'routes/purchase-returns.ts', source: purchaseReturns, inline: 3, durable: 0, deferred: 0 },
@@ -121,10 +138,11 @@ describe('durable allocation coverage is stated honestly', () => {
     const inline = LEDGER.reduce((sum, entry) => sum + entry.inline, 0);
     const deferred = LEDGER.reduce((sum, entry) => sum + entry.deferred, 0);
     expect(durable).toBe(6);
-    expect(inline).toBe(31);
-    expect(deferred).toBe(1);
-    /* The trigger count is unchanged: deferring one moved it between columns,
-       it did not remove it. 32 are still best-effort (31 inline + 1 deferred). */
+    expect(inline).toBe(27);
+    expect(deferred).toBe(5);
+    /* The trigger count is unchanged: deferring the four SO line routes
+       (2026-09-11) moved them between columns, it did not remove them. 32 are
+       still best-effort (27 inline + 5 deferred). */
     expect(inline + deferred).toBe(32);
     expect(durable + inline + deferred).toBe(38);
   });
