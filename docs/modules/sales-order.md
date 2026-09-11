@@ -1873,6 +1873,22 @@ re-attribute, with the Salesperson field as the only live control. Bulk handover
 > `20260909T1001` (the view must enumerate them — see the VIEW TRAP below).
 > Full reasoning: **`so-handover.md` §8**.
 
+> **OPEN TO ALL — the imported historical batch (owner 2026-09-11).** A boolean
+> `open_to_all` on `mfg_sales_orders` (mig `20260911T1500`) adds a SECOND bypass
+> to the SAME two helpers: `applySoScope` ORs `open_to_all.is.true` onto the
+> `access_staff_ids` overlap, and `soDocOutOfScope` short-circuits to in-scope
+> when it is set. It is **visibility only** — who may SEE and (subject to the
+> unchanged state locks: downstream DO/SI, processing-lock, PO-lock, 2990 mirror)
+> EDIT an order — never attribution: `salesperson_id`, `agent`, commission and
+> the per-person figures (`/mine`, `/my-mtd`, which scope on the caller's own
+> uuid, not these helpers) are all untouched, and nothing here reaches AutoCount.
+> Same reach as sharing (Sales Orders only). Defaults `false`; the AutoCount go-
+> live batch — `doc_no ~ '^HC-SO-[0-9]{6,}$'`, ~2882 orders, NOT
+> `linked_ac_docno IS NOT NULL` (which also matches write-back-linked native
+> orders) — is flipped `true` by `backend/scripts/backfill-so-open-to-all.mjs` +
+> its `workflow_dispatch`, never a migration. The payment-totals view enumerates
+> it too (same VIEW TRAP).
+
 Paginated contract (`?page=`) returns `{ salesOrders, total, page, pageSize,
 statusCounts, aggregates }`. `statusCounts` carries `all` plus ONE lowercase
 bucket per `SO_STATUSES` vocabulary entry (draft / confirmed / in_production /

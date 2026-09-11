@@ -293,6 +293,15 @@ sold the order, and that snapshot is what commission is booked from — the same
 reason `/apply` writes no financial column. A co-owner sees the Sales Order they
 are working; they do not inherit someone else's invoice.
 
+> **A SIBLING BYPASS RIDES THE SAME TWO HELPERS (owner 2026-09-11).** The boolean
+> `open_to_all` on `mfg_sales_orders` (mig `20260911T1500`) opens the AutoCount-
+> imported historical batch to EVERY user. `applySoScope` ORs `open_to_all.is.true`
+> onto the `access_staff_ids` overlap and `soDocOutOfScope` short-circuits on it,
+> so it inherits this table's reach exactly — Sales Orders only. It is a bulk
+> visibility flag, not a per-order grant: no Handover UI, no `collaborator_staff_ids`,
+> no attribution. Details in `sales-order.md` (§ row-level visibility) and the
+> backfill `backend/scripts/backfill-so-open-to-all.mjs`.
+
 ### 8.4 The migrated-SO lock is deliberately NOT asked
 
 `/apply` asks it (§3). `/share` does not, and that is the one decision in the
