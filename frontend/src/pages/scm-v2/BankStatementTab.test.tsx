@@ -201,6 +201,50 @@ describe('re-filing an old statement as its month\'s', () => {
   });
 });
 
+/* Owner, 2026-09-11: 为了方便看，你可以把这个金额分成 debit 和 credit 吗？ The
+   books' tables carry Debit and Credit the way a ledger does (a payment is a
+   credit to the bank account); the bank's own movements carry Deposit and
+   Withdrawal, the words on the statement (docs/bugs/0813). */
+describe('amounts in two columns', () => {
+  const cellsOf = (row: HTMLElement) => within(row).getAllByRole('cell').map((c) => String(c.textContent).trim());
+
+  test('an entry in the books shows under Debit or Credit, never as a signed figure', () => {
+    unmatched = [
+      { jeNo: '2990-JE-2604-0024', entryDate: '2026-04-30', sourceType: 'PV', sourceDocNo: '2990-HPV-2604-007', debitSen: 0, creditSen: 310168, partyName: 'HOUZS VENTURE HOLDING SDN BHD', carried: false },
+      { jeNo: '2990-JE-2606-0084', entryDate: '2026-06-04', sourceType: 'RCT', sourceDocNo: '2990-OR-2606-001', debitSen: 1200000, creditSen: 0, partyName: 'HOUZS VENTURE HOLDING SDN BHD', carried: false },
+    ];
+    openStatement();
+    const table = screen.getByText(/Outstanding items — in the books, not yet on the bank \(2\)/).closest('section') as HTMLElement;
+    const heads = within(table).getAllByRole('columnheader').map((h) => h.textContent);
+    expect(heads).toEqual(['Entry', 'Date', 'Source', 'Who', 'Debit', 'Credit']);
+    expect(cellsOf(within(table).getByText('2990-JE-2604-0024').closest('tr') as HTMLElement).slice(4)).toEqual(['', 'RM 3,101.68']);
+    expect(cellsOf(within(table).getByText('2990-JE-2606-0084').closest('tr') as HTMLElement).slice(4)).toEqual(['RM 12,000.00', '']);
+    expect(screen.queryByText('RM -3,101.68')).toBeNull();
+  });
+
+  test('a bank movement shows under Deposit or Withdrawal', () => {
+    openStatement();
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent);
+    expect(heads).toContain('Deposit');
+    expect(heads).toContain('Withdrawal');
+    expect(heads).not.toContain('Amount');
+    const charge = screen.getByText('SERVICE CHARGE').closest('tr') as HTMLElement;
+    const cells = cellsOf(charge);
+    /* tick box, the movement, Deposit, Withdrawal, what it looks like, what to do */
+    expect(cells[2]).toBe('');
+    expect(cells[3]).toBe('RM 25.00');
+    expect(screen.queryByText('RM -25.00')).toBeNull();
+  });
+
+  test('the chooser lists entries under Debit and Credit too', () => {
+    lines = [OTHER];
+    unmatched = [{ jeNo: '2990-JE-2604-0024', entryDate: '2026-04-30', sourceType: 'PV', sourceDocNo: '2990-HPV-2604-007', debitSen: 0, creditSen: 310168, partyName: 'HOUZS VENTURE HOLDING SDN BHD', carried: false }];
+    openStatement();
+    fireEvent.click(screen.getByLabelText('Pick line 9'));
+    const chooser = screen.getByText(/Choose the entry these movements are/).closest('section') as HTMLElement;
+    const heads = within(chooser).getAllByRole('columnheader').map((h) => h.textContent);
+    expect(heads).toEqual(['', 'Entry', 'Date', 'Source', 'Who', 'Debit', 'Credit']);
+    expect(cellsOf(within(chooser).getByText('2990-JE-2604-0024').closest('tr') as HTMLElement).slice(5)).toEqual(['', 'RM 3,101.68']);
 /* docs/bugs/0814 — the obvious ones are matched without a hand; a statement
    uploaded before the rule can have it run. */
 describe('matching the obvious ones', () => {

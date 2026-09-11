@@ -2612,6 +2612,33 @@ Every SET re-asserts `IS NULL`, so a corrected header survives. What the plan
 lists under "order itself blank" is an SO-side gap: fix the SO and re-run, it
 is idempotent. docs/bugs/0716.
 
+## The header delivery date CASCADES to the lines, and the lines are VISIBLE (2026-09-11)
+
+Two faults the owner found on one delivery order, with the header reading 24/09
+and all ten lines reading 19/09:
+
+**1. Changing "Customer delivery date" on the header now moves every line.** The
+rule is `cascadeLineDeliveryDate` in
+`frontend/src/vendor/scm/lib/line-delivery-date-cascade.ts`, and BOTH the sales
+order and the delivery order call it — it used to be written inline in
+`SalesOrderNew.tsx` and nowhere on the DO, which is how one screen followed and
+the other did not while both rendered the same `SoLineCard`. A line whose date an
+operator TYPED is never moved: `SoLineCard` sets
+`lineDeliveryDateOverridden` the moment its own date field is edited. Clearing
+the header clears its followers, on purpose — the alternative leaves lines
+holding a date the document no longer claims.
+
+**2. The DO detail page shows a Delivery date column.** The detail GET has always
+returned `line_delivery_date` (the ITEM columns, §the detail read); the page just
+never rendered it, so the date was editable in the form and invisible on the
+document. It renders muted when the line is following the header and
+full-strength when an operator set it — the same distinction the form's own date
+field draws.
+
+Ledger: `docs/bugs/0813-the-delivery-order-s-header-delivery-date-did-not-cascade-to.md`.
+**Mobile is NOT on this rule yet**: `src/mobile/MobileNewSO.tsx` keeps its own
+line shape with no override flag, so a cascade there has nothing to except.
+
 ## DO dates default to the SO's delivery date (2026-09-11)
 
 Owner rule, restated four times the same morning: 「我开 DO 之前我改 SO 就行 ……
