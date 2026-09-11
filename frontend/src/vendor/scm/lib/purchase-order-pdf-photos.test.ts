@@ -65,20 +65,29 @@ beforeAll(() => {
   proto.toDataURL = () => dataUrl;
 });
 
-const header = {
+/* Typed off the generator's own signature rather than cast with `as never`.
+   The repo bans that cast (no-restricted-syntax) for the reason it names: a
+   hand-written fixture pushed past its type hides the field the code actually
+   reads, which for THIS test would be `id` or `photo_urls` — the two the photo
+   block depends on. `printDocumentPdf.ts` takes the same shape the same way. */
+type PoArgs = Parameters<typeof import('./purchase-order-pdf').purchaseOrderPdfBase64>;
+
+const header: PoArgs[0] = {
   id: 'po-1',
   po_number: 'HC-PO-010148',
   supplier_id: null,
   status: 'SUBMITTED',
   po_date: '2026-09-07',
+  expected_at: null,
   currency: 'MYR',
   subtotal_sen: 100000,
   tax_sen: 0,
   total_sen: 100000,
+  notes: null,
   supplier: { code: '400-TEST', name: 'TEST SUPPLIER SDN. BHD.', address: '1 JALAN TEST' },
-} as never;
+};
 
-const line = (photos: string[]) => ({
+const line = (photos: string[]): PoArgs[1][number] => ({
   id: 'po-line-1',
   item_code: '9058-1A(LHF)',
   material_name: 'SOFA 9058 1A LHF',
@@ -95,7 +104,7 @@ const line = (photos: string[]) => ({
 
 const render = async (photos: string[]) => {
   const { purchaseOrderPdfBase64 } = await import('./purchase-order-pdf');
-  const pdf = Buffer.from(await purchaseOrderPdfBase64(header, [line(photos)] as never), 'base64');
+  const pdf = Buffer.from(await purchaseOrderPdfBase64(header, [line(photos)]), 'base64');
   return { pdf, raw: pdf.toString('latin1') };
 };
 
