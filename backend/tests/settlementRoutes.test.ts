@@ -498,9 +498,15 @@ describe('confirming is the moment of posting', () => {
     const { app, sb } = harness({
       mfg_sales_order_payments: [
         soPayment({ id: 'late', so_doc_no: 'SO-2608-077', paid_at: '2026-08-20T10:00:00', amount_sen: 77700, approval_code: null, merchant_provider: null }),
+        /* The same customer's earlier, CANCELLED order: its money is not offered (docs/bugs/0837). */
+        soPayment({ id: 'gone', so_doc_no: 'SO-2608-070', paid_at: '2026-08-19T10:00:00', amount_sen: 77700, approval_code: null, merchant_provider: null }),
         soPayment(),
       ],
-      mfg_sales_orders: [{ doc_no: 'SO-2608-077', company_id: CO, debtor_name: 'Chou Mun Yee' }, { doc_no: 'SO-2608-001', company_id: CO, debtor_name: 'Someone Else' }],
+      mfg_sales_orders: [
+        { doc_no: 'SO-2608-077', company_id: CO, debtor_name: 'Chou Mun Yee', status: 'CONFIRMED' },
+        { doc_no: 'SO-2608-070', company_id: CO, debtor_name: 'Chou Mun Yee', status: 'CANCELLED' },
+        { doc_no: 'SO-2608-001', company_id: CO, debtor_name: 'Someone Else', status: 'DELIVERED' },
+      ],
       sales_invoices: [],
     });
     await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
@@ -798,7 +804,19 @@ describe('the batch detail and the watchlists', () => {
     /* p3 is a fortnight before the statement period: too old to be a candidate
        for any of its lines, so it stays on watchlist 1 while the statement's
        second line — money with no sale behind it — stays on watchlist 2. */
-    const { app } = harness({ mfg_sales_order_payments: [soPayment(), soPayment({ id: 'p3', so_doc_no: 'SO-3', paid_at: '2026-07-15T09:00:00', amount_sen: 5000, approval_code: 'B2' })] });
+    /* c1 sits on a CANCELLED order: not a sale to reconcile, so it is on
+       neither list (owner 2026-09-12: cancel SO 就 cancel 不显示; docs/bugs/0837). */
+    const { app } = harness({
+      mfg_sales_order_payments: [
+        soPayment(),
+        soPayment({ id: 'p3', so_doc_no: 'SO-3', paid_at: '2026-07-15T09:00:00', amount_sen: 5000, approval_code: 'B2' }),
+        soPayment({ id: 'c1', so_doc_no: 'SO-GONE', paid_at: '2026-07-16T09:00:00', amount_sen: 6000, approval_code: 'B3' }),
+      ],
+      mfg_sales_orders: [
+        { doc_no: 'SO-3', company_id: CO, debtor_name: 'Still Here', status: 'CONFIRMED' },
+        { doc_no: 'SO-GONE', company_id: CO, debtor_name: 'Gone', status: 'CANCELLED' },
+      ],
+    });
     await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
 
     const body = await (await app.request('/settlement/watchlist?from=2026-07-01&to=2026-08-16')).json() as {

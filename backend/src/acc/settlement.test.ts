@@ -137,6 +137,27 @@ describe('loadPaymentCandidates', () => {
     // Both reach the screen saying they are untagged (blank counts as untagged).
     expect(r.payments.map((p) => p.merchantProvider)).toEqual([null, null]);
   });
+
+  /* Owner 2026-09-12: cancel SO 就 cancel 不显示. The money on a cancelled order
+     is not a sale to reconcile — it waits to be converted to a new order or
+     refunded — so it is nobody's candidate, whatever its tag or date. */
+  it('leaves a cancelled order\'s money out — it is converted or refunded, not reconciled (docs/bugs/0837)', async () => {
+    const sb = world({
+      mfg_sales_order_payments: [
+        { id: 'p1', so_doc_no: 'SO-1', paid_at: '2026-08-01T10:00:00', amount_sen: 100000, approval_code: 'A1', method: 'merchant', merchant_provider: 'MBB', company_id: 1 },
+        { id: 'c1', so_doc_no: 'SO-GONE', paid_at: '2026-08-01T11:00:00', amount_sen: 143300, approval_code: 'A2', method: 'merchant', merchant_provider: 'MBB', company_id: 1 },
+      ],
+      mfg_sales_orders: [
+        { doc_no: 'SO-1', company_id: 1, debtor_name: 'Still Here', status: 'CONFIRMED' },
+        { doc_no: 'SO-GONE', company_id: 1, debtor_name: 'Gone', status: 'CANCELLED' },
+      ],
+      sales_invoice_payments: [],
+    });
+    const r = await loadPaymentCandidates(sb, 1, { display_name: 'MBB', date_tolerance_days: 3 }, '2026-08-01', '2026-08-03', ['A2']);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.payments.map((p) => p.id)).toEqual(['p1']);
+  });
 });
 
 describe('couldBeAcquirers — which recorded payment may belong to this statement', () => {
