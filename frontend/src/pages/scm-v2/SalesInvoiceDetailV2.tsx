@@ -105,6 +105,7 @@ import { clearPaymentRetryHandoff, completePaymentRetryDraft, consumePaymentRetr
 import { transferFromColumnLabel } from "../../lib/convertScope";
 import { customerRefOf } from '../../lib/customer-ref';
 
+import { isFocLine } from '../../vendor/scm/lib/foc-line';
 // ─── Row shapes (subset — see SalesInvoiceDetail.tsx for the full 40-field
 // header) ───────────────────────────────────────────────────────────────
 
@@ -1103,8 +1104,7 @@ export function SalesInvoiceDetailV2() {
       align: "right",
       getValue: (l) => l.discount_sen,
       render: (l) => {
-        const isFoc =
-          l.unit_price_sen === 0 && (l.line_total_sen ?? 0) === 0;
+        const isFoc = isFocLine(l);
         if (isFoc) {
           return (
             <Badge tone="warning" size="xs">

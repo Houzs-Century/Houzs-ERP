@@ -94,6 +94,7 @@ import { AddPaymentSheet, RecordedPaymentsList, type RecordedPayment } from "./R
 import { MobileLineRemark } from "./MobileLineRemark";
 import "./mobile.css";
 
+import { isFocLine } from '../vendor/scm/lib/foc-line';
 /* Shapes are the subset of the /mfg-sales-orders/:docNo + /:docNo/payments
    responses the mobile detail screen reads. The backend camelCases nothing —
    these are the raw snake_case columns. */
@@ -1086,7 +1087,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                    positive discount_sen renders under the unit price. Without
                    these the row hid the discount and an FOC line looked like a
                    plain "RM 0.00 ×qty". */
-                const isFoc = (it.unit_price_sen ?? 0) === 0 && lineTotalSen(it) === 0;
+                const isFoc = isFocLine({ ...it, line_total_sen: lineTotalSen(it) });
                 const discountSen = it.discount_sen ?? 0;
                 return (
                 <div key={it.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "11px 13px", borderTop: i ? "1px solid var(--line2)" : "none" }}>
