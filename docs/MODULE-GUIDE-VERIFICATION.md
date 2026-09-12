@@ -98,6 +98,7 @@ hard to check.
 | `payment-voucher.md` | not verified | — | — |
 | `projects-pms.md` | not verified | — | — |
 | `purchase-consignment-order.md` | not verified | — | — |
+| `purchase-invoice.md` | not verified | — | — |
 | `purchase-order-amendment.md` | not verified | — | — |
 | `purchase-order.md` | not verified | — | — |
 | `purchase-return.md` | not verified | — | — |
