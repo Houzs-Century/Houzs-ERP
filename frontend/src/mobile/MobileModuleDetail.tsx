@@ -1622,6 +1622,12 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
           </div>
         )}
       </div>
+      {/* Collected on the ORDER — desktop parity (DeliveryOrderDetailV2's aside
+          card). Read-only on both surfaces: the order is the one place a
+          payment is taken. */}
+      {moduleKey === "delivery-orders-mfg" && s(header?.so_doc_no) && (
+        <MobileCollectedOnOrder soDocNo={s(header?.so_doc_no)} currency={s(header?.currency) || "MYR"} />
+      )}
       {/* CANCELLED = no lifecycle bar (spec); only the desktop-parity recovery
           actions (Reopen / Delete, the sole actions statusActionsFor returns for
           a cancelled doc) survive so a mis-cancel is still recoverable. */}
@@ -1981,3 +1987,4 @@ export function MobileModuleDetail({ moduleKey, row, title, onBack, onPOD, onEdi
 }
 
 import { DateField } from "../vendor/scm/components/DateField";
+import { MobileCollectedOnOrder } from "./MobileCollectedOnOrder";

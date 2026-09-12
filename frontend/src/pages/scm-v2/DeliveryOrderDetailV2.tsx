@@ -64,6 +64,7 @@ import {
   useUpdateMfgDeliveryOrderStatus,
   useRevertMfgDeliveryOrder,
   useUpdateMfgDeliveryOrderItem,
+  useSalesOrderPayments,
 } from "../../vendor/scm/lib/delivery-order-queries";
 import { useRacks } from "../../vendor/scm/lib/warehouse-queries";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
@@ -97,6 +98,7 @@ import { customerRefOf } from '../../lib/customer-ref';
 
 import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { isFocLine } from '../../vendor/scm/lib/foc-line';
+import { CollectedOnOrderCard } from "../../vendor/scm/components/CollectedOnOrderCard";
 // ─── Header + item shapes (subset — full 40-field row lives in the list V2) ─
 
 type DoLifecycle = "shipped" | "invoiced" | "returned";
@@ -699,6 +701,12 @@ export function DeliveryOrderDetailV2() {
     () => deliveryOrder?.note || deliveryOrder?.notes || null,
     [deliveryOrder?.note, deliveryOrder?.notes]
   );
+
+  /* What the ORDER has collected. Owner 2026-09-12: the money taken on the
+     sales order must be visible on the documents that come out of it, and this
+     page showed nothing at all. Read-only — carry means SHOW, not re-enter, and
+     the order stays the one place a payment is taken (docs/bugs/0850). */
+  const soPaymentsQ = useSalesOrderPayments(deliveryOrder?.so_doc_no ?? null);
 
   // Chain nodes for the shared Relationship Map modal, read from the LIVE
   // `/document-flow` graph (the SO map's source) instead of a hand-built chain.
@@ -1556,6 +1564,23 @@ export function DeliveryOrderDetailV2() {
                   tone="neutral"
                 />
               </AsideCard>
+
+              {/* Collected on the ORDER — its own card rather than extra rows
+                  anywhere else, because these receipts were banked against the
+                  sales order and not against this delivery, and merging the two
+                  would lose exactly the fact the office needs: which document
+                  took the money. Read-only here; it is edited on the order. */}
+              {deliveryOrder.so_doc_no && (
+                <AsideCard title={`Collected on ${deliveryOrder.so_doc_no}`}>
+                  <CollectedOnOrderCard
+                    soDocNo={deliveryOrder.so_doc_no}
+                    payments={soPaymentsQ.data}
+                    error={soPaymentsQ.error}
+                    isLoading={soPaymentsQ.isLoading}
+                    currency={deliveryOrder.currency}
+                  />
+                </AsideCard>
+              )}
 
               {/* Recent activity — synthesized from the header's status +
                   origin info (same source as the History modal; no new

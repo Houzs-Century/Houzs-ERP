@@ -2825,3 +2825,29 @@ disagreed in ways nobody could see from the screen that was right: the delivery
 order checked the PRICE ONLY, so a 0-priced line still taking money read **FOC
 there and Sale on the invoice**. Do not re-derive the rule in a component —
 `docs/bugs/0846-the-same-free-line-read-foc-on-the-delivery-order-and-sale-o.md`.
+
+---
+
+## Money collected on the sales order
+
+The delivery order shows what its SALES ORDER has collected — every receipt, the
+total, and the order's document number — on the desktop detail page (an aside
+card) and on the phone. Read from the sales order's own payments ledger through
+`useSalesOrderPayments`, the same hook the sales invoice uses, so the two screens
+cannot start disagreeing about money.
+
+**Read-only, deliberately.** Carry means SHOW, not re-enter: the sales order is
+the one place a payment is taken, and keying the same deposit again against the
+delivery order is the same money counted twice.
+
+`scm.delivery_order_payments` and its three endpoints
+(`GET`/`POST`/`DELETE /delivery-orders-mfg/:id/payments`) exist and are
+**unused by choice** — the two write hooks have no call sites anywhere in the
+frontend. Recording a payment on the delivery rather than on the order is a
+business decision with a real consequence for the order's outstanding figure,
+and it belongs to the owner, not to a passing change. Trace:
+`docs/bugs/0850-the-delivery-order-never-showed-the-money-already-taken-on-i.md`.
+
+A failed read says so rather than rendering as "nothing collected": the card
+takes `error` as a REQUIRED prop, because telling the office to chase money that
+is already banked is the expensive direction of that mistake.
