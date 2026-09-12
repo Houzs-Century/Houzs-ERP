@@ -128,7 +128,9 @@ export type PiLineEnrichable = Record<string, unknown> & { id: string; grn_item_
    importing SupabaseClient so the helper stays testable with a stub. */
 type MinimalPgrest = {
   from: (t: string) => {
-    select: (cols: string) => { in: (col: string, vals: string[]) => PromiseLike<{ data: unknown }> };
+    select: (cols: string) => {
+      in: (col: string, vals: string[]) => PromiseLike<{ data: unknown; error: unknown }>;
+    };
   };
 };
 
@@ -137,8 +139,14 @@ export async function attachGrnLineFacts(sb: MinimalPgrest, items: PiLineEnricha
   for (const it of items) { it.supplier_sku = null; it.po_unit_price_sen = null; }
   if (!grnItemIds.length) return;
 
-  const { data: gis } = await sb.from('grn_items')
+  /* Bind the error and THROW rather than reading `data ?? []` as "none": a
+     failed read and an empty result are different facts, and collapsing them
+     would quietly report every line as having no purchase order behind it —
+     which is exactly the wrong answer to show a person checking a bill. The
+     caller catches, logs, and leaves both fields null. */
+  const { data: gis, error: gErr } = await sb.from('grn_items')
     .select('id, supplier_sku, purchase_order_item_id').in('id', grnItemIds);
+  if (gErr) throw new Error(`grn_items read failed: ${String((gErr as { message?: string }).message ?? gErr)}`);
   const grnRows = (gis ?? []) as Array<{
     id: string; supplier_sku: string | null; purchase_order_item_id: string | null;
   }>;
@@ -150,6 +158,9 @@ export async function attachGrnLineFacts(sb: MinimalPgrest, items: PiLineEnricha
   const poItems: Array<{ id: string; unit_price_sen: number | null }> = [];
   if (poiIds.length) {
     const res = await sb.from('purchase_order_items').select('id, unit_price_sen').in('id', poiIds);
+    if (res.error) {
+      throw new Error(`purchase_order_items read failed: ${String((res.error as { message?: string }).message ?? res.error)}`);
+    }
     poItems.push(...((res.data ?? []) as Array<{ id: string; unit_price_sen: number | null }>));
   }
 
