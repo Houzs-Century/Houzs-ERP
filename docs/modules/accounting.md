@@ -1117,6 +1117,25 @@ and reference is another transaction; an acquirer without unique references
 `backend/tests/settlementRoutes.test.ts` ("a transaction already on another
 report").
 
+**An unconfirmed link follows its payment (2026-09-12, docs/bugs/0833; owner:
+要刷新功能，而且我希望是我打开自动刷新，而不是手动触发刷新).** The upload writes
+each link down with the payment's amount AS OF THEN; a payment Finance
+corrected afterwards (the 3,053 → 3,052 of docs/bugs/0821) left the link and
+the Merchant Recon screen reading the old figure until confirm re-read it and
+refused. `refreshUnconfirmedLinks` (`backend/src/acc/settlement.ts`) runs
+inside `settlementBatchDetail` (`backend/src/scm/routes/accounting-settlement.ts`)
+every time a report is opened: every UNCONFIRMED line's links re-read their
+payment — the window's candidates first, a payment outside the window by id —
+and a moved amount (or a moved order number) is written back to
+`acc_settlement_matches` and named in the reply (`refreshedLinks`: line,
+document, from, to), which the page shows above the lines
+(`frontend/src/pages/scm-v2/MerchantRecon.tsx`,
+`frontend/src/pages/scm-v2/settlement-queries.ts`). No button. Confirmed
+lines are the ledger's and are never touched; a payment that is gone is left
+as it was, for confirm to refuse by name. Contract:
+`backend/tests/settlementRoutes.test.ts` ("an unconfirmed link follows its
+payment").
+
 **A REFERENCE IS NOT BOUND BY THE DATE WINDOW (2026-09-09, docs/bugs/0760).**
 `loadPaymentCandidates` used to read the tolerance window only, and the
 reference was consulted afterwards — so a payment outside the window was never

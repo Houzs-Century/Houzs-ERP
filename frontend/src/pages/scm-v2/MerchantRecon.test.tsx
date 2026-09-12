@@ -108,6 +108,8 @@ vi.mock('./settlement-queries', () => ({
       acquirer: { code: 'MBB', hasUniqueRef: true, dateToleranceDays: 3 },
       buckets: { MATCHED: 1, NEEDS_CONFIRM: 1, UNMATCHED: 0, IGNORED: 0 },
       rows: [ROW, MATCHED_ROW, SUGGESTED_ROW, DONE_ROW, LONELY_ROW],
+      /* The owner's 3,053 → 3,052, read back as the report opened (docs/bugs/0833). */
+      refreshedLinks: [{ settlementRowId: 2, paymentSource: 'SOPAY', paymentId: 'p7', docNo: 'SO-2608-777', fromSen: 305300, toSen: 305200 }],
     },
     isLoading: false,
   }),
@@ -291,6 +293,15 @@ describe('the reconcile tab', () => {
     expect(screen.getByText(/Matched to/)).toBeTruthy();
     /* …and does NOT also repeat that as a grey clue above it. */
     expect(screen.queryByText('Reference 969745 matches SO-2608-043')).toBeNull();
+  });
+
+  test('a payment corrected after the upload is read back as the report opens, and named (docs/bugs/0833)', () => {
+    draw();
+    fireEvent.click(screen.getByText('Reconcile'));
+    const note = screen.getByTestId('refreshed-links');
+    expect(note.textContent).toContain('1 link refreshed');
+    expect(note.textContent).toContain('SO-2608-777');
+    expect(note.textContent).toContain('3,052.00');
   });
 
   test('a report opens on the lines still to decide, with its clue and candidates', () => {

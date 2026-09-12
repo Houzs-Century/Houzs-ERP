@@ -70,6 +70,8 @@ export type SettlementLink = {
   approval_code?: string | null;
 };
 
+export type RefreshedLink = { settlementRowId: number; paymentSource: string; paymentId: string; docNo: string | null; fromSen: number; toSen: number };
+
 export type SettlementRow = {
   id: number;
   line_no: number;
@@ -279,6 +281,8 @@ export const useSettlementBatch = (batchId: number | null) => useQuery({
     acquirer: { code: string; hasUniqueRef: boolean | null; dateToleranceDays: number };
     buckets: Record<string, number>;
     rows: SettlementRow[];
+    /** Unconfirmed links re-read their payment as the report opens (docs/bugs/0833): what moved. */
+    refreshedLinks?: RefreshedLink[];
   }>(`/accounting/settlement/batches/${batchId}`),
   staleTime: 0,
   retry: retryUnlessClientError,
