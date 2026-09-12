@@ -57,7 +57,8 @@ export async function readOrThrow<T>(
  * A POSITIVE NUMBER ANSWERS `null`. Both guard the same trap from opposite
  * sides: zero is not "unknown", it is "this customer owes nothing", and writing
  * it into a live account book declares a real debt settled. `recomputeTotals`
- * fills `total_revenue_sen` on every write, so a row without one is a legacy or
+ * fills `total_revenue_sen` on each write, but an AutoCount-imported order has
+ * only `local_total_sen` (the fallback below); a row with NEITHER is a
  * half-built order the ERP cannot speak for — the key is omitted and the book
  * keeps whatever it holds. The SO detail page reads the same absence as 0
  * because it is drawing a screen; this is writing a ledger.
@@ -74,39 +75,52 @@ export async function readOrThrow<T>(
  * 2,687 of production's 2,824 live orders when that was measured
  * (`probe-so-overpay.mjs`, run 31938735652; via docs/bugs/0723-*).
  *
- * IT REFUSES RATHER THAN FALLING BACK TO `local_total_sen`, which is what the
- * SCREEN now does (`soBalanceSen`, PR #3306). Three reasons, in order of weight:
+ * IT NOW FALLS BACK TO `local_total_sen` — the same total the SCREEN uses
+ * (`soBalanceSen` / `soDisplayTotalSen`). Until 2026-09-12 it REFUSED instead,
+ * and the three reasons are kept because ONE ruling retired two of them (owner
+ * 2026-09-12: AutoCount is now PUSH-ONLY — locked to hand-entry, so the ERP is
+ * the only way any figure reaches the book):
  *
- *   1. REFUSING KEEPS A NUMBER KNOWN TO BE RIGHT. The book's own `UDF_BALANCE`
- *      is where the ERP's figure came from — the import computed
- *      `paid = total - UDF_BALANCE` from it — so saying nothing leaves the
- *      account book holding the value this repo treats as the source of truth.
- *      Asserting anything can only make it worse.
- *   2. THE ERP'S PAID FIGURE IS KNOWN INCOMPLETE ON EXACTLY THESE ORDERS.
- *      `lib/migrated-so-lock.ts` records it: payments taken in AutoCount since
- *      2026-08-28 have never reached the ERP and there is no automatic path.
- *      `local_total_sen - paid` would therefore OVERSTATE the debt on a
- *      migrated order — a customer chased for money already received.
- *   3. A SCREEN AND A LEDGER ARE DIFFERENT ACTS, which is the split
- *      `so-outstanding.ts` exists to hold: `soOutstandingSen` takes
- *      `SoPaidInputs` with no `localTotalSen` field precisely so this reader
- *      cannot quietly acquire the screen's fallback.
+ *   1. WAS: refusing kept AutoCount's own `UDF_BALANCE`, the value the cutover
+ *      READ. NOW that AutoCount is locked, that value is the STALE one — a
+ *      balance collected in the ERP reaches the book by no other path, so
+ *      keeping the old number is exactly what left 34 migrated orders
+ *      (RM 101,034) reading as owing money already collected, since the delivery
+ *      sheet reads the balance from the book (docs/bugs/0842,
+ *      docs/migrated-so-lock-lifted-coe.md).
+ *   2. RESIDUAL, not gone: the ERP's paid figure is incomplete only for the
+ *      HISTORICAL window where a customer paid DIRECTLY in AutoCount (since
+ *      2026-08-28) and it never reached the ERP (docs/bugs/0678). For such an
+ *      order `local_total_sen - paid` OVERSTATES the debt. The answer stays
+ *      clamped `max(0, ...)`, so the worst case is a too-high balance, never a
+ *      false 0; the backfill that re-pushes these lists any PARTIAL balance for
+ *      a human to check against the book first. Going forward AutoCount takes no
+ *      payments, so the ERP figure is complete.
+ *   3. A screen and a ledger were held apart on purpose; the ruling is that once
+ *      the ERP is the source of truth, the ledger should say what the screen
+ *      says. `soOutstandingSen` still takes `SoPaidInputs` and stays clamped for
+ *      the book — this reader now feeds it the fallback total.
  *
- * WHAT IT DELIBERATELY DOES NOT REFUSE: a SETTLED order. Its total is a real
- * positive number and its balance is a real 0, which `acUdfMoney` renders as
- * "0.00" and both composers send — dropping it would leave every paid order
- * owing money in the book forever. The guard is on the TOTAL, never on the
- * answer. Pinned in `autocount-read.test.ts`.
+ * WHAT IT STILL REFUSES: an order with NO total in EITHER column — both 0 / NULL
+ * / negative. 0 is "unknown", not "owes nothing", and 0 into a ledger declares a
+ * real debt settled. WHAT IT DOES NOT REFUSE: a SETTLED order — a real positive
+ * total and a real 0 balance, which both composers send so a paid order stops
+ * owing money in the book. The guard is on the TOTAL, never on the answer.
+ * Pinned in `autocount-read.test.ts`.
  */
 export async function readSoOutstandingSen(
   sb: Sb,
   h: Record<string, unknown>,
 ): Promise<number | null> {
-  const total = Number(h.total_revenue_sen);
-  /* `> 0` subsumes the NULL and non-finite checks this used to make — `Number`
-     turns both into NaN or 0, and neither is greater than zero — and adds the
-     negative, which `max(0, ...)` would otherwise have turned into a confident
-     0. Written as `!(total > 0)` rather than `total <= 0` so NaN refuses. */
+  /* THE TOTAL, with the SAME fallback the SCREEN uses (soDisplayTotalSen in
+     so-outstanding.ts): `total_revenue_sen` when recomputeTotals has run, else
+     `local_total_sen` — the only total an AutoCount-imported order carries. The
+     header block above says WHY the write-back may take this fallback since
+     2026-09-12 (AutoCount is push-only). REFUSE only when NEITHER column has a
+     positive total: 0 is "unknown", and 0 into a ledger is a false "owes
+     nothing". `!(total > 0)` so NULL / NaN / negative refuse in both columns. */
+  const totalRevenueSen = Number(h.total_revenue_sen);
+  const total = totalRevenueSen > 0 ? totalRevenueSen : Number(h.local_total_sen);
   if (!(total > 0)) return null;
   const rows = await readOrThrow('mfg_sales_order_payments',
     sb.from('mfg_sales_order_payments')

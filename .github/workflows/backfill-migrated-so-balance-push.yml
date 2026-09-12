@@ -1,0 +1,62 @@
+name: Backfill migrated SO balance push (0842)
+
+# Re-pushes migrated Sales Orders' balance (UDF_BALANCE) to AutoCount, so the
+# "HC Delivery" sheet reflects collections taken in the ERP. One keyed edit per
+# order (no rebuild, destroys nothing). Dry-run default; APPLY needs the confirm
+# phrase. See backend/scripts/backfill-migrated-so-balance-push.mjs and
+# docs/migrated-so-lock-lifted-coe.md.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      mode:
+        description: "dry-run or apply"
+        required: true
+        default: "dry-run"
+        type: choice
+        options: [dry-run, apply]
+      confirm:
+        description: "On apply, type exactly: PUSH MIGRATED BALANCE"
+        required: false
+        default: ""
+        type: string
+      include_partial:
+        description: "Also push PARTIAL balances (verify against the book first)"
+        required: true
+        default: false
+        type: boolean
+      doc_nos:
+        description: "Optional: comma-separated doc_nos (default = the census set)"
+        required: false
+        default: ""
+        type: string
+
+# Never queue behind or displace a release; a write to the outbox is not a deploy.
+concurrency:
+  group: backfill-migrated-so-balance
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - name: Backfill migrated SO balance push
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          APPLY: ${{ inputs.mode == 'apply' && '1' || '' }}
+          CONFIRM: ${{ inputs.confirm }}
+          INCLUDE_PARTIAL: ${{ inputs.include_partial && '1' || '' }}
+          DOC_NOS: ${{ inputs.doc_nos }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo "DATABASE_URL missing"; exit 2; fi
+          npx tsx scripts/backfill-migrated-so-balance-push.mjs
