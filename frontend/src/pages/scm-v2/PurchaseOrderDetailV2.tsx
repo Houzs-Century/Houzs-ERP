@@ -91,6 +91,7 @@ import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel } from "../../lib/convertScope";
 import { HoldChip } from "../../vendor/scm/components/HoldChip";
 
+import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneySen(centi, currency);
@@ -467,6 +468,10 @@ function PurchaseOrderDetailV2ReadOnly() {
   // Relationship map modal — open state only; the chain itself comes from
   // usePoRelationshipMap below (after the header row resolves).
   const [relMapOpen, setRelMapOpen] = useState(false);
+  /* History drawer. The button used to navigate to `?tab=history`, a param
+     nothing in this file reads, so it changed the URL and nothing else — while
+     the backend had been recording this PO's every change all along. */
+  const [historyOpen, setHistoryOpen] = useState(false);
   // Allocation editor (mig 0235) — which line's split is open. Deliberately
   // available at every status except CANCELLED (backend rule): the historical
   // consolidated lines the owner wants to attribute live on RECEIVED POs.
@@ -551,7 +556,6 @@ function PurchaseOrderDetailV2ReadOnly() {
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/purchase-orders"));
   const goEdit = () => id && navigate(`/scm/purchase-orders/${id}?edit=1`);
-  const goHistory = () => id && navigate(`/scm/purchase-orders/${id}?tab=history`);
   // Render + download the PO PDF via the shared jspdf generator (client-side),
   // mirroring the V1 PurchaseOrderDetail handler. The old `?print=1` navigation
   // was dead — nothing consumed that param — so the button did nothing.
@@ -1184,7 +1188,7 @@ function PurchaseOrderDetailV2ReadOnly() {
           </div>
           <div className="flex flex-col items-end gap-1.5">
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button variant="ghost" icon={<History size={14} />} onClick={goHistory}>
+            <Button variant="ghost" icon={<History size={14} />} onClick={() => setHistoryOpen(true)}>
               History
             </Button>
             <Button variant="ghost" icon={<Share2 size={14} />} onClick={() => setRelMapOpen(true)}>
@@ -1606,6 +1610,10 @@ function PurchaseOrderDetailV2ReadOnly() {
           pickChainChoice(d);
         }}
       />
+      {historyOpen && (
+        <DocumentHistoryDrawer doc="PURCHASE_ORDER" id={String(purchaseOrder.id)}
+          label={purchaseOrder.po_number} onClose={() => setHistoryOpen(false)} />
+      )}
       <PrintPreviewModal
         open={print.open}
         onClose={print.close}

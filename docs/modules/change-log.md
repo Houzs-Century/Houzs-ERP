@@ -244,3 +244,48 @@ writer in the tree pinned verbatim, and the overwrite proved red then green).
   more than he asked for is harder to read, not easier.
 - It does not page. A window plus a document-type filter is the navigation; the
   truncation note says when that is not enough.
+
+---
+
+## The PER-DOCUMENT drawer, and the four documents that lacked it until 2026-09-13
+
+This page answers "what changed across the company". The other half of the
+owner's 2026-09-12 ruling — 「change log 应该全部都要有」 — is the drawer on the
+document itself, and it was missing on four of the six documents.
+
+**What was wrong.** `AuditEntityType` in
+`frontend/src/vendor/scm/lib/entity-audit-queries.ts` was a hand-copy of the
+backend's `ENTITY_TYPES` and had fallen five names behind. The purchase order,
+purchase invoice, sales invoice and delivery order could not be NAMED by the
+frontend, so nothing asked for their history — while the routes had been
+recording it all along. The delivery order showed a "Change history" modal
+synthesized from its own current columns, which is worse than none: it read as
+events and changed retrospectively when a date was edited. Full trace:
+`docs/bugs/0846-four-documents-kept-a-change-log-nobody-could-read.md`.
+
+**How it is wired now.**
+
+| piece | file |
+| --- | --- |
+| the list, exported as a VALUE both sides can be compared against | `frontend/src/vendor/scm/lib/entity-audit-queries.ts` |
+| the drift guard — reads the backend source, fails on any difference | `frontend/src/vendor/scm/lib/entity-audit-queries.test.ts` |
+| one registry: entity name, labels, status vocabulary, per document | `frontend/src/pages/scm-v2/DocumentHistoryDrawer.tsx` |
+| the four document vocabularies | `frontend/src/pages/scm-v2/document-audit-labels.ts` |
+| the four money/stock vocabularies | `frontend/src/pages/scm-v2/entity-audit-labels.ts` |
+
+A page mounts it in one line with the document's UUID — **not** its document
+number, which returns an empty history that looks real.
+
+**Adding a document is a row in `DOCS`,** plus a label dictionary. The registry's
+key type is a SUBSET of `AuditEntityType` on purpose: `PURCHASE_RETURN` and
+`INVENTORY_ADJUSTMENT` are recorded write-only and no screen asks for them, so
+the compiler refuses a `doc` this file cannot render rather than shipping a
+drawer with no vocabulary.
+
+**The label dictionaries are checked against the backend, not just written.**
+`DocumentHistoryDrawer.test.tsx` reads each route's alias tuples
+(`PO_AUDIT_FIELDS`, `SI_AUDIT_FIELDS`, `PI_AUDIT_FIELDS`, `DO_AUDIT_FIELDS`) and
+fails if a header field the route diffs has no label here. Line changes arrive
+under the SAME keys as header changes — the line's identity is in the entry NOTE
+("Line edited: HZ-SOFA-01"), not in the field name — so one dictionary per
+document covers both.
