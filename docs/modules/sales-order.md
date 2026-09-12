@@ -6205,3 +6205,34 @@ re-flows one.
 **Not done:** the frontend inputs carry no `maxLength`, so a person can still
 type past forty and see it re-flowed on save rather than being stopped as they
 type.
+
+---
+
+## The History drawer no longer reports a refusal as an empty history
+
+Changed 2026-09-13, in the same PR that gave the other four documents a change
+log at all. The sales order reads its own table (`mfg_so_audit_log`) through its
+own binding, so it was never affected by the missing entity-type list — but it
+shared the other defect with every drawer in the system.
+
+`AuditHistoryPanel` had `isLoading` and no error input, and both SO bindings fed
+it `q.data ?? []`. react-query leaves `data` undefined and `isLoading` false on a
+failed read, so a server refusal painted **"No history yet."** — on an audit
+trail, a claim that nobody has touched the order.
+
+Both bindings now pass `q.error`:
+
+| binding | file |
+| --- | --- |
+| V1 detail's `HistoryPanel` | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` |
+| V2 detail's drawer | `frontend/src/pages/scm-v2/SalesOrderDetailV2.tsx` |
+
+The panel renders a distinct failure state that says the log could not be loaded,
+says plainly that this is not proof nothing changed, and prints the reason the
+server gave. It is checked BEFORE `isLoading`, because react-query keeps the last
+error while retrying.
+
+This is the same `?? []` both of these files already carry a written-up comment
+about on their PAYMENTS query. The lesson was recorded next to one query and
+never reached the other.
+Trace: `docs/bugs/0848-a-change-log-that-could-not-load-said-no-history-yet.md`.

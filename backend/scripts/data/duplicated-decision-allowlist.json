@@ -1249,6 +1249,26 @@
       "check": "D1",
       "key": "FAILED,PENDING,SENT,SKIPPED|backend/src/scm/lib/autocount-outbox-status.ts backend/src/scm/lib/venture-portal-outbox.ts",
       "why": "THE AUTOCOUNT OUTBOX STATUSES VERSUS THE VENTURE PORTAL OUTBOX STATUSES. Two different outboxes, to two different systems, that deliberately share four state names so this codebase has ONE dialect for 'where is my outbox row' — the same ruling already recorded for the mail outbox against AutoCount's. They are not one rule: either outbox may grow a fifth state for a reason that has nothing to do with the other, and the Venture Portal feed must not inherit one."
+    },
+    {
+      "check": "D1",
+      "key": "CANCEL,CREATE,DELETE,POST,REVERSE,UPDATE|frontend/src/pages/scm-v2/document-audit-labels.ts frontend/src/pages/scm-v2/entity-audit-labels.ts",
+      "why": "THE AUDIT VERB SET has ONE home and these are not it: the six verbs are declared once, in backend/src/scm/lib/entity-audit.ts, and every dictionary here is keyed on that same set. What is duplicated is the WORDS, and the words must differ per document on purpose - POST means 'Confirmed purchase order' on a PO, 'Posted to AP' on a purchase invoice, 'Issued invoice' on a sales invoice and 'Loaded onto lorry' on a delivery order, which is the whole reason a per-document dictionary exists. Collapsing them would print one verb for eight documents and lose the distinction staff read. The real hazard is a key the dictionary spells differently from the backend, and that IS pinned: DocumentHistoryDrawer.test.tsx reads each route's own alias tuples and fails on a header field with no label."
+    },
+    {
+      "check": "D1",
+      "key": "DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,PAYMENT_VOUCHER,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER|backend/src/scm/lib/entity-audit.ts frontend/src/vendor/scm/lib/entity-audit-queries.ts",
+      "why": "PINNED BY A TEST, which is this checker's own prescribed remedy for a pair that must stay two. The list cannot be imported across the app boundary (the frontend does not build backend sources), so frontend/src/vendor/scm/lib/entity-audit-queries.test.ts READS backend/src/scm/lib/entity-audit.ts and asserts the two are equal, with a second assertion that the read found more than five names so a dead matcher cannot report a pass. Recorded rather than collapsed because this pair already cost four documents their change log while the comment said 'must stay in step' and nothing made it - docs/bugs/0847-four-documents-kept-a-change-log-nobody-could-read.md."
+    },
+    {
+      "check": "D2",
+      "key": "CANCEL,CREATE,DELETE,POST,REVERSE,SEND,UPDATE ~ CANCEL,CREATE,DELETE,POST,REVERSE,UPDATE",
+      "why": "SEND is the purchase order's alone, and correctly so: it records that the PO was EMAILED to its supplier, the one event in this log that leaves the building. No other document in entity_audit_log is transmitted to an outside party, so labelling SEND on the other seven would advertise a verb their routes never write."
+    },
+    {
+      "check": "D2",
+      "key": "DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,PAYMENT_VOUCHER,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER ~ DELIVERY_ORDER,GRN,PAYMENT_VOUCHER,PURCHASE_INVOICE,PURCHASE_ORDER,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER",
+      "why": "A DELIBERATE SUBSET, not a drift. The history drawer's DOCS registry covers the eight documents that have a detail screen asking for their history; PURCHASE_RETURN and INVENTORY_ADJUSTMENT are recorded WRITE-ONLY - the rows exist for an investigator and for /inventory/reconcile, and no screen requests them. The registry's key type is Extract<AuditEntityType, ...> so the compiler refuses a document this file has no label vocabulary for, and adding a screen for either means adding its row here."
     }
   ]
 }

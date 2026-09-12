@@ -1647,6 +1647,7 @@ function SalesOrderDetailV2ReadOnly() {
           entityName="Sales order"
           entries={auditEntries}
           isLoading={auditQ.isLoading}
+          error={auditQ.error}
           labels={SO_AUDIT_LABELS}
           onClose={closeHistory}
         />

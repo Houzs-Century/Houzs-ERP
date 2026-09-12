@@ -2,7 +2,7 @@
 // page. Procurement-side twin of SalesInvoiceDetailV2: money-forward,
 // Outstanding-as-hero, but flipped — this is what WE owe to the supplier.
 
-import { lazy, useMemo, type ReactNode } from "react";
+import { lazy, useMemo, useState, type ReactNode } from "react";
 import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { LazySlot } from "../../components/LazySlot";
@@ -49,6 +49,7 @@ import { cn } from "../../lib/utils";
 import { resolveFxRate } from "./fx-rate";
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
+import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { FocAmount } from "../../vendor/scm/components/FocAmount";
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -434,6 +435,10 @@ function PurchaseInvoiceDetailV2ReadOnly() {
 
   const outstanding = purchaseInvoice ? outstandingOf(purchaseInvoice) : 0;
 
+  /* History drawer. The button used to navigate to `?tab=history`, a param
+     nothing in this file reads, so it changed the URL and nothing else — while
+     the backend had been recording this invoice's every change all along. */
+  const [historyOpen, setHistoryOpen] = useState(false);
   const overdueDays = purchaseInvoice ? daysPast(purchaseInvoice.due_date) : -1;
   const isOverdue = overdueDays > 0 && outstanding > 0;
 
@@ -443,7 +448,6 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/purchase-invoices"));
   const goEdit = () => id && navigate(`/scm/purchase-invoices/${id}?edit=1`);
-  const goHistory = () => id && navigate(`/scm/purchase-invoices/${id}?tab=history`);
   // Render + download the PI PDF via the shared jspdf generator (client-side),
   // mirroring the V1 PurchaseInvoiceDetail handler. The old `?print=1`
   // navigation was dead — nothing consumed that param — so the button did nothing.
@@ -771,7 +775,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="ghost" icon={<History size={14} />} onClick={goHistory}>History</Button>
+            <Button variant="ghost" icon={<History size={14} />} onClick={() => setHistoryOpen(true)}>History</Button>
             {/* Copy as new (owner 2026-09-03): content as template, identity
                 fresh — any status; the New page does the pre-fill. */}
             <Button variant="ghost" icon={<Copy size={14} />}
@@ -999,6 +1003,10 @@ function PurchaseInvoiceDetailV2ReadOnly() {
           </button>
         </div>
       </div>
+      {historyOpen && (
+        <DocumentHistoryDrawer doc="PURCHASE_INVOICE" id={String(purchaseInvoice.id)}
+          label={purchaseInvoice.invoice_number} onClose={() => setHistoryOpen(false)} />
+      )}
       <PrintPreviewModal
         open={print.open}
         onClose={print.close}

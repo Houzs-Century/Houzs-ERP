@@ -184,3 +184,25 @@
   color: #767b6e;
   padding: var(--space-3);
 }
+
+/* The read FAILED. Deliberately louder than .historyEmpty: the two states look
+   identical to a reader and mean opposite things, and the quiet one used to be
+   shown for both. */
+.historyError {
+  color: #8a2b2b;
+  background: #fdf3f3;
+  border: 1px solid #f0d5d5;
+  border-radius: var(--radius-2, 6px);
+  padding: var(--space-3);
+  margin: var(--space-3);
+  line-height: 1.45;
+}
+
+.historyErrorReason {
+  display: block;
+  margin-top: 6px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  color: #5d3a3a;
+  word-break: break-word;
+}
