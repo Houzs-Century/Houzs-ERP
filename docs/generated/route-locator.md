@@ -633,20 +633,20 @@ Total: 1269 route registrations across 164 files.
 - L1128  DELETE /:id/items/:itemId
 
 ## backend/src/scm/routes/purchase-invoices.ts  (14)
-- L323  GET    /
-- L423  GET    /outstanding-grn-items
-- L518  GET    /:id
-- L630  GET    /:id/linked
-- L698  POST   /
-- L1140  PATCH  /:id/post
-- L1144  PATCH  /:id/payment
-- L1367  PATCH  /:id/cancel
-- L1668  POST   /from-grn-items
-- L1852  POST   /from-grn
-- L1864  PATCH  /:id
-- L1964  POST   /:id/items
-- L2134  PATCH  /:id/items/:itemId
-- L2323  DELETE /:id/items/:itemId
+- L324  GET    /
+- L424  GET    /outstanding-grn-items
+- L519  GET    /:id
+- L628  GET    /:id/linked
+- L696  POST   /
+- L1138  PATCH  /:id/post
+- L1142  PATCH  /:id/payment
+- L1365  PATCH  /:id/cancel
+- L1666  POST   /from-grn-items
+- L1850  POST   /from-grn
+- L1862  PATCH  /:id
+- L1962  POST   /:id/items
+- L2132  PATCH  /:id/items/:itemId
+- L2321  DELETE /:id/items/:itemId
 
 ## backend/src/scm/routes/purchase-returns.ts  (14)
 - L179  GET    /
