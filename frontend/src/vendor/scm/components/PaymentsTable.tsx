@@ -119,7 +119,7 @@ export type PaymentMethodLabel = string;
    CASH — sheet, plan and journal with it (owner 2026-09-12: 用 finance 权限改
    资料时 payment method 会跳掉去 cash; docs/bugs/0838). A value none of the four
    is refused by name — never booked as something else. */
-const VALUE_TO_CODE: Readonly<Record<string, PaymentMethod>> = Object.fromEntries(
+const VALUE_TO_CODE: Readonly<Partial<Record<string, PaymentMethod>>> = Object.fromEntries(
   (Object.entries(PAYMENT_METHOD_CODE_TO_VALUE) as Array<[PaymentMethod, string]>).map(([code, value]) => [value, code]),
 );
 
@@ -144,7 +144,7 @@ export const labelToApi = (label: PaymentMethodLabel): {
    the screen does not know opens under its own name (the select shows it as
    an extra option) so the row cannot be saved as anything else by accident. */
 const apiToValue = (p: SoPayment): string =>
-  PAYMENT_METHOD_CODE_TO_VALUE[p.method] ?? String(p.method);
+  (PAYMENT_METHOD_CODE_TO_VALUE as Partial<Record<string, string>>)[p.method] ?? String(p.method);
 
 /* The edit draft, seeded VERBATIM from the persisted row (owner 2026-09-12: 我按
    edit 时默认会已输入的资料，我只会 edit 我想要 edit 的东西; docs/bugs/0838) —
