@@ -38,6 +38,7 @@ import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summariz
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { sourceGrnIdsForPi } from '../lib/convert-parent';
 import { refuseMigratedSources } from '../lib/migrated-chain';
+import { attachGrnLineFacts } from '../lib/pi-po-price';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
 /* The create's refusal bodies and the two rules its exits follow (2026-08-19). */
 import { insertFailed, loadFailed, rollbackPi, committedAnyway } from '../lib/pi-create-refusals';
@@ -547,21 +548,18 @@ purchaseInvoices.get('/:id', async (c) => {
      the PI shows the supplier's code even when no live supplier↔material binding
      exists; PI-native service lines (grn_item_id NULL) simply carry none. The
      frontend still falls back to the binding when a line has no snapshot. */
+  /* Two facts a PI line borrows from its GRN line — the supplier's own code and
+     the price we ORDERED at (owner 2026-09-12: 「PI 应该要有两个价钱」). Both come
+     off the same row, so `lib/pi-po-price.ts` reads them together. Auxiliary: a
+     failed hop leaves both null rather than 500ing the whole invoice. */
   try {
-    const grnItemIds = uniq((items as Array<{ grn_item_id?: string | null }>).map((r) => r.grn_item_id));
-    if (grnItemIds.length) {
-      const { data: gis } = await sb.from('grn_items').select('id, supplier_sku').in('id', grnItemIds);
-      const skuByGrnItem = new Map<string, string>();
-      for (const g of (gis ?? []) as Array<{ id: string; supplier_sku: string | null }>) {
-        if (g.supplier_sku) skuByGrnItem.set(g.id, g.supplier_sku);
-      }
-      for (const it of items as Array<Record<string, unknown> & { grn_item_id?: string | null }>) {
-        it.supplier_sku = it.grn_item_id ? skuByGrnItem.get(it.grn_item_id) ?? null : null;
-      }
-    }
+    // The cast is the supabase builder's generic DEPTH (TS2589), not a type
+    // hole: the helper only ever calls from().select().in().
+    await attachGrnLineFacts(sb as unknown as Parameters<typeof attachGrnLineFacts>[0],
+      items as Array<Record<string, unknown> & { id: string; grn_item_id?: string | null }>);
   } catch (e) {
     // eslint-disable-next-line no-console
-    console.error('[pi detail] supplier-sku resolve failed', { id, error: e });
+    console.error('[pi detail] grn-line facts resolve failed', { id, error: e });
   }
 
   /* Customer DO(s) — owner 2026-07-23 ("要的", following "PI need show Do

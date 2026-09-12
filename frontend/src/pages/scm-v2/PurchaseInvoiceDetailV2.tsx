@@ -96,6 +96,11 @@ type PiItem = {
   /* Supplier's own code — PI has no column of its own; the detail GET carries it
      down from the source GRN line (grn_item_id → grn_items.supplier_sku). */
   supplier_sku?: string | null;
+  /** What the PURCHASE ORDER says this line costs, resolved by the backend
+      through grn_item -> purchase_order_item. null when the line has no
+      purchase order behind it (a PI-native service line, a receipt with no
+      PO, or an unbound SKU ordered at 0 and keyed in here). */
+  po_unit_price_sen?: number | null;
   description?: string | null;
   description2?: string | null;
   item_group?: string | null;
@@ -573,16 +578,54 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       ),
     },
     {
+      /* Owner 2026-09-12: 「PI 应该要有两个价钱：第一个是从 PO 那边带过来的，
+         第二个是 Supplier 填进去的 … 有差异的话就要做 checking」. The ordered
+         price is read-only — it is the purchase order's, not this document's —
+         and a line with no PO behind it says so rather than showing 0.00,
+         which would read as a giveaway. */
+      key: "poUnit",
+      label: "PO price",
+      width: "104px",
+      align: "right",
+      getValue: (l) => l.po_unit_price_sen ?? -1,
+      render: (l) => (
+        l.po_unit_price_sen == null ? (
+          <span className="text-[12px] text-ink-muted" title="No purchase order behind this line">—</span>
+        ) : (
+          <span className="font-money text-[13px] text-ink-muted">
+            {fmtMoney(l.po_unit_price_sen, purchaseInvoice?.currency)}
+          </span>
+        )
+      ),
+    },
+    {
       key: "unit",
-      label: "Unit price",
-      width: "108px",
+      label: "Supplier price",
+      width: "128px",
       align: "right",
       getValue: (l) => l.unit_price_sen ?? 0,
-      render: (l) => (
-        <span className="font-money text-[13px] text-ink-secondary">
-          {fmtMoney(l.unit_price_sen ?? 0, purchaseInvoice?.currency)}
-        </span>
-      ),
+      render: (l) => {
+        const supplier = l.unit_price_sen ?? 0;
+        const po = l.po_unit_price_sen;
+        const diff = po == null ? null : supplier - po;
+        return (
+          <span className="inline-flex flex-col items-end">
+            <span className="font-money text-[13px] text-ink-secondary">
+              {fmtMoney(supplier, purchaseInvoice?.currency)}
+            </span>
+            {diff != null && diff !== 0 && (
+              <span
+                className={`font-money text-[10.5px] ${diff > 0 ? "text-err" : "text-synced"}`}
+                title={diff > 0
+                  ? "The supplier billed MORE than the purchase order — check before posting"
+                  : "The supplier billed LESS than the purchase order"}
+              >
+                {diff > 0 ? "+" : "−"}{fmtMoney(Math.abs(diff), purchaseInvoice?.currency)}
+              </span>
+            )}
+          </span>
+        );
+      },
     },
     {
       key: "total",

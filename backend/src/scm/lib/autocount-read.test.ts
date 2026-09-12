@@ -6,8 +6,11 @@
 // tests; this is the READER, and the reader's job is to decide whether the ERP
 // has anything to say at all. Those are different questions, and the defect
 // this suite was opened for lived entirely in the second one: the arithmetic
-// was right about `max(0, 0 - 160000)` and the reader should never have asked
-// it.
+// was right about `max(0, 0 - 160000)` and the reader should never have asked it
+// OF `total_revenue_sen` alone. Since 2026-09-12 (AutoCount is push-only) the
+// reader FALLS BACK to `local_total_sen` — the total a migrated order actually
+// has — and answers; it refuses only when NEITHER column carries one. See
+// autocount-read.ts's header for why that fallback is safe now.
 //
 // The BALANCE UDF goes into a LICENSED ACCOUNT BOOK. Every case below is
 // therefore written as "what does the account book end up being told", not as
@@ -43,44 +46,59 @@ const migratedHeader = {
 const halfPaid = [{ so_doc_no: 'HC-SO-012929', amount_sen: 1_600_00, is_deposit: false }];
 
 describe('readSoOutstandingSen — when the ERP may speak for a licensed ledger', () => {
-  /* THE DEFECT. Total 3,200, paid 1,600, and the ERP was about to write
-     UDF_BALANCE = 0.00 into the account book — "this customer owes nothing"
-     about a customer who owes 1,600. The reader must refuse instead: AutoCount
-     then keeps its own UDF_BALANCE, which is the figure the cutover READ, and
-     is right. */
-  test('a part-paid migrated order does NOT answer 0 — it refuses', async () => {
-    const answer = await readSoOutstandingSen(sbWith(halfPaid), migratedHeader);
-    expect(answer).not.toBe(0);
-    expect(answer).toBeNull();
+  /* THE 2026-09-12 CHANGE. Total 3,200 (carried in local_total_sen — a migrated
+     order), paid 1,600. Until AutoCount went PUSH-ONLY the reader REFUSED here,
+     to avoid overwriting the book's own UDF_BALANCE with a possibly-incomplete
+     ERP figure. Now the ERP is the only way a balance reaches the book, so it
+     FALLS BACK to local_total_sen and tells the book the real 1,600 — the fix
+     for docs/bugs/0842 (34 migrated orders read as owing money already
+     collected). */
+  test('a part-paid migrated order now tells the book the real balance', async () => {
+    expect(await readSoOutstandingSen(sbWith(halfPaid), migratedHeader)).toBe(1_600_00);
   });
 
-  /* The same judgement one step removed from the money: a zero total with no
-     payments at all is still "the ERP does not know this order's total", and
-     an assertion of 0 would be a coincidence rather than a fact. */
-  test('a zero total refuses even when nothing has been paid', async () => {
-    expect(await readSoOutstandingSen(sbWith([]), migratedHeader)).toBeNull();
+  /* A migrated order collected IN FULL: the book is told 0, so the delivery
+     sheet — which reads the balance from the book — stops showing money already
+     received. */
+  test('a fully-paid migrated order tells the book 0', async () => {
+    expect(await readSoOutstandingSen(sbWith([
+      { so_doc_no: 'HC-SO-012929', amount_sen: 3_200_00, is_deposit: false },
+    ]), migratedHeader)).toBe(0);
   });
 
-  /* The guard that already existed, kept. It cannot fire against the live
-     schema — the column is NOT NULL — but it fires when the caller's SELECT
-     list omits it, which is the shape a future header-column edit would take. */
-  test('a NULL total still refuses, as it always has', async () => {
+  /* The fallback is the SAME total the screen uses (soDisplayTotalSen): a
+     total_revenue_sen that is not a positive number is not a total, so
+     local_total_sen answers instead — NULL and negative both fall back. */
+  test('a NULL total_revenue_sen falls back to local_total_sen', async () => {
     expect(await readSoOutstandingSen(sbWith(halfPaid), {
       ...migratedHeader, total_revenue_sen: null,
+    })).toBe(1_600_00);
+  });
+
+  test('a negative total_revenue_sen falls back to local_total_sen', async () => {
+    expect(await readSoOutstandingSen(sbWith(halfPaid), {
+      ...migratedHeader, total_revenue_sen: -1_00,
+    })).toBe(1_600_00);
+  });
+
+  /* ── WHAT IT STILL REFUSES ──────────────────────────────────────────────
+     No total in EITHER column is "unknown", not "owes nothing": writing 0 into a
+     licensed ledger would declare a real debt settled. */
+  test('no total in either column refuses, even with nothing paid', async () => {
+    expect(await readSoOutstandingSen(sbWith([]), {
+      doc_no: 'HC-SO-012929', total_revenue_sen: 0, local_total_sen: 0, deposit_sen: 0,
     })).toBeNull();
   });
 
-  test('a missing column — the caller never selected it — refuses', async () => {
+  test('a header that selected neither total column refuses', async () => {
     expect(await readSoOutstandingSen(sbWith(halfPaid), {
       doc_no: 'HC-SO-012929',
     })).toBeNull();
   });
 
-  /* A NEGATIVE total is not a balance either, and `max(0, ...)` would have
-     turned it into a confident 0. Same class, caught by the same `> 0`. */
-  test('a negative total refuses rather than clamping to 0', async () => {
+  test('both totals negative refuses rather than clamping to 0', async () => {
     expect(await readSoOutstandingSen(sbWith([]), {
-      ...migratedHeader, total_revenue_sen: -1_00,
+      doc_no: 'HC-SO-012929', total_revenue_sen: -1_00, local_total_sen: -1_00, deposit_sen: 0,
     })).toBeNull();
   });
 

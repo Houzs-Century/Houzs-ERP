@@ -255,7 +255,18 @@ try {
                          lower(coalesce(gi.item_group,'')) AS grp
                     FROM scm.grn_items gi WHERE gi.purchase_order_item_id = ANY(${poIds})`
       : [];
-    const dos = await sql`SELECT di.id::text AS id, di.variants FROM scm.delivery_order_items di WHERE di.so_item_id = ${r.id}`;
+    /* item_code and item_group are selected on the DELIVERY line for the same
+       reason they are on the purchase line: the OUT movement a shipment writes
+       is bucketed on the DELIVERY line's OWN code and key
+       (routes/delivery-orders-mfg.ts:927), which is NOT always the purchase
+       line's code — a purchase line names the SUPPLIER's model
+       (po-item-code-is-the-suppliers-model). Leaving it out would move the IN
+       side of a delivered line and strand its OUT side in the old bucket, which
+       is docs/bugs/0722 in the direction that produces a phantom. */
+    const dos = await sql`
+      SELECT di.id::text AS id, di.item_code, di.variants,
+             lower(coalesce(di.item_group,'')) AS grp
+        FROM scm.delivery_order_items di WHERE di.so_item_id = ${r.id}`;
     const grnIds = grn.map((x) => x.id);
     const pinv = grnIds.length
       ? await sql`SELECT pi.id::text AS id FROM scm.purchase_invoice_items pi WHERE pi.grn_item_id = ANY(${grnIds})`
@@ -298,7 +309,9 @@ try {
       doc: r.doc_no, soItemId: r.id, grp: r.grp, itemCode: r.item_code, text,
       have, next, displaced,
       added: next.filter((x) => !have.some((y) => K(x) === K(y))),
-      pos, grn, dos: dos.map((d) => d.id), pinv: pinv.map((x) => x.id), sinv: sinv.map((x) => x.id),
+      pos, grn, doRows: dos, dos: dos.map((d) => d.id),
+      pinv: pinv.map((x) => x.id), sinv: sinv.map((x) => x.id),
+      soRow: { item_code: r.item_code, variants: v, grp: r.grp },
     });
   }
 
@@ -332,12 +345,15 @@ try {
     return hits;
   }
 
-  /* Every stock bucket a chain would move: keyed by the line that OWNS the lot,
-     which is the purchase / receipt line, never the sales line. */
+  /* Every stock bucket a chain would move. EVERY line of the chain is asked,
+     not only the purchase side: the IN movement is bucketed on the receipt
+     line's code, the OUT movement on the DELIVERY line's code, and those two
+     are not always the same string. Moving one without the other is exactly the
+     phantom of docs/bugs/0722. */
   for (const p of plan) {
     p.buckets = [];
     const seen = new Set();
-    for (const row of [...p.pos, ...p.grn]) {
+    for (const row of [p.soRow, ...p.pos, ...p.grn, ...p.doRows]) {
       const before = objOf(row.variants) ?? {};
       const grp = row.grp || p.grp;
       const oldKey = computeVariantKey(grp, before);
@@ -367,12 +383,40 @@ try {
     }
   }
 
+  /* ONE BUCKET, TWO ANSWERS — refuse both.
+     Two lines can share an item code and an identical OLD key while their texts
+     ask for DIFFERENT options: HC-SO-010183 carries two CODY-(Q) beds, same
+     divan, same gap, same colour, one drawer left and one right. Their chains
+     are separate, so the shared-bucket test above sees only "members of the
+     plan" and lets both through — and then the first write moves every lot in
+     that bucket to LEFT and the second finds nothing to move, silently filing
+     the right-hand bed's stock under the left-hand key.
+     Splitting a lot by quantity is a different operation from renaming a key,
+     and this tool does not do it. Both are refused and named. */
+  const splits = new Map();
+  for (const p of plan) {
+    for (const b of p.buckets) {
+      const k = `${b.itemCode}|${b.oldKey}`;
+      const s = splits.get(k) ?? { newKeys: new Set(), rows: b.rows, docs: new Set() };
+      s.newKeys.add(b.newKey);
+      s.docs.add(p.doc);
+      splits.set(k, s);
+    }
+  }
+
   const writable = [];
   const refused = [];
   for (const p of plan) {
     let why = null;
     for (const b of p.buckets) {
       if (b.rows.untouchable) { why = `${b.rows.untouchable} row(s) in rack / stock-take / transfer tables this tool does not move (${b.itemCode})`; break; }
+      const s = splits.get(`${b.itemCode}|${b.oldKey}`);
+      if (s && s.newKeys.size > 1 && (b.rows.lots + b.rows.movements + b.rows.consumptions) > 0) {
+        why = `${b.itemCode} would have to SPLIT one stock bucket into ${s.newKeys.size}`
+          + ` — ${[...s.docs].slice(0, 4).join(', ')} share it and ask for different options.`
+          + ' Splitting a lot by quantity is not a re-key; this needs a person.';
+        break;
+      }
       if ((b.rows.lots + b.rows.movements + b.rows.consumptions) === 0) continue;
       const mine = inPlan.get(`${b.itemCode}|${b.oldKey}`) ?? new Set();
       const others = (await consumersOf(b.itemCode, b.grp, b.oldKey)).filter((cc) => !mine.has(String(cc.id)));

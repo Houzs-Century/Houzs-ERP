@@ -1,0 +1,70 @@
+name: Status vocabulary census (read-only)
+
+# How big is "rename the effective status to SUBMITTED"? Owner 2026-09-12 asked
+# for the impact BEFORE anything moves: 「你改的东西前因后果，所有连接、API 等等都要
+# 查看」. Greps this checkout and runs SELECTs — no writes, no DDL.
+# See docs/bugs/0845 and docs/modules/document-status-vocabulary.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB to count rows in (code census runs either way)"
+        required: true
+        default: "prod"
+        type: choice
+        options: ["prod", "staging", "none"]
+
+concurrency:
+  group: status-vocabulary-census
+  cancel-in-progress: false
+
+jobs:
+  prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-status-vocabulary.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-status-vocabulary.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  code-only:
+    if: ${{ inputs.target == 'none' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: node backend/scripts/check-status-vocabulary.mjs
