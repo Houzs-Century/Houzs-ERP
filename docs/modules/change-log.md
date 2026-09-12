@@ -289,3 +289,22 @@ fails if a header field the route diffs has no label here. Line changes arrive
 under the SAME keys as header changes — the line's identity is in the entry NOTE
 ("Line edited: HZ-SOFA-01"), not in the field name — so one dictionary per
 document covers both.
+
+### A drawer that cannot load must never say "No history yet"
+
+Found on staging 2026-09-13 and fixed in the same PR
+(`docs/bugs/0848-a-change-log-that-could-not-load-said-no-history-yet.md`). The
+panel had `isLoading` and no error input, and every binding fed it
+`q.data ?? []` — so a refused read painted the empty state, and a change log
+that could not load claimed the document had never been touched.
+
+`AuditHistoryPanel` now takes `error` and renders a distinct failure state that
+says so and prints the server's reason. It is checked BEFORE `isLoading`,
+because react-query keeps the last error while retrying. The prop is optional in
+the type, so `auditHistoryPanelError.test.tsx` SCANS every mount of the panel and
+fails on any that omits `error=`.
+
+The refusal that exposed it is a separate, still-open problem: the staging
+Worker's PostgREST key is the staging project's **anon** key, not its
+`service_role` key — `docs/bugs/0824-the-staging-sales-orders-list-said-permission-denied-on-the.md`,
+owner action. Production reads `rest_role: service_role` and is unaffected.
