@@ -59,6 +59,14 @@ Singapore's official OneMap API. It is **INERT until configured**: with no
 the same no-op contract `RESEND_API_KEY` uses. Front-end callers must degrade on
 `configured: false`, never assume a live lookup.
 
+The front-end field is `vendor/scm/components/SgPostcodeField.tsx` (hook
+`sg-postcode-queries.ts`); `AddressPostcodeField.tsx` chooses it over the cascade
+dropdown when `country === 'Singapore'`. Wired into `SupplierDetail` and the Sales
+Order delivery address — `SalesOrderNew` / `SalesOrderDetail` (desktop) and
+`MobileNewSO` (`bare` mode, inside the mobile `<Field>`). Country on the SO forms
+is DERIVED from the picked State, so a SG address is reached by picking a Singapore
+region as State.
+
 ## 2. The two directions
 
 **Top-down** (`由上往下`) — each pick narrows the next field:
