@@ -28,7 +28,7 @@ import { render, screen, cleanup } from '@testing-library/react';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { AuditHistoryPanel } from './AuditHistoryPanel';
-import type { AuditLabelDictionary } from './audit-labels';
+import type { AuditLabelDictionary, AuditLogEntry } from './audit-labels';
 
 /* `frontend/src`, found by walking UP from the working directory: this suite is
    run both from the repo root and from `frontend/` (CI uses
@@ -100,12 +100,12 @@ describe('a refused history is not an empty history', () => {
   });
 
   it('entries render whether or not an error prop is passed', () => {
-    panel({
-      entries: [{
-        id: '1', action: 'CREATE', actor_name_snapshot: 'Wei',
-        field_changes: [], created_at: '2026-09-13T00:00:00Z',
-      } as never],
-    });
+    const entry: AuditLogEntry = {
+      id: '1', action: 'CREATE', actor_name_snapshot: 'Wei',
+      field_changes: [], created_at: '2026-09-13T00:00:00Z',
+      source: null, note: null,
+    };
+    panel({ entries: [entry] });
     expect(screen.queryByText(/No history yet/i)).toBeNull();
     expect(screen.getByText(/Created/)).toBeTruthy();
   });
