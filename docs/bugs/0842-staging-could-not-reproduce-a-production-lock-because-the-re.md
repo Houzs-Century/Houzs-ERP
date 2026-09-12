@@ -1,6 +1,6 @@
 ## Staging could not reproduce a production lock because the refresh copied the rows but not the switches [high]
 
-<!-- area: Platform + deploys -->
+<!-- area: Deploy, CI, migrations -->
 
 **Symptom.** A salesperson (WhatsApp, 2026-09-12 18:17 MYT) could not edit the
 balance on an order: the SO detail showed **Edit** greyed out. Asked to explain
