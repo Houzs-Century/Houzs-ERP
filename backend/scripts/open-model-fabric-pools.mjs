@@ -71,11 +71,15 @@ async function main() {
   }
   const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 
+  /* `category` is the ENUM scm.mfg_product_category, so coalesce(category, '')
+     asks Postgres to read '' AS that enum and it refuses — "invalid input value
+     for enum scm.mfg_product_category". Cast to text FIRST; the comparison was
+     always a text one. Caught by the first staging plan run (34691761762). */
   const models = await sql`
     SELECT company_id, model_code, category,
            coalesce(allowed_options->'fabrics', 'null'::jsonb) AS pool
       FROM scm.product_models
-     WHERE upper(coalesce(category, '')) = 'SOFA'
+     WHERE upper(coalesce(category::text, '')) = 'SOFA'
      ORDER BY company_id, model_code`;
   const colours = await sql`
     SELECT company_id, fabric_id, colour_id FROM scm.fabric_colours
@@ -150,7 +154,7 @@ async function main() {
   const after = await v2`
     SELECT company_id, model_code
       FROM scm.product_models
-     WHERE upper(coalesce(category, '')) = 'SOFA'
+     WHERE upper(coalesce(category::text, '')) = 'SOFA'
        AND jsonb_array_length(coalesce(allowed_options->'fabrics', '[]'::jsonb)) > 0`;
   await v2.end();
   if (after.length) {
