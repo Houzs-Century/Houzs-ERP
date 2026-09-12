@@ -41,7 +41,7 @@ import {
 } from '../../vendor/scm/lib/localities-queries';
 import {
   useAddressCascade, pickState, pickCity, pickPostcode,
-  cityPlaceholder, postcodePlaceholder,
+  cityPlaceholder, postcodePlaceholder, POSTCODE_NEEDS_STATE,
 } from '../../vendor/scm/lib/address-cascade';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import {
@@ -969,6 +969,7 @@ export const ConsignmentOrderNew = () => {
                   value={postcode}
                   onChange={onPostcodePick}
                   placeholder={postcodePlaceholder(state, city)}
+                  blockedReason={state ? undefined : POSTCODE_NEEDS_STATE}
                   options={sortByNumeric(postcodes).map((p) => ({ value: p, label: p }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />

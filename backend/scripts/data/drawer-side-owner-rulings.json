@@ -1,0 +1,141 @@
+{
+  "_what": "Which side a bedframe's drawer is on, and any option a slip PHOTO states that the line's own text does not, where the customer's own text names no side. The catalogue holds Front Drawer (RM130), Left Drawer (RM160) and Right Drawer (RM160) and no neutral 'Side Drawer', so a side drawer MUST be recorded as left or right - and only the drawing, the supplier's own record, or a person can say which.",
+  "_why_this_file": "Owner rulings and photo readings live in a file the moment they are made, never only in a chat transcript. See the memory note owner-answers-must-be-written-down.",
+  "_defect": "parse-bedframe.mjs treated an unqualified DRAWER as a FRONT drawer and its side test required a space, so `Sidedrawer` (one word) fell through: 41 sales lines across 29 sales orders carried Front Drawer while the customer's text said a side one (docs/bugs/0824). The phrase MAP repeated the same mistake one stage later and was fixed separately (docs/bugs/0843).",
+  "_convention": "THE SIDE IS READ AS YOU LOOK AT IT, not as the sleeper lies. Owner, 2026-09-12, confirmed on two documents: HC-SO-003432's hand-drawn slip (a stick figure lying head-up with the drawers drawn on the RIGHT of the picture) and HC-SO-003434's photo of the installed bed (drawers on the long side facing the camera, headboard at the far right) - both are RIGHT DRAWER. So: look at the slip as drawn, or at the photo as taken; a drawer on your right is Right Drawer. Reading it from the sleeper's own left/right would mirror every one of them, which is why this sentence exists. Same class as the sofa TV rule (sofa-handedness-is-mirrored).",
+  "_drawing_grammar": "Every slip in this batch is the same plan view: a rectangle for the bed, `HB` written at the TOP edge, `TV` in a box BELOW the foot, a stick figure lying head-up inside. The drawers are a narrow strip drawn along one long edge, with one arrow per drawer pointing at it, sometimes with the count written beside them. Two consecutive orders in this batch (HC-SO-013070 and HC-SO-013071) are the same drawing mirrored - one bed's drawers left, the next bed's right - which is the owner's 「有一些是一左一右」.",
+  "_photo_source": "R2 bucket houzs-erp, key so-items/<doc>/<line id>/ac-*.jpg. They are the AutoCount attachment thumbnails and are about 240px on the long edge; the pen drawings read clearly at 4x, the installed-bed photos read for orientation only.",
+
+  "rulings": [
+    {
+      "doc": "HC-SO-003434",
+      "itemCode": "TRION (A) (HB STR)-(K)",
+      "bookText": "Sidedrawer/PC151-01/Divan12/gap10",
+      "was": "Front Drawer",
+      "is": "Right Drawer",
+      "by": "owner, 2026-09-12, in chat, on the document he sent with the delivery order HC-DO-2609-058",
+      "note": "The customer (Chris Tang, HC4681) asked for a side drawer; purchasing flagged that the SO said Front Drawer and the DO printed Front Drawer."
+    },
+    {
+      "doc": "HC-SO-003432",
+      "itemCode": "HILTON (A)-(SS)",
+      "bookText": "SideDrawer/Col:PC151-11/Divan:8\"+2\"leg/M'Gap:10\"",
+      "is": "Right Drawer",
+      "by": "owner, 2026-09-12, in chat - 「是的 这个是right」 - on this slip",
+      "evidence": "photo: stick figure lying head-up, two drawers drawn on the RIGHT of the bed, labelled `Drawer` with arrows",
+      "note": "This is the slip that FIXED the reading convention. Every other reading below applies it."
+    },
+    {
+      "doc": "HC-SO-000530",
+      "itemCode": "FENRIR-(Q)",
+      "bookText": "sidedrawer/PC151-01/divan10/gap12",
+      "is": "Right Drawer",
+      "by": "photo read, 2026-09-12",
+      "evidence": "photo of the INSTALLED bed: headboard at the far right of the frame, two drawers pulled out of the long side facing the camera - the same geometry as HC-SO-003434's photo, which the owner himself ruled RIGHT",
+      "confidence": "high - it is the owner's own confirmed case re-photographed, not a fresh judgement"
+    },
+    {
+      "doc": "HC-SO-009774",
+      "itemCode": "TRION (A) (HB STR)-(K)",
+      "bookText": "SideDrawer/Col:PC151-17/Div:8\"/M'GAP: 14\"",
+      "is": "Right Drawer",
+      "by": "photo read, 2026-09-12",
+      "evidence": "slip drawing, drawers on the RIGHT edge of the bed"
+    },
+    {
+      "doc": "HC-SO-010688",
+      "itemCode": "JAGER-(Q)",
+      "bookText": "HB FULL COVERED / COL:KIV/DIVAN8+0 with side drawer/GAP:12",
+      "is": "Right Drawer",
+      "by": "photo read, 2026-09-12",
+      "evidence": "slip drawing, drawers on the RIGHT edge of the bed"
+    },
+    {
+      "doc": "HC-SO-010688",
+      "itemCode": "JACOB 2.0 (F)-(K)",
+      "bookText": "COL:KIV / GAP:16\" / DIVAN 10+0 with side drawer",
+      "is": "Right Drawer",
+      "qty": 2,
+      "by": "photo read, 2026-09-12",
+      "evidence": "slip drawing: bed seen from the head, two pillows at the top, two drawers drawn on the RIGHT edge with an arrow and the words `Add 2 drawers`"
+    },
+    {
+      "doc": "HC-SO-011803",
+      "itemCode": "DAISON (A)-(SS)",
+      "bookText": "do side drawer/Col:PC151-01/M.Gap:10\"/Div:8\"+1\"",
+      "is": "Left Drawer",
+      "by": "photo read, 2026-09-12",
+      "evidence": "slip drawing: figure lying head-up, two drawers on the LEFT edge, arrows labelled `side -> drawer`"
+    },
+    {
+      "doc": "HC-SO-012083",
+      "itemCode": "TRION (A) (HB STR)-(Q)",
+      "bookText": "HB Do Straight/Do side DRAWER/Col:PC151-02/M.Gap:14\"/Div:10\"+1\"",
+      "is": "Right Drawer",
+      "by": "photo read, 2026-09-12",
+      "evidence": "slip drawing, drawers on the RIGHT edge of the bed"
+    },
+    {
+      "doc": "HC-SO-013070",
+      "itemCode": "TRION (A) (HB STR)-(K)",
+      "bookText": "add on side drawers/col:pc151-01/divan:10+0/gap:14",
+      "is": "Left Drawer",
+      "qty": 2,
+      "by": "photo read, 2026-09-12",
+      "evidence": "slip drawing: HB at the top, TV box below the foot, figure lying head-up, TWO arrows pointing LEFT at the left edge of the bed"
+    },
+    {
+      "doc": "HC-SO-013071",
+      "itemCode": "CELENE (A)-(Q)",
+      "bookText": "add on side drawers/col:pc151-01/gap:12inch/divan:8+0",
+      "is": "Right Drawer",
+      "qty": 2,
+      "by": "photo read, 2026-09-12",
+      "evidence": "slip drawing: HB at the top, TV box below the foot, figure lying head-up, TWO arrows pointing at the RIGHT edge of the bed with `2` written beside them",
+      "note": "The mirror of HC-SO-013070 on the very next document - the owner's 「有一些是一左一右」."
+    },
+    {
+      "doc": "HC-SO-013191",
+      "itemCode": "REGAL (A)-(SK)",
+      "bookText": "SideDrawer/Col:PC151-01/Div:10\"/M'GP:14\"",
+      "is": "Left Drawer",
+      "qty": 2,
+      "by": "photo read, 2026-09-12",
+      "evidence": "slip drawing: figure lying head-up, two drawers drawn on the LEFT edge, labelled `Drawer` with arrows"
+    }
+  ],
+
+  "unresolved": [
+    {
+      "doc": "HC-SO-012599",
+      "itemCode": "CELENE (A)-(Q)",
+      "bookText": "Side Drawer/Col: /Div:8\"/M'GP:10\"",
+      "why": "BOTH photos on this order are the printed `HB FULLY COVER` reference diagram, not a drawer drawing. The side is not stated anywhere on the document.",
+      "next": "ask the salesperson, or the supplier's own record if this order reaches the export"
+    },
+    {
+      "doc": "HC-SO-012599",
+      "itemCode": "TRION (A) (HB STR)-(K)",
+      "bookText": "Side Drawer/Col: /Div:10\"/M'GP:10\"",
+      "why": "same order, same two photos",
+      "next": "ask the salesperson"
+    },
+    {
+      "doc": "HC-SO-013353",
+      "itemCode": "HILTON (A)-(Q)",
+      "bookText": "COL:PC151-03/DIV:8\"1\"LEG/MGAP:10\"/2SIDE DRAWER",
+      "why": "`2SIDE DRAWER` reads as a PAIR - a drawer on each side - not as one side. No photo was attached. Writing both Left Drawer and Right Drawer is a different shape from every other line here and changes the charge, so it is not assumed.",
+      "next": "owner: is `2 side drawer` two drawers on one side, or one on each side?"
+    }
+  ],
+
+  "photoSpecials": [
+    {
+      "doc": "HC-SO-012599",
+      "add": ["HB Fully Cover"],
+      "by": "photo read, 2026-09-12",
+      "evidence": "both attachments on this order are the printed `HB FULLY COVER` reference diagram, which is how this factory records that choice; the line's own text names no headboard treatment",
+      "note": "Owner 2026-09-12: 「你顺便看完 HB FULLY COVER 的东西，也是顺便标选 HB FULLY COVER，就是全部 special」."
+    }
+  ]
+}

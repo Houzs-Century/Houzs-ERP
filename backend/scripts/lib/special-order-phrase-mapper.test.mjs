@@ -112,3 +112,48 @@ test("K and asArray are the identities the script writes with", () => {
   assert.deepEqual(asArray("a"), ["a"]);
   assert.deepEqual(asArray(["a"]), ["a"]);
 });
+
+/* ── docs/bugs/0824: a side drawer must NEVER decode as a front drawer ──────
+   The parser was fixed on 2026-09-12 to emit `Side Drawer (side unknown)`
+   instead of falling through to Front. This MAP went on filing that phrase as
+   Front anyway, because the Front family's `yes` carries a bare `\bdrawer\b`
+   and its `no` vetoed only left/right. Every wording below is transcribed from
+   a real production line. */
+const DRAWER_ADDONS = [
+  ...ADDONS,
+  { code: "Left Drawer", label: null, categories: ["BEDFRAME"], selling_price_sen: 16000, cost_price_sen: 16000 },
+  { code: "Right Drawer", label: null, categories: ["BEDFRAME"], selling_price_sen: 16000, cost_price_sen: 16000 },
+];
+const drawerLive = buildLiveIndex(DRAWER_ADDONS).liveByCat;
+const drawerCodes = (d2) => classifyLine(line({ d2 }), MAP, drawerLive)
+  .gained.filter((c) => /drawer/i.test(c)).sort();
+
+test("a side drawer with no hand stated decodes to NO drawer code at all", () => {
+  for (const d2 of [
+    "sidedrawer/PC151-01/divan10/gap12",
+    "SideDrawer/Col:PC151-11/Divan:8\"+2\"leg/M'Gap:10\"",
+    "HB FULL COVERED / COL:KIV/DIVAN8+0 with side drawer/GAP:12",
+    "Divan 8 / 2SIDE DRAWER / gap 12",
+    "divan 10 / drawer at the side",
+  ]) {
+    assert.deepEqual(drawerCodes(d2), [], `"${d2}" must not decode to a drawer code`);
+  }
+});
+
+test("the side drawer still reaches a human as UNMAPPED, never silently dropped", () => {
+  const r = classifyLine(line({ d2: "sidedrawer/PC151-01/divan10/gap12" }), MAP, drawerLive);
+  assert.ok(r.unmapped.some((u) => /SIDE DRAWER/i.test(u)), `unmapped was ${JSON.stringify(r.unmapped)}`);
+});
+
+test("a hand written with no space, or after the word, is read", () => {
+  assert.deepEqual(drawerCodes("Leftside Drawer/HeadBoard Straight/Divan:8\"+No Leg"), ["Left Drawer"]);
+  assert.deepEqual(drawerCodes("Divan: 8\" no leg/Col: PC151-01/add on right side drawer"), ["Right Drawer"]);
+  assert.deepEqual(drawerCodes("Add left hand side drawer"), ["Left Drawer"]);
+  assert.deepEqual(drawerCodes("divan 10 / drawer at the right"), ["Right Drawer"]);
+});
+
+test("a genuine front drawer is STILL a front drawer", () => {
+  assert.deepEqual(drawerCodes("div:10inch / gap:14inch / Front Drawer, HB Fully Cover"), ["Front Drawer"]);
+  assert.deepEqual(drawerCodes("divan 8 / gap 12 / drawer"), ["Front Drawer"]);
+  assert.deepEqual(drawerCodes("divan 8 / pull out"), ["Front Drawer"]);
+});

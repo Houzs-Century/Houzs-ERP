@@ -1053,10 +1053,35 @@ the same class's `right: 0`; neutralising the edges in the shared module covers
 every consumer instead. A test that asserts the unused edge is ABSENT is pinning
 the defect — assert `'auto'`.
 
+**A line discount is typed into the row since 2026-09-12** (`docs/bugs/0843-the-sales-side-had-no-discount-field-at-all-while-purchasing.md`).
+`SoLineCard` renders a `DiscountInput` between Unit Price and Delivery Date:
+one box where `1000` is ringgit and `25%` is a percentage of qty x unit price,
+committing sen into `draft.discountSen`. The server bound was already there —
+*"discountSen must be between 0 and qty x unit price"*. A DELIVERY-FEE line is
+disabled and read-only in that cell: its PRICE cell writes the same field
+(`feeDiscountForAmount`), and two controls on one value fight. The card is
+rendered by eleven pages, so the field is on the SO, DO, SI, Delivery Return and
+the six consignment screens; the Purchase Invoice uses `PoLineCard`, which has
+had it since 2026-09-11.
+
 Per-SKU `allowed_options` (Modular ON/OFF) filter every pool via
 `useModelAllowedOptionsByCode`, exactly as `SoLineCard` does. The REQUIRED axes
 per category are the shared `so-variant-rule`; Save is blocked when any line is
 missing a required axis.
+
+**EMPTY IS THE DEFAULT FOR FABRICS SINCE 2026-09-12, and that is a RULE, not
+a leftover.** `hasRestriction` is `Array.isArray(pool) && pool.length > 0`, so a
+non-empty `allowed_options.fabrics` means *restrict to exactly these* and an
+absent one means *no restriction*. Every sofa Model used to carry the same
+101-entry snapshot — measured 2026-09-12 it reached 820 of 820 active colours,
+so it restricted nothing, while a fabric added in Modular afterwards would have
+been offered by NO sofa Model until all 79 were edited. Owner ruling: whether a
+Model restricts its fabrics is HIS decision, taken in the Modular drawer, so the
+snapshot was dropped (`backend/scripts/open-model-fabric-pools.mjs`,
+`docs/bugs/0842-a-fabric-added-in-modular-would-be-offered-by-no-sofa-model.md`).
+Bedframes already behaved this way. **Do not re-seed a pool from "every fabric
+that exists today"** — that is the same snapshot again; leave it empty and let
+him tick what he wants restricted.
 
 **TWO THINGS ABOUT THAT FILTER THAT WERE WRONG UNTIL 2026-09-11 — read these
 before touching a pool (docs/bugs/0814-one-option-field-two-vocabularies-the-fabric-pool-held-serie.md).**
@@ -1388,11 +1413,19 @@ the option pools and `pickState` / `pickCity` / `pickPostcode` for the writes �
 so the desktop and mobile surfaces cannot drift, which is what happened while
 each held its own copy.
 
-The operator may start from **any** of the three: picking a Postcode back-fills
-State and City, picking an unambiguous City back-fills State, and picking a
-State narrows both of the others. The State back-filled by a reverse resolve is
-written in the SAME `setForm` as the value that produced it — routing it through
-the State picker's own handler would clear the cascade and wipe that value.
+The operator may start from a **State** or an unambiguous **City** (which
+back-fills State); picking a State narrows both of the others. The State
+back-filled by a reverse resolve is written in the SAME `setForm` as the value
+that produced it — routing it through the State picker's own handler would clear
+the cascade and wipe that value.
+
+**Postcode is State-first (owner 2026-09-12: "一定要选 state 才填写 postcode").**
+Postcode can no longer start the cascade: until a State is picked the Postcode
+field is blocked (placeholder "Select State first") and clicking it pops a prompt
+to choose a State. This holds on all three SO surfaces and every other cascade
+form; a Singapore address reaches it by picking a Singapore region as State, so
+its live-lookup Postcode is only ever shown once a State exists. Details and the
+per-render-style enforcement: `docs/modules/address-cascade.md`.
 
 Full rules, the ambiguity contract and the surfaces that deliberately opt out:
 `docs/modules/address-cascade.md`.
@@ -2149,7 +2182,7 @@ anything.
 
 | | |
 |---|---|
-| Switch | `scm.app_config` key **`scm.migrated_so_lock`** — `off` / `all` / company ids. Seeded `'1'` by `20260908T0014_scm_migrated_so_lock.sql`. Effective in 30s, no deploy. |
+| Switch | `scm.app_config` key **`scm.migrated_so_lock`** — `off` / `all` / company ids. Seeded `'1'` by `20260908T0014_scm_migrated_so_lock.sql`. Effective in 30s, no deploy. **OWNER RULING 2026-09-12: this is `off` and stays off.** 「旧单 migrate 进来了就是当作我们的系统的单了啊？要不然怎么叫 migrate 呢？」 — an imported order is one of ours: header, lines and payments edit like a new order's, and Inisate / AutoCount are the OLD systems, so no staff message may send anyone there to record money (docs/bugs/0842). The 2026-09-08 「只开新单，旧单暂时不能改」 that seeded `'1'` is SUPERSEDED; re-locking needs a fresh ruling, not a tally. |
 | Guard | `backend/src/scm/lib/migrated-so-readonly.ts`, mounted TWICE in `backend/src/scm/index.ts` — `scm.use("/mfg-sales-orders/*", migratedSoReadonly())` and `scm.use("/so-amendments/*", migratedSoAmendmentReadonly())`. Beside the write freeze it stacks with, and at the PREFIX rather than per handler: ~22 write routes reach their SO through the `:docNo` segment and a per-handler guard leaves the next one added unguarded. |
 | Why TWO mounts | **Two routers write one sales order.** Amendment approval is not a status flip: `PATCH /so-amendments/:id/approve-so` runs `applySoAmendment`, which deletes, inserts and updates the order's LINES and rewrites its HEADER (`scm/lib/so-revision.ts`). The lock shipped guarding the SO prefix only, so an amendment already OPEN on a migrated order could still be driven through — `docs/bugs/0688-an-amendment-already-open-on-a-migrated-sales-order-could-st.md`. Raising a NEW one was never possible: `POST /:docNo/amendments` is on the guarded prefix. |
 | Amendment id -> order | `amendmentSoDocNo` reads `so_amendments.so_doc_no`. THREE answers: an absent amendment returns `null` and the write proceeds (the handler 404s and writes nothing); a row whose `so_doc_no` cannot be read THROWS, and "could not tell" LOCKS. Folding those two together is how a gate ships looking applied. |

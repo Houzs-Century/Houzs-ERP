@@ -38,7 +38,7 @@ import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { useLocalities } from '../../vendor/scm/lib/localities-queries';
 import {
   useAddressCascade, pickState, pickCity, pickPostcode,
-  cityPlaceholder, postcodePlaceholder,
+  cityPlaceholder, postcodePlaceholder, POSTCODE_NEEDS_STATE,
 } from '../../vendor/scm/lib/address-cascade';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import {
@@ -685,6 +685,7 @@ export const SalesInvoiceNew = () => {
               <span className={styles.fieldLabel}>Postcode</span>
               <span className={styles.selectWrap}>
                 <select className={styles.fieldSelect} value={postcode}
+                  onMouseDown={state ? undefined : (e) => { e.preventDefault(); void notify({ title: 'Select State first', body: POSTCODE_NEEDS_STATE, tone: 'info' }); }}
                   onChange={(e) => onPostcodePick(e.target.value)}>
                   <option value="">{postcodePlaceholder(state, city)}</option>
                   {sortByNumeric(postcodes).map((p) => <option key={p} value={p}>{p}</option>)}

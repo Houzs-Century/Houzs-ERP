@@ -83,10 +83,31 @@ jobs:
           echo "rows of COPY blocks: $(grep -c '^COPY ' prod-data.sql)"
           gzip -1 prod-data.sql
 
+      # The OPERATIONAL SWITCHES, captured beside the data (docs/bugs/0840).
+      # scm.app_config rows decide whether a document may be written at all
+      # (scm.write_freeze, scm.migrated_so_lock). A staging copy that carries
+      # production's ROWS but not production's SWITCHES answers "can staff save
+      # this?" with the wrong answer — which is exactly what happened on
+      # 2026-09-12: production had migrated orders locked, staging did not, so a
+      # staging walk-through could not reproduce the refusal staff were hitting.
+      # Captured as key=value text, never as a dump fragment, so the restore side
+      # can print the before/after instead of silently applying it.
+      - name: Capture production's operational switches
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          /usr/lib/postgresql/17/bin/psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At -F= -c "
+            select key, value from scm.app_config
+             where key in ('scm.write_freeze','scm.migrated_so_lock')
+             order by key" > prod-switches.txt
+          echo "production switches:"; sed 's/^/  /' prod-switches.txt
       - uses: actions/upload-artifact@v4
         with:
           name: prod-data
-          path: prod-data.sql.gz
+          path: |
+            prod-data.sql.gz
+            prod-switches.txt
           retention-days: 1
           if-no-files-found: error
 
@@ -302,6 +323,47 @@ jobs:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           NODE_OPTIONS: --dns-result-order=ipv4first
         run: node scripts/staging-seed-account.mjs
+
+      # Make staging answer "can staff save this?" the way production does
+      # (docs/bugs/0840). The switches are applied EXPLICITLY rather than left to
+      # the data dump: app_config is one row per switch, and a row that silently
+      # does or does not survive a truncate+restore is the difference between a
+      # faithful rehearsal and a misleading one. Before/after is printed for both
+      # keys so a red rehearsal caused by a production freeze is explainable at a
+      # glance rather than looking like a defect.
+      - name: Mirror production's operational switches onto staging
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          PSQL=/usr/lib/postgresql/17/bin/psql
+          if [ ! -s prod-switches.txt ]; then
+            echo "::warning title=No production switches captured::prod-switches.txt is missing or empty — staging keeps its own scm.app_config values."
+            exit 0
+          fi
+          {
+            echo ""
+            echo "### Operational switches (production -> staging)"
+            echo ""
+            echo "| key | production | staging before | staging after |"
+            echo "| --- | --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          while IFS='=' read -r key val; do
+            [ -n "$key" ] || continue
+            before=$("$PSQL" "$DATABASE_URL" -v ON_ERROR_STOP=1 -At \
+              -c "select coalesce(value,'') from scm.app_config where key = '$key'")
+            "$PSQL" "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -c "
+              insert into scm.app_config (key, value, updated_at)
+              values ('$key', '$val', now())
+              on conflict (key) do update set value = excluded.value, updated_at = now()"
+            after=$("$PSQL" "$DATABASE_URL" -v ON_ERROR_STOP=1 -At \
+              -c "select coalesce(value,'') from scm.app_config where key = '$key'")
+            echo "switch $key: prod='$val' staging '$before' -> '$after'"
+            echo "| \`$key\` | \`$val\` | \`${before:-<absent>}\` | \`$after\` |" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$before" != "$after" ]; then
+              echo "::notice title=Staging switch changed::$key was '${before:-<absent>}' on staging and is now '$after' (production's value)."
+            fi
+          done < prod-switches.txt
 
       - name: Row counts AFTER (staging) — fail if any document table is empty
         env:

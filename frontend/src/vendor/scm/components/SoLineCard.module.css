@@ -30,8 +30,11 @@
 
 /* ── Main single-row layout ───────────────────────────────────────── */
 
-/* Houzs: [No #] [Item] [Remarks] [Qty] [Unit Price] [Delivery Date] [Amount] [Group] [Trash]
-   2990 adds Delivery Date as a 5th input between Unit Price and Amount. */
+/* Houzs: [No #] [Item] [Remarks] [Qty] [Unit Price] [Discount] [Delivery Date] [Amount] [Group] [Trash]
+   2990 adds Delivery Date as a 5th input between Unit Price and Amount.
+   Discount joined 2026-09-12 (owner: the sales side had no discount field at
+   all while purchasing did) — see docs/bugs/0843. It is WIDER than Unit Price
+   because the cell carries the conversion hint under the box. */
 .row {
   display: grid;
   grid-template-columns:
@@ -40,6 +43,7 @@
     minmax(160px, 1.5fr) /* Remarks */
     72px              /* Qty */
     96px              /* Unit Price */
+    116px             /* Discount — amount or 25%, with its conversion beneath */
     132px             /* Delivery Date */
     96px              /* Amount — fixed narrow per 2026-07-09 mockup */
     auto              /* Group badge */
@@ -50,7 +54,7 @@
 
 @media (max-width: 1100px) {
   .row {
-    grid-template-columns: 32px minmax(180px, 1.5fr) minmax(120px, 1fr) 60px 84px 120px 88px auto 28px;
+    grid-template-columns: 32px minmax(180px, 1.5fr) minmax(120px, 1fr) 60px 84px 104px 120px 88px auto 28px;
   }
 }
 
