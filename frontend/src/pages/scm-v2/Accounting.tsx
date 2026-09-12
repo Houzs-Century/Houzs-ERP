@@ -16,8 +16,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
-import { ArrowLeftRight, BookOpen, Boxes, CalendarClock, CreditCard, FileText, Gauge, HandCoins, LineChart, ListTree, Receipt, Scale, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
+import { ACCOUNTING_TAB_TITLES, accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
 import {
   useJournalEntries,
   useJournalEntryDetail,
@@ -63,7 +62,6 @@ import { PageHeader } from '../../components/Layout';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import { DateField } from "../../vendor/scm/components/DateField";
 
-const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 // The ONE guarded centi→"RM …" formatter — returns "—" for an absent/non-finite
 // amount, never "RM NaN". Kept under the local name so callsites are unchanged.
@@ -73,43 +71,22 @@ type Tab = AccountingTab;
 
 export const Accounting = () => {
   /* THE TAB THE URL NAMES (docs/bugs/0824). The Finance sidebar deep-links
-     every tab (/scm/accounting?tab=pnl …), so the page opens on the one asked
-     for, follows a sidebar click made while it is already open, and writes
-     the tab it shows back to the URL so the sidebar can mark it. A name the
-     page does not know falls back to the journal. */
-  const [params, setParams] = useSearchParams();
+     every tab (/scm/accounting?tab=pnl …) and is the ONE way between them
+     (owner 2026-09-12: 只靠侧栏就好，不然太乱了 — the strip of sixteen buttons
+     that used to sit here repeated the sidebar's three groups; docs/bugs/0841).
+     The page opens on the tab asked for, follows a sidebar click made while it
+     is already open, and names the tab in its title. A name the page does not
+     know falls back to the journal. */
+  const [params] = useSearchParams();
   const wanted = accountingTabFromSearch(params.get('tab'));
   const [tab, setTabState] = useState<Tab>(wanted ?? 'je');
   useEffect(() => {
     if (wanted && wanted !== tab) setTabState(wanted);
   }, [wanted, tab]);
-  const setTab = (next: Tab) => {
-    setTabState(next);
-    setParams({ tab: next }, { replace: true });
-  };
 
   return (
     <div className="space-y-4">
-      <PageHeader eyebrow="Finance" title="Accounting" />
-
-      <div className={styles.statusChips} style={{ gap: 'var(--space-2)' }}>
-        <TabBtn label="Chart of Accounts" icon={<ListTree {...ICON} />} active={tab === 'coa'} onClick={() => setTab('coa')} />
-        <TabBtn label="Item Groups"     icon={<Boxes {...ICON} />}    active={tab === 'groups'} onClick={() => setTab('groups')} />
-        <TabBtn label="Journal Entries" icon={<BookOpen {...ICON} />} active={tab === 'je'}    onClick={() => setTab('je')} />
-        <TabBtn label="General Ledger"  icon={<FileText {...ICON} />} active={tab === 'gl'}    onClick={() => setTab('gl')} />
-        <TabBtn label="Trial Balance"   icon={<Receipt {...ICON} />}  active={tab === 'tb'} onClick={() => setTab('tb')} />
-        <TabBtn label="Month-end"       icon={<CalendarClock {...ICON} />} active={tab === 'close'} onClick={() => setTab('close')} />
-        <TabBtn label="P&L"             icon={<LineChart {...ICON} />} active={tab === 'pnl'} onClick={() => setTab('pnl')} />
-        <TabBtn label="Balance Sheet"   icon={<Scale {...ICON} />} active={tab === 'bs'} onClick={() => setTab('bs')} />
-        <TabBtn label="Receipts & Payments" icon={<ArrowLeftRight {...ICON} />} active={tab === 'rp'} onClick={() => setTab('rp')} />
-        <TabBtn label="AR Aging"        icon={<TrendingUp {...ICON} />} active={tab === 'ar'}  onClick={() => setTab('ar')} />
-        <TabBtn label="AP Aging"        icon={<TrendingDown {...ICON} />} active={tab === 'ap'} onClick={() => setTab('ap')} />
-        <TabBtn label="Self-check"      icon={<ShieldCheck {...ICON} />} active={tab === 'check'} onClick={() => setTab('check')} />
-        <TabBtn label="Corrections"     icon={<FileText {...ICON} />} active={tab === 'corrections'} onClick={() => setTab('corrections')} />
-        <TabBtn label="Collection"      icon={<HandCoins {...ICON} />} active={tab === 'collection'} onClick={() => setTab('collection')} />
-        <TabBtn label="Merchant charges" icon={<CreditCard {...ICON} />} active={tab === 'charges'} onClick={() => setTab('charges')} />
-        <TabBtn label="Performance P&L" icon={<Gauge {...ICON} />} active={tab === 'performance'} onClick={() => setTab('performance')} />
-      </div>
+      <PageHeader eyebrow="Finance" title={`Accounting · ${ACCOUNTING_TAB_TITLES[tab]}`} />
 
       {tab === 'coa'   && <CoaTab />}
       {tab === 'groups' && <ItemGroupsTab />}
@@ -130,25 +107,6 @@ export const Accounting = () => {
     </div>
   );
 };
-
-const TabBtn = ({
-  label, icon, active, onClick,
-}: { label: string; icon: React.ReactNode; active: boolean; onClick: () => void }) => (
-  <button type="button" onClick={onClick}
-    style={{
-      display: 'inline-flex', alignItems: 'center', gap: 6,
-      padding: '6px 12px',
-      border: '1px solid var(--c-line, rgba(34,31,32,0.12))',
-      borderRadius: 'var(--radius-md)',
-      background: active ? 'var(--c-ink)' : 'transparent',
-      color: active ? 'var(--c-cream)' : 'var(--c-ink)',
-      fontSize: 'var(--fs-13)',
-      cursor: 'pointer',
-    }}>
-    {icon}
-    <span>{label}</span>
-  </button>
-);
 
 /* Small shared form styling for the phase-1 cards. */
 const cardStyle: React.CSSProperties = {
