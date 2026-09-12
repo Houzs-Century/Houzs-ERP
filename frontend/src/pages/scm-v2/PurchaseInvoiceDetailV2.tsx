@@ -106,6 +106,9 @@ type PiItem = {
   line_total_sen?: number;
   /* Landed-cost allocation (Phase 1-A) — freight (MYR sen) allocated to this line. */
   allocated_charge_sen?: number | null;
+  /* The line's own remark (purchase_invoice_items.notes) — carried from the GRN
+     line at conversion. Owner 2026-09-12: the remark travels with the line. */
+  notes?: string | null;
 };
 
 /* Landed-cost allocation (Phase 1-A) — human labels for the freight basis. */
@@ -545,6 +548,28 @@ function PurchaseInvoiceDetailV2ReadOnly() {
         <span className="font-money text-[13px] text-ink-secondary">
           {l.qty ?? 0} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
         </span>
+      ),
+    },
+    {
+      /* The line's own remark. Owner 2026-09-12: 「行备注（remark）应该也是要一样，
+         因为它们会带过去」 — the warehouse writes one at receipt ("outer carton
+         dented"), the invoice clerk needs to see it, and until now the only
+         place to put a sentence was the document header, where it belongs to
+         every line at once. The COLUMN was always there (grn_items.notes,
+         purchase_invoice_items.notes) and the GRN line PATCH has always
+         accepted it; nothing rendered it. See docs/bugs/0845. */
+      key: "lineNote",
+      label: "Remark",
+      width: "180px",
+      getValue: (l) => l.notes ?? "",
+      render: (l) => (
+        l.notes ? (
+          <span className="block truncate text-[12.5px] italic text-ink-secondary" title={l.notes}>
+            {l.notes}
+          </span>
+        ) : (
+          <span className="text-[12px] text-ink-muted">—</span>
+        )
       ),
     },
     {
