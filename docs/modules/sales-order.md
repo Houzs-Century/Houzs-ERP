@@ -1053,6 +1053,17 @@ the same class's `right: 0`; neutralising the edges in the shared module covers
 every consumer instead. A test that asserts the unused edge is ABSENT is pinning
 the defect — assert `'auto'`.
 
+**A line discount is typed into the row since 2026-09-12** (`docs/bugs/0843-the-sales-side-had-no-discount-field-at-all-while-purchasing.md`).
+`SoLineCard` renders a `DiscountInput` between Unit Price and Delivery Date:
+one box where `1000` is ringgit and `25%` is a percentage of qty x unit price,
+committing sen into `draft.discountSen`. The server bound was already there —
+*"discountSen must be between 0 and qty x unit price"*. A DELIVERY-FEE line is
+disabled and read-only in that cell: its PRICE cell writes the same field
+(`feeDiscountForAmount`), and two controls on one value fight. The card is
+rendered by eleven pages, so the field is on the SO, DO, SI, Delivery Return and
+the six consignment screens; the Purchase Invoice uses `PoLineCard`, which has
+had it since 2026-09-11.
+
 Per-SKU `allowed_options` (Modular ON/OFF) filter every pool via
 `useModelAllowedOptionsByCode`, exactly as `SoLineCard` does. The REQUIRED axes
 per category are the shared `so-variant-rule`; Save is blocked when any line is
