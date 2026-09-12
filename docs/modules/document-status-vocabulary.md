@@ -618,3 +618,24 @@ authors and deliberately NOT on the 2990 SO mirror. See
   the concepts above are the evidence.
 - `docs/modules/document-conversion.md` §9.6 — the sibling ruling that gave the
   transfer buttons one generated label instead of twenty hand-written ones.
+
+## How big is a rename? Measure it, do not estimate it
+
+Owner 2026-09-12 chose to unify the effective status on **SUBMITTED** across
+SO / PO / GR / PI / SI (the Delivery Order keeps `DRAFT / LOADED / DISPATCHED`),
+and set the condition for starting: 「你改的东西前因后果，所有连接、API 等等都要
+查看」.
+
+`backend/scripts/check-status-vocabulary.mjs` (workflow **Status vocabulary
+census (read-only)**) answers that in three estates, because each fails in a
+different way:
+
+| estate | how it fails | measured on `origin/main` 6bb723d95, 2026-09-12 |
+|---|---|---|
+| CODE | loudly, at build or in CI | `CONFIRMED` 93 files / 179 values · `SUBMITTED` 49 / 106 · `POSTED` 124 / 356 · `SENT` 49 / 98 |
+| RULES (`CHECK` / enum) | **refuses the write** — decides the ORDER of the rename | 6 lines in the live migration tree; the enums are the blocking ones |
+| DATA | silently — a list just stops showing documents | counted per table by the same script when a `DATABASE_URL` is given |
+
+Re-run it rather than quoting this table: it is a measurement with an expiry
+date, and the script prints its own corpus.
+
