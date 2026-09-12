@@ -1,0 +1,62 @@
+name: Special options census (read-only)
+
+# Manual, read-only. Answers the owner's 2026-09-12 question 「还有什么 special?」
+# with three lists:
+#
+#   1. every option the catalogue holds, and how many lines carry it across all
+#      six documents;
+#   2. the options NO TOOL CAN EVER FILL — a catalogue code with no rule in
+#      data/special-order-phrase-map.json is invisible to every backfill we have
+#      and can only be picked by a person;
+#   3. the free-text instructions that keep appearing and map to no option — the
+#      shortlist for what the catalogue is missing.
+#
+# It writes nothing: SELECTs only, no DDL, no transaction.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: special-coverage-census-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/check-special-coverage-census.mjs
+        env:
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/check-special-coverage-census.mjs
+        env:
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
