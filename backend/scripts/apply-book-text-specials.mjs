@@ -383,12 +383,40 @@ try {
     }
   }
 
+  /* ONE BUCKET, TWO ANSWERS — refuse both.
+     Two lines can share an item code and an identical OLD key while their texts
+     ask for DIFFERENT options: HC-SO-010183 carries two CODY-(Q) beds, same
+     divan, same gap, same colour, one drawer left and one right. Their chains
+     are separate, so the shared-bucket test above sees only "members of the
+     plan" and lets both through — and then the first write moves every lot in
+     that bucket to LEFT and the second finds nothing to move, silently filing
+     the right-hand bed's stock under the left-hand key.
+     Splitting a lot by quantity is a different operation from renaming a key,
+     and this tool does not do it. Both are refused and named. */
+  const splits = new Map();
+  for (const p of plan) {
+    for (const b of p.buckets) {
+      const k = `${b.itemCode}|${b.oldKey}`;
+      const s = splits.get(k) ?? { newKeys: new Set(), rows: b.rows, docs: new Set() };
+      s.newKeys.add(b.newKey);
+      s.docs.add(p.doc);
+      splits.set(k, s);
+    }
+  }
+
   const writable = [];
   const refused = [];
   for (const p of plan) {
     let why = null;
     for (const b of p.buckets) {
       if (b.rows.untouchable) { why = `${b.rows.untouchable} row(s) in rack / stock-take / transfer tables this tool does not move (${b.itemCode})`; break; }
+      const s = splits.get(`${b.itemCode}|${b.oldKey}`);
+      if (s && s.newKeys.size > 1 && (b.rows.lots + b.rows.movements + b.rows.consumptions) > 0) {
+        why = `${b.itemCode} would have to SPLIT one stock bucket into ${s.newKeys.size}`
+          + ` — ${[...s.docs].slice(0, 4).join(', ')} share it and ask for different options.`
+          + ' Splitting a lot by quantity is not a re-key; this needs a person.';
+        break;
+      }
       if ((b.rows.lots + b.rows.movements + b.rows.consumptions) === 0) continue;
       const mine = inPlan.get(`${b.itemCode}|${b.oldKey}`) ?? new Set();
       const others = (await consumersOf(b.itemCode, b.grp, b.oldKey)).filter((cc) => !mine.has(String(cc.id)));

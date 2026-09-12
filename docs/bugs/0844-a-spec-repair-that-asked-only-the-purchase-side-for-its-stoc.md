@@ -48,3 +48,25 @@ route chooses the code from the document IT owns.
 **Ref.** fix/book-text-specials-delivery-bucket, 2026-09-12. Related:
 `docs/bugs/0722` (why the stock moves with the line), `docs/bugs/0843` (the tool
 this belongs to), `docs/bugs/0822` (the purchase line names the supplier's model).
+
+---
+
+**SECOND HAZARD, same file, found the same way — ONE BUCKET, TWO ANSWERS.**
+
+Two lines can share an item code AND an identical OLD variant key while their
+texts ask for DIFFERENT options. It is not hypothetical: `HC-SO-010183` carries
+two `CODY-(Q)` beds — same divan, same gap, same colour — one reading
+`add on right side drawer` and the other `add on left side drawer`.
+
+Their chains are separate (`so_item_id` is per line), so the shared-bucket test
+sees both sets of ids as "members of the plan" and refuses neither. The first
+write then re-keys **every lot in that bucket** to Left, and the second finds
+nothing left to move — silently filing the right-hand bed's stock under the
+left-hand key. The document lines would read correctly and the stock would be
+wrong, which is the worst shape of all: no error, no count, nothing to notice.
+
+Splitting a lot by quantity is a different operation from renaming a key, and
+this tool does not do it. A bucket whose members ask for more than one new key,
+and which actually holds stock, now refuses every chain that touches it and
+names them. A bucket with NO stock rows is not refused — there is nothing to
+split, and the document lines simply take their own keys.
