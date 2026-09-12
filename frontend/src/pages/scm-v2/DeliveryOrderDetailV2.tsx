@@ -95,6 +95,7 @@ import { DO_SHIPPED_STATES } from '../../vendor/shared/do-shipped-states';
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { customerRefOf } from '../../lib/customer-ref';
 
+import { isFocLine } from '../../vendor/scm/lib/foc-line';
 // ─── Header + item shapes (subset — full 40-field row lives in the list V2) ─
 
 type DoLifecycle = "shipped" | "invoiced" | "returned";
@@ -1000,9 +1001,9 @@ export function DeliveryOrderDetailV2() {
       key: "type",
       label: "Type",
       width: "88px",
-      getValue: (l) => (Number(l.unit_price_sen ?? 0) === 0 ? "FOC" : "Sale"),
+      getValue: (l) => (isFocLine(l) ? "FOC" : "Sale"),
       render: (l) => {
-        const isFoc = Number(l.unit_price_sen ?? 0) === 0;
+        const isFoc = isFocLine(l);
         return (
           <Badge tone={isFoc ? "warning" : "neutral"} size="xs">
             {isFoc ? "FOC" : "Sale"}
