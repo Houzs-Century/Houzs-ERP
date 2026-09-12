@@ -1816,3 +1816,53 @@ a catalogue we do not have cannot call anything retired, and on a purchase order
 that label told the buyer to delete what the factory is building. With no pool
 the picks render read-only under *"from the Sales Order"*. See
 `docs/bugs/0779-the-special-order-text-reached-the-supplier-pdf-but-was-invi.md`.
+
+## The PO chasing list — line-level, cross-company outstanding (2026-09-12)
+
+The Outstanding dashboard already had a PO tab
+(`GET /api/scm/outstanding/po`, view `scm.v_po_outstanding`, mig 0084): a
+per-PO, per-company roll-up of `qty_ordered / qty_received / qty_outstanding`
+plus money — an AP "how much is owed" view. Procurement's *chasing* list is a
+different report (the AutoCount "PO chasing list" shape) and has its own view,
+endpoint and tab. The header view is untouched.
+
+- **View `scm.v_po_outstanding_lines`**
+  (`backend/src/db/migrations-pg/20260912T1000_scm_po_outstanding_lines_view.sql`)
+  — ONE ROW PER outstanding PO LINE. `remaining_qty = qty - received_qty`;
+  `is_outstanding` mirrors `v_po_outstanding` applied per line (never TRUE on a
+  RECEIVED / CANCELLED PO). Each row carries the AutoCount chasing columns:
+  `item_code`, `item_desc` (`material_name`), `item_desc2` (`description2` — the
+  colour / configuration spec), ship-to `location_code`/`location_name` (the
+  line's `warehouse_id`), `item_group`, `po_date`, `delivery_date`, the linked
+  `so_doc_no` (via `so_item_id`), and both `po_number` and `ac_po_no`
+  (`linked_ac_docno`). GRANT SELECT to `service_role` and a `NOTIFY pgrst` are in
+  the migration — a fresh view has an empty ACL and PostgREST must be told it
+  exists (`backend/docs/scm-view-trap-coe.md`).
+
+- **Endpoint `GET /api/scm/outstanding/po-lines`**
+  (`backend/src/scm/routes/outstanding.ts`), behind `scm.finance.outstanding`
+  like every other `/outstanding/*` route. Unlike the six money modules it is
+  CROSS-COMPANY: it widens with `scopeToAllowedCompanies` (not the per-company
+  `scopeToCompany`) and tags each row with `company_code` via `withCompanyCode`,
+  so HOUZS + 2990 appear in ONE list with a Company column. Same
+  `?outstanding=true|false|all` + `?from`/`&to` (on `po_date`) contract and the
+  same missing-view graceful degradation as its siblings.
+
+- **Frontend** — a "PO Chasing" tile/tab on the Outstanding page
+  (`frontend/src/pages/scm-v2/Outstanding.tsx`, component `PoChasingView`; hook
+  `useOutstandingPoLines` in
+  `frontend/src/vendor/scm/lib/outstanding-queries.ts`). Grouped by supplier
+  (`DataTable` `groupBy`), with a **Detail (component lines) / By set** toggle, a
+  company filter, and an Excel export (`onExport` → `lib/xlsx-runtime`).
+  Rolling sofa component lines up into one "set" row is a PRESENTATION heuristic
+  in `frontend/src/vendor/scm/lib/po-outstanding-rollup.ts` — group a PO's lines
+  by identical `item_desc2` — because there is NO set key on the line
+  (`binding_id` is null; each sofa component carries its own `so_item_id`), and
+  the SO side has none either. **Desktop only**: the whole Outstanding surface is
+  `DesktopOnly` on mobile, so there is no mobile chasing screen (and no
+  desktop/mobile pair to keep in sync — §8).
+
+- The AutoCount UDF dates — Estimate Delivery Date and Supplier Delivery Date
+  2 / 3 — are columns on the report but the ERP does not sync them yet
+  (`supplier_delivery_date_2/3` are 0% populated), so they render blank. Owner
+  2026-09-12: keep the column positions.
