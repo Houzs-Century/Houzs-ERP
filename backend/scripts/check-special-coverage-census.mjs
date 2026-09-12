@@ -14,10 +14,12 @@
  *
  *   3. WHICH ONES CAN NEVER BE FILLED AUTOMATICALLY. `apply-book-text-specials`
  *      and `apply-supplier-specials` can only write an option some RULE knows
- *      how to recognise — a family in data/special-order-phrase-map.json. A
- *      catalogue code with no family is invisible to every tool we have and can
- *      only ever be picked by a person in the form. That list is the real
- *      answer to "what is left".
+ *      how to recognise. data/special-order-phrase-map.json holds TWO rule
+ *      tables and BOTH count: the `families`, and `cushionSwapModels`, whose
+ *      five backrest-swap codes appear in no family. A catalogue code in
+ *      neither is invisible to every tool we have and can only be picked by a
+ *      person in the form. Reading only the first table invented five such
+ *      codes on the first run - docs/bugs/0845.
  *
  * It also reports the FREE TEXT that keeps appearing and maps to no option —
  * the shortlist for what the catalogue is missing. The owner's standing rule is
@@ -114,7 +116,31 @@ try {
 
   /* ── 3. which codes ANY rule can produce ───────────────────────────────── */
   const map = loadPhraseMap();
-  const reachable = new Set(map.families.map((f) => K(f.code)));
+  /* TWO rule sources, not one. `families` is the obvious half; `cushionSwapModels`
+     is a SECOND table that mapPhrase consults for the backrest swaps
+     (special-order-phrase-mapper.mjs:82-93), and its five codes appear in no
+     family. Reading only `families` reported those five as unreachable — a gap
+     that does not exist, contradicted by the apply run that had just written
+     `Change 8030 Backcushion` onto 23 lines and by this report's own count of
+     124 document lines carrying it. docs/bugs/0845. */
+  const reachable = new Set([
+    ...map.families.map((f) => K(f.code)),
+    ...(map.swaps ?? []).map(([, code]) => K(code)),
+  ]);
+  {
+    /* Self-test: a code only the SWAP table can produce must read as reachable,
+       and a name no rule mentions must not. A checker that cannot see one of its
+       inputs INVENTS a finding, which is the mirror of the trap CLAUDE.md names. */
+    const swapOnly = (map.swaps ?? []).map(([, c]) => K(c))
+      .find((c) => !map.families.some((f) => K(f.code) === c));
+    const ok = (!swapOnly || reachable.has(swapOnly)) && !reachable.has(K('a code no rule mentions'));
+    if (!ok) {
+      console.error('SELF-TEST FAILED on the reachability set. Refusing to report.');
+      process.exit(1);
+    }
+    line(`   rule sources: ${map.families.length} phrase families + ${(map.swaps ?? []).length} backrest swaps`
+      + ` = ${reachable.size} reachable codes`);
+  }
 
   rule();
   line('   THE CATALOGUE, and how many document lines carry each');
