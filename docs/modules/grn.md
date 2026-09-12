@@ -38,7 +38,7 @@ On POST, qty_received rolls up to PO items"* (`grns.ts:1-2`).
 | Surface | File | Notes |
 |---------|------|-------|
 | Desktop list | `frontend/src/pages/scm-v2/GoodsReceivedListV2.tsx` | Server-paginated, `pageSize = 50` (`:455`). |
-| Desktop detail (read) | `frontend/src/pages/scm-v2/GoodsReceivedDetailV2.tsx` | Read-only shell; `?edit=1` forwards to the legacy editor (`:240-248`), lazily loaded. |
+| Desktop detail (read) | `frontend/src/pages/scm-v2/GoodsReceivedDetailV2.tsx` | Read-only shell; `?edit=1` forwards to the legacy editor (`:240-248`), lazily loaded. Line grid carries a **Remark** column since 2026-09-12 — `grn_items.notes`, which the line PATCH has always accepted and nothing rendered (`docs/bugs/0844-the-remark-written-on-a-receipt-line-was-stored-and-never-sh.md`). |
 | Desktop detail (edit) | `frontend/src/pages/scm-v2/GoodsReceivedDetail.tsx` | The inline editor. Lock logic at `:244-248`. **"Add manual item" (Edit + `!isLocked`, owner 2026-09-10)** posts a free line — an item the source PO never ordered, a supplier extra, a sample — via `POST /:id/items` with `purchase_order_item_id` null, mirroring the New-GRN manual line (supplier-binding-aware picker); the primary path stays convert-from-PO ("From Purchase Order"). Refused by the same `unlinked_po_lines` guard (§6) when the material IS on the parent PO, and by the zero-cost gate (§7) — both surfaced inline. Softens the earlier in-code "never by free add-line" note. |
 | Desktop new | `frontend/src/pages/scm-v2/GrnNew.tsx` | Uses `usePurchaseOrders()` (the legacy unpaginated PO hook, `:156`). **"Add another item" now shows in EVERY mode (owner 2026-09-10)** — manual, from-PO-picks and single-PO — gated `canAddManualLine = isManual || !!supplierId`, so an item the PO never ordered can be received in the same create step (previously the button was `isManual`-only, hidden once you arrived from a PO). The extra line carries `purchase_order_item_id` null; the create path's `unlinked_po_lines` guard still refuses a hand-added material that IS on the header PO. |
 | Desktop from-PO | `frontend/src/pages/scm-v2/GrnFromPo.tsx` | Multi-select over `/outstanding-po-items`. Two display rules changed 2026-08-21, both shared and neither local: the Warehouse column reads through `warehouseLabel` (`frontend/src/vendor/scm/lib/warehouse-label.ts` — code first, then name; the picker rows carry FLAT columns, so a one-line adapter wraps them rather than a second rule), and the variant line under each row is now LABELLED `Description 2` by the shared `VariantDescription` component. Neither changes what is read or written. |
@@ -1432,3 +1432,25 @@ a catalogue we do not have cannot call anything retired, and on a purchase order
 that label told the buyer to delete what the factory is building. With no pool
 the picks render read-only under *"from the Sales Order"*. See
 `docs/bugs/0779-the-special-order-text-reached-the-supplier-pdf-but-was-invi.md`.
+
+## What a GRN LINE already carries — read this before planning a "new column"
+
+Measured off a live document (staging copy of production, 2026-09-12), not off
+the migration tree — `grn_items` predates `migrations-pg`, so no file in this
+repo creates it and a grep for `CREATE TABLE` finds nothing:
+
+| the line has | column |
+|---|---|
+| a remark | `notes` — and `PATCH /grns/:id/items/:itemId` accepts it in its from→to map |
+| **two** dates | `delivery_date` (the promised ETA, rendered as the ETA column) and `received_at` |
+| a discount | `discount_sen` |
+| a rack | `rack_id` |
+| variants, item group, supplier SKU, ordered/received/accepted/rejected qty, zero-cost acknowledgement | as named |
+
+It does NOT carry: an FOC flag (a free line is a **zero unit price**, plus
+`variants.freeGift` for the PWP path — there is no boolean anywhere), or photos.
+
+The six-document parity plan listed "add a line remark column to GR" and "add a
+line date to GR" as schema work. Both were already there; only the screen was
+missing. Check the live shape before writing a migration.
+
