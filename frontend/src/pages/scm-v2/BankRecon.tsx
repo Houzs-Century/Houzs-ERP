@@ -32,7 +32,6 @@ import {
 } from './settlement-ui';
 import { BankStatementTab } from './BankStatementTab';
 import { BankMonthTab } from './BankMonthTab';
-import { PayoutAdviceTab } from './PayoutAdviceTab';
 import { DateField } from '../../vendor/scm/components/DateField';
 import grid from './MerchantRecon.module.css';
 import { downloadCSV, toCSV } from '../../lib/csv';
@@ -50,19 +49,18 @@ export const BankRecon = () => {
      a day, so the file list is thirty rows and the question he is asking is
      about September. The files stay one press away, because a movement is
      still chased back to the file it came off. */
-  const [tab, setTab] = useState<'month' | 'statement' | 'advice' | 'money' | 'transit'>('month');
+  const [tab, setTab] = useState<'month' | 'statement' | 'money' | 'transit'>('month');
   return (
     <div className="space-y-4">
       <PageHeader eyebrow="Finance · step 2 of 2" title="Bank statement reconciliation" />
       <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
         <button type="button" style={btn(tab === 'month')} onClick={() => setTab('month')}>By month</button>
         <button type="button" style={btn(tab === 'statement')} onClick={() => setTab('statement')}>Bank statement</button>
-        {/* Public Bank's IBG advice — the payer's own list of which reports one
-            credit pays, and what lets the statement above match a payout
-            spanning more reports than any search would try. The merchant screen
-            carries the same tab (owner, 2026-08-24: 毕竟它属于card merchant
-            那边); this door stays because the credit lands on THIS side. */}
-        <button type="button" style={btn(tab === 'advice')} onClick={() => setTab('advice')}>Payment advice</button>
+        {/* Public Bank's IBG advice is uploaded on the Merchant reconciliation
+            screen only (owner 2026-09-12: merchant reconciliation 那边上传就好,
+            bank statement reconciliation 的 payment advice 拿掉; docs/bugs/0839)
+            — two doors to one table read as two uploads. The credit still
+            matches itself here once every day of the advice agrees. */}
         <button type="button" style={btn(tab === 'money')} onClick={() => setTab('money')}>Money to come in</button>
         <button type="button" style={btn(tab === 'transit')} onClick={() => setTab('transit')}>Still with the merchants</button>
         <span style={{ flex: 1 }} />
@@ -72,7 +70,6 @@ export const BankRecon = () => {
       </div>
       {tab === 'month' && <BankMonthTab />}
       {tab === 'statement' && <BankStatementTab />}
-      {tab === 'advice' && <PayoutAdviceTab />}
       {tab === 'money' && <WaitingForMoney />}
       {tab === 'transit' && <InTransitTab />}
     </div>

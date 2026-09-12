@@ -75,7 +75,6 @@ vi.mock('./settlement-queries', () => ({
    own file, PayoutAdviceTab.test.tsx. */
 vi.mock('./BankMonthTab', () => ({ BankMonthTab: () => <div>by month tab</div> }));
 vi.mock('./BankStatementTab', () => ({ BankStatementTab: () => <div>bank statement tab</div> }));
-vi.mock('./PayoutAdviceTab', () => ({ PayoutAdviceTab: () => <div>payment advice tab</div> }));
 
 import { BankRecon } from './BankRecon';
 
@@ -89,12 +88,13 @@ const draw = () => {
 };
 
 describe('the tab strip', () => {
-  /* The advice is where a Public Bank payout starts, so its tab has to be on
-     this screen — one press from the statement it will match. */
-  test('carries the payment advice beside the bank statement', () => {
+  /* The advice is uploaded on the Merchant reconciliation screen only (owner
+     2026-09-12: bank statement reconciliation 的 payment advice 拿掉;
+     docs/bugs/0839) — one door to one table. */
+  test('does not carry the payment advice — that door is on the merchant screen', () => {
     render(<MemoryRouter><BankRecon /></MemoryRouter>);
-    fireEvent.click(screen.getByText('Payment advice'));
-    expect(screen.getByText('payment advice tab')).toBeTruthy();
+    expect(screen.queryByText('Payment advice')).toBeNull();
+    expect(screen.getByText('Bank statement')).toBeTruthy();
   });
 });
 

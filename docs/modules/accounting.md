@@ -778,6 +778,21 @@ the reversal (owner: 不明白; docs/bugs/0786). The Ledger column now reads
 **"0047 → reversed by 0099 → 0100"**; the one legacy row is read as
 contra-only and never presents the contra as the original.
 
+**The payment advice has one door and takes several files (2026-09-12,
+docs/bugs/0839; owner: merchant reconciliation 那边上传就好，bank statement
+reconciliation 的 payment advice 拿掉，然后要支持上传多份).** The "Payment
+advice" tab is on the Merchant reconciliation screen only —
+`frontend/src/pages/scm-v2/BankRecon.tsx` no longer mounts it (two doors to
+one table read as two uploads); the bank credit still matches itself on the
+bank screen once every day of the advice agrees, because the matcher reads
+the same `acc_settlement_payout_batches`. `frontend/src/pages/scm-v2/PayoutAdviceTab.tsx`
+takes several PDFs in one pick: each is read as base64 and sent on its own to
+`POST /accounting/settlement/payouts`, in the order picked, and answered on
+its own line — a refused file (unreadable, or already on file by its hash)
+says so under its own name and the others still say what was read.
+Contracts: `frontend/src/pages/scm-v2/PayoutAdviceTab.test.tsx`,
+`frontend/src/pages/scm-v2/BankRecon.test.tsx`.
+
 **A bank charge deducted from a payout (2026-09-10, docs/bugs/0787).** Public
 Bank kept RM 324.00 of the 2026-06-06 settlement as a card-terminal application
 fee, so the advice said RM 3,024.18 for a day whose report nets RM 3,348.18 —

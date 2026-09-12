@@ -15,7 +15,11 @@
 //
 // Everything that decides anything lives on the server (acc/pbb-advice reads
 // the PDF, acc/payout-advice compares); this screen uploads and repeats what
-// the server said, refusals verbatim (§2.14).
+// the server said, refusals verbatim (§2.14). Several advices go up in one
+// pick (owner 2026-09-12: 要支持上传多份; docs/bugs/0839) — each is sent on its
+// own, in the order picked, and answered on its own line, so one unreadable
+// file never hides what the others said. This tab lives on the Merchant
+// reconciliation screen only (owner: merchant reconciliation 那边上传就好).
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
@@ -33,8 +37,9 @@ import grid from './MerchantRecon.module.css';
 export const PayoutAdviceTab = () => {
   const q = usePayouts();
   const upload = useUploadPayoutAdvice();
-  const [file, setFile] = useState<{ name: string; contentBase64: string } | null>(null);
-  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [files, setFiles] = useState<Array<{ name: string; contentBase64: string }>>([]);
+  const [results, setResults] = useState<Array<{ name: string; ok: boolean; text: string }>>([]);
+  const [sending, setSending] = useState(false);
 
   const payouts = q.data?.payouts ?? [];
   /* What the bank-charge dialog needs (docs/bugs/0787): the accounts it may
@@ -45,33 +50,41 @@ export const PayoutAdviceTab = () => {
   /* The PDF goes up as base64, not text — a PDF read as text is mangled before
      the server ever sees it. readAsDataURL's prefix is fine; the server strips
      everything up to the comma. */
-  const readFile = (picked: FileList | null) => {
-    setResult(null);
-    const f = picked?.[0];
-    if (!f) { setFile(null); return; }
-    const reader = new FileReader();
-    reader.onload = () => setFile({ name: f.name, contentBase64: String(reader.result ?? '') });
-    reader.readAsDataURL(f);
+  const readFiles = (picked: FileList | null) => {
+    setResults([]);
+    const list = Array.from(picked ?? []);
+    if (list.length === 0) { setFiles([]); return; }
+    Promise.all(list.map((f) => new Promise<{ name: string; contentBase64: string }>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ name: f.name, contentBase64: String(reader.result ?? '') });
+      reader.readAsDataURL(f);
+    }))).then(setFiles).catch(() => setFiles([]));
   };
 
-  const send = () => {
-    if (!file) return;
-    setResult(null);
-    /* Only Public Bank sends an advice this system can read, so nobody is asked
-       which acquirer — the server refuses any other by name. */
-    upload.mutate({ acquirerCode: 'PBB', fileName: file.name, contentBase64: file.contentBase64 }, {
-      onSuccess: (r) => {
-        setFile(null);
-        setResult({
-          ok: true,
+  const send = async () => {
+    if (files.length === 0 || sending) return;
+    setSending(true);
+    setResults([]);
+    const out: Array<{ name: string; ok: boolean; text: string }> = [];
+    for (const file of files) {
+      /* Only Public Bank sends an advice this system can read, so nobody is asked
+         which acquirer — the server refuses any other by name. */
+      try {
+        const r = await upload.mutateAsync({ acquirerCode: 'PBB', fileName: file.name, contentBase64: file.contentBase64 });
+        out.push({
+          name: file.name, ok: true,
           text: `Read: ${fmt(r.status.netSen)} across ${r.status.days.length} settlement day(s).`
             + (r.status.readyToReceive
               ? ' Every day agrees — the bank credit will match itself.'
               : ` ${r.status.blockedBy ?? ''}`),
         });
-      },
-      onError: (err) => setResult({ ok: false, text: refusalText(err, 'The advice could not be read.') }),
-    });
+      } catch (err) {
+        out.push({ name: file.name, ok: false, text: refusalText(err, 'The advice could not be read.') });
+      }
+      setResults([...out]);
+    }
+    setFiles([]);
+    setSending(false);
   };
 
   return (
@@ -84,19 +97,19 @@ export const PayoutAdviceTab = () => {
           credit books itself against those reports on the bank statement screen.
         </div>
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-          <input type="file" accept=".pdf" aria-label="Payment advice PDF"
-            onChange={(e) => readFile(e.target.files)} style={{ fontSize: 'var(--fs-13)' }} />
-          <button type="button" style={btn(true, !file || upload.isPending)}
-            disabled={!file || upload.isPending} onClick={send}>
-            <Upload {...ICON} /> {upload.isPending ? 'Reading…' : 'Upload payment advice'}
+          <input type="file" accept=".pdf" multiple aria-label="Payment advice PDF"
+            onChange={(e) => readFiles(e.target.files)} style={{ fontSize: 'var(--fs-13)' }} />
+          <button type="button" style={btn(true, files.length === 0 || sending)}
+            disabled={files.length === 0 || sending} onClick={() => void send()}>
+            <Upload {...ICON} /> {sending ? 'Reading…' : files.length > 1 ? `Upload ${files.length} payment advices` : 'Upload payment advice'}
           </button>
         </div>
-        {result && (
-          <div style={{ fontSize: 'var(--fs-13)', color: result.ok ? good : danger, display: 'flex', gap: 6 }}>
-            {!result.ok && <AlertTriangle {...ICON} />}
-            <span>{result.text}</span>
+        {results.map((r) => (
+          <div key={r.name} style={{ fontSize: 'var(--fs-13)', color: r.ok ? good : danger, display: 'flex', gap: 6 }}>
+            {!r.ok && <AlertTriangle {...ICON} />}
+            <span><b>{r.name}</b> — {r.text}</span>
           </div>
-        )}
+        ))}
       </section>
 
       <section className="space-y-3">
