@@ -1132,8 +1132,11 @@ except ONE account: the operating-expense account the company names
 (`900-O001` by default) is REPLACED by the company's rate (basis points,
 1600 = 16% by default) of sales excluding service, its booked figure shown
 and left out; an account the chart does not carry replaces nothing, and the
-report says so rather than dropping a booked expense. The pair lives on
-`scm.acc_company_settings` (`performance_opex_rate_bp`,
+report says so rather than dropping a booked expense. The ledger's OTHER
+INCOMES and EXTRA-ORDINARY INCOME sections join as `otherIncome` (owner
+2026-09-12: performance GL 要放 other income; docs/bugs/0836), credit-positive,
+so net = gross profit + other income − operating expense − other expenses.
+The pair lives on `scm.acc_company_settings` (`performance_opex_rate_bp`,
 `performance_opex_account`; migration
 `backend/src/db/migrations-pg/20260912T1300_acc_performance_pnl_settings.sql`,
 both defaulted) and is saved by

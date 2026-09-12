@@ -23,12 +23,14 @@ const report: PerformanceReport = {
   ],
   totals: { salesSen: 523000, cogsSen: 301000, gpSen: 222000, gpPct: 42.4, salesExServiceSen: 500000 },
   operatingExpense: { rateBp: 1600, baseSen: 500000, amountSen: 80000, account: '900-O001', accountName: 'OPERATIING EXPENSE', accountFound: true, bookedSen: 243550 },
+  otherIncome: [{ code: '590-0000', name: 'RENT RECEIVED', amountSen: 50000 }],
+  otherIncomeSen: 50000,
   otherExpenses: [
     { code: '900-A014', name: 'ADVERTISEMENT - SHOWROOM', amountSen: 100000 },
     { code: '900-R048', name: 'RENTAL OF SHOWROOM', amountSen: 4500000 },
   ],
   otherExpensesSen: 4600000,
-  netSen: -4458000, netPct: -852.4,
+  netSen: -4408000, netPct: -842.8,
   settings: { rateBp: 1600, account: '900-O001' },
 };
 const lastPath = { value: '' };
@@ -65,9 +67,12 @@ describe('the Performance P&L tab', () => {
     expect(opex.textContent).toContain('16.00% of sales excluding service (5,000.00), in place of 900-O001 OPERATIING EXPENSE');
     expect(within(opex).getByText('(800.00)')).toBeTruthy();
     expect(screen.getByText('900-R048 · RENTAL OF SHOWROOM')).toBeTruthy();
+    const rent = rows.find((r) => within(r).queryByText('590-0000 · RENT RECEIVED'))!;
+    expect(within(rent).getByText('500.00')).toBeTruthy();
+    expect(screen.getByText('Total other income (as booked)')).toBeTruthy();
     const net = rows.find((r) => within(r).queryByText('NET PERFORMANCE'))!;
-    expect(within(net).getByText('(44,580.00)')).toBeTruthy();
-    expect(within(net).getByText('-852.4% of sales')).toBeTruthy();
+    expect(within(net).getByText('(44,080.00)')).toBeTruthy();
+    expect(within(net).getByText('-842.8% of sales')).toBeTruthy();
     const notes = screen.getByLabelText('Performance notes');
     expect(notes.textContent).toContain('in place of account 900-O001 OPERATIING EXPENSE; the 2,435.50 booked on that account in the period is left out');
     expect(notes.textContent).toContain('free gifts');
@@ -96,7 +101,9 @@ describe('the Performance P&L tab', () => {
     expect(csv).toContain('Accessory,0.00,120.00,(120.00),—');
     expect(csv).toContain('Total,"5,230.00","3,010.00","2,220.00",42.4%');
     expect(csv).toContain('"Operating expense — 16.00% of sales excluding service (5,000.00), in place of 900-O001 OPERATIING EXPENSE",(800.00)');
-    expect(csv).toContain('NET PERFORMANCE,"(44,580.00)",-852.4% of sales');
+    expect(csv).toContain('590-0000 · RENT RECEIVED,500.00,');
+    expect(csv).toContain('Total other income (as booked),500.00,');
+    expect(csv).toContain('NET PERFORMANCE,"(44,080.00)",-842.8% of sales');
     expect(csv).toContain('Notes');
     expect(csv).toContain('in place of account 900-O001');
   });
