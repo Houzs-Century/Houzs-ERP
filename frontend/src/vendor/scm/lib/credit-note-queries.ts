@@ -15,6 +15,8 @@ export type CreditNote = {
   party_type: 'CUSTOMER' | 'SUPPLIER'; party_code: string | null; party_name: string | null;
   supplier_id: string | null; so_doc_no: string | null; sales_invoice_id: string | null;
   ap_invoice_id: string | null; purchase_invoice_id: string | null; source_doc_no: string | null;
+  /** The final invoice's number when the note answers one — read for the print (docs/bugs/0834). */
+  sales_invoice_number?: string | null;
   note_date: string; total_sen: number; reason: string | null; notes: string | null;
   status: NoteStatus; je_no: string | null;
   created_at: string; created_by: string | null; posted_at: string | null; cancelled_at: string | null;

@@ -22,8 +22,10 @@ import { useAccounts, leafAccounts } from '../../vendor/scm/lib/accounting-queri
 import { useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
 import {
   useCreditNotes, useCreditNoteDetail, useCreateCreditNote, useUpdateCreditNote, usePostCreditNote, useCancelCreditNote,
-  type CreditNote, type CreditNoteLineInput, type NoteKind, type NoteStatus,
+  type CreditNote, type CreditNoteLine, type CreditNoteLineInput, type NoteKind, type NoteStatus,
 } from '../../vendor/scm/lib/credit-note-queries';
+import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
 
 const KIND_WORD: Record<NoteKind, string> = { CN: 'Credit note', DN: 'Debit note', SCN: 'Supplier credit note' };
@@ -31,6 +33,14 @@ const KIND_WORD: Record<NoteKind, string> = { CN: 'Credit note', DN: 'Debit note
 const KIND_TABS: Array<NoteKind | 'ALL'> = ['ALL', ...(Object.keys(KIND_WORD) as NoteKind[])];
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'That was not accepted.');
+
+/* The chart's names for the print (docs/bugs/0834) — read when a print is
+   asked for, not on every page open. */
+const accountNamer = async (): Promise<(code: string) => string | null> => {
+  const r = await authedFetch<{ accounts: Array<{ account_code: string; account_name: string }> }>('/accounting/accounts');
+  const names = new Map(r.accounts.map((a) => [a.account_code, a.account_name]));
+  return (code) => names.get(code) ?? null;
+};
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 const card: React.CSSProperties = { background: 'var(--c-paper, #fff)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, padding: 0, overflowX: 'auto' };
@@ -76,6 +86,28 @@ export const CreditNotes = () => {
   const [form, setForm] = useState<{ mode: 'new' | 'edit'; id?: string; values: FormValues } | null>(null);
   const listQ = useCreditNotes(kind, status);
   const rows = listQ.data?.rows ?? [];
+  const [ticked, setTicked] = useState<Set<string>>(new Set());
+  const [printing, setPrinting] = useState(false);
+  const [printError, setPrintError] = useState<string | null>(null);
+  const toggle = (id: string) => setTicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const allTicked = rows.length > 0 && rows.every((n) => ticked.has(n.id));
+
+  /* The ticked notes as ONE document in LIST order, a page each (owner
+     2026-09-12: 要批量打印; docs/bugs/0834) — each note's lines and the
+     chart's names read for it. */
+  const printTicked = async (action: PdfAction) => {
+    const targets = rows.filter((n) => ticked.has(n.id));
+    if (targets.length === 0 || printing) return;
+    setPrinting(true); setPrintError(null);
+    try {
+      const [{ generateCreditNotesPdf }, nameOf, details] = await Promise.all([
+        import('../../vendor/scm/lib/credit-note-pdf'),
+        accountNamer(),
+        Promise.all(targets.map((n) => authedFetch<{ note: CreditNote; lines: CreditNoteLine[] }>(`/credit-notes/${n.id}`))),
+      ]);
+      await generateCreditNotesPdf(details.map((d) => ({ header: d.note, lines: d.lines })), nameOf, { action });
+    } catch (e) { setPrintError(errText(e)); } finally { setPrinting(false); }
+  };
 
   return (
     <div className="space-y-4">
@@ -103,11 +135,21 @@ export const CreditNotes = () => {
       {listQ.isLoading && <div style={soft}>Loading…</div>}
       {listQ.isError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>The list did not load — {errText(listQ.error)}</div>}
       {listQ.data && rows.length === 0 && <div style={soft}>No note yet. New note raises one.</div>}
+      {ticked.size > 0 && (
+        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--fs-13)' }} aria-label="Ticked notes">
+          <span>{ticked.size} ticked</span>
+          <Button size="sm" onClick={() => void printTicked('print')} disabled={printing}>{printing ? 'Preparing…' : `Print ${ticked.size}`}</Button>
+          <Button variant="ghost" size="sm" onClick={() => void printTicked('save')} disabled={printing}>Save PDF</Button>
+          <Button variant="ghost" size="sm" onClick={() => setTicked(new Set())} disabled={printing}>Clear</Button>
+          {printError && <span style={{ color: danger }}>{printError}</span>}
+        </div>
+      )}
       {rows.length > 0 && (
         <div style={card}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
+                <th style={th}><input type="checkbox" checked={allTicked} onChange={() => setTicked(allTicked ? new Set() : new Set(rows.map((n) => n.id)))} aria-label="Tick all" /></th>
                 <th style={th}>Number</th><th style={th}>Kind</th><th style={th}>Date</th><th style={th}>Party</th><th style={th}>Reference</th>
                 <th style={{ ...th, textAlign: 'right' }}>Total</th><th style={th}>Status</th><th style={th}>Journal</th>
               </tr>
@@ -115,6 +157,7 @@ export const CreditNotes = () => {
             <tbody>
               {rows.map((n) => (
                 <tr key={n.id} onClick={() => setOpenId(n.id)} style={{ cursor: 'pointer' }} data-note={n.note_number}>
+                  <td style={td} onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={ticked.has(n.id)} onChange={() => toggle(n.id)} aria-label={`Tick ${n.note_number}`} /></td>
                   <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{n.note_number}</td>
                   <td style={td}>{n.kind}</td>
                   <td style={td}>{fmtDateOrDash(n.note_date)}</td>
@@ -165,10 +208,21 @@ const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () => void; 
   const lines = q.data?.lines ?? [];
   const busy = post.isPending || cancel.isPending;
   const failed = post.isError ? post.error : cancel.isError ? cancel.error : null;
+  const [printing, setPrinting] = useState(false);
+  const [printError, setPrintError] = useState<string | null>(null);
+  const printOne = async () => {
+    if (!n || printing) return;
+    setPrinting(true); setPrintError(null);
+    try {
+      const [{ generateCreditNotePdf }, nameOf] = await Promise.all([import('../../vendor/scm/lib/credit-note-pdf'), accountNamer()]);
+      await generateCreditNotePdf(n, lines, nameOf, { action: 'print' });
+    } catch (e) { setPrintError(errText(e)); } finally { setPrinting(false); }
+  };
   return (
     <Modal title={n ? `${KIND_WORD[n.kind]} ${n.note_number}` : 'Note'} onClose={onClose} width="min(820px, 100%)" ariaLabel="Credit or debit note"
       actions={n && (
         <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+          <Button variant="ghost" size="sm" onClick={() => void printOne()} disabled={busy || printing}>{printing ? 'Preparing…' : 'Print'}</Button>
           {n.status === 'DRAFT' && <Button variant="ghost" size="sm" onClick={() => onEdit(n, lines)} disabled={busy}>Edit</Button>}
           {n.status === 'DRAFT' && <Button size="sm" onClick={() => post.mutate(n.id)} disabled={busy}>{post.isPending ? 'Posting…' : 'Post to ledger'}</Button>}
           {n.status !== 'CANCELLED' && (
@@ -206,6 +260,7 @@ const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () => void; 
             </tbody>
           </table>
           {post.isSuccess && <div style={{ fontSize: 'var(--fs-13)', color: good }}>Posted as {post.data.jeNo}.</div>}
+          {printError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{printError}</div>}
           {failed != null && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{errText(failed)}</div>}
         </div>
       )}

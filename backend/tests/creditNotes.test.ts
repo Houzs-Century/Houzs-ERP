@@ -216,4 +216,15 @@ describe('posting and cancelling', () => {
     const drafts = await (await app.request('/credit-notes?status=draft')).json() as { rows: Row[] };
     expect(drafts.rows.map((r) => r.kind)).toEqual(['CN']);
   });
+
+  test('a note that answers a sales invoice carries the invoice NUMBER on the list and the detail — the print names it (docs/bugs/0834)', async () => {
+    const { app } = harness();
+    const fromSi = await raise(app, { ...CN, soDocNo: undefined, salesInvoiceId: 'si-1' });
+    const plain = await raise(app, CN);
+    const all = await (await app.request('/credit-notes')).json() as { rows: Row[] };
+    expect(all.rows.find((r) => r.id === fromSi.id)?.sales_invoice_number).toBe('2990-SI-2609-001');
+    expect(all.rows.find((r) => r.id === plain.id)?.sales_invoice_number).toBeNull();
+    const detail = await (await app.request(`/credit-notes/${fromSi.id}`)).json() as { note: Row };
+    expect(detail.note.sales_invoice_number).toBe('2990-SI-2609-001');
+  });
 });
