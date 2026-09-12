@@ -302,11 +302,17 @@ try {
       const specials = p.after.specials;
       await sql.begin(async (t) => {
         const bump = async (table, id) => {
+          /* The options as a TEXT ARRAY, turned into jsonb by the server. Never a
+             pre-serialized string on a jsonb parameter: postgres.js runs its own
+             JSON.stringify over anything the server types as jsonb, so the value
+             would land double-encoded and every reader would see nothing
+             (docs/jsonb-double-encoding-coe.md, docs/bugs/0814). The repo's own
+             guard caught this exact line on the first CI run of this tool. */
           const res = await t.unsafe(
             `UPDATE scm.${table}
-                SET variants = coalesce(variants, '{}'::jsonb) || jsonb_build_object('specials', $1::jsonb)
+                SET variants = coalesce(variants, '{}'::jsonb) || jsonb_build_object('specials', to_jsonb($1::text[]))
               WHERE id = $2 AND jsonb_typeof(coalesce(variants, '{}'::jsonb)) = 'object'`,
-            [JSON.stringify(specials), id]);
+            [specials, id]);
           if (Number(res.count ?? 0) === 0) throw new Error(`${table} ${id}: variants is not an object`);
           docLines += 1;
         };
