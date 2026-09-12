@@ -1189,6 +1189,19 @@ design and the notes say so. Contracts: `backend/tests/performanceReport.test.ts
 `frontend/src/pages/scm-v2/PerformancePnl.test.tsx`;
 `frontend/src/components/sidebarFinanceGroups.test.ts` pins the deep link.
 
+**The Accounting page has no tab strip (2026-09-12, docs/bugs/0841; owner:
+只靠侧栏就好，不然太乱了).** The strip of sixteen tab buttons that sat over the
+page repeated the sidebar's Books / Reports / Setup groups, unsorted, so
+`frontend/src/pages/scm-v2/Accounting.tsx` dropped it: the Finance sidebar is
+the one way between tabs, the URL still names the tab
+(`/scm/accounting?tab=…`), a sidebar click while the page is open still
+follows, an unknown name still falls back to the journal — and the page header
+names the tab it shows ("Accounting · P&L"). The tab set has one home,
+`ACCOUNTING_TAB_TITLES` in `frontend/src/pages/scm-v2/accounting-tabs.ts`
+(`ACCOUNTING_TABS` is its keys). Contracts:
+`frontend/src/pages/scm-v2/accounting-tabs.test.ts`,
+`frontend/src/components/sidebarFinanceGroups.test.ts`.
+
 **The Finance sidebar is six groups (2026-09-12, docs/bugs/0824; owner:
 finance 的 function 分到很散 … report 全部集中在一个 side bar).** In
 `frontend/src/components/Sidebar.tsx` the Finance group's children are
