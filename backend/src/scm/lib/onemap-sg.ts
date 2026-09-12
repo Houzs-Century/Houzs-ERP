@@ -7,6 +7,14 @@
 // so a real SG postcode shows "No match". Rather than import 150k rows into the
 // shared master, we look the code up live and autofill the address.
 //
+// CITY + STATE. On top of the address, we call getPlanningarea with the search
+// result's coordinates to get the URA planning area (pln_area_n). That name is
+// exactly one of the 55 seeded SG cities, so the front end maps it back to the
+// seeded { city, state } and fills those too — a real SG postcode then behaves
+// like a Malaysian one (postcode -> address + City + State). Best-effort: if
+// getPlanningarea fails for any reason, planningArea is "" and the address
+// still returns, so the field degrades to address-only.
+//
 // SHAPE. Pure transforms + one orchestration function that takes an INJECTED
 // fetch, so the whole thing is unit-testable without the network or the auth
 // harness. The route (routes/sg-postcode.ts) is a thin wrapper over
@@ -19,6 +27,10 @@
 
 const TOKEN_URL = "https://www.onemap.gov.sg/api/auth/post/getToken";
 const SEARCH_URL = "https://www.onemap.gov.sg/api/common/elastic/search";
+const PLANNING_AREA_URL = "https://www.onemap.gov.sg/api/public/popapi/getPlanningarea";
+// URA Master Plan year. 2019 matches mig 0181's SG seed (its 55 planning areas
+// are the MP2019 set), so the returned pln_area_n lines up with a seeded city.
+const PLANNING_AREA_YEAR = "2019";
 
 export interface SgAddress {
   postcode: string;
@@ -28,6 +40,11 @@ export interface SgAddress {
   address: string;
   lat: string;
   lng: string;
+  // URA planning area for this coordinate (pln_area_n from getPlanningarea),
+  // uppercased as OneMap returns it. "" when unresolved — the address is still
+  // returned; the front end matches this against the seeded SG cities to fill
+  // City + State, and simply skips that fill when it is "".
+  planningArea: string;
 }
 
 export interface SgLookupResult {
@@ -55,7 +72,19 @@ export function normalizeSearchResult(r: Record<string, unknown>): SgAddress {
     address: field(r.ADDRESS),
     lat: field(r.LATITUDE),
     lng: field(r.LONGITUDE),
+    planningArea: "", // filled in by lookupSgPostcode after getPlanningarea
   };
+}
+
+/** Pull the planning-area NAME (pln_area_n) out of a getPlanningarea response.
+ *  OneMap returns an array whose first element carries it; an empty array, an
+ *  error object, or a coordinate outside every planning area all yield "".
+ *  Uppercased and trimmed so it matches the seeded SG cities case-insensitively. */
+export function parsePlanningArea(json: unknown): string {
+  if (!Array.isArray(json) || json.length === 0) return "";
+  const first = json[0] as Record<string, unknown>;
+  const name = typeof first.pln_area_n === "string" ? first.pln_area_n.trim() : "";
+  return name === "NIL" ? "" : name.toUpperCase();
 }
 
 /** Address line 1 an operator would write: block + road, falling back to the
@@ -93,6 +122,22 @@ async function getToken(email: string, password: string, f: typeof fetch): Promi
   return j.access_token;
 }
 
+/** Best-effort planning-area lookup for a coordinate. Never throws and never
+ *  fails the address lookup: returns "" on missing coords, a network error, a
+ *  non-OK status, a parse error or a missing field, so lookupSgPostcode still
+ *  returns the resolved address. Reuses the search token. */
+async function getPlanningArea(lat: string, lng: string, token: string, f: typeof fetch): Promise<string> {
+  if (!lat || !lng) return "";
+  const url = `${PLANNING_AREA_URL}?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lng)}&year=${PLANNING_AREA_YEAR}`;
+  try {
+    const res = await f(url, { headers: { authorization: token } });
+    if (!res.ok) return "";
+    return parsePlanningArea(await res.json());
+  } catch {
+    return ""; // enrichment is optional — degrade to address-only
+  }
+}
+
 /** Resolve a 6-digit SG postcode to its OneMap address rows. Returns
  *  { configured:false } when credentials are absent (the inert contract). */
 export async function lookupSgPostcode(
@@ -120,5 +165,13 @@ export async function lookupSgPostcode(
   const results = (j.results ?? [])
     .filter((r) => String(r.POSTAL ?? "").trim() === want)
     .map(normalizeSearchResult);
+  // Best-effort: enrich with the URA planning area so the form can also fill
+  // City + State. All rows for one postcode share a location, so a single
+  // lookup off the first row's coords applies to every row. Never fails the
+  // address path — planningArea just stays "" and the form fills address only.
+  if (results.length > 0) {
+    const planningArea = await getPlanningArea(results[0].lat, results[0].lng, token, f);
+    if (planningArea) for (const r of results) r.planningArea = planningArea;
+  }
   return { configured: true, results };
 }

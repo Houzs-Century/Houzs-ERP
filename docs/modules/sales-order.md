@@ -1397,6 +1397,20 @@ the State picker's own handler would clear the cascade and wipe that value.
 Full rules, the ambiguity contract and the surfaces that deliberately opt out:
 `docs/modules/address-cascade.md`.
 
+**A Singapore delivery address uses a live postcode lookup, not the 55-code
+dropdown (2026-09-11), and fills City + State too (2026-09-12).** When the picked
+State is a Singapore region the country derives to Singapore, and the Postcode
+field becomes `SgPostcodeField` — a free-text 6-digit input with a live OneMap
+lookup (`GET /api/scm/sg-postcode/:code`), because Singapore's ~150k per-building
+postcodes are not seeded. Its one-tap offer fills Address line 1 and, when the
+backend resolved the URA planning area, State + City as well (via
+`resolveSgPlanningArea` against the seeded SG rows) — so a real SG postcode fills
+the same three fields a Malaysian one does. It is INERT until the `ONEMAP_EMAIL` /
+`ONEMAP_PASSWORD` Worker secrets exist; without them the SG forms keep the seeded
+55-area picker. `SalesOrderDetail` passes `disabled` when the address is locked
+(processing has passed), so no lookup or fill fires on a locked order. Details:
+`docs/modules/address-cascade.md`.
+
 #### Address lines 1 and 2 STOP AT 40 CHARACTERS, and a long paste spills (2026-09-09)
 
 AutoCount's four `InvAddr` columns are 40 characters and it refuses the **whole

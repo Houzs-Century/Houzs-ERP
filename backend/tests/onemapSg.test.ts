@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach } from "vitest";
 import {
   isValidSgPostcode,
   normalizeSearchResult,
+  parsePlanningArea,
   addressLine1,
   lookupSgPostcode,
   __resetOneMapTokenCacheForTest,
@@ -13,7 +14,7 @@ function jsonResponse(body: unknown, ok = true): Response {
 }
 
 const addr = (o: Partial<SgAddress>): SgAddress => ({
-  postcode: "", building: "", blockNo: "", road: "", address: "", lat: "", lng: "", ...o,
+  postcode: "", building: "", blockNo: "", road: "", address: "", lat: "", lng: "", planningArea: "", ...o,
 });
 
 beforeEach(() => __resetOneMapTokenCacheForTest());
@@ -39,6 +40,7 @@ describe("normalizeSearchResult", () => {
     expect(a).toEqual({
       postcode: "238801", building: "ION ORCHARD", blockNo: "2", road: "ORCHARD TURN",
       address: "2 ORCHARD TURN ION ORCHARD SINGAPORE 238801", lat: "1.3039", lng: "103.8320",
+      planningArea: "",
     });
   });
 
@@ -47,6 +49,20 @@ describe("normalizeSearchResult", () => {
     expect(b.building).toBe("");
     expect(b.address).toBe("");
     expect(b.blockNo).toBe("10");
+  });
+});
+
+describe("parsePlanningArea", () => {
+  test("takes pln_area_n from the first element, uppercased", () => {
+    expect(parsePlanningArea([{ pln_area_n: "Orchard", pln_area_c: "OR" }])).toBe("ORCHARD");
+    expect(parsePlanningArea([{ pln_area_n: "BUKIT MERAH" }])).toBe("BUKIT MERAH");
+  });
+  test("degrades to empty on any non-conforming shape", () => {
+    expect(parsePlanningArea([])).toBe("");                                  // point outside all areas
+    expect(parsePlanningArea([{ "error message": "no pln_area found" }])).toBe(""); // error object
+    expect(parsePlanningArea([{ pln_area_n: "NIL" }])).toBe("");             // OneMap's literal NIL
+    expect(parsePlanningArea({ message: "Unauthorized" })).toBe("");         // not an array
+    expect(parsePlanningArea(null)).toBe("");
   });
 });
 
@@ -84,7 +100,7 @@ describe("lookupSgPostcode", () => {
     expect(out.results).toEqual([]);
   });
 
-  test("happy path: token then search, normalized + filtered to the exact postcode", async () => {
+  test("happy path: token, search, then planning area — normalized, filtered, enriched", async () => {
     const calls: string[] = [];
     const fetchImpl = (async (url: string, init?: RequestInit) => {
       calls.push(String(url));
@@ -92,6 +108,12 @@ describe("lookupSgPostcode", () => {
         return jsonResponse({ access_token: "TKN", expiry_timestamp: String(Math.floor(Date.now() / 1000) + 100000) });
       }
       expect((init?.headers as Record<string, string>)?.authorization).toBe("TKN");
+      if (String(url).includes("getPlanningarea")) {
+        // the coords enriched are the FIRST result's, not the filtered-out row's
+        expect(String(url)).toContain("latitude=1.30");
+        expect(String(url)).toContain("longitude=103.83");
+        return jsonResponse([{ pln_area_n: "Orchard", pln_area_c: "OR" }]);
+      }
       return jsonResponse({
         results: [
           { POSTAL: "238801", BUILDING: "ION ORCHARD", BLK_NO: "2", ROAD_NAME: "ORCHARD TURN", ADDRESS: "2 ORCHARD TURN ION ORCHARD SINGAPORE 238801", LATITUDE: "1.30", LONGITUDE: "103.83" },
@@ -106,7 +128,27 @@ describe("lookupSgPostcode", () => {
     expect(out.results).toHaveLength(1);
     expect(out.results[0].building).toBe("ION ORCHARD");
     expect(addressLine1(out.results[0])).toBe("2 ORCHARD TURN");
+    expect(out.results[0].planningArea).toBe("ORCHARD");
     expect(calls.some((u) => u.includes("getToken"))).toBe(true);
     expect(calls.some((u) => u.includes("elastic/search"))).toBe(true);
+    expect(calls.some((u) => u.includes("getPlanningarea"))).toBe(true);
+  });
+
+  test("a getPlanningarea failure still returns the address, planningArea empty", async () => {
+    const fetchImpl = (async (url: string) => {
+      if (String(url).includes("getToken")) {
+        return jsonResponse({ access_token: "TKN", expiry_timestamp: String(Math.floor(Date.now() / 1000) + 100000) });
+      }
+      if (String(url).includes("getPlanningarea")) return jsonResponse({ message: "Unauthorized" }, false);
+      return jsonResponse({
+        results: [{ POSTAL: "238801", BUILDING: "ION ORCHARD", BLK_NO: "2", ROAD_NAME: "ORCHARD TURN", ADDRESS: "2 ORCHARD TURN ION ORCHARD SINGAPORE 238801", LATITUDE: "1.30", LONGITUDE: "103.83" }],
+      });
+    }) as unknown as typeof fetch;
+
+    const out = await lookupSgPostcode({ email: "e", password: "p", fetchImpl }, "238801");
+    expect(out.error).toBeUndefined();       // the address lookup did NOT fail
+    expect(out.results).toHaveLength(1);
+    expect(out.results[0].building).toBe("ION ORCHARD");
+    expect(out.results[0].planningArea).toBe(""); // enrichment degraded silently
   });
 });

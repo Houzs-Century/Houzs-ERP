@@ -76,8 +76,9 @@ import { todayMyt } from '../../vendor/scm/lib/dates';
 import { addressLineProps } from '../../lib/acColumnWidths';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { deriveProcessingDate } from '../../lib/processingDate';
-import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
+import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
+import { AddressPostcodeField } from '../../vendor/scm/components/AddressPostcodeField';
 import { useAuth } from '../../vendor/scm/lib/auth';
 /* Houzs auth — the REAL logged-in user (name + id). The vendored 2990 auth
    bridge (useAuth above) has no staff row for the owner (id:null), which left
@@ -2148,20 +2149,17 @@ export const SalesOrderNew = () => {
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>Postcode</span>
-              <span className={styles.selectWrap}>
-                <SearchableSelect
-                  className={styles.fieldSelect}
-                  value={postcode}
-                  onChange={onPostcodePick}
-                  disabled={loc.isLoading}
-                  placeholder={loc.isLoading ? 'Loading…' : postcodePlaceholder(state, city)}
-                  options={sortByNumeric(postcodeChoices).map((p) => ({ value: p, label: p }))}
-                />
-                <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
-              </span>
-            </label>
+            <AddressPostcodeField
+              country={country}
+              value={postcode}
+              onChange={setPostcode}
+              onCascadePick={onPostcodePick}
+              onResolve={(r) => { setAddress1(r.address); if (r.state && r.city) { setState(r.state); setCity(r.city); } }}
+              postcodeChoices={postcodeChoices}
+              placeholder={loc.isLoading ? 'Loading…' : postcodePlaceholder(state, city)}
+              disabled={loc.isLoading}
+              classes={{ field: styles.field, label: styles.fieldLabel, select: styles.fieldSelect, selectWrap: styles.selectWrap, chevron: styles.selectChevron, input: styles.fieldInput }}
+            />
             {/* Task #121 — Country is auto-derived from the picked state via
                 my_localities. Read-only display; the API re-derives + snaps
                 it onto the SO header on POST. */}

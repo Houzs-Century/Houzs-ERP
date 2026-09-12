@@ -18,6 +18,10 @@ export interface SgAddress {
   address: string;
   lat: string;
   lng: string;
+  // URA planning area for this coordinate (pln_area_n), uppercased; "" when the
+  // backend could not resolve it. resolveSgPlanningArea maps it to a seeded
+  // { state, city } so the form fills City + State as well as the address.
+  planningArea: string;
 }
 
 export interface SgLookupResult {
@@ -33,6 +37,23 @@ export const isValidSgPostcode = (code: string): boolean => /^\d{6}$/.test(code.
 export const sgAddressLine1 = (a: SgAddress): string => {
   const blkRoad = [a.blockNo, a.road].filter(Boolean).join(' ').trim();
   return blkRoad || a.building || a.address;
+};
+
+/** Reverse-resolve a OneMap planning area (pln_area_n, any case) to the seeded
+ *  Singapore { state, city } it names. The 55 SG rows in my_localities use the
+ *  planning area as `city` and the URA region as `state` (mig 0181), so a live
+ *  planning area maps straight back to a seeded pair — the same trick that lets
+ *  a Malaysian postcode fill State + City. Returns null when the area is blank
+ *  or not one of the seeded SG cities, so the caller leaves State/City for the
+ *  operator rather than guessing. */
+export const resolveSgPlanningArea = (
+  rows: { country: string; city: string; state: string }[],
+  planningArea: string,
+): { state: string; city: string } | null => {
+  const want = planningArea.trim().toUpperCase();
+  if (!want) return null;
+  const hit = rows.find((r) => r.country === 'Singapore' && r.city.trim().toUpperCase() === want);
+  return hit ? { state: hit.state, city: hit.city } : null;
 };
 
 /** Look a real 6-digit SG postcode up. Fires ONLY for a valid 6-digit code, so
