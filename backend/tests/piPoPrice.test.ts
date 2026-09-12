@@ -34,12 +34,15 @@ describe('comparePiLinePrice', () => {
     });
   });
 
-  it('an order placed at zero (unbound SKU, keyed in at the invoice) IS a difference', () => {
-    /* supplierCostFor writes 0 for an unbound SKU — "key in at PI". That is a
-       real ordered price of zero, not a missing one, so the whole billed amount
-       is the difference and a person should look at it. */
+  it('an order placed at zero is UNPRICED, not an overcharge of the whole amount', () => {
+    /* CHANGED 2026-09-12 after measuring, not after reasoning. supplierCostFor
+       writes 0 for an unbound SKU — "key in at PI" — and on 25 live purchase
+       invoices (115 lines) 78 of them are that case. Treating 0 as a real price
+       painted 68% of every invoice red and buried the 2 lines that genuinely
+       differ. `poUnitPriceSen` is still reported so the UI can say "not priced";
+       only `differs` and `diffSen` refuse to invent a comparison. */
     expect(comparePiLinePrice(48_500, 0)).toEqual({
-      poUnitPriceSen: 0, supplierUnitPriceSen: 48_500, diffSen: 48_500, differs: true,
+      poUnitPriceSen: 0, supplierUnitPriceSen: 48_500, diffSen: null, differs: false,
     });
   });
 });
@@ -86,6 +89,7 @@ describe('piPriceDifferenceSummary — what the header says', () => {
       { qty: 2, supplierUnitPriceSen: 48_500, poUnitPriceSen: 41_500 }, // +7,000 x 2
       { qty: 1, supplierUnitPriceSen: 41_500, poUnitPriceSen: 41_500 }, // agrees
       { qty: 3, supplierUnitPriceSen: 10_000, poUnitPriceSen: null },   // nothing to compare
+      { qty: 4, supplierUnitPriceSen: 21_380, poUnitPriceSen: 0 },       // never priced
     ])).toEqual({ linesDiffering: 1, totalDiffSen: 14_000 });
   });
 

@@ -566,6 +566,11 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       render: (l) => (
         l.po_unit_price_sen == null ? (
           <span className="text-[12px] text-ink-muted" title="No purchase order behind this line">—</span>
+        ) : l.po_unit_price_sen === 0 ? (
+          /* An order that named no price (unbound SKU — "key in at PI"). 68% of
+             live lines, so calling it an overcharge would bury the ones that
+             are one. See lib/pi-po-price.ts for the measurement. */
+          <span className="text-[11.5px] text-ink-muted" title="The purchase order did not name a price for this line">not priced</span>
         ) : (
           <span className="font-money text-[13px] text-ink-muted">
             {fmtMoney(l.po_unit_price_sen, purchaseInvoice?.currency)}
@@ -582,7 +587,8 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       render: (l) => {
         const supplier = l.unit_price_sen ?? 0;
         const po = l.po_unit_price_sen;
-        const diff = po == null ? null : supplier - po;
+        /* 0 means the order named no price, so there is nothing to differ FROM. */
+        const diff = po == null || po === 0 ? null : supplier - po;
         return (
           <span className="inline-flex flex-col items-end">
             <span className="font-money text-[13px] text-ink-secondary">
