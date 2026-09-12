@@ -8,8 +8,9 @@
 //     of it;
 //   • every day is on screen with BOTH numbers, so a difference is visible and
 //     not just named;
-//   • the upload sends the PDF as base64 under PBB — nobody is asked which
-//     acquirer, because only Public Bank sends one;
+//   • the upload sends each PDF as base64 under PBB — nobody is asked which
+//     acquirer, because only Public Bank sends one; several picked at once go
+//     up one by one, in order, each answered on its own line (docs/bugs/0839);
 //   • a refusal is the server's own sentence (§2.14).
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -17,6 +18,10 @@ import { describe, expect, test, vi } from 'vitest';
 import type { Payout } from './settlement-queries';
 
 const uploadMutate = vi.fn();
+const uploadMutateAsync = vi.fn(async (body: { fileName: string }) => {
+  if (body.fileName.includes('BAD')) throw new Error('The advice names no settlement day.');
+  return { ok: true, payoutId: 9, status: { netSen: 1189800, readyToReceive: true, blockedBy: null, days: [{}, {}] } };
+});
 
 /* One advice every day of which agrees, one blocked in all three ways. */
 const READY: Payout = {
@@ -62,7 +67,7 @@ const usePayoutsMock = vi.fn(() => ({
 }));
 vi.mock('./settlement-queries', () => ({
   usePayouts: () => usePayoutsMock(),
-  useUploadPayoutAdvice: () => ({ mutate: uploadMutate, isPending: false }),
+  useUploadPayoutAdvice: () => ({ mutate: uploadMutate, mutateAsync: uploadMutateAsync, isPending: false }),
   usePostPayoutCharge: () => ({ mutate: chargeMutate, isPending: false }),
   useUndoPayoutCharge: () => ({ mutate: undoMutate, isPending: false }),
 }));
@@ -111,11 +116,12 @@ describe('an advice something is in the way of', () => {
   });
 });
 
-describe('uploading one', () => {
+describe('uploading', () => {
   test('is dead until a file is chosen, then sends it as base64 under PBB', async () => {
     render(<PayoutAdviceTab />);
     const button = screen.getByText('Upload payment advice').closest('button') as HTMLButtonElement;
     expect(button.disabled).toBe(true);
+    expect(screen.getByLabelText('Payment advice PDF').hasAttribute('multiple')).toBe(true);
 
     const file = new File(['%PDF-1.4 advice bytes'], 'HOUZSCENTURY_IBG_240826.pdf', { type: 'application/pdf' });
     fireEvent.change(screen.getByLabelText('Payment advice PDF'), { target: { files: [file] } });
@@ -124,13 +130,33 @@ describe('uploading one', () => {
     await waitFor(() => expect(button.disabled).toBe(false));
     fireEvent.click(button);
 
-    expect(uploadMutate).toHaveBeenCalledTimes(1);
-    const [body] = uploadMutate.mock.calls[0] as [
+    await waitFor(() => expect(uploadMutateAsync).toHaveBeenCalledTimes(1));
+    const [body] = uploadMutateAsync.mock.calls[0] as [
       { acquirerCode: string; fileName: string; contentBase64: string },
     ];
     expect(body.acquirerCode).toBe('PBB');
     expect(body.fileName).toBe('HOUZSCENTURY_IBG_240826.pdf');
     expect(body.contentBase64).toMatch(/^data:application\/pdf;base64,/);
+    expect(await screen.findByText(/Read: RM 11,898\.00 across 2 settlement day\(s\)/)).toBeTruthy();
+  });
+
+  /* Owner 2026-09-12: 要支持上传多份. Three picked together: each goes up on its
+     own, in the order picked; the one the server refuses says so on its own
+     line, and the other two still say what was read. */
+  test('several picked at once go up one by one, each answered on its own line', async () => {
+    uploadMutateAsync.mockClear();
+    render(<PayoutAdviceTab />);
+    const files = ['HOUZSCENTURY_IBG_100826.pdf', 'HOUZSCENTURY_IBG_BAD.pdf', 'HOUZSCENTURY_IBG_170826.pdf']
+      .map((name) => new File(['%PDF-1.4 advice bytes'], name, { type: 'application/pdf' }));
+    fireEvent.change(screen.getByLabelText('Payment advice PDF'), { target: { files } });
+    const button = await screen.findByText('Upload 3 payment advices');
+    fireEvent.click(button);
+
+    await waitFor(() => expect(uploadMutateAsync).toHaveBeenCalledTimes(3));
+    expect((uploadMutateAsync.mock.calls as Array<[{ fileName: string }]>).map(([b]) => b.fileName))
+      .toEqual(['HOUZSCENTURY_IBG_100826.pdf', 'HOUZSCENTURY_IBG_BAD.pdf', 'HOUZSCENTURY_IBG_170826.pdf']);
+    expect(await screen.findByText('The advice names no settlement day.', { exact: false })).toBeTruthy();
+    expect(screen.getAllByText(/Read: RM 11,898\.00/)).toHaveLength(2);
   });
 });
 
