@@ -778,6 +778,21 @@ the reversal (owner: 不明白; docs/bugs/0786). The Ledger column now reads
 **"0047 → reversed by 0099 → 0100"**; the one legacy row is read as
 contra-only and never presents the contra as the original.
 
+**2990's Maybank account takes a statement (2026-09-12, docs/bugs/0840;
+owner: maybank statement 要做，我要测试 maybank statement).** Migration
+`backend/src/db/migrations-pg/20260912T1600_acc_bank_statement_mbb_2990.sql`
+adds the second `acc_bank_statement_config` row for company 2 — 310-0010
+(CASH AT BANK - MAYBANK), bank MBB, account 564418610346, CSV, delimiter `|`,
+amount format `integer-sen`, credit indicator `CR`, the column map naming
+the Account Activity Report's captions (EFFECT DATE / BATCH DATE, TRX
+DESCRIPTION, TRX REFERENCE, AMOUNT, AMOUNT IND). The reader
+(`backend/src/acc/bank-parse.ts`) already knew the shape — its Maybank fixture
+in `backend/src/acc/bank-parse.test.ts` is copied from the real export — so
+the change is one data row, guarded by NOT EXISTS and the chart row; the
+upload's account check reads digits, so the file's zero-padded
+0000564418610346 satisfies 564418610346. The recognition rules the matcher
+uses on that statement (CARD SALES for MBB, PBB-PBCS, AEON, GHL) were already
+seeded.
 **The payment advice has one door and takes several files (2026-09-12,
 docs/bugs/0839; owner: merchant reconciliation 那边上传就好，bank statement
 reconciliation 的 payment advice 拿掉，然后要支持上传多份).** The "Payment
