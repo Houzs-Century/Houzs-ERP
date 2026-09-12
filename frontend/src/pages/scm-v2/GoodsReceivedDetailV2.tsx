@@ -85,6 +85,9 @@ type GrnItem = {
   item_code?: string | null;
   /* Supplier's own code, snapshotted per line at receipt (backend returns it). */
   supplier_sku?: string | null;
+  /* The line's own remark (grn_items.notes). The column and the line PATCH that
+     accepts it have both existed since the table did; nothing rendered it. */
+  notes?: string | null;
   description?: string | null;
   description2?: string | null;
   item_group?: string | null;
@@ -471,6 +474,28 @@ function GoodsReceivedDetailV2ReadOnly() {
         const full = ordered > 0 && rec >= ordered;
         return <span className={cn("font-money text-[13px] font-semibold", full ? "text-synced" : "text-ink")}>{rec}</span>;
       },
+    },
+    {
+      /* The line's own remark. Owner 2026-09-12: 「行备注（remark）应该也是要一样，
+         因为它们会带过去」 — the warehouse writes one at receipt ("outer carton
+         dented"), the invoice clerk needs to see it, and until now the only
+         place to put a sentence was the document header, where it belongs to
+         every line at once. The COLUMN was always there (grn_items.notes,
+         purchase_invoice_items.notes) and the GRN line PATCH has always
+         accepted it; nothing rendered it. See docs/bugs/0845. */
+      key: "lineNote",
+      label: "Remark",
+      width: "180px",
+      getValue: (l) => l.notes ?? "",
+      render: (l) => (
+        l.notes ? (
+          <span className="block truncate text-[12.5px] italic text-ink-secondary" title={l.notes}>
+            {l.notes}
+          </span>
+        ) : (
+          <span className="text-[12px] text-ink-muted">—</span>
+        )
+      ),
     },
     {
       key: "eta",
