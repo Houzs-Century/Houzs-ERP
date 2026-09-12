@@ -2830,28 +2830,33 @@ Three rules the composer keeps:
 - **Zero is a value.** `udf()` drops a falsy entry, so a settled order is sent as
   the string `"0.00"` (`acUdfMoney`). Dropping the key would leave a paid order
   showing a debt in the account book forever.
-- **No total means NO KEY — and 0 IS "no total" (since 2026-09-09).**
-  `readSoOutstandingSen` answers `null` for any `total_revenue_sen` that is not
-  **greater than zero**, because zero would declare a real debt settled in a
-  licensed ledger. The SO detail page reads the same absence as `0` — it is
-  drawing a screen, this is writing a ledger.
+- **No total in EITHER column means NO KEY.** `readSoOutstandingSen` answers
+  `null` only when NEITHER `total_revenue_sen` NOR `local_total_sen` is greater
+  than zero, because a zero would declare a real debt settled in a licensed
+  ledger. The SO detail page reads the same absence as `0` — it is drawing a
+  screen, this is writing a ledger.
 
-  It used to refuse only a NULL, which **cannot happen**: the column is `integer
-  DEFAULT 0 NOT NULL`, while every AutoCount-imported order carries a hard 0
-  because the cutover importer's `HCOLS` writes `local_total_sen` and not this
-  column. So the guard stood aside on exactly the orders it was written for, and
-  the reader computed `max(0, 0 - paid) = 0` — the ERP telling the book that a
-  part-paid order was settled. `docs/bugs/0726-*`.
+- **It FALLS BACK to `local_total_sen` (since 2026-09-12), the same total the
+  screen uses.** `total_revenue_sen` is `0` on a migrated order (the cutover
+  importer's `HCOLS` writes `local_total_sen` and not this column), and until
+  2026-09-12 the reader REFUSED there rather than fall back — so a balance
+  collected in the ERP on an old order never reached the book, and the HC
+  Delivery sheet kept showing it as owing (`docs/bugs/0842`,
+  `docs/migrated-so-lock-lifted-coe.md`). It falls back now because owner
+  2026-09-12 made AutoCount PUSH-ONLY: the ERP is the only way a figure reaches
+  the book, so the book must learn a migrated order's balance from the ERP.
+  `local_total_sen` is in `SO_HEADER_COLS` for this reason — omit it and the key
+  is silently dropped again.
 
-  **It REFUSES rather than falling back to `local_total_sen`**, which is what
-  the SCREEN does since PR #3306. Refusing leaves the book holding its own
-  `UDF_BALANCE`, which is the figure the cutover read and is right; asserting
-  `local_total_sen - paid` would be worse than silence here, because the ERP's
-  PAID side is knowingly incomplete on these orders — payments taken in
-  AutoCount since 2026-08-28 have never reached the ERP (`lib/migrated-so-lock.ts`),
-  so the ERP would OVERSTATE the debt and a paid-up customer would be chased.
-  The type split enforces it: `soOutstandingSen` takes `SoPaidInputs`, which has
-  no `localTotalSen` field.
+  RESIDUAL: the old refusal also guarded the ERP's PAID side being incomplete —
+  payments taken in AutoCount since 2026-08-28 not reaching the ERP
+  (`docs/bugs/0678`) — which would OVERSTATE the debt. That is retired going
+  forward (AutoCount takes no payments now) but survives for that historical
+  window, so the 0842 backfill holds PARTIAL balances back for a human to check.
+  The answer stays clamped `max(0, ...)`, so the worst case is a too-high
+  balance, never a false 0. (Earlier history: it once refused only a NULL, which
+  the `0 NOT NULL` column makes impossible, so it computed `max(0, 0 - paid) = 0`
+  for a migrated order — `docs/bugs/0726`.)
 
   **A SETTLED order is not refused.** Its total is a real positive number and
   its balance is a real 0, so `"0.00"` still goes — the guard is on the TOTAL,
