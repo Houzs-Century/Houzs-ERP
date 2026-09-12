@@ -42,4 +42,14 @@ describe('SgPostcodeField', () => {
     fireEvent.change(screen.getByPlaceholderText(/6-digit/), { target: { value: 'a1b2c3d4e5f6g7' } });
     expect(onChange).toHaveBeenCalledWith('123456');
   });
+
+  it('is inert when disabled — input disabled, no lookup offer', () => {
+    useSgPostcodeLookup.mockReturnValue({
+      data: { configured: true, results: [addr({ address: '2 ORCHARD TURN' })] },
+      isFetching: false,
+    });
+    render(<SgPostcodeField value="238801" onChange={() => {}} onResolveAddress={() => {}} disabled />);
+    expect((screen.getByPlaceholderText(/6-digit/) as HTMLInputElement).disabled).toBe(true);
+    expect(screen.queryByText(/^Use:/)).toBeNull();
+  });
 });

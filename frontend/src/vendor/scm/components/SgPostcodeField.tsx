@@ -18,6 +18,8 @@ export const SgPostcodeField = ({
   fieldClassName,
   labelClassName,
   inputClassName,
+  disabled,
+  title,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -25,8 +27,11 @@ export const SgPostcodeField = ({
   fieldClassName?: string;
   labelClassName?: string;
   inputClassName?: string;
+  disabled?: boolean;
+  title?: string;
 }) => {
-  const lookup = useSgPostcodeLookup(value);
+  // When the field is locked, do not look anything up or offer to fill.
+  const lookup = useSgPostcodeLookup(disabled ? '' : value);
   const data = lookup.data;
   const hit = data?.configured && data.results.length > 0 ? data.results[0] : null;
   const hintStyle: CSSProperties = { fontSize: 11, color: 'var(--fg-muted, #888)', marginTop: 4 };
@@ -39,10 +44,12 @@ export const SgPostcodeField = ({
         inputMode="numeric"
         maxLength={6}
         placeholder="6-digit SG postcode"
+        disabled={disabled}
+        title={title}
         onChange={(e) => onChange(e.target.value.replace(/\D/g, '').slice(0, 6))}
       />
-      {isValidSgPostcode(value) && lookup.isFetching && <span style={hintStyle}>Looking up address…</span>}
-      {hit && (
+      {!disabled && isValidSgPostcode(value) && lookup.isFetching && <span style={hintStyle}>Looking up address…</span>}
+      {!disabled && hit && (
         <button
           type="button"
           onClick={() => onResolveAddress(hit.address)}
@@ -51,7 +58,7 @@ export const SgPostcodeField = ({
           Use: {hit.address}
         </button>
       )}
-      {data && !data.configured && <span style={hintStyle}>Live lookup not enabled — enter the address manually.</span>}
+      {!disabled && data && !data.configured && <span style={hintStyle}>Live lookup not enabled — enter the address manually.</span>}
     </label>
   );
 };

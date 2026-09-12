@@ -125,8 +125,9 @@ import {
   useSoDropdownOptions, optionsOrFallback,
 } from '../../vendor/scm/lib/so-dropdown-options-queries';
 import { useStaff, usePickableStaff } from '../../vendor/scm/lib/admin-queries';
-import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
+import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
+import { AddressPostcodeField } from '../../vendor/scm/components/AddressPostcodeField';
 import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
 import { soStatusDisplay, type DeliveryState, type SoLifecycle } from '../../vendor/scm/lib/so-status';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
@@ -3625,21 +3626,18 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>Postcode</span>
-              <span className={styles.selectWrap}>
-                <SearchableSelect
-                  className={styles.fieldSelect}
-                  value={form.postcode}
-                  onChange={applyPostcodeReverse}
-                  disabled={inputsDisabled || stateLocked}
-                  title={stateLocked ? 'Processing has passed — Postcode is locked (it drives the PO delivery location).' : undefined}
-                  placeholder={postcodePlaceholder(form.state, form.city)}
-                  options={sortByNumeric(postcodeChoices).map((p) => ({ value: p, label: p }))}
-                />
-                <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
-              </span>
-            </label>
+            <AddressPostcodeField
+              country={country}
+              value={form.postcode}
+              onChange={(v) => setForm((s) => ({ ...s, postcode: v }))}
+              onCascadePick={applyPostcodeReverse}
+              onResolveAddress={(a) => setForm((s) => ({ ...s, address1: a }))}
+              postcodeChoices={postcodeChoices}
+              placeholder={postcodePlaceholder(form.state, form.city)}
+              disabled={inputsDisabled || stateLocked}
+              title={stateLocked ? 'Processing has passed — Postcode is locked (it drives the PO delivery location).' : undefined}
+              classes={{ field: styles.field, label: styles.fieldLabel, select: styles.fieldSelect, selectWrap: styles.selectWrap, chevron: styles.selectChevron, input: styles.fieldInput }}
+            />
             {/* Task #121 — Country is auto-derived from the picked state via
                 my_localities. Read-only; the API re-derives + snapshots it
                 onto the SO header on PATCH whenever customerState changes. */}
