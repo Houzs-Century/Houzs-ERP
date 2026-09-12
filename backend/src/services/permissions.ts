@@ -251,6 +251,20 @@ export const PERMISSIONS: PermissionDef[] = [
      accepts settings.manage, which already exists and already owns the AutoCount
      connection, so the button works for its real audience on day one. */
   { key: "scm.autocount.requeue", resource: "Supply Chain", verb: "manage", label: "Re-send a refused AutoCount document", description: "Put one failed or skipped document back in the AutoCount queue once its cause is fixed — writes into the live account book, and is refused outright for a document AutoCount has already accepted" },
+  /* DECLARED 2026-09-12 with the Venture Portal live sales-order feed
+     (mig 20260912T1800). The SAME SPLIT the two AutoCount keys above are drawn
+     on, and for a sharper reason. Reading the queue is watching. Managing it
+     sets the shared SECRET and decides WHICH COMPANIES' sales orders — with
+     their line costs and their margins — leave this system for an external
+     portal where they become the input to somebody's commission. A delivery
+     cannot be recalled, so the manage key is deliberately not implied by the
+     read key, and neither is implied by scm.access: an L2 SCM area key would be
+     an arbitrary owner for a page that spans orders, lines, costs and payments
+     at once. settings.manage is the other key both halves accept — whoever
+     already owns the sync connections owns this one — so the page works for its
+     real audience on day one with no grant migration. Owner + IT Admin hold "*". */
+  { key: "scm.venture_portal.read", resource: "Supply Chain", verb: "read", label: "View Venture Portal feed", description: "See whether the live sales-order feed to the Venture Portal is on, what is queued, what was delivered and why anything failed" },
+  { key: "scm.venture_portal.manage", resource: "Supply Chain", verb: "manage", label: "Manage Venture Portal feed", description: "Turn the live sales-order feed on or off, choose which companies it covers, set or rotate the shared secret, and re-send a delivery — sends sales orders, line costs and cancellations to an external portal" },
 
   // Mail Center — in-ERP shared inbox (/api/mail-center). mail_center.read is the
   // nav/page gate (grant broadly); mail_center.manage gates the alias / access /

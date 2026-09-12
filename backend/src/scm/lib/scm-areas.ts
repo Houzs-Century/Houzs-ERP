@@ -143,6 +143,22 @@ export const SCM_UNGUARDED_PREFIXES: readonly string[] = [
      scm.changelog.read / settings.manage keys inside the route. */
   "/change-log",
   "/autocount-outbox",
+  /* The Venture Portal live sales-order feed and its settings (2026-09-12). No
+     area guard for /autocount-outbox's reason: an L2 area key is a PAGE key and
+     this page belongs to no SCM area — it spans sales orders, their lines,
+     those lines' costs and their payments at once. Authorization is the flat
+     scm.venture_portal.read / .manage keys inside the route.
+     WHAT BEING ON THIS LIST COSTS, said plainly rather than discovered from a
+     refused save: unlike /change-log and /autocount-outbox this router is NOT
+     read-only, so a company-wide write freeze also pauses CHANGING the feed —
+     the secret, the scope, the switch. That is survivable and not nothing: the
+     cron drain is not an HTTP request and keeps delivering what is already
+     queued, so during a freeze the feed can be running and not be turnable off
+     from the page. Whoever imposed the freeze can still flip
+     scm.app_config 'scm.venture_portal_feed'. Exempting this prefix from the
+     freeze is a deliberate change to write-freeze's own contract and belongs in
+     its own PR, not smuggled in with the feed. */
+  "/venture-portal-feed",
   "/currencies",
   "/hr",
   "/localities",

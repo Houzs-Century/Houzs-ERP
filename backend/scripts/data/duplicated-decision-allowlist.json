@@ -1239,6 +1239,16 @@
       "check": "D1",
       "key": "#,ACCOUNT CODE,ACCOUNT NAME,AMOUNT,DESCRIPTION|frontend/src/vendor/scm/lib/credit-note-pdf.ts frontend/src/vendor/scm/lib/payment-voucher-pdf.ts",
       "why": "TWO SHEETS' COLUMN HEADINGS — the payment voucher's lines table and the credit note's (docs/bugs/0834) head their lines with the same five words. A heading row is the presentation of each sheet, decided sheet by sheet (the receipt's and the invoice's differ); nothing reads the two to agree, and a sheet that later needs a sixth column changes alone."
+    },
+    {
+      "check": "D1",
+      "key": "*,SCM.VENTURE_PORTAL.READ,SETTINGS.MANAGE|frontend/src/App.tsx frontend/src/components/Sidebar.tsx",
+      "why": "THE PERMISSION KEYS ONE NAV ENTRY IS GATED ON, written once on the route Guard and once on the sidebar item so a hidden link is also an unreachable route. The pair must agree; the server is the real gate and neither of these is it. unnamed inline literal(s)."
+    },
+    {
+      "check": "D1",
+      "key": "FAILED,PENDING,SENT,SKIPPED|backend/src/scm/lib/autocount-outbox-status.ts backend/src/scm/lib/venture-portal-outbox.ts",
+      "why": "THE AUTOCOUNT OUTBOX STATUSES VERSUS THE VENTURE PORTAL OUTBOX STATUSES. Two different outboxes, to two different systems, that deliberately share four state names so this codebase has ONE dialect for 'where is my outbox row' — the same ruling already recorded for the mail outbox against AutoCount's. They are not one rule: either outbox may grow a fifth state for a reason that has nothing to do with the other, and the Venture Portal feed must not inherit one."
     }
   ]
 }
