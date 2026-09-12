@@ -1232,8 +1232,13 @@
     },
     {
       "check": "D1",
-      "key": "CN,DN,SCN|backend/src/acc/credit-notes.ts frontend/src/pages/scm-v2/CreditNotes.tsx",
-      "why": "THE THREE KINDS OF NOTE (docs/bugs/0827; the vocabulary moved with the note core into acc/credit-notes.ts, docs/bugs/0831) — the migration CHECK is the one definition; the core validates the kind against it and the page labels it. The frontend cannot import the backend, and a label map is the presentation of a vocabulary, not a second answer to what the kinds are."
+      "key": "CN,DN,SCN|backend/src/acc/credit-notes.ts frontend/src/pages/scm-v2/CreditNotes.tsx frontend/src/vendor/scm/lib/credit-note-pdf.ts",
+      "why": "THE THREE KINDS OF NOTE (docs/bugs/0827; the vocabulary moved with the note core into acc/credit-notes.ts, docs/bugs/0831) — the migration CHECK is the one definition; the core validates the kind against it and the page labels it. The frontend cannot import the backend, and a label map is the presentation of a vocabulary, not a second answer to what the kinds are. The print (credit-note-pdf.ts, docs/bugs/0834) titles the sheet by kind — CREDIT NOTE / DEBIT NOTE / SUPPLIER CREDIT NOTE — off the same three words: the third presentation of the one vocabulary, not a fourth answer."
+    },
+    {
+      "check": "D1",
+      "key": "#,ACCOUNT CODE,ACCOUNT NAME,AMOUNT,DESCRIPTION|frontend/src/vendor/scm/lib/credit-note-pdf.ts frontend/src/vendor/scm/lib/payment-voucher-pdf.ts",
+      "why": "TWO SHEETS' COLUMN HEADINGS — the payment voucher's lines table and the credit note's (docs/bugs/0834) head their lines with the same five words. A heading row is the presentation of each sheet, decided sheet by sheet (the receipt's and the invoice's differ); nothing reads the two to agree, and a sheet that later needs a sixth column changes alone."
     }
   ]
 }

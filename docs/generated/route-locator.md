@@ -1106,12 +1106,12 @@ Total: 1258 route registrations across 163 files.
 - L130  GET    /:token/floorplans
 
 ## backend/src/scm/routes/credit-notes.ts  (6)
-- L279  GET    /
-- L280  POST   /
-- L281  GET    /:id
-- L282  PATCH  /:id
-- L283  POST   /:id/post
-- L284  POST   /:id/cancel
+- L300  GET    /
+- L301  POST   /
+- L302  GET    /:id
+- L303  PATCH  /:id
+- L304  POST   /:id/post
+- L305  POST   /:id/cancel
 
 ## backend/src/scm/routes/lorry-service-records.ts  (6)
 - L87  GET    /
