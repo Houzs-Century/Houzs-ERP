@@ -1069,6 +1069,16 @@ Per-SKU `allowed_options` (Modular ON/OFF) filter every pool via
 per category are the shared `so-variant-rule`; Save is blocked when any line is
 missing a required axis.
 
+**EMPTY IS THE DEFAULT FOR EVERY OPTION AXIS SINCE 2026-09-12** (owner:
+「全部都是啊」) — `sizes`, `compartments`, `specials`, `divan_heights`,
+`leg_heights`, `total_heights`, `gaps` and `mattress_thickness_cm` were cleared
+the same way `fabrics` was, with a restorable backup in
+`scm.app_config['scm.model_allowed_options_backup']`
+(`backend/scripts/open-model-option-pools.mjs`,
+`docs/bugs/0845-every-model-carried-an-option-list-nobody-chose-so-a-new-opt.md`).
+The paragraph below is the fabric half of the same rule and still applies to all
+of them.
+
 **EMPTY IS THE DEFAULT FOR FABRICS SINCE 2026-09-12, and that is a RULE, not
 a leftover.** `hasRestriction` is `Array.isArray(pool) && pool.length > 0`, so a
 non-empty `allowed_options.fabrics` means *restrict to exactly these* and an
