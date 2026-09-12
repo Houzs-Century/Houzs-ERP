@@ -41,11 +41,13 @@ import { ACCOUNT_SECTIONS, defaultSectionFor } from '../lib/account-sections';
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 const NO_PERM = { error: "You don't have permission to read the financial statements." };
 
-type AccountRow = { account_code: string; account_type: string; section: string | null };
-type SumRow = { code: string; name: string; type: string; drSen: number; crSen: number };
+export type AccountRow = { account_code: string; account_type: string; section: string | null };
+export type SumRow = { code: string; name: string; type: string; drSen: number; crSen: number };
 
-/** Sum posted, non-reversed GL lines per account inside [from, to]. */
-async function loadSums(
+/** Sum posted, non-reversed GL lines per account inside [from, to]. Shared
+    with the Performance P&L (accounting-performance.ts), whose expense side
+    is this read cut to the EXPENSES section. */
+export async function loadSums(
   sb: any,
   companyId: number,
   from: string | null,
@@ -73,7 +75,7 @@ async function loadSums(
 }
 
 /** The chart of the active company, read once per report. */
-async function loadAccounts(sb: any, companyId: number): Promise<{ ok: true; accounts: AccountRow[] } | { ok: false; reason: string }> {
+export async function loadAccounts(sb: any, companyId: number): Promise<{ ok: true; accounts: AccountRow[] } | { ok: false; reason: string }> {
   const { data, error } = await sb.from('accounts').select('account_code, account_type, section').eq('company_id', companyId);
   if (error) return { ok: false, reason: String((error as { message?: string }).message ?? error) };
   return { ok: true, accounts: (data ?? []) as AccountRow[] };
@@ -82,7 +84,7 @@ async function loadAccounts(sb: any, companyId: number): Promise<{ ok: true; acc
 /** Where each summed account sits: its stored section, else the default
     shelf for its type (a row older than the migration, or a code the chart
     no longer carries). */
-function sectionResolver(accounts: AccountRow[]): (r: SumRow) => string {
+export function sectionResolver(accounts: AccountRow[]): (r: SumRow) => string {
   const stored = new Map(accounts.map((a) => [a.account_code, a.section]));
   return (r) => stored.get(r.code) ?? defaultSectionFor(r.type, r.code);
 }

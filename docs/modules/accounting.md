@@ -1108,6 +1108,54 @@ narrows to the orders under the line, and exports the open view as CSV.
 Contracts: `backend/tests/collectionReport.test.ts`,
 `frontend/src/pages/scm-v2/CollectionReport.test.tsx`.
 
+**The Performance P&L (2026-09-12, docs/bugs/0835; owner: 我还要多一份
+performance P&L，就是 sales 和 COGS 的数额是根据 sales order 的，expense 其他
+remain，但是 expense 的 operating 要根据 sales 的 16% 来算 … 按 SO 日期 … 未送货也
+算 … 分成 bedframe, mattress, sofa, dining, accessory, service/Transport income
+… 16% 要设计成可调 … 只取代 900-O001，然后在 performance P&L 要注明).**
+`GET /accounting/reports/performance?from&to`
+(`backend/src/scm/routes/accounting-performance.ts`, the financial-statements
+permission) reads TWO sources, deliberately, and says so on its face. The
+sales side is the SALES ORDERS dated in the period — every status except
+DRAFT and CANCELLED, delivered or not (当月的表现) — each live line as the
+order records it: `total_sen` as sales, `line_cost_sen` (unit cost ×
+quantity) as cost, grouped BEDFRAME / MATTRESS / SOFA / DINING / ACCESSORY /
+SERVICE by the line's group word or its SVC- code (`performanceGroupOf` in
+`backend/src/acc/performance-pnl.ts`), a line outside the six under OTHERS
+so the total still ties to the orders, a legacy header-only delivery fee
+counted as service the way the order's own totals count it; per group sales,
+cost, gross profit and GP %. The expense side is the ledger by journal date
+— the standard P&L's own read (`loadSums` / `loadAccounts` /
+`sectionResolver`, exported from
+`backend/src/scm/routes/accounting-reports.ts`) cut to the EXPENSES section —
+except ONE account: the operating-expense account the company names
+(`900-O001` by default) is REPLACED by the company's rate (basis points,
+1600 = 16% by default) of sales excluding service, its booked figure shown
+and left out; an account the chart does not carry replaces nothing, and the
+report says so rather than dropping a booked expense. The pair lives on
+`scm.acc_company_settings` (`performance_opex_rate_bp`,
+`performance_opex_account`; migration
+`backend/src/db/migrations-pg/20260912T1300_acc_performance_pnl_settings.sql`,
+both defaulted) and is saved by
+`POST /accounting/reports/performance/settings`. Nothing is stored: the
+figures are computed on every read, so a cost filled in later on an order
+(the sofa lines the owner will backfill) shows the next time the tab opens.
+The screen is the Accounting page's Performance P&L tab
+(`frontend/src/pages/scm-v2/PerformancePnl.tsx`; `accounting-tabs.ts`,
+`Accounting.tsx`, the sidebar's Reports group): a row per group, the summary
+from gross profit through the computed operating expense (named for what it
+stands in for) and the booked expenses to net, the notes, the rate-and-account
+strip with Save, Export (CSV) and PDF
+(`frontend/src/vendor/scm/lib/performance-pnl-pdf.ts`) — screen, CSV and PDF
+all read the same pure lines in
+`frontend/src/vendor/scm/lib/performance-report-queries.ts`
+(`performanceSummaryLines`, `performanceNotes`). Free gifts are ACCESSORY
+lines with no sales and real cost, so that group's margin reads negative by
+design and the notes say so. Contracts: `backend/tests/performanceReport.test.ts`,
+`frontend/src/vendor/scm/lib/performance-pnl-pdf.test.ts`,
+`frontend/src/pages/scm-v2/PerformancePnl.test.tsx`;
+`frontend/src/components/sidebarFinanceGroups.test.ts` pins the deep link.
+
 **The Finance sidebar is six groups (2026-09-12, docs/bugs/0824; owner:
 finance 的 function 分到很散 … report 全部集中在一个 side bar).** In
 `frontend/src/components/Sidebar.tsx` the Finance group's children are
