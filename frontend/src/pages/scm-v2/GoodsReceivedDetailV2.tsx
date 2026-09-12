@@ -45,6 +45,7 @@ import { GRN_AUDIT_LABELS } from "./entity-audit-labels";
 import { resolveFxRate } from "./fx-rate";
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
+import { FocAmount } from "../../vendor/scm/components/FocAmount";
 type GrnStatus = "DRAFT" | "POSTED" | "CANCELLED" | string;
 
 type GrnHeader = HoldFields & {
@@ -528,13 +529,16 @@ function GoodsReceivedDetailV2ReadOnly() {
       render: (l) => {
         const freight = Number(l.allocated_charge_sen ?? 0);
         return (
-          <span className="inline-flex flex-col items-end">
-            <span className="font-money text-[13px] font-semibold text-ink">{fmtMoney(l.line_total_sen ?? 0, grn?.currency)}</span>
-            {/* Landed-cost allocation (Phase 1-A) — per-line freight (MYR sen). */}
-            {freight > 0 && (
-              <span className="font-money text-[10.5px] text-accent-ink">+freight {fmtMoney(freight, "MYR")}</span>
-            )}
-          </span>
+          <FocAmount
+            line={l}
+            amount={fmtMoney(l.line_total_sen ?? 0, grn?.currency)}
+            /* Landed-cost allocation (Phase 1-A) — per-line freight (MYR sen).
+               Dropped on a free line: a freebie that carries allocated freight
+               still cost nothing to buy, which is what the badge claims. */
+            sub={freight > 0
+              ? <span className="font-money text-[10.5px] text-accent-ink">+freight {fmtMoney(freight, "MYR")}</span>
+              : undefined}
+          />
         );
       },
     },
