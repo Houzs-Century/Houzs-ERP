@@ -1177,9 +1177,8 @@ export const SalesOrderDetail = () => {
     setSavingOrder(true);
     try {
       /* 1. The directly-editable half. keepLockedColsAsOriginal DROPS every
-            frozen column from the PATCH so it can't 409 so_locked_processing —
-            neither on the change we're about to request nor on a stored value
-            the form only re-displayed (HC-SO-013497, 2026-09-12). */
+            frozen column from the PATCH, so it can't 409 so_locked_processing
+            (not even on a stored value the form only re-displayed, 0836). */
       await new Promise<void>((resolve, reject) => {
         handle.save(
           { onSuccess: () => resolve(), onError: (msg) => reject(new Error(msg)) },
@@ -2713,10 +2712,9 @@ type CustomerCardHandle = {
   /** `keepLockedColsAsOriginal` (amendment mode) — send NO frozen header column
       at all, so this direct PATCH stays inside the server's field-scoped
       processing lock while the FREE fields in the same payload (customer type,
-      emergency contact, note) still save immediately. The changed frozen values
-      ride the amendment instead (getLockedHeaderChanges below). Customer name /
-      phone / email and the address lines are frozen too (2026-08-21, 2026-07-27)
-      and ride the amendment. */
+      emergency contact, note) still save immediately. Changed frozen values —
+      dates, address, and since 2026-08-21 name / phone / email — ride the
+      amendment instead (getLockedHeaderChanges below). */
   save: (
     // `raw` (optional 2nd arg) carries the original Error, whose `.body` holds
     // the server's aggregated `problems` list — so the page Save can show EVERY
@@ -3223,9 +3221,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
 
   /* The EXACT body the direct half sends in amendment mode; trySave and
      hasDirectHeaderChanges share it so the two cannot disagree. Frozen keys are
-     DROPPED before the diff, never reverted: a revert had to reproduce the
-     seeded value byte for byte and failed on "MR LIM " (trailing space from the
-     AutoCount import) — see withoutFrozenHeaderFields. */
+     DROPPED before the diff, never reverted (see withoutFrozenHeaderFields). */
   const directHeaderPatch = () => diffHeaderPayload(originalPayloadRef.current,
     withoutFrozenHeaderFields(buildPayload()));
 
@@ -3240,9 +3236,8 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
       return;
     }
     /* Send ONLY what the operator changed. In amendment mode the frozen
-       columns are removed BEFORE the diff, so they are never sent at all: the
-       server's lock diffs `col in updates`, so a column we never send cannot
-       409 so_locked_processing. */
+       columns are removed BEFORE the diff, so they are never sent: the server's
+       lock diffs `col in updates`, so an unsent column cannot 409. */
     onSave(opts?.keepLockedColsAsOriginal ? directHeaderPatch()
       : diffHeaderPayload(originalPayloadRef.current, buildPayload()), cb);
   };
