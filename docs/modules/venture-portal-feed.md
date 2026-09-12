@@ -14,8 +14,11 @@ and imported there. Now every changed sales order is pushed to the portal, with
 its lines, **their costs**, its payments and its cancellations.
 
 The portal's receiver has been live since **2026-09-05**. The contract it
-publishes is `docs/erp-sync/contract.md` in the Venture Portal repository
-[external].
+publishes lives in the Venture Portal repository, not this one:
+`docs/erp-sync/contract.md` [external] — the marker has to sit on the same line
+as the path, immediately after it, or `check-docs-drift --strict` cannot see it
+and reads the reference as a broken link. It wrapped onto the next line here
+first, which is the trap CLAUDE.md names in its own words.
 
 ---
 

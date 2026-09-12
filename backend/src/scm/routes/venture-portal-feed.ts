@@ -372,6 +372,18 @@ venturePortalFeed.post('/drain', async (c) => {
  * a document whose commission has already been paid.
  */
 venturePortalFeed.post('/rows/:id/requeue', async (c) => {
+  // company-scope: scm.venture_portal_outbox HAS NO company_id COLUMN — a row is
+  // a doc_no and a delivery state, and this page is deliberately cross-company
+  // (which companies feed the portal is the setting it edits; see the file
+  // header). So there is no predicate to write here, and the usual
+  // service-role/RLS argument does not apply the way it does to a document
+  // table. What makes it SAFE is that requeueing cannot cause a delivery: it
+  // only returns the row to `pending`, and drainVenturePortalOutbox re-reads the
+  // order's company_id and the enabled scope on the next sweep, marking an
+  // out-of-scope document `skipped` WITHOUT a request. That is asserted by
+  // "a company nobody enabled is skipped WITHOUT a request" in
+  // venture-portal-outbox.test.ts, so the boundary is a tested code path and not
+  // this comment. Authorization is scm.venture_portal.manage / settings.manage.
   const denied = denyManage(c);
   if (denied) return denied;
   const id = c.req.param('id');
