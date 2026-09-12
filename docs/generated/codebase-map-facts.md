@@ -87,7 +87,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-receipts.ts` | 0 | 88 |
 | `backend/src/scm/routes/accounting-reports.ts` | 0 | 186 |
 | `backend/src/scm/routes/accounting-rp.ts` | 0 | 319 |
-| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1571 |
+| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1585 |
 | `backend/src/scm/routes/accounting-stock-close.ts` | 0 | 53 |
 | `backend/src/scm/routes/accounting.ts` | 91 | 1518 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
@@ -225,7 +225,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2232 files, 757030 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2232 files, 757153 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |

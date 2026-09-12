@@ -27,6 +27,7 @@
 
 import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
+import { refreshUnconfirmedLinks, type LinkRow } from '../../acc/settlement';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId, allowedCompanyIds } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
@@ -837,6 +838,18 @@ export const settlementBatchDetail = guard(async (c) => {
      and reported "No payment recorded near …" about a line that was matched.
      The screen then said both things at once, which is what the owner saw. */
   const open = stored.filter((r) => !r.confirmed_at && r.bucket !== 'IGNORED');
+  /* THE OPEN LINES' LINKS FOLLOW THEIR PAYMENT (docs/bugs/0833): a payment
+     Finance corrected after the upload is read back at its current amount the
+     moment the report is opened — no button — and what moved is named in the
+     reply. Confirmed lines are the ledger's and are left alone. Read after the
+     candidates so the window's payments need no second read. */
+  const openLinks = open.flatMap((r) => (linksByRow.get(r.id) ?? []) as LinkRow[]);
+  const refresh = await refreshUnconfirmedLinks(sb, {
+    companyId: co.companyId,
+    links: openLinks,
+    known: new Map(candidates.payments.map((p) => [`${p.source}:${p.id}`, { amountSen: Number(p.amountSen), docNo: p.docNo || null }])),
+  });
+  if (!refresh.ok) return c.json({ error: 'load_failed', reason: refresh.reason }, 500);
   const needsAHuman = open.filter((r) => (linksByRow.get(r.id) ?? []).length === 0);
   const suggestions = matchStatement(
     { code: acq.acquirer.code, has_unique_ref: acq.acquirer.has_unique_ref, date_tolerance_days: acq.acquirer.date_tolerance_days },
@@ -930,6 +943,7 @@ export const settlementBatchDetail = guard(async (c) => {
     acquirer: { code: acq.acquirer.code, hasUniqueRef: acq.acquirer.has_unique_ref, dateToleranceDays: acq.acquirer.date_tolerance_days },
     buckets: tally,
     rows,
+    refreshedLinks: refresh.refreshed,
   });
 });
 

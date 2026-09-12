@@ -800,6 +800,9 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
 
   const rows = useMemo(() => q.data?.rows ?? [], [q.data]);
   const batch = q.data?.batch ?? null;
+  /* A payment Finance corrected after the upload: the server read it back as
+     this report opened and says which links moved (docs/bugs/0833). */
+  const refreshed = q.data?.refreshedLinks ?? [];
   const openRows = rows.filter((r) => !r.confirmed_at && r.bucket !== 'IGNORED');
   const doneRows = rows.filter((r) => r.confirmed_at || r.bucket === 'IGNORED');
   const unconfirmedMatched = rows.filter((r) => r.bucket === 'MATCHED' && !r.confirmed_at).length;
@@ -891,6 +894,15 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
           Posted {confirmAll.data.confirmed} of {confirmAll.data.attempted}.
           {confirmAll.data.statementCharge?.jeNo && ` Statement charge booked as ${confirmAll.data.statementCharge.jeNo}.`}
           {confirmAll.data.failed.map((f) => <div key={f.rowId}>{f.rowId ? `Line ${f.rowId}: ` : ''}{f.reason}</div>)}
+        </div>
+      )}
+
+      {refreshed.length > 0 && (
+        <div style={panel('good')} data-testid="refreshed-links">
+          <b>{refreshed.length} link{refreshed.length === 1 ? '' : 's'} refreshed to the payment's current amount</b>
+          <div style={softText}>
+            {refreshed.map((l) => `${l.docNo ?? l.paymentId}: ${fmt(l.fromSen)} → ${fmt(l.toSen)}`).join(' · ')}
+          </div>
         </div>
       )}
 
