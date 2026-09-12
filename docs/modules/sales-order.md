@@ -1058,6 +1058,20 @@ Per-SKU `allowed_options` (Modular ON/OFF) filter every pool via
 per category are the shared `so-variant-rule`; Save is blocked when any line is
 missing a required axis.
 
+**EMPTY IS THE DEFAULT FOR FABRICS SINCE 2026-09-12, and that is a RULE, not
+a leftover.** `hasRestriction` is `Array.isArray(pool) && pool.length > 0`, so a
+non-empty `allowed_options.fabrics` means *restrict to exactly these* and an
+absent one means *no restriction*. Every sofa Model used to carry the same
+101-entry snapshot — measured 2026-09-12 it reached 820 of 820 active colours,
+so it restricted nothing, while a fabric added in Modular afterwards would have
+been offered by NO sofa Model until all 79 were edited. Owner ruling: whether a
+Model restricts its fabrics is HIS decision, taken in the Modular drawer, so the
+snapshot was dropped (`backend/scripts/open-model-fabric-pools.mjs`,
+`docs/bugs/0842-a-fabric-added-in-modular-would-be-offered-by-no-sofa-model.md`).
+Bedframes already behaved this way. **Do not re-seed a pool from "every fabric
+that exists today"** — that is the same snapshot again; leave it empty and let
+him tick what he wants restricted.
+
 **TWO THINGS ABOUT THAT FILTER THAT WERE WRONG UNTIL 2026-09-11 — read these
 before touching a pool (docs/bugs/0814-one-option-field-two-vocabularies-the-fabric-pool-held-serie.md).**
 
