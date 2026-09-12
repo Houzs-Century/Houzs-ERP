@@ -1239,13 +1239,20 @@ just saved. Same missing question, opposite symptoms; see `docs/bugs/0488-*`.
 patch `save()` would send, so the page cannot be told "nothing to save" about a
 patch that would have been sent.
 
-⚠️ **Every key a surface COLLECTS must also be passed as an original to
-`withFrozenHeaderFieldsReverted`.** It reverts each amendable key present in the
-patch to `original[key]`; an omitted key is `undefined`, which `outValue` turns
-into **NULL** — not "leave it alone". Mobile omitted `address1`/`address2` while
-still emitting them, so its direct PATCH carried `address1: null` and the server
-409'd `so_locked_processing` on every amendment for any SO with an address.
-`AmendableHeaderValues` is a `Partial`, so this does not fail to compile.
+⚠️ **The direct half DROPS every amendable key; it never reverts one.**
+`withoutFrozenHeaderFields(patch)` (renamed 2026-09-12 from
+`withFrozenHeaderFieldsReverted(patch, original)`) deletes each
+`AMENDABLE_HEADER_KEY` and `salesLocation` from the direct PATCH, so the
+server's `col in updates` lock has nothing to diff. The old revert had to
+reproduce the seeded value byte for byte and failed twice through that seam:
+mobile omitted two originals and sent `address1: null` (2026-08-21,
+`docs/bugs/0488-*`); desktop passed complete originals but the revert TRIMMED
+them while the pristine payload held the raw row — AutoCount-imported rows
+carry trailing spaces (`"MR LIM "`), so a colour-only edit on HC-SO-013497 sent
+the untouched name and 409'd `so_locked_processing` (2026-09-12). The backend
+lock predicate (`lockedColumnsChanged`, `so-field-policy.ts`) now also trims
+both sides, so a whitespace-only delta from any client is never a CONTROLLED
+change.
 
 #### What an amendment LINE can carry — and the rule for extending it
 

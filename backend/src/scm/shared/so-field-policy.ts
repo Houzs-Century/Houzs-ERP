@@ -307,11 +307,16 @@ export const soHeaderFieldClass = (payloadKey: string): SoFieldClass => {
    Extracted from the PATCH handler so it can be tested directly rather than by
    a copy that could drift from what ships. */
 
-/** Loose equality mirroring the route's `norm()` — null / undefined / '' all
-    collapse, so a form re-sending a blank field as '' does not read as a
-    change from null. */
+/** Loose equality for the LOCK ONLY — null / undefined / '' all collapse, so a
+    form re-sending a blank field as '' does not read as a change from null,
+    and edge whitespace is ignored (2026-09-12, HC-SO-013497): AutoCount-
+    imported rows hold "MR LIM " with a trailing space, and a client that sends
+    back the "MR LIM" it displayed changes nothing anyone can see. That must
+    not be a CONTROLLED change. This is deliberately looser than the route's
+    write-path `norm()`: the lock decides whether an amendment is NEEDED, and
+    a whitespace-only delta never is. */
 const normValue = (v: unknown): string =>
-  v === null || v === undefined ? '' : String(v);
+  v === null || v === undefined ? '' : String(v).trim();
 
 export type LockedChangeOptions = {
   /** Remove-Processing-Date (Owner 2026-07-09, port of 2990 #717) — an admin

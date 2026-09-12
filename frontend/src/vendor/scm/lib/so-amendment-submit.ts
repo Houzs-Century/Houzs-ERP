@@ -106,8 +106,13 @@ export function amendmentSubmittedNotice(
 /** The amendment-mode banner, in ONE place because it was wrong in two.
     Addresses joined the CONTROLLED set on 2026-07-27 (two-lane phase 2,
     so-field-policy) and both banners still told the operator that address lines
-    "save straight away" — the exact opposite of what the server now does. */
+    "save straight away" — the exact opposite of what the server now does.
+    Customer name / phone / email made the same move on 2026-08-21 and the
+    banner kept promising they saved directly for three weeks (HC-SO-013497).
+    The list of what saves straight away is the FREE set in so-field-policy —
+    keep it in step with that table, not with memory. */
 export const AMENDMENT_MODE_BANNER =
-  'This order is already ordered from the supplier. Edit the lines, dates or delivery '
-  + 'address as usual — your request goes to the coordinator and supplier to confirm '
-  + 'before the order is revised. Customer name, phone, email and the note save straight away.';
+  'This order is already ordered from the supplier. Edit the lines, dates, delivery '
+  + 'address or customer name, phone and email as usual — your request goes to the '
+  + 'coordinator and supplier to confirm before the order is revised. The note, '
+  + 'customer type and emergency contact save straight away.';

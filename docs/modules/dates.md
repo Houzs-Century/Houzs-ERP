@@ -322,6 +322,16 @@ move landed, the **reader flip** was left pending. It is still pending.
 `processing_date` and `customer_delivery_date` CONTROLLED, and the file's own rule
 is *"every other patchable header column is FREE by omission"*.
 
+**The lock compares trimmed values (2026-09-12, docs/bugs/0836).**
+`lockedColumnsChanged` in the same file now trims both sides before deciding a
+CONTROLLED column changed. AutoCount-imported rows hold `"MR LIM "` with a
+trailing space; a client sending back the `"MR LIM"` it displayed changes
+nothing a customer or supplier could see, and on HC-SO-013497 that phantom
+delta 409'd a colour-only amendment. Dates are unaffected (`dateOrNull` already
+normalises them before the compare); the change matters for name / phone /
+email / address. It is the lock's equality only — the write path's `norm()`
+still stores what it is sent.
+
 **The reconciled refusal's sentence (2026-09-11, docs/bugs/0821).**
 `paymentReconciledMessage` in `so-field-policy.ts` (server and vendored copy)
 is reworded to stay under 200 characters with the date, entry number or account

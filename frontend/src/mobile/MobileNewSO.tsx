@@ -31,7 +31,7 @@ import { newIdempotencyKey, idempotentInit, useIdempotencyKey } from "../lib/ide
 import {
   buildAmendmentHeaderChanges,
   hasAmendmentHeaderChanges,
-  withFrozenHeaderFieldsReverted,
+  withoutFrozenHeaderFields,
 } from "../vendor/scm/lib/so-amendment-header";
 import { SearchableSelect } from "../vendor/scm/components/SearchableSelect";
 import { diffHeaderPayload, hasHeaderChanges } from "../vendor/scm/lib/so-header-diff";
@@ -1896,10 +1896,10 @@ export function MobileNewSO({
                header PATCH below, saved immediately, no approval needed.
              * FROZEN fields (Delivery / Processing Date, State, Postcode) + line
                changes -> the amendment request, approval decides.
-           The PATCH must therefore send every frozen column at its ORIGINAL value
-           or the server 409s so_locked_processing on the very change we're about
-           to request. Shared helpers with desktop (so-amendment-header) so the
-           split can't drift. */
+           The PATCH must therefore carry NO frozen column at all, or the server
+           409s so_locked_processing — on the change we're about to request, or
+           on a stored value we merely re-displayed. Shared helpers with desktop
+           (so-amendment-header) so the split can't drift. */
         const { changes: headerChanges } = buildAmendmentHeaderChanges(
           {
             processingDate:   procOut,
@@ -1923,24 +1923,14 @@ export function MobileNewSO({
             ...origContact,
           },
         );
-        // EVERY key collected must appear here — an omitted one reverts to NULL, not "leave alone", and 409s the lock (so-amendment-header.test.ts).
-        const outgoingPatch = amendmentMode
-          ? withFrozenHeaderFieldsReverted(patch, {
-              processingDate:   origProcDate,
-              customerDeliveryDate: origDelivDate,
-              customerState:        origState,
-              postcode:             origPostcode,
-              city:                 origCity,
-              address1:             origAddress1,
-              address2:             origAddress2,
-              ...origContact,
-            })
-          : patch;
+        // Frozen keys are DROPPED, not reverted (ledger 0488 + 2026-09-12): a
+        // revert needed the exact seeded bytes and 409'd the lock twice.
+        const outgoingPatch = amendmentMode ? withoutFrozenHeaderFields(patch) : patch;
 
-        /* Send ONLY what the operator changed. The diff runs AFTER the frozen-
-           field revert, so a reverted column drops out entirely rather than
-           being re-sent unchanged — the server's lock diffs `col in updates`, so
-           a column we never send cannot 409 so_locked_processing at all.
+        /* Send ONLY what the operator changed. In amendment mode the frozen
+           columns are already gone, so they are never re-sent — the server's
+           lock diffs `col in updates`, so a column we never send cannot 409
+           so_locked_processing at all.
            Baseline missing (prefill never completed) -> send the whole patch,
            exactly as before: we cannot prove a field is unchanged, and
            "unknown" must not silently become "not dirty". */
