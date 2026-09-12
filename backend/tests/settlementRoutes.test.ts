@@ -394,6 +394,32 @@ describe('a transaction already on another report', () => {
   });
 });
 
+describe('an unconfirmed link follows its payment (docs/bugs/0833)', () => {
+  test('opening the report reads the corrected amount back into the link and names it; a confirmed line is left alone', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: string };
+    expect(sb.tables.acc_settlement_matches[0]).toMatchObject({ payment_id: 'p1', amount_sen: 100000 });
+    /* Finance corrects the payment after the upload (3,053 → 3,052 in the
+       owner's case; here 1,000.00 → 999.00). */
+    sb.tables.mfg_sales_order_payments[0]!.amount_sen = 99900;
+    const opened = await app.request(`/settlement/batches/${up.batchId}`);
+    expect(opened.status).toBe(200);
+    const body = await opened.json() as { refreshedLinks: unknown[]; rows: Array<{ line_no: number; linked: Array<{ amount_sen: number }> }> };
+    expect(body.refreshedLinks).toEqual([expect.objectContaining({ paymentId: 'p1', docNo: 'SO-2608-001', fromSen: 100000, toSen: 99900 })]);
+    expect(sb.tables.acc_settlement_matches[0]).toMatchObject({ amount_sen: 99900 });
+    expect(body.rows.find((r) => r.linked.length > 0)?.linked[0]).toMatchObject({ amount_sen: 99900 });
+    /* Opened again with nothing moved: nothing to name. */
+    const again = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as { refreshedLinks: unknown[] };
+    expect(again.refreshedLinks).toEqual([]);
+    /* Confirmed: the ledger's now. A later correction is not read back. */
+    sb.tables.acc_settlement_rows[0]!.confirmed_at = '2026-08-05T00:00:00Z';
+    sb.tables.mfg_sales_order_payments[0]!.amount_sen = 50000;
+    const after = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as { refreshedLinks: unknown[] };
+    expect(after.refreshedLinks).toEqual([]);
+    expect(sb.tables.acc_settlement_matches[0]).toMatchObject({ amount_sen: 99900 });
+  });
+});
+
 describe('confirming is the moment of posting', () => {
   test('bulk-confirming the auto-matched pile books the FEE, and leaves the bank alone', async () => {
     const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });

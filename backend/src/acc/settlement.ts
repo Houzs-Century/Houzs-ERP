@@ -1269,3 +1269,66 @@ export async function undoBatchReceipt(
   }
   return { ok: true, status: 'undone', ...(reversed.status === 'reversed' ? { jeNo: reversed.jeNo } : {}) };
 }
+
+/* ── An unconfirmed link follows its payment (docs/bugs/0833) ─────────────── */
+
+export type LinkRow = { settlement_row_id: number; payment_source: string; payment_id: string; doc_no: string | null; amount_sen: number };
+export type RefreshedLink = { settlementRowId: number; paymentSource: string; paymentId: string; docNo: string | null; fromSen: number; toSen: number };
+
+/**
+ * The upload wrote each link down with the payment's amount AS OF THEN. A
+ * payment Finance corrected afterwards (3,053 → 3,052, docs/bugs/0821) left
+ * the link — and the Merchant Recon screen — reading the old figure until
+ * confirm re-read it and refused. Owner (2026-09-12): 我希望是我打开自动刷新 —
+ * so the batch detail re-reads every UNCONFIRMED link's payment when the
+ * report is opened and writes the current amount back, naming what moved.
+ * Confirmed links are the ledger's and are never touched here.
+ *
+ * `known` is what the caller already loaded (the window's candidates); a
+ * link whose payment is outside the window is read by id. A payment that is
+ * GONE is left as it was — confirm will refuse it and say so.
+ */
+export async function refreshUnconfirmedLinks(
+  sb: any,
+  p: { companyId: number; links: LinkRow[]; known: Map<string, { amountSen: number; docNo: string | null }> },
+): Promise<{ ok: true; refreshed: RefreshedLink[] } | { ok: false; reason: string }> {
+  const current = new Map<string, { amountSen: number; docNo: string | null }>();
+  for (const [k, v] of p.known) current.set(k, v);
+  const missing = p.links.filter((l) => !current.has(`${l.payment_source}:${l.payment_id}`));
+  const soIds = [...new Set(missing.filter((l) => l.payment_source === 'SOPAY').map((l) => String(l.payment_id)))];
+  const siIds = [...new Set(missing.filter((l) => l.payment_source === 'SIPAY').map((l) => String(l.payment_id)))];
+  for (let i = 0; i < soIds.length; i += 200) {
+    const { data, error } = await sb.from('mfg_sales_order_payments')
+      .select('id, so_doc_no, amount_sen').eq('company_id', p.companyId).in('id', soIds.slice(i, i + 200));
+    if (error) return { ok: false, reason: `order payments: ${error.message}` };
+    for (const r of (data ?? []) as Array<{ id: string; so_doc_no: string | null; amount_sen: number | null }>) {
+      current.set(`SOPAY:${String(r.id)}`, { amountSen: Number(r.amount_sen ?? 0), docNo: r.so_doc_no ?? null });
+    }
+  }
+  for (let i = 0; i < siIds.length; i += 200) {
+    const { data, error } = await sb.from('sales_invoice_payments')
+      .select('id, amount_sen').eq('company_id', p.companyId).in('id', siIds.slice(i, i + 200));
+    if (error) return { ok: false, reason: `invoice payments: ${error.message}` };
+    for (const r of (data ?? []) as Array<{ id: string; amount_sen: number | null }>) {
+      current.set(`SIPAY:${String(r.id)}`, { amountSen: Number(r.amount_sen ?? 0), docNo: null });
+    }
+  }
+  const refreshed: RefreshedLink[] = [];
+  for (const l of p.links) {
+    const now = current.get(`${l.payment_source}:${l.payment_id}`);
+    if (!now) continue;
+    const from = Number(l.amount_sen);
+    const docNo = now.docNo ?? l.doc_no ?? null;
+    if (now.amountSen === from && docNo === (l.doc_no ?? null)) continue;
+    const { error } = await sb.from('acc_settlement_matches')
+      .update({ amount_sen: now.amountSen, doc_no: docNo })
+      .eq('company_id', p.companyId).eq('payment_source', l.payment_source).eq('payment_id', l.payment_id);
+    if (error) return { ok: false, reason: `link ${l.payment_source}:${l.payment_id}: ${error.message}` };
+    l.amount_sen = now.amountSen;
+    l.doc_no = docNo;
+    if (now.amountSen !== from) {
+      refreshed.push({ settlementRowId: Number(l.settlement_row_id), paymentSource: l.payment_source, paymentId: l.payment_id, docNo, fromSen: from, toSen: now.amountSen });
+    }
+  }
+  return { ok: true, refreshed };
+}
