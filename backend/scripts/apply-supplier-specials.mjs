@@ -7,6 +7,12 @@
 // THE ASK (owner, 2026-09-12): 「跟着 supplier 改完我们的 SO PO GR DO 等等先，因为
 // 我们之前是没有规格和 sofa compartment 的，所以要修复先」.
 //
+// SIX DOCUMENTS, not four. Owner 2026-09-12: 「SO PO GR DO SI PI 全部」 and
+// 「sofa compartment 也是」. The invoices hang one hop further out - a purchase
+// invoice line names the receipt line it bills, a sales invoice line names the
+// sales line - and a spec that stops at the delivery note still reaches a person
+// on the invoice.
+//
 // WHAT WAS MISSING. The compartment and the measurements were aligned on
 // 2026-09-11; the OPTIONS were not. Measured on production the same day, over
 // the 375 supplier documents that match one of our purchase orders and the 614
@@ -101,13 +107,34 @@ async function findPo(ref) {
     ?? (/^PO-\d{4}-\d+$/.test(ref) ? await by('po_number', `HC-${ref}`) : null);
 }
 
-/** Everything downstream of one purchase line, and of its sales line. */
+/** Everything downstream of one purchase line, and of its sales line — all SIX
+ *  documents the owner names (SO, PO, GR, DO, SI, PI), because a spec that stops
+ *  at the delivery note still reaches a person on the invoice.
+ *
+ *  The invoices hang one hop further out: a purchase invoice line names the
+ *  GOODS-RECEIVED line it bills (`grn_item_id`), and a sales invoice line names
+ *  the SALES line (`so_item_id`). Measured 2026-09-12: of 474 purchase-invoice
+ *  lines linked to a sofa/bedframe receipt, the item code agrees on all 474 — the
+ *  compartment rounds already carried it — while 81 disagree on the SPEC and 22
+ *  carry none at all. Sales invoices hold no sofa/bedframe line yet. */
 async function chainOf(poItemId, soItemId) {
   const grn = await sql`SELECT gi.id FROM scm.grn_items gi WHERE gi.purchase_order_item_id = ${poItemId}`;
   const dos = soItemId
     ? await sql`SELECT di.id FROM scm.delivery_order_items di WHERE di.so_item_id = ${soItemId}`
     : [];
-  return { grn: grn.map((r) => String(r.id)), dos: dos.map((r) => String(r.id)) };
+  const grnIds = grn.map((r) => String(r.id));
+  const pinv = grnIds.length
+    ? await sql`SELECT pi.id FROM scm.purchase_invoice_items pi WHERE pi.grn_item_id = ANY(${grnIds})`
+    : [];
+  const sinv = soItemId
+    ? await sql`SELECT si.id FROM scm.sales_invoice_items si WHERE si.so_item_id = ${soItemId}`
+    : [];
+  return {
+    grn: grnIds,
+    dos: dos.map((r) => String(r.id)),
+    pinv: pinv.map((r) => String(r.id)),
+    sinv: sinv.map((r) => String(r.id)),
+  };
 }
 
 /** Every DOCUMENT line resolving to the same stock bucket. */
@@ -123,6 +150,7 @@ async function consumersOf(itemCode, group, key) {
   await scan('purchase_order_items', 'p.po_number', `JOIN scm.purchase_orders p ON p.id = i.purchase_order_id AND p.company_id = ${CO}`);
   await scan('grn_items', 'g.grn_number', `JOIN scm.grns g ON g.id = i.grn_id AND g.company_id = ${CO}`);
   await scan('delivery_order_items', 'd.do_number', `JOIN scm.delivery_orders d ON d.id = i.delivery_order_id AND d.company_id = ${CO}`);
+  await scan('purchase_invoice_items', 'h.invoice_number', `JOIN scm.purchase_invoices h ON h.id = i.purchase_invoice_id AND h.company_id = ${CO}`);
   return hits;
 }
 
@@ -223,6 +251,8 @@ try {
     if (p.soItemId) ids.add(p.soItemId);
     for (const g of p.chain.grn) ids.add(g);
     for (const dd of p.chain.dos) ids.add(dd);
+    for (const x of p.chain.pinv) ids.add(x);
+    for (const x of p.chain.sinv) ids.add(x);
     inPlan.set(k, ids);
   }
   for (const p of plan) {
@@ -249,7 +279,8 @@ try {
   rule();
   for (const p of writable.slice(0, 40)) {
     line(`   ADD  ${p.poNumber.padEnd(16)} ${p.itemCode.padEnd(22)} + ${p.add.join(', ')}`
-      + `   chain: ${p.chain.grn.length} GRN, ${p.chain.dos.length} DO · stock ${p.rows.lots}/${p.rows.movements}/${p.rows.consumptions}`);
+      + `   chain: ${p.chain.grn.length} GR, ${p.chain.dos.length} DO, ${p.chain.pinv.length} PI, ${p.chain.sinv.length} SI`
+      + ` · stock ${p.rows.lots}/${p.rows.movements}/${p.rows.consumptions}`);
   }
   if (writable.length > 40) line(`   ... and ${writable.length - 40} more`);
   rule();
@@ -283,6 +314,8 @@ try {
         if (p.soItemId) await bump('mfg_sales_order_items', p.soItemId);
         for (const g of p.chain.grn) await bump('grn_items', g);
         for (const dd of p.chain.dos) await bump('delivery_order_items', dd);
+        for (const x of p.chain.pinv) await bump('purchase_invoice_items', x);
+        for (const x of p.chain.sinv) await bump('sales_invoice_items', x);
         if (p.oldKey !== p.newKey) {
           for (const table of ['inventory_lots', 'inventory_movements', 'inventory_lot_consumptions']) {
             const res = await t.unsafe(
