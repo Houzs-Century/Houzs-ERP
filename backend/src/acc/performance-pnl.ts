@@ -18,7 +18,11 @@
 //     account as booked — except ONE: the operating-expense account the
 //     company names (900-O001 by default), which is REPLACED by a rate (16%
 //     by default, adjustable) of sales excluding service, because the owner
-//     budgets operating cost as a share of goods sold.
+//     budgets operating cost as a share of goods sold;
+//   • OTHER INCOME is the ledger's too (OTHER INCOMES + EXTRA-ORDINARY INCOME
+//     sections, as booked, by journal date) — owner 2026-09-12: performance
+//     GL 要放 other income — so net = gross profit + other income − operating
+//     expense − other expenses.
 // The rate and the account live on scm.acc_company_settings; the figures are
 // computed live on every read and stored nowhere. The building is pure
 // (buildPerformanceReport) so the contract test feeds it worlds directly.
@@ -100,7 +104,8 @@ export type PerfLine = {
   doc_no: string; item_group: string | null; item_code: string | null; qty: number | null;
   total_sen: number | null; unit_cost_sen: number | null; line_cost_sen: number | null; cancelled: boolean | null;
 };
-/** An EXPENSES-section account's live debit for the period, as the ledger booked it. */
+/** A ledger account's live figure for the period, as booked: an EXPENSES-section
+    account's debit, or an other-income section's credit. */
 export type PerfExpense = { code: string; name: string; amountSen: number };
 
 export type PerformanceGroup = { key: PerformanceGroupKey; label: string; lines: number; salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null };
@@ -116,6 +121,9 @@ export type PerformanceReport = {
     /** What the ledger booked on that account in the period — shown, left out of the expenses. */
     bookedSen: number;
   };
+  /** The ledger's OTHER INCOMES + EXTRA-ORDINARY INCOME accounts as booked, by code. */
+  otherIncome: PerfExpense[];
+  otherIncomeSen: number;
   /** Every other EXPENSES-section account as booked, by code. */
   otherExpenses: PerfExpense[];
   otherExpensesSen: number;
@@ -128,6 +136,8 @@ const pct = (part: number, whole: number): number | null => (whole > 0 ? Math.ro
 export function buildPerformanceReport(p: {
   from: string; to: string;
   orders: PerfOrder[]; lines: PerfLine[]; expenses: PerfExpense[];
+  /** Other income as the ledger booked it (credit-positive). */
+  otherIncome?: PerfExpense[];
   settings: PerformanceSettings;
   /** The named account as the chart has it, or null when the chart does not. */
   account: { code: string; name: string } | null;
@@ -184,7 +194,9 @@ export function buildPerformanceReport(p: {
     .filter((e) => e.amountSen !== 0)
     .sort((a, b) => a.code.localeCompare(b.code));
   const otherExpensesSen = otherExpenses.reduce((s, e) => s + e.amountSen, 0);
-  const netSen = gpSen - opexSen - otherExpensesSen;
+  const otherIncome = (p.otherIncome ?? []).filter((e) => e.amountSen !== 0).sort((a, b) => a.code.localeCompare(b.code));
+  const otherIncomeSen = otherIncome.reduce((s, e) => s + e.amountSen, 0);
+  const netSen = gpSen + otherIncomeSen - opexSen - otherExpensesSen;
 
   return {
     from: p.from, to: p.to,
@@ -200,6 +212,7 @@ export function buildPerformanceReport(p: {
       account: code, accountName: p.account?.name ?? null, accountFound,
       bookedSen: accountFound ? (replaced?.amountSen ?? 0) : 0,
     },
+    otherIncome, otherIncomeSen,
     otherExpenses, otherExpensesSen,
     netSen, netPct: pct(netSen, salesSen),
     settings: p.settings,

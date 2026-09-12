@@ -15,9 +15,11 @@ const r: PerformanceReport = {
   ],
   totals: { salesSen: 373000, cogsSen: 212000, gpSen: 161000, gpPct: 43.2, salesExServiceSen: 350000 },
   operatingExpense: { rateBp: 1600, baseSen: 350000, amountSen: 56000, account: '900-O001', accountName: 'OPERATIING EXPENSE', accountFound: true, bookedSen: 243550 },
+  otherIncome: [{ code: '590-0000', name: 'RENT RECEIVED', amountSen: 50000 }],
+  otherIncomeSen: 50000,
   otherExpenses: [{ code: '900-R048', name: 'RENTAL OF SHOWROOM', amountSen: 4500000 }],
   otherExpensesSen: 4500000,
-  netSen: 161000 - 56000 - 4500000, netPct: -1178.3,
+  netSen: 161000 + 50000 - 56000 - 4500000, netPct: -1164.9,
   settings: { rateBp: 1600, account: '900-O001' },
 };
 
@@ -29,11 +31,13 @@ describe('performanceTables', () => {
     expect(t.groups[1]!.cells).toEqual(['Sofa', '3,000.00', '1,800.00', '1,200.00', '40.0%']);
     expect(t.groups[2]!.cells).toEqual(['Accessory', '0.00', '120.00', '(120.00)', '—']);
     expect(t.groups[4]!).toEqual({ kind: 'total', cells: ['Total', '3,730.00', '2,120.00', '1,610.00', '43.2%'] });
-    expect(t.summary.map((l) => l.kind)).toEqual(['total', 'row', 'row', 'total', 'net']);
-    expect(t.summary[1]!.label).toBe('Operating expense — 16.00% of sales excluding service (3,500.00), in place of 900-O001 OPERATIING EXPENSE');
-    expect(t.summary[1]!.amountSen).toBe(-56000);
-    expect(t.summary[2]!.label).toBe('900-R048 · RENTAL OF SHOWROOM');
-    expect(t.summary[4]!).toEqual({ kind: 'net', label: 'NET PERFORMANCE', amountSen: -4395000, note: '-1178.3% of sales' });
+    expect(t.summary.map((l) => l.kind)).toEqual(['total', 'row', 'total', 'row', 'row', 'total', 'net']);
+    expect(t.summary[1]!).toEqual({ kind: 'row', label: '590-0000 · RENT RECEIVED', amountSen: 50000 });
+    expect(t.summary[2]!).toEqual({ kind: 'total', label: 'Total other income (as booked)', amountSen: 50000 });
+    expect(t.summary[3]!.label).toBe('Operating expense — 16.00% of sales excluding service (3,500.00), in place of 900-O001 OPERATIING EXPENSE');
+    expect(t.summary[3]!.amountSen).toBe(-56000);
+    expect(t.summary[4]!.label).toBe('900-R048 · RENTAL OF SHOWROOM');
+    expect(t.summary[6]!).toEqual({ kind: 'net', label: 'NET PERFORMANCE', amountSen: -4345000, note: '-1164.9% of sales' });
   });
 
   it('the notes say where each side came from and what the rate replaced', () => {
@@ -41,7 +45,7 @@ describe('performanceTables', () => {
     expect(notes[0]).toContain('sales orders dated 01/07/2026 to 31/07/2026');
     expect(notes[0]).toContain('4 orders, 3 of them not yet delivered');
     expect(notes[1]).toContain('16.00% of sales excluding service / transport income (3,500.00), in place of account 900-O001 OPERATIING EXPENSE');
-    expect(notes[1]).toContain('the 2,435.50 booked on that account in the period is left out');
+    expect(notes[1]).toContain('the 2,435.50 booked on that account in the period is left out. Other income and every other expense are as booked');
     expect(notes[2]).toContain('free gifts');
     const missing = performanceNotes({ ...r, operatingExpense: { ...r.operatingExpense, accountFound: false, accountName: null, bookedSen: 0 } });
     expect(missing[1]).toContain('Account 900-O001 is not in this company\'s chart, so nothing was replaced');

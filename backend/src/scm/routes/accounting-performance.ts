@@ -3,8 +3,9 @@
    and CANCELLED, delivered or not), per group — bedframe / mattress / sofa /
    dining / accessory / service — with gross profit and %; operating expense
    as an adjustable rate (16%) of sales excluding service IN PLACE OF the one
-   ledger account the company names (900-O001), every other expense as the
-   ledger booked it by journal date; net. Computed live on every read.
+   ledger account the company names (900-O001), every other expense — and
+   the other income (owner 2026-09-12: performance GL 要放 other income) — as
+   the ledger booked it by journal date; net. Computed live on every read.
    GET /accounting/reports/performance?from&to;
    POST /accounting/reports/performance/settings {rateBp, account}.
    The arithmetic is acc/performance-pnl.ts; see accounting.md. */
@@ -78,6 +79,10 @@ export const performanceReport = async (c: Ctx): Promise<Response> => {
   const expenses: PerfExpense[] = sums.sums
     .filter((r) => secOf(r) === 'EXPENSES')
     .map((r) => ({ code: r.code, name: r.name, amountSen: r.drSen - r.crSen }));
+  /* The other income the standard P&L shows — the same two sections, credit-positive. */
+  const otherIncome: PerfExpense[] = sums.sums
+    .filter((r) => ['OTHER INCOMES', 'EXTRA-ORDINARY INCOME'].includes(secOf(r)))
+    .map((r) => ({ code: r.code, name: r.name, amountSen: r.crSen - r.drSen }));
 
   /* The account the rate stands in for, as the chart names it. */
   const { data: acct, error: acctErr } = await sb.from('accounts')
@@ -87,7 +92,7 @@ export const performanceReport = async (c: Ctx): Promise<Response> => {
   if (acctErr) return c.json({ error: 'load_failed', reason: failed(acctErr) }, 500);
   const account = acct ? { code: String((acct as { account_code: string }).account_code), name: String((acct as { account_name?: string | null }).account_name ?? '') } : null;
 
-  return c.json(buildPerformanceReport({ from, to, orders, lines, expenses, settings: st.settings, account }));
+  return c.json(buildPerformanceReport({ from, to, orders, lines, expenses, otherIncome, settings: st.settings, account }));
 };
 
 /* ── POST /accounting/reports/performance/settings {rateBp, account} ─────── */

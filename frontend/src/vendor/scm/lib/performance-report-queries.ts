@@ -20,6 +20,8 @@ export type PerformanceReport = {
   groups: PerformanceGroup[];
   totals: { salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null; salesExServiceSen: number };
   operatingExpense: { rateBp: number; baseSen: number; amountSen: number; account: string; accountName: string | null; accountFound: boolean; bookedSen: number };
+  otherIncome: PerformanceExpense[];
+  otherIncomeSen: number;
   otherExpenses: PerformanceExpense[];
   otherExpensesSen: number;
   netSen: number; netPct: number | null;
@@ -61,9 +63,9 @@ const ratePct = (bp: number): string => `${(bp / 100).toFixed(2)}%`;
 
 export type PerformanceSummaryLine = { kind: 'total' | 'row' | 'net'; label: string; amountSen: number; note?: string };
 
-/** The lines under the groups — gross profit, the computed operating expense
-    (named for what it stands in for), every other expense as booked, net —
-    expenses as deductions. */
+/** The lines under the groups — gross profit, the other income as booked,
+    the computed operating expense (named for what it stands in for), every
+    other expense as booked, net — expenses as deductions. */
 export const performanceSummaryLines = (r: PerformanceReport): PerformanceSummaryLine[] => {
   const o = r.operatingExpense;
   const standsFor = o.accountFound
@@ -71,6 +73,8 @@ export const performanceSummaryLines = (r: PerformanceReport): PerformanceSummar
     : `${o.account} not in the chart — nothing replaced`;
   return [
     { kind: 'total', label: 'Gross profit', amountSen: r.totals.gpSen, note: fmtPerfPct(r.totals.gpPct) },
+    ...r.otherIncome.map((e): PerformanceSummaryLine => ({ kind: 'row', label: `${e.code} · ${e.name}`, amountSen: e.amountSen })),
+    { kind: 'total', label: 'Total other income (as booked)', amountSen: r.otherIncomeSen },
     { kind: 'row', label: `Operating expense — ${ratePct(o.rateBp)} of sales excluding service (${fmtPerf(o.baseSen)}), ${standsFor}`, amountSen: -o.amountSen },
     ...r.otherExpenses.map((e): PerformanceSummaryLine => ({ kind: 'row', label: `${e.code} · ${e.name}`, amountSen: -e.amountSen })),
     { kind: 'total', label: 'Total other expenses (as booked)', amountSen: -r.otherExpensesSen },
@@ -85,8 +89,8 @@ export const performanceNotes = (r: PerformanceReport): string[] => {
   const notes = [
     `Sales and cost of sales are taken from the sales orders dated ${fmtDateOrDash(r.from)} to ${fmtDateOrDash(r.to)} — every status except DRAFT and CANCELLED: ${r.orders.counted} orders, ${r.orders.notDelivered} of them not yet delivered. Cost of sales is each line's unit cost × quantity as recorded on the order.`,
     o.accountFound
-      ? `Operating expense is ${ratePct(o.rateBp)} of sales excluding service / transport income (${fmtPerf(o.baseSen)}), in place of account ${o.account}${o.accountName ? ` ${o.accountName}` : ''}; the ${fmtPerf(o.bookedSen)} booked on that account in the period is left out. Every other expense is as booked in the ledger, by journal date.`
-      : `Operating expense is ${ratePct(o.rateBp)} of sales excluding service / transport income (${fmtPerf(o.baseSen)}). Account ${o.account} is not in this company's chart, so nothing was replaced: the computed figure is added to the expenses as booked, by journal date.`,
+      ? `Operating expense is ${ratePct(o.rateBp)} of sales excluding service / transport income (${fmtPerf(o.baseSen)}), in place of account ${o.account}${o.accountName ? ` ${o.accountName}` : ''}; the ${fmtPerf(o.bookedSen)} booked on that account in the period is left out. Other income and every other expense are as booked in the ledger, by journal date.`
+      : `Operating expense is ${ratePct(o.rateBp)} of sales excluding service / transport income (${fmtPerf(o.baseSen)}). Account ${o.account} is not in this company's chart, so nothing was replaced: the computed figure is added to the expenses as booked. Other income and the expenses are as booked in the ledger, by journal date.`,
   ];
   const accessory = r.groups.find((g) => g.key === 'accessory');
   if (accessory && accessory.cogsSen > accessory.salesSen) notes.push('Accessory lines are largely free gifts — no sales against their cost — so a negative margin there is expected.');

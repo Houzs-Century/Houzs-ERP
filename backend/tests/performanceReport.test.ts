@@ -11,6 +11,9 @@
        other EXPENSES-section account is as the ledger booked it by journal
        date (posted, not reversed, in range) — cost-of-goods accounts are not
        expenses here, the cost side is the orders';
+     • other income is the ledger's OTHER INCOMES / EXTRA-ORDINARY INCOME as
+       booked (owner 2026-09-12: performance GL 要放 other income), added to
+       gross profit before the expenses;
      • a named account the chart does not carry replaces nothing, and the
        report says so;
      • the settings round-trip (rate in basis points, the account upper-cased),
@@ -43,6 +46,7 @@ const acct = (code: string, name: string, type: string, section: string): Row =>
 
 const CHART: Row[] = [
   acct('500-0003', 'SALES OF SOFA', 'INCOME', 'SALES'),
+  acct('590-0000', 'RENT RECEIVED', 'INCOME', 'OTHER INCOMES'),
   acct('601-0003', 'PURCHASE OF SOFA', 'EXPENSE', 'COST OF GOODS SOLD'),
   acct('900-O001', 'OPERATIING EXPENSE', 'EXPENSE', 'EXPENSES'),
   acct('900-A014', 'ADVERTISEMENT - SHOWROOM', 'EXPENSE', 'EXPENSES'),
@@ -83,6 +87,8 @@ function world(settings: Row[] = []) {
       gl('900-A014', 'ADVERTISEMENT - SHOWROOM', 'EXPENSE', '2026-08-02', 9000, 0),                      // outside the range
       gl('601-0003', 'PURCHASE OF SOFA', 'EXPENSE', '2026-07-09', 500000, 0),   // cost of goods: the orders carry the cost side
       gl('500-0003', 'SALES OF SOFA', 'INCOME', '2026-07-09', 0, 300000),
+      gl('590-0000', 'RENT RECEIVED', 'INCOME', '2026-07-15', 0, 50000),      // other income, as booked
+      gl('590-0000', 'RENT RECEIVED', 'INCOME', '2026-08-15', 0, 90000),      // outside the range
     ],
     accounts: CHART.map((r) => ({ ...r })),
     acc_company_settings: settings.map((r) => ({ ...r })),
@@ -136,8 +142,10 @@ describe('the Performance P&L', () => {
       { code: '900-R048', name: 'RENTAL OF SHOWROOM', amountSen: 4500000 },
     ]);
     expect(body.otherExpensesSen).toBe(4600000);
-    expect(body.netSen).toBe(222000 - 80000 - 4600000);
-    expect(body.netPct).toBe(-852.4);
+    expect(body.otherIncome).toEqual([{ code: '590-0000', name: 'RENT RECEIVED', amountSen: 50000 }]);
+    expect(body.otherIncomeSen).toBe(50000);
+    expect(body.netSen).toBe(222000 + 50000 - 80000 - 4600000);
+    expect(body.netPct).toBe(-842.8);
     expect(body.settings).toEqual({ rateBp: 1600, account: '900-O001' });
   });
 
@@ -150,7 +158,7 @@ describe('the Performance P&L', () => {
     });
     expect(body.otherExpenses.map((e: any) => e.code)).toEqual(['900-A014', '900-O001', '900-R048']);
     expect(body.otherExpensesSen).toBe(4843550);
-    expect(body.netSen).toBe(222000 - 100000 - 4843550);
+    expect(body.netSen).toBe(222000 + 50000 - 100000 - 4843550);
   });
 
   test('the settings round-trip: basis points and the account, upper-cased; out of range is refused by name', async () => {
@@ -205,6 +213,7 @@ describe('the Performance P&L', () => {
     expect(r.groups.find((g) => g.key === 'sofa')).toMatchObject({ salesSen: 200000, cogsSen: 140000, gpSen: 60000, gpPct: 30 });
     expect(r.orders).toEqual({ counted: 1, notDelivered: 0, excludedDraft: 0, excludedCancelled: 0 });
     expect(r.operatingExpense).toMatchObject({ baseSen: 200000, amountSen: 32000, bookedSen: 0 });
+    expect(r.otherIncome).toEqual([]);
     expect(r.netSen).toBe(28000);
   });
 });
