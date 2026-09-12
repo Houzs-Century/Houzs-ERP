@@ -556,7 +556,14 @@ purchaseInvoices.get('/:id', async (c) => {
      Auxiliary enrichment — a failed hop leaves both null rather than 500ing a
      purchase invoice nobody can then open. */
   try {
-    await attachGrnLineFacts(sb, items as Array<Record<string, unknown> & { id: string; grn_item_id?: string | null }>);
+    /* The cast is the supabase client's generic depth, not a type hole: its
+       builder is a deeply-parameterised generic and assigning it to the
+       helper's structural shape makes tsc give up (TS2589). The helper only
+       ever calls from().select().in(). */
+    await attachGrnLineFacts(
+      sb as unknown as Parameters<typeof attachGrnLineFacts>[0],
+      items as Array<Record<string, unknown> & { id: string; grn_item_id?: string | null }>,
+    );
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error('[pi detail] grn-line facts resolve failed', { id, error: e });

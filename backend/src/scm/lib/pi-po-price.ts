@@ -122,9 +122,13 @@ export const piPriceDifferenceSummary = (
    null — a purchase invoice must still open when an auxiliary read fails. */
 export type PiLineEnrichable = Record<string, unknown> & { id: string; grn_item_id?: string | null };
 
+/* The narrowest shape this needs. PromiseLike, not Promise: PostgREST's filter
+   builder is thenable but is not a Promise, and typing it as one makes the real
+   client fail to assign ("missing catch, finally"). Structural rather than
+   importing SupabaseClient so the helper stays testable with a stub. */
 type MinimalPgrest = {
   from: (t: string) => {
-    select: (cols: string) => { in: (col: string, vals: string[]) => Promise<{ data: unknown }> };
+    select: (cols: string) => { in: (col: string, vals: string[]) => PromiseLike<{ data: unknown }> };
   };
 };
 
@@ -143,10 +147,11 @@ export async function attachGrnLineFacts(sb: MinimalPgrest, items: PiLineEnricha
   for (const g of grnRows) if (g.supplier_sku) skuByGrnItem.set(g.id, g.supplier_sku);
 
   const poiIds = [...new Set(grnRows.map((g) => g.purchase_order_item_id).filter((v): v is string => !!v))];
-  const poItems = poiIds.length
-    ? ((await sb.from('purchase_order_items').select('id, unit_price_sen').in('id', poiIds)).data
-        ?? []) as Array<{ id: string; unit_price_sen: number | null }>
-    : [];
+  const poItems: Array<{ id: string; unit_price_sen: number | null }> = [];
+  if (poiIds.length) {
+    const res = await sb.from('purchase_order_items').select('id, unit_price_sen').in('id', poiIds);
+    poItems.push(...((res.data ?? []) as Array<{ id: string; unit_price_sen: number | null }>));
+  }
 
   const poPriceByLine = poUnitPriceByPiLine(items, grnRows, poItems);
   for (const it of items) {
