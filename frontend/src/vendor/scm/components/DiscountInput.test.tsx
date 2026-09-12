@@ -1,97 +1,107 @@
-/* DiscountInput — RM/% toggle. Owner rule (2026-09-11): the percentage is
-   NOT stored; the commit is always the resolved sen amount. These pin that
-   the % path resolves against baseSen the same way an operator would with
-   a calculator, and that switching modes preserves the sen value. */
+/* DiscountInput — ONE field, typed. Owner 2026-09-12: 「就是 1000 / 25% 这样不
+   需要特别去选」. The RM/% toggle (2026-09-11, docs/bugs/0803) is gone; what was
+   typed decides which unit it was. The commit is ALWAYS the resolved sen amount
+   — no percentage is persisted (owner ruling 2026-09-11, unchanged).
 
+   The decision itself is `readDiscountEntry`, tested directly: "amount or
+   percentage" is the feature, and a decision reachable only through a rendered
+   input is one nobody can enumerate the cases of. */
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
-import { DiscountInput } from './DiscountInput';
+import { DiscountInput, readDiscountEntry } from './DiscountInput';
 
-const RM_LABEL = 'Discount unit: RM — click to switch';
-const PCT_LABEL = 'Discount unit: % — click to switch';
+const BASE = 1_000_00; // RM 1,000.00 line, so 25% is RM 250.00
 
-describe('DiscountInput — RM mode', () => {
-  test('defaults to RM and commits sen on blur, like MoneyInput', () => {
+describe('readDiscountEntry — what did the operator mean', () => {
+  test('a bare number is an AMOUNT in ringgit', () => {
+    expect(readDiscountEntry('1000', BASE)).toEqual({ kind: 'amount', sen: 100_000 });
+    expect(readDiscountEntry('12.50', BASE)).toEqual({ kind: 'amount', sen: 1_250 });
+  });
+
+  test('a trailing % is a PERCENTAGE, resolved against the line base', () => {
+    expect(readDiscountEntry('25%', BASE)).toEqual({ kind: 'percent', pct: 25, sen: 25_000 });
+    expect(readDiscountEntry('12.5 %', BASE)).toEqual({ kind: 'percent', pct: 12.5, sen: 12_500 });
+  });
+
+  test('a pasted amount keeps its currency word', () => {
+    expect(readDiscountEntry('RM 1,000', BASE)).toEqual({ kind: 'amount', sen: 100_000 });
+    expect(readDiscountEntry('myr250.00', BASE)).toEqual({ kind: 'amount', sen: 25_000 });
+  });
+
+  test('over 100% is clamped to the whole line, never more', () => {
+    expect(readDiscountEntry('120%', BASE)).toEqual({ kind: 'percent', pct: 100, sen: BASE });
+  });
+
+  test('a percentage with no base is INVALID, not a silent zero', () => {
+    expect(readDiscountEntry('25%', 0)).toEqual({ kind: 'invalid' });
+  });
+
+  test('blank clears; a typo commits nothing', () => {
+    expect(readDiscountEntry('   ', BASE)).toEqual({ kind: 'blank' });
+    expect(readDiscountEntry('abc', BASE)).toEqual({ kind: 'invalid' });
+    expect(readDiscountEntry('25%%', BASE)).toEqual({ kind: 'invalid' });
+  });
+});
+
+describe('DiscountInput — one field, no mode to pick', () => {
+  test('there is no RM/% toggle any more', () => {
+    render(<DiscountInput bare valueSen={0} baseSen={BASE} onCommit={vi.fn()} />);
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  test('typing an amount commits sen', () => {
     const onCommit = vi.fn();
-    render(
-      <DiscountInput bare valueSen={0} baseSen={1_000_00} onCommit={onCommit} />,
-    );
-    expect(screen.getByRole('button', { name: RM_LABEL })).toBeTruthy();
-    const box = screen.getByTitle(/Click to edit/) as HTMLInputElement;
+    render(<DiscountInput bare valueSen={0} baseSen={BASE} onCommit={onCommit} />);
+    const box = screen.getByLabelText('Discount — type an amount or a percentage');
     fireEvent.focus(box);
     fireEvent.change(box, { target: { value: '250' } });
     fireEvent.blur(box);
     expect(onCommit).toHaveBeenCalledWith(25_000);
   });
-});
 
-describe('DiscountInput — % mode', () => {
-  test('toggle to %, type 25, commits Math.round(baseSen * 25 / 100)', () => {
+  test('typing 25% commits the resolved ringgit, not the percentage', () => {
     const onCommit = vi.fn();
-    render(
-      <DiscountInput bare valueSen={0} baseSen={1_000_00} onCommit={onCommit} />,
-    );
-    fireEvent.click(screen.getByRole('button', { name: RM_LABEL }));
-    const box = screen.getByLabelText('Discount percentage') as HTMLInputElement;
+    render(<DiscountInput bare valueSen={0} baseSen={BASE} onCommit={onCommit} />);
+    const box = screen.getByLabelText('Discount — type an amount or a percentage');
     fireEvent.focus(box);
-    fireEvent.change(box, { target: { value: '25' } });
+    fireEvent.change(box, { target: { value: '25%' } });
     fireEvent.blur(box);
     expect(onCommit).toHaveBeenCalledWith(25_000);
   });
 
-  test('a non-integer percentage rounds to the nearest sen', () => {
-    const onCommit = vi.fn();
-    render(
-      <DiscountInput bare valueSen={0} baseSen={333_33} onCommit={onCommit} />,
-    );
-    fireEvent.click(screen.getByRole('button', { name: RM_LABEL }));
-    const box = screen.getByLabelText('Discount percentage') as HTMLInputElement;
+  test('the hint shows the OTHER unit while typing a percentage', () => {
+    render(<DiscountInput bare valueSen={0} baseSen={BASE} onCommit={vi.fn()} />);
+    const box = screen.getByLabelText('Discount — type an amount or a percentage');
     fireEvent.focus(box);
-    fireEvent.change(box, { target: { value: '12.5' } });
-    fireEvent.blur(box);
-    expect(onCommit).toHaveBeenCalledWith(4_167); // 333.33 * 12.5% = 41.66625 -> 41.67 RM -> 4167 sen
+    fireEvent.change(box, { target: { value: '25%' } });
+    expect(screen.getByText('= RM 250.00')).toBeTruthy();
   });
 
-  test('a percentage above 100 clamps to 100', () => {
+  test('a stored amount reads back as an amount, with its percentage in the hint', () => {
+    render(<DiscountInput bare valueSen={25_000} baseSen={BASE} onCommit={vi.fn()} />);
+    const box = screen.getByLabelText('Discount — type an amount or a percentage') as HTMLInputElement;
+    expect(box.value).toBe('250.00');
+    expect(screen.getByText('= 25% of RM 1000.00')).toBeTruthy();
+  });
+
+  test('clearing the field commits 0', () => {
     const onCommit = vi.fn();
-    render(
-      <DiscountInput bare valueSen={0} baseSen={1_000_00} onCommit={onCommit} />,
-    );
-    fireEvent.click(screen.getByRole('button', { name: RM_LABEL }));
-    const box = screen.getByLabelText('Discount percentage') as HTMLInputElement;
+    render(<DiscountInput bare valueSen={25_000} baseSen={BASE} onCommit={onCommit} />);
+    const box = screen.getByLabelText('Discount — type an amount or a percentage');
     fireEvent.focus(box);
-    fireEvent.change(box, { target: { value: '150' } });
+    fireEvent.change(box, { target: { value: '' } });
     fireEvent.blur(box);
-    expect(onCommit).toHaveBeenCalledWith(100_000);
+    expect(onCommit).toHaveBeenCalledWith(0);
   });
 
-  test('mode-switch back to RM reads the current sen amount', () => {
+  test('a typo reverts to the stored value and commits nothing', () => {
     const onCommit = vi.fn();
-    const { rerender } = render(
-      <DiscountInput bare valueSen={25_000} baseSen={1_000_00} onCommit={onCommit} />,
-    );
-    // In RM (default) the field carries the sen amount, dressed.
-    expect((screen.getByTitle(/Click to edit/) as HTMLInputElement).value).toBe('250.00');
-    // Toggle to %; the field derives 25.00% from 25000 / 100000.
-    fireEvent.click(screen.getByRole('button', { name: RM_LABEL }));
-    expect((screen.getByLabelText('Discount percentage') as HTMLInputElement).value).toBe('25');
-    // Toggle back to RM without touching anything — the sen value survived.
-    fireEvent.click(screen.getByRole('button', { name: PCT_LABEL }));
-    rerender(<DiscountInput bare valueSen={25_000} baseSen={1_000_00} onCommit={onCommit} />);
-    expect((screen.getByTitle(/Click to edit/) as HTMLInputElement).value).toBe('250.00');
-  });
-});
-
-describe('DiscountInput — edge cases', () => {
-  test('baseSen === 0 disables the % field but still allows toggling back to RM', () => {
-    const onCommit = vi.fn();
-    render(
-      <DiscountInput bare valueSen={0} baseSen={0} onCommit={onCommit} />,
-    );
-    fireEvent.click(screen.getByRole('button', { name: RM_LABEL }));
-    const box = screen.getByLabelText('Discount percentage') as HTMLInputElement;
-    expect(box.disabled).toBe(true);
-    // The toggle stays enabled so the user isn't trapped.
-    expect(screen.getByRole('button', { name: PCT_LABEL }).hasAttribute('disabled')).toBe(false);
+    render(<DiscountInput bare valueSen={25_000} baseSen={BASE} onCommit={onCommit} />);
+    const box = screen.getByLabelText('Discount — type an amount or a percentage') as HTMLInputElement;
+    fireEvent.focus(box);
+    fireEvent.change(box, { target: { value: 'abc' } });
+    fireEvent.blur(box);
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(box.value).toBe('250.00');
   });
 });
