@@ -8,6 +8,10 @@ vi.mock('../lib/sg-postcode-queries', async (orig) => ({
   ...(await orig<typeof import('../lib/sg-postcode-queries')>()),
   useSgPostcodeLookup,
 }));
+// SgPostcodeField reads useLocalities to map the planning area back to a seeded
+// { state, city }; stub it so the SG branch renders without a QueryClient.
+const { useLocalities } = vi.hoisted(() => ({ useLocalities: vi.fn(() => ({ data: [] })) }));
+vi.mock('../lib/localities-queries', () => ({ useLocalities }));
 
 import { AddressPostcodeField } from './AddressPostcodeField';
 
@@ -17,7 +21,7 @@ const base = {
   value: '',
   onChange: () => {},
   onCascadePick: () => {},
-  onResolveAddress: () => {},
+  onResolve: () => {},
   postcodeChoices: ['50000', '53300'],
   placeholder: 'Pick postcode',
 };

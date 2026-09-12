@@ -2455,7 +2455,7 @@ export function MobileNewSO({
                       </Field>
                       <Field label={addressRequired ? "Postcode *" : "Postcode"} style={{ flex: 1 }} error={touched && addressRequired && !postcode.trim()} scanned={scanned("postcode", postcode)}>
                         {country === 'Singapore'
-                          ? <SgPostcodeField bare inputClassName="fld-i" value={postcode} onChange={setPostcode} onResolveAddress={setAddr1} disabled={addressIdentityLocked} />
+                          ? <SgPostcodeField bare inputClassName="fld-i" value={postcode} onChange={setPostcode} onResolve={(r) => { setAddr1(r.address); if (r.state && r.city) { setState(r.state); setCity(r.city); } }} disabled={addressIdentityLocked} />
                           : (<select className="fld-i" value={postcode} disabled={addressIdentityLocked || postcodeChoices.length === 0} onChange={(e) => onPostcodeChange(e.target.value)}>
                               <option value="">{postcodeChoices.length === 0 ? "No postcodes seeded" : postcodePlaceholder(state, city)}</option>
                               {postcodeChoices.map((p) => <option key={p} value={p}>{p}</option>)}

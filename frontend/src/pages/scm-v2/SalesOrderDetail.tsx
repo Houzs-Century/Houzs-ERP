@@ -3631,7 +3631,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               value={form.postcode}
               onChange={(v) => setForm((s) => ({ ...s, postcode: v }))}
               onCascadePick={applyPostcodeReverse}
-              onResolveAddress={(a) => setForm((s) => ({ ...s, address1: a }))}
+              onResolve={(r) => setForm((s) => ({ ...s, address1: r.address, ...(r.state && r.city ? { state: r.state, city: r.city } : {}) }))}
               postcodeChoices={postcodeChoices}
               placeholder={postcodePlaceholder(form.state, form.city)}
               disabled={inputsDisabled || stateLocked}

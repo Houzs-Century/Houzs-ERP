@@ -2154,7 +2154,7 @@ export const SalesOrderNew = () => {
               value={postcode}
               onChange={setPostcode}
               onCascadePick={onPostcodePick}
-              onResolveAddress={setAddress1}
+              onResolve={(r) => { setAddress1(r.address); if (r.state && r.city) { setState(r.state); setCity(r.city); } }}
               postcodeChoices={postcodeChoices}
               placeholder={loc.isLoading ? 'Loading…' : postcodePlaceholder(state, city)}
               disabled={loc.isLoading}

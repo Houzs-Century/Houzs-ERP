@@ -20,7 +20,7 @@ export const AddressPostcodeField = ({
   value,
   onChange,
   onCascadePick,
-  onResolveAddress,
+  onResolve,
   postcodeChoices,
   placeholder,
   disabled,
@@ -31,7 +31,7 @@ export const AddressPostcodeField = ({
   value: string;
   onChange: (v: string) => void;
   onCascadePick: (v: string) => void;
-  onResolveAddress: (address: string) => void;
+  onResolve: (r: { address: string; state: string | null; city: string | null }) => void;
   postcodeChoices: string[];
   placeholder: string;
   disabled?: boolean;
@@ -44,7 +44,7 @@ export const AddressPostcodeField = ({
       <SgPostcodeField
         value={value}
         onChange={onChange}
-        onResolveAddress={onResolveAddress}
+        onResolve={onResolve}
         disabled={disabled}
         title={title}
         fieldClassName={c.field}

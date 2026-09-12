@@ -59,13 +59,32 @@ Singapore's official OneMap API. It is **INERT until configured**: with no
 the same no-op contract `RESEND_API_KEY` uses. Front-end callers must degrade on
 `configured: false`, never assume a live lookup.
 
+**A real SG postcode also fills City + State, not just the address (2026-09-12).**
+After the address search, the backend calls OneMap's `getPlanningarea` with the
+result's coordinates to get the URA planning area (`pln_area_n`) and returns it as
+`planningArea` on each result. That planning area is exactly one of the 55 seeded
+SG cities (mig 0181 stores the planning area as `city` and the URA region as
+`state`), so `resolveSgPlanningArea(rows, planningArea)` in `sg-postcode-queries.ts`
+maps it back to the seeded `{ state, city }` and the field fills all three — a real
+SG postcode behaves like a Malaysian one (postcode → address + City + State).
+`getPlanningarea` is **best-effort**: if it fails for any reason the backend leaves
+`planningArea: ""`, `resolveSgPlanningArea` returns `null`, and the field fills the
+address only (the pre-2026-09-12 behaviour). The `getPlanningarea` round trip is
+auth-gated (Worker token) and cannot be exercised in CI, so the parse + the
+planning-area→{state,city} match are unit-tested while the live call itself is not.
+
 The front-end field is `vendor/scm/components/SgPostcodeField.tsx` (hook
 `sg-postcode-queries.ts`); `AddressPostcodeField.tsx` chooses it over the cascade
-dropdown when `country === 'Singapore'`. Wired into `SupplierDetail` and the Sales
+dropdown when `country === 'Singapore'`. Its one-tap offer calls
+`onResolve({ address, state, city })` — `state`/`city` are `null` when the planning
+area did not resolve, and each host writes State + City in a single set that leaves
+the typed Postcode untouched (the same "never route a back-filled State through the
+State picker" rule as trap #1 below). Wired into `SupplierDetail` and the Sales
 Order delivery address — `SalesOrderNew` / `SalesOrderDetail` (desktop) and
 `MobileNewSO` (`bare` mode, inside the mobile `<Field>`). Country on the SO forms
 is DERIVED from the picked State, so a SG address is reached by picking a Singapore
-region as State.
+region as State; because the resolved State is always a SG region, the country
+stays Singapore and the field does not disappear mid-fill.
 
 ## 2. The two directions
 
