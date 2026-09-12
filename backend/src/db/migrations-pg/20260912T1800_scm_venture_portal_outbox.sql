@@ -170,7 +170,18 @@ BEGIN
              'emergency_contact_name', 'emergency_contact_phone',
              'emergency_contact_relationship',
              'customer_po_image_b64', 'signature_b64',
-             'note', 'remark2', 'remark3', 'remark4']
+             'note', 'remark2', 'remark3', 'remark4',
+             /* The PAYMENT ARTEFACTS, added after reading what the payload
+                actually carries rather than what the contract remembered to
+                name. `approval_code` is a card/terminal authorisation code and
+                the other three are pointers to payment-slip and receipt IMAGES
+                — customer bank documents. None is a commission input, the
+                portal's own field list (contract §3) reads none of them, and
+                the portal answers 200 for anything it can still read, so
+                removing them cannot break the receiver. Minimum privilege is
+                the default here (CLAUDE.md rule 5), and this file becomes
+                immutable the moment it is applied. */
+             'approval_code', 'slip_key', 'slip_image_key', 'receipt_image_key']
       INTO hdr
       FROM scm.mfg_sales_orders_with_payment_totals v
      WHERE v.doc_no = dn;

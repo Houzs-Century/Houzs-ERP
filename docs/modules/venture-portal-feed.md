@@ -157,15 +157,35 @@ portal's deposit gate reads `balance_sen_live` first.
 
 A document whose row is gone returns `{ "docNo": …, "deleted": true, "snapshotAt": … }`.
 
-### Stripped before it leaves the database
+### Stripped before it leaves the database — 24 columns, and 6 of them are ours
 
-The contract's eighteen columns — `phone`, `email`, `address1..4`,
+The contract names eighteen: `phone`, `email`, `address1..4`,
 `ship_to_address`, `bill_to_address`, `install_to_address`,
 `emergency_contact_name` / `_phone` / `_relationship`, `customer_po_image_b64`,
-`signature_b64`, `note`, `remark2..4` — **plus two the contract missed**, `city`
-and `postcode`. Neither is a commission input, the portal reads a fixed column
-list and ignores anything else, so widening the strip list cannot break the
-receiver. The two `_b64` columns are whole images.
+`signature_b64`, `note`, `remark2..4`. The two `_b64` columns are whole images.
+
+**Six more were added here**, found by reading what the payload actually carries
+rather than what the contract remembered to name:
+
+| added | what it is | why it goes |
+|---|---|---|
+| `city`, `postcode` | address components | the contract's own reasoning, applied to two columns it skipped |
+| `approval_code` | a card / terminal authorisation code | payment credential. Not a commission input |
+| `slip_key`, `slip_image_key`, `receipt_image_key` | pointers to payment-slip and receipt IMAGES | customer bank documents |
+
+Widening the list cannot break the receiver: the portal reads a fixed column
+list (contract §3, none of these in it) and answers 200 for anything it can
+still read. Minimum privilege is the default (CLAUDE.md rule 5), and this
+migration becomes immutable the moment it is applied.
+
+**PROVEN against production, read-only, 2026-09-12** — the strip expression was
+run over a real in-scope order via the Supabase MCP:
+
+| measured | result |
+|---|---|
+| the 24 stripped keys still present | **0** |
+| the 19 columns the portal reads still present | **19** |
+| header keys that travel | 84 |
 
 ### The costing, which is half of what the portal was waiting for
 
@@ -325,7 +345,10 @@ no error is the drain not running.
   intact); the objects themselves have not been created on any database yet.
 - **Backfill throughput is untested** at 493 documents (see §10).
 - **The PII strip list is enforced in SQL**, so no TypeScript test covers it.
-  What IS covered is everything the sender decides — see
+  It is instead PROVEN by a read-only run of the expression against production
+  (§4): 0 of the 24 stripped keys survive, all 19 the portal reads do. Re-run
+  that query, not this sentence, if the view gains a column. Everything the
+  SENDER decides is covered by
   `backend/src/scm/lib/venture-portal-outbox.test.ts`.
 
 ---
