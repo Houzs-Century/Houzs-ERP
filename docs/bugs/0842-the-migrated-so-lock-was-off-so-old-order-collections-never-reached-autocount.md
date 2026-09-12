@@ -9,39 +9,49 @@ ERP did not change the "HC Delivery Updated" operations sheet's Balance column �
 the customer kept reading as owing money that had already been collected.
 
 **Root cause (traced, not guessed — Supabase MCP against prod
-`anogrigyjbduyzclzjgn`, read-only).** Two facts compound:
+`anogrigyjbduyzclzjgn`, read-only; write-back read on origin/main).** The sheet's
+HC (company-1) Balance is pulled from AutoCount by the sheet-bound
+`GetAutoCountData.gs` (`backend/src/routes/assrFormIntake.ts`), and a NORMAL
+order's ERP payment DOES reach it (owner-confirmed everyday behaviour). The 34
+migrated orders were the exception, for two compounding reasons:
 
-1. The sheet's HC (company-1) Balance is pulled from AutoCount by the
-   sheet-bound `GetAutoCountData.gs` — stated in `backend/src/routes/assrFormIntake.ts`
-   (the "2990 SO -> HC Delivery sheet export" exists precisely because 2990's
-   orders never reach AutoCount). Recording an SO payment in the ERP enqueues an
-   `edit` write-back that stamps AutoCount's custom `UDF_BALANCE`; it does NOT
-   post a real AutoCount receipt, so AutoCount's own outstanding — the number the
-   sheet reads — does not move.
-2. The `scm.migrated_so_lock` switch (`backend/src/scm/lib/migrated-so-lock.ts`;
-   owner 2026-09-08 「只开新单，旧单暂时不能改」; seeded `'1'` by migration
-   `20260908T0014_scm_migrated_so_lock.sql`) was found **`off`**. With it off,
-   migrated orders were editable, so staff keyed balance collections onto them in
-   the ERP.
+1. `scm.migrated_so_lock` (`backend/src/scm/lib/migrated-so-lock.ts`; owner
+   2026-09-08 「只开新单，旧单暂时不能改」; seeded `'1'` by mig
+   `20260908T0014_scm_migrated_so_lock.sql`) was found **`off`**, so migrated
+   orders were editable and staff keyed collections onto them in the ERP.
+2. Even recorded, the write-back REFUSED to push a migrated order's balance:
+   `readSoOutstandingSen` (`scm/lib/autocount-read.ts`), which composes
+   `UDF_BALANCE`, returns `null` when `total_revenue_sen` is not `> 0` — and a
+   migrated order carries its total in `local_total_sen` with `total_revenue_sen`
+   at 0 (0 on 9 of 10 sampled). So the `edit` was `sent` but OMITTED
+   `UDF_BALANCE`, and AutoCount kept its import-time value.
 
 Result: 34 company-1 migrated orders carried a post-import collection recorded in
 `scm.mfg_sales_order_payments` (RM 101,034 in total) — ERP `balance_sen_live`
-read 0 (paid) while the sheet still showed the pre-payment balance. The
-write-back queue was NOT the fault: 32 of the 34 orders' latest `edit` rows were
+read 0 on the settled ones while the sheet still showed the pre-payment balance.
+The write-back queue was NOT the fault: 32 of the 34 latest `edit` rows were
 `sent`.
 
-**Fix.** `scm.app_config` key `scm.migrated_so_lock` set `off` -> `'1'`
-(company-1 migrated orders read-only again — on the desktop, mobile, and backend
-router that already read this switch), 2026-09-12, applied live via Supabase MCP
-with the owner's authorisation. Collections on old orders now go to AutoCount,
-which the sheet reads. The switch's lifecycle is unchanged: lift it (-> off) only
-once AutoCount collections have been corrected. Full write-up:
-`docs/migrated-so-lock-lifted-coe.md`.
+**Fix.** Three parts:
+- **Config:** `scm.app_config.scm.migrated_so_lock` `off` -> `'1'` (2026-09-12,
+  Supabase MCP, owner-authorised) — migrated orders read-only again (desktop +
+  mobile + router); stops NEW ERP edits on old orders.
+- **Code:** `readSoOutstandingSen` falls back to `local_total_sen` when
+  `total_revenue_sen` is 0 (+ `local_total_sen` added to `SO_HEADER_COLS`), so the
+  write-back composes `UDF_BALANCE` for a migrated order. Safe now AutoCount is
+  push-only (owner) so the ERP figure is complete; the old refusal's premise
+  (docs/bugs/0678) is retired for the go-forward window. Pinned in
+  `autocount-read.test.ts`.
+- **Backfill:** `backend/scripts/backfill-migrated-so-balance-push.mjs` +
+  `.github/workflows/backfill-migrated-so-balance-push.yml` — re-pushes the 34
+  (one keyed edit each, no rebuild); dry-run default, confirm-phrase gate, PARTIAL
+  balances held back for a human to verify.
 
-**What this does NOT do.** The 34 historical collections (RM 101,034) still need
-to be entered in AutoCount by hand (CSV handed to the owner). Native ERP-born
-orders' later payments remain a smaller residual (still `UDF_BALANCE`-only).
-`scm.delivery_order_payments` being absent in prod (docs/bugs/0704) is a separate
-latent bug, not this symptom's cause.
+**What this does NOT do.** A PARTIAL-balance order carries a residual overstate
+risk (a customer who paid directly in AutoCount 2026-08-28..lock, docs/bugs/0678)
+— the backfill holds those for verification. The lock stays `'1'`, so an old
+order cannot take a NEW ERP collection until the owner lifts it.
+`scm.delivery_order_payments` absent in prod (docs/bugs/0704) is a separate latent
+bug.
 
-**Ref.** config flip 2026-09-12; `docs/migrated-so-lock-lifted-coe.md`.
+**Ref.** config flip + code fix + backfill 2026-09-12; `docs/migrated-so-lock-lifted-coe.md`.

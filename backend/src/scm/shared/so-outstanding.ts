@@ -40,11 +40,14 @@ export interface SoPaidInputs {
 /**
  * What the SCREEN needs on top of the paid rule: the SECOND total column.
  *
- * A separate interface rather than a field on `SoPaidInputs`, because the two
- * audiences take different inputs. `soOutstandingSen` writes AutoCount's
- * `UDF_BALANCE` and must keep answering off `total_revenue_sen` alone; only the
- * screen is allowed to fall back. Extending here means the compiler enumerates
- * the `soBalanceSen` call sites and leaves the write-back's untouched.
+ * A separate interface rather than a field on `SoPaidInputs`. `soOutstandingSen`
+ * clamps the total it is GIVEN and reads no column — the CALLER picks the total.
+ * The SCREEN picks it via `soDisplayTotalSen` (this interface). The write-back's
+ * reader (`readSoOutstandingSen`) answered off `total_revenue_sen` ALONE until
+ * 2026-09-12 and now takes the same `local_total_sen` fallback (AutoCount went
+ * push-only, so the book must learn a migrated order's balance from the ERP —
+ * see that file's header). Keeping `localTotalSen` off `SoPaidInputs` keeps that
+ * choice explicit at each call site rather than inherited.
  */
 export interface SoBalanceInputs extends SoPaidInputs {
   /**

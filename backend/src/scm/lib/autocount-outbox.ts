@@ -361,13 +361,17 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
    DeliverPhone1 when it differs from Phone1 and inserts it as
    emergency_contact_phone (:390/:412). Reading `phone` for both would put the
    customer's number in front of the driver.
-   total_revenue_sen + deposit_sen are two of the three inputs to the
-   outstanding balance the BALANCE UDF carries; the third is the payments ledger
-   (readSoOutstandingSen). NOT balance_sen — recomputeTotals rewrites that to
-   the gross total on every edit, and it is the column the cutover's UDF_BALANCE
-   landed in, which is exactly what makes it look like the right one. */
+   total_revenue_sen (or local_total_sen when the former is 0 — a migrated
+   order) + deposit_sen are two of the three inputs to the outstanding balance
+   the BALANCE UDF carries; the third is the payments ledger. readSoOutstandingSen
+   takes the local_total_sen fallback since 2026-09-12 (AutoCount push-only), so
+   local_total_sen MUST stay in this select — omit it and a migrated order reads
+   as having no total and the BALANCE UDF is silently dropped. NOT balance_sen —
+   recomputeTotals rewrites that to the gross total on each edit, and it is the
+   column the cutover's UDF_BALANCE landed in, which is exactly what makes it look
+   like the right one. */
 const SO_HEADER_COLS =
-  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, city, postcode, customer_state, phone, emergency_contact_phone, ref, customer_so_no, processing_date, customer_delivery_date, total_revenue_sen, deposit_sen, linked_ac_docno';
+  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, city, postcode, customer_state, phone, emergency_contact_phone, ref, customer_so_no, processing_date, customer_delivery_date, total_revenue_sen, local_total_sen, deposit_sen, linked_ac_docno';
 /* `cancelled` and `branding` are on THIS list and on no other, because only
    scm.mfg_sales_order_items has them (the other five line tables are
    still to get `cancelled` — docs/autocount-line-retirement-plan.md). Asking
