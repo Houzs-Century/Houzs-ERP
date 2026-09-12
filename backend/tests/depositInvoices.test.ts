@@ -39,6 +39,7 @@ const CHART: Row[] = [
 const ORDERS: Row[] = [
   { doc_no: '2990-SO-2609-001', company_id: CO, debtor_code: null, debtor_name: 'Larding Chen', customer_id: 'cust-larding', status: 'CONFIRMED' },
   { doc_no: '2990-SO-2607-019', company_id: CO, debtor_code: null, debtor_name: 'Mei Ling', customer_id: 'cust-mei', status: 'DELIVERED' },
+  { doc_no: '2990-SO-2609-009', company_id: CO, debtor_code: null, debtor_name: 'Gone Customer', customer_id: 'cust-gone', status: 'CANCELLED' },
 ];
 const INVOICES: Row[] = [
   { id: 'si-1', company_id: CO, invoice_number: '2990-SI-2609-001', so_doc_no: '2990-SO-2607-019', status: 'SENT', total_sen: 500_000, paid_sen: 0 },
@@ -128,6 +129,18 @@ describe('the birth of a deposit invoice', () => {
     expect(dis(sb)).toHaveLength(1);
   });
 
+  test('a payment on a cancelled order earns no deposit invoice — at the hook and in the backlog (docs/bugs/0832)', async () => {
+    const { app, sb } = harness({ settings: [ON], payments: [payment('p-1'), payment('p-x', { so_doc_no: '2990-SO-2609-009' })] });
+    const refund = await issueDepositInvoice(sb, { paymentId: 'p-x', soDocNo: '2990-SO-2609-009', paidAt: '2026-09-05', amountSen: 100_000 });
+    expect(refund).toEqual({ ok: true, status: 'not_due', why: 'order_not_live' });
+    await bookSoPaymentBestEffort(sb, payment('p-x', { so_doc_no: '2990-SO-2609-009' }), 'payment');
+    expect(dis(sb)).toHaveLength(0);
+    const st = await json(app, '/deposit-invoices/settings', 'GET');
+    expect(await st.json()).toMatchObject({ missingCount: 1 });
+    const issue = await json(app, '/deposit-invoices/issue-missing', 'POST', {});
+    expect(await issue.json()).toEqual({ ok: true, issued: ['2990-DI-2609-001'], skipped: [] });
+  });
+
   test('issuing twice for one payment finds the standing invoice: one row, one journal', async () => {
     const { sb } = harness({ settings: [ON] });
     const first = await issueDepositInvoice(sb, { paymentId: 'p-1', soDocNo: '2990-SO-2609-001', paidAt: '2026-09-05', amountSen: 100_000 });
@@ -195,7 +208,7 @@ describe('the routes', () => {
       payments: [payment('p-1'), payment('p-2', { paid_at: '2026-08-20' }), payment('p-3', { so_doc_no: '2990-SO-2607-019', paid_at: '2026-09-07' })],
     });
     const off = await json(app, '/deposit-invoices/settings', 'GET');
-    expect(await off.json()).toEqual({ settings: { enabled: false, fromDate: null }, missingCount: 0 });
+    expect(await off.json()).toEqual({ settings: { enabled: false, fromDate: null }, missingCount: 0, deliveredUninvoicedCount: 0 });
     const noDay = await json(app, '/deposit-invoices/settings', 'POST', { enabled: true });
     expect(noDay.status).toBe(400);
     expect((await noDay.json() as { error: string }).error).toBe('from_date_required');
@@ -212,7 +225,7 @@ describe('the routes', () => {
     expect(await issue.json()).toEqual({ ok: true, issued: ['2990-DI-2609-001'], skipped: [] });
     expect(dis(sb)).toEqual([expect.objectContaining({ payment_id: 'p-1', created_by: 'Chew' })]);
     const after = await json(app, '/deposit-invoices/settings', 'GET');
-    expect(await after.json()).toEqual({ settings: { enabled: true, fromDate: '2026-09-01' }, missingCount: 0 });
+    expect(await after.json()).toEqual({ settings: { enabled: true, fromDate: '2026-09-01' }, missingCount: 0, deliveredUninvoicedCount: 0 });
     /* Off again keeps the day for next time. */
     const offAgain = await json(app, '/deposit-invoices/settings', 'POST', { enabled: false, fromDate: '2026-09-01' });
     expect(await offAgain.json()).toMatchObject({ settings: { enabled: false, fromDate: '2026-09-01' }, missingCount: 0 });

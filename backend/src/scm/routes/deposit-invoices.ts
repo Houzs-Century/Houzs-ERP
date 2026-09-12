@@ -22,6 +22,7 @@ import {
   DI_COLS, cancelDepositInvoice, issueMissingDepositInvoices, loadDepositInvoiceSettings, missingDepositInvoices,
   postDepositInvoice, saveDepositInvoiceSettings, type DepositInvoiceRow,
 } from '../../acc/deposit-invoices';
+import { deliveredUninvoiced, invoiceDeliveredOrders } from '../lib/auto-final-invoice';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 type Row = Record<string, unknown>;
@@ -85,7 +86,9 @@ export const depositInvoiceDetailHandler = async (c: Ctx): Promise<Response> => 
   return c.json({ invoice: numbered.rows[0], payment: (payment as Row | null) ?? null });
 };
 
-/** The switch, and how many payments since the start still have no invoice. */
+/** The switch, how many payments since the start still have no deposit
+    invoice, and how many delivered orders still have no final invoice
+    (docs/bugs/0832 — the switch turned on after those deliveries). */
 export const depositInvoiceSettingsHandler = async (c: Ctx): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -94,7 +97,23 @@ export const depositInvoiceSettingsHandler = async (c: Ctx): Promise<Response> =
   if (!st.ok) return c.json({ error: 'load_failed', reason: st.reason }, 500);
   const missing = await missingDepositInvoices(sb, co.companyId);
   if (!missing.ok) return c.json({ error: 'load_failed', reason: missing.reason }, 500);
-  return c.json({ settings: st.settings, missingCount: missing.payments.length });
+  const delivered = st.settings.enabled ? await deliveredUninvoiced(sb, co.companyId) : { ok: true as const, orders: [] };
+  if (!delivered.ok) return c.json({ error: 'load_failed', reason: delivered.reason }, 500);
+  return c.json({ settings: st.settings, missingCount: missing.payments.length, deliveredUninvoicedCount: delivered.orders.length });
+};
+
+/** Invoice every delivered order that has no final invoice yet — each dated
+    the day its goods left — so the deposit invoices on them close (the
+    revenue posting raises the credit notes). Owner 2026-09-12: 已送货的根据
+    程序走. The switch must be on; the per-order gate says so. */
+export const invoiceDeliveredOrdersHandler = async (c: Ctx): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) return c.json(NO_PERM('raise final invoices'), 403);
+  const actorId = (c.get('user') as { id?: string } | undefined)?.id ?? null;
+  const r = await invoiceDeliveredOrders(c.get('supabase'), co.companyId, actorId);
+  if (!r.ok) return c.json({ error: 'invoice_failed', reason: r.reason }, 500);
+  return c.json({ ok: true, invoiced: r.invoiced, skipped: r.skipped });
 };
 
 export const saveDepositInvoiceSettingsHandler = async (c: Ctx): Promise<Response> => {
@@ -164,6 +183,7 @@ depositInvoices.get('/', listDepositInvoicesHandler);
 depositInvoices.get('/settings', depositInvoiceSettingsHandler);
 depositInvoices.post('/settings', saveDepositInvoiceSettingsHandler);
 depositInvoices.post('/issue-missing', issueMissingDepositInvoicesHandler);
+depositInvoices.post('/invoice-delivered', invoiceDeliveredOrdersHandler);
 depositInvoices.get('/:id', depositInvoiceDetailHandler);
 depositInvoices.post('/:id/cancel', cancelDepositInvoiceHandler);
 depositInvoices.post('/:id/post', postDepositInvoiceHandler);

@@ -19,6 +19,7 @@ import { docPrefixForCode } from './companyScope';
 import { absorbsOrderDeposit } from './si-order-deposit';
 import { doLineRemaining, siTransferRefusal } from './do-line-remaining';
 import { createSalesInvoiceFromDoLines } from './si-from-do';
+import { SO_DELIVERED_OR_BEYOND } from '../shared/so-deliverable-states';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the SCM libs */
 type Db = any;
@@ -35,7 +36,7 @@ export type AutoFinalInvoiceResult =
  */
 export async function autoFinalInvoiceForOrder(
   sb: Db,
-  p: { docNo: string; companyId: number | null; actorId: string | null },
+  p: { docNo: string; companyId: number | null; actorId: string | null; invoiceDate?: string | null },
 ): Promise<AutoFinalInvoiceResult> {
   if (p.companyId == null) return { ok: true, status: 'no_company' };
   const st = await loadDepositInvoiceSettings(sb, p.companyId);
@@ -79,6 +80,7 @@ export async function autoFinalInvoiceForOrder(
     createdBy: p.actorId,
     actor: null,
     auditNote: `Auto: final invoice at delivery of ${p.docNo} (deposit-invoice flow)`,
+    invoiceDate: p.invoiceDate ?? null,
   });
   if (!r.ok) return { ok: false, status: 'refused', reason: String(r.body.error ?? r.status), body: r.body };
   return { ok: true, status: 'invoiced', invoiceNumber: r.body.invoiceNumber, revenue: r.body.revenue.status, lines: picks.length };
@@ -102,4 +104,78 @@ export async function autoFinalInvoiceBestEffort(
     // eslint-disable-next-line no-console
     console.error('[auto-final-invoice] hook threw for', p.docNo, e);
   }
+}
+
+/* ── The backlog: orders delivered before the switch was on ──────────────── */
+
+
+export type DeliveredUninvoiced = { docNo: string; deliveredOn: string | null };
+
+/**
+ * The company's delivered orders with no live sales invoice — what the switch
+ * being turned on AFTER those deliveries left behind (owner 2026-09-12: 已送货的
+ * 根据程序走). Each carries the day its goods left: the latest delivered_at of
+ * its invoiceable deliveries, else the customer delivery date, else nothing
+ * (the invoice is then dated today).
+ */
+export async function deliveredUninvoiced(
+  sb: Db,
+  companyId: number,
+): Promise<{ ok: true; orders: DeliveredUninvoiced[] } | { ok: false; reason: string }> {
+  const { data: sos, error: soErr } = await sb.from('mfg_sales_orders')
+    .select('doc_no, status')
+    .eq('company_id', companyId)
+    .in('status', [...SO_DELIVERED_OR_BEYOND])
+    .order('doc_no')
+    .limit(2000);
+  if (soErr) return { ok: false, reason: `orders: ${soErr.message}` };
+  const docNos = ((sos ?? []) as Array<{ doc_no: string }>).map((r) => String(r.doc_no));
+  if (docNos.length === 0) return { ok: true, orders: [] };
+
+  const invoiced = new Set<string>();
+  const deliveredOn = new Map<string, string>();
+  for (let i = 0; i < docNos.length; i += 200) {
+    const chunk = docNos.slice(i, i + 200);
+    const { data: sis, error: siErr } = await sb.from('sales_invoices')
+      .select('so_doc_no, status').eq('company_id', companyId).in('so_doc_no', chunk);
+    if (siErr) return { ok: false, reason: `order invoices: ${siErr.message}` };
+    for (const r of (sis ?? []) as Array<{ so_doc_no: string | null; status?: string | null }>) {
+      if (r.so_doc_no && absorbsOrderDeposit(r.status)) invoiced.add(String(r.so_doc_no));
+    }
+    const { data: dos, error: doErr } = await sb.from('delivery_orders')
+      .select('so_doc_no, status, delivered_at, customer_delivery_date').eq('company_id', companyId).in('so_doc_no', chunk);
+    if (doErr) return { ok: false, reason: `deliveries: ${doErr.message}` };
+    for (const d of (dos ?? []) as Array<{ so_doc_no: string | null; status: string | null; delivered_at?: string | null; customer_delivery_date?: string | null }>) {
+      if (!d.so_doc_no || siTransferRefusal(d.status) != null) continue;
+      const day = String(d.delivered_at ?? d.customer_delivery_date ?? '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+      const at = deliveredOn.get(String(d.so_doc_no));
+      if (!at || day > at) deliveredOn.set(String(d.so_doc_no), day);
+    }
+  }
+  return {
+    ok: true,
+    orders: docNos.filter((d) => !invoiced.has(d)).map((docNo) => ({ docNo, deliveredOn: deliveredOn.get(docNo) ?? null })),
+  };
+}
+
+/** Invoice every delivered, uninvoiced order — each dated the day its goods
+    left — in order-number order. Each order answers for itself; one refusal
+    does not stop the rest. The switch must be on (the per-order gate says so). */
+export async function invoiceDeliveredOrders(
+  sb: Db,
+  companyId: number,
+  actorId: string | null,
+): Promise<{ ok: true; invoiced: string[]; skipped: Array<{ docNo: string; why: string }> } | { ok: false; reason: string }> {
+  const backlog = await deliveredUninvoiced(sb, companyId);
+  if (!backlog.ok) return backlog;
+  const invoiced: string[] = [];
+  const skipped: Array<{ docNo: string; why: string }> = [];
+  for (const o of backlog.orders) {
+    const r = await autoFinalInvoiceForOrder(sb, { docNo: o.docNo, companyId, actorId, invoiceDate: o.deliveredOn });
+    if (!r.ok) skipped.push({ docNo: o.docNo, why: `${r.status}: ${r.reason}` });
+    else if (r.status !== 'invoiced') skipped.push({ docNo: o.docNo, why: r.status });
+    else invoiced.push(r.invoiceNumber);
+  }
+  return { ok: true, invoiced, skipped };
 }

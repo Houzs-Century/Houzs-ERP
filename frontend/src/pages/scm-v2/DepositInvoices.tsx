@@ -16,7 +16,7 @@ import { Modal } from '../../vendor/scm/components/Modal';
 import { DateField } from '../../vendor/scm/components/DateField';
 import {
   useDepositInvoices, useDepositInvoiceDetail, useDepositInvoiceSettings, useSaveDepositInvoiceSettings,
-  useIssueMissingDepositInvoices, useCancelDepositInvoice, usePostDepositInvoice,
+  useIssueMissingDepositInvoices, useInvoiceDeliveredOrders, useCancelDepositInvoice, usePostDepositInvoice,
   type DepositInvoiceStatus,
 } from '../../vendor/scm/lib/deposit-invoice-queries';
 import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
@@ -103,12 +103,14 @@ const SwitchCard = () => {
   const q = useDepositInvoiceSettings();
   const save = useSaveDepositInvoiceSettings();
   const issue = useIssueMissingDepositInvoices();
+  const invoiceDelivered = useInvoiceDeliveredOrders();
   const [draft, setDraft] = useState<{ enabled: boolean; fromDate: string } | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const saved = q.data?.settings;
   const missing = q.data?.missingCount ?? 0;
+  const delivered = q.data?.deliveredUninvoicedCount ?? 0;
   const v = draft ?? { enabled: saved?.enabled ?? false, fromDate: saved?.fromDate ?? '' };
-  const busy = save.isPending || issue.isPending;
+  const busy = save.isPending || issue.isPending || invoiceDelivered.isPending;
 
   return (
     <section style={{ ...card, padding: 'var(--space-3)', overflowX: 'visible' }} aria-label="Deposit invoice switch">
@@ -147,6 +149,23 @@ const SwitchCard = () => {
         <div style={{ marginTop: 'var(--space-2)', fontSize: 'var(--fs-13)', color: good }}>
           Issued {issue.data.issued.length}{issue.data.issued.length > 0 ? `: ${issue.data.issued.join(', ')}` : ''}
           {issue.data.skipped.length > 0 ? ` · ${issue.data.skipped.length} skipped (${issue.data.skipped.map((s) => s.why).join(', ')})` : ''}.
+        </div>
+      )}
+      {saved?.enabled && delivered > 0 && (
+        <div style={{ marginTop: 'var(--space-2)', display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--fs-13)' }}>
+          <span>{delivered} delivered {delivered === 1 ? 'order' : 'orders'} still without a final invoice. Each is invoiced on the day its goods left; the deposit invoices on it are then closed by a credit note each.</span>
+          <Button variant="ghost" size="sm" disabled={busy || missing > 0}
+            title={missing > 0 ? 'Issue the deposit invoices first.' : undefined}
+            onClick={() => invoiceDelivered.mutate(undefined, { onError: (e) => setNote(errText(e)) })}>
+            {invoiceDelivered.isPending ? 'Invoicing…' : 'Invoice them now'}
+          </Button>
+          {missing > 0 && <span style={soft}>Issue the deposit invoices first.</span>}
+        </div>
+      )}
+      {invoiceDelivered.isSuccess && (
+        <div style={{ marginTop: 'var(--space-2)', fontSize: 'var(--fs-13)', color: good }}>
+          Invoiced {invoiceDelivered.data.invoiced.length}{invoiceDelivered.data.invoiced.length > 0 ? `: ${invoiceDelivered.data.invoiced.join(', ')}` : ''}
+          {invoiceDelivered.data.skipped.length > 0 ? ` · ${invoiceDelivered.data.skipped.length} skipped (${invoiceDelivered.data.skipped.map((s) => `${s.docNo}: ${s.why}`).join(', ')})` : ''}.
         </div>
       )}
       {note && <div style={{ ...soft, marginTop: 'var(--space-2)' }}>{note}</div>}

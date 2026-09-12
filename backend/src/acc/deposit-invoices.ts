@@ -39,6 +39,7 @@ import { docPrefixForCode } from '../scm/lib/companyScope';
 import { absorbsOrderDeposit } from '../scm/lib/si-order-deposit';
 import { todayMyt } from '../scm/lib/my-time';
 import { CREDIT_NOTE_HEADER, cancelCreditNote, insertCreditNote, postCreditNote } from './credit-notes';
+import { SO_NOT_AN_ORDER } from '../scm/shared/so-deliverable-states';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
 type Db = any;
@@ -107,7 +108,12 @@ export async function saveDepositInvoiceSettings(
 
 /* ── Is one due? ─────────────────────────────────────────────────────────── */
 
-export type NotDueWhy = 'switched_off' | 'before_start' | 'no_date' | 'no_amount' | 'invoice_exists';
+export type NotDueWhy = 'switched_off' | 'before_start' | 'no_date' | 'no_amount' | 'invoice_exists' | 'order_not_live';
+
+/** Orders that never became orders, or were taken back: their money is a
+    refund or a credit, never a sale (docs/bugs/0832) — the sales side's one
+    reading, shared with the Collection report. */
+const NOT_AN_ORDER = SO_NOT_AN_ORDER;
 
 /** Whether a payment on this order earns a deposit invoice: the company's
     switch is on, the payment's day is on or after the start, the amount is
@@ -181,12 +187,13 @@ export async function issueDepositInvoice(sb: Db, p: IssueInput): Promise<IssueR
   /* The order carries the company and the customer — the same read the
      payment's own posting makes (acc/payments), the same party code. */
   const { data: so, error: soErr } = await sb.from('mfg_sales_orders')
-    .select('company_id, debtor_name, customer_id, debtor_code')
+    .select('company_id, debtor_name, customer_id, debtor_code, status')
     .eq('doc_no', soDocNo)
     .maybeSingle();
   if (soErr) return { ok: false, status: 'read_failed', reason: `order: ${soErr.message}` };
-  const order = so as { company_id?: number | null; debtor_name?: string | null; customer_id?: string | null; debtor_code?: string | null } | null;
+  const order = so as { company_id?: number | null; debtor_name?: string | null; customer_id?: string | null; debtor_code?: string | null; status?: string | null } | null;
   if (!order) return { ok: false, status: 'so_not_found', reason: soDocNo };
+  if (NOT_AN_ORDER.has(String(order.status ?? '').toUpperCase())) return { ok: true, status: 'not_due', why: 'order_not_live' };
   const companyId = order.company_id ?? null;
   if (companyId == null) return { ok: false, status: 'no_company', reason: `${soDocNo} carries no company` };
 
@@ -410,9 +417,21 @@ export async function missingDepositInvoices(
   if (diErr) return { ok: false, reason: `deposit invoices: ${diErr.message}` };
   const have = new Set(((dis ?? []) as Array<{ payment_id: string }>).map((d) => String(d.payment_id)));
 
-  /* The orders that already carry a live invoice — one read per 200 orders. */
+  /* The orders that already carry a live invoice, and the orders that are
+     no orders (draft, cancelled) — one read each per 200 orders. */
   const docNos = [...new Set(candidates.map((p) => p.so_doc_no))];
   const invoiced = new Set<string>();
+  const notLive = new Set<string>();
+  for (let i = 0; i < docNos.length; i += 200) {
+    const { data: orders, error: soErr } = await sb.from('mfg_sales_orders')
+      .select('doc_no, status')
+      .eq('company_id', companyId)
+      .in('doc_no', docNos.slice(i, i + 200));
+    if (soErr) return { ok: false, reason: `orders: ${soErr.message}` };
+    for (const r of (orders ?? []) as Array<{ doc_no: string; status?: string | null }>) {
+      if (NOT_AN_ORDER.has(String(r.status ?? '').toUpperCase())) notLive.add(String(r.doc_no));
+    }
+  }
   for (let i = 0; i < docNos.length; i += 200) {
     const { data: sis, error: siErr } = await sb.from('sales_invoices')
       .select('so_doc_no, status')
@@ -425,7 +444,7 @@ export async function missingDepositInvoices(
   }
   return {
     ok: true, enabled: true,
-    payments: candidates.filter((p) => !have.has(String(p.id)) && !invoiced.has(String(p.so_doc_no))),
+    payments: candidates.filter((p) => !have.has(String(p.id)) && !invoiced.has(String(p.so_doc_no)) && !notLive.has(String(p.so_doc_no))),
   };
 }
 

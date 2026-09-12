@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-190 route modules (53 in `backend/src/routes`, 137 in `backend/src/scm/routes`), 1274 endpoint registrations.
+190 route modules (53 in `backend/src/routes`, 137 in `backend/src/scm/routes`), 1275 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -77,7 +77,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-bank-months.ts` | 0 | 525 |
 | `backend/src/scm/routes/accounting-bank.ts` | 0 | 1355 |
 | `backend/src/scm/routes/accounting-chart.ts` | 0 | 787 |
-| `backend/src/scm/routes/accounting-collection.ts` | 0 | 180 |
+| `backend/src/scm/routes/accounting-collection.ts` | 0 | 184 |
 | `backend/src/scm/routes/accounting-item-groups.ts` | 0 | 259 |
 | `backend/src/scm/routes/accounting-merchant-charges.ts` | 0 | 138 |
 | `backend/src/scm/routes/accounting-numbering.ts` | 0 | 134 |
@@ -118,7 +118,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
 | `backend/src/scm/routes/delivery-returns.ts` | 11 | 1879 |
 | `backend/src/scm/routes/delivery-zones.ts` | 9 | 794 |
-| `backend/src/scm/routes/deposit-invoices.ts` | 7 | 169 |
+| `backend/src/scm/routes/deposit-invoices.ts` | 8 | 189 |
 | `backend/src/scm/routes/document-cancel-routes.ts` | 11 | 692 |
 | `backend/src/scm/routes/document-flow.ts` | 2 | 1069 |
 | `backend/src/scm/routes/document-hold-routes.ts` | 0 | 96 |
@@ -225,7 +225,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2232 files, 756841 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2232 files, 757030 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |

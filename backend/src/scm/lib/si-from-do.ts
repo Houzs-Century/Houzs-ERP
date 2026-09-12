@@ -25,6 +25,7 @@ import { normalizePhone, buildVariantSummary, isServiceLine } from '../shared';
 import { scopeToCompanyIdOrOpen } from './companyScope';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from './doc-no';
 import { todayMyt } from './my-time';
+import { dateOrNull } from './date-coerce';
 import {
   doLineRemaining, doRemainingByItemId, findOverInvoicedDoItems, custKeyOf, remainingUnavailableResponse, siTransferRefusal,
 } from './do-line-remaining';
@@ -306,6 +307,10 @@ export type SiFromDoInput = {
   actor: AuditActor | null | undefined;
   /** The audit row's note; defaults to "Converted from Delivery Order(s) …". */
   auditNote?: string;
+  /** The invoice's date (YYYY-MM-DD). Defaults to today (MYT) — the picker's
+      rule; a delivery invoiced after the fact passes its delivery day so the
+      revenue lands in the month the goods left (docs/bugs/0832). */
+  invoiceDate?: string | null;
 };
 
 export type SiFromDoStatus = 201 | 400 | 404 | 409 | 500 | 503;
@@ -433,7 +438,7 @@ export async function createSalesInvoiceFromDoLines(sb: Db, input: SiFromDoInput
     delivery_order_id: firstDoId,
     debtor_code: (head.debtor_code as string | null) ?? null,
     debtor_name: (head.debtor_name as string | null) ?? 'Customer',
-    invoice_date: todayMyt(),
+    invoice_date: dateOrNull(input.invoiceDate) ?? todayMyt(),
     customer_delivery_date: (head.customer_delivery_date as string | null) ?? null,
     address1: (head.address1 as string | null) ?? null,
     address2: (head.address2 as string | null) ?? null,

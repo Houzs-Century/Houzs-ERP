@@ -1227,8 +1227,8 @@
     },
     {
       "check": "D1",
-      "key": "CLOSED,DELIVERED,INVOICED|backend/src/scm/routes/accounting-collection.ts backend/src/services/agents/cs-agent.ts",
-      "why": "DELIVERED-OR-BEYOND, asked twice: the CS agent answers \"has the customer got it\" for a chat reply; the Collection report (docs/bugs/0825) answers \"is this order at the balance stage\" for Finance. Both read the SO status enum as the same three words today. Recorded rather than collapsed: since docs/bugs/0831 the report ALSO counts an order with a live sales invoice as at the balance stage and measures the balance against the invoice's total; the status set stays for the delivered-but-uninvoiced orders, while the agent stays on delivery alone — they diverge on purpose."
+      "key": "CLOSED,DELIVERED,INVOICED|backend/src/scm/shared/so-deliverable-states.ts backend/src/services/agents/cs-agent.ts frontend/src/vendor/shared/so-deliverable-states.ts",
+      "why": "DELIVERED-OR-BEYOND, asked twice (the frontend copy is the byte-identical VENDORED TWIN of the shared file, refereed by frontend/src/vendor/shared/so-deliverable-states.canonical.test.ts — not a second decision): the CS agent answers \"has the customer got it\" for a chat reply; the sales side (SO_DELIVERED_OR_BEYOND in scm/shared/so-deliverable-states.ts, since docs/bugs/0832 the ONE home the Collection report and the final-invoice backlog both read) answers \"is this order at the balance stage\" for Finance. Both read the SO status enum as the same three words today. Recorded rather than collapsed: since docs/bugs/0831 the report ALSO counts an order with a live sales invoice as at the balance stage and measures the balance against the invoice's total; the status set stays for the delivered-but-uninvoiced orders, while the agent stays on delivery alone — they diverge on purpose."
     },
     {
       "check": "D1",
