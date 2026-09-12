@@ -1,0 +1,17 @@
+{
+  "_what": "Which side a bedframe's drawer is on, where the customer's own text says only 'side drawer' and names no side. The catalogue holds Front Drawer (RM130), Left Drawer (RM160) and Right Drawer (RM160) and no neutral 'Side Drawer', so a side drawer MUST be recorded as left or right - and only the owner or the salesperson can say which.",
+  "_why_this_file": "Owner rulings live in a file the moment they are given, never only in a chat transcript. See the memory note owner-answers-must-be-written-down.",
+  "_defect": "parse-bedframe.mjs:161 treats an unqualified DRAWER as a FRONT drawer, and the side-drawer test requires a space, so `Sidedrawer` (one word) fell through. 41 sales lines across 29 sales orders carry Front Drawer while the customer's text says a side one. docs/bugs/0824.",
+  "rulings": [
+    {
+      "doc": "HC-SO-003434",
+      "itemCode": "TRION (A) (HB STR)-(K)",
+      "bookText": "Sidedrawer/PC151-01/Divan12/gap10",
+      "was": "Front Drawer",
+      "is": "Right Drawer",
+      "by": "owner, 2026-09-12, in chat, on the document he sent with the delivery order HC-DO-2609-058",
+      "note": "The customer (Chris Tang, HC4681) asked for a side drawer; purchasing flagged that the SO said Front Drawer and the DO printed Front Drawer."
+    }
+  ],
+  "_convention": "THE SIDE IS READ AS YOU LOOK AT IT, not as the sleeper lies. Owner, 2026-09-12, confirmed on two documents: HC-SO-003432's hand-drawn slip (a stick figure lying head-up with the drawers drawn on the RIGHT of the picture) and HC-SO-003434's photo of the installed bed (drawers on the long side facing the camera, headboard at the far right) — both are RIGHT DRAWER. So: stand at the foot facing the headboard, or look at the slip as drawn; a drawer on your right is Right Drawer. Reading it from the sleeper's own left/right would mirror all of them, which is why this sentence exists. Same class as the sofa TV rule (sofa-handedness-is-mirrored)."
+}

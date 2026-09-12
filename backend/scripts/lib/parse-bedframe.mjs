@@ -155,9 +155,24 @@ function parseBedframe(d2) {
   /* Every other option the staff describe in words. Without these, 245 lines
      mentioning a real option (drawer / curve / headboard only / side panel /
      infront / one-piece divan) imported with NOTHING ticked. */
-  if (/LEFT\s*DRAWER|DRAWER\s*(?:AT\s*)?LEFT/i.test(s)) o.specials.push("Left Drawer");
-  if (/RIGHT\s*DRAWER|DRAWER\s*(?:AT\s*)?RIGHT/i.test(s)) o.specials.push("Right Drawer");
-  if (/FRONT\s*DRAWER|DRAWER\s*(?:AT\s*)?FRONT/i.test(s)) o.specials.push("Front Drawer");
+  /* A HAND may be written with no space and on either side of the word:
+     "Leftside Drawer", "Sidedrawer", "drawer at left", "add on right side
+     drawer", "2SIDE DRAWER". The tests below used to demand a space, so
+     `Sidedrawer` matched none of them and fell through to the unqualified rule
+     beneath - which called it a FRONT drawer. 41 sales lines over 29 sales
+     orders were recorded as Front while the customer's own text asked for a
+     side one, and the customer of HC-SO-003434 received a delivery order
+     printing "Front Drawer" (docs/bugs/0824). */
+  if (/LEFT\s*-?\s*(?:HAND\s*)?(?:SIDE\s*)?DRAWER|DRAWER\s*(?:AT\s*)?(?:THE\s*)?LEFT|LEFTSIDE/i.test(s)) o.specials.push("Left Drawer");
+  if (/RIGHT\s*-?\s*(?:HAND\s*)?(?:SIDE\s*)?DRAWER|DRAWER\s*(?:AT\s*)?(?:THE\s*)?RIGHT|RIGHTSIDE/i.test(s)) o.specials.push("Right Drawer");
+  if (/FRONT\s*-?\s*DRAWER|DRAWER\s*(?:AT\s*)?FRONT|FRONTDRAWER/i.test(s)) o.specials.push("Front Drawer");
+  /* A SIDE drawer with no hand named is NOT a front drawer, and which side it
+     is cannot be guessed here: the catalogue holds Front / Left / Right and no
+     neutral "Side", and the answer lives in the supplier's own record, the
+     slip's drawing, or the salesperson. Marked so the repair tool can find it
+     and a human can answer it - never silently filed as Front. */
+  if (/SIDE\s*-?\s*DRAWER|DRAWER\s*(?:AT\s*)?(?:THE\s*)?SIDE|SIDEDRAWER/i.test(s)
+      && !o.specials.some((x) => /drawer/i.test(x))) o.specials.push("Side Drawer (side unknown)");
   if (/DRAWER/i.test(s) && !o.specials.some((x) => /drawer/i.test(x))) o.specials.push("Front Drawer"); // unqualified drawer = front
   if (/DIVAN\s*CURVE|CURVE\s*DIVAN|DO\s*CURVE|EDGE.*CURVE/i.test(s)) o.specials.push("Divan Curve");
   if (/HEADBOARD\s*ONLY|HB\s*ONLY/i.test(s)) o.specials.push("Headboard Only");
