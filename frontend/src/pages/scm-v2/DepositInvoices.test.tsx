@@ -24,6 +24,8 @@ const ROWS: DepositInvoice[] = [
 ];
 const saveMutate = vi.fn();
 const issueMutate = vi.fn();
+const invoiceDeliveredMutate = vi.fn();
+const settings = { value: { settings: { enabled: true, fromDate: '2026-09-01' }, missingCount: 3, deliveredUninvoicedCount: 2 } };
 const cancelMutate = vi.fn();
 const postMutate = vi.fn();
 const lastList = { value: '' };
@@ -35,9 +37,10 @@ vi.mock('../../vendor/scm/lib/deposit-invoice-queries', async (importOriginal) =
     data: id ? { invoice: ROWS.find((r) => r.id === id)!, payment: { id: 'p-1', paid_at: '2026-09-05', method: 'cash', merchant_provider: null, online_type: null, amount_sen: 100000, is_deposit: true, collected_by: null } } : undefined,
     isLoading: false, isError: false, error: null,
   }),
-  useDepositInvoiceSettings: () => ({ data: { settings: { enabled: true, fromDate: '2026-09-01' }, missingCount: 3 }, isLoading: false, isError: false, error: null }),
+  useDepositInvoiceSettings: () => ({ data: settings.value, isLoading: false, isError: false, error: null }),
   useSaveDepositInvoiceSettings: () => ({ mutate: saveMutate, isPending: false }),
   useIssueMissingDepositInvoices: () => ({ mutate: issueMutate, isPending: false, isSuccess: false, data: undefined }),
+  useInvoiceDeliveredOrders: () => ({ mutate: invoiceDeliveredMutate, isPending: false, isSuccess: false, data: undefined }),
   useCancelDepositInvoice: () => ({ mutate: cancelMutate, isPending: false, isError: false, isSuccess: false, error: null, data: undefined }),
   usePostDepositInvoice: () => ({ mutate: postMutate, isPending: false, isError: false, isSuccess: false, error: null, data: undefined }),
 }));
@@ -72,6 +75,22 @@ describe('the Deposit Invoices page', () => {
     fireEvent.click(within(card).getByLabelText('Issue a deposit invoice for every customer payment'));
     fireEvent.click(within(card).getByText('Save'));
     expect(saveMutate.mock.calls[0]?.[0]).toEqual({ enabled: false, fromDate: '2026-09-01' });
+  });
+
+  test('the delivered backlog waits for the deposit invoices, then invoices on a button', () => {
+    render(<MemoryRouter><DepositInvoices /></MemoryRouter>);
+    const card = screen.getByLabelText('Deposit invoice switch');
+    expect(within(card).getByText(/2 delivered orders still without a final invoice/)).toBeTruthy();
+    const btn = within(card).getByText('Invoice them now') as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);                       // 3 deposit invoices still to issue
+    settings.value = { ...settings.value, missingCount: 0 };
+    render(<MemoryRouter><DepositInvoices /></MemoryRouter>);
+    const btns = screen.getAllByText('Invoice them now') as HTMLButtonElement[];
+    const ready = btns[btns.length - 1]!;
+    expect(ready.disabled).toBe(false);
+    fireEvent.click(ready);
+    expect(invoiceDeliveredMutate).toHaveBeenCalled();
+    settings.value = { ...settings.value, missingCount: 3 };
   });
 
   test('an invoice opens with its payment; Cancel invoice waits for a reason, then sends it; a posted invoice offers no Post', () => {

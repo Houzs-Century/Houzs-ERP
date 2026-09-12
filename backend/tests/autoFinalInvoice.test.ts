@@ -13,7 +13,7 @@
 
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
-import { autoFinalInvoiceForOrder } from '../src/scm/lib/auto-final-invoice';
+import { autoFinalInvoiceForOrder, deliveredUninvoiced, invoiceDeliveredOrders } from '../src/scm/lib/auto-final-invoice';
 import { createSalesInvoiceFromDoLines } from '../src/scm/lib/si-from-do';
 
 const CO = 2;
@@ -52,7 +52,7 @@ function harness(opts: { settings?: Row[]; doStatus?: string; extraDos?: Row[]; 
       {
         id: 'do-1', company_id: CO, so_doc_no: SO, do_number: '2990-DO-2609-001', status: opts.doStatus ?? 'DELIVERED',
         debtor_code: null, debtor_name: 'Larding Chen', customer_delivery_date: '2026-09-10', phone: '0123456789', migrated_no_stock: false,
-        salesperson_id: 'st-1', currency: 'MYR', do_date: '2026-09-10',
+        salesperson_id: 'st-1', currency: 'MYR', do_date: '2026-09-10', delivered_at: '2026-08-20T03:15:00Z',
       },
       ...(opts.extraDos ?? []),
     ],
@@ -153,6 +153,21 @@ describe('the final invoice at delivery', () => {
     const draft = harness({ settings: [ON], doStatus: 'DRAFT' });
     expect(await autoFinalInvoiceForOrder(draft, { docNo: SO, companyId: CO, actorId: 'u-1' })).toEqual({ ok: true, status: 'nothing_to_invoice' });
     expect(sis(draft)).toHaveLength(0);
+  });
+
+  test('the backlog: a delivered order with no invoice is invoiced on the day its goods left; an invoiced one is not in it; the switch off skips (docs/bugs/0832)', async () => {
+    const sb = harness({ settings: [ON] });
+    const backlog = await deliveredUninvoiced(sb, CO);
+    expect(backlog).toEqual({ ok: true, orders: [{ docNo: SO, deliveredOn: '2026-08-20' }] });
+    const r = await invoiceDeliveredOrders(sb, CO, 'u-9');
+    expect(r).toEqual({ ok: true, invoiced: [`2990-SI-${yymm()}-001`], skipped: [] });
+    expect(sis(sb)[0]).toMatchObject({ invoice_date: '2026-08-20', created_by: 'u-9', status: 'SENT' });
+    expect(jes(sb).find((j) => j.source_type === 'SI')).toMatchObject({ entry_date: '2026-08-20' });
+    expect(await deliveredUninvoiced(sb, CO)).toEqual({ ok: true, orders: [] });
+    expect(await invoiceDeliveredOrders(sb, CO, 'u-9')).toEqual({ ok: true, invoiced: [], skipped: [] });
+    const off = harness();
+    expect(await invoiceDeliveredOrders(off, CO, 'u-9')).toEqual({ ok: true, invoiced: [], skipped: [{ docNo: SO, why: 'switched_off' }] });
+    expect(sis(off)).toHaveLength(0);
   });
 
   test('the picker path converts through the same core: a refused pick names its reason, a good pick raises the invoice', async () => {

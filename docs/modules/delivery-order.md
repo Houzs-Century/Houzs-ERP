@@ -1329,6 +1329,14 @@ Refusals the operator sees, in the order they fire:
 > (`frontend/src/vendor/shared/so-deliverable-states.ts`, refereed by
 > `so-deliverable-states.canonical.test.ts`).
 >
+> **Since 2026-09-12 (docs/bugs/0832) the same file carries two more readings
+> of the SO status**, so the sales side asks each question in ONE place:
+> `SO_DELIVERED_OR_BEYOND` = `{DELIVERED, INVOICED, CLOSED}` (the Collection
+> report's balance stage and the orders the final-invoice backlog may invoice)
+> and `SO_NOT_AN_ORDER` = `{DRAFT, CANCELLED}` (left out of collection; no
+> deposit invoice is raised on one). Neither touches `soCanRaiseDo`; the
+> frontend twin carries them byte-for-byte, as the canonical test requires.
+>
 > **`CLOSED` joined the set on 2026-08-22**, when the status came back on the
 > Sales Order meaning **stop chasing the remainder** — the customer took 7 of the
 > 10, or the supplier cannot supply the last 3, and the delivered part stands

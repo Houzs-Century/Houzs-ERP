@@ -47,7 +47,7 @@ export const useDepositInvoiceDetail = (id: string | null) => useQuery({
 
 export const useDepositInvoiceSettings = () => useQuery({
   queryKey: [KEY, 'settings'],
-  queryFn: () => authedFetch<{ settings: DepositInvoiceSettings; missingCount: number }>('/deposit-invoices/settings'),
+  queryFn: () => authedFetch<{ settings: DepositInvoiceSettings; missingCount: number; deliveredUninvoicedCount: number }>('/deposit-invoices/settings'),
   staleTime: 0,
   retry: retryUnlessClientError,
 });
@@ -67,6 +67,16 @@ export const useIssueMissingDepositInvoices = () => {
     mutationFn: () =>
       authedFetch<{ ok: boolean; issued: string[]; skipped: Array<{ paymentId: string; why: string }> }>('/deposit-invoices/issue-missing', { method: 'POST', body: '{}' }),
     onSuccess: () => invalidate(qc),
+  });
+};
+
+/** Invoice the delivered orders the switch found already delivered (docs/bugs/0832). */
+export const useInvoiceDeliveredOrders = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      authedFetch<{ ok: boolean; invoiced: string[]; skipped: Array<{ docNo: string; why: string }> }>('/deposit-invoices/invoice-delivered', { method: 'POST', body: '{}' }),
+    onSuccess: () => { invalidate(qc); void qc.invalidateQueries({ queryKey: ['sales-invoices'] }); },
   });
 };
 

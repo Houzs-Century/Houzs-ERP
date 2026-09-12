@@ -14,21 +14,25 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { paginateAll } from '../lib/paginate-all';
 import { absorbsOrderDeposit } from '../lib/si-order-deposit';
+import { SO_DELIVERED_OR_BEYOND, SO_NOT_AN_ORDER } from '../shared/so-deliverable-states';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 const requirePerm = (c: Ctx): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 const NO_PERM = { error: "You don't have permission to read the financial statements." };
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Orders that never became orders, or were taken back, are not collection. */
-const NOT_AN_ORDER = new Set(['DRAFT', 'CANCELLED']);
+/** Orders that never became orders, or were taken back, are not collection —
+    the sales side's one reading, shared with the deposit invoice. */
+const NOT_AN_ORDER = SO_NOT_AN_ORDER;
 /** Delivered or beyond: the balance stage by STATUS. An order with a live
     sales invoice is at the balance stage whatever its status says, and its
     balance is measured against what was BILLED — the invoice's total — not
     the order's (docs/bugs/0831: the owner's "balance paid / convert to sales
     invoice"). Until every delivery raises its invoice, the status keeps the
-    delivered-but-uninvoiced orders in view. */
-const DELIVERED = new Set(['DELIVERED', 'INVOICED', 'CLOSED']);
+    delivered-but-uninvoiced orders in view. The set is the sales side's one
+    reading (scm/shared/so-deliverable-states), shared with the final-invoice
+    backlog. */
+const DELIVERED = SO_DELIVERED_OR_BEYOND;
 type SiRow = { so_doc_no: string | null; invoice_number: string; status: string | null; total_sen: number | null };
 
 type SoRow = {

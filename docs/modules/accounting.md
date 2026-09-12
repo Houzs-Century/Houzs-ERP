@@ -1015,6 +1015,27 @@ delivered-but-uninvoiced orders; the allowlist entry in
 Contracts: `backend/tests/depositInvoiceCloseout.test.ts`,
 `backend/tests/collectionReport.test.ts`, `CollectionReport.test.tsx`.
 
+**The switch turned on after the fact (2026-09-12, docs/bugs/0832; owner:
+已送货的根据程序走).** Two rules were missing once 2990 switched on with a June
+start day. A payment on a DRAFT or CANCELLED order earns no deposit invoice
+— `issueDepositInvoice` refuses it by name (`order_not_live`) and the backlog
+(`missingDepositInvoices`) leaves it out; 2990 had three such payments, a
+refund or a credit, never a sale. And the delivered orders the switch found
+already delivered (64 on 2990, no sales invoice) are invoiced on a second
+button — `deliveredUninvoiced` / `invoiceDeliveredOrders` in
+`backend/src/scm/lib/auto-final-invoice.ts`, `POST /deposit-invoices/invoice-delivered`
+(`backend/src/scm/routes/deposit-invoices.ts`), the count on the settings read
+— each invoice dated the day its goods left (the latest `delivered_at` of the
+order's invoiceable deliveries, else the customer delivery date, else today;
+`createSalesInvoiceFromDoLines` takes `invoiceDate` for it) so the revenue
+lands in the month the goods left, and its deposit invoices close by credit
+note as the revenue posts. THE ORDER MATTERS and the page enforces it: the
+deposit invoices are issued FIRST (the invoice button waits while any payment
+is still without one), then the delivered orders are invoiced — otherwise an
+invoiced order's deposits would simply settle the invoice with no deposit
+invoice ever raised. Contracts: `backend/tests/depositInvoices.test.ts`,
+`backend/tests/autoFinalInvoice.test.ts`, `DepositInvoices.test.tsx`.
+
 **The Merchant charges report (2026-09-12, docs/bugs/0826; owner: 我需要知道
 merchant charge 多少%，就是 charge / received amount，每个月的然后每个 merchant …
 每个不同 merchant 都要能看到，我指的是 gross … 每个月全部 merchant 加起来的%).**
