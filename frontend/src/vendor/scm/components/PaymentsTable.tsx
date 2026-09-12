@@ -111,28 +111,62 @@ export type MerchantProvider = string;
    below can only fire on data that predates the API lock. */
 export type PaymentMethodLabel = string;
 
+/* Maintenance VALUE → ledger code, for ALL FOUR codes the ledger stores. The
+   shared PAYMENT_METHOD_VALUE_TO_CODE deliberately omits Installment — that map
+   is the LOCK list (the three protected L1 rows) — so it must not be the
+   resolver here: an `installment` row opened for edit carries the value
+   'Installment', fell through to a cash fallback, and the edit was SAVED AS
+   CASH — sheet, plan and journal with it (owner 2026-09-12: 用 finance 权限改
+   资料时 payment method 会跳掉去 cash; docs/bugs/0838). A value none of the four
+   is refused by name — never booked as something else. */
+const VALUE_TO_CODE: Readonly<Partial<Record<string, PaymentMethod>>> = Object.fromEntries(
+  (Object.entries(PAYMENT_METHOD_CODE_TO_VALUE) as Array<[PaymentMethod, string]>).map(([code, value]) => [value, code]),
+);
+
+export class UnknownPaymentMethodError extends Error {
+  constructor(label: string) {
+    super(`Payment method "${label}" is not one of Merchant / Online / Installment / Cash — pick the method again before saving.`);
+    this.name = 'UnknownPaymentMethodError';
+  }
+}
+
 export const labelToApi = (label: PaymentMethodLabel): {
   method: PaymentMethod;
   merchantProvider: MerchantProvider | null;
 } => {
-  const method = paymentMethodCodeForValue(label);
+  const method = VALUE_TO_CODE[label] ?? paymentMethodCodeForValue(label);
   if (method) return { method, merchantProvider: null };
-  // The payment_method category is locked server-side to the four core
-  // values, so an unknown value here means pre-lock drifted data — surface
-  // it and fall back to cash so we don't book a card payment as transfer.
-  // eslint-disable-next-line no-console
-  console.warn(
-    `[PaymentsTable] Unknown payment method value "${label}" — falling ` +
-    `back to method=cash. Values are locked to Merchant / Online / ` +
-    `Installment / Cash (see @2990s/shared/payment-methods).`,
-  );
-  return { method: 'cash', merchantProvider: null };
+  throw new UnknownPaymentMethodError(label);
 };
 
 /* Persisted method code → the maintenance row VALUE (for select rehydrate
-   + the locked-set keys). Display labels resolve live from methodOpts. */
+   + the locked-set keys). Display labels resolve live from methodOpts. A code
+   the screen does not know opens under its own name (the select shows it as
+   an extra option) so the row cannot be saved as anything else by accident. */
 const apiToValue = (p: SoPayment): string =>
-  PAYMENT_METHOD_CODE_TO_VALUE[p.method] ?? 'Cash';
+  (PAYMENT_METHOD_CODE_TO_VALUE as Partial<Record<string, string>>)[p.method] ?? String(p.method);
+
+/* The edit draft, seeded VERBATIM from the persisted row (owner 2026-09-12: 我按
+   edit 时默认会已输入的资料，我只会 edit 我想要 edit 的东西; docs/bugs/0838) —
+   every field as stored, the method by its own value (an installment row opens
+   as Installment with its bank and plan), nothing derived, so a save that
+   touches one field sends the rest back unchanged. */
+export const editDraftOf = (p: SoPayment, planLabel: (months: number | null) => string): PaymentDraft => ({
+  uid: Math.random().toString(36).slice(2, 10),
+  paidAt: (p.paid_at ?? '').slice(0, 10) || todayMyt(),
+  methodLabel: apiToValue(p),
+  merchantProvider: p.merchant_provider ?? '',
+  installmentMonthsLabel:
+    (p.method === 'merchant' || p.method === 'installment')
+      ? planLabel(p.installment_months) : '',
+  onlineType: p.online_type ?? '',
+  amountSen: p.amount_sen,
+  accountSheet: p.account_sheet ?? '',
+  approvalCode: p.approval_code ?? '',
+  collectedBy: p.collected_by ?? '',
+  slipUploadSessionId: null,
+  editingPersistedId: p.id,
+});
 
 const methodPillStyle = (m: PaymentMethod): CSSProperties => {
   const bg =
@@ -778,22 +812,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      draft edits it. Reuses the exact same inline fields as Add Payment. */
   const beginEditPersisted = (p: SoPayment) => {
     if (!isSaved || isEditingPersisted(p.id)) return;
-    setSavedDrafts((prev) => [...prev, {
-      uid: Math.random().toString(36).slice(2, 10),
-      paidAt: (p.paid_at ?? '').slice(0, 10) || todayMyt(),
-      methodLabel: apiToValue(p),
-      merchantProvider: p.merchant_provider ?? '',
-      installmentMonthsLabel:
-        (p.method === 'merchant' || p.method === 'installment')
-          ? installmentLabelForMonths(p.installment_months) : '',
-      onlineType: p.online_type ?? '',
-      amountSen: p.amount_sen,
-      accountSheet: p.account_sheet ?? '',
-      approvalCode: p.approval_code ?? '',
-      collectedBy: p.collected_by ?? '',
-      slipUploadSessionId: null,
-      editingPersistedId: p.id,
-    }]);
+    setSavedDrafts((prev) => [...prev, editDraftOf(p, installmentLabelForMonths)]);
   };
 
   /* Commit an edit draft → PATCH /:docNo/payments/:id. Same payload derivation
@@ -804,7 +823,9 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     if (!isSaved || !d.editingPersistedId) return;
     const persisted = persistedPayments.find((p) => p.id === d.editingPersistedId);
     if (!persisted) return;
-    const { method } = labelToApi(d.methodLabel);
+    let method: PaymentMethod;
+    try { ({ method } = labelToApi(d.methodLabel)); }
+    catch (e) { void notify({ title: 'Payment method not recognised', body: e instanceof Error ? e.message : String(e), tone: 'error' }); return; }
     const body = {
       docNo:        (props as SavedModeProps).docNo,
       id:           d.editingPersistedId,
@@ -860,7 +881,9 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       });
       return;
     }
-    const { method } = labelToApi(d.methodLabel);
+    let method: PaymentMethod;
+    try { ({ method } = labelToApi(d.methodLabel)); }
+    catch (e) { void notify({ title: 'Payment method not recognised', body: e instanceof Error ? e.message : String(e), tone: 'error' }); return; }
     /* Cascade payload — populate sub-fields by the L1 method only
        (draftMethodFields). The API mirrors the same guard and will scrub any
        irrelevant sub-fields (e.g. a stale onlineType left over from a
@@ -919,7 +942,9 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       if (d.amountSen <= 0) { blocked.push(`${d.methodLabel}: no amount`); continue; }
       const missing = missingMethodSubField(d);
       if (missing) { blocked.push(`${d.methodLabel}: pick the ${missing}`); continue; }
-      const { method } = labelToApi(d.methodLabel);
+      let method: PaymentMethod;
+      try { ({ method } = labelToApi(d.methodLabel)); }
+      catch (e) { blocked.push(`${d.methodLabel}: ${e instanceof Error ? e.message : 'payment method not recognised'}`); continue; }
       try {
         await addPayment.mutateAsync({
           docNo:           (props as SavedModeProps).docNo,
