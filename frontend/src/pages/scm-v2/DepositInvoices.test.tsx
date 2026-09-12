@@ -1,9 +1,10 @@
 /* The Deposit Invoices page (docs/bugs/0828): the switch line and the
    backlog button, the list with its filters, one invoice with its payment,
-   cancel behind a reason, post again. The server half is
-   backend/tests/depositInvoices.test.ts. */
+   cancel behind a reason, post again; Print in the detail prints the one
+   invoice and ticked rows print as one document in list order
+   (docs/bugs/0834). The server half is backend/tests/depositInvoices.test.ts. */
 
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import type { DepositInvoice } from '../../vendor/scm/lib/deposit-invoice-queries';
@@ -29,6 +30,9 @@ const settings = { value: { settings: { enabled: true, fromDate: '2026-09-01' },
 const cancelMutate = vi.fn();
 const postMutate = vi.fn();
 const lastList = { value: '' };
+const pdfSingle = vi.fn(async (..._args: unknown[]) => {});
+const pdfBatch = vi.fn(async (..._args: unknown[]) => {});
+vi.mock('../../vendor/scm/lib/deposit-invoice-pdf', () => ({ generateDepositInvoicePdf: pdfSingle, generateDepositInvoicesPdf: pdfBatch }));
 
 vi.mock('../../vendor/scm/lib/deposit-invoice-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
@@ -106,12 +110,32 @@ describe('the Deposit Invoices page', () => {
     expect(cancelMutate).toHaveBeenCalledWith({ id: 'd1', reason: 'Customer changed order' });
   });
 
-  test('a cancelled invoice shows its reason and offers no actions', () => {
+  test('a cancelled invoice shows its reason and offers neither Post nor Cancel', () => {
     render(<MemoryRouter><DepositInvoices /></MemoryRouter>);
     fireEvent.click(screen.getByText('2990-DI-2609-002'));
     const dialog = screen.getByLabelText('Deposit invoice');
     expect(within(dialog).getByText(/payment on 2990-SO-2609-002 edited — re-issued/)).toBeTruthy();
     expect(within(dialog).queryByText('Cancel invoice')).toBeNull();
     expect(within(dialog).queryByLabelText('Cancel reason')).toBeNull();
+  });
+
+  test('Print in the detail prints the one invoice — a cancelled one too; ticked rows print as ONE document in list order (docs/bugs/0834)', async () => {
+    render(<MemoryRouter><DepositInvoices /></MemoryRouter>);
+    fireEvent.click(screen.getByText('2990-DI-2609-002'));
+    const dialog = screen.getByLabelText('Deposit invoice');
+    fireEvent.click(within(dialog).getByText('Print'));
+    await waitFor(() => expect(pdfSingle).toHaveBeenCalled());
+    expect(pdfSingle.mock.calls[0]?.[0]).toMatchObject({ di_number: '2990-DI-2609-002', status: 'CANCELLED', so_doc_no: '2990-SO-2609-002', method: 'merchant' });
+    expect(pdfSingle.mock.calls[0]?.[1]).toEqual({ action: 'print' });
+
+    /* Ticked in the other order; printed in LIST order. */
+    fireEvent.click(screen.getByLabelText('Tick 2990-DI-2609-002'));
+    fireEvent.click(screen.getByLabelText('Tick 2990-DI-2609-001'));
+    expect(screen.getByText('2 ticked')).toBeTruthy();
+    fireEvent.click(screen.getByText('Print 2'));
+    await waitFor(() => expect(pdfBatch).toHaveBeenCalled());
+    const list = pdfBatch.mock.calls[0]?.[0] as Array<{ di_number: string }>;
+    expect(list.map((d) => d.di_number)).toEqual(['2990-DI-2609-001', '2990-DI-2609-002']);
+    expect(pdfBatch.mock.calls[0]?.[1]).toEqual({ action: 'print' });
   });
 });

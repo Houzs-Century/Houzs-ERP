@@ -1036,6 +1036,37 @@ invoiced order's deposits would simply settle the invoice with no deposit
 invoice ever raised. Contracts: `backend/tests/depositInvoices.test.ts`,
 `backend/tests/autoFinalInvoice.test.ts`, `DepositInvoices.test.tsx`.
 
+**The deposit invoice and the credit note on paper (2026-09-12, docs/bugs/0834;
+owner: 打印版，根据 PV/OR PDF 可以，需要显示 SO 号和付款方式，CN 要显示它关的 DI
+号和 final invoice 号，要批量打印).** Both print client-side, like the payment
+voucher and the official receipt. `frontend/src/vendor/scm/lib/deposit-invoice-pdf.ts`
+draws one deposit invoice (A5 landscape, the receipt's shape): the customer,
+the sales order it is for, how it was paid, the amount in figures and in
+words, the credit note that closed it, and a CANCELLED watermark with the
+reason when it is void. `frontend/src/vendor/scm/lib/credit-note-pdf.ts` draws
+one note (A4, the voucher's shape) under the kind's title — CREDIT NOTE,
+DEBIT NOTE, SUPPLIER CREDIT NOTE — with the party, the papers it answers (the
+sales order; the deposit invoice it closes when its reference is a `-DI-`
+number, otherwise the reference as typed; the final invoice; the reason), a
+line per account with the chart's name, TOTAL, the amount in words, and a
+DRAFT or CANCELLED watermark. For the final invoice's number the credit-note
+list and detail carry `sales_invoice_number` (`withInvoiceNumbers` in
+`backend/src/scm/routes/credit-notes.ts`, read once per list the way the
+deposit-invoice page reads its note numbers;
+`frontend/src/vendor/scm/lib/credit-note-queries.ts` types it). On both pages
+— `frontend/src/pages/scm-v2/CreditNotes.tsx`,
+`frontend/src/pages/scm-v2/DepositInvoices.tsx` — Print in the detail prints
+the one document (a cancelled deposit invoice too, as void), and ticked rows
+print as ONE document in LIST order, a page each, from a bar that appears
+once something is ticked; the notes' lines and the chart's names are read
+when the print is asked for, not on page open. Contracts:
+`backend/tests/creditNotes.test.ts` (the invoice number on list and detail),
+`frontend/src/vendor/scm/lib/deposit-invoice-pdf.test.ts` and
+`frontend/src/vendor/scm/lib/credit-note-pdf.test.ts` (what each sheet
+draws), `frontend/src/pages/scm-v2/CreditNotes.test.tsx` and
+`frontend/src/pages/scm-v2/DepositInvoices.test.tsx` (the detail's Print, the
+ticked batch in list order).
+
 **The Merchant charges report (2026-09-12, docs/bugs/0826; owner: 我需要知道
 merchant charge 多少%，就是 charge / received amount，每个月的然后每个 merchant …
 每个不同 merchant 都要能看到，我指的是 gross … 每个月全部 merchant 加起来的%).**

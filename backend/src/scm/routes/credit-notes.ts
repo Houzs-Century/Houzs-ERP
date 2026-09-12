@@ -103,6 +103,23 @@ async function resolveCustomer(c: any, body: any): Promise<
   return { party: { code: String(body.partyCode ?? '').trim() || null, name }, soDocNo: null, salesInvoiceId: null };
 }
 
+/** The final invoice's number for a note that answers one (docs/bugs/0834):
+    the print says which invoice a close-out note follows, and the row carries
+    only the id. Read once per list, the way the deposit-invoice page reads
+    its note numbers. */
+async function withInvoiceNumbers(c: any, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
+  const ids = [...new Set(rows.map((r) => r.sales_invoice_id).filter((x): x is string => typeof x === 'string' && x !== ''))];
+  const numberOf = new Map<string, string>();
+  if (ids.length > 0) {
+    const co = requireActiveCompanyId(c);
+    if (!co.ok) return { resp: c.json(co.refusal, 409) };
+    const { data, error } = await c.get('supabase').from('sales_invoices').select('id, invoice_number').eq('company_id', co.companyId).in('id', ids);
+    if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
+    for (const s of (Array.isArray(data) ? data : []) as Array<{ id: string; invoice_number: string }>) numberOf.set(String(s.id), String(s.invoice_number));
+  }
+  return { rows: rows.map((r) => ({ ...r, sales_invoice_number: typeof r.sales_invoice_id === 'string' ? numberOf.get(r.sales_invoice_id) ?? null : null })) };
+}
+
 export const listCreditNotesHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -114,7 +131,9 @@ export const listCreditNotesHandler = async (c: any): Promise<Response> => {
   if (status === 'DRAFT' || status === 'POSTED' || status === 'CANCELLED') q = q.eq('status', status);
   const { data, error } = await q.order('note_date', { ascending: false }).order('note_number', { ascending: false }).limit(500);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ rows: (Array.isArray(data) ? data : []) as Row[] });
+  const numbered = await withInvoiceNumbers(c, (Array.isArray(data) ? data : []) as Row[]);
+  if ('resp' in numbered) return numbered.resp;
+  return c.json({ rows: numbered.rows });
 };
 
 export const creditNoteDetailHandler = async (c: any): Promise<Response> => {
@@ -125,7 +144,9 @@ export const creditNoteDetailHandler = async (c: any): Promise<Response> => {
   const sb = c.get('supabase');
   const { data: lines, error } = await scopeToCompany(sb.from('acc_credit_note_lines').select(LINE).eq('note_id', found.note.id), c).order('line_no');
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ note: found.note, lines: (Array.isArray(lines) ? lines : []) as Row[] });
+  const numbered = await withInvoiceNumbers(c, [found.note as unknown as Row]);
+  if ('resp' in numbered) return numbered.resp;
+  return c.json({ note: numbered.rows[0], lines: (Array.isArray(lines) ? lines : []) as Row[] });
 };
 
 export const createCreditNoteHandler = async (c: any): Promise<Response> => {

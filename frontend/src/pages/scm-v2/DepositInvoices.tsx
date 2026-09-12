@@ -19,6 +19,7 @@ import {
   useIssueMissingDepositInvoices, useInvoiceDeliveredOrders, useCancelDepositInvoice, usePostDepositInvoice,
   type DepositInvoiceStatus,
 } from '../../vendor/scm/lib/deposit-invoice-queries';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
 
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'That was not accepted.');
@@ -44,6 +45,23 @@ export const DepositInvoices = () => {
   const [openId, setOpenId] = useState<string | null>(null);
   const listQ = useDepositInvoices(status, so.trim());
   const rows = listQ.data?.rows ?? [];
+  const [ticked, setTicked] = useState<Set<string>>(new Set());
+  const [printing, setPrinting] = useState(false);
+  const [printError, setPrintError] = useState<string | null>(null);
+  const toggle = (id: string) => setTicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const allTicked = rows.length > 0 && rows.every((d) => ticked.has(d.id));
+
+  /* The ticked invoices as ONE document in LIST order, a page each (owner
+     2026-09-12: 要批量打印; docs/bugs/0834). The row carries all the sheet needs. */
+  const printTicked = async (action: PdfAction) => {
+    const targets = rows.filter((d) => ticked.has(d.id));
+    if (targets.length === 0 || printing) return;
+    setPrinting(true); setPrintError(null);
+    try {
+      const { generateDepositInvoicesPdf } = await import('../../vendor/scm/lib/deposit-invoice-pdf');
+      await generateDepositInvoicesPdf(targets, { action });
+    } catch (e) { setPrintError(errText(e)); } finally { setPrinting(false); }
+  };
 
   return (
     <div className="space-y-4">
@@ -64,11 +82,21 @@ export const DepositInvoices = () => {
       {listQ.isLoading && <div style={soft}>Loading…</div>}
       {listQ.isError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>The list did not load — {errText(listQ.error)}</div>}
       {listQ.data && rows.length === 0 && <div style={soft}>No deposit invoice matches this filter.</div>}
+      {ticked.size > 0 && (
+        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--fs-13)' }} aria-label="Ticked invoices">
+          <span>{ticked.size} ticked</span>
+          <Button size="sm" onClick={() => void printTicked('print')} disabled={printing}>{printing ? 'Preparing…' : `Print ${ticked.size}`}</Button>
+          <Button variant="ghost" size="sm" onClick={() => void printTicked('save')} disabled={printing}>Save PDF</Button>
+          <Button variant="ghost" size="sm" onClick={() => setTicked(new Set())} disabled={printing}>Clear</Button>
+          {printError && <span style={{ color: danger }}>{printError}</span>}
+        </div>
+      )}
       {rows.length > 0 && (
         <div style={card}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
+                <th style={th}><input type="checkbox" checked={allTicked} onChange={() => setTicked(allTicked ? new Set() : new Set(rows.map((d) => d.id)))} aria-label="Tick all" /></th>
                 <th style={th}>Number</th><th style={th}>Date</th><th style={th}>Customer</th><th style={th}>Order</th><th style={th}>Method</th>
                 <th style={{ ...th, textAlign: 'right' }}>Amount</th><th style={th}>Status</th><th style={th}>Journal</th><th style={th}>Closed by</th>
               </tr>
@@ -76,6 +104,7 @@ export const DepositInvoices = () => {
             <tbody>
               {rows.map((d) => (
                 <tr key={d.id} onClick={() => setOpenId(d.id)} style={{ cursor: 'pointer' }} data-invoice={d.di_number}>
+                  <td style={td} onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={ticked.has(d.id)} onChange={() => toggle(d.id)} aria-label={`Tick ${d.di_number}`} /></td>
                   <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{d.di_number}</td>
                   <td style={td}>{fmtDateOrDash(d.invoice_date)}</td>
                   <td style={td}>{d.party_name ?? d.party_code ?? '—'}</td>
@@ -182,15 +211,31 @@ const InvoiceDetail = ({ id, onClose }: { id: string; onClose: () => void }) => 
   const pay = q.data?.payment ?? null;
   const busy = cancel.isPending || post.isPending;
   const failed = cancel.isError ? cancel.error : post.isError ? post.error : null;
+  const [printing, setPrinting] = useState(false);
+  const [printError, setPrintError] = useState<string | null>(null);
+  /* A cancelled invoice prints too — as void, with its reason (docs/bugs/0834). */
+  const printOne = async () => {
+    if (!inv || printing) return;
+    setPrinting(true); setPrintError(null);
+    try {
+      const { generateDepositInvoicePdf } = await import('../../vendor/scm/lib/deposit-invoice-pdf');
+      await generateDepositInvoicePdf(inv, { action: 'print' });
+    } catch (e) { setPrintError(errText(e)); } finally { setPrinting(false); }
+  };
   return (
     <Modal title={inv ? `Deposit invoice ${inv.di_number}` : 'Deposit invoice'} onClose={onClose} width="min(760px, 100%)" ariaLabel="Deposit invoice"
-      actions={inv && inv.status === 'ISSUED' && (
+      actions={inv && (
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-          {!inv.je_no && <Button size="sm" onClick={() => post.mutate(inv.id)} disabled={busy}>{post.isPending ? 'Posting…' : 'Post to ledger'}</Button>}
-          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="why it is cancelled" aria-label="Cancel reason" style={input} />
-          <Button variant="ghost" size="sm" disabled={busy || reason.trim() === ''} onClick={() => cancel.mutate({ id: inv.id, reason: reason.trim() })}>
-            {cancel.isPending ? 'Cancelling…' : 'Cancel invoice'}
-          </Button>
+          <Button variant="ghost" size="sm" onClick={() => void printOne()} disabled={busy || printing}>{printing ? 'Preparing…' : 'Print'}</Button>
+          {inv.status === 'ISSUED' && !inv.je_no && <Button size="sm" onClick={() => post.mutate(inv.id)} disabled={busy}>{post.isPending ? 'Posting…' : 'Post to ledger'}</Button>}
+          {inv.status === 'ISSUED' && (
+            <>
+              <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="why it is cancelled" aria-label="Cancel reason" style={input} />
+              <Button variant="ghost" size="sm" disabled={busy || reason.trim() === ''} onClick={() => cancel.mutate({ id: inv.id, reason: reason.trim() })}>
+                {cancel.isPending ? 'Cancelling…' : 'Cancel invoice'}
+              </Button>
+            </>
+          )}
         </div>
       )}>
       {q.isLoading && <div style={soft}>Loading…</div>}
@@ -213,6 +258,7 @@ const InvoiceDetail = ({ id, onClose }: { id: string; onClose: () => void }) => 
             )}
           </div>
           {post.isSuccess && <div style={{ fontSize: 'var(--fs-13)', color: good }}>Posted as {post.data.jeNo}.</div>}
+          {printError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{printError}</div>}
           {cancel.isSuccess && <div style={{ fontSize: 'var(--fs-13)', color: good }}>Cancelled{cancel.data.contraJeNo ? ` — contra ${cancel.data.contraJeNo}` : ''}.</div>}
           {failed != null && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{errText(failed)}</div>}
         </div>
