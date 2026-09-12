@@ -17,6 +17,6 @@ list of auditable document types was a hand-copy of the backend's and had fallen
 five names behind, so nothing could ask for this document's history while the
 routes were recording it. That list is now pinned by a test that reads the
 backend source. Trace:
-`docs/bugs/0846-four-documents-kept-a-change-log-nobody-could-read.md`, and
+`docs/bugs/0847-four-documents-kept-a-change-log-nobody-could-read.md`, and
 `docs/modules/change-log.md` for how the drawer and the company-wide page fit
 together.

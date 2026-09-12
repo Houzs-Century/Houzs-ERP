@@ -261,7 +261,7 @@ frontend, so nothing asked for their history — while the routes had been
 recording it all along. The delivery order showed a "Change history" modal
 synthesized from its own current columns, which is worse than none: it read as
 events and changed retrospectively when a date was edited. Full trace:
-`docs/bugs/0846-four-documents-kept-a-change-log-nobody-could-read.md`.
+`docs/bugs/0847-four-documents-kept-a-change-log-nobody-could-read.md`.
 
 **How it is wired now.**
 
