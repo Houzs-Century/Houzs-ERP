@@ -346,7 +346,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/purchase-invoices.ts": {
-      "reads": 25,
+      "reads": 24,
       "catches": 0
     },
     "backend/src/scm/routes/purchase-returns.ts": {
