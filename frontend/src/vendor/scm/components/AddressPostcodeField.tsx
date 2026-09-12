@@ -25,6 +25,7 @@ export const AddressPostcodeField = ({
   placeholder,
   disabled,
   title,
+  blockedReason,
   classes,
 }: {
   country: string;
@@ -36,6 +37,11 @@ export const AddressPostcodeField = ({
   placeholder: string;
   disabled?: boolean;
   title?: string;
+  /** State-first gate: when set (no State picked), the cascade Postcode is inert
+   *  and pops this reason. Not passed to the SG lookup — a SG address is only
+   *  reached by first picking a Singapore region as State, so State is never
+   *  empty there. */
+  blockedReason?: string;
   classes?: { field?: string; label?: string; select?: string; selectWrap?: string; chevron?: string; input?: string };
 }) => {
   const c = classes ?? {};
@@ -64,6 +70,7 @@ export const AddressPostcodeField = ({
           disabled={disabled}
           title={title}
           placeholder={placeholder}
+          blockedReason={blockedReason}
           options={sortByNumeric(postcodeChoices).map((p) => ({ value: p, label: p }))}
         />
         <ChevronDown size={14} strokeWidth={1.75} className={c.chevron} />

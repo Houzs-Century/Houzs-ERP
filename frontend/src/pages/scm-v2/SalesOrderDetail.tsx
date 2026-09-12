@@ -118,7 +118,7 @@ import {
   pickCity,
   pickPostcode,
   cityPlaceholder,
-  postcodePlaceholder,
+  postcodePlaceholder, POSTCODE_NEEDS_STATE,
 } from '../../vendor/scm/lib/address-cascade';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import {
@@ -3633,6 +3633,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               onResolve={(r) => setForm((s) => ({ ...s, address1: r.address, ...(r.state && r.city ? { state: r.state, city: r.city } : {}) }))}
               postcodeChoices={postcodeChoices}
               placeholder={postcodePlaceholder(form.state, form.city)}
+              blockedReason={form.state ? undefined : POSTCODE_NEEDS_STATE}
               disabled={inputsDisabled || stateLocked}
               title={stateLocked ? 'Processing has passed — Postcode is locked (it drives the PO delivery location).' : undefined}
               classes={{ field: styles.field, label: styles.fieldLabel, select: styles.fieldSelect, selectWrap: styles.selectWrap, chevron: styles.selectChevron, input: styles.fieldInput }}
