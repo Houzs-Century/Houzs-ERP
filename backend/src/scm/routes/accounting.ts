@@ -62,6 +62,7 @@ import { pnlReport, balanceSheetReport } from './accounting-reports';
 import { receiptsPaymentsReport } from './accounting-rp';
 import { collectionReport } from './accounting-collection';
 import { merchantChargesReport } from './accounting-merchant-charges';
+import { performanceReport, savePerformanceSettingsHandler } from './accounting-performance';
 import { numberingGet, numberingPut } from './accounting-numbering';
 import { receiptsList, receiptEnsure, receiptFormalise } from './accounting-receipts';
 import { ACCOUNT_SECTIONS, defaultSectionFor } from '../lib/account-sections';
@@ -159,6 +160,11 @@ accounting.get('/reports/collection', collectionReport);
 /* What each acquirer charged against the gross, per month and per merchant (owner 2026-09-12; docs/bugs/0826). */
 accounting.get('/reports/merchant-charges', merchantChargesReport);
 accounting.get('/reports/balance-sheet', balanceSheetReport);
+/* The Performance P&L — the month's orders per group, a budgeted operating
+   expense in place of one ledger account, the rest as booked (owner
+   2026-09-12; docs/bugs/0835). Handlers in accounting-performance.ts. */
+accounting.get('/reports/performance', performanceReport);
+accounting.post('/reports/performance/settings', savePerformanceSettingsHandler);
 /* Voucher numbering — the owner's own levers (GL redesign item 8a): per-bank
    letters + suffix width. Handlers in accounting-numbering.ts. */
 accounting.get('/numbering', numberingGet);

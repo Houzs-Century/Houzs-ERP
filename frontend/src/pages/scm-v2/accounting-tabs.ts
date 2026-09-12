@@ -4,7 +4,7 @@
    it without loading the page. A tab the URL does not name falls back to the
    page's own default. */
 export const ACCOUNTING_TABS = [
-  'coa', 'groups', 'je', 'gl', 'tb', 'close', 'pnl', 'bs', 'rp', 'ar', 'ap', 'check', 'corrections', 'collection', 'charges',
+  'coa', 'groups', 'je', 'gl', 'tb', 'close', 'pnl', 'bs', 'rp', 'ar', 'ap', 'check', 'corrections', 'collection', 'charges', 'performance',
 ] as const;
 
 export type AccountingTab = (typeof ACCOUNTING_TABS)[number];

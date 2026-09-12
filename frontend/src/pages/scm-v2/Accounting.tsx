@@ -17,7 +17,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
-import { ArrowLeftRight, BookOpen, Boxes, CalendarClock, CreditCard, FileText, HandCoins, LineChart, ListTree, Receipt, Scale, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
+import { ArrowLeftRight, BookOpen, Boxes, CalendarClock, CreditCard, FileText, Gauge, HandCoins, LineChart, ListTree, Receipt, Scale, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
 import {
   useJournalEntries,
   useJournalEntryDetail,
@@ -54,6 +54,7 @@ import { ReceiptsPaymentsTab } from './ReceiptsPayments';
 import { PaymentCorrectionsTab } from './PaymentCorrectionsTab';
 import { CollectionTab } from './CollectionReport';
 import { MerchantChargesTab } from './MerchantChargesReport';
+import { PerformanceTab } from './PerformancePnl';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
@@ -107,6 +108,7 @@ export const Accounting = () => {
         <TabBtn label="Corrections"     icon={<FileText {...ICON} />} active={tab === 'corrections'} onClick={() => setTab('corrections')} />
         <TabBtn label="Collection"      icon={<HandCoins {...ICON} />} active={tab === 'collection'} onClick={() => setTab('collection')} />
         <TabBtn label="Merchant charges" icon={<CreditCard {...ICON} />} active={tab === 'charges'} onClick={() => setTab('charges')} />
+        <TabBtn label="Performance P&L" icon={<Gauge {...ICON} />} active={tab === 'performance'} onClick={() => setTab('performance')} />
       </div>
 
       {tab === 'coa'   && <CoaTab />}
@@ -124,6 +126,7 @@ export const Accounting = () => {
       {tab === 'corrections' && <PaymentCorrectionsTab />}
       {tab === 'collection' && <CollectionTab />}
       {tab === 'charges' && <MerchantChargesTab />}
+      {tab === 'performance' && <PerformanceTab />}
     </div>
   );
 };
