@@ -825,7 +825,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     if (!persisted) return;
     let method: PaymentMethod;
     try { ({ method } = labelToApi(d.methodLabel)); }
-    catch (e) { notify({ title: 'Payment method not recognised', body: e instanceof Error ? e.message : String(e), tone: 'error' }); return; }
+    catch (e) { void notify({ title: 'Payment method not recognised', body: e instanceof Error ? e.message : String(e), tone: 'error' }); return; }
     const body = {
       docNo:        (props as SavedModeProps).docNo,
       id:           d.editingPersistedId,
@@ -883,7 +883,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     }
     let method: PaymentMethod;
     try { ({ method } = labelToApi(d.methodLabel)); }
-    catch (e) { notify({ title: 'Payment method not recognised', body: e instanceof Error ? e.message : String(e), tone: 'error' }); return; }
+    catch (e) { void notify({ title: 'Payment method not recognised', body: e instanceof Error ? e.message : String(e), tone: 'error' }); return; }
     /* Cascade payload — populate sub-fields by the L1 method only
        (draftMethodFields). The API mirrors the same guard and will scrub any
        irrelevant sub-fields (e.g. a stale onlineType left over from a
