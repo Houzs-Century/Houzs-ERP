@@ -329,14 +329,39 @@ no error is the drain not running.
 
 ## 12. Files
 
+### What the module IS
+
 | file | what |
 |---|---|
 | `backend/src/db/migrations-pg/20260912T1800_scm_venture_portal_outbox.sql` | table, three triggers, `vp_build_payloads`, `vp_requeue_undelivered`, the seeded `'off'` flag |
-| `backend/src/scm/lib/venture-portal-outbox.ts` | the sender, the response taxonomy, the reconcile |
+| `backend/src/scm/lib/venture-portal-outbox.ts` | the sender, the response taxonomy, the reconcile, `VP_ROW_STATUSES`, `VP_CONFIG_KEYS` |
 | `backend/src/scm/lib/venture-portal-feed-flag.ts` | the switch + company scope, 30s cache, fails closed to OFF |
 | `backend/src/scm/routes/venture-portal-feed.ts` | the nine endpoints |
-| `backend/src/index.ts` | `*/5` drain, `*/30` reconcile |
 | `frontend/src/lib/venturePortalFeed.ts` | the ONE logic layer for both surfaces |
 | `frontend/src/pages/VenturePortalFeed.tsx` | desktop |
 | `frontend/src/mobile/MobileVenturePortalFeed.tsx` | mobile |
+
+### Where it is WIRED UP
+
+Listed because "where is this thing registered" is the question that costs the
+most time in this repo, and because a shared registry file changing is exactly
+where a feature half-lands — a route with no nav row, or a nav row pointing at
+no route.
+
+| file | what this module puts there |
+|---|---|
+| `backend/src/index.ts` | `drainVenturePortalOutbox` in the `*/5` cron; `reconcileVenturePortalOutbox` in the `*/30` cron |
+| `backend/src/scm/index.ts` | `scm.route("/venture-portal-feed", venturePortalFeed)` — no `scmAreaGuard`, and the comment says why |
+| `backend/src/scm/lib/scm-areas.ts` | `/venture-portal-feed` in `SCM_UNGUARDED_PREFIXES`, with what that costs under a write freeze (§11) |
+| `backend/src/services/permissions.ts` | `scm.venture_portal.read` and `scm.venture_portal.manage` (§7) |
+| `frontend/src/App.tsx` | the `/venture-portal-feed` route + its `Guard anyPerm` |
+| `frontend/src/components/Sidebar.tsx` | the `NAV_TABS` entry, System section — also what gates the MOBILE menu row |
+| `frontend/src/mobile/MobileApp.tsx` | the `venture-portal-feed` screen, its path mapping, its menu row and its `TabLocked` guard |
+| `frontend/src/routing/routeManifest.ts` | `/venture-portal-feed` in `STAFF_ROUTE_PATTERNS` — the drift gate fails without it |
+
+### Where it came from
+
+| file | what |
+|---|---|
 | `docs/2990-live-sync/` | the 2990 -> Houzs mirror this design descends from |
+| `docs/modules/autocount-writeback.md` | the outbox this one borrows its shape and status vocabulary from, and diverges from twice (§3) |
