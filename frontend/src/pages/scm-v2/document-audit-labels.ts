@@ -147,15 +147,21 @@ export const SALES_INVOICE_AUDIT_LABELS: AuditLabelDictionary = {
 
 /* ── Delivery Order — routes/delivery-orders-mfg.ts ───────────────────────── */
 
-/* The DO keeps its own three-state vocabulary (DRAFT / LOADED / DISPATCHED) —
-   the owner's 2026-09-12 exception to the SUBMITTED rename — so POST is
-   labelled in the delivery order's words rather than the shared ones. */
+/* The DO keeps its own vocabulary — the owner's 2026-09-12 exception to the
+   SUBMITTED rename — so POST is labelled in the delivery order's words rather
+   than the shared ones.
+
+   THE WORD FOR THE STORED VALUE `DISPATCHED` IS "Loaded". The goods going ON
+   the lorry is not the lorry leaving; departure is the driver's next scan
+   (IN_TRANSIT). Settled 2026-08-26 and pinned tree-wide by
+   doDispatchedReadsLoaded.test.ts, which caught this dictionary's first draft
+   calling it "Dispatched". */
 const DO_ACTIONS: Record<string, string> = {
   CREATE:  'Created delivery order',
   UPDATE:  'Updated',
-  POST:    'Dispatched',
+  POST:    'Loaded onto lorry',
   CANCEL:  'Cancelled delivery order',
-  REVERSE: 'Reversed dispatch',
+  REVERSE: 'Reversed loading',
   DELETE:  'Deleted delivery order',
 };
 
