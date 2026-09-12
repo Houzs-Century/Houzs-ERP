@@ -54,7 +54,7 @@ import {
   pickCity,
   pickPostcode,
   cityPlaceholder,
-  postcodePlaceholder,
+  postcodePlaceholder, POSTCODE_NEEDS_STATE,
 } from "../vendor/scm/lib/address-cascade";
 import { StatePicker } from "../vendor/scm/components/StatePicker";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
@@ -2446,7 +2446,7 @@ export function MobileNewSO({
                       <Field label={addressRequired ? "Postcode *" : "Postcode"} style={{ flex: 1 }} error={touched && addressRequired && !postcode.trim()} scanned={scanned("postcode", postcode)}>
                         {country === 'Singapore'
                           ? <SgPostcodeField bare inputClassName="fld-i" value={postcode} onChange={setPostcode} onResolve={(r) => { setAddr1(r.address); if (r.state && r.city) { setState(r.state); setCity(r.city); } }} disabled={addressIdentityLocked} />
-                          : (<select className="fld-i" value={postcode} disabled={addressIdentityLocked || postcodeChoices.length === 0} onChange={(e) => onPostcodeChange(e.target.value)}>
+                          : (<select className="fld-i" value={postcode} disabled={addressIdentityLocked || (!!state && postcodeChoices.length === 0)} onMouseDown={!state && !addressIdentityLocked ? (e) => { e.preventDefault(); void notify({ title: "Select State first", body: POSTCODE_NEEDS_STATE, tone: "info" }); } : undefined} onChange={(e) => onPostcodeChange(e.target.value)}>
                               <option value="">{postcodeChoices.length === 0 ? "No postcodes seeded" : postcodePlaceholder(state, city)}</option>
                               {postcodeChoices.map((p) => <option key={p} value={p}>{p}</option>)}
                             </select>)}

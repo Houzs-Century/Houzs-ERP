@@ -1388,11 +1388,19 @@ the option pools and `pickState` / `pickCity` / `pickPostcode` for the writes �
 so the desktop and mobile surfaces cannot drift, which is what happened while
 each held its own copy.
 
-The operator may start from **any** of the three: picking a Postcode back-fills
-State and City, picking an unambiguous City back-fills State, and picking a
-State narrows both of the others. The State back-filled by a reverse resolve is
-written in the SAME `setForm` as the value that produced it — routing it through
-the State picker's own handler would clear the cascade and wipe that value.
+The operator may start from a **State** or an unambiguous **City** (which
+back-fills State); picking a State narrows both of the others. The State
+back-filled by a reverse resolve is written in the SAME `setForm` as the value
+that produced it — routing it through the State picker's own handler would clear
+the cascade and wipe that value.
+
+**Postcode is State-first (owner 2026-09-12: "一定要选 state 才填写 postcode").**
+Postcode can no longer start the cascade: until a State is picked the Postcode
+field is blocked (placeholder "Select State first") and clicking it pops a prompt
+to choose a State. This holds on all three SO surfaces and every other cascade
+form; a Singapore address reaches it by picking a Singapore region as State, so
+its live-lookup Postcode is only ever shown once a State exists. Details and the
+per-render-style enforcement: `docs/modules/address-cascade.md`.
 
 Full rules, the ambiguity contract and the surfaces that deliberately opt out:
 `docs/modules/address-cascade.md`.
