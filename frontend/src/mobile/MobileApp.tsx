@@ -62,6 +62,7 @@ const MobileStockCard = lazy(() => import("./MobileStockCard").then((m) => ({ de
 const MobileStockTransferNew = lazy(() => import("./MobileStockTransferNew").then((m) => ({ default: m.MobileStockTransferNew })));
 const MobileFairReport = lazy(() => import("./MobileFairReport").then((m) => ({ default: m.MobileFairReport })));
 const MobileAutoCountSync = lazy(() => import("./MobileAutoCountSync").then((m) => ({ default: m.MobileAutoCountSync })));
+const MobileVenturePortalFeed = lazy(() => import("./MobileVenturePortalFeed").then((m) => ({ default: m.MobileVenturePortalFeed })));
 const MobileChangeLog = lazy(() => import("./MobileChangeLog").then((m) => ({ default: m.MobileChangeLog })));
 // SO Maintenance is the SAME desktop page (/scm/sales-orders/maintenance) — the
 // director-only State→Warehouse / Localities / SO-dropdown CRUD surface. Mobile
@@ -103,6 +104,7 @@ type Screen =
   | { t: "so-maintenance" }
   | { t: "fair-report" }
   | { t: "autocount-sync" }
+  | { t: "venture-portal-feed" }
   | { t: "change-log" }
   | { t: "new-so"; mode: "new" | "edit" | "edit-draft"; docNo?: string; scanPrefill?: MobileScanPrefill }
   | { t: "scan" }
@@ -149,6 +151,7 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/scm/sales-orders/maintenance") return { t: "so-maintenance" };
   if (path === "/reports/fair-report") return { t: "fair-report" };
   if (path === "/autocount-sync") return { t: "autocount-sync" };
+  if (path === "/venture-portal-feed") return { t: "venture-portal-feed" };
   if (path === "/change-log") return { t: "change-log" };
   if (path === "/scm/amendments") return { t: "amendments" };
   if (path === "/scm/po-amendments") return { t: "po-amendments" };
@@ -415,6 +418,13 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
      endpoint accepts. */
   { group: "System", items: [
     { to: "/autocount-sync", label: "AutoCount Sync" },
+    /* The Venture Portal feed. On a phone for the same reason the row above it
+       is: "did the portal get my sales orders" decides whether somebody's
+       commission is right, and turning the feed OFF is the one control most
+       plausibly needed away from a desk. Gated by its own live NAV_TABS entry
+       at /venture-portal-feed, carrying the same two keys the endpoint's read
+       half accepts. */
+    { to: "/venture-portal-feed", label: "Venture Portal Feed" },
     /* The go-live change log. Second row in this group, and it belongs on a
        phone for the same reason the first one does: "who changed my sales
        order" is a question the owner asks away from a desk. Gated by its own
@@ -791,6 +801,16 @@ function MobileAppInner() {
        Same two keys the desktop route and the server accept. OFF, not hidden. */
     const mayRead = can("*") || can("scm.autocount.read") || can("settings.manage");
     overlay = !mayRead ? <TabLocked title="AutoCount Sync" /> : <MobileAutoCountSync onBack={back} />;
+  }
+  else if (screen.t === "venture-portal-feed") {
+    /* Guard the SCREEN, not only the menu row, for /autocount-sync's reason: a
+       /venture-portal-feed URL must not mount the page or fire its query for
+       someone the endpoint would 403. Same two keys the desktop route and the
+       server's read half accept; the MANAGE half is checked per request by the
+       server and reflected in `canManage`, so a read-only holder sees the feed
+       and no buttons. OFF, not hidden. */
+    const mayRead = can("*") || can("scm.venture_portal.read") || can("settings.manage");
+    overlay = !mayRead ? <TabLocked title="Venture Portal Feed" /> : <MobileVenturePortalFeed onBack={back} />;
   }
   else if (screen.t === "new-so") overlay = <MobileNewSO mode={screen.mode} docNo={screen.docNo} scanPrefill={screen.scanPrefill} onBack={back} onSaved={(d) => setScreen({ t: "so-detail", docNo: d })} />;
   else if (screen.t === "scan") overlay = <MobileScan onBack={back} onDrafted={onScanDrafted} onOpenSo={(docNo) => setScreen({ t: "so-detail", docNo })} />;

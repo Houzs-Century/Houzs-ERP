@@ -66,6 +66,7 @@ const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m
 const Team = lazy(() => import("./pages/Team").then((m) => ({ default: m.Team })));
 const SystemHealth = lazy(() => import("./pages/SystemHealth").then((m) => ({ default: m.SystemHealth })));
 const AutoCountSync = lazy(() => import("./pages/AutoCountSync").then((m) => ({ default: m.AutoCountSync })));
+const VenturePortalFeed = lazy(() => import("./pages/VenturePortalFeed").then((m) => ({ default: m.VenturePortalFeed })));
 const ChangeLog = lazy(() => import("./pages/ChangeLog").then((m) => ({ default: m.ChangeLog })));
 const FleetHealth = lazy(() => import("./pages/FleetHealth").then((m) => ({ default: m.FleetHealth })));
 const LorryRecord = lazy(() => import("./pages/LorryRecord").then((m) => ({ default: m.LorryRecord })));
@@ -583,6 +584,20 @@ export default function App() {
           element={
             <Guard anyPerm={["*", "scm.autocount.read", "settings.manage"]}>
               <AutoCountSync />
+            </Guard>
+          }
+        />
+        {/* Venture Portal Feed — the live sales-order feed to the portal that
+            pays Revenue Department commission, and its settings. anyPerm
+            mirrors the two keys the endpoint's READ half accepts; changing
+            anything needs scm.venture_portal.manage, which the server checks
+            per request and the page reflects in `canManage`. This door only
+            decides whether the page opens. */}
+        <Route
+          path="/venture-portal-feed"
+          element={
+            <Guard anyPerm={["*", "scm.venture_portal.read", "settings.manage"]}>
+              <VenturePortalFeed />
             </Guard>
           }
         />

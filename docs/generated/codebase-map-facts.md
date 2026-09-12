@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-191 route modules (53 in `backend/src/routes`, 138 in `backend/src/scm/routes`), 1277 endpoint registrations.
+192 route modules (53 in `backend/src/routes`, 139 in `backend/src/scm/routes`), 1286 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -83,7 +83,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-numbering.ts` | 0 | 134 |
 | `backend/src/scm/routes/accounting-payment-corrections.ts` | 0 | 82 |
 | `backend/src/scm/routes/accounting-payouts.ts` | 0 | 265 |
-| `backend/src/scm/routes/accounting-performance.ts` | 0 | 111 |
+| `backend/src/scm/routes/accounting-performance.ts` | 0 | 116 |
 | `backend/src/scm/routes/accounting-pi-backfill.ts` | 0 | 149 |
 | `backend/src/scm/routes/accounting-receipts.ts` | 0 | 88 |
 | `backend/src/scm/routes/accounting-reports.ts` | 0 | 188 |
@@ -206,6 +206,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/trip-scan-token.ts` | 1 | 61 |
 | `backend/src/scm/routes/trips.ts` | 15 | 1391 |
 | `backend/src/scm/routes/unbilled-deliveries.ts` | 1 | 422 |
+| `backend/src/scm/routes/venture-portal-feed.ts` | 9 | 409 |
 | `backend/src/scm/routes/venues.ts` | 4 | 283 |
 | `backend/src/scm/routes/warehouse-mirror.ts` | 1 | 185 |
 | `backend/src/scm/routes/warehouse.ts` | 9 | 699 |
@@ -220,13 +221,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 153 | `154_assr_case_access.sql` (154) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 414 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 416 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2243 files, 758650 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2255 files, 762497 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -243,8 +244,8 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4518 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4486 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4342 |
-| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4205 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3737 |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4203 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3733 |
 | `backend/src/scm/routes/grns.ts` | 3564 |
 | `frontend/src/components/DataTable.tsx` | 3456 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3380 |
@@ -254,7 +255,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 
 ## 4. Frontend desktop routes
 
-160 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
+161 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
 `frontend/src/lib/routeAliases.ts` are expanded at runtime and not counted here).
 
 | path | page module |
@@ -419,12 +420,13 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `/setup-invoice` | `frontend/src/pages/SetupInvoiceFill` |
 | `/system-health` | `frontend/src/pages/SystemHealth` |
 | `/team` | `frontend/src/pages/Team` |
+| `/venture-portal-feed` | `frontend/src/pages/VenturePortalFeed` |
 
 Page files by directory:
 
 | directory | *.tsx |
 |---|---|
-| `frontend/src/pages` | 38 |
+| `frontend/src/pages` | 39 |
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/roles` | 2 |
@@ -435,7 +437,7 @@ Page files by directory:
 
 ## 5. Mobile screen inventory
 
-53 screen/component modules in `frontend/src/mobile`.
+54 screen/component modules in `frontend/src/mobile`.
 
 | file | lines |
 |---|---|
@@ -443,7 +445,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileAnnouncementMedia.tsx` | 171 |
 | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | 152 |
 | `frontend/src/mobile/MobileAnnouncements.tsx` | 1741 |
-| `frontend/src/mobile/MobileApp.tsx` | 1131 |
+| `frontend/src/mobile/MobileApp.tsx` | 1151 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 295 |
 | `frontend/src/mobile/MobileAssrCategoryChips.tsx` | 76 |
 | `frontend/src/mobile/MobileAssrSoField.tsx` | 76 |
@@ -470,7 +472,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
 | `frontend/src/mobile/MobileNewProject.tsx` | 196 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3737 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3733 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4486 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
@@ -491,6 +493,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileStockTransferNew.tsx` | 255 |
 | `frontend/src/mobile/MobileTrackingBanner.tsx` | 84 |
 | `frontend/src/mobile/MobileTwoFactorCard.tsx` | 268 |
+| `frontend/src/mobile/MobileVenturePortalFeed.tsx` | 429 |
 | `frontend/src/mobile/MobileVirtualList.tsx` | 159 |
 
 ## 6. Destinations served by both surfaces
@@ -544,3 +547,4 @@ Rows are derived from `frontend/src/mobile/MobileApp.tsx` and `frontend/src/App.
 | `/scm/warehouses` | Warehouse | `frontend/src/pages/scm-v2/Warehouses` | generic: MobileModuleList[warehouse] |
 | `/team?tab=departments2` | Departments | `frontend/src/pages/Team` | resolved at runtime by destinationScreen() |
 | `/team?tab=directory` | Directory | `frontend/src/pages/Team` | resolved at runtime by destinationScreen() |
+| `/venture-portal-feed` | Venture Portal Feed | `frontend/src/pages/VenturePortalFeed` | dedicated: venture-portal-feed |
