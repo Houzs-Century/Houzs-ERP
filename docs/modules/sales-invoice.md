@@ -37,6 +37,11 @@ only document in it that leaves the building as a customer's own copy.
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:275`; status actions `:498-511`. |
 | Mobile convert (DO→SI) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "si"` (`:73`). |
 
+> **The address is State-first (2026-09-12).** `SalesInvoiceNew`'s Postcode field is
+> blocked until a State is picked (placeholder "Select State first"; clicking it pops
+> a prompt). It shares the State/City/Postcode cascade; the rule lives in
+> `docs/modules/address-cascade.md`.
+
 > **The Salesperson picker names the person the source document already carries
 > (2026-08-21).** It reads `usePickableStaff({ onlySales: true, include: [<the
 > source doc's salesperson_id>] })`. `onlySales` narrows to Sales positions
