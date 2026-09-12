@@ -92,6 +92,7 @@ import { convertToLink, transferToLabel } from "../../lib/convertScope";
 import { HoldChip } from "../../vendor/scm/components/HoldChip";
 
 import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
+import { FocAmount } from "../../vendor/scm/components/FocAmount";
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneySen(centi, currency);
@@ -1042,9 +1043,7 @@ function PurchaseOrderDetailV2ReadOnly() {
       align: "right",
       getValue: (l) => l.line_total_sen,
       render: (l) => (
-        <span className="font-money text-[13px] font-semibold text-ink">
-          {fmtMoney(l.line_total_sen ?? 0, purchaseOrder?.currency)}
-        </span>
+        <FocAmount line={l} amount={fmtMoney(l.line_total_sen ?? 0, purchaseOrder?.currency)} />
       ),
     },
   ];
