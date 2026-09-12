@@ -71,7 +71,11 @@ describe("executable route contract", () => {
     // customer, supplier credit notes (docs/bugs/0827).
     // 158 since 2026-09-12: /scm/deposit-invoices — one invoice per deposit,
     // born off the payment when the company's switch is on (docs/bugs/0828).
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(158);
+    // 159 since 2026-09-12: /venture-portal-feed — the live sales-order feed to
+    // the Venture Portal (which pays Revenue Department commission out of these
+    // orders) and its settings: receiver address, shared secret, which
+    // companies, start date, and the queue with the reason on the row.
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(159);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -107,7 +111,8 @@ describe("executable route contract", () => {
     // the staff-route count above.
     // 166 since 2026-09-12 — /scm/credit-notes; see the staff-route count above.
     // 167 since 2026-09-12 — /scm/deposit-invoices; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(167);
+    // 168 since 2026-09-12 — /venture-portal-feed; see the staff-route count.
+    expect(ROUTE_CONTRACT).toHaveLength(168);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {
@@ -137,13 +142,18 @@ describe("mobile route drift gate", () => {
     // 35 since 2026-08-15: the System group and its one row, /autocount-sync.
     // 36 since 2026-09-08: /change-log, the System group's second row — the
     // owner asks "who changed my sales order" away from a desk too.
-    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(36);
+    // 37 since 2026-09-12: /venture-portal-feed, the System group's third row.
+    // On a phone for the same reason the other two are: whether the Venture
+    // Portal received an order decides whether somebody's commission is right,
+    // and turning the feed OFF is the control most plausibly wanted away from
+    // a desk.
+    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(37);
     // 6 since 2026-09-10: /roles, the rebuilt Roles & Permissions screen, reached
     // from a Profile row (gated via the Team hub tab).
     expect(PROFILE_ORG_ITEMS).toHaveLength(6);
-    expect(allMobile).toHaveLength(42);
-    expect(new Set(allMobile.map((item) => item.to)).size).toBe(42);
-    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(41);
+    expect(allMobile).toHaveLength(43);
+    expect(new Set(allMobile.map((item) => item.to)).size).toBe(43);
+    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(42);
   });
 
   it("maps every declared mobile row to a real screen, never a placeholder stub", () => {

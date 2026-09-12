@@ -86,6 +86,10 @@ import { soMirror } from "./scm/routes/so-mirror";
 import { drainCommands } from "./scm/lib/amendment-command";
 import { drainStockAllocationRecompute } from "./scm/lib/stock-allocation-job";
 import { drainAutoCountOutbox } from "./scm/lib/autocount-outbox";
+import {
+  drainVenturePortalOutbox,
+  reconcileVenturePortalOutbox,
+} from "./scm/lib/venture-portal-outbox";
 import { relinkHeldBackSweep } from "./scm/lib/autocount-relink-sweep";
 import { deliveryDateSweep } from "./scm/lib/autocount-delivery-date-sweep";
 import { refreshAllMrpSnapshots } from "./scm/lib/mrp-snapshot";
@@ -621,6 +625,30 @@ export default {
           })
           .catch((e) => console.error("[cron ac-writeback]", e))
       );
+      /* ERP -> Venture Portal live sales-order feed drain (mig 20260912T1800).
+         The portal pays Revenue Department commission out of these orders, so a
+         document that does not arrive is a commission that does not get paid.
+         Ships dark THREE times over: no-op while scm.app_config
+         'scm.venture_portal_feed' is off (which the migration seeds it to), and
+         no-op without scm.sync_config vp.url + vp.secret. Best-effort — a drain
+         failure can never break the slot.
+
+         THIS IS THE SENDER THE CONTRACT PUT IN pg_cron + pg_net. Neither
+         extension is installed on production (measured 2026-09-12; the query
+         and its NULL are in the migration header), and a pg_cron job would be
+         invisible to every gate this repo runs. Commission is settled monthly,
+         so five minutes and ten seconds are the same number to it. */
+      ctx.waitUntil(
+        drainVenturePortalOutbox(env)
+          .then((r) => {
+            /* A FAILED row means a sales order exists here and the portal has
+               not got it — somebody's commission is computed from a document
+               the portal cannot see. It can never read as routine. */
+            if (r.failed) console.error(`[cron vp-feed] FAILED ${JSON.stringify(r)}`);
+            else if (r.processed) console.log(`[cron vp-feed] ${JSON.stringify(r)}`);
+          })
+          .catch((e) => console.error("[cron vp-feed]", e))
+      );
       /* Keyless-conversion backlog sweep. Ships DARK: no-op unless
          scm.app_config 'scm.autocount_relink_sweep' is 'plan' (report only) or
          'apply' (stamp the book's line keys, then queue the keyed edit). Reads
@@ -695,6 +723,25 @@ export default {
           .catch((e) => console.error("[cron mrp-snapshot]", e))
       );
     } else if (event.cron === "*/30 * * * *") {
+      /* Venture Portal feed BACKSTOP — the half of "not one order missed" that
+         is provable rather than hoped for. The capture trigger swallows its own
+         errors on purpose (it must never roll back a salesperson's Save), so a
+         row CAN be missed; this re-queues any in-scope order with no delivered
+         row and the next drain sends it. Steady state is requeued=0.
+
+         The contract asks for hourly; this slot is every 30 minutes, which is
+         strictly better for a backstop and costs one more cheap statement.
+         `includeFailed: false` — a row parked after exhausting its attempts
+         stays parked until a person clears the cause, because re-queueing it
+         automatically would hide the failure behind a retry loop. Ships dark
+         with the feed. */
+      ctx.waitUntil(
+        reconcileVenturePortalOutbox(env, { includeFailed: false })
+          .then((r) => {
+            if (r.requeued) console.warn(`[cron vp-reconcile] requeued=${r.requeued}`);
+          })
+          .catch((e) => console.error("[cron vp-reconcile]", e))
+      );
       // ASSR/QMS v3.1 — per-stage alert scanner (half / approaching / breach).
       // Cheap: one query over open stage_history rows, idempotent via the
       // alerts_fired bit-mask.

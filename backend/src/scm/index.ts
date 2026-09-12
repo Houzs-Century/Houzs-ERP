@@ -51,6 +51,7 @@ import { receipts } from "./routes/receipts";
 import { entityAuditLog } from "./routes/entity-audit-log";
 import { changeLog } from "./routes/change-log";
 import { autocountOutbox } from "./routes/autocount-outbox";
+import { venturePortalFeed } from "./routes/venture-portal-feed";
 import { currencies } from "./routes/currencies";
 import { mfgSalesOrders } from "./routes/mfg-sales-orders";
 import { mfgSalesOrdersListEnrichment } from "./routes/mfg-sales-orders-list-enrichment";
@@ -603,6 +604,17 @@ scm.route("/change-log", changeLog);
 // and it has to be, because this endpoint quotes what the licensed account book
 // said about every document the company pushed.
 scm.route("/autocount-outbox", autocountOutbox);
+// ERP -> Venture Portal live sales-order feed: the settings page AND its queue
+// (scm.venture_portal_outbox, mig 20260912T1800). NO scmAreaGuard, for
+// /autocount-outbox's reason — an L2 area key is a PAGE key and this page
+// belongs to no SCM area: it spans sales orders, their lines, those lines' COSTS
+// and their payments at once, so any area key here would be an arbitrary owner.
+// Authorization is the flat scm.venture_portal.read / .manage / settings.manage
+// keys checked inside the route against the REAL caller. Deliberately
+// cross-company, unlike every other SCM route: which companies feed the portal
+// is the setting this page edits, so a company predicate would hide the thing
+// being set from the person setting it. The route header says so in full.
+scm.route("/venture-portal-feed", venturePortalFeed);
 // Currency MASTER — owner-maintained list + rate_to_myr, read by the GRN/PI/PV
 // currency dropdowns across areas. Like state-warehouse-mappings, it's a shared
 // lookup left on the coarse scm gate (reads open); writes are gated inside the

@@ -271,6 +271,16 @@
       "file": "frontend/src/vendor/scm/components/DateField.touch.test.tsx",
       "text": "const el = container.querySelector('input[type=\"date\"]');",
       "why": "A TEST QUERY SELECTOR, not a rendered input: it locates the ONE native date input DateField already owns, so the touch test can assert which geometry that input was given — a full-field tap overlay on a coarse pointer, a 20px strip behind the calendar button on a fine one. Nothing here renders a date and nothing here is read by an operator."
+    },
+    {
+      "file": "frontend/src/pages/VenturePortalFeed.tsx",
+      "text": "type=\"date\"",
+      "why": "ISO VALUE PRODUCER, not a display (case 1). A native date input reads and writes YYYY-MM-DD, and this one is bound to scm.sync_config vp.since — the Venture Portal feed's start date, compared against so_date in SQL. Storage is not display and is outside this rule. The page renders no date of its own except through fmtDateTime."
+    },
+    {
+      "file": "frontend/src/mobile/MobileVenturePortalFeed.tsx",
+      "text": "type=\"date\"",
+      "why": "ISO VALUE PRODUCER, not a display (case 1). A native date input reads and writes YYYY-MM-DD, and this one is bound to scm.sync_config vp.since — the Venture Portal feed's start date, compared against so_date in SQL. Storage is not display and is outside this rule. The page renders no date of its own except through fmtDateTime."
     }
   ]
 }
