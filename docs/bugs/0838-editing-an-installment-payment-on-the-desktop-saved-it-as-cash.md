@@ -1,6 +1,6 @@
 ## Editing an installment payment on the desktop saved it as cash [high]
 
-<!-- area: Sales Orders -->
+<!-- area: Sales orders + pricing -->
 
 **Symptom.** Finance opened an `installment` payment on the desktop
 Payments card to correct one field and pressed Save; the row came back as

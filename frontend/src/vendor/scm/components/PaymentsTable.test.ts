@@ -47,7 +47,7 @@ describe("editDraftOf — the edit draft is the persisted row, verbatim", () => 
   });
 
   it("a row whose stored method the screen does not know opens under that value, not as Cash", () => {
-    const d = editDraftOf({ ...row, method: "imported" } as typeof row, () => "");
+    const d = editDraftOf({ ...row, method: "imported" } as unknown as typeof row, () => "");
     expect(d.methodLabel).toBe("imported");
     expect(() => labelToApi(d.methodLabel)).toThrow(UnknownPaymentMethodError);
   });
