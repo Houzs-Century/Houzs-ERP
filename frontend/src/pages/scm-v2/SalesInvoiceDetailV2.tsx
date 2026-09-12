@@ -105,6 +105,8 @@ import { clearPaymentRetryHandoff, completePaymentRetryDraft, consumePaymentRetr
 import { transferFromColumnLabel } from "../../lib/convertScope";
 import { customerRefOf } from '../../lib/customer-ref';
 
+import { ActivityRow } from "./ActivityRow";
+import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { isFocLine } from '../../vendor/scm/lib/foc-line';
 // ─── Row shapes (subset — see SalesInvoiceDetail.tsx for the full 40-field
 // header) ───────────────────────────────────────────────────────────────
@@ -451,36 +453,6 @@ function PersonRow({
   );
 }
 
-type ActivityDot = "success" | "primary" | "muted";
-const DOT_CLS: Record<ActivityDot, string> = {
-  success: "bg-synced",
-  primary: "bg-primary",
-  muted: "bg-border-strong",
-};
-function ActivityRow({
-  title,
-  meta,
-  dot,
-  isLast,
-}: {
-  title: string;
-  meta: string;
-  dot: ActivityDot;
-  isLast?: boolean;
-}) {
-  return (
-    <div className="flex gap-3 pb-3.5">
-      <div className="flex flex-col items-center">
-        <span className={cn("mt-1 h-2 w-2 rounded-full", DOT_CLS[dot])} />
-        {!isLast && <span className="mt-1 w-[2px] flex-1 bg-border-subtle" />}
-      </div>
-      <div className="min-w-0">
-        <div className="text-[12.5px] font-semibold text-ink">{title}</div>
-        <div className="mt-0.5 text-[11px] text-ink-muted">{meta}</div>
-      </div>
-    </div>
-  );
-}
 
 
 // ─── Invoice total / outstanding hero (dark aside slab) ────────────────────
@@ -842,7 +814,7 @@ export function SalesInvoiceDetailV2() {
     }
   };
   const [relMapOpen, setRelMapOpen] = useState(false);
-  const goHistory = () => id && navigate(`/scm/sales-invoices/${id}?tab=history`);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const goRelationshipMap = () => setRelMapOpen(true);
   // Render + download the SI PDF via the shared jspdf generator (client-side),
   // mirroring the V1 SalesInvoiceDetail handler. The old `?print=1` navigation
@@ -1303,7 +1275,7 @@ export function SalesInvoiceDetailV2() {
             <Button
               variant="ghost"
               icon={<History size={14} />}
-              onClick={goHistory}
+              onClick={() => setHistoryOpen(true)}
             >
               History
             </Button>
@@ -1957,6 +1929,8 @@ export function SalesInvoiceDetailV2() {
           pickChainChoice(d);
         }}
       />
+      {historyOpen && <DocumentHistoryDrawer doc="SALES_INVOICE" id={String(salesInvoice.id)}
+        label={salesInvoice.invoice_number} onClose={() => setHistoryOpen(false)} />}
       <PrintPreviewModal
         open={print.open}
         onClose={print.close}

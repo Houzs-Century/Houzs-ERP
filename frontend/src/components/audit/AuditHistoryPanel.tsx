@@ -62,6 +62,16 @@ const relTime = (iso: string): string => {
   return fmtDate(iso);
 };
 
+/* What the server actually said, for the failure line. authedFetch throws an
+   Error whose message carries the route's `reason`; anything else is shown as
+   its own string rather than swallowed, because an unrenderable error is still
+   better than a blank. */
+const reasonOf = (error: unknown): string => {
+  if (error instanceof Error && error.message) return error.message;
+  const s = typeof error === 'string' ? error : String(error ?? '');
+  return s && s !== '[object Object]' ? s : 'no reason given';
+};
+
 export type AuditHistoryPanelProps = {
   /* Identifies the record in the drawer title, e.g. the SO doc no. */
   recordLabel: string;
@@ -69,6 +79,16 @@ export type AuditHistoryPanelProps = {
   entityName: string;
   entries: AuditLogEntry[];
   isLoading?: boolean;
+  /* The read's failure, if it failed. REQUIRED to be passed explicitly by every
+     binding (they all pass `q.error`), because the alternative is the bug this
+     prop exists to end: react-query leaves `data` undefined on a failure, so a
+     `?? []` turns a server refusal into "No history yet." — and on an audit
+     trail, "nobody touched this document" is the worst wrong answer there is.
+     Found on staging 2026-09-13 against a 500 reading "permission denied for
+     table entity_audit_log". Optional in the TYPE only so the panel keeps
+     rendering for a caller that has no error to report; every caller in this
+     tree passes it. */
+  error?: unknown;
   labels: AuditLabelDictionary;
   onClose: () => void;
   /* Optional per-entry badge, e.g. the SO status pill on a status change.
@@ -83,6 +103,7 @@ export const AuditHistoryPanel = memo(({
   entityName,
   entries,
   isLoading = false,
+  error = null,
   labels,
   onClose,
   renderBadge,
@@ -115,7 +136,16 @@ export const AuditHistoryPanel = memo(({
           </Button>
         </header>
         <div className={styles.historyPanelBody}>
-          {isLoading ? (
+          {error ? (
+            /* BEFORE isLoading on purpose: react-query keeps the last error
+               while it retries, so reading isLoading first would flicker a
+               permanent refusal between "Loading…" and "No history yet." */
+            <p className={styles.historyError}>
+              This change log could not be loaded, so what you see here is not
+              proof that nothing was changed. Try again in a moment; if it keeps
+              failing, send this to IT: <span className={styles.historyErrorReason}>{reasonOf(error)}</span>
+            </p>
+          ) : isLoading ? (
             <p className={styles.historyLoading}>Loading…</p>
           ) : entries.length === 0 ? (
             <p className={styles.historyEmpty}>

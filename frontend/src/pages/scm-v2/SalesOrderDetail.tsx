@@ -3916,6 +3916,7 @@ const HistoryPanel = memo(({
       entityName="Sales order"
       entries={entries}
       isLoading={q.isLoading}
+      error={q.error}
       labels={SO_AUDIT_LABELS}
       onClose={onClose}
       renderBadge={renderBadge}

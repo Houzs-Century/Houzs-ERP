@@ -40,8 +40,7 @@ import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel, transferFromColumnLabel } from "../../lib/convertScope";
-import { EntityHistoryPanel } from "./EntityHistoryPanel";
-import { GRN_AUDIT_LABELS } from "./entity-audit-labels";
+import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { resolveFxRate } from "./fx-rate";
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
@@ -731,15 +730,8 @@ function GoodsReceivedDetailV2ReadOnly() {
       {/* History drawer — portals to <body>, so its position here is only
           about lifecycle, not layout. */}
       {historyOpen && (
-        <EntityHistoryPanel
-          entityType="GRN"
-          entityId={String(grn.id)}
-          recordLabel={grn.grn_number}
-          entityName="Goods receipt"
-          labels={GRN_AUDIT_LABELS}
-          statusDocType="grn"
-          onClose={closeHistory}
-        />
+        <DocumentHistoryDrawer doc="GRN" id={String(grn.id)}
+          label={grn.grn_number} onClose={closeHistory} />
       )}
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 px-3 pb-6 pt-2.5 shadow-slab backdrop-blur-sm md:hidden">

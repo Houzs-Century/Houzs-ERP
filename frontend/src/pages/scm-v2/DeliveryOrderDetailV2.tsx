@@ -2,7 +2,7 @@
 // Order detail page, matching the 2026-07-08 design handoff prototypes.
 //
 // The 4 primary actions in the sticky header all open real modal overlays:
-//   · History         — change-history timeline
+//   · History         — the recorded change log (scm.entity_audit_log)
 //   · Relationship Map — a node-graph modal showing the document chain
 //     PO → SO → DO (current) → GRN → Invoice, NOT an inline pipeline
 //   · Print PDF       — print-preview card + Download/Print
@@ -95,6 +95,7 @@ import { DO_SHIPPED_STATES } from '../../vendor/shared/do-shipped-states';
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { customerRefOf } from '../../lib/customer-ref';
 
+import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { isFocLine } from '../../vendor/scm/lib/foc-line';
 // ─── Header + item shapes (subset — full 40-field row lives in the list V2) ─
 
@@ -613,100 +614,14 @@ function DriverSubCard({ header }: { header: DoHeader }) {
 // below both consume it.
 
 
-// ─── Modal · Change history timeline ───────────────────────────────────────
-
-function HistoryModal({
-  open,
-  onClose,
-  header,
-  itemsCount,
-}: {
-  open: boolean;
-  onClose: () => void;
-  header: DoHeader;
-  itemsCount: number;
-}) {
-  /* `created_by` is a scm.staff uuid and `issued_by_name` is never actually
-     sent by the DO detail endpoint, so the fallback chain printed the raw uuid
-     in the Change-history modal (owner 2026-07-16, same class as the Amendments
-     leak). Resolve through the shared roster; "System" stays the last resort. */
-  const { actorNameOf } = useStaffLookup();
-
-  // Derived timeline from the header's timestamps + status. A future backend
-  // history endpoint can replace this with a proper audit log; for now the
-  // detail endpoint doesn't return one, so we synthesize from what we know.
-  const events: Array<{ title: string; at: string; by: string; dot: "success" | "primary" | "muted" }> =
-    useMemo(() => {
-      const list: Array<{ title: string; at: string; by: string; dot: "success" | "primary" | "muted" }> = [];
-      list.push({
-        title: header.so_doc_no
-          ? `DO created from ${header.so_doc_no}`
-          : "DO created",
-        at: fmtDate(header.created_at || header.do_date),
-        by: header.issued_by_name || actorNameOf(header.created_by, "System"),
-        dot: "success",
-      });
-      if (header.driver_name) {
-        list.push({
-          title: `Driver ${header.driver_name} assigned`,
-          at: fmtDate(header.do_date),
-          by: header.issued_by_name || "System",
-          dot: "primary",
-        });
-      }
-      if (header.customer_delivery_date) {
-        list.push({
-          title: `Delivery scheduled ${fmtDate(header.customer_delivery_date)}`,
-          at: fmtDate(header.do_date),
-          by: header.issued_by_name || "System",
-          dot: "primary",
-        });
-      }
-      list.push({
-        title: `Status → ${EFFECTIVE_TONE[effectiveOf(header)].label}`,
-        at: fmtDate(header.do_date),
-        by: "System",
-        dot: "muted",
-      });
-      list.push({
-        title: `${itemsCount} line item${itemsCount === 1 ? "" : "s"} on this DO`,
-        at: fmtDate(header.do_date),
-        by: "System",
-        dot: "muted",
-      });
-      return list;
-    }, [header, itemsCount, actorNameOf]);
-
-  const DOT_CLS: Record<"success" | "primary" | "muted", string> = {
-    success: "bg-synced",
-    primary: "bg-primary",
-    muted: "bg-border-strong",
-  };
-
-  return (
-    <ModalOverlay open={open} onClose={onClose} title="Change history" icon={<History size={16} />}>
-      <div className="flex flex-col">
-        {events.map((e, i) => {
-          const isLast = i === events.length - 1;
-          return (
-            <div key={i} className="flex gap-3 pb-4 last:pb-0">
-              <div className="flex flex-col items-center">
-                <span className={cn("mt-1 h-2.5 w-2.5 rounded-full", DOT_CLS[e.dot])} />
-                {!isLast && <span className="mt-1 w-[2px] flex-1 bg-border-subtle" />}
-              </div>
-              <div className="min-w-0 flex-1 pb-1">
-                <div className="text-[13px] font-semibold text-ink">{e.title}</div>
-                <div className="mt-0.5 text-[11.5px] text-ink-muted">
-                  {e.at} · {e.by}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </ModalOverlay>
-  );
-}
+/* The synthesized "Change history" modal that stood here until 2026-09-13 is
+   gone. It built its timeline out of the header's own columns — created_at, the
+   driver name, the delivery date, the status, the line count — so it showed the
+   delivery order as it is NOW, dressed as a list of things that happened. Edit a
+   date and the "history" changed retrospectively with it; nothing that was
+   actually done to the document ever appeared. Its own comment said a real
+   history endpoint should replace it, and that endpoint has been recording this
+   document all along. It is now the shared History drawer. */
 
 // Relationship map — the inline node-graph + ModalOverlay copies that used
 // to live here were moved to a shared component (see the imports at the top
@@ -767,7 +682,8 @@ export function DeliveryOrderDetailV2() {
     { label: deliveryOrder?.do_number ?? id ?? "Delivery Order" },
   ]);
 
-  const [modal, setModal] = useState<"history" | "relmap" | "print" | null>(null);
+  const [modal, setModal] = useState<"relmap" | "print" | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const closeModal = () => setModal(null);
   const openPrintPreview = useCallback(() => setModal("print"), []);
   useOpenPrintPreviewFromUrl(openPrintPreview, !!deliveryOrder);
@@ -1231,7 +1147,7 @@ export function DeliveryOrderDetailV2() {
             <Button
               variant="ghost"
               icon={<History size={14} />}
-              onClick={() => setModal("history")}
+              onClick={() => setHistoryOpen(true)}
             >
               History
             </Button>
@@ -1762,12 +1678,10 @@ export function DeliveryOrderDetailV2() {
       </div>
 
       {/* Modals */}
-      <HistoryModal
-        open={modal === "history"}
-        onClose={closeModal}
-        header={deliveryOrder}
-        itemsCount={items.length}
-      />
+      {historyOpen && (
+        <DocumentHistoryDrawer doc="DELIVERY_ORDER" id={String(deliveryOrder.id)}
+          label={deliveryOrder.do_number} onClose={() => setHistoryOpen(false)} />
+      )}
       <DocumentRelationshipMapModal
         open={modal === "relmap"}
         onClose={closeModal}
