@@ -548,22 +548,15 @@ purchaseInvoices.get('/:id', async (c) => {
      the PI shows the supplier's code even when no live supplier↔material binding
      exists; PI-native service lines (grn_item_id NULL) simply carry none. The
      frontend still falls back to the binding when a line has no snapshot. */
-  /* Two facts a PI line borrows from its GRN line — the supplier's own code
-     (`grn_items.supplier_sku`, snapshotted at receipt) and the price we ORDERED
-     at (owner 2026-09-12: 「PI 应该要有两个价钱 … 有差异的话就要做 checking」).
-     Both come off the same row, so `lib/pi-po-price.ts` reads them together:
-     one grn_items read per DOCUMENT, plus one purchase_order_items read.
-     Auxiliary enrichment — a failed hop leaves both null rather than 500ing a
-     purchase invoice nobody can then open. */
+  /* Two facts a PI line borrows from its GRN line — the supplier's own code and
+     the price we ORDERED at (owner 2026-09-12: 「PI 应该要有两个价钱」). Both come
+     off the same row, so `lib/pi-po-price.ts` reads them together. Auxiliary: a
+     failed hop leaves both null rather than 500ing the whole invoice. */
   try {
-    /* The cast is the supabase client's generic depth, not a type hole: its
-       builder is a deeply-parameterised generic and assigning it to the
-       helper's structural shape makes tsc give up (TS2589). The helper only
-       ever calls from().select().in(). */
-    await attachGrnLineFacts(
-      sb as unknown as Parameters<typeof attachGrnLineFacts>[0],
-      items as Array<Record<string, unknown> & { id: string; grn_item_id?: string | null }>,
-    );
+    // The cast is the supabase builder's generic DEPTH (TS2589), not a type
+    // hole: the helper only ever calls from().select().in().
+    await attachGrnLineFacts(sb as unknown as Parameters<typeof attachGrnLineFacts>[0],
+      items as Array<Record<string, unknown> & { id: string; grn_item_id?: string | null }>);
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error('[pi detail] grn-line facts resolve failed', { id, error: e });
