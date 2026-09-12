@@ -118,6 +118,15 @@ async function main() {
   const snapshot = models.map((m) => ({
     company_id: m.company_id, model_code: m.model_code, allowed_options: m.allowed_options,
   }));
+  /* `::text` on the snapshot bind is load-bearing, not decoration.
+     `scm.app_config.value` is a TEXT column (mig 0272), so JSON.stringify is the
+     right bind — but postgres.js asks the SERVER for parameter types and runs
+     its own JSON.stringify over anything typed json/jsonb, which would encode
+     this twice and leave the backup a jsonb STRING that the restore statement
+     below reads as nothing. The cast pins the parameter as text so the driver's
+     serializer never runs. `audit:jsonb-binds` refuses the bind without it;
+     docs/jsonb-double-encoding-coe.md is why. On a BACKUP the stake is the whole
+     point: a double-encoded copy of the previous state is not a copy. */
   const [existing] = await sql`SELECT key, updated_at FROM scm.app_config WHERE key = ${BACKUP_KEY}`;
   if (existing) {
     log(`BACKUP already exists (written ${new Date(existing.updated_at).toISOString()}) — keeping it. `
@@ -125,7 +134,7 @@ async function main() {
   } else {
     await sql`
       INSERT INTO scm.app_config (key, value, description, updated_at)
-      VALUES (${BACKUP_KEY}, ${JSON.stringify(snapshot)},
+      VALUES (${BACKUP_KEY}, ${JSON.stringify(snapshot)}::text,
               ${`product_models.allowed_options for ${models.length} model(s), taken ${new Date().toISOString()} before open-model-option-pools`},
               now())
       ON CONFLICT (key) DO NOTHING`;
