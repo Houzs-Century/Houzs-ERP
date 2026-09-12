@@ -38,7 +38,7 @@ import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summariz
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { sourceGrnIdsForPi } from '../lib/convert-parent';
 import { refuseMigratedSources } from '../lib/migrated-chain';
-import { poUnitPriceByPiLine } from '../lib/pi-po-price';
+import { attachGrnLineFacts } from '../lib/pi-po-price';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
 /* The create's refusal bodies and the two rules its exits follow (2026-08-19). */
 import { insertFailed, loadFailed, rollbackPi, committedAnyway } from '../lib/pi-create-refusals';
@@ -548,44 +548,18 @@ purchaseInvoices.get('/:id', async (c) => {
      the PI shows the supplier's code even when no live supplier↔material binding
      exists; PI-native service lines (grn_item_id NULL) simply carry none. The
      frontend still falls back to the binding when a line has no snapshot. */
-  /* The ORDERED price rides along on the same hop (owner 2026-09-12: 「PI 应该
-     要有两个价钱 … 有差异的话就要做 checking」). grn_items already has to be read
-     for the supplier SKU, so `purchase_order_item_id` costs nothing extra and
-     one further read turns it into what the PO says today. Deliberately a JOIN
-     and not a stored copy: a PO is amendable, and a price snapshotted at
-     conversion would keep showing what the order USED to say. The mapping is
-     `lib/pi-po-price.ts` so the case that matters — a line with no purchase
-     order behind it reads "no PO price", never "overcharged by the whole
-     amount" — is tested without a database. */
+  /* Two facts a PI line borrows from its GRN line — the supplier's own code
+     (`grn_items.supplier_sku`, snapshotted at receipt) and the price we ORDERED
+     at (owner 2026-09-12: 「PI 应该要有两个价钱 … 有差异的话就要做 checking」).
+     Both come off the same row, so `lib/pi-po-price.ts` reads them together:
+     one grn_items read per DOCUMENT, plus one purchase_order_items read.
+     Auxiliary enrichment — a failed hop leaves both null rather than 500ing a
+     purchase invoice nobody can then open. */
   try {
-    const grnItemIds = uniq((items as Array<{ grn_item_id?: string | null }>).map((r) => r.grn_item_id));
-    if (grnItemIds.length) {
-      const { data: gis } = await sb.from('grn_items')
-        .select('id, supplier_sku, purchase_order_item_id').in('id', grnItemIds);
-      const grnRows = (gis ?? []) as Array<{
-        id: string; supplier_sku: string | null; purchase_order_item_id: string | null;
-      }>;
-      const skuByGrnItem = new Map<string, string>();
-      for (const g of grnRows) if (g.supplier_sku) skuByGrnItem.set(g.id, g.supplier_sku);
-      for (const it of items as Array<Record<string, unknown> & { grn_item_id?: string | null }>) {
-        it.supplier_sku = it.grn_item_id ? skuByGrnItem.get(it.grn_item_id) ?? null : null;
-      }
-      const poiIds = uniq(grnRows.map((g) => g.purchase_order_item_id));
-      const { data: pois } = poiIds.length
-        ? await sb.from('purchase_order_items').select('id, unit_price_sen').in('id', poiIds)
-        : { data: [] as Array<{ id: string; unit_price_sen: number | null }> };
-      const poPriceByLine = poUnitPriceByPiLine(
-        items as Array<{ id: string; grn_item_id?: string | null }>,
-        grnRows,
-        (pois ?? []) as Array<{ id: string; unit_price_sen: number | null }>,
-      );
-      for (const it of items as Array<Record<string, unknown> & { id: string }>) {
-        it.po_unit_price_sen = poPriceByLine.get(it.id) ?? null;
-      }
-    }
+    await attachGrnLineFacts(sb, items as Array<Record<string, unknown> & { id: string; grn_item_id?: string | null }>);
   } catch (e) {
     // eslint-disable-next-line no-console
-    console.error('[pi detail] supplier-sku / PO-price resolve failed', { id, error: e });
+    console.error('[pi detail] grn-line facts resolve failed', { id, error: e });
   }
 
   /* Customer DO(s) — owner 2026-07-23 ("要的", following "PI need show Do

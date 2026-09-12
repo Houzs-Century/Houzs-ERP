@@ -109,3 +109,48 @@ export const piPriceDifferenceSummary = (
   }
   return { linesDiffering, totalDiffSen };
 };
+
+/* ── The one read, done once ───────────────────────────────────────────────
+   Both facts a PI line borrows from its GRN line — the supplier's own code and
+   the price we ordered at — come off the same row, so they are fetched
+   together: one `grn_items` read per DOCUMENT plus one `purchase_order_items`
+   read, never one per line.
+
+   It MUTATES `items` in place because that is what the detail route already
+   does with every other enrichment, and a second shape would be a second thing
+   to keep in step. A failed hop is logged by the caller and leaves both fields
+   null — a purchase invoice must still open when an auxiliary read fails. */
+export type PiLineEnrichable = Record<string, unknown> & { id: string; grn_item_id?: string | null };
+
+type MinimalPgrest = {
+  from: (t: string) => {
+    select: (cols: string) => { in: (col: string, vals: string[]) => Promise<{ data: unknown }> };
+  };
+};
+
+export async function attachGrnLineFacts(sb: MinimalPgrest, items: PiLineEnrichable[]): Promise<void> {
+  const grnItemIds = [...new Set(items.map((r) => r.grn_item_id).filter((v): v is string => !!v))];
+  for (const it of items) { it.supplier_sku = null; it.po_unit_price_sen = null; }
+  if (!grnItemIds.length) return;
+
+  const { data: gis } = await sb.from('grn_items')
+    .select('id, supplier_sku, purchase_order_item_id').in('id', grnItemIds);
+  const grnRows = (gis ?? []) as Array<{
+    id: string; supplier_sku: string | null; purchase_order_item_id: string | null;
+  }>;
+
+  const skuByGrnItem = new Map<string, string>();
+  for (const g of grnRows) if (g.supplier_sku) skuByGrnItem.set(g.id, g.supplier_sku);
+
+  const poiIds = [...new Set(grnRows.map((g) => g.purchase_order_item_id).filter((v): v is string => !!v))];
+  const poItems = poiIds.length
+    ? ((await sb.from('purchase_order_items').select('id, unit_price_sen').in('id', poiIds)).data
+        ?? []) as Array<{ id: string; unit_price_sen: number | null }>
+    : [];
+
+  const poPriceByLine = poUnitPriceByPiLine(items, grnRows, poItems);
+  for (const it of items) {
+    it.supplier_sku = it.grn_item_id ? skuByGrnItem.get(it.grn_item_id) ?? null : null;
+    it.po_unit_price_sen = poPriceByLine.get(it.id) ?? null;
+  }
+}
