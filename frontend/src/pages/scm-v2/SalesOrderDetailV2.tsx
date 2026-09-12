@@ -95,6 +95,7 @@ import {
 import { MigratedReadonlyBanner } from "../../vendor/scm/components/MigratedReadonlyBanner";
 import { customerRefOf } from '../../lib/customer-ref';
 
+import { isFocLine } from '../../vendor/scm/lib/foc-line';
 // ─── Row types (subset — see MfgSalesOrdersList.tsx for the full SoRow) ────
 
 type SoHeader = {
@@ -899,7 +900,7 @@ function SalesOrderDetailV2ReadOnly() {
       align: "right",
       getValue: (l) => l.discount_sen,
       render: (l) => {
-        const isFoc = l.unit_price_sen === 0 && l.total_sen === 0;
+        const isFoc = isFocLine(l);
         if (isFoc) {
           return (
             <Badge tone="warning" size="xs">

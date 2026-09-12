@@ -965,3 +965,23 @@ POST-PATCH code, because a patch that omits `itemCode` still leaves the stored
 code sitting next to the link. The purchase chain closes the identical door in
 `purchase-invoices.ts`; the enumeration of both is
 `backend/tests/keyWithoutIdentityGuards.test.mjs`.
+
+## FOC is COMPUTED, and the rule lives in one place
+
+There is no FOC column on any line table. A line is free when it charges
+nothing — and since 2026-09-12 exactly one function decides that for every
+surface: `isFocLine` in `frontend/src/vendor/scm/lib/foc-line.ts`.
+
+- unit price 0 **or absent** (absent counts as zero), **and** the line total 0 —
+  read from `total_sen` on a sales order and `line_total_sen` elsewhere;
+- **or** `variants.freeGift`, which wins over the arithmetic: a
+  promotion-with-purchase gift can hold a granted base price for costing while
+  costing the customer nothing.
+- **Discounted to zero is NOT free** — it was sold and then given away, and the
+  discount is the story the document keeps telling.
+
+Before that, four surfaces carried four different rules and two of them
+disagreed in ways nobody could see from the screen that was right: the delivery
+order checked the PRICE ONLY, so a 0-priced line still taking money read **FOC
+there and Sale on the invoice**. Do not re-derive the rule in a component —
+`docs/bugs/0846-the-same-free-line-read-foc-on-the-delivery-order-and-sale-o.md`.
