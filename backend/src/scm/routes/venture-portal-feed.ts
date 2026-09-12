@@ -88,10 +88,16 @@ function maskSecret(raw: string | null): { set: boolean; length: number; tail: s
   return { set: true, length: v.length, tail: v.slice(-4) };
 }
 
+/** Null means the read FAILED, which is not the same as "nothing is configured"
+ *  — and the page must not render the second when the first happened. */
 async function readConfigRows(
   sb: ReturnType<typeof getSupabaseService>,
-): Promise<Record<string, string>> {
-  const { data } = await sb.from('sync_config').select('k, v').in('k', VP_CONFIG_KEYS as unknown as string[]);
+): Promise<Record<string, string> | null> {
+  const { data, error } = await sb
+    .from('sync_config')
+    .select('k, v')
+    .in('k', VP_CONFIG_KEYS as unknown as string[]);
+  if (error) return null;
   const out: Record<string, string> = {};
   for (const r of (data ?? []) as { k: string; v: string }[]) out[r.k] = r.v;
   return out;
@@ -119,43 +125,67 @@ venturePortalFeed.get('/status', async (c) => {
   const sb = getSupabaseService(c.env);
 
   const [scope, cfg] = await Promise.all([readFeedScope(sb), readConfigRows(sb)]);
+  /* EVERY READ BELOW IS BOUND AND A FAILURE ANSWERS 500, because a status board
+     that cannot read is not a healthy status board. Swallowed, an unreadable
+     queue renders as `failed: 0` and `pending: 0`, and vpVerdict turns that into
+     "Working — nothing waiting" on the owner's screen while orders sit
+     undelivered. A wrong green is worse than an error: one gets investigated.
+     audit:swallowed-reads caught all four of these. */
+  if (cfg === null) {
+    return c.json({ error: 'config_read_failed', message: 'could not read the feed connection' }, 500);
+  }
 
   /* One grouped read would need an aggregate PostgREST cannot express, so this
      is four counts with head:true — no rows travel, only the counts. */
   const counts: Record<string, number> = {};
+  const countErrors: string[] = [];
   await Promise.all(
     VP_ROW_STATUSES.map(async (s) => {
-      const { count } = await sb
+      const { count, error } = await sb
         .from('venture_portal_outbox')
         .select('id', { count: 'exact', head: true })
         .eq('status', s);
-      counts[s] = count ?? 0;
+      if (error) countErrors.push(`${s}: ${error.message}`);
+      else counts[s] = count ?? 0;
     }),
   );
+  if (countErrors.length) {
+    return c.json({ error: 'queue_read_failed', message: countErrors.join('; ') }, 500);
+  }
 
-  const { data: lastSent } = await sb
+  const { data: lastSent, error: lastSentErr } = await sb
     .from('venture_portal_outbox')
     .select('doc_no, sent_at, portal_outcome')
     .eq('status', 'sent')
     .order('sent_at', { ascending: false })
     .limit(1);
+  if (lastSentErr) {
+    return c.json({ error: 'queue_read_failed', message: lastSentErr.message }, 500);
+  }
 
-  const { data: lastError } = await sb
+  const { data: lastError, error: lastErrorErr } = await sb
     .from('venture_portal_outbox')
     .select('doc_no, last_error, attempts, updated_at')
     .not('last_error', 'is', null)
     .order('updated_at', { ascending: false })
     .limit(1);
+  if (lastErrorErr) {
+    return c.json({ error: 'queue_read_failed', message: lastErrorErr.message }, 500);
+  }
 
   /* The oldest thing still waiting IS the health signal. A pending count that
      is merely large means a busy queue; a pending row from two days ago means
-     nothing is draining, and those two look identical in a count. */
-  const { data: oldestPending } = await sb
+     nothing is draining, and those two look identical in a count — which is
+     also why this read in particular must never be swallowed. */
+  const { data: oldestPending, error: oldestErr } = await sb
     .from('venture_portal_outbox')
     .select('doc_no, created_at, attempts, last_error')
     .eq('status', 'pending')
     .order('created_at', { ascending: true })
     .limit(1);
+  if (oldestErr) {
+    return c.json({ error: 'queue_read_failed', message: oldestErr.message }, 500);
+  }
 
   return c.json({
     feed: {

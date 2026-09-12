@@ -187,6 +187,30 @@ run over a real in-scope order via the Supabase MCP:
 | the 19 columns the portal reads still present | **19** |
 | header keys that travel | 84 |
 
+### The builder itself has been RUN against production, read-only
+
+Not the function — the function exists on no database. Its whole BODY, verbatim,
+as an anonymous `DO` block over the real schema, plus a query that assembles one
+document's payload. The Supabase MCP connection is READ-ONLY (`cannot execute
+CREATE TABLE in a read-only transaction`), which is what makes this safe to say.
+
+`HC-SO-2609-063`, the newest in-scope order on 2026-09-12:
+
+| measured | result |
+|---|---|
+| payload size | **8,506 bytes** — the contract's "a few KB", confirmed |
+| line items / payments carried | 4 / 1 |
+| `salesperson` resolved through the `::uuid` cast and the `scm.staff` join | **yes** |
+| `items[0].line_cost_sen` present — the costing the portal was waiting for | **yes** |
+| `header.balance_sen_live` present — the deposit gate's input | **yes** |
+| `header.phone` present | **no** |
+| `header.approval_code` present | **no** |
+
+What this settles: the strip list, the view read, the uuid cast, the staff join,
+the two nested aggregates and both `ORDER BY`s all execute against the real
+schema and produce the shape the contract asks for. What it does NOT settle is
+anything the migration CREATES — see §11.
+
 ### The costing, which is half of what the portal was waiting for
 
 `items[].line_cost_sen` is the cost source its margin layer could not open
@@ -342,7 +366,14 @@ no error is the drain not running.
 - **The SQL is UNAPPLIED.** `pg-migrate` applies it on the next push to `main`.
   The statement splitting was verified against
   `backend/scripts/lib/split-sql.mjs` (20 statements, every dollar-quoted body
-  intact); the objects themselves have not been created on any database yet.
+  intact) and the builder's body was RUN read-only against production (§4) — but
+  the objects themselves have been created on no database. Not verifiable from
+  here either: the Supabase MCP connection is read-only, so no `CREATE` in this
+  file has ever been executed anywhere. What is still open is therefore the DDL
+  itself: the table, the three triggers, the two `CREATE FUNCTION` wrappers, the
+  grant block and the seed. If one of them has a syntax error, the deploy's
+  `pg-migrate` step fails and **blocks every later migration until it is
+  fixed** — so read the Deploy run, do not assume it.
 - **Backfill throughput is untested** at 493 documents (see §10).
 - **The PII strip list is enforced in SQL**, so no TypeScript test covers it.
   It is instead PROVEN by a read-only run of the expression against production

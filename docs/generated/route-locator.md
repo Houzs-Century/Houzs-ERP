@@ -996,15 +996,15 @@ Total: 1269 route registrations across 164 files.
 - L777  DELETE /locks/:id
 
 ## backend/src/scm/routes/venture-portal-feed.ts  (9)
-- L116  GET    /status
-- L186  GET    /rows
-- L211  PUT    /connection
-- L248  PUT    /secret
-- L273  PUT    /scope
-- L324  POST   /probe
-- L340  POST   /queue-undelivered
-- L356  POST   /drain
-- L374  POST   /rows/:id/requeue
+- L122  GET    /status
+- L216  GET    /rows
+- L241  PUT    /connection
+- L278  PUT    /secret
+- L303  PUT    /scope
+- L354  POST   /probe
+- L370  POST   /queue-undelivered
+- L386  POST   /drain
+- L404  POST   /rows/:id/requeue
 
 ## backend/src/scm/routes/warehouse.ts  (9)
 - L91  GET    /

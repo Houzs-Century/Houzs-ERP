@@ -50,6 +50,10 @@ function db(opts: {
   config?: Row[];
   outbox?: Row[];
   orders?: Row[];
+  /** Columns a table does NOT have. Asking for one fails the WHOLE query with
+   *  42703, exactly as PostgREST does — the fake's own seam for simulating a
+   *  read that errors rather than returns nothing. */
+  missing?: Record<string, string[]>;
 }) {
   return fakeSb(
     {
@@ -60,7 +64,7 @@ function db(opts: {
       ],
       mfg_sales_orders: opts.orders ?? [{ doc_no: 'HC-SO-013403', company_id: 1, so_date: '2026-09-01' }],
     },
-    {},
+    opts.missing ?? {},
     /* The migration's venture_portal_outbox_pending_doc_idx: one PENDING row
        per document. Declared so the fake constrains what production constrains. */
     [{ table: 'venture_portal_outbox', column: 'doc_no', covers: (r) => r.status === 'pending' }],
@@ -295,6 +299,38 @@ describe('refusing to send', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(outbox(sb)[0].status).toBe('skipped');
     expect(String(outbox(sb)[0].last_error)).toMatch(/since/i);
+  });
+
+  /* THE MOST IMPORTANT TEST IN THIS FILE, and it exists because
+     audit:swallowed-reads found the bug it pins.
+
+     The scope check is a read of mfg_sales_orders. That read's error was
+     originally not bound, so a five-second database blip returned no rows, every
+     lookup came back undefined, the `if (so)` guard was false — and the row fell
+     through to the deliverable list WITH NO SCOPE CHECK AT ALL. A blip would have
+     delivered another company's sales order, with its costs and its margins, to
+     an external portal, and nothing would have said so.
+
+     The fix aborts the sweep. What this test pins is the CONSEQUENCE, not the
+     implementation: on a failed scope read, nothing is sent and nothing is
+     marked. Leave this test in place even if the mechanism changes. */
+  test('a FAILED scope read sends nothing — a blip must not bypass the company check', async () => {
+    const sb = withBuilder(
+      db({ flag: '1', missing: { mfg_sales_orders: ['company_id'] } }),
+      [payloadFor('HC-SO-013403')],
+    );
+    currentSb = sb;
+    const fetchImpl = vi.fn() as never;
+
+    const r = await drainVenturePortalOutbox(env, 25, fetchImpl);
+
+    expect(r.skipped).toBe('scope_read_failed');
+    expect(r.sent).toBe(0);
+    expect(r.outOfScope).toBe(0);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    /* Still pending, so the next sweep retries it once the database answers. */
+    expect(outbox(sb)[0].status).toBe('pending');
+    expect(outbox(sb)[0].attempts).toBe(0);
   });
 
   test('`all` sends for every company', async () => {

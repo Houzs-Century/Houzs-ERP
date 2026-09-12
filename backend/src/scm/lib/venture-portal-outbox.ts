@@ -223,10 +223,19 @@ export async function drainVenturePortalOutbox(
      order no longer exists is NOT out of scope — it is a deletion, and the
      portal needs it to stop paying commission on a cancelled sale. */
   const docNos = rows.map((r) => r.doc_no);
-  const { data: soData } = await sb
+  const { data: soData, error: soErr } = await sb
     .from('mfg_sales_orders')
     .select('doc_no, company_id, so_date')
     .in('doc_no', docNos);
+  /* THE ERROR IS BOUND AND THE SWEEP ABORTS, and this is the one read here where
+     swallowing it is not a cosmetic bug. This map IS the company-scope check.
+     Left unbound, a five-second database blip returns no rows, every `so` below
+     is undefined, `if (so)` is false — and the row falls through to `deliverable`
+     WITHOUT ANY SCOPE CHECK AT ALL. A blip would deliver another company's sales
+     order, with its costs and margins, to an external portal. That is the exact
+     shape audit:swallowed-reads exists to catch, and it caught it here.
+     Returning leaves every row pending, which the next sweep retries. */
+  if (soErr) return { skipped: 'scope_read_failed', ...zero };
   const soByDoc = new Map<string, { company_id: number | null; so_date: string | null }>(
     ((soData ?? []) as { doc_no: string; company_id: number | null; so_date: string | null }[])
       .map((s) => [s.doc_no, { company_id: s.company_id, so_date: s.so_date }]),
