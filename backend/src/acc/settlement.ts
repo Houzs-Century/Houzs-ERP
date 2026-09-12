@@ -242,14 +242,20 @@ export async function loadPaymentCandidates(
   const soDocs = [...new Set(soRaw.map((r) => String(r.so_doc_no ?? '')).filter(Boolean))];
   const siIds = [...new Set(siRaw.map((r) => String(r.sales_invoice_id ?? '')).filter(Boolean))];
   const customerOf = new Map<string, string>();
+  /* A CANCELLED order's money is not a sale to reconcile (owner 2026-09-12:
+     cancel SO 就 cancel 不显示; docs/bugs/0837) — it waits to be converted to a
+     new order or refunded, and only then is it anybody's candidate again. The
+     status rides on the same read as the customer's name. */
+  const cancelledDocs = new Set<string>();
   if (soDocs.length > 0) {
     const { data, error } = await sb.from('mfg_sales_orders')
-      .select('doc_no, debtor_name').eq('company_id', companyId).in('doc_no', soDocs); // debtor_name — docs/bugs/0655
+      .select('doc_no, debtor_name, status').eq('company_id', companyId).in('doc_no', soDocs); // debtor_name — docs/bugs/0655
     /* Failed is not "nameless": a blank customer column across the whole
        screen reads as data, so the read fails like its siblings above. */
     if (error) return { ok: false, reason: `SO customers: ${error.message}` };
-    for (const r of (data ?? []) as Array<{ doc_no: string; debtor_name: string | null }>) {
+    for (const r of (data ?? []) as Array<{ doc_no: string; debtor_name: string | null; status?: string | null }>) {
       if (r.debtor_name) customerOf.set(`SO:${r.doc_no}`, r.debtor_name);
+      if (String(r.status ?? '').toUpperCase() === 'CANCELLED') cancelledDocs.add(String(r.doc_no));
     }
   }
   if (siIds.length > 0) {
@@ -270,6 +276,7 @@ export async function loadPaymentCandidates(
   };
   const payments: PaymentCandidate[] = [];
   for (const r of soRaw) {
+    if (cancelledDocs.has(String(r.so_doc_no ?? ''))) continue;
     payments.push({
       source: 'SOPAY',
       id: String(r.id),
@@ -423,10 +430,15 @@ export async function findPaymentsForRow(
   const nameOf = new Map<string, string>();
   const invoiceNoOf = new Map<string, string>();
   const soDocs = [...new Set(soRows.map((r) => String(r.so_doc_no ?? '')).filter(Boolean))];
+  const cancelledDocs = new Set<string>();
   for (let i = 0; i < soDocs.length; i += 200) {
-    const { data, error } = await sb.from('mfg_sales_orders').select('doc_no, debtor_name').eq('company_id', companyId).in('doc_no', soDocs.slice(i, i + 200));
+    const { data, error } = await sb.from('mfg_sales_orders').select('doc_no, debtor_name, status').eq('company_id', companyId).in('doc_no', soDocs.slice(i, i + 200));
     if (error) return { ok: false, status: 'load_failed', reason: `SO customers: ${error.message}` };
-    for (const r of (data ?? []) as Array<{ doc_no: string; debtor_name: string | null }>) if (r.debtor_name) nameOf.set(`SO:${r.doc_no}`, r.debtor_name);
+    for (const r of (data ?? []) as Array<{ doc_no: string; debtor_name: string | null; status?: string | null }>) {
+      if (r.debtor_name) nameOf.set(`SO:${r.doc_no}`, r.debtor_name);
+      /* A cancelled order's money is not offered here either (docs/bugs/0837). */
+      if (String(r.status ?? '').toUpperCase() === 'CANCELLED') cancelledDocs.add(String(r.doc_no));
+    }
   }
   const siIds = [...new Set(siRows.map((r) => String(r.sales_invoice_id ?? '')).filter(Boolean))];
   for (let i = 0; i < siIds.length; i += 200) {
@@ -443,7 +455,7 @@ export async function findPaymentsForRow(
     return p === '' ? null : p;
   };
   const all: FoundPayment[] = [
-    ...soRows.map((r): FoundPayment => ({
+    ...soRows.filter((r) => !cancelledDocs.has(String(r.so_doc_no ?? ''))).map((r): FoundPayment => ({
       source: 'SOPAY', id: String(r.id), docNo: String(r.so_doc_no ?? ''), paidOn: isoDay(r.paid_at),
       amountSen: Number(r.amount_sen ?? 0), approvalCode: r.approval_code ?? null,
       customerName: nameOf.get(`SO:${String(r.so_doc_no ?? '')}`) ?? null,

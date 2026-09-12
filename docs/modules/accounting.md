@@ -1199,6 +1199,21 @@ and reference is another transaction; an acquirer without unique references
 `backend/tests/settlementRoutes.test.ts` ("a transaction already on another
 report").
 
+**A cancelled order's money is not reconciled (2026-09-12, docs/bugs/0837;
+owner: cancel SO 就 cancel 不显示).** `loadPaymentCandidates` and
+`findPaymentsForRow` (`backend/src/acc/settlement.ts`) read the order's
+status on the same read as the customer's name and leave out every payment
+whose order is CANCELLED — so it is offered on no statement line, listed on
+neither watch list (the "no merchant report yet" table on the Merchant
+reconciliation page reads the same loader), and not findable by Find the
+sale. The money is not a sale to reconcile: it waits to be converted to a new
+order (the convert-payment design, not yet built) or refunded, and only then
+is it a candidate again. A link already confirmed against such a payment is
+untouched — the link is the ledger's. Contracts:
+`backend/src/acc/settlement.test.ts` (the loader leaves it out even by
+reference) and `backend/tests/settlementRoutes.test.ts` (the watch list, Find
+the sale).
+
 **An unconfirmed link follows its payment (2026-09-12, docs/bugs/0833; owner:
 要刷新功能，而且我希望是我打开自动刷新，而不是手动触发刷新).** The upload writes
 each link down with the payment's amount AS OF THEN; a payment Finance
