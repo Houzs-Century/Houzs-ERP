@@ -4737,6 +4737,23 @@ names a path that exists. Both screens read the key the same way
 pass the fourth argument — dropping it compiles, type-checks, and silently hides
 the control from Finance again.
 
+**An edited payment is the stored row, verbatim (2026-09-12, docs/bugs/0838;
+owner: 用 finance 权限改资料时 payment method 会跳掉去 cash … 我按 edit 时默认会
+已输入的资料，我只会 edit 我想要 edit 的东西).** `editDraftOf` in
+`frontend/src/vendor/scm/components/PaymentsTable.tsx` seeds the edit draft
+from the persisted row field by field — the method under its own value (an
+`installment` row opens as Installment, with its bank and plan), the sheet,
+the code, the collector — so a save that touches one field sends the rest
+back unchanged. `labelToApi` resolves ALL FOUR values the ledger stores
+through the inverse of `PAYMENT_METHOD_CODE_TO_VALUE` (the shared
+`PAYMENT_METHOD_VALUE_TO_CODE` is the LOCK list and deliberately lacks
+Installment, which is how an installment edit fell through to a cash fallback
+and was saved as cash, journal re-posted to cash with it), and a value none of
+the four is refused by name — `UnknownPaymentMethodError`, shown by the three
+commit paths — never booked as something else. A stored code the screen does
+not know opens under its own name rather than as Cash. Contract:
+`frontend/src/vendor/scm/components/PaymentsTable.test.ts`.
+
 **A reason is owed on the amend right, and only there (2026-09-10,
 docs/bugs/0785).** The predicate now says WHY a row may change (`via`), and
 both routes act on `via === 'amend'`: the PATCH takes `reason` in its body and
