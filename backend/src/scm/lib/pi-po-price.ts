@@ -26,8 +26,23 @@
 //     (the walk-in / direct-purchase case);
 //   * an UNBOUND SKU is ordered at 0 and keyed in at the invoice
 //     (mfg-purchase-orders.ts supplierCostFor: "unbound — key in at PI").
-// All three come back `null`, which the UI renders as "no PO price" rather than
-// as a difference of the full amount.
+// All three mean "the order never named a price", and NONE of them is an
+// overcharge.
+//
+// THE ZERO IS NOT A PRICE — MEASURED, NOT ASSUMED. The first version of this
+// module treated an ordered 0 as a real price, so a line billed RM 2,138 against
+// an unpriced order read as "+RM 2,138, supplier billed more". Measured on 25
+// live purchase invoices (115 lines, staging copy of production, 2026-09-12):
+//
+//   78 lines (68%)  ordered price 0  -> the order was never priced
+//   35 lines (30%)  ordered == billed
+//    2 lines (1.7%) genuinely differ  -> HC-PI-008026: TRION (A)-(K) ordered
+//                                        800.00 billed 830.00; JAGER-(Q)
+//                                        ordered 200.00 billed 225.00
+//
+// Painting the 78 red buries the 2 that a person actually has to check, which is
+// the whole point of the feature. So 0 is reported as UNPRICED and never as a
+// difference; the two real ones stand alone.
 // ----------------------------------------------------------------------------
 
 /** The one comparison, so the API, the UI and any report agree on the word. */
@@ -47,8 +62,11 @@ export const comparePiLinePrice = (
   poUnitPriceSen: number | null,
 ): PiLinePriceComparison => {
   const supplier = Number.isFinite(supplierUnitPriceSen) ? supplierUnitPriceSen : 0;
-  if (poUnitPriceSen == null) {
-    return { poUnitPriceSen: null, supplierUnitPriceSen: supplier, diffSen: null, differs: false };
+  /* `0` joins `null` here: an order that named no price cannot be over- or
+     under-billed against. See the measurement in the header — 68% of live lines
+     are this case, and calling them differences hides the 1.7% that are. */
+  if (poUnitPriceSen == null || poUnitPriceSen === 0) {
+    return { poUnitPriceSen, supplierUnitPriceSen: supplier, diffSen: null, differs: false };
   }
   const diff = supplier - poUnitPriceSen;
   return {
@@ -101,7 +119,7 @@ export const piPriceDifferenceSummary = (
   let linesDiffering = 0;
   let totalDiffSen = 0;
   for (const l of lines) {
-    if (l.poUnitPriceSen == null) continue;
+    if (l.poUnitPriceSen == null || l.poUnitPriceSen === 0) continue;
     const diff = l.supplierUnitPriceSen - l.poUnitPriceSen;
     if (diff === 0) continue;
     linesDiffering += 1;
