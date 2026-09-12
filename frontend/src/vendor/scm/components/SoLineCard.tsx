@@ -66,6 +66,7 @@ import { useNotify } from './NotifyDialog';
 import { SpecialOrders } from './SpecialOrders';
 import styles from './SoLineCard.module.css';
 import { DateField } from "./DateField";
+import { DiscountInput } from './DiscountInput';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
@@ -972,7 +973,37 @@ const SoLineCardInner = ({
           onBlur={() => setPriceText((amountCellSen / 100).toFixed(2))}
         />
 
-        {/* 6. Delivery Date (2990 addition between Unit Price and Amount) */}
+        {/* 6. Discount — owner 2026-09-12: the sales side had no discount field
+             at all while purchasing had one, so a sales discount could only be
+             typed into the price. ONE box: `1000` is ringgit, `25%` is a
+             percentage of qty x unit price (DiscountInput). What is stored is
+             always the resolved sen amount, which is what the server already
+             validates (0 .. qty x unit price).
+
+             A DELIVERY-FEE line is the exception and is disabled here: its
+             amount cell IS the discount — typing the amount to charge writes
+             `discountSen = gross - charged` (feeDiscountForAmount above), so a
+             second control writing the same field would fight it. */}
+        {isFeeLine ? (
+          <span
+            className={styles.priceLabel}
+            title="A delivery fee's discount is derived — type the amount to charge in the price cell."
+            style={{ textAlign: 'right', opacity: 0.55 }}
+          >
+            {draft.discountSen > 0 ? fmtRm(draft.discountSen) : '—'}
+          </span>
+        ) : (
+          <DiscountInput
+            bare
+            align="right"
+            inputClassName={styles.priceInput}
+            valueSen={draft.discountSen}
+            baseSen={draft.qty * draft.unitPriceSen}
+            disabled={!isEditing}
+            onCommit={(sen) => onChange({ discountSen: sen ?? 0 })}
+          />
+        )}
+        {/* 7. Delivery Date (2990 addition between Unit Price and Amount) */}
         <DateField
           fullWidth
           className={styles.input}
@@ -990,10 +1021,10 @@ const SoLineCardInner = ({
           }
         />
 
-        {/* 7. Amount */}
+        {/* 8. Amount */}
         <span className={styles.amount}>{fmtRm(lineTotal)}</span>
 
-        {/* 8. Group badge */}
+        {/* 9. Group badge */}
         <span className={styles.badge} style={{ background: badge.bg, color: badge.fg }}>
           {badge.label}
         </span>

@@ -14,6 +14,7 @@
 import { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAnchoredPanel, anchoredPanelStyle } from "../../../lib/anchoredPanel";
+import { serviceNotify } from "../lib/dialog-service";
 
 export type SearchableSelectOption = { value: string; label: string };
 
@@ -50,6 +51,7 @@ export function SearchableSelect({
   invalid = false,
   ariaLabel,
   title,
+  blockedReason,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -62,16 +64,26 @@ export function SearchableSelect({
   ariaLabel?: string;
   /** Hover tooltip (e.g. why a field is locked). Falls back to the selected label. */
   title?: string;
+  /** When set, the control is INERT but still clickable: it will not open and
+   *  cannot be typed into, and any attempt to use it pops this reason via the
+   *  app dialog. Use it for a precondition the operator must satisfy first
+   *  (e.g. "pick a State before a Postcode"), as opposed to `disabled`, which
+   *  greys the control out and stays silent. */
+  blockedReason?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const wrapRef = useRef<HTMLDivElement>(null);
+  const blocked = !!blockedReason;
+  // Inert-but-clickable: pop the reason and refuse to open. Kept on mousedown so
+  // the menu never even flashes, and mirrored on focus for keyboard tabs.
+  const raiseBlocked = () => void serviceNotify({ title: "Select State first", body: blockedReason, tone: "info" });
   // Pin the portalled menu to the input, tracking scroll/resize, and FLIP it
   // above when the room below cannot hold it. Portalling alone only escapes the
   // card's clip — measured on prod's New Sales Order, the City menu still ran
   // 111px past the bottom of the window, where `position: fixed` puts it out of
   // reach of any scroll.
-  const menuPos = useAnchoredPanel(wrapRef, open && !disabled, 280);
+  const menuPos = useAnchoredPanel(wrapRef, open && !disabled && !blocked, 280);
 
   // The label to show when closed — the selected option's, verbatim.
   const selectedLabel = useMemo(
@@ -111,24 +123,28 @@ export function SearchableSelect({
         value={open ? search : selectedLabel}
         placeholder={selectedLabel ? undefined : placeholder}
         disabled={disabled}
+        readOnly={blocked}
         /* House rule (owner 2026-08-09): opening a picker must KEEP the
            current value in view — seed the search with it, select-all so
            typing replaces. Blur without a pick restores via the value
            binding. Same non-lossy pattern as Divan/Gap native selects. */
+        onMouseDown={blocked ? (e) => { e.preventDefault(); raiseBlocked(); } : undefined}
         onFocus={(e) => {
+          if (blocked) { raiseBlocked(); e.currentTarget.blur(); return; }
           setOpen(true);
           setSearch(selectedLabel ?? "");
           e.currentTarget.select();
         }}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         onChange={(e) => {
+          if (blocked) return;
           setSearch(e.target.value);
           setOpen(true);
         }}
-        title={title ?? (selectedLabel || undefined)}
+        title={blocked ? blockedReason : (title ?? (selectedLabel || undefined))}
         style={invalid && !disabled ? { borderColor: "var(--c-festive-b, #B8331F)" } : undefined}
       />
-      {open && !disabled && menuPos &&
+      {open && !disabled && !blocked && menuPos &&
         createPortal(
           <ul
             style={{

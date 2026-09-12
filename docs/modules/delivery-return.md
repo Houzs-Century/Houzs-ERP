@@ -50,6 +50,11 @@ The two facts that make this module easy to get wrong:
 | Desktop new | `frontend/src/pages/scm-v2/DeliveryReturnNew.tsx` |
 | Convert from a DO | `frontend/src/pages/scm-v2/DeliveryReturnFromDo.tsx` |
 
+> **The address is State-first (2026-09-12).** `DeliveryReturnNew`'s Postcode field
+> is blocked until a State is picked (placeholder "Select State first"; clicking it
+> pops a prompt). It shares the State/City/Postcode cascade, so the rule and its
+> rationale live in `docs/modules/address-cascade.md`.
+
 > **A return line may not INVENT a sofa variant (2026-09-08).** `DeliveryReturnNew`
 > renders the shared `SoLineCard`, which auto-fills a blank sofa Leg Height with
 > the maintenance "Default" option — a SALES-ORDER convenience. The leg height is

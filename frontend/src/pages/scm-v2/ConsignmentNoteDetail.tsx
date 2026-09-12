@@ -46,7 +46,7 @@ import { SoLineCard, emptySoLine, type SoLineDraft } from '../../vendor/scm/comp
 import { useLocalities } from '../../vendor/scm/lib/localities-queries';
 import {
   useAddressCascade, pickState, pickCity, pickPostcode,
-  cityPlaceholder, postcodePlaceholder,
+  cityPlaceholder, postcodePlaceholder, POSTCODE_NEEDS_STATE,
 } from '../../vendor/scm/lib/address-cascade';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import {
@@ -889,6 +889,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                   onChange={onPostcodePick}
                   disabled={inputsDisabled}
                   placeholder={postcodePlaceholder(form.state, form.city)}
+                  blockedReason={form.state ? undefined : POSTCODE_NEEDS_STATE}
                   options={sortByNumeric(postcodes).map((p) => ({ value: p, label: p }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />

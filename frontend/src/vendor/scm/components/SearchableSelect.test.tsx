@@ -1,5 +1,9 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+
+const { serviceNotify } = vi.hoisted(() => ({ serviceNotify: vi.fn() }));
+vi.mock("../lib/dialog-service", () => ({ serviceNotify }));
+
 import { SearchableSelect, nextOptionWindow } from "./SearchableSelect";
 
 // Unmount is handled by the global afterEach(cleanup) in src/test-setup.ts.
@@ -115,5 +119,25 @@ describe("SearchableSelect windowing", () => {
     openMenu();
     fireEvent.mouseDown(renderedOptions()[3]);
     expect(picked).toEqual(["P3"]);
+  });
+});
+
+describe("SearchableSelect blockedReason", () => {
+  beforeEach(() => serviceNotify.mockClear());
+
+  test("a blocked control is read-only, will not open, and pops the reason", () => {
+    render(<SearchableSelect value="" onChange={() => {}} options={many} blockedReason="Choose a State first." />);
+    const input = screen.getByRole("textbox") as HTMLInputElement;
+    expect(input.readOnly).toBe(true);
+    fireEvent.mouseDown(input);
+    expect(document.querySelector("ul")).toBeNull(); // the menu never opened
+    expect(serviceNotify).toHaveBeenCalledWith(expect.objectContaining({ body: "Choose a State first." }));
+  });
+
+  test("without blockedReason the control opens as normal", () => {
+    render(<SearchableSelect value="" onChange={() => {}} options={many} />);
+    openMenu();
+    expect(document.querySelector("ul")).not.toBeNull();
+    expect(serviceNotify).not.toHaveBeenCalled();
   });
 });

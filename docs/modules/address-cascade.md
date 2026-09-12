@@ -99,14 +99,27 @@ City   ──> postcodeOptionsFor(rows, state, city) = postcodesInCity
 **Bottom-up** (`由下往上`) — a pick back-fills what sits above it:
 
 ```
-Postcode ──> resolvePostcode  ──> { state, city }
 City     ──> resolveCityState ──> state          (only when unambiguous)
+Postcode ──> resolvePostcode  ──> { state, city }   (scan / prefill only, see below)
 ```
 
-With nothing picked, City and Postcode offer the **cross-state pool**
-(`allCities` / `allPostcodes`), which is what makes them valid starting points.
-An ambiguous city that could not resolve a State still narrows Postcode, via
-`postcodesForCity`.
+With no State picked, **City** offers the cross-state pool (`allCities`) and can
+start the cascade. **Postcode cannot** — see the State-first rule below.
+
+### Postcode is State-first (owner 2026-09-12: "一定要选 state 才填写 postcode")
+
+`postcodeOptionsFor` returns **empty** with no State, so the Postcode field on
+every cascade form is blocked until a State exists: the placeholder reads "Select
+State first" and interacting with it pops `POSTCODE_NEEDS_STATE` via the app
+dialog. This removed the old bottom-up-from-a-bare-postcode entry (the reason the
+pool is no longer `allPostcodes`/`postcodesForCity` when State is blank).
+City-first still works — it back-fills State, which then opens Postcode — so
+`由下往上` survives via City. `resolvePostcode` itself is unchanged and still
+back-fills State + City for a postcode set by SCAN or PREFILL, where the value
+does not come through the picker. The block is enforced per render style:
+`SearchableSelect` takes `blockedReason` (inert-but-clickable, pops the reason);
+the native `<select>` forms guard `onMouseDown`; both are fed by the same empty
+option pool. Pinned OFF in `address-cascade.test.ts`.
 
 ## 3. The API a form uses
 
@@ -118,7 +131,8 @@ pickCity(rows, current, nextCity)     // -> full triple, State back-filled
 pickPostcode(rows, current, nextPc)   // -> full triple, State + City back-filled
 
 cityPlaceholder(state)                // "Pick city — State fills in"
-postcodePlaceholder(state, city)      // "Pick postcode — State and City fill in"
+postcodePlaceholder(state, city)      // "Select State first" when no State (else "Pick postcode…")
+POSTCODE_NEEDS_STATE                  // the popup body when Postcode is used before State
 ```
 
 The `pick*` functions are **pure and return the whole triple**. That is not
