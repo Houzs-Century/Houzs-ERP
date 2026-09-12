@@ -34,6 +34,7 @@ import {
   withFrozenHeaderFieldsReverted,
 } from "../vendor/scm/lib/so-amendment-header";
 import { SearchableSelect } from "../vendor/scm/components/SearchableSelect";
+import { SgPostcodeField } from "../vendor/scm/components/SgPostcodeField";
 import { diffHeaderPayload, hasHeaderChanges } from "../vendor/scm/lib/so-header-diff";
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER, AMENDMENT_NOTHING_TO_SUBMIT } from "../vendor/scm/lib/so-amendment-submit";
 import { LOCKED_STATUSES, procLockActive, migratedReadonly as soMigratedReadonly, type SoDetailGateHeader } from "../vendor/scm/lib/so-detail-gates";
@@ -2453,17 +2454,12 @@ export function MobileNewSO({
                         </select>
                       </Field>
                       <Field label={addressRequired ? "Postcode *" : "Postcode"} style={{ flex: 1 }} error={touched && addressRequired && !postcode.trim()} scanned={scanned("postcode", postcode)}>
-                        <select
-                          className="fld-i"
-                          value={postcode}
-                          disabled={addressIdentityLocked || postcodeChoices.length === 0}
-                          onChange={(e) => onPostcodeChange(e.target.value)}
-                        >
-                          <option value="">
-                            {postcodeChoices.length === 0 ? "No postcodes seeded" : postcodePlaceholder(state, city)}
-                          </option>
-                          {postcodeChoices.map((p) => <option key={p} value={p}>{p}</option>)}
-                        </select>
+                        {country === 'Singapore'
+                          ? <SgPostcodeField bare inputClassName="fld-i" value={postcode} onChange={setPostcode} onResolveAddress={setAddr1} disabled={addressIdentityLocked} />
+                          : (<select className="fld-i" value={postcode} disabled={addressIdentityLocked || postcodeChoices.length === 0} onChange={(e) => onPostcodeChange(e.target.value)}>
+                              <option value="">{postcodeChoices.length === 0 ? "No postcodes seeded" : postcodePlaceholder(state, city)}</option>
+                              {postcodeChoices.map((p) => <option key={p} value={p}>{p}</option>)}
+                            </select>)}
                       </Field>
                     </div>
                     {addressIdentityLocked ? (

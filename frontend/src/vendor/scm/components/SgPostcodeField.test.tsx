@@ -52,4 +52,11 @@ describe('SgPostcodeField', () => {
     expect((screen.getByPlaceholderText(/6-digit/) as HTMLInputElement).disabled).toBe(true);
     expect(screen.queryByText(/^Use:/)).toBeNull();
   });
+
+  it('bare mode renders just the input, without its own Postcode label', () => {
+    useSgPostcodeLookup.mockReturnValue({ data: undefined, isFetching: false });
+    render(<SgPostcodeField bare value="" onChange={() => {}} onResolveAddress={() => {}} />);
+    expect(screen.getByPlaceholderText(/6-digit/)).toBeTruthy();
+    expect(screen.queryByText('Postcode')).toBeNull();
+  });
 });
