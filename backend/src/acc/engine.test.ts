@@ -310,10 +310,14 @@ describe('rules — role resolution', () => {
     expect(roles.AR).toBe(DEFAULT_ROLE_CODES.AR);
   });
 
-  it('siLines books Dr AR / Cr SALES with the customer stamped on the AR leg', () => {
-    const lines = siLines({ ...DEFAULT_ROLE_CODES }, { invoice_number: 'X', debtor_code: 'C1', debtor_name: 'A' }, 500);
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toMatchObject({ accountCode: '300-0000', debitSen: 500, partyType: 'CUSTOMER' });
-    expect(lines[1]).toMatchObject({ accountCode: '500-0000', creditSen: 500 });
+  it('siLines books Dr AR for the total with the customer stamped on the AR leg / Cr each product group\'s own sales account', () => {
+    const lines = siLines({ ...DEFAULT_ROLE_CODES }, { invoice_number: 'X', debtor_code: 'C1', debtor_name: 'A' }, [
+      { groupCode: 'SOFA', accountCode: '500-0003', myrSen: 300 },
+      { groupCode: 'MATTRESS', accountCode: '500-0001', myrSen: 200 },
+    ]);
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toMatchObject({ accountCode: '300-0000', debitSen: 500, creditSen: 0, partyType: 'CUSTOMER', partyCode: 'C1' });
+    expect(lines[1]).toMatchObject({ accountCode: '500-0003', creditSen: 300, debitSen: 0 });
+    expect(lines[2]).toMatchObject({ accountCode: '500-0001', creditSen: 200, debitSen: 0 });
   });
 });

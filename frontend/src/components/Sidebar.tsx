@@ -656,44 +656,98 @@ export const NAV_TABS: NavTab[] = [
     anyPerm: ["*", "scm.access"],
     anyAccess: ["scm.finance", "scm.finance.accounting", "scm.finance.outstanding"],
     children: [
-      { to: "/scm/accounting", label: "Accounting", icon: BookOpen, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
-      { to: "/scm/daily-bank", label: "Daily Bank", icon: Landmark, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
-      // The two screens that empty settlement-in-transit, named the way the
-      // owner names the work: the merchant statement first, the bank statement
-      // after. Both gated on the same GL key the backend checks
-      // (scm.payment_voucher.post) — front and back both.
-      { to: "/scm/merchant-recon", label: "Merchant Recon", icon: CreditCard, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
-      // Official Receipts (GL redesign item 9): every customer payment's OR
-      // document — drafts waiting for their money, the formal run, print +
-      // manual confirm. NOT the money-in list — that stays at /scm/receipts.
-      { to: "/scm/official-receipts", label: "Official Receipts", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.accounting"] },
-      { to: "/scm/bank-recon", label: "Bank Recon", icon: Banknote, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
-      // Maintained across companies from one screen (owner, 2026-08-18).
-      { to: "/scm/settlement-setup", label: "Recon Setup", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
-      { to: "/scm/chart-of-accounts", label: "Chart of Accounts", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
-      { to: "/scm/other-debtors", label: "Other Debtors", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
-      // AP Invoices (owner 2026-09-06): the Finance side's supplier bills —
-      // AP invoices raised there beside the purchase invoices mirrored from
-      // Procurement. Same key as Other Debtors: the bill-raising people.
-      { to: "/scm/ap-invoices", label: "AP Invoices", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
-      { to: "/scm/receipts", label: "Receipts", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
-      { to: "/scm/payment-vouchers", label: "Payment Vouchers", icon: Wallet, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.accounting"] },
-      { to: "/scm/outstanding", label: "Outstanding", icon: AlertCircle, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
-      // Delivered-but-not-billed, aged. Sits next to Outstanding and on the
-      // SAME area key: it is the money answer to the question Outstanding's
-      // DO tab asks with a header-status flag and no money column.
-      { to: "/scm/unbilled-deliveries", label: "Not Yet Billed", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
-      // Currencies master (Phase 1-A FX) — owner-maintained currency + rate
-      // table for GRN / PI / PV foreign-currency posting. Gated on the flat
-      // scm.currency.manage permission (Owner / IT Admin via *).
-      { to: "/scm/currencies", label: "Currencies", icon: DollarSign, anyPerm: ["*", "scm.currency.manage"] },
-      // Sales Report — moved from the top-level slot (owner 2026-07-22).
-      // Gate: requireFairReport (management + Sales Director cohort). The
-      // parent Finance group's anyPerm/anyAccess would AND onto this child
-      // and hide it from the Sales Director (who has fairReport but often
-      // not the SCM finance areas), so the child ALSO carries its own
-      // anyPerm/anyAccess that admits the fair-report cohort explicitly.
-      { to: "/reports/fair-report", label: "Sales Report", icon: BarChart3, requireFairReport: true, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance", "scm.finance.accounting", "scm.finance.outstanding", "projects.finances"] },
+      // ── SIX GROUPS, BY THE JOB (owner 2026-09-12: finance 的 function 分到很散,
+      //    我希望我要 maintenance 的东西一个子 side bar, report 一个 side bar;
+      //    docs/bugs/0824). Fifteen flat entries and the Accounting page's
+      //    thirteen tabs were two lists to hunt through. Every entry below is
+      //    the SAME entry it was, gates untouched; the Accounting tabs are
+      //    reached by deep link (/scm/accounting?tab=…, read by the page), so
+      //    a report is one click from here. A group carries no gate of its
+      //    own: it is shown when any of its entries is, hidden when none are
+      //    (makeNavFilter), and the outer Finance gate still ANDs onto all.
+      {
+        label: "Money in",
+        icon: HandCoins,
+        groupId: "scm-finance-in",
+        children: [
+          { to: "/scm/official-receipts", label: "Official Receipts", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.accounting"] },
+          // Deposit invoices (owner 2026-09-12; docs/bugs/0828) — born with a
+          // customer payment when the company's switch is on; beside the
+          // receipt the same payment is born with.
+          { to: "/scm/deposit-invoices", label: "Deposit Invoices", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/receipts", label: "Receipts", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/other-debtors", label: "Other Debtors", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/outstanding", label: "Outstanding", icon: AlertCircle, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
+          { to: "/scm/unbilled-deliveries", label: "Not Yet Billed", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
+          // Credit and debit notes (owner 2026-09-12; docs/bugs/0827) — the
+          // customer's CN / DN and the supplier's SCN; the PV key family, like
+          // the AP invoice they sit beside.
+          { to: "/scm/credit-notes", label: "Credit / Debit Notes", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
+        ],
+      },
+      {
+        label: "Money out",
+        icon: Wallet,
+        groupId: "scm-finance-out",
+        children: [
+          { to: "/scm/payment-vouchers", label: "Payment Vouchers", icon: Wallet, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/ap-invoices", label: "AP Invoices", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
+        ],
+      },
+      {
+        label: "Bank & cards",
+        icon: Landmark,
+        groupId: "scm-finance-bank",
+        children: [
+          { to: "/scm/daily-bank", label: "Daily Bank", icon: Landmark, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/merchant-recon", label: "Merchant Recon", icon: CreditCard, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/bank-recon", label: "Bank Recon", icon: Banknote, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
+        ],
+      },
+      {
+        label: "Books",
+        icon: BookOpen,
+        groupId: "scm-finance-books",
+        children: [
+          { to: "/scm/accounting?tab=je", label: "Journal Entries", icon: BookOpen, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=gl", label: "General Ledger", icon: FileText, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=tb", label: "Trial Balance", icon: Receipt, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=close", label: "Month-end", icon: History, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=check", label: "Self-check", icon: ClipboardCheck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+        ],
+      },
+      {
+        label: "Reports",
+        icon: BarChart3,
+        groupId: "scm-finance-reports",
+        children: [
+          { to: "/scm/accounting?tab=pnl", label: "P&L", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=bs", label: "Balance Sheet", icon: LayoutDashboard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=rp", label: "Receipts & Payments", icon: Banknote, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=ar", label: "AR Aging", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=ap", label: "AP Aging", icon: Wallet, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          // Finance's corrections to recorded payments (docs/bugs/0785) — a
+          // report, so it lives with the reports (owner: 包括那个 finance 改
+          // sales order 的报告).
+          { to: "/scm/accounting?tab=corrections", label: "Corrections", icon: History, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          // Deposit and balance collected per salesman (owner 2026-09-12; docs/bugs/0825).
+          { to: "/scm/accounting?tab=collection", label: "Collection", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          // What each acquirer charged against the gross, per month (owner 2026-09-12; docs/bugs/0826).
+          { to: "/scm/accounting?tab=charges", label: "Merchant charges", icon: CreditCard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/reports/fair-report", label: "Sales Report", icon: BarChart3, requireFairReport: true, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance", "scm.finance.accounting", "scm.finance.outstanding", "projects.finances"] },
+        ],
+      },
+      {
+        label: "Setup",
+        icon: SettingsIcon,
+        groupId: "scm-finance-setup",
+        children: [
+          { to: "/scm/chart-of-accounts", label: "Chart of Accounts", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=groups", label: "Item Groups", icon: SettingsIcon, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/settlement-setup", label: "Recon Setup", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/currencies", label: "Currencies", icon: DollarSign, anyPerm: ["*", "scm.currency.manage"] },
+        ],
+      },
     ],
   },
 

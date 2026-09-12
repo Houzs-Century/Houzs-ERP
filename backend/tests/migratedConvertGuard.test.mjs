@@ -35,6 +35,13 @@ const read = (p) => fs.readFileSync(path.join(here, "..", p), "utf8");
 
 const PI_SRC = "src/scm/routes/purchase-invoices.ts";
 const SI_SRC = "src/scm/routes/sales-invoices.ts";
+/* A handler that is a DOOR on a core in another file (docs/bugs/0830: the
+   DO -> SI conversion runs from the delivery reconciler with no request
+   context) is judged by that core's text. The core is read the way a named
+   handler is; a missing core is a failure here, never an empty body. */
+const CORES = {
+  [SI_SRC]: { "POST /from-dos": { src: "src/scm/lib/si-from-do.ts", fn: "createSalesInvoiceFromDoLines" } },
+};
 
 /**
  * Slice a router file into { route -> handler body }, where a handler body runs
@@ -67,6 +74,12 @@ function handlers(src, routerVar) {
     if (named) {
       const fn = namedFunctionBody(lines, named[1]);
       if (fn) body += "\n" + fn;
+    }
+    const core = CORES[src]?.[h.key];
+    if (core) {
+      const coreBody = namedFunctionBody(read(core.src).split(/\r?\n/), core.fn);
+      assert.ok(coreBody, `${h.key} names ${core.fn} in ${core.src} as its core, and it is not there`);
+      body += "\n" + coreBody;
     }
     out.set(h.key, body);
   });
@@ -135,14 +148,17 @@ test("the guard refuses rather than proceeds when the source lookup FAILS", () =
        it guards was never in question. What stays pinned: it must RETURN, it
        must be a 500, and `mig.reason` must ride the body so the failure is
        findable. */
+    /* A core with no request context answers through `refuse(status, body)`
+       (lib/si-from-do.ts), the HTTP-shaped outcome its door returns as-is —
+       the third spelling of the same refusal, pinned to the same two facts. */
     assert.match(
       body,
-      /if \(!mig\.ok\) return (?:c\.json\(|refuseWithoutWriting\(c, )[^;]*mig\.reason[^;]*, 500\);/,
+      /if \(!mig\.ok\) return (?:(?:c\.json\(|refuseWithoutWriting\(c, )[^;]*mig\.reason[^;]*, 500|refuse\(500, [^;]*mig\.reason[^;]*)\);/,
       `${g.route} calls ${g.guard} but does not refuse when the lookup fails`,
     );
     assert.match(
       body,
-      /if \(mig\.refusal\) return (?:c\.json\(|refuseWithoutWriting\(c, )mig\.refusal, 409\);/,
+      /if \(mig\.refusal\) return (?:(?:c\.json\(|refuseWithoutWriting\(c, )mig\.refusal, 409|refuse\(409, mig\.refusal)\);/,
       `${g.route} calls ${g.guard} but does not return its refusal`,
     );
   }

@@ -224,7 +224,20 @@ posting.
 - **Create from DO lines** (`POST /from-dos`, `createSalesInvoiceFromDoLinesHandler`).
   Same `asDraft` contract, read strictly (`body.asDraft === true`) and landed at
   `status: isDraft ? 'DRAFT' : 'SENT'`, with `invoice_date` forced to
-  `todayMyt()`. **Since 2026-08-20 the phone always sends `asDraft: true`** — see
+  `todayMyt()`. **Since 2026-09-12 (docs/bugs/0830) the handler is a thin door
+  on `backend/src/scm/lib/si-from-do.ts` (`createSalesInvoiceFromDoLines`):
+  the conversion — migrated refusal, remaining check, one customer, race
+  guard, totals, audit row, AutoCount enqueue, revenue, customer credit, the
+  paid roll (now on every from-DO invoice) — runs with no request context, so
+  the delivery reconciler can raise the FINAL invoice by itself when the
+  company's deposit-invoice switch is on (`lib/auto-final-invoice.ts`;
+  docs/modules/accounting.md). `recomputeTotals`, `buildItemRow`,
+  `recordSiCreate` and `migratedRefusalForDeliveries` moved into that lib
+  with it; the router imports them back.** The revenue posting closes the
+  order's deposit invoices with a credit note each, and the CANCEL transition
+  releases them again (`releaseDepositInvoicesBestEffort` beside
+  `reverseSiRevenue` in the status handler) — docs/bugs/0831,
+  docs/modules/accounting.md. **Since 2026-08-20 the phone always sends `asDraft: true`** — see
   the ruling below.
 - **Confirm** (DRAFT → SENT, inside the status handler at `:1958-2005`). Stamps
   `sent_at` + `confirmed_at` with a `.eq('status','DRAFT')` race gate (`:1969-1971`),

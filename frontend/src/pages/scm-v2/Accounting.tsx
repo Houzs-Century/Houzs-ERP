@@ -14,9 +14,10 @@
 //      drift named to the document (brief §3.5)
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { ArrowLeftRight, BookOpen, Boxes, CalendarClock, FileText, LineChart, ListTree, Receipt, Scale, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
+import { ArrowLeftRight, BookOpen, Boxes, CalendarClock, CreditCard, FileText, HandCoins, LineChart, ListTree, Receipt, Scale, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
 import {
   useJournalEntries,
   useJournalEntryDetail,
@@ -51,6 +52,8 @@ import { StockCloseTab } from './StockClose';
 import { PnLTab, BalanceSheetTab } from './Reports';
 import { ReceiptsPaymentsTab } from './ReceiptsPayments';
 import { PaymentCorrectionsTab } from './PaymentCorrectionsTab';
+import { CollectionTab } from './CollectionReport';
+import { MerchantChargesTab } from './MerchantChargesReport';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
@@ -65,10 +68,24 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 // amount, never "RM NaN". Kept under the local name so callsites are unchanged.
 const fmt = (sen: number | null | undefined) => fmtSen(sen);
 
-type Tab = 'coa' | 'groups' | 'je' | 'gl' | 'tb' | 'close' | 'pnl' | 'bs' | 'rp' | 'ar' | 'ap' | 'check' | 'corrections';
+type Tab = AccountingTab;
 
 export const Accounting = () => {
-  const [tab, setTab] = useState<Tab>('je');
+  /* THE TAB THE URL NAMES (docs/bugs/0824). The Finance sidebar deep-links
+     every tab (/scm/accounting?tab=pnl …), so the page opens on the one asked
+     for, follows a sidebar click made while it is already open, and writes
+     the tab it shows back to the URL so the sidebar can mark it. A name the
+     page does not know falls back to the journal. */
+  const [params, setParams] = useSearchParams();
+  const wanted = accountingTabFromSearch(params.get('tab'));
+  const [tab, setTabState] = useState<Tab>(wanted ?? 'je');
+  useEffect(() => {
+    if (wanted && wanted !== tab) setTabState(wanted);
+  }, [wanted, tab]);
+  const setTab = (next: Tab) => {
+    setTabState(next);
+    setParams({ tab: next }, { replace: true });
+  };
 
   return (
     <div className="space-y-4">
@@ -88,6 +105,8 @@ export const Accounting = () => {
         <TabBtn label="AP Aging"        icon={<TrendingDown {...ICON} />} active={tab === 'ap'} onClick={() => setTab('ap')} />
         <TabBtn label="Self-check"      icon={<ShieldCheck {...ICON} />} active={tab === 'check'} onClick={() => setTab('check')} />
         <TabBtn label="Corrections"     icon={<FileText {...ICON} />} active={tab === 'corrections'} onClick={() => setTab('corrections')} />
+        <TabBtn label="Collection"      icon={<HandCoins {...ICON} />} active={tab === 'collection'} onClick={() => setTab('collection')} />
+        <TabBtn label="Merchant charges" icon={<CreditCard {...ICON} />} active={tab === 'charges'} onClick={() => setTab('charges')} />
       </div>
 
       {tab === 'coa'   && <CoaTab />}
@@ -103,6 +122,8 @@ export const Accounting = () => {
       {tab === 'ap'    && <ApAgingTab />}
       {tab === 'check' && <SelfCheckTab />}
       {tab === 'corrections' && <PaymentCorrectionsTab />}
+      {tab === 'collection' && <CollectionTab />}
+      {tab === 'charges' && <MerchantChargesTab />}
     </div>
   );
 };

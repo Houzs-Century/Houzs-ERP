@@ -101,8 +101,14 @@ export async function fetchMonthlyDocNos(
   // A fetch error still yields [] — identical to the old `data ?? []`: the
   // insert collides and insertWithDocNoRetry handles it exactly as it does
   // today. The ONLY behaviour change here is that the set is no longer cut off.
+  // THE NAMED COLUMN FIRST. A driver that returns the whole row instead of the
+  // one column asked for (the test fake does; a view could) would otherwise
+  // hand back its FIRST string — an id — and the floor would read 0 for a
+  // series with numbers on file, minting -001 twice (docs/bugs/0827 found it
+  // raising the second credit note of a month). The single-value fallback
+  // stays for the drivers that rename the key (trips: trip_no / tripNo).
   return ((data ?? []) as Array<Record<string, unknown>>)
-    .map((row) => Object.values(row).find((v) => typeof v === 'string'))
+    .map((row) => (typeof row[col] === 'string' ? row[col] : Object.values(row).find((v) => typeof v === 'string')))
     .filter((v): v is string => typeof v === 'string');
 }
 

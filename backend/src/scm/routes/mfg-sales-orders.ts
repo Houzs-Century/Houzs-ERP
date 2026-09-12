@@ -283,6 +283,7 @@ import {
 } from '../lib/so-cancel-vouchers';
 import { deferAllocationRecompute, scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
 import { pgrestIn } from '../lib/pgrest-in-list';
+import { skuCategoryResolver } from '../lib/sku-category';
 
 export const mfgSalesOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
 mfgSalesOrders.use('*', supabaseAuth);
@@ -7978,6 +7979,14 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   const nextLineNo = typeof (maxNoRow as { line_no?: number | null } | null)?.line_no === 'number'
     ? (maxNoRow as { line_no: number }).line_no + 1
     : null;
+  /* SKU wins — lib/sku-category.ts, docs/bugs/0514. The create door already
+     resolved the group from the product master; this door copied the request
+     (`it.itemGroup ?? 'others'`) until 2026-09-12, so a sofa added to an
+     existing order could land on `others`, lose hard binding, and read SHORT in
+     MRP with its purchase order open (docs/bugs/0813's shape, on the SO). The
+     phone's add-item payload sends `itemGroup: l.itemGroup || "others"`. */
+  const addGroupOf = await skuCategoryResolver(sb, [{ materialKind: 'mfg_product', itemCode: itemCodeStr }], activeCompanyId(c) ?? null);
+  const addItemGroup = addGroupOf({ materialKind: 'mfg_product', itemCode: itemCodeStr, itemGroup: it.itemGroup }) ?? 'others';
   /* Shared base fields — used for both the single-row non-sofa path and as the
      template for each sofa module row (create-path convention: baseRow). */
   const baseRow = {
@@ -7986,7 +7995,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     debtor_code: header.debtor_code,
     debtor_name: header.debtor_name,
     agent: header.agent,
-    item_group: it.itemGroup ?? 'others',
+    item_group: addItemGroup,
     item_code: it.itemCode,
     description: correctedSizeDescription(itemCodeStr, it.description as string | null, sizeSkuMap)
       ?? ((it.description as string) ?? null),
@@ -8322,7 +8331,12 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     ? (it.variants as MfgItemForRecompute['variants'])
     : ((prev as { variants?: MfgItemForRecompute['variants'] }).variants ?? null);
   const itemCodeAfter = it.itemCode !== undefined ? String(it.itemCode) : prev.item_code;
-  const itemGroupAfter = it.itemGroup !== undefined ? String(it.itemGroup) : prev.item_group;
+  /* SKU wins — lib/sku-category.ts, docs/bugs/0514. Until 2026-09-12 this door
+     took the request's group verbatim; the product master decides, the request
+     is a fallback only when the code is not catalogued, and the stored value is
+     the last resort. Same rule as create and add-item. */
+  const patchGroupOf = await skuCategoryResolver(sb, [{ materialKind: 'mfg_product', itemCode: itemCodeAfter }], activeCompanyId(c) ?? null);
+  const itemGroupAfter = patchGroupOf({ materialKind: 'mfg_product', itemCode: itemCodeAfter, itemGroup: it.itemGroup }) ?? prev.item_group;
 
   /* Did the caller actually CHANGE the priced shape of this line? Loo 2026-06-28:
      the Backend SO Detail Save re-commits EVERY line, even untouched ones, so an
@@ -8539,12 +8553,16 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     updates.custom_specials         = recomputedPatch.custom_specials ?? null;
   }
   for (const [from, to] of [
-    ['itemCode', 'item_code'], ['itemGroup', 'item_group'], ['description', 'description'],
+    ['itemCode', 'item_code'], ['description', 'description'],
     ['description2', 'description2'], ['uom', 'uom'], ['variants', 'variants'],
     ['remark', 'remark'], ['cancelled', 'cancelled'],
   ] as const) {
     if (it[from] !== undefined) updates[to] = it[from];
   }
+  /* item_group is never copied through from the request: it is the SKU's
+     (itemGroupAfter above). Written only when it actually moves, so an edit
+     that touches neither code nor group leaves the column alone. */
+  if (itemGroupAfter !== prev.item_group) updates.item_group = itemGroupAfter;
   /* Anti-tamper (Task 6) — when the client sends variants, strip any client-supplied
      freeItem marker, then re-graft the persisted marker (if any) so an already-free
      line stays free and a normal line cannot be made free via a crafted PATCH.

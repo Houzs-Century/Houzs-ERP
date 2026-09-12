@@ -45,6 +45,8 @@ import { purchaseInvoicesListEnrichment } from "./routes/purchase-invoices-list-
 import { paymentVouchers } from "./routes/payment-vouchers";
 import { otherDebtors } from "./routes/other-debtors";
 import { apInvoices } from "./routes/ap-invoices";
+import { creditNotes } from "./routes/credit-notes";
+import { depositInvoices } from "./routes/deposit-invoices";
 import { receipts } from "./routes/receipts";
 import { entityAuditLog } from "./routes/entity-audit-log";
 import { changeLog } from "./routes/change-log";
@@ -533,6 +535,16 @@ scm.route("/receipts", receipts);
 // purchase invoices it is paid alongside; same area, same PV key family.
 scm.use("/ap-invoices/*", scmAreaGuard("scm.finance.accounting"));
 scm.route("/ap-invoices", apInvoices);
+// Credit and debit notes (owner 2026-09-12; docs/bugs/0827) — the customer's
+// CN / DN and the supplier's SCN, raised by Finance; same area, same PV key
+// family as the AP invoice beside it.
+scm.use("/credit-notes/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/credit-notes", creditNotes);
+// Deposit invoices (owner 2026-09-12; docs/bugs/0828) — born with a customer
+// payment when the company's switch is on; Finance reads, cancels, re-posts,
+// and holds the switch. Same area as the notes and receipts beside it.
+scm.use("/deposit-invoices/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/deposit-invoices", depositInvoices);
 // Payment Audit Log — Finance's payment TRAIL (port of 2990's /admin/audit-log):
 // one row per mfg_sales_order_payments entry + its SO header context. Read-only.
 // Same L2 area as Accounting: it is the money ledger's read side, not a new

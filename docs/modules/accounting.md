@@ -23,7 +23,7 @@ books which entry":
 
 | action | entry | source_type | reversal |
 |---|---|---|---|
-| Sales invoice issued | Dr AR / Cr SALES | `SI` | `SI_REVERSAL` |
+| Sales invoice issued | Dr AR / Cr each group's sales account (500-x/502/503 by scm.acc_item_group_accounts; unbound group REFUSES — docs/bugs/0829) | `SI` | `SI_REVERSAL` |
 | Purchase invoice posted | Dr each group's purchase account (601-x/602 by scm.acc_item_group_accounts; unbound group REFUSES) / Cr AP | `PI` | `PI_REVERSAL` |
 | AP invoice posted (non-stock supplier bill) | Dr each line's own account / Cr AP control (400 or 405 by the supplier's code) | `API` | `API_REVERSAL` |
 | Payment voucher posted | Dr expense legs / Cr bank-or-AP header; a supplier payment's Dr leg on the AP control carries the supplier as party (since 2026-09-06) | `PV` | `PV_REVERSAL` |
@@ -865,6 +865,216 @@ the reason, for a human to confirm. Offered, never taken: two possible answers i
 a question, so nothing is ticked and he chooses;
 `acc/settlement.ts` confirms, which POSTS that moment.
 
+**Credit and debit notes (2026-09-12, docs/bugs/0827; owner 2026-09-05:
+CN/DN approved, sales CN + supplier CN first, DN second, prefixes CN / DN /
+SCN; 2026-09-12: 这个要做).** `scm.acc_credit_notes` + `_lines` (migration
+`backend/src/db/migrations-pg/20260912T0100_acc_credit_notes.sql`), routes
+`/scm/credit-notes` (`backend/src/scm/routes/credit-notes.ts`, mounted under
+the finance area guard in `backend/src/scm/index.ts`, the PV key family:
+create/edit on `scm.payment_voucher.create|write`, post on `.post`, cancel on
+`.cancel`); the page route is registered in `frontend/src/App.tsx` and
+`frontend/src/routing/routeManifest.ts`, its hooks live in
+`frontend/src/vendor/scm/lib/credit-note-queries.ts`. Three kinds, one shape: **CN** to a
+customer — Dr each line's account (role `SALES_RETURNS`, 510-0000 RETURN
+INWARDS by default) / Cr AR with the customer as party; **DN** to a customer —
+Dr AR (party) / Cr each line's account; **SCN** from a supplier — Dr the
+supplier's AP control (`apControlRole`: 405 for a 405-x code) / Cr each
+line's account (role `PURCHASE_RETURNS`, 612-0000 PURCHASES RETURN by
+default). The customer is the sales order's (`customerPartyCode`, the code a
+payment carries — one customer one code), else the invoice's, else the name
+typed; a supplier note names its supplier. Numbers `{co}-CN-YYMM-NNN`,
+`{co}-DN-YYMM-NNN`, `{co}-SCN-YYMM-NNN` (NEW series, `mintMonthlyDocNo`).
+DRAFT → POSTED by `postJournal` (source_type = kind, source_doc_no = the
+number; a second post echoes `already_posted`) → CANCELLED by
+`reverseJournal` (`REVERSAL_SOURCE` carries CN/DN/SCN); a posted note is not
+edited (`not_editable`) — cancel and raise again. The page
+(`frontend/src/pages/scm-v2/CreditNotes.tsx`, sidebar Money in → Credit /
+Debit Notes) lists by kind and status, raises a note (lines with a blank
+account land on the default), opens one to its lines, posts, cancels. Since
+docs/bugs/0831 the document itself — number, header, lines, journal, contra —
+is `backend/src/acc/credit-notes.ts` (`insertCreditNote` / `postCreditNote` /
+`cancelCreditNote`); the route keeps the caller's half, and the deposit-invoice
+close-out raises its notes through the same core. Not yet: applying a note to
+a specific invoice's balance, printing. `fetchMonthlyDocNos` reads the named column first
+since this PR (a whole-row driver handed back the id and minted -001 twice).
+Contracts: `backend/tests/creditNotes.test.ts`, `CreditNotes.test.tsx`.
+
+**Deposit invoices (2026-09-12, docs/bugs/0828; owner: e-invoice 好像是根据收钱
+就认 sales 了 … 每个顾客不是有自己本身的 account code 吗 … 做成开关 … 可以自己选
+几时要开始自动开 deposit invoice).** A customer payment received BEFORE the
+order's final sales invoice gets an invoice of its own — Dr AR with the
+customer as party / Cr DEPOSIT PAY BY CUSTOMER (role `DEPOSIT_INCOME`,
+509-0000, `depositInvoiceLines` in `backend/src/acc/rules.ts`) — dated the
+payment's day, numbered `{co}-DI-YYMM-NNN` (NEW series), posted by
+`postJournal` keyed (`DI`, the number); `REVERSAL_SOURCE` carries DI. The
+payment has already booked Dr money / Cr AR, so the customer nets to nothing
+and the deposit stands as a sale; a payment after the final invoice settles
+the invoice and gets none. Tables `scm.acc_deposit_invoices` and
+`scm.acc_company_settings` (migration
+`backend/src/db/migrations-pg/20260912T0300_acc_deposit_invoices.sql`); the
+library is `backend/src/acc/deposit-invoices.ts`. WHERE IT IS BORN:
+`bookSoPaymentBestEffort` in `backend/src/scm/lib/so-payment-row.ts` — the
+hook the three payment writers pass (the panel, the scan job, both SO-create
+deposit inserts) — which asks `issueDepositInvoice`: the company's switch on,
+the day on or after the start, no live sales invoice on the order
+(`absorbsOrderDeposit`: a draft or a cancelled one is none), idempotent on the
+payment. The edit re-post (`repostSoPaymentBestEffort`) cancels a standing
+invoice whose amount or day moved by contra (`DI_REVERSAL`, dated the day
+of the cancel) and issues the next number; `afterSoPaymentRemoved` cancels
+it. One invoice STANDS per payment (a partial unique index). THE SWITCH is
+per company with a start day (`acc_company_settings.deposit_invoice_enabled`
+/ `_from`) — off until Finance turns it on, and switching on needs the day.
+Routes `/scm/deposit-invoices` (`backend/src/scm/routes/deposit-invoices.ts`,
+mounted under the finance area guard in `backend/src/scm/index.ts`, listed
+in `backend/src/scm/lib/scm-areas.ts`): the list (`?status&so`), one invoice
+with its payment, `GET|POST /settings` (the switch + how many payments
+since the start still have no invoice), `POST /issue-missing` (issues
+them, in payment-date order), `POST /:id/cancel` (a reason is required; the
+row stays on file with it), `POST /:id/post` (an invoice whose journal was
+refused at birth). The switch, the backlog and a re-post on
+`scm.payment_voucher.post`, cancel on `.cancel`. The page
+(`frontend/src/pages/scm-v2/DepositInvoices.tsx`, sidebar Money in →
+Deposit Invoices beside Official Receipts — `frontend/src/components/Sidebar.tsx`,
+pinned by `frontend/src/components/sidebarFinanceGroups.test.ts`; the route
+in `frontend/src/App.tsx` and `frontend/src/routing/routeManifest.ts`, the
+hooks in `frontend/src/vendor/scm/lib/deposit-invoice-queries.ts`) carries the
+switch line and the backlog button, the list, one invoice with its payment,
+cancel behind a reason, post again. 2990 on from the day the owner picks;
+HOUZS off. NEXT (④c): the final sales invoice at delivery and one credit
+note per deposit invoice at that moment (`credit_note_id` is the link);
+until then the sale stays on 509-0000. Contracts:
+`backend/tests/depositInvoices.test.ts`, `DepositInvoices.test.tsx`.
+
+**The final invoice at delivery (2026-09-12, docs/bugs/0830; the deposit-invoice
+design's next step).** When the company's deposit-invoice switch is ON, the
+delivery reconciler (`backend/src/scm/lib/so-delivery-sync.ts`, the moment it
+flips an order to DELIVERED) invoices the order BY ITSELF:
+`backend/src/scm/lib/auto-final-invoice.ts` reads the order's deliveries an
+invoice may be raised from (`siTransferRefusal`, the picker's own gate),
+every line with quantity still unbilled (`doLineRemaining`, basis
+invoiceable), skips an order that already has a live invoice
+(`absorbsOrderDeposit`: a draft or a cancelled one is none), and raises ONE
+invoice — SENT, `{co}-SI-YYMM-NNN`, revenue per product group, the paid roll
+counting the deposits, the CREATE audit row noted "Auto: final invoice at
+delivery". Never blocks the delivery. The conversion it runs is the picker's
+own, lifted into `backend/src/scm/lib/si-from-do.ts`
+(`createSalesInvoiceFromDoLines`, an HTTP-shaped outcome; `recomputeTotals`,
+`buildItemRow`, `recordSiCreate`, `migratedRefusalForDeliveries` moved beside
+it) — `POST /sales-invoices/from-dos` in
+`backend/src/scm/routes/sales-invoices.ts` is now a thin door on it. Two rules
+changed on the way: the paid roll (`recomputeSiPaid`) runs on EVERY from-DO
+invoice, not only when customer credit landed, so an invoice off a
+deposit-paid order reads PARTIALLY_PAID / PAID from birth; and
+`postSiRevenue` (`backend/src/scm/lib/post-si-revenue.ts`) stamps the AR
+party the way the payment does — `customerPartyCode`: the debtor code when
+the business keeps one, else the order's `customer_id` — so a 2990 invoice
+nets in the customer's sub-ledger with its payments, deposit invoices and
+credit notes instead of sitting under no party. NEXT (④c-B): one credit
+note per deposit invoice at this moment (`credit_note_id`), and the
+Collection report's balance view keyed on "has a sales invoice". Contracts:
+`backend/tests/autoFinalInvoice.test.ts`; the router's own pins
+(`backend/tests/oneSystemTwoOrganisations.test.ts` reads DO_HEADER from the
+lib since this change).
+
+**The close-out: one credit note per deposit invoice at the final invoice
+(2026-09-12, docs/bugs/0831; owner: CN at delivery, 1:1 per DI at final
+invoice).** The moment the final invoice posts its revenue —
+`postSiRevenue` in `backend/src/scm/lib/post-si-revenue.ts`, the one gate
+every issued invoice passes (create, from-DO, confirm, resync, the backfill)
+— `applyDepositInvoicesToInvoice` (`backend/src/acc/deposit-invoices.ts`)
+closes every deposit invoice still standing on the order with a credit note
+of its own: kind CN, `{co}-CN-YYMM-NNN`, Dr DEPOSIT PAY BY CUSTOMER
+(`DEPOSIT_INCOME`) / Cr AR with the customer as party for the deposit's
+amount, dated the INVOICE's day, `source_doc_no` the deposit invoice's
+number, `sales_invoice_id` the invoice, raised and posted through
+`backend/src/acc/credit-notes.ts` and linked on
+`acc_deposit_invoices.credit_note_id`. Idempotent: a linked deposit invoice
+is left alone; a note already raised for the pair (a retry after the link
+failed to write) is linked, not duplicated; a note whose posting was refused
+is still linked, so it is found on the notes page and posted from there
+rather than raised twice. The customer's ledger then reads: deposits −D,
+deposit invoices +D, the final invoice +T, the notes −D → AR = T − D, the
+balance still owed; 509-0000 nets to zero; the sale stands ONCE on the group
+sales accounts. A CANCELLED final invoice (`releaseDepositInvoicesFromInvoice`,
+hooked at the cancel in `backend/src/scm/routes/sales-invoices.ts`) cancels
+those notes by contra and the deposit invoices stand again; a note Finance
+raised against the invoice by hand (no deposit invoice points at it) stays.
+The deposit-invoice list and detail (`backend/src/scm/routes/deposit-invoices.ts`,
+`frontend/src/pages/scm-v2/DepositInvoices.tsx`, "Closed by") name the note.
+THE COLLECTION REPORT (`backend/src/scm/routes/accounting-collection.ts`,
+`frontend/src/pages/scm-v2/CollectionReport.tsx`,
+`frontend/src/vendor/scm/lib/collection-report-queries.ts`; owner: 一个是看
+balance paid / convert to sales invoice Sales) now reads each order's live
+sales invoice (`absorbsOrderDeposit`: a draft or a cancelled one is none):
+the balance is measured against what was BILLED — `billedSen`, the invoice's
+total, else the order's — the invoice is named beside the order, the balance
+view's value column reads "Invoiced value", and an invoiced order is at the
+balance stage whatever its status says (the status set stays for the
+delivered-but-uninvoiced orders; the allowlist entry in
+`backend/scripts/data/duplicated-decision-allowlist.json` says so).
+Contracts: `backend/tests/depositInvoiceCloseout.test.ts`,
+`backend/tests/collectionReport.test.ts`, `CollectionReport.test.tsx`.
+
+**The Merchant charges report (2026-09-12, docs/bugs/0826; owner: 我需要知道
+merchant charge 多少%，就是 charge / received amount，每个月的然后每个 merchant …
+每个不同 merchant 都要能看到，我指的是 gross … 每个月全部 merchant 加起来的%).**
+`GET /accounting/reports/merchant-charges?from=YYYY-MM&to=YYYY-MM&acquirer&confirmed`
+(`backend/src/scm/routes/accounting-merchant-charges.ts`, the
+financial-statements permission) reads the merchant reports' lines
+(`acc_settlement_rows`, by trading day) and the bank's own payout charges
+(`acc_settlement_payout_batches.charge_sen`, by the day the payout landed —
+docs/bugs/0787) and answers per month, per acquirer: lines, gross, merchant
+fee, net, fee % of gross, bank charge, the two together and their % of gross;
+a line per month across acquirers; a grand total; and under each
+month-and-acquirer the reports (files) behind it with the same figures.
+`confirmed=1` keeps only confirmed lines; `acquirer` keeps one merchant.
+The tab (`MerchantChargesReport.tsx`, `/scm/accounting?tab=charges`, Reports
+group of the sidebar) shows a month as a block — all merchants first, then
+each merchant, opening to its reports — with month pickers, the merchant
+filter, the confirmed-only tick and an Export of the table as CSV.
+Contracts: `backend/tests/merchantChargesReport.test.ts`,
+`frontend/src/pages/scm-v2/MerchantChargesReport.test.tsx`.
+
+**The Collection report (2026-09-12, docs/bugs/0825; owner: collection
+report … salesman 开了多少单，deposit 收了多少%，below 50% 的我也需要知道; 分主要看
+两个，deposit / sales order amount，一个是看 balance paid).** `GET
+/accounting/reports/collection?from&to&threshold&salesperson`
+(`backend/src/scm/routes/accounting-collection.ts`, the financial-statements
+permission) reads the orders opened in the period BY SO DATE — DRAFT and
+CANCELLED are not orders — and the payments recorded on them: a payment
+flagged deposit is deposit (topped up later, in several pieces, whenever
+paid), the rest is balance; the SO's own balance columns are not read. Per
+salesman (`staff` by `salesperson_id`, else the agent text, else
+"Unassigned"): orders, order value, deposit, deposit % and how many orders sit
+under the threshold (default 50%, the caller's); and for the DELIVERED ones
+(DELIVERED / INVOICED / CLOSED — until the delivery raises the invoice, the
+status is the fact) the balance due after deposit, balance collected, balance
+% and outstanding; totals across salesmen; the orders themselves under each.
+The tab (`CollectionReport.tsx`, `/scm/accounting?tab=collection`, Reports
+group of the sidebar) shows the two views, opens a salesman to the orders,
+narrows to the orders under the line, and exports the open view as CSV.
+Contracts: `backend/tests/collectionReport.test.ts`,
+`frontend/src/pages/scm-v2/CollectionReport.test.tsx`.
+
+**The Finance sidebar is six groups (2026-09-12, docs/bugs/0824; owner:
+finance 的 function 分到很散 … report 全部集中在一个 side bar).** In
+`frontend/src/components/Sidebar.tsx` the Finance group's children are
+Money in (Official Receipts, Receipts, Other Debtors, Outstanding, Not Yet
+Billed), Money out (Payment Vouchers, AP Invoices), Bank & cards (Daily Bank,
+Merchant Recon, Bank Recon), Books (Journal Entries, General Ledger, Trial
+Balance, Month-end, Self-check), Reports (P&L, Balance Sheet, Receipts &
+Payments, AR Aging, AP Aging, Corrections, Sales Report) and Setup (Chart of
+Accounts, Item Groups, Recon Setup, Currencies). Every entry keeps the gates it
+had; a group has none of its own (`makeNavFilter` shows it when any entry is
+visible). The Accounting page's tabs are deep-linked as
+`/scm/accounting?tab=<name>` — the names live in
+`frontend/src/pages/scm-v2/accounting-tabs.ts`, the page opens on the tab the
+URL names and writes its tab back to the URL, and the plain "Accounting"
+entry is gone. A new finance report joins the Reports group; a new
+maintenance screen joins Setup. Contracts:
+`frontend/src/components/sidebarFinanceGroups.test.ts`,
+`frontend/src/pages/scm-v2/accounting-tabs.test.ts`.
+
 **A transaction already on another report is left out (2026-09-11,
 docs/bugs/0823; owner: 可以我觉得要).** Maybank's portal exports one CSV per
 merchant, day and programme (DVS04A credit, DVS04E debit, T41AX Amex, EP41
@@ -1602,6 +1812,25 @@ SI auto-posts on create/confirm (`lib/post-si-revenue.ts`; resync
 void+reposts on post-issue edits). PI posts on demand + resyncs. PV posts on
 `POST /payment-vouchers/:id/post` and reverses on cancel. All three files own
 only their document specifics; the entry writing is the engine's.
+
+**One ringgit, one product group, one account (docs/bugs/0829, 2026-09-12).**
+The split a document's lines make before they reach the ledger has ONE home,
+`backend/src/acc/item-group-split.ts` (`splitByItemGroup`): case-fold the
+group code (the registry is upper-case, the panels write lower-case), refuse
+a line with no group (`line_ungrouped`) and a group with no binding
+(`group_unbound`) by name — the owner's rule, 挡下来提醒我去绑 — FX once per
+group, the remainder on the largest group so the entry sums to the header
+total. `postPiAccounting` (`backend/src/scm/routes/accounting.ts`) reads
+its debits from it, unchanged in behaviour; `postSiRevenue` now reads the
+invoice's lines and credits one line per group to
+`acc_item_group_accounts.sales_account` (`siLines` in
+`backend/src/acc/rules.ts` takes the group credits, pinned in
+`backend/src/acc/engine.test.ts`). WHY: 2990's `roles.SALES` (500-0000
+RENTAL REVENUE) is INACTIVE in the accountant's chart, so the old two-line
+rule could not book a 2990 sale at all, and HOUZS's sales all landed on
+RENTAL REVENUE while SALES OF SOFA / BEDDING / DINING / SERVICE INCOME sat
+bound and unread. An invoice refused by name stays unposted; bind the group
+on Accounting → Item Groups and the next create/confirm/resync posts it.
 
 **Migrated documents book nothing** (`migrated_no_stock` guard): AutoCount
 already carries their revenue/payable — posting here would double the books.
