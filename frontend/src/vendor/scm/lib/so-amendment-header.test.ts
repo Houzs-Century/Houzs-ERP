@@ -1,23 +1,27 @@
-// Cover for the HEADER half of an SO amendment — the frozen-field revert.
+// so-amendment-header.test — the direct-save half of a locked-SO edit.
 //
-// The module had no tests. The gap mattered: withFrozenHeaderFieldsReverted
-// reverts EVERY key in AMENDABLE_HEADER_KEYS that is present in the patch, and
-// it reads each original from the `original` argument. A caller that collects a
-// key into the patch but omits it from `original` therefore does not revert
-// that column — it NULLS it (outValue(undefined) === null), which reads to the
-// server as a genuine change to a frozen column.
-//
-// That is a caller-shape bug the type system cannot catch: AmendableHeaderValues
-// is Partial<Record<...>>, so an omitted key type-checks.
+// HISTORY OF THIS HELPER, because it has now bitten twice through the SAME seam:
+//   * 2026-08-21 (ledger 0488): mobile passed an `original` missing two keys, the
+//     "revert" wrote NULL for them, and every mobile amendment on an SO with an
+//     address 409'd so_locked_processing.
+//   * 2026-09-12 (ledger, this PR): desktop passed a complete `original`, but the
+//     revert TRIMMED it (outValue) while the pristine payload held the raw stored
+//     value. AutoCount-imported rows carry trailing spaces ("MR LIM "), so the
+//     "reverted" name differed from the seeded one, the diff sent it, and the
+//     server 409'd — on a colour-only edit the operator never touched the name in.
+// Both are the same defect: a revert must reproduce the seeded value BYTE FOR
+// BYTE or it becomes an edit. The helper now DROPS every frozen key instead of
+// reverting it — there is nothing to reproduce, so there is nothing to get wrong.
 
 import { describe, it, expect } from 'vitest';
-import { withFrozenHeaderFieldsReverted } from './so-amendment-header';
+import { withoutFrozenHeaderFields } from './so-amendment-header';
+import { diffHeaderPayload } from './so-header-diff';
 
-/* The header patch both surfaces build for a locked SO. Address lines joined
-   the frozen set on 2026-07-27 (two-lane phase 2), so they appear here. */
+/* The header patch both surfaces build for a locked SO. */
 const patch = {
   debtorName: 'Hee Wai loon',
   phone: '+60123456789',
+  email: 'hee@example.com',
   address1: '51, Jln Utara',
   address2: 'Pjs 12',
   postcode: '46200',
@@ -25,66 +29,54 @@ const patch = {
   customerState: 'Selangor',
   processingDate: '2026-08-25',
   customerDeliveryDate: '2026-09-01',
+  note: 'ring the bell',
+  emergencyContactName: 'Fatimah',
+  customerType: 'EXISTING',
 };
 
-/* What the SO actually holds — the values a revert must restore. Customer
-   name / phone joined the frozen set 2026-08-21 (owner: "需要加上更新客户
-   信息"), so they carry originals here like the address block does. */
-const original = {
-  debtorName: 'Hee Wai Loon',
-  phone: '+60129999999',
-  address1: '51, Jln Utara',
-  address2: 'Pjs 12',
-  postcode: '46200',
-  city: 'Petaling Jaya',
-  customerState: 'Selangor',
-  processingDate: '2026-08-20',
-  customerDeliveryDate: '2026-08-30',
-};
-
-describe('withFrozenHeaderFieldsReverted', () => {
-  it('restores every frozen column to its saved value, so the direct PATCH carries no frozen change', () => {
-    const out = withFrozenHeaderFieldsReverted(patch, original);
-    expect(out.address1).toBe('51, Jln Utara');
-    expect(out.address2).toBe('Pjs 12');
-    expect(out.processingDate).toBe('2026-08-20');
-    expect(out.customerDeliveryDate).toBe('2026-08-30');
-    // Customer info is frozen since 2026-08-21: the requested change rides the
-    // amendment while the direct-PATCH half reverts to what the SO holds.
-    expect(out.debtorName).toBe('Hee Wai Loon');
-    expect(out.phone).toBe('+60129999999');
+describe('withoutFrozenHeaderFields', () => {
+  it('carries NO frozen column at all — the direct PATCH cannot trip the lock on one', () => {
+    const out = withoutFrozenHeaderFields(patch);
+    for (const key of ['debtorName', 'phone', 'email', 'address1', 'address2', 'postcode',
+      'city', 'customerState', 'processingDate', 'customerDeliveryDate']) {
+      expect(key in out, key).toBe(false);
+    }
   });
 
   it('leaves the FREE fields alone — they are what the direct PATCH exists to save', () => {
-    const out = withFrozenHeaderFieldsReverted(
-      { ...patch, note: 'ring the bell', emergencyContactName: 'Fatimah' },
-      original,
-    );
+    const out = withoutFrozenHeaderFields(patch);
     expect(out.note).toBe('ring the bell');
     expect(out.emergencyContactName).toBe('Fatimah');
+    expect(out.customerType).toBe('EXISTING');
   });
 
-  /* THE MOBILE DEFECT (2026-08-21). MobileNewSO collected address1/address2
-     into the amendment's header changes but passed an `original` carrying only
-     the five date/location keys. address1 is in the patch and in
-     AMENDABLE_HEADER_KEYS, so it was reverted to outValue(undefined) === null.
-     The subsequent diff then saw null vs the stored street and sent it, and the
-     server 409'd so_locked_processing on a column the operator never touched —
-     blocking EVERY mobile amendment on a locked SO that has an address. */
-  it('an original that omits a collected key NULLS it — the shape that broke mobile', () => {
-    const out = withFrozenHeaderFieldsReverted(patch, {
-      processingDate: '2026-08-20',
-      customerDeliveryDate: '2026-08-30',
-      customerState: 'Selangor',
-      postcode: '46200',
-      city: 'Petaling Jaya',
-    });
-    expect(out.address1).toBeNull();
-    expect(out.address2).toBeNull();
-  });
-
-  it('drops salesLocation entirely — it is DERIVED and must never reach the lock diff', () => {
-    const out = withFrozenHeaderFieldsReverted({ ...patch, salesLocation: 'WH-KL' }, original);
+  it('drops salesLocation too — DERIVED, re-derived server-side from the approved State', () => {
+    const out = withoutFrozenHeaderFields({ ...patch, salesLocation: 'WH-KL' });
     expect('salesLocation' in out).toBe(false);
+  });
+
+  /* THE DESKTOP DEFECT (2026-09-12, HC-SO-013497). Stored debtor_name is
+     "MR LIM " (trailing space, AutoCount import). The operator changed ONE
+     line's fabric colour. The old revert wrote outValue("MR LIM ") === "MR LIM"
+     into the patch; the pristine payload held "MR LIM "; diffHeaderPayload
+     (deliberately no trim) sent debtorName; the server's raw compare 409'd.
+     With the frozen keys dropped, the diff has nothing to compare. */
+  it('a stored value with surrounding whitespace never reaches the direct PATCH', () => {
+    const seeded = { debtorName: 'MR LIM ', address1: '26, JLN BU4/9 BANDAR UTAMA ', note: '' };
+    const outgoing = { debtorName: 'MR LIM ', address1: '26, JLN BU4/9 BANDAR UTAMA ', note: '' };
+    expect(diffHeaderPayload(seeded, withoutFrozenHeaderFields(outgoing))).toEqual({});
+  });
+
+  it('a FREE edit beside an untouched frozen field still goes out alone', () => {
+    const seeded = { debtorName: 'MR LIM ', note: '' };
+    const outgoing = { debtorName: 'MR LIM ', note: 'leave at guard house' };
+    expect(diffHeaderPayload(seeded, withoutFrozenHeaderFields(outgoing)))
+      .toEqual({ note: 'leave at guard house' });
+  });
+
+  it('does not mutate its input', () => {
+    const input = { ...patch };
+    withoutFrozenHeaderFields(input);
+    expect(input).toEqual(patch);
   });
 });

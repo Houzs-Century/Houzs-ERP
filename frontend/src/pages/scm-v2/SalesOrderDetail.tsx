@@ -66,7 +66,7 @@ import { notifySaveProblems } from '../../vendor/scm/components/SaveProblemsList
 import {
   buildAmendmentHeaderChanges,
   hasAmendmentHeaderChanges,
-  withFrozenHeaderFieldsReverted,
+  withoutFrozenHeaderFields,
   amendmentHeaderDiffRows,
   soHeaderFieldKind,
   type SoAmendmentHeaderChanges,
@@ -1176,9 +1176,10 @@ export const SalesOrderDetail = () => {
     if (reason == null) return; // cancelled the prompt
     setSavingOrder(true);
     try {
-      /* 1. The directly-editable half. keepLockedColsAsOriginal reverts every
-            frozen column to its saved value so this PATCH can't 409
-            so_locked_processing on the very change we're about to request. */
+      /* 1. The directly-editable half. keepLockedColsAsOriginal DROPS every
+            frozen column from the PATCH so it can't 409 so_locked_processing —
+            neither on the change we're about to request nor on a stored value
+            the form only re-displayed (HC-SO-013497, 2026-09-12). */
       await new Promise<void>((resolve, reject) => {
         handle.save(
           { onSuccess: () => resolve(), onError: (msg) => reject(new Error(msg)) },
@@ -2709,12 +2710,13 @@ type CustomerCardHandle = {
       when the header is OK. Called by the page Save BEFORE any line is written
       so a bad date never half-commits the order. */
   validate: () => string | null;
-  /** `keepLockedColsAsOriginal` (amendment mode) — send every FROZEN header
-      column at its ORIGINAL value so this direct PATCH stays inside the server's
-      field-scoped processing lock, while the customer's contact details and note
-      in the same payload still save immediately. The changed frozen values ride
-      the amendment instead (getLockedHeaderChanges below). NOT address lines:
-      they joined the CONTROLLED set 2026-07-27 and ride the amendment too. */
+  /** `keepLockedColsAsOriginal` (amendment mode) — send NO frozen header column
+      at all, so this direct PATCH stays inside the server's field-scoped
+      processing lock while the FREE fields in the same payload (customer type,
+      emergency contact, note) still save immediately. The changed frozen values
+      ride the amendment instead (getLockedHeaderChanges below). Customer name /
+      phone / email and the address lines are frozen too (2026-08-21, 2026-07-27)
+      and ride the amendment. */
   save: (
     // `raw` (optional 2nd arg) carries the original Error, whose `.body` holds
     // the server's aggregated `problems` list — so the page Save can show EVERY
@@ -3220,9 +3222,12 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
   };
 
   /* The EXACT body the direct half sends in amendment mode; trySave and
-     hasDirectHeaderChanges share it so the two cannot disagree. */
+     hasDirectHeaderChanges share it so the two cannot disagree. Frozen keys are
+     DROPPED before the diff, never reverted: a revert had to reproduce the
+     seeded value byte for byte and failed on "MR LIM " (trailing space from the
+     AutoCount import) — see withoutFrozenHeaderFields. */
   const directHeaderPatch = () => diffHeaderPayload(originalPayloadRef.current,
-    withFrozenHeaderFieldsReverted(buildPayload(), lockedHeaderOriginal));
+    withoutFrozenHeaderFields(buildPayload()));
 
   const trySave = (
     cb?: { onSuccess?: () => void; onError?: (msg: string, raw?: unknown) => void },
@@ -3234,11 +3239,10 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
       else notify({ title: 'Check the dates', body: err, tone: 'error' });
       return;
     }
-    /* Send ONLY what the operator changed. The diff runs AFTER the frozen-field
-       revert, so a reverted column equals its seeded value and drops out
-       entirely — which is strictly safer than sending it back unchanged: the
+    /* Send ONLY what the operator changed. In amendment mode the frozen
+       columns are removed BEFORE the diff, so they are never sent at all: the
        server's lock diffs `col in updates`, so a column we never send cannot
-       409 so_locked_processing at all. */
+       409 so_locked_processing. */
     onSave(opts?.keepLockedColsAsOriginal ? directHeaderPatch()
       : diffHeaderPayload(originalPayloadRef.current, buildPayload()), cb);
   };

@@ -109,9 +109,22 @@ describe('operator copy', () => {
     expect(AMENDMENT_MODE_BANNER).not.toMatch(/address(es)? .{0,24}save straight away/i);
   });
 
-  it('the banner names what DOES save straight away', () => {
-    expect(AMENDMENT_MODE_BANNER).toMatch(/phone/i);
+  /* 2026-08-21 moved customer name / phone / email into the CONTROLLED set
+     (so-field-policy). The banner kept promising they "save straight away"
+     for three weeks — the operator on HC-SO-013497 read that, and the server
+     409'd. Pin both halves: what rides the amendment, and what still saves. */
+  it('the banner does not promise that name / phone / email save straight away', () => {
+    expect(AMENDMENT_MODE_BANNER).not.toMatch(/(name|phone|email)[^.]{0,40}save straight away/i);
+  });
+
+  it('the banner names what DOES save straight away — the note and emergency contact', () => {
+    expect(AMENDMENT_MODE_BANNER).toMatch(/note/i);
+    expect(AMENDMENT_MODE_BANNER).toMatch(/emergency contact/i);
     expect(AMENDMENT_MODE_BANNER).toMatch(/save straight away/i);
+  });
+
+  it('the banner tells the operator the contact block needs approval', () => {
+    expect(AMENDMENT_MODE_BANNER).toMatch(/customer name, phone/i);
   });
 
   it('the empty-state error asks for a line, a date or the address — the approval half', () => {
