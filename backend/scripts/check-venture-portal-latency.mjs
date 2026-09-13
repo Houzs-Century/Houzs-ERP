@@ -66,6 +66,36 @@ const FEED_KEY = "scm.venture_portal_feed";
 /** How many recent deliveries to show individually. */
 const SAMPLE = 20;
 
+/**
+ * Only count rows CREATED at or after this instant. Null counts everything.
+ *
+ * WHY IT EXISTS, and it is not a convenience. A measurement of this feed is only
+ * meaningful against the code that was running when the row was QUEUED, and this
+ * queue has already outlived two behaviour changes in one day. On 2026-09-13 the
+ * sweep took rows strictly oldest-first, so a live save sat behind a 2,600-row
+ * backfill; that was fixed at 13:16Z (`docs/bugs/0863-…`). Rows queued before
+ * that carry the OLD behaviour's wait in their seconds — the newest such row read
+ * 983.7s — and pooling them with rows queued after it produces a number that
+ * describes neither.
+ *
+ * So the cutoff is an INPUT rather than a constant: the honest question is always
+ * "how fast is the code that is running now", and the answer changes every time
+ * the sender changes. Pass the deploy time of whatever you are measuring.
+ *
+ * Absent, it reports everything and says so — which is right for "is the feed
+ * working at all" and wrong for "how fast is it today".
+ */
+const SINCE = (() => {
+  const raw = (process.env.SINCE ?? "").trim();
+  if (!raw) return null;
+  const t = Date.parse(raw);
+  if (Number.isNaN(t)) {
+    console.error(`SINCE is not a date this can read: ${JSON.stringify(raw)}. Use an ISO instant like 2026-09-13T13:16:00Z.`);
+    process.exit(1);
+  }
+  return new Date(t).toISOString();
+})();
+
 // Same resolution order as pg-migrate.mjs: env wins so CI needs no .dev.vars.
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -105,6 +135,14 @@ try {
     notice(`switch            : ${on ? `ON for ${v === "all" ? "every company" : `company ${v}`}` : "OFF — nothing is being sent"} (set ${flag[0].updated_at})`);
   }
 
+  /* SAID FIRST, every run. A latency without its window is not a measurement,
+     and this queue has already outlived two behaviour changes in one day. */
+  notice(
+    SINCE
+      ? `counting rows     : QUEUED AT OR AFTER ${SINCE} — earlier rows are excluded`
+      : "counting rows     : ALL of them, however old. Pass SINCE to measure only what the CURRENT sender queued; without it, rows queued under older behaviour are mixed in",
+  );
+
   // 2. What is in the queue?
   const counts = await pg`
     SELECT status, count(*)::int AS n
@@ -126,6 +164,7 @@ try {
           FROM scm.venture_portal_outbox
           WHERE status = 'sent' AND sent_at IS NOT NULL AND created_at IS NOT NULL
             AND op <> 'RECONCILE'
+            AND (${SINCE}::timestamptz IS NULL OR created_at >= ${SINCE}::timestamptz)
           ORDER BY sent_at DESC LIMIT ${SAMPLE}`
       : await pg`
           SELECT doc_no, op, created_at, sent_at,
@@ -134,11 +173,12 @@ try {
           FROM scm.venture_portal_outbox
           WHERE status = 'sent' AND sent_at IS NOT NULL AND created_at IS NOT NULL
             AND op = 'RECONCILE'
+            AND (${SINCE}::timestamptz IS NULL OR created_at >= ${SINCE}::timestamptz)
           ORDER BY sent_at DESC LIMIT ${SAMPLE}`;
 
     notice("");
     if (rows.length === 0) {
-      notice(`${label}: NONE YET — zero delivered rows of this kind.`);
+      notice(`${label}: NONE YET — zero delivered rows of this kind${SINCE ? ` created at or after ${SINCE}` : ""}.`);
       if (isSave) {
         notice("  No order SAVED since the feed was turned on has been delivered yet, so the save-to-portal number does not exist. Do not read this as 'fast'; save one order and re-run.");
       }
@@ -149,9 +189,13 @@ try {
     notice(`  fastest         : ${fmt(all[0])}`);
     notice(`  median          : ${fmt(all[Math.floor(all.length / 2)])}`);
     notice(`  slowest         : ${fmt(all[all.length - 1])}`);
-    notice("  newest first — doc, op, seconds, what the portal did with it:");
+    /* created_at is PRINTED, not just filtered on. Which code was running when a
+       row was queued is the thing that makes its seconds mean anything, and a
+       reader cannot check the cutoff was the one they meant without seeing it. */
+    notice("  newest first — doc, op, queued at, seconds, what the portal did with it:");
     for (const r of rows) {
-      notice(`    ${String(r.doc_no).padEnd(18)} ${String(r.op).padEnd(16)} ${fmt(secs(r.seconds)).padStart(9)}  ${r.portal_outcome ?? "(the portal said nothing)"}${Number(r.attempts) > 1 ? `  tried ${r.attempts}x` : ""}`);
+      const queuedAt = new Date(r.created_at).toISOString().replace("T", " ").slice(0, 19);
+      notice(`    ${String(r.doc_no).padEnd(18)} ${String(r.op).padEnd(34)} ${queuedAt}Z ${fmt(secs(r.seconds)).padStart(9)}  ${r.portal_outcome ?? "(the portal said nothing)"}${Number(r.attempts) > 1 ? `  tried ${r.attempts}x` : ""}`);
     }
   };
 
