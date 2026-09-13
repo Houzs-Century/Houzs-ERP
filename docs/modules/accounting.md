@@ -1652,6 +1652,21 @@ fingerprint), `backend/src/acc/bank-match.test.ts` (GHL, HLB whole and
 split), `backend/tests/bankRoutes.test.ts` ("uploading overlapping exports",
 "setting up a statement account"), `SettlementSetup.test.tsx` (the card).
 
+**The Reconciliation setup page lines up (2026-09-13, docs/bugs/0857; owner:
+setup 的东西很乱不整齐，很多都会 wrap text，不然就是没有 column/table).** Layout
+only, in `frontend/src/pages/scm-v2/SettlementSetup.tsx` and its module
+`frontend/src/pages/scm-v2/SettlementSetup.module.css`: the per-company
+defaults (default bank, voucher numbering) sit in ONE card as two aligned rows
+— a label column and a content column, the letters in a fixed grid with the
+code on one line; the Bank statements and Bank recognition rules tables name
+their column widths (`table-layout: fixed`), codes and account numbers never
+wrap and are monospaced, and the headings a file names read as chips (the
+captions on hover and under Edit); the statement edit form and the merchant
+report-layout form each sit in their own frame with their fields in fixed
+rows of equal width and the actions to the right. Every hook, label, button
+and refusal is unchanged — `frontend/src/pages/scm-v2/SettlementSetup.test.tsx`
+passes as it was.
+
 **A MONTH, not a file at a time (2026-09-09; owner, uploading one a day: 每天我
 上传bank statement 和 merchant report 测试，但是有办法选这个是几月的？因为我发现
 好像没有).** Layer 4 reconciled one FILE, which is the right unit for a monthly
