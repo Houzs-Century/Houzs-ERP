@@ -117,6 +117,7 @@ visibly live — including the Relationship Map, which "会跳动" by design.
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | Generic screen; the PO config is `MODULE_CONFIGS["mfg-purchase-orders"]` (`:1198-1237`). |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Generic; PO config `:354`, PO status actions `:515-532`. |
 | Mobile convert (SO→PO) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "po"`. Offered only to a caller who passes `canOperatePurchaseOrders` — see below. |
+| Mobile new (direct) | `frontend/src/mobile/MobilePurchaseDocNew.tsx` | `kind = "po"`. What the list `+` opens since 2026-09-13; links to the convert wizard. See below. |
 
 **The mobile `+` is an OPERATE gate (2026-08-14).** `MobileModuleList` renders the
 `+` on the presence of an `onNew` callback alone, and `MobileConvertWizard` imports
@@ -129,6 +130,34 @@ met the area guard's 403 at the end of it. The gate is now
 `scm/middleware/area-guard` — `edit` on the area for POST/PATCH/PUT/DELETE, with
 `*` always passing. The target chain has no default arm, so a new ConvertTarget
 that forgets its gate will not typecheck.
+
+**Mobile DIRECT create (2026-09-13).** Owner 2026-09-12: 「电脑版本有的，手机版本都要有」, and
+the convert wizard is not how he wants to create. The list's `+` now opens
+`frontend/src/mobile/MobilePurchaseDocNew.tsx` (`kind = "po"`) — a direct
+create — and that screen offers "From a Sales Order instead", which opens the existing convert wizard. The request body, the pre-checks and the
+module-to-document mapping live in `frontend/src/mobile/mobile-purchase-doc.ts`; the
+`+` is gated by `mayCreatePurchaseDoc`, which calls `canOperatePurchaseOrders`
+(`frontend/src/auth/salesAccess.ts`) — the same helper as before, no new rule.
+The `+` itself is wired in `frontend/src/mobile/MobileApp.tsx` (the `module` screen's
+`onNew`, checked before the convert mapping) and rendered by the `purchase-doc-new`
+screen arm there.
+
+It POSTs `/mfg-purchase-orders` through the SAME `useCreatePurchaseOrder` hook as
+`PurchaseOrderNew`, with `purchaseLocationId` required and `expectedAt` optional
+(blank defaults to today server-side). **Confirm applies the PO variant gate from
+the shared rule** — `vendor/shared/so-variant-rule.missingVariantAxes`, the function
+desktop's `missingRequiredVariants` wraps — with the item code passed so the DIVAN
+ONLY / adjustable-bed exemptions hold. Because the phone captures no options, a
+sofa or bedframe line can only be **saved as a draft** there (desktop's own message,
+naming every missing option) and completed on desktop; an accessory or mattress
+line confirms directly.
+
+What the phone form does NOT do yet, stated so nobody reads it as full parity: no
+product-option editor (fabric / size / heights), no supplier price auto-fill, MYR
+only (no exchange rate or landed-cost allocation), no per-line delivery date,
+warehouse override, discount or rack. The unit price starts BLANK, never at the
+catalog selling price and never at a `0.00` that drops keystrokes. Trace:
+`docs/bugs/0872-the-phone-could-not-create-a-purchase-order-goods-receipt-or.md`.
 
 
 Desktop routes are declared in `frontend/src/App.tsx:516-519`, all behind

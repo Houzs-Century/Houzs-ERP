@@ -332,6 +332,19 @@ is what produced the first three. Pinned by
 > actually rescues that case. The server's own `over_remaining` / `409` refusal
 > remains the real guard, and it always was.
 
+**The phone LIST has two keys, and the wizard refreshes one (recorded 2026-09-13, NOT
+changed).** `MobileModuleList` caches an un-paged list under `["mobile-module", ...]`
+and a server-paginated one under `["mobile-module-paged", ...]`; delivery orders,
+sales invoices, goods receipts, purchase orders and purchase invoices are all
+server-paginated. React Query matches whole key ELEMENTS, so
+`invalidateQueries({ queryKey: ["mobile-module"] })` does not reach the paged key.
+`MobileConvertWizard` invalidates only `["mobile-module"]` after a convert, so the
+target list can LIKELY show its cached page for up to the 30-second stale time —
+not reproduced, and not changed here. The helper that refreshes both,
+`invalidateMobileLists`, now lives in `frontend/src/mobile/sharedInvalidate.ts`
+and is what the phone's direct create (`MobilePurchaseDocNew.tsx`) calls. Trace:
+`docs/bugs/0872-the-phone-could-not-create-a-purchase-order-goods-receipt-or.md`.
+
 ### 6b. Why the other six pairs are still NOT on the wizard (assessed 2026-08-21)
 
 The wizard covers four of the ten desktop `*From*` pickers. The remaining six

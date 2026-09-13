@@ -1,6 +1,34 @@
 
 ---
 
+## Creating one on the phone (2026-09-13)
+
+Before this date the phone had **no way to raise a purchase invoice at all** — the
+Purchase Invoices list had no `+`, and the convert wizard has no GRN-to-PI target.
+The list's `+` now opens `frontend/src/mobile/MobilePurchaseDocNew.tsx`
+(`kind = "pi"`), a direct create of a MANUAL invoice (`grnId: null`,
+`purchaseOrderId: null`, every line `grnItemId: null`) through the SAME
+`useCreatePurchaseInvoice` hook as `PurchaseInvoiceNew`. A non-draft is then POSTED
+with `usePostPurchaseInvoice`, as desktop does — **without that second call no AP
+liability is recorded.**
+The `+` itself is wired in `frontend/src/mobile/MobileApp.tsx` (the `module` screen's
+`onNew`, checked before the convert mapping) and rendered by the `purchase-doc-new`
+screen arm there.
+
+**New frontend gate, no new permission.** `canOperatePurchaseInvoices`
+(`frontend/src/auth/salesAccess.ts`) is the third arm of the same private
+`canOperateScmProcurement` rule as the PO and GRN helpers: `edit` or better on
+`scm.procurement.pi`, the area `backend/src/scm/index.ts` already guards
+`/purchase-invoices/*` with. A `view` holder gets no `+`. Pinned in
+`frontend/src/auth/procurementOperate.test.ts`.
+
+**What is still desktop-only:** PI from a GRN (`PurchaseInvoiceFromGrn`), foreign
+currency + exchange rate, freight allocation, and the product-option fields. The
+unit price starts BLANK on the phone. Trace:
+`docs/bugs/0872-the-phone-could-not-create-a-purchase-order-goods-receipt-or.md`.
+
+---
+
 ## History drawer (change log)
 
 The History button opens the recorded change log for this purchase invoice — every field
