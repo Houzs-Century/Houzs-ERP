@@ -1,0 +1,88 @@
+name: Fold a legacy spelling onto its catalogue code
+
+# Manual. 200 raw slip phrases sit in variants.specials on 1,491 document lines,
+# and `specials` composes computeVariantKey — so every spelling is its OWN stock
+# bucket. Measured 2026-09-13 (run 34728515268): 32 spellings of `Nylon Fabric`
+# across 595 document lines, the largest of 14 such groups.
+#
+# Owner 2026-09-13: 「3 统一nylon」 — the nylon family only. The authorised list
+# lives in backend/scripts/data/legacy-specials-unify.json with the words he
+# used; a value is folded only when the phrase mapper decodes it to exactly ONE
+# catalogue code AND that code is authorised.
+#
+# The stock gate is the shared, tested one (scripts/lib/spec-chain-guard.mjs):
+# a bucket reached from outside the chain is refused, and a bucket two chains
+# would send to different keys is refused for both. docs/bugs/0722 and 0844.
+#
+# MODE=plan unless told otherwise; apply needs the confirm phrase and re-reads
+# every chain on a FRESH connection.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      mode:
+        description: "plan or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      limit:
+        description: "cap the number of chains written (0 = all)"
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: 'type exactly: FOLD THE LEGACY SPELLINGS (only needed for apply)'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: unify-legacy-specials-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/unify-legacy-specials.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          LIMIT: ${{ inputs.limit }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/unify-legacy-specials.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          LIMIT: ${{ inputs.limit }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

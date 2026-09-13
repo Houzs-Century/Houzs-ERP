@@ -70,6 +70,7 @@ import { computeVariantKey } from '../src/scm/shared/variant-key.ts';
 import {
   loadPhraseMap, buildLiveIndex, classifyLine, K,
 } from './lib/special-order-phrase-mapper.mjs';
+import { classifyPlans } from './lib/spec-chain-guard.mjs';
 
 const CONFIRM_PHRASE = 'CARRY THE BOOK TEXT OPTIONS';
 const MODE = String(process.env.MODE || 'plan').toLowerCase();
@@ -380,64 +381,13 @@ try {
     }
   }
 
-  /* Identities that belong to THIS chain — a bucket shared only with them is
-     ours to move. */
-  const inPlan = new Map();
-  for (const p of plan) {
-    for (const b of p.buckets) {
-      const k = `${b.itemCode}|${b.oldKey}`;
-      const ids = inPlan.get(k) ?? new Set();
-      ids.add(p.soItemId);
-      for (const x of p.pos) ids.add(x.id);
-      for (const x of p.grn) ids.add(x.id);
-      for (const x of p.dos) ids.add(x);
-      for (const x of p.pinv) ids.add(x);
-      for (const x of p.sinv) ids.add(x);
-      inPlan.set(k, ids);
-    }
-  }
-
-  /* ONE BUCKET, TWO ANSWERS — refuse both.
-     Two lines can share an item code and an identical OLD key while their texts
-     ask for DIFFERENT options: HC-SO-010183 carries two CODY-(Q) beds, same
-     divan, same gap, same colour, one drawer left and one right. Their chains
-     are separate, so the shared-bucket test above sees only "members of the
-     plan" and lets both through — and then the first write moves every lot in
-     that bucket to LEFT and the second finds nothing to move, silently filing
-     the right-hand bed's stock under the left-hand key.
-     Splitting a lot by quantity is a different operation from renaming a key,
-     and this tool does not do it. Both are refused and named. */
-  const splits = new Map();
-  for (const p of plan) {
-    for (const b of p.buckets) {
-      const k = `${b.itemCode}|${b.oldKey}`;
-      const s = splits.get(k) ?? { newKeys: new Set(), rows: b.rows, docs: new Set() };
-      s.newKeys.add(b.newKey);
-      s.docs.add(p.doc);
-      splits.set(k, s);
-    }
-  }
-
-  const writable = [];
-  const refused = [];
-  for (const p of plan) {
-    let why = null;
-    for (const b of p.buckets) {
-      if (b.rows.untouchable) { why = `${b.rows.untouchable} row(s) in rack / stock-take / transfer tables this tool does not move (${b.itemCode})`; break; }
-      const s = splits.get(`${b.itemCode}|${b.oldKey}`);
-      if (s && s.newKeys.size > 1 && (b.rows.lots + b.rows.movements + b.rows.consumptions) > 0) {
-        why = `${b.itemCode} would have to SPLIT one stock bucket into ${s.newKeys.size}`
-          + ` — ${[...s.docs].slice(0, 4).join(', ')} share it and ask for different options.`
-          + ' Splitting a lot by quantity is not a re-key; this needs a person.';
-        break;
-      }
-      if ((b.rows.lots + b.rows.movements + b.rows.consumptions) === 0) continue;
-      const mine = inPlan.get(`${b.itemCode}|${b.oldKey}`) ?? new Set();
-      const others = (await consumersOf(b.itemCode, b.grp, b.oldKey)).filter((cc) => !mine.has(String(cc.id)));
-      if (others.length) { why = `the stock bucket ${b.itemCode} is shared with ${others.length} line(s) outside this chain (${others.slice(0, 4).map((o) => o.doc).join(', ')})`; break; }
-    }
-    if (why) refused.push({ ...p, why }); else writable.push(p);
-  }
+  /* THE GATE IS SHARED AND TESTED. Both of its refusals were bought here, on
+     production data, hours apart — a delivered line's OUT movement stranded by
+     collecting buckets from the purchase side only, and two chains sending one
+     bucket to different keys (docs/bugs/0844). `unify-legacy-specials.mjs`
+     needs exactly the same gate, so it lives in lib with ten tests rather than
+     being copied and left to drift. */
+  const { writable, refused } = await classifyPlans(plan, consumersOf);
 
   /* ── report ────────────────────────────────────────────────────────────── */
   rule();
