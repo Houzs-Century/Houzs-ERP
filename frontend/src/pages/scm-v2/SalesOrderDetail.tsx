@@ -240,7 +240,7 @@ const STATUS_CLASS: Record<string, string> = {
 const SO_STATUS_LABEL: Record<string, string> = {
   DRAFT:         'Draft',
   CONFIRMED:     'Submitted',
-  IN_PRODUCTION: 'Proceed',
+  IN_PRODUCTION: 'In Production',
   READY_TO_SHIP: 'Stock Ready',
   SHIPPED:       'Arranged',
   DELIVERED:     'Delivered',

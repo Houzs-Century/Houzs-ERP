@@ -87,11 +87,6 @@ const DELIBERATE = new Map<string, string>([
   ['pages/scm-v2/DeliveryReturnDetailV2.tsx::CANCELLED',
    'Same next-step vocabulary — "Closed" is what the hero strip says when the '
    + 'return is over, beside its blurb. Not the status pill.'],
-  ['pages/scm-v2/so-list-status.ts::IN_PRODUCTION',
-   'OPEN — the owner decides. The list TAB says "In Production" and the pill says '
-   + '"Proceed"; both are his words from different days. One rung with two words '
-   + 'is the defect he reported on 2026-09-13, so this is recorded rather than '
-   + 'silently aligned: aligning it would change what he reads without his say.'],
 ]);
 
 type Entry = { status: string; label: string };
