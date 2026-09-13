@@ -119,13 +119,45 @@ on `/api/scm/*` in `backend/src/scm/index.ts`:
 | when it sweeps again | only when a **full batch LEFT the queue** (`vpKickSweepAgain`: `sent + failed + outOfScope >= 25`). Not `processed` — a 401 keeps its row pending and costs it no attempts, so counting `processed` would fire 100 POSTs per kick for as long as two keys disagreed |
 | if anything fails | swallowed and logged as `[vp-kick]`. It can never fail the request, and losing a kick costs only time |
 
-**Measured latency: UNKNOWN.** The design path is save -> trigger (same
-transaction) -> response -> 1.5 s debounce -> one POST, which the hand-off
-estimates at **2-3 s (LIKELY, not measured)**. Nothing in this repo has yet
-delivered one order to the live portal end to end, because the feed is off and the
-key has to be pasted on the portal by hand first. **Replace this paragraph with
-the number from the first real order** — an estimate left standing here would read
-as a measurement to the next person.
+### What went live on 2026-09-13, and what is still UNKNOWN
+
+The feed was turned on for company 1 at **10:34:43Z** and the backlog queued.
+Everything below is PROVEN from read-only production dispatches of the latency
+workflow, except the one line that says otherwise.
+
+**PROVEN — the feed works end to end.** Live saves are captured by the trigger,
+delivered, and the portal ACCEPTS and APPLIES them. Two of the thirteen
+trigger-written rows delivered by 13:25Z:
+
+| doc | op | portal said |
+|---|---|---|
+| `HC-SO-013362` | `UPDATE` | `applied` |
+| `HC-SO-013466` | `INSERT:mfg_sales_order_payments` | `applied` |
+
+A payment added to an order travels as its own capture and is applied — the child
+triggers are working, not just the header one.
+
+**PROVEN — the backlog drains far faster than the cron alone.** Two reads
+13 min 56 s apart with nobody working: `sent` 275 -> 334, i.e. **4.2/min**, which
+is the `*/5` cron's 25-per-sweep and nothing else. Two reads ~96 min apart while
+the page was in use: `sent` 334 -> 1755, i.e. **~14.8/min**, because every write
+kicks. So a 2,600-row backfill is ~10 hours if left alone and **under two hours**
+if anybody is working — and pressing **Send now** is itself a write, so it both
+drains 25 directly and kicks up to 100 more.
+
+**UNKNOWN — the save-to-portal latency.** Still not measured, and the reason is
+specific rather than an absence of trying: every delivered trigger row so far was
+QUEUED before the starvation fix (`0863`) went live at 13:16Z, so its seconds
+carry the old sender's wait — the newest read **983.7s**, which is neither the
+starvation nor the fix. The design path is save -> trigger (same transaction) ->
+response -> 1.5 s debounce -> one POST, which the hand-off estimates at **2-3 s
+(LIKELY, not measured)**.
+
+**To get the number**: save or edit ANY sales order — a payment or a line counts,
+as `HC-SO-013466` shows — then run the latency workflow with
+`since = 2026-09-13T13:16:00Z` or later. The `SAVE -> PORTAL` line is the answer.
+**Replace this section with it**; an estimate left standing here reads as a
+measurement to the next person.
 
 **ALWAYS PASS `since`, and pass the DEPLOY TIME of the sender you are measuring.**
 A latency means nothing without the window it was measured over, and this queue
@@ -505,10 +537,20 @@ no URL to type, and nothing to ask the portal owner for)
 3. Press **Test connection**. Expect `{"ok":true,"service":"venture-portal",…}`.
 4. Page -> Switch -> companies (Houzs Century is `1`) -> **Turn on**.
 5. Page -> The queue -> **Queue anything not delivered** to backfill.
-   493 in-scope orders existed on 2026-09-12. One kick clears up to 100, and any
-   save kicks — so pressing **Send now** a few times, or simply working normally,
-   walks it down far faster than the old 25-per-five-minutes. **UNTESTED at that
-   scale** — watch the first run and record the wall clock here.
+   **MEASURED on the real run, 2026-09-13** (this replaces the "493 orders,
+   UNTESTED at that scale" estimate that stood here — the real backlog was five
+   times bigger): **2,947 rows** queued, of which 2,672 were still pending at
+   11:35Z.
+
+   | conditions | rate | 2,600 rows would take |
+   |---|---|---|
+   | nobody working — the `*/5` cron alone | **4.2/min** | ~10 hours |
+   | the page in use, so every write kicks | **~14.8/min** | under 2 hours |
+
+   **Send now is itself a write**, so one press drains 25 directly AND kicks up
+   to 100 more. Pressing it a few times, or simply working normally, is what
+   accounts for the second row. Nothing is lost either way; the only cost is
+   time.
 6. Portal HR matches each ERP salesperson to a portal staff row once
    (Revenue -> Fair -> Comm Cal). Remembered against `scm.staff.id`.
 
@@ -580,7 +622,10 @@ and the `*/5` sweep. `[vp-kick]` in the Worker log is the kick's own failures.
   grant block and the seed. If one of them has a syntax error, the deploy's
   `pg-migrate` step fails and **blocks every later migration until it is
   fixed** — so read the Deploy run, do not assume it.
-- **Backfill throughput is untested** at 493 documents (see §10).
+- ~~Backfill throughput is untested at 493 documents~~ — **MEASURED 2026-09-13 at
+  2,947 rows**: 4.2/min with nobody working, ~14.8/min with the page in use. §10
+  carries the table. The estimate of 493 was itself wrong by five times, which is
+  the reason the number now comes from a dispatch rather than a paragraph.
 - **The PII strip list is enforced in SQL**, so no TypeScript test covers it.
   It is instead PROVEN by a read-only run of the expression against production
   (§4): 0 of the 24 stripped keys survive, all 19 the portal reads do. Re-run
