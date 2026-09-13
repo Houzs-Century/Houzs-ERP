@@ -338,7 +338,7 @@ gate.
 | PUT | `/connection` | manage | `vp.url` + `vp.since`. **https only** — the body carries a customer name and every line's cost. Unchanged by the 2026-09-13 default: the address the page OFFERS is a page-side constant, never a server default |
 | POST | `/secret/generate` | manage | **mints the key.** 48 URL-safe characters, stored exactly as `PUT /secret` stores it, returned **once** in that response and never again |
 | PUT | `/secret` | manage | **write-only.** >= 32 characters. The paste-your-own fallback; the page has no box for it since 2026-09-13 |
-| PUT | `/scope` | manage | the switch and the company list. `companies` is REQUIRED when enabling |
+| PUT | `/scope` | manage | the switch and the company list. `companies` is REQUIRED when enabling. Stamps `updated_by` with the caller's **scm.staff uuid** (`resolveCallerStaffId`) — `scm.app_config.updated_by` is a uuid and the Houzs user id is an integer, which made this endpoint refuse every call until 2026-09-13 (`docs/bugs/0861-…`). Also writes `venture_portal.scope.set` to `audit_events` with the real integer actor |
 | POST | `/probe` | manage | GETs the receiver's `/health` with the secret. Sends no sales-order data |
 | POST | `/queue-undelivered` | manage | the backfill AND the self-heal, one operation |
 | POST | `/drain` | manage | send now rather than waiting for the sweep |

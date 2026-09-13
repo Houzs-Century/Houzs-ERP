@@ -53,6 +53,7 @@ import {
   reconcileVenturePortalOutbox,
 } from '../lib/venture-portal-outbox';
 import { writeAudit } from '../../services/audit';
+import { resolveCallerStaffId } from '../lib/salesScope';
 
 export const venturePortalFeed = new Hono<{ Bindings: Env; Variables: Variables }>();
 venturePortalFeed.use('*', supabaseAuth);
@@ -413,6 +414,18 @@ venturePortalFeed.put('/scope', async (c) => {
   }
 
   const sb = getSupabaseService(c.env);
+
+  /* scm.app_config.updated_by IS A uuid (migration 0272), and houzsUser.id is an
+     INTEGER — the public.users id. Writing it straight in made Postgres refuse
+     the whole upsert with `invalid input syntax for type uuid: "90"`, so the
+     switch could not be turned on by anybody from the day the page shipped. The
+     page reported it honestly ("Not saved: ...") and the feed stayed off, which
+     is why nothing else caught it: every gate here reads code, and this was a
+     disagreement between a column type and a value that only the database sees.
+     resolveCallerStaffId returns Promise<string | null>, so the compiler now
+     refuses a number at this call site — the fix is a type, not a reminder. */
+  const actorStaffId = await resolveCallerStaffId(sb, c.get('houzsUser')?.id ?? null);
+
   const { error } = await sb.from('app_config').upsert(
     {
       key: VENTURE_PORTAL_FEED_KEY,
@@ -420,11 +433,29 @@ venturePortalFeed.put('/scope', async (c) => {
       description:
         'ERP -> Venture Portal live sales-order feed. off = nothing is queued and nothing is sent. Set to a company id list (Houzs Century is 1) to enable. Read by scm/lib/venture-portal-feed-flag.ts.',
       updated_at: new Date().toISOString(),
-      updated_by: c.get('houzsUser')?.id ?? null,
+      updated_by: actorStaffId,
     },
     { onConflict: 'key' },
   );
   if (error) return c.json({ error: 'write_failed', message: error.message }, 500);
+
+  /* WHO TURNED IT ON GOES IN THE AUDIT LEDGER, not only in updated_by. This
+     setting decides whose sales orders — with their costs and margins — leave
+     this system for somewhere they become the input to somebody's commission,
+     and a delivery cannot be recalled. `updated_by` is null for anyone with no
+     scm.staff row, and audit_events takes the real integer user id, so the
+     ledger answers the question the column cannot. */
+  await writeAudit(c.env, {
+    action: 'venture_portal.scope.set',
+    entityType: 'app_config',
+    entityId: VENTURE_PORTAL_FEED_KEY,
+    summary: enabled
+      ? `the Venture Portal feed was turned on for ${value === 'all' ? 'every company' : `company ${value}`}`
+      : 'the Venture Portal feed was turned off',
+    meta: { value, staffId: actorStaffId },
+    actorId: c.get('houzsUser')?.id ?? null,
+    actorEmail: c.get('houzsUser')?.email ?? null,
+  });
 
   /* The flag has a 30s cache. Without this drop, the page would show the old
      state for half a minute after somebody pressed the switch, which reads as
