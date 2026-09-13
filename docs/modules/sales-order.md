@@ -6254,3 +6254,15 @@ carried no reference to the slip, measured as zero occurrences in its shipped
 production chunk. The only desktop rendering was on `SalesOrderDetail`, reached by
 pressing Edit. Trace:
 `docs/bugs/0854-a-slip-photographed-on-the-phone-was-invisible-on-the-deskto.md`.
+
+### Adding a line by hand
+
+The detail page carries an **Add line** button beside Edit, gated the same way
+Edit is — adding a line IS an edit. It hands over to the editor with a
+`#add-line` fragment; the editor opens its add row and strips the fragment, so
+the intent fires once and does not survive a reload or a back button.
+
+The word comes from `ADD_LINE_LABEL` in `vendor/scm/lib/add-line-handoff.ts`.
+Four documents used to spell this four ways, and none of them said it on the page
+you start from. Trace:
+`docs/bugs/0853-add-a-line-was-only-reachable-from-inside-edit-under-four-di.md`.

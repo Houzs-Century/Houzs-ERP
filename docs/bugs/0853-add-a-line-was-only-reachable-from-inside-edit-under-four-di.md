@@ -35,10 +35,15 @@ form that will not stay shut.
 
 `ADD_LINE_LABEL` is exported so the four names become one.
 
-**What is NOT fixed here, said plainly.** This PR wires the goods receipt, which
-is the document he was holding. The purchase invoice, the purchase order and the
-sales order have the same editor-side add row and still need the button on their
-detail page. And the SALES INVOICE has no add-line path at all on any surface:
+**What is NOT fixed here, said plainly.** The goods receipt, the purchase
+invoice, the purchase order and the sales order all carry the button now, and
+`addLineHandoff.test.ts` SCANS those four detail pages for the handoff and the
+shared word, scans their four editors for consuming it, and fails on any editor
+that reintroduces its own spelling.
+
+The two that remain are the DELIVERY ORDER, whose lines are added on its create
+screen rather than through an editor, and the SALES INVOICE, which has no
+add-line path at all on any surface:
 `useAddSalesInvoiceItem` exists in the query layer with **zero call sites** in
 `frontend/src`, so its backend `POST /:id/items` is unreachable from the app.
 That is a separate gap, recorded here so the next reader does not assume it was

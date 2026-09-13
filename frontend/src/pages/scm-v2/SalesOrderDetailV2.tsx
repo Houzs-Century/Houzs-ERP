@@ -34,6 +34,7 @@ import {
   Phone as PhoneIcon,
   MoreHorizontal,
   Wallet,
+  Plus,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -97,6 +98,7 @@ import { customerRefOf } from '../../lib/customer-ref';
 
 import { isFocLine } from '../../vendor/scm/lib/foc-line';
 import { OrderSlipPhoto } from "../../vendor/scm/components/OrderSlipPhoto";
+import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
 // ─── Row types (subset — see MfgSalesOrdersList.tsx for the full SoRow) ────
 
 type SoHeader = {
@@ -690,6 +692,10 @@ function SalesOrderDetailV2ReadOnly() {
   // amendment-eligible the editor opens in amendment mode (Save submits an
   // amendment request); when hard-locked the button is disabled here.
   const goEdit = () => docNo && navigate(`/scm/sales-orders/${docNo}?edit=1`);
+  /* "Add line" from the page you START on — the affordance lived only
+     inside the editor, under a different name per document, so it read as
+     missing (docs/bugs/0853). */
+  const goAddLine = () => docNo && navigate(addLineHref(`/scm/sales-orders/${docNo}`));
   /* Payments editing now lives ON this page (same PaymentsTable the editor
      uses) — "Collect payment" just unlocks the card and scrolls to it. */
   const location = useLocation();
@@ -1218,6 +1224,16 @@ function SalesOrderDetailV2ReadOnly() {
                 Request cancellation
               </Button>
             )}
+            {/* Same gate as Edit: adding a line IS an edit, so an order that
+                cannot be edited must not offer it. */}
+            <Button
+              variant="secondary"
+              icon={<Plus size={14} />}
+              onClick={goAddLine}
+              disabled={editDisabled}
+            >
+              {ADD_LINE_LABEL}
+            </Button>
             <Button
               variant="primary"
               icon={<Edit3 size={14} />}

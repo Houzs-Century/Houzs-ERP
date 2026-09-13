@@ -34,7 +34,7 @@
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, FileText, Pencil, Trash2, Printer, Save, Ban, ChevronDown, ArrowRightLeft, Plus, X,
 } from 'lucide-react';
@@ -75,7 +75,8 @@ import styles from './SalesOrderDetail.module.css';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 
-import { ADD_LINE_LABEL, consumedAddLine, wantsAddLine } from '../../vendor/scm/lib/add-line-handoff';
+import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
+import { useAddLineHandoff } from '../../vendor/scm/lib/useAddLineHandoff';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
@@ -217,10 +218,10 @@ const BLANK_ADD: AddDraft = {
 
 export const GoodsReceivedDetail = () => {
   const { id } = useParams<{ id: string }>();
+  /* "Add line" from the detail page — at the TOP with the other hooks; this
+     editor returns early while the GRN loads (docs/bugs/0853). */
+  const addLineHandoff = useAddLineHandoff();
   const navigate = useNavigate();
-  /* The router's location, not window.location: the handoff effect below must
-     re-run when the hash changes on an already-mounted page. */
-  const routerLocation = useLocation();
   const detail = useGrnDetail(id ?? null);
   const updateHeader = useUpdateGrnHeader();
   const updateItem = useUpdateGrnItem();
@@ -284,14 +285,6 @@ export const GoodsReceivedDetail = () => {
   const addGrnItem = useAddGrnItem();
   const [showAddItem, setShowAddItem] = useState(false);
 
-  /* The detail page's "Add line" hands over with #add-line. Consumed ONCE and
-     stripped from the URL: left on, it re-opens the add row on every remount,
-     which on a page that remounts after a save is a form that will not shut. */
-  useEffect(() => {
-    if (!wantsAddLine(routerLocation.hash)) return;
-    setShowAddItem(true);
-    navigate(consumedAddLine(`${routerLocation.pathname}${routerLocation.search}`), { replace: true });
-  }, [routerLocation.hash, routerLocation.pathname, routerLocation.search, navigate]);
   const [addDraft, setAddDraft] = useState<AddDraft>(BLANK_ADD);
   const [addError, setAddError] = useState<string | null>(null);
   const [productQuery, setProductQuery] = useState('');
@@ -320,6 +313,7 @@ export const GoodsReceivedDetail = () => {
      fields; `hardLocked` gates the Edit button + the own-stage header fields. */
   const hardLocked = grn ? !(grn.status === 'DRAFT' || grn.status === 'POSTED') : true;
   const isLocked = grn ? !(grn.status === 'DRAFT' || (grn.status === 'POSTED' && !hasChildren)) : true;
+  addLineHandoff.current = { enabled: isEditing && !isLocked, onTrigger: () => setShowAddItem(true) };
   const lockedDueToChildren = grn ? (grn.status === 'POSTED' && hasChildren) : false;
 
   /* Only a HARD lock (Cancelled / Closed) drops us out of Edit — a GRN with a

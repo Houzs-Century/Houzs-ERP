@@ -151,6 +151,8 @@ import { DateField } from "../../vendor/scm/components/DateField";
 import { HoldChip } from "../../vendor/scm/components/HoldChip";
 import { CancelRequestPanel } from "../../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "./use-cancel-request-action";
 
+import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
+import { useAddLineHandoff } from '../../vendor/scm/lib/useAddLineHandoff';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
@@ -485,6 +487,11 @@ const lineCommitSig = (d: SoLineDraft): string => JSON.stringify({
 export const SalesOrderDetail = () => {
   const { docNo } = useParams<{ docNo: string }>();
   const navigate = useNavigate();
+  /* "Add line" from the detail page. At the TOP with the other hooks: this
+     editor returns early while the document loads, and a hook written below
+     that return is the rules-of-hooks violation the linter caught when this
+     was first pasted in per-file (docs/bugs/0853). */
+  const addLineHandoff = useAddLineHandoff();
   const detail = useMfgSalesOrderDetail(docNo ?? null);
   const updateHeader = useUpdateMfgSalesOrderHeader();
   const updateStatus = useUpdateMfgSalesOrderStatus();
@@ -1627,6 +1634,7 @@ export const SalesOrderDetail = () => {
      Nothing is written directly — submitAmendment routes the diff through the
      approval flow, and the server's line routes still 409 a direct write. */
   const linesLocked = isLocked || (procLockActive && !amendmentMode);
+  addLineHandoff.current = { enabled: isEditing && !linesLocked, onTrigger: startAddLine };
   /* The raw lock, for the few per-line actions that still write DIRECTLY to the
      server (price override) rather than through the amendment diff — those must
      stay disabled on a locked SO or they render-then-409. */
@@ -2245,7 +2253,7 @@ export const SalesOrderDetail = () => {
           {isEditing && (
             <Button variant="primary" onClick={startAddLine} disabled={linesLocked}>
               <Plus {...ICON} />
-              <span>Add Line Item</span>
+              <span>{ADD_LINE_LABEL}</span>
             </Button>
           )}
         </header>
