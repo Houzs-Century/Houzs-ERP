@@ -99,7 +99,7 @@ const PR: Record<string, Entry> = {
 const SO: Record<string, Entry> = {
   DRAFT:         { label: 'Draft',         tone: 'pending' },
   CONFIRMED:     { label: 'Submitted',     tone: 'info' },
-  IN_PRODUCTION: { label: 'Proceed',       tone: 'progress' },
+  IN_PRODUCTION: { label: 'In Production', tone: 'progress' },
   READY_TO_SHIP: { label: 'Ready to Ship', tone: 'success' },
   SHIPPED:       { label: 'Shipped',       tone: 'success' },
   DELIVERED:     { label: 'Delivered',     tone: 'success' },
