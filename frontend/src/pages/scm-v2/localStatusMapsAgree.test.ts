@@ -63,7 +63,6 @@ const PAGES: ReadonlyArray<readonly [rel: string, docType: StatusDocType]> = [
   ['pages/scm-v2/do-list-status.ts', 'do'],
   ['pages/scm-v2/DeliveryReturnsListV2.tsx', 'dr'],
   ['pages/scm-v2/DeliveryReturnDetailV2.tsx', 'dr'],
-  ['pages/scm-v2/StockTakesListV2.tsx', 'stockTake'],
 ];
 
 /* DELIBERATE differences — a page that says something else ON PURPOSE, with the

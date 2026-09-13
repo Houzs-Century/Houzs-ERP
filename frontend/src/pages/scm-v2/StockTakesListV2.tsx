@@ -31,6 +31,7 @@ import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { fmtDate } from "../../vendor/shared/format";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
+import { statusLabel } from "../../vendor/scm/lib/status-pill";
 import { stockTakeRowMenu } from "./row-menus";
 
 type StatusTab = "all" | "open" | "posted" | "cancelled";
@@ -39,16 +40,27 @@ type StatusTab = "all" | "open" | "posted" | "cancelled";
 const warehouseOf = (r: StockTakeRow): string =>
   warehouseLabel(r.warehouse) || r.warehouse_id || "—";
 
+/* The LABEL is NOT declared here. It comes from `vendor/scm/lib/status-pill.ts`,
+   the one canonical map — docs/modules/document-status-vocabulary.md §1. What
+   stays is what is genuinely this page's own: the tone palette (four names, not
+   status-pill's six) and the filter BUCKET. */
 const STATUS_TONE: Record<
   string,
-  { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
+  { tone: "success" | "warning" | "error" | "neutral"; bucket: StatusTab }
 > = {
-  OPEN:      { tone: "warning", label: "Open",      bucket: "open" },
-  POSTED:    { tone: "success", label: "Confirmed", bucket: "posted" },
-  CANCELLED: { tone: "error",   label: "Cancelled", bucket: "cancelled" },
+  OPEN:      { tone: "warning", bucket: "open" },
+  POSTED:    { tone: "success", bucket: "posted" },
+  CANCELLED: { tone: "error",   bucket: "cancelled" },
 };
-const statusFor = (s: string) =>
-  STATUS_TONE[(s || "").toUpperCase()] ?? { tone: "neutral" as const, label: s || "—", bucket: "open" as StatusTab };
+const statusFor = (s: string) => {
+  const key = (s || "").toUpperCase();
+  const own = STATUS_TONE[key];
+  /* An unlisted status keeps answering with the RAW value, not a humanised one —
+     that is the existing behaviour and this change does not touch it. */
+  return own
+    ? { ...own, label: statusLabel("stockTake", key) }
+    : { tone: "neutral" as const, label: s || "—", bucket: "open" as StatusTab };
+};
 
 function ViewToggle({ value, onChange }: { value: "table" | "cards"; onChange: (v: "table" | "cards") => void }) {
   const btn = (which: "table" | "cards", label: string, Icon: typeof TableIcon) => {
