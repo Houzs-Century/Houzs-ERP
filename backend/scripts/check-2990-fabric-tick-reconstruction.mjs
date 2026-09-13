@@ -29,10 +29,17 @@
 // half matches must NOT be applied, because a wrong tick list is worse than an
 // open one: it silently removes colours he can sell.
 //
-// READ-ONLY. Four selects, no writes, no DDL, no transaction.
+// SECOND SOURCE (added after the first run proved scm.product_fabrics holds
+// ZERO rows for company 2): the 2990 SOURCE system this company was migrated
+// from. If its product_models still carry allowed_options.fabrics at 28 / 36,
+// those are the ticks. Read with SOURCE_SUPABASE_URL / SOURCE_SERVICE_ROLE_KEY,
+// the same secrets mirror-sentinel reads with. Skipped with a notice if absent.
+//
+// READ-ONLY. Selects only, no writes, no DDL, no transaction.
 //
 // RE-RUN: read-only and idempotent; every run re-reads the live rows.
 import postgres from "postgres";
+import { createClient } from "@supabase/supabase-js";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -117,6 +124,8 @@ async function main() {
   const noSeries = rows.filter((r) => r.series === 0).length;
 
   console.log("");
+  await fromSource(colours.map((r) => String(r.colour_id)));
+
   log(`VERDICT: ${matched} of ${rows.length} Model(s) reconstruct to a size the clear recorded (${RECORDED.join("/")}).`);
   if (noSeries) log(`${noSeries} Model(s) have NO product_fabrics series at all — nothing to reconstruct from for those.`);
 
@@ -130,6 +139,28 @@ async function main() {
       + "a partially-right tick list removes colours he can sell, which is worse than the current open state. "
       + "The honest options are: leave every Model open, or have him re-tick the ones he wants narrowed.");
   }
+}
+
+async function fromSource(activeColourIds) {
+  const url = process.env.SOURCE_SUPABASE_URL, key = process.env.SOURCE_SERVICE_ROLE_KEY;
+  if (!url || !key) { log("SOURCE: secrets absent in this environment - second source skipped."); return; }
+  const src = createClient(url, key, { auth: { persistSession: false } });
+  const { data, error } = await src.schema("public").from("product_models").select("*");
+  if (error) { log(`SOURCE: product_models read failed - ${error.message}`); return; }
+  const sofas = (data ?? []).filter((m) => String(m.category ?? "").toUpperCase() === "SOFA");
+  log(`SOURCE: ${data?.length ?? 0} product_models, ${sofas.length} SOFA.`);
+  const active = new Set(activeColourIds);
+  console.log("\nsource model          fabrics   in 2990 active colours   matches a recorded size   updated_at");
+  let matched = 0;
+  for (const m of sofas.sort((a, b) => String(a.code ?? a.model_code).localeCompare(String(b.code ?? b.model_code)))) {
+    const fab = Array.isArray(m.allowed_options?.fabrics) ? m.allowed_options.fabrics.map(String) : null;
+    const n = fab ? fab.length : 0;
+    const known = fab ? fab.filter((c) => active.has(c)).length : 0;
+    const ok = RECORDED.includes(n);
+    if (ok) matched += 1;
+    console.log(`${String(m.code ?? m.model_code ?? m.id).padEnd(20)}  ${String(fab ? n : "none").padStart(7)}   ${String(known).padStart(22)}   ${(ok ? "yes" : "NO").padStart(23)}   ${m.updated_at ?? ""}`);
+  }
+  log(`SOURCE VERDICT: ${matched} of ${sofas.length} SOFA Model(s) in the 2990 source hold a pool of a recorded size (${RECORDED.join("/")}).`);
 }
 
 main().catch((e) => { console.error(GH ? `::error::${e?.message ?? e}` : e); process.exit(1); });
