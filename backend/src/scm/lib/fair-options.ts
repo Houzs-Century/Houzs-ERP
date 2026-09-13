@@ -262,8 +262,9 @@ export function resolveFair(input: {
 }
 
 /** A BOOTH is one organizer's stand for one brand. Two project rows that agree
- *  on both are duplicate records of the same booth — production carried 9 such
- *  groups on 2026-09-13 — and collapsing them to the lowest id is a documented,
+ *  on both are duplicate records of the same booth — the data-gaps report's
+ *  first clean run (2026-09-13) found 66 such groups across all years, 9 of them
+ *  inside Jun-Dec 2026 — and collapsing them to the lowest id is a documented,
  *  stable arbiter (the same choice `venue-binding.ts` makes between
  *  indistinguishable projects): an auditable tie-break beats a planner-order
  *  coin flip, and beats refusing to link an order that has exactly one real

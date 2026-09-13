@@ -34,7 +34,10 @@
  * 3. DUPLICATE FAIRS. Two project rows identical on venue + organizer + brand +
  *    period are one booth entered twice. The resolver collapses them to the
  *    lowest id so an order still links, but the duplicate splits that fair's P&L
- *    and puts a repeated row in the picker. 9 groups on 2026-09-13.
+ *    and puts a repeated row in the picker. Measured by this script's first
+ *    clean run (2026-09-13): 66 groups across all years, 9 of them inside
+ *    Jun-Dec 2026. The earlier "9" quoted in #3778 was the Jun-Dec window only
+ *    and read as an all-time figure; this section has no date filter.
  *
  * THIS SCRIPT DOES NOT FIX ANY OF THEM, deliberately. Fixing #1 means choosing
  * which spelling is right, #2 means knowing what brand a product actually is,

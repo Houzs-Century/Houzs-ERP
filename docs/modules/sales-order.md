@@ -940,7 +940,8 @@ Four different situations used to be one indistinguishable blank:
 | `NULL` | predates the picker (2,946 orders) | deliberately NOT back-stamped |
 
 **Two booths that agree on organizer AND brand collapse to the lowest project
-id** — those are duplicate records of one booth (9 groups live on 2026-09-13) and
+id** — those are duplicate records of one booth (66 groups across all years on
+2026-09-13, 9 of them inside Jun-Dec 2026) and
 a documented stable arbiter beats refusing an order that has one real answer. Two
 that differ on either answer `AMBIGUOUS` instead: MID VALLEY carried MLE and REX
 on the same day on 2026-03-20, and the lowest id there would be a guess.

@@ -55,7 +55,8 @@ input anywhere") and `frontend/src/pages/scm-v2/FairPending.test.tsx` (4).
 against a broken tree — there is no RED run to cite and this entry does not claim
 one. One rule did change while the tests were being written: `resolveFair`
 originally collapsed every brand match to the lowest project id, which is right
-for two records of ONE booth (production held 9 such duplicate groups) but is a
+for two records of ONE booth (production held 66 such duplicate groups across
+all years; the "9" this entry first quoted was the Jun-Dec 2026 window only) but is a
 guess where two different ORGANIZERS share a venue on one day — MID VALLEY had
 MLE and REX on 2026-03-20. The test asserting the collapse and the comment
 forbidding it contradicted each other in the same file; the rule was changed to
