@@ -1,0 +1,44 @@
+{
+  "_what": "Which LEGACY SPELLING families the owner has authorised folding onto their catalogue code. A value in this file is still only folded when the phrase mapper decodes it to exactly that one code — the list narrows what may be touched, it never widens what a rule decides.",
+  "_why_a_file": "The measurement found 14 such groups over 1,491 document lines. The owner authorised ONE of them. An authorisation that lives in a transcript is an authorisation the next session invents the scope of, so it lives here with the words he used.",
+  "_the_harm_it_bounds": "specials composes computeVariantKey, so folding a spelling onto its code MERGES two stock buckets. That is a stock move, not a tidy-up, and it is refused by the same guard every other spec tool uses (scripts/lib/spec-chain-guard.mjs, docs/bugs/0722 and 0844).",
+  "_measured": "Production run 34728515268, 2026-09-13, company 1: 200 legacy values on 1,491 document lines; 128 of them group onto 14 catalogue codes; 72 (272 lines) the rules can place on no option and which stay as free text.",
+
+  "authorised": [
+    {
+      "code": "Nylon Fabric",
+      "by": "owner, 2026-09-13, in chat — 「3 统一nylon」, answering the question 'do you want the 1,219 lines of legacy spellings folded onto their catalogue option'",
+      "measured": "32 spellings across 595 document lines — the largest of the 14 groups",
+      "examples": [
+        "Bottom wrap nylon",
+        "BOTTOM USE UMBRELLA FABRIC",
+        "Nilon bottom",
+        "Bottom upgrade to umbrella fabric",
+        "wrap bottom to Nilon",
+        "Bottom wrap by nylon",
+        "Bottom Wrap by Nylon Fabric",
+        "Bottom wrap Nylon Fabric",
+        "Bttm upgrade to umbrella fabric",
+        "BOTTOM USE UMBRELLA FABIRC"
+      ],
+      "why_this_one_is_safe_to_fold": "The owner's own ruling created this code: 「nylon 和 umbrella fabric 一样的 — one request, one code」 (the Nylon Fabric family's `why` in special-order-phrase-map.json). Every spelling above is that one request written differently, so folding them changes no meaning — only the bucket they share."
+    }
+  ],
+
+  "notAuthorised": [
+    { "code": "HB Fully Cover", "lines": 288, "spellings": 28 },
+    { "code": "Seat Base Fully Cover with no Leg", "lines": 105, "spellings": 11 },
+    { "code": "HB Straight", "lines": 62, "spellings": 12 },
+    { "code": "Change 8030 Backcushion", "lines": 61, "spellings": 18 },
+    { "code": "Divan Full Cover", "lines": 47, "spellings": 15 },
+    { "code": "5540 Backrest", "lines": 31, "spellings": 5 },
+    { "code": "Seat Behind Extend 5\"", "lines": 27, "spellings": 1 },
+    { "code": "Seat Firmer", "lines": 12, "spellings": 1 },
+    { "code": "No notch on Seat Cushion", "lines": 11, "spellings": 8 },
+    { "code": "Wooden Arm", "lines": 8, "spellings": 3 },
+    { "code": "Seat Cushion No Notch and Plain", "lines": 4, "spellings": 1 },
+    { "code": "No Side Panel", "lines": 2, "spellings": 2 },
+    { "code": "Separate Backrest Packing", "lines": 2, "spellings": 1 }
+  ],
+  "_notAuthorised_note": "Listed so the next session can see exactly what was NOT covered and does not have to re-measure it. These stay as they are until the owner says otherwise. Do not fold them because the nylon round went well."
+}
