@@ -1058,4 +1058,4 @@ would be a whole surface built to carry one row. The label is still the shared
 sales invoice and has no add-line affordance (nor for the four 0853 documents).
 
 Tests: `frontend/src/pages/scm-v2/salesInvoiceAddLine.test.tsx` (mounts the real
-page). Trace: `docs/bugs/0864-the-sales-invoice-could-not-add-a-line-on-any-surface-the-en.md`.
+page). Trace: `docs/bugs/0870-the-sales-invoice-could-not-add-a-line-on-any-surface-the-en.md`.
