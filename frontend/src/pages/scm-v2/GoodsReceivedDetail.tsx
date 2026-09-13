@@ -62,6 +62,7 @@ import { useMaintenanceConfig, useSpecialAddons, useMfgProducts } from '../../ve
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
+import { LinePoRefLink } from '../../vendor/scm/components/LinePoRefLink';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { DiscountInput } from '../../vendor/scm/components/DiscountInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
@@ -171,6 +172,7 @@ type GrnItemRow = Record<string, unknown> & {
   /* Bug #2 (2026-05-31) — server-resolved per-line source PO number + the GRN's
      receive date, so each line surfaces "received from which PO" + "receive date". */
   source_po_number?: string | null;
+  source_po_id?: string | null;
   received_at?: string | null;
   /* Downstream "Transfer To" breakdown (read-only): the Purchase Invoice(s) and
      Purchase Return(s) this GRN line was carried into, resolved server-side. */
@@ -933,7 +935,7 @@ export const GoodsReceivedDetail = () => {
                     <span>
                       Received from PO:{' '}
                       <strong style={{ fontFamily: 'var(--font-mono)', color: 'var(--fg)' }}>
-                        {it.source_po_number ?? '— (manual)'}
+                        <LinePoRefLink line={it} empty="— (manual)" className="font-mono text-primary-ink hover:underline" />
                       </strong>
                     </span>
                     <span>
