@@ -12,11 +12,31 @@
 // the production DSN in front of a person for a SELECT. CLAUDE.md forbids both,
 // and Actions already holds secrets.DATABASE_URL for the deploy.
 //
-// WHAT IT MEASURES, precisely. `created_at` is stamped by the capture trigger,
-// which runs in the SAME TRANSACTION as the salesperson's Save — so it IS the
-// moment of the save, not the moment some sweep noticed. `sent_at` is stamped
-// when the portal answered 2xx. The difference is the number the owner asked
-// for: 「我要秒级 update 的」.
+// WHAT IT MEASURES, precisely — and the first version of this script GOT IT
+// WRONG, which is why the distinction is spelled out here rather than assumed.
+//
+// `created_at` is the moment the OUTBOX ROW was written, and there are two very
+// different ways that happens:
+//
+//   op = INSERT / UPDATE / DELETE (optionally `:child_table`)
+//       the capture TRIGGER, running in the SAME TRANSACTION as the
+//       salesperson's Save. For these rows created_at IS the save, and
+//       sent_at - created_at is the number the owner asked for:
+//       「我要秒级 update 的」.
+//
+//   op = RECONCILE
+//       a BACKFILL sweep (scm.vp_requeue_undelivered) queueing a historical
+//       order that was never delivered. created_at is when the BACKFILL ran,
+//       which has nothing to do with when the order was saved — often years
+//       earlier. sent_at - created_at for these is "how long it waited in a
+//       queue thousands deep", not a latency.
+//
+// MIXING THEM PRODUCES A CONFIDENT WRONG ANSWER. Measured on the first real
+// dispatch, 2026-09-13: over the last 20 deliveries the median read 2094.6s —
+// about 35 minutes — while 2,672 backfilled rows were draining. Read as
+// save-to-portal latency that number says the feed is broken; it actually said
+// the backlog was long. The two populations are reported separately now, and the
+// SAVES line is the one §2 of the module guide is asking for.
 //
 // WHAT IT CANNOT TELL YOU, said plainly:
 //
@@ -96,41 +116,52 @@ try {
       : `queue             : ${counts.map((r) => `${r.status} ${r.n}`).join(", ")}`,
   );
 
-  // 3. THE NUMBER. Seconds from the salesperson's Save to the portal's 2xx.
-  const delivered = await pg`
-    SELECT doc_no,
-           created_at,
-           sent_at,
-           EXTRACT(EPOCH FROM (sent_at - created_at)) AS seconds,
-           portal_outcome,
-           attempts
-    FROM scm.venture_portal_outbox
-    WHERE status = 'sent' AND sent_at IS NOT NULL AND created_at IS NOT NULL
-    ORDER BY sent_at DESC
-    LIMIT ${SAMPLE}`;
+  // 3. THE NUMBER — reported per POPULATION, never pooled. See the header.
+  const report = async (label, isSave) => {
+    const rows = isSave
+      ? await pg`
+          SELECT doc_no, op, created_at, sent_at,
+                 EXTRACT(EPOCH FROM (sent_at - created_at)) AS seconds,
+                 portal_outcome, attempts
+          FROM scm.venture_portal_outbox
+          WHERE status = 'sent' AND sent_at IS NOT NULL AND created_at IS NOT NULL
+            AND op <> 'RECONCILE'
+          ORDER BY sent_at DESC LIMIT ${SAMPLE}`
+      : await pg`
+          SELECT doc_no, op, created_at, sent_at,
+                 EXTRACT(EPOCH FROM (sent_at - created_at)) AS seconds,
+                 portal_outcome, attempts
+          FROM scm.venture_portal_outbox
+          WHERE status = 'sent' AND sent_at IS NOT NULL AND created_at IS NOT NULL
+            AND op = 'RECONCILE'
+          ORDER BY sent_at DESC LIMIT ${SAMPLE}`;
 
-  if (delivered.length === 0) {
     notice("");
-    notice("LATENCY           : NOT MEASURABLE YET — zero delivered rows.");
-    notice("No sales order has reached the portal, so there is no number to report. Turn the feed on, save one order, and re-run this. Do not read this as 'fast'.");
-  } else {
-    const all = delivered.map((r) => secs(r.seconds)).filter((n) => n != null).sort((a, b) => a - b);
-    const median = all[Math.floor(all.length / 2)];
-    notice("");
-    notice(`LATENCY over the last ${all.length} deliveries — save to portal 2xx:`);
-    notice(`  fastest         : ${fmt(all[0])}`);
-    notice(`  median          : ${fmt(median)}`);
-    notice(`  slowest         : ${fmt(all[all.length - 1])}`);
-    notice("");
-    notice("  A delivery in a few seconds was the SAVE'S OWN kick. One near a multiple of 300s was the five-minute cron picking up something the kick missed. Which one is not recorded — this is the reader's call, not the script's.");
-    notice("");
-    notice("  newest first — doc, seconds, what the portal did with it:");
-    for (const r of delivered) {
-      notice(`    ${String(r.doc_no).padEnd(18)} ${fmt(secs(r.seconds)).padStart(8)}  ${r.portal_outcome ?? "(the portal said nothing)"}${Number(r.attempts) > 1 ? `  tried ${r.attempts}x` : ""}`);
+    if (rows.length === 0) {
+      notice(`${label}: NONE YET — zero delivered rows of this kind.`);
+      if (isSave) {
+        notice("  No order SAVED since the feed was turned on has been delivered yet, so the save-to-portal number does not exist. Do not read this as 'fast'; save one order and re-run.");
+      }
+      return;
     }
-    notice("");
-    notice(`Put the median into docs/modules/venture-portal-feed.md §2, which currently carries an ESTIMATE labelled LIKELY and asks for this number.`);
-  }
+    const all = rows.map((r) => secs(r.seconds)).filter((n) => n != null).sort((a, b) => a - b);
+    notice(`${label} — last ${all.length}:`);
+    notice(`  fastest         : ${fmt(all[0])}`);
+    notice(`  median          : ${fmt(all[Math.floor(all.length / 2)])}`);
+    notice(`  slowest         : ${fmt(all[all.length - 1])}`);
+    notice("  newest first — doc, op, seconds, what the portal did with it:");
+    for (const r of rows) {
+      notice(`    ${String(r.doc_no).padEnd(18)} ${String(r.op).padEnd(16)} ${fmt(secs(r.seconds)).padStart(9)}  ${r.portal_outcome ?? "(the portal said nothing)"}${Number(r.attempts) > 1 ? `  tried ${r.attempts}x` : ""}`);
+    }
+  };
+
+  await report("SAVE -> PORTAL (op is a trigger: this is the real latency)", true);
+  notice("");
+  notice("  A delivery in a few seconds was the SAVE'S OWN kick. One near a multiple of 300s was the five-minute cron picking up something the kick missed. Which one is not recorded — that inference is the reader's, not the script's.");
+  notice("  This SAVE line is the number docs/modules/venture-portal-feed.md §2 asks for. The BACKFILL line below is NOT it.");
+
+  await report("BACKFILL (op = RECONCILE: queue wait, NOT a latency)", false);
+  notice("  These rows were queued by a backfill sweep, so created_at is when the SWEEP ran, not when the order was saved. Seconds here measure how long the backlog was, and must never be quoted as the feed's latency.");
 
   // 4. Anything stuck? The oldest thing still waiting IS the health signal.
   const oldest = await pg`

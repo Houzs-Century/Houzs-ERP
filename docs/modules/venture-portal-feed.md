@@ -135,11 +135,23 @@ queue counts, and the fastest / median / slowest seconds from `created_at` (the
 capture trigger, inside the salesperson's own transaction — so it IS the save) to
 `sent_at` (the portal's 2xx), plus the oldest row still waiting.
 
-Two things it deliberately does NOT do. It does not label a delivery as the kick's
-or the cron's, because nothing records which sender sent it — a few seconds is
-almost certainly the kick and a multiple of 300s almost certainly the cron, and
-that inference is the reader's, not the script's. And with **zero** delivered rows
-it says NOT MEASURABLE YET rather than reporting a latency computed over nothing.
+**It reports TWO populations and never pools them**, which is the whole
+correctness of the thing (`docs/bugs/0862-…`):
+
+| line | rows | what the seconds mean |
+|---|---|---|
+| `SAVE -> PORTAL` | `op <> 'RECONCILE'` — written by the capture TRIGGER | `created_at` IS the salesperson's Save. **This is §2's number.** |
+| `BACKFILL` | `op = 'RECONCILE'` — written by `vp_requeue_undelivered` | `created_at` is when the BACKFILL ran, so this is how long the queue was. **Never quote it as the feed's latency.** |
+
+Pooled, they lie with authority. Measured on the first dispatch, 2026-09-13: the
+pooled median read **2094.6s** while 2,672 backfilled rows were draining, which
+reads as "the feed takes 35 minutes" and actually said "the backlog is long".
+
+Two more things it deliberately does NOT do. It does not label a delivery as the
+kick's or the cron's, because nothing records which sender sent it — a few seconds
+is almost certainly the kick and a multiple of 300s almost certainly the cron, and
+that inference is the reader's, not the script's. And with **zero** delivered SAVE
+rows it says NONE YET rather than reporting a latency computed over nothing.
 
 **What the kick CANNOT see, and the cron still must:** a change to
 `scm.mfg_sales_orders*` made outside a Worker request — a migration backfill, a
