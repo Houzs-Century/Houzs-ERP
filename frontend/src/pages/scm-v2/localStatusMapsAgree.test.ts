@@ -49,7 +49,6 @@ const SRC = findSrc();
 const PAGES: ReadonlyArray<readonly [rel: string, docType: StatusDocType]> = [
   ['pages/scm-v2/PurchaseOrdersListV2.tsx', 'po'],
   ['pages/scm-v2/PurchaseOrderDetailV2.tsx', 'po'],
-  ['pages/scm-v2/GoodsReceivedListV2.tsx', 'grn'],
   ['pages/scm-v2/GoodsReceivedDetailV2.tsx', 'grn'],
   ['pages/scm-v2/PurchaseInvoicesListV2.tsx', 'pi'],
   ['pages/scm-v2/PurchaseInvoiceDetailV2.tsx', 'pi'],
