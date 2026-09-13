@@ -62,6 +62,13 @@ vi.mock("../../vendor/scm/lib/sales-invoice-queries", () => ({
   useAddSalesInvoicePayment: addPayment,
   useDeleteSalesInvoicePayment: deletePayment,
   useUpdateSalesInvoiceHeader: updateHeader,
+  /* The page mounts the Add line affordance (SalesInvoiceAddLine.tsx). It is
+     not what this file tests, but a module mock must name every export the
+     page reaches for or the mount throws before any assertion runs. */
+  useAddSalesInvoiceItem: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+}));
+vi.mock("../../vendor/scm/lib/mfg-products-queries", () => ({
+  useMfgProducts: () => ({ data: [] }),
 }));
 /* The REAL draft helpers stay — `newPaymentDraft` mints the row Mark paid
    seeds, and `labelToApi` / `draftMethodFields` translate it on the way out, so
