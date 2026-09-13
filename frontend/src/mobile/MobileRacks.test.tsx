@@ -164,6 +164,18 @@ describe("MobileRacks screen", () => {
     expect(screen.queryByText(/No racks in any warehouse/)).toBeNull();
   });
 
+  it("pins the search box and chip row to their own height (no flex grow/shrink)", async () => {
+    /* jsdom has no layout, so this pins the MECHANISM, not the pixels. In a
+       real 375px render both collapsed or ballooned inside the vertical scroll
+       column: `.chips` scrolls sideways (flex min-height drops to 0, shrank to a
+       sliver) and `.searchbar` carries `flex: 1` (grew ~200px tall whenever a
+       search left few results). Measured after the fix: 36px and 32px. */
+    const { container } = wrap();
+    await screen.findByText("A2");
+    expect((container.querySelector(".searchbar") as HTMLElement).style.flex).toMatch(/^(none|0 0 auto)$/);
+    expect((container.querySelector(".chips") as HTMLElement).style.flex).toMatch(/^(none|0 0 auto)$/);
+  });
+
   it("counts only what is currently matched", async () => {
     wrap();
     await screen.findByText("A2");

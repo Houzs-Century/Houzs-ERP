@@ -210,7 +210,11 @@ export function MobileRacks({ onBack }: { onBack: () => void }) {
         className="hz-scroll"
         style={{ flex: 1, overflowY: "auto", padding: 14, paddingBottom: 40, display: "flex", flexDirection: "column", gap: 12 }}
       >
-        <div className="searchbar">
+        {/* `.searchbar` carries `flex: 1` for the usual horizontal header row.
+            In this vertical column that makes it GROW into any free space, so a
+            search that leaves one rack stretched the box ~200px tall (seen in a
+            real 375px render). `flex: none` pins it to its content height. */}
+        <div className="searchbar" style={{ flex: "none" }}>
           <input
             value={filters.q}
             onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
@@ -219,7 +223,11 @@ export function MobileRacks({ onBack }: { onBack: () => void }) {
           />
         </div>
 
-        <div className="chips">
+        {/* `flex: none` is load-bearing. `.chips` scrolls sideways (overflow-x),
+            which drops its flex min-height to 0, and this column is a shrinking
+            flex container — so without it the chip row collapses to a 2px
+            sliver. Seen in a real 375px render; jsdom cannot show it. */}
+        <div className="chips" style={{ flex: "none" }}>
           {STATUS_CHIPS.map((c) => (
             <button
               key={c.key || "all"}

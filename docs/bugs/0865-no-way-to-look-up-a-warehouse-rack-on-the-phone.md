@@ -56,6 +56,23 @@ A10), and it comes from the shared module rather than from this file. The error
 path is pinned too: a 403 must say the read FAILED, never render an empty
 warehouse.
 
+**Two layout defects the tests could not see, caught by rendering it.** The
+first version passed all 11 jsdom tests and was still broken on a phone. Rendered
+at 375px with the real `mobile.css` (a local Vite harness seeding the query
+cache — the local app cannot sign in), the status chips collapsed to a 2px
+sliver, and a search that left one rack stretched the search box ~200px tall.
+Both are one mechanism: the scroll column is a vertical flex container, `.chips`
+scrolls sideways (so its flex min-height drops to 0 and it shrinks), and the
+shared `.searchbar` class carries `flex: 1` (so it grows into free space — which
+only appears when the result list is short, i.e. right after a search). Fixed
+with `flex: none` on both; measured after the fix in the same render: search box
+36px, chip row 32px. jsdom has no layout, so the test pins the mechanism (the
+inline `flex`), and was proved RED with the searchbar's `flex: none` removed:
+
+```
+AssertionError: expected '' to match /^(none|0 0 auto)$/
+```
+
 **Not fixed here, on purpose.** Renaming, re-zoning and deleting racks stay on
 the desktop Racks & Bins page. A phone in a warehouse is a finder; rack CREATE
 already exists on mobile via `FORM_RACK` and is unchanged.
