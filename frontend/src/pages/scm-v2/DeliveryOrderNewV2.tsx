@@ -71,13 +71,19 @@ import { useDebtorSearch, type DebtorSuggestion } from "../../vendor/scm/lib/sal
 import { DebtorSuggestList } from "../../vendor/scm/components/DebtorSuggestList";
 import { useDebouncedValue } from "../../vendor/scm/lib/hooks";
 import { useStateWarehouseMappings } from "../../vendor/scm/lib/state-warehouse-queries";
-import { useLocalities } from "../../vendor/scm/lib/localities-queries";
+import { useLocalities, countryForState } from "../../vendor/scm/lib/localities-queries";
 import {
   useAddressCascade, pickState, pickCity, pickPostcode,
-  cityPlaceholder, postcodePlaceholder,
+  cityPlaceholder, postcodePlaceholder, POSTCODE_NEEDS_STATE,
 } from "../../vendor/scm/lib/address-cascade";
 import { StatePicker } from "../../vendor/scm/components/StatePicker";
-import { sortByText, sortByNumeric } from "../../vendor/scm/lib/sort-options";
+import { SearchableSelect } from "../../vendor/scm/components/SearchableSelect";
+import { AddressPostcodeField } from "../../vendor/scm/components/AddressPostcodeField";
+import { sortByText } from "../../vendor/scm/lib/sort-options";
+
+/* The address boxes share the order form's widgets, drawn in this page's style. */
+const ADDRESS_SELECT_CLS =
+  "h-10 w-full rounded-lg border border-border bg-surface px-3 pr-8 text-[13.5px] text-ink outline-none focus:border-primary";
 import { splitE164, combineE164 } from "../../vendor/shared/phone";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { fmtDate } from "../../vendor/shared/format";
@@ -626,8 +632,9 @@ export function DeliveryOrderNewV2() {
     const code = stateWarehousesQ.data?.mappings.find((m) => m.state === next)?.warehouse?.code;
     if (code) setSalesLocation(code);
   };
-  const withCurrent = (opts: string[], current: string) =>
-    (current && !opts.includes(current) ? [current, ...opts] : opts).map((v) => ({ value: v, label: v }));
+  const withCurrent = (opts: string[], current: string): string[] =>
+    (current && !opts.includes(current) ? [current, ...opts] : opts);
+  const country = (state ? countryForState(locRows, state) : null) ?? "Malaysia";
 
   // One-shot seed guards + the original-line signatures used to diff an edit.
   const [stashSeeded, setStashSeeded] = useState(false);
@@ -1339,27 +1346,39 @@ export function DeliveryOrderNewV2() {
                 <StatePicker
                   value={state}
                   onChange={onStatePick}
-                  selectClassName="h-10 w-full rounded-lg border border-border bg-surface px-3 pr-8 text-[13.5px] text-ink outline-none focus:border-primary"
+                  selectClassName={ADDRESS_SELECT_CLS}
                 />
               </div>
               <div>
                 <Label text="City" />
-                <SelectInput
+                <SearchableSelect
+                  className={ADDRESS_SELECT_CLS}
                   value={city}
                   onChange={(next) => applyTriple(pickCity(locRows, { state, city, postcode }, next))}
+                  disabled={loc.isLoading}
                   placeholder={loc.isLoading ? "Loading…" : cityPlaceholder(state)}
-                  options={withCurrent(sortByText(cities), city)}
+                  options={withCurrent(sortByText(cities), city).map((v) => ({ value: v, label: v }))}
                 />
               </div>
-              <div>
-                <Label text="Postcode" />
-                <SelectInput
-                  value={postcode}
-                  onChange={(next) => applyTriple(pickPostcode(locRows, { state, city, postcode }, next))}
-                  placeholder={loc.isLoading ? "Loading…" : postcodePlaceholder(state, city)}
-                  options={withCurrent(sortByNumeric(postcodes), postcode)}
-                />
-              </div>
+              <AddressPostcodeField
+                country={country}
+                value={postcode}
+                onChange={setPostcode}
+                onCascadePick={(next) => applyTriple(pickPostcode(locRows, { state, city, postcode }, next))}
+                onResolve={(r) => { setAddr1(r.address); if (r.state && r.city) { setState(r.state); setCity(r.city); } }}
+                postcodeChoices={withCurrent(postcodes, postcode)}
+                placeholder={loc.isLoading ? "Loading…" : postcodePlaceholder(state, city)}
+                blockedReason={state ? undefined : POSTCODE_NEEDS_STATE}
+                disabled={loc.isLoading}
+                classes={{
+                  field: "block",
+                  label: "mb-1.5 block font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted",
+                  select: ADDRESS_SELECT_CLS,
+                  selectWrap: "relative block",
+                  chevron: "pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-ink-muted",
+                  input: ADDRESS_SELECT_CLS,
+                }}
+              />
               <div>
                 <Label text="Sales location" />
                 <SelectInput

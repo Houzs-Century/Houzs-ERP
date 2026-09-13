@@ -40,7 +40,7 @@ const walk = (dir: string): string[] => readdirSync(dir).flatMap((name) => {
 });
 
 const STATE_LABEL = /(text="State"|>State<)/;
-const POSTCODE_LABEL = /(text="Postcode"|>Postcode<)/;
+const POSTCODE_LABEL = /(text="Postcode"|>Postcode<|<AddressPostcodeField\b)/;
 
 const forms = ROOTS.flatMap((r) => walk(join(SRC, r)))
   .map((p) => ({ rel: relative(SRC, p).replace(/\\/g, '/'), text: readFileSync(p, 'utf8') }))
@@ -65,6 +65,18 @@ describe('address forms use the shared State picker', () => {
     expect(doForm.text).toMatch(/useAddressCascade\(/);
     expect(doForm.text).toMatch(/pickCity\(/);
     expect(doForm.text).toMatch(/pickPostcode\(/);
+  });
+
+  it('the Delivery Order address uses the SAME widgets as the Sales Order — searchable City, the shared Postcode field', () => {
+    /* Owner 2026-09-14: 「一定要跟 Sales Order 一模一样」. Same functions is not
+       enough if the boxes behave differently: the order form's City is typeable
+       and its Postcode carries the State-first popup and the Singapore lookup. */
+    const so = forms.find((f) => f.rel === 'pages/scm-v2/SalesOrderNew.tsx');
+    const doForm = forms.find((f) => f.rel === 'pages/scm-v2/DeliveryOrderNewV2.tsx')!;
+    for (const widget of ['<StatePicker', '<SearchableSelect', '<AddressPostcodeField']) {
+      if (so) expect(so.text, `SalesOrderNew no longer uses ${widget} — update this test`).toContain(widget);
+      expect(doForm.text, `DeliveryOrderNewV2 must use ${widget} like the Sales Order`).toContain(widget);
+    }
   });
 
   it('every exemption is still a form the scan finds — the list cannot rot', () => {

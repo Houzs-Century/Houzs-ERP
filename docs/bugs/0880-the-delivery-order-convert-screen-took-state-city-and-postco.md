@@ -13,8 +13,10 @@ six consignment screens — wires `StatePicker` and `useAddressCascade` from
 `vendor/scm/lib/address-cascade.ts` by hand, and this one form was simply never
 given the wiring. Nothing checked that a form had it.
 
-**Fix.** The DO form now uses the same shared layer: `StatePicker`, and City /
-Postcode as selects fed by `useAddressCascade`, picked through `pickState` /
+**Fix.** The DO form now uses the same shared layer AND the same widgets as the
+Sales Order form (owner: 「一定要跟 Sales Order 一模一样」): `StatePicker`, a
+typeable `SearchableSelect` for City and the shared `AddressPostcodeField` for
+Postcode (State-first popup, Singapore lookup), all fed by `useAddressCascade`, picked through `pickState` /
 `pickCity` / `pickPostcode` so each pick back-fills the other two exactly as on
 the order form. Picking a State fills Sales Location from its state-warehouse
 mapping (in the pick handler, so a location carried from the order is not
@@ -23,7 +25,8 @@ visible instead of rendering as the empty placeholder.
 
 Guard: `frontend/src/pages/scm-v2/addressFormsUseCascade.test.ts` scans every
 form under `pages/scm-v2`, `mobile` and `vendor/scm/components` that labels both
-a State and a Postcode field and requires `StatePicker`; two read-only/CRUD
+a State and a Postcode field and requires `StatePicker`, and requires the DO form
+to use the same three widgets as `SalesOrderNew.tsx`; two read-only/CRUD
 screens are exempted by name with a reason. Proved RED against `main`'s
 `DeliveryOrderNewV2.tsx` (it names that file), green on the fix.
 
