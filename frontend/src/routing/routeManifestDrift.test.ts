@@ -77,7 +77,7 @@ describe("executable route contract", () => {
     // companies, start date, and the queue with the reason on the row.
     // 160 since 2026-09-13: /scm/fair-pending — the sales orders whose FAIR link
     // the system could not settle on its own (two booths fit, or the order's
-    // brand has no booth at that event). docs/bugs/0856.
+    // brand has no booth at that event). docs/bugs/0862.
     expect(STAFF_ROUTE_PATTERNS).toHaveLength(160);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());

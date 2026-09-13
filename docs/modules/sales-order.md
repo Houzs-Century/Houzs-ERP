@@ -884,7 +884,7 @@ that day: `project_id` was non-NULL on **0 of 2,946** Houzs Century orders, so n
 order in the account book could say which FAIR it was written at — and the venue
 text cannot answer it either, because four different fairs were running at MID
 VALLEY on the same three days, one per brand. Full trace:
-`docs/bugs/0856-a-sales-order-could-not-record-which-fair-it-was-written-at.md`.
+`docs/bugs/0862-a-sales-order-could-not-record-which-fair-it-was-written-at.md`.
 
 The Venue field on all three SO forms (`SalesOrderNew`, `SalesOrderDetail`,
 `MobileNewSO`) is now **Fair**, rendered by ONE shared component,

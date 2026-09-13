@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-193 route modules (53 in `backend/src/routes`, 140 in `backend/src/scm/routes`), 1289 endpoint registrations.
+193 route modules (53 in `backend/src/routes`, 140 in `backend/src/scm/routes`), 1291 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -74,7 +74,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/users.ts` | 22 | 2331 |
 | `backend/src/scm/routes/accounting-bank-config.ts` | 0 | 126 |
 | `backend/src/scm/routes/accounting-bank-locks.ts` | 0 | 230 |
-| `backend/src/scm/routes/accounting-bank-months.ts` | 0 | 525 |
+| `backend/src/scm/routes/accounting-bank-months.ts` | 0 | 673 |
 | `backend/src/scm/routes/accounting-bank.ts` | 0 | 1355 |
 | `backend/src/scm/routes/accounting-chart.ts` | 0 | 787 |
 | `backend/src/scm/routes/accounting-collection.ts` | 0 | 184 |
@@ -90,7 +90,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-rp.ts` | 0 | 319 |
 | `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1585 |
 | `backend/src/scm/routes/accounting-stock-close.ts` | 0 | 53 |
-| `backend/src/scm/routes/accounting.ts` | 93 | 1524 |
+| `backend/src/scm/routes/accounting.ts` | 94 | 1527 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ap-invoice-files.ts` | 0 | 50 |
@@ -119,7 +119,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
 | `backend/src/scm/routes/delivery-returns.ts` | 11 | 1879 |
 | `backend/src/scm/routes/delivery-zones.ts` | 9 | 794 |
-| `backend/src/scm/routes/deposit-invoices.ts` | 8 | 189 |
+| `backend/src/scm/routes/deposit-invoices.ts` | 8 | 214 |
 | `backend/src/scm/routes/document-cancel-routes.ts` | 11 | 692 |
 | `backend/src/scm/routes/document-flow.ts` | 2 | 1069 |
 | `backend/src/scm/routes/document-hold-routes.ts` | 0 | 96 |
@@ -158,7 +158,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mrp.ts` | 2 | 1867 |
 | `backend/src/scm/routes/other-debtors.ts` | 13 | 676 |
 | `backend/src/scm/routes/outstanding.ts` | 3 | 384 |
-| `backend/src/scm/routes/payment-vouchers.ts` | 21 | 1989 |
+| `backend/src/scm/routes/payment-vouchers.ts` | 21 | 1993 |
 | `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 212 |
 | `backend/src/scm/routes/po-amendments.ts` | 7 | 763 |
 | `backend/src/scm/routes/po-gates.ts` | 0 | 90 |
@@ -207,7 +207,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/trip-scan-token.ts` | 1 | 61 |
 | `backend/src/scm/routes/trips.ts` | 15 | 1391 |
 | `backend/src/scm/routes/unbilled-deliveries.ts` | 1 | 422 |
-| `backend/src/scm/routes/venture-portal-feed.ts` | 9 | 451 |
+| `backend/src/scm/routes/venture-portal-feed.ts` | 10 | 571 |
 | `backend/src/scm/routes/venues.ts` | 4 | 283 |
 | `backend/src/scm/routes/warehouse-mirror.ts` | 1 | 185 |
 | `backend/src/scm/routes/warehouse.ts` | 9 | 699 |
@@ -222,13 +222,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 153 | `154_assr_case_access.sql` (154) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 417 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 421 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2290 files, 767153 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2295 files, 769891 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -432,7 +432,7 @@ Page files by directory:
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 160 |
+| `frontend/src/pages/scm-v2` | 161 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 10 |
@@ -496,7 +496,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileStockTransferNew.tsx` | 255 |
 | `frontend/src/mobile/MobileTrackingBanner.tsx` | 84 |
 | `frontend/src/mobile/MobileTwoFactorCard.tsx` | 268 |
-| `frontend/src/mobile/MobileVenturePortalFeed.tsx` | 429 |
+| `frontend/src/mobile/MobileVenturePortalFeed.tsx` | 483 |
 | `frontend/src/mobile/MobileVirtualList.tsx` | 159 |
 
 ## 6. Destinations served by both surfaces

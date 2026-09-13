@@ -61,4 +61,4 @@ MLE and REX on 2026-03-20. The test asserting the collapse and the comment
 forbidding it contradicted each other in the same file; the rule was changed to
 answer AMBIGUOUS and `oneBoothOrNothing` now keys on organizer + brand.
 
-**Ref.** `feat/so-fair-picker`, 2026-09-13.
+**Ref.** `feat/so-fair-picker` (#3778), 2026-09-13.
