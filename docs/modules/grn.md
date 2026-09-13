@@ -1569,3 +1569,18 @@ read as missing to anyone looking at the document. The word is now
 `ADD_LINE_LABEL` from `vendor/scm/lib/add-line-handoff.ts`, shared, because four
 documents had four names for the same action. Trace:
 `docs/bugs/0853-add-a-line-was-only-reachable-from-inside-edit-under-four-di.md`.
+
+**The lock is shared now (2026-09-13).** Whether the document is still open for a new
+line used to be an inline `const isLocked = ...` in the desktop editor. It is
+`goodsReceiptLinesLocked` in `frontend/src/vendor/scm/lib/line-add-lock.ts`, called by
+`frontend/src/pages/scm-v2/GoodsReceivedDetail.tsx` AND by the phone. `lineAddLock.test.ts` scans the editor so an inline
+copy cannot grow back.
+
+**On the phone (2026-09-13).** `frontend/src/mobile/MobileAddLine.tsx`, mounted under
+the line items by `frontend/src/mobile/MobileModuleDetail.tsx`, opens the add row IN
+PLACE (the phone has no separate editor for this document). It is offered when
+`canOperateGoodsReceipts` passes AND the shared lock above says open — `mayAddLine` in
+`frontend/src/mobile/mobile-add-line.ts` — and it posts through the same
+`useAddGrnItem` with the desktop add row's body. A refusal stays inline beside the row,
+which keeps what was typed; the unit price starts blank. Trace:
+`docs/bugs/0873-the-phone-could-not-add-a-line-to-any-document.md`.

@@ -70,6 +70,7 @@ import { mobileLineAddHeaders } from "./mobile-so-line-save";
 import { uploadSoItemPhotoWithLease } from "./mobile-so-concurrency";
 import type { ExtractedSlip } from "../vendor/scm/components/ScanOrderModal";
 import type { MobileScanPrefill } from "./MobileScan";
+import { ADD_LINE_LABEL } from "../vendor/scm/lib/add-line-handoff";
 import { MobileSkuPicker, type PickedSku } from "./MobileSkuPicker";
 import {
   useMaintenanceConfig,
@@ -580,12 +581,14 @@ export function MobileNewSO({
   scanPrefill,
   onBack,
   onSaved,
+  openAddLine,
 }: {
   mode: Mode;
   docNo?: string;
   scanPrefill?: MobileScanPrefill;
   onBack: () => void;
   onSaved?: (docNo: string) => void;
+  openAddLine: boolean;
 }) {
   const qc = useQueryClient();
   const notify = useNotify();
@@ -1002,7 +1005,8 @@ export function MobileNewSO({
         const liveItems = (detail.items ?? []).filter((it) => !it.cancelled);
         setOrigItems(liveItems);
         const editable = liveItems.map(lineFromItem);
-        setLines(editable.length ? editable : [newLine()]);
+        const addRow = openAddLine ? newLine() : null; // detail's Add line: one new row, picker open
+        setLines(addRow ? [...editable, addRow] : editable.length ? editable : [newLine()]); if (addRow) setPickerFor(addRow.key);
         /* FIX D1(b) — a prefilled line already carries its persisted Item Delivery
            Date; treat it as a manual override so the header→line cascade never
            stomps a saved per-line date on load. */
@@ -2554,7 +2558,7 @@ export function MobileNewSO({
                         />
                       ))}
                     </div>
-                    <button className="addline" onClick={() => setLines((p) => [...p, newLine()])}>+ Add Line Item</button>
+                    <button className="addline" onClick={() => setLines((p) => [...p, newLine()])}>+ {ADD_LINE_LABEL}</button>
                   </>
                 )}
                 <div className="so-sub-row"><span style={{ fontSize: 11, color: "var(--mut)" }}>Subtotal</span><span className="money" style={{ fontSize: 17, fontWeight: 800, color: "var(--brand-d)" }}>RM {fmt(subtotal / 100)}</span></div>

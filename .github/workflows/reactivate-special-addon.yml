@@ -1,0 +1,80 @@
+name: Re-activate a retired special option
+
+# Manual. Owner, 2026-09-14: 「查看有什么类似的 seperate packing for backerest 的
+# special 嘛 没有的话就用 1 这个」 - look for an ACTIVE option meaning the same
+# thing; only if there is none, re-activate the retired one.
+#
+# The look is part of the run: it lists active options in the same category
+# whose code or label mentions packing or separate, and REFUSES to re-activate
+# if one exists. It changes `active` only, and verifies price, label and
+# categories are unchanged on a fresh connection.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      code:
+        description: "exact catalogue code"
+        required: true
+        default: "Separate Backrest Packing"
+        type: string
+      mode:
+        description: "plan or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'type exactly: REACTIVATE THIS OPTION (only needed for apply)'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: reactivate-special-addon-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/reactivate-special-addon.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          CODE: ${{ inputs.code }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/reactivate-special-addon.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          CODE: ${{ inputs.code }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

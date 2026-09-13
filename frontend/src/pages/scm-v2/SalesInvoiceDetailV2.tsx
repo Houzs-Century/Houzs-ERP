@@ -106,6 +106,7 @@ import { transferFromColumnLabel } from "../../lib/convertScope";
 import { customerRefOf } from '../../lib/customer-ref';
 
 import { useSalesInvoiceAddLine } from "./SalesInvoiceAddLine";
+import { salesInvoiceLinesOpen } from "../../vendor/scm/lib/line-add-lock";
 import { ActivityRow } from "./ActivityRow";
 import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { isFocLine } from '../../vendor/scm/lib/foc-line';
@@ -741,7 +742,7 @@ export function SalesInvoiceDetailV2() {
   /* Add line — the SI has no separate editor page to hand off to, so its add
      row opens in place. Gated on the Edit permission AND on DRAFT, which is
      exactly what POST /:id/items allows. See SalesInvoiceAddLine.tsx. */
-  const addLine = useSalesInvoiceAddLine(id ?? null, canWriteSi && siIsDraft);
+  const addLine = useSalesInvoiceAddLine(id ?? null, canWriteSi && salesInvoiceLinesOpen({ status: salesInvoice?.status ?? null }));
   const startEditHeader = () => {
     if (!salesInvoice) return;
     setHdrInvoiceDate(salesInvoice.invoice_date.slice(0, 10));

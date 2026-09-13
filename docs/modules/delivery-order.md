@@ -2581,6 +2581,18 @@ server falls back to the customer date. `missingSourceFields` names
 **Delivery Date** when the source order has none. Mobile is unaffected: its
 convert wizard posts to `/from-sos`, which copies server-side.
 
+### State, City and Postcode are the shared dropdown cascade (2026-09-14)
+
+The form's address used to take State, City and Postcode as free text — the only
+document form left that way. It now uses the same layer as the Sales Order and
+Sales Invoice forms: `StatePicker`, then City and Postcode as selects from
+`useAddressCascade` (`vendor/scm/lib/address-cascade.ts`), each pick back-filling
+the other two. Picking a State fills **Sales location** from its state-warehouse
+mapping; a location carried from the order is left alone on load, and the field
+stays editable. A carried City or Postcode the locality list does not hold stays
+visible. `frontend/src/pages/scm-v2/addressFormsUseCascade.test.ts` fails any
+address form that drops the shared picker (docs/bugs/0873).
+
 ## A migrated DO's sales / delivery fields come from the SO header too (2026-09-08)
 
 The customer block (phone, email, address, city, state, postcode, emergency

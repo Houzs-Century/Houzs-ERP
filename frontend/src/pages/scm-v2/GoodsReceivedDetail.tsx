@@ -77,6 +77,7 @@ import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '..
 import { DateField } from "../../vendor/scm/components/DateField";
 
 import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
+import { goodsReceiptLinesLocked } from '../../vendor/scm/lib/line-add-lock';
 import { useAddLineHandoff } from '../../vendor/scm/lib/useAddLineHandoff';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -314,7 +315,7 @@ export const GoodsReceivedDetail = () => {
      `isLocked` (= hard OR children) still gates the LINE editor + inherited
      fields; `hardLocked` gates the Edit button + the own-stage header fields. */
   const hardLocked = grn ? !(grn.status === 'DRAFT' || grn.status === 'POSTED') : true;
-  const isLocked = grn ? !(grn.status === 'DRAFT' || (grn.status === 'POSTED' && !hasChildren)) : true;
+  const isLocked = grn ? goodsReceiptLinesLocked({ status: grn.status, has_children: grn.has_children ?? null }) : true;
   addLineHandoff.current = { enabled: isEditing && !isLocked, onTrigger: () => setShowAddItem(true) };
   const lockedDueToChildren = grn ? (grn.status === 'POSTED' && hasChildren) : false;
 

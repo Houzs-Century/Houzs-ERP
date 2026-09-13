@@ -71,6 +71,13 @@ import { useDebtorSearch, type DebtorSuggestion } from "../../vendor/scm/lib/sal
 import { DebtorSuggestList } from "../../vendor/scm/components/DebtorSuggestList";
 import { useDebouncedValue } from "../../vendor/scm/lib/hooks";
 import { useStateWarehouseMappings } from "../../vendor/scm/lib/state-warehouse-queries";
+import { useLocalities } from "../../vendor/scm/lib/localities-queries";
+import {
+  useAddressCascade, pickState, pickCity, pickPostcode,
+  cityPlaceholder, postcodePlaceholder,
+} from "../../vendor/scm/lib/address-cascade";
+import { StatePicker } from "../../vendor/scm/components/StatePicker";
+import { sortByText, sortByNumeric } from "../../vendor/scm/lib/sort-options";
 import { splitE164, combineE164 } from "../../vendor/shared/phone";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { fmtDate } from "../../vendor/shared/format";
@@ -599,6 +606,28 @@ export function DeliveryOrderNewV2() {
     }
     return Array.from(byValue.values());
   }, [stateWarehousesQ.data, salesLocation]);
+
+  /* The same State -> City -> Postcode cascade the Sales Order and Sales Invoice
+     forms use (address-cascade.ts). These three were free-text boxes here, the
+     only document form left that way, so a DO could carry an address the order
+     form would never accept. A carried value the locality list lacks stays
+     visible rather than rendering as the empty placeholder. */
+  const loc = useLocalities();
+  const locRows = useMemo(() => loc.data ?? [], [loc.data]);
+  const { cities, postcodes } = useAddressCascade(locRows, state, city);
+  const applyTriple = (next: { state: string; city: string; postcode: string }) => {
+    setState(next.state); setCity(next.city); setPostcode(next.postcode);
+  };
+  /* A State PICK fills Sales Location from its mapping, as on the order form.
+     Done in the handler, not an effect, so a location carried from the order
+     is never overwritten on load. */
+  const onStatePick = (next: string) => {
+    applyTriple(pickState(next));
+    const code = stateWarehousesQ.data?.mappings.find((m) => m.state === next)?.warehouse?.code;
+    if (code) setSalesLocation(code);
+  };
+  const withCurrent = (opts: string[], current: string) =>
+    (current && !opts.includes(current) ? [current, ...opts] : opts).map((v) => ({ value: v, label: v }));
 
   // One-shot seed guards + the original-line signatures used to diff an edit.
   const [stashSeeded, setStashSeeded] = useState(false);
@@ -1307,26 +1336,28 @@ export function DeliveryOrderNewV2() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
               <div>
                 <Label text="State" />
-                <TextInput
+                <StatePicker
                   value={state}
-                  onChange={setState}
-                  placeholder="Pick state"
+                  onChange={onStatePick}
+                  selectClassName="h-10 w-full rounded-lg border border-border bg-surface px-3 pr-8 text-[13.5px] text-ink outline-none focus:border-primary"
                 />
               </div>
               <div>
                 <Label text="City" />
-                <TextInput
+                <SelectInput
                   value={city}
-                  onChange={setCity}
-                  placeholder="Pick city"
+                  onChange={(next) => applyTriple(pickCity(locRows, { state, city, postcode }, next))}
+                  placeholder={loc.isLoading ? "Loading…" : cityPlaceholder(state)}
+                  options={withCurrent(sortByText(cities), city)}
                 />
               </div>
               <div>
                 <Label text="Postcode" />
-                <TextInput
+                <SelectInput
                   value={postcode}
-                  onChange={setPostcode}
-                  placeholder="Pick postcode"
+                  onChange={(next) => applyTriple(pickPostcode(locRows, { state, city, postcode }, next))}
+                  placeholder={loc.isLoading ? "Loading…" : postcodePlaceholder(state, city)}
+                  options={withCurrent(sortByNumeric(postcodes), postcode)}
                 />
               </div>
               <div>

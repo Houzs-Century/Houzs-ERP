@@ -137,15 +137,35 @@ try {
   {
     const must = ['Bottom wrap nylon', 'BOTTOM USE UMBRELLA FABRIC', 'Nilon bottom',
       'wrap bottom to Nilon', 'Bttm upgrade to umbrella fabric'];
-    const mustNot = ['fully cover', 'Fully Covered To floor no leg', '1 side power slider', 'Nylon Fabric'];
+    /* SCOPE-INDEPENDENT must-nots only. The first version also listed
+       `Fully Covered To floor no leg` - true on 2026-09-13 when only nylon was
+       authorised, false the moment the owner approved the sofa fully-cover
+       family, and the run REFUSED (34769843790, nothing written). A self-test
+       that hard-codes the scope goes stale the day the scope widens. These two
+       are wrong for reasons no authorisation can change: one means no option at
+       all, the other already IS a catalogue code. */
+    const mustNot = ['1 side power slider', 'Nylon Fabric'];
+    /* The scope-DEPENDENT half, computed from the scope itself: a spelling whose
+       meaning is NOT authorised must not fold. Only asserted while such a
+       family exists. */
+    const outOfScope = [
+      ['SOFA', 'Fully Covered To floor no leg'],
+      ['BEDFRAME', 'HB straight to Wall'],
+      ['BEDFRAME', 'fully cover'],
+    ].filter(([cat, v]) => {
+      const hit = mapPhrase(v, liveByCat.get(cat), cat, map);
+      return hit.length && !hit.every((c) => authorised.has(K(c)));
+    });
     const bad = [...must.filter((v) => !foldTo(v, 'SOFA').some((c) => K(c) === K('Nylon Fabric'))),
-      ...mustNot.filter((v) => foldTo(v, 'SOFA').length > 0)];
+      ...mustNot.filter((v) => foldTo(v, 'SOFA').length > 0),
+      ...outOfScope.filter(([cat, v]) => foldTo(v, cat).length > 0).map(([, v]) => v)];
     if (bad.length) {
       console.error(`SELF-TEST FAILED on ${bad.length} real spelling(s). Refusing to run.`);
       for (const v of bad) console.error(`   ${v} -> ${JSON.stringify(foldTo(v, 'SOFA'))}`);
       process.exit(1);
     }
-    line(`   fold self-test: ${must.length} must-fold and ${mustNot.length} must-NOT-fold spellings all correct`);
+    line(`   fold self-test: ${must.length} must-fold, ${mustNot.length} must-NOT-fold,`
+      + ` ${outOfScope.length} out-of-scope spellings all correct`);
   }
 
   /* ── the chains, rooted at the sales line, exactly as the specials round ── */

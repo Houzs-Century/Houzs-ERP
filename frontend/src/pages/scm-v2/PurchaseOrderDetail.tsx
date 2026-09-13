@@ -102,6 +102,7 @@ import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '..
 import { DateField } from "../../vendor/scm/components/DateField";
 
 import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
+import { purchaseOrderLinesLocked } from '../../vendor/scm/lib/line-add-lock';
 import { useAddLineHandoff } from '../../vendor/scm/lib/useAddLineHandoff';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -354,7 +355,7 @@ export const PurchaseOrderDetail = () => {
      `isLocked` (= hard OR children) still gates the LINE editor + inherited
      fields; `hardLocked` gates the Edit button + the PO-own header fields. */
   const hardLocked = po ? !isEditableStatus : true;
-  const isLocked = po ? (!isEditableStatus || hasChildren) : true;
+  const isLocked = po ? purchaseOrderLinesLocked({ status: po.status, has_children: po.has_children ?? null }) : true;
   const lockedDueToChildren = po ? (isEditableStatus && hasChildren) : false;
 
   /* Only a HARD lock (Received / Cancelled) drops us out of Edit — a PO with a
