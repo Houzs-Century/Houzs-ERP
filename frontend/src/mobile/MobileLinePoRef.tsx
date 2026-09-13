@@ -11,6 +11,9 @@
 import type { CSSProperties } from "react";
 import { linePoLink, type LinePoFields, type LinePoLink } from "../vendor/scm/lib/line-po-link";
 import type { FlowNav } from "./relationship-map-model";
+import { PoPriceReference } from "../vendor/scm/components/PoPriceReference";
+import { piPriceDifferenceSummary } from "../vendor/scm/lib/pi-po-price-rule";
+import { fmtSen } from "../lib/scm";
 
 const PO_REF_MODULES = new Set(["grns", "purchase-invoices"]);
 
@@ -46,3 +49,39 @@ export function MobileLinePoRef({ poRef, nav }: { poRef: LinePoLink | null | und
     </div>
   );
 }
+
+/* The one slot MobileModuleDetail renders under a GRN / PI line. On a purchase
+   invoice it adds the PO price beside the PI price (owner 2026-09-14: 「点开这个
+   PI 时，我也能一眼看清：根据 PO 设想的价钱是多少，以及最终开单（PI）又是多少」) —
+   the same PoPriceReference the desktop editor and detail use. Reference only. */
+type PoFactsLine = LinePoFields & { po_unit_price_sen?: number | null; unit_price_sen?: number | null };
+
+export function MobileLinePoFacts({ moduleKey, line, nav }: { moduleKey: string; line: PoFactsLine; nav?: FlowNav }) {
+  const poRef = mobileLinePoRefFor(moduleKey, line);
+  return (
+    <>
+      <MobileLinePoRef poRef={poRef} nav={nav} />
+      {moduleKey === "purchase-invoices" && (
+        <div style={rowStyle}>
+          <span style={eyebrowStyle}>PO price</span>
+          <PoPriceReference poUnitPriceSen={line.po_unit_price_sen} piUnitPriceSen={Number(line.unit_price_sen ?? 0) || 0} fmt={(sen) => fmtSen(sen)} />
+        </div>
+      )}
+    </>
+  );
+}
+
+/** The phone's at-a-glance line on a purchase invoice: how many lines were
+ *  billed at a price other than the PO's. null when none differ. */
+export const mobilePiPoPriceNotice = (
+  items: ReadonlyArray<{ qty?: number | null; unit_price_sen?: number | null; po_unit_price_sen?: number | null }> | null | undefined,
+): string | null => {
+  const { linesDiffering, totalDiffSen } = piPriceDifferenceSummary((items ?? []).map((it) => ({
+    qty: Number(it.qty ?? 0) || 0,
+    supplierUnitPriceSen: Number(it.unit_price_sen ?? 0) || 0,
+    poUnitPriceSen: it.po_unit_price_sen ?? null,
+  })));
+  if (linesDiffering === 0) return null;
+  const net = `${totalDiffSen >= 0 ? "+" : "−"}${fmtSen(Math.abs(totalDiffSen))}`;
+  return `${linesDiffering} ${linesDiffering === 1 ? "line" : "lines"} billed at a different price from the PO (net ${net}). For reference only.`;
+};

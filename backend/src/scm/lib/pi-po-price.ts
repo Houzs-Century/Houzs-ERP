@@ -46,38 +46,10 @@
 // ----------------------------------------------------------------------------
 
 import { poRefByPiLine, poRefByPoItemId } from './line-po-ref';
+import { piPriceDifferenceSummary } from './pi-po-price-rule';
 
-/** The one comparison, so the API, the UI and any report agree on the word. */
-export type PiLinePriceComparison = {
-  /** Ordered price, or null when this line has no purchase-order line behind it. */
-  poUnitPriceSen: number | null;
-  /** What the supplier billed — the PI line's own unit price. */
-  supplierUnitPriceSen: number;
-  /** supplier - PO, per unit. null when there is nothing to compare against. */
-  diffSen: number | null;
-  /** True only when the two are BOTH known and differ. */
-  differs: boolean;
-};
-
-export const comparePiLinePrice = (
-  supplierUnitPriceSen: number,
-  poUnitPriceSen: number | null,
-): PiLinePriceComparison => {
-  const supplier = Number.isFinite(supplierUnitPriceSen) ? supplierUnitPriceSen : 0;
-  /* `0` joins `null` here: an order that named no price cannot be over- or
-     under-billed against. See the measurement in the header — 68% of live lines
-     are this case, and calling them differences hides the 1.7% that are. */
-  if (poUnitPriceSen == null || poUnitPriceSen === 0) {
-    return { poUnitPriceSen, supplierUnitPriceSen: supplier, diffSen: null, differs: false };
-  }
-  const diff = supplier - poUnitPriceSen;
-  return {
-    poUnitPriceSen,
-    supplierUnitPriceSen: supplier,
-    diffSen: diff,
-    differs: diff !== 0,
-  };
-};
+/* The pure rule lives in its own mirrored file; re-exported so existing importers keep one door. */
+export { comparePiLinePrice, defaultPiUnitPriceSen, piPriceDifferenceSummary, type PiLinePriceComparison } from './pi-po-price-rule';
 
 /**
  * Resolve the ordered price for a set of PI lines from the two hop tables.
@@ -113,23 +85,6 @@ export const poUnitPriceByPiLine = (
   return out;
 };
 
-/** The header line a person checking the bill reads first: how many lines
- *  differ, and by how much in total (qty x per-unit difference). */
-export const piPriceDifferenceSummary = (
-  lines: ReadonlyArray<{ qty?: number | null; supplierUnitPriceSen: number; poUnitPriceSen: number | null }>,
-): { linesDiffering: number; totalDiffSen: number } => {
-  let linesDiffering = 0;
-  let totalDiffSen = 0;
-  for (const l of lines) {
-    if (l.poUnitPriceSen == null || l.poUnitPriceSen === 0) continue;
-    const diff = l.supplierUnitPriceSen - l.poUnitPriceSen;
-    if (diff === 0) continue;
-    linesDiffering += 1;
-    totalDiffSen += diff * (Number(l.qty ?? 0) || 0);
-  }
-  return { linesDiffering, totalDiffSen };
-};
-
 /* ── The one read, done once ───────────────────────────────────────────────
    Both facts a PI line borrows from its GRN line — the supplier's own code and
    the price we ordered at — come off the same row, so they are fetched
@@ -154,10 +109,64 @@ type MinimalPgrest = {
   };
 };
 
+/* ── The trail, taken once ─────────────────────────────────────────────────
+   Migration 20260914T0200 stores the ordered price ON the invoice line. Every
+   insert path calls this on the rows it is about to write, so the value comes
+   from the server's own link at that moment — a `po_unit_price_sen` in a
+   request body is overwritten, and a line with no purchase order behind it is
+   null. A failed read THROWS: an invoice written with a silent trail of nulls
+   would look exactly like "no purchase order", which is the wrong answer. */
+export async function stampPoPriceSnapshot(sb: MinimalPgrest, rows: Array<Record<string, unknown>>): Promise<void> {
+  const grnItemIds = [...new Set(rows.map((r) => r.grn_item_id).filter((v): v is string => typeof v === 'string' && !!v))];
+  for (const r of rows) r.po_unit_price_sen = null;
+  if (!grnItemIds.length) return;
+  const g = await sb.from('grn_items').select('id, purchase_order_item_id').in('id', grnItemIds);
+  if (g.error) throw new Error(`grn_items read failed: ${String((g.error as { message?: string }).message ?? g.error)}`);
+  const grnRows = (g.data ?? []) as Array<{ id: string; purchase_order_item_id: string | null }>;
+  const poiIds = [...new Set(grnRows.map((x) => x.purchase_order_item_id).filter((v): v is string => !!v))];
+  const poItems: Array<{ id: string; unit_price_sen: number | null }> = [];
+  if (poiIds.length) {
+    const p = await sb.from('purchase_order_items').select('id, unit_price_sen').in('id', poiIds);
+    if (p.error) throw new Error(`purchase_order_items read failed: ${String((p.error as { message?: string }).message ?? p.error)}`);
+    poItems.push(...((p.data ?? []) as Array<{ id: string; unit_price_sen: number | null }>));
+  }
+  const keyed = rows.map((r, i) => ({ id: String(i), grn_item_id: (r.grn_item_id as string | null | undefined) ?? null }));
+  const byLine = poUnitPriceByPiLine(keyed, grnRows, poItems);
+  rows.forEach((r, i) => { r.po_unit_price_sen = byLine.get(String(i)) ?? null; });
+}
+
+/** The one-line form every insert site uses: stamp the trail, then run the
+ *  site's own insert. A failed stamp comes back in the insert's error shape, so
+ *  each site's existing failure handling (rollback, 500) applies unchanged.
+ *  `sb` is `unknown` because the route's real client type is too deep for the
+ *  structural one (TS2589) — the same reason the detail route casts. */
+export async function withPoPriceSnapshot<R extends { error: { message: string } | null }>(
+  sb: unknown,
+  rows: Array<Record<string, unknown>>,
+  insert: () => PromiseLike<R>,
+): Promise<R | { data: null; error: { message: string } }> {
+  try {
+    await stampPoPriceSnapshot(sb as MinimalPgrest, rows);
+  } catch (e) {
+    return { data: null, error: { message: e instanceof Error ? e.message : String(e) } };
+  }
+  return insert();
+}
+
 export async function attachGrnLineFacts(sb: MinimalPgrest, items: PiLineEnrichable[]): Promise<void> {
   const grnItemIds = [...new Set(items.map((r) => r.grn_item_id).filter((v): v is string => !!v))];
+  /* The stored trail (20260914T0200) as the detail read returned it, taken
+     BEFORE the fields are reset. `po_price_source` tells the screen which one
+     it is looking at: 'snapshot' | 'live' (a line written before the column
+     existed) | 'none'. */
+  const stored = new Map<string, number>();
   for (const it of items) {
+    if (typeof it.po_unit_price_sen === 'number') stored.set(it.id, it.po_unit_price_sen);
     it.supplier_sku = null; it.po_unit_price_sen = null; it.source_po_id = null; it.source_po_number = null;
+    it.po_price_source = 'none';
+  }
+  for (const it of items) {
+    if (stored.has(it.id)) { it.po_unit_price_sen = stored.get(it.id)!; it.po_price_source = 'snapshot'; }
   }
   if (!grnItemIds.length) return;
 
@@ -195,9 +204,38 @@ export async function attachGrnLineFacts(sb: MinimalPgrest, items: PiLineEnricha
   const poRefByLine = poRefByPiLine(items, grnRows, poRefByPoItemId(poItems));
   for (const it of items) {
     it.supplier_sku = it.grn_item_id ? skuByGrnItem.get(it.grn_item_id) ?? null : null;
-    it.po_unit_price_sen = poPriceByLine.get(it.id) ?? null;
+    if (!stored.has(it.id)) {
+      it.po_unit_price_sen = poPriceByLine.get(it.id) ?? null;
+      it.po_price_source = it.po_unit_price_sen == null ? 'none' : 'live';
+    }
     const ref = poRefByLine.get(it.id) ?? null;
     it.source_po_id = ref?.poId ?? null;
     it.source_po_number = ref?.poNumber ?? null;
   }
 }
+
+/* ── The list marker ──────────────────────────────────────────────────────
+   Per invoice: how many lines were billed at a price other than the one their
+   purchase order named, the net per-unit x qty difference, and how many lines
+   HAD a PO price to compare at all — so the list can say "no PO price" rather
+   than a reassuring "matches" for an invoice nothing could be compared on.
+   Information only (owner 2026-09-14: 「这只是一个 reference 的」). */
+export type PiPoPriceSummary = { linesDiffering: number; totalDiffSen: number; comparableLines: number; lines: number };
+
+export const piPoPriceSummaryByInvoice = (
+  lines: ReadonlyArray<{ purchase_invoice_id: string; qty?: number | null; unit_price_sen?: number | null; po_unit_price_sen?: number | null }>,
+): Map<string, PiPoPriceSummary> => {
+  const grouped = new Map<string, Array<{ qty: number; supplierUnitPriceSen: number; poUnitPriceSen: number | null }>>();
+  for (const l of lines) {
+    const arr = grouped.get(l.purchase_invoice_id) ?? [];
+    arr.push({ qty: Number(l.qty ?? 0) || 0, supplierUnitPriceSen: Number(l.unit_price_sen ?? 0) || 0, poUnitPriceSen: l.po_unit_price_sen ?? null });
+    grouped.set(l.purchase_invoice_id, arr);
+  }
+  const out = new Map<string, PiPoPriceSummary>();
+  for (const [id, arr] of grouped) {
+    const { linesDiffering, totalDiffSen } = piPriceDifferenceSummary(arr);
+    const comparableLines = arr.filter((a) => a.poUnitPriceSen != null && a.poUnitPriceSen !== 0).length;
+    out.set(id, { linesDiffering, totalDiffSen, comparableLines, lines: arr.length });
+  }
+  return out;
+};

@@ -7,7 +7,7 @@ import { buildVariantSummary } from "../vendor/shared/variant-summary";
 import { formatPhone } from "@2990s/shared/phone";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
-import { CommittedBatchRowMobile, PairedSoRowsMobile, SourcePosRowMobile, SubstitutedRowMobile } from "./source-chips"; import { MobileLinePoRef, mobileLinePoRefFor } from "./MobileLinePoRef";
+import { CommittedBatchRowMobile, PairedSoRowsMobile, SourcePosRowMobile, SubstitutedRowMobile } from "./source-chips"; import { MobileLinePoFacts, mobilePiPoPriceNotice } from "./MobileLinePoRef";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
 import { MobileLineRemark } from "./MobileLineRemark";
 import { useGrnZeroCostRemedy } from "./MobileGrnZeroCost";
@@ -527,6 +527,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       firstOf(nested(h.supplier)?.code) === "—" ? "" : firstOf(nested(h.supplier)?.code),
       s(h.supplier_invoice_ref).trim() ? `Ref ${s(h.supplier_invoice_ref)}` : "",
     ),
+    notice: (_h, items) => mobilePiPoPriceNotice(items), // PO price vs PI price, reference only (owner 2026-09-14)
     status: (h) => h.status,
     meta: (h) => [
       ["Invoice Date", dmy(h.invoice_date)],
@@ -1618,7 +1619,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
                   : null;
                 const delivered = coverageType ? (deliveredMap.get(code) ?? []) : undefined;
                 const provenance = coverageType ? (provByCode.get(code) ?? []) : undefined;
-                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} remark={l.remark} qty={l.qty} unitSen={l.unitSen} amountSen={l.amountSen} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} substituted={moduleKey === "delivery-orders-mfg" && Boolean(it?.ac_substituted)} poRef={<MobileLinePoRef poRef={mobileLinePoRefFor(moduleKey, it ?? {})} nav={flowNav} />} />;
+                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} remark={l.remark} qty={l.qty} unitSen={l.unitSen} amountSen={l.amountSen} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} substituted={moduleKey === "delivery-orders-mfg" && Boolean(it?.ac_substituted)} poRef={<MobileLinePoFacts moduleKey={moduleKey} line={it ?? {}} nav={flowNav} />} />;
               }) : <div style={{ fontSize: 11.5, color: "#9aa093", padding: "9px 0" }}>No line items.</div>)}
             </div>
             {!isLoading && !error && id && <MobileAddLine moduleKey={moduleKey} docId={id} header={header} onAdded={invalidate} />}

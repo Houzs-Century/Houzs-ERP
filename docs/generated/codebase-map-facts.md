@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-193 route modules (53 in `backend/src/routes`, 140 in `backend/src/scm/routes`), 1291 endpoint registrations.
+193 route modules (53 in `backend/src/routes`, 140 in `backend/src/scm/routes`), 1292 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -171,7 +171,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/purchase-consignment-orders.ts` | 10 | 746 |
 | `backend/src/scm/routes/purchase-consignment-receives.ts` | 13 | 1426 |
 | `backend/src/scm/routes/purchase-consignment-returns.ts` | 14 | 1151 |
-| `backend/src/scm/routes/purchase-invoices-list-enrichment.ts` | 1 | 73 |
+| `backend/src/scm/routes/purchase-invoices-list-enrichment.ts` | 2 | 108 |
 | `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2404 |
 | `backend/src/scm/routes/purchase-order-item-photos.ts` | 2 | 227 |
 | `backend/src/scm/routes/purchase-returns.ts` | 14 | 1843 |
@@ -222,13 +222,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 153 | `154_assr_case_access.sql` (154) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 421 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 422 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2295 files, 769891 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2317 files, 774012 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -246,7 +246,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/mobile/MobilePMS.tsx` | 4486 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4342 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4206 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3744 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3748 |
 | `backend/src/scm/routes/grns.ts` | 3564 |
 | `frontend/src/components/DataTable.tsx` | 3456 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3380 |
@@ -432,22 +432,23 @@ Page files by directory:
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 161 |
+| `frontend/src/pages/scm-v2` | 162 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 10 |
 
 ## 5. Mobile screen inventory
 
-55 screen/component modules in `frontend/src/mobile`.
+59 screen/component modules in `frontend/src/mobile`.
 
 | file | lines |
 |---|---|
+| `frontend/src/mobile/MobileAddLine.tsx` | 187 |
 | `frontend/src/mobile/MobileAmendments.tsx` | 147 |
 | `frontend/src/mobile/MobileAnnouncementMedia.tsx` | 171 |
 | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | 152 |
 | `frontend/src/mobile/MobileAnnouncements.tsx` | 1741 |
-| `frontend/src/mobile/MobileApp.tsx` | 1151 |
+| `frontend/src/mobile/MobileApp.tsx` | 1189 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 295 |
 | `frontend/src/mobile/MobileAssrCategoryChips.tsx` | 76 |
 | `frontend/src/mobile/MobileAssrSoField.tsx` | 76 |
@@ -466,16 +467,17 @@ Page files by directory:
 | `frontend/src/mobile/MobileInbox.tsx` | 261 |
 | `frontend/src/mobile/MobileInvitations.tsx` | 301 |
 | `frontend/src/mobile/MobileLinePhotos.tsx` | 143 |
+| `frontend/src/mobile/MobileLinePoRef.tsx` | 48 |
 | `frontend/src/mobile/MobileLineRemark.tsx` | 38 |
 | `frontend/src/mobile/MobileLogin.tsx` | 171 |
 | `frontend/src/mobile/MobileMailCenter.tsx` | 1814 |
 | `frontend/src/mobile/MobileMileageCapture.tsx` | 395 |
-| `frontend/src/mobile/MobileModuleDetail.tsx` | 1990 |
+| `frontend/src/mobile/MobileModuleDetail.tsx` | 1993 |
 | `frontend/src/mobile/MobileModuleForm.tsx` | 389 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
 | `frontend/src/mobile/MobileNewProject.tsx` | 196 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3744 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3748 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4486 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
@@ -483,9 +485,11 @@ Page files by directory:
 | `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 466 |
 | `frontend/src/mobile/MobilePoAmendments.tsx` | 137 |
 | `frontend/src/mobile/MobileProfile.tsx` | 1002 |
+| `frontend/src/mobile/MobilePurchaseDocNew.tsx` | 387 |
+| `frontend/src/mobile/MobileRacks.tsx` | 306 |
 | `frontend/src/mobile/MobileRelationshipMap.tsx` | 275 |
 | `frontend/src/mobile/MobileRoles.tsx` | 409 |
-| `frontend/src/mobile/MobileSODetail.tsx` | 2097 |
+| `frontend/src/mobile/MobileSODetail.tsx` | 2100 |
 | `frontend/src/mobile/MobileSalesOrders.tsx` | 847 |
 | `frontend/src/mobile/MobileSavedPhotoThumb.tsx` | 82 |
 | `frontend/src/mobile/MobileScan.tsx` | 1467 |
@@ -548,6 +552,7 @@ Rows are derived from `frontend/src/mobile/MobileApp.tsx` and `frontend/src/App.
 | `/scm/stock-transfers` | Stock Transfers | `frontend/src/pages/scm-v2/StockTransfersListV2` | generic: MobileModuleList[stock-transfers] |
 | `/scm/suppliers` | Suppliers | `frontend/src/pages/scm-v2/SuppliersV2Route` | generic: MobileModuleList[suppliers] |
 | `/scm/warehouses` | Warehouse | `frontend/src/pages/scm-v2/Warehouses` | generic: MobileModuleList[warehouse] |
+| `/scm/warehouses/racks` | Racks | `frontend/src/pages/scm-v2/WarehouseRacks` | dedicated: racks |
 | `/team?tab=departments2` | Departments | `frontend/src/pages/Team` | resolved at runtime by destinationScreen() |
 | `/team?tab=directory` | Directory | `frontend/src/pages/Team` | resolved at runtime by destinationScreen() |
 | `/venture-portal-feed` | Venture Portal Feed | `frontend/src/pages/VenturePortalFeed` | dedicated: venture-portal-feed |

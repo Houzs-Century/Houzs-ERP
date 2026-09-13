@@ -40,17 +40,29 @@ export const poRefByPoItemId = (
 
 /** GRN detail: stamp `source_po_id` + `source_po_number` on every line (null on
  *  a line with no PO behind it), in place — the route's existing enrichment
- *  shape. */
+ *  shape — plus `po_unit_price_sen`, the price the order names today, which the
+ *  create-invoice-from-receipt screen starts a new invoice line at
+ *  (owner 2026-09-14). The price is independent of the ref: an order whose
+ *  number cannot be read still has a price. */
 export const stampGrnLinePoRefs = (
   lines: Array<Record<string, unknown> & { purchase_order_item_id: string | null }>,
   refs: ReadonlyMap<string, LinePoRef>,
+  priceByPoItemId: ReadonlyMap<string, number | null>,
 ): void => {
   for (const l of lines) {
-    const ref = l.purchase_order_item_id ? refs.get(l.purchase_order_item_id) ?? null : null;
+    const poiId = l.purchase_order_item_id;
+    const ref = poiId ? refs.get(poiId) ?? null : null;
     l.source_po_id = ref?.poId ?? null;
     l.source_po_number = ref?.poNumber ?? null;
+    l.po_unit_price_sen = poiId ? priceByPoItemId.get(poiId) ?? null : null;
   }
 };
+
+/** PO line rows -> unit price per PO line; a non-number reads as null, never 0. */
+export const poPriceByPoItemId = (
+  poItems: ReadonlyArray<{ id: string; unit_price_sen?: number | null }>,
+): Map<string, number | null> =>
+  new Map(poItems.map((r) => [r.id, typeof r.unit_price_sen === 'number' ? r.unit_price_sen : null]));
 
 /** PI detail: the extra hop through the receipt line. Every PI line gets an
  *  entry, so a caller never reads undefined. */

@@ -6,7 +6,7 @@
  * header's PO or a neighbour's. A GRN may span several POs of one supplier and
  * a PI may bill several GRNs, so the header ref is a guess for any given line. */
 import { describe, it, expect } from 'vitest';
-import { poRefByPoItemId, poRefByPiLine, stampGrnLinePoRefs } from '../src/scm/lib/line-po-ref';
+import { poPriceByPoItemId, poRefByPoItemId, poRefByPiLine, stampGrnLinePoRefs } from '../src/scm/lib/line-po-ref';
 import { attachGrnLineFacts } from '../src/scm/lib/pi-po-price';
 
 const poItems = [
@@ -37,11 +37,12 @@ describe('stampGrnLinePoRefs', () => {
       { id: 'g2', purchase_order_item_id: null },
       { id: 'g3', purchase_order_item_id: 'p3' },
     ];
-    stampGrnLinePoRefs(lines, poRefByPoItemId(poItems));
-    expect(lines.map((l) => [l.source_po_id, l.source_po_number])).toEqual([
-      ['po-A', 'HC-PO-010007'],
-      [null, null],
-      [null, null],
+    stampGrnLinePoRefs(lines, poRefByPoItemId(poItems), poPriceByPoItemId([{ id: 'p1', unit_price_sen: 80_000 }, { id: 'p3', unit_price_sen: 0 }]));
+    expect(lines.map((l) => [l.source_po_id, l.source_po_number, l.po_unit_price_sen])).toEqual([
+      ['po-A', 'HC-PO-010007', 80_000],
+      [null, null, null],
+      // no readable PO number, but the order's price is still the order's price
+      [null, null, 0],
     ]);
   });
 });

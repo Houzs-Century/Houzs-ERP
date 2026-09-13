@@ -120,3 +120,72 @@ on the phone (`frontend/src/mobile/MobileLinePoRef.tsx`).
 
 Measured read-only on 2026-09-14: 649 invoice lines; 29 (HOUZS) have no receipt
 line behind them, and none of the lines that do fails to reach a purchase-order line.
+
+---
+
+## The PO price is STORED on the line, and shown beside the PI price (2026-09-14)
+
+Owner, 2026-09-14, in three steps: 「create 的时候，系统肯定会把 PO 的价钱直接带过来」;
+「能直接看到这个 PI 的价钱，以及之前在 PO 里的价钱是多少」; and — the part that sets
+the limits — 「这只是一个 reference 的 … 我 PI 要填多少钱都是我喜欢的」. So: a
+default, a stored reference, and a visible difference. **No block, no warning
+dialog, no approval, no variance report, no AutoCount effect.**
+
+**Stored, not looked up.** `scm.purchase_invoice_items.po_unit_price_sen`
+(migration `20260914T0200_scm_pi_item_po_unit_price.sql`) holds the
+purchase-order line's unit price as it was when the invoice line was written.
+Why a column and not the join the detail page used before: an approved PO
+amendment writes `unit_price_sen` on a line that is already received and invoiced
+(`po-revision.ts` applies PRICE with no received floor), so a live lookup would
+rewrite an existing invoice's reference under it.
+
+- **Written only by the server**, at insert, on all four insert paths of
+  `backend/src/scm/routes/purchase-invoices.ts` (`POST /`, `/from-grn-items`,
+  `/from-grn`, `POST /:id/items`) through `withPoPriceSnapshot` in
+  `backend/src/scm/lib/pi-po-price.ts`. A value in the request body is
+  overwritten; the line PATCH's field map does not carry it, so editing the PI
+  price never touches it.
+- `NULL` = no purchase order behind the line, or a line written before the
+  column existed. `0` = the order named no price.
+- **Read** by `attachGrnLineFacts`: the stored value when present
+  (`po_price_source: 'snapshot'`), otherwise the live join (`'live'`, a line not
+  yet back-filled), otherwise `'none'`.
+- **Back-fill** for existing lines: `backend/scripts/backfill-pi-po-unit-price.mjs`
+  via the workflow *Stamp the PO price onto purchase-invoice lines*
+  (`backfill-pi-po-unit-price.yml`), plan by default, staging first. It stamps
+  the PO price **as of the run**, because no history of PO prices exists — the
+  plan prints how many lines sit on an amended PO.
+
+**Default at create.** `PurchaseInvoiceNew` (the create-from-GRN review) starts
+each line's Unit Price at `defaultPiUnitPriceSen(po, grn)`: the PO line's price
+when the order named one, otherwise the receipt line's (where a price keyed at
+receiving lives when the order had none). `GET /grns/:id` serves
+`po_unit_price_sen` per line for this. The two API-only convert endpoints
+(`/from-grn`, `/from-grn-items`) still bill the receipt line's price — no screen
+calls either of them today (grep `usePurchaseInvoiceFromGrn`,
+`useCreatePisFromGrnItems`: definitions only).
+
+**Where it shows.** One component, `PoPriceReference`
+(`frontend/src/vendor/scm/components/PoPriceReference.tsx`), everywhere: the
+**PO price** column on `PurchaseInvoiceDetailV2` (the billed column is now
+labelled **PI price**), the legacy view table and each Edit line card in
+`PurchaseInvoiceDetail`, beside the Unit Price input in `PurchaseInvoiceNew`, and
+under each line on the phone (`MobileLinePoFacts` in
+`frontend/src/mobile/MobileLinePoRef.tsx`) with a one-line notice at the top of
+the phone's invoice screen. It says **no PO link**, **PO had no price**, or
+**PO RM X** with **+RM d vs PO** when the prices differ.
+
+**List marker.** `GET /purchase-invoices/list-po-price?piIds=` (in
+`purchase-invoices-list-enrichment.ts`, same company predicate as the list)
+returns per invoice `{ linesDiffering, totalDiffSen, comparableLines, lines }`,
+computed through the SAME `attachGrnLineFacts`. The desktop list's **vs PO
+price** column reads it via `usePiListPoPriceMap`
+(`frontend/src/vendor/scm/lib/pi-list-po-price.ts`): "N lines differ" /
+"Matches PO" / "No PO price". The phone list has no marker: `MobileModuleList.tsx`
+sits at its file-size ceiling and its list config has no per-row enrichment; the
+phone shows the notice on the invoice screen instead.
+
+**One rule, two trees.** When two prices "differ" (a PO price of 0 never does)
+lives in `pi-po-price-rule.ts`, byte-identical in `backend/src/scm/lib/` and
+`frontend/src/vendor/scm/lib/`, refereed by
+`frontend/src/vendor/scm/lib/pi-po-price-rule.canonical.test.ts`.
