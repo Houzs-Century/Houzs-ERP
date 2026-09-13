@@ -56,6 +56,7 @@ import {
   useCancelGrn,
 } from "../../vendor/scm/lib/grn-queries";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
+import { withStatusLabels } from "../../vendor/scm/lib/status-pill";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
@@ -128,16 +129,22 @@ const totalOf = (r: GrnRow): number => r.total_sen ?? 0;
 // a real enum member (grn_status = DRAFT / POSTED / CLOSED / CANCELLED) and it
 // files under `posted` because its stock IN stands — only CANCELLED had its
 // receipt reversed.
-const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }> = {
-  DRAFT:     { tone: "warning", label: "Draft",     bucket: "draft" },
-  POSTED:    { tone: "success", label: "Submitted", bucket: "posted" },
-  CLOSED:    { tone: "neutral", label: "Closed",    bucket: "posted" },
-  CANCELLED: { tone: "error",   label: "Cancelled", bucket: "cancelled" },
+/* The LABEL is NOT declared here. It comes from `vendor/scm/lib/status-pill.ts`,
+   the one canonical map — docs/modules/document-status-vocabulary.md §1. What
+   stays is what is genuinely this page's own: the tone palette (four names, not
+   status-pill's six) and the filter BUCKET. */
+const STATUS_OWN: Record<string, { tone: "success" | "warning" | "error" | "neutral"; bucket: StatusTab }> = {
+  DRAFT:     { tone: "warning", bucket: "draft" },
+  POSTED:    { tone: "success", bucket: "posted" },
+  CLOSED:    { tone: "neutral", bucket: "posted" },
+  CANCELLED: { tone: "error",   bucket: "cancelled" },
   /* ON_HOLD (mig 0319) — a paperwork pause, NOT a stock event: the inventory
      IN fired at POSTED and a hold moves nothing. A held GRN cannot be
      invoiced, because the billable-GRN read is .eq(status, POSTED). */
-  ON_HOLD:   { tone: "warning", label: "On Hold",   bucket: "on_hold" },
+  ON_HOLD:   { tone: "warning", bucket: "on_hold" },
 };
+
+const STATUS_TONE = withStatusLabels("grn", STATUS_OWN);
 
 const statusFor = (s: string) =>
   STATUS_TONE[(s || "").toUpperCase()] ?? { tone: "neutral" as const, label: s || "—", bucket: "posted" as StatusTab };

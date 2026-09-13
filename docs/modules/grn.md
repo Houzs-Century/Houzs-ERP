@@ -46,6 +46,8 @@ On POST, qty_received rolls up to PO items"* (`grns.ts:1-2`).
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:324`; status actions `:535-542`. |
 | Mobile convert (PO→GRN) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "grn"`, **no line picker** — a whole-PO convert. Offered only to a caller who passes `canOperateGoodsReceipts` — see below. |
 
+> **Status WORDS on both desktop screens come from `frontend/src/vendor/scm/lib/status-pill.ts` (2026-09-13).** The list keeps its own tone and filter bucket and gets the label through `withStatusLabels("grn", …)`; the detail page kept a hand-written label in `EFFECTIVE_TONE` that rendered nowhere, and it was deleted. Nothing on screen changed. The detail header BADGE still reads a separate `STAGE_LABEL` that says Posted — recorded, not fixed, in `docs/bugs/0866-six-status-maps-collapsed-onto-status-pill-and-the-detail-ba.md`.
+
 **The mobile `+` is an OPERATE gate (2026-08-14).** `MobileModuleList` renders the
 `+` on the presence of an `onNew` callback alone, and `MobileConvertWizard` imports
 no auth of its own — so withholding `onNew` is the only thing that keeps the wizard
