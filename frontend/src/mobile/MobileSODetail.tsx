@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { formatDate } from "../lib/utils";
 import { NonSellingWarehouseNoteMobile, SourcePosRowMobile, soStockPillMobile } from "./source-chips";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
+import { ADD_LINE_LABEL } from "../vendor/scm/lib/add-line-handoff";
 import type { FlowNav } from "./relationship-map-model";
 import { fmtAmt } from "../lib/scm";
 import { useQueryClient } from "@tanstack/react-query";
@@ -267,7 +268,7 @@ const total = (h: SoHeader) => h.local_total_sen ?? h.total_revenue_sen ?? 0;
  *  (`#so-detail` + `renderSoDetail`/`openSO`), wired to the real
  *  /mfg-sales-orders/:docNo (header + line items) and /:docNo/payments.
  *  Draft/Submitted actions PATCH /:docNo/status. Design classes only. */
-export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: string; onBack: () => void; onEdit?: (docNo: string) => void;
+export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav }: { docNo: string; onBack: () => void; onEdit?: (docNo: string) => void; onAddLine: ((docNo: string) => void) | null;
   /** Relationship-Map node navigation (MobileApp). Absent → map nodes inert. */
   flowNav?: FlowNav;
 }) {
@@ -1286,6 +1287,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                 <button className="btn-ghost" style={{ flex: 1, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => onEdit?.(docNo)}>Edit Draft</button>
                 <button className="btn" style={{ flex: 1.3, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => setStatus("CONFIRMED")}>{busy ? "Working…" : "Create Sales Order"}</button>
               </div>
+              {onAddLine && <button className="btn-ghost" style={{ opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => onAddLine(docNo)}>+ {ADD_LINE_LABEL}</button>}
               {/* Discard draft — the escape hatch for a junk draft (esp. a bad
                   scan/OCR draft). Secondary red-outline so it never competes with
                   Create; behind the house confirm dialog. Backend refuses anything
@@ -1315,6 +1317,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                   <div style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--mut2)", alignSelf: "center" }}>Locked — downstream documents exist.</div>
                 )}
               </div>
+              {onAddLine && canWriteSo && <button className="btn-ghost" style={{ marginTop: 9, opacity: busy || editLocked ? 0.4 : 1 }} disabled={busy || editLocked} onClick={() => onAddLine(docNo)}>+ {ADD_LINE_LABEL}</button>}
             </>
           )}
           {ph === "cancelled" && (
