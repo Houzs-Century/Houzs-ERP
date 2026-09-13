@@ -88,11 +88,12 @@ try {
   for (const a of authorised.values()) line(`      ${a.code} — ${a.by}`);
 
   const addons = await sql`
-    SELECT code, label, categories, selling_price_sen, cost_price_sen
+    SELECT code, label, categories, active, selling_price_sen, cost_price_sen
       FROM scm.special_addons WHERE company_id = ${CO}`;
   const { liveByCat } = buildLiveIndex(addons);
   const map = loadPhraseMap();
   const known = new Set(addons.map((a) => K(a.code)));
+  const retired = new Set(addons.filter((a) => a.active === false).map((a) => K(a.code)));
   for (const k of authorised.keys()) {
     if (!known.has(k)) {
       console.error(`REFUSED: the authorised code "${authorised.get(k).code}" is not in this company's catalogue.`);
@@ -100,6 +101,19 @@ try {
       process.exit(1);
     }
   }
+  /* A RETIRED option is not something to move a live line onto - the same rule
+     align-line-specials-to-catalogue states in its own header. An authorisation
+     cannot override it, because re-offering a withdrawn choice is a product
+     decision and not a side effect of a spelling fold. Dropped from scope and
+     named, rather than refusing the whole run. */
+  const retiredTargets = [...authorised.keys()].filter((k) => retired.has(k));
+  for (const k of retiredTargets) {
+    line(`   DROPPED FROM SCOPE — "${authorised.get(k).code}" is RETIRED (active = false).`);
+    line('      A live line must not be moved onto an option the picker no longer offers.');
+    line('      Re-activate it first if those lines are wanted; that is a separate decision.');
+    authorised.delete(k);
+  }
+  if (!authorised.size) { line('   Every authorised family is retired. Nothing to do.'); process.exit(0); }
 
   /** A legacy value -> the authorised codes it means, or [].
    *
