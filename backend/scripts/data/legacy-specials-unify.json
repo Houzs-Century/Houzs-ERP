@@ -49,14 +49,25 @@
         "hb and divan fully cover fabric"
       ],
       "why_this_one_is_safe_to_fold": "Same request for the divan base. Several of its spellings name the headboard AND the divan in one breath, which is why both codes had to be authorised together — see _both_codes_in_one_phrase."
+    },
+    {
+      "code": "Seat Base Fully Cover with no Leg",
+      "by": "owner, 2026-09-13, in chat — 「是的 批」, answering the question whether the SOFA fully-cover family was included in 「HB DIVAN fullycover那些也可以做啊」. It was asked separately BECAUSE it is a different request on a different category and shares only the words `Fully Cover`.",
+      "measured": "11 spellings across 105 document lines",
+      "examples": [
+        "Fully Covered To floor no leg",
+        "EXTEND TO FLOOR WITH 1'INCH LEG",
+        "Fully Cover to Floor",
+        "fully cover replace the leg",
+        "REMARKS:seat FULLY COVER TO FLOOR",
+        "28 inch per seat (no leg )",
+        "replace the leg by fully cover",
+        "2+C+1(35'INCH)FULLY COVER NO LEG"
+      ],
+      "why_this_one_is_safe_to_fold": "All eleven are the same SOFA request - the seat base covered down to the floor with the legs removed - and the family carries the owner's own 2026-08-10 ruling that `fully cover to floor no leg` and `fully cover replace the leg` mean the same treatment. Its `no` veto excludes the two lines that say the opposite (`REQUEST TO NORMAL LEG AND NOT FULLY COVER`)."
     }
   ],
   "notAuthorised": [
-    {
-      "code": "Seat Base Fully Cover with no Leg",
-      "lines": 105,
-      "spellings": 11
-    },
     {
       "code": "HB Straight",
       "lines": 62,
@@ -110,5 +121,5 @@
   ],
   "_notAuthorised_note": "Listed so the next session can see exactly what was NOT covered and does not have to re-measure it. These stay as they are until the owner says otherwise. Do not fold them because the nylon round went well.",
   "_both_codes_in_one_phrase": "A legacy value may genuinely ask for TWO things: `HB & DIVAN BOTTOM FULLY COVER` decodes to HB Fully Cover AND Divan Full Cover, and that is not ambiguity - it is what the sentence says. The tool folds such a value into ALL of its codes, but ONLY when every one of them is authorised. If even one is not, the value is left alone and reported: folding it would silently drop the meaning that is out of scope, which is worse than not folding at all. Before the owner authorised HB Fully Cover and Divan Full Cover together on 2026-09-13 these phrases were skipped for exactly that reason.",
-  "_open_question_2026_09_13": "`Seat Base Fully Cover with no Leg` (11 spellings, 105 lines) is NOT authorised. Its name contains `Fully Cover` but it is a different request on a different category: a SOFA whose seat base is covered to the floor with the legs removed (`Fully Covered To floor no leg`, `EXTEND TO FLOOR WITH 1'INCH LEG`, `fully cover replace the leg`). The owner said 「HB DIVAN fullycover」, which names the bedframe headboard and divan. Ask before including it; do not read it in from the shared word."
+  "_answered_2026_09_13": "The sofa `Seat Base Fully Cover with no Leg` family was asked about separately, because it shares only the words `Fully Cover` with the bedframe ones and is a different request on a different category. Owner answered 「是的 批」. Keep asking that way: a shared word in a code NAME is not evidence that two families are the same request."
 }
