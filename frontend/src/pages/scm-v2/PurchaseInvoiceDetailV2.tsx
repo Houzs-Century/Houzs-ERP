@@ -21,6 +21,7 @@ import {
   Wallet,
   AlertTriangle,
   Send,
+  Plus,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -51,6 +52,7 @@ import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip"
 
 import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { FocAmount } from "../../vendor/scm/components/FocAmount";
+import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 type PiStatus =
@@ -166,7 +168,7 @@ const EFFECTIVE_TONE: Record<
   { tone: "success" | "warning" | "error" | "neutral"; label: string; blurb: string }
 > = {
   draft: { tone: "warning", label: "Draft", blurb: "Draft · not yet posted" },
-  posted: { tone: "warning", label: "Confirmed", blurb: "Confirmed · awaiting payment" },
+  posted: { tone: "warning", label: "Submitted", blurb: "Submitted · awaiting payment" },
   on_hold: { tone: "warning", label: "On Hold", blurb: "On hold · payment blocked until released" },
   partial: { tone: "warning", label: "Partially paid", blurb: "Partially paid · balance still due" },
   paid: { tone: "success", label: "Paid", blurb: "Paid · loop closed" },
@@ -448,6 +450,10 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/purchase-invoices"));
   const goEdit = () => id && navigate(`/scm/purchase-invoices/${id}?edit=1`);
+  /* "Add line" from the page you START on — the affordance lived only
+     inside the editor, under a different name per document, so it read as
+     missing (docs/bugs/0853). */
+  const goAddLine = () => id && navigate(addLineHref(`/scm/purchase-invoices/${id}`));
   // Render + download the PI PDF via the shared jspdf generator (client-side),
   // mirroring the V1 PurchaseInvoiceDetail handler. The old `?print=1`
   // navigation was dead — nothing consumed that param — so the button did nothing.
@@ -795,6 +801,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
             {canMarkPaid && (
               <Button variant="secondary" icon={<CheckCircle2 size={14} />} onClick={doMarkPaid}>Mark paid</Button>
             )}
+            <Button variant="secondary" icon={<Plus size={14} />} onClick={goAddLine}>{ADD_LINE_LABEL}</Button>
             <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>Edit</Button>
           </div>
         </div>

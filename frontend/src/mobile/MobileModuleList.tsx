@@ -1249,7 +1249,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     chips: [
       { key: "all", label: "All", match: () => true },
       { key: "draft", label: "Draft", match: (r) => eq(pick(r, "status"), "draft") },
-      { key: "posted", label: "Confirmed", match: (r) => eq(pick(r, "status"), "posted") },
+      { key: "posted", label: "Submitted", match: (r) => eq(pick(r, "status"), "posted") },
     ],
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "receivedAt", "received_at"), pick(b, "receivedAt", "received_at")) }],
   },

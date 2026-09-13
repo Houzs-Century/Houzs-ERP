@@ -101,6 +101,8 @@ import styles from './SalesOrderDetail.module.css';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 
+import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
+import { useAddLineHandoff } from '../../vendor/scm/lib/useAddLineHandoff';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
@@ -207,6 +209,11 @@ const draftFromItem = (it: PoItemRow): EditLine => ({
 export const PurchaseOrderDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  /* "Add line" from the detail page. At the TOP with the other hooks: this
+     editor returns early while the document loads, and a hook written below
+     that return is the rules-of-hooks violation the linter caught when this
+     was first pasted in per-file (docs/bugs/0853). */
+  const addLineHandoff = useAddLineHandoff();
   const detail = usePurchaseOrderDetail(id ?? null);
   const updateHeader = useUpdatePurchaseOrderHeader();
   // PR-DRAFT-removal — Submit button removed (POs are SUBMITTED on create).
@@ -649,6 +656,7 @@ export const PurchaseOrderDetail = () => {
       warehouseId:  po.purchase_location_id ?? undefined,
       deliveryDate: headerView.expectedAt || undefined,
     }]);
+  addLineHandoff.current = { enabled: isEditing && !isLocked, onTrigger: startAddLine };
 
   /* Remove a line. A persisted line fires the delete mutation immediately (it
      releases SO quota back to the From-SO picker — same as the old trash
@@ -1244,7 +1252,7 @@ export const PurchaseOrderDetail = () => {
           {isEditing && !isLocked && (
             <Button variant="primary" size="sm" onClick={startAddLine}>
               <Plus {...ICON} />
-              <span>Add item</span>
+              <span>{ADD_LINE_LABEL}</span>
             </Button>
           )}
         </header>

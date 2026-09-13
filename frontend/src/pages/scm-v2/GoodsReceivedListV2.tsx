@@ -130,7 +130,7 @@ const totalOf = (r: GrnRow): number => r.total_sen ?? 0;
 // receipt reversed.
 const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }> = {
   DRAFT:     { tone: "warning", label: "Draft",     bucket: "draft" },
-  POSTED:    { tone: "success", label: "Confirmed", bucket: "posted" },
+  POSTED:    { tone: "success", label: "Submitted", bucket: "posted" },
   CLOSED:    { tone: "neutral", label: "Closed",    bucket: "posted" },
   CANCELLED: { tone: "error",   label: "Cancelled", bucket: "cancelled" },
   /* ON_HOLD (mig 0319) — a paperwork pause, NOT a stock event: the inventory

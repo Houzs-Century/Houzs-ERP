@@ -34,6 +34,7 @@ import {
   Phone as PhoneIcon,
   MoreHorizontal,
   Wallet,
+  Plus,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -96,6 +97,8 @@ import { MigratedReadonlyBanner } from "../../vendor/scm/components/MigratedRead
 import { customerRefOf } from '../../lib/customer-ref';
 
 import { isFocLine } from '../../vendor/scm/lib/foc-line';
+import { OrderSlipPhoto } from "../../vendor/scm/components/OrderSlipPhoto";
+import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
 // ─── Row types (subset — see MfgSalesOrdersList.tsx for the full SoRow) ────
 
 type SoHeader = {
@@ -245,8 +248,8 @@ const STATUS_TONE: Record<
   },
   confirmed: {
     tone: "success",
-    label: "Confirmed",
-    blurb: "Confirmed · awaiting payment",
+    label: "Submitted",
+    blurb: "Submitted · awaiting payment",
   },
   cancelled: {
     tone: "error",
@@ -689,6 +692,10 @@ function SalesOrderDetailV2ReadOnly() {
   // amendment-eligible the editor opens in amendment mode (Save submits an
   // amendment request); when hard-locked the button is disabled here.
   const goEdit = () => docNo && navigate(`/scm/sales-orders/${docNo}?edit=1`);
+  /* "Add line" from the page you START on — the affordance lived only
+     inside the editor, under a different name per document, so it read as
+     missing (docs/bugs/0853). */
+  const goAddLine = () => docNo && navigate(addLineHref(`/scm/sales-orders/${docNo}`));
   /* Payments editing now lives ON this page (same PaymentsTable the editor
      uses) — "Collect payment" just unlocks the card and scrolls to it. */
   const location = useLocation();
@@ -747,6 +754,10 @@ function SalesOrderDetailV2ReadOnly() {
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
   const auditQ = useSalesOrderAuditLog(docNo ?? null);
   const auditEntries = auditQ.data ?? [];
+  const slipImageKey =
+    (salesOrder as unknown as { slipImageKey?: string | null; slip_image_key?: string | null } | null)?.slipImageKey
+    ?? (salesOrder as unknown as { slip_image_key?: string | null } | null)?.slip_image_key
+    ?? null;
   const [relMapOpen, setRelMapOpen] = useState(false);
   const goRelationshipMap = () => setRelMapOpen(true);
   // Render + download the SO PDF via the shared jspdf generator (client-side),
@@ -1213,6 +1224,16 @@ function SalesOrderDetailV2ReadOnly() {
                 Request cancellation
               </Button>
             )}
+            {/* Same gate as Edit: adding a line IS an edit, so an order that
+                cannot be edited must not offer it. */}
+            <Button
+              variant="secondary"
+              icon={<Plus size={14} />}
+              onClick={goAddLine}
+              disabled={editDisabled}
+            >
+              {ADD_LINE_LABEL}
+            </Button>
             <Button
               variant="primary"
               icon={<Edit3 size={14} />}
@@ -1487,6 +1508,17 @@ function SalesOrderDetailV2ReadOnly() {
                   moves to the separate Finance "Fulfillment Costing" module.
                   The customer-facing OrderTotalCard above (Subtotal / Discount /
                   Total) stays; only cost/margin is gone. */}
+
+              {/* The customer's handwritten slip, photographed on the phone.
+                  It lives on the order (slip_image_key, mig 0033) and until
+                  2026-09-13 this page never rendered it — so a slip taken on
+                  the phone was invisible on the computer unless somebody
+                  pressed Edit (docs/bugs/0854). */}
+              {slipImageKey && (
+                <AsideCard title="Order slip">
+                  <OrderSlipPhoto imageKey={slipImageKey} maxWidth={320} />
+                </AsideCard>
+              )}
 
               <AsideCard title="Key dates">
                 <KeyDateRow k="SO date" v={fmtDate(salesOrder.so_date)} />

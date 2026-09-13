@@ -1499,3 +1499,18 @@ The allocated-freight sub-line is dropped on a free line — a freebie that carr
 landed cost still cost nothing to buy, and printing both reads as two answers to
 one question. Trace:
 `docs/bugs/0849-a-supplier-freebie-printed-as-rm-0-00-with-nothing-to-say-it.md`.
+
+---
+
+## Adding a line by hand
+
+The goods receipt detail page carries an **Add line** button beside Edit. It
+hands over to the editor with a `#add-line` fragment; the editor opens its add
+row and strips the fragment, so the intent fires once and does not survive a
+reload or a back button.
+
+The affordance used to exist only INSIDE Edit, named "Add manual item" — so it
+read as missing to anyone looking at the document. The word is now
+`ADD_LINE_LABEL` from `vendor/scm/lib/add-line-handoff.ts`, shared, because four
+documents had four names for the same action. Trace:
+`docs/bugs/0853-add-a-line-was-only-reachable-from-inside-edit-under-four-di.md`.

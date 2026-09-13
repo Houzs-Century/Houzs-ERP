@@ -109,6 +109,16 @@ export const DiscountInput = ({
 }) => {
   const [draft, setDraft] = useState(amountAtRest(valueSen));
   const focused = useRef(false);
+  /* The hint is SHOWN only while the field has focus, and it FLOATS. Both
+     halves were bought by the owner, 2026-09-13, looking at a sales-order line:
+     「怎么不是整齐一点呢？」 — the hint rendered as a block under every discount
+     cell, on every row, at rest. It made that one column ~14px taller than
+     Unit Price and Delivery Date beside it, so the whole line read ragged, and
+     it spent a permanent strip of a phone-width row on a sentence nobody is
+     reading while they scan a list. A reading you need WHILE TYPING does not
+     belong in the resting layout. At rest the same text is still on the input's
+     `title`, and it is still announced to a screen reader below. */
+  const [showHint, setShowHint] = useState(false);
 
   // Re-seed from the stored value whenever it changes under us (a qty edit
   // recomputes the line), but never while the operator is typing into it.
@@ -146,7 +156,7 @@ export const DiscountInput = ({
   return (
     <span
       className={className}
-      style={{ display: 'flex', flexDirection: 'column', gap: 2, width: '100%' }}
+      style={{ display: 'block', position: 'relative', width: '100%' }}
     >
       <input
         type="text"
@@ -160,13 +170,14 @@ export const DiscountInput = ({
         title={`${hint} · Enter to save · Esc to cancel`}
         onFocus={(e) => {
           focused.current = true;
+          setShowHint(true);
           if (selectOnFocus) {
             const el = e.currentTarget;
             window.setTimeout(() => { el.select(); }, 0);
           }
         }}
         onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => { focused.current = false; commit(); }}
+        onBlur={() => { focused.current = false; setShowHint(false); commit(); }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); }
           if (e.key === 'Escape') {
@@ -175,14 +186,31 @@ export const DiscountInput = ({
           }
         }}
       />
+      {/* ABSOLUTE so it cannot change the row's height: the cell keeps the
+          input's height at rest AND while typing, and the reading appears over
+          whatever is below rather than pushing it down. Opacity rather than
+          unmounting, so `aria-live` still announces the reading to a screen
+          reader on a field that never receives visible focus. */}
       <span
         aria-live="polite"
         style={{
+          position: 'absolute',
+          top: '100%',
+          left: 0,
+          right: 0,
+          marginTop: 1,
+          zIndex: 2,
+          pointerEvents: 'none',
+          opacity: showHint && !disabled ? 1 : 0,
+          transition: 'opacity 80ms linear',
           fontSize: 10.5,
           lineHeight: 1.3,
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
           color: live.kind === 'invalid' ? 'var(--c-danger, #b3321f)' : 'var(--c-muted, #6b7580)',
+          background: 'var(--c-surface, #fff)',
           textAlign: align,
-          minHeight: 14,
         }}
       >
         {disabled ? '' : hint}

@@ -1009,3 +1009,20 @@ disagreed in ways nobody could see from the screen that was right: the delivery
 order checked the PRICE ONLY, so a 0-priced line still taking money read **FOC
 there and Sale on the invoice**. Do not re-derive the rule in a component —
 `docs/bugs/0846-the-same-free-line-read-foc-on-the-delivery-order-and-sale-o.md`.
+
+---
+
+## The confirm rung reads "Submitted"
+
+Stored `SENT`; shown as **Submitted** since 2026-09-13, on the pill and on the
+list's filter tab, which used to disagree. The stored value is unchanged and
+every report, export and AutoCount read still goes to it. One of the five
+documents in the owner's ruling. Trace:
+`docs/bugs/0851-one-rung-three-words-the-filter-tab-said-submitted-while-the.md`.
+
+**The sales invoice cannot add a line on any surface.** Its backend
+`POST /sales-invoices/:id/items` exists, and `useAddSalesInvoiceItem` exists in
+the query layer with ZERO call sites in `frontend/src` — so the endpoint is
+unreachable from the app. The other four documents gained an **Add line** button
+on 2026-09-13; this one is the outstanding gap, recorded here rather than left
+for the next reader to rediscover.

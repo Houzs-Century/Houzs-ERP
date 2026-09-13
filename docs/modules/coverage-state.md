@@ -135,3 +135,15 @@ disagreed in ways nobody could see from the screen that was right: the delivery
 order checked the PRICE ONLY, so a 0-priced line still taking money read **FOC
 there and Sale on the invoice**. Do not re-derive the rule in a component —
 `docs/bugs/0846-the-same-free-line-read-foc-on-the-delivery-order-and-sale-o.md`.
+
+---
+
+## Status wording on the list pages (2026-09-13)
+
+`PurchaseInvoicesListV2.tsx` and the other list pages that declare their own
+`{ tone, label }` map now read **Submitted**, not Confirmed, for the confirm rung
+of the five documents the owner named. The stored values are untouched. These
+local maps are exactly why the tab and the pill were able to disagree in the
+first place; the root fix (every page reading `status-pill.ts`) stays OPEN and is
+recorded in `docs/modules/document-status-vocabulary.md`. Trace:
+`docs/bugs/0851-one-rung-three-words-the-filter-tab-said-submitted-while-the.md`.

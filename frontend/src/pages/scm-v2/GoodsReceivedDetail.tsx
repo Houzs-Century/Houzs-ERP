@@ -75,6 +75,8 @@ import styles from './SalesOrderDetail.module.css';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 
+import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
+import { useAddLineHandoff } from '../../vendor/scm/lib/useAddLineHandoff';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
@@ -216,6 +218,9 @@ const BLANK_ADD: AddDraft = {
 
 export const GoodsReceivedDetail = () => {
   const { id } = useParams<{ id: string }>();
+  /* "Add line" from the detail page — at the TOP with the other hooks; this
+     editor returns early while the GRN loads (docs/bugs/0853). */
+  const addLineHandoff = useAddLineHandoff();
   const navigate = useNavigate();
   const detail = useGrnDetail(id ?? null);
   const updateHeader = useUpdateGrnHeader();
@@ -279,6 +284,7 @@ export const GoodsReceivedDetail = () => {
      (like the From-PO append + line delete). */
   const addGrnItem = useAddGrnItem();
   const [showAddItem, setShowAddItem] = useState(false);
+
   const [addDraft, setAddDraft] = useState<AddDraft>(BLANK_ADD);
   const [addError, setAddError] = useState<string | null>(null);
   const [productQuery, setProductQuery] = useState('');
@@ -307,6 +313,7 @@ export const GoodsReceivedDetail = () => {
      fields; `hardLocked` gates the Edit button + the own-stage header fields. */
   const hardLocked = grn ? !(grn.status === 'DRAFT' || grn.status === 'POSTED') : true;
   const isLocked = grn ? !(grn.status === 'DRAFT' || (grn.status === 'POSTED' && !hasChildren)) : true;
+  addLineHandoff.current = { enabled: isEditing && !isLocked, onTrigger: () => setShowAddItem(true) };
   const lockedDueToChildren = grn ? (grn.status === 'POSTED' && hasChildren) : false;
 
   /* Only a HARD lock (Cancelled / Closed) drops us out of Edit — a GRN with a
@@ -706,7 +713,7 @@ export const GoodsReceivedDetail = () => {
           <h2 className={styles.cardTitle}>Line Items ({visibleItems.length})</h2>
           {/* The primary path stays convert-from-PO — the TOP-LEVEL "From
               Purchase Order" header button (see actions row above), mirroring
-              Create GR. The "Add manual item" affordance BELOW covers a
+              Create GR. The "Add line" affordance BELOW covers a
               genuinely-free receipt (an item the PO never ordered, a sample);
               the server still refuses receiving a material the parent PO DOES
               order by hand (unlinked_po_lines) — that must go through From PO. */}
@@ -1093,7 +1100,7 @@ export const GoodsReceivedDetail = () => {
                   gap: 'var(--space-2)',
                 }}
               >
-                <Plus {...ICON} /> Add manual item
+                <Plus {...ICON} /> {ADD_LINE_LABEL}
               </button>
             ) : (
               <div style={{

@@ -31,6 +31,7 @@ import {
   FilePenLine,
   Share2,
   Split,
+  Plus,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -93,6 +94,7 @@ import { HoldChip } from "../../vendor/scm/components/HoldChip";
 
 import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { FocAmount } from "../../vendor/scm/components/FocAmount";
+import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneySen(centi, currency);
@@ -557,6 +559,10 @@ function PurchaseOrderDetailV2ReadOnly() {
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/purchase-orders"));
   const goEdit = () => id && navigate(`/scm/purchase-orders/${id}?edit=1`);
+  /* "Add line" from the page you START on — the affordance lived only
+     inside the editor, under a different name per document, so it read as
+     missing (docs/bugs/0853). */
+  const goAddLine = () => id && navigate(addLineHref(`/scm/purchase-orders/${id}`));
   // Render + download the PO PDF via the shared jspdf generator (client-side),
   // mirroring the V1 PurchaseOrderDetail handler. The old `?print=1` navigation
   // was dead — nothing consumed that param — so the button did nothing.
@@ -1248,6 +1254,7 @@ function PurchaseOrderDetailV2ReadOnly() {
                 Raise amendment
               </Button>
             )}
+            <Button variant="secondary" icon={<Plus size={14} />} onClick={goAddLine}>{ADD_LINE_LABEL}</Button>
             <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>
               Edit
             </Button>

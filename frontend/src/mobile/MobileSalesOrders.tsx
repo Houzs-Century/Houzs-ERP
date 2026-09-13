@@ -162,7 +162,7 @@ type StatusFilter =
 const STATUS_FILTERS: { key: StatusFilter; label: string }[] = [
   { key: "all", label: "All" },
   { key: "draft", label: "Draft" },
-  { key: "confirmed", label: "Confirmed" },
+  { key: "confirmed", label: "Submitted" },
   { key: "in_production", label: "In Production" },
   { key: "ready_to_ship", label: "Ready to Ship" },
   { key: "shipped", label: "Shipped" },

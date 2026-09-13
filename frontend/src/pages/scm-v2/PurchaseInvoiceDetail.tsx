@@ -77,6 +77,8 @@ import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '..
 import { transferFromColumnLabel } from "../../lib/convertScope";
 import { DateField } from "../../vendor/scm/components/DateField";
 
+import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
+import { useAddLineHandoff } from '../../vendor/scm/lib/useAddLineHandoff';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
@@ -153,6 +155,11 @@ const draftFromItem = (it: PiItemRow): EditLine => ({
 
 export const PurchaseInvoiceDetail = () => {
   const { id } = useParams<{ id: string }>();
+  /* "Add line" from the detail page. At the TOP with the other hooks: this
+     editor returns early while the document loads, and a hook written below
+     that return is the rules-of-hooks violation the linter caught when this
+     was first pasted in per-file (docs/bugs/0853). */
+  const addLineHandoff = useAddLineHandoff();
   const detail = usePurchaseInvoiceDetail(id ?? null);
   const updateHeader = useUpdatePurchaseInvoiceHeader();
   const addItem = useAddPurchaseInvoiceItem();
@@ -401,6 +408,7 @@ export const PurchaseInvoiceDetail = () => {
      Committed by the page-level Save. */
   const startAddLine = () =>
     setEditLines((prev) => [...prev, { ...emptyPoLine() }]);
+  addLineHandoff.current = { enabled: isEditing && !isLocked, onTrigger: startAddLine };
 
   /* Remove a line. A persisted line fires the delete mutation immediately; a
      never-saved blank card just drops from the draft array. */
@@ -635,7 +643,7 @@ export const PurchaseInvoiceDetail = () => {
           {isEditing && !isLocked && (
             <Button variant="primary" size="sm" onClick={startAddLine}>
               <Plus {...ICON} />
-              <span>Add item</span>
+              <span>{ADD_LINE_LABEL}</span>
             </Button>
           )}
         </header>

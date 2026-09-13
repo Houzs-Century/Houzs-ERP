@@ -20,6 +20,7 @@ import {
   Send,
   Receipt,
   RotateCcw,
+  Plus,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -45,6 +46,7 @@ import { resolveFxRate } from "./fx-rate";
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
 import { FocAmount } from "../../vendor/scm/components/FocAmount";
+import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
 type GrnStatus = "DRAFT" | "POSTED" | "CANCELLED" | string;
 
 type GrnHeader = HoldFields & {
@@ -135,7 +137,7 @@ const effectiveOf = (h: GrnHeader): Effective => {
 
 const EFFECTIVE_TONE: Record<Effective, { tone: "success" | "warning" | "error" | "neutral"; label: string; blurb: string }> = {
   draft: { tone: "warning", label: "Draft", blurb: "Draft · not yet posted" },
-  posted: { tone: "success", label: "Confirmed", blurb: "Confirmed · inventory received" },
+  posted: { tone: "success", label: "Submitted", blurb: "Submitted · inventory received" },
   on_hold: { tone: "warning", label: "On Hold", blurb: "On hold · stock already received, billing paused" },
   cancelled: { tone: "error", label: "Cancelled", blurb: "Cancelled · receipt reversed" },
 };
@@ -347,6 +349,10 @@ function GoodsReceivedDetailV2ReadOnly() {
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/grns"));
   const goEdit = () => id && navigate(`/scm/grns/${id}?edit=1`);
+  /* "Add line" from the page you START on. The affordance existed only
+     inside the editor, under a different name on each document, so the owner
+     read it as missing (docs/bugs/0853). */
+  const goAddLine = () => id && navigate(addLineHref(`/scm/grns/${id}`));
   // Render + download the GRN PDF via the shared jspdf generator (client-side),
   // mirroring the V1 GoodsReceivedDetail handler. The old `?print=1` navigation
   // was dead — nothing consumed that param — so the button did nothing.
@@ -642,6 +648,7 @@ function GoodsReceivedDetailV2ReadOnly() {
             {canPost && <Button variant="secondary" icon={<Send size={14} />} onClick={doPost}>Post</Button>}
             {canConvertToPi && <Button variant="secondary" icon={<Receipt size={14} />} onClick={goConvertToPi}>{transferToLabel('pi')}</Button>}
             {canConvertToPr && <Button variant="secondary" icon={<RotateCcw size={14} />} onClick={goConvertToPr}>{transferToLabel('pr')}</Button>}
+            <Button variant="secondary" icon={<Plus size={14} />} onClick={goAddLine}>{ADD_LINE_LABEL}</Button>
             <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>Edit</Button>
           </div>
         </div>
