@@ -39,6 +39,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
+import { statusLabel } from "../../vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
@@ -137,7 +138,7 @@ const effectiveOf = (h: GrnHeader): Effective => {
 
 /* No LABEL here, and none is added: it was DEAD. Every reader of this map takes
    `.tone` or `.blurb` (grep EFFECTIVE_TONE — three call sites, none of them
-   `.label`), and the word on the badge comes from STAGE_LABEL below. A fourth
+   `.label`), and the word on the badge comes from statusLabel("grn", …) below. A fourth
    hand-written copy of the status vocabulary that renders nowhere is the
    drift docs/modules/document-status-vocabulary.md §1 exists to stop, so it is
    removed rather than repointed at status-pill.ts. */
@@ -148,11 +149,11 @@ const EFFECTIVE_TONE: Record<Effective, { tone: "success" | "warning" | "error" 
   cancelled: { tone: "error", blurb: "Cancelled · receipt reversed" },
 };
 
-const STAGE_LABEL: Record<string, string> = {
-  DRAFT: "Draft",
-  POSTED: "Posted",
-  CANCELLED: "Cancelled",
-};
+/* The header BADGE reads its word from vendor/scm/lib/status-pill.ts. It used to
+   read a hand-written STAGE_LABEL here, which said "Posted" for POSTED - contradicting the
+   owner's ruling that this rung reads one word on every surface, and invisible to
+   localStatusMapsAgree because a flat map is not the { label } shape it parsed.
+   docs/bugs/0868. The guard now scans that shape too. */
 
 const initialsOf = (name: string | null | undefined): string => {
   if (!name) return "—";
@@ -346,7 +347,7 @@ function GoodsReceivedDetailV2ReadOnly() {
   );
 
   const eff = grn ? effectiveOf(grn) : null;
-  const stageLabel = grn ? STAGE_LABEL[(grn.status || "").toUpperCase()] ?? grn.status : "";
+  const stageLabel = grn ? statusLabel("grn", grn.status) : "";
   const badgeTone = eff ? EFFECTIVE_TONE[eff].tone : "neutral";
 
   // Back always returns to the Goods Received list (owner 2026-07-24: every

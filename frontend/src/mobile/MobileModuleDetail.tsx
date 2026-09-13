@@ -31,6 +31,7 @@ import { formatDate } from "../lib/utils";
 import { PAYMENT_METHOD_CODES, PAYMENT_METHOD_DEFAULT_LABELS } from "../vendor/scm/lib/payment-methods";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../vendor/scm/lib/pdf-common";
+import { humaniseStatusKey, statusLabel, type StatusDocType } from "../vendor/scm/lib/status-pill";
 import "./mobile.css";
 
 // ---------------------------------------------------------------------------
@@ -138,7 +139,7 @@ function CancelledRibbon({ header }: { header: any }) {
   );
 }
 
-function StatusPill({ status }: { status: unknown }) {
+function StatusPill({ status, statusDoc }: { status: unknown; statusDoc: StatusDocType | null }) {
   const raw = s(status).trim();
   if (!raw) return null;
   const p = phase(status);
@@ -150,10 +151,13 @@ function StatusPill({ status }: { status: unknown }) {
     cancelled: ["#f8eaea", "#b23a3a", "none"],
   };
   const [bg, fg, border] = map[p];
-  const label = raw
-    .replace(/_/g, " ")
-    .toLowerCase()
-    .replace(/\b\w/g, (m) => m.toUpperCase());
+  /* The WORD comes from status-pill.ts for every document that has a canonical
+     vocabulary. This used to title-case the stored value for all of them, so a
+     goods receipt read "Posted", a sales invoice "Sent" and a delivery order at
+     LOADED read "Loaded" - the word the owner gave the NEXT rung (docs/bugs/0868).
+     A module with no canonical map passes null and keeps exactly that old
+     transform: humaniseStatusKey is the same title-casing. */
+  const label = statusDoc ? statusLabel(statusDoc, raw) : humaniseStatusKey(raw);
   return (
     <span className="spill" style={{ background: bg, color: fg, border }}>
       {label}
@@ -288,8 +292,8 @@ function LineItem({ name, sub, remark, qty, unitSen, amountSen, assigned, source
 }
 
 // ── Header card (shared by every module) ────────────────────────────────────
-function DetailHeader({ eyebrow, title, subtitle, status, onBack, onEdit, onPdf, onMap }: {
-  eyebrow: string; title: string; subtitle?: string; status?: unknown; onBack: () => void; onEdit?: () => void; onPdf?: () => void;
+function DetailHeader({ eyebrow, title, subtitle, status, statusDoc, onBack, onEdit, onPdf, onMap }: {
+  eyebrow: string; title: string; subtitle?: string; status?: unknown; statusDoc: StatusDocType | null; onBack: () => void; onEdit?: () => void; onPdf?: () => void;
   /** Opens the mobile Relationship Map (document modules with a flow anchor). */
   onMap?: () => void;
 }) {
@@ -300,7 +304,7 @@ function DetailHeader({ eyebrow, title, subtitle, status, onBack, onEdit, onPdf,
           <span style={{ fontSize: 17, lineHeight: 1 }}>{"‹"}</span> Back
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <StatusPill status={status} />
+          <StatusPill status={status} statusDoc={statusDoc} />
           {onMap && (
             <button className="tinybtn" onClick={onMap} style={{ background: "#f4f6f3", border: "1px solid var(--line2)", color: "var(--ink)" }}>
               Map
@@ -341,6 +345,10 @@ type DocMap = {
   title: (h: any) => string;
   subtitle?: (h: any) => string;
   status: (h: any) => unknown;
+  /** Which status-pill.ts vocabulary the header pill reads its word from. REQUIRED:
+   *  null is a decision (no canonical map - the stored value is humanised), and
+   *  leaving it out must not compile. */
+  statusDoc: StatusDocType | null;
   /** KV grid rows: [label, value]. */
   meta: (h: any) => Array<[string, string]>;
   /** [Total, Secondary, Tertiary] stats — each [label, value, color] or null. */
@@ -362,6 +370,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     title: (h) => firstOf(h.debtor_name, h.debtor_code),
     subtitle: (h) => (s(h.so_doc_no).trim() ? `SO ${s(h.so_doc_no)}` : ""),
     status: (h) => h.status,
+    statusDoc: "do",
     meta: (h) => [
       ["DO Date", dmy(h.do_date)],
       ["Delivery", dmy(h.customer_delivery_date ?? h.expected_delivery_at)],
@@ -396,6 +405,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     title: (h) => firstOf(h.debtor_name, h.debtor_code),
     subtitle: (h) => (s(h.so_doc_no).trim() ? `SO ${s(h.so_doc_no)}` : ""),
     status: (h) => h.status,
+    statusDoc: "si",
     meta: (h) => [
       ["Invoice Date", dmy(h.invoice_date)],
       ["Due Date", dmy(h.due_date)],
@@ -448,6 +458,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       return join(code, po ? `PO ${po}` : "");
     },
     status: (h) => h.status,
+    statusDoc: "grn",
     meta: (h) => [
       ["Received", dmy(h.received_at)],
       ["Delivery Note", firstOf(h.delivery_note_ref)],
@@ -475,6 +486,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     title: (h) => firstOf(nested(h.supplier)?.name, h.po_number),
     subtitle: (h) => firstOf(nested(h.supplier)?.code) === "—" ? "" : firstOf(nested(h.supplier)?.code),
     status: (h) => h.status,
+    statusDoc: "po",
     meta: (h) => [
       ["PO Date", dmy(h.po_date)],
       ["Expected", dmy(h.expected_at)],
@@ -526,6 +538,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       s(h.supplier_invoice_ref).trim() ? `Ref ${s(h.supplier_invoice_ref)}` : "",
     ),
     status: (h) => h.status,
+    statusDoc: "pi",
     meta: (h) => [
       ["Invoice Date", dmy(h.invoice_date)],
       ["Due Date", dmy(h.due_date)],
@@ -578,6 +591,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       return join(grn ? `GRN ${grn}` : "", po ? `PO ${po}` : "");
     },
     status: (h) => h.status,
+    statusDoc: "pr",
     meta: (h) => [
       ["Return Date", dmy(h.return_date)],
       ["Reason", firstOf(h.reason)],
@@ -620,6 +634,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     title: (h) => firstOf(h.debtor_name, h.return_number),
     subtitle: (h) => (s(h.do_doc_no).trim() ? `DO ${s(h.do_doc_no)}` : ""),
     status: (h) => h.status,
+    statusDoc: "dr",
     meta: (h) => [
       ["Return Date", dmy(h.return_date)],
       ["Reason", firstOf(h.reason)],
@@ -669,6 +684,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       s(h.po_doc_no).trim() ? `PO ${s(h.po_doc_no)}` : "",
     ),
     status: (h) => h.status,
+    statusDoc: null,
     meta: (h) => [
       ["Order Date", dmy(h.so_date)],
       ["Delivery", dmy(h.customer_delivery_date ?? h.processing_date)],
@@ -713,6 +729,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     title: (h) => firstOf(h.debtor_name, h.do_number),
     subtitle: (h) => (s(h.consignment_so_doc_no).trim() ? `CO ${s(h.consignment_so_doc_no)}` : ""),
     status: (h) => h.status,
+    statusDoc: null,
     meta: (h) => [
       ["Note Date", dmy(h.do_date)],
       ["Delivery", dmy(h.customer_delivery_date ?? h.expected_delivery_at)],
@@ -753,6 +770,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     title: (h) => firstOf(h.debtor_name, h.return_number),
     subtitle: (h) => (s(h.do_doc_no).trim() ? `CN ${s(h.do_doc_no)}` : ""),
     status: (h) => h.status,
+    statusDoc: null,
     meta: (h) => [
       ["Return Date", dmy(h.return_date)],
       ["Reason", firstOf(h.reason)],
@@ -795,6 +813,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     title: (h) => firstOf(nested(h.supplier)?.name, h.pc_number),
     subtitle: (h) => firstOf(nested(h.supplier)?.code) === "—" ? "" : firstOf(nested(h.supplier)?.code),
     status: (h) => h.status,
+    statusDoc: null,
     meta: (h) => [
       ["PC Date", dmy(h.po_date)],
       ["Expected", dmy(h.expected_at)],
@@ -841,6 +860,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       return join(code, pc ? `PC ${pc}` : "");
     },
     status: (h) => h.status,
+    statusDoc: null,
     meta: (h) => [
       ["Received", dmy(h.received_at)],
       ["Delivery Note", firstOf(h.delivery_note_ref)],
@@ -887,6 +907,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       return join(pc ? `PC ${pc}` : "", recv ? `Receive ${recv}` : "");
     },
     status: (h) => h.status,
+    statusDoc: null,
     meta: (h) => [
       ["Return Date", dmy(h.return_date)],
       ["Reason", firstOf(h.reason)],
@@ -1521,6 +1542,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
         title={map.title(header)}
         subtitle={map.subtitle?.(header)}
         status={map.status(header)}
+        statusDoc={map.statusDoc}
         onBack={onBack}
         onEdit={onEdit}
         onPdf={onPdf}
@@ -1915,6 +1937,7 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
         eyebrow={eyebrow === "—" ? "" : eyebrow}
         title={heading}
         status={status}
+        statusDoc={null}
         onBack={onBack}
         onEdit={onEdit}
       />

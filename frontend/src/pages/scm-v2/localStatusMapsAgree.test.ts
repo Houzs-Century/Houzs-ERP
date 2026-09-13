@@ -32,7 +32,7 @@
  * the durable form of the measurement that chose them.
  */
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { statusLabel, statusVocabulary, withStatusLabels, type StatusDocType } from '../../vendor/scm/lib/status-pill';
 
@@ -260,5 +260,129 @@ describe('no page spells a status differently from status-pill.ts', () => {
        inventing the evidence the test exists to check. */
     expect(Array.isArray(unknown)).toBe(true);
     if (unknown.length) console.log(`[status-map scan] ${unknown.length} entr(ies) outside the canonical vocabularies (informational)`);
+  });
+});
+
+/* THE HEADER BADGE — a second family of copies the scans above could not see.
+ *
+ * Found 2026-09-13 while collapsing the six pages (docs/bugs/0866). A detail
+ * page's header <Badge> did not read the `{ tone, label }` map at all: it read a
+ * FLAT `STAGE_LABEL: Record<string, string>`, `KEY: "Word"` with no object
+ * around it, so parseLocalMap never matched it — and the Goods Received and
+ * Purchase Invoice badges said "Posted", the Sales Invoice badge "Sent", where
+ * the owner ruled 「PI、SI、GR、PO、SO 都要改成 submitted」 (2026-09-12).
+ *
+ * The phone had the same fault by a different road: MobileModuleDetail's
+ * StatusPill title-cased the RAW stored value, so a delivery order at LOADED read
+ * "Loaded" — the word the owner gave the NEXT rung (DISPATCHED, 2026-08-26).
+ *
+ * So this block finds its files by SHAPE across pages/scm-v2 rather than from a
+ * hand list: a new page that declares a flat stage map is scanned the day it is
+ * written, and one this block has not been told the document type of FAILS
+ * instead of being skipped. */
+const STAGE_MAP_DOC: Record<string, StatusDocType> = {
+  'pages/scm-v2/PurchaseOrderDetailV2.tsx': 'po',
+  'pages/scm-v2/DeliveryOrderDetailV2.tsx': 'do',
+  'pages/scm-v2/DeliveryReturnDetailV2.tsx': 'dr',
+  'pages/scm-v2/GoodsReceivedDetailV2.tsx': 'grn',
+  'pages/scm-v2/PurchaseInvoiceDetailV2.tsx': 'pi',
+  'pages/scm-v2/SalesInvoiceDetailV2.tsx': 'si',
+  'pages/scm-v2/PurchaseReturnDetailV2.tsx': 'pr',
+};
+
+const parseStageMap = (source: string): Entry[] | null => {
+  const text = source.replace(/\r/g, '');
+  const m = /const STAGE_LABEL\s*:\s*Record<string,\s*string>\s*=\s*\{([\s\S]*?)\n\};/.exec(text);
+  if (!m) return null;
+  const body = m[1].replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  return [...body.matchAll(/([A-Z][A-Z0-9_]*)\s*:\s*["'`]([^"'`]+)["'`]/g)].map((x) => ({ status: x[1], label: x[2] }));
+};
+
+const scmV2Files = (): string[] => {
+  const dir = resolve(SRC, 'pages/scm-v2');
+  return readdirSync(dir)
+    .filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f))
+    .map((f) => `pages/scm-v2/${f}`);
+};
+
+describe('the header badge spells a status the way status-pill.ts does', () => {
+  const declaring = scmV2Files().filter((rel) => parseStageMap(read(rel)) !== null);
+
+  it('the shape scan finds real flat stage maps — it cannot pass by matching nothing', () => {
+    /* Proof the regex still matches the shape it exists for. If every page is
+       collapsed one day this assertion is the one to change, on purpose. */
+    expect(declaring.length).toBeGreaterThan(0);
+    const entries = declaring.reduce((n, rel) => n + (parseStageMap(read(rel)) ?? []).length, 0);
+    expect(entries).toBeGreaterThan(10);
+  });
+
+  it('every page declaring a flat stage map is one this guard knows the document type of', () => {
+    const unclassified = declaring.filter((rel) => !(rel in STAGE_MAP_DOC));
+    expect(unclassified, 'add these to STAGE_MAP_DOC with their document type').toEqual([]);
+  });
+
+  it('no badge word disagrees with status-pill.ts', () => {
+    const wrong: string[] = [];
+    for (const rel of declaring) {
+      const docType = STAGE_MAP_DOC[rel];
+      if (!docType) continue;
+      for (const e of parseStageMap(read(rel)) ?? []) {
+        if (!statusVocabulary(docType).includes(e.status)) continue;
+        const canonical = statusLabel(docType, e.status);
+        /* Case-insensitive, like the object-map scan above: "Partially received"
+           against "Partially Received" is a separate, owner-visible decision. */
+        if (canonical.toLowerCase() !== e.label.toLowerCase()) {
+          wrong.push(`${rel}: badge ${e.status} reads "${e.label}", status-pill.ts says "${canonical}"`);
+        }
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+});
+
+/* The phone's document header. Every SCM document module must name the canonical
+   vocabulary its pill reads, so the word comes from status-pill.ts and not from
+   title-casing the stored value. Parsed from source because MobileModuleDetail is
+   one 2,000-line screen with no seam to render a single header through. */
+const MOBILE_MODULE_DOC: Record<string, StatusDocType | null> = {
+  'delivery-orders-mfg': 'do',
+  'sales-invoices': 'si',
+  grns: 'grn',
+  'mfg-purchase-orders': 'po',
+  'purchase-invoices': 'pi',
+  'purchase-returns': 'pr',
+  'delivery-returns': 'dr',
+  /* No canonical map exists for the consignment documents, and the owner kept
+     their own words (consignment IN_PRODUCTION reads "Proceed", 2026-09-13), so
+     their pill humanises the stored value exactly as before. */
+  'consignment-orders': null,
+  'consignment-notes': null,
+  'consignment-returns': null,
+  'purchase-consignment-orders': null,
+  'purchase-consignment-receives': null,
+  'purchase-consignment-returns': null,
+};
+
+describe('the phone document header reads its word from status-pill.ts', () => {
+  const source = read('mobile/MobileModuleDetail.tsx').replace(/\r/g, '');
+  const block = /const DOC_MODULES: Record<string, DocMap> = \{([\s\S]*?)\n\};/.exec(source)?.[1] ?? '';
+  const declared = new Map<string, string>();
+  for (const m of block.matchAll(/\n {2}"?([a-z][a-z-]*)"?: \{\n([\s\S]*?)\n {2}\},/g)) {
+    const doc = /\n {4}statusDoc: (null|["']([A-Za-z]+)["']),/.exec(m[2]);
+    declared.set(m[1], doc ? (doc[2] ?? 'null') : '<missing>');
+  }
+
+  it('the module scan found the document modules — it cannot pass on an empty read', () => {
+    expect(declared.size).toBeGreaterThanOrEqual(Object.keys(MOBILE_MODULE_DOC).length);
+  });
+
+  it('every document module names the vocabulary this guard expects', () => {
+    const got = Object.fromEntries([...declared].filter(([k]) => k in MOBILE_MODULE_DOC));
+    const want = Object.fromEntries(Object.entries(MOBILE_MODULE_DOC).map(([k, v]) => [k, v ?? 'null']));
+    expect(got).toEqual(want);
+  });
+
+  it('no document module on the phone is left unclassified', () => {
+    expect([...declared.keys()].filter((k) => !(k in MOBILE_MODULE_DOC))).toEqual([]);
   });
 });

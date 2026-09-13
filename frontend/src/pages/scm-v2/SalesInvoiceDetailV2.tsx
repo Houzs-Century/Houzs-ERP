@@ -98,6 +98,7 @@ import {
 } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
+import { statusLabel } from "../../vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
 import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
@@ -329,14 +330,11 @@ const EFFECTIVE_TONE: Record<
 
 // Raw-stage label so the header Badge still shows the exact stored status
 // instead of the bucketed effective label.
-const STAGE_LABEL: Record<string, string> = {
-  DRAFT: "Draft",
-  SENT: "Sent",
-  PARTIALLY_PAID: "Partially paid",
-  PAID: "Paid",
-  OVERDUE: "Overdue",
-  CANCELLED: "Cancelled",
-};
+/* The header BADGE reads its word from vendor/scm/lib/status-pill.ts. It used to
+   read a hand-written STAGE_LABEL here, which said "Sent" for SENT - contradicting the
+   owner's ruling that this rung reads one word on every surface, and invisible to
+   localStatusMapsAgree because a flat map is not the { label } shape it parsed.
+   docs/bugs/0868. The guard now scans that shape too. */
 
 const initialsOf = (name: string | null | undefined): string => {
   if (!name) return "—";
@@ -711,10 +709,7 @@ export function SalesInvoiceDetailV2() {
   ]);
 
   const eff = salesInvoice ? effectiveOf(salesInvoice, items, depositSen) : null;
-  const stageLabel = salesInvoice
-    ? STAGE_LABEL[(salesInvoice.status || "").toUpperCase()] ??
-      salesInvoice.status
-    : "";
+  const stageLabel = salesInvoice ? statusLabel("si", salesInvoice.status) : "";
   const badgeTone = eff ? EFFECTIVE_TONE[eff].tone : "neutral";
 
   const foldedNote = useMemo(
