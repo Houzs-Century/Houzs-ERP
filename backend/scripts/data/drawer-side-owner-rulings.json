@@ -112,6 +112,36 @@
       ],
       "by": "owner, 2026-09-13, in chat - 「1 right+left」",
       "note": "`2 SIDE DRAWER` is a PAIR: one drawer on each side. The line carries BOTH catalogue codes, which is the only line in this batch shaped that way. The owner was asked precisely because it changes the charge as well as the spec."
+    },
+    {
+      "doc": "HC-SO-010385",
+      "itemCode": "TRION (A)-(K)",
+      "bookText": "Col:PC151-09/Gap:14 inch/Divan:10 inch+I inch leg/1 pair side drawer",
+      "is": "Right Drawer",
+      "qty": 2,
+      "by": "photo read, 2026-09-13",
+      "evidence": "slip drawing: figure lying head-up, TWO drawers drawn on the RIGHT edge of the bed",
+      "note": "The line ALREADY carried Right Drawer. The photo confirms it rather than changing it - recorded so the line stops appearing as unanswered work."
+    },
+    {
+      "doc": "HC-SO-010385",
+      "itemCode": "REGAL (A)-(Q)",
+      "bookText": "Col:PC151-01/Gap:14 inch/Divan:10 inch+I inch leg/1 pair side drawer",
+      "is": "Left Drawer",
+      "qty": 2,
+      "by": "photo read, 2026-09-13",
+      "evidence": "slip drawing: figure lying head-up, TWO drawers drawn on the LEFT edge of the bed",
+      "note": "Already carried Left Drawer; the photo confirms it. Same order as the TRION above, drawn mirrored - one bed's pair on the right, the other's on the left."
+    },
+    {
+      "doc": "HC-SO-013119",
+      "itemCode": "TRION (A) (HB STR)-(K)",
+      "bookText": "2SIDE DRAWER/DIV:8”NOLEG/COL:PC151-04/gap:12\"",
+      "is": "Left Drawer",
+      "qty": 2,
+      "by": "photo read, 2026-09-13",
+      "evidence": "slip drawing: HB written at the top, figure lying head-up, THREE arrows on the LEFT edge labelled `drawer`",
+      "note": "Already carried Left Drawer; the photo confirms it. IMPORTANT: this document's text is `2SIDE DRAWER`, the same wording the owner ruled as a right+left PAIR on HC-SO-013353 - and here the drawing puts both drawers on ONE side. See _phrase_ambiguity_2side below."
     }
   ],
   "unresolved": [
@@ -145,5 +175,6 @@
   "_catalogue_decisions_2026_09_13": {
     "unifyLegacySpellings": "Owner: 「3 统一nylon」 - unify the NYLON family only for now. Measured on production 2026-09-13 (run 34728515268): 32 spellings of `Nylon Fabric` across 595 document lines, the largest of 14 such groups. The other 13 groups - HB Fully Cover 288 lines / 28 spellings, Seat Base Fully Cover with no Leg 105, HB Straight 62, Change 8030 Backcushion 61, Divan Full Cover 47, and the rest - are NOT authorised and stay as they are until he says so.",
     "retireUnusedOptions": "Owner: 「4 暂时不收」 - the 10 catalogue options no document carries stay in the picker for now. Do not raise again unless he asks."
-  }
+  },
+  "_phrase_ambiguity_2side": "CONTRADICTION, RECORDED RATHER THAN RESOLVED. Owner, 2026-09-13, ruled HC-SO-013353's `2SIDE DRAWER` as 「1 right+left」 - one drawer on each side. HC-SO-013353 has NO photo. Three documents that DO have a drawing use the same shape of wording and all three draw both drawers on ONE side: HC-SO-013119 `2SIDE DRAWER` -> two on the LEFT; HC-SO-010385 `1 pair side drawer` -> two on the RIGHT on one bed and two on the LEFT on the other. So on the evidence available, `2 side drawer` / `1 pair side drawer` reads as TWO DRAWERS ON ONE SIDE, not one per side. That is the opposite of the ruling for HC-SO-013353. DO NOT generalise either reading: the ruling stands for HC-SO-013353 because the owner gave it, and the three photographed documents stand because their own drawing says so. The owner is being asked to re-confirm HC-SO-013353 with these three drawings in front of him, because it is the one line in the batch with no drawing to check him against, and a pair-vs-one-side error changes both the build and the charge."
 }
