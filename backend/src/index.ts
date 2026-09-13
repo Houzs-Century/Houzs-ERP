@@ -90,6 +90,7 @@ import {
   drainVenturePortalOutbox,
   reconcileVenturePortalOutbox,
 } from "./scm/lib/venture-portal-outbox";
+import { reconcilePendingFairs } from "./scm/lib/fair-reconcile";
 import { relinkHeldBackSweep } from "./scm/lib/autocount-relink-sweep";
 import { deliveryDateSweep } from "./scm/lib/autocount-delivery-date-sweep";
 import { refreshAllMrpSnapshots } from "./scm/lib/mrp-snapshot";
@@ -818,6 +819,26 @@ export default {
                   console.log(`[cron push-reminders] ${JSON.stringify(r)}`);
               })
               .catch((e) => console.error("[cron push-reminders]", e))
+          );
+        }
+      }
+      // Fair reconcile (owner 2026-09-13). 23% of exhibitions reach PMS within a
+      // week of opening and 13 of 114 only after they had started, so an order
+      // written on the floor often has no fair to point at yet. It records the
+      // place and waits; this pass links it once the fair exists. Gated to the
+      // 08:00 MYT hour (UTC 0) — a day's latency is the whole point, and the
+      // slot fires twice in that hour, which is harmless because the job only
+      // reads rows still marked PENDING. Best-effort: a failure here can never
+      // break the other crons. scm/lib/fair-reconcile.ts.
+      {
+        const h = new Date(event.scheduledTime).getUTCHours();
+        if (h === 0) {
+          ctx.waitUntil(
+            reconcilePendingFairs(env)
+              .then((r) => {
+                if (r.scanned > 0) console.log(`[cron fair-reconcile] ${JSON.stringify(r)}`);
+              })
+              .catch((e) => console.error("[cron fair-reconcile]", e))
           );
         }
       }

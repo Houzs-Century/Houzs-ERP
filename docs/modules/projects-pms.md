@@ -133,6 +133,18 @@ read those entries first.
 | Picker + inline create (project form) | `frontend/src/pages/Projects.tsx:554` `VenuePicker` |
 | SCM-side read | `frontend/src/vendor/scm/lib/venues-queries.ts:116` → `/api/projects/venues?includeShowrooms=1` |
 
+**A project is now PICKED on the sales order, not only assigned to.** Since
+2026-09-13 the SO forms carry a FAIR picker whose rows are built from
+`public.projects` — one row per (venue, organizer, period), covering every brand
+booth at that event — and the server resolves the order's own brand back to one
+`projects.id` to stamp `scm.mfg_sales_orders.project_id`. Three PMS columns that
+were previously display-only are now load-bearing for money attribution:
+`organizer` (it is half of what a picker row says, so two spellings are two
+fairs), `brand` (it chooses the booth) and the `start_date`/`end_date` period (it
+decides which fairs are offered at all, and a cancelled `status` removes the row).
+`backend/scripts/report-fair-data-gaps.mjs` reports the three data problems that
+break this, and the rules live in `docs/modules/sales-order.md` §The FAIR picker.
+
 The showroom merge is **opt-in** (`backend/src/routes/projects.ts:960-962`):
 showroom rows get synthetic ids `showroom:<uuid>` (`:987`) and are de-duplicated
 case-insensitively against the project venues (`:972-978`, `:996`). There is no

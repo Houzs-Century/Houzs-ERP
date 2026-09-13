@@ -3,7 +3,7 @@
   "totals": {
     "@typescript-eslint/no-explicit-any": 521,
     "@typescript-eslint/no-floating-promises": 775,
-    "@typescript-eslint/no-unnecessary-condition": 1757,
+    "@typescript-eslint/no-unnecessary-condition": 1753,
     "no-restricted-syntax": 133
   },
   "files": {
@@ -629,7 +629,7 @@
       "no-restricted-syntax": 12
     },
     "src/pages/scm-v2/Mrp.tsx": {
-      "@typescript-eslint/no-unnecessary-condition": 3
+      "@typescript-eslint/no-unnecessary-condition": 2
     },
     "src/pages/scm-v2/Outstanding.tsx": {
       "@typescript-eslint/no-unnecessary-condition": 2
@@ -765,7 +765,7 @@
       "no-restricted-syntax": 5
     },
     "src/pages/scm-v2/SalesInvoiceDetailV2.tsx": {
-      "@typescript-eslint/no-unnecessary-condition": 7,
+      "@typescript-eslint/no-unnecessary-condition": 6,
       "no-restricted-syntax": 2
     },
     "src/pages/scm-v2/SalesInvoiceFromDo.tsx": {
@@ -799,7 +799,7 @@
     },
     "src/pages/scm-v2/SalesOrderNew.tsx": {
       "@typescript-eslint/no-explicit-any": 1,
-      "@typescript-eslint/no-unnecessary-condition": 29
+      "@typescript-eslint/no-unnecessary-condition": 28
     },
     "src/pages/scm-v2/SalesOrderNewFromProducts.tsx": {
       "@typescript-eslint/no-unnecessary-condition": 7
@@ -929,7 +929,7 @@
     },
     "src/vendor/scm/components/PaymentsTable.tsx": {
       "@typescript-eslint/no-floating-promises": 4,
-      "@typescript-eslint/no-unnecessary-condition": 8
+      "@typescript-eslint/no-unnecessary-condition": 7
     },
     "src/vendor/scm/components/PcVariantEditor.tsx": {
       "@typescript-eslint/no-unnecessary-condition": 2

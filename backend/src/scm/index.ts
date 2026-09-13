@@ -55,6 +55,7 @@ import { venturePortalFeed } from "./routes/venture-portal-feed";
 import { currencies } from "./routes/currencies";
 import { mfgSalesOrders } from "./routes/mfg-sales-orders";
 import { mfgSalesOrdersListEnrichment } from "./routes/mfg-sales-orders-list-enrichment";
+import { mfgSoFairs } from "./routes/mfg-so-fairs";
 import { soAmendments } from "./routes/so-amendments";
 import { soHandover } from "./routes/so-handover";
 import { poAmendments } from "./routes/po-amendments";
@@ -388,6 +389,11 @@ scm.route("/mfg-sales-orders", mfgSalesOrdersListEnrichment);
 // the status route — which only wakes when the body says CANCELLED — is mounted
 // above, ahead of the area guard. routes/document-cancel-routes.ts.
 scm.route("/mfg-sales-orders", soCancelRequests);
+// The fair picker (owner 2026-09-13). Mounted BEFORE the main router for the same
+// reason as the enrichment above: its static `/fair-options` and `/fair-pending`
+// paths must resolve ahead of `/:docNo`. In its own file because
+// mfg-sales-orders.ts is already over its file-size ceiling.
+scm.route("/mfg-sales-orders", mfgSoFairs);
 scm.route("/mfg-sales-orders", mfgSalesOrders);
 // SO amendment / revision workflow — SO-centric, so it rides the same L2 area
 // guard as Sales Orders (GET=view, PATCH=edit); the finer scm.amendment.* gates

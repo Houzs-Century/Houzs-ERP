@@ -86,6 +86,7 @@ import { useAuth } from '../../vendor/scm/lib/auth';
    AuthUser to default + name the creator so the field is never blank. */
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useVenues, type AutoVenue } from '../../vendor/scm/lib/venues-queries';
+import { FairPicker, type FairPickValue } from '../../components/FairPicker';
 import {
   useLocalities, countryForState,
 } from '../../vendor/scm/lib/localities-queries';
@@ -1033,11 +1034,28 @@ export const SalesOrderNew = () => {
      where Commander locked Venue to the salesperson's home venue, Houzs picks
      Venue manually. Defaults to the salesperson's venue but stays changeable. */
   const [pickedVenueId, setPickedVenueId] = useState<string | null>(null);
-  const effectiveVenueId = pickedVenueId ?? resolvedVenueId;
+  /* FAIR PICKER (owner 2026-09-13) — the operator now picks an EVENT (place +
+     organizer), not a bare place, so the order can record WHICH FAIR it was
+     written at and not merely where. The venue NAME is what the row carries, so
+     it leads here and the master id follows it by name for back-compat with the
+     `venue_id` column and the reports that read it. */
+  const [fairPick, setFairPick] = useState<FairPickValue>({ venue: null, organizer: null });
   const effectiveVenueName: string = useMemo(() => {
-    if (!effectiveVenueId) return '';
-    return (venuesQ.data ?? []).find((r) => r.id === effectiveVenueId)?.name ?? '';
-  }, [effectiveVenueId, venuesQ.data]);
+    if (fairPick.venue) return fairPick.venue;
+    const id = pickedVenueId ?? resolvedVenueId;
+    if (!id) return '';
+    return (venuesQ.data ?? []).find((r) => r.id === id)?.name ?? '';
+  }, [fairPick.venue, pickedVenueId, resolvedVenueId, venuesQ.data]);
+  const effectiveVenueId = useMemo(() => {
+    if (!fairPick.venue) return pickedVenueId ?? resolvedVenueId;
+    const byName = (venuesQ.data ?? []).find(
+      (r) => r.name.trim().toLowerCase() === fairPick.venue!.trim().toLowerCase(),
+    );
+    /* A fair can name a venue the master does not hold. The NAME still stands on
+       the order — refusing it would block a real sale to enforce a list nobody
+       has finished filling in. */
+    return byName?.id ?? null;
+  }, [fairPick.venue, pickedVenueId, resolvedVenueId, venuesQ.data]);
 
   /* Houzs venue auto-fill (owner 2026-06-25) — the logged-in salesperson is
      assigned to an exhibition project (Sales Attending), so the system already
@@ -1060,6 +1078,13 @@ export const SalesOrderNew = () => {
   }, []);
   useEffect(() => {
     if (autoVenue?.venueId && pickedVenueId == null) setPickedVenueId(autoVenue.venueId);
+    /* Seed the fair picker from the same auto-resolve, by NAME — the picker is
+       keyed on the venue name, and `venueId` is null for any venue the master
+       does not hold. Only ever seeds a BLANK: a human pick is a decision and is
+       never overwritten (same rule as canAutoResolveVenue server-side). */
+    if (autoVenue?.venueName && fairPick.venue == null) {
+      setFairPick({ venue: autoVenue.venueName, organizer: null });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoVenue]);
 
@@ -1600,6 +1625,10 @@ export const SalesOrderNew = () => {
            for back-compat with reports / PDFs that still read it. */
         venueId: effectiveVenueId ?? undefined,
         venue: effectiveVenueName || undefined,
+        /* The picked event's ORGANIZER. Together with the venue, the order date
+           and the brand derived from the lines, this is what identifies one
+           fair; the server never trusts a project id from here. */
+        fairOrganizer: fairPick.organizer ?? undefined,
         /* Address handling: address1/2 skipped when fill-later is on, but
            State/City/Postcode/BuildingType always submit. */
         address1: fillAddressLater ? undefined : (address1 || undefined),
@@ -1922,45 +1951,33 @@ export const SalesOrderNew = () => {
               </span>
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Venue</span>
-              {/* Houzs 2026-06-22 (owner): Venue is manually pickable (was a
-                  locked 2990 field). Defaults to the salesperson's home venue,
-                  the operator can change it. */}
-              <span className={styles.selectWrap}>
-                <select
-                  className={`${styles.fieldSelect} ${editedClass('venueId', effectiveVenueId ?? '')}`}
-                  value={effectiveVenueId ?? ''}
-                  onChange={(e) => setPickedVenueId(e.target.value || null)}
-                  aria-label="Venue"
-                >
-                  <option value="">—</option>
-                  {(venuesQ.data ?? []).map((v) => (
-                    <option key={v.id} value={v.id}>{v.name}</option>
-                  ))}
-                </select>
-                <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
-              </span>
-              {/* Name the SOURCE, not just the fact of an auto-fill. "Auto-filled
-                  from Ipoh Fair" and "Auto-filled from your showroom" mean
-                  different things, and the operator needs to know which default
-                  they are being offered before deciding to override it. */}
-              {autoVenue?.venueId && autoVenue.source === 'PMS' && autoVenue.projectName && (
+              <span className={styles.fieldLabel}>Fair</span>
+              {/* Owner 2026-09-13: a row is a PLACE plus an ORGANIZER, no dates,
+                  and nothing here is typed — "Others" is a second PICK over the
+                  venue master. The brand is never asked for: the server derives
+                  it from the SKUs and uses it to decide which brand booth at the
+                  picked event this order belongs to. FairPicker.tsx has the
+                  rules; it is the SAME component the mobile form renders. */}
+              <FairPicker
+                id="so-fair"
+                value={fairPick}
+                /* The create form has no SO-date field — the server stamps today in
+                   MYT — so null is the honest value here, not a browser date. */
+                soDate={null}
+                onChange={setFairPick}
+                wrapClassName={styles.selectWrap}
+                selectClassName={`${styles.fieldSelect} ${editedClass('venueId', effectiveVenueId ?? '')}`}
+              />
+              {/* Name the SOURCE of the default, not just that there was one:
+                  "from Ipoh Fair" and "from your showroom" mean different things
+                  and the operator overrides on that. (The "master holds ~38" note
+                  that stood here was stale — measured 2026-09-13 it holds 92 and
+                  covers every venue any 2026 fair uses.) */}
+              {autoVenue?.venueName && (
                 <span style={{ fontSize: '11px', marginTop: '4px', opacity: 0.7 }}>
-                  Auto-filled from {autoVenue.projectName}
-                </span>
-              )}
-              {autoVenue?.venueId && autoVenue.source === 'SHOWROOM' && (
-                <span style={{ fontSize: '11px', marginTop: '4px', opacity: 0.7 }}>
-                  Auto-filled from your showroom{autoVenue.showroomName ? ` (${autoVenue.showroomName})` : ''} — change it if you are somewhere else today
-                </span>
-              )}
-              {/* KNOWN GAP, deliberately tolerated: projects reference ~60
-                  distinct venues and the master holds ~38. The order still
-                  saves with the venue text — refusing it would block real sales
-                  to enforce a list nobody has finished filling in. */}
-              {autoVenue && !autoVenue.venueId && autoVenue.venueName && (
-                <span style={{ fontSize: '11px', marginTop: '4px', color: 'var(--c-festive-b, #B8331F)' }}>
-                  Venue {autoVenue.venueName} is not in the venue list yet — it is still saved on the order; add it in Project Maintenance to show it here.
+                  {autoVenue.venueId
+                    ? `Auto-filled from ${autoVenue.source === 'PMS' ? (autoVenue.projectName ?? 'your fair') : `your showroom${autoVenue.showroomName ? ` (${autoVenue.showroomName})` : ''}`} — change it if you are somewhere else today`
+                    : `${autoVenue.venueName} is not in the venue list yet — it still saves on the order; add it in Project Maintenance to show it here.`}
                 </span>
               )}
             </label>
