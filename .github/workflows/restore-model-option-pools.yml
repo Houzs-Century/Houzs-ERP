@@ -1,0 +1,90 @@
+name: Restore model option pools
+
+# Puts back the `allowed_options` that `open-model-option-pools` cleared on
+# 2026-09-13, from the backup that run took first.
+#
+# WHY: the clear was run on a ruling about RESTRICTIONS, and several of those
+# pools are not restrictions — for MATTRESS and BEDFRAME, allowed_options.sizes
+# IS the record of which sizes a Model comes in (mirrored onto each SKU's
+# pos_active), and mattress thickness has no other home. The owner saw it as
+# sizes and the headrest going missing. See docs/bugs/0855.
+#
+# The backup predates the clear and POSTDATES the deliberate sofa-fabric opening
+# (docs/bugs/0842), so restoring does not re-restrict sofa fabrics.
+#
+# PLAN by default. APPLY needs CONFIRM="RESTORE-OPTION-POOLS".
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options: ["staging", "prod"]
+      mode:
+        description: "plan (default, writes NOTHING) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: ["plan", "apply"]
+      confirm:
+        description: 'Required for apply: RESTORE-OPTION-POOLS'
+        required: false
+        default: ""
+      company:
+        description: "Optional: limit to one company id (blank = every company)"
+        required: false
+        default: ""
+
+concurrency:
+  group: open-model-option-pools
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/restore-model-option-pools.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/restore-model-option-pools.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
