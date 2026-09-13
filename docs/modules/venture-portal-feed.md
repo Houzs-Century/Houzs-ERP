@@ -420,6 +420,17 @@ on while `vp.url` is still empty and the drain answers `not_configured`.
 Both surfaces render all of it from the shared layer; the desktop and mobile
 suites each assert the reveal appears once and is gone after **Done**.
 
+**Two places answer "the keys disagree", and a test now holds them together.**
+`vpRowTodo` speaks for a failed queue row; `vpProbeNote` speaks for **Test
+connection**. For 401 and 503 they must give the same DIAGNOSIS and the same
+ACTION — differing only in the last three words, "then re-send" against "then test
+again". They drifted once and it shipped: 0859 corrected the row's pair and left
+the probe's saying "ask the portal owner", on the button pressed first
+(`docs/bugs/0860-…`). `vpProbeNote` was an inline closure inside `useVpActions`
+until then, which is why no test could reach it; it is an exported pure function
+now, and *"gives a queue row and the connection test the same next step"* fails if
+either is corrected alone.
+
 ---
 
 ## 10. Operating it

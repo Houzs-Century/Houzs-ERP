@@ -211,7 +211,15 @@ describe("the desktop page", () => {
     await screen.findByText(/could not be delivered/);
 
     await userEvent.click(screen.getByRole("button", { name: /Test connection/i }));
-    expect(await screen.findByText(/refused the secret/i)).toBeTruthy();
+    /* THE NEXT STEP, on the surface, not just in the shared layer. A 401 here is
+       the portal holding a different key, and the button that fixes it is on this
+       same card — this used to read "refused the secret ... the two values are not
+       the same", which described a world where the operator typed the key twice.
+       Matched on "then test again", which is the CONNECTION TEST's ending: the
+       failed row on this same screen now gives the same diagnosis and ends "then
+       re-send", so /different key/ alone matches twice. That both say it is the
+       point of the drift guard in venturePortalFeed.test.ts. */
+    expect(await screen.findByText(/different key.*then test again/i)).toBeTruthy();
   });
 
   it("turns the feed off through the scope endpoint, not a separate switch", async () => {
