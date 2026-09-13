@@ -1029,6 +1029,18 @@ every report, export and AutoCount read still goes to it. One of the five
 documents in the owner's ruling. Trace:
 `docs/bugs/0851-one-rung-three-words-the-filter-tab-said-submitted-while-the.md`.
 
+> **CORRECTED AGAIN 2026-09-14 — the header BADGE and the phone still said "Sent".**
+> The detail page's header `<Badge>` read a separate flat `STAGE_LABEL` map, a shape
+> neither `localStatusMapsAgree.test.ts` nor `confirmRungReadsSubmitted.test.ts`
+> parsed, and the phone header (`frontend/src/mobile/MobileModuleDetail.tsx`)
+> title-cased the stored value. Both now read `statusLabel("si", …)`, so a SENT
+> invoice shows **Submitted** in the badge and on the phone. The same badge also
+> changes `PARTIALLY_PAID` from "Partially paid" to "Partially Paid" and `VOID` from
+> the raw key to "Void". Pinned on the rendered page by
+> `frontend/src/pages/scm-v2/markPaidRecordsTheMoney.test.tsx` (*the header badge
+> reads the canonical word*). Trace:
+> `docs/bugs/0868-the-detail-header-badge-said-posted-and-sent-where-the-owner.md`.
+
 ---
 
 ## Add line — opens IN PLACE, draft only (2026-09-13)
