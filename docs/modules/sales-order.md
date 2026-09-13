@@ -6266,3 +6266,15 @@ The word comes from `ADD_LINE_LABEL` in `vendor/scm/lib/add-line-handoff.ts`.
 Four documents used to spell this four ways, and none of them said it on the page
 you start from. Trace:
 `docs/bugs/0853-add-a-line-was-only-reachable-from-inside-edit-under-four-di.md`.
+
+---
+
+## `IN_PRODUCTION` reads "In Production"
+
+Owner, 2026-09-13: 「SO 就写 in production」. The list TAB already said that; the
+canonical map and the V1 detail page's own map said "Proceed", so one rung wore
+two words on one screen. Both are his, from different days; he picked.
+
+The stored value is unchanged, as always with a relabel. Guarded by
+`frontend/src/pages/scm-v2/localStatusMapsAgree.test.ts`. Trace:
+`docs/bugs/0864-the-sales-order-tab-said-in-production-and-the-pill-said-pro.md`.
