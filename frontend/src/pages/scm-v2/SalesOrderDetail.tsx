@@ -487,11 +487,7 @@ const lineCommitSig = (d: SoLineDraft): string => JSON.stringify({
 export const SalesOrderDetail = () => {
   const { docNo } = useParams<{ docNo: string }>();
   const navigate = useNavigate();
-  /* "Add line" from the detail page. At the TOP with the other hooks: this
-     editor returns early while the document loads, and a hook written below
-     that return is the rules-of-hooks violation the linter caught when this
-     was first pasted in per-file (docs/bugs/0853). */
-  const addLineHandoff = useAddLineHandoff();
+  const addLineHandoff = useAddLineHandoff();  // top-level: see useAddLineHandoff
   const detail = useMfgSalesOrderDetail(docNo ?? null);
   const updateHeader = useUpdateMfgSalesOrderHeader();
   const updateStatus = useUpdateMfgSalesOrderStatus();
@@ -3772,12 +3768,8 @@ const ScannedImageCard = ({
    rows stay queryable — only the UI rendering is gone.
    ════════════════════════════════════════════════════════════════════════ */
 
-/* ════════════════════════════════════════════════════════════════════════
-   PaymentCard moved → components/PaymentsTable (task #105).
-   AddressCard + StatusBar + NEXT deleted as dead code (task #101).
-   ════════════════════════════════════════════════════════════════════════ */
-
-
+/* PaymentCard moved -> components/PaymentsTable (task #105); AddressCard +
+   StatusBar + NEXT are the same deletions the block above already records. */
 
 /* ════════════════════════════════════════════════════════════════════════
    StatusTimeline + PriceOverridePanel — removed in followup #85
