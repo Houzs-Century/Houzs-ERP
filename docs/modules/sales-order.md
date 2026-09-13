@@ -920,6 +920,14 @@ The Venue field on all three SO forms (`SalesOrderNew`, `SalesOrderDetail`,
 | Router mount, ahead of `/:docNo` | `backend/src/scm/index.ts` |
 | Route registration | `frontend/src/App.tsx`, `frontend/src/routing/routeManifest.ts` |
 
+**The data-gaps report prints the ORGANIZER ROSTER, not only the folded
+duplicates** (0872). Its fold normalises case, spacing and punctuation, so it
+finds `KAI HAO (KL CHEN)` / `KAI HAO (KL, CHEN)` — and it cannot find
+`MALL MGMT` / `MALL MGT`, because that is an abbreviation and any rule loose
+enough to fold it would merge organizers that really are different, which merges
+two fairs' P&L. The whole roster is about 15 rows; a person reads it. Do not
+"improve" this into a fuzzy match.
+
 **`fair_match` (mig `20260913T1900`) is why a NULL `project_id` is readable.**
 Four different situations used to be one indistinguishable blank:
 
@@ -932,7 +940,8 @@ Four different situations used to be one indistinguishable blank:
 | `NULL` | predates the picker (2,946 orders) | deliberately NOT back-stamped |
 
 **Two booths that agree on organizer AND brand collapse to the lowest project
-id** — those are duplicate records of one booth (9 groups live on 2026-09-13) and
+id** — those are duplicate records of one booth (66 groups across all years on
+2026-09-13, 9 of them inside Jun-Dec 2026) and
 a documented stable arbiter beats refusing an order that has one real answer. Two
 that differ on either answer `AMBIGUOUS` instead: MID VALLEY carried MLE and REX
 on the same day on 2026-03-20, and the lowest id there would be a guess.
