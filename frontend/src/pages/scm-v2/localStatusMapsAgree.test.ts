@@ -324,8 +324,10 @@ describe('the header badge spells a status the way status-pill.ts does', () => {
   it('no badge word disagrees with status-pill.ts', () => {
     const wrong: string[] = [];
     for (const rel of declaring) {
+      /* `in`, not a truthiness check on the lookup: the unclassified test above
+         owns that failure, and a Record index is typed as always present. */
+      if (!(rel in STAGE_MAP_DOC)) continue;
       const docType = STAGE_MAP_DOC[rel];
-      if (!docType) continue;
       for (const e of parseStageMap(read(rel)) ?? []) {
         if (!statusVocabulary(docType).includes(e.status)) continue;
         const canonical = statusLabel(docType, e.status);
@@ -365,11 +367,12 @@ const MOBILE_MODULE_DOC: Record<string, StatusDocType | null> = {
 
 describe('the phone document header reads its word from status-pill.ts', () => {
   const source = read('mobile/MobileModuleDetail.tsx').replace(/\r/g, '');
-  const block = /const DOC_MODULES: Record<string, DocMap> = \{([\s\S]*?)\n\};/.exec(source)?.[1] ?? '';
+  const docModules = /const DOC_MODULES: Record<string, DocMap> = \{([\s\S]*?)\n\};/.exec(source);
+  const block = docModules ? docModules[1] : '';
   const declared = new Map<string, string>();
   for (const m of block.matchAll(/\n {2}"?([a-z][a-z-]*)"?: \{\n([\s\S]*?)\n {2}\},/g)) {
-    const doc = /\n {4}statusDoc: (null|["']([A-Za-z]+)["']),/.exec(m[2]);
-    declared.set(m[1], doc ? (doc[2] ?? 'null') : '<missing>');
+    const doc = /\bstatusDoc: (null|["']([A-Za-z]+)["']),/.exec(m[2]);
+    declared.set(m[1], doc ? doc[1].replace(/["']/g, '') : '<missing>');
   }
 
   it('the module scan found the document modules — it cannot pass on an empty read', () => {

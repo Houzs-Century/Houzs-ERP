@@ -151,12 +151,8 @@ function StatusPill({ status, statusDoc }: { status: unknown; statusDoc: StatusD
     cancelled: ["#f8eaea", "#b23a3a", "none"],
   };
   const [bg, fg, border] = map[p];
-  /* The WORD comes from status-pill.ts for every document that has a canonical
-     vocabulary. This used to title-case the stored value for all of them, so a
-     goods receipt read "Posted", a sales invoice "Sent" and a delivery order at
-     LOADED read "Loaded" - the word the owner gave the NEXT rung (docs/bugs/0868).
-     A module with no canonical map passes null and keeps exactly that old
-     transform: humaniseStatusKey is the same title-casing. */
+  /* Word from status-pill.ts; title-casing the stored value made a LOADED delivery order read "Loaded"
+     (docs/bugs/0868). null = no canonical map: humaniseStatusKey is that same old title-casing. */
   const label = statusDoc ? statusLabel(statusDoc, raw) : humaniseStatusKey(raw);
   return (
     <span className="spill" style={{ background: bg, color: fg, border }}>
@@ -345,9 +341,7 @@ type DocMap = {
   title: (h: any) => string;
   subtitle?: (h: any) => string;
   status: (h: any) => unknown;
-  /** Which status-pill.ts vocabulary the header pill reads its word from. REQUIRED:
-   *  null is a decision (no canonical map - the stored value is humanised), and
-   *  leaving it out must not compile. */
+  /** status-pill.ts vocabulary for the header pill. REQUIRED - null is a decision (humanise the stored value). */
   statusDoc: StatusDocType | null;
   /** KV grid rows: [label, value]. */
   meta: (h: any) => Array<[string, string]>;
@@ -369,8 +363,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.do_number),
     title: (h) => firstOf(h.debtor_name, h.debtor_code),
     subtitle: (h) => (s(h.so_doc_no).trim() ? `SO ${s(h.so_doc_no)}` : ""),
-    status: (h) => h.status,
-    statusDoc: "do",
+    status: (h) => h.status, statusDoc: "do",
     meta: (h) => [
       ["DO Date", dmy(h.do_date)],
       ["Delivery", dmy(h.customer_delivery_date ?? h.expected_delivery_at)],
@@ -404,8 +397,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.invoice_number),
     title: (h) => firstOf(h.debtor_name, h.debtor_code),
     subtitle: (h) => (s(h.so_doc_no).trim() ? `SO ${s(h.so_doc_no)}` : ""),
-    status: (h) => h.status,
-    statusDoc: "si",
+    status: (h) => h.status, statusDoc: "si",
     meta: (h) => [
       ["Invoice Date", dmy(h.invoice_date)],
       ["Due Date", dmy(h.due_date)],
@@ -457,8 +449,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       const po = s(nested(h.purchase_order)?.po_number).trim();
       return join(code, po ? `PO ${po}` : "");
     },
-    status: (h) => h.status,
-    statusDoc: "grn",
+    status: (h) => h.status, statusDoc: "grn",
     meta: (h) => [
       ["Received", dmy(h.received_at)],
       ["Delivery Note", firstOf(h.delivery_note_ref)],
@@ -485,8 +476,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.po_number),
     title: (h) => firstOf(nested(h.supplier)?.name, h.po_number),
     subtitle: (h) => firstOf(nested(h.supplier)?.code) === "—" ? "" : firstOf(nested(h.supplier)?.code),
-    status: (h) => h.status,
-    statusDoc: "po",
+    status: (h) => h.status, statusDoc: "po",
     meta: (h) => [
       ["PO Date", dmy(h.po_date)],
       ["Expected", dmy(h.expected_at)],
@@ -537,8 +527,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       firstOf(nested(h.supplier)?.code) === "—" ? "" : firstOf(nested(h.supplier)?.code),
       s(h.supplier_invoice_ref).trim() ? `Ref ${s(h.supplier_invoice_ref)}` : "",
     ),
-    status: (h) => h.status,
-    statusDoc: "pi",
+    status: (h) => h.status, statusDoc: "pi",
     meta: (h) => [
       ["Invoice Date", dmy(h.invoice_date)],
       ["Due Date", dmy(h.due_date)],
@@ -590,8 +579,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       const po = s(nested(h.purchase_order)?.po_number).trim();
       return join(grn ? `GRN ${grn}` : "", po ? `PO ${po}` : "");
     },
-    status: (h) => h.status,
-    statusDoc: "pr",
+    status: (h) => h.status, statusDoc: "pr",
     meta: (h) => [
       ["Return Date", dmy(h.return_date)],
       ["Reason", firstOf(h.reason)],
@@ -633,8 +621,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.return_number),
     title: (h) => firstOf(h.debtor_name, h.return_number),
     subtitle: (h) => (s(h.do_doc_no).trim() ? `DO ${s(h.do_doc_no)}` : ""),
-    status: (h) => h.status,
-    statusDoc: "dr",
+    status: (h) => h.status, statusDoc: "dr",
     meta: (h) => [
       ["Return Date", dmy(h.return_date)],
       ["Reason", firstOf(h.reason)],
@@ -683,8 +670,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       s(h.ref).trim() ? `Ref ${s(h.ref)}` : "",
       s(h.po_doc_no).trim() ? `PO ${s(h.po_doc_no)}` : "",
     ),
-    status: (h) => h.status,
-    statusDoc: null,
+    status: (h) => h.status, statusDoc: null,
     meta: (h) => [
       ["Order Date", dmy(h.so_date)],
       ["Delivery", dmy(h.customer_delivery_date ?? h.processing_date)],
@@ -728,8 +714,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.do_number),
     title: (h) => firstOf(h.debtor_name, h.do_number),
     subtitle: (h) => (s(h.consignment_so_doc_no).trim() ? `CO ${s(h.consignment_so_doc_no)}` : ""),
-    status: (h) => h.status,
-    statusDoc: null,
+    status: (h) => h.status, statusDoc: null,
     meta: (h) => [
       ["Note Date", dmy(h.do_date)],
       ["Delivery", dmy(h.customer_delivery_date ?? h.expected_delivery_at)],
@@ -769,8 +754,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.return_number),
     title: (h) => firstOf(h.debtor_name, h.return_number),
     subtitle: (h) => (s(h.do_doc_no).trim() ? `CN ${s(h.do_doc_no)}` : ""),
-    status: (h) => h.status,
-    statusDoc: null,
+    status: (h) => h.status, statusDoc: null,
     meta: (h) => [
       ["Return Date", dmy(h.return_date)],
       ["Reason", firstOf(h.reason)],
@@ -812,8 +796,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.pc_number),
     title: (h) => firstOf(nested(h.supplier)?.name, h.pc_number),
     subtitle: (h) => firstOf(nested(h.supplier)?.code) === "—" ? "" : firstOf(nested(h.supplier)?.code),
-    status: (h) => h.status,
-    statusDoc: null,
+    status: (h) => h.status, statusDoc: null,
     meta: (h) => [
       ["PC Date", dmy(h.po_date)],
       ["Expected", dmy(h.expected_at)],
@@ -859,8 +842,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       const pc = s(nested(h.purchase_consignment_order)?.pc_number ?? h.pc_order_no).trim();
       return join(code, pc ? `PC ${pc}` : "");
     },
-    status: (h) => h.status,
-    statusDoc: null,
+    status: (h) => h.status, statusDoc: null,
     meta: (h) => [
       ["Received", dmy(h.received_at)],
       ["Delivery Note", firstOf(h.delivery_note_ref)],
@@ -906,8 +888,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       const recv = s(nested(h.pc_receive)?.receive_number).trim();
       return join(pc ? `PC ${pc}` : "", recv ? `Receive ${recv}` : "");
     },
-    status: (h) => h.status,
-    statusDoc: null,
+    status: (h) => h.status, statusDoc: null,
     meta: (h) => [
       ["Return Date", dmy(h.return_date)],
       ["Reason", firstOf(h.reason)],
