@@ -493,6 +493,158 @@ describe('readVpConfig', () => {
 });
 
 // ---------------------------------------------------------------------------
+// A LIVE SAVE IS NEVER STUCK BEHIND A BACKFILL
+//
+// This block exists because the obvious ordering — strict FIFO on created_at —
+// silently defeats the one property the whole kick was built for, and it does so
+// only when a backlog exists, which is exactly when nobody is looking.
+//
+// created_at is when the ROW was made, not when the ORDER was saved. A backfill
+// sweep stamps thousands of rows with "now", so an order saved a minute later
+// sorts BEHIND all of them. Measured on production 2026-09-13, the day the feed
+// was turned on: 2,613 backfilled rows draining at ~4.2/min, i.e. a newly saved
+// order would have waited about TEN HOURS while the kick fired on schedule and
+// delivered somebody's old paperwork instead.
+//
+// Nothing would have failed. The kick worked, the cron worked, the queue drained,
+// every delivery was correct — and the feature was useless. That is why the
+// property is pinned here rather than left to the ORDER BY reading sensibly.
+// ---------------------------------------------------------------------------
+
+describe('what the sweep picks first', () => {
+  /** N backfill rows, all stamped BEFORE the live save, as a real backfill is. */
+  const backfillRows = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `bf-${i}`,
+      doc_no: `HC-SO-OLD-${String(i).padStart(4, '0')}`,
+      op: 'RECONCILE',
+      status: 'pending',
+      attempts: 0,
+      created_at: `2026-09-13T01:00:${String(i % 60).padStart(2, '0')}Z`,
+    }));
+
+  /** The salesperson's save, stamped AFTER every backfill row above.
+   *
+   *  A FACTORY, NOT A CONSTANT, and that distinction cost a debugging round: the
+   *  fake updates rows IN PLACE, exactly as a database does, so a shared fixture
+   *  object is still 'sent' in the next test and silently stops being a pending
+   *  live save. The suite then passes the first assertion and fails the rest for
+   *  a reason that has nothing to do with the code under test. */
+  const liveRow = () => ({
+    id: 'live-1',
+    doc_no: 'HC-SO-NEW-0001',
+    op: 'UPDATE',
+    status: 'pending',
+    attempts: 0,
+    created_at: '2026-09-13T09:00:00Z',
+  });
+
+  const orderRowsFor = (rows: Row[]) =>
+    rows.map((r) => ({ doc_no: r.doc_no, company_id: 1, so_date: '2026-09-01' }));
+
+  /* THE ONE THAT MATTERS. Strict FIFO passes every other test in this file and
+     fails this one. */
+  test('a save just made goes out before a backfill queued hours earlier', async () => {
+    const rows = [...backfillRows(60), liveRow()];
+    const sb = withBuilder(
+      db({ flag: '1', outbox: rows, orders: orderRowsFor(rows) }),
+      [payloadFor(liveRow().doc_no), ...backfillRows(60).map((r) => payloadFor(String(r.doc_no)))],
+    );
+    currentSb = sb;
+    const fetchImpl = vi.fn(async () => res(200)) as unknown as typeof fetch;
+
+    await drainVenturePortalOutbox(env, VP_DRAIN_BATCH, fetchImpl);
+
+    const live = outbox(sb).find((r) => r.id === 'live-1');
+    expect(live?.status).toBe('sent');
+  });
+
+  test('the backfill still fills the rest of the batch, oldest first', async () => {
+    const rows = [...backfillRows(60), liveRow()];
+    const sb = withBuilder(
+      db({ flag: '1', outbox: rows, orders: orderRowsFor(rows) }),
+      [payloadFor(liveRow().doc_no), ...backfillRows(60).map((r) => payloadFor(String(r.doc_no)))],
+    );
+    currentSb = sb;
+    const fetchImpl = vi.fn(async () => res(200)) as unknown as typeof fetch;
+
+    const r = await drainVenturePortalOutbox(env, VP_DRAIN_BATCH, fetchImpl);
+
+    /* One live + 24 backfill = a full batch. The live row does not COST the
+       backfill a slot it would otherwise have used productively; it takes the
+       one at the front. */
+    expect(r.sent).toBe(VP_DRAIN_BATCH);
+    const sentBackfill = outbox(sb).filter((x) => x.op === 'RECONCILE' && x.status === 'sent');
+    expect(sentBackfill).toHaveLength(VP_DRAIN_BATCH - 1);
+    /* And they are the OLDEST of them, not an arbitrary 24. */
+    expect(sentBackfill.map((x) => x.doc_no).sort()).toEqual(
+      backfillRows(VP_DRAIN_BATCH - 1).map((x) => x.doc_no).sort(),
+    );
+  });
+
+  /* THE UNCHANGED CASE, so the priority cannot be mistaken for a rewrite: with no
+     live save waiting — the steady state during a backfill — the sweep behaves
+     exactly as it always did. */
+  test('with nothing live waiting, the backfill drains oldest-first as before', async () => {
+    const rows = backfillRows(40);
+    const sb = withBuilder(
+      db({ flag: '1', outbox: rows, orders: orderRowsFor(rows) }),
+      rows.map((r) => payloadFor(String(r.doc_no))),
+    );
+    currentSb = sb;
+    const fetchImpl = vi.fn(async () => res(200)) as unknown as typeof fetch;
+
+    const r = await drainVenturePortalOutbox(env, VP_DRAIN_BATCH, fetchImpl);
+
+    expect(r.sent).toBe(VP_DRAIN_BATCH);
+    expect(outbox(sb).filter((x) => x.status === 'sent').map((x) => x.doc_no).sort()).toEqual(
+      backfillRows(VP_DRAIN_BATCH).map((x) => x.doc_no).sort(),
+    );
+  });
+
+  test('several live saves go in their own order, oldest of them first', async () => {
+    const live = [
+      { ...liveRow(), id: 'live-a', doc_no: 'HC-SO-NEW-A', created_at: '2026-09-13T09:00:02Z' },
+      { ...liveRow(), id: 'live-b', doc_no: 'HC-SO-NEW-B', created_at: '2026-09-13T09:00:01Z' },
+    ];
+    const rows = [...backfillRows(5), ...live];
+    const sb = withBuilder(
+      db({ flag: '1', outbox: rows, orders: orderRowsFor(rows) }),
+      rows.map((r) => payloadFor(String(r.doc_no))),
+    );
+    currentSb = sb;
+    const sentDocs: string[] = [];
+    const fetchImpl = vi.fn(async (_u: unknown, init: { body?: string } = {}) => {
+      sentDocs.push(JSON.parse(String(init.body ?? '{}')).docNo);
+      return res(200);
+    }) as unknown as typeof fetch;
+
+    await drainVenturePortalOutbox(env, VP_DRAIN_BATCH, fetchImpl);
+
+    expect(sentDocs.slice(0, 2)).toEqual(['HC-SO-NEW-B', 'HC-SO-NEW-A']);
+  });
+
+  /* A child edit writes `UPDATE:mfg_sales_order_items`, not a bare TG_OP, so a
+     discriminator that tested equality against the three verbs would treat a
+     payment or line edit as a backfill and starve it. Only 'RECONCILE' is the
+     backfill. */
+  test('a child-table edit counts as live, not as a backfill', async () => {
+    const child = { ...liveRow(), id: 'live-child', doc_no: 'HC-SO-NEW-CHILD', op: 'UPDATE:mfg_sales_order_payments' };
+    const rows = [...backfillRows(60), child];
+    const sb = withBuilder(
+      db({ flag: '1', outbox: rows, orders: orderRowsFor(rows) }),
+      rows.map((r) => payloadFor(String(r.doc_no))),
+    );
+    currentSb = sb;
+    const fetchImpl = vi.fn(async () => res(200)) as unknown as typeof fetch;
+
+    await drainVenturePortalOutbox(env, VP_DRAIN_BATCH, fetchImpl);
+
+    expect(outbox(sb).find((r) => r.id === 'live-child')?.status).toBe('sent');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // THE KEY THIS SIDE MINTS
 //
 // Two properties, and only one of them is about length. The other is that the

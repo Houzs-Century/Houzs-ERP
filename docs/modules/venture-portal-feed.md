@@ -289,6 +289,31 @@ All three are in a trigger column list, so all three re-deliver.
 
 ---
 
+### A LIVE SAVE IS NEVER STUCK BEHIND A BACKFILL (2026-09-13)
+
+The sweep does **not** take the 25 oldest pending rows. It takes trigger rows
+first (`op <> 'RECONCILE'`, oldest-first among themselves), then tops the batch up
+from the backfill, also oldest-first.
+
+Strict FIFO — the obvious ordering, and what shipped first — defeats the kick
+entirely whenever a backlog exists, silently. `created_at` is when the ROW was
+made, so `vp_requeue_undelivered` stamps thousands of rows with "now" and an order
+saved a minute later sorts BEHIND all of them. **PROVEN on production the day the
+feed was turned on:** 2,613 backfilled rows draining at 4.2/min, so a newly saved
+order would have waited **≈ 10 hours** while the kick fired on time and delivered
+old paperwork. Nothing fails in that state — every delivery is correct and the
+feature is useless. Full trace and the two measurements in
+`docs/bugs/0863-a-newly-saved-order-queued-behind-the-backfill-and-would-hav.md`.
+
+`op` is the discriminator because the migration already writes it. Note a child
+edit is `UPDATE:mfg_sales_order_payments`, not a bare verb — only `'RECONCILE'`
+means backfill, and a test pins that so a line or payment edit cannot be starved.
+Two queries rather than one expression: PostgREST orders by COLUMNS, and a sort
+column would mean reshaping the table. Cost: one extra read per sweep when nothing
+live is waiting.
+
+---
+
 ## 5. The one round trip per sweep
 
 `vp_build_payloads` takes an ARRAY and answers for the whole batch. A

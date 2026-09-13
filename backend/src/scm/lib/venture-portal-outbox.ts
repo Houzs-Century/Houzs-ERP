@@ -80,6 +80,19 @@ export const VP_ROW_STATUSES = ['pending', 'sent', 'failed', 'skipped'] as const
  *  reason — the route listed them a second time to render them. */
 export const VP_CONFIG_KEYS = ['vp.url', 'vp.secret', 'vp.since'] as const;
 
+/**
+ * The `op` a BACKFILL row carries, as written by `scm.vp_requeue_undelivered`
+ * (migration `20260912T1800`). Every other value is a TRIGGER's `TG_OP` and
+ * therefore a live save.
+ *
+ * SPELLED ONCE because the drain now sorts on it — live saves are delivered
+ * ahead of a backfill, and getting this string wrong would silently invert that
+ * (every row would look live, or every row would look backfilled, and the sweep
+ * would still return 25 rows either way). The SQL is unavoidably a second
+ * spelling; nothing can import into a migration.
+ */
+export const VP_RECONCILE_OP = 'RECONCILE';
+
 export type VpConfig = { url: string; secret: string; since: string | null };
 
 export type VpDrainSummary = {
@@ -205,16 +218,58 @@ export async function drainVenturePortalOutbox(
   const cfg = await readVpConfig(sb);
   if (!cfg) return { skipped: 'not_configured', ...zero };
 
-  const { data, error } = await sb
+  /* A LIVE SAVE IS NEVER STUCK BEHIND A BACKFILL, and this is the whole reason
+     the selection is two queries instead of one.
+
+     It used to be a single `ORDER BY created_at ASC LIMIT 25` — strict FIFO —
+     which is the obvious ordering and is wrong for the one property the owner
+     asked for. `created_at` is when the ROW was made, so a backfill sweep stamps
+     thousands of rows with "now", and an order saved a minute later sorts BEHIND
+     all of them. Measured on production 2026-09-13, the day the feed was turned
+     on: 2,613 backfilled rows draining at ~4.2/min, so a newly saved order would
+     have waited about TEN HOURS while the kick dutifully fired and delivered
+     somebody's 2024 paperwork. The feature would have looked broken, and the
+     module guide's "the save sends its own order" would have been false for as
+     long as any backlog existed.
+
+     So: trigger rows first, oldest-first among themselves; the backfill tops the
+     batch up with whatever room is left, also oldest-first. Nothing is starved —
+     the backfill still drains at the full rate whenever no live save is waiting,
+     which is almost always — and a live save waits at most one in-flight batch.
+
+     `op` is the discriminator because the migration already writes it: the
+     triggers write TG_OP (INSERT/UPDATE/DELETE, `:child_table` for a child edit)
+     and `vp_requeue_undelivered` writes the literal 'RECONCILE'. Two queries
+     rather than one expression because PostgREST orders by COLUMNS, not by
+     expressions, and inventing a sort column would mean a migration on a table
+     whose shape this PR must not change.
+
+     THE COST is one extra read per sweep when no live row is waiting. That is
+     the steady state, so it is a real cost and a small one: a `head`-less select
+     of at most 25 narrow rows, inside the subrequest diet. */
+  const { data: liveData, error: liveErr } = await sb
     .from('venture_portal_outbox')
     .select('id, doc_no, op, attempts')
     .eq('status', 'pending')
     .lt('attempts', VP_MAX_ATTEMPTS)
+    .neq('op', VP_RECONCILE_OP)
     .order('created_at', { ascending: true })
     .limit(limit);
-  if (error) return { skipped: 'query_failed', ...zero };
+  if (liveErr) return { skipped: 'query_failed', ...zero };
 
-  const rows = (data as VpOutboxRow[] | null) ?? [];
+  const rows = (liveData as VpOutboxRow[] | null) ?? [];
+  if (rows.length < limit) {
+    const { data: backfillData, error: backfillErr } = await sb
+      .from('venture_portal_outbox')
+      .select('id, doc_no, op, attempts')
+      .eq('status', 'pending')
+      .lt('attempts', VP_MAX_ATTEMPTS)
+      .eq('op', VP_RECONCILE_OP)
+      .order('created_at', { ascending: true })
+      .limit(limit - rows.length);
+    if (backfillErr) return { skipped: 'query_failed', ...zero };
+    rows.push(...((backfillData as VpOutboxRow[] | null) ?? []));
+  }
   if (!rows.length) return { ...zero };
 
   /* SCOPE FIRST, and from the order itself. A document whose company is not
