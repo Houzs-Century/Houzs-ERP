@@ -537,7 +537,12 @@ Two consequences worth knowing before you touch this:
   with `parsePgrestInList` rather than a second `split(',')` — a naive split
   reproduces the bug and reports a clean run. The shared fakes
   (`backend/src/scm/lib/fake-postgrest.ts`, `backend/tests/fakePostgrest.ts`) and
-  `backend/scripts/lib/pgrest-shim.mjs` already do.
+  `backend/scripts/lib/pgrest-shim.mjs` already do. The shim's `.not(col,'in',…)`
+  did NOT until 2026-09-14: it split the quoted list `sqlNotInList` writes and
+  bound `"CANCELLED"` with its quotes. It now unquotes, and LEFT embeds work too,
+  so `computeMrp` itself runs over the shim — `check-so-po-line-links.mjs` uses
+  it to print the engine's real per-line PO instead of a hand-ported replica
+  (`docs/bugs/0874-the-pgrest-shim-could-not-run-the-mrp-engine-quoted-not-in-l.md`).
 - **A test fake's comparison operators must compare by the column's type**,
   NULL matching nothing — the way `fake-postgrest`'s `gte`/`lte` do, and the
   way `lt` does since 2026-09-10 (docs/bugs/0785). Before that `lt` was

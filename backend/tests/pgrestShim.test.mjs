@@ -219,11 +219,49 @@ test("a filter naming an alias select() never declared is a loud gap", async () 
   assert.equal(sb.__gaps.length, 1);
 });
 
-test("an embed without !inner is refused rather than guessed as a LEFT join", async () => {
+/* LEFT embeds (no !inner), 2026-09-14. `do-unlinked-coverage.ts` reads
+   `parent:delivery_orders(status)` and computeMrp reaches it, so until this the
+   real MRP engine could not run over the shim at all. A LEFT embed must never
+   remove a parent row, and an unmatched to-one must come back null. */
+const DO_FKS = [
+  { src_table: "delivery_order_items", tgt_table: "delivery_orders", src_col: "delivery_order_id", tgt_col: "id" },
+];
+
+test("a LEFT to-one embed is a LEFT JOIN with no parent narrowing, null when unmatched", async () => {
+  const sql = fakeSqlWithCatalog(DO_FKS, []);
+  const sb = pgrestShim(sql);
+  const { error } = await sb.from("delivery_order_items")
+    .select("id, so_item_id, qty, parent:delivery_orders(status)")
+    .in("so_item_id", ["s1", "s2"])
+    .order("id")
+    .range(0, 999);
+  assert.equal(error, null, `expected no error, got ${error && error.message}`);
+  const { text, params } = lastCall(sql);
+  assert.match(text, /LEFT JOIN "scm"."delivery_orders" "parent" ON "parent"."id" = "p"."delivery_order_id"/);
+  assert.match(text, /CASE WHEN "parent"."id" IS NULL THEN NULL ELSE json_build_object\('status', "parent"."status"\) END AS "parent"/);
+  assert.doesNotMatch(text, /(^|[^T]) JOIN "scm"."delivery_orders"/, "must not be an INNER join");
+  assert.doesNotMatch(text, /EXISTS/);
+  assert.deepEqual(params, ["s1", "s2"]);
+  assert.equal(sb.__gaps.length, 0);
+});
+
+test("a LEFT to-many embed aggregates without the EXISTS that !inner adds", async () => {
   const sql = fakeSqlWithCatalog(SO_FKS, []);
   const sb = pgrestShim(sql);
-  const { error } = await sb.from("mfg_sales_order_items").select("id, so:mfg_sales_orders(status)");
-  assert.match(String(error?.message), /without !inner/);
+  const { error } = await sb.from("mfg_sales_order_items").select("id, do_items:delivery_order_items(id, qty)");
+  assert.equal(error, null, `expected no error, got ${error && error.message}`);
+  const { text } = lastCall(sql);
+  assert.match(text, /COALESCE\(json_agg/);
+  assert.doesNotMatch(text, /EXISTS/);
+});
+
+test("a FILTER on a LEFT embed is still a loud gap — it narrows the embed, not the parents", async () => {
+  const sql = fakeSqlWithCatalog(SO_FKS, []);
+  const sb = pgrestShim(sql);
+  const { error } = await sb.from("mfg_sales_order_items")
+    .select("id, so:mfg_sales_orders(status)")
+    .not("so.status", "in", "(CANCELLED)");
+  assert.match(String(error?.message), /LEFT embed/);
   assert.equal(sb.__gaps.length, 1);
 });
 

@@ -529,6 +529,19 @@ day it is added.
 
 ### Binding a PO line to its source SO line (`so_item_id`)
 
+> **"The SO already has a PO, why does the line not show it?" — check first,
+> 2026-09-14.** Actions -> **Check SO -> PO line links (read-only)**
+> (`backend/scripts/check-so-po-line-links.mjs`) prints, per SO:PO pair, every
+> line with the fields that decide the link, a one-sentence verdict per SO line,
+> what the REAL `computeMrp` answers for each line (run over
+> `scripts/lib/pgrest-shim.mjs`), and the company-1 class size. Two shapes were
+> found behind staff issues #18/#19, both from the sofa compartment corrections:
+> a PO piece ADDED by `apply-sofa-compartment-corrections.mjs` with no
+> `so_item_id` (the applier now links it after every build is written, through
+> `scripts/lib/added-po-compartment-link.mjs`), and a PO that holds FEWER
+> compartments than its SO, which has no line to link at all.
+> `docs/bugs/0873-a-purchase-compartment-the-sofa-correction-added-was-never-l.md`.
+
 `so_item_id` is what lets a shipment resolve its incoming PO: `dropship-batch.ts`
 finds the expected batch through it, `/po-so-coverage` treats it as the STATIC
 link, and `recomputeSoPicked` counts from it. (**Post-PR-4** the first of those
