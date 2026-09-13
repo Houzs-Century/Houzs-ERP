@@ -69,8 +69,8 @@ Two details worth knowing before editing these:
 **Re-measured after merging `main`, not carried over.** While this change was in
 progress `main` settled Sales Order `IN_PRODUCTION` as "In Production" in
 `status-pill.ts` and removed it from the guard's DELIBERATE list (the sibling entry
-`0864-the-sales-order-tab-said-in-production-and-the-pill-said-pro.md` — same
-number, landed concurrently). That was the one line of `status-pill.ts` it touched,
+`0864-the-sales-order-tab-said-in-production-and-the-pill-said-pro.md`, landed
+concurrently). That was the one line of `status-pill.ts` it touched,
 in the SO map, so no map these six read moved. The scan was re-run on the merged
 tree regardless: the six pages' ORIGINAL 22 words against the merged canonical map
 give 0 deltas, and `so-list-status` still differs — now only by its `cancel` key —

@@ -165,7 +165,7 @@ carry. Those copies were aligned by hand on 2026-08-21.
 > page's `STATUS_TONE[key] ?? fallback` keeps its one-line shape. Attaching the label
 > inside the lookup instead trips the frontend lint ratchet
 > (`no-unnecessary-condition`, +1 per file); the reason is in the function's own
-> comment and in `docs/bugs/0864-six-status-maps-collapsed-onto-status-pill-and-the-detail-ba.md`.
+> comment and in `docs/bugs/0866-six-status-maps-collapsed-onto-status-pill-and-the-detail-ba.md`.
 >
 > **They were chosen by measurement.** Each renders the byte-identical word it used
 > to hand-write, checked entry by entry. The remaining twelve would each change at
@@ -173,7 +173,7 @@ carry. Those copies were aligned by hand on 2026-08-21.
 > `Partially Received`), a map keyed by something other than the stored status
 > (`partial`, `cancel`), or a DELIBERATE difference the guard records with its
 > authority — so collapsing them is a decision, not a refactor. Full table:
-> `docs/bugs/0864-six-status-maps-collapsed-onto-status-pill-and-the-detail-ba.md`.
+> `docs/bugs/0866-six-status-maps-collapsed-onto-status-pill-and-the-detail-ba.md`.
 >
 > **Leaving `PAGES` is not the same as being unwatched.** `COLLAPSED_WORDS` in the
 > same test pins the word each collapsed page showed before, so a later edit to
