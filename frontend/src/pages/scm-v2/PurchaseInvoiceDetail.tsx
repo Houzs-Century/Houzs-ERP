@@ -78,6 +78,7 @@ import { transferFromColumnLabel } from "../../lib/convertScope";
 import { DateField } from "../../vendor/scm/components/DateField";
 
 import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
+import { purchaseInvoiceLinesLocked } from '../../vendor/scm/lib/line-add-lock';
 import { useAddLineHandoff } from '../../vendor/scm/lib/useAddLineHandoff';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -231,7 +232,7 @@ export const PurchaseInvoiceDetail = () => {
   // Unified edit-lock (migration 0106): a PI is read-only once it has ANY
   // payment recorded (paid_sen > 0) OR is CANCELLED. POSTED with zero payment
   // stays editable.
-  const isLocked = pi ? (pi.status === 'CANCELLED' || (pi.paid_sen ?? 0) > 0) : true;
+  const isLocked = pi ? purchaseInvoiceLinesLocked({ status: pi.status, paid_sen: pi.paid_sen ?? null }) : true;
   // DRAFT lifecycle — a DRAFT PI is editable (not locked) and shows a Confirm
   // banner; confirming flips DRAFT → POSTED (where AP/GL post + GRN consume run).
   const isDraft = (pi?.status as string) === 'DRAFT';
