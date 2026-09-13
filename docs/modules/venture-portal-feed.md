@@ -468,6 +468,19 @@ and the `*/5` sweep. `[vp-kick]` in the Worker log is the kick's own failures.
   **The kick is unaffected either way**: it is mounted after write-freeze, and a
   frozen write returns 503 without calling `next()`, so no kick is even entered
   for a save that did not happen.
+- **Two kicks can overlap, on purpose.** The debounce collapses writes inside ONE
+  1.5 s window, and a backfill sweep of 25 POSTs easily outlasts that — so a save
+  arriving mid-sweep starts a second drain, and both can read the same pending
+  rows. There is deliberately no in-flight lock: a lock would leave a save that
+  landed during a long drain with no kick at all, waiting five minutes, which is
+  the opposite of what this was built for. The cost is a duplicate POST, and the
+  portal upserts one live row per document by newest `snapshotAt` and answers
+  `duplicate` — a delivered-but-not-reapplied outcome (§6), so no commission is
+  double-counted. `attempts` can undercount slightly, which matters to nothing.
+  **LIKELY, not PROVEN from here** — the dedupe is the portal's behaviour, stated
+  in its contract, and its receiver is in another repository. Note the overlap is
+  already reachable today by pressing **Send now** while the cron sweeps; the kick
+  makes it more frequent, it does not create it.
 - **The kick's limits, all three deliberate.** (a) The debounce timestamp is
   MODULE-LEVEL, so it is per-isolate: two isolates serving two saves a second
   apart schedule two drains. Harmless — the second finds an empty queue. (b) A

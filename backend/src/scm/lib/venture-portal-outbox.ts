@@ -550,6 +550,25 @@ export const VP_KICK_DELAY_MS = 1_500;
  *  a POS rush clears in seconds rather than at 25 per five minutes. */
 export const VP_KICK_MAX_SWEEPS = 4;
 
+/* TWO KICKS CAN OVERLAP, and that is a deliberate choice rather than an
+   oversight. The debounce only collapses writes inside ONE window; a busy
+   backfill sweep is 25 POSTs and can easily outlast 1.5 s, so a save arriving
+   mid-sweep starts a second drain and both may read the same pending rows.
+   There is no in-flight lock because the alternative is worse for the thing the
+   owner actually asked for: a lock would make a save that lands during a long
+   drain get no kick at all, and wait for the five-minute sweep.
+
+   What the overlap costs is a duplicate POST. The portal upserts one live row
+   per document and applies the newest snapshotAt, answering `duplicate` — which
+   is a SUCCESSFUL delivery it chose not to re-apply (see the taxonomy above), so
+   nothing is double-counted in anybody's commission. `attempts` can undercount a
+   little, which matters to nothing: it exists to park a row that keeps failing.
+
+   LIKELY, not PROVEN here: the dedupe is the portal's behaviour, stated in its
+   contract, and its receiver lives in another repository. The same overlap is
+   already reachable today by pressing "Send now" while the cron sweeps, so the
+   kick makes an existing property more frequent rather than creating one. */
+
 type VpKickSeams = { now: () => number; sleep: (ms: number) => Promise<void> };
 
 const VP_KICK_PRODUCTION_SEAMS: VpKickSeams = {
