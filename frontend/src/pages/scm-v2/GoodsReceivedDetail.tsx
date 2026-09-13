@@ -34,7 +34,7 @@
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, FileText, Pencil, Trash2, Printer, Save, Ban, ChevronDown, ArrowRightLeft, Plus, X,
 } from 'lucide-react';
@@ -75,6 +75,7 @@ import styles from './SalesOrderDetail.module.css';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 
+import { ADD_LINE_LABEL, consumedAddLine, wantsAddLine } from '../../vendor/scm/lib/add-line-handoff';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
@@ -217,6 +218,9 @@ const BLANK_ADD: AddDraft = {
 export const GoodsReceivedDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  /* The router's location, not window.location: the handoff effect below must
+     re-run when the hash changes on an already-mounted page. */
+  const routerLocation = useLocation();
   const detail = useGrnDetail(id ?? null);
   const updateHeader = useUpdateGrnHeader();
   const updateItem = useUpdateGrnItem();
@@ -279,6 +283,15 @@ export const GoodsReceivedDetail = () => {
      (like the From-PO append + line delete). */
   const addGrnItem = useAddGrnItem();
   const [showAddItem, setShowAddItem] = useState(false);
+
+  /* The detail page's "Add line" hands over with #add-line. Consumed ONCE and
+     stripped from the URL: left on, it re-opens the add row on every remount,
+     which on a page that remounts after a save is a form that will not shut. */
+  useEffect(() => {
+    if (!wantsAddLine(routerLocation.hash)) return;
+    setShowAddItem(true);
+    navigate(consumedAddLine(`${routerLocation.pathname}${routerLocation.search}`), { replace: true });
+  }, [routerLocation.hash, routerLocation.pathname, routerLocation.search, navigate]);
   const [addDraft, setAddDraft] = useState<AddDraft>(BLANK_ADD);
   const [addError, setAddError] = useState<string | null>(null);
   const [productQuery, setProductQuery] = useState('');
@@ -706,7 +719,7 @@ export const GoodsReceivedDetail = () => {
           <h2 className={styles.cardTitle}>Line Items ({visibleItems.length})</h2>
           {/* The primary path stays convert-from-PO — the TOP-LEVEL "From
               Purchase Order" header button (see actions row above), mirroring
-              Create GR. The "Add manual item" affordance BELOW covers a
+              Create GR. The "Add line" affordance BELOW covers a
               genuinely-free receipt (an item the PO never ordered, a sample);
               the server still refuses receiving a material the parent PO DOES
               order by hand (unlinked_po_lines) — that must go through From PO. */}
@@ -1093,7 +1106,7 @@ export const GoodsReceivedDetail = () => {
                   gap: 'var(--space-2)',
                 }}
               >
-                <Plus {...ICON} /> Add manual item
+                <Plus {...ICON} /> {ADD_LINE_LABEL}
               </button>
             ) : (
               <div style={{

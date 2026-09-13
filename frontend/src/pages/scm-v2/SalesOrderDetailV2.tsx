@@ -96,6 +96,7 @@ import { MigratedReadonlyBanner } from "../../vendor/scm/components/MigratedRead
 import { customerRefOf } from '../../lib/customer-ref';
 
 import { isFocLine } from '../../vendor/scm/lib/foc-line';
+import { OrderSlipPhoto } from "../../vendor/scm/components/OrderSlipPhoto";
 // ─── Row types (subset — see MfgSalesOrdersList.tsx for the full SoRow) ────
 
 type SoHeader = {
@@ -747,6 +748,10 @@ function SalesOrderDetailV2ReadOnly() {
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
   const auditQ = useSalesOrderAuditLog(docNo ?? null);
   const auditEntries = auditQ.data ?? [];
+  const slipImageKey =
+    (salesOrder as unknown as { slipImageKey?: string | null; slip_image_key?: string | null } | null)?.slipImageKey
+    ?? (salesOrder as unknown as { slip_image_key?: string | null } | null)?.slip_image_key
+    ?? null;
   const [relMapOpen, setRelMapOpen] = useState(false);
   const goRelationshipMap = () => setRelMapOpen(true);
   // Render + download the SO PDF via the shared jspdf generator (client-side),
@@ -1487,6 +1492,17 @@ function SalesOrderDetailV2ReadOnly() {
                   moves to the separate Finance "Fulfillment Costing" module.
                   The customer-facing OrderTotalCard above (Subtotal / Discount /
                   Total) stays; only cost/margin is gone. */}
+
+              {/* The customer's handwritten slip, photographed on the phone.
+                  It lives on the order (slip_image_key, mig 0033) and until
+                  2026-09-13 this page never rendered it — so a slip taken on
+                  the phone was invisible on the computer unless somebody
+                  pressed Edit (docs/bugs/0854). */}
+              {slipImageKey && (
+                <AsideCard title="Order slip">
+                  <OrderSlipPhoto imageKey={slipImageKey} maxWidth={320} />
+                </AsideCard>
+              )}
 
               <AsideCard title="Key dates">
                 <KeyDateRow k="SO date" v={fmtDate(salesOrder.so_date)} />

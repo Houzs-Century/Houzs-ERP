@@ -21,6 +21,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { GoodsReceivedDetail } from './GoodsReceivedDetail';
 
+import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
 const h = vi.hoisted(() => ({
   addMock: vi.fn(),
   grn: null as Record<string, unknown> | null,
@@ -105,13 +106,13 @@ beforeEach(() => {
   h.grn = null;
 });
 
-describe('GoodsReceivedDetail — Add manual item', () => {
+describe('GoodsReceivedDetail — Add line', () => {
   it('adds a free line (no PO link) on an editable POSTED GRN', async () => {
     h.grn = makeGrn();
     const user = userEvent.setup();
     renderDetail();
 
-    await user.click(await screen.findByRole('button', { name: /add manual item/i }));
+    await user.click(await screen.findByRole('button', { name: ADD_LINE_LABEL }));
 
     await user.type(await screen.findByPlaceholderText(/search SKUs by code or name/i), 'ACC-001');
     await user.type(screen.getByPlaceholderText(/auto-filled when an item is picked/i), 'Extra cushion');
@@ -130,14 +131,14 @@ describe('GoodsReceivedDetail — Add manual item', () => {
     h.grn = makeGrn({ status: 'CANCELLED' });
     renderDetail();
     await screen.findByRole('heading', { name: /Line Items/i });
-    expect(screen.queryByRole('button', { name: /add manual item/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: ADD_LINE_LABEL })).toBeNull();
   });
 
   it('hides the affordance on a POSTED GRN that has downstream children', async () => {
     h.grn = makeGrn({ has_children: true });
     renderDetail();
     await screen.findByRole('heading', { name: /Line Items/i });
-    expect(screen.queryByRole('button', { name: /add manual item/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: ADD_LINE_LABEL })).toBeNull();
   });
 
   it('surfaces the server unlinked-PO refusal inline (does not close the row)', async () => {
@@ -149,7 +150,7 @@ describe('GoodsReceivedDetail — Add manual item', () => {
     const user = userEvent.setup();
     renderDetail();
 
-    await user.click(await screen.findByRole('button', { name: /add manual item/i }));
+    await user.click(await screen.findByRole('button', { name: ADD_LINE_LABEL }));
     await user.type(await screen.findByPlaceholderText(/search SKUs by code or name/i), 'ACC-001');
     await user.type(screen.getByPlaceholderText(/auto-filled when an item is picked/i), 'Extra cushion');
     await user.click(screen.getByRole('button', { name: /^add item$/i }));

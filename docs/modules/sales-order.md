@@ -6236,3 +6236,21 @@ This is the same `?? []` both of these files already carry a written-up comment
 about on their PAYMENTS query. The lesson was recorded next to one query and
 never reached the other.
 Trace: `docs/bugs/0848-a-change-log-that-could-not-load-said-no-history-yet.md`.
+
+---
+
+## The order slip photo, on BOTH surfaces
+
+The customer's handwritten slip, photographed on the phone during scan-to-SO,
+lives on the order as `slip_image_key` (mig 0033).
+
+It now renders on the routed desktop page as an "Order slip" aside card, through
+`vendor/scm/components/OrderSlipPhoto.tsx`, and on the phone through
+MobileSODetail's own thumbnail-and-viewer treatment. The two differ in
+presentation on purpose; what must not differ is whether the photo is reachable.
+
+Until 2026-09-13 it was not. `SalesOrderDetailV2` — the page the router serves —
+carried no reference to the slip, measured as zero occurrences in its shipped
+production chunk. The only desktop rendering was on `SalesOrderDetail`, reached by
+pressing Edit. Trace:
+`docs/bugs/0854-a-slip-photographed-on-the-phone-was-invisible-on-the-deskto.md`.
