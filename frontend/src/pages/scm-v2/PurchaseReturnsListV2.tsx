@@ -44,7 +44,7 @@ import {
   useCancelPurchaseReturn,
 } from "../../vendor/scm/lib/purchase-return-queries";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
-import { statusLabel } from "../../vendor/scm/lib/status-pill";
+import { withStatusLabels } from "../../vendor/scm/lib/status-pill";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
@@ -109,22 +109,17 @@ const refundOf = (r: PrRow): number => r.refund_sen ?? 0;
    NOT added to the canonical map to make this read nicely: that map's tones are
    live on other surfaces, and inventing an entry to tidy a call site is the
    forged-evidence failure CLAUDE.md names. */
-const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neutral"; bucket: StatusTab }> = {
+const STATUS_OWN: Record<string, { tone: "success" | "warning" | "error" | "neutral"; bucket: StatusTab }> = {
   DRAFT:     { tone: "warning", bucket: "draft" },
   POSTED:    { tone: "warning", bucket: "posted" },
   COMPLETED: { tone: "success", bucket: "completed" },
   CANCELLED: { tone: "error",   bucket: "cancelled" },
 };
 
-const statusFor = (s: string) => {
-  const key = (s || "").toUpperCase();
-  const own = STATUS_TONE[key];
-  /* An unlisted status keeps answering with the RAW value, not a humanised one —
-     that is the existing behaviour and this change does not touch it. */
-  return own
-    ? { ...own, label: statusLabel("pr", key) }
-    : { tone: "neutral" as const, label: s || "—", bucket: "posted" as StatusTab };
-};
+const STATUS_TONE = withStatusLabels("pr", STATUS_OWN);
+
+const statusFor = (s: string) =>
+  STATUS_TONE[(s || "").toUpperCase()] ?? { tone: "neutral" as const, label: s || "—", bucket: "posted" as StatusTab };
 
 function SplitDropdown({ onImport, onDuplicate }: { onImport: () => void; onDuplicate: () => void }) {
   const [open, setOpen] = useState(false);

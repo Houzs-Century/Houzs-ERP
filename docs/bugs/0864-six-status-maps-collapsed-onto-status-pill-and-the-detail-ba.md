@@ -33,7 +33,20 @@ back identical on every entry; those six were converted and nothing else was.
 
 Each keeps what is genuinely its own — the tone (a four-name palette, not
 status-pill's six), the filter bucket, the blurb — and takes only the LABEL from
-`statusLabel`. An unlisted status still answers with its RAW value, as before.
+`status-pill.ts`. An unlisted status still answers with its RAW value, as before.
+
+**How the four LIST pages get it, and why it is not the obvious way.** They call
+`withStatusLabels(docType, STATUS_OWN)` (new, in `status-pill.ts`) once at module
+load, so their `statusFor` stays BYTE-IDENTICAL to what it was on `c6ce93745` —
+checked by diffing each function against that commit. The obvious way, attaching
+the label inside `statusFor`, was written first and the lint ratchet refused it:
++1 `no-unnecessary-condition` in all four files. Two attempts to keep it failed,
+measured with `npm run lint` each time — a `| undefined` annotation (a `const`
+narrows to its initialiser) and `?? null` (TypeScript types `T ?? null` as `T`
+when `T` cannot be null). The rule exempts a nullish check made straight on an
+index-signature access, which is the one shape the original line already had.
+The two DETAIL pages read the word through a plain function call and were never
+flagged.
 
 Two details worth knowing before editing these:
 

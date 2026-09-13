@@ -156,9 +156,16 @@ carry. Those copies were aligned by hand on 2026-08-21.
 > eighteen are the `PAGES` list in
 > `frontend/src/pages/scm-v2/localStatusMapsAgree.test.ts` (this paragraph said
 > "sixteen" before; the guard enumerates eighteen, and the guard is the count to
-> trust). Six now take their LABEL from `statusLabel(docType, STATUS)` and keep
-> only their own tone, bucket and blurb: Goods Received list + detail, Purchase
-> Return list + detail, Stock Takes list, Stock Transfers list.
+> trust). Six now take their LABEL from `status-pill.ts` and keep only their own
+> tone, bucket and blurb: Goods Received list + detail, Purchase Return list +
+> detail, Stock Takes list, Stock Transfers list.
+>
+> **Collapsing the next page? Use `withStatusLabels(docType, ownMap)`.** It attaches
+> the canonical label to a map keyed by stored status, once, at module load — so a
+> page's `STATUS_TONE[key] ?? fallback` keeps its one-line shape. Attaching the label
+> inside the lookup instead trips the frontend lint ratchet
+> (`no-unnecessary-condition`, +1 per file); the reason is in the function's own
+> comment and in `docs/bugs/0864-six-status-maps-collapsed-onto-status-pill-and-the-detail-ba.md`.
 >
 > **They were chosen by measurement.** Each renders the byte-identical word it used
 > to hand-write, checked entry by entry. The remaining twelve would each change at

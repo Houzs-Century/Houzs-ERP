@@ -34,7 +34,7 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { statusLabel, statusVocabulary, type StatusDocType } from '../../vendor/scm/lib/status-pill';
+import { statusLabel, statusVocabulary, withStatusLabels, type StatusDocType } from '../../vendor/scm/lib/status-pill';
 
 const findSrc = (): string => {
   let dir = process.cwd();
@@ -183,6 +183,31 @@ describe('the six collapsed pages still read the words they read before', () => 
     ];
     const relapsed = COLLAPSED.filter((rel) => parseLocalMap(read(rel)).length > 0);
     expect(relapsed, 'these declare a local label again — put them back in PAGES or undo the relapse').toEqual([]);
+  });
+});
+
+describe('withStatusLabels — how a collapsed page gets its word', () => {
+  const own = {
+    POSTED: { tone: 'success', bucket: 'posted' },
+    DRAFT: { tone: 'warning', bucket: 'draft' },
+  } as const;
+  const withLabels = withStatusLabels('grn', own);
+
+  it('attaches exactly the canonical label, keyed by the stored status', () => {
+    expect(withLabels.POSTED.label).toBe(statusLabel('grn', 'POSTED'));
+    expect(withLabels.DRAFT.label).toBe(statusLabel('grn', 'DRAFT'));
+  });
+
+  it("keeps everything that is the page's own — the tone and the bucket are untouched", () => {
+    expect(withLabels.POSTED).toMatchObject({ tone: 'success', bucket: 'posted' });
+    expect(withLabels.DRAFT).toMatchObject({ tone: 'warning', bucket: 'draft' });
+  });
+
+  it("adds no status the page did not list, so the page's own fallback still decides an unknown one", () => {
+    /* The collapsed pages answer an unlisted status with its RAW value. That only
+       survives if this helper does not quietly add the whole canonical vocabulary. */
+    expect(Object.keys(withLabels).sort()).toEqual(['DRAFT', 'POSTED']);
+    expect(withLabels.CANCELLED).toBeUndefined();
   });
 });
 
