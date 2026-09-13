@@ -288,6 +288,15 @@ describe('the list of statements read', () => {
     render(<BankStatementTab />);
     expect(screen.getByText(/Card money is recognised for MBB, PBB, AEON, HLB/)).toBeTruthy();
   });
+
+  /* One account's files at a time (owner 2026-09-13: 无法分辨), the tab
+     naming the bank the way the upload box does. */
+  test('lists the files one account at a time, the tab naming the bank', () => {
+    render(<BankStatementTab />);
+    const tab = screen.getByRole('tab', { name: 'MBB · 310-0010' });
+    expect(tab.getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('aug.csv')).toBeTruthy();
+  });
 });
 
 /* ── The owner's form (2026-09-11, docs/bugs/0806) ─────────────────────────

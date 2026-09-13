@@ -46,7 +46,7 @@ import {
   bankRulesList, bankRuleCreate, bankRuleUpdate,
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo, bankLinesMatchGroup, bankStatementPeriod, bankStatementAutoMatch,
 } from './accounting-bank';
-import { bankMonths, bankMonthDetail } from './accounting-bank-months';
+import { bankMonths, bankMonthDetail, bankMonthClosing } from './accounting-bank-months';
 import { bankLocks, bankMonthLock, bankMonthUnlock } from './accounting-bank-locks';
 import { paymentCorrections } from './accounting-payment-corrections';
 import { bankConfigList, bankConfigSave } from './accounting-bank-config';
@@ -211,6 +211,9 @@ accounting.get('/bank/locks', bankLocks);
 accounting.get('/payment-corrections', paymentCorrections);
 accounting.post('/bank/months/:accountCode/:month/lock', bankMonthLock);
 accounting.post('/bank/months/:accountCode/:month/unlock', bankMonthUnlock);
+/* The month-end figure typed off the bank's own statement, for an account
+   whose files print no balance (docs/bugs/0858). */
+accounting.post('/bank/months/:accountCode/:month/closing', bankMonthClosing);
 accounting.post('/bank/lines/:id/receipt', bankLineReceipt);
 accounting.post('/bank/lines/:id/match', bankLineMatch);
 accounting.post('/bank/lines/:id/ignore', bankLineIgnore);

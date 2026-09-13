@@ -84,6 +84,24 @@ describe('a month that reconciles', () => {
     expect(r.provenance.join(' ')).toContain('d01.csv');
     expect(r.provenance.join(' ')).toContain('d30.csv');
   });
+
+  /* A figure nobody's file printed is named as typed, with who and when
+     (docs/bugs/0858) — on paper, a number with no author is a number nobody
+     can check. */
+  test('names a typed figure as typed, with who typed it and when', () => {
+    const r = reconciliationStatement(input({
+      assembly: {
+        ...ASSEMBLY,
+        closingFrom: { fileName: null, on: '2026-09-30', typed: { month: '2026-09', by: 'Chew', at: '2026-09-13T07:05:00Z', note: 'per the September e-statement' } },
+      },
+    }));
+    const said = r.provenance.join(' ');
+    expect(said).toContain('Closing MYR 10,900.00 as typed for the end of 2026-09 by Chew on 13/09/2026');
+    expect(said).toContain('per the September e-statement');
+    expect(said).toContain('no file uploaded prints it');
+    expect(said).not.toContain('per null');
+    expect(r.filable).toBe(true);
+  });
 });
 
 describe('a month with outstanding items', () => {
