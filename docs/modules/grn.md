@@ -66,6 +66,9 @@ create — and that screen offers "From a Purchase Order instead", which opens t
 module-to-document mapping live in `frontend/src/mobile/mobile-purchase-doc.ts`; the
 `+` is gated by `mayCreatePurchaseDoc`, which calls `canOperateGoodsReceipts`
 (`frontend/src/auth/salesAccess.ts`) — the same helper as before, no new rule.
+The `+` itself is wired in `frontend/src/mobile/MobileApp.tsx` (the `module` screen's
+`onNew`, checked before the convert mapping) and rendered by the `purchase-doc-new`
+screen arm there.
 
 It raises a MANUAL receipt (`purchaseOrderId: null`, every line
 `purchaseOrderItemId: null`) through `useCreateGrn`, the body `GrnNew` sends for a

@@ -11,6 +11,9 @@ The list's `+` now opens `frontend/src/mobile/MobilePurchaseDocNew.tsx`
 `useCreatePurchaseInvoice` hook as `PurchaseInvoiceNew`. A non-draft is then POSTED
 with `usePostPurchaseInvoice`, as desktop does — **without that second call no AP
 liability is recorded.**
+The `+` itself is wired in `frontend/src/mobile/MobileApp.tsx` (the `module` screen's
+`onNew`, checked before the convert mapping) and rendered by the `purchase-doc-new`
+screen arm there.
 
 **New frontend gate, no new permission.** `canOperatePurchaseInvoices`
 (`frontend/src/auth/salesAccess.ts`) is the third arm of the same private
