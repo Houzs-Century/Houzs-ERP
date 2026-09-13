@@ -68,6 +68,7 @@ import {
 } from '@2990s/shared/mfg-pricing';
 import { PoLineCard, emptyPoLine, type PoLineDraft } from '../../vendor/scm/components/PoLineCard';
 import { LinePoRefLink } from '../../vendor/scm/components/LinePoRefLink';
+import { PoPriceReference } from '../../vendor/scm/components/PoPriceReference';
 import { linePoLink } from '../../vendor/scm/lib/line-po-link';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
@@ -122,6 +123,8 @@ type PiItemRow = Record<string, unknown> & {
   /* #26 — the line's own purchase order, resolved by the detail GET. */
   source_po_id?: string | null;
   source_po_number?: string | null;
+  /* The PO price trail (mig 20260914T0200), served by the detail GET. */
+  po_unit_price_sen?: number | null;
 };
 
 /* Whole-line edit (T12) — Edit mode drives one PoLineCard per line, the SAME rich
@@ -667,9 +670,13 @@ export const PurchaseInvoiceDetail = () => {
                   free-entry line has none and shows nothing. */}
               {(() => {
                 const src = l.itemId ? items.find((it) => it.id === l.itemId) : undefined;
-                return src && linePoLink(src) ? (
-                  <div className={styles.muted} style={{ fontSize: 'var(--fs-12)', margin: '0 0 var(--space-1) var(--space-1)' }}>
-                    From PO <LinePoRefLink line={src} />
+                /* Beside the #26 PO link: the PO's price against the price being
+                   typed now (owner 2026-09-14). Reference only — Save is never
+                   gated on it. */
+                return src && (linePoLink(src) || src.grn_item_id) ? (
+                  <div className={styles.muted} style={{ fontSize: 'var(--fs-12)', margin: '0 0 var(--space-1) var(--space-1)', display: 'flex', gap: 'var(--space-3)', alignItems: 'baseline', flexWrap: 'wrap' }}>
+                    {linePoLink(src) && <span>From PO <LinePoRefLink line={src} /></span>}
+                    <PoPriceReference poUnitPriceSen={src.po_unit_price_sen} piUnitPriceSen={l.unitPriceSen} fmt={(sen) => fmtRm(sen, pi.currency)} />
                   </div>
                 ) : null;
               })()}
@@ -711,6 +718,7 @@ export const PurchaseInvoiceDetail = () => {
                 <th>Group</th>
                 <th>PO</th>
                 <th className={styles.tableRight}>Qty</th>
+                <th className={styles.tableRight}>PO price</th>
                 <th className={styles.tableRight}>Unit</th>
                 <th className={styles.tableRight}>Disc</th>
                 <th className={styles.tableRight}>Total</th>
@@ -731,6 +739,7 @@ export const PurchaseInvoiceDetail = () => {
                   <td className={styles.muted}>{it.item_group ?? it.material_kind ?? '—'}</td>
                   <td><LinePoRefLink line={it} /></td>
                   <td className={styles.tableRight}>{it.qty}</td>
+                  <td className={styles.tableRight}><PoPriceReference poUnitPriceSen={it.po_unit_price_sen} piUnitPriceSen={it.unit_price_sen} fmt={(sen) => fmtRm(sen, pi.currency)} align="right" /></td>
                   <td className={styles.tableRight}>{fmtRm(it.unit_price_sen, pi.currency)}</td>
                   <td className={styles.tableRight}>{(it.discount_sen ?? 0) > 0 ? fmtRm(it.discount_sen, pi.currency) : '—'}</td>
                   <td className={styles.priceCell}>{fmtRm(it.line_total_sen ?? (it.qty * it.unit_price_sen - (it.discount_sen ?? 0)), pi.currency)}</td>

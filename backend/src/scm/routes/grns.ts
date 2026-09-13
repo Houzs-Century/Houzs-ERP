@@ -1,7 +1,7 @@
 // /grns — Goods Receipt Notes (procurement receiving step).
 // PO → GRN → Purchase Invoice. On POST, qty_received rolls up to PO items.
 
-import { poRefByPoItemId, stampGrnLinePoRefs, type LinePoRef } from '../lib/line-po-ref';
+import { poPriceByPoItemId, poRefByPoItemId, stampGrnLinePoRefs, type LinePoRef } from '../lib/line-po-ref';
 import { Hono } from 'hono';
 import { GRN_STATUS_BUCKETS } from '../lib/grn-status-buckets';
 import { HELD_OR_TERM, HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
@@ -1289,7 +1289,7 @@ grns.get('/:id', async (c) => {
   );
   const headerReceivedAt = (h.data as { received_at?: string | null }).received_at ?? null;
   const poItemIds = [...new Set(lineItems.map((it) => it.purchase_order_item_id).filter((x): x is string => Boolean(x)))];
-  let poRefs: ReadonlyMap<string, LinePoRef> = new Map();
+  let poRefs: ReadonlyMap<string, LinePoRef> = new Map(); let poPrices: ReadonlyMap<string, number | null> = new Map();
   /* Owner 2026-08-06 — the V2 detail's "Ordered" column needs the SOURCE PO
      line's qty (grn_items has no ordered-qty column of its own; the V2 page
      was reading a nonexistent `qty` field and rendered 0 on every GRN). Same
@@ -1299,14 +1299,14 @@ grns.get('/:id', async (c) => {
   const downstreamMap = await grnLineDownstream(sb, lineItems.map((it) => it.id));
   if (poItemIds.length > 0) {
     const { data: poiRows } = await sb.from('purchase_order_items')
-      .select('id, qty, purchase_order_id, po:purchase_orders ( po_number )')
+      .select('id, qty, unit_price_sen, purchase_order_id, po:purchase_orders ( po_number )')
       .in('id', poItemIds);
     const rows = (poiRows ?? []) as Array<{ id: string; qty: number | null; purchase_order_id: string | null; po: { po_number: string } | Array<{ po_number: string }> | null }>;
     // #26 — the PO each LINE came from (id + number, so the screens can link it).
-    poRefs = poRefByPoItemId(rows);
+    poRefs = poRefByPoItemId(rows); poPrices = poPriceByPoItemId(rows as Array<{ id: string; unit_price_sen?: number | null }>);
     for (const r of rows) if (r.qty != null) poQtyByItemId.set(r.id, Number(r.qty));
   }
-  stampGrnLinePoRefs(lineItems, poRefs);
+  stampGrnLinePoRefs(lineItems, poRefs, poPrices);
   const items = lineItems.map((it) => ({
     ...it,
     ordered_qty: it.purchase_order_item_id ? (poQtyByItemId.get(it.purchase_order_item_id) ?? null) : null,

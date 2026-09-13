@@ -46,6 +46,8 @@ import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { useGrnDetail, useGrnDetails } from '../../vendor/scm/lib/grn-queries';
 import { useActiveCurrencies, rateFor } from '../../vendor/scm/lib/currencies-queries';
 import { LinePoRefLink } from '../../vendor/scm/components/LinePoRefLink';
+import { PoPriceReference } from '../../vendor/scm/components/PoPriceReference';
+import { defaultPiUnitPriceSen } from '../../vendor/scm/lib/pi-po-price-rule';
 import { linePoLink, type LinePoFields } from '../../vendor/scm/lib/line-po-link';
 import { CurrencySelect } from '../../vendor/scm/components/CurrencySelect';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
@@ -116,6 +118,9 @@ type DraftLine = {
   /* #26 — the PO the source receipt line came from (GRN detail serves it);
      absent on a manual line. Display only, never sent. */
   sourcePo?:      LinePoFields;
+  /* The PO line's price, shown beside Unit Price for reference (owner
+     2026-09-14). Display only: the server stamps its own copy at insert. */
+  poUnitPriceSen?: number | null;
 };
 
 export const PurchaseInvoiceNew = () => {
@@ -240,7 +245,10 @@ export const PurchaseInvoiceNew = () => {
         itemGroup:      it.item_group ?? null,
         variants:       (it.variants as Record<string, unknown> | null) ?? null,
         qty:            pickQtyById ? (pickQtyById.get(it.id) ?? it._remaining) : it._remaining,
-        unitPriceSen: it.unit_price_sen ?? 0,
+        /* Owner 2026-09-14: 「create 的时候，系统肯定会把 PO 的价钱直接带过来」 —
+           the PO price when the order named one, else the receipt's. */
+        unitPriceSen: defaultPiUnitPriceSen(it.po_unit_price_sen ?? null, it.unit_price_sen ?? 0),
+        poUnitPriceSen: it.po_unit_price_sen ?? null,
         notes:          '',
         sourcePo:       { source_po_id: it.source_po_id ?? null, source_po_number: it.source_po_number ?? null },
       }));
@@ -1022,6 +1030,9 @@ export const PurchaseInvoiceNew = () => {
                     <MoneyInput bare valueSen={l.unitPriceSen}
                       onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen ?? 0 })}
                       inputClassName={styles.fieldInput} selectOnFocus />
+                    {!isManualLine && (
+                      <PoPriceReference poUnitPriceSen={l.poUnitPriceSen} piUnitPriceSen={l.unitPriceSen} fmt={(sen) => fmtRm(sen, currency)} />
+                    )}
                   </label>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Line Total</span>

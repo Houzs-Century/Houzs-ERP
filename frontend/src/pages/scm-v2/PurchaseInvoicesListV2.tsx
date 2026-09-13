@@ -46,6 +46,7 @@ import { PullToRefresh } from "../../components/PullToRefresh";
 import { ListErrorPanel, SearchPendingPanel, SearchProgress } from "../../components/SearchProgress";
 import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
+import { poPriceMarker, usePiListPoPriceMap } from "../../vendor/scm/lib/pi-list-po-price";
 import {
   usePurchaseInvoicesPaged,
   useEnrichedPiListRows,
@@ -657,6 +658,9 @@ export function PurchaseInvoicesListV2() {
   // no longer waits on a company-wide computeMrp (perf/pi-list-mrp-off-load).
   const serverRows = (data?.purchaseInvoices ?? []) as PiRow[];
   const rows = useEnrichedPiListRows(serverRows, !listLoading);
+  /* PO price vs invoice price, per invoice (owner 2026-09-14) — a quiet marker,
+     fetched a beat after the page renders, never gating anything. */
+  const poPriceById = usePiListPoPriceMap(useMemo(() => serverRows.map((r) => r.id).filter(Boolean) as string[], [serverRows]), !listLoading);
   const total = data?.total ?? 0;
   const counts = data?.statusCounts ?? {
     all: 0,
@@ -1027,6 +1031,25 @@ export function PurchaseInvoicesListV2() {
           return <span className="font-money text-[13px] font-semibold text-synced">Cleared</span>;
         }
         return <span className="font-money text-[13px] font-semibold text-err">{fmtRm(o)}</span>;
+      },
+    },
+    {
+      key: "vs_po",
+      label: "vs PO price",
+      width: "132px",
+      disableSort: true,
+      getValue: (r) => poPriceMarker(poPriceById.get(String(r.id)))?.label ?? "",
+      render: (r) => {
+        const m = poPriceMarker(poPriceById.get(String(r.id)));
+        if (!m) return <span className="text-[12px] text-ink-muted">…</span>;
+        if (m.tone === "differs") {
+          return (
+            <span className="text-[12px] font-semibold" style={{ color: "#a16a2e" }} title={`Net ${m.diffSen > 0 ? "+" : "−"}${fmtRm(Math.abs(m.diffSen))} against the purchase order prices. For reference only.`}>
+              {m.label}
+            </span>
+          );
+        }
+        return <span className={m.tone === "matches" ? "text-[12px] text-ink-secondary" : "text-[12px] text-ink-muted"}>{m.label}</span>;
       },
     },
     {

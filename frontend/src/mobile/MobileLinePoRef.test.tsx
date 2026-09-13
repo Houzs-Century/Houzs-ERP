@@ -42,3 +42,36 @@ describe("MobileLinePoRef", () => {
     expect(container.textContent).toBe("");
   });
 });
+
+import { MobileLinePoFacts, mobilePiPoPriceNotice } from "./MobileLinePoRef";
+
+describe("MobileLinePoFacts — PO ref, and on an invoice the PO price beside the PI price", () => {
+  it("purchase invoice line: PO ref + PO price with the difference", () => {
+    render(<MobileLinePoFacts moduleKey="purchase-invoices" line={{ source_po_id: "po-1", source_po_number: "HC-PO-1", po_unit_price_sen: 80_000, unit_price_sen: 83_000 }} />);
+    expect(screen.getByText("HC-PO-1")).toBeTruthy();
+    expect(screen.getByText(/PO RM\s?800\.00/)).toBeTruthy();
+    expect(screen.getByText(/\+RM\s?30\.00 vs PO/)).toBeTruthy();
+  });
+  it("purchase invoice line with no PO: says no PO link", () => {
+    render(<MobileLinePoFacts moduleKey="purchase-invoices" line={{ po_unit_price_sen: null, unit_price_sen: 900 }} />);
+    expect(screen.getByText("no PO link")).toBeTruthy();
+  });
+  it("goods receipt line: PO ref only, no price row", () => {
+    render(<MobileLinePoFacts moduleKey="grns" line={{ source_po_id: "po-1", source_po_number: "HC-PO-1", po_unit_price_sen: 80_000, unit_price_sen: 83_000 }} />);
+    expect(screen.queryByText(/vs PO|PO RM/)).toBeNull();
+  });
+});
+
+describe("mobilePiPoPriceNotice — the phone's at-a-glance line", () => {
+  it("names how many lines differ and the net, as information", () => {
+    const n = mobilePiPoPriceNotice([
+      { qty: 1, unit_price_sen: 83_000, po_unit_price_sen: 80_000 },
+      { qty: 2, unit_price_sen: 22_500, po_unit_price_sen: 20_000 },
+      { qty: 1, unit_price_sen: 5_000, po_unit_price_sen: 5_000 },
+    ]);
+    expect(n).toMatch(/^2 lines billed at a different price from the PO \(net \+RM\s?80\.00\)\. For reference only\.$/);
+  });
+  it("nothing differs -> no notice", () => {
+    expect(mobilePiPoPriceNotice([{ qty: 1, unit_price_sen: 213_800, po_unit_price_sen: 0 }])).toBeNull();
+  });
+});

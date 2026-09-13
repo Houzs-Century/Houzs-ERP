@@ -1506,6 +1506,13 @@ The one reading of "has a PO" is `linePoLink` in
 `frontend/src/vendor/scm/lib/line-po-link.ts`; a manual line shows a dash and is
 never given the header's PO.
 
+**`po_unit_price_sen` per line (2026-09-14).** The same read in
+`backend/src/scm/routes/grns.ts` also serves the purchase-order line's unit price
+(`stampGrnLinePoRefs` in `backend/src/scm/lib/line-po-ref.ts`), null on a manual
+line. The receipt screens do not show it; the create-purchase-invoice-from-receipt
+screen starts a new invoice line at it — see `docs/modules/purchase-invoice.md`,
+*The PO price is STORED on the line*.
+
 Measured read-only on 2026-09-14: of 1,202 posted receipt lines, 87 (all company
 HOUZS) have no `purchase_order_item_id`, and none points at a purchase-order line
 that no longer exists.
