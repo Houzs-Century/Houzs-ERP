@@ -499,6 +499,14 @@ live in `GET /:docNo/items` and in the deferred `GET /:docNo/coverage`; **`GET
 service line and `null` for every other line, and the client heals the real value
 from `/:docNo/coverage` after the doc renders (see §2 and the perf note).
 
+**Which clients make that second call** (re-check with `git grep -n
+useSoLineCoverage frontend/src`): `SalesOrderDetailV2` (desktop detail), the list
+drill-down (docs/bugs/0598) and, since 2026-09-14, `MobileSODetail` — the phone
+never did, so from 2026-09-01 its line card could not show a line's incoming
+purchase order or READY source at all
+(`docs/bugs/0874-the-phone-s-sales-order-detail-never-fetched-line-coverage-s.md`).
+All three overlay it with `vendor/scm/lib/so-coverage-overlay.ts`.
+
 | Line kind | Rule |
 |---|---|
 | SERVICE (`isServiceLine`) | always `'stock'` — a service carries no inventory, so it is inherently available |
