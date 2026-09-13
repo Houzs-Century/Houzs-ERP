@@ -17,6 +17,16 @@ name: Venture Portal feed latency (read-only)
 # a schedule turns a real query into CI noise nobody reads.
 on:
   workflow_dispatch:
+    inputs:
+      since:
+        description: >-
+          Only count rows QUEUED at or after this instant (ISO, e.g.
+          2026-09-13T13:16:00Z). Leave empty to count everything. Pass the deploy
+          time of the sender you are measuring — a row queued under older
+          behaviour carries that behaviour's wait in its seconds, and pooling the
+          two describes neither.
+        required: false
+        type: string
 
 # Deliberately NOT in the deploy concurrency group: this touches nothing and must
 # never queue behind — or displace — a release.
@@ -43,6 +53,7 @@ jobs:
       - run: node scripts/check-venture-portal-latency.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SINCE: ${{ inputs.since }}
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml for
           # the full Happy-Eyeballs reasoning. Harmless on an IPv4-only host.
           NODE_OPTIONS: --dns-result-order=ipv4first

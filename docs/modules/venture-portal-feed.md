@@ -127,6 +127,15 @@ key has to be pasted on the portal by hand first. **Replace this paragraph with
 the number from the first real order** — an estimate left standing here would read
 as a measurement to the next person.
 
+**ALWAYS PASS `since`, and pass the DEPLOY TIME of the sender you are measuring.**
+A latency means nothing without the window it was measured over, and this queue
+has already outlived two behaviour changes in one day: rows queued before
+2026-09-13T13:16Z carry the pre-`0863` starvation in their seconds (the newest
+such row read 983.7s), and pooling them with later rows describes neither. The
+run prints the window it used on its first line, and prints each row's queued-at
+so the cutoff can be checked rather than trusted. Left empty it counts everything
+and says so — right for "is the feed working at all", wrong for "how fast is it".
+
 **The number comes from a script, not from asking anybody.** Actions ->
 **Venture Portal feed latency (read-only)** -> Run workflow
 (`.github/workflows/venture-portal-latency.yml`,
