@@ -89,8 +89,12 @@ if (WANTS_APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
 }
 const APPLY = WANTS_APPLY;
 
-/* The three drawer codes are MUTUALLY EXCLUSIVE — one bed, one drawer position.
-   This is the only family this tool is allowed to displace. */
+/* The drawer family is the only one this tool is allowed to DISPLACE: a bed
+   whose text or ruling names a hand must not also keep the other hand.
+   They are not strictly exclusive, though — a PAIR is legitimate, one drawer on
+   each side, and the owner confirmed HC-SO-013353 is exactly that on 2026-09-13
+   (「1 right+left」). So a ruling may name more than one, and only the drawers
+   NOT wanted are removed. */
 const DRAWERS = ['Left Drawer', 'Right Drawer', 'Front Drawer'];
 const isDrawer = (c) => DRAWERS.some((d) => K(d) === K(c));
 
@@ -226,12 +230,20 @@ try {
     const cat = r.grp === 'sofa' ? 'SOFA' : 'BEDFRAME';
     const liveCode = (want) => liveByCat.get(cat).get(K(want)) ?? null;
     if (ruled) {
-      const code = liveCode(ruled.is);
-      if (code) {
+      /* A ruling may name TWO codes. HC-SO-013353's `2 SIDE DRAWER` is a PAIR -
+         one drawer on each side - and the owner confirmed it on 2026-09-13
+         (「1 right+left」). So `is` is a string OR an array, and every code it
+         names is written; the drawer displacement still clears whatever the
+         chain carried first, so a pair replaces a single and never doubles up. */
+      const want = (Array.isArray(ruled.is) ? ruled.is : [ruled.is]).map((x) => liveCode(x));
+      if (want.every(Boolean) && want.length) {
         for (let i = gained.length - 1; i >= 0; i -= 1) if (isDrawer(gained[i])) gained.splice(i, 1);
-        gained.push(code);
+        for (const code of want) if (!gained.some((x) => K(x) === K(code))) gained.push(code);
         ruledUsed += 1;
-      } else { ruledMissingCode.push(`${r.doc_no} ${ruled.is}`); }
+      } else {
+        const named = Array.isArray(ruled.is) ? ruled.is.join(' + ') : ruled.is;
+        ruledMissingCode.push(`${r.doc_no} ${named}`);
+      }
     }
     for (const a of (rulings.extras.get(r.doc_no) ?? [])) {
       const code = liveCode(a);
@@ -287,11 +299,13 @@ try {
     for (const g of grn) pushHave(g.variants);
     for (const d of dos) pushHave(d.variants);
 
-    const wantHand = c.gained.find((x) => isDrawer(x)) ?? null;
+    /* Every drawer the line is now known to want. More than one is legitimate
+       (a pair, one per side); the ones NOT wanted are displaced. */
+    const wantDrawers = c.gained.filter((x) => isDrawer(x));
     const next = [];
     const displaced = [];
     for (const x of have) {
-      if (wantHand && isDrawer(x) && K(x) !== K(wantHand)) { displaced.push(x); continue; }
+      if (wantDrawers.length && isDrawer(x) && !wantDrawers.some((w) => K(w) === K(x))) { displaced.push(x); continue; }
       next.push(x);
     }
     for (const g of c.gained) if (!next.some((x) => K(x) === K(g))) next.push(g);
