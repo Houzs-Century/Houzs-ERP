@@ -147,11 +147,11 @@ import { SO_FINANCE_KEYS, SO_ITEM_FINANCE_KEYS, stripAuditFinance } from '../lib
 import { resolveSalesScopeIds, applySoScope, soDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { recordAmendmentRequested, notifyAmendmentsRaised } from '../lib/amendment-raised-effects';
 import {
-  resolveVenueBinding,
-  loadVenueBindingInputs, venueNameForHalfWrittenPair,
+  venueNameForHalfWrittenPair,
   type VenueSource,
   type VenueBindingSb,
 } from '../lib/venue-binding';
+import { bindVenueOnCreate, resolveFairForSave, type FairDb } from '../lib/fair-binding';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
 /* What changed on a LINE, for the audit trail — derived from the update about to
    be persisted rather than a hand-kept field list (owner 2026-08-12; see the
@@ -2512,85 +2512,6 @@ mfgSalesOrders.get('/customer-search', async (c) => {
   return c.json({ customers: [...byKey.values()].slice(0, 8) });
 });
 
-// Houzs — resolve the venue the logged-in salesperson is BOUND to on a given
-// date, so the New-SO / OCR form (desktop AND mobile) can pre-select it in the
-// Venue dropdown. MUST be registered BEFORE "/:docNo" (single-segment static
-// path, else Hono treats "active-venue" as a docNo).
-//
-// The rule itself lives in lib/venue-binding.ts and is shared with the SO create
-// path — this endpoint only fetches, calls it, and maps the venue NAME onto the
-// project_venues master id the dropdown compares against. The route name is
-// kept as "active-venue" (rather than renamed to match the resolver) because the
-// desktop form, the mobile form and the vendored SCM client all call this exact
-// path; the concept it returns is now "the rep's bound venue", of which the
-// active exhibition is one of two sources.
-//
-// ZERO PMS DATA IS THE NORMAL CASE: showroom parking is the primary binding, and
-// a rep on no projects at all must still get their showroom's venue back here.
-// Nothing on this path warns, errors or degrades because no project has a team.
-//
-// venueId is null when the resolved venue text isn't in the project_venues
-// master — a KNOWN and tolerated gap (projects reference ~60 distinct venues,
-// the master holds ~38). The form stamps the text anyway and hints that it is
-// unmastered; it does NOT reject the order. Rejecting unmastered venues would
-// block real sales to enforce a list nobody has finished filling in.
-mfgSalesOrders.get('/active-venue', async (c) => {
-  const hu = c.get('houzsUser');
-  const uid = hu?.id != null ? Number(hu.id) : NaN;
-  const dateRaw = c.req.query('date');
-  /* The ORDER's date when the form supplies one (a backdated slip must resolve
-     against the fair that was running the day it was written), else today in
-     MYT — never the UTC date, which is yesterday until 08:00 local. */
-  const soDate =
-    typeof dateRaw === 'string' && /^\d{4}-\d{2}-\d{2}/.test(dateRaw)
-      ? dateRaw.slice(0, 10)
-      : todayMyt();
-  const EMPTY = {
-    venueId: null, venueName: null, projectName: null,
-    source: null, projectId: null, showroomName: null,
-  };
-  if (!Number.isFinite(uid)) return c.json(EMPTY);
-  try {
-    const sb = c.get('supabase');
-    const staffId = await resolveCallerStaffId(sb, uid);
-    const { pmsCandidates, showroom } = await loadVenueBindingInputs({
-      db: c.env.DB, sb: sb as unknown as VenueBindingSb, userId: uid, staffId,
-    });
-    const binding = resolveVenueBinding({ soDate, pmsCandidates, showroom });
-    if (!binding.venueName) return c.json(EMPTY);
-
-    /* Map the resolved venue TEXT onto the project_venues master id, so the
-       dropdown can SELECT the row rather than only display the text. Lives here
-       and not in the resolver because it is a presentation concern — the venue
-       that gets stamped is the text either way. */
-    let venueId: string | null = null;
-    try {
-      /* Company-scoped (mig 0093): venue NAMES are not unique across the two
-         masters, so an unscoped match hands this company the OTHER company's
-         venue id — and that id is what the SO stores. See projects-pms.md. */
-      const row = await c.env.DB.prepare(
-        `SELECT id FROM project_venues
-          WHERE lower(trim(name)) = lower(trim(?)) AND active = 1${activeCompanySql(c)} LIMIT 1`,
-      )
-        .bind(binding.venueName)
-        .first<{ id?: number | null }>();
-      venueId = row?.id != null ? String(row.id) : null;
-    } catch {
-      venueId = null; // unmastered venue — the text still stands
-    }
-    return c.json({
-      venueId,
-      venueName: binding.venueName,
-      projectName: binding.projectName,
-      projectId: binding.projectId,
-      source: binding.source,
-      showroomName: showroom && binding.source === 'SHOWROOM' ? showroom.warehouseName : null,
-    });
-  } catch {
-    return c.json(EMPTY);
-  }
-});
-
 mfgSalesOrders.get('/:docNo', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo');
   const [h, i] = await Promise.all([
@@ -3514,40 +3435,35 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      it MANUAL, and hanging the fair link off the venue branch would leave
      project_id NULL for the very flow the Fair Report needs. NON-FATAL
      throughout — no lookup failure may ever block a sale. */
-  let projectIdToStamp: number | null = null;
-  {
-    const houzsUser = c.get('houzsUser');
-    const uid = houzsUser?.id != null ? Number(houzsUser.id) : NaN;
-    if (Number.isFinite(uid)) {
-      /* The ORDER's date, not today's — a backdated slip must resolve against
-         the fair that was running the day it was written, in MYT. */
-      const soDateForVenue =
-        typeof body.soDate === 'string' && body.soDate.trim()
-          ? body.soDate.trim().slice(0, 10)
-          : todayMyt();
-      try {
-        const { pmsCandidates, showroom } = await loadVenueBindingInputs({
-          /* Cast: SupabaseClient's generics are deep enough that structurally
-             matching them here trips TS2589. The loader only ever calls
-             .from().select().eq().maybeSingle(), which VenueBindingSb pins. */
-          db: c.env.DB, sb: sb as unknown as VenueBindingSb, userId: uid,
-          /* The SALESPERSON the order is attributed to, not necessarily the
-             caller: an admin keying an order in for a showroom rep must stamp
-             the REP's showroom, exactly as the home-venue chain above follows
-             the selected salesperson. */
-          staffId: salespersonIdToStamp ?? callerStaffId,
-        });
-        const binding = resolveVenueBinding({ soDate: soDateForVenue, pmsCandidates, showroom });
-        projectIdToStamp = binding.projectId;
-        if (!resolvedVenueName && binding.venueName) {
-          resolvedVenueName = binding.venueName;
-          venueSource = binding.source;
-        }
-      } catch {
-        /* non-fatal — leave venue + project_id NULL if the lookup fails */
-      }
-    }
+  /* The ORDER's date, not today's — a backdated slip must resolve against the
+     fair that was running the day it was written, in MYT. Also the date the
+     fair link below is resolved against, so the two can never disagree. */
+  const soDateForVenue =
+    typeof body.soDate === 'string' && body.soDate.trim()
+      ? body.soDate.trim().slice(0, 10)
+      : todayMyt();
+  /* The 34-line inline block this replaces now lives in lib/fair-binding.ts as
+     bindVenueOnCreate — same rule, same non-fatal contract, one copy. Cast: the
+     SupabaseClient generics are deep enough that matching them structurally here
+     trips TS2589; the loader only calls .from().select().eq().maybeSingle(). */
+  const autoBind = await bindVenueOnCreate({
+    db: c.env.DB, sb: sb as unknown as VenueBindingSb,
+    userId: c.get('houzsUser')?.id != null ? Number(c.get('houzsUser')?.id) : NaN,
+    staffId: salespersonIdToStamp ?? callerStaffId,
+    soDate: soDateForVenue,
+  });
+  let projectIdToStamp: number | null = autoBind.projectId;
+  if (!resolvedVenueName && autoBind.venueName) {
+    resolvedVenueName = autoBind.venueName;
+    venueSource = autoBind.source;
   }
+  /* The order's BRAND decides which booth at the picked event this sale belongs
+     to, and it is derived from the SKUs — so it is not known until the lines are
+     inserted. Carried down to the fair stamp after that. An explicit
+     body.branding is the caller's decision and wins, exactly as it does for the
+     header stamp itself. */
+  let effectiveBrand: string | null =
+    String((body.branding as string | null | undefined) ?? '').trim() || null;
 
   /* Houzs venue_id guard — only a real uuid reaches the uuid column; a
      project_venues integer id or a `showroom:…` synthetic id becomes NULL and
@@ -5449,6 +5365,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         activeCompanyId(c) ?? null,
       );
       if (headerBrand) {
+        effectiveBrand = headerBrand;
         await scopeToCompany(
           sb.from('mfg_sales_orders').update({ branding: headerBrand }).eq('doc_no', docNo),
           c,
@@ -5460,6 +5377,42 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        The inline rollup above set per-module costs; this corrects them + the
        header totals to the combo. No-op for non-sofa / non-matching SOs. */
     await recomputeTotals(sb, docNo, c);
+  }
+
+  /* ── FAIR LINK (owner 2026-09-13) ─────────────────────────────────────────
+     Which EXHIBITION this sale belongs to, not just where it was written. The
+     picker sent a place and an organizer; the booth is re-derived here from the
+     order's own brand, because a client-supplied project id would let a stale
+     dropdown attribute a sale to another company's fair and `project_id` carries
+     no company predicate of its own.
+
+     Runs OUTSIDE the items block on purpose: an order with no lines still has a
+     venue and a date, and must still record WHY it has no fair link rather than
+     leaving a blank that reads the same as "nobody has looked".
+
+     The automatic PMS binding above is a real link when it fired, so it stands
+     when the picker resolves nothing. Non-fatal throughout — no fair-link
+     problem may block a sale, and the nightly reconcile retries PENDING. */
+  {
+    const fair = await resolveFairForSave({
+      db: c.env.DB as unknown as FairDb,
+      companySql: activeCompanySql(c, 'p.company_id'),
+      venue: resolvedVenueName,
+      organizer:
+        typeof body.fairOrganizer === 'string' && body.fairOrganizer.trim()
+          ? body.fairOrganizer.trim()
+          : null,
+      soDate: soDateForVenue,
+      brand: effectiveBrand,
+    });
+    const linkedId = fair.projectId ?? projectIdToStamp;
+    await scopeToCompany(
+      sb
+        .from('mfg_sales_orders')
+        .update({ project_id: linkedId, fair_match: linkedId != null ? 'PICKED' : fair.match })
+        .eq('doc_no', docNo),
+      c,
+    );
   }
 
   /* PWP Code Voucher (migration 0130) — carry forward the un-applied reserved
@@ -6832,6 +6785,15 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   if (vFix.kind === 'unresolved') { delete body['venue']; delete updates['venue']; }
   if (body['venue'] !== undefined) {
     updates['venue_source'] = 'MANUAL' satisfies VenueSource;
+    /* FAIR LINK (owner 2026-09-13) — the venue just moved, so whatever fair this
+       order was linked to is now a claim about a place it was not written at.
+       Dropping the link and marking it PENDING hands it to the nightly reconcile
+       (and, failing that, to the pending screen) instead of leaving a stale
+       attribution in exhibition P&L. Re-resolving it here would need the order's
+       brand, which means reading its lines on the critical path of every header
+       save; PENDING is the honest, cheap answer and it self-heals. */
+    updates['project_id'] = null;
+    updates['fair_match'] = 'PENDING';
   }
 
   /* Task #121 — when customerState changes, re-derive customer_country
