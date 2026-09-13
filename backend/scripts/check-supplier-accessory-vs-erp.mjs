@@ -107,9 +107,16 @@ try {
       const t = pillowType(l.code, l.desc);
       if (!t) continue;
       rows += 1;
-      const m = supplier.get(d.ourPoRef) ?? new Map();
+      /* KEY BY THE NORMALISED REFERENCE. The first production run
+         (34777318705) keyed by the raw string, and the supplier writes one PO
+         two ways - `PO--009780` x2 and `PO-009780` x1. Both resolved to the same
+         purchase order, and each half was compared against our FULL quantity,
+         so a document that agrees (2 + 1 = 3 against our 3) was reported as two
+         quantity differences. */
+      const key = refVariants(d.ourPoRef)[0];
+      const m = supplier.get(key) ?? new Map();
       m.set(t, (m.get(t) ?? 0) + Number(l.qty ?? 0));
-      supplier.set(d.ourPoRef, m);
+      supplier.set(key, m);
     }
   }
   line(`   supplier accessory rows: ${rows} over ${supplier.size} document(s)`);
@@ -132,15 +139,24 @@ try {
     const lines = await sql`
       SELECT i.item_code, coalesce(i.material_name,'') AS description,
              coalesce(i.qty,0)::numeric AS qty, coalesce(i.received_qty,0)::numeric AS recv,
-             lower(coalesce(i.item_group,'')) AS grp
-        FROM scm.purchase_order_items i WHERE i.purchase_order_id = ${po.id}`;
+             lower(coalesce(i.item_group,'')) AS grp,
+             so.doc_no AS so_doc, so.item_code AS so_code, coalesce(so.description,'') AS so_desc,
+             coalesce(so.description2,'') AS so_desc2
+        FROM scm.purchase_order_items i
+        LEFT JOIN scm.mfg_sales_order_items so ON so.id = i.so_item_id
+       WHERE i.purchase_order_id = ${po.id}`;
     const ours = new Map();
     const recv = new Map();
+    const evidence = new Map();
     for (const r of lines) {
       const t = pillowType(r.item_code, r.description);
       if (!t) continue;
       ours.set(t, (ours.get(t) ?? 0) + Number(r.qty));
       recv.set(t, (recv.get(t) ?? 0) + Number(r.recv));
+      const ev = evidence.get(t) ?? [];
+      ev.push(`${r.item_code} "${r.description}" x${Number(r.qty)}`
+        + (r.so_doc ? `  <- customer line ${r.so_doc} ${r.so_code} "${r.so_desc}"${r.so_desc2 ? ` / ${r.so_desc2}` : ''}` : '  (no sales line)'));
+      evidence.set(t, ev);
     }
 
     const types = new Set([...theirs.keys(), ...ours.keys()]);
@@ -150,7 +166,8 @@ try {
     for (const t of types) {
       const a = theirs.get(t) ?? 0;
       const b = ours.get(t) ?? 0;
-      const e = { po: po.po_number, type: t, supplier: a, ours: b, received: recv.get(t) ?? 0 };
+      const e = { po: po.po_number, type: t, supplier: a, ours: b, received: recv.get(t) ?? 0,
+        evidence: evidence.get(t) ?? [] };
       if (a === b) out.agree.push(e);
       else if (b === 0) { out.oursMissing.push(e); anyDiff = true; }
       else if (a === 0) { out.supplierNone.push(e); anyDiff = true; }
@@ -181,6 +198,7 @@ try {
       line(`      ${String(e.po).padEnd(16)} ${String(e.type).padEnd(14)} supplier ${pad(e.supplier, 3)}`
         + `   ours ${pad(e.ours, 3)}   received ${pad(e.received, 3)}`
         + (e.received > 0 ? '   <- goods are IN' : ''));
+      for (const ev of e.evidence) line(`           ours: ${ev}`);
     }
   };
   show('QTY DIFFERS', out.qty);
