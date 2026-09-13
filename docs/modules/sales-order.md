@@ -875,6 +875,79 @@ It is wired to the real backend on the **unchanged** contract:
 | PREFILL | `GET /mfg-sales-orders/:docNo` (header + items), `GET /mfg-sales-orders/:docNo/payments` |
 | PAY (slip-backed rows) | `POST /mfg-sales-orders/:docNo/payments` |
 | VENUE (derived) | `GET /mfg-sales-orders/active-venue` |
+| FAIR PICKER | `GET /mfg-sales-orders/fair-options?date=YYYY-MM-DD` |
+
+### The FAIR picker — which exhibition a sale belongs to (owner 2026-09-13)
+
+Until this date an SO recorded a VENUE and nothing else. Measured on production
+that day: `project_id` was non-NULL on **0 of 2,946** Houzs Century orders, so no
+order in the account book could say which FAIR it was written at — and the venue
+text cannot answer it either, because four different fairs were running at MID
+VALLEY on the same three days, one per brand. Full trace:
+`docs/bugs/0862-a-sales-order-could-not-record-which-fair-it-was-written-at.md`.
+
+The Venue field on all three SO forms (`SalesOrderNew`, `SalesOrderDetail`,
+`MobileNewSO`) is now **Fair**, rendered by ONE shared component,
+`frontend/src/components/FairPicker.tsx`. Four rules, all the owner's:
+
+1. **A row is a PLACE plus an ORGANIZER, with no date** — 「只需要选 event 和
+   organizer 就好了」. Dates appear on exactly one shape: the same venue AND the
+   same organizer twice inside one month (four occurrences in the seven months to
+   Sep 2026, e.g. MVEC SOUTHKEY / REX on 8-10 and 14-16 Aug). The server sets
+   `showDates` on both of those rows and on nothing else.
+2. **Nobody types** — 「dont let them write in manual, third option just pick
+   others」. "Others" opens a second PICK over the company's venue master (92 rows
+   for Houzs Century, covering every venue any 2026 fair uses). There is no text
+   input anywhere in the flow; `FairPicker.test.tsx` asserts that directly.
+3. **The BRAND is never asked for.** It is derived from the order's SKUs
+   (`deriveHeaderBrandingFromLines`) and the server uses venue + organizer + date
+   + brand to pick which brand BOOTH the order belongs to.
+4. **A fair that is not in PMS yet is normal, not an error.** 23% of fairs reach
+   the system within a week of opening and 13 of 114 arrived after they had
+   already started, so the order records the place, lands `PENDING`, and the
+   daily pass links it once the fair exists.
+
+| Surface | File |
+|---|---|
+| The rule (pure, tested) | `backend/src/scm/lib/fair-options.ts` |
+| Its SQL | `backend/src/scm/lib/fair-binding.ts` |
+| Routes | `backend/src/scm/routes/mfg-so-fairs.ts` |
+| Daily second pass | `backend/src/scm/lib/fair-reconcile.ts` (cron, UTC hour 0) |
+| Picker | `frontend/src/components/FairPicker.tsx` |
+| Settle screen | `frontend/src/pages/scm-v2/FairPending.tsx` -> `/scm/fair-pending` |
+| Data gaps report | `backend/scripts/report-fair-data-gaps.mjs` |
+| Cron registration (UTC hour 0) | `backend/src/index.ts` |
+| Router mount, ahead of `/:docNo` | `backend/src/scm/index.ts` |
+| Route registration | `frontend/src/App.tsx`, `frontend/src/routing/routeManifest.ts` |
+
+**`fair_match` (mig `20260913T1900`) is why a NULL `project_id` is readable.**
+Four different situations used to be one indistinguishable blank:
+
+| value | meaning | who acts |
+|---|---|---|
+| `PICKED` | resolved from a picked event + the order's brand | nobody |
+| `PENDING` | no fair at that place on that date YET | the daily pass |
+| `AMBIGUOUS` | two booths fit; the order cannot say which | a person, on `/scm/fair-pending` |
+| `UNMATCHED` | a fair exists, the order's brand has no booth at it | usually a missing SKU brand |
+| `NULL` | predates the picker (2,946 orders) | deliberately NOT back-stamped |
+
+**Two booths that agree on organizer AND brand collapse to the lowest project
+id** — those are duplicate records of one booth (9 groups live on 2026-09-13) and
+a documented stable arbiter beats refusing an order that has one real answer. Two
+that differ on either answer `AMBIGUOUS` instead: MID VALLEY carried MLE and REX
+on the same day on 2026-03-20, and the lowest id there would be a guess.
+
+**A header PATCH that changes the venue drops the link to `PENDING`** and clears
+`project_id` rather than re-resolving inline — re-resolving needs the order's
+lines, which is a read on the critical path of every header save. The organizer
+is deliberately NOT sent on a PATCH for the same reason; the daily pass re-derives
+from venue + date + brand, which is unique except on the three days of 2026 where
+two organizers shared a venue.
+
+**`GET /active-venue` moved to `mfg-so-fairs.ts`** on the same date, behaviour
+unchanged — `mfg-sales-orders.ts` is over its file-size ceiling and could not
+hold the new endpoints beside it. The mount order in `scm/index.ts` still places
+it ahead of `/:docNo`.
 
 **`active-venue` resolves WITHIN one company, since 2026-08-20.** It returns the
 venue TEXT from `resolveVenueBinding` and then maps that text onto a

@@ -20,6 +20,7 @@ import { resolveSelfStaff } from "../vendor/scm/lib/self-staff";
 import { useAuth, isAdminLevel, isHatchSales } from "../vendor/scm/lib/auth";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
+import { FairPicker, type FairPickValue } from "../components/FairPicker";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import { addressLineProps } from "../lib/acColumnWidths";
@@ -1101,11 +1102,24 @@ export function MobileNewSO({
      value keeps flowing (including a later salesperson change re-deriving it);
      picking "—" reverts to the derived default (desktop-verbatim behaviour). */
   const [pickedVenueId, setPickedVenueId] = useState<string | null>(null);
-  const effectiveVenueId = pickedVenueId ?? resolvedVenueId;
+  /* FAIR PICKER (owner 2026-09-13) — desktop parity, same component, same rules:
+     a row is a place plus an organizer, nothing is typed, and the brand is
+     derived from the SKUs server-side. The venue NAME leads and the master id
+     follows it by name, because a fair can name a venue the master lacks. */
+  const [fairPick, setFairPick] = useState<FairPickValue>({ venue: null, organizer: null });
+  useEffect(() => {
+    /* Seeds a BLANK only — a human pick is a decision and is never overwritten. */
+    if (fairPick.venue == null && resolvedVenueName) setFairPick({ venue: resolvedVenueName, organizer: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedVenueName]);
+  const effectiveVenueId = fairPick.venue
+    ? ((venuesQ.data ?? []).find((r) => r.name.trim().toLowerCase() === fairPick.venue!.trim().toLowerCase())?.id ?? null)
+    : (pickedVenueId ?? resolvedVenueId);
   const effectiveVenueName: string = useMemo(() => {
+    if (fairPick.venue) return fairPick.venue;
     if (pickedVenueId == null) return resolvedVenueName;
     return (venuesQ.data ?? []).find((r) => r.id === pickedVenueId)?.name ?? "";
-  }, [pickedVenueId, venuesQ.data, resolvedVenueName]);
+  }, [fairPick.venue, pickedVenueId, venuesQ.data, resolvedVenueName]);
 
   /* Sales Location derives from state_warehouse_mappings for the picked state
      (desktop parity: SalesOrderNew state → salesLocation cascade). */
@@ -2074,6 +2088,10 @@ export function MobileNewSO({
         /* Same builder as the edit patch — a CREATE sends every field because a
            new order has no prior value to diff against. */
         ...soHeaderPatchFrom(headerPatchInput),
+        /* The picked event's ORGANIZER — CREATE only. On an EDIT the server
+           re-derives the fair whenever the venue changes, so the patch must not
+           carry it (soHeaderPatchFrom feeds the edit diff as well). */
+        fairOrganizer: fairPick.organizer ?? undefined,
         /* EXPLICIT draft flag — the backend statuses DRAFT only on
            body.asDraft === true; nulling the dates alone saves CONFIRMED. */
         asDraft: asDraft === true,
@@ -2304,24 +2322,17 @@ export function MobileNewSO({
                       {buildingTypeOpts.map((t) => <option key={t.id} value={t.value}>{t.label}</option>)}
                     </select>
                   </Field>
-                  {/* Owner 2026-07-04 — Venue is a real select (was read-only).
-                      Defaults to the derived venue (salesperson's active project
-                      / home venue / persisted on edit); the operator can override
-                      from the venues master, mirroring desktop SalesOrderNew. */}
-                  <Field label="Venue" style={{ flex: 1 }}>
-                    <select
-                      className="fld-i"
-                      value={effectiveVenueId ?? ""}
-                      onChange={(e) => setPickedVenueId(e.target.value || null)}
-                    >
-                      <option value="">—</option>
-                      {effectiveVenueId && !(venuesQ.data ?? []).some((v) => v.id === effectiveVenueId) && (
-                        <option value={effectiveVenueId}>{effectiveVenueName || resolvedVenueName || effectiveVenueId}</option>
-                      )}
-                      {(venuesQ.data ?? []).map((v) => (
-                        <option key={v.id} value={v.id}>{v.name}</option>
-                      ))}
-                    </select>
+                  {/* Owner 2026-09-13 — the venue select became the FAIR picker:
+                      place + organizer, no dates, nothing typed. Same component
+                      as desktop SalesOrderNew, which is the point. */}
+                  <Field label="Fair" style={{ flex: 1 }}>
+                    <FairPicker
+                      id="mob-so-fair"
+                      value={fairPick}
+                      soDate={null}
+                      onChange={setFairPick}
+                      selectClassName="fld-i"
+                    />
                   </Field>
                 </div>
                 {!isEdit && autoVenue?.venueId &&

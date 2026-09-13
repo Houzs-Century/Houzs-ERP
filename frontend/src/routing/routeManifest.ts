@@ -50,6 +50,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/unbilled-deliveries",
   "/scm/currencies",
   "/scm/fabric-tracking",
+  "/scm/fair-pending",
   // Warehouse loading queue (no-price "what to load" list, scm.warehouse.inventory).
   "/scm/loading-list",
   "/scm/warehouses",
