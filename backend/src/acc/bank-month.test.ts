@@ -18,7 +18,7 @@
 // uploaded rather than the calendar.
 
 import { describe, it, expect } from 'vitest';
-import { assembleMonth, monthWindow, monthOf, type MonthStatement } from './bank-month';
+import { assembleMonth, monthWindow, monthOf, previousMonth, nextMonth, type MonthStatement } from './bank-month';
 import type { StatementMovement } from './bank-reconcile';
 
 const stmt = (over: Partial<MonthStatement> = {}): MonthStatement => ({
@@ -230,5 +230,80 @@ describe('a month with nothing in it', () => {
 
   it('refuses a month that is not one', () => {
     expect(assembleMonth('2026-13', [], [])).toBeNull();
+  });
+});
+
+describe('a month whose files print no balance, with the figures typed (docs/bugs/0858)', () => {
+  /* Maybank's Account Activity Report: movements only. The owner types the
+     month-end figure off the bank's own statement; the month opens where the
+     previous one closed. The IGNORED movement is a repeat and moves nothing. */
+  const files = [stmt({
+    id: 1, fileName: 'ACCOUNTACTIVITYREPORT_564418759397.csv',
+    periodFrom: '2026-06-02', periodTo: '2026-06-29', openingBalanceSen: null, closingBalanceSen: null,
+  })];
+  const moves = [
+    mov({ id: 1, bookedOn: '2026-06-02', amountSen: 50000 }),
+    mov({ id: 2, bookedOn: '2026-06-29', amountSen: -20000 }),
+    mov({ id: 3, bookedOn: '2026-06-15', amountSen: 99999, state: 'IGNORED' }),
+  ];
+  const typedMay = { month: '2026-05', closingSen: 1000000, typedBy: 'Chew', typedAt: '2026-09-13T07:00:00Z', note: null };
+  const typedJune = { month: '2026-06', closingSen: 1030000, typedBy: 'Chew', typedAt: '2026-09-13T07:05:00Z', note: 'per the June e-statement' };
+
+  it('opens at the previous month\'s typed closing and closes at its own, naming who typed them', () => {
+    const a = assembleMonth('2026-06', files, moves, { closing: typedJune, previousClosing: typedMay })!;
+    expect(a.statementOpeningSen).toBe(1000000);
+    expect(a.openingFrom).toMatchObject({ statementId: null, fileName: null, on: '2026-05-31', typed: { month: '2026-05', by: 'Chew' } });
+    expect(a.statementClosingSen).toBe(1030000);
+    expect(a.closingFrom).toMatchObject({ on: '2026-06-30', typed: { month: '2026-06', note: 'per the June e-statement' } });
+    expect(a.gaps).toEqual([]);
+    expect(a.complete).toBe(true);
+  });
+
+  /* THE ONE THAT MATTERS: a typed figure is believed only when the movements
+     reach it. Otherwise a day is missing, or the figure is wrong, and the
+     month says so with the amount rather than closing over it. */
+  it('is not whole while the typed closing does not follow from the opening and the movements', () => {
+    const a = assembleMonth('2026-06', files, moves, { closing: { ...typedJune, closingSen: 1035000 }, previousClosing: typedMay })!;
+    expect(a.complete).toBe(false);
+    expect(a.gaps).toHaveLength(1);
+    expect(a.gaps[0]).toContain('RM 50.00 is unaccounted for');
+    expect(a.gaps[0]).toContain('closes at RM 10,350.00 (typed)');
+  });
+
+  it('still lacks its opening when only its own closing is typed, and says what to type', () => {
+    const a = assembleMonth('2026-06', files, moves, { closing: typedJune, previousClosing: null })!;
+    expect(a.statementOpeningSen).toBeNull();
+    expect(a.statementClosingSen).toBe(1030000);
+    expect(a.complete).toBe(false);
+    expect(a.gaps.join(' ')).toContain('Type the closing balance of 2026-05');
+  });
+
+  it('lets a figure a file prints win over a typed one', () => {
+    /* A Hong Leong-style file for the 30th that prints the closing. */
+    const printed = stmt({ id: 2, fileName: 'd30.csv', periodFrom: '2026-06-30', periodTo: '2026-06-30', openingBalanceSen: null, closingBalanceSen: 1030000 });
+    const a = assembleMonth('2026-06', [...files, printed], moves, { closing: { ...typedJune, closingSen: 5 }, previousClosing: typedMay })!;
+    expect(a.statementClosingSen).toBe(1030000);
+    expect(a.closingFrom).toMatchObject({ statementId: 2, fileName: 'd30.csv' });
+    expect(a.closingFrom!.typed).toBeUndefined();
+    /* The opening is still the typed one, and the typed check still runs against it. */
+    expect(a.openingFrom).toMatchObject({ typed: { month: '2026-05' } });
+    expect(a.complete).toBe(true);
+  });
+
+  it('ignores a typed figure handed over for some other month', () => {
+    const a = assembleMonth('2026-06', files, moves, {
+      closing: { ...typedJune, month: '2026-07' }, previousClosing: { ...typedMay, month: '2026-04' },
+    })!;
+    expect(a.statementOpeningSen).toBeNull();
+    expect(a.statementClosingSen).toBeNull();
+  });
+
+  it('knows which month comes before and after', () => {
+    expect(previousMonth('2026-06')).toBe('2026-05');
+    expect(previousMonth('2026-01')).toBe('2025-12');
+    expect(nextMonth('2026-06')).toBe('2026-07');
+    expect(nextMonth('2026-12')).toBe('2027-01');
+    expect(previousMonth('rubbish')).toBeNull();
+    expect(nextMonth('2026-13')).toBeNull();
   });
 });

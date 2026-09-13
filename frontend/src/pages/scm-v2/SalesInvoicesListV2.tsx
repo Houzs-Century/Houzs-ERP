@@ -202,11 +202,11 @@ const STATUS_TONE: Record<
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
 > = {
   draft:           { tone: "warning", label: "Draft",       bucket: "sent" },
-  sent:            { tone: "warning", label: "Sent",        bucket: "sent" },
+  sent:            { tone: "warning", label: "Submitted",   bucket: "sent" },
   issued:          { tone: "warning", label: "Submitted",   bucket: "sent" },
   overdue:         { tone: "error",   label: "Overdue",     bucket: "sent" },
-  partially_paid:  { tone: "warning", label: "Partial pay", bucket: "partial" },
-  partial:         { tone: "warning", label: "Partial pay", bucket: "partial" },
+  partially_paid:  { tone: "warning", label: "Partially paid", bucket: "partial" },
+  partial:         { tone: "warning", label: "Partially paid", bucket: "partial" },
   paid:            { tone: "success", label: "Paid",        bucket: "paid" },
   completed:       { tone: "success", label: "Paid",        bucket: "paid" },
   cancelled:       { tone: "error",   label: "Cancelled",   bucket: "cancelled" },

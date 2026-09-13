@@ -32,6 +32,16 @@
 //      not add up" is not something anybody can act on and "RM 1,240 moved
 //      between 4 Sep and 8 Sep on days you have not uploaded" is.
 //
+//   4. A figure a file PRINTS always wins; where no file inside the month
+//      prints one, a figure somebody TYPED off the bank's own month-end
+//      statement stands in (docs/bugs/0858). Maybank's Account Activity Report
+//      lists movements and no balance, so without this a Maybank month could
+//      never tally or close. The typed closing is this month's end; the
+//      previous month's typed closing is this month's start, because a month
+//      opens where the last one closed — and a typed figure is checked against
+//      the movements the way the chain is, so a mistyped one, or a day missing
+//      from the files, is named with the amount rather than quietly believed.
+//
 // Nothing here reads a database or decides what a movement means. It arranges
 // what a month is made of and hands it to reconcileBankStatement, which is the
 // one place that answers whether the bank and the books agree.
@@ -51,6 +61,26 @@ export type MonthStatement = {
   closingBalanceSen: number | null;
 };
 
+/** A month-end figure somebody TYPED off the bank's own statement, for an
+    account whose files print no balance (docs/bugs/0858). */
+export type TypedBalance = {
+  /** The month whose closing this is, as YYYY-MM. */
+  month: string;
+  closingSen: number;
+  typedBy: string | null;
+  typedAt: string;
+  note: string | null;
+};
+
+/** The typed figures that can speak for a month: its own closing, and the
+    previous month's closing, which is where this month opens. */
+export type MonthBalances = {
+  closing: TypedBalance | null;
+  previousClosing: TypedBalance | null;
+};
+
+export const NO_TYPED_BALANCES: MonthBalances = { closing: null, previousClosing: null };
+
 /** Two files that should have met and did not. */
 export type ChainBreak = {
   beforeId: number;
@@ -67,11 +97,17 @@ export type ChainBreak = {
   gapSen: number;
 };
 
-/** Where a month's opening or closing figure was taken from. */
+/** Where a month's opening or closing figure was taken from: the file it was
+    read off, or — when no file printed one — the person who typed it. */
 export type BalanceSource = {
-  statementId: number;
-  fileName: string;
+  /** The file. Null when the figure was typed. */
+  statementId: number | null;
+  fileName: string | null;
+  /** The day the figure stands for. */
   on: string;
+  /** Present when the figure was TYPED rather than printed: the month it was
+      typed as the closing of, who typed it, when, and their note. */
+  typed?: { month: string; by: string | null; at: string; note: string | null };
 };
 
 export type MonthAssembly = {
@@ -87,7 +123,7 @@ export type MonthAssembly = {
 
   statementOpeningSen: number | null;
   /** Where that opening came from, so a reader can go and look at it. Null
-      when no file inside this month printed one. */
+      when no file inside this month printed one and nothing was typed. */
   openingFrom: BalanceSource | null;
   statementClosingSen: number | null;
   closingFrom: BalanceSource | null;
@@ -99,7 +135,8 @@ export type MonthAssembly = {
   /** Plain sentences about what this month does not have. Empty means the
       files cover it end to end and their balances meet. */
   gaps: string[];
-  /** Opening known, closing known, and no break between them. */
+  /** Opening known, closing known (printed or typed), no break between them,
+      and a typed figure agreeing with the movements. */
   complete: boolean;
 };
 
@@ -121,6 +158,27 @@ export function monthWindow(month: string): { from: string; to: string } | null 
 /** The YYYY-MM an ISO date falls in. */
 export const monthOf = (iso: string): string => iso.slice(0, 7);
 
+/** The month before a YYYY-MM, or null when it is not a month. */
+export function previousMonth(month: string): string | null {
+  const m = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!m) return null;
+  const mon = Number(m[2]);
+  if (mon < 1 || mon > 12) return null;
+  return mon === 1 ? `${Number(m[1]) - 1}-12` : `${m[1]}-${pad(mon - 1)}`;
+}
+
+/** The month after a YYYY-MM, or null when it is not a month. */
+export function nextMonth(month: string): string | null {
+  const m = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!m) return null;
+  const mon = Number(m[2]);
+  if (mon < 1 || mon > 12) return null;
+  return mon === 12 ? `${Number(m[1]) + 1}-01` : `${m[1]}-${pad(mon + 1)}`;
+}
+
+const rm = (sen: number) =>
+  `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 /**
  * Assemble one month of one account.
  *
@@ -132,6 +190,7 @@ export function assembleMonth(
   month: string,
   statements: MonthStatement[],
   movements: StatementMovement[],
+  typed: MonthBalances = NO_TYPED_BALANCES,
 ): MonthAssembly | null {
   const window = monthWindow(month);
   if (!window) return null;
@@ -157,6 +216,33 @@ export function assembleMonth(
      one uploaded. He uploads out of order and overlapping (2026-09-08). */
   const withClosing = ordered.filter((s) => s.closingBalanceSen != null);
   const last = withClosing.length > 0 ? withClosing[withClosing.length - 1]! : null;
+
+  /* Rule 4: a figure a file PRINTS always wins. Where no file inside the month
+     prints one, a figure somebody TYPED off the bank's own month-end statement
+     stands in — this month's typed closing at the end, and the previous
+     month's typed closing at the start, because a month opens where the last
+     one closed. Only the figure for exactly that month is taken: a caller
+     handing over some other month's figure is ignored, not believed. */
+  const prev = previousMonth(month);
+  const typedOpening = typed.previousClosing != null && prev != null && typed.previousClosing.month === prev
+    ? typed.previousClosing : null;
+  const typedClosing = typed.closing != null && typed.closing.month === month ? typed.closing : null;
+  const statementOpeningSen = first?.openingBalanceSen ?? typedOpening?.closingSen ?? null;
+  const statementClosingSen = last?.closingBalanceSen ?? typedClosing?.closingSen ?? null;
+  const typedSource = (t: TypedBalance, on: string): BalanceSource => ({
+    statementId: null, fileName: null, on,
+    typed: { month: t.month, by: t.typedBy, at: t.typedAt, note: t.note },
+  });
+  const openingFrom: BalanceSource | null = first != null
+    ? { statementId: first.id, fileName: first.fileName, on: String(first.periodFrom) }
+    : typedOpening != null && prev != null
+      ? typedSource(typedOpening, monthWindow(prev)?.to ?? window.from)
+      : null;
+  const closingFrom: BalanceSource | null = last != null
+    ? { statementId: last.id, fileName: last.fileName, on: String(last.periodTo) }
+    : typedClosing != null
+      ? typedSource(typedClosing, window.to)
+      : null;
 
   /* Rule 3: walk the files in date order and check that each one opens where
      the previous one closed. Only files printing both figures can be chained;
@@ -200,15 +286,16 @@ export function assembleMonth(
 
   const gaps: string[] = [];
   const noneInside = inside.length === 0;
-  if (first == null) {
+  if (statementOpeningSen == null) {
     gaps.push(noneInside
       ? `No file uploaded for ${month} lies wholly inside it, so the month has no opening balance of its own.`
-      : `None of this month's files prints an opening balance.`);
+      : `None of this month's files prints an opening balance.`
+        + (prev == null ? '' : ` Type the closing balance of ${prev} off the bank's month-end statement and ${month} opens there.`));
   }
-  if (last == null) {
+  if (statementClosingSen == null) {
     gaps.push(noneInside
       ? `No file uploaded for ${month} lies wholly inside it, so the month has no closing balance of its own.`
-      : `None of this month's files prints a closing balance.`);
+      : `None of this month's files prints a closing balance. Type it off the bank's month-end statement and the month can tally.`);
   }
   for (const b of breaks) {
     gaps.push(
@@ -223,23 +310,41 @@ export function assembleMonth(
     );
   }
 
+  /* A typed figure is checked the way the chain is (rule 3): the opening plus
+     this month's movements must reach the closing. Where they do not, a day is
+     missing from the files or the figure is mistyped — and the amount is
+     named, because it is the size of what is missing. Two PRINTED figures are
+     left to the reconciliation's own identity, which says the same thing in
+     its own words. An IGNORED movement is out, as it is there: a repeat of one
+     already recorded, or a pair the bank itself reversed. */
+  let typedShortSen = 0;
+  if ((openingFrom?.typed != null || closingFrom?.typed != null)
+    && statementOpeningSen != null && statementClosingSen != null) {
+    const moved = movements.filter((m) => m.state !== 'IGNORED').reduce((s, m) => s + m.amountSen, 0);
+    typedShortSen = statementClosingSen - (statementOpeningSen + moved);
+    if (typedShortSen !== 0) {
+      gaps.push(
+        `${month} opens at ${rm(statementOpeningSen)}${openingFrom?.typed ? ' (typed)' : ''} and closes at`
+        + ` ${rm(statementClosingSen)}${closingFrom?.typed ? ' (typed)' : ''}, but the movements uploaded come to`
+        + ` ${rm(moved)} — ${rm(Math.abs(typedShortSen))} is unaccounted for: a day is missing from the files,`
+        + ' or a typed figure is wrong.',
+      );
+    }
+  }
+
   return {
     month,
     monthFrom: window.from,
     monthTo: window.to,
     periodFrom,
     periodTo,
-    statementOpeningSen: first?.openingBalanceSen ?? null,
-    openingFrom: first == null
-      ? null
-      : { statementId: first.id, fileName: first.fileName, on: String(first.periodFrom) },
-    statementClosingSen: last?.closingBalanceSen ?? null,
-    closingFrom: last == null
-      ? null
-      : { statementId: last.id, fileName: last.fileName, on: String(last.periodTo) },
+    statementOpeningSen,
+    openingFrom,
+    statementClosingSen,
+    closingFrom,
     spanningIds,
     breaks,
     gaps,
-    complete: first != null && last != null && breaks.length === 0,
+    complete: statementOpeningSen != null && statementClosingSen != null && breaks.length === 0 && typedShortSen === 0,
   };
 }

@@ -301,8 +301,8 @@ const EFFECTIVE_TONE: Record<
   },
   sent: {
     tone: "warning",
-    label: "Sent",
-    blurb: "Sent · awaiting payment",
+    label: "Submitted",
+    blurb: "Submitted · awaiting payment",
   },
   partial: {
     tone: "warning",

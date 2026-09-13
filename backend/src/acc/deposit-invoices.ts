@@ -39,6 +39,7 @@ import { docPrefixForCode } from '../scm/lib/companyScope';
 import { absorbsOrderDeposit } from '../scm/lib/si-order-deposit';
 import { todayMyt } from '../scm/lib/my-time';
 import { CREDIT_NOTE_HEADER, cancelCreditNote, insertCreditNote, postCreditNote } from './credit-notes';
+import { refundedByInvoice } from './deposit-refunds';
 import { SO_NOT_AN_ORDER } from '../scm/shared/so-deliverable-states';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
@@ -499,12 +500,20 @@ export async function applyDepositInvoicesToInvoice(
   if (error) return { ok: false, reason: `deposit invoices: ${error.message}` };
   const open = ((dis ?? []) as DepositInvoiceRow[]).filter((d) => !d.credit_note_id);
   if (open.length === 0) return { ok: true, applied: [], skipped: [] };
+  /* What a refund already took off each (docs/bugs/0860): the note that
+     closes the invoice is for the REMAINDER, and an invoice refunded in full
+     was closed by its refund note and is not standing here. */
+  const refunded = await refundedByInvoice(sb, p.companyId, open.map((d) => d.di_number));
+  if (!refunded.ok) return { ok: false, reason: refunded.reason };
   const code = await companyCodeById(sb, p.companyId);
   if (!code) return { ok: false, reason: `company ${p.companyId} has no code to number under` };
   const roles = await resolveRoles(sb, p.companyId);
   const applied: Array<{ diNumber: string; noteNumber: string; jeNo: string | null }> = [];
   const skipped: Array<{ diNumber: string; why: string }> = [];
   for (const di of open) {
+    const refundedSen = refunded.sen.get(di.di_number) ?? 0;
+    const remaining = Number(di.amount_sen) - refundedSen;
+    if (remaining <= 0) { skipped.push({ diNumber: di.di_number, why: 'refunded in full — closed by its refund notes' }); continue; }
     const { data: prior, error: priorErr } = await sb.from('acc_credit_notes')
       .select(CREDIT_NOTE_HEADER)
       .eq('company_id', p.companyId).eq('kind', 'CN').eq('source_doc_no', di.di_number).eq('sales_invoice_id', p.siId)
@@ -523,7 +532,12 @@ export async function applyDepositInvoicesToInvoice(
         sourceDocNo: di.di_number,
         noteDate: p.invoiceDate,
         reason: `Deposit invoice ${di.di_number} closed by final invoice ${p.siNumber}`,
-        lines: [{ description: `Deposit invoice ${di.di_number} applied to ${p.siNumber}`, code: roles.DEPOSIT_INCOME, amountSen: Number(di.amount_sen) }],
+        lines: [{
+          description: `Deposit invoice ${di.di_number} applied to ${p.siNumber}`
+            + (refundedSen > 0 ? ` (after RM ${(refundedSen / 100).toFixed(2)} refunded)` : ''),
+          code: roles.DEPOSIT_INCOME,
+          amountSen: remaining,
+        }],
         createdBy: p.actor,
       });
       if (!raised.ok) { skipped.push({ diNumber: di.di_number, why: `note not raised: ${raised.reason}` }); continue; }

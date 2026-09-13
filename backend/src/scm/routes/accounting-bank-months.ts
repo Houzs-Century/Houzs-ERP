@@ -9,7 +9,9 @@
 // month was thirty separate answers and none of them was the answer to "did
 // September agree".
 //
-// These two doors are that answer. Neither of them decides anything: the month
+// These doors are that answer (the third, POST …/closing, takes the month-end
+// figure typed off the bank's own statement for an account whose files print
+// none — docs/bugs/0858). None of them decides anything: the month
 // is assembled by acc/bank-month (which month a movement is in, which file may
 // speak for a balance, where the chain of files breaks) and judged by
 // acc/bank-reconcile (the identity that makes a difference falsifiable). This
@@ -22,10 +24,17 @@
 import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { requireActiveCompanyId } from '../lib/companyScope';
-import { assembleMonth, monthOf, monthWindow, type MonthStatement } from '../../acc/bank-month';
+import {
+  assembleMonth, monthOf, monthWindow, nextMonth, previousMonth,
+  type MonthStatement, type MonthBalances, type TypedBalance,
+} from '../../acc/bank-month';
+import { lockedRefusal, monthAsDate, monthFromDate } from '../../acc/bank-lock';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
 import { entryCandidatesFor } from '../../acc/bank-match';
-import { loadPayableBatches, loadAccountLedger, loadLiveMonthLock, claimedSetFor, jeNosOf, loadRecognitionRules, loadPayoutAdvices } from '../../acc/bank';
+import {
+  loadPayableBatches, loadAccountLedger, loadLiveMonthLock, loadBankConfig, claimedSetFor, jeNosOf,
+  loadRecognitionRules, loadPayoutAdvices,
+} from '../../acc/bank';
 import { bankGuard, freshDecisions } from './accounting-bank';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -134,6 +143,46 @@ const jeNosByLine = (matches: Row[]): Map<number, string[]> => {
   return out;
 };
 
+/* ── The month-end figures somebody typed (docs/bugs/0858) ─────────────────── */
+
+const BALANCE_FIELDS = 'id, account_code, period_month, closing_sen, note, typed_by, typed_at';
+
+const asTypedBalance = (r: Row): TypedBalance => ({
+  month: monthFromDate(String(r.period_month ?? '')),
+  closingSen: Number(r.closing_sen ?? 0),
+  typedBy: textOf(r.typed_by),
+  typedAt: String(r.typed_at ?? ''),
+  note: textOf(r.note),
+});
+
+/** Every typed month-end figure of the company — or of one account — keyed
+    account|month. One read for a whole list, the same as the locks. */
+async function loadTypedBalances(
+  sb: Db, companyId: number, accountCode?: string,
+): Promise<{ ok: true; byKey: Map<string, TypedBalance> } | { ok: false; reason: string }> {
+  const scoped = sb.from('acc_bank_month_balances').select(BALANCE_FIELDS).eq('company_id', companyId);
+  const res = await (accountCode ? scoped.eq('account_code', accountCode) : scoped);
+  if (res.error) return { ok: false, reason: String(res.error.message) };
+  const byKey = new Map<string, TypedBalance>();
+  for (const r of rowsOf(res.data)) {
+    const b = asTypedBalance(r);
+    byKey.set(`${textOf(r.account_code) ?? ''}|${b.month}`, b);
+  }
+  return { ok: true, byKey };
+}
+
+/** What can speak for a month: its own typed closing, and the previous
+    month's, which is where it opens. */
+const typedFor = (byKey: Map<string, TypedBalance>, accountCode: string, month: string): MonthBalances => {
+  const prev = previousMonth(month);
+  return {
+    closing: byKey.get(`${accountCode}|${month}`) ?? null,
+    previousClosing: prev == null ? null : (byKey.get(`${accountCode}|${prev}`) ?? null),
+  };
+};
+
+const userName = (c: Ctx) => (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
+
 /* ── GET /bank/months — every account × month that has anything in it ─────── */
 
 export const bankMonths = bankGuard(async (c) => {
@@ -169,6 +218,11 @@ export const bankMonths = bankGuard(async (c) => {
       lockedAt: String(l.locked_at ?? ''),
     });
   }
+
+  /* And which months have a figure typed for them — the list has to say
+     whether a Maybank month can be trusted without opening it. */
+  const typedRes = await loadTypedBalances(sb, co.companyId);
+  if (!typedRes.ok) return c.json({ error: 'load_failed', reason: typedRes.reason }, 500);
 
   const byId = new Map<number, Row>(statements.map((s) => [Number(s.id), s]));
 
@@ -253,7 +307,7 @@ export const bankMonths = bankGuard(async (c) => {
         const row = byId.get(id);
         if (row) fed.push(asMonthStatement(row));
       }
-      const assembly = assembleMonth(b.month, fed, b.movements);
+      const assembly = assembleMonth(b.month, fed, b.movements, typedFor(typedRes.byKey, b.accountCode, b.month));
       return {
         accountCode: b.accountCode,
         month: b.month,
@@ -327,8 +381,11 @@ export async function loadMonthForLock(
   const movements = lines.map((l) => asMovement(l, jeNosOf(l.posted_je_no)[0] ?? null, jesOf.get(Number(l.id)) ?? []));
   const firstPeriodFrom = allStatements.map((s) => dayOf(s.period_from) ?? '').filter(Boolean).sort()[0] ?? null;
 
+  const typedRes = await loadTypedBalances(sb, companyId, accountCode);
+  if (!typedRes.ok) return { ok: false, reason: typedRes.reason };
+
   const fed = feedersOf(allStatements, new Set(lines.map((l) => Number(l.statement_id))), window);
-  const assembly = assembleMonth(month, fed.map(asMonthStatement), movements);
+  const assembly = assembleMonth(month, fed.map(asMonthStatement), movements, typedFor(typedRes.byKey, accountCode, month));
   if (!assembly) return { ok: false, reason: `${month} is not a month` };
 
   const ledger = await loadAccountLedger(sb, companyId, accountCode, assembly.periodTo);
@@ -400,14 +457,17 @@ export const bankMonthDetail = bankGuard(async (c) => {
   const matchP = sb.from('acc_bank_statement_matches')
     .select('bank_line_id, je_no, amount_sen, match_reason').eq('company_id', co.companyId);
 
-  const [linesRes, matchRes, batches, rules, payouts] = await Promise.all([
+  const [linesRes, matchRes, batches, rules, payouts, typedRes] = await Promise.all([
     linesP, matchP, loadPayableBatches(sb, co.companyId), loadRecognitionRules(sb), loadPayoutAdvices(sb, co.companyId),
+    loadTypedBalances(sb, co.companyId, accountCode),
   ]);
   if (linesRes.error) return c.json({ error: 'load_failed', reason: linesRes.error.message }, 500);
   if (matchRes.error) return c.json({ error: 'load_failed', reason: matchRes.error.message }, 500);
   if (!batches.ok) return c.json({ error: 'load_failed', reason: batches.reason }, 500);
   if (!rules.ok) return c.json({ error: 'load_failed', reason: rules.reason }, 500);
   if (!payouts.ok) return c.json({ error: 'load_failed', reason: payouts.reason }, 500);
+  if (!typedRes.ok) return c.json({ error: 'load_failed', reason: typedRes.reason }, 500);
+  const balances = typedFor(typedRes.byKey, accountCode, month);
 
   const matchesByLine = matchesByLineOf(rowsOf(matchRes.data));
 
@@ -439,7 +499,7 @@ export const bankMonthDetail = bankGuard(async (c) => {
      movement is in another month has no business speaking for this one's
      balances. */
   const fed = feedersOf(allStatements, new Set(lines.map((l) => Number(l.statement_id))), window);
-  const assembly = assembleMonth(month, fed.map(asMonthStatement), movements);
+  const assembly = assembleMonth(month, fed.map(asMonthStatement), movements, balances);
   if (!assembly) return c.json({ error: 'bad_month' }, 400);
 
   const [ledger, held] = await Promise.all([
@@ -490,6 +550,10 @@ export const bankMonthDetail = bankGuard(async (c) => {
     /* Null means open. The screen renders the LOCK rather than inferring one
        from a disabled button, so a closed month says who closed it and why. */
     lock: held.lock,
+    /* The typed month-end figures as stored — this month's and the previous
+       month's — so the screen can show what was typed even where a file
+       printed the balance and the typed one was not used (docs/bugs/0858). */
+    balances,
     /* Named, in the order they cover the month, so a break can be chased to the
        two files it is between. */
     statements: [...fed]
@@ -522,4 +586,88 @@ export const bankMonthDetail = bankGuard(async (c) => {
     }),
     unmatchedEntries,
   });
+});
+
+/* ── POST /bank/months/:accountCode/:month/closing — the month-end figure typed
+   off the bank's own statement (docs/bugs/0858) ──────────────────────────────
+   Maybank's Account Activity Report prints no balance, so the month had
+   nothing to tally against and could never close. The figure is typed ONCE
+   per month; the next month opens at it. Body: { closingSen: integer sen, or
+   null to remove; note?: string }. A figure a FILE prints still wins over it
+   (acc/bank-month rule 4), so typing one against a Hong Leong month is
+   harmless and unused. */
+
+export const bankMonthClosing = bankGuard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const accountCode = String(c.req.param('accountCode') ?? '').trim();
+  const month = String(c.req.param('month') ?? '').trim();
+  if (!accountCode) return c.json({ error: 'no_account' }, 400);
+  if (!monthWindow(month)) {
+    return c.json({ error: 'bad_month', message: `${month} is not a month. Use YYYY-MM.` }, 400);
+  }
+  let body: Record<string, unknown> = {};
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { body = {}; }
+  const closingSen = body.closingSen == null ? null : Number(body.closingSen);
+  if (closingSen != null && (!Number.isInteger(closingSen) || Math.abs(closingSen) > 1e14)) {
+    return c.json({ error: 'bad_amount', message: 'The closing balance must be a whole number of sen.' }, 400);
+  }
+  const noteText = textOf(body.note)?.trim();
+  const note = noteText ? noteText : null;
+  const sb = c.get('supabase');
+
+  /* Only an account set up to take a statement. A figure typed against an
+     account nobody reconciles is a stray row, and the refusal names what IS
+     set up. */
+  const config = await loadBankConfig(sb, co.companyId, accountCode);
+  if (!config.ok) return c.json({ error: 'no_such_account', message: config.reason }, 400);
+
+  /* A CLOSED MONTH REFUSES THE WRITE that would change what it says — and the
+     closing of this month is what the NEXT month opens at, so while the next
+     month is closed this figure cannot move either. */
+  const next = nextMonth(month);
+  const [held, heldNext] = await Promise.all([
+    loadLiveMonthLock(sb, co.companyId, accountCode, month),
+    next == null ? Promise.resolve({ ok: true as const, lock: null }) : loadLiveMonthLock(sb, co.companyId, accountCode, next),
+  ]);
+  if (!held.ok) return c.json({ error: 'load_failed', reason: held.reason }, 500);
+  if (!heldNext.ok) return c.json({ error: 'load_failed', reason: heldNext.reason }, 500);
+  if (held.lock) return c.json(lockedRefusal(held.lock, `typing the closing balance of ${month}`), 409);
+  if (heldNext.lock) {
+    return c.json(lockedRefusal(heldNext.lock, `changing the closing balance of ${month}, which ${next ?? ''} opens at`), 409);
+  }
+
+  const existing = await sb.from('acc_bank_month_balances')
+    .select(BALANCE_FIELDS)
+    .eq('company_id', co.companyId).eq('account_code', accountCode).eq('period_month', monthAsDate(month))
+    .maybeSingle();
+  if (existing.error) return c.json({ error: 'load_failed', reason: existing.error.message }, 500);
+  const current = existing.data ? (existing.data as unknown as Row) : null;
+
+  /* Null removes the figure — the one way to take back a typed number once a
+     file that prints the balance has arrived, or a wrong month was typed. */
+  if (closingSen == null) {
+    if (current) {
+      const gone = await sb.from('acc_bank_month_balances').delete()
+        .eq('company_id', co.companyId).eq('id', Number(current.id));
+      if (gone.error) return c.json({ error: 'save_failed', message: gone.error.message }, 500);
+    }
+    return c.json({ ok: true, balance: null });
+  }
+
+  const now = new Date().toISOString();
+  const saved = current
+    ? await sb.from('acc_bank_month_balances')
+      .update({ closing_sen: closingSen, note, typed_by: userName(c), typed_at: now, updated_at: now })
+      .eq('company_id', co.companyId).eq('id', Number(current.id))
+      .select(BALANCE_FIELDS).single()
+    : await sb.from('acc_bank_month_balances')
+      .insert({
+        company_id: co.companyId, account_code: accountCode, period_month: monthAsDate(month),
+        closing_sen: closingSen, note, typed_by: userName(c), typed_at: now,
+      })
+      .select(BALANCE_FIELDS).single();
+  if (saved.error) return c.json({ error: 'save_failed', message: saved.error.message }, 500);
+
+  return c.json({ ok: true, balance: asTypedBalance(saved.data as unknown as Row) });
 });

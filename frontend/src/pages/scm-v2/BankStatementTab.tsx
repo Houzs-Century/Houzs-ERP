@@ -31,6 +31,7 @@ import {
 import { ICON, fmt, btn, softText, danger, good, panel, refusalText } from './settlement-ui';
 import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
+import { BankAccountTabs, currentAccount } from './BankAccountTabs';
 
 export const BankStatementTab = () => {
   const [statementId, setStatementId] = useState<number | null>(null);
@@ -57,6 +58,11 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
   const accounts = setup.data?.accounts ?? [];
   const chosen = accounts.find((a) => a.account_code === accountCode) ?? null;
   const rows = statements.data?.statements ?? [];
+  /* One account's files at a time, as on By month (owner 2026-09-13: 无法分辨). */
+  const [account, setAccount] = useState<string | null>(null);
+  const codes = [...new Set(rows.map((s) => s.account_code))].sort();
+  const current = currentAccount(codes, account);
+  const shown = rows.filter((s) => s.account_code === current);
 
   const readFile = (picked: FileList | null) => {
     setResult(null);
@@ -173,19 +179,19 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
         {rows.length === 0 && !statements.isLoading && (
           <div style={softText}>None yet. Upload one above and it will be matched against the books.</div>
         )}
-        {rows.length > 0 && (
+        <BankAccountTabs codes={codes} value={current} onChange={setAccount} ariaLabel="Bank account of the files listed" />
+        {shown.length > 0 && (
           <table className={grid.grid}>
             <thead>
               <tr>
-                <th>Account</th><th>File</th><th>Period</th>
+                <th>File</th><th>Period</th>
                 <th className={grid.num}>In</th><th className={grid.num}>Out</th>
                 <th>Still to decide</th><th />
               </tr>
             </thead>
             <tbody>
-              {rows.map((s) => (
+              {shown.map((s) => (
                 <tr key={s.id}>
-                  <td><span className={styles.codeChip}>{s.account_code}</span></td>
                   <td style={{ wordBreak: 'break-all' }}>{s.file_name}</td>
                   <td>{s.period_from} → {s.period_to}</td>
                   <td className={grid.num}>{fmt(s.in_sen)}</td>

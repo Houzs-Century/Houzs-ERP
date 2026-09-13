@@ -400,6 +400,31 @@ export type BankChainBreak = {
   gapSen: number;
 };
 
+/** Where a month's opening or closing figure came from: the file it was read
+    off, or — when no file printed one — the person who typed it
+    (docs/bugs/0858). */
+export type BankBalanceSource = {
+  statementId: number | null;
+  fileName: string | null;
+  on: string;
+  typed?: { month: string; by: string | null; at: string; note: string | null };
+};
+
+/** A month-end figure somebody typed off the bank's own statement. */
+export type BankTypedBalance = {
+  month: string;
+  closingSen: number;
+  typedBy: string | null;
+  typedAt: string;
+  note: string | null;
+};
+
+/** This month's typed closing, and the previous month's (where this one opens). */
+export type BankMonthBalances = {
+  closing: BankTypedBalance | null;
+  previousClosing: BankTypedBalance | null;
+};
+
 export type BankMonthAssembly = {
   month: string;
   monthFrom: string;
@@ -407,12 +432,14 @@ export type BankMonthAssembly = {
   periodFrom: string;
   periodTo: string;
   statementOpeningSen: number | null;
-  openingFrom: { statementId: number; fileName: string; on: string } | null;
+  openingFrom: BankBalanceSource | null;
   statementClosingSen: number | null;
-  closingFrom: { statementId: number; fileName: string; on: string } | null;
+  closingFrom: BankBalanceSource | null;
   spanningIds: number[];
   breaks: BankChainBreak[];
   gaps: string[];
+  /** Opening known, closing known (printed or typed), no break between them,
+      and a typed figure agreeing with the movements. */
   complete: boolean;
 };
 
@@ -431,6 +458,9 @@ export const useBankMonth = (accountCode: string | null, month: string | null) =
     assembly: BankMonthAssembly;
     reconciliation: Reconciliation;
     lock: BankMonthLock | null;
+    /** The typed month-end figures as stored (docs/bugs/0858). Optional only
+        for the minute a newer screen reads an older server. */
+    balances?: BankMonthBalances;
     statements: Array<BankStatement & { spanning: boolean }>;
     lines: Array<BankLine & { file_name: string | null }>;
     unmatchedEntries: LedgerEntry[];
@@ -510,6 +540,27 @@ export const useUnlockBankMonth = () => {
       authedFetch<{ ok: boolean; lock: BankMonthLock }>(
         `/accounting/bank/months/${encodeURIComponent(accountCode)}/${encodeURIComponent(month)}/unlock`,
         { method: 'POST', body: JSON.stringify({ note }) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['bank-month'] });
+      void qc.invalidateQueries({ queryKey: ['bank-months'] });
+    },
+  });
+};
+
+/* The month-end figure typed off the bank's own statement, for an account
+   whose files print none (docs/bugs/0858). Null removes it. The month's
+   opening is the PREVIOUS month's closing, so the month view saves that one
+   under the previous month. */
+export const useTypeMonthClosing = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ accountCode, month, closingSen, note }: {
+      accountCode: string; month: string; closingSen: number | null; note?: string | null;
+    }) =>
+      authedFetch<{ ok: boolean; balance: BankTypedBalance | null }>(
+        `/accounting/bank/months/${encodeURIComponent(accountCode)}/${encodeURIComponent(month)}/closing`,
+        { method: 'POST', body: JSON.stringify({ closingSen, note: note ?? null }) },
       ),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['bank-month'] });

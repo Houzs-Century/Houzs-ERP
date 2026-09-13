@@ -300,6 +300,16 @@
       "file": "frontend/src/pages/scm-v2/OtherDebtors.test.tsx",
       "text": "expect(within(d).getByText(/is already received against it/)).toBeTruthy();",
       "why": "A test asserting the cap sentence renders for a fixture bill that carries received_sen 20000 - it checks the form repeats the server's counted figure; nothing empty is read or claimed."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/BankMonthTab.tsx",
+      "text": "? <b style={{ color: good }}>Nothing left to decide</b>",
+      "why": "Read off the month's own lines, which arrive WITH the month (rendered only under q.data, so a failed read renders nothing): it counts the OPEN ones among them - the same lines the reconciliation panel's 'N movements on the bank still to decide' and the Still-to-decide table are built from. A month with no line at all is the quiet month (docs/bugs/0794), whose statement was filed with zero movements; nothing left is exactly true of it."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/BankMonthTab.test.tsx",
+      "text": "expect(screen.getByText('Nothing left to decide')).toBeTruthy();",
+      "why": "A test asserting the sentence renders for a fixture whose one line is POSTED - it checks the count of OPEN lines among those in hand; nothing empty is read or claimed."
     }
   ]
 }

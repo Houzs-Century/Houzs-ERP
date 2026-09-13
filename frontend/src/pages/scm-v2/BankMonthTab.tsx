@@ -29,16 +29,16 @@
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
-import { AlertTriangle, ArrowLeft, CalendarDays, Lock, Printer, Unlock } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, CalendarDays, Check, Link2, Lock, Printer, Unlock } from 'lucide-react';
 import {
-  useBankMonths, useBankMonth, useLockBankMonth, useUnlockBankMonth,
-  type BankMonth, type BankMonthAssembly, type BankMonthLock, type BankLine,
-  type Reconciliation,
+  useBankMonths, useBankMonth, useLockBankMonth, useUnlockBankMonth, useAutoMatchStatement, useTypeMonthClosing,
+  type BankMonth, type BankMonthAssembly, type BankMonthBalances, type BankMonthLock, type BankLine,
+  type BankBalanceSource, type BankTypedBalance, type Reconciliation,
 } from './bank-queries';
-import { ICON, fmt, btn, softText, danger, panel, refusalText } from './settlement-ui';
+import { ICON, fmt, btn, softText, danger, good, panel, refusalText } from './settlement-ui';
 import { ReconciliationPanel, OpenLines, DoneLine, BooksNotOnBank } from './BankStatementTab';
+import { BankAccountTabs, currentAccount } from './BankAccountTabs';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
-import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
 
 /** 2026-09 → 09/2026 — a month in the house's own numeric, unambiguous shape,
@@ -53,19 +53,52 @@ export const monthLabel = (month: string): string => {
   return m ? `${m[2]}/${m[1]}` : month;
 };
 
+/** The month before a YYYY-MM — the one whose closing this month opens at.
+    Anything that is not a month gives null. */
+export const previousMonthOf = (month: string): string | null => {
+  const m = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!m) return null;
+  const mon = Number(m[2]);
+  if (mon < 1 || mon > 12) return null;
+  return mon === 1 ? `${Number(m[1]) - 1}-12` : `${m[1]}-${String(mon - 1).padStart(2, '0')}`;
+};
+
+/** "19,840.54" → 1984054 sen; a minus sign is allowed, because an overdrawn
+    account closes below zero. Anything that is not a money amount is null. */
+export const parseRm = (text: string): number | null => {
+  const t = text.trim().replace(/,/g, '');
+  if (!/^-?\d+(\.\d{1,2})?$/.test(t)) return null;
+  return Math.round(Number(t) * 100);
+};
+
 type Picked = { accountCode: string; month: string };
 
 export const BankMonthTab = () => {
   const [picked, setPicked] = useState<Picked | null>(null);
+  /* Which account's months are on the list — kept HERE, above the list, so
+     coming back from a month lands on the same account (owner 2026-09-13:
+     by month 这里我无法分辨什么也会). */
+  const [account, setAccount] = useState<string | null>(null);
   if (picked) return <MonthView picked={picked} onBack={() => setPicked(null)} />;
-  return <MonthList onOpen={setPicked} />;
+  return (
+    <MonthList account={account} onAccount={setAccount}
+      onOpen={(p) => { setAccount(p.accountCode); setPicked(p); }} />
+  );
 };
 
 /* ── Every month that has anything in it ──────────────────────────────────── */
 
-const MonthList = ({ onOpen }: { onOpen: (p: Picked) => void }) => {
+const MonthList = ({ account, onAccount, onOpen }: {
+  account: string | null; onAccount: (code: string) => void; onOpen: (p: Picked) => void;
+}) => {
   const q = useBankMonths();
   const months = q.data?.months ?? [];
+  /* One account at a time. The codes come off the months themselves, so an
+     account with nothing uploaded has no tab — a tab over an empty list is a
+     question with no answer. */
+  const codes = [...new Set(months.map((m) => m.accountCode))].sort();
+  const current = currentAccount(codes, account);
+  const shown = months.filter((m) => m.accountCode === current);
 
   return (
     <div className="space-y-3">
@@ -83,17 +116,19 @@ const MonthList = ({ onOpen }: { onOpen: (p: Picked) => void }) => {
         </div>
       )}
 
-      {months.length > 0 && (
+      <BankAccountTabs codes={codes} value={current} onChange={onAccount} ariaLabel="Bank account" />
+
+      {shown.length > 0 && (
         <table className={grid.grid}>
           <thead>
             <tr>
-              <th>Month</th><th>Account</th><th>Files</th><th>Days covered</th>
+              <th>Month</th><th>Files</th><th>Days covered</th>
               <th className={grid.num}>In</th><th className={grid.num}>Out</th>
               <th>Still to decide</th><th>The month itself</th><th />
             </tr>
           </thead>
           <tbody>
-            {months.map((m) => <MonthRow key={`${m.accountCode}|${m.month}`} m={m} onOpen={onOpen} />)}
+            {shown.map((m) => <MonthRow key={`${m.accountCode}|${m.month}`} m={m} onOpen={onOpen} />)}
           </tbody>
         </table>
       )}
@@ -104,7 +139,6 @@ const MonthList = ({ onOpen }: { onOpen: (p: Picked) => void }) => {
 const MonthRow = ({ m, onOpen }: { m: BankMonth; onOpen: (p: Picked) => void }) => (
   <tr>
     <td><b>{monthLabel(m.month)}</b></td>
-    <td><span className={styles.codeChip}>{m.accountCode}</span></td>
     <td>
       {m.statementCount} file{m.statementCount === 1 ? '' : 's'}
       <div className={grid.sub}>{m.lineCount} movement{m.lineCount === 1 ? '' : 's'}</div>
@@ -200,6 +234,14 @@ const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) =
         </button>
       </div>
 
+      {/* HOW MUCH IS LEFT, and the rule that clears the obvious part of it —
+          on the month, where he works (owner 2026-09-13: 我的 matching 在 bank
+          statement，然后 lock 在 by month？不能做一起？). */}
+      {q.data && (
+        <StillToDecide open={open.length} locked={q.data.lock != null}
+          statements={q.data.statements.map((s) => ({ id: s.id, fileName: s.file_name }))} />
+      )}
+
       {/* MOUNTED ONLY WHILE OPEN. The dialog reads the company branding through
           react-query, so mounting it closed puts a live query on every month a
           person merely looks at — and, more sharply, makes this whole screen
@@ -249,6 +291,15 @@ const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) =
       {q.data && !q.data.assembly.complete && <WhatIsMissing a={q.data.assembly} />}
       {q.data && <ReconciliationPanel r={q.data.reconciliation} />}
       {q.data && <WhereTheFiguresCameFrom a={q.data.assembly} />}
+
+      {/* THE FIGURE HE TYPES, for a month no file prints a balance for
+          (docs/bugs/0858). Keyed on what is stored so a saved figure re-seeds
+          the boxes; hidden on a closed month, whose figures cannot move. */}
+      {q.data && q.data.lock == null && (
+        <TypedBalances
+          key={`${q.data.balances?.closing?.typedAt ?? ''}|${q.data.balances?.previousClosing?.typedAt ?? ''}`}
+          assembly={q.data.assembly} balances={q.data.balances} picked={picked} />
+      )}
 
       {open.length > 0 && <OpenLines lines={ordered} entries={q.data?.unmatchedEntries ?? []} />}
 
@@ -410,17 +461,167 @@ const WhatIsMissing = ({ a }: { a: BankMonthAssembly }) => (
 
 /* ── Which file each figure was taken off ─────────────────────────────────── */
 
+/* "per d01.csv (2026-09-01)", or — for a figure nobody's file printed — who
+   typed it, for which month, and when (docs/bugs/0858). */
+const figureSource = (src: BankBalanceSource): string => (src.typed
+  ? `the closing balance typed for ${monthLabel(src.typed.month)}${src.typed.by ? ` by ${src.typed.by}` : ''} on ${src.typed.at.slice(0, 10)}`
+    + (src.typed.note ? ` (“${src.typed.note}”)` : '')
+    + ' — no file prints it'
+  : `per ${src.fileName ?? ''} (${src.on})`);
+
 const WhereTheFiguresCameFrom = ({ a }: { a: BankMonthAssembly }) => {
   /* A balance with no provenance is a number nobody can check. Both ends are
-     named with the file and the day, so a reader can open that file and look. */
+     named with the file and the day, so a reader can open that file and look
+     — or with the person who typed it, so a reader knows whom to ask. */
   if (a.openingFrom == null && a.closingFrom == null) return null;
   return (
     <div style={softText}>
       {a.openingFrom && (
-        <>Opened at <b>{fmt(a.statementOpeningSen)}</b> per {a.openingFrom.fileName} ({a.openingFrom.on}). </>
+        <>Opened at <b>{fmt(a.statementOpeningSen)}</b> {figureSource(a.openingFrom)}. </>
       )}
       {a.closingFrom && (
-        <>Closed at <b>{fmt(a.statementClosingSen)}</b> per {a.closingFrom.fileName} ({a.closingFrom.on}).</>
+        <>Closed at <b>{fmt(a.statementClosingSen)}</b> {figureSource(a.closingFrom)}.</>
+      )}
+    </div>
+  );
+};
+
+/* ── How much is left, and the rule that clears the obvious part ──────────── */
+
+const StillToDecide = ({ open, locked, statements }: {
+  open: number; locked: boolean; statements: Array<{ id: number; fileName: string }>;
+}) => (
+  <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+    {open === 0
+      ? <b style={{ color: good }}>Nothing left to decide</b>
+      : <b style={{ color: danger }}>{open} still to decide</b>}
+    {open > 0 && !locked && statements.length > 0 && <MatchTheObviousOnes statements={statements} />}
+  </div>
+);
+
+/* The file screen's rule, run over EVERY file that fed this month, one after
+   the other; the answer is the sum. A file the server refuses (one crossing
+   into a closed month, say) is named and the rest still run — one refusal
+   must not stop the other files being matched. */
+const MatchTheObviousOnes = ({ statements }: { statements: Array<{ id: number; fileName: string }> }) => {
+  const run = useAutoMatchStatement();
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ matched: number; jeNos: string[]; contraPairs: number; refused: string[] } | null>(null);
+
+  const go = async () => {
+    setBusy(true);
+    const tally = { matched: 0, jeNos: [] as string[], contraPairs: 0, refused: [] as string[] };
+    for (const s of statements) {
+      try {
+        const r = await run.mutateAsync(s.id);
+        tally.matched += r.matched;
+        tally.jeNos.push(...r.jeNos);
+        tally.contraPairs += r.contraPairs;
+      } catch (err) {
+        tally.refused.push(`${s.fileName}: ${refusalText(err, 'the rule did not run.')}`);
+      }
+    }
+    setResult(tally);
+    setBusy(false);
+  };
+
+  return (
+    <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+      <button type="button" style={{ ...btn(), padding: '2px 8px' }} disabled={busy} onClick={() => { void go(); }}>
+        <Link2 {...ICON} /> {busy ? 'Matching…' : 'Match the obvious ones now'}
+      </button>
+      <span style={softText}>
+        The same rule as on the file screen, over every file that fed this month: a movement with exactly one
+        entry of the same amount in the books, whose name the bank's line carries, is matched without asking.
+        The rest stay below for you.
+      </span>
+      {result && (
+        <span style={{ fontSize: 'var(--fs-13)', color: result.matched > 0 ? good : undefined }}>
+          {result.matched} matched by amount and name{result.matched > 0 ? ` — ${result.jeNos.join(', ')}` : ''}
+          {result.contraPairs > 0 ? `; ${result.contraPairs} pair${result.contraPairs === 1 ? '' : 's'} the bank reversed left out` : ''}.
+        </span>
+      )}
+      {result?.refused.map((r) => (
+        <span key={r} style={{ fontSize: 'var(--fs-12)', color: danger }}>{r}</span>
+      ))}
+    </div>
+  );
+};
+
+/* ── The month-end figure typed off the bank's own statement (docs/bugs/0858) ── */
+
+/* Shown only where a figure is NOT printed by any file: Maybank's Account
+   Activity Report lists movements and no balance, so without a typed figure
+   the month has nothing to tally against and can never close. A file that
+   prints the balance always wins, so the box is not offered where one did. */
+const TypedBalances = ({ assembly, balances, picked }: {
+  assembly: BankMonthAssembly; balances?: BankMonthBalances; picked: Picked;
+}) => {
+  const save = useTypeMonthClosing();
+  const needClosing = assembly.closingFrom == null || assembly.closingFrom.typed != null;
+  const needOpening = assembly.openingFrom == null || assembly.openingFrom.typed != null;
+  const prev = previousMonthOf(picked.month);
+  if (!needClosing && !needOpening) return null;
+  return (
+    <div style={{ ...panel('plain'), display: 'grid', gap: 'var(--space-2)' }}>
+      <b>Month-end balance per the bank</b>
+      <div style={softText}>
+        No file uploaded for this month prints a balance — Maybank's Account Activity Report lists movements
+        only. Type the closing balance off the bank's own month-end statement; the month opens where the previous
+        one closed, and the reconciliation statement names who typed each figure. A file that prints a balance
+        always wins over a typed one.
+      </div>
+      {needClosing && (
+        <TypedFigure label={`Closing balance of ${monthLabel(picked.month)}`}
+          ariaLabel="Closing balance per the bank statement"
+          month={picked.month} current={balances?.closing ?? null} picked={picked} save={save} />
+      )}
+      {needOpening && prev != null && (
+        <TypedFigure label={`Closing balance of ${monthLabel(prev)} — ${monthLabel(picked.month)} opens there`}
+          ariaLabel="Closing balance of the previous month"
+          month={prev} current={balances?.previousClosing ?? null} picked={picked} save={save} />
+      )}
+      {save.isError && (
+        <div style={{ fontSize: 'var(--fs-13)', color: danger, display: 'flex', gap: 6 }}>
+          <AlertTriangle {...ICON} />
+          <span>{refusalText(save.error, 'The figure was not saved.')}</span>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const TypedFigure = ({ label, ariaLabel, month, current, picked, save }: {
+  label: string; ariaLabel: string; month: string; current: BankTypedBalance | null; picked: Picked;
+  save: ReturnType<typeof useTypeMonthClosing>;
+}) => {
+  const [text, setText] = useState(current ? (current.closingSen / 100).toFixed(2) : '');
+  const [note, setNote] = useState(current?.note ?? '');
+  const sen = parseRm(text);
+  const bad = text.trim() !== '' && sen == null;
+  const dirty = sen !== (current?.closingSen ?? null) || (note.trim() || null) !== (current?.note ?? null);
+  const cannot = sen == null || !dirty || save.isPending;
+  return (
+    <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 'var(--fs-13)', fontWeight: 600, minWidth: 260 }}>{label}</span>
+      <span style={{ fontSize: 'var(--fs-13)' }}>RM</span>
+      <input value={text} onChange={(e) => setText(e.target.value)} inputMode="decimal" aria-label={ariaLabel}
+        placeholder="0.00" style={{ padding: '5px 8px', fontSize: 'var(--fs-13)', width: 140, textAlign: 'right' }} />
+      <input value={note} onChange={(e) => setNote(e.target.value)} aria-label={`Note on the ${ariaLabel.toLowerCase()}`}
+        placeholder="Note, e.g. per the June e-statement" style={{ padding: '5px 8px', fontSize: 'var(--fs-13)', minWidth: 240 }} />
+      <button type="button" style={btn(true, cannot)} disabled={cannot}
+        onClick={() => save.mutate({ accountCode: picked.accountCode, month, closingSen: sen, note: note.trim() || null })}>
+        <Check {...ICON} /> {save.isPending ? 'Saving…' : 'Save'}
+      </button>
+      {bad && <span style={{ fontSize: 'var(--fs-12)', color: danger }}>Not a money amount — 19840.54, or -120.00 for an overdrawn account.</span>}
+      {current && (
+        <>
+          <span style={softText}>typed{current.typedBy ? ` by ${current.typedBy}` : ''} on {current.typedAt.slice(0, 10)}</span>
+          <button type="button" style={{ ...btn(), padding: '2px 8px' }} disabled={save.isPending}
+            onClick={() => save.mutate({ accountCode: picked.accountCode, month, closingSen: null, note: null })}>
+            Clear
+          </button>
+        </>
       )}
     </div>
   );

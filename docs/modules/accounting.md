@@ -782,7 +782,7 @@ contra-only and never presents the contra as the original.
 owner: maybank statement 要做，我要测试 maybank statement).** Migration
 `backend/src/db/migrations-pg/20260912T1600_acc_bank_statement_mbb_2990.sql`
 adds the second `acc_bank_statement_config` row for company 2 — 310-0010
-(CASH AT BANK - MAYBANK), bank MBB, account 564418610346, CSV, delimiter `|`,
+(CASH AT BANK - MAYBANK), bank MBB, account 564418759397 (the seed said 564418610346, which is HOUZS's Maybank account — corrected by migration 20260913T0900, docs/bugs/0856), CSV, delimiter `|`,
 amount format `integer-sen`, credit indicator `CR`, the column map naming
 the Account Activity Report's captions (EFFECT DATE / BATCH DATE, TRX
 DESCRIPTION, TRX REFERENCE, AMOUNT, AMOUNT IND). The reader
@@ -790,7 +790,7 @@ DESCRIPTION, TRX REFERENCE, AMOUNT, AMOUNT IND). The reader
 in `backend/src/acc/bank-parse.test.ts` is copied from the real export — so
 the change is one data row, guarded by NOT EXISTS and the chart row; the
 upload's account check reads digits, so the file's zero-padded
-0000564418610346 satisfies 564418610346. The recognition rules the matcher
+0000564418759397 satisfies 564418759397. The recognition rules the matcher
 uses on that statement (CARD SALES for MBB, PBB-PBCS, AEON, GHL) were already
 seeded.
 **The payment advice has one door and takes several files (2026-09-12,
@@ -928,6 +928,29 @@ close-out raises its notes through the same core. Not yet: applying a note to
 a specific invoice's balance, printing. `fetchMonthlyDocNos` reads the named column first
 since this PR (a whole-row driver handed back the id and minted -001 twice).
 Contracts: `backend/tests/creditNotes.test.ts`, `CreditNotes.test.tsx`.
+
+**A refund on a deposit invoice is a CREDIT NOTE, whole or in part (2026-09-13,
+docs/bugs/0860; owner: partial refund 可以做 … 就 DI 也需要开 CN).** A deposit
+invoice booked the money as a sale (Dr AR / Cr 509 DEPOSIT PAY BY CUSTOMER);
+the Customer Refund voucher on its own (Dr AR / Cr bank) hands the money back
+and leaves the sale standing. So when a refund voucher naming a Sales Order
+POSTS, `backend/src/acc/deposit-refunds.ts` raises one credit note per deposit
+invoice the refund draws on — oldest first, Dr 509 / Cr AR (party the
+customer), dated the voucher's day, `source_doc_no` the invoice,
+`refund_pv_id` the voucher (migration 20260913T1800 adds the column) — for
+what still stands on the invoice until the refund is covered. Refunded in
+full, the note closes the invoice (`credit_note_id`); in part, the invoice
+stands for the remainder and the final invoice's close-out note is for the
+REMAINDER (`applyDepositInvoicesToInvoice` reads `refundedByInvoice`). A
+cancelled refund voucher contras its notes and the invoices stand again. Money
+no deposit invoice covers raises no note — the refund's own Dr AR answers
+that payment's Cr AR — and is logged, not hidden. Idempotent per (voucher,
+invoice). The refund form says how many deposit invoices stand and for how
+much; the Deposit Invoices page shows what each was refunded, note by note,
+with the voucher. This is the e-invoice shape as well: a Refund Note
+referencing the original document, never a cancel past 72 hours. Two things
+deliberately NOT done here, both with management (owner 2026-09-13): the
+closed-invoice cancel guard, and converting payments to a new order.
 
 **Deposit invoices (2026-09-12, docs/bugs/0828; owner: e-invoice 好像是根据收钱
 就认 sales 了 … 每个顾客不是有自己本身的 account code 吗 … 做成开关 … 可以自己选
@@ -1256,6 +1279,15 @@ untouched — the link is the ledger's. Contracts:
 `backend/src/acc/settlement.test.ts` (the loader leaves it out even by
 reference) and `backend/tests/settlementRoutes.test.ts` (the watch list, Find
 the sale).
+
+**A confirmed link is corrected by a named row, never by code (2026-09-13,
+docs/bugs/0859).** The 0833 refresh below covers UNCONFIRMED links only — a
+confirmed link is the ledger's record of what was reconciled. The one link
+confirmed before 0833 landed with a since-corrected amount (2990-SO-2607-012,
+PBB 2026-07-12 ref 005805, 3,053 shown against a payment of 3,052) is set
+right by migration `20260913T1700_acc_settlement_link_so_2607_012_amount.sql`,
+guarded on the payment id, the document number and the stale value. Owner
+2026-09-13: 可以.
 
 **An unconfirmed link follows its payment (2026-09-12, docs/bugs/0833; owner:
 要刷新功能，而且我希望是我打开自动刷新，而不是手动触发刷新).** The upload writes
@@ -1651,6 +1683,50 @@ the HLB rule to the split word. Contracts: `backend/src/acc/bank-parse.test.ts`
 fingerprint), `backend/src/acc/bank-match.test.ts` (GHL, HLB whole and
 split), `backend/tests/bankRoutes.test.ts` ("uploading overlapping exports",
 "setting up a statement account"), `SettlementSetup.test.tsx` (the card).
+
+**The Reconciliation setup page lines up (2026-09-13, docs/bugs/0857; owner:
+setup 的东西很乱不整齐，很多都会 wrap text，不然就是没有 column/table).** Layout
+only, in `frontend/src/pages/scm-v2/SettlementSetup.tsx` and its module
+`frontend/src/pages/scm-v2/SettlementSetup.module.css`: the per-company
+defaults (default bank, voucher numbering) sit in ONE card as two aligned rows
+— a label column and a content column, the letters in a fixed grid with the
+code on one line; the Bank statements and Bank recognition rules tables name
+their column widths (`table-layout: fixed`), codes and account numbers never
+wrap and are monospaced, and the headings a file names read as chips (the
+captions on hover and under Edit); the statement edit form and the merchant
+report-layout form each sit in their own frame with their fields in fixed
+rows of equal width and the actions to the right. Every hook, label, button
+and refusal is unchanged — `frontend/src/pages/scm-v2/SettlementSetup.test.tsx`
+passes as it was.
+
+**A Maybank month tallies on a TYPED month-end figure; By month is one account
+at a time; the month runs the rule (2026-09-13, docs/bugs/0858; owner: by month
+这里我无法分辨什么也会 / 我的 matching 在 bank statement，然后 lock 在 by month？
+不能做一起？ / 做 做 做).** Maybank's Account Activity Report prints movements
+and no balance, so rule 2 below left a Maybank month with no opening, no
+closing and nothing to tally against — it could never close. **Rule 4** in
+`backend/src/acc/bank-month.ts`: a figure a file PRINTS always wins; where none
+does, the month's typed closing is its closing and the PREVIOUS month's typed
+closing is its opening (a month opens where the last one closed). The figure
+is typed once per month on the month view ("Month-end balance per the bank",
+with a second box for the previous month's closing when the opening is
+missing) into `scm.acc_bank_month_balances` (migration 20260913T1000, one row
+per company × account × month, who and when kept) through
+`POST /accounting/bank/months/:accountCode/:month/closing`
+(`{ closingSen | null, note? }`; null removes it; refused on a closed month
+and while the NEXT month is closed, since that month opens at it). A typed
+figure is checked the way the chain is — opening plus the month's non-ignored
+movements must reach the closing — and a shortfall is a gap sentence with the
+amount that keeps the month not whole, so a mistyped figure or a missing day is
+named rather than closed over. The screen and the reconciliation statement
+name who typed each figure and when ("as typed for the end of 2026-06 by Chew
+on 13/09/2026 — no file uploaded prints it"). Two layout changes with it: the
+By month list and the Bank statement file list show ONE account at a time
+(`frontend/src/pages/scm-v2/BankAccountTabs.tsx`, tabs labelled
+`MBB · 310-0010` off the bank setup), and the month view says "N still to
+decide" and carries "Match the obvious ones now", which runs the per-statement
+auto-match door over every file that fed the month and names any file the
+server refused while the others still run.
 
 **A MONTH, not a file at a time (2026-09-09; owner, uploading one a day: 每天我
 上传bank statement 和 merchant report 测试，但是有办法选这个是几月的？因为我发现

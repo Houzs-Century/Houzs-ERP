@@ -4,7 +4,7 @@
 
 **Symptom.** Bank statement reconciliation knew one account for 2990 — the
 Hong Leong current account (310-0020, migration 20260908T2100). Maybank
-(310-0010, CASH AT BANK - MAYBANK, account 564418610346 — where the MBB card
+(310-0010, CASH AT BANK - MAYBANK, account 564418759397 — where the MBB card
 machine, AEON and the cash deposits land) had no statement config, so its
 Account Activity Report could not be uploaded, and the merchant reports the
 owner had just finished uploading had no bank side to reconcile against.
@@ -19,13 +19,13 @@ account.
 
 **Fix.** Migration
 `backend/src/db/migrations-pg/20260912T1600_acc_bank_statement_mbb_2990.sql`:
-one config row for company 2 / 310-0010 — bank MBB, account 564418610346,
+one config row for company 2 / 310-0010 — bank MBB, account 564418759397 (seeded as 564418610346, which is HOUZS's account — corrected by docs/bugs/0856),
 CSV, delimiter `|`, amount format `integer-sen`, credit indicator `CR`, and a
 column map naming the export's captions (EFFECT DATE, TRX DESCRIPTION,
 TRX REFERENCE, AMOUNT, AMOUNT IND; BATCH DATE as the date's second name).
 Guarded by NOT EXISTS on the account and by the chart row's existence; HOUZS
 untouched. The upload's account check reads digits, so the zero-padded
-0000564418610346 in the file satisfies it. Verified on staging.
+0000564418759397 in the file satisfies it. Verified on staging.
 
 Pinned by the reader's own Maybank fixture in
 `backend/src/acc/bank-parse.test.ts` (pipe, packed dates, integer sen, the

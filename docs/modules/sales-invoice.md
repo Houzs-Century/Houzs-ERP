@@ -1015,7 +1015,15 @@ there and Sale on the invoice**. Do not re-derive the rule in a component —
 ## The confirm rung reads "Submitted"
 
 Stored `SENT`; shown as **Submitted** since 2026-09-13, on the pill and on the
-list's filter tab, which used to disagree. The stored value is unchanged and
+list's filter tab, which used to disagree.
+
+> **CORRECTED the same day.** The first sweep changed the list map's `issued:`
+> bucket and MISSED the `sent:` key — which is the one the stored value `SENT`
+> actually resolves to — and missed the detail page's own map entirely. So the
+> invoice still read "Sent" on both surfaces while the pill said "Submitted".
+> Found by `localStatusMapsAgree.test.ts`, the scan that now compares every
+> page's hand-written status map against `status-pill.ts`. `PARTIALLY_PAID` was
+> reading "Partial pay" against a canonical "Partially paid" and is aligned too. The stored value is unchanged and
 every report, export and AutoCount read still goes to it. One of the five
 documents in the owner's ruling. Trace:
 `docs/bugs/0851-one-rung-three-words-the-filter-tab-said-submitted-while-the.md`.
