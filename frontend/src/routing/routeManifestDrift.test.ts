@@ -147,13 +147,17 @@ describe("mobile route drift gate", () => {
     // Portal received an order decides whether somebody's commission is right,
     // and turning the feed OFF is the control most plausibly wanted away from
     // a desk.
-    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(37);
+    // 38 since 2026-09-13: /scm/warehouses/racks, the Warehouse group's fifth
+    // row — the storekeeper's rack LOOKUP. Owner parity ruling 2026-09-12
+    // (「电脑版本有的，手机版本都要有」); the phone could CREATE a rack and never
+    // read one back.
+    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(38);
     // 6 since 2026-09-10: /roles, the rebuilt Roles & Permissions screen, reached
     // from a Profile row (gated via the Team hub tab).
     expect(PROFILE_ORG_ITEMS).toHaveLength(6);
-    expect(allMobile).toHaveLength(43);
-    expect(new Set(allMobile.map((item) => item.to)).size).toBe(43);
-    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(42);
+    expect(allMobile).toHaveLength(44);
+    expect(new Set(allMobile.map((item) => item.to)).size).toBe(44);
+    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(43);
   });
 
   it("maps every declared mobile row to a real screen, never a placeholder stub", () => {

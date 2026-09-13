@@ -218,6 +218,31 @@ cross-company write** — editing, stock and zone all stay on the per-company
 endpoints. The owner chose this "keep separate + a read-only cross-company view"
 over merging the two companies' warehouses (2026-09-11).
 
+### Mobile — rack LOOKUP (2026-09-13)
+
+`frontend/src/mobile/MobileRacks.tsx`, reached from the phone Menu's Warehouse
+group and from the desktop URL `/scm/warehouses/racks` (`destinationScreen` in
+`frontend/src/mobile/MobileApp.tsx`). Owner ruling 2026-09-12,
+「电脑版本有的，手机版本都要有」.
+
+It reads `GET /warehouse/cross-company` — the SAME feed as the desktop "All
+Companies" tab — and is **read-only by design**: it answers "which rack holds
+this" and "what is on this rack". Search matches the shared slot haystack (rack
+label, item code / product name, customer, source document); the status chips,
+the company / warehouse selects, the natural rack ordering and the zone label
+all come from `frontend/src/vendor/scm/lib/warehouse-floorplan.ts`, so the phone
+and the desktop cannot diverge on any of them.
+
+**No new endpoint, no new permission.** The menu row's gate resolves against the
+existing `/scm/warehouses/racks` `NAV_TABS` entry
+(`frontend/src/components/Sidebar.tsx` — `anyAccess: ["scm.warehouse.inventory"]`,
+`hideForSalesRep: true`), which is the same declaration that guards the desktop
+page.
+
+**What is still desktop-only:** rack rename, re-zone, batch edit and delete. Rack
+CREATE has been on mobile since `FORM_RACK` (`MobileModuleList.tsx`) and is
+unchanged.
+
 ## 4. Downstream reads
 
 The Type column is not just cosmetic — several downstream code paths already
