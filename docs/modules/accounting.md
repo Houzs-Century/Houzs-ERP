@@ -1257,6 +1257,15 @@ untouched — the link is the ledger's. Contracts:
 reference) and `backend/tests/settlementRoutes.test.ts` (the watch list, Find
 the sale).
 
+**A confirmed link is corrected by a named row, never by code (2026-09-13,
+docs/bugs/0859).** The 0833 refresh below covers UNCONFIRMED links only — a
+confirmed link is the ledger's record of what was reconciled. The one link
+confirmed before 0833 landed with a since-corrected amount (2990-SO-2607-012,
+PBB 2026-07-12 ref 005805, 3,053 shown against a payment of 3,052) is set
+right by migration `20260913T1700_acc_settlement_link_so_2607_012_amount.sql`,
+guarded on the payment id, the document number and the stale value. Owner
+2026-09-13: 可以.
+
 **An unconfirmed link follows its payment (2026-09-12, docs/bugs/0833; owner:
 要刷新功能，而且我希望是我打开自动刷新，而不是手动触发刷新).** The upload writes
 each link down with the payment's amount AS OF THEN; a payment Finance
