@@ -3,7 +3,6 @@
   "_why_a_file": "The measurement found 14 such groups over 1,491 document lines. The owner authorised ONE of them. An authorisation that lives in a transcript is an authorisation the next session invents the scope of, so it lives here with the words he used.",
   "_the_harm_it_bounds": "specials composes computeVariantKey, so folding a spelling onto its code MERGES two stock buckets. That is a stock move, not a tidy-up, and it is refused by the same guard every other spec tool uses (scripts/lib/spec-chain-guard.mjs, docs/bugs/0722 and 0844).",
   "_measured": "Production run 34728515268, 2026-09-13, company 1: 200 legacy values on 1,491 document lines; 128 of them group onto 14 catalogue codes; 72 (272 lines) the rules can place on no option and which stay as free text.",
-
   "authorised": [
     {
       "code": "Nylon Fabric",
@@ -22,23 +21,105 @@
         "BOTTOM USE UMBRELLA FABIRC"
       ],
       "why_this_one_is_safe_to_fold": "The owner's own ruling created this code: 「nylon 和 umbrella fabric 一样的 — one request, one code」 (the Nylon Fabric family's `why` in special-order-phrase-map.json). Every spelling above is that one request written differently, so folding them changes no meaning — only the bucket they share."
+    },
+    {
+      "code": "HB Fully Cover",
+      "by": "owner, 2026-09-13, in chat — 「HB DIVAN fullycover那些也可以做啊」, extending the nylon authorisation",
+      "measured": "28 spellings across 288 document lines — the second largest group",
+      "examples": [
+        "fully cover",
+        "HB FullyCover",
+        "HB FULL COVERED",
+        "HB & DIVAN BOTTOM FULLY COVER",
+        "HB&DIVANfullyCovered",
+        "HB FULLY COVERED",
+        "HB AND DIVAN"
+      ],
+      "why_this_one_is_safe_to_fold": "Every spelling is the same request — the headboard covered in fabric — written differently. The phrase map's HB Fully Cover family already vetoes `straight`, so a HB Straight slip cannot land here."
+    },
+    {
+      "code": "Divan Full Cover",
+      "by": "owner, 2026-09-13, in chat — 「HB DIVAN fullycover那些也可以做啊」",
+      "measured": "15 spellings across 47 document lines",
+      "examples": [
+        "HB & DIVAN BOTTOM FULLY COVER",
+        "HB&DIVANfullyCovered",
+        "HB DIVAN FULL COVERED",
+        "HB DIV FULL COVER",
+        "hb and divan fully cover fabric"
+      ],
+      "why_this_one_is_safe_to_fold": "Same request for the divan base. Several of its spellings name the headboard AND the divan in one breath, which is why both codes had to be authorised together — see _both_codes_in_one_phrase."
+    },
+    {
+      "code": "Seat Base Fully Cover with no Leg",
+      "by": "owner, 2026-09-13, in chat — 「是的 批」, answering the question whether the SOFA fully-cover family was included in 「HB DIVAN fullycover那些也可以做啊」. It was asked separately BECAUSE it is a different request on a different category and shares only the words `Fully Cover`.",
+      "measured": "11 spellings across 105 document lines",
+      "examples": [
+        "Fully Covered To floor no leg",
+        "EXTEND TO FLOOR WITH 1'INCH LEG",
+        "Fully Cover to Floor",
+        "fully cover replace the leg",
+        "REMARKS:seat FULLY COVER TO FLOOR",
+        "28 inch per seat (no leg )",
+        "replace the leg by fully cover",
+        "2+C+1(35'INCH)FULLY COVER NO LEG"
+      ],
+      "why_this_one_is_safe_to_fold": "All eleven are the same SOFA request - the seat base covered down to the floor with the legs removed - and the family carries the owner's own 2026-08-10 ruling that `fully cover to floor no leg` and `fully cover replace the leg` mean the same treatment. Its `no` veto excludes the two lines that say the opposite (`REQUEST TO NORMAL LEG AND NOT FULLY COVER`)."
     }
   ],
-
   "notAuthorised": [
-    { "code": "HB Fully Cover", "lines": 288, "spellings": 28 },
-    { "code": "Seat Base Fully Cover with no Leg", "lines": 105, "spellings": 11 },
-    { "code": "HB Straight", "lines": 62, "spellings": 12 },
-    { "code": "Change 8030 Backcushion", "lines": 61, "spellings": 18 },
-    { "code": "Divan Full Cover", "lines": 47, "spellings": 15 },
-    { "code": "5540 Backrest", "lines": 31, "spellings": 5 },
-    { "code": "Seat Behind Extend 5\"", "lines": 27, "spellings": 1 },
-    { "code": "Seat Firmer", "lines": 12, "spellings": 1 },
-    { "code": "No notch on Seat Cushion", "lines": 11, "spellings": 8 },
-    { "code": "Wooden Arm", "lines": 8, "spellings": 3 },
-    { "code": "Seat Cushion No Notch and Plain", "lines": 4, "spellings": 1 },
-    { "code": "No Side Panel", "lines": 2, "spellings": 2 },
-    { "code": "Separate Backrest Packing", "lines": 2, "spellings": 1 }
+    {
+      "code": "HB Straight",
+      "lines": 62,
+      "spellings": 12
+    },
+    {
+      "code": "Change 8030 Backcushion",
+      "lines": 61,
+      "spellings": 18
+    },
+    {
+      "code": "5540 Backrest",
+      "lines": 31,
+      "spellings": 5
+    },
+    {
+      "code": "Seat Behind Extend 5\"",
+      "lines": 27,
+      "spellings": 1
+    },
+    {
+      "code": "Seat Firmer",
+      "lines": 12,
+      "spellings": 1
+    },
+    {
+      "code": "No notch on Seat Cushion",
+      "lines": 11,
+      "spellings": 8
+    },
+    {
+      "code": "Wooden Arm",
+      "lines": 8,
+      "spellings": 3
+    },
+    {
+      "code": "Seat Cushion No Notch and Plain",
+      "lines": 4,
+      "spellings": 1
+    },
+    {
+      "code": "No Side Panel",
+      "lines": 2,
+      "spellings": 2
+    },
+    {
+      "code": "Separate Backrest Packing",
+      "lines": 2,
+      "spellings": 1
+    }
   ],
-  "_notAuthorised_note": "Listed so the next session can see exactly what was NOT covered and does not have to re-measure it. These stay as they are until the owner says otherwise. Do not fold them because the nylon round went well."
+  "_notAuthorised_note": "Listed so the next session can see exactly what was NOT covered and does not have to re-measure it. These stay as they are until the owner says otherwise. Do not fold them because the nylon round went well.",
+  "_both_codes_in_one_phrase": "A legacy value may genuinely ask for TWO things: `HB & DIVAN BOTTOM FULLY COVER` decodes to HB Fully Cover AND Divan Full Cover, and that is not ambiguity - it is what the sentence says. The tool folds such a value into ALL of its codes, but ONLY when every one of them is authorised. If even one is not, the value is left alone and reported: folding it would silently drop the meaning that is out of scope, which is worse than not folding at all. Before the owner authorised HB Fully Cover and Divan Full Cover together on 2026-09-13 these phrases were skipped for exactly that reason.",
+  "_answered_2026_09_13": "The sofa `Seat Base Fully Cover with no Leg` family was asked about separately, because it shares only the words `Fully Cover` with the bedframe ones and is a different request on a different category. Owner answered 「是的 批」. Keep asking that way: a shared word in a code NAME is not evidence that two families are the same request."
 }
