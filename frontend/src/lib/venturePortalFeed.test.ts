@@ -24,6 +24,7 @@ import {
   vpKeyLine,
   vpOldestPendingHours,
   vpOutcomeLine,
+  vpProbeNote,
   vpReceiverDraft,
   vpReceiverHint,
   vpRowTodo,
@@ -231,6 +232,56 @@ describe("the receiver address", () => {
     expect(vpReceiverHint(status({ url: "" }))).toMatch(/Not saved yet/i);
     expect(vpReceiverHint(status({ url: "" }))).toMatch(/Save address/);
     expect(vpReceiverHint(status())).toMatch(/^Saved\./);
+  });
+});
+
+describe("what Test connection says it found", () => {
+  it("passes the portal's own answer through when it worked", () => {
+    const n = vpProbeNote({ ok: true, status: 200, body: '{"ok":true,"service":"venture-portal"}' });
+    expect(n.tone).toBe("good");
+    expect(n.text).toMatch(/venture-portal/);
+  });
+
+  it("says which field is empty rather than blaming the portal", () => {
+    expect(vpProbeNote({ ok: false, status: 0, body: "", reason: "not_configured" }).text)
+      .toMatch(/receiver address or the API key/i);
+  });
+
+  it("names an HTTP failure it has no specific advice for", () => {
+    const n = vpProbeNote({ ok: false, status: 500, body: "" });
+    expect(n.tone).toBe("bad");
+    expect(n.text).toMatch(/HTTP 500/);
+  });
+
+  /* THE BUG THIS BLOCK EXISTS FOR. vpRowTodo's 401/503 advice was corrected to
+     "generate one here and paste it in the Venture Portal" and this pair was left
+     saying to go and ask the portal owner — on the button somebody presses FIRST,
+     immediately after generating a key. It shipped to production that way. */
+  it("tells somebody with a key mismatch to generate and paste, not to ask anybody", () => {
+    for (const status of [401, 503]) {
+      const text = vpProbeNote({ ok: false, status, body: "" }).text;
+      expect(text).toMatch(/paste it in the Venture Portal/i);
+      expect(text).not.toMatch(/portal owner/i);
+    }
+    expect(vpProbeNote({ ok: false, status: 401, body: "" }).text).toMatch(/different key/i);
+    expect(vpProbeNote({ ok: false, status: 503, body: "" }).text).toMatch(/no key of its own/i);
+  });
+
+  /* THE DRIFT GUARD, which is the part that makes this fixed rather than
+     corrected. Two places answer "the keys disagree" — a queue row and the
+     connection test — and the whole defect was one being updated without the
+     other. Correcting either alone now fails here. */
+  it("gives a queue row and the connection test the same next step", () => {
+    for (const [status, err] of [[401, "http 401 — wrong secret"], [503, "http 503 — no secret yet"]] as const) {
+      const fromRow = vpRowTodo(row({ status: "failed", last_error: err }));
+      const fromProbe = vpProbeNote({ ok: false, status, body: "" }).text;
+      expect(fromRow).toMatch(/paste it in the Venture Portal/i);
+      expect(fromProbe).toMatch(/paste it in the Venture Portal/i);
+      /* And the same diagnosis, not just the same action. */
+      const phrase = status === 401 ? /different key/i : /no key of its own/i;
+      expect(fromRow).toMatch(phrase);
+      expect(fromProbe).toMatch(phrase);
+    }
   });
 });
 

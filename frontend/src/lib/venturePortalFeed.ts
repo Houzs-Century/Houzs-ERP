@@ -320,6 +320,42 @@ export interface VpNote {
   text: string;
 }
 
+/** What POST /probe answers. */
+export interface VpProbeResult {
+  ok: boolean;
+  status: number;
+  body: string;
+  reason?: string;
+}
+
+/**
+ * What **Test connection** says it found.
+ *
+ * PULLED OUT OF THE HOOK so it is a pure sentence like every other verdict in
+ * this file, and it was pulled out for a reason rather than for tidiness: while
+ * it lived inside useVpActions it was the one operator sentence here that no test
+ * could reach, and it is the sentence that got left behind. vpRowTodo's 401/503
+ * advice was corrected to "generate one here and paste it in the Venture Portal"
+ * and this one still said to go and ask the portal owner — on the button somebody
+ * presses FIRST, right after generating a key.
+ *
+ * The two families are now pinned together by a test that asserts both name the
+ * same action, so correcting one and not the other fails instead of shipping.
+ */
+export function vpProbeNote(res: VpProbeResult): VpNote {
+  if (res.ok) return { tone: "good", text: `Reached the portal. It answered: ${res.body.slice(0, 160)}` };
+  if (res.reason === "not_configured") return { tone: "wait", text: "The receiver address or the API key is still empty." };
+  /* A 401 and a 503 mean the same two things here as they do on a queue row, and
+     the operator is standing in front of the same one button either way. */
+  if (res.status === 401) {
+    return { tone: "bad", text: "The portal is holding a different key. Generate a new one here and paste it in the Venture Portal, then test again." };
+  }
+  if (res.status === 503) {
+    return { tone: "wait", text: "The portal has no key of its own yet. Generate one here and paste it in the Venture Portal, then test again." };
+  }
+  return { tone: "bad", text: `Could not reach the portal (HTTP ${res.status})${res.reason ? `: ${res.reason}` : ""}` };
+}
+
 /**
  * Every write on the page, through one path.
  *
@@ -451,19 +487,8 @@ export function useVpActions(onChanged: () => void) {
     () =>
       run(
         "probe",
-        () =>
-          api.post<{ ok: boolean; status: number; body: string; reason?: string }>(
-            "/api/scm/venture-portal-feed/probe",
-            {},
-          ),
-        (r) => {
-          const res = r as { ok: boolean; status: number; body: string; reason?: string };
-          if (res.ok) return { tone: "good", text: `Reached the portal. It answered: ${res.body.slice(0, 160)}` };
-          if (res.reason === "not_configured") return { tone: "wait", text: "The address or the secret is still empty." };
-          if (res.status === 401) return { tone: "bad", text: "The portal refused the secret — the two values are not the same." };
-          if (res.status === 503) return { tone: "wait", text: "The portal has no secret of its own set yet. Ask the portal owner to set it." };
-          return { tone: "bad", text: `Could not reach the portal (HTTP ${res.status})${res.reason ? `: ${res.reason}` : ""}` };
-        },
+        () => api.post<VpProbeResult>("/api/scm/venture-portal-feed/probe", {}),
+        (r) => vpProbeNote(r as VpProbeResult),
       ),
     [run],
   );
