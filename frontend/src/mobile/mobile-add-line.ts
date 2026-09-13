@@ -39,7 +39,7 @@ export type AddLineDoc = "po" | "grn" | "pi" | "si";
 /** The phone detail modules that carry "Add line". Keyed by the
  *  MobileModuleList config key. Delivery orders are absent on purpose: the
  *  desktop has no manual add on a delivery order either. */
-export const MODULE_TO_ADD_LINE_DOC: Readonly<Record<string, AddLineDoc>> = {
+export const MODULE_TO_ADD_LINE_DOC: Readonly<Partial<Record<string, AddLineDoc>>> = {
   "mfg-purchase-orders": "po",
   grns: "grn",
   "purchase-invoices": "pi",

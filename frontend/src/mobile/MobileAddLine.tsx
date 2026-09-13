@@ -65,10 +65,11 @@ export function MobileAddLine({
    *  refreshed here too. */
   onAdded: () => void;
 }) {
-  const doc: AddLineDoc | undefined = MODULE_TO_ADD_LINE_DOC[moduleKey];
+  /* Partial on purpose: most modules have no "Add line", and a lookup that can
+     miss must be typed as one. */
+  const doc = MODULE_TO_ADD_LINE_DOC[moduleKey];
   const { user, can, pageAccess } = useAuth();
-  const offered = !!doc && mayAddLine(doc, header, { user, can, pageAccess });
-  if (!doc || !offered) return null;
+  if (doc === undefined || !mayAddLine(doc, header, { user, can, pageAccess })) return null;
   return <AddLineRow doc={doc} docId={docId} header={header} onAdded={onAdded} />;
 }
 
