@@ -6349,6 +6349,19 @@ Four documents used to spell this four ways, and none of them said it on the pag
 you start from. Trace:
 `docs/bugs/0853-add-a-line-was-only-reachable-from-inside-edit-under-four-di.md`.
 
+**On the phone (2026-09-13).** `frontend/src/mobile/MobileSODetail.tsx` offers
+**+ Add line** beside Edit on a draft and on a submitted order, disabled by the SAME
+lock as the phone's Edit (`migratedLocked` on a draft, `editLocked` on a submitted
+order) and shown only with `canWriteSo`. It hands off through `frontend/src/mobile/MobileApp.tsx`
+(`new-so` screen, `addLine: true`) to `frontend/src/mobile/MobileNewSO.tsx`, whose
+`openAddLine` appends one new line during the edit prefill and opens the product
+picker on it — once per mount, since the prefill runs once. The editor's own button
+no longer spells it "+ Add Line Item"; it reads `ADD_LINE_LABEL`.
+
+Not changed, recorded: the phone's submitted-order footer shows **Edit** without
+`canWriteSo` (the server still refuses a view-level save). Trace:
+`docs/bugs/0873-the-phone-could-not-add-a-line-to-any-document.md`.
+
 ---
 
 ## `IN_PRODUCTION` reads "In Production"
