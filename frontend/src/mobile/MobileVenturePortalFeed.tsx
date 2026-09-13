@@ -18,15 +18,18 @@
 import { useCallback, useMemo, useState } from "react";
 
 import {
-  VP_MIN_SECRET_LEN,
+  VP_DEFAULT_RECEIVER_URL,
+  VP_KEY_PASTE_LINE,
   VP_ROW_STATUS_LABEL,
   useVpActions,
   useVpRows,
   useVpStatus,
+  vpKeyLine,
   vpOutcomeLine,
+  vpReceiverDraft,
+  vpReceiverHint,
   vpRowTodo,
   vpScopeLabel,
-  vpSecretLine,
   vpVerdict,
   type VpRow,
   type VpRowStatus,
@@ -164,11 +167,13 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
      classic version of this bug, and a phone keyboard makes it worse. */
   const [urlDraft, setUrlDraft] = useState<string | null>(null);
   const [sinceDraft, setSinceDraft] = useState<string | null>(null);
-  const [secretDraft, setSecretDraft] = useState("");
   const [companiesDraft, setCompaniesDraft] = useState<string | null>(null);
   const [everyCompany, setEveryCompany] = useState<boolean | null>(null);
 
-  const url = urlDraft ?? s?.connection.url ?? "";
+  /* Pre-filled with the portal's own address when nothing is stored — a phone
+     keyboard is the worst place to type a URL, and this is where the owner is
+     most likely to be doing it. */
+  const url = urlDraft ?? vpReceiverDraft(s);
   const since = sinceDraft ?? s?.connection.since ?? "";
   const scope = s?.feed.scope;
   const companies = companiesDraft ?? (Array.isArray(scope) ? scope.join(", ") : "");
@@ -297,18 +302,18 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
 
             <div className="card" style={{ padding: 13, marginBottom: 12 }}>
               <div style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 3 }}>Connection</div>
-              <Hint>The shared secret is never shown again after it is saved.</Hint>
+              <Hint>The API key is generated here and shown once.</Hint>
 
               <div style={{ marginTop: 11 }}>
                 <Label>Receiver address</Label>
                 <input
                   className="fld-i"
                   value={url}
-                  placeholder="https://…/api/erp/v1/sales-orders"
+                  placeholder={VP_DEFAULT_RECEIVER_URL}
                   disabled={!canManage}
                   onChange={(e) => setUrlDraft(e.target.value)}
                 />
-                <Hint>Must be https. The portal owner provides this.</Hint>
+                <Hint>{vpReceiverHint(s)}</Hint>
               </div>
 
               <div style={{ marginTop: 11 }}>
@@ -334,34 +339,82 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
                 </button>
               ) : null}
 
+              {/* THE KEY. No input box on either surface — it is minted by the
+                  server, and the one place a human types it is the portal. */}
               <div style={{ marginTop: 13 }}>
-                <Label>Shared secret</Label>
-                <input
-                  className="fld-i"
-                  type="password"
-                  autoComplete="new-password"
-                  value={secretDraft}
-                  placeholder={`At least ${VP_MIN_SECRET_LEN} characters`}
-                  disabled={!canManage}
-                  onChange={(e) => setSecretDraft(e.target.value)}
-                />
-                <Hint>{vpSecretLine(s)}</Hint>
-                {secretDraft.length > 0 && secretDraft.length < VP_MIN_SECRET_LEN ? (
-                  <div style={{ fontSize: 11.5, color: "#8f2222", marginTop: 4 }}>
-                    Too short &mdash; {secretDraft.length} of {VP_MIN_SECRET_LEN} characters.
-                  </div>
-                ) : null}
+                <Label>API key</Label>
+                <div
+                  style={{
+                    fontFamily: "ui-monospace, monospace",
+                    fontSize: 13,
+                    color: "#767b6e",
+                    border: "1px solid #d6d9d2",
+                    borderRadius: 9,
+                    padding: "9px 11px",
+                  }}
+                >
+                  {s.connection.secret.set ? `····${s.connection.secret.tail}` : "not set"}
+                </div>
+                <Hint>{vpKeyLine(s)}</Hint>
               </div>
+
+              {/* THE ONE-TIME REVEAL, from the same shared state the desktop
+                  reads — dismissed, it is gone from the browser and the server
+                  will not answer it again. */}
+              {actions.revealedKey ? (
+                <div
+                  style={{
+                    marginTop: 11,
+                    background: TONE_BG.wait,
+                    borderRadius: 11,
+                    padding: 11,
+                  }}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 800, color: TONE_INK.wait }}>Copy this now</div>
+                  <div
+                    style={{
+                      marginTop: 8,
+                      background: "#fff",
+                      border: "1px solid #d6d9d2",
+                      borderRadius: 9,
+                      padding: "9px 10px",
+                      fontFamily: "ui-monospace, monospace",
+                      fontSize: 12.5,
+                      wordBreak: "break-all",
+                      userSelect: "all",
+                    }}
+                  >
+                    {actions.revealedKey}
+                  </div>
+                  <button className="btn" style={{ marginTop: 9 }} onClick={() => void actions.copyKey()}>
+                    {actions.keyCopied ? "Copied" : "Copy"}
+                  </button>
+                  <button
+                    className="btn"
+                    style={{ marginTop: 8, background: "#fff", color: "#16695f", border: "1px solid #d6d9d2" }}
+                    onClick={actions.dismissKey}
+                  >
+                    Done
+                  </button>
+                  <div style={{ fontSize: 11.5, marginTop: 9, lineHeight: 1.45, color: "#11140f" }}>
+                    {VP_KEY_PASTE_LINE}
+                  </div>
+                </div>
+              ) : null}
 
               {canManage ? (
                 <>
                   <button
                     className="btn"
                     style={{ marginTop: 10 }}
-                    disabled={actions.busy === "secret" || secretDraft.length < VP_MIN_SECRET_LEN}
-                    onClick={() => void actions.saveSecret(secretDraft).then(() => setSecretDraft(""))}
+                    disabled={actions.busy === "generate"}
+                    onClick={() => void actions.generateKey()}
                   >
-                    {actions.busy === "secret" ? "Saving" : s.connection.secret.set ? "Replace secret" : "Save secret"}
+                    {actions.busy === "generate"
+                      ? "Generating"
+                      : s.connection.secret.set
+                        ? "Generate a new API key"
+                        : "Generate API key"}
                   </button>
                   <button
                     className="btn"
@@ -379,7 +432,8 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
               <div className="card" style={{ padding: 13, marginBottom: 12 }}>
                 <div style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 3 }}>The queue</div>
                 <Hint>
-                  A batch goes out every five minutes, up to {s.queue.batch} at a time.
+                  A save sends its own order; a sweep every five minutes collects anything left over, up to{" "}
+                  {s.queue.batch} at a time.
                 </Hint>
                 <button
                   className="btn"

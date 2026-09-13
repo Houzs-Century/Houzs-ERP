@@ -123,6 +123,7 @@ import { hr } from "./routes/hr";
 import { scmAreaGuard } from "./middleware/area-guard";
 import { hasPositionCapability } from "../services/positionCapabilities";
 import { scmWriteFreeze } from "./lib/write-freeze";
+import { venturePortalKick } from "./lib/venture-portal-kick";
 import { migratedSoReadonly, migratedSoAmendmentReadonly } from "./lib/migrated-so-readonly";
 import { writeFreezeStatus } from "./routes/write-freeze-status";
 
@@ -140,6 +141,18 @@ export const scm = new Hono<{ Bindings: Env }>();
    below use. Grammar, the UPDATE for each stage, and the rollback:
    docs/write-freeze-staged-lift.md. */
 scm.use('/*', scmWriteFreeze());
+
+/* ── VENTURE PORTAL FEED: SEND WITHIN SECONDS (owner 2026-09-13) ────────────
+   After a successful non-GET, schedule the Venture Portal outbox drain instead
+   of leaving it to the five-minute cron — the owner's 「我要秒级 update 的」.
+   Mounted HERE, immediately after the freeze, for two reasons: a frozen write
+   returns 503 without calling next(), so the kick is not even entered for a
+   save that did not happen; and one mount covers every router that can touch a
+   sales order, which a per-handler call could not. It runs AFTER next(), it can
+   never fail the request, and both cron sweeps stay exactly as they were — they
+   are the zero-loss guarantee and this is only the accelerator. Cost of an idle
+   kick, and what it cannot see: lib/venture-portal-kick.ts. */
+scm.use('/*', venturePortalKick());
 
 /* Read-only view of that value for the operator making the go/no-go call —
    GET, so the freeze never blocks it, and no area guard because it is not an

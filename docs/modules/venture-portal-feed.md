@@ -55,7 +55,8 @@ scm.mfg_sales_orders / _items / _payments
   │  AFTER trigger, SAME TRANSACTION as the salesperson's Save, exception-safe
   ▼
 scm.venture_portal_outbox            one PENDING row per document
-  │  */5 cron  →  drainVenturePortalOutbox()
+  │  the SAVE's own request, after its response   →  kickVenturePortalDrain()
+  │  */5 cron, unchanged                          →  drainVenturePortalOutbox()
   │               scope check  →  scm.vp_build_payloads()  →  one POST per doc
   ▼
 POST <vp.url>   header x-sync-secret
@@ -67,8 +68,8 @@ the portal upserts one live row per document, ordered by snapshotAt
 Plus a backstop: the `*/30` cron calls `reconcileVenturePortalOutbox()`, which
 re-queues any in-scope order with no delivered row. Steady state is `requeued=0`.
 
-**Latency is under five minutes**, not the ten seconds the contract designed
-for. See §2.
+**The save sends its own order**, and the two crons stay exactly as they were —
+they are the zero-loss guarantee and the kick is only the accelerator. See §2.
 
 ---
 
@@ -93,11 +94,43 @@ reported nothing for three weeks because the script it ran had been crashing
 since the day after it was written.
 
 The Worker's `*/5` slot already drains two outboxes (`email_outbox`,
-`scm.autocount_outbox`) in TypeScript that CI executes. Commission is settled
-monthly; five minutes and ten seconds are the same number to it.
+`scm.autocount_outbox`) in TypeScript that CI executes.
 
-**What this gives up, plainly:** the feed is not "live within seconds". A sales
-order saved at 10:01 reaches the portal by 10:05 rather than 10:01:10.
+### Seconds, WITHOUT pg_cron — the kick (2026-09-13)
+
+The paragraph that used to end this section said the feed "is not live within
+seconds" and that an order saved at 10:01 reaches the portal at 10:05. The owner
+asked for seconds — 「我要秒级 update 的」 — and that did not need the extensions
+after all, because **the slow half was never the capture.** The trigger already
+runs in the salesperson's own transaction. Only the DRAIN waited for a cron, and
+a request can schedule the drain itself.
+
+`kickVenturePortalDrain(env, ctx)` (`backend/src/scm/lib/venture-portal-outbox.ts`),
+called from one middleware (`backend/src/scm/lib/venture-portal-kick.ts`) mounted
+on `/api/scm/*` in `backend/src/scm/index.ts`:
+
+| | |
+|---|---|
+| when | after `next()`, on a **non-GET** whose response is **2xx**. A read changed nothing; a refused write changed nothing either |
+| where the work runs | inside `ctx.waitUntil`, so the person who pressed Save waits for none of it |
+| the wait | `VP_KICK_DELAY_MS` = 1500 ms before the first sweep, so several requests saving one order collapse into ONE delivery — the payload is built at send time, and that only pays off if the send waits |
+| the debounce | the SAME 1500 ms, held in a module-level timestamp. A write inside the window is covered by the drain already scheduled, because that drain has not run yet and the write's outbox row is already committed. Per-isolate and best-effort |
+| how far one kick goes | up to `VP_KICK_MAX_SWEEPS` = 4 sweeps x `VP_DRAIN_BATCH` = **100 documents**, then it hands the rest back to the cron |
+| when it sweeps again | only when a **full batch LEFT the queue** (`vpKickSweepAgain`: `sent + failed + outOfScope >= 25`). Not `processed` — a 401 keeps its row pending and costs it no attempts, so counting `processed` would fire 100 POSTs per kick for as long as two keys disagreed |
+| if anything fails | swallowed and logged as `[vp-kick]`. It can never fail the request, and losing a kick costs only time |
+
+**Measured latency: UNKNOWN.** The design path is save -> trigger (same
+transaction) -> response -> 1.5 s debounce -> one POST, which the hand-off
+estimates at **2-3 s (LIKELY, not measured)**. Nothing in this repo has yet
+delivered one order to the live portal end to end, because the feed is off and the
+key has to be pasted on the portal by hand first. **Replace this paragraph with
+the number from the first real order** — that is acceptance step 4, and an
+estimate left standing here would read as a measurement to the next person.
+
+**What the kick CANNOT see, and the cron still must:** a change to
+`scm.mfg_sales_orders*` made outside a Worker request — a migration backfill, a
+repair script, a hand-written `UPDATE`. The trigger captures it; no request exists
+to kick it; the `*/5` sweep collects it. Accepted, and the reason both crons stay.
 
 ---
 
@@ -248,9 +281,20 @@ This does not, and the difference is the useful part:
 |---|---|---|---|
 | 2xx | `sent` | yes | delivered. `portal_outcome` records what the portal did with it |
 | 401 | stays `pending` | **no** | the secret does not match. Ours to fix, not the document's — six 401s while somebody is still filling in the config must not park six orders |
-| 503 | stays `pending` | **no** | the portal has no `ERP_SYNC_SECRET` yet. Nothing to fix on our side |
+| 503 | stays `pending` | **no** | the portal holds no key of its own yet |
 | 400 / 422 | `failed` at once | yes | the portal could not READ the delivery. The contract's own table says it "will not fix itself", so retrying it every five minutes buys nothing and hides it |
 | 5xx, timeout, transport | stays `pending` | yes | parked as `failed` at 6 attempts |
+
+> **The 503 row's MEANING moved on 2026-09-13; its HANDLING did not.** It used to
+> mean "the portal has no `ERP_SYNC_SECRET` on Vercel — nothing to fix on our
+> side", and that sentence was rendered to operators by `vpRowTodo` as "ask the
+> portal owner". Since the portal's PRs #117 + #118 it reads a key pasted on its
+> own page and that env var is optional, so a 503 is now fixed from OUR page plus
+> one paste. `classifyVpResponse` is untouched — retry, no attempt consumed, which
+> was right before and is right now. What changed is only the sentence the page
+> shows, and 401 got the same treatment: both name the next step (generate, paste,
+> re-send) and say which side is empty. LIKELY, from the portal's own hand-off; the
+> receiver's source is in another repository and has not been read from here.
 
 **A 200 is a successful delivery even when the portal did not apply it.** The
 contract warns against conflating the two twice. `portal_outcome` carries the
@@ -291,21 +335,45 @@ gate.
 |---|---|---|---|
 | GET | `/status` | read | the switch, the scope, the connection, the queue counts, last delivery, last error, oldest waiting |
 | GET | `/rows` | read | `?status=&doc_no=&limit=` (capped 200) |
-| PUT | `/connection` | manage | `vp.url` + `vp.since`. **https only** — the body carries a customer name and every line's cost |
-| PUT | `/secret` | manage | **write-only.** >= 32 characters |
+| PUT | `/connection` | manage | `vp.url` + `vp.since`. **https only** — the body carries a customer name and every line's cost. Unchanged by the 2026-09-13 default: the address the page OFFERS is a page-side constant, never a server default |
+| POST | `/secret/generate` | manage | **mints the key.** 48 URL-safe characters, stored exactly as `PUT /secret` stores it, returned **once** in that response and never again |
+| PUT | `/secret` | manage | **write-only.** >= 32 characters. The paste-your-own fallback; the page has no box for it since 2026-09-13 |
 | PUT | `/scope` | manage | the switch and the company list. `companies` is REQUIRED when enabling |
 | POST | `/probe` | manage | GETs the receiver's `/health` with the secret. Sends no sales-order data |
 | POST | `/queue-undelivered` | manage | the backfill AND the self-heal, one operation |
 | POST | `/drain` | manage | send now rather than waiting for the sweep |
 | POST | `/rows/:id/requeue` | manage | release one parked row. A `sent` row is refused `409` |
 
-### The secret is write-only through the API
+### The key is minted here and shown once
 
-`PUT /secret` sets it; **nothing reads it back.** `GET /status` answers with its
-LENGTH and last four characters — enough to tell "the right one is in there"
-from "the field is empty" without putting a credential on a screen, in a log, or
-in a browser's network tab. The value only ever leaves the database as a request
-header the sender builds.
+Owner 2026-09-13: 「那边 generate 一个 API key 出来；我这边只需要填那个 API key，
+它就可以 link 起来了」. Before this, linking the two systems meant inventing a
+string and typing the same string into two places.
+
+`POST /secret/generate` mints 48 characters from a **64-symbol** URL-safe
+alphabet with `crypto.getRandomValues` (`mintVpSecret`). The alphabet's length is
+load-bearing: `byte & 63` is uniform only because 64 divides 256 exactly, so
+trimming it to 62 "alphanumeric only" symbols would bias the first two, silently.
+A test pins the length for that reason.
+
+**It is returned in that one response and never again.** `GET /status` answers
+with the key's LENGTH, its last four characters and `setAt` — when it was last
+written, from `scm.sync_config.updated_at`. That is enough to tell "the right one
+is in there" from "the field is empty", and enough to answer "is the portal
+holding the key we generated on Sunday?", without putting a credential on a
+screen, in a log, or in a browser's network tab. The value only ever leaves the
+database as a request header the sender builds.
+
+**The audit row carries no key.** `writeAudit` records
+`venture_portal.secret.generate` with the actor, the entity and the key's LENGTH
+and TAIL in `meta` — so the ledger answers who minted one and when, without the
+ledger becoming worth stealing. The actor is passed explicitly from `houzsUser`
+rather than left to `audit(c, …)`, which lifts it off `c.get('user')` — inside
+`/api/scm/*` that is the pinned `scm.staff` system identity every caller shares.
+
+**Rotating** is pressing Generate again and pasting the new key on the portal. The
+window of 401s in between costs the queue nothing: a 401 does not consume a row's
+attempts (§6), so the deliveries go out on their own once the two agree.
 
 ---
 
@@ -324,31 +392,65 @@ the row.
 waiting" is a busy queue; "1 waiting since Tuesday" is a feed that stopped, and
 those are the same number. The staleness branch reads `oldestPending`.
 
+### Connection, since 2026-09-13 — two things nobody has to type
+
+**The API key has no input box.** Where the free-text *Shared secret* field was,
+the card now shows `Key ····9f2a · generated 13/09/2026 15:40` (`vpKeyLine`) and a
+**Generate API key** button. Pressing it reveals the key ONCE, in a box with
+**Copy** and **Done**, under the sentence that names where it goes:
+
+> Paste this in the Venture Portal › Revenue › Fair › Commission Calculation ›
+> Houzs ERP link. Not shown again; generate a new one to rotate.
+
+The reveal is component state in `useVpActions` — never localStorage, never the
+URL, gone on reload, and the server will not answer it a second time. **Copy
+reports its own failure**: `navigator.clipboard` throws on an insecure origin and
+on a denied permission, and a silent one there sends the operator to the portal
+with an empty clipboard and no key left to copy.
+
+**The receiver address arrives pre-filled** with `VP_DEFAULT_RECEIVER_URL` —
+`https://venture-portal-chi.vercel.app/api/erp/v1/sales-orders` — when `vp.url`
+is empty (`vpReceiverDraft`). It is a PAGE constant, not a server default:
+`PUT /connection` is unchanged and still https-only, and a receiver address the
+server chose for an endpoint that sends customer names and line costs outward is
+the wrong direction. `vpReceiverHint` says out loud which state it is in, because
+a pre-filled box otherwise reads as a saved one and somebody would turn the feed
+on while `vp.url` is still empty and the drain answers `not_configured`.
+
+Both surfaces render all of it from the shared layer; the desktop and mobile
+suites each assert the reveal appears once and is gone after **Done**.
+
 ---
 
 ## 10. Operating it
 
-**Turning it on for the first time**
+**Turning it on for the first time** (rewritten 2026-09-13 — no secret to invent,
+no URL to type, and nothing to ask the portal owner for)
 
-1. Get the receiver URL and the shared secret from the portal owner. The secret
-   must also be set as `ERP_SYNC_SECRET` on the portal's Vercel Production env —
-   until it is, the portal answers 503 and our queue simply waits.
-2. Page -> Connection -> save the address, save the secret, press **Test
-   connection**. Expect `{"ok":true,…}`.
-3. Page -> Switch -> companies (Houzs Century is `1`) -> **Turn on**.
-4. Page -> The queue -> **Queue anything not delivered** to backfill.
-   493 in-scope orders existed on 2026-09-12; at 25 per five-minute sweep that
-   is about 100 minutes, or press **Send now** repeatedly to walk it down while
-   watching. **UNTESTED at that scale** — watch the first run.
-5. Portal HR matches each ERP salesperson to a portal staff row once
+1. Page -> Connection -> the **Receiver address** is already the portal's own.
+   Press **Save address**. (Nothing is stored until you do; the hint says so.)
+2. Press **Generate API key** -> **Copy** -> paste it in the Venture Portal
+   (Revenue -> Fair -> Commission Calculation -> *Houzs ERP link*) -> **Done**.
+3. Press **Test connection**. Expect `{"ok":true,"service":"venture-portal",…}`.
+4. Page -> Switch -> companies (Houzs Century is `1`) -> **Turn on**.
+5. Page -> The queue -> **Queue anything not delivered** to backfill.
+   493 in-scope orders existed on 2026-09-12. One kick clears up to 100, and any
+   save kicks — so pressing **Send now** a few times, or simply working normally,
+   walks it down far faster than the old 25-per-five-minutes. **UNTESTED at that
+   scale** — watch the first run and record the wall clock here.
+6. Portal HR matches each ERP salesperson to a portal staff row once
    (Revenue -> Fair -> Comm Cal). Remembered against `scm.staff.id`.
 
-**Rotating the secret** — set the new value on the PORTAL first, then on this
-page. The window of 401s only delays deliveries: a 401 costs a row no attempts.
+**Rotating the key** — press **Generate API key** again, then paste the new one on
+the portal. Order does not matter: the window of 401s only delays deliveries,
+because a 401 costs a row no attempts. (This used to read "set the new value on
+the PORTAL first", which was advice for a key you invented yourself; when this
+side mints it, the portal cannot be first.)
 
-**Is it stuck?** The page's verdict answers it. `pending` that keeps growing
-while `last_error` reads `http 401` is the secret; a `pending` row hours old with
-no error is the drain not running.
+**Is it stuck?** The page's verdict answers it. `pending` that keeps growing while
+`last_error` reads `http 401` is the key — the portal is holding a different one.
+A `pending` row hours old with no error means BOTH senders have stopped: the kick
+and the `*/5` sweep. `[vp-kick]` in the Worker log is the kick's own failures.
 
 **A month's commission run is already applied.** Deliveries for it arrive as
 `held`. HR reopens the run in the portal and replays.
@@ -363,6 +465,39 @@ no error is the drain not running.
   The cron drain is not an HTTP request and keeps delivering what is queued.
   Whoever imposed the freeze can still flip `scm.app_config`. Exempting this
   prefix is a change to write-freeze's own contract and belongs in its own PR.
+  **The kick is unaffected either way**: it is mounted after write-freeze, and a
+  frozen write returns 503 without calling `next()`, so no kick is even entered
+  for a save that did not happen.
+- **Two kicks can overlap, on purpose.** The debounce collapses writes inside ONE
+  1.5 s window, and a backfill sweep of 25 POSTs easily outlasts that — so a save
+  arriving mid-sweep starts a second drain, and both can read the same pending
+  rows. There is deliberately no in-flight lock: a lock would leave a save that
+  landed during a long drain with no kick at all, waiting five minutes, which is
+  the opposite of what this was built for. The cost is a duplicate POST, and the
+  portal upserts one live row per document by newest `snapshotAt` and answers
+  `duplicate` — a delivered-but-not-reapplied outcome (§6), so no commission is
+  double-counted. `attempts` can undercount slightly, which matters to nothing.
+  **LIKELY, not PROVEN from here** — the dedupe is the portal's behaviour, stated
+  in its contract, and its receiver is in another repository. Note the overlap is
+  already reachable today by pressing **Send now** while the cron sweeps; the kick
+  makes it more frequent, it does not create it.
+- **The kick's limits, all three deliberate.** (a) The debounce timestamp is
+  MODULE-LEVEL, so it is per-isolate: two isolates serving two saves a second
+  apart schedule two drains. Harmless — the second finds an empty queue. (b) A
+  change made to `scm.mfg_sales_orders*` outside a Worker request (a migration
+  backfill, a repair script, a hand-written `UPDATE`) is captured by the trigger
+  and kicked by nothing; the `*/5` sweep collects it. (c) One kick delivers at
+  most `VP_KICK_MAX_SWEEPS * VP_DRAIN_BATCH` = 100 documents. It is an
+  accelerator, not a backfill tool.
+- **`/api/pos/*` is deliberately NOT a second mount.** Checked 2026-09-13:
+  `backend/src/routes/pos.ts` has nine routes and the only two naming
+  `scm.mfg_sales_orders` are both `SELECT`s inside `GET /sales-stats`. POS
+  sales-order writes go through `/api/scm/mfg-sales-orders` and its cart through
+  `/api/scm/pos-cart`, both already under the mount. Re-check with
+  `grep -n "mfg_sales_orders" backend/src/routes/pos.ts` before assuming it stayed
+  true — a POS write path added there would silently fall back to the cron.
+- **Measured end-to-end latency is UNKNOWN** and §2 says why. Acceptance step 4
+  produces it; the estimate in §2 is labelled and must be replaced, not quoted.
 - **The SQL is UNAPPLIED.** `pg-migrate` applies it on the next push to `main`.
   The statement splitting was verified against
   `backend/scripts/lib/split-sql.mjs` (20 statements, every dollar-quoted body
@@ -391,9 +526,10 @@ no error is the drain not running.
 | file | what |
 |---|---|
 | `backend/src/db/migrations-pg/20260912T1800_scm_venture_portal_outbox.sql` | table, three triggers, `vp_build_payloads`, `vp_requeue_undelivered`, the seeded `'off'` flag |
-| `backend/src/scm/lib/venture-portal-outbox.ts` | the sender, the response taxonomy, the reconcile, `VP_ROW_STATUSES`, `VP_CONFIG_KEYS` |
+| `backend/src/scm/lib/venture-portal-outbox.ts` | the sender, the response taxonomy, the reconcile, `VP_ROW_STATUSES`, `VP_CONFIG_KEYS`, `mintVpSecret`, `kickVenturePortalDrain` |
+| `backend/src/scm/lib/venture-portal-kick.ts` | the ONE middleware that schedules a drain after a successful SCM write (§2) |
 | `backend/src/scm/lib/venture-portal-feed-flag.ts` | the switch + company scope, 30s cache, fails closed to OFF |
-| `backend/src/scm/routes/venture-portal-feed.ts` | the nine endpoints |
+| `backend/src/scm/routes/venture-portal-feed.ts` | the ten endpoints |
 | `frontend/src/lib/venturePortalFeed.ts` | the ONE logic layer for both surfaces |
 | `frontend/src/pages/VenturePortalFeed.tsx` | desktop |
 | `frontend/src/mobile/MobileVenturePortalFeed.tsx` | mobile |
@@ -407,8 +543,9 @@ no route.
 
 | file | what this module puts there |
 |---|---|
-| `backend/src/index.ts` | `drainVenturePortalOutbox` in the `*/5` cron; `reconcileVenturePortalOutbox` in the `*/30` cron |
-| `backend/src/scm/index.ts` | `scm.route("/venture-portal-feed", venturePortalFeed)` — no `scmAreaGuard`, and the comment says why |
+| `backend/src/index.ts` | `drainVenturePortalOutbox` in the `*/5` cron; `reconcileVenturePortalOutbox` in the `*/30` cron. **Both unchanged on 2026-09-13** — they are the zero-loss guarantee |
+| `backend/src/scm/index.ts` | `scm.route("/venture-portal-feed", venturePortalFeed)` — no `scmAreaGuard`, and the comment says why. **Plus `scm.use('/*', venturePortalKick())`**, immediately after `scmWriteFreeze()`: one mount, so no router that writes a sales order can miss it, and a frozen write never reaches it |
+| `backend/src/services/audit.ts` | `writeAudit` records `venture_portal.secret.generate` — actor, length, tail, never the key (§8) |
 | `backend/src/scm/lib/scm-areas.ts` | `/venture-portal-feed` in `SCM_UNGUARDED_PREFIXES`, with what that costs under a write freeze (§11) |
 | `backend/src/services/permissions.ts` | `scm.venture_portal.read` and `scm.venture_portal.manage` (§7) |
 | `frontend/src/App.tsx` | the `/venture-portal-feed` route + its `Guard anyPerm` |

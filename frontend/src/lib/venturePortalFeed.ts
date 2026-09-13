@@ -15,9 +15,11 @@
 // a console, and CLAUDE.md forbids that shape: 「一个功能如果上线后的日常操作还需
 // 要开 Terminal、跑 SQL、或找 IT 帮忙，就等于没做完」.
 //
-// THE SECRET IS NEVER READ BACK. The API answers with its length and last four
-// characters only (backend scm/routes/venture-portal-feed.ts), so nothing here
-// can render it, log it, or put it in a browser's network tab.
+// THE KEY IS MINTED BY THE SERVER AND SHOWN ONCE. Generate returns it in that
+// one response body and this layer holds it in component state until the box is
+// dismissed. Afterwards the API answers with its length, its last four
+// characters and when it was set (backend scm/routes/venture-portal-feed.ts), so
+// nothing here can re-render it, log it, or put it in a network tab again.
 //
 // THE COPY IS PLAIN ENGLISH, matching AutoCount Sync's labels ("Waiting", "Not
 // accepted", "Technical detail, for whoever looks after the AutoCount link").
@@ -28,13 +30,36 @@
 import { useCallback, useState } from "react";
 import { api } from "../api/client";
 import { useQuery } from "../hooks/useQuery";
+/* ONE DATE FORMAT, ONE PLACE THAT WRITES IT (owner 2026-08-18), and the reason
+   it is imported into the LOGIC layer rather than each surface: "generated
+   13/09/2026 15:40" is a sentence, and every sentence on this page lives here.
+   backend/scripts/check-date-formatting.mjs gates the rule. */
+import { fmtDateTime } from "../vendor/shared/format";
 
 export const VP_STATUS_PATH = "/api/scm/venture-portal-feed/status";
 export const VP_ROWS_PATH = "/api/scm/venture-portal-feed/rows";
 
-/** The contract's floor, mirrored so the form can refuse before the round trip.
- *  The SERVER is still the boundary — this only saves a wasted request. */
-export const VP_MIN_SECRET_LEN = 32;
+/**
+ * The receiver, pre-filled so the owner never types a URL.
+ *
+ * This is the portal's live address (its PRs #117 + #118). It is only an OFFER:
+ * the page shows it in the address box when nothing is stored, and PUT
+ * /connection is unchanged — nothing is saved until somebody presses Save
+ * address, and the server still refuses anything that is not https.
+ *
+ * Deliberately a constant HERE and not a server default: a default the SERVER
+ * applied would be a receiver address nobody chose, which for an endpoint that
+ * sends customer names and line costs outward is the wrong direction. Offering
+ * it on screen leaves the decision where it belongs and still saves the typing.
+ */
+export const VP_DEFAULT_RECEIVER_URL =
+  "https://venture-portal-chi.vercel.app/api/erp/v1/sales-orders";
+
+/** The one-time reveal's instruction — the exact path on the portal, because
+ *  「我这边只需要填那个 API key」 is only true if the page says where. */
+export const VP_KEY_PASTE_LINE =
+  "Paste this in the Venture Portal › Revenue › Fair › Commission Calculation › Houzs ERP link. "
+  + "Not shown again; generate a new one to rotate.";
 
 export type VpRowStatus = "pending" | "sent" | "failed" | "skipped";
 
@@ -42,6 +67,9 @@ export interface VpMaskedSecret {
   set: boolean;
   length: number;
   tail: string;
+  /** When the key was last written, from scm.sync_config's own updated_at.
+   *  A timestamp, never a credential. */
+  setAt: string | null;
 }
 
 export interface VpStatus {
@@ -125,14 +153,19 @@ export function vpVerdict(s: VpStatus | null): VpVerdict {
     return {
       tone: "bad",
       headline: `An order has been waiting ${Math.floor(stale)}h to be delivered`,
-      detail: "A delivery normally takes under five minutes. This is the sender having stopped, not a busy queue.",
+      /* DESCRIBES THE MECHANISM, not a measured duration. A delivery is sent
+         from the save itself, and a sweep every five minutes catches whatever
+         that missed — so an hour-old row means BOTH have stopped, which is the
+         thing worth saying. Naming a number here would be claiming a latency
+         nobody has measured on this account yet. */
+      detail: "An order is normally sent from the save itself, and a sweep every five minutes catches anything that missed. Waiting this long means neither is running.",
     };
   }
   if (s.queue.pending > 0) {
     return {
       tone: "wait",
       headline: `${s.queue.pending} waiting to be delivered`,
-      detail: "A batch goes out every five minutes.",
+      detail: "These go out from the save itself; a sweep every five minutes collects anything left over.",
     };
   }
   return {
@@ -161,12 +194,52 @@ export function vpScopeLabel(s: VpStatus | null): string {
   return "Off";
 }
 
-/** What the secret field should say without ever showing the secret. */
-export function vpSecretLine(s: VpStatus | null): string {
+/**
+ * What the page says about the key, without ever being able to show it.
+ *
+ * The dots are the point: an operator has to be able to check that the key the
+ * portal holds is the key this side generated, and four characters plus a
+ * timestamp does that. Nothing here could render the key even if it wanted to —
+ * GET /status does not carry it.
+ *
+ * "GENERATED", not "set": after this change the page has no way to put a key
+ * there except Generate. PUT /secret still exists for pasting one through the
+ * API, and a key arriving that way would read as generated — a single verb one
+ * step off on a screen, in exchange for not adding a fourth config row and a
+ * second read to answer it. The timestamp is exact either way.
+ */
+export function vpKeyLine(s: VpStatus | null): string {
   if (!s) return "";
   const k = s.connection.secret;
-  if (!k.set) return "Not set — the portal will refuse every delivery until it is.";
-  return `Set (${k.length} characters, ending ${k.tail}). Entering a new one replaces it.`;
+  if (!k.set) return "No API key yet. Generate one, then paste it in the Venture Portal.";
+  const when = k.setAt ? ` · generated ${fmtDateTime(k.setAt)}` : "";
+  return `Key ····${k.tail}${when}`;
+}
+
+/**
+ * What the address box should hold before anybody has typed anything.
+ *
+ * `|| ` not `?? ` on purpose: an empty stored string is exactly the not-yet-set
+ * case, and `??` would show a blank box and make the owner type the URL — the
+ * thing this exists to avoid.
+ */
+export function vpReceiverDraft(s: VpStatus | null): string {
+  return s?.connection.url || VP_DEFAULT_RECEIVER_URL;
+}
+
+/**
+ * Whether the address on screen is the one in USE, or only the offer.
+ *
+ * Without this the two states look identical — a pre-filled box reads as saved,
+ * and somebody would turn the feed on believing the receiver was configured when
+ * `vp.url` is still empty and the drain answers `not_configured`.
+ */
+export function vpReceiverHint(s: VpStatus | null): string {
+  if (!s) return "";
+  if (s.connection.url) {
+    return "Saved. Must be https — a delivery carries a customer's name and every line's cost.";
+  }
+  return "The Venture Portal's own address, filled in for you. Not saved yet — press Save address to use it.";
 }
 
 /** What a row's state means to somebody who did not write the queue. */
@@ -210,8 +283,13 @@ export function vpOutcomeLine(row: VpRow): string | null {
 export function vpRowTodo(row: VpRow): string | null {
   if (row.status !== "failed") return null;
   const e = row.last_error ?? "";
-  if (/401/.test(e)) return "The two secrets do not match. Set the same value here and on the portal, then re-send.";
-  if (/503/.test(e)) return "The portal has no secret configured. Ask the portal owner to set it; then re-send.";
+  /* 401 and 503 both mean "the keys disagree", and the DIFFERENCE is which side
+     is empty — so each names its own next step. Since the portal reads a key
+     pasted on its own page (its PRs #117 + #118), both are now fixed from here
+     plus one paste, which is what these two sentences say and what they did not
+     say before: 503 used to read "nothing to fix on our side". */
+  if (/401/.test(e)) return "The portal is holding a different key. Generate a new one here, paste it in the Venture Portal, then re-send.";
+  if (/503/.test(e)) return "The portal has no key of its own yet. Generate one here, paste it in the Venture Portal, then re-send.";
   if (/4(00|22)/.test(e)) return "The portal could not read this delivery. Whoever looks after the feed needs to see this one.";
   if (/gave up/.test(e)) return "It was tried several times and never got through. Re-send once the cause is fixed.";
   return "Re-send once the cause is fixed.";
@@ -255,6 +333,13 @@ export interface VpNote {
 export function useVpActions(onChanged: () => void) {
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<VpNote | null>(null);
+  /* THE ONE-TIME REVEAL LIVES HERE, not in either page, because "is the key
+     still on screen" is a decision and both surfaces must answer it the same
+     way. Component state only: it is never written to localStorage, never put in
+     the URL, and gone on a reload — the server will not answer it a second
+     time, and neither will this. */
+  const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [keyCopied, setKeyCopied] = useState(false);
 
   const run = useCallback(
     async (key: string, call: () => Promise<unknown>, say: (result: unknown) => VpNote) => {
@@ -287,18 +372,65 @@ export function useVpActions(onChanged: () => void) {
     [run],
   );
 
-  const saveSecret = useCallback(
-    (secret: string) =>
+  /**
+   * Mint a key and reveal it once.
+   *
+   * The reveal is set INSIDE the call, before `run` reports, so a successful
+   * generate cannot end with the key written to the database and nothing on
+   * screen — which would leave the feed holding a key nobody can paste anywhere,
+   * fixable only by generating another.
+   */
+  const generateKey = useCallback(
+    () =>
       run(
-        "secret",
-        () => api.put("/api/scm/venture-portal-feed/secret", { secret }),
+        "generate",
+        async () => {
+          const r = await api.post<{ secret: string }>(
+            "/api/scm/venture-portal-feed/secret/generate",
+            {},
+          );
+          setRevealedKey(r.secret);
+          setKeyCopied(false);
+          return r;
+        },
         () => ({
           tone: "good",
-          text: "Secret saved. Set the same value on the portal — until it matches, deliveries are refused, and a refusal costs an order nothing: they go out on their own once the two agree.",
+          text: "A new API key is ready. Copy it now and paste it in the Venture Portal — it is not shown again. Until the portal holds the same key, deliveries are refused and that costs an order nothing: they go out on their own once the two agree.",
         }),
       ),
     [run],
   );
+
+  /** Dismiss the reveal. Nothing to save — the key is already in the database. */
+  const dismissKey = useCallback(() => {
+    setRevealedKey(null);
+    setKeyCopied(false);
+  }, []);
+
+  /**
+   * Copy the revealed key.
+   *
+   * A CLIPBOARD REFUSAL MUST REACH SOMEBODY. navigator.clipboard throws on an
+   * insecure origin and on a denied permission, and this is the one moment on
+   * the page where silently doing nothing costs real work: the operator walks to
+   * the portal with an empty clipboard and the key is gone. CLAUDE.md's "a
+   * failure that reaches nobody is worse than a crash", at the exact call site
+   * that would have produced it.
+   */
+  const copyKey = useCallback(async () => {
+    const key = revealedKey;
+    if (!key) return;
+    try {
+      await navigator.clipboard.writeText(key);
+      setKeyCopied(true);
+    } catch {
+      setKeyCopied(false);
+      setNote({
+        tone: "bad",
+        text: "Could not reach the clipboard. Select the key above and copy it by hand — it is not shown again.",
+      });
+    }
+  }, [revealedKey]);
 
   const saveScope = useCallback(
     (enabled: boolean, companies: number[] | "all") =>
@@ -308,7 +440,7 @@ export function useVpActions(onChanged: () => void) {
         () => ({
           tone: enabled ? "good" : "off",
           text: enabled
-            ? "On. The next batch goes out within five minutes."
+            ? "On. From now on a saved order is sent from the save itself, and anything already waiting leaves on the next sweep."
             : "Off. Nothing more is sent; anything already waiting stays waiting.",
         }),
       ),
@@ -403,8 +535,12 @@ export function useVpActions(onChanged: () => void) {
     busy,
     note,
     setNote,
+    revealedKey,
+    keyCopied,
     saveConnection,
-    saveSecret,
+    generateKey,
+    dismissKey,
+    copyKey,
     saveScope,
     probe,
     queueUndelivered,

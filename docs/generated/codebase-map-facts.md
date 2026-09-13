@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-192 route modules (53 in `backend/src/routes`, 139 in `backend/src/scm/routes`), 1287 endpoint registrations.
+192 route modules (53 in `backend/src/routes`, 139 in `backend/src/scm/routes`), 1288 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -206,7 +206,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/trip-scan-token.ts` | 1 | 61 |
 | `backend/src/scm/routes/trips.ts` | 15 | 1391 |
 | `backend/src/scm/routes/unbilled-deliveries.ts` | 1 | 422 |
-| `backend/src/scm/routes/venture-portal-feed.ts` | 9 | 451 |
+| `backend/src/scm/routes/venture-portal-feed.ts` | 10 | 540 |
 | `backend/src/scm/routes/venues.ts` | 4 | 283 |
 | `backend/src/scm/routes/warehouse-mirror.ts` | 1 | 185 |
 | `backend/src/scm/routes/warehouse.ts` | 9 | 699 |
@@ -227,7 +227,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2280 files, 766001 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2282 files, 767195 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -494,7 +494,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileStockTransferNew.tsx` | 255 |
 | `frontend/src/mobile/MobileTrackingBanner.tsx` | 84 |
 | `frontend/src/mobile/MobileTwoFactorCard.tsx` | 268 |
-| `frontend/src/mobile/MobileVenturePortalFeed.tsx` | 429 |
+| `frontend/src/mobile/MobileVenturePortalFeed.tsx` | 483 |
 | `frontend/src/mobile/MobileVirtualList.tsx` | 159 |
 
 ## 6. Destinations served by both surfaces

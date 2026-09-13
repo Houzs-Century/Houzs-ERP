@@ -44,7 +44,7 @@ const status = (over: Partial<VpStatus> = {}): VpStatus => ({
   connection: {
     url: "https://portal.example/api/erp/v1/sales-orders",
     since: "2026-08-01",
-    secret: { set: true, length: 40, tail: "e-42" },
+    secret: { set: true, length: 48, tail: "e-42", setAt: "2026-09-13T07:40:00.000Z" },
     ready: true,
   },
   queue: {
@@ -104,17 +104,45 @@ describe("the desktop page", () => {
     expect(await screen.findByText("1 order could not be delivered")).toBeTruthy();
   });
 
-  /* THE SECURITY PROPERTY. The API cannot hand the page a secret, and the page
-     must not render one if a future endpoint change ever did. */
-  it("never renders the shared secret", async () => {
+  /* THE SECURITY PROPERTY. GET /status cannot hand the page a key, and there is
+     no input box that could hold one — so the only way a key reaches this screen
+     is the one-time reveal below. */
+  it("never renders a key the server did not hand it", async () => {
     wire(status());
     await mount();
-    await screen.findByText(/40 characters/);
+    /* The whole sentence, not just the mask: the mask alone appears twice (the
+       field and its hint), which is correct page behaviour and an ambiguous
+       query. */
+    await screen.findByText(/Key ····e-42 · generated/);
     expect(document.body.textContent).not.toContain(SECRET);
-    /* The field itself is a password input, so a shoulder-surfer and a
-       screenshot both get dots. */
-    const secretBox = screen.getByPlaceholderText(/At least 32 characters/);
-    expect(secretBox.getAttribute("type")).toBe("password");
+    /* And no box to type one into: the owner fills the key in on the PORTAL. */
+    expect(screen.queryByPlaceholderText(/At least 32 characters/)).toBeNull();
+  });
+
+  /* THE HAND-SHAKE, end to end on this surface: press Generate, the key is on
+     screen exactly once with the instruction that names where it goes, and Done
+     takes it away for good — the server will not answer it a second time.
+     Asserted rather than assumed because a reveal that does not appear leaves a
+     key written to the database that nobody can paste anywhere. */
+  it("reveals a generated key once, with where to paste it, and lets it go", async () => {
+    wire(status({
+      connection: { ...status().connection, secret: { set: false, length: 0, tail: "", setAt: null } },
+    }));
+    apiPost.mockResolvedValue({ ok: true, secret: SECRET, mask: { set: true, length: 39, tail: "e-42", setAt: null } });
+    await mount();
+    /* With no key stored the verdict is the not-wired-up one, which outranks the
+       failed count — the page's own ordering, asserted here by waiting on it. */
+    await screen.findByText(/not wired up yet/i);
+
+    await userEvent.click(screen.getByRole("button", { name: /Generate API key/i }));
+
+    expect(await screen.findByText(SECRET)).toBeTruthy();
+    expect(apiPost).toHaveBeenCalledWith("/api/scm/venture-portal-feed/secret/generate", {});
+    expect(screen.getByText(/Commission Calculation/)).toBeTruthy();
+    expect(screen.getByText(/Not shown again/)).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: /^Done$/ }));
+    expect(screen.queryByText(SECRET)).toBeNull();
   });
 
   it("shows the address and the start date the server holds", async () => {
@@ -123,6 +151,19 @@ describe("the desktop page", () => {
     const url = await screen.findByDisplayValue("https://portal.example/api/erp/v1/sales-orders");
     expect(url).toBeTruthy();
     expect(screen.getByDisplayValue("2026-08-01")).toBeTruthy();
+  });
+
+  /* 「我这边只需要填那个 API key」 — so a URL is not a thing the owner types. The
+     box arrives holding the portal's own address, and the hint says out loud
+     that it is only an offer: a pre-filled box otherwise reads as saved, and
+     somebody would turn the feed on while vp.url is still empty. */
+  it("offers the portal's own address, and says it is not saved yet", async () => {
+    wire(status({ connection: { ...status().connection, url: "" } }));
+    await mount();
+    expect(
+      await screen.findByDisplayValue("https://venture-portal-chi.vercel.app/api/erp/v1/sales-orders"),
+    ).toBeTruthy();
+    expect(screen.getByText(/Not saved yet/i)).toBeTruthy();
   });
 
   /* A READ-ONLY HOLDER. The server is the boundary; this asserts the page
@@ -135,13 +176,19 @@ describe("the desktop page", () => {
     expect(screen.queryByRole("button", { name: /Turn off/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /Test connection/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /Send again/i })).toBeNull();
+    /* Minting a key is the newest write on this page and the most consequential
+       of the small ones — it invalidates the key the portal is holding, so every
+       queued delivery starts answering 401 until somebody pastes the new one. */
+    expect(screen.queryByRole("button", { name: /Generate/i })).toBeNull();
   });
 
   it("puts the reason and the next step on the failed row", async () => {
     wire(status());
     await mount();
     expect(await screen.findByText("HC-SO-013403")).toBeTruthy();
-    expect(screen.getByText(/do not match/i)).toBeTruthy();
+    /* The next STEP, not the status code: a 401 is the portal holding a
+       different key, and the fix is generate-then-paste. */
+    expect(screen.getByText(/different key/i)).toBeTruthy();
     expect(screen.getByText(/http 401/)).toBeTruthy();
   });
 
