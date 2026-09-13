@@ -2585,13 +2585,13 @@ convert wizard posts to `/from-sos`, which copies server-side.
 
 The form's address used to take State, City and Postcode as free text — the only
 document form left that way. It now uses the same layer as the Sales Order and
-Sales Invoice forms: `StatePicker`, then City and Postcode as selects from
+Sales Invoice forms, with the Sales Order's own widgets: `StatePicker`, a typeable City select and the shared `AddressPostcodeField`, fed by
 `useAddressCascade` (`vendor/scm/lib/address-cascade.ts`), each pick back-filling
 the other two. Picking a State fills **Sales location** from its state-warehouse
 mapping; a location carried from the order is left alone on load, and the field
 stays editable. A carried City or Postcode the locality list does not hold stays
 visible. `frontend/src/pages/scm-v2/addressFormsUseCascade.test.ts` fails any
-address form that drops the shared picker (docs/bugs/0873).
+address form that drops the shared picker (docs/bugs/0880).
 
 ## A migrated DO's sales / delivery fields come from the SO header too (2026-09-08)
 
