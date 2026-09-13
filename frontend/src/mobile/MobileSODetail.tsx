@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { formatDate } from "../lib/utils";
 import { NonSellingWarehouseNoteMobile, SourcePosRowMobile, soStockPillMobile } from "./source-chips";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
@@ -19,6 +19,7 @@ import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { ACCESS_RANK } from "../types";
 import {
   useMfgSalesOrderDetail,
+  useSoLineCoverage,
   useSalesOrderPayments,
   useUpdateMfgSalesOrderStatus,
   useDeleteMfgSalesOrder,
@@ -26,6 +27,7 @@ import {
   type SoAuditEntry,
   type SoAuditFieldChange,
 } from "../vendor/scm/lib/sales-order-queries";
+import { overlaySoLineCoverage } from "../vendor/scm/lib/so-coverage-overlay";
 import { buildVariantSummary } from "../vendor/shared/variant-summary";
 import { formatPhone } from "../vendor/shared/phone";
 import { orderLineIdentity } from "@2990s/shared";
@@ -305,6 +307,12 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav }: { 
      invalidate ['mfg-sales-order-detail'] + ['mfg-sales-orders', docNo,
      'payments'] and those invalidations now reach this screen too. */
   const detail = useMfgSalesOrderDetail(docNo);
+  /* The live Stock / Incoming PO / READY-source fields are NOT in GET /:docNo
+     (it returns coverage_po null since docs/bugs/0592); they come from this
+     second call, overlaid below with the SAME function the desktop uses. The
+     phone never made the call, so its line card could not show the incoming
+     purchase order at all (found tracing staff issues #18/#19, 2026-09-14). */
+  const coverage = useSoLineCoverage(docNo);
   const paymentsQ = useSalesOrderPayments(docNo);
 
   const staffQ = useStaff();
@@ -323,7 +331,10 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav }: { 
      and mobile did not — the one-shared-rule divergence this repo keeps paying
      for. Production held zero cancelled rows until 2026-08-10, so it never
      showed. */
-  const items = ((detail.data?.items ?? []) as SoItem[]).filter((l) => !l.cancelled);
+  const items = useMemo(
+    () => overlaySoLineCoverage(((detail.data?.items ?? []) as SoItem[]).filter((l) => !l.cancelled), coverage.data?.coverage),
+    [detail.data, coverage.data],
+  );
   /* MONEY IS EITHER KNOWN OR UNKNOWN — the MobilePOD (#653) rule, applied to the
      sibling screen that runs the same subtraction. `paymentsQ.data ?? []` folded
      a FAILED payments read into "no payments", and `data` is set only by a
