@@ -43,7 +43,7 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
 import {
-  loadPhraseMap, buildLiveIndex, classifyLine, K,
+  loadPhraseMap, buildLiveIndex, classifyLine, mapPhrase, K,
 } from './lib/special-order-phrase-mapper.mjs';
 
 const DST = process.env.DATABASE_URL;
@@ -82,6 +82,7 @@ try {
       FROM scm.special_addons WHERE company_id = ${CO}
      ORDER BY code`;
   line(`   catalogue rows: ${addons.length}`);
+  const { liveByCat } = buildLiveIndex(addons);
 
   /* ── 2. how many document lines carry each, across all six ─────────────── */
   const TABLES = [
@@ -92,24 +93,31 @@ try {
     ['purchase_invoice_items', 'purchase invoice', 'JOIN scm.purchase_invoices h ON h.id = i.purchase_invoice_id AND h.company_id = $1'],
     ['sales_invoice_items', 'sales invoice', 'JOIN scm.sales_invoices h ON h.id = i.sales_invoice_id AND h.company_id = $1'],
   ];
-  const carried = new Map();   // K(code) -> { total, byDoc: Map }
-  const bump = (code, docName) => {
+  const carried = new Map();   // K(code) -> { total, byDoc, cats, asWritten }
+  const bump = (code, docName, grp) => {
     const k = K(code);
-    const e = carried.get(k) ?? { total: 0, byDoc: new Map(), asWritten: code };
+    const e = carried.get(k) ?? { total: 0, byDoc: new Map(), cats: new Map(), asWritten: code };
     e.total += 1;
     e.byDoc.set(docName, (e.byDoc.get(docName) ?? 0) + 1);
+    /* The CATEGORY of the line is carried because a phrase means different
+       things on the two sides: `fully cover` is HB Fully Cover on a bedframe and
+       something else entirely on a sofa. Grouping a legacy spelling under the
+       wrong category's code would be the same class of error as reading only
+       half the rule table (docs/bugs/0845). */
+    const g = grp === 'sofa' ? 'SOFA' : grp === 'bedframe' ? 'BEDFRAME' : 'OTHER';
+    e.cats.set(g, (e.cats.get(g) ?? 0) + 1);
     carried.set(k, e);
   };
   for (const [table, docName, join] of TABLES) {
     const rows = await sql.unsafe(
-      `SELECT i.variants FROM scm.${table} i ${join}
+      `SELECT i.variants, lower(coalesce(i.item_group,'')) AS grp FROM scm.${table} i ${join}
         WHERE jsonb_typeof(coalesce(i.variants,'{}'::jsonb)) = 'object'
           AND coalesce(i.variants -> 'specials', '[]'::jsonb) <> '[]'::jsonb`, [CO]);
     for (const r of rows) {
       const o = objOf(r.variants) ?? {};
       for (const s of (Array.isArray(o.specials) ? o.specials : [])) {
         const t = String(s).trim();
-        if (t) bump(t, docName);
+        if (t) bump(t, docName, r.grp);
       }
     }
   }
@@ -173,18 +181,65 @@ try {
   const known = new Set(addons.map((a) => K(a.code)));
   const orphan = [...carried.entries()].filter(([k]) => !known.has(k));
   rule();
+  const orphanLines = orphan.reduce((n, [, e]) => n + e.total, 0);
   line(`   values carried on documents that the catalogue does NOT hold: ${orphan.length}`);
-  for (const [, e] of orphan.sort((a, b) => b[1].total - a[1].total).slice(0, 25)) {
+  line(`   document lines carrying one of them:                          ${orphanLines}`);
+  line('   These are raw slip phrases stamped as specials before the catalogue settled.');
+  line('   They RENDER on the document, so nothing is broken to look at — but `specials`');
+  line('   composes the inventory key, so every spelling is its OWN stock bucket.');
+
+  /* WHICH OF THEM ARE THE SAME THING, decided by the RULES and not by eye.
+     Each legacy value is put back through the same phrase mapper the backfills
+     use: if it decodes to a catalogue code, that code is what it MEANS, and
+     every spelling decoding to the same code is one option split across many
+     buckets. Grouping them by reading them myself would be a guess; grouping
+     them with the rules that already govern this data is a measurement. */
+  const meansCat = new Map();     // catalogue code -> { lines, spellings: [] }
+  const meansNothing = [];
+  for (const [, e] of orphan) {
+    /* Ask the category the value ACTUALLY appears on, most common first — never
+       a fixed SOFA-then-BEDFRAME order, which would file a sofa's `fully cover`
+       under the headboard code. */
+    const order = [...e.cats].filter(([c]) => c !== 'OTHER').sort((a, b) => b[1] - a[1]).map(([c]) => c);
+    let hit = [];
+    let via = '';
+    for (const cat of (order.length ? order : ['SOFA', 'BEDFRAME'])) {
+      hit = mapPhrase(e.asWritten, liveByCat.get(cat), cat, map);
+      if (hit.length) { via = cat; break; }
+    }
+    e.via = via;
+    if (!hit.length) { meansNothing.push(e); continue; }
+    for (const code of hit) {
+      const g = meansCat.get(code) ?? { lines: 0, spellings: [] };
+      g.lines += e.total;
+      g.spellings.push(e);
+      meansCat.set(code, g);
+    }
+  }
+  rule();
+  line('   THE LEGACY SPELLINGS, GROUPED BY WHAT THE RULES SAY THEY MEAN.');
+  line('   Each row is ONE catalogue option whose stock is split across several buckets');
+  line('   purely because the words differ. Folding a row onto its code merges those');
+  line('   buckets — which is a STOCK move, so it is an owner decision, not a tidy-up:');
+  line('');
+  const groups = [...meansCat].sort((a, b) => b[1].lines - a[1].lines);
+  for (const [code, g] of groups) {
+    line(`   ${code}  —  ${g.lines} line(s) across ${g.spellings.length} spelling(s)`);
+    for (const e of g.spellings.sort((a, b) => b.total - a.total).slice(0, 8)) {
+      line(`         ${pad(e.total)}  [${e.via}] ${e.asWritten}`);
+    }
+    if (g.spellings.length > 8) line(`         ... and ${g.spellings.length - 8} more spelling(s)`);
+  }
+  line('');
+  line(`   legacy values the rules can NOT place on any catalogue option: ${meansNothing.length}`
+    + `  (${meansNothing.reduce((n, e) => n + e.total, 0)} line(s))`);
+  for (const e of meansNothing.sort((a, b) => b.total - a.total).slice(0, 30)) {
     line(`      ${pad(e.total)}  ${e.asWritten}`);
   }
-  if (orphan.length) {
-    line('      These are real picked values from before the catalogue settled, or a');
-    line('      spelling that drifted. They RENDER on the document; nothing is broken.');
-  }
+  if (meansNothing.length > 30) line(`      ... and ${meansNothing.length - 30} more`);
 
   /* ── 4. the free text that maps to nothing ─────────────────────────────── */
   const snap = loadSnapshot();
-  const { liveByCat } = buildLiveIndex(addons);
   const soRows = await sql`
     SELECT i.id::text AS id, i.doc_no, i.item_code, i.description2, i.remark,
            i.variants, i.linked_ac_dtlkey,
