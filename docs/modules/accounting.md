@@ -1667,6 +1667,35 @@ rows of equal width and the actions to the right. Every hook, label, button
 and refusal is unchanged — `frontend/src/pages/scm-v2/SettlementSetup.test.tsx`
 passes as it was.
 
+**A Maybank month tallies on a TYPED month-end figure; By month is one account
+at a time; the month runs the rule (2026-09-13, docs/bugs/0858; owner: by month
+这里我无法分辨什么也会 / 我的 matching 在 bank statement，然后 lock 在 by month？
+不能做一起？ / 做 做 做).** Maybank's Account Activity Report prints movements
+and no balance, so rule 2 below left a Maybank month with no opening, no
+closing and nothing to tally against — it could never close. **Rule 4** in
+`backend/src/acc/bank-month.ts`: a figure a file PRINTS always wins; where none
+does, the month's typed closing is its closing and the PREVIOUS month's typed
+closing is its opening (a month opens where the last one closed). The figure
+is typed once per month on the month view ("Month-end balance per the bank",
+with a second box for the previous month's closing when the opening is
+missing) into `scm.acc_bank_month_balances` (migration 20260913T1000, one row
+per company × account × month, who and when kept) through
+`POST /accounting/bank/months/:accountCode/:month/closing`
+(`{ closingSen | null, note? }`; null removes it; refused on a closed month
+and while the NEXT month is closed, since that month opens at it). A typed
+figure is checked the way the chain is — opening plus the month's non-ignored
+movements must reach the closing — and a shortfall is a gap sentence with the
+amount that keeps the month not whole, so a mistyped figure or a missing day is
+named rather than closed over. The screen and the reconciliation statement
+name who typed each figure and when ("as typed for the end of 2026-06 by Chew
+on 13/09/2026 — no file uploaded prints it"). Two layout changes with it: the
+By month list and the Bank statement file list show ONE account at a time
+(`frontend/src/pages/scm-v2/BankAccountTabs.tsx`, tabs labelled
+`MBB · 310-0010` off the bank setup), and the month view says "N still to
+decide" and carries "Match the obvious ones now", which runs the per-statement
+auto-match door over every file that fed the month and names any file the
+server refused while the others still run.
+
 **A MONTH, not a file at a time (2026-09-09; owner, uploading one a day: 每天我
 上传bank statement 和 merchant report 测试，但是有办法选这个是几月的？因为我发现
 好像没有).** Layer 4 reconciled one FILE, which is the right unit for a monthly

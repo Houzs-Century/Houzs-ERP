@@ -13,9 +13,9 @@
 //     buttons wherever it is looked at.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
-import type { BankLine, BankMonth, BankMonthAssembly, Reconciliation } from './bank-queries';
+import type { BankLine, BankMonth, BankMonthAssembly, BankMonthBalances, Reconciliation } from './bank-queries';
 
 const MONTH: BankMonth = {
   accountCode: '310-0020', month: '2026-09',
@@ -75,6 +75,9 @@ const state = vi.hoisted(() => ({
   lines: [] as unknown[],
   statements: [] as unknown[],
   lock: null as unknown,
+  balances: null as unknown,
+  autoMatch: vi.fn(),
+  typeClosing: vi.fn(),
 }));
 
 vi.mock('./bank-queries', () => ({
@@ -83,6 +86,7 @@ vi.mock('./bank-queries', () => ({
     data: {
       accountCode: '310-0020', month: '2026-09',
       assembly: state.assembly, reconciliation: state.recon, lock: state.lock,
+      balances: state.balances,
       statements: state.statements, lines: state.lines, unmatchedEntries: [],
     },
     isLoading: false,
@@ -100,13 +104,15 @@ vi.mock('./bank-queries', () => ({
   useUndoBankLine: () => ({ mutate: vi.fn(), isPending: false }),
   useLockBankMonth: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useUnlockBankMonth: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
+  useAutoMatchStatement: () => ({ mutate: vi.fn(), mutateAsync: state.autoMatch, isPending: false, isError: false, error: null }),
+  useTypeMonthClosing: () => ({ mutate: state.typeClosing, isPending: false, isError: false, error: null }),
 }));
 
-import { BankMonthTab, monthLabel } from './BankMonthTab';
+import { BankMonthTab, monthLabel, parseRm, previousMonthOf } from './BankMonthTab';
 
 const setUp = (over: {
   months?: unknown[]; assembly?: BankMonthAssembly; recon?: Reconciliation;
-  lines?: unknown[]; statements?: unknown[]; lock?: unknown;
+  lines?: unknown[]; statements?: unknown[]; lock?: unknown; balances?: BankMonthBalances;
 } = {}) => {
   state.months = over.months ?? [MONTH];
   state.assembly = over.assembly ?? ASSEMBLY;
@@ -114,6 +120,9 @@ const setUp = (over: {
   state.lines = over.lines ?? [LINE];
   state.statements = over.statements ?? STATEMENTS;
   state.lock = over.lock ?? null;
+  state.balances = over.balances ?? { closing: null, previousClosing: null };
+  state.autoMatch.mockReset();
+  state.typeClosing.mockReset();
 };
 
 /* The print dialog this screen mounts reads the company branding through
@@ -164,6 +173,144 @@ describe('the list of months', () => {
     setUp({ months: [] });
     show();
     expect(screen.getByText(/No bank statement has been uploaded yet/)).toBeTruthy();
+    expect(screen.queryByRole('tablist')).toBeNull();
+  });
+
+  /* Owner, 2026-09-13: by month 这里我无法分辨什么也会，你可能做成两个 tab? One
+     account's months at a time; the other account is one press away. */
+  test('shows one account at a time, with the other on its own tab', () => {
+    setUp({ months: [MONTH, { ...MONTH, accountCode: '310-0010', month: '2026-08', statementCount: 5 }] });
+    show();
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((t) => t.textContent)).toEqual(['310-0010', '310-0020']);
+    /* The first account, in code order, is up: its five files and not the other's three. */
+    expect(screen.getByText('5 files')).toBeTruthy();
+    expect(screen.queryByText('3 files')).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: '310-0020' }));
+    expect(screen.getByText('3 files')).toBeTruthy();
+    expect(screen.queryByText('5 files')).toBeNull();
+  });
+});
+
+/* Owner, 2026-09-13: 我的 matching 在 bank statement，然后 lock 在 by month？
+   不能做一起？ — the month says how much is left, and runs the rule itself. */
+describe('what is still to decide, on the month', () => {
+  test('says how many are left, and runs the rule over every file that fed the month', async () => {
+    setUp();
+    state.autoMatch
+      .mockResolvedValueOnce({ ok: true, matched: 2, jeNos: ['JE-1', 'JE-2'], contraPairs: 1 })
+      .mockResolvedValueOnce({ ok: true, matched: 1, jeNos: ['JE-3'], contraPairs: 0 });
+    openMonth();
+    expect(screen.getByText('1 still to decide')).toBeTruthy();
+    fireEvent.click(screen.getByText('Match the obvious ones now'));
+    await waitFor(() => expect(state.autoMatch).toHaveBeenCalledTimes(2));
+    /* One call per file of the month, in the order the files cover it. */
+    expect(state.autoMatch.mock.calls.map((c) => c[0])).toEqual([1, 3]);
+    expect(await screen.findByText(/3 matched by amount and name — JE-1, JE-2, JE-3; 1 pair the bank reversed left out/)).toBeTruthy();
+  });
+
+  test('a file the server refuses is named, and the others still run', async () => {
+    setUp();
+    state.autoMatch
+      .mockRejectedValueOnce(new Error('310-0020 2026-08 was closed by Chew on 2026-09-01, so matching would change a month that has already been reconciled and reported.'))
+      .mockResolvedValueOnce({ ok: true, matched: 1, jeNos: ['JE-3'], contraPairs: 0 });
+    openMonth();
+    fireEvent.click(screen.getByText('Match the obvious ones now'));
+    expect(await screen.findByText(/1 matched by amount and name — JE-3/)).toBeTruthy();
+    expect(screen.getByText(/d01\.csv: .*closed by Chew/)).toBeTruthy();
+  });
+
+  test('says nothing is left, and offers no rule, once every movement is decided', () => {
+    setUp({ lines: [{ ...LINE, state: 'POSTED', posted_je_no: 'JE-1' }] });
+    openMonth();
+    expect(screen.getByText('Nothing left to decide')).toBeTruthy();
+    expect(screen.queryByText('Match the obvious ones now')).toBeNull();
+  });
+
+  test('offers no rule on a closed month', () => {
+    setUp({ lock: { accountCode: '310-0020', month: '2026-09', lockedBy: 'Chew', lockedAt: '2026-10-02T03:14:00Z', lockNote: null, closingStatementSen: 1090000, closingLedgerSen: 1090000, differenceSen: 0, statementCount: 3, wasComplete: true } });
+    openMonth();
+    expect(screen.getByText('1 still to decide')).toBeTruthy();
+    expect(screen.queryByText('Match the obvious ones now')).toBeNull();
+  });
+});
+
+/* ── The figure he types, for a month no file prints a balance for (docs/bugs/0858) ── */
+describe('the month-end balance typed off the bank statement', () => {
+  const NO_BALANCES: BankMonthAssembly = {
+    ...ASSEMBLY, complete: false,
+    statementOpeningSen: null, openingFrom: null,
+    statementClosingSen: null, closingFrom: null,
+    gaps: ['None of this month\'s files prints an opening balance. Type the closing balance of 2026-08 off the bank\'s month-end statement and 2026-09 opens there.', 'None of this month\'s files prints a closing balance. Type it off the bank\'s month-end statement and the month can tally.'],
+  };
+  const TYPED_CLOSING = { statementId: null, fileName: null, on: '2026-09-30', typed: { month: '2026-09', by: 'Chew', at: '2026-09-13T07:05:00Z', note: 'per the September e-statement' } };
+  const STORED = { month: '2026-09', closingSen: 1090000, typedBy: 'Chew', typedAt: '2026-09-13T07:05:00Z', note: 'per the September e-statement' };
+
+  test('reads money the way people type it', () => {
+    expect(parseRm('19,840.54')).toBe(1984054);
+    expect(parseRm(' 10000 ')).toBe(1000000);
+    expect(parseRm('-120.00')).toBe(-12000);
+    expect(parseRm('')).toBeNull();
+    expect(parseRm('ten')).toBeNull();
+    expect(parseRm('1.234')).toBeNull();
+    expect(previousMonthOf('2026-09')).toBe('2026-08');
+    expect(previousMonthOf('2026-01')).toBe('2025-12');
+    expect(previousMonthOf('rubbish')).toBeNull();
+  });
+
+  test('offers the closing box, and the previous month\'s, only where no file prints the figure', () => {
+    setUp();   // both ends printed by files
+    openMonth();
+    expect(screen.queryByLabelText('Closing balance per the bank statement')).toBeNull();
+    expect(screen.queryByLabelText('Closing balance of the previous month')).toBeNull();
+  });
+
+  test('saves the closing under this month and the opening under the previous one, in sen', () => {
+    setUp({ assembly: NO_BALANCES });
+    openMonth();
+    expect(screen.getByText(/Closing balance of 08\/2026 — 09\/2026 opens there/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Closing balance per the bank statement'), { target: { value: '19,840.54' } });
+    fireEvent.change(screen.getByLabelText('Note on the closing balance per the bank statement'), { target: { value: 'per the September e-statement' } });
+    fireEvent.click(screen.getAllByText('Save')[0]!);
+    expect(state.typeClosing).toHaveBeenCalledWith({ accountCode: '310-0020', month: '2026-09', closingSen: 1984054, note: 'per the September e-statement' });
+
+    fireEvent.change(screen.getByLabelText('Closing balance of the previous month'), { target: { value: '10000' } });
+    fireEvent.click(screen.getAllByText('Save')[1]!);
+    expect(state.typeClosing).toHaveBeenLastCalledWith({ accountCode: '310-0020', month: '2026-08', closingSen: 1000000, note: null });
+  });
+
+  test('will not save what is not a money amount', () => {
+    setUp({ assembly: NO_BALANCES });
+    openMonth();
+    fireEvent.change(screen.getByLabelText('Closing balance per the bank statement'), { target: { value: 'ten' } });
+    expect(screen.getAllByText('Save')[0]!.closest('button')!.disabled).toBe(true);
+    expect(screen.getByText(/Not a money amount/)).toBeTruthy();
+  });
+
+  /* A figure with no author is a number nobody can check: the screen names
+     who typed it, the box carries it, and it can be taken back. */
+  test('names the typed figure where the figures come from, shows it in the box, and can clear it', () => {
+    setUp({
+      assembly: { ...NO_BALANCES, statementClosingSen: 1090000, closingFrom: TYPED_CLOSING },
+      balances: { closing: STORED, previousClosing: null },
+    });
+    openMonth();
+    expect(screen.getByText(/the closing balance typed for 09\/2026 by Chew on 2026-09-13/)).toBeTruthy();
+    expect((screen.getByLabelText('Closing balance per the bank statement') as HTMLInputElement).value).toBe('10900.00');
+    expect(screen.getByText(/typed by Chew on 2026-09-13/)).toBeTruthy();
+    /* Nothing changed, so there is nothing to save. */
+    expect(screen.getAllByText('Save')[0]!.closest('button')!.disabled).toBe(true);
+    fireEvent.click(screen.getByText('Clear'));
+    expect(state.typeClosing).toHaveBeenCalledWith({ accountCode: '310-0020', month: '2026-09', closingSen: null, note: null });
+  });
+
+  test('offers no box on a closed month', () => {
+    setUp({
+      assembly: NO_BALANCES,
+      lock: { accountCode: '310-0020', month: '2026-09', lockedBy: 'Chew', lockedAt: '2026-10-02T03:14:00Z', lockNote: null, closingStatementSen: 1090000, closingLedgerSen: 1090000, differenceSen: 0, statementCount: 3, wasComplete: true },
+    });
+    openMonth();
+    expect(screen.queryByLabelText('Closing balance per the bank statement')).toBeNull();
   });
 });
 

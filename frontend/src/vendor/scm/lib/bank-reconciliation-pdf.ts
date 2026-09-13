@@ -70,14 +70,22 @@ export type ReconInput = {
   reconciled: boolean;
 };
 
+/** Where a figure came from: the file, or — when no file printed one — the
+    person who typed it off the bank's own statement (docs/bugs/0858). */
+export type FigureSource = {
+  fileName: string | null;
+  on: string;
+  typed?: { month: string; by: string | null; at: string; note: string | null };
+};
+
 export type AssemblyInput = {
   month: string;
   periodFrom: string;
   periodTo: string;
   statementOpeningSen: number | null;
-  openingFrom: { fileName: string; on: string } | null;
+  openingFrom: FigureSource | null;
   statementClosingSen: number | null;
-  closingFrom: { fileName: string; on: string } | null;
+  closingFrom: FigureSource | null;
   gaps: string[];
   complete: boolean;
 };
@@ -182,19 +190,17 @@ export function reconciliationStatement(input: ReconReportInput): ReconReport {
   }
   if (!r.consistent && r.inconsistency) warnings.push(r.inconsistency);
 
+  /* A figure nobody's file printed is named as TYPED, with who and when: on
+     paper an auditor relies on, a number with no author is a number nobody
+     can check. */
+  const sourceOfFigure = (what: 'Opening' | 'Closing', sen: number | null, src: FigureSource): string => (src.typed
+    ? `${what} ${money(sen ?? 0)} as typed for the end of ${src.typed.month} by ${src.typed.by ?? 'somebody'}`
+      + ` on ${fmtDocDate(src.typed.at.slice(0, 10))}${src.typed.note ? ` (“${src.typed.note}”)` : ''}`
+      + ' — no file uploaded prints it.'
+    : `${what} ${money(sen ?? 0)} per ${src.fileName ?? ''} (${fmtDocDate(src.on)}).`);
   const provenance: string[] = [];
-  if (assembly.openingFrom) {
-    provenance.push(
-      `Opening ${money(assembly.statementOpeningSen ?? 0)} per ${assembly.openingFrom.fileName}`
-      + ` (${fmtDocDate(assembly.openingFrom.on)}).`,
-    );
-  }
-  if (assembly.closingFrom) {
-    provenance.push(
-      `Closing ${money(assembly.statementClosingSen ?? 0)} per ${assembly.closingFrom.fileName}`
-      + ` (${fmtDocDate(assembly.closingFrom.on)}).`,
-    );
-  }
+  if (assembly.openingFrom) provenance.push(sourceOfFigure('Opening', assembly.statementOpeningSen, assembly.openingFrom));
+  if (assembly.closingFrom) provenance.push(sourceOfFigure('Closing', assembly.statementClosingSen, assembly.closingFrom));
 
   /* THE WALK, or the reason there is none. The owner's form (2026-09-11,
      docs/bugs/0806): balance per the books, plus the payments the bank has
