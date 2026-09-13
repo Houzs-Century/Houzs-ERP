@@ -90,16 +90,30 @@ const emptySpecialAddon = (): SpecialAddonInput => ({
   sellingPriceSen: 0, costPriceSen: 0, optionGroups: [], active: true, sortOrder: 0,
 });
 
-/* ONE price (owner 2026-06-22). A special add-on now carries a SINGLE price —
-   the surcharge that feeds SO costing. SO costing reads special_addons
-   .cost_price_sen (buildSpecialsPoolFromAddons → def.costPriceSen → lookupCost),
-   so the one number the owner enters is written to BOTH selling_price_sen and
-   cost_price_sen. Mirrors the other Maintenance pools, where the single
-   priceSen IS the cost (lookupCost: hit.priceSen ?? hit.costSen). Keeping the
-   two columns in sync means the displayed price and the costing price never
-   diverge, and no second "COST RM" field is ever shown. */
-const withSyncedPrice = (priceSen: number): { sellingPriceSen: number; costPriceSen: number } =>
-  ({ sellingPriceSen: priceSen, costPriceSen: priceSen });
+/* ONE price (owner 2026-06-22), and it is the COST — corrected 2026-09-13.
+   The number here feeds SO COSTING, which reads special_addons.cost_price_sen
+   (buildSpecialsPoolFromAddons → def.costPriceSen → lookupCost). That half was
+   always right.
+
+   WHAT WAS WRONG: it was also written to `selling_price_sen`, "so the two
+   columns never diverge". They are not two spellings of one number. The
+   SELLING side reads `sellingPriceSen` and ADDS it to what the customer pays
+   (shared/mfg-pricing.ts:223-234 lookupSelling → :532 of
+   lib/mfg-pricing-recompute.ts), and that file's own comment states the design:
+   "variant priceSen is COST, NOT selling ... surcharges contribute 0 to selling
+   until a director sets a value". Syncing the columns made "a director set a
+   value" accidentally TRUE for every option somebody priced — eleven of this
+   company's thirty-five, each with selling exactly equal to cost, which is the
+   signature of a copied column.
+
+   Owner 2026-09-13: 「我放的都是 costing 啊 为什么会 show 在 SO 和影响 SO 呢？
+   完全都不需要有这个功能啊」. So this writes the COST only. `selling_price_sen`
+   stays in the schema and the API — a Sales Director can still author a real
+   selling surcharge deliberately, and company 2 carries the value to the 2990s
+   POS, which sets its own price — but this screen no longer sets it by accident.
+   docs/bugs/0852. */
+const withSyncedPrice = (priceSen: number): { costPriceSen: number } =>
+  ({ costPriceSen: priceSen });
 
 // ════════════════════════════════════════════════════════════════════════
 // Sub-nav wrapper (mirrors the POS Product Add-ons / Order Add-ons left rail)
@@ -274,10 +288,10 @@ export const SpecialAddonsManager = ({ categoryFilter }: { categoryFilter?: stri
       label: 'Base',
       width: 100,
       align: 'right',
-      accessor: (row) => <span style={{ fontWeight: 600 }}>{rm(row.sellingPriceSen)}</span>,
+      accessor: (row) => <span style={{ fontWeight: 600 }}>{rm(row.costPriceSen)}</span>,
       searchValue: () => '',
-      filterValue: (row) => rm(row.sellingPriceSen),
-      sortFn: (a, b) => a.sellingPriceSen - b.sellingPriceSen,
+      filterValue: (row) => rm(row.costPriceSen),
+      sortFn: (a, b) => a.costPriceSen - b.costPriceSen,
     },
     {
       key: 'followup',
@@ -365,11 +379,11 @@ export const SpecialAddonsManager = ({ categoryFilter }: { categoryFilter?: stri
               </div>
             </div>
             <label>
-              <span style={{ display: 'block', fontSize: 'var(--fs-13)', fontWeight: 600, marginBottom: 4 }}>Price (RM, can be −)</span>
-              {/* ONE price — the single surcharge that flows to SO costing.
-                  Written to both selling + cost so they never diverge. */}
+              <span style={{ display: 'block', fontSize: 'var(--fs-13)', fontWeight: 600, marginBottom: 4 }}>Cost (RM, can be −)</span>
+              {/* The COST that flows to SO costing. It is NOT a customer
+                  surcharge and is no longer written to selling_price_sen. */}
               <input type="number" step={1} style={{ ...inputStyle, width: 140 }}
-                value={senToRm(editing.draft.sellingPriceSen)}
+                value={senToRm(editing.draft.costPriceSen)}
                 onChange={(e) => patch(withSyncedPrice(rmToSen(Number(e.target.value) || 0)))} />
             </label>
             <label style={{ display: 'flex', alignItems: 'flex-end', gap: 6, fontSize: 'var(--fs-13)' }}>
