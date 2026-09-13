@@ -62,6 +62,7 @@ const MobileProfile = lazy(() => import("./MobileProfile").then((m) => ({ defaul
 const MobileStockCard = lazy(() => import("./MobileStockCard").then((m) => ({ default: m.MobileStockCard })));
 const MobileStockTransferNew = lazy(() => import("./MobileStockTransferNew").then((m) => ({ default: m.MobileStockTransferNew })));
 const MobilePurchaseDocNew = lazy(() => import("./MobilePurchaseDocNew").then((m) => ({ default: m.MobilePurchaseDocNew })));
+const MobileRacks = lazy(() => import("./MobileRacks").then((m) => ({ default: m.MobileRacks })));
 const MobileFairReport = lazy(() => import("./MobileFairReport").then((m) => ({ default: m.MobileFairReport })));
 const MobileAutoCountSync = lazy(() => import("./MobileAutoCountSync").then((m) => ({ default: m.MobileAutoCountSync })));
 const MobileVenturePortalFeed = lazy(() => import("./MobileVenturePortalFeed").then((m) => ({ default: m.MobileVenturePortalFeed })));
@@ -127,6 +128,10 @@ type Screen =
      Mobile mounts this for /fleet-health; desktop mounts the full Fleet Health
      admin dashboard at the same URL (one product, two presentations). */
   | { t: "mileage-capture" }
+  /* Warehouse rack LOOKUP — /scm/warehouses/racks. Read-only finder; the
+     desktop Racks & Bins page at the same URL is the edit surface. Rack
+     CREATE stays on MobileModuleList's FORM_RACK, unchanged. */
+  | { t: "racks" }
   | { t: "service"; startNew?: boolean }
   | { t: "delivery-planning" }
   | { t: "pms"; projectId?: number }
@@ -167,6 +172,7 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/activity-inbox") return { t: "inbox" };
   if (path === "/roles") return { t: "roles" };
   if (path === "/scm/delivery-planning") return { t: "delivery-planning" };
+  if (path === "/scm/warehouses/racks") return { t: "racks" };
   // Fleet Health on a phone IS the driver's mileage capture; the desktop Fleet
   // Health dashboard (plans admin + board) is the same URL's desktop surface.
   if (path === "/fleet-health") return { t: "mileage-capture" };
@@ -413,6 +419,12 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
   ]},
   { group: "Warehouse", items: [
     { to: "/scm/warehouses", label: "Warehouse" },
+    /* Racks — the storekeeper's "where is it". Points at the desktop route
+       /scm/warehouses/racks, which is a real NAV_TABS entry (Sidebar.tsx,
+       anyAccess scm.warehouse.inventory, hideForSalesRep), so `allowed()`
+       gates the phone row off the SAME declaration as the desktop page. No
+       gateVia and no second rule. */
+    { to: "/scm/warehouses/racks", label: "Racks" },
     { to: "/scm/inventory", label: "Inventory" },
     { to: "/scm/stock-transfers", label: "Stock Transfers" },
     { to: "/scm/stock-takes", label: "Stock Take" },
@@ -897,6 +909,7 @@ function MobileAppInner() {
       onBack={() => setScreen({ t: "module", key: screen.key, title: screen.title })}
       onNewTransfer={() => setScreen({ t: "stock-transfer-new", key: screen.key, row: screen.row, title: screen.title })} />;
   }
+  else if (screen.t === "racks") overlay = <MobileRacks onBack={back} />;
   else if (screen.t === "stock-transfer-new") {
     const backToCard = () => setScreen({ t: "module-detail", key: screen.key, row: screen.row, title: screen.title });
     overlay = <MobileStockTransferNew onBack={backToCard} onCreated={backToCard} />;

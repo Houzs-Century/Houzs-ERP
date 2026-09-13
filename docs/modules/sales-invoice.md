@@ -29,7 +29,7 @@ only document in it that leaves the building as a customer's own copy.
 | Surface | File | Notes |
 |---------|------|-------|
 | Desktop list | `frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx` | Server-paginated, `pageSize = 50` (`:777`). Outstanding column / cards / drawer / KPI are all net of the source order's deposit, via `vendor/scm/lib/si-outstanding.ts`; a `dep` marker on the cell and an off-by-default **SO deposit** column say why the figure is smaller. **Mark paid** here opens the detail screen's payment editor rather than writing a status — see the section below. |
-| Desktop detail | `frontend/src/pages/scm-v2/SalesInvoiceDetailV2.tsx` | Header + lines + payments + a separate read-only **Collected on `<SO>`** panel. `outstandingOf` / `effectiveOf` both take the applied order deposit as a REQUIRED argument, so the Outstanding figure and the status pill cannot disagree. **Mark paid** records a receipt — it does not write a status; the rule is `frontend/src/pages/scm-v2/markPaidPlan.ts`, see the section below. Persisted payment rows carry an Official-Receipt printer button (GL redesign 9b): the page hands `receiptFor={{ source: 'SIPAY', persistedIds }}` to the shared `PaymentsTable`, because its rows ride DRAFT mode (`uid` = API row id) and the component cannot otherwise tell a saved payment from a typed one — see `docs/modules/accounting.md` §Official Receipts. |
+| Desktop detail | `frontend/src/pages/scm-v2/SalesInvoiceDetailV2.tsx` | Header + lines (with an in-place **Add line** row on a DRAFT, see the *Add line* section) + payments + a separate read-only **Collected on `<SO>`** panel. `outstandingOf` / `effectiveOf` both take the applied order deposit as a REQUIRED argument, so the Outstanding figure and the status pill cannot disagree. **Mark paid** records a receipt — it does not write a status; the rule is `frontend/src/pages/scm-v2/markPaidPlan.ts`, see the section below. Persisted payment rows carry an Official-Receipt printer button (GL redesign 9b): the page hands `receiptFor={{ source: 'SIPAY', persistedIds }}` to the shared `PaymentsTable`, because its rows ride DRAFT mode (`uid` = API row id) and the component cannot otherwise tell a saved payment from a typed one — see `docs/modules/accounting.md` §Official Receipts. |
 | Desktop new | `frontend/src/pages/scm-v2/SalesInvoiceNew.tsx` | Salesperson picker — see the note under this table. Passes `seedSofaLegDefault={false}` to `SoLineCard`: an invoice bills what was sold and must not add a sofa Leg Height the sales order never carried, because that attribute is part of the stock bucket (`docs/bugs/0722-a-delivery-order-invented-the-sofa-s-leg-height-so-the-stock.md`). |
 | Desktop from-DO | `frontend/src/pages/scm-v2/SalesInvoiceFromDo.tsx` | Line-level picker over `/invoiceable-do-lines`. |
 | Desktop report | `frontend/src/pages/scm-v2/SalesInvoiceDetailListing.tsx` | Detail-listing report. |
@@ -780,6 +780,7 @@ a warning, not a block.
 | Balance display (`total − paid`) | `SalesInvoicesListV2.tsx` / `SalesInvoiceDetailV2.tsx` | `mobile/MobileModuleList.tsx` `balanceCenti` (`:287`) — a duplicated computation, so a change to how balance is derived must land on both |
 | Server pagination opt-in | `useSalesInvoicesPaged` | `mobile/MobileModuleList.tsx` `SERVER_PAGINATED` (`:326`) |
 | Detail fields | `pages/scm-v2/SalesInvoiceDetailV2.tsx` | `mobile/MobileModuleDetail.tsx` config `:275` |
+| Add line (DRAFT only) | `pages/scm-v2/SalesInvoiceAddLine.tsx`, mounted by `SalesInvoiceDetailV2.tsx` | **none** — mobile has no add-line affordance; see *Add line* above |
 | Confirm / Cancel / Reopen | `SalesInvoiceDetailV2.tsx:1130-1150` | `mobile/MobileModuleDetail.tsx:498-511`, gated by `useMayOperateDoc` (`:454`) → `canOperateSalesInvoices` (`frontend/src/auth/salesAccess.ts:210`) — the SAME helper the desktop uses |
 | DO→SI conversion | `pages/scm-v2/SalesInvoiceFromDo.tsx` → `SalesInvoiceNew.tsx` → **`POST /`** (an editable form: prices, dates, address, payment drafts) | `mobile/MobileConvertWizard.tsx` (`target: "si"`) → **`POST /from-dos`** with **`asDraft: true`** (a straight transfer, no edit step — so it DRAFTS, see below) |
 | Cache invalidation after a write | the hooks in `vendor/scm/lib/sales-invoice-queries.ts` (including the three ledger keys) | `mobile/sharedInvalidate.ts:70` |
@@ -1028,9 +1029,33 @@ every report, export and AutoCount read still goes to it. One of the five
 documents in the owner's ruling. Trace:
 `docs/bugs/0851-one-rung-three-words-the-filter-tab-said-submitted-while-the.md`.
 
-**The sales invoice cannot add a line on any surface.** Its backend
-`POST /sales-invoices/:id/items` exists, and `useAddSalesInvoiceItem` exists in
-the query layer with ZERO call sites in `frontend/src` — so the endpoint is
-unreachable from the app. The other four documents gained an **Add line** button
-on 2026-09-13; this one is the outstanding gap, recorded here rather than left
-for the next reader to rediscover.
+---
+
+## Add line — opens IN PLACE, draft only (2026-09-13)
+
+Until 2026-09-13 the sales invoice could not add a line on any surface: the
+backend `POST /sales-invoices/:id/items` existed and `useAddSalesInvoiceItem`
+had ZERO call sites in `frontend/src`. It now has one.
+
+| | |
+| --- | --- |
+| Where | **Add line** in the *Line items* section header of `frontend/src/pages/scm-v2/SalesInvoiceDetailV2.tsx`. Pressing it opens a *New line* row under the table: item code (SKU datalist from `useMfgProducts`, fetched only while the row is open), description, qty, unit price, discount, and the computed amount. |
+| Logic | `frontend/src/pages/scm-v2/SalesInvoiceAddLine.tsx` — `useSalesInvoiceAddLine(invoiceId, canAdd)` returns `{ action, panel }` for the two slots. Its own module because the detail page sits just under the 2,000-line cap. |
+| Offered when | `pageAccess('scm.sales.invoices')` is `edit`/`full` (the page's own Edit gate) **and** status is `DRAFT`. That is exactly what the handler accepts: it 409s `invoice_cancelled` and, via `isIssuedSi`, `invoice_issued` for everything else. Not rendered-then-refused. |
+| Payload | `{ itemCode, description, qty, unitPriceSen, discountSen, uom: 'UNIT' }` — money in SEN, into `buildItemRow` (`backend/src/scm/lib/si-from-do.ts`). No `doItemId`: this is a free line. |
+| Refusals | Shown INLINE under the row, which stays open with the typing. The ones worth knowing: an unknown item code (409), a code **still pending on the source Delivery Order** (409 — the operator must use *Add from Delivery Order* so the delivered quantity is tracked), over-remaining (409). An empty item code is refused client-side before the round trip. The hook's `onError: writeFailedAs('Line not added')` also fires, deliberately kept as the floor for any future caller. |
+
+**Why not the other four documents' handoff.** GRN / PI / PO / SO put the button
+on the V2 detail page and hand off to a separate V1 editor through
+`vendor/scm/lib/add-line-handoff.ts` (`addLineHref` → `?edit=1#add-line`). The
+sales invoice has no editor page — the header **Edit** here is an inline
+header-only panel — so there is nothing to hand off to, and a second editor page
+would be a whole surface built to carry one row. The label is still the shared
+`ADD_LINE_LABEL`. `addLineHandoff.test.ts` asserts this page does NOT build an
+`addLineHref`, so a later sweep does not turn it into a link to nowhere.
+
+**Not covered:** mobile. `frontend/src/mobile/MobileModuleDetail.tsx` opens a
+sales invoice and has no add-line affordance (nor for the four 0853 documents).
+
+Tests: `frontend/src/pages/scm-v2/salesInvoiceAddLine.test.tsx` (mounts the real
+page). Trace: `docs/bugs/0870-the-sales-invoice-could-not-add-a-line-on-any-surface-the-en.md`.
