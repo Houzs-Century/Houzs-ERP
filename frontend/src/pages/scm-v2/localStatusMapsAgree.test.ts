@@ -1,8 +1,9 @@
 /* EVERY PAGE THAT SPELLS A STATUS ITSELF MUST SPELL IT THE SAME WAY.
  *
- * `docs/modules/document-status-vocabulary.md` records that SIXTEEN list and
- * detail pages declare their own `{ tone, label }` map instead of reading
- * `status-pill.ts`, and calls that root fix OPEN. On 2026-09-13 that gap
+ * `docs/modules/document-status-vocabulary.md` records that list and detail
+ * pages declare their own `{ tone, label }` map instead of reading
+ * `status-pill.ts`, and calls that root fix OPEN. (It said "sixteen"; this list
+ * enumerated eighteen, and a count lives in the list, not in prose.) On 2026-09-13 that gap
  * produced a visible defect: the Purchase Orders list's filter TAB said
  * SUBMITTED beside a status PILL that said Confirmed, and the Goods Received
  * tab said CONFIRMED — one rung, three words on one screen.
@@ -22,6 +23,13 @@
  * a status the canonical map has never heard of (its own bucket vocabulary);
  * that is reported as UNKNOWN and not failed, because inventing a canonical
  * entry to make a test pass is forging the evidence.
+ *
+ * SIX OF THE EIGHTEEN ARE COLLAPSED (2026-09-13) and are therefore no longer in
+ * PAGES. That removal costs something the list itself cannot give back: a page
+ * that stops declaring a map also stops being watched here. `COLLAPSED_WORDS`
+ * below is what replaces that watch — the exact words those six surfaces showed
+ * BEFORE the collapse, asserted against the canonical map they now read. It is
+ * the durable form of the measurement that chose them.
  */
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
@@ -59,6 +67,41 @@ const PAGES: ReadonlyArray<readonly [rel: string, docType: StatusDocType]> = [
   ['pages/scm-v2/do-list-status.ts', 'do'],
   ['pages/scm-v2/DeliveryReturnsListV2.tsx', 'dr'],
   ['pages/scm-v2/DeliveryReturnDetailV2.tsx', 'dr'],
+];
+
+/* COLLAPSED — these six no longer declare a label of their own, so they are off
+   the list above by the rule this file states: the list says how much of the
+   root fix is LEFT. They were chosen by measurement, not by reading: each one
+   renders the byte-identical string through `statusLabel(docType, STATUS)` that
+   it used to hand-write. Every page still listed above would change at least one
+   word on screen, which is a decision and not a refactor.
+
+   GoodsReceivedListV2 · GoodsReceivedDetailV2 · PurchaseReturnsListV2
+   PurchaseReturnDetailV2 · StockTakesListV2 · StockTransfersListV2 */
+
+/* The words those six surfaces showed BEFORE the collapse, transcribed from the
+   maps this PR deleted (read the diff, not this comment, if you doubt one).
+   They now come from status-pill.ts, so this table is what fails if a later edit
+   to the canonical map silently re-words a screen the owner already signed off.
+
+   `pr` DRAFT is deliberately not in the canonical map and resolves through
+   statusLabel's humanise fallback; it is listed here because what a user reads
+   is the point, not which branch produced it. */
+const COLLAPSED_WORDS: ReadonlyArray<readonly [docType: StatusDocType, status: string, word: string]> = [
+  ['grn', 'DRAFT', 'Draft'],
+  ['grn', 'POSTED', 'Submitted'],
+  ['grn', 'CLOSED', 'Closed'],
+  ['grn', 'CANCELLED', 'Cancelled'],
+  ['grn', 'ON_HOLD', 'On Hold'],
+  ['pr', 'DRAFT', 'Draft'],
+  ['pr', 'POSTED', 'Confirmed'],
+  ['pr', 'COMPLETED', 'Completed'],
+  ['pr', 'CANCELLED', 'Cancelled'],
+  ['stockTake', 'OPEN', 'Open'],
+  ['stockTake', 'POSTED', 'Confirmed'],
+  ['stockTake', 'CANCELLED', 'Cancelled'],
+  ['stockTransfer', 'POSTED', 'Confirmed'],
+  ['stockTransfer', 'CANCELLED', 'Cancelled'],
 ];
 
 /* DELIBERATE differences — a page that says something else ON PURPOSE, with the
@@ -120,6 +163,31 @@ describe('the scan is reading real maps', () => {
     for (const docType of new Set(PAGES.map(([, d]) => d))) {
       expect(statusVocabulary(docType).length, docType).toBeGreaterThan(1);
     }
+  });
+});
+
+describe('the six collapsed pages still read the words they read before', () => {
+  it('every pinned word is what status-pill.ts answers today', () => {
+    const moved = COLLAPSED_WORDS
+      .filter(([docType, status, word]) => statusLabel(docType, status) !== word)
+      .map(([docType, status, word]) => `${docType}.${status}: was "${word}", status-pill.ts now says "${statusLabel(docType, status)}"`);
+    /* A failure here is NOT a licence to edit the expected word. It means a
+       screen the owner already reads changed wording — go and get that decided,
+       the way the DELIBERATE list above records the ones that were. */
+    expect(moved).toEqual([]);
+  });
+
+  it('no collapsed page declares a status map any more — the collapse cannot silently revert', () => {
+    const COLLAPSED = [
+      'pages/scm-v2/GoodsReceivedListV2.tsx',
+      'pages/scm-v2/GoodsReceivedDetailV2.tsx',
+      'pages/scm-v2/PurchaseReturnsListV2.tsx',
+      'pages/scm-v2/PurchaseReturnDetailV2.tsx',
+      'pages/scm-v2/StockTakesListV2.tsx',
+      'pages/scm-v2/StockTransfersListV2.tsx',
+    ];
+    const relapsed = COLLAPSED.filter((rel) => parseLocalMap(read(rel)).length > 0);
+    expect(relapsed, 'these declare a local label again — put them back in PAGES or undo the relapse').toEqual([]);
   });
 });
 

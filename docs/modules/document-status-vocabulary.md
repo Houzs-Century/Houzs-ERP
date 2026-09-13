@@ -148,15 +148,48 @@ Worth knowing before anyone cites this screen as the guarantee.
 
 `frontend/src/vendor/scm/lib/status-pill.ts` carries the canonical map and the
 rule in its header. **It is not the only copy, and pretending otherwise is how
-this drifted.** Sixteen list and detail pages declare their own
-`{ tone, label, bucket }` map, because they need the bucket and the blurb that
-`status-pill` does not carry. Those copies were aligned by hand on 2026-08-21.
+this drifted.** List and detail pages declare their own `{ tone, label, bucket }`
+map, because they need the bucket and the blurb that `status-pill` does not
+carry. Those copies were aligned by hand on 2026-08-21.
 
-> **OPEN — the root fix is not done ON THE SCREENS.** Those sixteen pages should
-> read their LABEL from `status-pill` and keep only their own bucket/blurb. Until
-> they do, a seventeenth page can invent a sixth word and nothing will say so.
-> Adding a document type today? Its confirm step reads **Confirmed**, in
-> `status-pill.ts` AND in that page's own map.
+> **PARTLY DONE ON THE SCREENS — 2026-09-13: six of eighteen collapsed.** The
+> eighteen are the `PAGES` list in
+> `frontend/src/pages/scm-v2/localStatusMapsAgree.test.ts` (this paragraph said
+> "sixteen" before; the guard enumerates eighteen, and the guard is the count to
+> trust). Six now take their LABEL from `statusLabel(docType, STATUS)` and keep
+> only their own tone, bucket and blurb: Goods Received list + detail, Purchase
+> Return list + detail, Stock Takes list, Stock Transfers list.
+>
+> **They were chosen by measurement.** Each renders the byte-identical word it used
+> to hand-write, checked entry by entry. The remaining twelve would each change at
+> least one word on screen — a letter case (`Partially received` against
+> `Partially Received`), a map keyed by something other than the stored status
+> (`partial`, `cancel`), or a DELIBERATE difference the guard records with its
+> authority — so collapsing them is a decision, not a refactor. Full table:
+> `docs/bugs/0864-six-status-maps-collapsed-onto-status-pill-and-the-detail-ba.md`.
+>
+> **Leaving `PAGES` is not the same as being unwatched.** `COLLAPSED_WORDS` in the
+> same test pins the word each collapsed page showed before, so a later edit to
+> `status-pill.ts` that re-words one of those screens fails.
+>
+> **OPEN — the remaining twelve.** Adding a document type today? Its confirm step
+> reads **Confirmed**, in `status-pill.ts` AND — until its page is collapsed — in
+> that page's own map.
+
+> **OPEN, AND WORSE — the detail-page BADGE is a second family no guard sees.**
+> Found while collapsing the six, 2026-09-13; traced in source on `origin/main`
+> 678a8a8cd, not observed on a running screen. Seven detail pages carry a flat
+> `STAGE_LABEL: Record<string, string>`, and that — not the `{ tone, label }` map —
+> is what the header `<Badge>` renders. Four contradict the ruling at the top of
+> this section: the GRN and Purchase Invoice badges say **Posted** and the Sales
+> Invoice badge says **Sent** where the owner ruled Submitted, and the Purchase
+> Return badge says **Posted** where the canonical map says Confirmed.
+>
+> Both guards are structurally blind to it: `confirmRungReadsSubmitted.test.ts`
+> fails only on a stored value beside `"Confirmed"`, and `localStatusMapsAgree`
+> parses only the `{ … label: "X" }` shape. **A guard that matches one spelling of
+> a copy does not see the next spelling.** Fixing it changes words the owner reads,
+> so it was left out of the no-visible-change collapse and needs its own change.
 
 > **DONE ON THE PAPER — 2026-08-26.** The printed documents were a
 > seventeenth-to-twenty-fifth surface of exactly this shape, and worse than a
