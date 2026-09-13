@@ -31,6 +31,7 @@ import type { FlowDocNav, FlowNav } from "./relationship-map-model";
 import type { SearchNav } from "./MobileSearch";
 import type { MobileScanPrefill } from "./MobileScan";
 import type { ConvertTarget } from "./MobileConvertWizard";
+import { MODULE_TO_PURCHASE_DOC, convertInsteadFor, mayCreatePurchaseDoc, type PurchaseDocKind } from "./mobile-purchase-doc";
 const MobileSalesOrders = lazy(() => import("./MobileSalesOrders").then((m) => ({ default: m.MobileSalesOrders })));
 const MobileAmendments = lazy(() => import("./MobileAmendments").then((m) => ({ default: m.MobileAmendments })));
 const MobilePoAmendments = lazy(() => import("./MobilePoAmendments").then((m) => ({ default: m.MobilePoAmendments })));
@@ -60,6 +61,7 @@ const MobileMileageCapture = lazy(() => import("./MobileMileageCapture").then((m
 const MobileProfile = lazy(() => import("./MobileProfile").then((m) => ({ default: m.MobileProfile })));
 const MobileStockCard = lazy(() => import("./MobileStockCard").then((m) => ({ default: m.MobileStockCard })));
 const MobileStockTransferNew = lazy(() => import("./MobileStockTransferNew").then((m) => ({ default: m.MobileStockTransferNew })));
+const MobilePurchaseDocNew = lazy(() => import("./MobilePurchaseDocNew").then((m) => ({ default: m.MobilePurchaseDocNew })));
 const MobileRacks = lazy(() => import("./MobileRacks").then((m) => ({ default: m.MobileRacks })));
 const MobileFairReport = lazy(() => import("./MobileFairReport").then((m) => ({ default: m.MobileFairReport })));
 const MobileAutoCountSync = lazy(() => import("./MobileAutoCountSync").then((m) => ({ default: m.MobileAutoCountSync })));
@@ -114,6 +116,9 @@ type Screen =
   | { t: "stock-transfer-new"; key: string; row: any; title: string }
   | { t: "module-form"; key: string; mode: "new" | "edit"; row?: any }
   | { t: "convert"; key: string; title: string; target: ConvertTarget; initialSourceId?: string }
+  /* DIRECT create for PO / GRN / PI (owner 2026-09-12: create directly, not
+     only by converting). Entered from that module list's "+"; returns to it. */
+  | { t: "purchase-doc-new"; key: string; title: string; kind: PurchaseDocKind }
   /* `from` is the return address. Back/Done out of POD normally drops to the
      tab, which is right when POD was opened from a document card — but the
      delivery-planning board sends the driver here MID-RUN, and dumping them on
@@ -219,11 +224,13 @@ function initialScreenFor(route: MobileRoute): Screen {
 
 // Doc modules whose "+ New" opens a convert wizard (create by converting a
 // source doc), matching desktop. Others with a `form` open MobileModuleForm.
+// Purchase Orders and Goods Receipts USED to be here: since 2026-09-13 their "+"
+// opens the DIRECT create (MODULE_TO_PURCHASE_DOC in mobile-purchase-doc.ts),
+// which offers the convert wizard as its secondary action — so both desktop
+// flows stay reachable, direct first, as the owner asked.
 const MODULE_TO_CONVERT: Record<string, ConvertTarget> = {
   "delivery-orders-mfg": "do",
   "sales-invoices": "si",
-  "grns": "grn",
-  "mfg-purchase-orders": "po",
 };
 
 const ROUTE_TO_CONFIG: Record<string, string> = {
@@ -853,7 +860,15 @@ function MobileAppInner() {
             : convertTarget === "po"
               ? canOperatePurchaseOrders(can, pageAccess)
               : true;
-    const onNew = convertTarget
+    /* Direct create (PO / GRN / PI) is checked FIRST and gated by the same
+       per-document helpers as everywhere else (mayCreatePurchaseDoc). Withheld
+       `onNew` = no "+" at all — off, not hidden. */
+    const purchaseKind = MODULE_TO_PURCHASE_DOC[k] as PurchaseDocKind | undefined;
+    const onNew = purchaseKind
+      ? mayCreatePurchaseDoc(purchaseKind, can, pageAccess)
+        ? () => setScreen({ t: "purchase-doc-new", key: k, title: screen.title, kind: purchaseKind })
+        : undefined
+      : convertTarget
       ? mayConvert
         ? () => setScreen({ t: "convert", key: k, title: screen.title, target: convertTarget })
         : undefined
@@ -864,6 +879,16 @@ function MobileAppInner() {
       onOpen={(row) => setScreen({ t: "module-detail", key: k, row, title: screen.title })}
       onNew={onNew}
       aboveList={k === "members" ? <MobileInvitations /> : undefined} />;
+  }
+  else if (screen.t === "purchase-doc-new") {
+    const backToList = () => setScreen({ t: "module", key: screen.key, title: screen.title });
+    const alt = convertInsteadFor(screen.kind);
+    const { key, title } = screen;
+    overlay = <MobilePurchaseDocNew
+      kind={screen.kind}
+      onBack={backToList}
+      onCreated={backToList}
+      onConvertInstead={alt ? { label: alt.label, open: () => setScreen({ t: "convert", key, title, target: alt.target }) } : null} />;
   }
   else if (screen.t === "convert") {
     // Convert is entered from a module list ("+ New") → return to that list

@@ -17,6 +17,14 @@
  *    and GURNEY PARAGON in June therefore looked like two organizers at one
  *    venue on one day when it was one.
  *
+ *    The automatic fold catches case, spacing and punctuation only. It does NOT
+ *    catch that pair, and no safe rule would: `MGT`/`MGMT` is an abbreviation,
+ *    and a rule loose enough to fold it would fold organizers that really are
+ *    different. So section 1 prints the WHOLE roster (~15 rows) for a person to
+ *    read. This limit is not theoretical — on the first real dispatch the fold
+ *    reported `KAI HAO (KL CHEN)` / `KAI HAO (KL, CHEN)` and stayed silent about
+ *    MALL MGT.
+ *
  * 2. MAIN PRODUCTS WITH NO BRAND. The brand is what decides WHICH booth at a
  *    picked event an order belongs to, and it is read off the SKU. A main
  *    product (sofa / bedframe / mattress) with a blank brand leaves the order
@@ -26,7 +34,10 @@
  * 3. DUPLICATE FAIRS. Two project rows identical on venue + organizer + brand +
  *    period are one booth entered twice. The resolver collapses them to the
  *    lowest id so an order still links, but the duplicate splits that fair's P&L
- *    and puts a repeated row in the picker. 9 groups on 2026-09-13.
+ *    and puts a repeated row in the picker. Measured by this script's first
+ *    clean run (2026-09-13): 66 groups across all years, 9 of them inside
+ *    Jun-Dec 2026. The earlier "9" quoted in #3778 was the Jun-Dec window only
+ *    and read as an all-time figure; this section has no date filter.
  *
  * THIS SCRIPT DOES NOT FIX ANY OF THEM, deliberately. Fixing #1 means choosing
  * which spelling is right, #2 means knowing what brand a product actually is,
@@ -76,7 +87,17 @@ async function main() {
   for (const [, rows] of dupOrgs) {
     line(`   ${rows.map((r) => `"${r.organizer}" (${r.fairs})`).join('  vs  ')}`);
   }
-  if (dupOrgs.length === 0) line('   none');
+  if (dupOrgs.length === 0) line('   none by the fold key');
+  /* The fold key above catches case, spacing and punctuation. It CANNOT catch an
+     abbreviation — `MALL MGMT` and `MALL MGT` are one organizer to a human and
+     two different keys to any rule, and a rule loose enough to fold them would
+     also fold organizers that really are different. Measured on the first real
+     dispatch (2026-09-13): the fold found `KAI HAO (KL CHEN)` / `KAI HAO (KL,
+     CHEN)` and did NOT find the MALL MGT pair, which is exactly this limit.
+     So the whole roster is printed — it is ~15 rows — and a person reads it.
+     A list a human scans beats a cleverer rule nobody can audit. */
+  line('   full roster, for the abbreviations no fold key can catch safely:');
+  for (const r of organizers) line(`     ${String(r.fairs).padStart(4)}  ${r.organizer}`);
   line('');
 
   // ── 2. main products with no brand ────────────────────────────────────────
@@ -88,9 +109,9 @@ async function main() {
       FROM scm.mfg_products
      WHERE company_id = ${CO}
        AND coalesce(btrim(branding), '') = ''
-       AND (upper(category) LIKE '%SOFA%'
-         OR upper(category) LIKE '%BEDFRAME%'
-         OR upper(category) LIKE '%MATTRESS%')
+       AND (upper(category::text) LIKE '%SOFA%'
+         OR upper(category::text) LIKE '%BEDFRAME%'
+         OR upper(category::text) LIKE '%MATTRESS%')
      GROUP BY category
      ORDER BY skus DESC`;
   const totalNoBrand = noBrand.reduce((n, r) => n + r.skus, 0);
@@ -103,9 +124,9 @@ async function main() {
         FROM scm.mfg_products
        WHERE company_id = ${CO}
          AND coalesce(btrim(branding), '') = ''
-         AND (upper(category) LIKE '%SOFA%'
-           OR upper(category) LIKE '%BEDFRAME%'
-           OR upper(category) LIKE '%MATTRESS%')
+         AND (upper(category::text) LIKE '%SOFA%'
+           OR upper(category::text) LIKE '%BEDFRAME%'
+           OR upper(category::text) LIKE '%MATTRESS%')
        ORDER BY category, code
        LIMIT 40`;
     line(`   first ${sample.length}:`);
