@@ -45,6 +45,8 @@ import { useIdempotencyKey } from '../../lib/idempotency';
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { useGrnDetail, useGrnDetails } from '../../vendor/scm/lib/grn-queries';
 import { useActiveCurrencies, rateFor } from '../../vendor/scm/lib/currencies-queries';
+import { LinePoRefLink } from '../../vendor/scm/components/LinePoRefLink';
+import { linePoLink, type LinePoFields } from '../../vendor/scm/lib/line-po-link';
 import { CurrencySelect } from '../../vendor/scm/components/CurrencySelect';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { specialOrderSurface } from '../../vendor/scm/lib/special-order-surface';
@@ -111,6 +113,9 @@ type DraftLine = {
   qty:            number;
   unitPriceSen: number;
   notes:          string;
+  /* #26 — the PO the source receipt line came from (GRN detail serves it);
+     absent on a manual line. Display only, never sent. */
+  sourcePo?:      LinePoFields;
 };
 
 export const PurchaseInvoiceNew = () => {
@@ -237,6 +242,7 @@ export const PurchaseInvoiceNew = () => {
         qty:            pickQtyById ? (pickQtyById.get(it.id) ?? it._remaining) : it._remaining,
         unitPriceSen: it.unit_price_sen ?? 0,
         notes:          '',
+        sourcePo:       { source_po_id: it.source_po_id ?? null, source_po_number: it.source_po_number ?? null },
       }));
     setLines(next);
   }, [sourceItems, fromPicks]);
@@ -866,6 +872,11 @@ export const PurchaseInvoiceNew = () => {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                     <span style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-12)', fontWeight: 700, letterSpacing: '0.10em', color: 'var(--fg-muted)' }}>LINE {idx + 1}</span>
                     {l.itemGroup && <ItemGroupPill group={l.itemGroup} />}
+                    {l.sourcePo && linePoLink(l.sourcePo) && (
+                      <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+                        From PO <LinePoRefLink line={l.sourcePo} />
+                      </span>
+                    )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
                     <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>

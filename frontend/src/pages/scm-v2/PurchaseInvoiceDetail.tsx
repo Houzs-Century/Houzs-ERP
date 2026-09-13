@@ -67,6 +67,8 @@ import {
   type PoPriceMatrix,
 } from '@2990s/shared/mfg-pricing';
 import { PoLineCard, emptyPoLine, type PoLineDraft } from '../../vendor/scm/components/PoLineCard';
+import { LinePoRefLink } from '../../vendor/scm/components/LinePoRefLink';
+import { linePoLink } from '../../vendor/scm/lib/line-po-link';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
@@ -117,6 +119,9 @@ type PiItemRow = Record<string, unknown> & {
   /* GRN-sourced lines carry the source GRN line id; identity + variants on those
      stay read-only (only qty/price editable). Free-entry lines have it null. */
   grn_item_id?: string | null;
+  /* #26 — the line's own purchase order, resolved by the detail GET. */
+  source_po_id?: string | null;
+  source_po_number?: string | null;
 };
 
 /* Whole-line edit (T12) — Edit mode drives one PoLineCard per line, the SAME rich
@@ -657,8 +662,18 @@ export const PurchaseInvoiceDetail = () => {
              ONE page-level Save diffs each draft and add/update/deletes. */
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', padding: 'var(--space-3)' }}>
             {editLines.map((l, idx) => (
+              <div key={l.rid}>
+              {/* #26 — which PO this line came from, above its editor. A new or
+                  free-entry line has none and shows nothing. */}
+              {(() => {
+                const src = l.itemId ? items.find((it) => it.id === l.itemId) : undefined;
+                return src && linePoLink(src) ? (
+                  <div className={styles.muted} style={{ fontSize: 'var(--fs-12)', margin: '0 0 var(--space-1) var(--space-1)' }}>
+                    From PO <LinePoRefLink line={src} />
+                  </div>
+                ) : null;
+              })()}
               <PoLineCard
-                key={l.rid}
                 index={idx}
                 line={l}
                 currency={pi.currency}
@@ -678,6 +693,7 @@ export const PurchaseInvoiceDetail = () => {
                 hidePoFields
                 identityReadOnly={Boolean(l.grnLinked)}
               />
+              </div>
             ))}
             {editLines.length === 0 && (
               <p className={styles.emptyRow} style={{ padding: 'var(--space-3)' }}>
@@ -693,6 +709,7 @@ export const PurchaseInvoiceDetail = () => {
               <tr>
                 <th>Item</th>
                 <th>Group</th>
+                <th>PO</th>
                 <th className={styles.tableRight}>Qty</th>
                 <th className={styles.tableRight}>Unit</th>
                 <th className={styles.tableRight}>Disc</th>
@@ -712,6 +729,7 @@ export const PurchaseInvoiceDetail = () => {
                     })()}
                   </td>
                   <td className={styles.muted}>{it.item_group ?? it.material_kind ?? '—'}</td>
+                  <td><LinePoRefLink line={it} /></td>
                   <td className={styles.tableRight}>{it.qty}</td>
                   <td className={styles.tableRight}>{fmtRm(it.unit_price_sen, pi.currency)}</td>
                   <td className={styles.tableRight}>{(it.discount_sen ?? 0) > 0 ? fmtRm(it.discount_sen, pi.currency) : '—'}</td>

@@ -52,6 +52,7 @@ import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip"
 
 import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { FocAmount } from "../../vendor/scm/components/FocAmount";
+import { LinePoRefLink } from "../../vendor/scm/components/LinePoRefLink";
 import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -105,6 +106,9 @@ type PiItem = {
       purchase order behind it (a PI-native service line, a receipt with no
       PO, or an unbound SKU ordered at 0 and keyed in here). */
   po_unit_price_sen?: number | null;
+  /* #26 — the line's own purchase order, resolved through its receipt line. */
+  source_po_id?: string | null;
+  source_po_number?: string | null;
   description?: string | null;
   description2?: string | null;
   item_group?: string | null;
@@ -553,6 +557,16 @@ function PurchaseInvoiceDetailV2ReadOnly() {
         if (code === "—") return <span className="text-ink-muted">—</span>;
         return <span className="font-mono text-[12px] text-ink-secondary">{code}</span>;
       },
+    },
+    {
+      /* #26 — the purchase order THIS line came from, clickable. Per line, not
+         the header's: one receipt / invoice can span several orders. A line with
+         no PO behind it shows a dash (vendor/scm/lib/line-po-link.ts). */
+      key: "sourcePo",
+      label: "PO",
+      width: "128px",
+      getValue: (l) => l.source_po_number ?? "",
+      render: (l) => <LinePoRefLink line={l} />,
     },
     {
       key: "qty",

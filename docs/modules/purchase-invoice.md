@@ -99,3 +99,24 @@ which keeps what was typed; the unit price starts blank. Trace:
 (it closes only on CANCELLED or a payment). The desktop never meets that — it asks
 only once the invoice exists — but the phone header can be unloaded, so
 `mayAddLine` refuses a header with no status before asking any rule.
+
+---
+
+## Which purchase order a LINE came from (#26, 2026-09-14)
+
+`GET /purchase-invoices/:id` serves `source_po_id` + `source_po_number` per line,
+walked `grn_item_id -> grn_items.purchase_order_item_id -> purchase_orders`. It
+comes out of the SAME `purchase_order_items` read as `po_unit_price_sen`
+(`attachGrnLineFacts` in `backend/src/scm/lib/pi-po-price.ts`, mapping in
+`backend/src/scm/lib/line-po-ref.ts`), so the order a line names and the ordered
+price beside it cannot come from two different rows. A PI-native line (no
+`grn_item_id`) or a receipt line with no PO gets null and shows a dash.
+
+Shown on: the **PO** column of `PurchaseInvoiceDetailV2`, the **PO** column of
+the legacy view table and a "From PO" link above each line card in Edit
+(`PurchaseInvoiceDetail`), the line card header of the create-from-GRN review
+(`PurchaseInvoiceNew`, read off `GET /grns/:id`), and a **PO** row under each line
+on the phone (`frontend/src/mobile/MobileLinePoRef.tsx`).
+
+Measured read-only on 2026-09-14: 649 invoice lines; 29 (HOUZS) have no receipt
+line behind them, and none of the lines that do fails to reach a purchase-order line.

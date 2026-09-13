@@ -45,6 +45,8 @@
 // difference; the two real ones stand alone.
 // ----------------------------------------------------------------------------
 
+import { poRefByPiLine, poRefByPoItemId } from './line-po-ref';
+
 /** The one comparison, so the API, the UI and any report agree on the word. */
 export type PiLinePriceComparison = {
   /** Ordered price, or null when this line has no purchase-order line behind it. */
@@ -154,7 +156,9 @@ type MinimalPgrest = {
 
 export async function attachGrnLineFacts(sb: MinimalPgrest, items: PiLineEnrichable[]): Promise<void> {
   const grnItemIds = [...new Set(items.map((r) => r.grn_item_id).filter((v): v is string => !!v))];
-  for (const it of items) { it.supplier_sku = null; it.po_unit_price_sen = null; }
+  for (const it of items) {
+    it.supplier_sku = null; it.po_unit_price_sen = null; it.source_po_id = null; it.source_po_number = null;
+  }
   if (!grnItemIds.length) return;
 
   /* Bind the error and THROW rather than reading `data ?? []` as "none": a
@@ -173,18 +177,27 @@ export async function attachGrnLineFacts(sb: MinimalPgrest, items: PiLineEnricha
   for (const g of grnRows) if (g.supplier_sku) skuByGrnItem.set(g.id, g.supplier_sku);
 
   const poiIds = [...new Set(grnRows.map((g) => g.purchase_order_item_id).filter((v): v is string => !!v))];
-  const poItems: Array<{ id: string; unit_price_sen: number | null }> = [];
+  /* The same PO-line read carries the line's own purchase order (#26), so the
+     PO number beside a line and the PO price beside it can never come from two
+     different rows. */
+  type PoItemRow = { id: string; unit_price_sen: number | null; purchase_order_id: string | null; po?: { po_number?: string | null } | null };
+  const poItems: PoItemRow[] = [];
   if (poiIds.length) {
-    const res = await sb.from('purchase_order_items').select('id, unit_price_sen').in('id', poiIds);
+    const res = await sb.from('purchase_order_items')
+      .select('id, unit_price_sen, purchase_order_id, po:purchase_orders ( po_number )').in('id', poiIds);
     if (res.error) {
       throw new Error(`purchase_order_items read failed: ${String((res.error as { message?: string }).message ?? res.error)}`);
     }
-    poItems.push(...((res.data ?? []) as Array<{ id: string; unit_price_sen: number | null }>));
+    poItems.push(...((res.data ?? []) as PoItemRow[]));
   }
 
   const poPriceByLine = poUnitPriceByPiLine(items, grnRows, poItems);
+  const poRefByLine = poRefByPiLine(items, grnRows, poRefByPoItemId(poItems));
   for (const it of items) {
     it.supplier_sku = it.grn_item_id ? skuByGrnItem.get(it.grn_item_id) ?? null : null;
     it.po_unit_price_sen = poPriceByLine.get(it.id) ?? null;
+    const ref = poRefByLine.get(it.id) ?? null;
+    it.source_po_id = ref?.poId ?? null;
+    it.source_po_number = ref?.poNumber ?? null;
   }
 }

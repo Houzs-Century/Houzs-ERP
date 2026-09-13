@@ -46,6 +46,7 @@ import { resolveFxRate } from "./fx-rate";
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
 import { FocAmount } from "../../vendor/scm/components/FocAmount";
+import { LinePoRefLink } from "../../vendor/scm/components/LinePoRefLink";
 import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
 type GrnStatus = "DRAFT" | "POSTED" | "CANCELLED" | string;
 
@@ -103,6 +104,8 @@ type GrnItem = {
   qty_received?: number | null;
   qty_accepted?: number | null;
   ordered_qty?: number | null;
+  source_po_id?: string | null;
+  source_po_number?: string | null;
   unit_price_sen?: number;
   line_total_sen?: number;
   warehouse_code?: string | null;
@@ -458,6 +461,16 @@ function GoodsReceivedDetailV2ReadOnly() {
         if (code === "—") return <span className="text-ink-muted">—</span>;
         return <span className="font-mono text-[12px] text-ink-secondary">{code}</span>;
       },
+    },
+    {
+      /* #26 — the purchase order THIS line came from, clickable. Per line, not
+         the header's: one receipt / invoice can span several orders. A line with
+         no PO behind it shows a dash (vendor/scm/lib/line-po-link.ts). */
+      key: "sourcePo",
+      label: "PO",
+      width: "128px",
+      getValue: (l) => l.source_po_number ?? "",
+      render: (l) => <LinePoRefLink line={l} />,
     },
     {
       key: "qty_po",
