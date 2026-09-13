@@ -101,12 +101,20 @@ try {
     }
   }
 
-  /** A legacy value -> the ONE authorised code it means, or null. */
+  /** A legacy value -> the authorised codes it means, or [].
+   *
+   *  A value may genuinely ask for TWO things: `HB & DIVAN BOTTOM FULLY COVER`
+   *  decodes to HB Fully Cover AND Divan Full Cover, and that is not ambiguity,
+   *  it is what the sentence says. Such a value folds into ALL of its codes —
+   *  but ONLY when every one of them is authorised. If even one is not, the
+   *  value is left alone: folding it would silently drop the meaning that is out
+   *  of scope, which is worse than not folding at all. */
   const foldTo = (value, cat) => {
-    if (known.has(K(value))) return null;                  // already a catalogue code
+    if (known.has(K(value))) return [];                    // already a catalogue code
     const hit = mapPhrase(value, liveByCat.get(cat), cat, map);
-    if (hit.length !== 1) return null;                     // ambiguous, or means nothing
-    return authorised.has(K(hit[0])) ? hit[0] : null;
+    if (!hit.length) return [];                            // means no catalogue option
+    if (!hit.every((c) => authorised.has(K(c)))) return []; // partially out of scope
+    return hit;
   };
 
   /* Self-test the fold on REAL production spellings, in both directions, before
@@ -116,11 +124,11 @@ try {
     const must = ['Bottom wrap nylon', 'BOTTOM USE UMBRELLA FABRIC', 'Nilon bottom',
       'wrap bottom to Nilon', 'Bttm upgrade to umbrella fabric'];
     const mustNot = ['fully cover', 'Fully Covered To floor no leg', '1 side power slider', 'Nylon Fabric'];
-    const bad = [...must.filter((v) => K(foldTo(v, 'SOFA') ?? '') !== K('Nylon Fabric')),
-      ...mustNot.filter((v) => foldTo(v, 'SOFA') !== null)];
+    const bad = [...must.filter((v) => !foldTo(v, 'SOFA').some((c) => K(c) === K('Nylon Fabric'))),
+      ...mustNot.filter((v) => foldTo(v, 'SOFA').length > 0)];
     if (bad.length) {
       console.error(`SELF-TEST FAILED on ${bad.length} real spelling(s). Refusing to run.`);
-      for (const v of bad) console.error(`   ${v} -> ${foldTo(v, 'SOFA')}`);
+      for (const v of bad) console.error(`   ${v} -> ${JSON.stringify(foldTo(v, 'SOFA'))}`);
       process.exit(1);
     }
     line(`   fold self-test: ${must.length} must-fold and ${mustNot.length} must-NOT-fold spellings all correct`);
@@ -173,16 +181,22 @@ try {
     const changes = [];
     for (const x of have) {
       const to = foldTo(x, cat);
-      if (!to) {
+      if (!to.length) {
         if (!known.has(K(x))) {
           const hit = mapPhrase(x, liveByCat.get(cat), cat, map);
-          if (hit.length > 1) ambiguous.set(x, (ambiguous.get(x) ?? 0) + 1);
+          /* Report the near-misses: a value that DOES mean catalogue options but
+             not all of them are in scope. That list is what the owner reads when
+             deciding whether to widen the authorisation. */
+          if (hit.length && !hit.every((c) => authorised.has(K(c)))) {
+            const label = `${x}  ->  ${hit.join(' + ')}`;
+            ambiguous.set(label, (ambiguous.get(label) ?? 0) + 1);
+          }
         }
         if (!folded.some((y) => K(y) === K(x))) folded.push(x);
         continue;
       }
-      changes.push({ from: x, to });
-      if (!folded.some((y) => K(y) === K(to))) folded.push(to);
+      changes.push({ from: x, to: to.join(' + ') });
+      for (const code of to) if (!folded.some((y) => K(y) === K(code))) folded.push(code);
     }
     if (!changes.length) { untouched += 1; continue; }
 
@@ -276,8 +290,8 @@ try {
   if (refused.length > 25) line(`   ... and ${refused.length - 25} more refusals`);
   if (ambiguous.size) {
     rule();
-    line('   legacy values that decode to MORE THAN ONE option — never folded, because');
-    line('   picking one of two meanings is inventing a spec:');
+    line('   legacy values that mean a catalogue option NOT in scope — left alone, because');
+    line('   folding them would silently drop the meaning that is out of scope:');
     for (const [k, n] of [...ambiguous].sort((a, b) => b[1] - a[1]).slice(0, 15)) line(`      ${String(n).padStart(4)}  ${k}`);
   }
 
@@ -334,7 +348,9 @@ try {
         if (now === null) { bad.push(`${p.doc}: specials is not an array`); continue; }
         for (const c of p.changes) {
           if (now.some((y) => K(y) === K(c.from))) bad.push(`${p.doc}: still carries the old spelling "${c.from}"`);
-          if (!now.some((y) => K(y) === K(c.to))) bad.push(`${p.doc}: does not carry "${c.to}"`);
+          for (const code of String(c.to).split(' + ')) {
+            if (!now.some((y) => K(y) === K(code))) bad.push(`${p.doc}: does not carry "${code}"`);
+          }
         }
         for (const b of p.buckets) {
           const left = Number((await check.unsafe(
