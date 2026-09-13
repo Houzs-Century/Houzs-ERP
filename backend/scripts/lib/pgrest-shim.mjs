@@ -304,7 +304,12 @@ export function pgrestShim(sql, schema = "scm", opts = {}) {
           for (const t of embedSpecs) {
             const m = /^(?:([A-Za-z_][A-Za-z0-9_]*)\s*:\s*)?([A-Za-z_][A-Za-z0-9_]*)(!inner)?\s*\((.*)\)$/.exec(t);
             if (!m) return gap(`embedded select ${JSON.stringify(t)} — unparseable`);
-            if (!m[3]) return gap(`embedded select ${JSON.stringify(t)} without !inner — a LEFT embed changes which parent rows come back`);
+            /* A plain `rel(...)` (no !inner) is a LEFT embed: it never removes a
+               parent row. Implemented 2026-09-14 for `do-unlinked-coverage.ts`'s
+               `parent:delivery_orders(status)`, which computeMrp reaches — without
+               it no script could run the real MRP engine. Its FILTERS stay a gap
+               (below): on a LEFT embed PostgREST narrows the embedded value, not
+               the parent set, and nobody here needs that yet. */
             const embedCols = splitTopLevel(m[4]);
             if (embedCols.some((c) => c.includes("(") || c.includes(":"))) {
               return gap(`embedded select ${JSON.stringify(t)} — only ONE level of embedding is implemented`);
@@ -313,7 +318,7 @@ export function pgrestShim(sql, schema = "scm", opts = {}) {
             /* "p" is this translation's own name for the parent table. */
             if (alias === "p") return gap(`embed aliased "p" — that name is taken by the parent row`);
             if (embedCols.length === 0) return gap(`embedded select ${JSON.stringify(t)} names no columns`);
-            embeds.push({ alias, table: m[2], cols: embedCols });
+            embeds.push({ alias, table: m[2], cols: embedCols, inner: Boolean(m[3]) });
           }
           const byAlias = new Map(embeds.map((e) => [e.alias, e]));
           const baseCols = parts.filter((t) => !t.includes("("));
@@ -330,6 +335,7 @@ export function pgrestShim(sql, schema = "scm", opts = {}) {
             if (alias === null) { parentFilters.push(f); continue; }
             const e = byAlias.get(alias);
             if (!e) return gap(`filter on "${alias}.*" but select() declares no embed called "${alias}"`);
+            if (!e.inner) return gap(`filter on "${alias}.*" — "${alias}" is a LEFT embed (no !inner), whose filters narrow the embedded value rather than the parent rows`);
             const strip = (c) => String(c).slice(alias.length + 1);
             e.filters = e.filters ?? [];
             e.filters.push(f.op === "or"
@@ -365,7 +371,9 @@ export function pgrestShim(sql, schema = "scm", opts = {}) {
           const selectList = [...baseCols.map((c) => `${P}.${q(c)}`)];
           for (const e of embeds) {
             if (e.toOne) {
-              selectList.push(`json_build_object(${e.cols.map((c) => `'${c}', ${A(e)}.${q(c)}`).join(", ")}) AS ${A(e)}`);
+              const obj = `json_build_object(${e.cols.map((c) => `'${c}', ${A(e)}.${q(c)}`).join(", ")})`;
+              /* LEFT and unmatched -> null, which is what PostgREST returns. */
+              selectList.push(e.inner ? `${obj} AS ${A(e)}` : `CASE WHEN ${A(e)}.${q(e.childCol)} IS NULL THEN NULL ELSE ${obj} END AS ${A(e)}`);
             } else {
               /* to-MANY: aggregate in a correlated subquery so the parent row
                  set is never multiplied. */
@@ -374,13 +382,13 @@ export function pgrestShim(sql, schema = "scm", opts = {}) {
             }
           }
           const joins = embeds.filter((e) => e.toOne)
-            .map((e) => `JOIN "${schema}".${q(e.table)} ${A(e)} ON ${A(e)}.${q(e.childCol)} = ${P}.${q(e.parentCol)}`);
+            .map((e) => `${e.inner ? "JOIN" : "LEFT JOIN"} "${schema}".${q(e.table)} ${A(e)} ON ${A(e)}.${q(e.childCol)} = ${P}.${q(e.parentCol)}`);
           const allWhere = [
             ...clausesFor(parentFilters, (c) => `${P}.${q(c)}`),
             ...embeds.filter((e) => e.toOne).flatMap((e) => clausesFor(e.filters ?? [], (c) => `${A(e)}.${q(c)}`)),
             /* `!inner` on a to-many: at least one child must survive the same
                narrowing the aggregate applied. */
-            ...embeds.filter((e) => !e.toOne).map((e) => `EXISTS (SELECT 1 ${childFrom(e, embedWhere(e))})`),
+            ...embeds.filter((e) => !e.toOne && e.inner).map((e) => `EXISTS (SELECT 1 ${childFrom(e, embedWhere(e))})`),
           ];
           const eOrder = state.order.length
             ? ` ORDER BY ${state.order.map((o) => `${P}.${q(o.col)} ${o.asc ? "ASC" : "DESC"}`).join(", ")}`
@@ -480,8 +488,15 @@ export function pgrestShim(sql, schema = "scm", opts = {}) {
       not(col, op, v) {
         if (op === "is" && v === null) { state.filters.push({ op: "not-is-null", col }); return proxied; }
         if (op === "in" && typeof v === "string" && v.startsWith("(") && v.endsWith(")")) {
-          // PostgREST parenthesised bare-value list: not('status','in','(A,B)').
-          const arr = v.slice(1, -1).split(",").map((s) => s.trim()).filter(Boolean);
+          // PostgREST parenthesised list: bare not('status','in','(A,B)') or
+          // QUOTED not('status','in','("A","B")'). The quoted form is what
+          // mrp.ts `sqlNotInList` writes; split naively, the quotes stayed in
+          // the value and computeMrp died on `invalid input value for enum
+          // scm.mfg_so_status: ""CANCELLED""`. Quoted lists go through the one
+          // grammar parser, bare lists keep their old trim.
+          const arr = v.includes('"')
+            ? parsePgrestInList(v)
+            : v.slice(1, -1).split(",").map((s) => s.trim()).filter(Boolean);
           state.filters.push({ op: "not-in", col, v: arr });
           return proxied;
         }

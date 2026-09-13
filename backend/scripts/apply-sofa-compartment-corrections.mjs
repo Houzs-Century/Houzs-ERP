@@ -81,6 +81,7 @@ import {
   splitBuildCopies,
   supersededBy,
 } from "./lib/sofa-build-plan.mjs";
+import { decideAddedPoCompartmentLink } from "./lib/added-po-compartment-link.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -584,6 +585,9 @@ async function main() {
   let nPi = 0, nSi = 0, nHeldInv = 0, nRel = 0;
   /** doc -> { isPo, needle, want, copies } — re-checked on a fresh connection. */
   const verify = [];
+  /** Purchase-order pieces this run INSERTED — linked to their sales-order piece
+      once every build has been written (see linkAddedPoPieces). */
+  const addedPo = [];
 
   for (const c of DATA.builds) {
     const docs = ONLY ? c.docs.filter((d) => d === ONLY) : c.docs;
@@ -628,7 +632,7 @@ async function main() {
       }
       let rows = isPo
         ? await sql`SELECT i.id, i.item_code AS code, i.qty, i.unit_price_sen, i.line_total_sen AS total,
-                           i.variants, i.description2, i.received_qty, i.so_item_id, i.linked_ac_dtlkey
+                           i.variants, i.description2, i.received_qty, i.so_item_id, i.linked_ac_dtlkey, i.warehouse_id
                       FROM scm.purchase_order_items i
                      WHERE i.purchase_order_id = ${poId} AND i.item_group = 'sofa'
                      ORDER BY i.id`
@@ -850,7 +854,13 @@ async function main() {
         for (const p of s.plan) {
           if (p.op === "update" && K(p.from) === K(p.to)) { log(`      keep   ${compartmentOf(p.to)}${seat.write ? ` (seat ${seat.value})` : ""}`); nUpd++; }
           else if (p.op === "update") { log(`      change ${compartmentOf(p.from)} -> ${compartmentOf(p.to)}`); nUpd++; }
-          else if (p.op === "insert") { log(`      add    ${compartmentOf(p.to)}`); nIns++; }
+          else if (p.op === "insert") {
+            log(`      add    ${compartmentOf(p.to)}`); nIns++;
+            if (isPo && !APPLY) {
+              const d = await decideLinkFor(sql, { purchase_order_id: poId, item_code: p.to, warehouse_id: s.src?.warehouse_id ?? null, linked_ac_dtlkey: s.src?.linked_ac_dtlkey ?? null }, null);
+              log(`             link on today's rows: ${d.verdict === "link" ? `-> ${d.soDoc} ln ${d.soLineNo ?? "-"}` : `none — ${d.reason}`} (APPLY decides again after every build is written)`);
+            }
+          }
           else if (p.op === "release") {
             log(`      release ${compartmentOf(p.from)} — ${p.poLines.map((x) => `${x.po_number} ${x.item_code}`).join(", ")} stops being dedicated to a row this collapse removes; the PO half of this entry deletes it`);
             nRel += p.poLines.length;
@@ -927,19 +937,26 @@ async function main() {
                  row's key is a copy of what the sibling already states, never a
                  guess; repair-sofa-added-compartment-line-key.mjs is the same
                  write for the rows earlier rounds already added. */
-              if (isPo) await tx`INSERT INTO scm.purchase_order_items
+              if (isPo) {
+                const [ins] = await tx`INSERT INTO scm.purchase_order_items
                   (purchase_order_id, material_kind, item_code, material_name, item_group, description, description2,
                    qty, received_qty, unit_price_sen, line_total_sen, variants, warehouse_id, delivery_date, from_mrp, company_id,
                    linked_ac_dtlkey)
                   SELECT i.purchase_order_id, 'mfg_product', ${p.to}, ${name}, 'sofa', i.description, ${src.description2 ?? null},
                          i.qty, 0, ${p.price}, ${p.tot}, ${tx.json(p.v)}, i.warehouse_id, i.delivery_date, false, ${CO},
                          i.linked_ac_dtlkey
-                    FROM scm.purchase_order_items i WHERE i.id = ${src.id}`;
-              /* so_item_id is deliberately NOT copied onto an inserted PO line.
-                 The dedication is one SO line to one PO line, and pointing a
-                 second PO line at the same SO line would read as two incoming
-                 units of one ordered piece. An added compartment has no SO line
-                 of its own until the SO half of the same build is corrected. */
+                    FROM scm.purchase_order_items i WHERE i.id = ${src.id}
+                  RETURNING id`;
+                if (ins) addedPo.push({ id: ins.id, doc });
+              }
+              /* so_item_id is NOT copied from the source row: the dedication is
+                 one SO line to one PO line, and pointing a second PO line at the
+                 same SO line would read as two incoming units of one piece. The
+                 added piece is linked to ITS OWN sales-order piece instead, by
+                 linkAddedPoPieces once every build in the run is written — the
+                 sales-order half of the same entry may run after this one.
+                 Before 2026-09-14 nothing linked it at all, and a company-1 sofa
+                 is covered only through that link (staff issue #19). */
               /* warehouse_id IS NOT OPTIONAL HERE, and its absence is silent.
                  Stock allocation buckets by (warehouse, item, variant), so a line
                  that lands NULL can never match stock: it stays PENDING forever,
@@ -1013,6 +1030,8 @@ async function main() {
     }
   }
 
+  const linked = APPLY ? await linkAddedPoPieces(addedPo) : [];
+
   log("");
   log(`builds touched ${nBuilds} (${nSofas} sofa${nSofas === 1 ? "" : "s"}) · lines updated ${nUpd} · added ${nIns} · removed ${nDel}`);
   log(`downstream carried: PO lines ${nPo} · GRN lines ${nGr} · DO lines ${nDo}`);
@@ -1028,6 +1047,82 @@ async function main() {
 
   if (!APPLY) { log("\nDRY-RUN — set APPLY=1 to write."); return; }
   await verifyOnFreshConnection(verify);
+  await verifyLinksOnFreshConnection(linked);
+}
+
+/* The evidence decideAddedPoCompartmentLink needs, read for one purchase piece:
+   the linked pieces of the same build on the same purchase order, and every line
+   on the sales order(s) they name. `excludeId` is the row itself once it exists. */
+async function decideLinkFor(db, row, excludeId) {
+  const siblings = await db`
+    SELECT s.doc_no AS so_doc, s.linked_ac_dtlkey::text AS so_dtlkey
+      FROM scm.purchase_order_items it
+      JOIN scm.mfg_sales_order_items s ON s.id = it.so_item_id
+     WHERE it.purchase_order_id = ${row.purchase_order_id}
+       AND it.linked_ac_dtlkey IS NOT DISTINCT FROM ${row.linked_ac_dtlkey}
+       AND it.id IS DISTINCT FROM ${excludeId}`;
+  const docs = [...new Set(siblings.map((r) => r.so_doc))];
+  const candidates = docs.length ? await db`
+    SELECT s.id::text AS id, s.doc_no, s.line_no, s.item_code, s.cancelled,
+           s.warehouse_id::text AS warehouse_id, s.linked_ac_dtlkey::text AS linked_ac_dtlkey,
+           EXISTS (SELECT 1 FROM scm.purchase_order_items x JOIN scm.purchase_orders xp ON xp.id = x.purchase_order_id
+                    WHERE x.so_item_id = s.id AND xp.status::text NOT IN ('CANCELLED','DRAFT')
+                      AND x.id IS DISTINCT FROM ${excludeId}) AS covered
+      FROM scm.mfg_sales_order_items s
+     WHERE s.doc_no = ANY(${docs})` : [];
+  return decideAddedPoCompartmentLink(
+    { item_code: row.item_code, warehouse_id: row.warehouse_id ?? null, linked_ac_dtlkey: row.linked_ac_dtlkey ?? null },
+    siblings.map((r) => ({ so_doc: r.so_doc, so_dtlkey: r.so_dtlkey })),
+    candidates.map((c) => ({ ...c, warehouse_id: c.warehouse_id ?? null })),
+  );
+}
+
+/* Link every purchase piece this run added to its own sales-order piece, on the
+   evidence the documents state. One column, one row, guarded on the row still
+   being unlinked. A piece the rule cannot place is LEFT and named. */
+async function linkAddedPoPieces(addedPo) {
+  const linked = [];
+  if (!addedPo.length) return linked;
+  log(`\nLINK — ${addedPo.length} purchase piece(s) added by this run`);
+  for (const a of addedPo) {
+    const [row] = await sql`
+      SELECT id::text AS id, purchase_order_id, item_code, warehouse_id::text AS warehouse_id,
+             linked_ac_dtlkey::text AS linked_ac_dtlkey, so_item_id
+        FROM scm.purchase_order_items WHERE id = ${a.id}`;
+    if (!row) { log(`  ${a.doc} ${a.id}: row no longer exists — nothing to link`); continue; }
+    if (row.so_item_id) { log(`  ${a.doc} ${row.item_code}: already linked — left as it is`); continue; }
+    const d = await decideLinkFor(sql, row, row.id);
+    if (d.verdict !== "link") { log(`  LEFT ${a.doc} ${row.item_code}: ${d.reason}`); continue; }
+    const upd = await sql`UPDATE scm.purchase_order_items SET so_item_id = ${d.soItemId}
+                           WHERE id = ${row.id} AND so_item_id IS NULL RETURNING id`;
+    if (!upd.length) { log(`  ${a.doc} ${row.item_code}: changed underneath this run — left as it is`); continue; }
+    log(`  LINKED ${a.doc} ${row.item_code} -> ${d.soDoc} ln ${d.soLineNo ?? "-"}`);
+    linked.push({ id: row.id, doc: a.doc, itemCode: row.item_code, soItemId: d.soItemId, soDoc: d.soDoc });
+  }
+  if (linked.length) log(`  ${linked.length} linked. Run "Recompute SO stock allocation" before reading MRP or the sales-order screen — this script does not.`);
+  return linked;
+}
+
+/* The SHAPE of each link, re-read on a NEW connection: the row points at the
+   sales-order line it was meant to, that line is on the right order, and it
+   carries the same item code. A row count would pass a link to the wrong piece. */
+async function verifyLinksOnFreshConnection(linked) {
+  if (!linked.length) return;
+  const v = newSql();
+  let bad = 0;
+  for (const l of linked) {
+    const [r] = await v`
+      SELECT it.so_item_id::text AS so_item_id, it.item_code, s.doc_no, s.item_code AS so_code
+        FROM scm.purchase_order_items it
+        LEFT JOIN scm.mfg_sales_order_items s ON s.id = it.so_item_id
+       WHERE it.id = ${l.id}`;
+    const ok = r && r.so_item_id === l.soItemId && r.doc_no === l.soDoc && K(r.so_code) === K(r.item_code);
+    if (ok) log(`  LINK OK  ${l.doc} ${l.itemCode} -> ${r.doc_no}`);
+    else { bad++; log(`  LINK FAIL ${l.doc} ${l.itemCode}: read back ${JSON.stringify(r ?? null)}, expected ${l.soDoc} / ${l.soItemId}`); }
+  }
+  await v.end();
+  if (bad) { console.error(`LINK VERIFY FAILED on ${bad} row(s)`); process.exit(1); }
+  log(`LINK VERIFY OK — ${linked.length} link(s)`);
 }
 
 /**
