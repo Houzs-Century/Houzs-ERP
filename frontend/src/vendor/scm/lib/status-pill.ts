@@ -99,7 +99,7 @@ const PR: Record<string, Entry> = {
 const SO: Record<string, Entry> = {
   DRAFT:         { label: 'Draft',         tone: 'pending' },
   CONFIRMED:     { label: 'Submitted',     tone: 'info' },
-  IN_PRODUCTION: { label: 'Proceed',       tone: 'progress' },
+  IN_PRODUCTION: { label: 'In Production', tone: 'progress' },
   READY_TO_SHIP: { label: 'Ready to Ship', tone: 'success' },
   SHIPPED:       { label: 'Shipped',       tone: 'success' },
   DELIVERED:     { label: 'Delivered',     tone: 'success' },
@@ -240,6 +240,31 @@ export function statusLabel(docType: StatusDocType, status: string | null | unde
  *  in a test is the one nobody notices has gone stale. */
 export function statusVocabulary(docType: StatusDocType): string[] {
   return Object.keys(MAPS[docType]);
+}
+
+/** Attach the canonical LABEL to a page's own status map. A list or detail page
+ *  still needs things this file does not carry — its filter bucket, its blurb,
+ *  its own tone palette — so it keeps a map of THOSE, keyed by stored status, and
+ *  gets the word from here instead of hand-writing it. Hand-written copies are
+ *  what produced the 2026-09-13 "one rung, three words" defects (docs/bugs/0851).
+ *
+ *  Resolved once, when the page module loads, rather than per lookup: the page's
+ *  `STATUS_TONE[key] ?? fallback` then keeps its original one-line shape, which is
+ *  the shape `no-unnecessary-condition` exempts (a nullish check straight on an
+ *  index-signature access). Every attempt to attach the label at lookup time went
+ *  through a variable and was flagged — measured with `npm run lint`, 2026-09-13.
+ *
+ *  An unlisted status is not in `own` and so is not in the result: the page's own
+ *  fallback still decides what an unknown status reads, exactly as before. */
+export function withStatusLabels<T extends object>(
+  docType: StatusDocType,
+  own: Record<string, T>,
+): Record<string, T & { label: string }> {
+  const out: Record<string, T & { label: string }> = {};
+  for (const [status, entry] of Object.entries(own)) {
+    out[status] = { ...entry, label: statusLabel(docType, status) };
+  }
+  return out;
 }
 
 // ── Simplified amendment status buckets (owner 2026-07-24) ───────────────────

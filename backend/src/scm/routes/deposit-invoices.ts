@@ -22,6 +22,7 @@ import {
   DI_COLS, cancelDepositInvoice, issueMissingDepositInvoices, loadDepositInvoiceSettings, missingDepositInvoices,
   postDepositInvoice, saveDepositInvoiceSettings, type DepositInvoiceRow,
 } from '../../acc/deposit-invoices';
+import { refundedByInvoice } from '../../acc/deposit-refunds';
 import { deliveredUninvoiced, invoiceDeliveredOrders } from '../lib/auto-final-invoice';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -56,18 +57,42 @@ export const listDepositInvoicesHandler = async (c: Ctx): Promise<Response> => {
 };
 
 /** The number of the credit note that closed each invoice (docs/bugs/0831),
-    read once for the page — the row carries only the id. */
+    read once for the page — the row carries only the id — and what a refund
+    took off each, note by note, with the voucher that paid it
+    (docs/bugs/0860). */
 async function withNoteNumbers(c: Ctx, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return { resp: c.json(co.refusal, 409) };
+  const sb = c.get('supabase');
   const ids = [...new Set(rows.map((r) => r.credit_note_id).filter((x): x is string => typeof x === 'string' && x !== ''))];
   const numberOf = new Map<string, string>();
   if (ids.length > 0) {
-    const co = requireActiveCompanyId(c);
-    if (!co.ok) return { resp: c.json(co.refusal, 409) };
-    const { data, error } = await c.get('supabase').from('acc_credit_notes').select('id, note_number').eq('company_id', co.companyId).in('id', ids);
+    const { data, error } = await sb.from('acc_credit_notes').select('id, note_number').eq('company_id', co.companyId).in('id', ids);
     if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
     for (const n of (Array.isArray(data) ? data : []) as Array<{ id: string; note_number: string }>) numberOf.set(String(n.id), String(n.note_number));
   }
-  return { rows: rows.map((r) => ({ ...r, credit_note_number: typeof r.credit_note_id === 'string' ? numberOf.get(r.credit_note_id) ?? null : null })) };
+  const refunded = await refundedByInvoice(sb, co.companyId, rows.map((r) => String(r.di_number ?? '')));
+  if (!refunded.ok) return { resp: c.json({ error: 'load_failed', reason: refunded.reason }, 500) };
+  const pvIds = [...new Set([...refunded.notes.values()].flat().map((n) => n.refundPvId))];
+  const pvNumberOf = new Map<string, string>();
+  if (pvIds.length > 0) {
+    const { data, error } = await sb.from('payment_vouchers').select('id, pv_number').eq('company_id', co.companyId).in('id', pvIds);
+    if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
+    for (const v of (Array.isArray(data) ? data : []) as Array<{ id: string; pv_number: string }>) pvNumberOf.set(String(v.id), String(v.pv_number));
+  }
+  return {
+    rows: rows.map((r) => {
+      const di = String(r.di_number ?? '');
+      return {
+        ...r,
+        credit_note_number: typeof r.credit_note_id === 'string' ? numberOf.get(r.credit_note_id) ?? null : null,
+        refunded_sen: refunded.sen.get(di) ?? 0,
+        refund_notes: (refunded.notes.get(di) ?? []).map((n) => ({
+          note_number: n.noteNumber, total_sen: n.totalSen, status: n.status, note_date: n.noteDate, pv_number: pvNumberOf.get(n.refundPvId) ?? null,
+        })),
+      };
+    }),
+  };
 }
 
 export const depositInvoiceDetailHandler = async (c: Ctx): Promise<Response> => {

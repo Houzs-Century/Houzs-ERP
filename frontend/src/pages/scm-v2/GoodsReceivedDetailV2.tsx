@@ -135,11 +135,17 @@ const effectiveOf = (h: GrnHeader): Effective => {
   return "draft";
 };
 
-const EFFECTIVE_TONE: Record<Effective, { tone: "success" | "warning" | "error" | "neutral"; label: string; blurb: string }> = {
-  draft: { tone: "warning", label: "Draft", blurb: "Draft · not yet posted" },
-  posted: { tone: "success", label: "Submitted", blurb: "Submitted · inventory received" },
-  on_hold: { tone: "warning", label: "On Hold", blurb: "On hold · stock already received, billing paused" },
-  cancelled: { tone: "error", label: "Cancelled", blurb: "Cancelled · receipt reversed" },
+/* No LABEL here, and none is added: it was DEAD. Every reader of this map takes
+   `.tone` or `.blurb` (grep EFFECTIVE_TONE — three call sites, none of them
+   `.label`), and the word on the badge comes from STAGE_LABEL below. A fourth
+   hand-written copy of the status vocabulary that renders nowhere is the
+   drift docs/modules/document-status-vocabulary.md §1 exists to stop, so it is
+   removed rather than repointed at status-pill.ts. */
+const EFFECTIVE_TONE: Record<Effective, { tone: "success" | "warning" | "error" | "neutral"; blurb: string }> = {
+  draft: { tone: "warning", blurb: "Draft · not yet posted" },
+  posted: { tone: "success", blurb: "Submitted · inventory received" },
+  on_hold: { tone: "warning", blurb: "On hold · stock already received, billing paused" },
+  cancelled: { tone: "error", blurb: "Cancelled · receipt reversed" },
 };
 
 const STAGE_LABEL: Record<string, string> = {

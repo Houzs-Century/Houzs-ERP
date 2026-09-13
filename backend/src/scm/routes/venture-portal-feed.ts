@@ -13,12 +13,13 @@
 // reading why a delivery failed and re-sending it are ALL ordinary operations
 // that will happen for years after this ships, so every one of them is a button.
 //
-// THE SECRET IS WRITE-ONLY THROUGH THIS API. PUT /secret sets it; nothing reads
-// it back. GET /status answers with its LENGTH and last four characters and
-// nothing else, which is enough to tell "the right one is in there" from "the
-// field is empty" without putting a credential on a screen, in a log, or in a
-// browser's network tab. The value itself only ever leaves the database as a
-// request header the sender builds.
+// THE KEY IS MINTED HERE AND SHOWN ONCE. POST /secret/generate makes one and
+// returns it in that one response; PUT /secret remains for pasting your own.
+// Nothing reads it back afterwards — GET /status answers with its LENGTH, its
+// last four characters and WHEN it was set, which is enough to tell "the right
+// one is in there" from "the field is empty" without putting a credential on a
+// screen, in a log, or in a browser's network tab. The value itself only ever
+// leaves the database as a request header the sender builds.
 //
 // DELIBERATELY CROSS-COMPANY, and naming that per CLAUDE.md's rule. Every other
 // SCM route carries a company predicate because the service-role client bypasses
@@ -45,10 +46,14 @@ import {
   VP_DRAIN_BATCH,
   VP_MAX_ATTEMPTS,
   VP_ROW_STATUSES,
+  VP_SECRET_LENGTH,
   drainVenturePortalOutbox,
+  mintVpSecret,
   probeVenturePortal,
   reconcileVenturePortalOutbox,
 } from '../lib/venture-portal-outbox';
+import { writeAudit } from '../../services/audit';
+import { resolveCallerStaffId } from '../lib/salesScope';
 
 export const venturePortalFeed = new Hono<{ Bindings: Env; Variables: Variables }>();
 venturePortalFeed.use('*', supabaseAuth);
@@ -81,25 +86,51 @@ function denyManage(c: Ctx) {
     : c.json({ error: 'forbidden', need: MANAGE_KEYS }, 403);
 }
 
-/** Enough to recognise the secret, never enough to use it. */
-function maskSecret(raw: string | null): { set: boolean; length: number; tail: string } {
+/** Enough to recognise the key, never enough to use it.
+ *
+ *  `setAt` is scm.sync_config's own updated_at for the vp.secret row — the ONE
+ *  extra fact the page needs to say "key ....9f2a, generated on Tuesday" rather
+ *  than just "a key is set". It is a timestamp, not a credential; there is
+ *  nothing in here an attacker could do anything with. */
+function maskSecret(
+  raw: string | null,
+  setAt: string | null,
+): { set: boolean; length: number; tail: string; setAt: string | null } {
   const v = (raw ?? '').trim();
-  if (!v) return { set: false, length: 0, tail: '' };
-  return { set: true, length: v.length, tail: v.slice(-4) };
+  if (!v) return { set: false, length: 0, tail: '', setAt: null };
+  return { set: true, length: v.length, tail: v.slice(-4), setAt };
 }
 
-/** Null means the read FAILED, which is not the same as "nothing is configured"
- *  — and the page must not render the second when the first happened. */
+/** One config row: its value and when it was last written. */
+type VpConfigRow = { v: string; updatedAt: string | null };
+
+/**
+ * Null means the read FAILED, which is not the same as "nothing is configured"
+ * — and the page must not render the second when the first happened.
+ *
+ * A MAP, NOT A Record, and that is a correctness choice rather than a style one.
+ * `Record<string, T>` indexes as `T` unless `noUncheckedIndexedAccess` is on, so
+ * TypeScript promises a value for `cfg['vp.url']` that PostgREST does not — the
+ * row is simply absent before anybody fills the page in, which is the normal
+ * state. The guards below are the only thing standing between that and
+ * `undefined` reaching the page, and with a Record the linter called all of them
+ * redundant and would have had them deleted. `Map.get` returns `T | undefined`,
+ * so the type now says what the database says and every guard is load-bearing to
+ * the compiler too. This is the trap CLAUDE.md names in the `lint:` job comment,
+ * met at its source instead of suppressed at the call site.
+ */
 async function readConfigRows(
   sb: ReturnType<typeof getSupabaseService>,
-): Promise<Record<string, string> | null> {
+): Promise<Map<string, VpConfigRow> | null> {
   const { data, error } = await sb
     .from('sync_config')
-    .select('k, v')
+    .select('k, v, updated_at')
     .in('k', VP_CONFIG_KEYS as unknown as string[]);
   if (error) return null;
-  const out: Record<string, string> = {};
-  for (const r of (data ?? []) as { k: string; v: string }[]) out[r.k] = r.v;
+  const out = new Map<string, VpConfigRow>();
+  for (const r of (data ?? []) as { k: string; v: string; updated_at: string | null }[]) {
+    out.set(r.k, { v: r.v, updatedAt: r.updated_at ?? null });
+  }
   return out;
 }
 
@@ -194,11 +225,11 @@ venturePortalFeed.get('/status', async (c) => {
       configKey: VENTURE_PORTAL_FEED_KEY,
     },
     connection: {
-      url: cfg['vp.url'] ?? '',
-      since: cfg['vp.since'] ?? '',
-      secret: maskSecret(cfg['vp.secret'] ?? null),
+      url: cfg.get('vp.url')?.v ?? '',
+      since: cfg.get('vp.since')?.v ?? '',
+      secret: maskSecret(cfg.get('vp.secret')?.v ?? null, cfg.get('vp.secret')?.updatedAt ?? null),
       /* The three switches, answered as one question: can a delivery happen? */
-      ready: Boolean(cfg['vp.url'] && cfg['vp.secret']) && scope !== 'off',
+      ready: Boolean(cfg.get('vp.url')?.v && cfg.get('vp.secret')?.v) && scope !== 'off',
     },
     queue: {
       ...counts,
@@ -289,7 +320,66 @@ venturePortalFeed.put('/secret', async (c) => {
   const sb = getSupabaseService(c.env);
   const err = await writeConfig(sb, 'vp.secret', secret);
   if (err) return c.json({ error: 'write_failed', message: err }, 500);
-  return c.json({ ok: true, secret: maskSecret(secret) });
+  return c.json({ ok: true, secret: maskSecret(secret, new Date().toISOString()) });
+});
+
+/**
+ * MINT a key here, show it ONCE, and never again.
+ *
+ * Owner 2026-09-13: 「那边 generate 一个 API key 出来；我这边只需要填那个 API
+ * key，它就可以 link 起来了」. This is the primary road now and PUT /secret above
+ * is the paste-your-own fallback: the page has a Generate button and no secret
+ * box, so nobody has to invent a string, and nobody types the same string twice.
+ * Rotating is pressing Generate again and pasting the new key on the portal —
+ * the window of 401s in between costs the queue nothing, because a 401 does not
+ * consume a row's attempts (classifyVpResponse).
+ *
+ * SHOWN ONCE is not theatre. The value is returned in THIS response body and
+ * never again: GET /status answers its length and last four characters, this
+ * route writes no log line carrying it, and the audit row below carries only its
+ * tail. If it is lost before it reaches the portal, the answer is to generate
+ * another one, which costs nothing.
+ */
+venturePortalFeed.post('/secret/generate', async (c) => {
+  const denied = denyManage(c);
+  if (denied) return denied;
+
+  const secret = mintVpSecret();
+  const sb = getSupabaseService(c.env);
+  /* Written through the SAME helper PUT /secret uses, so the two roads cannot
+     store it differently — one row, one key, one upsert. */
+  const err = await writeConfig(sb, 'vp.secret', secret);
+  if (err) return c.json({ error: 'write_failed', message: err }, 500);
+
+  /* THE AUDIT ROW CARRIES NO KEY. What it carries is who minted one, when, and
+     its last four characters — which is exactly enough to answer "is the portal
+     holding the key we generated on Tuesday?" from the ledger without the ledger
+     being worth stealing.
+
+     writeAudit, not audit(c, ...), because audit() lifts the actor off
+     c.get('user') — and inside /api/scm/* that is the PINNED scm.staff system
+     identity every caller shares (see scm/env.ts). houzsUser is the real person,
+     so the actor is passed explicitly. Best-effort by construction: a failed
+     audit insert logs and is swallowed, and must not lose the operator a key
+     that has already been written. */
+  await writeAudit(c.env, {
+    action: 'venture_portal.secret.generate',
+    entityType: 'sync_config',
+    entityId: 'vp.secret',
+    summary: 'a Venture Portal API key was generated',
+    meta: { length: secret.length, tail: secret.slice(-4) },
+    actorId: c.get('houzsUser')?.id ?? null,
+    actorEmail: c.get('houzsUser')?.email ?? null,
+  });
+
+  /* `mask` travels beside it so the page can render "key ....9f2a, generated
+     just now" without waiting for the next poll of GET /status. */
+  return c.json({
+    ok: true,
+    secret,
+    length: VP_SECRET_LENGTH,
+    mask: maskSecret(secret, new Date().toISOString()),
+  });
 });
 
 /**
@@ -324,6 +414,18 @@ venturePortalFeed.put('/scope', async (c) => {
   }
 
   const sb = getSupabaseService(c.env);
+
+  /* scm.app_config.updated_by IS A uuid (migration 0272), and houzsUser.id is an
+     INTEGER — the public.users id. Writing it straight in made Postgres refuse
+     the whole upsert with `invalid input syntax for type uuid: "90"`, so the
+     switch could not be turned on by anybody from the day the page shipped. The
+     page reported it honestly ("Not saved: ...") and the feed stayed off, which
+     is why nothing else caught it: every gate here reads code, and this was a
+     disagreement between a column type and a value that only the database sees.
+     resolveCallerStaffId returns Promise<string | null>, so the compiler now
+     refuses a number at this call site — the fix is a type, not a reminder. */
+  const actorStaffId = await resolveCallerStaffId(sb, c.get('houzsUser')?.id ?? null);
+
   const { error } = await sb.from('app_config').upsert(
     {
       key: VENTURE_PORTAL_FEED_KEY,
@@ -331,11 +433,29 @@ venturePortalFeed.put('/scope', async (c) => {
       description:
         'ERP -> Venture Portal live sales-order feed. off = nothing is queued and nothing is sent. Set to a company id list (Houzs Century is 1) to enable. Read by scm/lib/venture-portal-feed-flag.ts.',
       updated_at: new Date().toISOString(),
-      updated_by: c.get('houzsUser')?.id ?? null,
+      updated_by: actorStaffId,
     },
     { onConflict: 'key' },
   );
   if (error) return c.json({ error: 'write_failed', message: error.message }, 500);
+
+  /* WHO TURNED IT ON GOES IN THE AUDIT LEDGER, not only in updated_by. This
+     setting decides whose sales orders — with their costs and margins — leave
+     this system for somewhere they become the input to somebody's commission,
+     and a delivery cannot be recalled. `updated_by` is null for anyone with no
+     scm.staff row, and audit_events takes the real integer user id, so the
+     ledger answers the question the column cannot. */
+  await writeAudit(c.env, {
+    action: 'venture_portal.scope.set',
+    entityType: 'app_config',
+    entityId: VENTURE_PORTAL_FEED_KEY,
+    summary: enabled
+      ? `the Venture Portal feed was turned on for ${value === 'all' ? 'every company' : `company ${value}`}`
+      : 'the Venture Portal feed was turned off',
+    meta: { value, staffId: actorStaffId },
+    actorId: c.get('houzsUser')?.id ?? null,
+    actorEmail: c.get('houzsUser')?.email ?? null,
+  });
 
   /* The flag has a 30s cache. Without this drop, the page would show the old
      state for half a minute after somebody pressed the switch, which reads as

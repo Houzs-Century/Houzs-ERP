@@ -75,7 +75,10 @@ describe("executable route contract", () => {
     // the Venture Portal (which pays Revenue Department commission out of these
     // orders) and its settings: receiver address, shared secret, which
     // companies, start date, and the queue with the reason on the row.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(159);
+    // 160 since 2026-09-13: /scm/fair-pending — the sales orders whose FAIR link
+    // the system could not settle on its own (two booths fit, or the order's
+    // brand has no booth at that event). docs/bugs/0862.
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(160);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -112,7 +115,8 @@ describe("executable route contract", () => {
     // 166 since 2026-09-12 — /scm/credit-notes; see the staff-route count above.
     // 167 since 2026-09-12 — /scm/deposit-invoices; see the staff-route count above.
     // 168 since 2026-09-12 — /venture-portal-feed; see the staff-route count.
-    expect(ROUTE_CONTRACT).toHaveLength(168);
+    // 169 since 2026-09-13 — /scm/fair-pending; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(169);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {
@@ -147,13 +151,17 @@ describe("mobile route drift gate", () => {
     // Portal received an order decides whether somebody's commission is right,
     // and turning the feed OFF is the control most plausibly wanted away from
     // a desk.
-    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(37);
+    // 38 since 2026-09-13: /scm/warehouses/racks, the Warehouse group's fifth
+    // row — the storekeeper's rack LOOKUP. Owner parity ruling 2026-09-12
+    // (「电脑版本有的，手机版本都要有」); the phone could CREATE a rack and never
+    // read one back.
+    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(38);
     // 6 since 2026-09-10: /roles, the rebuilt Roles & Permissions screen, reached
     // from a Profile row (gated via the Team hub tab).
     expect(PROFILE_ORG_ITEMS).toHaveLength(6);
-    expect(allMobile).toHaveLength(43);
-    expect(new Set(allMobile.map((item) => item.to)).size).toBe(43);
-    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(42);
+    expect(allMobile).toHaveLength(44);
+    expect(new Set(allMobile.map((item) => item.to)).size).toBe(44);
+    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(43);
   });
 
   it("maps every declared mobile row to a real screen, never a placeholder stub", () => {

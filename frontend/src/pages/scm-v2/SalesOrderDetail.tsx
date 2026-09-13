@@ -133,6 +133,7 @@ import { soStatusDisplay, type DeliveryState, type SoLifecycle } from '../../ven
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useAuth } from '../../vendor/scm/lib/auth';
 import { useVenues } from '../../vendor/scm/lib/venues-queries';
+import { FairPicker } from '../../components/FairPicker';
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { generateSalesOrderPdf } from '../../vendor/scm/lib/sales-order-pdf';
@@ -240,7 +241,7 @@ const STATUS_CLASS: Record<string, string> = {
 const SO_STATUS_LABEL: Record<string, string> = {
   DRAFT:         'Draft',
   CONFIRMED:     'Submitted',
-  IN_PRODUCTION: 'Proceed',
+  IN_PRODUCTION: 'In Production',
   READY_TO_SHIP: 'Stock Ready',
   SHIPPED:       'Arranged',
   DELIVERED:     'Delivered',
@@ -3427,28 +3428,28 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               </span>
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Venue</span>
-              {/* Houzs 2026-06-23 (owner): Venue is manually pickable (was a
-                  locked 2990 field). Defaults to the salesperson's venue. */}
-              <span className={styles.selectWrap}>
-                <select
-                  className={styles.fieldSelect}
-                  value={form.venueId || ''}
-                  disabled={inputsDisabled}
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    const name = (venuesQ.data ?? []).find((v) => v.id === id)?.name ?? '';
-                    setForm((s) => ({ ...s, venueId: id, venue: name }));
-                  }}
-                  aria-label="Venue"
-                >
-                  <option value="">—</option>
-                  {(venuesQ.data ?? []).map((v) => (
-                    <option key={v.id} value={v.id}>{v.name}</option>
-                  ))}
-                </select>
-                <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
-              </span>
+              <span className={styles.fieldLabel}>Fair</span>
+              {/* Owner 2026-09-13 — same picker as the create forms. The ORGANIZER
+                  is deliberately not sent on a header PATCH: a venue change drops
+                  the fair link to PENDING and the nightly reconcile re-derives it
+                  from venue + date + brand, which is unique except where two
+                  organizers share a venue on one day (3 days in all of 2026).
+                  Those land on the pending screen for a person, not on a guess. */}
+              <FairPicker
+                id="so-detail-fair"
+                value={{ venue: form.venue || null, organizer: null }}
+                soDate={header.so_date}
+                disabled={inputsDisabled}
+                onChange={(next) => setForm((s) => ({
+                  ...s,
+                  venue: next.venue ?? '',
+                  venueId: (venuesQ.data ?? []).find(
+                    (v) => v.name.trim().toLowerCase() === (next.venue ?? '').trim().toLowerCase(),
+                  )?.id ?? '',
+                }))}
+                wrapClassName={styles.selectWrap}
+                selectClassName={styles.fieldSelect}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Processing Date</span>

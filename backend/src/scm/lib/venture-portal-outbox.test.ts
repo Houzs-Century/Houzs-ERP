@@ -25,14 +25,35 @@ vi.mock('../../db/supabase', () => ({ getSupabaseService: () => currentSb }));
 
 const { fakeSb } = await import('./fake-postgrest');
 const {
+  VP_DRAIN_BATCH,
+  VP_KICK_DELAY_MS,
+  VP_KICK_MAX_SWEEPS,
   VP_MAX_ATTEMPTS,
+  VP_SECRET_ALPHABET,
+  VP_SECRET_LENGTH,
   classifyVpResponse,
   drainVenturePortalOutbox,
+  kickVenturePortalDrain,
+  mintVpSecret,
   readVpConfig,
+  resetVpKick,
+  vpKickSweepAgain,
 } = await import('./venture-portal-outbox');
 const { resetFeedFlagCache } = await import('./venture-portal-feed-flag');
 
 type Row = Record<string, unknown>;
+
+/** VpDrainSummary's shape, spelled locally because the module is reached through
+ *  a dynamic import (the getSupabaseService seam) and a type cannot come out of
+ *  one. The field list is pinned by every drain test in this file. */
+type VpDrainSummaryShape = {
+  skipped?: string;
+  processed: number;
+  sent: number;
+  failed: number;
+  retried: number;
+  outOfScope: number;
+};
 
 const URL_ROW = { k: 'vp.url', v: 'https://venture-portal-chi.vercel.app/api/erp/v1/sales-orders' };
 const SECRET_ROW = { k: 'vp.secret', v: 'x'.repeat(40) };
@@ -95,7 +116,14 @@ const res = (status: number, body: unknown = { outcome: 'applied' }) =>
 
 const env = {} as never;
 
-beforeEach(() => resetFeedFlagCache());
+/* BRACES, not a concise arrow: vitest treats a value returned from beforeEach as
+   that test's teardown, and these two return undefined today but a future one
+   might not. resetVpKick with no argument also restores the REAL clock and sleep,
+   so a seam set by one test cannot leak into the next. */
+beforeEach(() => {
+  resetFeedFlagCache();
+  resetVpKick();
+});
 
 // ---------------------------------------------------------------------------
 
@@ -461,5 +489,398 @@ describe('readVpConfig', () => {
   test('a missing date floor is null, not an empty string', async () => {
     const sb = db({ flag: '1' });
     expect((await readVpConfig(sb as never))?.since).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A LIVE SAVE IS NEVER STUCK BEHIND A BACKFILL
+//
+// This block exists because the obvious ordering — strict FIFO on created_at —
+// silently defeats the one property the whole kick was built for, and it does so
+// only when a backlog exists, which is exactly when nobody is looking.
+//
+// created_at is when the ROW was made, not when the ORDER was saved. A backfill
+// sweep stamps thousands of rows with "now", so an order saved a minute later
+// sorts BEHIND all of them. Measured on production 2026-09-13, the day the feed
+// was turned on: 2,613 backfilled rows draining at ~4.2/min, i.e. a newly saved
+// order would have waited about TEN HOURS while the kick fired on schedule and
+// delivered somebody's old paperwork instead.
+//
+// Nothing would have failed. The kick worked, the cron worked, the queue drained,
+// every delivery was correct — and the feature was useless. That is why the
+// property is pinned here rather than left to the ORDER BY reading sensibly.
+// ---------------------------------------------------------------------------
+
+describe('what the sweep picks first', () => {
+  /** N backfill rows, all stamped BEFORE the live save, as a real backfill is. */
+  const backfillRows = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `bf-${i}`,
+      doc_no: `HC-SO-OLD-${String(i).padStart(4, '0')}`,
+      op: 'RECONCILE',
+      status: 'pending',
+      attempts: 0,
+      created_at: `2026-09-13T01:00:${String(i % 60).padStart(2, '0')}Z`,
+    }));
+
+  /** The salesperson's save, stamped AFTER every backfill row above.
+   *
+   *  A FACTORY, NOT A CONSTANT, and that distinction cost a debugging round: the
+   *  fake updates rows IN PLACE, exactly as a database does, so a shared fixture
+   *  object is still 'sent' in the next test and silently stops being a pending
+   *  live save. The suite then passes the first assertion and fails the rest for
+   *  a reason that has nothing to do with the code under test. */
+  const liveRow = () => ({
+    id: 'live-1',
+    doc_no: 'HC-SO-NEW-0001',
+    op: 'UPDATE',
+    status: 'pending',
+    attempts: 0,
+    created_at: '2026-09-13T09:00:00Z',
+  });
+
+  const orderRowsFor = (rows: Row[]) =>
+    rows.map((r) => ({ doc_no: r.doc_no, company_id: 1, so_date: '2026-09-01' }));
+
+  /* THE ONE THAT MATTERS. Strict FIFO passes every other test in this file and
+     fails this one. */
+  test('a save just made goes out before a backfill queued hours earlier', async () => {
+    const rows = [...backfillRows(60), liveRow()];
+    const sb = withBuilder(
+      db({ flag: '1', outbox: rows, orders: orderRowsFor(rows) }),
+      [payloadFor(liveRow().doc_no), ...backfillRows(60).map((r) => payloadFor(String(r.doc_no)))],
+    );
+    currentSb = sb;
+    const fetchImpl = vi.fn(async () => res(200)) as unknown as typeof fetch;
+
+    await drainVenturePortalOutbox(env, VP_DRAIN_BATCH, fetchImpl);
+
+    const live = outbox(sb).find((r) => r.id === 'live-1');
+    expect(live?.status).toBe('sent');
+  });
+
+  test('the backfill still fills the rest of the batch, oldest first', async () => {
+    const rows = [...backfillRows(60), liveRow()];
+    const sb = withBuilder(
+      db({ flag: '1', outbox: rows, orders: orderRowsFor(rows) }),
+      [payloadFor(liveRow().doc_no), ...backfillRows(60).map((r) => payloadFor(String(r.doc_no)))],
+    );
+    currentSb = sb;
+    const fetchImpl = vi.fn(async () => res(200)) as unknown as typeof fetch;
+
+    const r = await drainVenturePortalOutbox(env, VP_DRAIN_BATCH, fetchImpl);
+
+    /* One live + 24 backfill = a full batch. The live row does not COST the
+       backfill a slot it would otherwise have used productively; it takes the
+       one at the front. */
+    expect(r.sent).toBe(VP_DRAIN_BATCH);
+    const sentBackfill = outbox(sb).filter((x) => x.op === 'RECONCILE' && x.status === 'sent');
+    expect(sentBackfill).toHaveLength(VP_DRAIN_BATCH - 1);
+    /* And they are the OLDEST of them, not an arbitrary 24. */
+    expect(sentBackfill.map((x) => x.doc_no).sort()).toEqual(
+      backfillRows(VP_DRAIN_BATCH - 1).map((x) => x.doc_no).sort(),
+    );
+  });
+
+  /* THE UNCHANGED CASE, so the priority cannot be mistaken for a rewrite: with no
+     live save waiting — the steady state during a backfill — the sweep behaves
+     exactly as it always did. */
+  test('with nothing live waiting, the backfill drains oldest-first as before', async () => {
+    const rows = backfillRows(40);
+    const sb = withBuilder(
+      db({ flag: '1', outbox: rows, orders: orderRowsFor(rows) }),
+      rows.map((r) => payloadFor(String(r.doc_no))),
+    );
+    currentSb = sb;
+    const fetchImpl = vi.fn(async () => res(200)) as unknown as typeof fetch;
+
+    const r = await drainVenturePortalOutbox(env, VP_DRAIN_BATCH, fetchImpl);
+
+    expect(r.sent).toBe(VP_DRAIN_BATCH);
+    expect(outbox(sb).filter((x) => x.status === 'sent').map((x) => x.doc_no).sort()).toEqual(
+      backfillRows(VP_DRAIN_BATCH).map((x) => x.doc_no).sort(),
+    );
+  });
+
+  test('several live saves go in their own order, oldest of them first', async () => {
+    const live = [
+      { ...liveRow(), id: 'live-a', doc_no: 'HC-SO-NEW-A', created_at: '2026-09-13T09:00:02Z' },
+      { ...liveRow(), id: 'live-b', doc_no: 'HC-SO-NEW-B', created_at: '2026-09-13T09:00:01Z' },
+    ];
+    const rows = [...backfillRows(5), ...live];
+    const sb = withBuilder(
+      db({ flag: '1', outbox: rows, orders: orderRowsFor(rows) }),
+      rows.map((r) => payloadFor(String(r.doc_no))),
+    );
+    currentSb = sb;
+    const sentDocs: string[] = [];
+    const fetchImpl = vi.fn(async (_u: unknown, init: { body?: string } = {}) => {
+      sentDocs.push(JSON.parse(String(init.body ?? '{}')).docNo);
+      return res(200);
+    }) as unknown as typeof fetch;
+
+    await drainVenturePortalOutbox(env, VP_DRAIN_BATCH, fetchImpl);
+
+    expect(sentDocs.slice(0, 2)).toEqual(['HC-SO-NEW-B', 'HC-SO-NEW-A']);
+  });
+
+  /* A child edit writes `UPDATE:mfg_sales_order_items`, not a bare TG_OP, so a
+     discriminator that tested equality against the three verbs would treat a
+     payment or line edit as a backfill and starve it. Only 'RECONCILE' is the
+     backfill. */
+  test('a child-table edit counts as live, not as a backfill', async () => {
+    const child = { ...liveRow(), id: 'live-child', doc_no: 'HC-SO-NEW-CHILD', op: 'UPDATE:mfg_sales_order_payments' };
+    const rows = [...backfillRows(60), child];
+    const sb = withBuilder(
+      db({ flag: '1', outbox: rows, orders: orderRowsFor(rows) }),
+      rows.map((r) => payloadFor(String(r.doc_no))),
+    );
+    currentSb = sb;
+    const fetchImpl = vi.fn(async () => res(200)) as unknown as typeof fetch;
+
+    await drainVenturePortalOutbox(env, VP_DRAIN_BATCH, fetchImpl);
+
+    expect(outbox(sb).find((r) => r.id === 'live-child')?.status).toBe('sent');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE KEY THIS SIDE MINTS
+//
+// Two properties, and only one of them is about length. The other is that the
+// sampling is UNBIASED, which no amount of eyeballing the output would show:
+// `byte & 63` is uniform only while the alphabet is exactly 64 symbols long, and
+// shortening it to 62 (the obvious "alphanumeric only" edit) makes the first two
+// symbols 4/256 likelier than the rest, silently and forever.
+// ---------------------------------------------------------------------------
+
+describe('minting a key', () => {
+  test('the alphabet is exactly 64 URL-safe symbols, which is what makes it unbiased', () => {
+    expect(VP_SECRET_ALPHABET.length).toBe(64);
+    expect(new Set(VP_SECRET_ALPHABET).size).toBe(64);
+    /* URL-safe: nothing here needs escaping in a header, a form field or a
+       query string, which is the whole reason the alphabet is not plain base64. */
+    expect(VP_SECRET_ALPHABET).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  test('a key is 48 URL-safe characters, well over the portal 32-character floor', () => {
+    const key = mintVpSecret();
+    expect(key.length).toBe(VP_SECRET_LENGTH);
+    expect(key.length).toBe(48);
+    expect(key).toMatch(/^[A-Za-z0-9_-]{48}$/);
+    /* The route's own MIN_SECRET_LEN and the portal's ERP_SYNC_SECRET_MIN_LENGTH
+       are both 32. A generated key must never be refused by the thing that
+       stores it. */
+    expect(key.length).toBeGreaterThanOrEqual(32);
+  });
+
+  test('two keys are never the same', () => {
+    const keys = new Set(Array.from({ length: 200 }, () => mintVpSecret()));
+    expect(keys.size).toBe(200);
+  });
+
+  test('every symbol it produces comes from the declared alphabet', () => {
+    /* Guards the indexing itself: a `& 64` or an off-by-one on the alphabet
+       length would yield `undefined` characters, and "undefined" in a shared
+       secret is a string the portal would happily accept. */
+    const chars = new Set(Array.from({ length: 100 }, () => mintVpSecret()).join(''));
+    for (const ch of chars) expect(VP_SECRET_ALPHABET).toContain(ch);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SECONDS INSTEAD OF FIVE MINUTES — the kick
+//
+// WHAT THESE TESTS ARE REALLY PROTECTING. The kick runs inside waitUntil, after
+// the response has gone, on every non-GET write in the whole SCM surface. That
+// is the worst possible place for a bug to be visible: it cannot fail a request,
+// so nothing tells anybody. Each property below is one that would be silent in
+// production.
+//
+//   - a kick must never throw into the request that scheduled it;
+//   - a burst of writes must schedule ONE drain, or saving a sales order with
+//     four lines would POST the same document four times;
+//   - a kick whose waitUntil REFUSED must not leave the debounce armed, or one
+//     failed schedule would swallow the next 1.5 s of real ones;
+//   - the sweep loop must stop when a sweep achieved nothing, or a mismatched
+//     key would send 100 POSTs per kick for as long as it stayed mismatched.
+// ---------------------------------------------------------------------------
+
+/** A waitUntil that hands the scheduled work back so a test can await it. */
+function fakeCtx() {
+  const scheduled: Promise<unknown>[] = [];
+  return {
+    ctx: { waitUntil: (p: Promise<unknown>) => { scheduled.push(p); } },
+    settle: () => Promise.all(scheduled),
+    count: () => scheduled.length,
+  };
+}
+
+/** N pending rows for N documents that belong to a company nobody enabled.
+ *
+ *  WHY OUT OF SCOPE: the drain clears such a row WITHOUT a request (asserted in
+ *  'refusing to send'), so these tests exercise the kick's scheduling and its
+ *  sweep loop end-to-end with ZERO network and no fetch to stub. What lands in
+ *  the table is the proof the drain really ran inside waitUntil. */
+function outOfScopeQueue(n: number) {
+  const docs = Array.from({ length: n }, (_, i) => `HC-SO-9${String(i).padStart(4, '0')}`);
+  return db({
+    flag: '1',
+    outbox: docs.map((doc_no, i) => ({
+      id: `vp-${i}`,
+      doc_no,
+      op: 'UPDATE',
+      status: 'pending',
+      attempts: 0,
+      created_at: `2026-09-12T00:${String(i % 60).padStart(2, '0')}:00Z`,
+    })),
+    orders: docs.map((doc_no) => ({ doc_no, company_id: 9, so_date: '2026-09-01' })),
+  });
+}
+
+describe('deciding whether to sweep again', () => {
+  const summary = (over: Partial<VpDrainSummaryShape>): VpDrainSummaryShape => ({
+    processed: 0, sent: 0, failed: 0, retried: 0, outOfScope: 0, ...over,
+  });
+
+  test('a full batch that LEFT the queue means there is probably more', () => {
+    expect(vpKickSweepAgain(summary({ processed: 25, sent: 25 }))).toBe(true);
+    expect(vpKickSweepAgain(summary({ outOfScope: 25 }))).toBe(true);
+    expect(vpKickSweepAgain(summary({ sent: 20, failed: 5 }))).toBe(true);
+  });
+
+  /* THE TRAP THIS FUNCTION EXISTS FOR. A 401 keeps its row pending and costs it
+     no attempts, so a full batch is `processed` on every sweep for as long as
+     the two keys disagree. Counting `processed` would send 100 POSTs per kick,
+     forever, at exactly the moment somebody is mid-way through pasting the key
+     on the portal. */
+  test('a full batch that stayed pending does NOT earn another sweep', () => {
+    expect(vpKickSweepAgain(summary({ processed: 25, retried: 25 }))).toBe(false);
+  });
+
+  test('a part-full batch stops the kick and leaves the rest to the sweep', () => {
+    expect(vpKickSweepAgain(summary({ processed: 24, sent: 24 }))).toBe(false);
+    expect(vpKickSweepAgain(summary({ processed: 0 }))).toBe(false);
+  });
+
+  /* Every `skipped` code means the drain did not get as far as the queue — off,
+     unconfigured, or a failed read. Sweeping again would repeat the same refusal
+     three more times. */
+  test('a drain that never reached the queue is never swept again', () => {
+    for (const skipped of ['feed_off', 'not_configured', 'query_failed', 'scope_read_failed']) {
+      expect(vpKickSweepAgain(summary({ skipped, sent: 25 }))).toBe(false);
+    }
+  });
+});
+
+describe('kicking the drain', () => {
+  test('the drain really runs, after the wait, inside waitUntil', async () => {
+    currentSb = outOfScopeQueue(1);
+    let waited = -1;
+    resetVpKick({ sleep: async (ms) => { waited = ms; } });
+    const { ctx, settle, count } = fakeCtx();
+
+    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    expect(count()).toBe(1);
+    /* Nothing has happened YET — the work is queued, not run, which is the
+       property that keeps it off the request's critical path. */
+    expect(outbox(currentSb)[0].status).toBe('pending');
+
+    await settle();
+    expect(waited).toBe(VP_KICK_DELAY_MS);
+    expect(outbox(currentSb)[0].status).toBe('skipped');
+  });
+
+  /* SAVING ONE SALES ORDER IS SEVERAL REQUESTS. Without the debounce each would
+     schedule its own drain and the portal would upsert the same document once
+     per request — the payload is built at SEND time precisely so they collapse
+     into one delivery, and that only works if the delivery waits. */
+  test('writes inside the window schedule ONE drain', async () => {
+    currentSb = outOfScopeQueue(1);
+    let clock = 1_000_000;
+    resetVpKick({ now: () => clock, sleep: async () => {} });
+    const { ctx, settle, count } = fakeCtx();
+
+    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    clock += 200;
+    expect(kickVenturePortalDrain(env, ctx)).toBe('debounced');
+    clock += 200;
+    expect(kickVenturePortalDrain(env, ctx)).toBe('debounced');
+    expect(count()).toBe(1);
+
+    /* And a write AFTER the window gets its own drain — the debounce is a
+       collapse, not a rate limit that drops work. */
+    clock += VP_KICK_DELAY_MS;
+    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    expect(count()).toBe(2);
+    await settle();
+  });
+
+  test('a context with no waitUntil is reported, not silently ignored', () => {
+    currentSb = outOfScopeQueue(1);
+    resetVpKick({ sleep: async () => {} });
+    expect(kickVenturePortalDrain(env, null)).toBe('no_execution_context');
+    expect(outbox(currentSb)[0].status).toBe('pending');
+  });
+
+  /* THE ONE THAT IS ONLY A BUG IF YOU GET THE ORDER WRONG. Stamping the
+     debounce before waitUntil succeeds would mean one refused schedule ate the
+     next 1.5 s of real ones — invisible, because a refused schedule is already
+     silent. */
+  test('a waitUntil that refuses leaves the next kick free to try', () => {
+    currentSb = outOfScopeQueue(1);
+    resetVpKick({ sleep: async () => {} });
+    const angry = { waitUntil: () => { throw new Error('this context is dead'); } };
+
+    expect(kickVenturePortalDrain(env, angry)).toBe('no_execution_context');
+
+    const { ctx } = fakeCtx();
+    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+  });
+
+  /* NEVER INTO THE REQUEST. The person who pressed Save already has their 200;
+     a broken accelerator must not turn into an unhandled rejection in their
+     isolate. */
+  test('a failure inside the scheduled work never rejects', async () => {
+    currentSb = outOfScopeQueue(1);
+    resetVpKick({ sleep: async () => { throw new Error('boom'); } });
+    const { ctx, settle } = fakeCtx();
+
+    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    await expect(settle()).resolves.toBeDefined();
+    expect(outbox(currentSb)[0].status).toBe('pending');
+  });
+
+  /* THE BACKFILL, which is why one kick sweeps more than once: 30 waiting
+     documents clear in one kick instead of taking two five-minute sweeps. */
+  test('one kick sweeps again while a full batch keeps leaving the queue', async () => {
+    currentSb = outOfScopeQueue(30);
+    resetVpKick({ sleep: async () => {} });
+    const { ctx, settle } = fakeCtx();
+
+    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    await settle();
+
+    /* A single sweep is capped at VP_DRAIN_BATCH, so all 30 being cleared is the
+       proof that the loop ran twice. */
+    expect(outbox(currentSb).filter((r) => r.status === 'skipped')).toHaveLength(30);
+    expect(outbox(currentSb).filter((r) => r.status === 'pending')).toHaveLength(0);
+  });
+
+  /* AND IT IS BOUNDED. A kick is not a backfill tool — 4 sweeps, then it hands
+     the rest back to the five-minute cron, so one save can never turn into an
+     unbounded run inside somebody's waitUntil. */
+  test('a kick stops at VP_KICK_MAX_SWEEPS and leaves the rest to the cron', async () => {
+    const total = VP_DRAIN_BATCH * VP_KICK_MAX_SWEEPS + 25;
+    currentSb = outOfScopeQueue(total);
+    resetVpKick({ sleep: async () => {} });
+    const { ctx, settle } = fakeCtx();
+
+    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    await settle();
+
+    expect(outbox(currentSb).filter((r) => r.status === 'skipped'))
+      .toHaveLength(VP_DRAIN_BATCH * VP_KICK_MAX_SWEEPS);
+    expect(outbox(currentSb).filter((r) => r.status === 'pending')).toHaveLength(25);
   });
 });

@@ -80,6 +80,19 @@ export const VP_ROW_STATUSES = ['pending', 'sent', 'failed', 'skipped'] as const
  *  reason — the route listed them a second time to render them. */
 export const VP_CONFIG_KEYS = ['vp.url', 'vp.secret', 'vp.since'] as const;
 
+/**
+ * The `op` a BACKFILL row carries, as written by `scm.vp_requeue_undelivered`
+ * (migration `20260912T1800`). Every other value is a TRIGGER's `TG_OP` and
+ * therefore a live save.
+ *
+ * SPELLED ONCE because the drain now sorts on it — live saves are delivered
+ * ahead of a backfill, and getting this string wrong would silently invert that
+ * (every row would look live, or every row would look backfilled, and the sweep
+ * would still return 25 rows either way). The SQL is unavoidably a second
+ * spelling; nothing can import into a migration.
+ */
+export const VP_RECONCILE_OP = 'RECONCILE';
+
 export type VpConfig = { url: string; secret: string; since: string | null };
 
 export type VpDrainSummary = {
@@ -205,16 +218,58 @@ export async function drainVenturePortalOutbox(
   const cfg = await readVpConfig(sb);
   if (!cfg) return { skipped: 'not_configured', ...zero };
 
-  const { data, error } = await sb
+  /* A LIVE SAVE IS NEVER STUCK BEHIND A BACKFILL, and this is the whole reason
+     the selection is two queries instead of one.
+
+     It used to be a single `ORDER BY created_at ASC LIMIT 25` — strict FIFO —
+     which is the obvious ordering and is wrong for the one property the owner
+     asked for. `created_at` is when the ROW was made, so a backfill sweep stamps
+     thousands of rows with "now", and an order saved a minute later sorts BEHIND
+     all of them. Measured on production 2026-09-13, the day the feed was turned
+     on: 2,613 backfilled rows draining at ~4.2/min, so a newly saved order would
+     have waited about TEN HOURS while the kick dutifully fired and delivered
+     somebody's 2024 paperwork. The feature would have looked broken, and the
+     module guide's "the save sends its own order" would have been false for as
+     long as any backlog existed.
+
+     So: trigger rows first, oldest-first among themselves; the backfill tops the
+     batch up with whatever room is left, also oldest-first. Nothing is starved —
+     the backfill still drains at the full rate whenever no live save is waiting,
+     which is almost always — and a live save waits at most one in-flight batch.
+
+     `op` is the discriminator because the migration already writes it: the
+     triggers write TG_OP (INSERT/UPDATE/DELETE, `:child_table` for a child edit)
+     and `vp_requeue_undelivered` writes the literal 'RECONCILE'. Two queries
+     rather than one expression because PostgREST orders by COLUMNS, not by
+     expressions, and inventing a sort column would mean a migration on a table
+     whose shape this PR must not change.
+
+     THE COST is one extra read per sweep when no live row is waiting. That is
+     the steady state, so it is a real cost and a small one: a `head`-less select
+     of at most 25 narrow rows, inside the subrequest diet. */
+  const { data: liveData, error: liveErr } = await sb
     .from('venture_portal_outbox')
     .select('id, doc_no, op, attempts')
     .eq('status', 'pending')
     .lt('attempts', VP_MAX_ATTEMPTS)
+    .neq('op', VP_RECONCILE_OP)
     .order('created_at', { ascending: true })
     .limit(limit);
-  if (error) return { skipped: 'query_failed', ...zero };
+  if (liveErr) return { skipped: 'query_failed', ...zero };
 
-  const rows = (data as VpOutboxRow[] | null) ?? [];
+  const rows = (liveData as VpOutboxRow[] | null) ?? [];
+  if (rows.length < limit) {
+    const { data: backfillData, error: backfillErr } = await sb
+      .from('venture_portal_outbox')
+      .select('id, doc_no, op, attempts')
+      .eq('status', 'pending')
+      .lt('attempts', VP_MAX_ATTEMPTS)
+      .eq('op', VP_RECONCILE_OP)
+      .order('created_at', { ascending: true })
+      .limit(limit - rows.length);
+    if (backfillErr) return { skipped: 'query_failed', ...zero };
+    rows.push(...((backfillData as VpOutboxRow[] | null) ?? []));
+  }
   if (!rows.length) return { ...zero };
 
   /* SCOPE FIRST, and from the order itself. A document whose company is not
@@ -461,4 +516,212 @@ export async function reconcileVenturePortalOutbox(
   });
   if (error) return { skipped: 'requeue_failed', requeued: 0 };
   return { requeued: Number(data ?? 0) };
+}
+
+// ---------------------------------------------------------------------------
+// THE KEY THIS SIDE MINTS
+//
+// Owner 2026-09-13: 「那边 generate 一个 API key 出来；我这边只需要填那个 API
+// key，它就可以 link 起来了」. Before this, linking the two systems meant
+// inventing a string and typing the SAME string into two places — and a
+// hand-invented shared secret is the one configuration mistake here that cannot
+// be undone by fixing it later: a short one on a public receiver is guessable,
+// and a delivery cannot be recalled.
+//
+// So the key is minted HERE, shown once, and pasted on the portal. The portal
+// side (its PRs #117 + #118, live) reads a key pasted on its own page, so there
+// is exactly one place a human types it, and it is not this one.
+//
+// IT LIVES IN THE SENDER MODULE because this module is already the one home for
+// what `vp.secret` IS — VP_CONFIG_KEYS and readVpConfig are above. The route
+// mints through here so "a Venture Portal key" has one definition, and its
+// shape can be pinned by a test without booting a router.
+// ---------------------------------------------------------------------------
+
+/** 64 URL-SAFE SYMBOLS, and the count is load-bearing — see mintVpSecret. */
+export const VP_SECRET_ALPHABET =
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+/** 48 characters = 288 bits. The portal's floor is 32 characters
+ *  (ERP_SYNC_SECRET_MIN_LENGTH in its src/lib/erp-sync/auth.ts [external]), and
+ *  this feed's own MIN_SECRET_LEN is the same 32, so a generated key clears both
+ *  with room to spare. */
+export const VP_SECRET_LENGTH = 48;
+
+/**
+ * A new shared secret.
+ *
+ * `byte & 63` is UNIFORM because 64 divides 256 exactly — every symbol is
+ * reachable from exactly four byte values. That is why the alphabet is 64 long
+ * and not 62: a `% 62` over an alphanumeric alphabet would make the first two
+ * symbols likelier than the rest, and the usual fix (reject and re-draw) is code
+ * nobody needs if the arithmetic is chosen not to need it. A test pins the
+ * LENGTH of the alphabet for exactly this reason — shorten it and the bias is
+ * silent.
+ *
+ * URL-safe rather than plain base64: this value is typed into a form on the
+ * portal by a person and sent as an HTTP header, and `+`, `/` and `=` survive
+ * neither road reliably.
+ */
+export function mintVpSecret(): string {
+  const bytes = new Uint8Array(VP_SECRET_LENGTH);
+  crypto.getRandomValues(bytes);
+  let out = '';
+  for (const b of bytes) out += VP_SECRET_ALPHABET[b & 63];
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// SECONDS INSTEAD OF FIVE MINUTES — the kick
+//
+// Owner 2026-09-13: 「我要秒级 update 的」. The capture trigger already runs in
+// the SAME TRANSACTION as the salesperson's Save, so nothing about WHEN we know
+// changes here. What waited was the DRAIN, on the five-minute cron. This kicks
+// the drain from the request that caused the change.
+//
+// WHAT IS DELIBERATELY UNCHANGED: both cron sweeps. They are the zero-loss
+// guarantee and this is a latency optimisation sitting on top of them. A kick
+// that is debounced away, lost with its isolate, or never scheduled at all
+// (because the change came from a migration rather than a request) costs nothing
+// but time — the sweep still collects it. Read every line below as best-effort,
+// because that is what makes it safe to put on every write.
+//
+// WHY ~1.5 SECONDS AND NOT ZERO: the payload is built at SEND time (see the file
+// header), so five edits to one order collapse into one delivery — but only if
+// the delivery happens after the fifth. Saving a sales order and its lines is
+// several requests in a row; draining instantly would POST the order once per
+// request and the portal would upsert the same document four times over.
+// ---------------------------------------------------------------------------
+
+/** The debounce window AND the wait before the first sweep — ONE number on
+ *  purpose. A write arriving inside the window is covered by the drain already
+ *  scheduled, because that drain has not run yet and the arriving write's outbox
+ *  row is already committed (the trigger is same-transaction, and this code runs
+ *  after the response). Two numbers here would be two chances for a write to
+ *  fall between them and wait for the cron. */
+export const VP_KICK_DELAY_MS = 1_500;
+
+/** Sweeps one kick may run: 4 x VP_DRAIN_BATCH = 100 documents, so a backfill or
+ *  a POS rush clears in seconds rather than at 25 per five minutes. */
+export const VP_KICK_MAX_SWEEPS = 4;
+
+/* TWO KICKS CAN OVERLAP, and that is a deliberate choice rather than an
+   oversight. The debounce only collapses writes inside ONE window; a busy
+   backfill sweep is 25 POSTs and can easily outlast 1.5 s, so a save arriving
+   mid-sweep starts a second drain and both may read the same pending rows.
+   There is no in-flight lock because the alternative is worse for the thing the
+   owner actually asked for: a lock would make a save that lands during a long
+   drain get no kick at all, and wait for the five-minute sweep.
+
+   What the overlap costs is a duplicate POST. The portal upserts one live row
+   per document and applies the newest snapshotAt, answering `duplicate` — which
+   is a SUCCESSFUL delivery it chose not to re-apply (see the taxonomy above), so
+   nothing is double-counted in anybody's commission. `attempts` can undercount a
+   little, which matters to nothing: it exists to park a row that keeps failing.
+
+   LIKELY, not PROVEN here: the dedupe is the portal's behaviour, stated in its
+   contract, and its receiver lives in another repository. The same overlap is
+   already reachable today by pressing "Send now" while the cron sweeps, so the
+   kick makes an existing property more frequent rather than creating one. */
+
+type VpKickSeams = { now: () => number; sleep: (ms: number) => Promise<void> };
+
+const VP_KICK_PRODUCTION_SEAMS: VpKickSeams = {
+  now: () => Date.now(),
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
+
+let vpKickSeams: VpKickSeams = VP_KICK_PRODUCTION_SEAMS;
+let vpLastKickAt = 0;
+
+/**
+ * Test seam — drop the debounce clock, and optionally replace the clock and the
+ * 1.5 s wait so a test does not have to spend it.
+ *
+ * PRODUCTION CALLS THIS WITH NOTHING, and calling it with nothing restores the
+ * real clock and the real sleep, so an override cannot leak into another test.
+ * Same shape as primeWriteFreezeCache next door, and for the same reason:
+ * vi.mock does not reliably intercept module imports under the Cloudflare
+ * Workers pool, which is where this file's suite runs.
+ */
+export function resetVpKick(over?: Partial<VpKickSeams>): void {
+  vpLastKickAt = 0;
+  vpKickSeams = over ? { ...VP_KICK_PRODUCTION_SEAMS, ...over } : VP_KICK_PRODUCTION_SEAMS;
+}
+
+export type VpKickOutcome = 'scheduled' | 'debounced' | 'no_execution_context';
+
+/**
+ * Is another sweep worth running? PURE, so the decision can be pinned without a
+ * database — the shape lib/write-freeze.ts's isFrozen is written in.
+ *
+ * THE TEST IS "DID A FULL BATCH LEAVE THE QUEUE", not "was a full batch
+ * processed", and the difference is a real trap. A 401 leaves its row PENDING
+ * and costs it no attempts (classifyVpResponse), so a queue of 25 rows against a
+ * mismatched key would be `processed: 25` on every sweep — four sweeps, 100
+ * POSTs, the same 25 rows, on every single kick, for as long as the two keys
+ * disagree. Counting only the rows that actually LEFT `pending` stops after one
+ * sweep in that case and still walks a real backfill down at 100 per kick.
+ *
+ * `outOfScope` counts, because those rows were cleared with no request at all —
+ * continuing is nearly free and there may be hundreds more behind them.
+ *
+ * Conservative where it is unsure, on purpose: 20 delivered and 5 retried stops
+ * the kick, and the next save's kick or the five-minute sweep picks the rest up.
+ * The cron is the guarantee; this is only the accelerator.
+ */
+export function vpKickSweepAgain(summary: VpDrainSummary): boolean {
+  if (summary.skipped) return false;
+  return summary.sent + summary.failed + summary.outOfScope >= VP_DRAIN_BATCH;
+}
+
+/**
+ * Schedule a drain for the change this request just made.
+ *
+ * NEVER THROWS INTO THE REQUEST and never delays it: the wait and the sweeps all
+ * happen inside ctx.waitUntil, after the response has been sent. A failure here
+ * must be invisible to the person who pressed Save, because their save already
+ * succeeded — the only consequence of losing a kick is that the order leaves on
+ * the five-minute sweep instead of in a couple of seconds.
+ *
+ * `ctx` is `| null` rather than optional, per CLAUDE.md: it DECIDES whether
+ * anything is scheduled at all, so every call site has to say which case it is
+ * in. A Hono context with no ExecutionContext passes null and gets a truthful
+ * answer back instead of a silent no-op.
+ */
+export function kickVenturePortalDrain(
+  env: Env,
+  ctx: { waitUntil(p: Promise<unknown>): void } | null,
+): VpKickOutcome {
+  if (ctx == null) return 'no_execution_context';
+
+  const now = vpKickSeams.now();
+  if (now - vpLastKickAt < VP_KICK_DELAY_MS) return 'debounced';
+
+  try {
+    ctx.waitUntil(runVpKick(env));
+    /* Stamped only once something IS scheduled. Stamped before the call, a
+       waitUntil that refused would debounce the next 1.5 s of writes into a
+       drain that does not exist. */
+    vpLastKickAt = now;
+  } catch (e) {
+    console.error('[vp-kick] could not schedule a drain', String((e as Error | undefined)?.message ?? e));
+    return 'no_execution_context';
+  }
+  return 'scheduled';
+}
+
+/** The scheduled work. Swallows everything — see kickVenturePortalDrain. */
+async function runVpKick(env: Env): Promise<void> {
+  try {
+    await vpKickSeams.sleep(VP_KICK_DELAY_MS);
+    for (let sweep = 0; sweep < VP_KICK_MAX_SWEEPS; sweep += 1) {
+      const summary = await drainVenturePortalOutbox(env);
+      if (!vpKickSweepAgain(summary)) return;
+    }
+  } catch (e) {
+    /* [vp-kick] is the string to alert on. A burst of these means the drain is
+       failing for every save, which the page's own verdict will also be saying. */
+    console.error('[vp-kick] drain failed', String((e as Error | undefined)?.message ?? e));
+  }
 }

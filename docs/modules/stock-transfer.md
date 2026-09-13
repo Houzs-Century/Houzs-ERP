@@ -35,6 +35,8 @@ CANCELLED. There is no draft rung and no edit.
 | Backend routes | `backend/src/scm/routes/stock-transfers.ts` | Mounted at `/api/scm/stock-transfers`. |
 | Atomic payload builder (pure) | `backend/src/scm/lib/stock-transfer-atomic.ts` | `buildTransferPayload`. |
 
+> **The list screen reads its status word from `status-pill.ts` too (2026-09-13)**, the same source the print already used (§4): `withStatusLabels("stockTransfer", …)`, keeping the page’s own tone and filter bucket. Nothing on screen changed. `docs/bugs/0866-six-status-maps-collapsed-onto-status-pill-and-the-detail-ba.md`.
+
 ### The desktop list has a right-click menu (2026-08-22)
 
 **Open** and **Print**, then **Cancel Stock Transfer** alone at the bottom in

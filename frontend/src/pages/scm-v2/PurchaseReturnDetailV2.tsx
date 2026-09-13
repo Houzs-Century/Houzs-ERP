@@ -42,6 +42,7 @@ import { usePrompt } from "../../vendor/scm/components/PromptDialog";
 import { RelationshipMapButton } from "../../vendor/scm/components/RelationshipMapButton";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
+import { statusLabel } from "../../vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
 
 type PrStatus = "DRAFT" | "POSTED" | "COMPLETED" | "CANCELLED" | string;
@@ -105,12 +106,23 @@ const effectiveOf = (h: PrHeader): Effective => {
   return "draft";
 };
 
-const EFFECTIVE_TONE: Record<Effective, { tone: "success" | "warning" | "error" | "neutral"; label: string; blurb: string }> = {
-  draft:     { tone: "warning", label: "Draft",     blurb: "Draft · not yet posted" },
-  posted:    { tone: "warning", label: "Confirmed", blurb: "Confirmed · awaiting credit note" },
-  completed: { tone: "success", label: "Completed", blurb: "Completed · credit note issued" },
-  cancelled: { tone: "error",   label: "Cancelled", blurb: "Cancelled · no further action" },
+/* The LABEL is NOT declared here. Every `Effective` key above is the stored
+   status lowercased, so the word comes from `vendor/scm/lib/status-pill.ts`,
+   the one canonical map — docs/modules/document-status-vocabulary.md §1. What
+   stays is what is genuinely this page's own: the tone palette (four names, not
+   status-pill's six) and the BLURB.
+
+   `draft` is a real purchase-return status the canonical `pr` map does not
+   carry, so it resolves through statusLabel's documented humanise fallback —
+   which answers "Draft", the identical word this map used to hand-write. */
+const EFFECTIVE_TONE: Record<Effective, { tone: "success" | "warning" | "error" | "neutral"; blurb: string }> = {
+  draft:     { tone: "warning", blurb: "Draft · not yet posted" },
+  posted:    { tone: "warning", blurb: "Confirmed · awaiting credit note" },
+  completed: { tone: "success", blurb: "Completed · credit note issued" },
+  cancelled: { tone: "error",   blurb: "Cancelled · no further action" },
 };
+
+const effectiveLabel = (eff: Effective): string => statusLabel("pr", eff.toUpperCase());
 
 const STAGE_LABEL: Record<string, string> = {
   DRAFT: "Draft",
@@ -577,7 +589,7 @@ export function PurchaseReturnDetailV2() {
 
               <AsideCard title="Recent activity">
                 <ActivityRow
-                  title={`Return ${EFFECTIVE_TONE[effectiveOf(purchaseReturn)].label.toLowerCase()}`}
+                  title={`Return ${effectiveLabel(effectiveOf(purchaseReturn)).toLowerCase()}`}
                   meta={fmtDate(purchaseReturn.return_date)}
                   dot={EFFECTIVE_TONE[effectiveOf(purchaseReturn)].tone === "success" ? "success" : "primary"}
                 />

@@ -148,15 +148,55 @@ Worth knowing before anyone cites this screen as the guarantee.
 
 `frontend/src/vendor/scm/lib/status-pill.ts` carries the canonical map and the
 rule in its header. **It is not the only copy, and pretending otherwise is how
-this drifted.** Sixteen list and detail pages declare their own
-`{ tone, label, bucket }` map, because they need the bucket and the blurb that
-`status-pill` does not carry. Those copies were aligned by hand on 2026-08-21.
+this drifted.** List and detail pages declare their own `{ tone, label, bucket }`
+map, because they need the bucket and the blurb that `status-pill` does not
+carry. Those copies were aligned by hand on 2026-08-21.
 
-> **OPEN — the root fix is not done ON THE SCREENS.** Those sixteen pages should
-> read their LABEL from `status-pill` and keep only their own bucket/blurb. Until
-> they do, a seventeenth page can invent a sixth word and nothing will say so.
-> Adding a document type today? Its confirm step reads **Confirmed**, in
-> `status-pill.ts` AND in that page's own map.
+> **PARTLY DONE ON THE SCREENS — 2026-09-13: six of eighteen collapsed.** The
+> eighteen are the `PAGES` list in
+> `frontend/src/pages/scm-v2/localStatusMapsAgree.test.ts` (this paragraph said
+> "sixteen" before; the guard enumerates eighteen, and the guard is the count to
+> trust). Six now take their LABEL from `status-pill.ts` and keep only their own
+> tone, bucket and blurb: Goods Received list + detail, Purchase Return list +
+> detail, Stock Takes list, Stock Transfers list.
+>
+> **Collapsing the next page? Use `withStatusLabels(docType, ownMap)`.** It attaches
+> the canonical label to a map keyed by stored status, once, at module load — so a
+> page's `STATUS_TONE[key] ?? fallback` keeps its one-line shape. Attaching the label
+> inside the lookup instead trips the frontend lint ratchet
+> (`no-unnecessary-condition`, +1 per file); the reason is in the function's own
+> comment and in `docs/bugs/0866-six-status-maps-collapsed-onto-status-pill-and-the-detail-ba.md`.
+>
+> **They were chosen by measurement.** Each renders the byte-identical word it used
+> to hand-write, checked entry by entry. The remaining twelve would each change at
+> least one word on screen — a letter case (`Partially received` against
+> `Partially Received`), a map keyed by something other than the stored status
+> (`partial`, `cancel`), or a DELIBERATE difference the guard records with its
+> authority — so collapsing them is a decision, not a refactor. Full table:
+> `docs/bugs/0866-six-status-maps-collapsed-onto-status-pill-and-the-detail-ba.md`.
+>
+> **Leaving `PAGES` is not the same as being unwatched.** `COLLAPSED_WORDS` in the
+> same test pins the word each collapsed page showed before, so a later edit to
+> `status-pill.ts` that re-words one of those screens fails.
+>
+> **OPEN — the remaining twelve.** Adding a document type today? Its confirm step
+> reads **Confirmed**, in `status-pill.ts` AND — until its page is collapsed — in
+> that page's own map.
+
+> **OPEN, AND WORSE — the detail-page BADGE is a second family no guard sees.**
+> Found while collapsing the six, 2026-09-13; traced in source on `origin/main`
+> 678a8a8cd, not observed on a running screen. Seven detail pages carry a flat
+> `STAGE_LABEL: Record<string, string>`, and that — not the `{ tone, label }` map —
+> is what the header `<Badge>` renders. Four contradict the ruling at the top of
+> this section: the GRN and Purchase Invoice badges say **Posted** and the Sales
+> Invoice badge says **Sent** where the owner ruled Submitted, and the Purchase
+> Return badge says **Posted** where the canonical map says Confirmed.
+>
+> Both guards are structurally blind to it: `confirmRungReadsSubmitted.test.ts`
+> fails only on a stored value beside `"Confirmed"`, and `localStatusMapsAgree`
+> parses only the `{ … label: "X" }` shape. **A guard that matches one spelling of
+> a copy does not see the next spelling.** Fixing it changes words the owner reads,
+> so it was left out of the no-visible-change collapse and needs its own change.
 
 > **DONE ON THE PAPER — 2026-08-26.** The printed documents were a
 > seventeenth-to-twenty-fifth surface of exactly this shape, and worse than a
@@ -180,12 +220,14 @@ this drifted.** Sixteen list and detail pages declare their own
 > and compares what `doc.text` painted; a source scan over `*-pdf.ts` catches a
 > generator that is not in its table yet.
 >
-> **One word is still unsettled and it is the owner's to pick.**
-> `status-pill.ts` says SO `IN_PRODUCTION` reads **Proceed**;
-> `frontend/src/pages/scm-v2/so-list-status.ts` says **In Production** while its
-> own comment claims the two match exactly. Both are live on screens. The printed
-> sales order now follows `status-pill.ts`, so it says *Proceed* where it said
-> *In Production* before this change.
+> **SETTLED 2026-09-13 — this paragraph used to call it unsettled.** It read:
+> `status-pill.ts` says SO `IN_PRODUCTION` reads **Proceed** while
+> `so-list-status.ts` says **In Production**, and the owner has to pick. He picked
+> 「SO 就写 in production」, and `status-pill.ts` now says In Production — see
+> "`IN_PRODUCTION` reads In Production" at the end of this guide. The printed sales
+> order follows `status-pill.ts`, so it reads *In Production* again. Kept rather
+> than deleted because the section below was appended without this one being
+> updated, which left the guide asserting both answers at once.
 
 ### A HOLD IS NOT A STATUS — it is a MARKER beside one (2026-08-22, migs 0324/0325)
 
@@ -648,3 +690,18 @@ different way:
 Re-run it rather than quoting this table: it is a measurement with an expiry
 date, and the script prints its own corpus.
 
+
+
+### `IN_PRODUCTION` reads "In Production" (owner, 2026-09-13)
+
+The Sales Orders list TAB said "In Production" and the pill said "Proceed" —
+both his words, from different days, in two maps nothing compared. He chose
+「SO 就写 in production」, so the canonical map now says In Production too.
+
+The CONSIGNMENT order keeps "Proceed" for its own `IN_PRODUCTION`: he named the
+sales order, and that is a different document with its own lifecycle.
+
+Guarded by `frontend/src/pages/scm-v2/localStatusMapsAgree.test.ts`, which
+compares every page's own status map against `status-pill.ts` and fails on a
+disagreement that is not recorded as deliberate with its authority. Trace:
+`docs/bugs/0864-the-sales-order-tab-said-in-production-and-the-pill-said-pro.md`.

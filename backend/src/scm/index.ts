@@ -55,6 +55,7 @@ import { venturePortalFeed } from "./routes/venture-portal-feed";
 import { currencies } from "./routes/currencies";
 import { mfgSalesOrders } from "./routes/mfg-sales-orders";
 import { mfgSalesOrdersListEnrichment } from "./routes/mfg-sales-orders-list-enrichment";
+import { mfgSoFairs } from "./routes/mfg-so-fairs";
 import { soAmendments } from "./routes/so-amendments";
 import { soHandover } from "./routes/so-handover";
 import { poAmendments } from "./routes/po-amendments";
@@ -123,6 +124,7 @@ import { hr } from "./routes/hr";
 import { scmAreaGuard } from "./middleware/area-guard";
 import { hasPositionCapability } from "../services/positionCapabilities";
 import { scmWriteFreeze } from "./lib/write-freeze";
+import { venturePortalKick } from "./lib/venture-portal-kick";
 import { migratedSoReadonly, migratedSoAmendmentReadonly } from "./lib/migrated-so-readonly";
 import { writeFreezeStatus } from "./routes/write-freeze-status";
 
@@ -140,6 +142,18 @@ export const scm = new Hono<{ Bindings: Env }>();
    below use. Grammar, the UPDATE for each stage, and the rollback:
    docs/write-freeze-staged-lift.md. */
 scm.use('/*', scmWriteFreeze());
+
+/* ── VENTURE PORTAL FEED: SEND WITHIN SECONDS (owner 2026-09-13) ────────────
+   After a successful non-GET, schedule the Venture Portal outbox drain instead
+   of leaving it to the five-minute cron — the owner's 「我要秒级 update 的」.
+   Mounted HERE, immediately after the freeze, for two reasons: a frozen write
+   returns 503 without calling next(), so the kick is not even entered for a
+   save that did not happen; and one mount covers every router that can touch a
+   sales order, which a per-handler call could not. It runs AFTER next(), it can
+   never fail the request, and both cron sweeps stay exactly as they were — they
+   are the zero-loss guarantee and this is only the accelerator. Cost of an idle
+   kick, and what it cannot see: lib/venture-portal-kick.ts. */
+scm.use('/*', venturePortalKick());
 
 /* Read-only view of that value for the operator making the go/no-go call —
    GET, so the freeze never blocks it, and no area guard because it is not an
@@ -375,6 +389,11 @@ scm.route("/mfg-sales-orders", mfgSalesOrdersListEnrichment);
 // the status route — which only wakes when the body says CANCELLED — is mounted
 // above, ahead of the area guard. routes/document-cancel-routes.ts.
 scm.route("/mfg-sales-orders", soCancelRequests);
+// The fair picker (owner 2026-09-13). Mounted BEFORE the main router for the same
+// reason as the enrichment above: its static `/fair-options` and `/fair-pending`
+// paths must resolve ahead of `/:docNo`. In its own file because
+// mfg-sales-orders.ts is already over its file-size ceiling.
+scm.route("/mfg-sales-orders", mfgSoFairs);
 scm.route("/mfg-sales-orders", mfgSalesOrders);
 // SO amendment / revision workflow — SO-centric, so it rides the same L2 area
 // guard as Sales Orders (GET=view, PATCH=edit); the finer scm.amendment.* gates

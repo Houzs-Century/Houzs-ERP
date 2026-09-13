@@ -44,6 +44,7 @@ import {
   useCancelPurchaseReturn,
 } from "../../vendor/scm/lib/purchase-return-queries";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
+import { withStatusLabels } from "../../vendor/scm/lib/status-pill";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
@@ -97,12 +98,25 @@ const supplierCodeOf = (r: PrRow): string => r.supplier?.code || "—";
 const sourceOf = (r: PrRow): string => r.grn?.grn_number || r.purchase_order?.po_number || "—";
 const refundOf = (r: PrRow): number => r.refund_sen ?? 0;
 
-const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }> = {
-  DRAFT:     { tone: "warning", label: "Draft",     bucket: "draft" },
-  POSTED:    { tone: "warning", label: "Confirmed", bucket: "posted" },
-  COMPLETED: { tone: "success", label: "Completed", bucket: "completed" },
-  CANCELLED: { tone: "error",   label: "Cancelled", bucket: "cancelled" },
+/* The LABEL is NOT declared here. It comes from `vendor/scm/lib/status-pill.ts`,
+   the one canonical map — docs/modules/document-status-vocabulary.md §1. What
+   stays is what is genuinely this page's own: the tone palette (four names, not
+   status-pill's six) and the filter BUCKET.
+
+   DRAFT is a real purchase-return status that the canonical `pr` map does not
+   carry, so it resolves through statusLabel's documented humanise fallback —
+   which answers "Draft", the identical word this map used to hand-write. It is
+   NOT added to the canonical map to make this read nicely: that map's tones are
+   live on other surfaces, and inventing an entry to tidy a call site is the
+   forged-evidence failure CLAUDE.md names. */
+const STATUS_OWN: Record<string, { tone: "success" | "warning" | "error" | "neutral"; bucket: StatusTab }> = {
+  DRAFT:     { tone: "warning", bucket: "draft" },
+  POSTED:    { tone: "warning", bucket: "posted" },
+  COMPLETED: { tone: "success", bucket: "completed" },
+  CANCELLED: { tone: "error",   bucket: "cancelled" },
 };
+
+const STATUS_TONE = withStatusLabels("pr", STATUS_OWN);
 
 const statusFor = (s: string) =>
   STATUS_TONE[(s || "").toUpperCase()] ?? { tone: "neutral" as const, label: s || "—", bucket: "posted" as StatusTab };

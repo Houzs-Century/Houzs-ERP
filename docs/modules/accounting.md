@@ -929,6 +929,29 @@ a specific invoice's balance, printing. `fetchMonthlyDocNos` reads the named col
 since this PR (a whole-row driver handed back the id and minted -001 twice).
 Contracts: `backend/tests/creditNotes.test.ts`, `CreditNotes.test.tsx`.
 
+**A refund on a deposit invoice is a CREDIT NOTE, whole or in part (2026-09-13,
+docs/bugs/0860; owner: partial refund 可以做 … 就 DI 也需要开 CN).** A deposit
+invoice booked the money as a sale (Dr AR / Cr 509 DEPOSIT PAY BY CUSTOMER);
+the Customer Refund voucher on its own (Dr AR / Cr bank) hands the money back
+and leaves the sale standing. So when a refund voucher naming a Sales Order
+POSTS, `backend/src/acc/deposit-refunds.ts` raises one credit note per deposit
+invoice the refund draws on — oldest first, Dr 509 / Cr AR (party the
+customer), dated the voucher's day, `source_doc_no` the invoice,
+`refund_pv_id` the voucher (migration 20260913T1800 adds the column) — for
+what still stands on the invoice until the refund is covered. Refunded in
+full, the note closes the invoice (`credit_note_id`); in part, the invoice
+stands for the remainder and the final invoice's close-out note is for the
+REMAINDER (`applyDepositInvoicesToInvoice` reads `refundedByInvoice`). A
+cancelled refund voucher contras its notes and the invoices stand again. Money
+no deposit invoice covers raises no note — the refund's own Dr AR answers
+that payment's Cr AR — and is logged, not hidden. Idempotent per (voucher,
+invoice). The refund form says how many deposit invoices stand and for how
+much; the Deposit Invoices page shows what each was refunded, note by note,
+with the voucher. This is the e-invoice shape as well: a Refund Note
+referencing the original document, never a cancel past 72 hours. Two things
+deliberately NOT done here, both with management (owner 2026-09-13): the
+closed-invoice cancel guard, and converting payments to a new order.
+
 **Deposit invoices (2026-09-12, docs/bugs/0828; owner: e-invoice 好像是根据收钱
 就认 sales 了 … 每个顾客不是有自己本身的 account code 吗 … 做成开关 … 可以自己选
 几时要开始自动开 deposit invoice).** A customer payment received BEFORE the
@@ -1256,6 +1279,15 @@ untouched — the link is the ledger's. Contracts:
 `backend/src/acc/settlement.test.ts` (the loader leaves it out even by
 reference) and `backend/tests/settlementRoutes.test.ts` (the watch list, Find
 the sale).
+
+**A confirmed link is corrected by a named row, never by code (2026-09-13,
+docs/bugs/0859).** The 0833 refresh below covers UNCONFIRMED links only — a
+confirmed link is the ledger's record of what was reconciled. The one link
+confirmed before 0833 landed with a since-corrected amount (2990-SO-2607-012,
+PBB 2026-07-12 ref 005805, 3,053 shown against a payment of 3,052) is set
+right by migration `20260913T1700_acc_settlement_link_so_2607_012_amount.sql`,
+guarded on the payment id, the document number and the stale value. Owner
+2026-09-13: 可以.
 
 **An unconfirmed link follows its payment (2026-09-12, docs/bugs/0833; owner:
 要刷新功能，而且我希望是我打开自动刷新，而不是手动触发刷新).** The upload writes

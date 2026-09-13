@@ -1,0 +1,59 @@
+name: Venture Portal feed latency (read-only)
+
+# Answers "how many seconds does a saved sales order take to reach the Venture
+# Portal?" without anyone opening a SQL console.
+#
+# The number lives only in production's scm.venture_portal_outbox — created_at is
+# stamped by the capture trigger inside the salesperson's own transaction, sent_at
+# when the portal answered 2xx. docs/modules/venture-portal-feed.md §2 carries an
+# ESTIMATE and asks for the measured number; this is where that number comes from.
+#
+# Before this existed the only ways to get it were to ask the owner to read a
+# screen (an interruption every time) or to put the production DSN in front of a
+# person for a SELECT. CLAUDE.md forbids both, and Actions already holds
+# secrets.DATABASE_URL for the deploy.
+#
+# Manual trigger only — it is a question, not a gate, and a production DB read on
+# a schedule turns a real query into CI noise nobody reads.
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: >-
+          Only count rows QUEUED at or after this instant (ISO, e.g.
+          2026-09-13T13:16:00Z). Leave empty to count everything. Pass the deploy
+          time of the sender you are measuring — a row queued under older
+          behaviour carries that behaviour's wait in its seconds, and pooling the
+          two describes neither.
+        required: false
+        type: string
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and must
+# never queue behind — or displace — a release.
+concurrency:
+  group: venture-portal-latency
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-venture-portal-latency.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SINCE: ${{ inputs.since }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml for
+          # the full Happy-Eyeballs reasoning. Harmless on an IPv4-only host.
+          NODE_OPTIONS: --dns-result-order=ipv4first
