@@ -920,6 +920,14 @@ The Venue field on all three SO forms (`SalesOrderNew`, `SalesOrderDetail`,
 | Router mount, ahead of `/:docNo` | `backend/src/scm/index.ts` |
 | Route registration | `frontend/src/App.tsx`, `frontend/src/routing/routeManifest.ts` |
 
+**The data-gaps report prints the ORGANIZER ROSTER, not only the folded
+duplicates** (0872). Its fold normalises case, spacing and punctuation, so it
+finds `KAI HAO (KL CHEN)` / `KAI HAO (KL, CHEN)` — and it cannot find
+`MALL MGMT` / `MALL MGT`, because that is an abbreviation and any rule loose
+enough to fold it would merge organizers that really are different, which merges
+two fairs' P&L. The whole roster is about 15 rows; a person reads it. Do not
+"improve" this into a fuzzy match.
+
 **`fair_match` (mig `20260913T1900`) is why a NULL `project_id` is readable.**
 Four different situations used to be one indistinguishable blank:
 
