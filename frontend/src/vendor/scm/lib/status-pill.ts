@@ -69,7 +69,7 @@ type Entry = { label: string; tone: StatusTone };
 
 const PO: Record<string, Entry> = {
   DRAFT:              { label: 'Draft',              tone: 'pending' },
-  SUBMITTED:          { label: 'Confirmed',          tone: 'info' },
+  SUBMITTED:          { label: 'Submitted',          tone: 'info' },
   PARTIALLY_RECEIVED: { label: 'Partially Received', tone: 'progress' },
   RECEIVED:           { label: 'Received',           tone: 'success' },
   CANCELLED:          { label: 'Cancelled',          tone: 'danger' },
@@ -77,14 +77,14 @@ const PO: Record<string, Entry> = {
 };
 const GRN: Record<string, Entry> = {
   DRAFT:     { label: 'Draft',     tone: 'pending' },
-  POSTED:    { label: 'Confirmed', tone: 'info' },
+  POSTED:    { label: 'Submitted', tone: 'info' },
   CLOSED:    { label: 'Closed',    tone: 'success' },
   CANCELLED: { label: 'Cancelled', tone: 'danger' },
   ON_HOLD:   { label: 'On Hold',   tone: 'pending' },
 };
 const PI: Record<string, Entry> = {
   DRAFT:          { label: 'Draft',          tone: 'pending' },
-  POSTED:         { label: 'Confirmed',      tone: 'info' },
+  POSTED:         { label: 'Submitted',      tone: 'info' },
   PARTIALLY_PAID: { label: 'Partially Paid', tone: 'progress' },
   PAID:           { label: 'Paid',           tone: 'success' },
   VOID:           { label: 'Void',           tone: 'danger' },
@@ -98,7 +98,7 @@ const PR: Record<string, Entry> = {
 };
 const SO: Record<string, Entry> = {
   DRAFT:         { label: 'Draft',         tone: 'pending' },
-  CONFIRMED:     { label: 'Confirmed',     tone: 'info' },
+  CONFIRMED:     { label: 'Submitted',     tone: 'info' },
   IN_PRODUCTION: { label: 'Proceed',       tone: 'progress' },
   READY_TO_SHIP: { label: 'Ready to Ship', tone: 'success' },
   SHIPPED:       { label: 'Shipped',       tone: 'success' },
@@ -121,7 +121,7 @@ const DO: Record<string, Entry> = {
 };
 const SI: Record<string, Entry> = {
   DRAFT:          { label: 'Draft',          tone: 'pending' },
-  SENT:           { label: 'Confirmed',      tone: 'info' },
+  SENT:           { label: 'Submitted',      tone: 'info' },
   PARTIALLY_PAID: { label: 'Partially Paid', tone: 'progress' },
   PAID:           { label: 'Paid',           tone: 'success' },
   OVERDUE:        { label: 'Overdue',        tone: 'danger' },

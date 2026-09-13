@@ -20,18 +20,27 @@ The step where a document stops being a draft and becomes committed is **stored
 under five different words**, because each document type was written at a
 different time and each one picked its own:
 
+> **UPDATED 2026-09-13 — the five he named now read "Submitted".** The
+> 2026-08-21 sweep put one word on every PILL and stopped there, so the list
+> FILTER TABS still carried the stored value: a purchase order's tab said
+> SUBMITTED beside a pill saying Confirmed, and a goods receipt's tab said
+> CONFIRMED. One rung, three words on screen. The owner, 2026-09-12:
+> 「PI、SI、GR、PO、SO 都要改成 submitted」. The stored values are STILL
+> unchanged — this is the same option A, applied again to the word.
+> Trace: `docs/bugs/0851-one-rung-three-words-the-filter-tab-said-submitted-while-the.md`.
+
 | document | STORED value | shown on screen |
 |---|---|---|
-| Sales Order | `CONFIRMED` | Confirmed |
-| Purchase Order | `SUBMITTED` | Confirmed |
-| GRN | `POSTED` | Confirmed |
-| Purchase Invoice | `POSTED` | Confirmed |
-| Purchase Return | `POSTED` | Confirmed |
-| Stock Transfer | `POSTED` | Confirmed |
-| Stock Take | `POSTED` | Confirmed |
+| Sales Order | `CONFIRMED` | **Submitted** |
+| Purchase Order | `SUBMITTED` | **Submitted** |
+| GRN | `POSTED` | **Submitted** |
+| Purchase Invoice | `POSTED` | **Submitted** |
+| Purchase Return | `POSTED` | Confirmed — NOT in the owner's five |
+| Stock Transfer | `POSTED` | Confirmed — NOT in the owner's five |
+| Stock Take | `POSTED` | Confirmed — NOT in the owner's five |
 | Payment Voucher | `POSTED` | **Approved** — the one exception since 2026-09-02: the owner's four layers (payment-voucher.md §0b) make approval the step that posts, so the pill wears his word for it; the stored value stays `POSTED` like the rest of this table |
-| Sales Invoice | `SENT` | Confirmed |
-| Delivery Order | `LOADED` | Confirmed |
+| Sales Invoice | `SENT` | **Submitted** |
+| Delivery Order | `LOADED` | Confirmed — the owner kept the DO on its own vocabulary (draft / load / dispatch), and both its words were settled by him separately |
 
 **The stored values are UNCHANGED and must stay unchanged.** That is the whole
 reason option A was recommended over renaming the columns: AutoCount, every

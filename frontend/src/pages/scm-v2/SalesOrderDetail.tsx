@@ -237,7 +237,7 @@ const STATUS_CLASS: Record<string, string> = {
 // from soStatusDisplay; this is only the stored-status fallback).
 const SO_STATUS_LABEL: Record<string, string> = {
   DRAFT:         'Draft',
-  CONFIRMED:     'Confirmed',
+  CONFIRMED:     'Submitted',
   IN_PRODUCTION: 'Proceed',
   READY_TO_SHIP: 'Stock Ready',
   SHIPPED:       'Arranged',

@@ -166,7 +166,7 @@ const EFFECTIVE_TONE: Record<
   { tone: "success" | "warning" | "error" | "neutral"; label: string; blurb: string }
 > = {
   draft: { tone: "warning", label: "Draft", blurb: "Draft · not yet posted" },
-  posted: { tone: "warning", label: "Confirmed", blurb: "Confirmed · awaiting payment" },
+  posted: { tone: "warning", label: "Submitted", blurb: "Submitted · awaiting payment" },
   on_hold: { tone: "warning", label: "On Hold", blurb: "On hold · payment blocked until released" },
   partial: { tone: "warning", label: "Partially paid", blurb: "Partially paid · balance still due" },
   paid: { tone: "success", label: "Paid", blurb: "Paid · loop closed" },

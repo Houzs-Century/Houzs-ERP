@@ -139,7 +139,7 @@ const STATUS_TONE: Record<
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
 > = {
   DRAFT:          { tone: "warning", label: "Draft",           bucket: "draft" },
-  POSTED:         { tone: "warning", label: "Confirmed",       bucket: "posted" },
+  POSTED:         { tone: "warning", label: "Submitted",       bucket: "posted" },
   PARTIALLY_PAID: { tone: "warning", label: "Partially paid",  bucket: "partial" },
   PAID:           { tone: "success", label: "Paid",            bucket: "paid" },
   CANCELLED:      { tone: "error",   label: "Cancelled",       bucket: "cancelled" },

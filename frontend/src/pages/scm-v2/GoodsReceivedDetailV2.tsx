@@ -135,7 +135,7 @@ const effectiveOf = (h: GrnHeader): Effective => {
 
 const EFFECTIVE_TONE: Record<Effective, { tone: "success" | "warning" | "error" | "neutral"; label: string; blurb: string }> = {
   draft: { tone: "warning", label: "Draft", blurb: "Draft · not yet posted" },
-  posted: { tone: "success", label: "Confirmed", blurb: "Confirmed · inventory received" },
+  posted: { tone: "success", label: "Submitted", blurb: "Submitted · inventory received" },
   on_hold: { tone: "warning", label: "On Hold", blurb: "On hold · stock already received, billing paused" },
   cancelled: { tone: "error", label: "Cancelled", blurb: "Cancelled · receipt reversed" },
 };

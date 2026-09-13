@@ -49,7 +49,7 @@ export type StatusTab =
 export const SO_STATUS_TABS: Array<{ value: StatusTab; label: string }> = [
   { value: "all", label: "All" },
   { value: "draft", label: "Draft" },
-  { value: "confirmed", label: "Confirmed" },
+  { value: "confirmed", label: "Submitted" },
   { value: "in_production", label: "In Production" },
   { value: "ready_to_ship", label: "Ready to Ship" },
   { value: "delivered", label: "Delivered" },
@@ -65,7 +65,7 @@ export const SO_STATUS_TABS: Array<{ value: StatusTab; label: string }> = [
 // matched falls through as neutral.
 const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neutral"; label: string }> = {
   draft: { tone: "warning", label: "Draft" },
-  confirmed: { tone: "success", label: "Confirmed" },
+  confirmed: { tone: "success", label: "Submitted" },
   cancelled: { tone: "error", label: "Cancelled" },
   cancel: { tone: "error", label: "Cancelled" },
   invoiced: { tone: "success", label: "Invoiced" },

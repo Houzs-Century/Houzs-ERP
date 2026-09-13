@@ -245,8 +245,8 @@ const STATUS_TONE: Record<
   },
   confirmed: {
     tone: "success",
-    label: "Confirmed",
-    blurb: "Confirmed · awaiting payment",
+    label: "Submitted",
+    blurb: "Submitted · awaiting payment",
   },
   cancelled: {
     tone: "error",
