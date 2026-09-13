@@ -213,12 +213,14 @@ carry. Those copies were aligned by hand on 2026-08-21.
 > and compares what `doc.text` painted; a source scan over `*-pdf.ts` catches a
 > generator that is not in its table yet.
 >
-> **One word is still unsettled and it is the owner's to pick.**
-> `status-pill.ts` says SO `IN_PRODUCTION` reads **Proceed**;
-> `frontend/src/pages/scm-v2/so-list-status.ts` says **In Production** while its
-> own comment claims the two match exactly. Both are live on screens. The printed
-> sales order now follows `status-pill.ts`, so it says *Proceed* where it said
-> *In Production* before this change.
+> **SETTLED 2026-09-13 — this paragraph used to call it unsettled.** It read:
+> `status-pill.ts` says SO `IN_PRODUCTION` reads **Proceed** while
+> `so-list-status.ts` says **In Production**, and the owner has to pick. He picked
+> 「SO 就写 in production」, and `status-pill.ts` now says In Production — see
+> "`IN_PRODUCTION` reads In Production" at the end of this guide. The printed sales
+> order follows `status-pill.ts`, so it reads *In Production* again. Kept rather
+> than deleted because the section below was appended without this one being
+> updated, which left the guide asserting both answers at once.
 
 ### A HOLD IS NOT A STATUS — it is a MARKER beside one (2026-08-22, migs 0324/0325)
 

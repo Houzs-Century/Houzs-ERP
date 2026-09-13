@@ -1,4 +1,9 @@
 ## Six status maps collapsed onto status-pill, and the detail badges a second family both guards were blind to [medium]
+<!-- status: open -->
+<!-- area: Frontend + mobile -->
+
+`open` because of the BADGE finding below, which is unfixed. The collapse itself
+changes nothing on screen and needs no production step.
 
 **Symptom.** Nothing new on screen — this entry is the ROOT FIX behind two
 defects that already shipped and were patched on 2026-09-13: a Purchase Orders
@@ -45,8 +50,18 @@ Two details worth knowing before editing these:
 | cause | pages |
 |---|---|
 | CASE only — the page lower-cases the second word | `PurchaseOrdersListV2` (Partially received), `PurchaseInvoicesListV2` (Partially paid), `DeliveryReturnsListV2` (Credit noted), `do-list-status` (In transit) |
-| the map's KEY is not the stored status (`partial`, `cancel`, `issued`, `completed`, `open`, `shipped`), so a naive lookup answers "Partial" / "Cancel" | `PurchaseOrderDetailV2`, `PurchaseInvoiceDetailV2`, `SalesInvoicesListV2`, `SalesInvoiceDetailV2`, `SalesOrderDetailV2`, `DeliveryOrderDetailV2` |
-| DELIBERATE, with its authority in the guard's own list | `so-list-status` IN_PRODUCTION (owner's to decide), `do-list-status` SIGNED (owner 2026-08-21), `DeliveryReturnDetailV2` (next-step vocabulary) |
+| the map's KEY is not the stored status (`partial`, `cancel`, `issued`, `completed`, `open`, `shipped`), so a naive lookup answers "Partial" / "Cancel" | `PurchaseOrderDetailV2`, `PurchaseInvoiceDetailV2`, `SalesInvoicesListV2`, `SalesInvoiceDetailV2`, `SalesOrderDetailV2`, `so-list-status`, `DeliveryOrderDetailV2` |
+| DELIBERATE, with its authority in the guard's own list | `do-list-status` SIGNED (owner 2026-08-21), `DeliveryReturnDetailV2` (next-step vocabulary) |
+
+**Re-measured after merging `main`, not carried over.** While this change was in
+progress `main` settled Sales Order `IN_PRODUCTION` as "In Production" in
+`status-pill.ts` and removed it from the guard's DELIBERATE list (the sibling entry
+`0864-the-sales-order-tab-said-in-production-and-the-pill-said-pro.md` — same
+number, landed concurrently). That was the one line of `status-pill.ts` it touched,
+in the SO map, so no map these six read moved. The scan was re-run on the merged
+tree regardless: the six pages' ORIGINAL 22 words against the merged canonical map
+give 0 deltas, and `so-list-status` still differs — now only by its `cancel` key —
+so it stays uncollapsed, under the key row above rather than DELIBERATE.
 
 **FOUND, NOT FIXED — the detail-page BADGE is a second family nobody watches.**
 Traced in source on `origin/main` 678a8a8cd; NOT observed on a running screen.
