@@ -457,6 +457,8 @@ describe('the Customer Refund (?type=refund, §14)', () => {
       ],
       bookedSen: 50000, refunds: [{ id: 'pv-old', pvNumber: '2990-MRF-2607-001', status: 'POSTED', voucherDate: '2026-07-20', totalSen: 20000 }],
       refundedSen: 20000, refundableSen: 30000, eligible: true, reason: null,
+      /* Two deposit invoices still stand on the order (docs/bugs/0860). */
+      deposits: { count: 2, standingSen: 150000 },
     };
     draw('/scm/payment-vouchers/new?type=refund');
     expect(screen.getByText('New Customer Refund')).toBeTruthy();
@@ -467,6 +469,8 @@ describe('the Customer Refund (?type=refund, §14)', () => {
     fireEvent.change(doc, { target: { value: ' 2990-SO-2607-001 ' } });
     fireEvent.keyDown(doc, { key: 'Enter' });
     await waitFor(() => expect((screen.getByLabelText('Customer') as HTMLInputElement).value).toBe('Ah Meng · 0123'));
+    /* The deposit-invoice half is said before the voucher is raised (docs/bugs/0860). */
+    expect(screen.getByText(/2 deposit invoices standing for/)).toBeTruthy();
     /* Payments with their ledger flag; the AutoCount-era row says so. */
     expect(screen.getByText('✓ booked')).toBeTruthy();
     expect(screen.getByText('AutoCount era')).toBeTruthy();

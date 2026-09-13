@@ -53,7 +53,8 @@ import { dateOrNull } from '../lib/date-coerce';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { apControlRole, pvLines, customerRefundLines, resolveRoles } from '../../acc/rules';
 import { customerPartyCode } from '../../acc/payments';
-import { refundSourceHandler, refundCreateGuard, refundOwnControl, bookRefundCredit } from '../lib/pv-refund';
+import { refundSourceHandler, refundCreateGuard, refundOwnControl, bookRefundCredit, refundHookInput } from '../lib/pv-refund';
+import { refundDepositInvoicesBestEffort, releaseRefundNotesBestEffort } from '../../acc/deposit-refunds';
 import { CASH_SERIES_LETTER } from '../../acc/receipts';
 import { settleApInvoicePaidSen } from '../lib/ap-invoice-settlement';
 import { allocationHeadroomBreach, pendingReservationsHandler } from '../lib/pv-reservations';
@@ -1059,7 +1060,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
      is the third. */
   /* The customer's party code: the debtor code when kept, else the header's
      customer_id — the same rule the payment booked with (owner 2026-09-08). */
-  const refundPv = pvRaw as { refund_source_doc_no?: string | null; debtor_code?: string | null; customer_id?: string | null };
+  const refundPv = pvRaw as { refund_source_type?: string | null; refund_source_doc_no?: string | null; debtor_code?: string | null; customer_id?: string | null };
   const r = await postJournal(sb, {
     companyId,
     entryDate: pv.voucher_date,
@@ -1081,6 +1082,8 @@ export const postPaymentVoucherHandler = async (c: any) => {
     status: 'POSTED', posted_at: new Date().toISOString(), updated_at: new Date().toISOString(),
   }).eq('id', id);
   if (isRefund(pv.purpose)) await bookRefundCredit(sb, { ...pv, debtor_code: refundPv.debtor_code ?? null }, 'refund');
+  /* The deposit-invoice half of a refund (docs/bugs/0860): a credit note per invoice it draws on. */
+  await refundDepositInvoicesBestEffort(sb, refundHookInput({ ...pv, ...refundPv, id, company_id: companyId }, totalSen, approvalActor(c)));
 
   /* The money-out event. Recorded here rather than after the PI settlement loop
      below so a settlement hiccup cannot cost us the record that the GL was
@@ -1627,6 +1630,7 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
   // failure never un-cancels the voucher; the contra is idempotent.
   const rev = await reversePvAccounting(sb, cancelled.pv_number);
   if (rev.ok && isRefund(head.purpose)) await bookRefundCredit(sb, head, 'reversal');
+  if (rev.ok && isRefund(head.purpose)) await releaseRefundNotesBestEffort(sb, { companyId: co.companyId, pvId: id, pvNumber: cancelled.pv_number, actor: approvalActor(c) });
   if (!rev.ok) {
     // eslint-disable-next-line no-console
     console.error(`[pv-accounting] reversal failed for ${cancelled.pv_number}:`, rev.status, rev.reason);

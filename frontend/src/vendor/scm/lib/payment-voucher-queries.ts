@@ -396,6 +396,10 @@ export type RefundSource = {
   refunds: RefundVoucherRow[];
   refundedSen: number;
   refundableSen: number;
+  /** Deposit invoices still standing on the order, and what is left on them
+      (docs/bugs/0860). Optional only for the minute a newer screen reads an
+      older server. */
+  deposits?: { count: number; standingSen: number };
   eligible: boolean;
   reason: string | null;
 };

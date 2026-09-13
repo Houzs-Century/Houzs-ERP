@@ -15,6 +15,9 @@ const ROWS: DepositInvoice[] = [
     party_code: 'cust-larding', party_name: 'Larding Chen', invoice_date: '2026-09-05', amount_sen: 100000, method: 'cash',
     status: 'ISSUED', je_no: '2990-JE-2609-0011', credit_note_id: null, cancel_reason: null,
     created_at: '2026-09-05T00:00:00Z', created_by: 'u-1', cancelled_at: null, cancelled_by: null,
+    /* Part of it refunded (docs/bugs/0860): the list says so, the detail names the note and the voucher. */
+    refunded_sen: 40000,
+    refund_notes: [{ note_number: '2990-CN-2609-009', total_sen: 40000, status: 'POSTED', note_date: '2026-09-12', pv_number: '2990-CRF-2609-001' }],
   },
   {
     id: 'd2', company_id: 2, di_number: '2990-DI-2609-002', payment_source: 'SOPAY', payment_id: 'p-2', so_doc_no: '2990-SO-2609-002',
@@ -137,5 +140,18 @@ describe('the Deposit Invoices page', () => {
     const list = pdfBatch.mock.calls[0]?.[0] as Array<{ di_number: string }>;
     expect(list.map((d) => d.di_number)).toEqual(['2990-DI-2609-001', '2990-DI-2609-002']);
     expect(pdfBatch.mock.calls[0]?.[1]).toEqual({ action: 'print' });
+  });
+});
+
+/* A refund on a deposit invoice is a credit note against it, whole or in
+   part (docs/bugs/0860): the list says how much came off, the detail names
+   the note and the refund voucher. */
+describe('what a refund took off an invoice', () => {
+  test('the list says how much was refunded; the detail names the note and the voucher', () => {
+    render(<MemoryRouter><DepositInvoices /></MemoryRouter>);
+    expect(screen.getByText('refunded RM 400.00')).toBeTruthy();
+    fireEvent.click(screen.getByText('2990-DI-2609-001'));
+    expect(screen.getByText(/Refunded RM 400\.00 — the sale this invoice booked is taken back by credit note/)).toBeTruthy();
+    expect(screen.getByText(/2990-CN-2609-009 · RM 400\.00 · POSTED · refund 2990-CRF-2609-001/)).toBeTruthy();
   });
 });
