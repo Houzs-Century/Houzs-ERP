@@ -4644,7 +4644,7 @@ const SpecialsMaintenancePanel = ({
                   </span>
                 )}
               </div>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-15)', color: '#11140f', textAlign: 'right', whiteSpace: 'nowrap' }}>{senToRmStr(r.sellingPriceSen)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-15)', color: '#11140f', textAlign: 'right', whiteSpace: 'nowrap' }}>{senToRmStr(r.costPriceSen)}</span>
               <span style={{ fontSize: 'var(--fs-12)', fontWeight: 600, textAlign: 'right', color: r.active ? '#1a7a3a' : '#767b6e' }}>{r.active ? 'Active' : 'Inactive'}</span>
             </div>
           ))}
@@ -4669,11 +4669,13 @@ const SpecialsMaintenancePanel = ({
                   <input style={inputStyle} value={r.label} onChange={(e) => patchRow(i, { label: e.target.value })} placeholder="Right Drawer" />
                 </label>
                 <label style={{ width: 140 }}>
-                  <span style={{ display: 'block', fontSize: 'var(--fs-13)', fontWeight: 600, marginBottom: 4 }}>Price (RM, can be −)</span>
-                  {/* ONE price → written to selling + cost so they never diverge. */}
+                  <span style={{ display: 'block', fontSize: 'var(--fs-13)', fontWeight: 600, marginBottom: 4 }}>Cost (RM, can be −)</span>
+                  {/* The COST only. Writing it to selling_price_sen as well made
+                      the pricing engine charge it to the CUSTOMER — the selling
+                      side reads sellingPriceSen and adds it (docs/bugs/0852). */}
                   <input type="number" step={1} style={inputStyle}
-                    value={Math.round(r.sellingPriceSen) / 100}
-                    onChange={(e) => { const sen = Math.round((Number(e.target.value) || 0) * 100); patchRow(i, { sellingPriceSen: sen, costPriceSen: sen }); }} />
+                    value={Math.round(r.costPriceSen) / 100}
+                    onChange={(e) => { const sen = Math.round((Number(e.target.value) || 0) * 100); patchRow(i, { costPriceSen: sen }); }} />
                 </label>
                 <label style={{ display: 'flex', alignItems: 'flex-end', gap: 6, fontSize: 'var(--fs-13)' }}>
                   <input type="checkbox" checked={r.active} onChange={(e) => patchRow(i, { active: e.target.checked })} /> Active
@@ -4778,7 +4780,7 @@ const SpecialsHistoryDialog = ({
               </div>
               {entry.notes && <p style={{ marginTop: 6, fontSize: 'var(--fs-13)', color: '#11140f' }}>Notes: {entry.notes}</p>}
               <pre style={{ marginTop: 8, padding: 'var(--space-2)', background: '#f4f6f3', border: '1px solid #d6d9d2', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-11)', overflow: 'auto', maxHeight: 200 }}>
-                {JSON.stringify(slice.map((a) => ({ code: a.code, label: a.label, priceRM: Math.round(a.sellingPriceSen) / 100, active: a.active, followUps: (a.optionGroups ?? []).length })), null, 2)}
+                {JSON.stringify(slice.map((a) => ({ code: a.code, label: a.label, costRM: Math.round(a.costPriceSen) / 100, active: a.active, followUps: (a.optionGroups ?? []).length })), null, 2)}
               </pre>
             </div>
           );
