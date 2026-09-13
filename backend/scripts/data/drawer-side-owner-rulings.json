@@ -5,7 +5,6 @@
   "_convention": "THE SIDE IS READ AS YOU LOOK AT IT, not as the sleeper lies. Owner, 2026-09-12, confirmed on two documents: HC-SO-003432's hand-drawn slip (a stick figure lying head-up with the drawers drawn on the RIGHT of the picture) and HC-SO-003434's photo of the installed bed (drawers on the long side facing the camera, headboard at the far right) - both are RIGHT DRAWER. So: look at the slip as drawn, or at the photo as taken; a drawer on your right is Right Drawer. Reading it from the sleeper's own left/right would mirror every one of them, which is why this sentence exists. Same class as the sofa TV rule (sofa-handedness-is-mirrored).",
   "_drawing_grammar": "Every slip in this batch is the same plan view: a rectangle for the bed, `HB` written at the TOP edge, `TV` in a box BELOW the foot, a stick figure lying head-up inside. The drawers are a narrow strip drawn along one long edge, with one arrow per drawer pointing at it, sometimes with the count written beside them. Two consecutive orders in this batch (HC-SO-013070 and HC-SO-013071) are the same drawing mirrored - one bed's drawers left, the next bed's right - which is the owner's 「有一些是一左一右」.",
   "_photo_source": "R2 bucket houzs-erp, key so-items/<doc>/<line id>/ac-*.jpg. They are the AutoCount attachment thumbnails and are about 240px on the long edge; the pen drawings read clearly at 4x, the installed-bed photos read for orientation only.",
-
   "rulings": [
     {
       "doc": "HC-SO-003434",
@@ -102,9 +101,19 @@
       "qty": 2,
       "by": "photo read, 2026-09-12",
       "evidence": "slip drawing: figure lying head-up, two drawers drawn on the LEFT edge, labelled `Drawer` with arrows"
+    },
+    {
+      "doc": "HC-SO-013353",
+      "itemCode": "HILTON (A)-(Q)",
+      "bookText": "COL:PC151-03/DIV:8\"1\"LEG/MGAP:10\"/2SIDE DRAWER",
+      "is": [
+        "Right Drawer",
+        "Left Drawer"
+      ],
+      "by": "owner, 2026-09-13, in chat - 「1 right+left」",
+      "note": "`2 SIDE DRAWER` is a PAIR: one drawer on each side. The line carries BOTH catalogue codes, which is the only line in this batch shaped that way. The owner was asked precisely because it changes the charge as well as the spec."
     }
   ],
-
   "unresolved": [
     {
       "doc": "HC-SO-012599",
@@ -119,23 +128,22 @@
       "bookText": "Side Drawer/Col: /Div:10\"/M'GP:10\"",
       "why": "same order, same two photos",
       "next": "ask the salesperson"
-    },
-    {
-      "doc": "HC-SO-013353",
-      "itemCode": "HILTON (A)-(Q)",
-      "bookText": "COL:PC151-03/DIV:8\"1\"LEG/MGAP:10\"/2SIDE DRAWER",
-      "why": "`2SIDE DRAWER` reads as a PAIR - a drawer on each side - not as one side. No photo was attached. Writing both Left Drawer and Right Drawer is a different shape from every other line here and changes the charge, so it is not assumed.",
-      "next": "owner: is `2 side drawer` two drawers on one side, or one on each side?"
     }
   ],
-
   "photoSpecials": [
     {
       "doc": "HC-SO-012599",
-      "add": ["HB Fully Cover"],
+      "add": [
+        "HB Fully Cover"
+      ],
       "by": "photo read, 2026-09-12",
       "evidence": "both attachments on this order are the printed `HB FULLY COVER` reference diagram, which is how this factory records that choice; the line's own text names no headboard treatment",
       "note": "Owner 2026-09-12: 「你顺便看完 HB FULLY COVER 的东西，也是顺便标选 HB FULLY COVER，就是全部 special」."
     }
-  ]
+  ],
+  "_scope_rule_for_unstated_sides": "Owner, 2026-09-13, on the side drawers whose hand nobody wrote: 「要看照片 看有没有 要不然就是还没有 proceed 就不需要看」. So: if the line has a slip PHOTO, read it and record the hand here. If it has NO photo AND the order is not proceeded (internal_expected_dd IS NULL), leave it alone - the hand can be asked when the order is actually proceeded, and chasing it now is work nobody needs. Only a line with no photo that IS proceeded has to be chased with the salesperson. Same shape as the memory note sofa-direction-scope-is-unproceeded-only, in reverse.",
+  "_catalogue_decisions_2026_09_13": {
+    "unifyLegacySpellings": "Owner: 「3 统一nylon」 - unify the NYLON family only for now. Measured on production 2026-09-13 (run 34728515268): 32 spellings of `Nylon Fabric` across 595 document lines, the largest of 14 such groups. The other 13 groups - HB Fully Cover 288 lines / 28 spellings, Seat Base Fully Cover with no Leg 105, HB Straight 62, Change 8030 Backcushion 61, Divan Full Cover 47, and the rest - are NOT authorised and stay as they are until he says so.",
+    "retireUnusedOptions": "Owner: 「4 暂时不收」 - the 10 catalogue options no document carries stay in the picker for now. Do not raise again unless he asks."
+  }
 }
