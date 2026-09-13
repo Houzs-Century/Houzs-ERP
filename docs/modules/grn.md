@@ -45,6 +45,7 @@ On POST, qty_received rolls up to PO items"* (`grns.ts:1-2`).
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS.grns` (`:1159-1192`). |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:324`; status actions `:535-542`. |
 | Mobile convert (PO→GRN) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "grn"`, **no line picker** — a whole-PO convert. Offered only to a caller who passes `canOperateGoodsReceipts` — see below. |
+| Mobile new (direct, manual receipt) | `frontend/src/mobile/MobilePurchaseDocNew.tsx` | `kind = "grn"`. What the list `+` opens since 2026-09-13; links to the convert wizard. See below. |
 
 **The mobile `+` is an OPERATE gate (2026-08-14).** `MobileModuleList` renders the
 `+` on the presence of an `onNew` callback alone, and `MobileConvertWizard` imports
@@ -57,6 +58,30 @@ met the area guard's 403 at the end of it. The gate is now
 `scm/middleware/area-guard` — `edit` on the area for POST/PATCH/PUT/DELETE, with
 `*` always passing. The target chain has no default arm, so a new ConvertTarget
 that forgets its gate will not typecheck.
+
+**Mobile DIRECT create (2026-09-13).** Owner 2026-09-12: 「电脑版本有的，手机版本都要有」, and
+the convert wizard is not how he wants to create. The list's `+` now opens
+`frontend/src/mobile/MobilePurchaseDocNew.tsx` (`kind = "grn"`) — a direct
+create — and that screen offers "From a Purchase Order instead", which opens the existing convert wizard. The request body, the pre-checks and the
+module-to-document mapping live in `frontend/src/mobile/mobile-purchase-doc.ts`; the
+`+` is gated by `mayCreatePurchaseDoc`, which calls `canOperateGoodsReceipts`
+(`frontend/src/auth/salesAccess.ts`) — the same helper as before, no new rule.
+
+It raises a MANUAL receipt (`purchaseOrderId: null`, every line
+`purchaseOrderItemId: null`) through `useCreateGrn`, the body `GrnNew` sends for a
+manual receipt: `warehouseId` required (the server refuses `warehouse_required`,
+since a manual receipt has no PO line to resolve one from), accepted = received,
+rejected 0. A non-draft then calls `usePostGrn` as `GrnNew` does (an idempotent
+no-op on an already-POSTED receipt). The create response's `movementErrors` is read
+through the shared `reportInBandFailure`, and a `zero_cost_receipt` refusal is shown
+through `zeroCostRefusalText` — which lines, and what each normally costs.
+
+What the phone form does NOT do yet, stated so nobody reads it as full parity: no
+product-option editor (fabric / size / heights), no supplier price auto-fill, MYR
+only (no exchange rate or landed-cost allocation), no per-line delivery date,
+warehouse override, discount or rack. The unit price starts BLANK, never at the
+catalog selling price and never at a `0.00` that drops keystrokes. Trace:
+`docs/bugs/0872-the-phone-could-not-create-a-purchase-order-goods-receipt-or.md`.
 
 
 Desktop routes: `frontend/src/App.tsx:542-545`, behind
