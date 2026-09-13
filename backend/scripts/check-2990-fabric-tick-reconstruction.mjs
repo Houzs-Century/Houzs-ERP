@@ -50,7 +50,7 @@ async function main() {
   if (!co) { await sql.end(); console.error(`::error::no company ${COMPANY}`); process.exit(1); }
 
   const colours = await sql`
-    SELECT colour_id, fabric_id FROM scm.fabric_colours
+    SELECT colour_id::text AS colour_id, fabric_id::text AS fabric_id FROM scm.fabric_colours
      WHERE company_id = ${COMPANY} AND coalesce(active, true) = true`;
   const coloursBySeries = new Map();
   for (const r of colours) {
@@ -60,17 +60,23 @@ async function main() {
   }
 
   const models = await sql`
-    SELECT id, model_code, allowed_options FROM scm.product_models
+    SELECT id::text AS id, model_code, allowed_options FROM scm.product_models
      WHERE company_id = ${COMPANY} AND upper(coalesce(category::text,'')) = 'SOFA'
      ORDER BY model_code`;
 
   /* The SERIES each Model's own SKUs offer. product_fabrics is per PRODUCT, so
      a Model's set is the union over its products — which is what the Modular
      drawer shows at the Model layer. */
+  /* Cast both sides: mfg_products.id is TEXT (`mfg-<hex>`) and the first run
+     of this check died on `operator does not exist: text = uuid`. Count the
+     table's rows for the company separately, so a join that matches nothing
+     reads as "no join", never as "no series". */
+  const [pfTotal] = await sql`
+    SELECT count(*)::int AS n FROM scm.product_fabrics WHERE company_id = ${COMPANY}`;
   const pf = await sql`
-    SELECT p.model_id, f.fabric_id, f.active
+    SELECT p.model_id::text AS model_id, f.fabric_id::text AS fabric_id, f.active
       FROM scm.product_fabrics f
-      JOIN scm.mfg_products p ON p.id = f.product_id
+      JOIN scm.mfg_products p ON p.id::text = f.product_id::text
      WHERE f.company_id = ${COMPANY} AND p.model_id IS NOT NULL`;
   const seriesByModel = new Map();
   for (const r of pf) {
@@ -84,6 +90,7 @@ async function main() {
 
   log(`${co.code}: ${models.length} SOFA Model(s); ${colours.length} active colour(s) across ${coloursBySeries.size} series.`);
   log(`Pool sizes the clear recorded for this company: ${RECORDED.join(" / ")}`);
+  log(`product_fabrics rows for this company: ${pfTotal.n}; joined to a Model: ${pf.length}`);
   log(`Models with any product_fabrics series: ${seriesByModel.size}`);
 
   const rows = [];

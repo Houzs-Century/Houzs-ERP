@@ -114,6 +114,19 @@ describe('every document that CAN add a line offers it from the page you start o
     });
   }
 
+  it('the SALES INVOICE uses the shared word WITHOUT a handoff — it has no editor to hand off to', () => {
+    /* The fifth document, added 2026-09-13. Its add row opens IN PLACE on
+       `SalesInvoiceDetailV2.tsx`, because unlike the four above it has no
+       separate V1 editor page and `addLineHref` would point at nothing. The
+       word on the button is still the shared one, which is the part the owner
+       reads; asserting the ABSENCE of `addLineHref` here stops a later sweep
+       "fixing" this page into a link to a page that does not exist. */
+    const page = read('pages/scm-v2/SalesInvoiceDetailV2.tsx');
+    expect(page).toContain('useSalesInvoiceAddLine');
+    expect(page).not.toContain('addLineHref');
+    expect(read('pages/scm-v2/SalesInvoiceAddLine.tsx')).toContain('ADD_LINE_LABEL');
+  });
+
   it('no editor still spells the action its own way', () => {
     /* Four documents had four names. A page that reintroduces one is a page
        the owner will not find the button on. */

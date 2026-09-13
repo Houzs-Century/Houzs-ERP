@@ -105,6 +105,7 @@ import { clearPaymentRetryHandoff, completePaymentRetryDraft, consumePaymentRetr
 import { transferFromColumnLabel } from "../../lib/convertScope";
 import { customerRefOf } from '../../lib/customer-ref';
 
+import { useSalesInvoiceAddLine } from "./SalesInvoiceAddLine";
 import { ActivityRow } from "./ActivityRow";
 import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { isFocLine } from '../../vendor/scm/lib/foc-line';
@@ -737,6 +738,10 @@ export function SalesInvoiceDetailV2() {
   // editor (no navigation; ?edit=1 was dead). invoice_date is only editable
   // while DRAFT; the backend rejects it once issued.
   const siIsDraft = (salesInvoice?.status || "").toUpperCase() === "DRAFT";
+  /* Add line — the SI has no separate editor page to hand off to, so its add
+     row opens in place. Gated on the Edit permission AND on DRAFT, which is
+     exactly what POST /:id/items allows. See SalesInvoiceAddLine.tsx. */
+  const addLine = useSalesInvoiceAddLine(id ?? null, canWriteSi && siIsDraft);
   const startEditHeader = () => {
     if (!salesInvoice) return;
     setHdrInvoiceDate(salesInvoice.invoice_date.slice(0, 10));
@@ -1622,7 +1627,7 @@ export function SalesInvoiceDetailV2() {
             </Section>
 
             {/* Line items — money-forward, 5 cols. FOC badge on zero-price. */}
-            <Section title={`Line items · ${items.length}`}>
+            <Section title={`Line items · ${items.length}`} actions={addLine.action}>
               <DataTable<SiItem>
                 tableId={`si-lines-${id}`}
                 layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.salesInvoiceLines}
@@ -1632,6 +1637,7 @@ export function SalesInvoiceDetailV2() {
                 getRowKey={(l) => l.id}
                 emptyLabel="No line items"
               />
+              {addLine.panel}
             </Section>
 
             {/* Owner 2026-07-17: Totals·Margin (Revenue/Cost/Margin/Margin%)
