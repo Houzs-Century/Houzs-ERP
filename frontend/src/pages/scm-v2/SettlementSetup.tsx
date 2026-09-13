@@ -71,8 +71,17 @@ export const SettlementSetup = () => {
         </>
       )}
 
-      <DefaultBankCard />
-      <NumberingCard />
+      {/* Per-company settings in ONE card — label column, content column —
+          instead of two floating strips (owner 2026-09-13: setup 的东西很乱不
+          整齐; docs/bugs/0857). */}
+      <section className={css.card}>
+        <div className={css.cardHead}>
+          <span className={css.cardTitle}>This company&rsquo;s defaults</span>
+          <span className={css.hint}>The bank every voucher starts from, and the letter each bank&rsquo;s vouchers carry. Per company — switch companies in the top bar for the other one.</span>
+        </div>
+        <DefaultBankRow />
+        <NumberingRow />
+      </section>
       <BankStatementsCard />
       <BankRulesCard />
     </div>
@@ -148,7 +157,11 @@ const BankStatementsCard = () => {
       )}
       {configs.length > 0 && (
         <div className={css.scroll}>
-          <table className={css.grid}>
+          <table className={`${css.grid} ${css.fixed}`}>
+            <colgroup>
+              <col style={{ width: 120 }} /><col style={{ width: 80 }} /><col style={{ width: 160 }} />
+              <col style={{ width: 200 }} /><col /><col style={{ width: 90 }} />
+            </colgroup>
             <thead>
               <tr>
                 <th className={css.head}>Account</th><th className={css.head}>Bank</th><th className={css.head}>Account no.</th>
@@ -158,14 +171,22 @@ const BankStatementsCard = () => {
             <tbody>
               {configs.map((c) => (
                 <tr key={c.id} className={css.row}>
-                  <td className={css.label}><div className={css.name}>{c.account_code}</div></td>
-                  <td>{c.bank_code}{c.is_active ? '' : ' (off)'}</td>
-                  <td>{c.account_no ?? '—'}</td>
-                  <td>{c.statement_format}{c.delimiter ? ` · ${c.delimiter === '\t' ? 'tab' : c.delimiter}` : ''} · {c.amount_format}</td>
-                  <td style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-                    {HEADING_ROLES.filter((r) => joinHeadings(c.column_map[r.key])).map((r) => `${r.label.replace(/ headings?.*$/i, '')}: ${joinHeadings(c.column_map[r.key])}`).join(' · ') || 'built-in names'}
+                  <td className={`${css.label} ${css.nowrap}`}><span className={`${css.name} ${css.mono}`}>{c.account_code}</span></td>
+                  <td className={`${css.cell} ${css.nowrap}`}>{c.bank_code}{c.is_active ? '' : ' (off)'}</td>
+                  <td className={`${css.cell} ${css.nowrap} ${css.mono}`}>{c.account_no ?? '—'}</td>
+                  <td className={`${css.cell} ${css.nowrap}`}>
+                    {c.statement_format}{c.delimiter ? ` · ${c.delimiter === '\t' ? 'tab' : c.delimiter}` : ''} · {c.amount_format === 'integer-sen' ? 'integer sen' : c.amount_format}
                   </td>
-                  <td><button type="button" style={btn()} onClick={() => edit(c)}>Edit</button></td>
+                  <td className={css.cell}>
+                    {/* The roles the file names, as chips; the captions themselves on hover and under Edit. */}
+                    <div className={css.chips}>
+                      {HEADING_ROLES.filter((r) => joinHeadings(c.column_map[r.key])).map((r) => (
+                        <span key={r.key} className={css.chip} title={joinHeadings(c.column_map[r.key])}>{r.label.replace(/ headings?( \(joined\))?$/i, '')}</span>
+                      ))}
+                      {HEADING_ROLES.every((r) => !joinHeadings(c.column_map[r.key])) && <span className={css.hint}>built-in names</span>}
+                    </div>
+                  </td>
+                  <td className={css.cell}><button type="button" style={btn()} onClick={() => edit(c)}>Edit</button></td>
                 </tr>
               ))}
             </tbody>
@@ -177,38 +198,44 @@ const BankStatementsCard = () => {
         {note && <span style={{ ...softText, color: note.includes('saved') ? undefined : danger }}>{note}</span>}
       </div>
       {form && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 'var(--space-2)', fontSize: 'var(--fs-13)' }}>
-          <label>Account<br />
-            <select aria-label="Statement account" value={form.accountCode} onChange={(e) => set({ accountCode: e.target.value })} disabled={configs.some((c) => c.account_code === form.accountCode)} style={{ width: '100%' }}>
-              <option value="">— pick the bank account —</option>
-              {money.map((a) => <option key={a.account_code} value={a.account_code}>{a.account_code} · {a.account_name}</option>)}
-            </select>
-          </label>
-          <label>Bank<br /><input aria-label="Bank" value={form.bankCode} onChange={(e) => set({ bankCode: e.target.value })} placeholder="HLB / MBB / PBB…" style={{ width: '100%' }} /></label>
-          <label>Account number (the file must mention it)<br /><input aria-label="Account number" value={form.accountNo} onChange={(e) => set({ accountNo: e.target.value })} style={{ width: '100%' }} /></label>
-          <label>File format<br />
-            <select aria-label="File format" value={form.statementFormat} onChange={(e) => set({ statementFormat: e.target.value })} style={{ width: '100%' }}>
-              <option value="CSV">CSV</option><option value="TXT">TXT</option>
-            </select>
-          </label>
-          <label>Delimiter<br />
-            <select aria-label="Delimiter" value={form.delimiter} onChange={(e) => set({ delimiter: e.target.value })} style={{ width: '100%' }}>
-              <option value="">comma</option><option value="|">pipe |</option><option value="tab">tab</option><option value=";">semicolon ;</option>
-            </select>
-          </label>
-          <label>Amounts<br />
-            <select aria-label="Amount format" value={form.amountFormat} onChange={(e) => set({ amountFormat: e.target.value })} style={{ width: '100%' }}>
-              <option value="decimal">decimal (1,710.00)</option><option value="integer-sen">integer sen (000000000171000)</option>
-            </select>
-          </label>
-          <label>Credit indicator<br /><input aria-label="Credit indicator" value={form.creditIndicator} onChange={(e) => set({ creditIndicator: e.target.value })} style={{ width: '100%' }} /></label>
-          {HEADING_ROLES.map((r) => (
-            <label key={r.key}>{r.label}<br />
-              <input aria-label={r.label} value={form[r.key]} onChange={(e) => set({ [r.key]: e.target.value } as Partial<ConfigForm>)}
-                placeholder={(defaults[r.key] ?? []).slice(0, 3).join(', ') || '—'} style={{ width: '100%' }} />
+        <div className={css.formCard} aria-label="Statement setup form">
+          {/* Row 1 — the file's identity. Row 2 — its headings. Every field the
+              same width, its label above it. */}
+          <div className={css.formRow7}>
+            <label className={css.field}>Account
+              <select aria-label="Statement account" value={form.accountCode} onChange={(e) => set({ accountCode: e.target.value })} disabled={configs.some((c) => c.account_code === form.accountCode)}>
+                <option value="">— pick the bank account —</option>
+                {money.map((a) => <option key={a.account_code} value={a.account_code}>{a.account_code} · {a.account_name}</option>)}
+              </select>
             </label>
-          ))}
-          <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+            <label className={css.field}>Bank<input aria-label="Bank" value={form.bankCode} onChange={(e) => set({ bankCode: e.target.value })} placeholder="HLB / MBB / PBB…" /></label>
+            <label className={css.field}>Account number<input aria-label="Account number" value={form.accountNo} onChange={(e) => set({ accountNo: e.target.value })} placeholder="the file must mention it" /></label>
+            <label className={css.field}>File format
+              <select aria-label="File format" value={form.statementFormat} onChange={(e) => set({ statementFormat: e.target.value })}>
+                <option value="CSV">CSV</option><option value="TXT">TXT</option>
+              </select>
+            </label>
+            <label className={css.field}>Delimiter
+              <select aria-label="Delimiter" value={form.delimiter} onChange={(e) => set({ delimiter: e.target.value })}>
+                <option value="">comma</option><option value="|">pipe |</option><option value="tab">tab</option><option value=";">semicolon ;</option>
+              </select>
+            </label>
+            <label className={css.field}>Amounts
+              <select aria-label="Amount format" value={form.amountFormat} onChange={(e) => set({ amountFormat: e.target.value })}>
+                <option value="decimal">decimal (1,710.00)</option><option value="integer-sen">integer sen (000000000171000)</option>
+              </select>
+            </label>
+            <label className={css.field}>Credit indicator<input aria-label="Credit indicator" value={form.creditIndicator} onChange={(e) => set({ creditIndicator: e.target.value })} /></label>
+          </div>
+          <div className={css.formRow8}>
+            {HEADING_ROLES.map((r) => (
+              <label key={r.key} className={css.field}>{r.label.replace(/ headings?$/i, '')}
+                <input aria-label={r.label} value={form[r.key]} onChange={(e) => set({ [r.key]: e.target.value } as Partial<ConfigForm>)}
+                  placeholder={(defaults[r.key] ?? []).slice(0, 3).join(', ') || '—'} />
+              </label>
+            ))}
+          </div>
+          <div className={css.formActions}>
             <span style={softText}>A blank heading uses the reader's built-in names (shown greyed). Save, then upload on Bank Recon.</span>
             <span style={{ flex: 1 }} />
             <button type="button" style={btn(true, save.isPending || !form.accountCode || !form.bankCode)} disabled={save.isPending || !form.accountCode || !form.bankCode} onClick={submit}>
@@ -250,7 +277,10 @@ const BankRulesCard = () => {
         <span className={css.hint}>How a statement credit is known to be an acquirer&rsquo;s payout. Shared by every company; a broken pattern is refused, not saved.</span>
       </div>
       <div className={css.scroll}>
-        <table className={css.grid}>
+        <table className={`${css.grid} ${css.fixed}`}>
+          <colgroup>
+            <col style={{ width: 110 }} /><col /><col style={{ width: 140 }} /><col style={{ width: 90 }} /><col style={{ width: 80 }} /><col style={{ width: 100 }} />
+          </colgroup>
           <thead>
             <tr>
               <th className={css.head}>Acquirer</th>
@@ -267,7 +297,7 @@ const BankRulesCard = () => {
               const dirty = drafts[r.id] != null && Object.keys(drafts[r.id]!).length > 0;
               return (
                 <tr key={r.id} className={css.row}>
-                  <td className={css.label}><b>{r.acquirer_code}</b></td>
+                  <td className={`${css.label} ${css.nowrap}`}><b className={css.mono}>{r.acquirer_code}</b></td>
                   <td style={{ padding: '4px 8px' }}>
                     <input
                       aria-label={`Pattern for ${r.acquirer_code} rule ${r.id}`}
@@ -361,7 +391,7 @@ const BankRulesCard = () => {
    letter typed HERE, never a deploy) and the suffix width (3 → -001, up to
    5). The PV series (8b), the OR channels (9) and transfers (10) all read
    the same letters, so Maybank is M everywhere or nowhere. */
-const NumberingCard = () => {
+const NumberingRow = () => {
   const q = useVoucherNumbering();
   const save = useSaveVoucherNumbering();
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -380,10 +410,10 @@ const NumberingCard = () => {
   const dirty = dirtyLetters.length > 0 || (digits != null && digits !== (q.data?.digits ?? 3));
 
   return (
-    <section className={css.card}>
-      <div style={{ padding: 'var(--space-3)' }} className="space-y-2">
-        <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-          <b style={{ fontSize: 'var(--fs-14)' }}>Voucher numbering (this company)</b>
+    <div className={css.defs}>
+      <div className={css.defLabel}>Voucher numbering</div>
+      <div className="space-y-2" style={{ minWidth: 0 }}>
+        <div className={css.defRow}>
           <span style={softText}>每家银行一个字母 (Maybank M → 2990-MPV-2609-001);位数你自己定</span>
           <span style={{ flex: 1 }} />
           <span style={softText}>Digits</span>
@@ -403,10 +433,11 @@ const NumberingCard = () => {
             {save.isPending ? 'Saving…' : 'Save'}
           </button>
         </div>
-        <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+        <div className={css.letters}>
           {rows.map((a) => (
-            <label key={a.accountCode} style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 'var(--fs-13)' }}>
-              <span style={softText}>{a.accountCode} · {a.accountName}</span>
+            <label key={a.accountCode} className={css.letter}>
+              <span className={css.mono}>{a.accountCode}</span>
+              <span className={css.letterName}>{a.accountName}</span>
               {a.fixedCash === true ? (
                 /* The drawer: C on both papers (CPV / COR), minted off
                    roles.CASH — nothing to type, nothing the Save sends. */
@@ -429,11 +460,12 @@ const NumberingCard = () => {
         </div>
         {note && <div style={softText}>{note}</div>}
       </div>
-    </section>
+    </div>
   );
 };
 
-const DefaultBankCard = () => {
+/* The company's default bank → a row in the defaults card. */
+const DefaultBankRow = () => {
   const rolesQ = useAccountRoles();
   const accountsQ = useAccounts();
   const save = useSaveBankDefault();
@@ -446,11 +478,9 @@ const DefaultBankCard = () => {
   const dirty = !!choice && choice !== current;
 
   return (
-    <section className={css.card}>
-      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap', padding: 'var(--space-3)' }}>
-        <b style={{ fontSize: 'var(--fs-14)' }}>Default bank (this company)</b>
-        <span style={softText}>pre-fills every voucher&rsquo;s Paid From; transfer payments land here</span>
-        <span style={{ flex: 1 }} />
+    <div className={css.defs}>
+      <div className={css.defLabel}>Default bank</div>
+      <div className={css.defRow}>
         <select
           aria-label="Default bank account"
           value={value}
@@ -476,9 +506,9 @@ const DefaultBankCard = () => {
         >
           {save.isPending ? 'Saving…' : 'Save'}
         </button>
+        <span style={softText}>pre-fills every voucher&rsquo;s Paid From; transfer payments land here{note ? ` · ${note}` : ''}</span>
       </div>
-      {note && <div style={{ ...softText, padding: '0 var(--space-3) var(--space-3)' }}>{note}</div>}
-    </section>
+    </div>
   );
 };
 
@@ -749,9 +779,6 @@ const MerchantForm = ({ merchant, onDone }: { merchant: MaintenanceMerchant; onD
       {node}
     </label>
   );
-  const grid: React.CSSProperties = {
-    display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 'var(--space-3)',
-  };
   const input: React.CSSProperties = { padding: '6px 8px', fontSize: 'var(--fs-13)', width: '100%', boxSizing: 'border-box' };
   const legend: React.CSSProperties = {
     fontSize: 'var(--fs-12)', fontWeight: 700, letterSpacing: '.04em',
@@ -768,9 +795,9 @@ const MerchantForm = ({ merchant, onDone }: { merchant: MaintenanceMerchant; onD
         <span style={softText}>Taught once. Every company reads {merchant.display_name}&rsquo;s file this way.</span>
       </div>
 
-      <div className="space-y-2">
+      <div className={css.formCard}>
         <div style={legend}>How the file is built</div>
-        <div style={grid}>
+        <div className={css.formRow4}>
           {field('File format', (
             <select style={input} value={form.statementFormat} aria-label={`${merchant.code} statement format`}
               onChange={(e) => setForm({ ...form, statementFormat: e.target.value })}>
@@ -806,9 +833,9 @@ const MerchantForm = ({ merchant, onDone }: { merchant: MaintenanceMerchant; onD
         )}
       </div>
 
-      <div className="space-y-2">
+      <div className={css.formCard}>
         <div style={legend}>Column headings, exactly as they appear in the file</div>
-        <div style={grid}>
+        <div className={css.formRow5}>
           {HEADING_FIELDS.map((f) => {
             const required = requiredHeadings.includes(f.key);
             return field(`${f.label}${required ? ' *' : ''}`, (
