@@ -111,7 +111,7 @@ const emptySpecialAddon = (): SpecialAddonInput => ({
    stays in the schema and the API — a Sales Director can still author a real
    selling surcharge deliberately, and company 2 carries the value to the 2990s
    POS, which sets its own price — but this screen no longer sets it by accident.
-   docs/bugs/0852. */
+   docs/bugs/0859-one-price-box-wrote-the-cost-into-the-selling-column-so-a-co.md. */
 const withSyncedPrice = (priceSen: number): { costPriceSen: number } =>
   ({ costPriceSen: priceSen });
 

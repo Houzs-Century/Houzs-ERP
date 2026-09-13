@@ -21,7 +21,7 @@
 // figure typed by the owner became a customer surcharge, and "a director set a
 // value" became accidentally true. The tell: all eleven priced options carry
 // selling EXACTLY equal to cost. Both screens are fixed in the same PR; this
-// script repairs the values they already wrote. docs/bugs/0852.
+// script repairs the values they already wrote. docs/bugs/0859-one-price-box-wrote-the-cost-into-the-selling-column-so-a-co.md.
 //
 // WHY IT IS SAFE, MEASURED NOT ASSUMED (prod run 34745750576, 2026-09-13):
 // of 3,948 sofa/bedframe sales lines, 3,944 are on a MIGRATED order where the

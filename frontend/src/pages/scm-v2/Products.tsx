@@ -4418,11 +4418,11 @@ const ProductSuppliersDrawer = ({
    /special-addons/save), which the backend applies onto the live table. SO
    costing keeps reading the live table via loadSpecialAddons — unchanged.
 
-   ONE price: each add-on shows a SINGLE "Price (RM)" — the surcharge that feeds
-   SO costing — written to BOTH selling_price_sen and cost_price_sen so the
-   displayed price and the costing price never diverge (mirrors the other priced
-   pools, where the single priceSen IS the cost). Follow-up choice extras stay
-   selling-only, as in the configurator.
+   ONE box: each add-on shows a SINGLE "Cost (RM)" — the surcharge that feeds
+   SO costing — written to cost_price_sen ONLY. It used to be written to
+   selling_price_sen too, which charged the cost to the customer (docs/bugs/0859).
+   Selling surcharges are a Sales Director's deliberate value, never a copy.
+   Follow-up choice extras stay selling-only, as in the configurator.
    ════════════════════════════════════════════════════════════════════════ */
 
 const senToRmStr = (sen: number): string =>
@@ -4670,9 +4670,7 @@ const SpecialsMaintenancePanel = ({
                 </label>
                 <label style={{ width: 140 }}>
                   <span style={{ display: 'block', fontSize: 'var(--fs-13)', fontWeight: 600, marginBottom: 4 }}>Cost (RM, can be −)</span>
-                  {/* The COST only. Writing it to selling_price_sen as well made
-                      the pricing engine charge it to the CUSTOMER — the selling
-                      side reads sellingPriceSen and adds it (docs/bugs/0852). */}
+                  {/* COST only: writing selling too charged it to the customer (docs/bugs/0859). */}
                   <input type="number" step={1} style={inputStyle}
                     value={Math.round(r.costPriceSen) / 100}
                     onChange={(e) => { const sen = Math.round((Number(e.target.value) || 0) * 100); patchRow(i, { costPriceSen: sen }); }} />
