@@ -12,11 +12,12 @@
 // rule cannot be fixed on one surface and missed on the other — the owner's
 // standing rule, and a bug class this repo keeps paying for.
 //
-// WHAT IS DELIBERATELY NOT ON THIS PAGE: the secret. The API answers with its
-// length and last four characters and nothing else, so there is no code path
-// here that could render it. Also no payload viewer — a delivery carries a
-// customer's name and every line's cost, and this screen is about whether the
-// feed works, not a window onto the orders themselves.
+// WHAT IS DELIBERATELY NOT ON THIS PAGE: a box to type the key into. It is
+// minted by the server, revealed once, and afterwards the API answers with its
+// length, its last four characters and when it was set — so outside that one
+// reveal there is no code path here that could render it. Also no payload viewer
+// — a delivery carries a customer's name and every line's cost, and this screen
+// is about whether the feed works, not a window onto the orders themselves.
 // ---------------------------------------------------------------------------
 
 import { useCallback, useMemo, useState } from "react";
@@ -34,16 +35,19 @@ import { cn } from "../lib/utils";
    through. backend/scripts/check-date-formatting.mjs gates it. */
 import { fmtDateTime } from "../vendor/shared/format";
 import {
-  VP_MIN_SECRET_LEN,
+  VP_DEFAULT_RECEIVER_URL,
+  VP_KEY_PASTE_LINE,
   VP_ROW_STATUS_LABEL,
   VP_ROW_STATUS_TONE,
   useVpActions,
   useVpRows,
   useVpStatus,
+  vpKeyLine,
   vpOutcomeLine,
+  vpReceiverDraft,
+  vpReceiverHint,
   vpRowTodo,
   vpScopeLabel,
-  vpSecretLine,
   vpVerdict,
   type VpRow,
   type VpRowStatus,
@@ -169,17 +173,17 @@ export function VenturePortalFeed() {
      address every fifteen seconds is the classic version of this bug. */
   const [urlDraft, setUrlDraft] = useState<string | null>(null);
   const [sinceDraft, setSinceDraft] = useState<string | null>(null);
-  const [secretDraft, setSecretDraft] = useState("");
   const [companiesDraft, setCompaniesDraft] = useState<string | null>(null);
   const [everyCompany, setEveryCompany] = useState<boolean | null>(null);
 
-  const url = urlDraft ?? s?.connection.url ?? "";
+  /* The receiver address arrives PRE-FILLED with the portal's own when nothing
+     is stored, so the owner never types a URL. vpReceiverHint says plainly that
+     it is only an offer until Save address is pressed. */
+  const url = urlDraft ?? vpReceiverDraft(s);
   const since = sinceDraft ?? s?.connection.since ?? "";
   const scope = s?.feed.scope;
   const companies = companiesDraft ?? (Array.isArray(scope) ? scope.join(", ") : "");
   const allCompanies = everyCompany ?? scope === "all";
-
-  const secretTooShort = secretDraft.length > 0 && secretDraft.length < VP_MIN_SECRET_LEN;
 
   const parsedCompanies = useMemo(
     () =>
@@ -196,7 +200,7 @@ export function VenturePortalFeed() {
     <div className="space-y-4 p-4">
       <PageHeader
         title="Venture Portal Feed"
-        description="Every sales order, its lines, their costs and its cancellations, delivered to the Venture Portal within five minutes of being saved. The portal works out Revenue Department commission from these."
+        description="Every sales order, its lines, their costs and its cancellations, delivered to the Venture Portal from the save itself. The portal works out Revenue Department commission from these."
         primaryAction={
           <Button variant="secondary" icon={<RefreshCw className="h-4 w-4" />} onClick={refresh}>
             Refresh
@@ -289,13 +293,13 @@ export function VenturePortalFeed() {
 
             <Card
               title="Connection"
-              description="Where deliveries go, and the shared secret the portal checks. The secret is never shown again after it is saved."
+              description="Where deliveries go, and the API key the portal checks. The key is generated here and shown once."
             >
-              <Field label="Receiver address" hint="Must be https. The portal owner provides this.">
+              <Field label="Receiver address" hint={vpReceiverHint(s)}>
                 <input
                   className={inputClass}
                   value={url}
-                  placeholder="https://…/api/erp/v1/sales-orders"
+                  placeholder={VP_DEFAULT_RECEIVER_URL}
                   disabled={!canManage}
                   onChange={(e) => setUrlDraft(e.target.value)}
                 />
@@ -324,33 +328,48 @@ export function VenturePortalFeed() {
                 </Button>
               ) : null}
 
-              <Field label="Shared secret" hint={vpSecretLine(s)}>
-                <input
-                  className={inputClass}
-                  type="password"
-                  autoComplete="new-password"
-                  value={secretDraft}
-                  placeholder={`At least ${VP_MIN_SECRET_LEN} characters`}
-                  disabled={!canManage}
-                  onChange={(e) => setSecretDraft(e.target.value)}
-                />
+              {/* THE KEY. No input box: there is nothing here for anybody to
+                  type, which is the change the owner asked for — 「我这边只需要
+                  填那个 API key」, and the one place it is typed is the portal. */}
+              <Field label="API key" hint={vpKeyLine(s)}>
+                <div className="rounded-md border border-border bg-canvas px-3 py-2 font-mono text-sm text-ink-muted">
+                  {s.connection.secret.set ? `····${s.connection.secret.tail}` : "not set"}
+                </div>
               </Field>
-              {secretTooShort ? (
-                <p className="text-xs text-err">
-                  Too short — {secretDraft.length} of {VP_MIN_SECRET_LEN} characters.
-                </p>
+
+              {/* THE ONE-TIME REVEAL. Shown only while the shared layer is
+                  holding a freshly minted key; after Done it is gone from the
+                  browser and the server will not answer it again. */}
+              {actions.revealedKey ? (
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
+                  <p className="text-xs font-semibold text-warning-text">Copy this now</p>
+                  <p className="mt-2 select-all break-all rounded border border-border bg-surface px-2 py-2 font-mono text-sm text-ink">
+                    {actions.revealedKey}
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <Button variant="secondary" className="px-2 py-1 text-xs" onClick={() => void actions.copyKey()}>
+                      {actions.keyCopied ? "Copied" : "Copy"}
+                    </Button>
+                    <Button variant="secondary" className="px-2 py-1 text-xs" onClick={actions.dismissKey}>
+                      Done
+                    </Button>
+                  </div>
+                  <p className="mt-2 text-xs text-ink">{VP_KEY_PASTE_LINE}</p>
+                </div>
               ) : null}
 
               {canManage ? (
                 <div className="flex flex-wrap gap-2">
                   <Button
-                    variant="secondary"
-                    disabled={actions.busy === "secret" || secretDraft.length < VP_MIN_SECRET_LEN}
-                    onClick={() =>
-                      void actions.saveSecret(secretDraft).then(() => setSecretDraft(""))
-                    }
+                    variant={s.connection.secret.set ? "secondary" : "primary"}
+                    disabled={actions.busy === "generate"}
+                    onClick={() => void actions.generateKey()}
                   >
-                    {actions.busy === "secret" ? "Saving" : s.connection.secret.set ? "Replace secret" : "Save secret"}
+                    {actions.busy === "generate"
+                      ? "Generating"
+                      : s.connection.secret.set
+                        ? "Generate a new API key"
+                        : "Generate API key"}
                   </Button>
                   <Button variant="secondary" disabled={actions.busy === "probe"} onClick={() => void actions.probe()}>
                     {actions.busy === "probe" ? "Testing" : "Test connection"}
@@ -362,7 +381,7 @@ export function VenturePortalFeed() {
 
           <Card
             title="The queue"
-            description={`Waiting ${s.queue.pending} · delivered ${s.queue.sent} · not delivered ${s.queue.failed} · out of scope ${s.queue.skipped}. A batch goes out every five minutes, up to ${s.queue.batch} at a time.`}
+            description={`Waiting ${s.queue.pending} · delivered ${s.queue.sent} · not delivered ${s.queue.failed} · out of scope ${s.queue.skipped}. A save sends its own order; a sweep every five minutes collects anything left over, up to ${s.queue.batch} at a time.`}
           >
             {s.queue.lastSent ? (
               <p className="text-xs text-ink-muted">

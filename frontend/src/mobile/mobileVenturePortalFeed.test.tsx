@@ -42,7 +42,7 @@ const status = (over: Partial<VpStatus> = {}): VpStatus => ({
   connection: {
     url: "https://portal.example/api/erp/v1/sales-orders",
     since: "2026-08-01",
-    secret: { set: true, length: 40, tail: "e-42" },
+    secret: { set: true, length: 48, tail: "e-42", setAt: "2026-09-13T07:40:00.000Z" },
     ready: true,
   },
   queue: {
@@ -98,12 +98,49 @@ describe("the phone screen", () => {
     expect(await screen.findByText("1 order could not be delivered")).toBeTruthy();
   });
 
-  it("never renders the shared secret", async () => {
+  it("never renders a key the server did not hand it", async () => {
     wire(status());
     await mount();
-    await screen.findByText(/40 characters/);
+    /* The whole sentence — the mask alone appears twice (the field and its
+       hint), which is correct and an ambiguous query. */
+    await screen.findByText(/Key ····e-42 · generated/);
     expect(document.body.textContent).not.toContain(SECRET);
-    expect(screen.getByPlaceholderText(/At least 32 characters/).getAttribute("type")).toBe("password");
+    /* No box to type a key into on this surface either — the phone must not be
+       the one place the old free-text field survived. */
+    expect(screen.queryByPlaceholderText(/At least 32 characters/)).toBeNull();
+  });
+
+  /* GENERATE MUST WORK FROM A PHONE, and this is where it is most likely to be
+     used: standing in front of the portal on a laptop with the ERP on a phone is
+     exactly the shape of the hand-shake. Same reveal, same instruction, same
+     Done, from the same shared state the desktop reads. */
+  it("reveals a generated key once and lets it go, as the desktop does", async () => {
+    wire(status({
+      connection: { ...status().connection, secret: { set: false, length: 0, tail: "", setAt: null } },
+    }));
+    apiPost.mockResolvedValue({ ok: true, secret: SECRET, mask: { set: true, length: 39, tail: "e-42", setAt: null } });
+    await mount();
+    await screen.findByText(/not wired up yet/i);
+
+    await userEvent.click(screen.getByRole("button", { name: /Generate API key/i }));
+
+    expect(await screen.findByText(SECRET)).toBeTruthy();
+    expect(apiPost).toHaveBeenCalledWith("/api/scm/venture-portal-feed/secret/generate", {});
+    expect(screen.getByText(/Commission Calculation/)).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: /^Done$/ }));
+    expect(screen.queryByText(SECRET)).toBeNull();
+  });
+
+  /* A phone keyboard is the worst place to type a URL, so the offer matters more
+     here than anywhere — and so does saying it is only an offer. */
+  it("offers the portal's own address, and says it is not saved yet", async () => {
+    wire(status({ connection: { ...status().connection, url: "" } }));
+    await mount();
+    expect(
+      await screen.findByDisplayValue("https://venture-portal-chi.vercel.app/api/erp/v1/sales-orders"),
+    ).toBeTruthy();
+    expect(screen.getByText(/Not saved yet/i)).toBeTruthy();
   });
 
   it("goes back when asked", async () => {
@@ -144,14 +181,15 @@ describe("the phone screen", () => {
     wire(status());
     await mount();
     expect(await screen.findByText("HC-SO-013403")).toBeTruthy();
-    /* A 503 is the PORTAL owner's job. Telling somebody to re-send would send
-       them round in circles, so the shared layer points at the right person and
-       both surfaces render its answer.
+    /* A 503 is the portal holding NO key. Since it now takes one pasted on its
+       own page, the next step is on this screen — generate, paste, re-send — and
+       both surfaces render the shared layer's sentence for it.
 
-       MATCHED ON THE WHOLE SENTENCE, not on "portal owner": the receiver-address
-       hint says "The portal owner provides this", so the short phrase matches
-       twice and the looser assertion would have read as a double render. */
-    expect(screen.getByText(/Ask the portal owner to set it/i)).toBeTruthy();
+       MATCHED ON A PHRASE UNIQUE TO THAT SENTENCE. It used to match "portal
+       owner", which also appeared in the receiver-address hint, so the looser
+       assertion would have read as a double render; that hint no longer says it,
+       but the lesson stands and the phrase below appears exactly once. */
+    expect(screen.getByText(/no key of its own yet/i)).toBeTruthy();
   });
 
   it("says out loud when a save is refused", async () => {

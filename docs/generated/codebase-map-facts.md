@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-192 route modules (53 in `backend/src/routes`, 139 in `backend/src/scm/routes`), 1286 endpoint registrations.
+192 route modules (53 in `backend/src/routes`, 139 in `backend/src/scm/routes`), 1287 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -206,7 +206,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/trip-scan-token.ts` | 1 | 61 |
 | `backend/src/scm/routes/trips.ts` | 15 | 1391 |
 | `backend/src/scm/routes/unbilled-deliveries.ts` | 1 | 422 |
-| `backend/src/scm/routes/venture-portal-feed.ts` | 9 | 451 |
+| `backend/src/scm/routes/venture-portal-feed.ts` | 10 | 527 |
 | `backend/src/scm/routes/venues.ts` | 4 | 283 |
 | `backend/src/scm/routes/warehouse-mirror.ts` | 1 | 185 |
 | `backend/src/scm/routes/warehouse.ts` | 9 | 699 |
@@ -227,7 +227,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2256 files, 762970 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2280 files, 766154 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -244,7 +244,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4518 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4486 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4342 |
-| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4204 |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4205 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3733 |
 | `backend/src/scm/routes/grns.ts` | 3564 |
 | `frontend/src/components/DataTable.tsx` | 3456 |
@@ -430,14 +430,14 @@ Page files by directory:
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 157 |
+| `frontend/src/pages/scm-v2` | 159 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 10 |
 
 ## 5. Mobile screen inventory
 
-54 screen/component modules in `frontend/src/mobile`.
+55 screen/component modules in `frontend/src/mobile`.
 
 | file | lines |
 |---|---|
@@ -453,6 +453,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileAvatar.tsx` | 148 |
 | `frontend/src/mobile/MobileCalendar.tsx` | 792 |
 | `frontend/src/mobile/MobileChangeLog.tsx` | 237 |
+| `frontend/src/mobile/MobileCollectedOnOrder.tsx` | 37 |
 | `frontend/src/mobile/MobileConvertWizard.tsx` | 1199 |
 | `frontend/src/mobile/MobileCrashBoundary.tsx` | 39 |
 | `frontend/src/mobile/MobileDeliveryFieldsCard.tsx` | 524 |
@@ -467,7 +468,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileLogin.tsx` | 171 |
 | `frontend/src/mobile/MobileMailCenter.tsx` | 1814 |
 | `frontend/src/mobile/MobileMileageCapture.tsx` | 395 |
-| `frontend/src/mobile/MobileModuleDetail.tsx` | 1983 |
+| `frontend/src/mobile/MobileModuleDetail.tsx` | 1990 |
 | `frontend/src/mobile/MobileModuleForm.tsx` | 389 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
@@ -482,7 +483,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileProfile.tsx` | 1002 |
 | `frontend/src/mobile/MobileRelationshipMap.tsx` | 275 |
 | `frontend/src/mobile/MobileRoles.tsx` | 409 |
-| `frontend/src/mobile/MobileSODetail.tsx` | 2096 |
+| `frontend/src/mobile/MobileSODetail.tsx` | 2097 |
 | `frontend/src/mobile/MobileSalesOrders.tsx` | 847 |
 | `frontend/src/mobile/MobileSavedPhotoThumb.tsx` | 82 |
 | `frontend/src/mobile/MobileScan.tsx` | 1467 |
@@ -493,7 +494,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileStockTransferNew.tsx` | 255 |
 | `frontend/src/mobile/MobileTrackingBanner.tsx` | 84 |
 | `frontend/src/mobile/MobileTwoFactorCard.tsx` | 268 |
-| `frontend/src/mobile/MobileVenturePortalFeed.tsx` | 429 |
+| `frontend/src/mobile/MobileVenturePortalFeed.tsx` | 483 |
 | `frontend/src/mobile/MobileVirtualList.tsx` | 159 |
 
 ## 6. Destinations served by both surfaces

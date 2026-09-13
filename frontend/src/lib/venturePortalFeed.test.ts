@@ -16,14 +16,18 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  VP_DEFAULT_RECEIVER_URL,
+  VP_KEY_PASTE_LINE,
   VP_PORTAL_OUTCOME_LABEL,
   VP_ROW_STATUS_LABEL,
   VP_ROW_STATUS_TONE,
+  vpKeyLine,
   vpOldestPendingHours,
   vpOutcomeLine,
+  vpReceiverDraft,
+  vpReceiverHint,
   vpRowTodo,
   vpScopeLabel,
-  vpSecretLine,
   vpVerdict,
   type VpRow,
   type VpStatus,
@@ -38,6 +42,7 @@ const status = (over: {
   sent?: number;
   failed?: number;
   oldestPendingAt?: string | null;
+  secretSetAt?: string | null;
 } = {}): VpStatus => ({
   feed: {
     enabled: over.enabled ?? true,
@@ -48,8 +53,13 @@ const status = (over: {
     url: over.url ?? "https://portal.example/api/erp/v1/sales-orders",
     since: "",
     secret: over.secretSet === false
-      ? { set: false, length: 0, tail: "" }
-      : { set: true, length: 40, tail: "9f2a" },
+      ? { set: false, length: 0, tail: "", setAt: null }
+      : {
+          set: true,
+          length: 48,
+          tail: "9f2a",
+          setAt: over.secretSetAt === undefined ? "2026-09-13T07:40:00.000Z" : over.secretSetAt,
+        },
     ready: true,
   },
   queue: {
@@ -128,7 +138,11 @@ describe("the verdict", () => {
     const stuck = vpVerdict(status({ pending: 8, oldestPendingAt: new Date(Date.now() - 5 * 3_600_000).toISOString() }));
     expect(stuck.tone).toBe("bad");
     expect(stuck.headline).toMatch(/waiting 5h/);
-    expect(stuck.detail).toMatch(/sender having stopped/i);
+    /* Names BOTH senders, because there are two now: the save's own kick and the
+       five-minute sweep. An hour-old row means neither ran, and saying only "the
+       sender stopped" would leave somebody looking for one thing. */
+    expect(stuck.detail).toMatch(/neither is running/i);
+    expect(stuck.detail).toMatch(/from the save itself/i);
   });
 
   it("is quiet when there is nothing to do", () => {
@@ -165,18 +179,71 @@ describe("the scope, as a sentence", () => {
   });
 });
 
-describe("the secret line", () => {
+describe("the key line", () => {
   /* THE WHOLE SECURITY PROPERTY OF THE PAGE, asserted rather than assumed: the
-     sentence recognises the secret and cannot reconstruct it. */
-  it("describes the secret without being able to reveal it", () => {
-    const line = vpSecretLine(status());
-    expect(line).toMatch(/40 characters/);
-    expect(line).toMatch(/9f2a/);
-    expect(line).not.toMatch(/^Set \(.*[a-z]{20}/);
+     sentence lets an operator RECOGNISE the key without carrying enough of it to
+     reconstruct one. Four characters and a timestamp answer "is the portal
+     holding the key I generated on Sunday?" and nothing else. */
+  it("recognises the key without being able to reveal it", () => {
+    const line = vpKeyLine(status());
+    expect(line).toMatch(/····9f2a/);
+    expect(line).toMatch(/generated 13\/09\/2026 /);
+    /* Nothing that could be a key: no run of key-shaped characters. The status
+       payload cannot carry one, and this pins that the sentence would not print
+       it if a future endpoint change ever did. */
+    expect(line).not.toMatch(/[A-Za-z0-9_-]{12}/);
   });
 
-  it("says plainly that deliveries are refused until it is set", () => {
-    expect(vpSecretLine(status({ secretSet: false }))).toMatch(/refuse every delivery/i);
+  it("still names the key when the server did not say when it was set", () => {
+    const line = vpKeyLine(status({ secretSetAt: null }));
+    expect(line).toBe("Key ····9f2a");
+  });
+
+  /* NOT "the portal will refuse every delivery" any more — true, but not an
+     instruction. The operator has one button to press and the sentence names it. */
+  it("tells somebody with no key what to do about it", () => {
+    const line = vpKeyLine(status({ secretSet: false }));
+    expect(line).toMatch(/Generate one/i);
+    expect(line).toMatch(/Venture Portal/);
+  });
+});
+
+describe("the receiver address", () => {
+  /* 「我这边只需要填那个 API key」 — the owner fills in ONE thing, and a URL is
+     not it. The portal's own address is offered so it never has to be typed. */
+  it("offers the portal's own address when nothing is stored", () => {
+    expect(vpReceiverDraft(status({ url: "" }))).toBe(VP_DEFAULT_RECEIVER_URL);
+    expect(VP_DEFAULT_RECEIVER_URL.startsWith("https://")).toBe(true);
+    expect(VP_DEFAULT_RECEIVER_URL.endsWith("/api/erp/v1/sales-orders")).toBe(true);
+  });
+
+  it("never overrides an address somebody already saved", () => {
+    expect(vpReceiverDraft(status({ url: "https://elsewhere.example/erp" }))).toBe(
+      "https://elsewhere.example/erp",
+    );
+  });
+
+  /* THE TRAP THIS HINT EXISTS FOR: a pre-filled box looks exactly like a saved
+     one, so without a sentence somebody would turn the feed on believing the
+     receiver was configured while vp.url is still empty and the drain answers
+     not_configured. */
+  it("says plainly that the offered address is not saved yet", () => {
+    expect(vpReceiverHint(status({ url: "" }))).toMatch(/Not saved yet/i);
+    expect(vpReceiverHint(status({ url: "" }))).toMatch(/Save address/);
+    expect(vpReceiverHint(status())).toMatch(/^Saved\./);
+  });
+});
+
+describe("the one-time reveal's instruction", () => {
+  /* The whole hand-shake is one paste, and it fails silently if the operator
+     cannot find the page. So the sentence names the path, and says the key does
+     not come back. */
+  it("names where the key goes and that it is shown once", () => {
+    expect(VP_KEY_PASTE_LINE).toMatch(/Venture Portal/);
+    expect(VP_KEY_PASTE_LINE).toMatch(/Commission Calculation/);
+    expect(VP_KEY_PASTE_LINE).toMatch(/Houzs ERP link/);
+    expect(VP_KEY_PASTE_LINE).toMatch(/Not shown again/);
+    expect(VP_KEY_PASTE_LINE).toMatch(/rotate/);
   });
 });
 
@@ -215,12 +282,18 @@ describe("a row", () => {
     expect(vpRowTodo(row({ status: "skipped" }))).toBeNull();
   });
 
-  /* The four refusals an operator can actually act on, each pointed at the
-     person who can act. A 503 is the PORTAL owner's job and saying "re-send"
-     there would send somebody round in circles. */
+  /* The four refusals an operator can actually act on, each pointed at the next
+     step rather than at a status code. */
   it("names what to do about each kind of refusal", () => {
-    expect(vpRowTodo(row({ status: "failed", last_error: "http 401 — wrong secret" }))).toMatch(/do not match/i);
-    expect(vpRowTodo(row({ status: "failed", last_error: "http 503 — no secret yet" }))).toMatch(/portal owner/i);
+    /* BOTH KEY REFUSALS END IN THE SAME ACTION and each says which side is
+       empty: 401 is the portal holding a DIFFERENT key, 503 is it holding NONE.
+       Since the portal takes a key pasted on its own page, neither needs
+       anybody else any more — which is why 503 no longer reads "ask the portal
+       owner", a sentence that was true when only a Vercel env var could fix it. */
+    expect(vpRowTodo(row({ status: "failed", last_error: "http 401 — wrong secret" }))).toMatch(/different key/i);
+    expect(vpRowTodo(row({ status: "failed", last_error: "http 401 — wrong secret" }))).toMatch(/paste it in the Venture Portal/i);
+    expect(vpRowTodo(row({ status: "failed", last_error: "http 503 — no secret yet" }))).toMatch(/no key of its own/i);
+    expect(vpRowTodo(row({ status: "failed", last_error: "http 503 — no secret yet" }))).toMatch(/paste it in the Venture Portal/i);
     expect(vpRowTodo(row({ status: "failed", last_error: "http 422 — docNo missing" }))).toMatch(/could not read/i);
     expect(vpRowTodo(row({ status: "failed", last_error: "http 500 (gave up after 6 attempts)" }))).toMatch(/tried several times/i);
     expect(vpRowTodo(row({ status: "failed", last_error: null }))).toMatch(/re-send/i);
