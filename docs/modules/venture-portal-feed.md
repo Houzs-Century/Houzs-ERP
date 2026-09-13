@@ -124,8 +124,22 @@ transaction) -> response -> 1.5 s debounce -> one POST, which the hand-off
 estimates at **2-3 s (LIKELY, not measured)**. Nothing in this repo has yet
 delivered one order to the live portal end to end, because the feed is off and the
 key has to be pasted on the portal by hand first. **Replace this paragraph with
-the number from the first real order** — that is acceptance step 4, and an
-estimate left standing here would read as a measurement to the next person.
+the number from the first real order** — an estimate left standing here would read
+as a measurement to the next person.
+
+**The number comes from a script, not from asking anybody.** Actions ->
+**Venture Portal feed latency (read-only)** -> Run workflow
+(`.github/workflows/venture-portal-latency.yml`,
+`backend/scripts/check-venture-portal-latency.mjs`). It reports the switch, the
+queue counts, and the fastest / median / slowest seconds from `created_at` (the
+capture trigger, inside the salesperson's own transaction — so it IS the save) to
+`sent_at` (the portal's 2xx), plus the oldest row still waiting.
+
+Two things it deliberately does NOT do. It does not label a delivery as the kick's
+or the cron's, because nothing records which sender sent it — a few seconds is
+almost certainly the kick and a multiple of 300s almost certainly the cron, and
+that inference is the reader's, not the script's. And with **zero** delivered rows
+it says NOT MEASURABLE YET rather than reporting a latency computed over nothing.
 
 **What the kick CANNOT see, and the cron still must:** a change to
 `scm.mfg_sales_orders*` made outside a Worker request — a migration backfill, a
@@ -539,6 +553,8 @@ and the `*/5` sweep. `[vp-kick]` in the Worker log is the kick's own failures.
 | `backend/src/db/migrations-pg/20260912T1800_scm_venture_portal_outbox.sql` | table, three triggers, `vp_build_payloads`, `vp_requeue_undelivered`, the seeded `'off'` flag |
 | `backend/src/scm/lib/venture-portal-outbox.ts` | the sender, the response taxonomy, the reconcile, `VP_ROW_STATUSES`, `VP_CONFIG_KEYS`, `mintVpSecret`, `kickVenturePortalDrain` |
 | `backend/src/scm/lib/venture-portal-kick.ts` | the ONE middleware that schedules a drain after a successful SCM write (§2) |
+| `backend/scripts/check-venture-portal-latency.mjs` | the read-only production measurement behind §2's number — switch, queue, fastest/median/slowest save-to-portal seconds |
+| `.github/workflows/venture-portal-latency.yml` | its manual trigger, so nobody opens a SQL console to ask |
 | `backend/src/scm/lib/venture-portal-feed-flag.ts` | the switch + company scope, 30s cache, fails closed to OFF |
 | `backend/src/scm/routes/venture-portal-feed.ts` | the ten endpoints |
 | `frontend/src/lib/venturePortalFeed.ts` | the ONE logic layer for both surfaces |
