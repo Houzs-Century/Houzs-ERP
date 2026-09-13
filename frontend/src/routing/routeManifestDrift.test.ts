@@ -75,7 +75,10 @@ describe("executable route contract", () => {
     // the Venture Portal (which pays Revenue Department commission out of these
     // orders) and its settings: receiver address, shared secret, which
     // companies, start date, and the queue with the reason on the row.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(159);
+    // 160 since 2026-09-13: /scm/fair-pending — the sales orders whose FAIR link
+    // the system could not settle on its own (two booths fit, or the order's
+    // brand has no booth at that event). docs/bugs/0856.
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(160);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -112,7 +115,8 @@ describe("executable route contract", () => {
     // 166 since 2026-09-12 — /scm/credit-notes; see the staff-route count above.
     // 167 since 2026-09-12 — /scm/deposit-invoices; see the staff-route count above.
     // 168 since 2026-09-12 — /venture-portal-feed; see the staff-route count.
-    expect(ROUTE_CONTRACT).toHaveLength(168);
+    // 169 since 2026-09-13 — /scm/fair-pending; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(169);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {
