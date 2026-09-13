@@ -46,13 +46,28 @@ VERIFIED on a fresh connection: all 17 SOFA Model(s) hold 58 colour(s).
 Confirmed through the POS's own endpoint — `GET /pos-pools/mfg-catalog?baseModel=Annsa&category=SOFA`
 with `X-Company-Id: 2` now returns 58 `allowed_options.fabrics`.
 
-**NOT fully recovered, and the owner has noticed:** each 2990 sofa was previously
-ticked to **28 or 36** colours, not all 58. The clear took no backup and printed
-only aggregates, so his exact ticks are not in any backup.
-`check-2990-fabric-tick-reconstruction.mjs` (PR #3785, read-only) tests whether
-they can be worked out from `scm.product_fabrics` — if every Model reconstructs
-to 28 or 36, they are recoverable; if only some do, the check says do NOT apply
-it, because a partially-right tick list silently removes colours he can sell.
+**His own ticks are now RESTORED** (each Model was ticked to 28 or 36, not all 58).
+`scm.product_fabrics` proved empty for company 2 (run 34765055452:
+`product_fabrics rows for this company: 0`). The 2990 SOURCE system still held
+them (run 34765704752: 16 of 17 SOFA Models at 28/36, every colour id active here).
+`restore-2990-fabric-ticks-from-source.mjs` (PR #3793, ledger 0871) put them back;
+staging then production, production run 34766567177:
+
+```
+BACKUP written: 17 model(s), 13766 bytes.
+APPLIED: 16 SOFA Model(s) restored to their source ticks.
+VERIFIED on a fresh connection: 16 Model(s) hold exactly their source pool as a JSON array (... PANTTI=36, the rest 28).
+```
+
+A second plan run (34766609171) reported `Models to restore: 0`. MAKOTO has no
+pool in the source and keeps all colours. Undo: write back
+`scm.app_config['scm.sofa_fabric_pools_before_source_restore']`.
+**Not yet seen on the POS screen** — the Chrome extension was disconnected; the
+database state is what was verified. What it cannot prove: a tick changed inside
+the ERP after migration would not be in the source.
+
+"56" explained: `scm.fabric_colours` has 58 active rows for company 2 but 56
+distinct colour ids — two ids appear under two series.
 
 ---
 
@@ -103,16 +118,13 @@ Guards added, which is the more durable half:
 
 ---
 
-## 4. In flight right now (three background agents)
+## 4. Background work — state at handoff
 
-| what | worktree |
+| what | state |
 |---|---|
-| Sales invoice: add a line — the only document with no add path on any surface | `houzs-work-worktrees/si-add-line` |
-| Collapse the 16 hand-written status maps onto `status-pill.ts` | `houzs-work-worktrees/collapse-status-maps` |
-| Mobile parity: direct create for PO / GR / PI, plus rack lookup | `houzs-work-worktrees/mobile-parity` |
-
-Each was told to work page-by-page behind the existing guards, to keep the
-deliberate differences, and never to ship a half-wired screen.
+| Sales invoice: add a line (desktop) | MERGED #3787, deployed (run 34764719140); ledger 0870 |
+| Collapse status maps onto `status-pill.ts` | 6 of 18 pages in #3792 (queue); follow-up: detail hero badges read "Posted"/"Sent" against the 2026-09-12 "Submitted" ruling — agent fixing, ledger 0868 |
+| Mobile parity: direct create PO/GR/PI + rack lookup | in progress, ledger 0867; then mobile Add line (no mobile surface has it) |
 
 ---
 
@@ -126,8 +138,8 @@ deliberate differences, and never to ship a half-wired screen.
    `wrangler secret put SUPABASE_SERVICE_ROLE_KEY --env staging`. Production is
    unaffected. `docs/bugs/0824-the-staging-rehearsal-had-been-red-every-night-since-2026-08.md`.
 2. **A repo-level `STAGING_DATABASE_URL` points at PRODUCTION.** Same entry.
-3. **The 2990 fabric ticks** — once PR #3785's check has run, either accept "every
-   model offers every colour" or re-tick the models he wants narrowed.
+3. **Look at one 2990 sofa on the POS** (e.g. Annsa) and confirm it offers his 28
+   colours, not all of them. Only needed because the browser check could not run.
 4. **The option-pool question**, framed properly this time: the same column holds
    RESTRICTIONS (`fabrics`, `specials`) and CONFIGURATION (MATTRESS/BEDFRAME
    `sizes`, `mattress_thickness_cm`). Recommendation: clear only the
