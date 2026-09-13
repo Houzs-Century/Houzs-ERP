@@ -119,7 +119,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
 | `backend/src/scm/routes/delivery-returns.ts` | 11 | 1879 |
 | `backend/src/scm/routes/delivery-zones.ts` | 9 | 794 |
-| `backend/src/scm/routes/deposit-invoices.ts` | 8 | 189 |
+| `backend/src/scm/routes/deposit-invoices.ts` | 8 | 214 |
 | `backend/src/scm/routes/document-cancel-routes.ts` | 11 | 692 |
 | `backend/src/scm/routes/document-flow.ts` | 2 | 1069 |
 | `backend/src/scm/routes/document-hold-routes.ts` | 0 | 96 |
@@ -157,7 +157,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mrp.ts` | 2 | 1867 |
 | `backend/src/scm/routes/other-debtors.ts` | 13 | 676 |
 | `backend/src/scm/routes/outstanding.ts` | 3 | 384 |
-| `backend/src/scm/routes/payment-vouchers.ts` | 21 | 1989 |
+| `backend/src/scm/routes/payment-vouchers.ts` | 21 | 1993 |
 | `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 212 |
 | `backend/src/scm/routes/po-amendments.ts` | 7 | 763 |
 | `backend/src/scm/routes/po-gates.ts` | 0 | 90 |
@@ -221,13 +221,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 153 | `154_assr_case_access.sql` (154) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 418 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 420 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2282 files, 767195 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2284 files, 767778 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |

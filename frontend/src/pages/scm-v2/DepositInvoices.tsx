@@ -113,7 +113,10 @@ export const DepositInvoices = () => {
                   <td style={{ ...td, ...num }}>{fmtSen(d.amount_sen)}</td>
                   <td style={td}><StatusPill status={d.status} /></td>
                   <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{d.je_no ?? '—'}</td>
-                  <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{d.credit_note_number ?? (d.credit_note_id ? 'CN' : '—')}</td>
+                  <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>
+                    {d.credit_note_number ?? (d.credit_note_id ? 'CN' : '—')}
+                    {(d.refunded_sen ?? 0) > 0 && <div style={soft}>refunded {fmtSen(d.refunded_sen ?? 0)}</div>}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -253,6 +256,16 @@ const InvoiceDetail = ({ id, onClose }: { id: string; onClose: () => void }) => 
             </div>
             <div><div style={soft}>Status</div><StatusPill status={inv.status} />{inv.je_no ? <span style={soft}> · {inv.je_no}</span> : <span style={{ ...soft, color: danger }}> · not posted</span>}</div>
             {inv.credit_note_id && <div><div style={soft}>Closed by credit note</div><span style={{ fontFamily: 'var(--font-mono)' }}>{inv.credit_note_number ?? inv.credit_note_id}</span></div>}
+            {(inv.refund_notes ?? []).length > 0 && (
+              <div style={{ gridColumn: '1 / -1' }}>
+                <div style={soft}>Refunded {fmtSen(inv.refunded_sen ?? 0)} — the sale this invoice booked is taken back by credit note, one per refund voucher</div>
+                {(inv.refund_notes ?? []).map((n) => (
+                  <div key={n.note_number} style={{ fontFamily: 'var(--font-mono)' }}>
+                    {n.note_number} · {fmtSen(n.total_sen)} · {n.status}{n.pv_number ? ` · refund ${n.pv_number}` : ''}
+                  </div>
+                ))}
+              </div>
+            )}
             {inv.status === 'CANCELLED' && (
               <div style={{ gridColumn: '1 / -1' }}><div style={soft}>Cancelled</div>{inv.cancel_reason ?? '—'}{inv.cancelled_by ? <span style={soft}> · {inv.cancelled_by}</span> : null}{inv.cancelled_at ? <span style={soft}> · {fmtDateOrDash(inv.cancelled_at)}</span> : null}</div>
             )}

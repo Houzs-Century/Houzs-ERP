@@ -448,27 +448,27 @@ Total: 1271 route registrations across 164 files.
 - L2297  POST   /:id/impersonate
 
 ## backend/src/scm/routes/payment-vouchers.ts  (21)
-- L401  GET    /
-- L406  POST   /print-bundle
-- L407  GET    /refund-source
-- L408  POST   /:id/files
-- L409  GET    /:id/files
-- L410  GET    /:id/files/:fileId
-- L411  DELETE /:id/files/:fileId
-- L413  GET    /:id
-- L748  POST   /
-- L947  PATCH  /:id
-- L1350  POST   /:id/post
-- L1400  POST   /:id/submit
-- L1425  POST   /:id/withdraw
-- L1477  POST   /:id/check
-- L1508  POST   /:id/approve
-- L1537  POST   /:id/reject
-- L1744  POST   /:id/cancel
-- L1774  GET    /advances/list
-- L1775  GET    /reservations/list
-- L1875  POST   /:id/apply-advance
-- L1968  POST   /extract
+- L402  GET    /
+- L407  POST   /print-bundle
+- L408  GET    /refund-source
+- L409  POST   /:id/files
+- L410  GET    /:id/files
+- L411  GET    /:id/files/:fileId
+- L412  DELETE /:id/files/:fileId
+- L414  GET    /:id
+- L749  POST   /
+- L948  PATCH  /:id
+- L1353  POST   /:id/post
+- L1403  POST   /:id/submit
+- L1428  POST   /:id/withdraw
+- L1480  POST   /:id/check
+- L1511  POST   /:id/approve
+- L1540  POST   /:id/reject
+- L1748  POST   /:id/cancel
+- L1778  GET    /advances/list
+- L1779  GET    /reservations/list
+- L1879  POST   /:id/apply-advance
+- L1972  POST   /extract
 
 ## backend/src/scm/routes/consignment-orders.ts  (19)
 - L211  GET    /
@@ -1040,14 +1040,14 @@ Total: 1271 route registrations across 164 files.
 - L331  DELETE /:id
 
 ## backend/src/scm/routes/deposit-invoices.ts  (8)
-- L182  GET    /
-- L183  GET    /settings
-- L184  POST   /settings
-- L185  POST   /issue-missing
-- L186  POST   /invoice-delivered
-- L187  GET    /:id
-- L188  POST   /:id/cancel
-- L189  POST   /:id/post
+- L207  GET    /
+- L208  GET    /settings
+- L209  POST   /settings
+- L210  POST   /issue-missing
+- L211  POST   /invoice-delivered
+- L212  GET    /:id
+- L213  POST   /:id/cancel
+- L214  POST   /:id/post
 
 ## backend/src/scm/routes/fabric-tier-addon.ts  (8)
 - L44  GET    /

@@ -34,6 +34,7 @@
 import { requireActiveCompanyId, scopeToCompanyId } from './companyScope';
 import { resolveRoles } from '../../acc/rules';
 import { addCustomerCredit } from './customer-credits';
+import { standingDeposits, type RefundInput } from '../../acc/deposit-refunds';
 
 export type RefundSourceType = 'SO' | 'SI';
 
@@ -61,6 +62,10 @@ export type RefundSource = {
   refunds: RefundVoucherRow[];
   refundedSen: number;
   refundableSen: number;
+  /** Deposit invoices still standing on the order (none closed them), and
+      what is left on them after earlier refunds — posting the refund raises
+      a credit note against them (docs/bugs/0860). Zero on an invoice refund. */
+  deposits: { count: number; standingSen: number };
   eligible: boolean;
   reason: string | null;
 };
@@ -161,6 +166,12 @@ export async function loadRefundSource(
     }));
   }
 
+  let deposits = { count: 0, standingSen: 0 };
+  if (type === 'SO') {
+    const d = await standingDeposits(sb, companyId, docNo);
+    if (!d.ok) return { ok: false, status: 500, error: 'load_failed', message: d.reason };
+    deposits = d.deposits;
+  }
   const bookedSen = payments.filter((p) => p.booked && p.amountSen > 0).reduce((s, p) => s + p.amountSen, 0);
   const prior = await refundsOn(sb, companyId, docNo, excludePvId);
   if (!prior.ok) return { ok: false, status: 500, error: 'load_failed', message: prior.reason };
@@ -175,7 +186,7 @@ export async function loadRefundSource(
     ok: true,
     source: {
       type, docNo, status, customer, payments, bookedSen,
-      refunds: prior.rows, refundedSen, refundableSen,
+      refunds: prior.rows, refundedSen, refundableSen, deposits,
       eligible: ineligible == null && refundableSen > 0,
       reason: ineligible ?? (refundableSen > 0 ? null : `${docNo} is refunded in full already.`),
     },
@@ -283,3 +294,26 @@ export async function bookRefundCredit(
     console.error('[pv-refund] customer credit NOT written:', pv.pv_number, direction, r.reason);
   }
 }
+
+/**
+ * The deposit-invoice half of a POSTED refund (docs/bugs/0860): what the
+ * route hands acc/deposit-refunds, or null when there is nothing to credit
+ * — an invoice refund, no document, no company. Composed here so the route
+ * file keeps its one-line hook.
+ */
+export const refundHookInput = (
+  pv: {
+    id: string; pv_number: string; voucher_date: string; company_id: number | null; purpose: unknown;
+    refund_source_type?: string | null; refund_source_doc_no?: string | null;
+  },
+  totalSen: number,
+  actor: string | null,
+): RefundInput | null => {
+  if (!isRefundPurpose(pv.purpose) || pv.company_id == null) return null;
+  if (String(pv.refund_source_type ?? '').toUpperCase() !== 'SO' || !pv.refund_source_doc_no) return null;
+  return {
+    companyId: pv.company_id, pvId: String(pv.id), pvNumber: pv.pv_number,
+    voucherDate: String(pv.voucher_date ?? '').slice(0, 10), soDocNo: pv.refund_source_doc_no, amountSen: totalSen, actor,
+  };
+};
+const isRefundPurpose = (raw: unknown): boolean => String(raw ?? '').trim().toUpperCase() === 'CUSTOMER_REFUND';

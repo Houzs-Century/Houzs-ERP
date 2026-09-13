@@ -1111,6 +1111,16 @@ refusals in the route.
 
 ## §14 Customer Refund rides the PV (2026-09-07)
 
+**With deposit invoices (2026-09-13, docs/bugs/0860).** A refund voucher
+naming a Sales Order that carries deposit invoices raises, when it POSTS, one
+credit note per deposit invoice it draws on (Dr 509 / Cr AR, oldest first,
+for what still stands — a part refund leaves the rest standing) and its
+cancel contras them; the note carries `refund_pv_id`. The refund form says how
+many deposit invoices stand and for how much (`deposits` on the refund
+source). The rules live in `backend/src/acc/deposit-refunds.ts`; this route
+file holds the two one-line hooks. See the accounting guide's deposit-invoice
+paragraphs.
+
 The owner's design check, answered and confirmed (按 1、2、3 的顺序做): a
 refund to a customer is the same paper as a payment voucher — money leaves a
 bank or the drawer through Draft → Prepared → Checked → Approved, with

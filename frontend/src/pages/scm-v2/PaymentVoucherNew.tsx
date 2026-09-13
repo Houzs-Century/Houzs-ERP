@@ -826,6 +826,16 @@ export const PaymentVoucherNew = () => {
                   </span>
                   <span>Refundable <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.refundableSen)}</b></span>
                 </div>
+                {/* The deposit-invoice half (docs/bugs/0860): said before the
+                    voucher is raised, because a credit note is a document the
+                    customer may hold. */}
+                {refundSrc.deposits != null && refundSrc.deposits.count > 0 && (
+                  <p style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>
+                    {refundSrc.deposits.count} deposit invoice{refundSrc.deposits.count === 1 ? '' : 's'} standing for {fmtRm(refundSrc.deposits.standingSen)} —
+                    when this refund is approved, a credit note is raised against them for the amount refunded (oldest first), so the
+                    sale the deposit invoice booked is taken back with the money. A part refund leaves the rest standing.
+                  </p>
+                )}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
                   <b style={{ fontSize: 'var(--fs-13)' }}>Refund amount (MYR)</b>
                   <label style={{ width: 180 }}>
