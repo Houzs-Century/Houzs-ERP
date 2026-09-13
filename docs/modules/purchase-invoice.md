@@ -176,10 +176,10 @@ the phone's invoice screen. It says **no PO link**, **PO had no price**, or
 **PO RM X** with **+RM d vs PO** when the prices differ.
 
 **List marker.** `GET /purchase-invoices/list-po-price?piIds=` (in
-`purchase-invoices-list-enrichment.ts`, same company predicate as the list)
+`backend/src/scm/routes/purchase-invoices-list-enrichment.ts`, same company predicate as the list)
 returns per invoice `{ linesDiffering, totalDiffSen, comparableLines, lines }`,
 computed through the SAME `attachGrnLineFacts`. The desktop list's **vs PO
-price** column reads it via `usePiListPoPriceMap`
+price** column (`frontend/src/pages/scm-v2/PurchaseInvoicesListV2.tsx`) reads it via `usePiListPoPriceMap`
 (`frontend/src/vendor/scm/lib/pi-list-po-price.ts`): "N lines differ" /
 "Matches PO" / "No PO price". The phone list has no marker: `MobileModuleList.tsx`
 sits at its file-size ceiling and its list config has no per-row enrichment; the
