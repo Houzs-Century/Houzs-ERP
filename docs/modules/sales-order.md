@@ -916,6 +916,9 @@ The Venue field on all three SO forms (`SalesOrderNew`, `SalesOrderDetail`,
 | Picker | `frontend/src/components/FairPicker.tsx` |
 | Settle screen | `frontend/src/pages/scm-v2/FairPending.tsx` -> `/scm/fair-pending` |
 | Data gaps report | `backend/scripts/report-fair-data-gaps.mjs` |
+| Cron registration (UTC hour 0) | `backend/src/index.ts` |
+| Router mount, ahead of `/:docNo` | `backend/src/scm/index.ts` |
+| Route registration | `frontend/src/App.tsx`, `frontend/src/routing/routeManifest.ts` |
 
 **`fair_match` (mig `20260913T1900`) is why a NULL `project_id` is readable.**
 Four different situations used to be one indistinguishable blank:
