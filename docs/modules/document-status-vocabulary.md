@@ -648,3 +648,18 @@ different way:
 Re-run it rather than quoting this table: it is a measurement with an expiry
 date, and the script prints its own corpus.
 
+
+
+### `IN_PRODUCTION` reads "In Production" (owner, 2026-09-13)
+
+The Sales Orders list TAB said "In Production" and the pill said "Proceed" —
+both his words, from different days, in two maps nothing compared. He chose
+「SO 就写 in production」, so the canonical map now says In Production too.
+
+The CONSIGNMENT order keeps "Proceed" for its own `IN_PRODUCTION`: he named the
+sales order, and that is a different document with its own lifecycle.
+
+Guarded by `frontend/src/pages/scm-v2/localStatusMapsAgree.test.ts`, which
+compares every page's own status map against `status-pill.ts` and fails on a
+disagreement that is not recorded as deliberate with its authority. Trace:
+`docs/bugs/0864-the-sales-order-tab-said-in-production-and-the-pill-said-pro.md`.

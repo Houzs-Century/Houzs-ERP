@@ -24,7 +24,7 @@
 //
 // So an empty pool removes the SERIES CHIPS as well as the colours: the
 // salesperson sees nothing to pick. Staff, 2026-09-13: 「Coner 款选不到颜色」
-// 「其他款式也选不了颜色」. docs/bugs/0856.
+// 「其他款式也选不了颜色」. docs/bugs/0858-the-2990-pos-lost-every-sofa-colour-because-our-picker-and-t.md.
 //
 // WHAT THIS RESTORES, and what it CANNOT. The pool holds COLOUR ids. This fills
 // every SOFA Model of the POS company with every ACTIVE colour id belonging to
