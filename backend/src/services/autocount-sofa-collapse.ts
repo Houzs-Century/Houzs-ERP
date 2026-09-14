@@ -744,7 +744,24 @@ export function collapseSofaLines(lines: CollapsibleLine[]): CollapseResult {
     const alreadySeparate = keys.length > 1
       && keys.every((k) => k != null)
       && new Set(keys.map(String)).size === keys.length;
-    if (neverSent || alreadySeparate) {
+    /* A PIECE LINE, NOT A ONE-PIECE BUILD (docs/bugs/0909). A single keyed
+       compartment folds because a folded build of one piece is a real shape.
+       It is not a real shape for a piece the book's grammar has no solo word
+       for — an armed end, a corner, a chaise — while the SAME document holds
+       another piece of that model under a DIFFERENT key: that document stores
+       its pieces as separate book lines. HC-PO-2609-063 carries 8030 1A(LHF)
+       and 1A(RHF) as book lines 929346 and 929348 with a pillow between them,
+       HC-PO-2609-047 carries 9028 L(LHF) and 2A(RHF) as 928220 and 928221 with
+       different specials, and each piece was folded alone and refused
+       ("cannot spell [2A(RHF)]"). Such a piece goes through as itself. */
+    const pieceLine = run.length === 1 && keys[0] != null && !tokenFor(run[0].compartment, 0, 1)
+      && lines.some((l, i) => {
+        if (i === run[0].index || l.linked_ac_dtlkey == null) return false;
+        if (l.item_group != null && up(l.item_group) !== 'SOFA') return false;
+        const sp = splitSofaCode(l.item_code);
+        return sp != null && up(sp.model) === up(runModel) && String(l.linked_ac_dtlkey) !== String(keys[0]);
+      });
+    if (neverSent || alreadySeparate || pieceLine) {
       for (const x of run) out.push({ ...x.line, sourceIndexes: [x.index], via: 'passthrough' });
       run = [];
       runModel = null;

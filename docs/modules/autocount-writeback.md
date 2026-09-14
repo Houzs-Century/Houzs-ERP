@@ -6464,3 +6464,12 @@ everything else in typed order. Size, colour and specials are still compared
 exactly. The echo rungs are unchanged and stay exact. HC-SO-012736
 [Console, 2A(LHF), 1A(RHF)] and HC-GRN-2609-006 had been refused on this.
 `docs/bugs/0906-a-sofa-typed-with-its-armed-end-out-of-place-was-refused-tho.md`.
+
+## A sofa piece kept as its own book line goes through as itself (2026-09-14)
+
+A single keyed compartment folds, since a folded build of one piece is a real
+shape. The exception: a piece with no solo spelling (an armed end, a corner, a
+chaise) goes through as itself when the same document holds another piece of
+that model under a different key. Such a document keeps its pieces as separate
+book lines. HC-PO-2609-063 and HC-PO-2609-047 had been refused on this.
+`docs/bugs/0909-a-sofa-piece-kept-as-its-own-book-line-was-folded-alone-and-refused.md`.
