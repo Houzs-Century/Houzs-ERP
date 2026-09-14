@@ -256,6 +256,9 @@ const CEILINGS = {
 // exactly the size of change that should have to say so out loud.
 const GROWTH = {
   INITIAL_JS_GZIP: 8 * KB,
+  // 2026-09-14: #3818 vendored pdf.js (+97.4 KB gzip, all lazy — loaded on the
+  // press that picks a statement .pdf; initial JS +0.0 KB). It went in under a
+  // one-PR allowance of 100; the merge base carries it now, so back to 60.
   TOTAL_JS_GZIP: 60 * KB,
   // Per-chunk raw growth. A chunk gaining 100 KB raw without crossing the
   // absolute ceiling is still a route getting out of hand.
