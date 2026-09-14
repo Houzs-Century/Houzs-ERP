@@ -66,3 +66,39 @@ export const ASSR_ISSUE_CATEGORIES = [
   "Warranty / service request",
   "Installation / assembly issue",
 ] as const;
+
+/**
+ * "Order PO" — the supplier purchase orders raised from the case's SALES ORDER,
+ * merged by the list and detail reads as `order_pos`
+ * (backend/src/services/assrOrderPos.ts). It is NOT `po_no`: that is the
+ * case's own service PO, which generate-po mints and costing reads.
+ * Read-only, never stored. One reader so the desktop list, the desktop detail
+ * and the phone cannot disagree about which purchase orders a case shows.
+ */
+export type AssrOrderPo = { id: string; po_number: string };
+
+export function assrOrderPos(row: unknown): AssrOrderPo[] {
+  const r = (row ?? {}) as Record<string, unknown>;
+  const raw = r.order_pos ?? r.orderPos;
+  if (!Array.isArray(raw)) return [];
+  const out: AssrOrderPo[] = [];
+  for (const p of raw as Array<Record<string, unknown> | null>) {
+    const id = p?.id;
+    const num = p?.po_number ?? p?.poNumber;
+    if (typeof id === "string" && id && typeof num === "string" && num) out.push({ id, po_number: num });
+  }
+  return out;
+}
+
+/** "PO1 · PO2", the same separator the DO No column uses; "" when none. */
+export function assrOrderPoText(row: unknown): string {
+  return assrOrderPos(row).map((p) => p.po_number).join(" · ");
+}
+
+/** The PO detail page is scoped to the tab's ACTIVE company while Service Cases
+ *  are cross-company, so the link carries the case's company as the
+ *  `?company=` new-window seed (lib/activeCompany.ts consumeCompanyUrlSeed). */
+export function assrOrderPoHref(po: AssrOrderPo, companyId: number | null): string {
+  const base = `/scm/purchase-orders/${encodeURIComponent(po.id)}`;
+  return companyId != null && Number.isInteger(companyId) && companyId > 0 ? `${base}?company=${companyId}` : base;
+}
