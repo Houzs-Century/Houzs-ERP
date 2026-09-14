@@ -1727,6 +1727,26 @@ rows of equal width and the actions to the right. Every hook, label, button
 and refusal is unchanged — `frontend/src/pages/scm-v2/SettlementSetup.test.tsx`
 passes as it was.
 
+**Signs on the four Finance reports, and the Performance summary in its
+columns (2026-09-14/15, docs/bugs/0910; owner: 弄整齐可能 expense 的 column 和
+gp 同一排，percentage 也是。然后 expense 可以不用（）吗？因为本身就是费用，除非他当月是
+ct 大过 debit 才（）).** One rule for P&L, Balance Sheet, Performance P&L and
+Receipts & Payments: a figure is the positive amount it is — an expense is a
+cost, not a negative — and only a line whose credits beat its debits in the
+period (a reversal, the closing-stock credit) prints in parentheses; a loss
+is a negative net and reads the same way; never a minus inside the brackets
+("(RM -1,139.19)" was the P&L's rendering of a reversed expense). The shared
+`fmtSenParen` (`vendor/shared/format.ts`) carries it on the standard
+statements (`Reports.tsx` lost its `negate` sections), `fmtPerf` on the
+Performance P&L, and R&P already printed that way. On the Performance P&L
+the summary lines (gross profit, other income, the computed operating
+expense, the expenses as booked, net) now sit in the SAME table as the
+groups — the label across the first three columns, the amount under Gross
+profit, the line's % of sales under GP % — and `performanceSummaryLines`
+carries `pct` on every line (expenses as their positive amounts; the CSV and
+the PDF print `% of sales` as their third column). Contracts:
+`Reports.test.tsx`, `PerformancePnl.test.tsx`, `performance-pnl-pdf.test.ts`.
+
 **Every payment action by a role holding the correction right owes a reason,
 and Corrections names who first recorded the payment (2026-09-14,
 docs/bugs/0888; owner: 只要是有关 collection payment 的，我或有权限的用户做的动作

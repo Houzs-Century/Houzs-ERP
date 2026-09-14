@@ -52,7 +52,7 @@ export const performanceCsv = (r: PerformanceReport): string => {
   const summary = toCSV(performanceSummaryLines(r), [
     { key: 'line', label: 'Line', getValue: (l) => l.label },
     { key: 'amount', label: 'Amount', getValue: (l) => fmtPerf(l.amountSen) },
-    { key: 'note', label: 'Note', getValue: (l) => l.note ?? '' },
+    { key: 'pct', label: '% of sales', getValue: (l) => fmtPerfPct(l.pct) },
   ]);
   const notes = toCSV(performanceNotes(r).map((n) => ({ n })), [{ key: 'note', label: 'Notes', getValue: (x) => x.n }]);
   return `${toCSV([{ p: `${r.from} to ${r.to}` }], [{ key: 'p', label: 'Performance P&L', getValue: (x) => x.p }])}\r\n\r\n${groups}\r\n\r\n${summary}\r\n\r\n${notes}`;
@@ -133,15 +133,16 @@ export const PerformanceTab = () => {
                 <td style={{ ...td, ...num }}>{fmtPerf(r.totals.gpSen)}</td>
                 <td style={{ ...td, ...num }}>{fmtPerfPct(r.totals.gpPct)}</td>
               </tr>
-            </tbody>
-          </table>
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 'var(--space-3)' }} aria-label="Performance summary">
-            <tbody>
+              {/* The summary sits in the SAME columns as the groups (owner
+                  2026-09-14, docs/bugs/0910: 弄整齐，expense 的 column 和 gp 同一排，
+                  percentage 也是): the amount under Gross profit, its % of sales
+                  under GP %. Expenses print plain; parentheses only for a line
+                  whose credits beat its debits, and for a loss. */}
               {performanceSummaryLines(r).map((l, i) => (
-                <tr key={i} style={l.kind === 'net' ? { fontWeight: 700, borderTop: '2px solid var(--c-ink, #221f20)' } : l.kind === 'total' ? { fontWeight: 600 } : undefined}>
-                  <td style={{ ...td, paddingLeft: l.kind === 'row' ? 24 : 10 }}>{l.label}</td>
-                  <td style={{ ...td, ...num, color: l.kind === 'net' && l.amountSen < 0 ? danger : undefined }}>{fmtPerf(l.amountSen)}</td>
-                  <td style={{ ...td, ...soft, whiteSpace: 'nowrap' }}>{l.note ?? ''}</td>
+                <tr key={i} data-summary={l.kind} style={l.kind === 'net' ? { fontWeight: 700, borderTop: '2px solid var(--c-ink, #221f20)' } : l.kind === 'total' ? { fontWeight: 600 } : undefined}>
+                  <td colSpan={3} style={{ ...td, paddingLeft: l.kind === 'row' ? 24 : 10 }}>{l.label}</td>
+                  <td style={{ ...td, ...num, color: l.amountSen < 0 ? danger : undefined }}>{fmtPerf(l.amountSen)}</td>
+                  <td style={{ ...td, ...num }}>{fmtPerfPct(l.pct)}</td>
                 </tr>
               ))}
             </tbody>
