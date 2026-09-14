@@ -1,6 +1,7 @@
 // ----------------------------------------------------------------------------
 // Amendments — the SO-amendment / revision inbox (Phase 1-C). A DataGrid queue
-// of every amendment across all Sales Orders, newest first. HOUZS VENDOR port
+// of every amendment across all Sales Orders, Requested first, newest first
+// within a status. HOUZS VENDOR port
 // of 2990's apps/backend/src/pages/Amendments.tsx.
 //
 // Row-click routing (Houzs 2026-07-15): a double-click now opens the amendment
@@ -22,6 +23,8 @@ import {
   amendmentBucketOf,
   AMENDMENT_LIST_CHIPS,
   amendmentBucketLabel,
+  amendmentBucketRank,
+  compareAmendmentsForList,
 } from '../../vendor/scm/lib/status-pill';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
@@ -37,6 +40,10 @@ const STATUS_CHIPS = AMENDMENT_LIST_CHIPS;
 
 /* New unique storage key — NEVER reuse another list's key. */
 const AMENDMENT_LIST_STORAGE_KEY = 'so-amendment-list.layout.v1';
+
+/* Opens with Requested on top (status-pill.ts owns the order). A column sort
+   the operator clicked still wins — DataGrid only applies this while none is. */
+const OPEN_ORDER = compareAmendmentsForList<AmendmentRow>((a) => a.status, (a) => a.created_at);
 
 /* `requested_by` is a bare scm.staff uuid (so_amendments.requested_by, FK ->
    scm.staff.id) — the list endpoint sends no name with it. Resolve through the
@@ -97,7 +104,8 @@ const buildAmendmentColumns = (
     searchValue: (a) => simplifiedAmendmentPill(a.status).label,
     groupValue: (a) => simplifiedAmendmentPill(a.status).label,
     exportValue: (a) => simplifiedAmendmentPill(a.status).label,
-    sortFn: (a, b) => amendmentBucketOf(a.status).localeCompare(amendmentBucketOf(b.status)),
+    // Ascending = Requested -> Approved -> Rejected, not the bucket names A-Z.
+    sortFn: (a, b) => amendmentBucketRank(a.status) - amendmentBucketRank(b.status),
   },
   {
     key: 'created_at', label: 'Created', width: 160, sortable: true,
@@ -187,6 +195,7 @@ export const Amendments = () => {
         searchPlaceholder="Search SO no, amendment no, requested by…"
         loadedSearchLimit={500}
         groupBanner={false}
+        defaultSort={OPEN_ORDER}
         /* Open on DOUBLE-click (mirrors the GRN / PO list). */
         onRowDoubleClick={(a) => openRow(a)}
         /* Closed amendments (rejected / withdrawn) grey out so they read as dead

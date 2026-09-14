@@ -305,3 +305,24 @@ export const simplifiedAmendmentPill = (status: string | null | undefined): Entr
 export const AMENDMENT_LIST_CHIPS = ['all', 'REQUESTED', 'APPROVED'] as const;
 export const amendmentBucketLabel = (bucket: string): string =>
   bucket === 'all' ? 'All' : (BUCKET_ENTRY[bucket as AmendmentBucket]?.label ?? bucket);
+
+/** The order every amendment LIST opens in (staff request 2026-09-14): what
+ *  still needs an action first. Ranks the simplified BUCKET, so SO's
+ *  SUPPLIER_PENDING sits with Requested and SENT with Approved — the same word
+ *  the row's pill shows. Both enums are closed sets (migs 0080, 0194) and
+ *  amendmentBucketOf folds anything else into REQUESTED, so there is no fourth
+ *  rank to place. */
+export const AMENDMENT_BUCKET_ORDER: readonly AmendmentBucket[] = ['REQUESTED', 'APPROVED', 'REJECTED'];
+
+export const amendmentBucketRank = (status: string | null | undefined): number =>
+  AMENDMENT_BUCKET_ORDER.indexOf(amendmentBucketOf(status));
+
+/** Bucket order, then newest first inside a bucket (a row with no date last).
+ *  Built per row shape because the SO/PO queues and the merged PO inbox name
+ *  their fields differently. */
+export const compareAmendmentsForList = <T,>(
+  statusOf: (row: T) => string | null | undefined,
+  createdAtOf: (row: T) => string | null | undefined,
+) => (a: T, b: T): number =>
+  amendmentBucketRank(statusOf(a)) - amendmentBucketRank(statusOf(b))
+  || String(createdAtOf(b) ?? '').localeCompare(String(createdAtOf(a) ?? ''));
