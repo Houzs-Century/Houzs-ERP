@@ -31,10 +31,11 @@ export const AMENDMENT_APPROVER_LABEL: Record<AmendmentApprover, string> = {
 };
 
 /* Not a status tone on purpose: Requested / Approved / Rejected already own the
-   burnt, green and red pills on the same row, and the approver must not read as
-   a fourth status. */
+   burnt, green and red pills on the desktop row, and the phone paints Requested
+   teal — so Purchaser is a clear blue, not a blue-grey that reads as teal on a
+   small card. The approver must not read as a fourth status. */
 export const AMENDMENT_APPROVER_TONE: Record<AmendmentApprover, { bg: string; fg: string }> = {
-  PURCHASER: { bg: 'rgba(43, 92, 138, 0.14)', fg: '#2b5c8a' },
+  PURCHASER: { bg: 'rgba(53, 82, 163, 0.14)', fg: '#3552a3' },
   LOGISTIC: { bg: 'rgba(123, 63, 120, 0.14)', fg: '#7b3f78' },
   LEGACY: { bg: 'rgba(34, 31, 32, 0.08)', fg: '#6b6f66' },
 };

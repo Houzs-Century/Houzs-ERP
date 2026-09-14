@@ -23,7 +23,7 @@ for the visit, is stripped from every layout write, and a sort saved before the
 prop is ignored. `Amendments.tsx` and `PoAmendments.tsx` pass it; every other grid
 is unchanged (a test pins that a plain grid still restores its sort). Pinned by
 `frontend/src/pages/scm-v2/amendment-list-order.test.tsx` (the two "left from an
-earlier visit" tests) and `frontend/src/vendor/scm/components/DataGrid.test.tsx`.
+earlier visit" tests) and `frontend/src/vendor/scm/components/DataGridSessionSort.test.tsx`.
 Proved RED: with `sortForSessionOnly` removed from both pages, both queue tests fail
 and the rest of the file passes. The phone queues were never affected — their chip
 state is in memory and they sort every render.

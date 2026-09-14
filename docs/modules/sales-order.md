@@ -1414,6 +1414,14 @@ module. They were duplicated per surface and had drifted in both wording and
 truth — both told operators that address lines "save straight away" for three
 weeks after 2026-07-27 moved addresses under Logistics approval.
 
+Who a lane waits on is worded by ROLE since 2026-09-14 — **Purchaser** / **Logistic**,
+from `frontend/src/vendor/scm/lib/amendment-approver.ts`: the submitted notice, the
+pending-amendment banner on `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` and on
+`frontend/src/mobile/MobileSODetail.tsx`, the job card, and the coloured Approver
+badge on the amendment queues (owner: 「那个是归类purchaser哪个是归类Logistic」). Before,
+each site typed "Purchasing" / "Logistics" itself. Details in
+[`so-amendment.md`](./so-amendment.md) §7.
+
 #### Line photos on the read-only detail
 
 The V2 detail has a **Photos** column: `photo_urls` has ridden on

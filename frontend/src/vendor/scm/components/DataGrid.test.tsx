@@ -183,41 +183,6 @@ describe("DataGrid defaultSort (arrangement queues 2026-08-07)", () => {
     fireEvent.click(header); // off -> back to the default, not to fetch order
     expect(rowTexts(container)).toEqual(["Bravo", "Charlie", "Alpha"]);
   });
-
-  test("a clicked header sort is remembered for the next visit (existing contract)", () => {
-    const draw = () => render(
-      <DataGrid rows={qRows} columns={qColumns} storageKey="ds-remembered" rowKey={(r) => r.id} defaultSort={byRank} />,
-    );
-    const first = draw();
-    fireEvent.click(screen.getByRole("button", { name: "Name" })); // asc
-    first.unmount();
-    expect(rowTexts(draw().container)).toEqual(["Alpha", "Bravo", "Charlie"]);
-  });
-
-  test("sortForSessionOnly: a header still sorts this visit, and the next visit opens on the default again", () => {
-    const draw = () => render(
-      <DataGrid rows={qRows} columns={qColumns} storageKey="ds-session" rowKey={(r) => r.id} defaultSort={byRank} sortForSessionOnly />,
-    );
-    const first = draw();
-    fireEvent.click(screen.getByRole("button", { name: "Name" })); // asc
-    expect(rowTexts(first.container)).toEqual(["Alpha", "Bravo", "Charlie"]);
-    first.unmount();
-    expect(rowTexts(draw().container)).toEqual(["Bravo", "Charlie", "Alpha"]);
-  });
-
-  test("sortForSessionOnly: a sort saved before the grid opted in is not applied on open", () => {
-    const saved = render(
-      <DataGrid rows={qRows} columns={qColumns} storageKey="ds-stale" rowKey={(r) => r.id} defaultSort={byRank} />,
-    );
-    const header = screen.getByRole("button", { name: "Name" });
-    fireEvent.click(header); // asc
-    fireEvent.click(header); // desc — saved, the shape a user's browser already holds
-    saved.unmount();
-    const { container } = render(
-      <DataGrid rows={qRows} columns={qColumns} storageKey="ds-stale" rowKey={(r) => r.id} defaultSort={byRank} sortForSessionOnly />,
-    );
-    expect(rowTexts(container)).toEqual(["Bravo", "Charlie", "Alpha"]);
-  });
 });
 
 describe("DataGrid active-filter chips (stacked filters visible, 2026-08-07)", () => {
