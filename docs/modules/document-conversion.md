@@ -696,6 +696,15 @@ Two things made the provider the right shape rather than a modal per list:
   A modal plus three handlers in each of ten lists does not fit. An imperative
   call costs each list one import.
 
+**A print interrupted by a deploy reopens itself (2026-09-14, bug 0883).** Each
+print the provider starts runs through `trackPrintAction`
+(`frontend/src/lib/chunkActionRecovery.ts`). If its code chunk was removed by a
+deploy, the tab reloads once (only with nothing unsaved on screen, at most once
+per 5 minutes) and the provider reopens the SAME document's preview on the next
+load, on the same URL only. Otherwise the "older version" banner stays and its
+Refresh button reopens the print. Detail pages get the same through
+`usePrintPreview` + `useOpenPrintPreviewFromUrl`.
+
 **Print now still goes through the PDF (`action: 'print'`), never
 `window.print()`.** The global `@media print` block in `index.css` hides
 `body *` and reveals only `.org-print-area`, so `window.print()` from a list

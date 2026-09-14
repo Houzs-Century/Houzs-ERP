@@ -351,6 +351,35 @@ jobs:
       # DEPLOY rather than a PR. The gate belongs on the PR, where it already
       # runs with a baseline.
       - run: npm run check:sw
+      # KEEP THE PREVIOUS BUILDS' CHUNKS FETCHABLE. A Pages deployment is atomic:
+      # it serves exactly the files uploaded with it, so every deploy used to
+      # delete the last build's hashed chunks, and a tab still on that build got
+      # 404 for its next lazy import. On 2026-09-14 staff printing HC-SO-012016
+      # got "Failed to fetch dynamically imported module:
+      # .../assets3/sales-order-pdf-C9QaiR37.js" (now HTTP 404 "Not found").
+      #
+      # This step reads the LIVE deployment's asset-manifest.json, downloads the
+      # hashed files the new build lacks, verifies each against the manifest's
+      # sha256, and writes them into dist beside the new build — never over a
+      # file the new build has (index.html, sw.js and every asset it produced
+      # come from THIS build only). It prunes files no build produced in 7 days
+      # and keeps the deployment under 19,000 files (Pages allows 20,000),
+      # dropping the oldest first. Counts land in the log and the step summary.
+      # Rules and tests: frontend/scripts/lib/asset-retention.mjs,
+      # frontend/scripts/retain-previous-assets.test.mjs.
+      #
+      # FAIL-SAFE BY CONTRACT: a failure here must never block a release. The
+      # script exits 0 on every operational failure with the new build intact;
+      # continue-on-error + timeout cover a crash or hang it did not anticipate.
+      # No new secret — it only GETs the public site the smoke step reads too.
+      - name: Carry previous builds' hashed assets into this deployment
+        continue-on-error: true
+        timeout-minutes: 6
+        run: node scripts/retain-previous-assets.mjs --base "${{ vars.FRONTEND_SMOKE_URL || 'https://erp.houzscentury.com' }}" --retention-days 7 --max-files 19000
+      # A kill mid-write can leave a temp file; it must not be deployed.
+      - name: Drop partial retention writes
+        if: always()
+        run: find dist -name '*.retain-tmp' -delete
       - uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}

@@ -16,9 +16,6 @@ export default defineConfig({
     ],
     dedupe: ["react", "react-dom"],
   },
-  define: {
-    __BUILD_ID__: JSON.stringify("local-perf-lab"),
-  },
   server: {
     host: "127.0.0.1",
     port: 4174,

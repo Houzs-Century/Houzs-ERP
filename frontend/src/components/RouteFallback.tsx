@@ -2,7 +2,14 @@ import React from "react";
 import { useLocation } from "react-router-dom";
 import { Skeleton } from "./Skeleton";
 import { reportClientError } from "../lib/errorReporter";
-import { errorMessage, isDeployStaleEvidence, isStaleChunkError } from "../lib/staleBuild";
+import {
+  CHUNK_PROBE_TIMEOUT_MS,
+  chunkUrlFrom,
+  isDeployStaleEvidence,
+  isStaleChunkError,
+  probeChunk,
+} from "../lib/staleBuild";
+import { BUILD_ID } from "../lib/buildId";
 
 /**
  * Suspense fallback for lazily-loaded route chunks — a brand-tinted page
@@ -44,24 +51,17 @@ const RECOVER_AT_KEY = "chunk-recovered-at";
  *  still self-heals once. */
 const RECOVER_COOLDOWN_MS = 60_000;
 const CLEANUP_TIMEOUT_MS = 8_000;
-/** Budget for the single cache-busting probe of the chunk that failed (see
- *  probeChunk). Short on purpose: the operator is staring at a skeleton for the
- *  whole of it, and an answer we don't get in time is treated as "transient",
- *  which is the CHEAP branch — so a slow probe costs nothing but the wait. */
-const PROBE_TIMEOUT_MS = 3_000;
 /** hardRecover() always ends in reload(), but its awaits (SW unregister, cache
  *  delete) are not guaranteed to settle. Don't strand the user on a skeleton.
  *  DERIVED, never typed: the watchdog must outlast the worst legitimate
  *  recovery — probe budget, then cleanup budget — or it fires the "recovery
  *  failed" panel while the reload it is supposed to follow is still coming. */
-const RECOVER_TIMEOUT_MS = PROBE_TIMEOUT_MS + CLEANUP_TIMEOUT_MS + 1_000;
+const RECOVER_TIMEOUT_MS = CHUNK_PROBE_TIMEOUT_MS + CLEANUP_TIMEOUT_MS + 1_000;
 
-declare const __BUILD_ID__: string;
-/** The build this bundle was compiled from — the same define errorReporter
- *  stamps onto every reported event, so a panel in client_errors can be read
- *  against the build that produced it. */
-export const CURRENT_BUILD_ID =
-  typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "dev";
+/** The build this tab booted from — the same id errorReporter stamps onto every
+ *  reported event, so a panel in client_errors can be read against the build
+ *  that produced it. Read from index.html (lib/buildId.ts), not compiled in. */
+export const CURRENT_BUILD_ID = BUILD_ID;
 
 /** How expensive the remembered attempt was.
  *  `soft` = a plain reload (the probe said the chunk was fetchable, so the build
@@ -151,65 +151,6 @@ function markHardRecover(kind: RecoverKind): boolean {
     return true;
   } catch {
     return false;
-  }
-}
-
-/** The chunk URL the browser names in the failure — "Failed to fetch
- *  dynamically imported module: https://erp.houzscentury.com/assets3/Foo-x.js".
- *  Restricted to our OWN origin: this URL is fed to fetch(), and an error
- *  message is attacker-influenceable in principle (a third-party script's
- *  rejection can reach the same boundary), so a cross-origin probe would be a
- *  request we never meant to make. Any other error shape returns null and the
- *  caller keeps the old unconditional behaviour. */
-function chunkUrlFrom(err: unknown): string | null {
-  const m = errorMessage(err).match(/\bhttps?:\/\/[^\s"'()]+\.[mc]?js\b/i);
-  if (!m) return null;
-  try {
-    const url = new URL(m[0]);
-    if (typeof window === "undefined" || url.origin !== window.location.origin) return null;
-    return url.href;
-  } catch {
-    return null;
-  }
-}
-
-/** What one cache-busting re-fetch says about the chunk the import could not
- *  get. Deliberately three-valued: "we could not tell" is not "it is gone". */
-type ChunkProbe = "present" | "absent" | "unknown";
-
-/**
- * Ask ONCE whether the chunk is really missing, before spending a hard
- * recovery on it. A hard recovery unregisters every service worker and deletes
- * every cache — the right price for a stranded build, a wildly wrong one for a
- * network hiccup, which is what a lone failed import usually is.
- *
- * `cache: "reload"` bypasses the browser HTTP cache on the way out, so an
- * aborted/poisoned entry for this exact URL is re-fetched rather than replayed.
- * It does NOT bypass the service worker, which is deliberate: a still-installed
- * old worker answering a hashed /assets/*.js with the app shell is precisely
- * the stale-deploy shape hardRecover exists for, and we want to SEE it.
- */
-async function probeChunk(url: string): Promise<ChunkProbe> {
-  const abort = new AbortController();
-  const deadline = setTimeout(() => abort.abort(), PROBE_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, { cache: "reload", credentials: "same-origin", signal: abort.signal });
-    // A missing chunk is a real 404 at the edge — functions/[[path]].ts turns
-    // the SPA-fallback shell back into one for any static-asset extension, and
-    // that is the answer this branch is reading.
-    if (!res.ok) return "absent";
-    // 200 with an HTML body under a .js URL is the SW/edge poisoning described
-    // in hardRecover's header. Same verdict as a 404: only the unregister fixes it.
-    return /javascript|ecmascript/i.test(res.headers.get("content-type") ?? "")
-      ? "present"
-      : "absent";
-  } catch {
-    // Offline, aborted, blocked. NOT evidence the build moved — and purging
-    // every cache while offline destroys the only copy of the shell the service
-    // worker could still serve. Stay on the cheap branch.
-    return "unknown";
-  } finally {
-    clearTimeout(deadline);
   }
 }
 

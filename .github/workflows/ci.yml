@@ -890,6 +890,10 @@ jobs:
       # explicitly — a checker nobody runs is not a checker.
       - run: node --test scripts/check-bundle-verdict.mjs
       - run: node --test scripts/check-raw-fetch-inventory.test.mjs
+      # The merge/prune rules deploy.yml uses to keep the previous builds'
+      # chunks in each Pages deployment — they run only on a push to main, so
+      # this is the one place they are exercised before they touch a release.
+      - run: node --test scripts/retain-previous-assets.test.mjs
       # `tsc --noEmit` against this tsconfig ("files": [] + references) resolves
       # zero inputs and exits 0 on a tree full of type errors. The typecheck
       # script above was exactly that until 2026-08-01. Pin the shape.

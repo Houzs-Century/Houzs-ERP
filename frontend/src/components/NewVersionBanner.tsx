@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import { RefreshCw } from "lucide-react";
 import { useVersionCheck } from "../hooks/useVersionCheck";
 import { chunkFailureSnapshot, subscribeChunkFailure } from "../lib/staleBuild";
+import { runBeforeManualReload } from "../lib/beforeManualReload";
 
 /**
  * NewVersionBanner — a non-blocking "this tab is behind the deploy" prompt.
@@ -24,8 +25,11 @@ import { chunkFailureSnapshot, subscribeChunkFailure } from "../lib/staleBuild";
  * site. It stays OUTSIDE the public surfaces (survey, portal, reset) on purpose:
  * those are single-screen flows, and there is no reason to poll on them.
  *
- * We never reload from under the operator — they click when they're ready, so a
- * deploy mid-data-entry can't wipe their work. Clicking enters a brief loading
+ * This banner never reloads from under the operator — they click when they're
+ * ready, so a deploy mid-data-entry can't wipe their work. (The one automatic
+ * reload in this area is lib/chunkActionRecovery.ts, for a PRINT with no unsaved
+ * work on screen; when it declines, this banner is what the operator gets, and
+ * its button reopens that print after the reload.) Clicking enters a brief loading
  * state (spinning icon) so a double-click can't fire two reloads.
  *
  * useLocation is read HERE and not in App(): App creates the element tree for
@@ -49,6 +53,7 @@ export function NewVersionBanner() {
 
   const reload = () => {
     setReloading(true);
+    if (chunkFailed) runBeforeManualReload();
     window.location.reload();
   };
 

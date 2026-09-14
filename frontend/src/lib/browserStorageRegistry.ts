@@ -58,6 +58,8 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   { id: "scm-handoffs", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs:scm-handoff:v<version>:<registered non-payment handoff>", matches: (key) => SCM_TRANSIENT_KEYS.has(key) },
   { id: "query-snapshots", classification: "CACHE", storage: ["localStorage"], keyFamily: "houzs-rq-snapshot:<build>:<session>:<company>", matches: prefix("houzs-rq-snapshot:") },
   { id: "chunk-recovery", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "chunk-recovered-at", matches: exact("chunk-recovered-at") },
+  { id: "chunk-action-reload", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "chunk-action-reload (cooldown for the print-action stale-chunk reload)", matches: exact("chunk-action-reload") },
+  { id: "chunk-print-resume", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "chunk-print-resume (the print to reopen after that reload)", matches: exact("chunk-print-resume") },
   { id: "workspace-tabs", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.workspaceTabs.v1 (per-window strip; blob records its {user,company} owner)", matches: exact("houzs.workspaceTabs.v1") },
   { id: "scm-list-return", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.scmListReturn.v1 (per-section last filtered list URL, for detail Back)", matches: exact("houzs.scmListReturn.v1") },
   { id: "assr-list-filter", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.assrListFilter.v1 (per-tab Service Cases search + stage, for detail Back)", matches: exact("houzs.assrListFilter.v1") },
@@ -164,6 +166,9 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "lib/activeCompany.ts",
   "lib/authToken.ts",
   "lib/browserNotificationPreference.ts",
+  // chunk-action-reload + chunk-print-resume (sessionStorage, TRANSIENT): the
+  // cooldown and the print to reopen after a stale-build reload.
+  "lib/chunkActionRecovery.ts",
   // Native app: reads/writes ONLY the per-device biometric opt-in flag
   // (native:biometric-session, DEVICE_PREF). The session it unlocks lives in the
   // iOS Keychain, never in browser storage — this file touches localStorage for

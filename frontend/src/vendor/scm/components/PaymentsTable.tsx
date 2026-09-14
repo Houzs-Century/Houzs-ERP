@@ -67,6 +67,7 @@ import { formatDate } from '../../../lib/utils';
 import { newIdempotencyKey } from '../../../lib/idempotency';
 import detailStyles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 import paymentsStyles from '../../../pages/scm-v2/Payments.module.css';
+import { useUnsavedWork } from '../../../lib/unsavedWork';
 
 /* Bare amount, no currency. The Amount COLUMN carries the currency once in its
    header: `currency` is a single per-document prop (callers pass
@@ -1096,6 +1097,10 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      the whole document and its own recovery path, and would otherwise prompt on
      every single exit from a form where every row is legitimately unsaved. */
   const unsavedCount = isSaved ? drafts.length : 0;
+  /* The same rows are unsaved work for an AUTOMATIC reload
+     (lib/chunkActionRecovery), which must never fire while money is typed but
+     unbooked. Draft mode is covered by its /new URL (lib/unsavedWork). */
+  useUnsavedWork(unsavedCount > 0);
   useEffect(() => {
     if (unsavedCount === 0) return;
     const warn = (e: BeforeUnloadEvent) => {
