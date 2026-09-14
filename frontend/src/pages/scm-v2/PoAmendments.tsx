@@ -30,6 +30,13 @@ import {
   amendmentBucketRank,
   compareAmendmentsForList,
 } from '../../vendor/scm/lib/status-pill';
+import { AmendmentApproverBadge } from '../../vendor/scm/components/AmendmentApproverBadge';
+import {
+  AMENDMENT_APPROVER_LABEL,
+  PO_AMENDMENT_APPROVER,
+  soAmendmentApprover,
+  type AmendmentApprover,
+} from '../../vendor/scm/lib/amendment-approver';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
@@ -53,6 +60,7 @@ type InboxRow = {
   id: string;
   poLabel: string;
   amendmentNo: string;
+  approver: AmendmentApprover;
   requestedBy: string | null;
   reason: string | null;
   status: string;
@@ -60,7 +68,8 @@ type InboxRow = {
 };
 
 /* Opens with Requested on top across both sources (status-pill.ts owns the
-   order). A column sort the operator clicked still wins. */
+   order), EVERY time: the grid is sortForSessionOnly, so a header click sorts
+   this visit and is not remembered (owner 2026-09-14). */
 const OPEN_ORDER = compareAmendmentsForList<InboxRow>((a) => a.status, (a) => a.createdAt);
 
 const SOURCE_LABEL: Record<InboxRow['kind'], string> = {
@@ -107,6 +116,17 @@ const buildColumns = (
     exportValue: (a) => SOURCE_LABEL[a.kind],
     groupValue: (a) => SOURCE_LABEL[a.kind],
     sortFn: (a, b) => a.kind.localeCompare(b.kind),
+  },
+  {
+    /* Who signs it (owner 2026-09-14) — the same badge as the SO queue. A
+       direct PO amendment has one approve key, Purchaser's; an SO-driven row
+       follows its lane (DELIVERY rows never reach this queue, see allRows). */
+    key: 'approver', label: 'Approver', width: 130, sortable: true, groupable: true,
+    accessor: (a) => <AmendmentApproverBadge approver={a.approver} />,
+    searchValue: (a) => AMENDMENT_APPROVER_LABEL[a.approver],
+    exportValue: (a) => AMENDMENT_APPROVER_LABEL[a.approver],
+    groupValue: (a) => AMENDMENT_APPROVER_LABEL[a.approver],
+    sortFn: (a, b) => AMENDMENT_APPROVER_LABEL[a.approver].localeCompare(AMENDMENT_APPROVER_LABEL[b.approver]),
   },
   {
     key: 'requested_by', label: 'Requested by', width: 180, sortable: true, groupable: true,
@@ -163,6 +183,7 @@ export const PoAmendments = () => {
       id: a.id,
       poLabel: a.po_number ?? '',
       amendmentNo: String(a.amendment_no ?? ''),
+      approver: PO_AMENDMENT_APPROVER,
       requestedBy: a.requested_by ?? null,
       reason: a.reason ?? null,
       status: a.status,
@@ -186,6 +207,7 @@ export const PoAmendments = () => {
         id: a.id,
         poLabel: (a.bound_pos ?? []).map((p) => p.po_number).join(', '),
         amendmentNo: String(a.amendment_no ?? ''),
+        approver: soAmendmentApprover(a.lane),
         requestedBy: a.requested_by ?? null,
         reason: a.reason ?? null,
         status: a.status,
@@ -252,6 +274,7 @@ export const PoAmendments = () => {
           loadedSearchLimit={500}
           groupBanner={false}
           defaultSort={OPEN_ORDER}
+          sortForSessionOnly
           onRowDoubleClick={(a) => openRow(a)}
           /* Closed amendments (REJECTED / withdrawn) grey out so they read as
              dead — mirrors the SO amendment queue + the GRN cancelled treatment. */

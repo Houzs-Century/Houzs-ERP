@@ -1201,6 +1201,14 @@ before touching a pool (docs/bugs/0814-one-option-field-two-vocabularies-the-fab
    11-20 inch were invisible on both surfaces while the server accepted them.
    **`SoLineCard` must call the shared helpers, never a private copy** — it had
    one, which is exactly why the fold reached mobile and not the desktop.
+   **The FABRIC question has its own module since 2026-09-14:**
+   `backend/src/scm/shared/fabric-pool.ts` (`fabricAllowedByPool`, colour OR
+   series, folded) with the byte-identical browser copy
+   `frontend/src/vendor/shared/fabric-pool.ts`. The save gate, the desktop
+   `FabricColourCombobox` and the phone sheet
+   `frontend/src/mobile/MobileFabricPicker.tsx` all call it. The phone sheet had
+   NO pool filter before that and offered colours the save refused
+   (`docs/bugs/0889-the-phone-s-fabric-sheet-offered-colours-the-model-does-not.md`).
 
 `backend/scripts/check-allowed-options-vocabulary.mjs` (Actions -> **Check
 option-pool vocabulary**) resolves every pool value against the table its gate
@@ -1413,6 +1421,14 @@ The amendment-mode banner and the two-lane "submitted" notice also live in that
 module. They were duplicated per surface and had drifted in both wording and
 truth — both told operators that address lines "save straight away" for three
 weeks after 2026-07-27 moved addresses under Logistics approval.
+
+Who a lane waits on is worded by ROLE since 2026-09-14 — **Purchaser** / **Logistic**,
+from `frontend/src/vendor/scm/lib/amendment-approver.ts`: the submitted notice, the
+pending-amendment banner on `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` and on
+`frontend/src/mobile/MobileSODetail.tsx`, the job card, and the coloured Approver
+badge on the amendment queues (owner: 「那个是归类purchaser哪个是归类Logistic」). Before,
+each site typed "Purchasing" / "Logistics" itself. Details in
+[`so-amendment.md`](./so-amendment.md) §7.
 
 #### Line photos on the read-only detail
 
