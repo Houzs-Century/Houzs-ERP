@@ -3,10 +3,12 @@
 //
 // Owner 2026-09-10: a report of every customer-payment correction made on the
 // amend right, with the reason typed at the time and what it did to the
-// ledger. Same shape as the bank reconciliation statement: every line of the
-// document is decided in `correctionsDocument`, a pure function the test
-// reads back without rendering a PDF; `generatePaymentCorrectionsPdf` only
-// draws what that returns.
+// ledger; 2026-09-14 (docs/bugs/0888): every payment action by a role holding
+// the right — added, edited, deleted, proof attached — beside who FIRST
+// recorded the payment. Same shape as the bank reconciliation statement:
+// every line of the document is decided in `correctionsDocument`, a pure
+// function the test reads back without rendering a PDF;
+// `generatePaymentCorrectionsPdf` only draws what that returns.
 // ----------------------------------------------------------------------------
 
 import { jsPDF } from 'jspdf';
@@ -27,11 +29,16 @@ export type CorrectionRowInput = {
   by: string;
   docNo: string;
   customer: string | null;
-  kind: 'edited' | 'deleted';
+  kind: 'added' | 'edited' | 'deleted' | 'proof';
   changes: Array<{ field: string; from: unknown; to: unknown }>;
   amountFromSen: number | null;
   amountToSen: number | null;
   reason: string;
+  /** No reason because the row predates the rule (owner 2026-09-14: 规则之前). */
+  beforeRule: boolean;
+  /** Who first recorded the payment this row concerns, and when (ISO). */
+  recordedBy: string | null;
+  recordedOn: string | null;
   originalJeNo: string | null;
   contraJeNo: string | null;
   jeNo: string | null;
@@ -40,7 +47,10 @@ export type CorrectionRowInput = {
 export type CorrectionsInput = {
   month: string;
   rows: CorrectionRowInput[];
-  summary: { corrections: number; edited: number; deleted: number; netMovedSen: number; deletedSen: number };
+  summary: {
+    corrections: number; added: number; edited: number; deleted: number; proof: number;
+    netMovedSen: number; addedSen: number; deletedSen: number;
+  };
 };
 
 export type CorrectionsDocument = {
@@ -48,8 +58,9 @@ export type CorrectionsDocument = {
   monthText: string;
   /** The three figures the screen's cards show, as label/value pairs. */
   summary: Array<{ label: string; value: string }>;
-  /** One line per correction, in the report's column order:
-      when + who / order + customer / what changed / reason / ledger. */
+  /** One line per action, in the report's column order: when + who / order +
+      customer / what was done / who first recorded the payment / reason /
+      ledger. */
   lines: string[][];
   /** The sentence printed instead of a table when there is nothing to list. */
   empty: string | null;
@@ -61,7 +72,7 @@ export type CorrectionsDocument = {
 const FIELD_WORDS: Record<string, string> = {
   amountSen: 'Amount', paidAt: 'Date', method: 'Method', merchantProvider: 'Bank',
   installmentMonths: 'Plan', onlineType: 'Sub-type', approvalCode: 'Approval code',
-  accountSheet: 'Account sheet', collectedBy: 'Collected by',
+  accountSheet: 'Account sheet', collectedBy: 'Collected by', slipKey: 'Proof',
 };
 
 const valueText = (field: string, v: unknown): string => {
@@ -71,15 +82,46 @@ const valueText = (field: string, v: unknown): string => {
   return String(v);
 };
 
+const changeValue = (r: CorrectionRowInput, field: string): unknown =>
+  r.changes.find((c) => c.field === field)?.to ?? null;
+
 /** "Amount RM 1,990.00 → RM 1,991.00; Method cash → transfer" — or, for a
-    delete, what was removed. */
+    delete, what was removed; for an add, what was recorded; for a proof,
+    whether it was attached or replaced. */
 export const whatChanged = (r: CorrectionRowInput): string => {
   if (r.kind === 'deleted') {
     return r.amountFromSen == null ? 'Deleted' : `Deleted — ${fmtRm(r.amountFromSen)} removed`;
   }
+  if (r.kind === 'added') {
+    if (r.amountToSen == null) return 'Added';
+    const method = changeValue(r, 'method');
+    const paidAt = changeValue(r, 'paidAt');
+    const how = [
+      typeof method === 'string' && method !== '' ? method : null,
+      typeof paidAt === 'string' && paidAt !== '' ? `on ${fmtDocDate(paidAt.slice(0, 10))}` : null,
+    ].filter((s): s is string => s !== null).join(' ');
+    return `Added — ${fmtRm(r.amountToSen)}${how ? ` (${how})` : ''}`;
+  }
+  if (r.kind === 'proof') {
+    const slip = r.changes.find((c) => c.field === 'slipKey');
+    return slip && slip.from != null && slip.from !== '' ? 'Proof replaced' : 'Proof attached';
+  }
   const parts = r.changes.map((c) => `${FIELD_WORDS[c.field] ?? c.field} ${valueText(c.field, c.from)} → ${valueText(c.field, c.to)}`);
   return parts.length > 0 ? parts.join('; ') : 'Edited';
 };
+
+/** Who first recorded the payment, and the day — "Rachael\n29/08/2026"; a
+    dash when nothing could be read (never a guess). */
+export const recordedText = (r: CorrectionRowInput): string => {
+  if (!r.recordedBy && !r.recordedOn) return '—';
+  const day = r.recordedOn ? fmtDocDate(r.recordedOn.slice(0, 10)) : null;
+  return [r.recordedBy ?? '—', day].filter((s): s is string => s !== null).join('\n');
+};
+
+/** The reason given — or, on a row from before the rule, that there was
+    nothing asked (owner 2026-09-14: 规则之前). */
+export const reasonText = (r: CorrectionRowInput): string =>
+  (r.reason ? r.reason : r.beforeRule ? 'Before the rule' : '—');
 
 /** Three numbers in the order the books moved: the ORIGINAL, the contra that
     voided it, the entry booked in its place —
@@ -102,26 +144,30 @@ export const monthText = (month: string): string => {
 
 const signed = (sen: number): string => (sen < 0 ? `−${fmtRm(-sen)}` : sen > 0 ? `+${fmtRm(sen)}` : fmtRm(0));
 
+/** The sentence an empty month prints and shows: what was LOOKED FOR, in the
+    month named — never a claim about the business. */
+export const emptyText = (month: string): string =>
+  `No payment action on the correction right was found for ${monthText(month)}.`;
+
 export function correctionsDocument(input: CorrectionsInput): CorrectionsDocument {
   const s = input.summary;
   return {
     title: 'PAYMENT CORRECTIONS',
     monthText: monthText(input.month),
     summary: [
-      { label: 'Corrections', value: String(s.corrections) },
-      { label: 'Edited / deleted', value: `${s.edited} / ${s.deleted}` },
+      { label: 'Payment actions', value: String(s.corrections) },
+      { label: 'Added / edited / deleted / proof', value: `${s.added} / ${s.edited} / ${s.deleted} / ${s.proof}` },
       { label: 'Money received, net effect', value: signed(s.netMovedSen) },
     ],
     lines: input.rows.map((r) => [
       `${fmtDocDate(r.at.slice(0, 10))}\n${r.by}`,
       `${r.docNo}${r.customer ? `\n${r.customer}` : ''}`,
       whatChanged(r),
-      r.reason || '—',
+      recordedText(r),
+      reasonText(r),
       ledgerText(r),
     ]),
-    empty: input.rows.length === 0
-      ? `No payment correction on the amend right was recorded for ${monthText(input.month)}.`
-      : null,
+    empty: input.rows.length === 0 ? emptyText(input.month) : null,
   };
 }
 
@@ -155,11 +201,11 @@ export async function generatePaymentCorrectionsPdf(
   } else {
     autoTable(doc, {
       startY: y + 4,
-      head: [['Corrected', 'Sales order', 'What changed', 'Reason', 'Ledger']],
+      head: [['Done', 'Sales order', 'What', 'First recorded by', 'Reason', 'Ledger']],
       body: report.lines,
       styles: { ...DOC_TABLE_STYLES, fontSize: 8, cellPadding: 1.5, valign: 'top' },
       headStyles: DOC_TABLE_HEAD_STYLES,
-      columnStyles: { 0: { cellWidth: 32 }, 1: { cellWidth: 48 }, 2: { cellWidth: 70 }, 3: { cellWidth: 70 }, 4: { cellWidth: 46 } },
+      columnStyles: { 0: { cellWidth: 30 }, 1: { cellWidth: 44 }, 2: { cellWidth: 62 }, 3: { cellWidth: 40 }, 4: { cellWidth: 52 }, 5: { cellWidth: 39 } },
     });
   }
 

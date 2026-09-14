@@ -15,6 +15,7 @@ import { useStaff, usePickableStaff } from "../vendor/scm/lib/admin-queries";
 import { collaboratorLabel } from "../vendor/scm/lib/so-collaborators";
 import { HIST_FIELD_LABEL, HIST_MONEY_FIELDS } from "./so-history-labels";
 import { statusLabel } from "../vendor/scm/lib/status-pill";
+import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover } from "../vendor/scm/lib/amendment-approver";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { ACCESS_RANK } from "../types";
 import {
@@ -94,6 +95,7 @@ import {
    owns any payment-row markup: that second, read-only copy is exactly what made
    Edit Draft offer LESS than the screen it was opened from. */
 import { AddPaymentSheet, RecordedPaymentsList, type RecordedPayment } from "./RecordedPayments";
+import { owesPaymentReason } from "../vendor/scm/lib/payment-reason";
 import { MobileLineRemark } from "./MobileLineRemark";
 import "./mobile.css";
 
@@ -899,7 +901,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav }: { 
                 )}
                 {amendmentLane != null && openAmendment.status === "REQUESTED" && !canApproveLane && (
                   <div style={{ fontSize: 11.5, lineHeight: 1.45, color: "#6d5626" }}>
-                    Waiting for {amendmentLane === "LINES" ? "Purchasing" : "Logistics"} — one signature applies it.
+                    Waiting for {AMENDMENT_APPROVER_LABEL[soAmendmentApprover(amendmentLane)]} — one signature applies it.
                   </div>
                 )}
                 {/* Gate actions — perm + status gated, exactly like desktop.
@@ -1256,6 +1258,9 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav }: { 
           docNo={docNo}
           staff={pickableStaffQ.data ?? []}
           defaultCollectedBy={defaultCollectedBy}
+          /* A role holding the correction right says why it records money
+             (docs/bugs/0888); the list decides the same for its own edits. */
+          reasonWhy={owesPaymentReason(houzsAuth.user) ? "holder" : null}
           onClose={() => setPayOpen(false)}
           onSaved={async () => {
             setPayOpen(false);

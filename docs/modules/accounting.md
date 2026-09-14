@@ -1699,6 +1699,39 @@ rows of equal width and the actions to the right. Every hook, label, button
 and refusal is unchanged — `frontend/src/pages/scm-v2/SettlementSetup.test.tsx`
 passes as it was.
 
+**Every payment action by a role holding the correction right owes a reason,
+and Corrections names who first recorded the payment (2026-09-14,
+docs/bugs/0888; owner: 只要是有关 collection payment 的，我或有权限的用户做的动作
+都要记录写 reason … 我就是要看原本是谁记录这一笔的 … finance 和我的一定要填).**
+The reason rule of docs/bugs/0785 hung on one door — a correction the amend
+right opened after the day. It now also hangs on the KEY, read LITERALLY — one
+rule, `paymentReasonRule` in `scm/lib/so-payment-reason.ts`, asked by the four
+payment routes: a ROLE that carries `scm.so_payment.amend` in its own list
+(`holdsHouzsPermLiterally`; the `*` wildcard alone is not a holder, so
+HOUZS CENTURY is untouched) owes a reason on every payment action on a sales
+order — the add, the edit, the delete, the proof attach — same day or not,
+refused without one (`KEY_HOLDER_REASON_REQUIRED`), and every such row is
+audited `source = 'amend'` with the reason in `note`. The window itself is
+unchanged (`mayAmend` still reads `hasHouzsPerm`; a reconciled payment stays
+shut to everybody). The key is granted per ROLE under Team > Roles &
+Permissions, the Roles section — a flat key, not a position capability; the
+"Finance" role already names it. Migration `20260914T1700` tags every
+payment audit row with its `payment_id`, so the report can answer who
+recorded the payment FIRST: the ADD_PAYMENT row's actor, else the collector on
+the payment row (a scan-born receipt names no actor), and for a correction
+written before the tagging the order's own earlier add when exactly one fits
+— otherwise a dash, never a guess. The report also lists a holder's untagged
+`web` rows from before the rule (the owner's two adds of 2026-09-14), marked
+"Before the rule" with no reason; the holders are read the way the amendment
+notice reads its audience (`usersHoldingPermission`, then `users.name`),
+and a read that fails refuses the report. The tab and the printed report gain
+the kinds Added / Proof, a **First recorded by** column and a "Done by"
+filter. The screens read the key through `frontend/src/auth/literalPermission.ts`
+and ask with the one wording in `vendor/scm/lib/payment-reason.ts`. Contracts:
+`tests/soPaymentAmendRoutes.test.ts`, `acc/payment-corrections.test.ts`,
+`scm/routes/paymentCorrectionsRoute.test.ts`, `soPaymentAmendClients.test.ts`,
+`PaymentCorrectionsTab.test.tsx`, `payment-corrections-pdf.test.ts`.
+
 **A row follows the matcher's fresh decision (2026-09-14, docs/bugs/0870;
 owner, on a July PBB credit that had turned into "one payout for several
 reports" with nothing ticked and a dead button: 什么意思？).** The matcher

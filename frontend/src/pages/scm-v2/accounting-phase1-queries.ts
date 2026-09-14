@@ -108,20 +108,28 @@ export type PaymentDrift = {
   error?: string;
 };
 
-/** The Finance report of payment corrections made on the amend right (docs/bugs/0785):
-    a filtered read of the SO audit log, one row per correction, with the reason
-    typed at the time and what it did to the ledger. */
+/** The Finance report of every payment action made on the correction right
+    (docs/bugs/0785; widened to adds, deletes and proof attaches by a role
+    holding the right, docs/bugs/0888): a filtered read of the SO audit log,
+    one row per action, with the reason typed at the time, who first recorded
+    the payment, and what it did to the ledger. */
 export type PaymentCorrectionRow = {
   id: string;
   at: string;
   by: string;
   docNo: string;
   customer: string | null;
-  kind: 'edited' | 'deleted';
+  kind: 'added' | 'edited' | 'deleted' | 'proof';
   changes: Array<{ field: string; from: unknown; to: unknown }>;
   amountFromSen: number | null;
   amountToSen: number | null;
   reason: string;
+  /** No reason because the row predates the rule (owner 2026-09-14: 规则之前). */
+  beforeRule: boolean;
+  /** Who FIRST recorded the payment this row concerns, and when (ISO); null
+      when it could not be read — never a guess. */
+  recordedBy: string | null;
+  recordedOn: string | null;
   /** The entry that was voided, the contra that voided it, the entry booked
       in its place — any null when that part did not happen. */
   originalJeNo: string | null;
@@ -131,7 +139,10 @@ export type PaymentCorrectionRow = {
 export type PaymentCorrections = {
   month: string;
   rows: PaymentCorrectionRow[];
-  summary: { corrections: number; edited: number; deleted: number; netMovedSen: number; deletedSen: number };
+  summary: {
+    corrections: number; added: number; edited: number; deleted: number; proof: number;
+    netMovedSen: number; addedSen: number; deletedSen: number;
+  };
 };
 export const usePaymentCorrections = (month: string) => useQuery({
   queryKey: ['payment-corrections', month],

@@ -43,6 +43,7 @@ import { todayMyt, mytDayOf } from '../lib/dates';
    (Owner 2026-07-19). */
 import { paymentRowMutable, type PaymentChangeVia } from '../lib/so-field-policy';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
+import { owesPaymentReason, paymentReasonAsk, reasonWhyFor } from '../lib/payment-reason';
 import { usePrompt } from './ConfirmDialog';
 import {
   PAYMENT_METHOD_CODE_TO_VALUE,
@@ -506,10 +507,16 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      day it was keyed. Showing the control is the courtesy; the endpoint still
      decides, and it refuses a payment that has already been RECONCILED — a
      fact only the server can read, so this side never claims to know it. */
-  const { can } = useHouzsAuth();
+  const { can, user: houzsUser } = useHouzsAuth();
   const mayAmend = can('scm.so_payment.amend');
   /* A correction on the amend right owes a reason, asked BEFORE the write and
-     required (owner 2026-09-10: 靠权限改的来决定). A same-day fix asks nothing. */
+     required (owner 2026-09-10: 靠权限改的来决定). A same-day fix asks nothing —
+     unless the caller's ROLE holds the right LITERALLY (owner 2026-09-14,
+     docs/bugs/0888): then every payment action asks — add, edit, delete, the
+     proof — same day or not, and lands on Accounting › Corrections. The server
+     reads the key the same way (holdsHouzsPermLiterally) and refuses without.
+     The wording of every ask lives in lib/payment-reason, shared with mobile. */
+  const reasonOnEvery = owesPaymentReason(houzsUser);
   const askReason = usePrompt();
 
   /* ── Official Receipt print (GL redesign 9b) ──────────────────────────
@@ -582,8 +589,12 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       body: 'The slip currently attached to this payment will be swapped for the one you just uploaded. The change is recorded in the order history.',
       confirmLabel: 'Replace',
     }))) return;
+    /* A role holding the right says why (docs/bugs/0888) — before the write,
+       and a dismissed ask abandons it. */
+    const reason = reasonOnEvery ? await askReason(paymentReasonAsk(p.slip_key ? 'proof-replace' : 'proof', 'holder')) : '';
+    if (reason === null) return;
     attachSlip.mutate(
-      { docNo: (props as SavedModeProps).docNo, id: p.id, uploadSessionId },
+      { docNo: (props as SavedModeProps).docNo, id: p.id, uploadSessionId, ...(reason ? { reason } : {}) },
       {
         onError: (e) => {
           // eslint-disable-next-line no-console
@@ -839,14 +850,8 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       collectedBy:  d.collectedBy  || null,
       ...draftMethodFields(method, d),
     };
-    const reason = rowVia(persisted.created_at) === 'amend'
-      ? await askReason({
-        title: 'Why is this payment being corrected?',
-        body: 'Finance keeps a record of every correction made after the day it was keyed in.',
-        input: { label: 'Reason', placeholder: 'Sales keyed RM 1,990 — receipt shows RM 1,991', required: true },
-        confirmLabel: 'Save changes',
-      })
-      : '';
+    const why = reasonWhyFor(rowVia(persisted.created_at), reasonOnEvery);
+    const reason = why ? await askReason(paymentReasonAsk('edit', why)) : '';
     if (reason === null) return;
     editPayment.mutate({ ...body, ...(reason ? { reason } : {}) }, {
       onSuccess: () => removeDraft(d.uid),
@@ -860,7 +865,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
 
   /* SAVED mode commit — fire POST /:docNo/payments. DRAFT mode has no
      commit affordance; the parent batches them at SO-create time. */
-  const commitDraft = (d: PaymentDraft) => {
+  const commitDraft = async (d: PaymentDraft) => {
     if (!isSaved) return;
     /* Owner 2026-07-13 — the slip is OPTIONAL now (a receipt isn't always on
        hand). Gate only on an amount > 0; the SO route accepts a slip-less
@@ -905,6 +910,11 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       idempotencyKey:  d.idempotencyKey,
       ...draftMethodFields(method, d),
     };
+    /* A ROLE holding the correction right says why it records money, too
+       (docs/bugs/0888) — asked before the write, abandoned when dismissed. */
+    const reason = reasonOnEvery ? await askReason(paymentReasonAsk('add', 'holder')) : '';
+    if (reason === null) return;
+    if (reason) body.reason = reason;
     addPayment.mutate(body as { docNo: string } & Record<string, unknown>, {
       onSuccess: () => {
         removeDraft(d.uid);
@@ -946,9 +956,18 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       let method: PaymentMethod;
       try { ({ method } = labelToApi(d.methodLabel)); }
       catch (e) { blocked.push(`${d.methodLabel}: ${e instanceof Error ? e.message : 'payment method not recognised'}`); continue; }
+      /* A holder of the right says why for each row the page saves — a
+         dismissed ask leaves that row where it is, reported as blocked. */
+      let reason = '';
+      if (reasonOnEvery) {
+        const answer = await askReason(paymentReasonAsk('add', 'holder'));
+        if (answer === null) { blocked.push(`${d.methodLabel}: no reason given`); continue; }
+        reason = answer;
+      }
       try {
         await addPayment.mutateAsync({
           docNo:           (props as SavedModeProps).docNo,
+          ...(reason ? { reason } : {}),
           paidAt:          d.paidAt,
           method,
           amountSen:       d.amountSen,
@@ -970,7 +989,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     }
     return { committed, failed, blocked };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- props is read at call time by design
-  }, [isSaved, addPayment, removeDraft]);
+  }, [isSaved, addPayment, removeDraft, reasonOnEvery, askReason]);
 
   /* Summary maths — identical across modes. In DRAFT mode there are no
      persisted rows yet, so paid is just Σ drafts. In SAVED mode paid is
@@ -1361,14 +1380,8 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                           className={paymentsStyles.trashBtn}
                           disabled={deletePayment.isPending}
                           onClick={async () => {
-                            const reason = rowVia(p.created_at) === 'amend'
-                              ? await askReason({
-                                title: 'Why is this payment being removed?',
-                                body: 'Finance keeps a record of every correction made after the day it was keyed in.',
-                                input: { label: 'Reason', placeholder: 'Keyed twice — duplicate of the RM 500 on 29/08', required: true },
-                                confirmLabel: 'Continue', danger: true,
-                              })
-                              : '';
+                            const why = reasonWhyFor(rowVia(p.created_at), reasonOnEvery);
+                            const reason = why ? await askReason(paymentReasonAsk('delete', why)) : '';
                             if (reason === null) return;
                             if (await askConfirm({
                               title: `Delete this ${methodDisplay(p)} payment of ${fmtRm(p.amount_sen, currency)}?`,

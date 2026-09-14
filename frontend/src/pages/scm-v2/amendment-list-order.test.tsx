@@ -90,6 +90,21 @@ describe('desktop SO amendment queue', () => {
     const bucketOf = (id: string) => ({ a: 1, b: 2, c: 1, d: 0, e: 0, f: 2 } as Record<string, number>)[id];
     expect(ids.map(bucketOf)).toEqual([0, 0, 1, 1, 2, 2]);
   });
+
+  /* The owner's screen on 2026-09-14: the Status header read "↓", a sort clicked
+     on an earlier visit and remembered by the browser, so Requested sat at the
+     BOTTOM of "All" even though the queue's own order puts it on top. */
+  test('a Status sort left from an earlier visit does not decide the order the next time it opens', () => {
+    const bucketOf = (id: string) => ({ a: 1, b: 2, c: 1, d: 0, e: 0, f: 2 } as Record<string, number>)[id];
+    const first = render(<MemoryRouter><Amendments /></MemoryRouter>);
+    const status = screen.getByRole('button', { name: 'Status' });
+    fireEvent.click(status); // ascending
+    fireEvent.click(status); // descending: Requested at the bottom for THIS visit
+    expect(gridIds(first.container, 'SO').map(bucketOf)).toEqual([2, 2, 1, 1, 0, 0]);
+    first.unmount();
+    const { container } = render(<MemoryRouter><Amendments /></MemoryRouter>);
+    expect(gridIds(container, 'SO')).toEqual(EXPECTED);
+  });
 });
 
 describe('desktop PO amendment queue', () => {
@@ -105,6 +120,22 @@ describe('desktop PO amendment queue', () => {
     ];
     const { container } = render(<MemoryRouter><PoAmendments /></MemoryRouter>);
     expect(gridIds(container, 'PO')).toEqual(['q', 'n', 'm', 'p', 'r']);
+  });
+
+  test('a sort left from an earlier visit does not decide the order the next time it opens', () => {
+    poRows = [
+      row('p', 'APPROVED', '2026-09-11T08:00:00Z'),
+      row('q', 'REQUESTED', '2026-09-03T08:00:00Z'),
+      row('r', 'REJECTED', '2026-09-13T08:00:00Z'),
+    ];
+    const first = render(<MemoryRouter><PoAmendments /></MemoryRouter>);
+    const created = screen.getByRole('button', { name: 'Created' });
+    fireEvent.click(created); // oldest first
+    fireEvent.click(created); // newest first: the Rejected row leads this visit
+    expect(gridIds(first.container, 'PO')[0]).toBe('r');
+    first.unmount();
+    const { container } = render(<MemoryRouter><PoAmendments /></MemoryRouter>);
+    expect(gridIds(container, 'PO')).toEqual(['q', 'p', 'r']);
   });
 });
 

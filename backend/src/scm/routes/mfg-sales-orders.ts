@@ -70,7 +70,9 @@ import {
   PAYMENT_WINDOW_CLOSED_ERROR,
 } from '../shared/so-field-policy';
 import { paymentMayChange, SO_PAYMENT_AMEND } from '../../acc/payment-reconciled';
-import { AMEND_SOURCE, ledgerFieldChange, REASON_REQUIRED } from '../../acc/payment-corrections';
+import { AMEND_SOURCE, ledgerFieldChange } from '../../acc/payment-corrections';
+import { paymentReasonRule } from '../lib/so-payment-reason';
+import { paymentVersionGuard, soCasGrace, soCasGraceOpen } from '../lib/so-cas';
 /* SO-SKU spec P2 — every charge is a SKU line. Predicates from P1; the
    fee/addon → SERVICE-line decomposition builders are pure + shared. */
 import {
@@ -436,41 +438,11 @@ const soVersionConflict = (currentVersion: number) => ({
   currentVersion,
 });
 
-/* ── ROLLOUT GRACE WINDOW for mandatory CAS (2026-07-22) ───────────────────────
-   Making `version` mandatory is a BREAKING wire change for every browser tab
-   that is ALREADY OPEN when this deploys. Those tabs run the previous JS
-   bundle, which never sends a version, so without a grace path the first Save
-   after deploy 428s for every single person mid-edit, all at once, with no way
-   to recover except a reload they have not been told to do. A correctness fix
-   that interrupts the whole shop the moment it lands is not a fix yet.
-
-   MECHANISM: a bounded, opt-in, self-closing window driven by the
-   `SO_CAS_GRACE_UNTIL` Worker variable (an ISO-8601 instant).
-     • unset  → strict from the first request (the safe default, and the
-                permanent steady state; nothing to remember to turn off)
-     • set and in the FUTURE → a request that omits the version is accepted with
-                the PRE-CAS semantics (server-current version, last-writer-wins,
-                exactly today's production behaviour) and flagged `casGrace`
-     • set and in the PAST → strict again, automatically
-
-   A STALE version is ALWAYS a 409, in or out of the window: the grace only
-   covers clients that cannot speak the protocol at all, never a client that
-   spoke it and lost. Set it to deploy time + 30 minutes at rollout and delete
-   the variable afterwards — see docs/IDEMPOTENCY-PHASE2-RUNBOOK.md. */
-export type SoCasGraceWindow = { until?: string | null; now?: number };
-
-export function soCasGraceOpen(window?: SoCasGraceWindow): boolean {
-  const raw = window?.until;
-  if (!raw) return false;
-  const until = Date.parse(String(raw));
-  if (!Number.isFinite(until)) return false;
-  return (window?.now ?? Date.now()) < until;
-}
-
-/** Read the window off the Worker env. One place, so no route invents its own. */
-export const soCasGrace = (c: any): SoCasGraceWindow => ({
-  until: (c?.env?.SO_CAS_GRACE_UNTIL as string | undefined) ?? null,
-});
+/* The CAS rollout grace window and the payment version guard live in
+   scm/lib/so-cas.ts (moved 2026-09-14 — this file may only shrink);
+   re-exported because two suites import them from here. */
+export { paymentVersionGuard, soCasGrace, soCasGraceOpen } from '../lib/so-cas';
+export type { PaymentVersionGuard, SoCasGraceWindow } from '../lib/so-cas';
 
 /* 'held' is all its two callers can be in: both read a LIVE lease first. The
    three-way lives in requireSoLineWriteLease below - docs/bugs/0630. */
@@ -5218,6 +5190,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
         source: 'automation',
         note: 'Auto: POS split payment recorded at SO create',
+        paymentId: String((depRow as { id?: unknown } | null)?.id ?? '') || null,
         fieldChanges: [
           { field: 'paidAt',      from: null, to: paidAt },
           { field: 'method',      from: null, to: p.method },
@@ -5275,6 +5248,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
           actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
           source: 'automation',
           note: 'Auto: POS deposit recorded at SO create',
+          paymentId: String((depRow as { id?: unknown } | null)?.id ?? '') || null,
           fieldChanges: [
             { field: 'paidAt',      from: null, to: paidAt },
             { field: 'method',      from: null, to: depositMethod },
@@ -10726,6 +10700,8 @@ const paymentCreateSchema = z.object({
      slip-less (slip_key NULL, same as a scan-job first receipt). Previously
      `.min(1)` (required). */
   uploadSessionId:    z.string().min(1).optional().nullable(),
+  /* Owed by a role holding the correction right (docs/bugs/0888). */
+  reason:             z.string().trim().max(500).optional(),
 });
 
 mfgSalesOrders.post('/:docNo/payments', async (c) => {
@@ -10742,6 +10718,11 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
   const parsed = paymentCreateSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
   const p = parsed.data;
+
+  /* A role holding the correction right says why it records money, too
+     (docs/bugs/0888) — the rule in lib/so-payment-reason; never a window gate. */
+  const owed = paymentReasonRule(c, { reason: p.reason });
+  if (owed.refusal) return c.json(owed.refusal, 400);
 
   /* FIX 3 (2026-07-16) — method ⇒ bank/account mapping, enforced server-side.
      The desktop New-SO / Payments cascade blocks saving a Merchant payment with
@@ -10834,6 +10815,7 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
     note:              p.note,
     createdBy:         user.id,
     actorName:         (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+    ...(owed.owed ? { auditSource: AMEND_SOURCE, auditNote: p.reason } : {}),
   });
   if (errorMessage) return c.json({ error: 'insert_failed', reason: errorMessage }, 500);
 
@@ -10892,35 +10874,6 @@ const paymentPatchSchema = z.object({
   reason:            z.string().trim().max(500).optional(),
 });
 
-export type PaymentVersionGuard =
-  | { ok: true; version: number; grace?: true }
-  | { ok: false; status: 409 | 428; body: { error: string; currentVersion: number } };
-
-/** Shared PATCH/DELETE payment CAS contract. Missing is 428, stale is 409. */
-export function paymentVersionGuard(
-  candidate: unknown,
-  currentVersion: number,
-  grace?: SoCasGraceWindow,
-): PaymentVersionGuard {
-  const version = Number(candidate);
-  if (!Number.isInteger(version) || version < 1) {
-    if (soCasGraceOpen(grace)) return { ok: true, version: currentVersion, grace: true };
-    return {
-      ok: false,
-      status: 428,
-      body: { error: 'payment_version_required', currentVersion },
-    };
-  }
-  if (version !== currentVersion) {
-    return {
-      ok: false,
-      status: 409,
-      body: { error: 'payment_version_conflict', currentVersion },
-    };
-  }
-  return { ok: true, version };
-}
-
 mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
   // WRITE: the company must RESOLVE (companyScope.ts strict rule) - a payment
   // edit is a books change, so an unknown company refuses rather than widens.
@@ -10974,8 +10927,8 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
   const parsed = paymentPatchSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
   const p = parsed.data;
-  const amended = editWindow.via === 'amend';
-  if (amended && !p.reason) return c.json(REASON_REQUIRED, 400);
+  const owed = paymentReasonRule(c, { reason: p.reason, viaAmend: editWindow.via === 'amend' }); // docs/bugs/0785, 0888
+  if (owed.refusal) return c.json(owed.refusal, 400);
   const versionCheck = paymentVersionGuard(p.version, Number(before.version ?? 1), soCasGrace(c));
   if (!versionCheck.ok) return c.json(versionCheck.body, versionCheck.status);
   const expectedPaymentVersion = versionCheck.version;
@@ -11102,10 +11055,11 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     action: 'UPDATE_PAYMENT',
     actorId: user.id,
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+    paymentId: id,
     fieldChanges: [...soPaymentFieldChanges(before, next), ...ledgerFieldChange(ledger)],
     /* A correction made on the amend right is a FINANCE event: it carries the
        typed reason and is what the corrections report lists (docs/bugs/0785). */
-    ...(amended ? { source: AMEND_SOURCE, note: p.reason } : {}),
+    ...owed.audit,
   });
 
   /* Same reason as the insert: an edited amount moves the outstanding balance,
@@ -11180,9 +11134,8 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
   }
   /* A DELETE carries no body here — version already rides the query, so the
      reason does too. Required on the amend right, same as the PATCH. */
-  const delAmended = windowCheck.via === 'amend';
-  const delReason = String(c.req.query('reason') ?? '').trim().slice(0, 500);
-  if (delAmended && !delReason) return c.json(REASON_REQUIRED, 400);
+  const owed = paymentReasonRule(c, { reason: c.req.query('reason'), viaAmend: windowCheck.via === 'amend' });
+  if (owed.refusal) return c.json(owed.refusal, 400);
 
   const { data: deleted, error } = await scopeToCompanyId(sb.from('mfg_sales_order_payments').delete()
     .eq('id', id)
@@ -11208,6 +11161,7 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
     action: 'DELETE_PAYMENT',
     actorId: user.id,
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+    paymentId: id,
     fieldChanges: [
       { field: 'paidAt',       from: rowTyped.paid_at,       to: null },
       { field: 'method',       from: rowTyped.method,        to: null },
@@ -11215,7 +11169,7 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
       ...(rowTyped.approval_code ? [{ field: 'approvalCode', from: rowTyped.approval_code, to: null } satisfies FieldChange] : []),
       ...ledgerFieldChange(delLedger),
     ],
-    ...(delAmended ? { source: AMEND_SOURCE, note: delReason } : {}),
+    ...owed.audit,
   });
 
   /* A deleted payment raises the outstanding balance, so the account book has
@@ -11283,6 +11237,8 @@ mfgSalesOrders.get('/:docNo/payments/:id/slip-url', async (c) => {
    rather than silent. */
 const paymentSlipAttachSchema = z.object({
   uploadSessionId: z.string().min(1),
+  /* Owed by a role holding the correction right (docs/bugs/0888). */
+  reason:          z.string().trim().max(500).optional(),
 });
 
 mfgSalesOrders.post('/:docNo/payments/:id/slip', async (c) => {
@@ -11309,7 +11265,9 @@ mfgSalesOrders.post('/:docNo/payments/:id/slip', async (c) => {
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const parsed = paymentSlipAttachSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
-  const { uploadSessionId } = parsed.data;
+  const { uploadSessionId, reason } = parsed.data;
+  const owed = paymentReasonRule(c, { reason }); // not a window gate — see above; docs/bugs/0888
+  if (owed.refusal) return c.json(owed.refusal, 400);
 
   /* Resolve the upload session → committed R2 key. Same contract as the POST
      route: only a session that finished its PUT ('uploaded') resolves, so a
@@ -11373,7 +11331,8 @@ mfgSalesOrders.post('/:docNo/payments/:id/slip', async (c) => {
     action: 'UPDATE_PAYMENT',
     actorId: user.id,
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
-    note: before.slip_key ? 'Payment proof replaced' : 'Payment proof attached',
+    paymentId: id,
+    ...(owed.owed ? owed.audit : { note: before.slip_key ? 'Payment proof replaced' : 'Payment proof attached' }),
     fieldChanges: [{ field: 'slipKey', from: before.slip_key, to: nextSlipKey }],
   });
 
