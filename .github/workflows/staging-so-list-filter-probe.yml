@@ -1,0 +1,47 @@
+name: Staging SO list filter probe (read-only)
+
+# Measures, on the STAGING database, what the Sales Order list's line-level
+# filters (warehouse / item category / open amendment) and the branding filter
+# match and cost. One psql session inside a READ ONLY transaction as
+# service_role (the role PostgREST reads with): SELECT and EXPLAIN ANALYZE only,
+# then ROLLBACK. Exit 0 for every legitimate answer; the answer is the output.
+# Manual trigger only. Own concurrency group.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/so-list-line-filters]
+    paths: [backend/scripts/sql/staging-so-list-filter-probe.sql]
+
+concurrency:
+  group: staging-so-list-filter-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: Staging
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install PostgreSQL 17 client
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+      - name: Assert the target is STAGING
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          case "$DATABASE_URL" in *anogrigyjbduyzclzjgn*) echo "::error::points at PRODUCTION"; exit 1;; esac
+          case "$DATABASE_URL" in *minnapsemfzjmtvnnvdd*) echo "target: staging";; *) echo "::error::not the staging project"; exit 1;; esac
+      - name: Census and timings
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          set -uo pipefail
+          /usr/lib/postgresql/17/bin/psql "$DATABASE_URL" -v ON_ERROR_STOP=0 -X -f backend/scripts/sql/staging-so-list-filter-probe.sql
