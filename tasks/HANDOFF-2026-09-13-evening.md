@@ -137,7 +137,9 @@ Guards added, which is the more durable half:
    `service_role` key for project `minnapsemfzjmtvnnvdd` and
    `wrangler secret put SUPABASE_SERVICE_ROLE_KEY --env staging`. Production is
    unaffected. `docs/bugs/0824-the-staging-rehearsal-had-been-red-every-night-since-2026-08.md`.
-2. **A repo-level `STAGING_DATABASE_URL` points at PRODUCTION.** Same entry.
+2. ~~**A repo-level `STAGING_DATABASE_URL` points at PRODUCTION.** Same entry.~~
+   **Already closed when this was written** — deleted 2026-09-12; on 2026-09-14
+   `gh secret list` shows no repo-level copy, only the Staging environment's.
 3. **Look at one 2990 sofa on the POS** (e.g. Annsa) and confirm it offers his 28
    colours, not all of them. Only needed because the browser check could not run.
 4. **The option-pool question**, framed properly this time: the same column holds

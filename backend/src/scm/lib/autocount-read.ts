@@ -15,6 +15,7 @@ import { poSourceRef, poTransferShape, type PoTransferShape } from '../shared/po
 import { soOutstandingSen } from '../shared/so-outstanding';
 import { bookSpellingOrOwn, type ErpLine } from '../../services/autocount-writeback';
 import { LOCATION_MAP } from '../../services/autocount-master-maps';
+import { inAcLineOrder } from './ac-line-order';
 
 type Sb = SupabaseClient<any, any, any>;
 
@@ -275,8 +276,16 @@ export async function readPoTransferFacts(
      transfer is addressed by DtlKey alone, so a purchase line naming a
      sales line for a different bed would have transferred the wrong book row.
      Both selects were already being taken; this adds one column to each. */
+  /* IN THE COMPOSER'S ORDER, and that is a money rule, not tidiness. The keys
+     this returns become `DtlKeys`, which composeSoToPo zips BY INDEX with the
+     details enqueuePoCreate composed from `inAcLineOrder` rows, and the host
+     applies each Detail's Qty and UnitPrice to the line transferred from that
+     Detail's DtlKey. This read had no ORDER BY, so production handed the rows
+     back in another order: HC-PO-2609-032 told the book CROWN (SS+S) x2 and
+     STAR (SS) x1, each at the other's cost (probe run 34826755295). The drain's
+     backfill for a `wait` row zips the same way. */
   const rows = ((await readOrThrow('purchase_order_items',
-    sb.from('purchase_order_items').select('id, so_item_id, item_code').eq('purchase_order_id', poId))) ?? []) as Array<Record<string, unknown>>;
+    inAcLineOrder(sb.from('purchase_order_items').select('id, so_item_id, item_code').eq('purchase_order_id', poId)))) ?? []) as Array<Record<string, unknown>>;
   if (!rows.length) return [];
 
   const ids = rows.map((r) => String(r.id));

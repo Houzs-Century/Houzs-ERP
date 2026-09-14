@@ -151,20 +151,6 @@ export const usePostPurchaseInvoice = () => {
     onError: writeFailedAs('Purchase invoice not posted'),
   });
 };
-export const useRecordPiPayment = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, amountSen, notes }: { id: string; amountSen: number; notes?: string }) =>
-      authedFetch(`/purchase-invoices/${id}/payment`, {
-        method: 'PATCH', body: JSON.stringify({ amountSen, notes }),
-      }),
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
-      qc.invalidateQueries({ queryKey: ['purchase-invoice-detail', vars.id] });
-    },
-    onError: writeFailed,
-  });
-};
 export const useCancelPurchaseInvoice = () => {
   const qc = useQueryClient();
   return useMutation({

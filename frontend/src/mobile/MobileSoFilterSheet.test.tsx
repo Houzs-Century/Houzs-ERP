@@ -79,6 +79,16 @@ describe("MobileSoFilterSheet", () => {
     expect(screen.queryByRole("button", { name: /^Draft\s*0$/ })).toBeTruthy();
   });
 
+  it("the field picker's labels use the same text class as the status rows (owner: the fonts were all different, too big)", async () => {
+    const user = userEvent.setup();
+    renderSheet();
+    const statusLabel = screen.getByRole("button", { name: /Submitted\s*2341/ }).querySelector("span");
+    await user.click(screen.getByRole("button", { name: "+ Add filter" }));
+    const fieldLabel = screen.getByRole("button", { name: /^Created by/ }).querySelector("span");
+    expect(fieldLabel?.className).toBe(statusLabel?.className);
+    expect(fieldLabel?.className).toBe("ml");
+  });
+
   it("adds a Created by row from the grouped picker, previews its count, and applies it", async () => {
     const user = userEvent.setup();
     const props = renderSheet();
