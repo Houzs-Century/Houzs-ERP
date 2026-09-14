@@ -19,6 +19,14 @@ import type { BankLine, Reconciliation, LedgerEntry } from './bank-queries';
 
 const bookMutate = vi.fn();
 const bookMutateAsync = vi.fn();
+const uploadMutate = vi.fn();
+/* pdf.js never runs under jsdom: the extractor is stubbed, and what is
+   pinned is that a picked .pdf goes to the server AS its extracted text,
+   marked as a PDF (docs/bugs/0869). */
+vi.mock('../../vendor/scm/lib/pdf-text', () => ({
+  PDF_TEXT_KIND: 'houzs-pdf-text/1',
+  extractPdfText: vi.fn(async () => ({ kind: 'houzs-pdf-text/1', pages: [{ lines: [{ y: 693, cells: [{ x: 449, t: '31/08/26' }] }] }] })),
+}));
 const matchMutate = vi.fn();
 const groupMutate = vi.fn();
 const ignoreMutate = vi.fn();
@@ -85,7 +93,7 @@ vi.mock('./bank-queries', () => ({
     },
     isLoading: false,
   }),
-  useUploadBankStatement: () => ({ mutate: vi.fn(), isPending: false }),
+  useUploadBankStatement: () => ({ mutate: uploadMutate, isPending: false }),
   useBookBankReceipt: () => ({ mutate: bookMutate, mutateAsync: bookMutateAsync, isPending: false, isError: false, error: null }),
   useMatchBankLine: () => ({ mutate: matchMutate, isPending: false, isError: false, error: null }),
   useMatchBankGroup: () => ({ mutate: groupMutate, isPending: false, isError: false, error: null }),
@@ -656,5 +664,36 @@ describe('every certain payout at once', () => {
     lines = [SPLIT, OTHER];
     openStatement();
     expect(screen.queryByText(/Money received — all/)).toBeNull();
+  });
+});
+
+/* ── The bank's monthly statement PDF (owner 2026-09-14: 也支持 csv，也支持 pdf;
+   docs/bugs/0869): the browser reads its text with positions and the upload
+   carries it marked as a PDF; a CSV goes as it always did. ────────────────── */
+describe('uploading a statement PDF', () => {
+  const pick = async (file: File) => {
+    render(<BankStatementTab />);
+    fireEvent.change(screen.getByLabelText('Bank account'), { target: { value: '310-0010' } });
+    const input = screen.getByLabelText('Bank statement file') as HTMLInputElement;
+    expect(input.accept).toContain('.pdf');
+    fireEvent.change(input, { target: { files: [file] } });
+    const go = () => screen.getByText('Upload bank statement').closest('button') as HTMLButtonElement;
+    await waitFor(() => expect(go().disabled).toBe(false));
+    fireEvent.click(go());
+    expect(uploadMutate).toHaveBeenCalledTimes(1);
+    return uploadMutate.mock.calls[0]![0] as { fileName: string; format: string; content: string; accountCode: string };
+  };
+
+  test('a picked .pdf is sent as its extracted text, marked PDF', async () => {
+    uploadMutate.mockReset();
+    const sent = await pick(new File(['%PDF-1.4'], 'MBBcurrent_564418759397_2026-08-31.pdf', { type: 'application/pdf' }));
+    expect(sent).toMatchObject({ accountCode: '310-0010', fileName: 'MBBcurrent_564418759397_2026-08-31.pdf', format: 'PDF' });
+    expect(JSON.parse(sent.content)).toMatchObject({ kind: 'houzs-pdf-text/1', pages: [{ lines: [{ y: 693 }] }] });
+  });
+
+  test('a picked .csv is sent as its text, marked CSV, as it always was', async () => {
+    uploadMutate.mockReset();
+    const sent = await pick(new File(['EFFECT DATE|AMOUNT\n20260605|100'], 'aug.csv', { type: 'text/csv' }));
+    expect(sent).toMatchObject({ fileName: 'aug.csv', format: 'CSV', content: 'EFFECT DATE|AMOUNT\n20260605|100' });
   });
 });

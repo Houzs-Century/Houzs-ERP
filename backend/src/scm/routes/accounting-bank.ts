@@ -22,6 +22,7 @@ import type { Env, Variables } from '../env';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { parseBankStatement, movementFingerprint } from '../../acc/bank-parse';
+import { readPdfContent, pdfDigits, parsePdfStatement } from '../../acc/bank-parse-pdf';
 import { monthWindow } from '../../acc/bank-month';
 import {
   groupBankMovements, matchBankMovements, entryCandidatesFor, obviousEntryFor, bankReversalPairs,
@@ -173,10 +174,24 @@ export const bankUpload = guard(async (c) => {
      every total balances, and the answer is about somebody else's money. So if
      the config knows the account number and the file names a different one, it
      is refused by name. */
+  /* A STATEMENT PDF arrives as the text pdf.js read off it, with positions
+     (docs/bugs/0869); the bank's layout is read in acc/bank-parse-pdf. Told
+     apart by what the body says it is AND by the content's own marker — a
+     CSV renamed .pdf is still a CSV, and a PDF whose text never arrived is
+     said so, not read as an empty statement. */
+  const isPdf = String(body.format ?? '').toUpperCase() === 'PDF';
+  const pdf = isPdf ? readPdfContent(content) : null;
+  if (isPdf && !pdf) {
+    return c.json({ error: 'unreadable_statement', message: 'Nothing of the PDF\'s text arrived. Try the file again, or upload the CSV export.' }, 400);
+  }
+
   const expectNo = (cfg.config.account_no ?? '').replace(/\D/g, '');
   if (expectNo) {
-    const digits = content.slice(0, 20000).replace(/\D/g, '');
-    if (!digits.includes(expectNo)) {
+    const digits = pdf ? pdfDigits(pdf) : content.slice(0, 20000).replace(/\D/g, '');
+    /* The CSV export pads the number with zeros (0000564418610346); the
+       statement PDF prints it bare (564418610346). Both name the account. */
+    const bare = expectNo.replace(/^0+/, '');
+    if (!digits.includes(expectNo) && !(bare && digits.includes(bare))) {
       return c.json({
         error: 'wrong_account',
         message: `This file does not mention account ${cfg.config.account_no}, which is the ${cfg.config.bank_code} account you chose. Check you picked the right account, or the right file.`,
@@ -184,10 +199,10 @@ export const bankUpload = guard(async (c) => {
     }
   }
 
-  const parsed = parseBankStatement(
-    parseConfigFrom(cfg.config, /^\d{4}-\d{2}$/.test(String(body.statementMonth ?? '')) ? String(body.statementMonth) : null),
-    content,
-  );
+  const monthNamed = /^\d{4}-\d{2}$/.test(String(body.statementMonth ?? '')) ? String(body.statementMonth) : null;
+  const parsed = pdf
+    ? parsePdfStatement({ bankCode: cfg.config.bank_code, pdf, statementMonth: monthNamed })
+    : parseBankStatement(parseConfigFrom(cfg.config, monthNamed), content);
   if (!parsed.ok) return c.json({ error: 'unreadable_statement', message: parsed.reason }, 400);
 
   /* THE MONTH A STATEMENT COVERS (docs/bugs/0802). Hong Leong's April statement
@@ -213,6 +228,32 @@ export const bankUpload = guard(async (c) => {
     }
     periodFrom = window.from;
     periodTo = window.to;
+  }
+
+  /* ONE SOURCE PER MONTH. A statement PDF and a CSV export of the same days
+     print the same movements in different words, so the fingerprint that
+     keeps two CSV exports from doubling a movement (below) cannot tell them
+     apart — and a month read from both would count everything twice. A PDF
+     is refused where the account already holds CSV movements on its days, and
+     a CSV where it holds PDF ones (docs/bugs/0869). Two CSV exports overlap as
+     they always did. */
+  {
+    const { data: others, error: oErr } = await sb.from('acc_bank_statements')
+      .select('file_name, period_from, period_to, line_count')
+      .eq('company_id', co.companyId).eq('account_code', accountCode);
+    if (oErr) return c.json({ error: 'load_failed', reason: oErr.message }, 500);
+    const clash = ((others ?? []) as Array<{ file_name: string; period_from: string | null; period_to: string | null; line_count: number | null }>)
+      .find((s) => Number(s.line_count ?? 0) > 0
+        && String(s.period_from ?? '').slice(0, 10) <= periodTo && String(s.period_to ?? '').slice(0, 10) >= periodFrom
+        && /\.pdf$/i.test(String(s.file_name ?? '')) !== Boolean(pdf));
+    if (clash) {
+      return c.json({
+        error: 'mixed_sources',
+        message: pdf
+          ? `${clash.file_name} already covers these days from a CSV export; a statement PDF for the same days would record them twice. One source per month.`
+          : `${clash.file_name} already covers these days from a statement PDF; a CSV export for the same days would record them twice. One source per month.`,
+      }, 409);
+    }
   }
 
   /* A CLOSED MONTH TAKES NO NEW MOVEMENTS. Checked here, after the file has been
