@@ -20,9 +20,9 @@
 // Backed by GET /mrp (apps/api/src/routes/mrp.ts).
 // ----------------------------------------------------------------------------
 
-import { useRef, useState, type ReactNode } from 'react';
+import { useCallback, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import { ChevronRight, ChevronDown, RefreshCw, Truck, ShoppingCart, CalendarRange, Clock } from 'lucide-react';
+import { ChevronRight, ChevronDown, RefreshCw, Truck, ShoppingCart, CalendarRange, Clock, Download } from 'lucide-react';
 import { DataTable, type Column } from '../../components/DataTable';
 import {
   useMrp, useRegenerateMrp, useCategoryLeadTimes, useUpdateCategoryLeadTime, GLOBAL_LEAD_KEY,
@@ -34,6 +34,8 @@ import { useAuth, isAdminLevel } from '../../vendor/scm/lib/auth';
 import { useCreatePosFromSoItems } from '../../vendor/scm/lib/suppliers-queries';
 import { newIdempotencyKey } from '../../lib/idempotency';
 import { mrpViews, mrpCategoryOf, rowBelongsToView } from './mrp-views';
+import { flattenMrpExportLines, MRP_EXPORT_LINE_COLUMNS } from './mrp-export-lines';
+import { downloadCSV, toCSV } from '../../lib/csv';
 import { fmtDate, fmtDateTime } from '../../vendor/shared/format';
 import { allocSourceOf } from '../../vendor/shared/mrp-alloc-source';
 import { DateField } from '../../vendor/scm/components/DateField';
@@ -675,6 +677,19 @@ export const Mrp = () => {
   // A search hit is force-opened so the matching line is visible without a drill.
   const forceOpen = Boolean(searchQ);
 
+  /* Export lines (staff request #28, 2026-09-14) — one row per SKU x SO line of
+     the rows the TABLE is showing. DataTable's column funnels are client-side,
+     so only its onFilteredRowsChange knows that set. Held in a ref, not state:
+     displayModels is a fresh array every render, so storing the report in state
+     would re-render, re-report and loop. The existing Export is untouched. */
+  const visibleModelsRef = useRef<ModelGroup[]>([]);
+  const onVisibleModels = useCallback((rows: ModelGroup[]) => { visibleModelsRef.current = rows; }, []);
+  const onExportLines = () => {
+    const rows = flattenMrpExportLines(visibleModelsRef.current, view === 'sofa' ? accessoryBySoDoc : null);
+    if (rows.length === 0) return;
+    downloadCSV(`mrp-${view}-lines-${new Date().toISOString().slice(0, 10)}.csv`, toCSV(rows, MRP_EXPORT_LINE_COLUMNS));
+  };
+
   /* Model-row expansion is driven by DataTable via its controlled-expansion API
      (expandable.expandedIds = expandedModels, onExpandedChange = setExpandedModels);
      Collapse/Expand-all and a search hit set that state directly. Variant-level
@@ -1122,6 +1137,11 @@ export const Mrp = () => {
               <button type="button" className={TOOLBAR_BTN} onClick={() => void q.refetch()} disabled={q.isFetching}>
                 <RefreshCw {...ICON} className={q.isFetching ? 'animate-spin' : undefined} /> Refresh
               </button>
+              <button type="button" className={TOOLBAR_BTN} onClick={onExportLines}
+                disabled={!data || displayModels.length === 0}
+                title="Download one row per Sales Order line of the rows shown (coverage, PO no, stock)">
+                <Download {...ICON} /> Export lines
+              </button>
               {/* Server-side Regenerate — recompute + save the stored planning
                   snapshot (option B). Distinct from Refresh, which only re-reads. */}
               <button type="button" className={TOOLBAR_BTN} onClick={() => regenerate.mutate()} disabled={regenerate.isPending}
@@ -1277,6 +1297,7 @@ export const Mrp = () => {
         getRowKey={(g) => g.groupKey}
         getRowClassName={(g) => (g.shortage > 0 ? styles.rowShort : undefined)}
         exportName={`mrp-${view}`}
+        onFilteredRowsChange={onVisibleModels}
         search={{
           value: search,
           onChange: setSearch,
