@@ -20,7 +20,7 @@ import type { AcLineTable } from './autocount-outbox';
 /* VALUE import, not type-only: the four downstream item tables are read off it
    rather than re-listed. No cycle — autocount-convert-lines imports types from
    services/autocount-writeback, never from this file. */
-import { DOWNSTREAM, type AcDownstreamSpec } from './autocount-convert-lines';
+import { CONVERT_TARGET, DOWNSTREAM, type AcDownstreamSpec } from './autocount-convert-lines';
 // @ts-expect-error - plain .mjs, shared with stamp-conversion-line-keys.mjs so the drain and the backlog stamp hold one pairing rule
 import { planDocumentKeys } from '../../../scripts/lib/conversion-line-key-plan.mjs';
 
@@ -139,7 +139,7 @@ export async function persistLineKeys(
        conversion does not preserve (a sofa is one book line; the book spells a
        supplier's code). Absent on a host built before 2026-09-14, and then the
        checks below run as they always have. */
-    const linkedSpec = TRANSFER_LINKED[row.op];
+    const linkedSpec = transferLinkedSpec(row.op);
     if (linkedSpec && lines.every((l) => l.FromDocDtlKey != null)) {
       return await persistByTransferLink(sb, label, target, lines, linkedSpec);
     }
@@ -295,16 +295,13 @@ export async function persistLineKeys(
   }
 }
 
-/** The conversions whose created lines AutoCount links in DocTransfer, and the
- *  spec that says where each ERP row names its source line. `so_to_po` is not
- *  here: the book records that edge on PODTL, not in DocTransfer, and its
- *  source keys travel in the request (`sourceDtlKeys`, above). */
-const TRANSFER_LINKED: Partial<Record<string, AcDownstreamSpec>> = {
-  so_to_do: DOWNSTREAM.DO,
-  po_to_gr: DOWNSTREAM.GR,
-  do_to_iv: DOWNSTREAM.IV,
-  gr_to_pi: DOWNSTREAM.PI,
-};
+/** The conversions whose created lines AutoCount links in DocTransfer are the
+ *  four in CONVERT_TARGET, read off it rather than listed again; the spec says
+ *  where each ERP row names its source line. `so_to_po` is not one of them: the
+ *  book records that edge on PODTL, and its source keys travel in the request
+ *  (`sourceDtlKeys`, above). */
+const transferLinkedSpec = (op: string): AcDownstreamSpec | undefined =>
+  Object.hasOwn(CONVERT_TARGET, op) ? DOWNSTREAM[CONVERT_TARGET[op as keyof typeof CONVERT_TARGET]] : undefined;
 
 /**
  * Pair a converted document's rows with the book's lines by SOURCE line: our
