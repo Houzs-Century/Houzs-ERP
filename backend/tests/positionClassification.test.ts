@@ -59,6 +59,16 @@ describe('classifyPosition answers with the enforcing code', () => {
     expect(src).toContain('import { classifyPosition } from "./lib/position-classification.mjs"');
   });
 
+  it('neither diagnostic prints a person by name into the public Actions log (docs/bugs/0895)', () => {
+    for (const script of ['audit-permission-grants.mjs', 'diag-role-permissions.mjs']) {
+      const src = readFileSync(resolve(HERE, `../scripts/${script}`), 'utf8');
+      expect(src, script).not.toMatch(/\bu\.name\b/);
+      expect(src, script).not.toMatch(/user_name|AS person\b/);
+    }
+    const audit = readFileSync(resolve(HERE, '../scripts/audit-permission-grants.mjs'), 'utf8');
+    expect(audit).not.toMatch(/lower\(p\.name\) IN \(/);
+  });
+
   it('the workflow runs the script under tsx, which the TypeScript import needs', () => {
     const wf = readFileSync(resolve(HERE, '../../.github/workflows/diag-role-permissions.yml'), 'utf8');
     expect(wf).toContain('npx tsx scripts/audit-permission-grants.mjs');

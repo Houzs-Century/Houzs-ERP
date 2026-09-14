@@ -34,6 +34,11 @@ if (!url) {
   process.exit(1);
 }
 
+/** A person is printed by user id, never by name: this runs in a PUBLIC
+ *  repository's Actions log (docs/bugs/0895). The id opens the user in
+ *  Team > Users for whoever needs the name. */
+const personRef = (id) => `user #${id}`.padEnd(14);
+
 const notice = (msg) =>
   console.log(process.env.GITHUB_ACTIONS ? `::notice::${msg}` : `\n${msg}`);
 
@@ -124,7 +129,7 @@ try {
 
   // -- (3) WHO IS ACTUALLY IN THE SYSTEM ------------------------------------
   const people = await pg`
-    SELECT u.id, u.name, u.status,
+    SELECT u.id, u.status,
            r.name AS role_name, r.permissions AS role_perms,
            p.name AS position_name, d.name AS dept_name
       FROM users u
@@ -132,13 +137,13 @@ try {
       LEFT JOIN positions p ON p.id = u.position_id
       LEFT JOIN departments d ON d.id = u.department_id
      WHERE u.status = 'active'
-     ORDER BY p.name NULLS FIRST, r.name, u.name`;
+     ORDER BY p.name NULLS FIRST, r.name, u.id`;
 
   notice(`-- (3) ACTIVE USERS: ${people.length} --`);
   const positionless = people.filter((u) => !u.position_name);
   console.log(`  active users with NO position (hydrate from the LEGACY ROLE matrix): ${positionless.length}`);
   for (const u of positionless)
-    console.log(`      ${String(u.name).padEnd(28)} role=${u.role_name} dept=${u.dept_name ?? "-"}`);
+    console.log(`      ${personRef(u.id)} role=${u.role_name} dept=${u.dept_name ?? "-"}`);
 
   const wild = people.filter((u) => {
     let perms = []; try { perms = JSON.parse(u.role_perms || "[]"); } catch {}
@@ -148,7 +153,7 @@ try {
   for (const u of wild) {
     let perms = []; try { perms = JSON.parse(u.role_perms || "[]"); } catch {}
     const via = perms.includes("*") ? "role" : "position";
-    console.log(`      ${String(u.name).padEnd(28)} via ${via.padEnd(8)} role=${String(u.role_name).padEnd(20)} position=${u.position_name ?? "-"}`);
+    console.log(`      ${personRef(u.id)} via ${via.padEnd(8)} role=${String(u.role_name).padEnd(20)} position=${u.position_name ?? "-"}`);
   }
 
   notice("-- (3b) COHORT HEADCOUNT (the number behind each rule) --");
@@ -171,7 +176,7 @@ try {
   );
   console.log(`  ${deptOnlySales.length} people`);
   for (const u of deptOnlySales)
-    console.log(`      ${String(u.name).padEnd(28)} position=${u.position_name ?? "(none)"} dept=${u.dept_name}`);
+    console.log(`      ${personRef(u.id)} position=${u.position_name ?? "(none)"} dept=${u.dept_name}`);
 
   // -- (4) COMPANY GRANTS ---------------------------------------------------
   const companies = await pg`SELECT id, code, name, is_active FROM companies ORDER BY id`;
@@ -179,15 +184,15 @@ try {
   for (const c of companies) console.log(`  ${c.id} ${c.code} ${c.name} active=${c.is_active}`);
 
   const grants = await pg`
-    SELECT u.id, u.name, p.name AS position_name,
+    SELECT u.id, p.name AS position_name,
            coalesce(array_agg(c.code ORDER BY c.code) FILTER (WHERE c.code IS NOT NULL), '{}') AS codes
       FROM users u
       LEFT JOIN positions p ON p.id = u.position_id
       LEFT JOIN user_companies uc ON uc.user_id = u.id
       LEFT JOIN companies c ON c.id = uc.company_id
      WHERE u.status = 'active'
-     GROUP BY u.id, u.name, p.name
-     ORDER BY u.name`;
+     GROUP BY u.id, p.name
+     ORDER BY u.id`;
   const byGrant = new Map();
   for (const g of grants) {
     const key = (g.codes ?? []).join("+") || "(NO GRANT - fail closed)";
@@ -199,7 +204,7 @@ try {
   const none = grants.filter((g) => !(g.codes ?? []).length);
   if (none.length) {
     console.log("\n  people with ZERO company grants (they see nothing):");
-    for (const g of none) console.log(`      ${String(g.name).padEnd(28)} position=${g.position_name ?? "-"}`);
+    for (const g of none) console.log(`      ${personRef(g.id)} position=${g.position_name ?? "-"}`);
   }
 
   // -- (5) The page-access TABLES the position policy no longer reads --------
@@ -219,9 +224,8 @@ try {
 
   // -- (6) THE ROWS THE OWNER CONFIGURED THAT NOTHING READS ------------------
   // auth.ts hydrates a POSITIONED user from resolvePositionPolicy(), not from
-  // position_page_access. For any position the policy does not classify
-  // (= not Driver/Helper/Storekeeper/Storekeeper Supervisor, not Sales, not
-  // Super Admin/Owner) the resolved map is fullAccessMap() -- so every row the
+  // position_page_access. For any position the policy files as FULL
+  // (classifyPosition(...).cohort === "full") the resolved map is fullAccessMap() -- so every row the
   // owner saved in Team > Positions for that position is INERT, including the
   // rows that say "none".
   notice("-- (6) IGNORED Team>Positions rows (position resolves to FULL in code) --");
@@ -287,35 +291,32 @@ try {
 
   // -- (9b) which companies the unclassified-position people are granted -----
   notice("-- (9b) company grants for the unclassified-position cohort --");
-  const uc = await pg`
-    SELECT p.name AS position, coalesce(c.code, '(none)') AS company, count(DISTINCT u.id)::int AS people
+  const uc = (await pg`
+    SELECT p.name AS position, d.name AS dept, coalesce(c.code, '(none)') AS company, count(DISTINCT u.id)::int AS people
       FROM users u
       JOIN positions p ON p.id = u.position_id
+      LEFT JOIN departments d ON d.id = u.department_id
       LEFT JOIN user_companies g ON g.user_id = u.id
       LEFT JOIN companies c ON c.id = g.company_id
      WHERE u.status = 'active'
-       AND lower(p.name) IN ('outsource transporter', 'warehouse crew kl', 'logistic admin',
-                             'operation executive', 'hr manager', 'it developer executive',
-                             'finance manager')
-     GROUP BY 1, 2 ORDER BY 1, 2`;
+     GROUP BY 1, 2, 3 ORDER BY 1, 3`).filter((r) => classifyPosition(r.position, r.dept).cohort === "full");
   for (const r of uc)
     console.log(`  ${String(r.position).padEnd(24)} ${String(r.company).padEnd(8)} ${String(r.people).padStart(3)} people`);
 
   // -- (10) HAS THE FULL-COHORT EXPOSURE BEEN EXERCISED? --------------------
   notice("-- (10) audit_events by people on an UNCLASSIFIED position --");
-  const acted = await pg`
-    SELECT p.name AS position, u.name AS person, count(*)::int AS events,
+  const acted = (await pg`
+    SELECT p.name AS position, d.name AS dept, u.id AS person_id, count(*)::int AS events,
            max(a.created_at) AS newest
       FROM audit_events a
       JOIN users u ON u.id = a.actor_id
       JOIN positions p ON p.id = u.position_id
+      LEFT JOIN departments d ON d.id = u.department_id
      WHERE u.status = 'active'
-       AND lower(p.name) IN ('outsource transporter', 'warehouse crew kl', 'logistic admin',
-                             'operation executive', 'hr manager', 'it developer executive')
-     GROUP BY 1, 2 ORDER BY 3 DESC`;
+     GROUP BY 1, 2, 3 ORDER BY 4 DESC`).filter((a) => classifyPosition(a.position, a.dept).cohort === "full");
   if (!acted.length) console.log("  (no audit_events rows for these people)");
   for (const a of acted)
-    console.log(`  ${String(a.position).padEnd(24)} ${String(a.person).padEnd(26)} ${String(a.events).padStart(5)} events, newest ${a.newest}`);
+    console.log(`  ${String(a.position).padEnd(24)} ${personRef(a.person_id)} ${String(a.events).padStart(5)} events, newest ${a.newest}`);
 
   console.log("\nDone. Read-only -- nothing was changed.");
 } finally {
