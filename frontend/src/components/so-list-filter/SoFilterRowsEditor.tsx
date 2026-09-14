@@ -11,7 +11,8 @@ import {
 } from "../../vendor/shared/so-list-filter-model";
 import { draftAdd, draftChangeField, draftRemove, draftUpdate } from "../../vendor/scm/lib/so-list-filter-state";
 import { SoFilterFieldPicker } from "./SoFilterFieldPicker";
-import { SoFilterValueEditor, type SoFilterPerson } from "./SoFilterValueEditor";
+import { SoFilterValueEditor } from "./SoFilterValueEditor";
+import type { SoFilterLookups } from "./useSoFilterLookups";
 import { SO_FILTER_SKINS, type SoFilterSkin } from "./soFilterSkin";
 
 type PickerState = null | { mode: "add" } | { mode: "change"; index: number };
@@ -20,15 +21,13 @@ export function SoFilterRowsEditor({
   skin,
   draft,
   onDraftChange,
-  people,
-  nameOf,
+  lookups,
   today,
 }: {
   skin: SoFilterSkin;
   draft: readonly SoListFilter[];
   onDraftChange: (next: SoListFilter[]) => void;
-  people: readonly SoFilterPerson[];
-  nameOf: (staffId: string) => string;
+  lookups: SoFilterLookups;
   today: string;
 }) {
   const k = SO_FILTER_SKINS[skin];
@@ -89,7 +88,7 @@ export function SoFilterRowsEditor({
                 style={skin === "mobile" ? { flex: 1, minWidth: 0, justifyContent: "space-between", padding: "9px 10px", ...(complete ? null : { borderColor: "var(--gold)" }) } : undefined}
                 onClick={() => setOpenRow(openRow === i ? null : i)}>
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12.5, color: complete ? undefined : "#a16a2e" }}>
-                  {soFilterSummary(row, nameOf)}
+                  {soFilterSummary(row, lookups.labels)}
                 </span>
                 <Caret />
               </button>
@@ -100,7 +99,7 @@ export function SoFilterRowsEditor({
             </div>
             {openRow === i && (
               <div style={{ padding: skin === "mobile" ? "4px 2px 6px" : "4px 0 8px" }}>
-                <SoFilterValueEditor skin={skin} row={row} people={people} today={today}
+                <SoFilterValueEditor skin={skin} row={row} lookups={lookups} today={today}
                   onChange={(patch) => onDraftChange(draftUpdate(draft, i, patch))} />
               </div>
             )}
