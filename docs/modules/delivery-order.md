@@ -34,7 +34,8 @@ reversal branch. The DO is the OUT half of the inventory ledger.
 | Desktop from-SO | `frontend/src/pages/scm-v2/DeliveryOrderFromSo.tsx` | Line-level picker over `/deliverable-so-lines`. |
 | Desktop report | `frontend/src/pages/scm-v2/DeliveryOrderDetailListing.tsx` | Detail-listing report. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS["delivery-orders-mfg"]` (`:1064-1106`). |
-| Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:241`; status actions `:480-494`. |
+| Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:241`; status actions `:480-494`. Offers **Edit** for a DO (2026-09-14) when `canOperateDeliveryOrders` passes (MobileApp decides). |
+| Mobile header edit | `frontend/src/mobile/MobileDoHeaderEdit.tsx` | The phone's twin of the desktop edit form's HEADER (owner 2026-09-12 parity): customer, SO ref, phone, email, customer type, salesperson, address with the shared State / City / Postcode cascade, sales location, emergency contact, DO date, driver, vehicle, building type, venue, expected and customer delivery dates, note. Seeds and builds the body through `vendor/scm/lib/do-header-form.ts` (the desktop calls the same two) and saves through `useUpdateMfgDeliveryOrderHeader`. A changed customer delivery date moves the lines still following the header (`cascadeLineDeliveryDate`). Disables what the SI / DR lock freezes (§6). **Does not edit line items** — the desktop edit does. |
 | Mobile POD | `frontend/src/mobile/MobilePOD.tsx` | The driver screen — signature + photo + GPS, through the **shared hook** (`useUpdateMfgDeliveryOrderStatus`, `evidence` parameter). It used a raw `authedFetch` until 2026-08-21; see "Who may attach proof of delivery" below. `signatureData` is sent **only when the customer actually drew** (gated on `hasSignature`, which the pad sets on the first pointerdown). It used to be gated on `canvas.toDataURL()`, which returns a valid non-empty PNG for an untouched transparent canvas — so every delivery stored a blank signature into `delivery_orders.signature_data`, indistinguishable from a real POD that failed to render. `podKey` and the GPS fields in the same payload were already gated on real capture. |
 | Mobile convert (SO→DO) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "do"` (`:72`). Posts **`asDraft: true`** → the DO lands DRAFT and the operator confirms it; the phone never ships. Same shape as the wizard's GRN arm. CTA reads "Create draft Delivery Order". |
 | Mobile planning board | `frontend/src/mobile/MobileDeliveryPlanning.tsx` | Driver run-sheet. "Take POD photo — complete" **navigates to Mobile POD** (`onPod`); it does not write a status. It used to PATCH `DELIVERED` directly with no evidence, while telling the driver to "open the order afterwards to attach the POD photo" — which MobilePOD refuses once the DO is delivered. |
@@ -501,13 +502,13 @@ revocation is folded into the unknown answer precisely because it WOULD.
   moved no deduction. The create path also fires `syncSoDeliveredFromDo` and the
   customer DO email.
 - **`/from-sos`** (`:2976`). Same shape, `asDraft` respected at `:3185` / `:3283`.
-- **Header PATCH** (`:3450`). **FIELD-LEVEL lock since 2026-08-20 (§8 GAP-1):** a
-  live DR/SI no longer freezes the whole header — only the columns that child
-  snapshots freeze (`DO_IDENTITY_LOCK_COLS` in `lib/do-audit-fields.ts` =
-  `debtor_code` / `debtor_name` / `currency` / `sales_location` / `branding`),
-  via `changedLockedCols` (`shared/header-inherited-lock.ts`) + `doHasDownstream`,
-  409 `do_identity_locked`. The DO's own delivery dates, dispatch/POD, addresses
-  and notes stay editable with a child present. Strips the three amend fields out
+- **Header PATCH** (`:3450`). **Locked by a live SI / DR — owner ruling 2026-09-14**
+  (「我的 Sales Invoice 开了，正常上游的单就锁了」), which SUPERSEDES the 2026-08-20
+  field-level rule that froze only customer / currency / location / branding and
+  left addresses, phone, dates and notes editable. The rule is ONE module,
+  `backend/src/scm/shared/do-header-lock.ts`, read by this PATCH
+  (`doLockedHeaderChanges` + `doHasDownstream`, 409 `do_identity_locked`) AND by
+  both screens — see §6 for the field list. Strips the three amend fields out
   of the DO update and mirrors them onto the parent SO instead, writing a separate
   audit row on the **SO's** timeline (`prepareSoAmendMirrorAudit`, `:221-260`).
   `delivery_substatus` is whitelisted against `HC_SUBSTATUS_VALUES` (`:209-212`).
@@ -1979,12 +1980,59 @@ a separate module.
 
 | Trigger | What stops | Enforced at |
 |---------|-----------|-------------|
-| Any non-cancelled **DR or SI** on the DO | header PATCH, line add, line edit, and the CANCELLED transition | `doHasDownstream` (`:269-284`) called at `:3544`, `:3648`, `:3796`, `:4232` |
+| Any non-cancelled **DR or SI** on the DO | the header's customer / address / contact / commercial fields (list below), line add, line edit, and the CANCELLED transition | header: `doLockedHeaderChanges` (`shared/do-header-lock.ts`) + `doHasDownstream`; lines and cancel: `doHasDownstream` (`lib/downstream-lock.ts`) |
 | Line already invoiced or returned | that line's DELETE | `doLineConsumedQty` (`:1468`), checked `:4014-4022` — per-line, deliberately finer than the doc-level lock |
 | Status already CANCELLED | every further transition — **CANCELLED is FINAL** | `:4203-4209`. Un-cancelling would leave the cancel's add-back ADJUSTMENT standing while `deductInventoryForDo` no-ops, inflating stock by the whole DO. Re-deliver via a NEW DO. |
 | DO has shipped (`DO_STOCK_OUT_STATUSES`) | moving back to DRAFT / LOADED | `:4219-4225`. A plain status write does not reverse the OUT, so the DO would read un-shipped while its stock stayed deducted. |
 | Unknown status string | the whole request | `:4171-4176` — the handler historically wrote `body.status` verbatim. |
 | An **unlinked line for an item the header's SO already orders** | `POST /` and `POST /:id/items` | `findUnlinkedSoLines` (`lib/do-unlinked-so-lines.ts`) → 409 `unlinked_so_lines`. See below — this is the guard that was missing when one SO shipped twice. |
+
+### The header lock once an invoice or return exists (owner ruling 2026-09-14)
+
+The owner: 「我的 Sales Invoice 开了，正常上游的单就锁了」 and 「无论怎么样 convert，它最后
+一个 step 基本上就是可以被 edit 的，他被下一个流程 lock 住了」. The last document in the
+chain is the editable one; once the next step exists, the one before it locks.
+This SUPERSEDES the 2026-08-20 field-level rule ("越松越好"), which froze only the
+customer, currency, sales location and branding.
+
+**ONE rule, three readers.** `backend/src/scm/shared/do-header-lock.ts` (byte-identical
+`frontend/src/vendor/shared/do-header-lock.ts`, pinned by
+`do-header-lock.canonical.test.ts`) is read by the server's `PATCH /:id`, by the
+desktop edit form `DeliveryOrderNewV2.tsx ?edit=` and by the phone's
+`MobileDoHeaderEdit.tsx`. The screens decide "locked" from the detail GET's
+`has_children`, which counts the SAME non-cancelled SI / DR rows
+`doHasDownstream` counts; they disable exactly the locked fields, show why, and
+drop those keys from the body. The server still refuses (409
+`do_identity_locked`, naming the fields) if anything else sends one.
+
+**Locked with a live SI or DR:** customer name and code, phone, email, customer
+type, address lines 1-2, city, state (`state` and `customer_state`), postcode,
+country, building type, venue, emergency contact name / phone / relationship,
+sales location, currency, branding, reference / customer PO / customer SO ref,
+DO date, customer delivery date, note and remarks (`note`, `notes`).
+
+**Still editable, and why** — only what happens AFTER invoicing in real life:
+
+| Field(s) | Why it stays open |
+| --- | --- |
+| driver (`driver_id`, `driver_name`), vehicle | the crew is reassigned on the day; `PUT /:id/crew` writes these too |
+| time window, time confirmed, arrival, departure, shipout date, customer-delivered date, port ETA, delivery sub-status, arrives-at-warehouse date | the delivery-execution record. The Delivery Planning `PATCH /delivery-planning/:type/:id/fields` route writes exactly these columns, and the driver's "Mark arrived" button PATCHes `arrivalAt` here — both keep working on an invoiced DO |
+| expected delivery date (`expected_delivery_at`) | our dispatch plan; it moves when a lorry is rescheduled. The CUSTOMER's delivery date is locked |
+| salesperson (`salesperson_id`, and `agent`, its AutoCount name) | **not named in the 2026-09-14 ruling.** The 2026-08-17 ruling says a delivered order must be hand-over-able to a replacement salesperson, and the Sales Order lock exempts it for that reason. Kept open so the two rulings do not collide — a question for the owner, not a decision made here |
+
+Status moves, proof of delivery and the SO amend mirror are separate paths and
+do not read this rule. `tests/doHeaderLockPartition.test.ts` fails if the PATCH
+gains a column that is in neither list. The Consignment Note used to share the
+DO's lock set; it keeps the 2026-08-20 set, because the ruling was about the DO.
+
+**How the other links in the chain lock today** (read from the code on
+2026-09-14, NOT changed by this ruling):
+
+| Parent, once the child exists | Header | Lines |
+| --- | --- | --- |
+| Sales Order, once a live DO or SI exists (`soHasDownstream`) | 32 identity / address / contact / value columns freeze (`SO_IDENTITY_LOCK_COLS`, `shared/so-identity-lock.ts`); payment, remarks and scheduling stay open; the salesperson moves only with `scm.so.attribute_other` | governed by the SO's own processing / amendment rules (`sales-order.md`), not this table |
+| Purchase Order, once a live GRN exists (`poHasDownstream`) | supplier, currency and purchase location freeze (`PO_LOCK_COLS`); dates and notes stay open | add / edit / delete refused wholesale |
+| Goods Receipt, once any line is invoiced or returned (`grnHasDownstream`) | supplier, currency, exchange rate and cost-allocation method freeze (`GRN_LOCK_COLS`); received date, delivery-note ref, warehouse and notes stay open | a PO-linked line's product, category and options are read-only regardless of the invoice (`grn-inherited-lock.ts`) |
 
 **`so_doc_no` is free text, and that used to be a hole.** A DO line with no
 `so_item_id` still deducts stock (`deductInventoryForDo` reads the DO's OWN
@@ -2048,6 +2096,7 @@ into a duplicate line.
 | List columns / filters / buckets | `pages/scm-v2/MfgDeliveryOrdersListV2.tsx` | `mobile/MobileModuleList.tsx` config `:1064` |
 | Server pagination opt-in | `useMfgDeliveryOrdersPaged` | `mobile/MobileModuleList.tsx` `SERVER_PAGINATED` (`:325`) |
 | Detail fields | `pages/scm-v2/DeliveryOrderDetailV2.tsx` | `mobile/MobileModuleDetail.tsx` config `:241` |
+| Header edit + the SI / DR lock | `pages/scm-v2/DeliveryOrderNewV2.tsx` (`?edit=`) | `mobile/MobileDoHeaderEdit.tsx` — both through `vendor/scm/lib/do-header-form.ts` and `vendor/shared/do-header-lock.ts` |
 | Status ladder / who may advance it | `DeliveryOrderDetailV2.tsx` action bar | `mobile/MobileModuleDetail.tsx:480-494`, gated by `useMayOperateDoc` (`:454`) → `canOperateDeliveryOrders` (`frontend/src/auth/salesAccess.ts:200`) — the SAME helper the desktop uses |
 | SO→DO conversion | `pages/scm-v2/DeliveryOrderFromSo.tsx` (picker → `DeliveryOrderNewV2.tsx`, which owns the "Save as draft" toggle) | `mobile/MobileConvertWizard.tsx` (`target: "do"`) — one screen, always `asDraft: true` |
 | Convert-to-DO from the planning board | `vendor/scm/lib/delivery-planning-queries.ts` `useConvertSosToDo` | `mobile/MobileDeliveryPlanning.tsx` — **both** carry an `Idempotency-Key`; desktop keys per SO doc_no (one mount converts many), mobile per mount (one mount is one stop) |

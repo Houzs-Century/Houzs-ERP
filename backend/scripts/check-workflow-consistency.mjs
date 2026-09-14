@@ -57,7 +57,7 @@ const HEADER_MANIFEST = [
   { doc: 'Sales Order',                 file: 'mfg-sales-orders.ts',              symbols: ['changedIdentityLockCols', 'SO_IDENTITY_LOCK_COLS'] },
   { doc: 'Purchase Order',              file: 'mfg-purchase-orders.ts',           symbols: ['changedPoIdentityLockCols'] },
   { doc: 'Goods Received Note',         file: 'grns.ts',                          symbols: ['grnHeaderInheritedChanges'] },
-  { doc: 'Delivery Order',              file: 'delivery-orders-mfg.ts',           symbols: ['changedLockedCols', 'DO_IDENTITY_LOCK_COLS'] },
+  { doc: 'Delivery Order',              file: 'delivery-orders-mfg.ts',           symbols: ['doLockedHeaderChanges'] },
   { doc: 'Consignment Order',           file: 'consignment-orders.ts',            symbols: ['CO_IDENTITY_LOCK_COLS'] },
   { doc: 'Consignment Note',            file: 'consignment-notes.ts',             symbols: ['changedLockedCols', 'CN_IDENTITY_LOCK_COLS'] },
   { doc: 'Purchase-Consignment Order',  file: 'purchase-consignment-orders.ts',   symbols: ['changedLockedCols', 'PCO_IDENTITY_LOCK_COLS'] },

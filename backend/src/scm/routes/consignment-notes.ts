@@ -59,7 +59,7 @@ consignmentNotes.use('*', supabaseAuth);
    ANY non-cancelled Consignment Return referencing it. Mirrors doHasDownstream
    on the DO side, but there is no Sales Invoice in the consignment flow. */
 /* Header field-level lock — column set + labels from the ONE rulebook
-   (shared/document-policy.ts); mirrors the DO. */
+   (shared/document-policy.ts); the DO's pre-2026-09-14 set. */
 const CN_IDENTITY_LOCK_COLS = CN_LOCK_COLS;
 const CN_IDENTITY_LABELS = CN_LOCK_LABELS;
 

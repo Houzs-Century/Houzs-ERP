@@ -37,6 +37,7 @@ const MobileAmendments = lazy(() => import("./MobileAmendments").then((m) => ({ 
 const MobilePoAmendments = lazy(() => import("./MobilePoAmendments").then((m) => ({ default: m.MobilePoAmendments })));
 const MobilePoAmendmentDetail = lazy(() => import("./MobilePoAmendmentDetail").then((m) => ({ default: m.MobilePoAmendmentDetail })));
 const MobileSODetail = lazy(() => import("./MobileSODetail").then((m) => ({ default: m.MobileSODetail })));
+const MobileDoHeaderEdit = lazy(() => import("./MobileDoHeaderEdit").then((m) => ({ default: m.MobileDoHeaderEdit })));
 const MobileNewSO = lazy(() => import("./MobileNewSO").then((m) => ({ default: m.MobileNewSO })));
 const MobileCalendar = lazy(() => import("./MobileCalendar").then((m) => ({ default: m.MobileCalendar })));
 const MobileSearch = lazy(() => import("./MobileSearch").then((m) => ({ default: m.MobileSearch })));
@@ -115,6 +116,9 @@ type Screen =
   | { t: "module-detail"; key: string; row: any; title: string }
   | { t: "stock-transfer-new"; key: string; row: any; title: string }
   | { t: "module-form"; key: string; mode: "new" | "edit"; row?: any }
+  /* Delivery Order header edit (owner 2026-09-12 parity). Its own screen, not the
+     generic module form: it needs the address cascade and the SI/DR lock. */
+  | { t: "do-edit"; key: string; row: Record<string, unknown>; title: string }
   | { t: "convert"; key: string; title: string; target: ConvertTarget; initialSourceId?: string }
   /* DIRECT create for PO / GRN / PI (owner 2026-09-12: create directly, not
      only by converting). Entered from that module list's "+"; returns to it. */
@@ -928,7 +932,11 @@ function MobileAppInner() {
       (canOperateDeliveryOrders(user, can, pageAccess) || canDriverCompleteDelivery(user));
     overlay = <MobileModuleDetail moduleKey={screen.key} row={screen.row} title={screen.title}
       onBack={() => setScreen({ t: "module", key: screen.key, title: screen.title })}
-      onEdit={() => setScreen({ t: "module-form", key: screen.key, mode: "edit", row: screen.row })}
+      onEdit={screen.key !== "delivery-orders-mfg"
+        ? () => setScreen({ t: "module-form", key: screen.key, mode: "edit", row: screen.row })
+        : canOperateDeliveryOrders(user, can, pageAccess) && screen.row?.id
+          ? () => setScreen({ t: "do-edit", key: screen.key, row: screen.row, title: screen.title })
+          : undefined}
       onPOD={canPod ? () => setScreen({ t: "pod", docNo: String(doNo) }) : undefined}
       flowNav={flowNav} />;
   }
@@ -941,6 +949,10 @@ function MobileAppInner() {
         onBack={() => setScreen(screen.mode === "edit" && screen.row ? { t: "module-detail", key: screen.key, row: screen.row, title } : { t: "module", key: screen.key, title })}
         onSaved={() => setScreen({ t: "module", key: screen.key, title })} />
     );
+  }
+  else if (screen.t === "do-edit") {
+    const backToDoc = () => setScreen({ t: "module-detail", key: screen.key, row: screen.row, title: screen.title });
+    overlay = <MobileDoHeaderEdit id={String(screen.row.id)} onBack={backToDoc} onSaved={backToDoc} />;
   }
   else if (screen.t === "pod") {
     const leavePod = screen.from === "delivery-planning"
