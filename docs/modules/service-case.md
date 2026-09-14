@@ -440,7 +440,7 @@ Two different purchase orders sit on a case, and they must not share a field:
 `purchase_orders` through `soConvertedPos` (`scm/lib/so-converted-po.ts`) — the
 same walk the Sales Orders list uses for its raised-PO chips. CANCELLED POs are
 dropped, DRAFT kept. **Company:** cases are grouped by their own `company_id`
-and each group is read with `company_id = <that id>` on all three reads; a case
+and each group is read with `company_id = <that id>` on the three reads; a case
 with no `company_id` or no `doc_no` gets `[]` and issues no read. Fail-soft
 like `do_numbers`: a failed read also reads as `[]` ("—"), so an empty Order PO
 does not by itself prove the order has no PO. Both companies.

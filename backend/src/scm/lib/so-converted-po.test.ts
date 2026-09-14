@@ -126,7 +126,7 @@ describe('soConvertedPoNumbers', () => {
     ]);
   });
 
-  test('a company id puts company_id = <id> on all three reads', async () => {
+  test('a company id puts company_id = <id> on the three reads', async () => {
     // Both companies carry an "SO-1" whose line raised a PO. With company 2
     // named, only company 2's line, PO line and PO may answer — a row of
     // company 1 leaking through any ONE of the three reads adds a PO-1-*.

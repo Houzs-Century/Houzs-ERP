@@ -1951,7 +1951,7 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
   ]);
 
   const data = rows.results ?? [];
-  await Promise.all([attachDeliveryOrders(env, data as any[]), attachOrderPos(env, data as any[])]);
+  await Promise.all([attachDeliveryOrders(env, data as any[]), attachOrderPos(env, data)]);
 
   return {
     data,
@@ -1962,7 +1962,7 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
 }
 
 /** `order_pos` — see services/assrOrderPos.ts. No scm in the D1 test env. */
-async function attachOrderPos(env: Env, rows: any[]) {
+async function attachOrderPos(env: Env, rows: Array<Record<string, unknown>>) {
   if (isSupabaseConfigured(env)) await attachOrderPurchaseOrders(getSupabaseService(env), rows);
 }
 

@@ -29,7 +29,7 @@ way `do_numbers` is: `services/assrOrderPos.ts` resolves, per case and inside
 the case's own `company_id`, the purchase orders raised from its SO lines
 through the existing SO -> PO walk `scm/lib/so-converted-po.ts` (now
 `soConvertedPos`, which also returns the PO id, and takes a REQUIRED
-`companyId: number | null` applied to all three reads). Shown as a list column
+`companyId: number | null` applied to the three reads). Shown as a list column
 right after DO No, a linked line above the editable PO No on the case detail,
 and a line above PO No on the phone. PO No itself is unchanged.
 
