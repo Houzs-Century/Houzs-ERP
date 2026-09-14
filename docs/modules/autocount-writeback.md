@@ -6372,3 +6372,32 @@ office host is rebuilt**; until then the host sends no link, the old count and
 code checks decide, and the export and the stamp are re-runnable for whatever
 drains in between. Ledger: `docs/bugs/0897-delivery-orders-and-goods-receipts-the-write-back-created-ke.md`,
 `docs/bugs/0898-the-drain-could-not-pair-a-converted-document-s-lines-with-t.md`.
+
+## Sending a refused DO / GR edit again once its lines are keyed (2026-09-14)
+
+A delivery order or goods receipt edit refused for a keyless line is a `skipped`
+row with an empty body, and nothing re-sends it: the re-queue ladder does not
+take edits (`autocount-requeue.ts`, "fix the cause, save the document again"),
+and the relink sweep queues the keyed edit only on the run that itself closed
+the last gap. A document keyed some other way — the DocTransfer stamp — is
+already complete when the sweep reaches it.
+
+`backend/scripts/requeue-keyed-conversion-edits.mjs` (workflow *Re-send refused
+DO / GR edits once every line is keyed*, run under `tsx`) does that one save for
+the documents that need it: a keyless-line refusal not followed by any pending
+or sent edit, and no keyless line left. It calls the Worker's own `enqueueEdit`
+over `pgrest-shim`, so the composer's guards all apply, and verifies on a fresh
+connection that each queued body names every line by DtlKey. Plan by default.
+
+**Its limit:** the refused edit's payload is empty, so a line hard-deleted in
+that save is not retired by the edit sent now — the same limit as the sweep's
+queued edit. Plan runs against production 2026-09-14: before any stamp, 15
+documents with an unanswered keyless refusal, 1 fully keyed (HC-DO-2609-039),
+14 held. After the relink sweep's one apply run (13:05Z: 30 lines stamped, 12
+edits queued, all 12 sent) and the DocTransfer stamp (run 34847683795: 603 keys,
+verified), 3 remain: HC-DO-2609-039, fully keyed; HC-GRN-2609-006 (a STOOL) and
+HC-GRN-2609-028 (10 AK-SLEEP ESSENTIAL 7 HOLES pillows), each with one row added
+on the receipt with no purchase line behind it. The book's copy of each receipt
+has every line claimed, so those rows are sent as `IsNewLine` — the same
+declaration the relink sweep makes (docs/bugs/0817) — and are held instead when
+there is no fresh book snapshot for the document.

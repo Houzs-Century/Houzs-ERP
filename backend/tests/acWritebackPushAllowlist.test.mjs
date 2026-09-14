@@ -40,6 +40,9 @@ const MAY_PUSH = [
   'reraise-hc-po-2608-001.mjs',
   // Re-queues the edits approved amendments never queued (docs/bugs/0888).
   'requeue-amendment-ac-edits.mjs',
+  // Re-sends a DO / GR edit refused for a keyless line once its keys are in
+  // (docs/bugs/0900) — its purpose is the send; it writes no ERP value.
+  'requeue-keyed-conversion-edits.mjs',
 ];
 
 test('only the deliberate push tools opt out of repair suppression', () => {
