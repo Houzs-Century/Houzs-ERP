@@ -212,7 +212,10 @@ function report(p) {
   log(`flags: ${p.flags.map((f) => `${f.key}=${JSON.stringify(f.value)}`).join("  ") || "(neither row present)"}`);
   const vpReach = p.writes.filter((w) => !p.vpSince || (w.so_date && w.so_date >= p.vpSince));
   log(`Venture Portal: receiver wired=${p.vpWired}, vp.since=${p.vpSince ?? "(none)"}; of the ${p.writes.length} fills, ${vpReach.length} are dated on/after vp.since and are re-delivered by the next drain IF the feed flag enables company ${p.cid}; the other ${p.writes.length - vpReach.length} are marked skipped without a request`);
-  if (vpReach.length) out(`  VP-REACH	${vpReach.map((w) => `${w.doc_no}(${w.so_date})`).join(" ")}`);
+  const vpState = new Map();
+  for (const w of vpReach) vpState.set(w.vp, (vpState.get(w.vp) ?? 0) + 1);
+  log(`  portal outbox history of those ${vpReach.length}: ${[...vpState].map(([k, n]) => `${k} x${n}`).join(", ") || "none"}`);
+  if (vpReach.length) out(`  VP-REACH\t${vpReach.map((w) => `${w.doc_no}(${w.so_date}; ${w.vp})`).join(" ")}`);
 }
 
 async function applyPlan(sql, p) {
