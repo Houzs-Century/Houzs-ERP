@@ -1736,7 +1736,7 @@ cost, not a negative — and only a line whose credits beat its debits in the
 period (a reversal, the closing-stock credit) prints in parentheses; a loss
 is a negative net and reads the same way; never a minus inside the brackets
 ("(RM -1,139.19)" was the P&L's rendering of a reversed expense). The shared
-`fmtSenParen` (`vendor/shared/format.ts`) carries it on the standard
+`fmtSenParen` (`frontend/src/vendor/shared/format.ts`) carries it on the standard
 statements (`Reports.tsx` lost its `negate` sections), `fmtPerf` on the
 Performance P&L, and R&P already printed that way. On the Performance P&L
 the summary lines (gross profit, other income, the computed operating
