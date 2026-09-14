@@ -83,7 +83,7 @@ describe("DeliveryOrderNewV2 edit — a DO with a live Sales Invoice (owner ruli
     await waitFor(() => expect(authedFetch.mock.calls.some(([u, i]) => u === "/delivery-orders-mfg/do-1" && (i as RequestInit | undefined)?.method === "PATCH")).toBe(true));
     const [, init] = authedFetch.mock.calls.find(([u, i]) => u === "/delivery-orders-mfg/do-1" && (i as RequestInit | undefined)?.method === "PATCH")!;
     const body = JSON.parse(String((init as RequestInit).body));
-    expect(Object.keys(body).sort()).toEqual(["agent", "driverName", "expectedDeliveryAt", "vehicle"]);
+    expect(Object.keys(body).sort()).toEqual(["driverName", "expectedDeliveryAt", "vehicle"]);
     expect(body.vehicle).toBe("VBB 2");
   });
 
