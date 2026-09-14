@@ -27,3 +27,8 @@ jobs:
       - run: node scripts/probe-fabric-accessory-population.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # TEMPORARY plan run from the branch; removed before merge.
+      - run: node scripts/recategorise-fabric-accessory.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: plan

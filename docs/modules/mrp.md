@@ -665,7 +665,8 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   lines already on orders keep their old group until a data run moves them —
   `backend/scripts/recategorise-fabric-accessory.mjs` (plan/apply workflow),
   which also writes the colour a line's own text names into `fabricCode`
-  (`scripts/lib/fabric-colour-match.mjs`) and relabels received stock per lot.
+  (the one matcher, via `scripts/lib/line-colour-verdict.mjs`) and relabels
+  received stock per lot.
 - **A SOFA'S BINDING CAN BE UNWRITABLE, and that is a separate failure from an
   absent purchase order.** The book records the SO -> PO edge at LINE grain in
   `PODTL.FromSODtlKey`, and `backend/scripts/repair-po-so-link-from-book.mjs`

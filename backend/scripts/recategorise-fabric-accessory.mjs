@@ -18,10 +18,11 @@
       line tables (SO, PO, GRN, DO, PI, SI). The header money buckets read
       includes('accessor'), so a line stays in the accessories total.
    3. variants.fabricCode, only where the line has none and its colour RESOLVES
-      (lib/fabric-colour-match.mjs, verdict `match`). A line's own text wins; a
+      (the one matcher, lib/fabric-colour-match.mjs, through
+      lib/line-colour-verdict.mjs: one colour, not an assumed series). A line's own text wins; a
       line whose own text names no colour inherits from the line it came from
       (PO <- SO, GRN <- PO, DO <- SO, PI <- GRN, SI <- DO <- SO). A line whose
-      own text is `several` / `unknown` / `duplicate` is left blank and LISTED —
+      own text is `several` / `unknown` is left blank and LISTED —
       it is never overridden by its parent.
    4. STOCK, per lot, never per bucket (owner decision 2 of 2026-09-14,
       「我们的库存是分item的」). A lot is relabelled only when it came from a GRN
@@ -51,7 +52,8 @@
    moved and every resolvable line already carrying fabricCode (skipped, never
    overwritten), and every relabelled lot already on its key. */
 import postgres from "postgres";
-import { indexFabricMaster, matchFabricColour } from "./lib/fabric-colour-match.mjs";
+import { buildFabricColourIndex } from "./lib/fabric-colour-match.mjs";
+import { lineColourVerdict } from "./lib/line-colour-verdict.mjs";
 import { variantKeyMirror } from "./lib/ledger-repair-core.mjs";
 
 const DSN = process.env.DATABASE_URL;
@@ -90,6 +92,7 @@ const lineText = (r, cols) => {
   return [v.extraAddonNote, ...specials, ...cols.map((c) => r[c])]
     .filter(Boolean).join(" | ")
     .replace(/账本原文:.*$/s, "")
+    .replace(/(?:topped up|created) from AutoCount.*$/is, "")
     .replace(/\b(?:AMN|HOK|DSL|RDS)-\s*(?:SQUARE|LONG) PILLOW.*$/i, "");
 };
 const hasFabric = (v) => !!(v && typeof v === "object" && (v.fabricCode || v.colorCode || v.colourCode || v.fabricColor));
@@ -118,13 +121,10 @@ async function plan(tx) {
     WHERE company_id = ${COMPANY} AND id::text = ANY(${skus.map((s) => s.id)}) AND category::text <> ${CATEGORY} RETURNING id`;
   say(`  moved now: ${mMoved.length} models, ${sMoved.length} SKUs`);
 
-  // ── fabric master, with sofa-line usage as the tie-break ──
-  const fab = await tx`SELECT f.fabric_code, f.is_active,
-      (SELECT count(*)::int FROM scm.mfg_sales_order_items i
-        WHERE i.company_id = ${COMPANY} AND i.variants->>'fabricCode' = f.fabric_code) AS uses
-    FROM scm.fabric_trackings f WHERE f.company_id = ${COMPANY}`;
-  const idx = indexFabricMaster(fab);
-  say(`fabric master: ${fab.length} rows`);
+  // ── the fabric colour library, through the one matcher ──
+  const fab = await tx`SELECT fabric_id, colour_id, label, active FROM scm.fabric_colours WHERE company_id = ${COMPANY}`;
+  const { explainColour } = buildFabricColourIndex(fab);
+  say(`fabric colour library: ${fab.length} rows`);
 
   // ── lines ──
   const rows = {};
@@ -141,7 +141,7 @@ async function plan(tx) {
   for (const [k, d] of Object.entries(LINES)) {
     own[k] = new Map(rows[k].map((r) => [r.id, hasFabric(r.variants)
       ? { verdict: "has-fabric", code: r.variants.fabricCode ?? r.variants.fabricColor ?? r.variants.colorCode ?? r.variants.colourCode }
-      : matchFabricColour(lineText(r, d.text), idx)]));
+      : lineColourVerdict(lineText(r, d.text), explainColour)]));
   }
   const resolved = {};
   const resolve = (k, id, depth = 0) => {
@@ -166,7 +166,7 @@ async function plan(tx) {
   const writes = [];
   const unresolved = [];
   for (const k of Object.keys(LINES)) {
-    const tally = { lines: rows[k].length, has: 0, own: 0, parent: 0, blank: 0, several: 0, unknown: 0, duplicate: 0 };
+    const tally = { lines: rows[k].length, has: 0, own: 0, parent: 0, blank: 0, several: 0, unknown: 0 };
     for (const r of rows[k]) {
       const o = own[k].get(r.id);
       if (o.verdict === "has-fabric") { tally.has++; continue; }

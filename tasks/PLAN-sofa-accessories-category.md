@@ -81,8 +81,10 @@ DB: `20260911T0900_scm_mrp_supplier_category_lead_times.sql:33` CHECK constraint
 Owner: 「这几个也是swap去sofa accessory 然后看一下之前旧的order 都帮我backfill颜色」 —
 models AR01, AR02, BC04, BC04-MF, BC05, BC05-MF, SB02 plus SQUARE PILLOW, LONG PILLOW
 (company 1). Tool: `backend/scripts/recategorise-fabric-accessory.mjs`, workflow
-*Move products to Sofa Accessory + back-fill colour*; colour reading in
-`backend/scripts/lib/fabric-colour-match.mjs` (tested on the real texts).
+*Move products to Sofa Accessory + back-fill colour*; colours are read by the one
+matcher (`backend/scripts/lib/fabric-colour-match.mjs`) through
+`backend/scripts/lib/line-colour-verdict.mjs`, which refuses two-colour lines and
+assumed series.
 
 Plan run 34843795061 (production, rolled back): 7 models + 9 SKUs move; line
 groups on SO 248 / PO 85 / GRN 48 / DO 14 / PI 29 / SI 1; 285 lines get a colour
