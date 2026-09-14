@@ -259,6 +259,7 @@ async function printAmendments(docNo) {
     say(`  ▸ ${a.amendment_no}  lane=${a.lane ?? "NULL(legacy)"}  status=${a.status}  created_at=${a.created_at}`);
     say(`      reason: ${j(a.reason)}`);
     say(`      header_changes: ${j(a.header_changes)}`);
+    say(`      old_header_snapshot: ${j(a.old_header_snapshot)}`);
     const extra = Object.entries(a).filter(([k, v]) => !AMEND_SKIP.has(k) && v != null && !/_by$/.test(k)).map(([k, v]) => `${k}=${j(v)}`);
     if (extra.length) say(`      other: ${extra.join(" · ").slice(0, 600)}`);
     const lines = await sql`
@@ -294,6 +295,20 @@ async function q32() {
     say(`-- ${want}: matches ${hits.map((h) => `${h.doc_no}[co ${h.company_id}, ${h.s}, book=${h.linked_ac_docno ?? "∅"}]`).join(", ") || "NONE"}`);
     const exact = hits.find((h) => h.doc_no === want) ?? hits[0];
     if (!exact) continue;
+    /* The STORED address block. The desktop form seeds City as `city ?? address3`
+       while the amendment diff's "before" read `city` alone, so a NULL city with
+       a populated address3 would request address3 as a City change nobody made.
+       quote() shows NULL vs '' vs trailing spaces apart. */
+    const quote = (v) => (v == null ? "NULL" : JSON.stringify(v));
+    const [hdr] = await sql`
+      SELECT city, address3, postcode, address4, address1, address2, customer_state
+        FROM scm.mfg_sales_orders WHERE doc_no = ${exact.doc_no}`;
+    say(`  header now: city=${quote(hdr.city)} address3=${quote(hdr.address3)} postcode=${quote(hdr.postcode)} address4=${quote(hdr.address4)} state=${quote(hdr.customer_state)}`);
+    say(`              address1=${quote(hdr.address1)} address2=${quote(hdr.address2)}`);
+    const cur = await sql`
+      SELECT line_no, item_code, item_group, variants->>'legHeight' AS leg, variants ? 'legHeight' AS has_leg
+        FROM scm.mfg_sales_order_items WHERE doc_no = ${exact.doc_no} ORDER BY line_no NULLS LAST`;
+    say(`  lines now: ${cur.map((r) => `ln ${r.line_no} ${r.item_code}[${r.item_group}] legHeight=${r.has_leg ? quote(r.leg) : "(absent)"}`).join(" · ")}`);
     await printAmendments(exact.doc_no);
   }
   const laneCensus = await sql`
@@ -314,6 +329,33 @@ async function q32() {
   say(`-- company ${COMPANY} header_changes key census (lane × key): ${keyCensus.map((x) => `${x.lane ?? "NULL"}/${x.header_key}=${x.n}`).join(" · ") || "none"}`);
   const types = await sql`SELECT jsonb_typeof(header_changes) AS t, count(*)::int AS n FROM scm.so_amendments WHERE company_id = ${COMPANY} AND header_changes IS NOT NULL GROUP BY 1`;
   say(`-- header_changes jsonb types: ${types.map((x) => `${x.t}=${x.n}`).join(" ") || "none"}`);
+
+  /* PHANTOM populations, company-wide — how many amendments requested nothing
+     the operator changed. (a) a SPEC line whose ONLY delta from its old_snapshot
+     is a "Default" sofa leg height added where the before had none. (b) a City
+     header change equal to the SO's address3 while its city column is NULL
+     (the desktop seed fallback) — only decidable while the row is still
+     REQUESTED, since an approved one has already written city. */
+  const legPhantoms = await sql`
+    SELECT a.amendment_no, a.status::text AS s, a.lane, count(*)::int AS n
+      FROM scm.so_amendments a JOIN scm.so_amendment_lines l ON l.amendment_id = a.id
+     WHERE a.company_id = ${COMPANY} AND l.change_type = 'SPEC'
+       AND lower(trim(coalesce(l.new_variants->>'legHeight', ''))) = 'default'
+       AND trim(coalesce(l.old_snapshot->'variants'->>'legHeight', '')) = ''
+       AND trim(coalesce(l.old_snapshot->'variants'->>'sofaLegHeight', '')) = ''
+       AND l.new_item_code IS NOT DISTINCT FROM (l.old_snapshot->>'itemCode')
+       AND l.new_qty IS NOT DISTINCT FROM (l.old_snapshot->>'qty')::numeric
+       AND l.new_remark IS NULL
+       AND jsonb_strip_nulls(l.new_variants - 'legHeight' - 'sofaLegHeight' - 'remark' - 'totalHeight')
+         = jsonb_strip_nulls(coalesce(l.old_snapshot->'variants', '{}'::jsonb) - 'legHeight' - 'sofaLegHeight' - 'remark' - 'totalHeight')
+     GROUP BY 1, 2, 3 ORDER BY 1`;
+  say(`-- (a) SPEC lines whose only variant delta is an added "Default" leg height: ${legPhantoms.map((x) => `${x.amendment_no}[${x.lane}/${x.s}] ${x.n} line(s)`).join(" · ") || "none"}`);
+  const cityPhantoms = await sql`
+    SELECT a.amendment_no, a.status::text AS s, a.header_changes->>'city' AS req, so.city, so.address3
+      FROM scm.so_amendments a JOIN scm.mfg_sales_orders so ON so.doc_no = a.so_doc_no
+     WHERE a.company_id = ${COMPANY} AND a.header_changes ? 'city'
+     ORDER BY a.created_at`;
+  say(`-- (b) every City request vs the SO's city/address3 now: ${cityPhantoms.map((x) => `${x.amendment_no}[${x.s}] req=${JSON.stringify(x.req)} city=${x.city == null ? "NULL" : JSON.stringify(x.city)} address3=${x.address3 == null ? "NULL" : JSON.stringify(x.address3)}`).join(" · ") || "none"}`);
 }
 
 /* ── 33 ─────────────────────────────────────────────────────────────────── */
