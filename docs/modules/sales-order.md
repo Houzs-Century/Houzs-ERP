@@ -1201,6 +1201,14 @@ before touching a pool (docs/bugs/0814-one-option-field-two-vocabularies-the-fab
    11-20 inch were invisible on both surfaces while the server accepted them.
    **`SoLineCard` must call the shared helpers, never a private copy** — it had
    one, which is exactly why the fold reached mobile and not the desktop.
+   **The FABRIC question has its own module since 2026-09-14:**
+   `backend/src/scm/shared/fabric-pool.ts` (`fabricAllowedByPool`, colour OR
+   series, folded) with the byte-identical browser copy
+   `frontend/src/vendor/shared/fabric-pool.ts`. The save gate, the desktop
+   `FabricColourCombobox` and the phone sheet
+   `frontend/src/mobile/MobileFabricPicker.tsx` all call it. The phone sheet had
+   NO pool filter before that and offered colours the save refused
+   (`docs/bugs/0889-the-phone-s-fabric-sheet-offered-colours-the-model-does-not.md`).
 
 `backend/scripts/check-allowed-options-vocabulary.mjs` (Actions -> **Check
 option-pool vocabulary**) resolves every pool value against the table its gate
