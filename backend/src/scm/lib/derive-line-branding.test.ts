@@ -26,7 +26,8 @@ function fakeSb(products: Prod[]) {
     };
     return q;
   };
-  return { from: (t: string) => { if (t !== 'mfg_products') throw new Error(t); return query(); } } as never;
+  const sb = { from: (t: string) => { if (t !== 'mfg_products') throw new Error(t); return query(); } };
+  return sb as unknown as Parameters<typeof deriveHeaderBrandingFromLines>[0];
 }
 
 const HOUZS_BRANDS = ['AKEMI', 'AKEMI C&C', 'BEDFRAME', 'Carres', 'DUNLOPILLO', 'ERGOTEX', 'MY SOFA FACTORY', 'MYLATEX', 'NONE', 'OTHERS', 'SERVICE', 'ZANOTTI'];
