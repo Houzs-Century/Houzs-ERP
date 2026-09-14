@@ -130,6 +130,17 @@ const stats = { docs: 0, noPo: 0, noRows: 0, ambiguousKey: 0, already: 0, propos
 const refuted = [];
 const orderKept = [];
 const amendedList = [];
+/* EVERY SKIP IS NAMED. Until 2026-09-14 these buckets printed a COUNT and
+   nothing else - "build not identified by one key 5" - so a document that could
+   not be corrected was invisible, and it resurfaced later as "another one that
+   does not tally". Owner, 2026-09-14: 「那这些都要处理吧 要不然之后又跑出来」.
+   A count with no names is a backlog nobody can work, so each bucket now keeps
+   the documents and the reason. */
+const noRowsList = [];
+const keylessBesideList = [];
+const ambiguousList = [];
+const noSoList = [];
+const soNoKeyList = [];
 
 try {
   const docs = book.documents
@@ -182,10 +193,20 @@ try {
        WHERE i.purchase_order_id = ${po.id}
          AND lower(coalesce(i.item_group, '')) = 'sofa'
        ORDER BY i.id`;
-    if (!rows.length) { stats.noRows += 1; continue; }
+    if (!rows.length) { stats.noRows += 1; noRowsList.push({ po: po.po_number, supplierDoc: d.supplierDoc }); continue; }
 
     const keys = [...new Set(rows.map((r) => r.dtlkey).filter(Boolean))];
-    if (keys.length !== 1) { stats.ambiguousKey += 1; continue; }
+    const keyless = rows.filter((r) => !r.dtlkey).length;
+    if (keys.length !== 1) {
+      stats.ambiguousKey += 1;
+      ambiguousList.push({
+        po: po.po_number, supplierDoc: d.supplierDoc,
+        why: keys.length === 0 ? 'no row carries a book line key' : `${keys.length} different book line keys on one purchase order`,
+        ours: rows.map((r) => `${suffix(r.item_code)}${r.dtlkey ? '' : '(no key)'}`).join('+'),
+        supplier: d.lines.map((l) => suffix(l.code)).join('+'),
+      });
+      continue;
+    }
 
     const theirs = d.lines.map((l) => suffix(l.code));
     const mine = rows.map((r) => suffix(r.item_code));
@@ -218,7 +239,7 @@ try {
         soKeys = [...new Set(so.map((r) => r.dtlkey).filter(Boolean))];
       }
     }
-    if (!soDoc) stats.noSo += 1;
+    if (!soDoc) { stats.noSo += 1; noSoList.push({ po: po.po_number, supplierDoc: d.supplierDoc }); }
 
     const received = rows.reduce((a, r) => a + Number(r.received || 0), 0);
     if (received > 0) stats.received += 1;
@@ -229,7 +250,23 @@ try {
     if (sameBag && sameSeq && !legMissing && seat === null) { stats.already += 1; continue; }
 
     const ourModel = oneOf(rows.map((r) => modelOf(r.item_code)));
-    if (!ourModel) { stats.ambiguousKey += 1; continue; }
+    if (!ourModel) {
+      stats.ambiguousKey += 1;
+      ambiguousList.push({
+        po: po.po_number, supplierDoc: d.supplierDoc, why: 'more than one sofa MODEL on one purchase order',
+        ours: rows.map((r) => r.item_code).join('+'), supplier: d.lines.map((l) => l.code).join('+'),
+      });
+      continue;
+    }
+    /* A row with NO book key sitting beside keyed rows of the same build is
+       invisible to a correction addressed by that key - it is never selected, so
+       it is never matched and never removed. HC-PO-010041 carried two such
+       duplicate pieces for four days while its entry reported nothing to do. */
+    if (keyless) {
+      stats.keylessBeside = (stats.keylessBeside ?? 0) + 1;
+      keylessBesideList.push({ po: po.po_number, keyless,
+        rows: rows.filter((r) => !r.dtlkey).map((r) => `${suffix(r.item_code)}${r.so_item_id ? '' : ' (no sales link)'}`).join(', ') });
+    }
 
     /* A document may carry MORE THAN ONE earlier answer, and they need not agree
        with each other - HC-PO-009679 held three. Keeping whichever happened to be
@@ -282,7 +319,7 @@ try {
     };
     entries.push({ ...common, docs: [po.po_number], lineKeys: keys });
     if (soDoc && soKeys.length) entries.push({ ...common, docs: [soDoc], lineKeys: soKeys });
-    else if (soDoc) stats.soNoKey += 1;
+    else if (soDoc) { stats.soNoKey += 1; soNoKeyList.push({ po: po.po_number, so: soDoc }); }
     stats.proposed += 1;
   }
 
@@ -302,12 +339,22 @@ try {
   log(`   supplier sofa documents            ${stats.docs}`);
   log(`   no purchase order here (IGNORED)   ${stats.noPo}   <- owner: already delivered, do not chase`);
   log(`   WE AMENDED IT AFTER THEIR CUT      ${stats.amended}   <- ours is newer; NOT corrected toward the file`);
+  for (const a of amendedList) log(`      ${String(a.po).padEnd(16)} supplier ${a.supplierDoc} cut ${a.cut}   ${a.amendments.join(' | ')}`);
   log(`   purchase order has no sofa row     ${stats.noRows}`);
-  log(`   build not identified by one key    ${stats.ambiguousKey}`);
+  for (const a of noRowsList) log(`      ${String(a.po).padEnd(16)} supplier ${a.supplierDoc}`);
+  log(`   build not identified by one key    ${stats.ambiguousKey}   <- NOT corrected; every one named`);
+  for (const a of ambiguousList) {
+    log(`      ${String(a.po).padEnd(16)} supplier ${a.supplierDoc}   ${a.why}`);
+    log(`         ours ${a.ours}   supplier ${a.supplier}`);
+  }
   log(`   already correct, nothing to write  ${stats.already}`);
   log(`   PROPOSED                           ${stats.proposed}`);
   log(`      of those, no sales order found  ${stats.noSo}   <- purchase order corrected alone`);
+  for (const a of noSoList) log(`         ${String(a.po).padEnd(16)} supplier ${a.supplierDoc}`);
   log(`      sales order found but KEYLESS   ${stats.soNoKey}   <- PO entry only; a keyless line cannot be addressed`);
+  for (const a of soNoKeyList) log(`         ${String(a.po).padEnd(16)} sales order ${a.so}`);
+  log(`   KEYLESS ROWS beside a keyed build  ${stats.keylessBeside ?? 0}   <- a key-addressed correction cannot reach these`);
+  for (const a of keylessBesideList) log(`      ${String(a.po).padEnd(16)} ${a.keyless} row(s): ${a.rows}`);
   log(`   entries emitted (PO + SO apart)    ${entries.length}`);
   log(`   an earlier round the supplier REFUTES ${stats.priorRefuted}   <- supersede that entry by hand`);
   for (const r of refuted) log(`      ${String(r.po).padEnd(16)} supplier ${r.supplier}   earlier: ${r.priors.join(' | ')}`);
