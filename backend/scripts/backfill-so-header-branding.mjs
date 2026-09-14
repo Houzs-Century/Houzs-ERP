@@ -157,6 +157,19 @@ async function buildPlan(sql) {
     FROM scm.sync_config WHERE k IN ('vp.since', 'vp.url', 'vp.secret')`;
   const vpSince = tidy(vp[0]?.since) || null;
   const vpWired = Number(vp[0]?.wired ?? 0) === 2;
+  /* Has the portal already been sent each order? A re-delivery of an order it
+     holds is an ordinary update; a first delivery of an order it never had is
+     a new record in somebody's commission input. */
+  const writeDocs = writes.map((w) => w.doc_no);
+  const vpRows = writeDocs.length === 0 ? [] : await sql`
+    SELECT doc_no, bool_or(status = 'sent') AS sent, bool_or(status = 'pending') AS pending,
+           bool_or(status = 'skipped') AS skipped, bool_or(status = 'failed') AS failed
+    FROM scm.venture_portal_outbox WHERE doc_no = ANY(${writeDocs}) GROUP BY doc_no`;
+  const vpByDoc = new Map(vpRows.map((r) => [r.doc_no, r]));
+  for (const w of writes) {
+    const r = vpByDoc.get(w.doc_no);
+    w.vp = !r ? "never queued" : r.sent ? "already sent" : r.pending ? "pending" : r.failed ? "failed" : "skipped";
+  }
 
   return { cid, companyCode, vocab, headCount: heads.length, targets, imported, erpDetail, lines: lines.length, foreignLines, writes, unfilled, triggers, flags, vpSince, vpWired };
 }
