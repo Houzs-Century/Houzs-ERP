@@ -15,14 +15,14 @@ import {
 } from "../../vendor/shared/so-list-filter-model";
 import { draftRemove, useSoListCountPreview, useSoListFilters } from "../../vendor/scm/lib/so-list-filter-state";
 import { SoFilterRowsEditor } from "../../components/so-list-filter/SoFilterRowsEditor";
-import { useSoFilterPeople } from "../../components/so-list-filter/useSoFilterPeople";
+import { useSoFilterLookups } from "../../components/so-list-filter/useSoFilterLookups";
 import { SO_FILTER_SKINS } from "../../components/so-list-filter/soFilterSkin";
 
 export function SoListFilterBar({ q }: { q: string }) {
   const { filters, status, apply } = useSoListFilters();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<SoListFilter[]>([]);
-  const { people, nameOf } = useSoFilterPeople(open ? draft : filters);
+  const lookups = useSoFilterLookups(open ? draft : filters);
   const preview = useSoListCountPreview({ status, q, filters: draft, enabled: open });
   const boxRef = useRef<HTMLDivElement>(null);
   const k = SO_FILTER_SKINS.desktop;
@@ -46,7 +46,7 @@ export function SoListFilterBar({ q }: { q: string }) {
       {filters.map((f, i) => (
         <span key={`${f.field}-${i}`} className="inline-flex items-center gap-1 rounded-full border border-primary/50 bg-primary-soft py-1 pl-3 pr-1 text-[12px] text-primary-ink">
           <button type="button" className="font-semibold" onClick={openPanel}>
-            {soFilterField(f.field)?.label}: <span className="font-normal">{soFilterSummary(f, nameOf)}</span>
+            {soFilterField(f.field)?.label}: <span className="font-normal">{soFilterSummary(f, lookups.labels)}</span>
           </button>
           <button type="button" aria-label={`Remove ${soFilterField(f.field)?.label} filter`}
             className="inline-flex h-5 w-5 items-center justify-center rounded-full hover:bg-primary/15"
@@ -67,7 +67,7 @@ export function SoListFilterBar({ q }: { q: string }) {
             <span className={k.label}>More filters · {complete.length}</span>
           </div>
           <div className="overflow-y-auto px-4 py-3">
-            <SoFilterRowsEditor skin="desktop" draft={draft} onDraftChange={setDraft} people={people} nameOf={nameOf} today={soTodayYmd(new Date())} />
+            <SoFilterRowsEditor skin="desktop" draft={draft} onDraftChange={setDraft} lookups={lookups} today={soTodayYmd(new Date())} />
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-2.5">
             <button type="button" className={k.ghostButton} onClick={() => { apply({ filters: [] }); setOpen(false); }}>Clear</button>

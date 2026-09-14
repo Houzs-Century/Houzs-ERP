@@ -11,7 +11,7 @@ import { useState } from "react";
 import { soFilterIsComplete, soTodayYmd, type SoListFilter } from "../vendor/shared/so-list-filter-model";
 import { useSoListCountPreview } from "../vendor/scm/lib/so-list-filter-state";
 import { SoFilterRowsEditor } from "../components/so-list-filter/SoFilterRowsEditor";
-import { useSoFilterPeople } from "../components/so-list-filter/useSoFilterPeople";
+import { useSoFilterLookups } from "../components/so-list-filter/useSoFilterLookups";
 
 export function MobileSoFilterSheet({
   appliedStatus,
@@ -35,7 +35,7 @@ export function MobileSoFilterSheet({
 }) {
   const [status, setStatus] = useState(appliedStatus);
   const [draft, setDraft] = useState<SoListFilter[]>(() => [...appliedFilters]);
-  const { people, nameOf } = useSoFilterPeople(draft);
+  const lookups = useSoFilterLookups(draft);
   const preview = useSoListCountPreview({ status, q, filters: draft, enabled: true });
   const complete = draft.filter(soFilterIsComplete);
   const today = soTodayYmd(new Date());
@@ -95,7 +95,7 @@ export function MobileSoFilterSheet({
             <span className="gl">More filters · {complete.length}</span>
             <span className="gr" />
           </div>
-          <SoFilterRowsEditor skin="mobile" draft={draft} onDraftChange={setDraft} people={people} nameOf={nameOf} today={today} />
+          <SoFilterRowsEditor skin="mobile" draft={draft} onDraftChange={setDraft} lookups={lookups} today={today} />
         </div>
         <div className="sheet-foot">
           <button type="button" className="btn-ghost" style={{ flex: "0 0 34%" }} onClick={onClear}>Clear</button>
