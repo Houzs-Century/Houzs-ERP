@@ -11,13 +11,26 @@
 // its debits in the period (a reversal, a closing-stock credit) prints in
 // parentheses; a loss is a negative net and reads the same way. The four
 // Finance reports share this rule through fmtSenParen / fmtPerf.
+//
+// LAYOUT (owner 2026-09-14, docs/bugs/0911: 我想要有 level，父子 account 分层 …
+// 我要能自己调动排版 … P&L 那边不是每个 expense 都有 percentage): the P&L draws each
+// block on the report's layout — the server lays the period's figures on the
+// owner's tree of categories (one tree, shared by every company, ticked per
+// company) — with a subtotal on every category, % of sales on every row, and
+// L1..Ln buttons to open the tree to a depth. The Layout button opens the
+// editor (ReportLayoutEditor) for whoever may read the statements.
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Button } from '@2990s/design-system';
 import { fmtSenParen } from '../../vendor/shared/format';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { DateField } from '../../vendor/scm/components/DateField';
+import { useAuth } from '../../auth/AuthContext';
+import { laidDepth, type LaidNode } from '../../vendor/scm/lib/report-layout';
+import { LaidBlock, LaidTotalRow, LevelButtons, type Level } from './ReportLayoutTree';
+import { ReportLayoutEditor } from './ReportLayoutEditor';
 
 const card: React.CSSProperties = {
   padding: 'var(--space-4)',
@@ -53,15 +66,28 @@ const Section = ({ title, rows, totalLabel, totalSen }: {
 );
 
 /* ── P&L ──────────────────────────────────────────────────────────────────── */
+type PnlLayout = {
+  stored: boolean;
+  /** Sales of the period — what every % is of; null when nothing sold. */
+  baseSen: number | null;
+  tradingIncome: LaidNode[]; costOfSales: LaidNode[]; otherIncome: LaidNode[]; expenses: LaidNode[]; taxation: LaidNode[];
+};
+
 export const PnLTab = () => {
   const [from, setFrom] = useState(monthStart());
   const [to, setTo] = useState(myt());
+  const [level, setLevel] = useState<Level>('all');
+  const [editing, setEditing] = useState(false);
+  const { can } = useAuth();
+  const canArrange = can('scm.payment_voucher.post');
   const q = useQuery({
     queryKey: ['report-pnl', from, to],
     queryFn: () => authedFetch<{
       tradingIncome: Line[]; costOfSales: Line[]; otherIncome: Line[]; expenses: Line[];
       /** TAXATION section rows — a profit-before-tax line appears when any posted. */
       taxation?: Line[];
+      /** The same figures on the report's layout. */
+      layout: PnlLayout;
       totals: {
         tradingIncomeSen: number; costOfSalesSen: number; grossProfitSen: number; otherIncomeSen: number; expensesSen: number;
         profitBeforeTaxSen?: number; taxationSen?: number; netProfitSen: number;
@@ -71,42 +97,49 @@ export const PnLTab = () => {
     staleTime: 30_000,
   });
 
+  const lay = q.data?.layout;
+  const depth = lay ? Math.max(laidDepth(lay.tradingIncome), laidDepth(lay.costOfSales), laidDepth(lay.otherIncome), laidDepth(lay.expenses), laidDepth(lay.taxation)) : 0;
+  const base = lay ? lay.baseSen : null;
+
   return (
     <div className="space-y-3">
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={soft}>From</span><DateField value={from} onChange={setFrom} aria-label="P&L from" />
         <span style={soft}>To</span><DateField value={to} onChange={setTo} aria-label="P&L to" />
+        <LevelButtons depth={depth} level={level} onLevel={setLevel} />
+        {canArrange && (
+          <Button variant="ghost" size="sm" onClick={() => setEditing((v) => !v)} aria-pressed={editing}>Layout</Button>
+        )}
       </div>
+      {editing && <ReportLayoutEditor report="pnl" onClose={() => setEditing(false)} />}
       {q.isLoading && <div style={soft}>Working the period out…</div>}
       {q.isError && <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-danger, #a33)' }}>The statement did not load — adjust the dates to retry.</div>}
-      {q.data && (
+      {q.data && lay && (
         <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
-            <tbody>
-              <Section title="Trading income" rows={q.data.tradingIncome} totalLabel="Total income" totalSen={q.data.totals.tradingIncomeSen} />
-              <Section title="Cost of sales (purchases + opening − closing)" rows={q.data.costOfSales} totalLabel="Total cost of sales" totalSen={q.data.totals.costOfSalesSen} />
-              <tr style={{ borderTop: '2px solid var(--c-ink, #221f20)' }}>
-                <td style={{ padding: '6px 10px', fontWeight: 700 }}>GROSS PROFIT</td>
-                <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 700 }}>{fmtSenParen(q.data.totals.grossProfitSen)}</td>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border-weak, #e3e1da)' }}>
+                <th style={{ padding: '6px 10px', textAlign: 'left', ...soft }}>{lay.stored ? 'On the saved layout' : 'On the chart\'s own tree'}</th>
+                <th style={{ padding: '6px 10px', textAlign: 'right', ...soft }}>Amount</th>
+                <th style={{ padding: '6px 10px', textAlign: 'right', ...soft }}>% of sales</th>
               </tr>
-              <Section title="Other income" rows={q.data.otherIncome} totalLabel="Total other income" totalSen={q.data.totals.otherIncomeSen} />
-              <Section title="Expenses" rows={q.data.expenses} totalLabel="Total expenses" totalSen={q.data.totals.expensesSen} />
+            </thead>
+            <tbody>
+              <LaidBlock title="Trading income" nodes={lay.tradingIncome} level={level} totalLabel="Total income" totalSen={q.data.totals.tradingIncomeSen} baseSen={base} />
+              <LaidBlock title="Cost of sales (purchases + opening − closing)" nodes={lay.costOfSales} level={level} totalLabel="Total cost of sales" totalSen={q.data.totals.costOfSalesSen} baseSen={base} />
+              <LaidTotalRow label="GROSS PROFIT" amountSen={q.data.totals.grossProfitSen} baseSen={base} />
+              <LaidBlock title="Other income" nodes={lay.otherIncome} level={level} totalLabel="Total other income" totalSen={q.data.totals.otherIncomeSen} baseSen={base} />
+              <LaidBlock title="Expenses" nodes={lay.expenses} level={level} totalLabel="Total expenses" totalSen={q.data.totals.expensesSen} baseSen={base} />
               {/* The TAXATION section (AutoCount's own line) only when
                   something posted there — the layout stays as the owner
                   left it otherwise (版式先这样). */}
               {(q.data.taxation?.length ?? 0) > 0 && (
                 <>
-                  <tr style={{ borderTop: '2px solid var(--c-ink, #221f20)' }}>
-                    <td style={{ padding: '6px 10px', fontWeight: 700 }}>PROFIT BEFORE TAX</td>
-                    <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 700 }}>{fmtSenParen(q.data.totals.profitBeforeTaxSen ?? q.data.totals.netProfitSen)}</td>
-                  </tr>
-                  <Section title="Taxation" rows={q.data.taxation ?? []} totalLabel="Total taxation" totalSen={q.data.totals.taxationSen ?? 0} />
+                  <LaidTotalRow label="PROFIT BEFORE TAX" amountSen={q.data.totals.profitBeforeTaxSen ?? q.data.totals.netProfitSen} baseSen={base} />
+                  <LaidBlock title="Taxation" nodes={lay.taxation} level={level} totalLabel="Total taxation" totalSen={q.data.totals.taxationSen ?? 0} baseSen={base} />
                 </>
               )}
-              <tr style={{ borderTop: '2px solid var(--c-ink, #221f20)' }}>
-                <td style={{ padding: '8px 10px', fontWeight: 700 }}>NET PROFIT</td>
-                <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700 }}>{fmtSenParen(q.data.totals.netProfitSen)}</td>
-              </tr>
+              <LaidTotalRow label="NET PROFIT" amountSen={q.data.totals.netProfitSen} baseSen={base} strong />
             </tbody>
           </table>
         </div>
