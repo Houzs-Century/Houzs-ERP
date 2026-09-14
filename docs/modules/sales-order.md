@@ -1765,7 +1765,7 @@ Invalidation always wins over all three (mutation → invalidate → forced refe
 
 | Method | Path | Handler | Purpose |
 |--------|------|---------|---------|
-| GET | `/api/scm/mfg-sales-orders` | list handler | Grid rows (+ `?summary=1` lightweight bucket mode, `?status=`, `?debtor=`; `?page=` opts into the paginated contract) |
+| GET | `/api/scm/mfg-sales-orders` | list handler | Grid rows (+ `?summary=1` lightweight bucket mode, `?status=`, `?debtor=`; `?page=` opts into the paginated contract, which also takes repeated `?f=field:op[:value]` second-level filters, see §3; an invalid row answers `400 invalid_filter`) |
 | GET | `/api/scm/mfg-sales-orders/list-mrp-enrichment` | `mfg-sales-orders-list-enrichment.ts` | `?docNos=A,B,C` → `{ enrichment: { [docNo]: { sourcePoReady, sourcePoAdj, stockRemark, isMainReady, planningState } } }`. The deferred, MRP-derived half of the list (see §"why the list opens instantly"). Read-only, company + sales scoped, fail-soft. Registered before `/:docNo` so the static path is not captured as a doc number. |
 | GET | `/api/scm/mfg-sales-orders/:docNo` | detail | One SO header + lines. FAST — does NOT run MRP inline (2026-09-01); MRP-derived line fields (`stock_state`, `coverage_po`/`coverage_eta`, `ready_source_pos`, live `stock_status_effective`) return their no-MRP defaults and the client heals them from `/:docNo/coverage` |
 | GET | `/api/scm/mfg-sales-orders/:docNo/coverage` | detail | The DEFERRED live Stock column: runs the global `computeMrp` + `soLineReadySourcePos` (the code `/:docNo` stopped running inline) → `{ coverage: [{ id, stock_state, coverage_po, coverage_eta, ready_source_pos, stock_status_effective }] }`, one entry per line. Same company + self-scoped-sales 404 guard as the detail. Read-only, fail-soft. Client calls it after the doc renders |
@@ -5438,6 +5438,54 @@ yet could not be found by it — 21 live orders were in that state. `customer_so
 was added to the search; `po_doc_no` is a 0%-filled dead column not projected onto
 this list and is intentionally not searched. Entry
 `docs/bugs/0755-so-list-search-ignored-customer-so-no-so-a-shown-reference-c.md`.
+
+### Second-level filters (`?f=`, owner 2026-09-14)
+
+The status tab is the FIRST filter. Below it (phone: the Filter sheet's
+"MORE FILTERS" rows; desktop: the "More filters" bar beside the status pills)
+the user adds rows of field + operator + value that AND together. Paginated arm
+only — the legacy (`page` absent) arm is untouched.
+
+| layer | file |
+| --- | --- |
+| model: fields, operators, validation, date presets, wire format | `backend/src/scm/shared/so-list-filter-model.ts` = `frontend/src/vendor/shared/so-list-filter-model.ts` (byte-identical, `so-list-filter-model.canonical.test.ts`) |
+| server predicates + "me" lookup + one `prepareSoListFilters` call | `backend/src/scm/lib/so-list-query-filters.ts` |
+| URL state (`f` + `status`), draft editing, Apply-count preview | `frontend/src/vendor/scm/lib/so-list-filter-state.ts` |
+| shared editors (rows, grouped field picker, value editor, calendar) | `frontend/src/components/so-list-filter/` |
+| phone sheet / desktop bar (presentation only) | `frontend/src/mobile/MobileSoFilterSheet.tsx`, `frontend/src/pages/scm-v2/SoListFilterBar.tsx` |
+
+**One prepared filter reaches all three reads** — the page rows, the money
+aggregate (header revenue / outstanding) and the status counts
+(`backend/tests/soListFilterWiring.test.ts` pins it). With any filter set the
+counts read the payment-totals VIEW instead of the base table, because Balance /
+Total / Payment status compare view-computed columns; with none they read the
+base table exactly as before. Company scope and the sales scope are applied
+first, as on every other read in the handler; every value reaches PostgREST as a
+filter value, and the three `.or()` strings (Reference, Remarks, Contact no.)
+pass through `escapeForOr`.
+
+Fields and the column each reads: Created by / Salesperson → `salesperson_id`
+("is me" resolves the caller's `scm.staff` ids server-side). **Created by is NOT
+`created_by`**: a native order stores the SCM bridge's pinned system staff uuid
+there, so that column cannot tell people apart. Venue `venue`, State
+`customer_state`, City `city`, Sales location `sales_location`, Name
+`debtor_name`, Reference `ref` or `customer_so_no`, Customer type
+`customer_type`, Building type `building_type`, Email `email`, Contact no.
+`phone` (also its +60 form), Remarks `note` / `remark2..4`; Processing /
+Delivery / Order date `processing_date` / `customer_delivery_date` / `so_date`;
+Created / Last change date `created_at` / `updated_at` bounded by Kuala Lumpur
+midnights; SO no. from–to is a `doc_no` text range; Balance `balance_sen_live`,
+Total `local_total_sen`; Payment status (Unpaid = nothing paid and balance > 0,
+Deposit only = something paid and balance > 0, Fully paid = balance <= 0);
+Overdue = `amended_delivery_date` (else `customer_delivery_date`) before today in
+KL and status not SHIPPED / DELIVERED / INVOICED / CLOSED / CANCELLED.
+
+**Not offered yet, shown disabled in the picker:** Warehouse, Branding, Item
+category, Has pending amendment — each is a fact about the order's LINES (or the
+amendments table), and the list reads a header view. Also not built: Stock
+readiness (computed after the page renders by the deferred MRP enrichment, so it
+cannot filter a server page), Item code contains, IC No and Cancel date (no such
+column on the SO header).
 
 ---
 

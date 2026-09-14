@@ -23,6 +23,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { shippedProgressColumn, ShippedProgressPill } from "./so-list-shipped-column";
 import { SO_STATUS_TABS, statusFor, type StatusTab } from "./so-list-status";
 import { SoListStatusCell } from "./SoListStatusCell";
+import { SoListFilterBar } from "./SoListFilterBar";
+import { useSoListFilters } from "../../vendor/scm/lib/so-list-filter-state";
 import { salesOrderRowMenu } from "./row-menus";
 import { brandingToneForCategory, type BrandTone } from "../../lib/brandingTone";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -1018,6 +1020,7 @@ export function MfgSalesOrdersListV2() {
   // regardless of the URL param (a 9-col DataTable is unreadable on 360dpi).
   const view = (params.get("view") ?? "table") as "table" | "cards";
   const search = params.get("q") ?? "";
+  const { filters: soFilters } = useSoListFilters(); // second-level filters (URL `f`), shared with mobile
   // URL is state — the page index lives in `?page=` (0-based). pageSize is a
   // fixed 50 (backend caps at 100). Both feed the server-pagination hook so
   // search / status counts / sort span the FULL set, not the visible page.
@@ -1056,6 +1059,7 @@ export function MfgSalesOrdersListV2() {
     status,
     q: debouncedSearch,
     sort,
+    filters: soFilters,
     enabled: sortReady,
   });
   const searchTransition = useSearchResultTransition({
@@ -1159,7 +1163,7 @@ export function MfgSalesOrdersListV2() {
     setParams(new URLSearchParams(), { replace: true });
   };
   const filtersActive =
-    status !== "all" || view !== "table" || search.trim().length > 0;
+    status !== "all" || view !== "table" || search.trim().length > 0 || soFilters.length > 0;
 
   // ── Actions wired to real routes / mutations ──────────────────────────
   const goNewSo = () => navigate("/scm/sales-orders/new");
@@ -2129,6 +2133,7 @@ export function MfgSalesOrdersListV2() {
               value={status}
               onChange={(v) => setStatusChip(v)}
             />
+            <SoListFilterBar q={debouncedSearch} />
             <div className="flex-1" />
             <ViewToggle value={view} onChange={setView} />
           </div>
@@ -2159,6 +2164,7 @@ export function MfgSalesOrdersListV2() {
           value={status}
           onChange={(v) => setStatusChip(v)}
         />
+        <SoListFilterBar q={debouncedSearch} />
       </div>
 
       {/* Phone → CardsGrid ALWAYS. Desktop → the view toggle decides. */}
