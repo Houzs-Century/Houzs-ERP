@@ -38,6 +38,6 @@ describe('buildDoHeaderBody', () => {
 
   it('a LOCKED DO sends only the fields that stay open (owner ruling 2026-09-14)', () => {
     const b = buildDoHeaderBody(seedDoHeaderForm(DOO, '2026-09-14'), STAFF, { locked: true });
-    expect(Object.keys(b).sort()).toEqual(['agent', 'driverName', 'expectedDeliveryAt', 'salespersonId', 'vehicle']);
+    expect(Object.keys(b).sort()).toEqual(['driverName', 'expectedDeliveryAt', 'vehicle']);
   });
 });

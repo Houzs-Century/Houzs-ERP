@@ -1272,7 +1272,7 @@
     },
     {
       "check": "D1",
-      "key": "AGENT,ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,CUSTOMER_DELIVERED_DATE,DELIVERY_SUBSTATUS,DEPARTURE_AT,DRIVER_ID,DRIVER_NAME,ETA_ARRIVING_PORT,EXPECTED_DELIVERY_AT,SALESPERSON_ID,SHIPOUT_DATE,TIME_CONFIRMED,TIME_RANGE,VEHICLE|backend/src/scm/shared/do-header-lock.ts frontend/src/vendor/shared/do-header-lock.ts",
+      "key": "ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,CUSTOMER_DELIVERED_DATE,DELIVERY_SUBSTATUS,DEPARTURE_AT,DRIVER_ID,DRIVER_NAME,ETA_ARRIVING_PORT,EXPECTED_DELIVERY_AT,SHIPOUT_DATE,TIME_CONFIRMED,TIME_RANGE,VEHICLE|backend/src/scm/shared/do-header-lock.ts frontend/src/vendor/shared/do-header-lock.ts",
       "why": "A VENDORED TWIN, not a second decision: the Delivery Order header columns that stay editable once a Sales Invoice or Delivery Return exists (owner ruling 2026-09-14). One home in backend/src/scm/shared/do-header-lock.ts, read by the PATCH /delivery-orders-mfg/:id refusal; the byte-identical copy under frontend/src/vendor/shared/ exists because the desktop edit form and the phone edit screen disable fields from it and the browser cannot import backend/src. Refereed by frontend/src/vendor/shared/do-header-lock.canonical.test.ts (byte compare) and backend/tests/doHeaderLockPartition.test.ts (every PATCH column classified)."
     },
     {

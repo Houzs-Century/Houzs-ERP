@@ -20,6 +20,16 @@
 // Best-effort: any read error yields an empty map (the column shows "—"),
 // never a throw — the PO number is an ancillary column, not load-bearing for
 // the list, and must never 500 it.
+//
+// Readers: the Sales Orders list (numbers only) and the Service Case list +
+// detail "Order PO" (services/assrOrderPos.ts), which needs the PO id too so
+// the detail can link each number to its PO page. ONE walk, two projections.
+//
+// `companyId` is REQUIRED (number | null) and, when a number, goes on all
+// three reads as company_id = <id>. The SCM client is the service role, so
+// that predicate is the only thing keeping a doc_no or line id of the other
+// company's books out of the answer. null = no predicate, and a caller passing
+// it has to say why.
 // ----------------------------------------------------------------------------
 
 /** PostgREST `.in()` caps out on URL length, and the un-paginated SO list can
@@ -33,12 +43,30 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
+export type SoConvertedPo = { id: string; po_number: string };
+
 export async function soConvertedPoNumbers(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   docNos: Array<string | null | undefined>,
+  companyId: number | null,
 ): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>();
+  for (const [doc, pos] of await soConvertedPos(sb, docNos, companyId)) {
+    out.set(doc, [...new Set(pos.map((p) => p.po_number))]);
+  }
+  return out;
+}
+
+export async function soConvertedPos(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  docNos: Array<string | null | undefined>,
+  companyId: number | null,
+): Promise<Map<string, SoConvertedPo[]>> {
+  const out = new Map<string, SoConvertedPo[]>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const scoped = (q: any) => (companyId == null ? q : q.eq('company_id', companyId));
   const docs = [...new Set(docNos.filter((d): d is string => !!d))];
   if (docs.length === 0) return out;
 
@@ -48,9 +76,9 @@ export async function soConvertedPoNumbers(
     //    as a conversion of that SO.)
     const docByItemId = new Map<string, string>();
     for (const part of chunk(docs, IN_CHUNK)) {
-      const { data, error } = await sb
+      const { data, error } = await scoped(sb
         .from('mfg_sales_order_items')
-        .select('id, doc_no')
+        .select('id, doc_no'))
         .in('doc_no', part);
       if (error) return out;
       for (const r of (data ?? []) as Array<{ id: string | null; doc_no: string | null }>) {
@@ -64,9 +92,9 @@ export async function soConvertedPoNumbers(
     const links: Array<{ so_item_id: string; purchase_order_id: string }> = [];
     const poIds = new Set<string>();
     for (const part of chunk(itemIds, IN_CHUNK)) {
-      const { data, error } = await sb
+      const { data, error } = await scoped(sb
         .from('purchase_order_items')
-        .select('so_item_id, purchase_order_id')
+        .select('so_item_id, purchase_order_id'))
         .in('so_item_id', part)
         .not('purchase_order_id', 'is', null);
       if (error) return out;
@@ -83,9 +111,9 @@ export async function soConvertedPoNumbers(
     //    without the status column can't silently widen the set).
     const numById = new Map<string, string>();
     for (const part of chunk([...poIds], IN_CHUNK)) {
-      const { data, error } = await sb
+      const { data, error } = await scoped(sb
         .from('purchase_orders')
-        .select('id, po_number, status')
+        .select('id, po_number, status'))
         .in('id', part);
       if (error) return out;
       for (const p of (data ?? []) as Array<{ id: string; po_number: string | null; status: string | null }>) {
@@ -94,18 +122,18 @@ export async function soConvertedPoNumbers(
       }
     }
 
-    // Assemble doc_no → sorted, de-duped PO numbers.
-    const setByDoc = new Map<string, Set<string>>();
+    // Assemble doc_no → PO de-duped by id, sorted by number.
+    const byDoc = new Map<string, Map<string, SoConvertedPo>>();
     for (const l of links) {
       const doc = docByItemId.get(l.so_item_id);
       const num = numById.get(l.purchase_order_id);
       if (!doc || !num) continue;
-      let s = setByDoc.get(doc);
-      if (!s) { s = new Set(); setByDoc.set(doc, s); }
-      s.add(num);
+      let m = byDoc.get(doc);
+      if (!m) { m = new Map(); byDoc.set(doc, m); }
+      m.set(l.purchase_order_id, { id: l.purchase_order_id, po_number: num });
     }
-    for (const [doc, s] of setByDoc) {
-      out.set(doc, [...s].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })));
+    for (const [doc, m] of byDoc) {
+      out.set(doc, [...m.values()].sort((a, b) => a.po_number.localeCompare(b.po_number, undefined, { numeric: true })));
     }
     return out;
   } catch {

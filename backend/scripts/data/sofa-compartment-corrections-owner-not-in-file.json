@@ -22,6 +22,16 @@
    "source": "owner-not-in-file-2026-09-11",
    "docs": ["HC-PO-2609-053"],
    "lineKeys": ["928403", "928404", "928405"]
+  },
+  {
+   "model": "9058",
+   "pieces": ["1A(LHF)", "CNR", "1NA", "1A(RHF)"],
+   "seat": "30",
+   "confidence": "owner",
+   "why": "Owner 2026-09-14, verbatim: 「这个是1AL+C+1NA+1AR」 = 1A(LHF) + CNR + 1NA + 1A(RHF), four pieces, left to right. He was shown the only order-slip photo on the sales-order line (R2 key so-items/HC-SO-013497/336d7acc-d407-4aa5-90a0-27577dd03b4f/ac-926847-1.jpg: \"9058\", \"TV\" written above; drawn left to right a hatched-arm box, then boxes, a wide box at the turn, plus a small hatched box above the right end). SUPERSEDES our 2026-09-10 mirrored reading L(LHF)+1NA+1NA+1A(RHF) (confidence LIKELY in sofa-compartment-corrections-drawings.json, re-mirrored by the TV round in sofa-compartment-corrections-tv-direction.json, both keyed 926847); those two entries are removed in this same change so one address carries one answer. Production before (read-only run 34770252267, check-so-colour-amendment-trace): HC-SO-013497 sofa lines #1 9058-L(LHF), #4 9058-1NA, #5 9058-1NA, #6 9058-1A(RHF). Seat 30 and fabric HR805-90 are the book's own and do not change; only the piece list changes. ALREADY WRITTEN BY STAFF before this entry existed: SO amendment HC-SO-013497/A1 ('ERP convert wrong item code', SO_APPROVED 2026-09-14 01:09 UTC) and its PO follow-up HC-PO-2609-064/A1 (APPROVED 01:19, PO revision 2). Read-only run 34808053694: SO lines #1 9058-1A(LHF), #4 9058-CNR, #5 9058-1NA, #6 9058-1A(RHF); PO lines #1 1A(LHF), #2 CNR, #3 1NA, #4 1A(RHF), received 0, each so_item_id pointing at the SO line of the same piece. So this entry is the RECORD of the ruling and is inert on apply. It is also a GUARD: before it, dry-run 34808142625 on main planned the two removed entries as 'change 1A(LHF) -> L(LHF), change CNR -> 1NA' - any apply run would have reverted the owner's build. HC-PO-2609-064 is not given an entry of its own: its lines carry no account-book line key (probe run 34808006861) and no Desc2 to address them by, and the applier carries an SO piece onto the PO line dedicated to it.",
+   "source": "owner-ruling-2026-09-14",
+   "docs": ["HC-SO-013497"],
+   "lineKeys": ["926847"]
   }
  ]
 }

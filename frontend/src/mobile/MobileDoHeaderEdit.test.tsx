@@ -151,7 +151,7 @@ describe("MobileDoHeaderEdit — locked by a Sales Invoice (owner ruling 2026-09
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
     const header = patches().filter((c) => c.url === "/delivery-orders-mfg/do-1");
-    expect(Object.keys(bodyOf(header[0])).sort()).toEqual(["agent", "driverName", "expectedDeliveryAt", "salespersonId", "vehicle"]);
+    expect(Object.keys(bodyOf(header[0])).sort()).toEqual(["driverName", "expectedDeliveryAt", "vehicle"]);
     expect(bodyOf(header[0]).vehicle).toBe("VBB 2");
   });
 });
