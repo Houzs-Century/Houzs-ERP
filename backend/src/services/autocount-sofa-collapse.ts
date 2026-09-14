@@ -265,6 +265,41 @@ function sameMultiset(a: string[], b: string[]): boolean {
   return true;
 }
 
+/* AN ARMED END IS AN END (docs/bugs/0906). The book's decoder reads a plain
+   armed end — 1EL / 2EL / 1ER / 2ER — as the end of the sofa its hand names
+   whatever position the token takes: `CT + 2EL + 1ER` decodes to
+   [2A(LHF), Console, 1A(RHF)]. The ERP lists pieces in the order they were
+   typed, so HC-SO-012736 holds [Console, 2A(LHF), 1A(RHF)] and the composed text
+   was refused for decoding into the only arrangement those pieces can take.
+
+   Returns the decoded arrangement only when it is the ERP's pieces with nothing
+   moved except armed ends, each now at the end its hand names: at most one left
+   and one right armed end, every other piece in the ERP's relative order, the
+   left end first and the right end last. Anything else — two sofas' worth of
+   ends, a middle piece moved, a chaise, a recliner arm — returns null and the
+   exact comparison stands. Handedness is never changed, so this cannot write
+   the mirror. */
+const ARMED_END = /^[12]A\((LHF|RHF)\)$/;
+function armedEndsPlaced(text: string, model: string, erp: string[]): string[] | null {
+  const e = erp.map(up);
+  const lefts = e.filter((p) => ARMED_END.test(p) && p.endsWith('(LHF)'));
+  const rights = e.filter((p) => ARMED_END.test(p) && p.endsWith('(RHF)'));
+  if (lefts.length > 1 || rights.length > 1 || lefts.length + rights.length === 0) return null;
+  let decoded: string[];
+  try {
+    decoded = parseSofa(text, model, hasMechanism(erp)).pieces;
+  } catch {
+    return null;
+  }
+  const d = decoded.map(up);
+  if (!sameMultiset(d, e) || sameSeq(d, e)) return null;
+  const middle = (xs: string[]) => xs.filter((p) => !ARMED_END.test(p));
+  if (!sameSeq(middle(d), middle(e))) return null;
+  if (lefts.length && d[0] !== lefts[0]) return null;
+  if (rights.length && d[d.length - 1] !== rights[0]) return null;
+  return decoded;
+}
+
 function sameSpecials(a: string[], b: string[]): boolean {
   const A = new Set(a.map(specialKey).filter(Boolean));
   const B = new Set(b.map(specialKey).filter(Boolean));
@@ -555,7 +590,12 @@ function collapseRun(
     /* The gate is asked about the text that is ACTUALLY SENT, with the specials
        that are actually in it. Comparing pointed text against the full special
        list would fail every time and make the second attempt dead code. */
-    const g = decodesTo(t, model, pieces, { size, colour, specials: sp });
+    let g = decodesTo(t, model, pieces, { size, colour, specials: sp });
+    /* The one reordering the gate accepts: armed ends read to their own ends,
+       nothing else moved. Size, colour and specials are then compared exactly
+       against that arrangement, by the same gate. */
+    const placed = g.ok ? null : armedEndsPlaced(t, model, pieces);
+    if (placed) g = decodesTo(t, model, placed, { size, colour, specials: sp });
     if (!g.ok) return { why: `composed Desc2 does not survive a decode: ${g.why}` };
     return { text: t };
   };

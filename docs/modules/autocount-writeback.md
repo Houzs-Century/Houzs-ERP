@@ -6449,3 +6449,15 @@ apply verified. It is how a purchase order sent with swapped values (0889) gets
 its own values back once keyed, and how an edit refused for a cause since fixed
 is sent. It never asks for a rebuild. Ledger:
 `docs/bugs/0903-purchase-orders-raised-from-a-sales-order-kept-swapped-value.md`.
+
+## A sofa's armed ends may be typed anywhere (2026-09-14)
+
+The ERP lists sofa pieces in the order they were typed, and the book's decoder
+reads a plain armed end (`1EL` / `2EL` / `1ER` / `2ER`) as the end its hand
+names. The compose gate in `autocount-sofa-collapse.ts` therefore accepts one
+reordering on top of the exact sequence. The decoded pieces must be the ERP's,
+with only plain armed ends moved: at most one per hand, left first, right last,
+everything else in typed order. Size, colour and specials are still compared
+exactly. The echo rungs are unchanged and stay exact. HC-SO-012736
+[Console, 2A(LHF), 1A(RHF)] and HC-GRN-2609-006 had been refused on this.
+`docs/bugs/0906-a-sofa-typed-with-its-armed-end-out-of-place-was-refused-tho.md`.
