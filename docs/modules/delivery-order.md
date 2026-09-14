@@ -2009,7 +2009,9 @@ drop those keys from the body. The server still refuses (409
 type, address lines 1-2, city, state (`state` and `customer_state`), postcode,
 country, building type, venue, emergency contact name / phone / relationship,
 sales location, currency, branding, reference / customer PO / customer SO ref,
-DO date, customer delivery date, note and remarks (`note`, `notes`).
+DO date, customer delivery date, note and remarks (`note`, `notes`), and the
+salesperson (`salesperson_id`, `agent`) — owner 2026-09-14, asked directly:
+「下游开了 上游就locked了啊」.
 
 **Still editable, and why** — only what happens AFTER invoicing in real life:
 
@@ -2018,7 +2020,6 @@ DO date, customer delivery date, note and remarks (`note`, `notes`).
 | driver (`driver_id`, `driver_name`), vehicle | the crew is reassigned on the day; `PUT /:id/crew` writes these too |
 | time window, time confirmed, arrival, departure, shipout date, customer-delivered date, port ETA, delivery sub-status, arrives-at-warehouse date | the delivery-execution record. The Delivery Planning `PATCH /delivery-planning/:type/:id/fields` route writes exactly these columns, and the driver's "Mark arrived" button PATCHes `arrivalAt` here — both keep working on an invoiced DO |
 | expected delivery date (`expected_delivery_at`) | our dispatch plan; it moves when a lorry is rescheduled. The CUSTOMER's delivery date is locked |
-| salesperson (`salesperson_id`, and `agent`, its AutoCount name) | **not named in the 2026-09-14 ruling.** The 2026-08-17 ruling says a delivered order must be hand-over-able to a replacement salesperson, and the Sales Order lock exempts it for that reason. Kept open so the two rulings do not collide — a question for the owner, not a decision made here |
 
 Status moves, proof of delivery and the SO amend mirror are separate paths and
 do not read this rule. `tests/doHeaderLockPartition.test.ts` fails if the PATCH
