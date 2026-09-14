@@ -75,6 +75,8 @@ import { useHoldAction } from "./use-hold-action";
 import { usePoCancelAction } from "./use-po-cancel-action";
 import { StatusWithHold, rowIsHeld } from "../../vendor/scm/components/HoldChip";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
+import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { purchaseOrderPrintChain } from "../../lib/printChain";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -931,8 +933,10 @@ export function PurchaseOrdersListV2() {
 
   // Batch "Print all" — fetch each selected PO's full detail, resolve its bound
   // warehouse name (the PDF can't hit the API), then render into one combined
-  // file or one file per PO. Mirrors the V1 PurchaseOrders list handler.
-  const printSelectedPos = async () => {
+  // file or one file per PO. Reached through the same Print preview as the
+  // GRN / DO / SI lists (owner 2026-09-14: 「PO打印没有这个」), so View / Print /
+  // Download are the exits and only Download still asks combined-vs-separate.
+  const deliverSelectedPos = async (action: PdfAction) => {
     if (printingDocs) return;
     const chosen = rows.filter((r) => selectedIds.has(r.id));
     if (chosen.length === 0) return;
@@ -968,11 +972,11 @@ export function PurchaseOrdersListV2() {
           staleTime: 30_000,
         });
         const po = toPo(d);
-        await pdf.generatePurchaseOrderPdf(po.header as never, po.items as never);
+        await pdf.generatePurchaseOrderPdf(po.header as never, po.items as never, { action });
         clearSelection();
         return;
       }
-      const how = await askChoice({
+      const how = action !== "save" ? "one" : await askChoice({
         title: `Print ${chosen.length} purchase orders`,
         options: [
           { value: "one", label: "One combined PDF" },
@@ -993,13 +997,11 @@ export function PurchaseOrdersListV2() {
       if (how === "one") {
         await pdf.generateCombinedPurchaseOrderPdf(pos as never, {
           fileName: `purchase-orders-${new Date().toISOString().slice(0, 10)}.pdf`,
+          action,
         });
       } else {
         for (const po of pos)
-          await pdf.generatePurchaseOrderPdf(
-            po.header as never,
-            po.items as never
-          );
+          await pdf.generatePurchaseOrderPdf(po.header as never, po.items as never, { action });
       }
       clearSelection();
     } catch (e) {
@@ -1012,6 +1014,7 @@ export function PurchaseOrdersListV2() {
       setPrintingDocs(false);
     }
   };
+  const batchPrint = usePrintPreview(deliverSelectedPos);
 
   /* RECEIVABLE is the server's own allow-list (grns.ts RECEIVABLE_PO_STATUSES)
      — SUBMITTED or PARTIALLY_RECEIVED.
@@ -1418,12 +1421,19 @@ export function PurchaseOrdersListV2() {
                       variant="secondary"
                       icon={<Printer size={14} />}
                       disabled={printingDocs}
-                      onClick={() => void printSelectedPos()}
+                      onClick={batchPrint.openPreview}
                     >
                       {printingDocs
                         ? "Printing…"
                         : `Print all (${selectedIds.size})`}
                     </Button>
+                    <PrintPreviewBatchModal
+                      open={batchPrint.open}
+                      onClose={batchPrint.close}
+                      docTitle="Purchase Orders"
+                      docNos={rows.filter((r) => selectedIds.has(r.id)).map((r) => poDisplayNumber(r.po_number, r.revision))}
+                      {...batchPrint.handlers}
+                    />
                     <Button
                       variant="primary"
                       icon={<Package size={14} />}
