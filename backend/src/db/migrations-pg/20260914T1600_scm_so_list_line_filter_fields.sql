@@ -26,11 +26,16 @@
 --     (mfg-sales-orders.ts GET /:docNo): status NOT IN (SENT, REJECTED) AND
 --     (lane IS NULL OR status = REQUESTED).
 --
--- COST, measured on staging (run 34818215402, 2,943 HOUZS orders, EXISTS
--- form): warehouse count 13.5ms, sofa grouped status count 21.9ms, sofa money
--- sums 23.4ms, open-amendment count 0.15ms, against a 2.3ms unfiltered count.
--- Both child tables are indexed on their doc number (idx_scm_mfg_so_items_doc_no,
--- idx_so_amendment_so).
+-- COST, measured on staging with THESE bodies (probe run 34819831872: created
+-- in a transaction, EXPLAIN ANALYZE as service_role, rolled back; 2,943 Houzs
+-- orders): one full read with the warehouse filter 94-97ms, item category
+-- 157-167ms, pending amendment 42-46ms, all three together 231ms — against
+-- 2-7ms for the same read unfiltered. A function per row is the cost (a SQL or
+-- plpgsql body measured the same, run 34819665024); an inline EXISTS measured
+-- 13-23ms (run 34818215402) but PostgREST cannot express it on a view filter.
+-- Any other filter the user has set (company, status tab, dates) narrows the
+-- rows first. PostgREST acceptance of these fields on a view is checked against
+-- a real PostgREST 14.5 by .github/workflows/postgrest-contract-so-list-filters.yml.
 --
 -- REVERSAL: ship a NEW migration that drops the three functions:
 --   DROP FUNCTION IF EXISTS scm.so_line_warehouse_ids(scm.mfg_sales_orders_with_payment_totals);

@@ -1,7 +1,6 @@
-name: Staging SO list filter probe (read-only)
+name: Staging SO list filter probe (rolled back)
 
 # Measures, on the STAGING database, what the Sales Order list line-level
-#
 # filter functions (migrations-pg 20260914T1600) cost: they are created INSIDE
 # one transaction, measured as service_role with EXPLAIN ANALYZE, and the whole
 # transaction is ROLLED BACK. Exit 0 for every legitimate answer.
@@ -9,9 +8,6 @@ name: Staging SO list filter probe (read-only)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [feat/so-list-line-filters]
-    paths: [backend/scripts/sql/staging-so-list-filter-probe.sql, backend/src/db/migrations-pg/20260914T1600_scm_so_list_line_filter_fields.sql]
 
 concurrency:
   group: staging-so-list-filter-probe

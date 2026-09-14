@@ -5496,7 +5496,13 @@ Each function reads only child rows carrying the order's own `company_id` and
 only live (non-cancelled) lines; `backend/tests-pg/soListLineFilterFields.pg.test.ts`
 replays the migration against Postgres and pins which orders each selects. The
 Warehouse picker lists the company's warehouses (inactive included) from
-`GET /inventory/warehouses`. **A DROP of the payment-totals view must CASCADE
+`GET /inventory/warehouses`. `.github/workflows/postgrest-contract-so-list-filters.yml`
+runs these filters through a real PostgREST 14.5 (the version staging reports)
+with postgrest-js and `prepareSoListFilters`. Cost on staging, one full read over
+2,943 Houzs orders (probe run 34819831872): warehouse ~95ms, item category ~160ms,
+pending amendment ~45ms, all three 231ms, against 2-7ms unfiltered; the list
+runs its page, count, status and money reads concurrently, so a request pays
+roughly one of those in wall time. **A DROP of the payment-totals view must CASCADE
 these three functions and re-run that migration's bodies after the recreate** —
 they depend on the view's row type.
 
