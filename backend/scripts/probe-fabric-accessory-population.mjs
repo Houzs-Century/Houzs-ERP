@@ -99,5 +99,38 @@ for (const t of cols.filter((c) => c.cols.includes("variant_key"))) {
     for (const r of rows.slice(0, 40)) say(`     ${r.item_code.padEnd(16)} key "${r.vk}" rows ${r.n}${qtyCol ? ` qty ${r.qty}` : ""}`);
   } catch (e) { say(`  ${fq}: ${e.message}`); }
 }
+
+notice("──── 6. colour text -> fabric master (company 1), every distinct text ────");
+const fcols = await sql`SELECT column_name::text AS c FROM information_schema.columns WHERE table_schema='scm' AND table_name='fabric_trackings' ORDER BY ordinal_position`;
+say(`fabric_trackings columns: ${fcols.map((r) => r.c).join(", ")}`);
+const nameCol = ["fabric_name", "name", "description", "colour", "color"].filter((c) => fcols.some((r) => r.c === c));
+const fab = await sql.unsafe(`SELECT fabric_code, supplier_code${nameCol.length ? ", " + nameCol.map(q).join(", ") : ""} FROM scm.fabric_trackings WHERE company_id = 1`);
+say(`company-1 fabric rows: ${fab.length}`);
+const norm = (x) => String(x ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+const keys = [];
+for (const f of fab) for (const k of [f.fabric_code, f.supplier_code]) { const n = norm(k); if (n.length >= 4) keys.push({ n, f }); }
+const texts = new Map();
+for (const t of ["mfg_sales_order_items", "purchase_order_items", "grn_items", "delivery_order_items", "purchase_invoice_items", "sales_invoice_items"]) {
+  const tc = (await sql`SELECT array_agg(column_name::text) AS c FROM information_schema.columns WHERE table_schema='scm' AND table_name=${t}`)[0].c;
+  const txtCols = ["description2", "notes", "remark"].filter((c) => tc.includes(c));
+  const rows = await sql.unsafe(`SELECT variants${txtCols.map((c) => ", " + q(c)).join("")} FROM scm.${q(t)} WHERE upper(btrim(item_code)) = ANY($1)`, [codes]);
+  for (const r of rows) {
+    const v = r.variants && typeof r.variants === "object" ? r.variants : {};
+    const txt = [v.extraAddonNote, ...(Array.isArray(v.specials) ? v.specials.map((x) => typeof x === "string" ? x : x?.label ?? x?.name ?? "") : []), ...txtCols.map((c) => r[c])]
+      .filter(Boolean).join(" | ").replace(/账本原文:.*$/, "").replace(/(AMN|HOK|DSL)-\s*(SQUARE|LONG) PILLOW.*$/i, "").trim();
+    const e = texts.get(txt) ?? { n: 0, tables: new Set() }; e.n++; e.tables.add(t); texts.set(txt, e);
+  }
+}
+const sorted = [...texts.entries()].sort((a, b) => b[1].n - a[1].n);
+for (const [txt, e] of sorted) {
+  const nt = norm(txt);
+  const hits = keys.filter((k) => nt.includes(k.n));
+  const best = new Map();
+  for (const h of hits) best.set(h.f.fabric_code, h);
+  const cands = [...best.values()].sort((a, b) => b.n.length - a.n.length).slice(0, 4)
+    .map((h) => `${h.f.fabric_code}[sup ${h.f.supplier_code ?? "-"}${nameCol.length ? " " + nameCol.map((c) => h.f[c] ?? "").join("/") : ""}]`);
+  say(`  ${String(e.n).padStart(3)}× "${txt.slice(0, 70)}" -> ${cands.length ? cands.join(" ; ") : "NO MATCH"}`);
+}
+
 notice("READ-ONLY — nothing was written.");
 await sql.end();
