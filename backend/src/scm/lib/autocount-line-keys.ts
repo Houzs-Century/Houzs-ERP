@@ -546,6 +546,11 @@ export function newLineTargetOf(docType: string, payload: { body?: unknown }): N
   const newDesc2: string[] = [];
   const knownKeys: number[] = [];
   for (const l of lines) {
+    /* A retired line is not laid down by a rebuild — the host skips it before
+       AddDetail — so it has no book line to pair with and no ERP row to store
+       on. Counting it refused the whole batch and left the dead keys in place:
+       HC-SO-001463 and HC-SO-013209, docs/bugs/0904. */
+    if (rebuilt && l.Retire === true) continue;
     const key = Number(l.DtlKey);
     if (!rebuilt && Number.isFinite(key) && key > 0) knownKeys.push(key);
     if (!rebuilt && l.IsNewLine !== true) continue;
