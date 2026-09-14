@@ -1699,6 +1699,29 @@ rows of equal width and the actions to the right. Every hook, label, button
 and refusal is unchanged — `frontend/src/pages/scm-v2/SettlementSetup.test.tsx`
 passes as it was.
 
+**The bank's monthly statement PDF uploads too (2026-09-14, docs/bugs/0869;
+owner, after Maybank's Account Activity export turned out to omit two June
+credits the statement printed: 我觉得可以 pdf，就也支持 csv，也支持 pdf).** On
+Bank statement reconciliation a `.pdf` is read in the browser by pdf.js —
+every piece of text with the x/y it was drawn at, grouped into lines
+(`frontend/src/vendor/scm/lib/pdf-text.ts`, loaded on the press, never for a
+CSV) — and sent as `content` with `format: 'PDF'`; the bank's LAYOUT is read
+on the server (`backend/src/acc/bank-parse-pdf.ts`, beside the CSV column
+maps) into the same shape the CSV reader hands over, so everything after —
+recognition, matching, the month, the lock — is unchanged. Maybank's SME
+statement: rows dd/mm (the year off the header's statement date), the amount
+with a +/- suffix, the running balance at the right, continuation lines
+folded into the row above, pages until ENDING BALANCE; BEGINNING and ENDING
+BALANCE become the file's opening and closing, so a Maybank month read off
+the PDF is covered end to end with nothing typed (rule 4 stays for the CSV
+path). The rows must walk from the beginning balance to the ending balance or
+the file is refused. ONE SOURCE PER MONTH: a PDF is refused (`mixed_sources`,
+409) where the account already holds CSV movements on its days and a CSV
+where it holds PDF ones — the fingerprint that keeps two CSV exports from
+doubling a movement cannot tell the two formats' words apart. A bank with no
+PDF layout (Hong Leong today — its CSV prints the balances already) is
+refused by name.
+
 **Every certain payout at once (2026-09-14, docs/bugs/0868; owner, on a July
 statement of matched card payouts: 这些我还需要自己确定吗？ → 做).** The matcher
 decides WHICH report a card payout is; booking the money (Dr bank / Cr
