@@ -426,13 +426,15 @@ than a convention: a request body, query string and header can only produce
 string keys, and JSON has no symbols. It is non-enumerable, so it cannot leak
 into a payload either.
 
-**The six tools that may push** are pinned by
-`backend/tests/acWritebackPushAllowlist.test.mjs`, so a seventh cannot join by
+**The seven tools that may push** are pinned by
+`backend/tests/acWritebackPushAllowlist.test.mjs`, so an eighth cannot join by
 copying a neighbour: `rebuild-ac-document.mjs`, `requeue-autocount-skipped.mjs`,
 `recompose-autocount-transfer.mjs`, `reraise-hc-po-2608-001.mjs`,
-`sync-ac-delta.mjs` under `LANES=push` only, and `enqueue-so-writeback.mts`
-(below). The pin read only `.mjs` and `.ts` until 2026-09-14, so that sixth one —
-a `.mts` — carried the opt-in for four days without the test seeing it
+`sync-ac-delta.mjs` under `LANES=push` only, `requeue-amendment-ac-edits.mjs`
+(`docs/bugs/0888-approved-so-and-po-amendments-queued-no-autocount-edit-from.md`),
+and `enqueue-so-writeback.mts` (below). The pin read only `.mjs` and `.ts` until
+2026-09-14, so that last one — a `.mts` — carried the opt-in for four days
+without the test seeing it
 (`docs/bugs/0888-the-account-book-push-allowlist-could-not-see-a-mts-script.md`).
 
 The drain is not gated this way and does not need to be: `drainAutoCountOutbox`
@@ -557,6 +559,20 @@ one edit is queued per applied amendment. Re-creating the document instead would
 destroy AutoCount's own `DocTransfer` links and its audit trail — a worse loss
 than the ERP-side one, and forbidden outright by the owner's rule that nothing is
 ever deleted.
+
+**The two amendment approves enqueue THROUGH THE TRANSACTION CLIENT**
+(`pgTransactionSupabase`, `lib/pg-supabase-transaction.ts`), unlike every other
+SO/PO edit, which uses `c.get('supabase')`. Every query the composer makes must
+therefore compile on that shim too — including the escaped
+`.filter(col, 'in', pgrestInList(...))` the shared readers use. It did not from
+2026-09-10 (#3545) to the fix in docs/bugs/0888: the compose threw, nothing was
+queued, and 0 of 47 amendments approved in that window reached AutoCount (run
+34819514473). `lib/pgTransactionInFilter.test.ts` drives `enqueueEdit` through the
+real shim for that reason. And since 0888 an unnamed compose error is written as a
+`skipped` row (`compose failed, nothing sent: (<ErrorName>) …`) instead of being
+dropped — a silent write-back is the failure mode, so it may not be silent.
+Documents already affected: `scripts/requeue-amendment-ac-edits.mjs` (plan by
+default).
 
 A **variant or SKU change IS a line change** — AutoCount takes it as `Desc2` +
 `ItemCode` on the same `DtlKey` — so the `tbc-*` routes need no operation of

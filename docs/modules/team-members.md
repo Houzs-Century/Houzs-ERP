@@ -225,6 +225,13 @@ card shows `active / target` when a target is set.
 - **Both surfaces or neither.** Invite/edit/action semantics changed on
   desktop must land in the mobile pair (`MobileModuleList` config +
   `MemberActions`) in the same PR.
+- **A scoped Sales Director never picks a role — on invite as on edit.**
+  `POST /invite` stores the baseline role (`resolveDefaultRoleId`) for every
+  scoped caller, whatever `role_id` the body carries; `PATCH /:id` deletes
+  `role_id`. The phone invite form drops its Role field for that caller
+  (`frontend/src/mobile/member-invite-form.ts`). Until 2026-09-14 the invite
+  defaulted only a MISSING role, so the phone's Role picker let a Sales
+  Director create a Super Admin (`docs/bugs/0887-a-sales-director-could-invite-a-new-account-straight-into-su.md`).
 - **Impersonation is registered TWICE, and the second one is dead.** See
   section 4 below before changing either.
 - **Writing `users.name` or `users.status` fires a trigger into `scm.staff`.**

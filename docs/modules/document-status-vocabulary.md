@@ -183,20 +183,33 @@ carry. Those copies were aligned by hand on 2026-08-21.
 > reads **Confirmed**, in `status-pill.ts` AND — until its page is collapsed — in
 > that page's own map.
 
-> **OPEN, AND WORSE — the detail-page BADGE is a second family no guard sees.**
-> Found while collapsing the six, 2026-09-13; traced in source on `origin/main`
-> 678a8a8cd, not observed on a running screen. Seven detail pages carry a flat
-> `STAGE_LABEL: Record<string, string>`, and that — not the `{ tone, label }` map —
-> is what the header `<Badge>` renders. Four contradict the ruling at the top of
-> this section: the GRN and Purchase Invoice badges say **Posted** and the Sales
-> Invoice badge says **Sent** where the owner ruled Submitted, and the Purchase
-> Return badge says **Posted** where the canonical map says Confirmed.
+> **FIXED 2026-09-14 — the detail-page BADGE, and the phone header beside it.**
+> Found 2026-09-13 while collapsing the six: the header `<Badge>` on a detail page
+> read a flat `STAGE_LABEL: Record<string, string>`, not the `{ tone, label }` map,
+> and neither guard parsed that shape. The GRN and Purchase Invoice badges said
+> **Posted** and the Sales Invoice badge **Sent** where the owner ruled Submitted;
+> the Purchase Return badge said **Posted** where status-pill.ts says Confirmed.
+> Those four pages now call `statusLabel(docType, status)` and their `STAGE_LABEL`
+> is deleted.
 >
-> Both guards are structurally blind to it: `confirmRungReadsSubmitted.test.ts`
-> fails only on a stored value beside `"Confirmed"`, and `localStatusMapsAgree`
-> parses only the `{ … label: "X" }` shape. **A guard that matches one spelling of
-> a copy does not see the next spelling.** Fixing it changes words the owner reads,
-> so it was left out of the no-visible-change collapse and needs its own change.
+> **The phone had the same fault by another road.** `MobileModuleDetail.tsx`'s
+> header pill title-cased the stored value for every document, so a delivery order
+> at `LOADED` read **Loaded** — the next rung's word — and a Sales Invoice read
+> **Sent**. Every module in `DOC_MODULES` now carries a REQUIRED
+> `statusDoc: StatusDocType | null`; the six consignment modules pass `null` and
+> keep humanising the stored value, which keeps their own words.
+>
+> **Still on their own flat map, on purpose:** the Purchase Order, Delivery Order
+> and Delivery Return detail badges. Each differs from status-pill.ts only in
+> letter case, which nobody has ruled on. `localStatusMapsAgree.test.ts` now finds
+> every flat stage map in `pages/scm-v2` by SHAPE and compares it, and pins the
+> phone's module-to-vocabulary table. The full list of words that changed, with the
+> authority for each, is in
+> `docs/bugs/0868-the-detail-header-badge-said-posted-and-sent-where-the-owner.md`.
+>
+> **A guard that matches one spelling of a copy does not see the next spelling.**
+> This one was found by reading, not by a check — which is the argument for
+> scanning by shape.
 
 > **DONE ON THE PAPER — 2026-08-26.** The printed documents were a
 > seventeenth-to-twenty-fifth surface of exactly this shape, and worse than a

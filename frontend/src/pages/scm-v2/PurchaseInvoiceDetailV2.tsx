@@ -46,6 +46,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
+import { statusLabel } from "../../vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
 import { resolveFxRate } from "./fx-rate";
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
@@ -181,13 +182,11 @@ const EFFECTIVE_TONE: Record<
   cancelled: { tone: "error", label: "Cancelled", blurb: "Cancelled · no further action" },
 };
 
-const STAGE_LABEL: Record<string, string> = {
-  DRAFT: "Draft",
-  POSTED: "Posted",
-  PARTIALLY_PAID: "Partially paid",
-  PAID: "Paid",
-  CANCELLED: "Cancelled",
-};
+/* The header BADGE reads its word from vendor/scm/lib/status-pill.ts. It used to
+   read a hand-written STAGE_LABEL here, which said "Posted" for POSTED - contradicting the
+   owner's ruling that this rung reads one word on every surface, and invisible to
+   localStatusMapsAgree because a flat map is not the { label } shape it parsed.
+   docs/bugs/0868. The guard now scans that shape too. */
 
 const initialsOf = (name: string | null | undefined): string => {
   if (!name) return "—";
@@ -434,10 +433,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   );
 
   const eff = purchaseInvoice ? effectiveOf(purchaseInvoice) : null;
-  const stageLabel = purchaseInvoice
-    ? STAGE_LABEL[(purchaseInvoice.status || "").toUpperCase()] ??
-      purchaseInvoice.status
-    : "";
+  const stageLabel = purchaseInvoice ? statusLabel("pi", purchaseInvoice.status) : "";
   const badgeTone = eff ? EFFECTIVE_TONE[eff].tone : "neutral";
 
   const outstanding = purchaseInvoice ? outstandingOf(purchaseInvoice) : 0;

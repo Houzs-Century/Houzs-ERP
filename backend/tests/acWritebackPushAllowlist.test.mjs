@@ -26,7 +26,8 @@ import { fileURLToPath } from 'node:url';
 const SCRIPTS = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts');
 
 /* Every extension node or tsx will run. It read only `.mjs` and `.ts`, and
-   enqueue-so-writeback.mts pushed to the book unseen (docs/bugs/0888). */
+   enqueue-so-writeback.mts pushed to the book unseen
+   (docs/bugs/0888-the-account-book-push-allowlist-could-not-see-a-mts-script.md). */
 const runnable = (f) => /\.[cm]?[jt]s$/.test(f);
 
 /** Scripts whose reason for existing is to push a document into AutoCount. */
@@ -42,6 +43,9 @@ const MAY_PUSH = [
   'sync-ac-delta.mjs',
   // A one-shot re-raise of a single purchase order.
   'reraise-hc-po-2608-001.mjs',
+  // Re-queues the edits approved amendments never queued
+  // (docs/bugs/0888-approved-so-and-po-amendments-queued-no-autocount-edit-from.md).
+  'requeue-amendment-ac-edits.mjs',
   // Re-pushes a sales order's corrected balance after a direct SQL repair left
   // the book stale (docs/bugs/0785, the orphan scan-deposit fix).
   'enqueue-so-writeback.mts',
