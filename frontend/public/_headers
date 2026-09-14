@@ -23,6 +23,12 @@
 /sw.js
   Cache-Control: public, max-age=0, must-revalidate
 
+# The list of hashed files this deployment carries (scripts/retain-previous-assets.mjs).
+# The NEXT deploy reads it to decide which old chunks to keep; a cached copy would
+# make it forget the build right before it. Exact path, no wildcard.
+/asset-manifest.json
+  Cache-Control: no-store
+
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 

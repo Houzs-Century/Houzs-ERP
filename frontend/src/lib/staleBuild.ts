@@ -49,7 +49,10 @@
 // left the gap undisclosed:
 //   • It does NOT retry the import, and it does NOT reload. The operator
 //     deliberately clicked Print with data on screen; reloading under them is
-//     the thing this whole area exists to avoid.
+//     the thing this whole area exists to avoid. The ONE exception lives in its
+//     own listener, chunkActionRecovery.ts: a PRINT whose page can reopen that
+//     same preview, with no unsaved work on screen, reloads once (rate-limited)
+//     and reopens it. Everything else still gets only this banner.
 //   • It does NOT preventDefault, so the error still propagates to the caller's
 //     own catch and the existing toast is unchanged.
 //   • It DOES raise the version banner, so the operator gets an explanation and
@@ -186,4 +189,74 @@ export function installChunkFailureWatch(): () => void {
     window.removeEventListener("vite:preloadError", onPreloadError);
     installed = false;
   };
+}
+
+// --- asking the network about ONE chunk --------------------------------------
+// Moved here from RouteFallback.tsx unchanged so the print-action recovery can
+// ask the same question the render boundary asks, with the same answer.
+
+/** Budget for the single cache-busting probe of the chunk that failed (see
+ *  probeChunk). Short on purpose: the operator is staring at a skeleton for the
+ *  whole of it, and an answer we don't get in time is treated as "transient",
+ *  which is the CHEAP branch — so a slow probe costs nothing but the wait. */
+export const CHUNK_PROBE_TIMEOUT_MS = 3_000;
+
+/** The chunk URL the browser names in the failure — "Failed to fetch
+ *  dynamically imported module: https://erp.houzscentury.com/assets3/Foo-x.js".
+ *  Restricted to our OWN origin: this URL is fed to fetch(), and an error
+ *  message is attacker-influenceable in principle (a third-party script's
+ *  rejection can reach the same boundary), so a cross-origin probe would be a
+ *  request we never meant to make. Any other error shape returns null and the
+ *  caller keeps the old unconditional behaviour. */
+export function chunkUrlFrom(err: unknown): string | null {
+  const m = errorMessage(err).match(/\bhttps?:\/\/[^\s"'()]+\.[mc]?js\b/i);
+  if (!m) return null;
+  try {
+    const url = new URL(m[0]);
+    if (typeof window === "undefined" || url.origin !== window.location.origin) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+/** What one cache-busting re-fetch says about the chunk the import could not
+ *  get. Deliberately three-valued: "we could not tell" is not "it is gone". */
+export type ChunkProbe = "present" | "absent" | "unknown";
+
+/**
+ * Ask ONCE whether the chunk is really missing, before spending a recovery on
+ * it. Shared by RouteFallback (render failures) and chunkActionRecovery (a print
+ * click). A hard recovery unregisters every service worker and deletes
+ * every cache — the right price for a stranded build, a wildly wrong one for a
+ * network hiccup, which is what a lone failed import usually is.
+ *
+ * `cache: "reload"` bypasses the browser HTTP cache on the way out, so an
+ * aborted/poisoned entry for this exact URL is re-fetched rather than replayed.
+ * It does NOT bypass the service worker, which is deliberate: a still-installed
+ * old worker answering a hashed /assets/*.js with the app shell is precisely
+ * the stale-deploy shape hardRecover exists for, and we want to SEE it.
+ */
+export async function probeChunk(url: string): Promise<ChunkProbe> {
+  const abort = new AbortController();
+  const deadline = setTimeout(() => abort.abort(), CHUNK_PROBE_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { cache: "reload", credentials: "same-origin", signal: abort.signal });
+    // A missing chunk is a real 404 at the edge — functions/[[path]].ts turns
+    // the SPA-fallback shell back into one for any static-asset extension, and
+    // that is the answer this branch is reading.
+    if (!res.ok) return "absent";
+    // 200 with an HTML body under a .js URL is the SW/edge poisoning described
+    // in hardRecover's header. Same verdict as a 404: only the unregister fixes it.
+    return /javascript|ecmascript/i.test(res.headers.get("content-type") ?? "")
+      ? "present"
+      : "absent";
+  } catch {
+    // Offline, aborted, blocked. NOT evidence the build moved — and purging
+    // every cache while offline destroys the only copy of the shell the service
+    // worker could still serve. Stay on the cheap branch.
+    return "unknown";
+  } finally {
+    clearTimeout(deadline);
+  }
 }
