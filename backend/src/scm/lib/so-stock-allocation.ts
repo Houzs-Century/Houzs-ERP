@@ -77,14 +77,42 @@ import { pgrestIn } from './pgrest-in-list';
    is variant-blind and must never promote it (HC-SO-013367, 2026-08-30). */
 /* Owner 2026-09-14: the Sofa Accessory category (fabric_accessory) binds per order
    like a sofa - 「这个会需要像 sofa 那样 hardbinding 的」. A custom pillow is made
-   from the customer's fabric; pooled stock of another colour is never its evidence. */
+   from the customer's fabric; pooled stock of another colour is never its evidence.
+   This and CUSTOM_ACCESSORY_CODES below are the same ruling reached two ways on the
+   same day: the code list binds the two pillows TODAY, while they are still
+   `accessory`; the group binds every SKU the owner moves into the category later,
+   with nobody editing this file. Once both pillows are re-categorised the code list
+   is redundant but harmless. */
 const HARD_BOUND_GROUPS = new Set(['bedframe', 'sofa', 'fabric_accessory']);
+
+/* CUSTOM PILLOWS ARE BOUND TOO (owner 2026-09-14): 「Square Pillow 跟 Long Pillow
+   … 如果有选颜色 … 因为它是 accessories，你也是 still 要根据它的规格来分配的」.
+   The colour lives in the Special Order text (`variants.extraAddonNote`), which
+   is deliberately NOT part of the variant key, so every custom pillow of one SKU
+   shared one pooled bucket and the FIFO walk handed a pillow sewn in one
+   customer's colour to whichever order was due first. Measured on prod the same
+   day (probe-custom-pillow-binding.mjs): 34 of 222 live company-1 custom pillow
+   lines were covered on MRP by somebody else's purchase order, and five were
+   ordered twice because MRP reported them short while their own PO was open.
+
+   MATCHED ON THE SKU, not on "has a colour", on purpose. The owner's SKU rule
+   (2026-09-10) already makes the CUSTOM code the coloured one — a pillow with
+   no colour belongs on `SQUARE PILLOW RDM`, which stays pooled — and a blank
+   colour on the custom code is a not-yet-filled order, not a random pillow.
+   A text-presence rule would also flip a line in and out of the pool as someone
+   types, and would have to be evaluated against the SALES line from the
+   purchase side, where imported PO lines carry the colour only in
+   `description2`. The group is not consulted: the code alone names the pillow,
+   and a mis-grouped purchase line must not fall back into the pool. */
+export const CUSTOM_ACCESSORY_CODES: ReadonlySet<string> = new Set(['SQUARE PILLOW', 'LONG PILLOW']);
+
 export function isHardBoundLine(
   itemGroup: string | null | undefined,
   itemCode: string | null | undefined,
 ): boolean {
   const g = (itemGroup ?? '').toLowerCase();
   if (HARD_BOUND_GROUPS.has(g)) return true;
+  if (CUSTOM_ACCESSORY_CODES.has((itemCode ?? '').trim().toUpperCase())) return true;
   return g === 'mattress' && /\(SP\)\s*$/i.test(itemCode ?? '');
 }
 

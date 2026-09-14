@@ -134,3 +134,39 @@ describe('company-1 hard binding: the pool is never a bound line\'s evidence', (
     expect(lineOf(sb).stock_status).toBe('READY');
   });
 });
+
+/* CUSTOM PILLOWS JOIN HARD BINDING (owner 2026-09-14, 「因为它是 accessories，你也是
+   still 要根据它的规格来分配的」). A SQUARE PILLOW / LONG PILLOW is sewn in the
+   colour the customer chose, so pooled stock of the same SKU is somebody else's
+   colour. Production 2026-09-14: HC-SO-011160's four single SQUARE PILLOWs
+   (B0315-7/8/9/12) read READY off pooled KL stock while their own HC-PO-010150
+   had received nothing. */
+describe('company-1 custom pillows are bound to their own purchase order', () => {
+  test('a C1 SQUARE PILLOW with a colour and NO receipt of its own stays PENDING despite pooled stock', async () => {
+    const sb = world({
+      company: 1, group: 'accessory', code: 'SQUARE PILLOW', category: 'ACCESSORY',
+      variants: { extraAddonNote: 'colour : B0315-7' }, pooledQty: 59,
+      poItems: [{ qty: 1, received_qty: 0 }],
+    });
+    const res = await recomputeSoStockAllocation(sb);
+    expect(res.ok).toBe(true);
+    expect(lineOf(sb).stock_status).toBe('PENDING');
+  });
+
+  test('a C1 LONG PILLOW whose own purchase order is received is READY with no pooled stock', async () => {
+    const sb = world({
+      company: 1, group: 'accessory', code: 'LONG PILLOW', category: 'ACCESSORY',
+      variants: { extraAddonNote: 'Col : ZL-17 GREY' }, poItems: [{ qty: 1, received_qty: 1 }],
+    });
+    const res = await recomputeSoStockAllocation(sb);
+    expect(res.ok).toBe(true);
+    expect(lineOf(sb).stock_status).toBe('READY');
+  });
+
+  test('a C1 PLAIN accessory still pools', async () => {
+    const sb = world({ company: 1, group: 'accessory', code: 'AK- ESSENTIAL BOLSTER', category: 'ACCESSORY', pooledQty: 2 });
+    const res = await recomputeSoStockAllocation(sb);
+    expect(res.ok).toBe(true);
+    expect(lineOf(sb).stock_status).toBe('READY');
+  });
+});

@@ -746,6 +746,26 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   company-1 sofa lines read READY without their own purchase order. Company 2
   keeps the pooled sofa model.
 
+- **AND CUSTOM PILLOWS JOINED IT ON 2026-09-14** — `SQUARE PILLOW` and `LONG PILLOW`
+  (`CUSTOM_ACCESSORY_CODES` in `lib/so-stock-allocation.ts`, read by
+  `isHardBoundLine`, so section 7 and the stored allocator both follow). Owner:
+  「因为它是 accessories，你也是 still 要根据它的规格来分配的」. The colour is Special
+  Order text, which is not in the bucket key, so every custom pillow of one SKU
+  shared one bucket and FIFO handed a purchase order raised for one customer's
+  colour to whichever order was due first — on prod 34 of 222 live company-1
+  custom pillow lines named somebody else's PO and 7 read short with their own
+  open (`probe-custom-pillow-binding.mjs`, workflow *Probe custom pillow binding
+  (read-only)*). Matched on the SKU, not on "has a colour": the CUSTOM code is the
+  coloured one by the 2026-09-10 SKU rule, `SQUARE PILLOW RDM` stays pooled, and a
+  blank colour on the custom code is an unfilled order. Company 2 unchanged.
+  `docs/bugs/0890-mrp-pooled-custom-pillows-by-sku-so-one-customer-s-colour-co.md`.
+- **Ordering a bound line twice is refused on every convert path, MRP included
+  (2026-09-14).** An MRP-origin convert skips the per-line cap for a POOLED line
+  (the MRP shortage is the guard there). For a company-1 bound line the server now
+  counts every live PO on that line, MRP-origin included, and answers
+  `qty_exceeds_remaining` past its quantity (`lib/bound-line-ordered.ts`). The
+  page's existing "Already ordered" dialog handles it.
+
 ### "If the variants are different, will it still match my goods?" (owner, 2026-08-16)
 
 Answered separately for the two kinds of supply, because on `main` today they do
