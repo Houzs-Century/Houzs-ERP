@@ -3931,6 +3931,33 @@ purchase order is a second rollout that needs its own.
 > targeted re-export of those DtlKeys with
 > `export-ac-line-photos.py`'s `DTLKEY_FILE` mode, then upload, then attach.
 
+### A picture too large for one request is left behind, not the document (2026-09-14)
+
+AcSyncService refuses any request over `MaxBody` — 2 MiB — with HTTP 413
+`body too large`, and a 4xx is not retried, so the row fails at once. The drain
+attaches every line photograph of an edit as base64, and uploads allow 10 MB
+with no resize, so **one phone photo refused the whole edit**: price, dates and
+the balance with it. Measured 2026-09-14 on the three orders refused that way —
+HC-SO-2609-063, HC-SO-012388, HC-SO-013496 — each carries exactly one
+photograph, of 2.19, 2.30 and 4.20 MB (R2 object sizes).
+
+The attachment now lives in `backend/src/scm/lib/autocount-photo-attach.ts`
+(moved out of the drain, which is at its size cap) and sizes the body before it
+sends: `planPhotoBudget` attaches lines in payload order while the encoded body
+stays under the host's limit, and a line that would cross it is sent with **no
+`Photos` key** — the book keeps the pictures it had on that line, the same rule
+as an unreadable picture. The sent row carries
+`PHOTOS NOT SENT: <n> line(s) … line <DtlKey> (<MB> MB)`, joined with ` | ` to
+any line-identity sentence, and the health check lists those rows under their
+own heading instead of calling them identity gaps. Tests:
+`backend/src/scm/lib/autocount-photo-attach.test.ts` and the drain case in
+`backend/src/scm/lib/autocount-drain.test.ts`. Ledger:
+`docs/bugs/0899-one-large-phone-photo-made-autocount-refuse-a-whole-sales-or.md`.
+
+**Still open:** the large picture itself does not reach AutoCount. That needs
+the picture made smaller — at upload, or by the host before it builds the RTF,
+which also means raising `MaxBody` — and neither is done here.
+
 ## 8. Configuration
 
 | Name | Kind | Notes |
@@ -5424,6 +5451,28 @@ not-folded-into-agree property, the unwritten ruling that stays `DIFFER`, the
 no-ruling control, and the assertion that a ruling cannot rescue an ERP carrying
 no compartments at all.
 
+## Every piece of a corrected build carries the build's colour and leg (2026-09-14)
+
+New SURFACE on `backend/scripts/apply-sofa-compartment-corrections.mjs`. Every
+piece's variants, whether kept or added, now go through
+`lib/sofa-build-axes.mjs`. Blank fabric fields and a blank `legHeight` are
+filled from the same sofa's other rows. The dry-run prints a
+`fill <piece>: <keys> from the build` line for each piece it fills.
+
+Before this, an ADDED piece got `{seatHeight}` and nothing else: its variants
+were built from a row it did not have. HC-SO-013346's added `8030-1A(RHF)`
+carried no colour on the sales order or the purchase order, while its
+`8030-1A(LHF)` sibling carried `CH141-11`.
+
+The rule is the one `fill-sofa-sibling-fabric-2026-09-09.mjs` was approved on:
+
+- fill blanks only;
+- fill fabric only when the build carries exactly one (a two-tone build is left
+  alone);
+- never copy specials, because they carry money.
+
+Trace in docs/bugs/0896-a-piece-the-sofa-corrections-applier-added-carried-no-colour.md.
+
 ## The applier's MAIN path carries the supplier code too (2026-09-14)
 
 Correction to the section below: its claim that the corrections applier "aligns
@@ -6281,6 +6330,41 @@ Tests: `backend/src/scm/routes/soPaymentQueuesAcEdit.test.ts` (the body, a
 keyless line, the pending-create fold, `composeSoPaymentEdit`) and
 `backend/tests/autocountWritebackWiring.test.ts` (all three payment paths call
 it). Ledger: `docs/bugs/0896-a-payment-on-a-sales-order-whose-lines-autocount-refused-nev.md`.
+
+## A converted document's line keys, from the book's DocTransfer (2026-09-14)
+
+**The gap.** `persistLineKeys` cannot prove which ERP row a DELIVERY ORDER or
+GOODS RECEIPT line is: the host's `CreatedLines` returns `DtlKey`, `ItemCode`
+and `Desc2` and no source line, and a conversion copies the SOURCE line's item
+code (the book's supplier spelling), so the item-code and line-count checks
+refuse. Measured 2026-09-14: 82 ERP-created delivery orders (417 lines) and 64
+goods receipts (244 lines) sat in the book with a keyless line, and an edit of
+any of them is refused whole (`KeylessLineError`).
+
+**Where the answer is.** Not in `DODTL.FromDocDtlKey` / `GRDTL.FromDocDtlKey`
+(NULL) but in `DocTransfer`, which names one source line per transferred line —
+the same table docs/bugs/0746 found for the migrated chain.
+
+**The stamp.** Two scripts and one workflow, for the documents already in the
+book:
+
+| step | where | what |
+| --- | --- | --- |
+| export (office network, read-only) | `backend/scripts/export-ac-conversion-line-keys.py` | every line of an `HC-DO-` / `HC-GRN-` document with its DocTransfer source key, into `backend/scripts/data/ac-conversion-line-keys.json.gz`; refuses a book whose lines have more than one transfer row or a source of the wrong type |
+| plan / apply (Actions) | `backend/scripts/stamp-conversion-line-keys.mjs`, workflow *Stamp AutoCount line keys on our DOs and GRs* | inside one document, our row's source key (`so_item_id` / `purchase_order_item_id` -> that line's `linked_ac_dtlkey`) meets the book line it fed (`backend/scripts/lib/conversion-line-key-plan.mjs`); writes `linked_ac_dtlkey` only where NULL, one transaction, PLAN_DIGEST-bound, verified on a fresh connection; refuses a snapshot older than two days |
+
+It sends nothing to AutoCount. A refused edit of a stamped document still has to
+be re-queued.
+
+**Plan measured locally against production 2026-09-14:** delivery orders stamp
+417, 66 existing keys agree, 0 disagree; goods receipts stamp 216, 7 agree,
+0 disagree, 26 lines with no source (added on the receipt), 2 whose source the
+receipt does not hold, 1 ambiguous.
+
+**Still open.** Conversions drained after the stamp keep no key the same way.
+The lasting fix is for `CreatedLines` to return each line's `FromDocDtlKey` from
+`DocTransfer`, which needs the office host rebuilt; until then the export and
+the stamp are re-runnable. Ledger: `docs/bugs/0897-delivery-orders-and-goods-receipts-the-write-back-created-ke.md`.
 
 ## Sending a refused DO / GR edit again once its lines are keyed (2026-09-14)
 
