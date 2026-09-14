@@ -89,8 +89,11 @@ if (!(ageDays <= MAX_AGE_DAYS)) {
   process.exit(2);
 }
 
+/* A delivery order or goods receipt only. A sales or purchase order that loses a
+   line is rebuilt (`shouldRebuild`), so a retirement there is not this lane. */
 const bookByDoc = new Map();
 for (const r of snap.rows) {
+  if (r[F.docType] !== "DO" && r[F.docType] !== "GR") continue;
   const k = `${r[F.docType]}|${r[F.docNo]}`;
   (bookByDoc.get(k) ?? bookByDoc.set(k, []).get(k)).push({
     toDtlKey: Number(r[F.toDtlKey]), itemCode: r[F.itemCode], qty: Number(r[F.qty]),
