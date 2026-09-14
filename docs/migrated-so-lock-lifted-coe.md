@@ -2,6 +2,21 @@
 
 **Date.** 2026-09-12.
 
+> **Correction, 2026-09-14 — read this before the "Fixes" table.** The lock this
+> COE says was set back to `'1'` and "stays `'1'`" has been **`off` in production
+> since 2026-09-12 18:55 MYT**, and migrated orders are editable. Evidence, each
+> run re-read on 2026-09-14: `set-migrated-so-lock.yml` run 34689675812
+> (18:54 MYT, apply) `BEFORE "1" (updated 10/09/2026, 14:04:10 MYT)` → `"off"`,
+> `1 HOUZS migrated=2882 shut -> open`, per the owner's ruling that evening that a
+> migrated order is one of our orders (`docs/bugs/0842-staging-could-not-reproduce-a-production-lock-because-the-re.md`);
+> run 34830061288 (2026-09-14 17:50 MYT, plan, writes nothing) still reads
+> `"off" (updated 12/09/2026, 18:55:12 MYT)`. The code fix below is what makes the
+> open state work — a collection keyed on a migrated order now reaches
+> `UDF_BALANCE`. **Do not restore `'1'` on the strength of this document.** Full
+> note, including the part not resolved (this COE says the lock was *found* `off`;
+> the row read `'1'`, last updated 2026-09-10, at 18:54 MYT), in
+> `docs/bugs/0842-the-migrated-so-lock-was-off-so-old-order-collections-never-reached-autocount.md`.
+
 **Trigger — what staff saw, in the owner's words.** 「Have key in in ERP but the
 delivery sheet no update the payment balance」. A balance collected on an old
 order and keyed into the ERP did not reduce the outstanding on the "HC Delivery
@@ -75,10 +90,12 @@ migrated order's balance from the ERP — the opposite of the old safety.
   2026-08-28 .. the lock, never reaching the ERP (docs/bugs/0678), would have its
   debt OVERSTATED by `local_total - paid`. The clamp keeps it non-negative; the
   backfill holds PARTIAL balances back for verification against the book.
-- **Going-forward collections on old orders.** The lock stays `'1'`, so a
+- ~~**Going-forward collections on old orders.** The lock stays `'1'`, so a
   collection on a migrated order cannot currently be recorded in the ERP (nor in
   AutoCount, which is locked). The lock is lifted (→ off) once the collections
-  are reconciled, or a narrower path is chosen — the owner's decision.
+  are reconciled, or a narrower path is chosen — the owner's decision.~~
+  **Decided and done before this COE merged** — migrated orders were opened on the
+  owner's ruling at 2026-09-12 18:55 MYT; see the correction at the top.
 - `scm.delivery_order_payments` absent (`docs/bugs/0704`); the inbound half,
   AutoCount payments not reaching the ERP (`docs/bugs/0678`).
 

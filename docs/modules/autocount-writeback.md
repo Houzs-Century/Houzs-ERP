@@ -5157,6 +5157,25 @@ writes nothing wrong. A blank on either side falls back too.
 `readPoTransferFacts` adds `item_code` to the two selects it was already taking,
 so the check costs no extra round trip.
 
+**`readPoTransferFacts` reads in `inAcLineOrder` since 2026-09-14, and that is a
+money rule.** Its keys become `DtlKeys`, which `composeSoToPo` zips BY INDEX with
+the details composed from `inAcLineOrder` rows, and the host applies each
+Detail's Qty / UnitPrice / Location / DeliveryDate to the line transferred from
+THAT Detail's DtlKey. The read had no ORDER BY: 15 of 27 multi-line transfers
+since go-live were sent with keys and values from different lines, and on
+`HC-PO-2609-032` / `HC-PO-2609-063` the quantity itself differs (probe run
+34827560743, section 7d). `docs/bugs/0889-a-multi-line-so-to-po-transfer-sent-each-line-s-quantity-and.md`.
+
+**A transfer stores its line keys by SOURCE KEY, not by ItemCode.**
+`AddSOToPOTransferDetail` copies the sales line's item, so the book's ItemCode on a
+transferred purchase line is the SALES item (`HOK-2038 (A) (Q)`) while the ERP
+composed its own (`CELENE (A)-(Q)`); `persistLineKeys`' ItemCode check could never
+pass and 52 of 74 transfers kept no keys. It now proves line N against the ERP
+row whose sales line IS `DtlKeys[N]` (the wire body's, after the drain's
+backfill), reading both tables before it writes. A CREATE skips the Desc2 and
+repeated-code refusals, which exist for conversions whose order is only presumed.
+`docs/bugs/0890-transferred-and-newly-created-purchase-orders-kept-no-autoco.md`.
+
 ## 12b. Clearing a FINISHED document off the page (2026-09-08)
 
 The owner asked twice for three old test documents to stop appearing on
@@ -6176,6 +6195,15 @@ to a single SEAT, not a left arm. Four more documents are the same shape.
 `scatteredByBookLine` gathers lines sharing a key and a model, **non-contiguous
 only**, so a run the adjacency rule already forms is left to it and nothing that
 works today moves.
+
+**Corrected 2026-09-14 — "contiguous" was not the same as "already formed".** The
+adjacency rule also breaks a run where the stored Desc2 changes. `HC-SO-013320`
+and `HC-PO-010008` hold two adjacent 8069 pieces under ONE book key (910573 /
+910869) whose Desc2 differ, because an amendment re-derived each piece's text
+from its own special order; each piece was collapsed alone and refused
+(`cannot spell [1A(LHF)]`, `cannot spell [1B(RHF)]`). A contiguous group is now
+left to the adjacency rule only when its pieces share one Desc2
+(`docs/bugs/0891-two-adjacent-pieces-of-one-sofa-book-line-with-different-des.md`).
 
 **THE HAZARD, and why `bookGrouped` exists.** A gathered run arrives in the ERP's
 INSERTION order, which states nothing about how the sofa is built. Composing from

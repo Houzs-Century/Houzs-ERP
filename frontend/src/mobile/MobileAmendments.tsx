@@ -8,6 +8,13 @@ import {
   compareAmendmentsForList,
   type StatusTone,
 } from "../vendor/scm/lib/status-pill";
+import {
+  AMENDMENT_APPROVER_LABEL,
+  AMENDMENT_APPROVER_TONE,
+  soAmendmentApprover,
+  type AmendmentApprover,
+} from "../vendor/scm/lib/amendment-approver";
+import { customerRefOf } from "../lib/customer-ref";
 import { formatDate } from "../lib/utils";
 import { useStaffLookup } from "../hooks/useStaffLookup";
 import "./mobile.css";
@@ -21,11 +28,11 @@ import "./mobile.css";
  *
  * REAL-DATA DISCIPLINE: the list endpoint (GET /so-amendments →
  * { amendments: AmendmentRow[] }) returns id / so_doc_no / amendment_no /
- * status / reason / requested_by / created_at ONLY. It carries no customer
- * name and no per-line change kinds, so the mockup's customer line and
- * QTY/SPEC/ADD/REMOVE change-tags are intentionally dropped rather than
- * paid for with a per-row detail fetch — those live on AmendmentDetail.lines,
- * surfaced on the SO detail's diff view.
+ * status / lane / reason / requested_by / created_at, the bound POs and the
+ * SO's reference. It carries no customer name and no per-line change kinds,
+ * so the mockup's customer line and QTY/SPEC/ADD/REMOVE change-tags are
+ * intentionally dropped rather than paid for with a per-row detail fetch —
+ * those live on AmendmentDetail.lines, surfaced on the SO detail's diff view.
  * ------------------------------------------------------------------ */
 
 // SIMPLIFIED status filter (owner 2026-07-24): Requested / Approved / All — same
@@ -55,6 +62,12 @@ const TONE_BADGE_CLASS: Record<StatusTone, string> = {
 function AmendmentBadge({ status }: { status: string }) {
   const { label, tone } = simplifiedAmendmentPill(status);
   return <span className={`badge ${TONE_BADGE_CLASS[tone]}`}>{label}</span>;
+}
+
+// Who signs it — the desktop queue's Approver badge, same word and colour.
+function ApproverBadge({ approver }: { approver: AmendmentApprover }) {
+  const { bg, fg } = AMENDMENT_APPROVER_TONE[approver];
+  return <span className="badge" style={{ background: bg, color: fg }}>{AMENDMENT_APPROVER_LABEL[approver]}</span>;
 }
 
 export function MobileAmendments({
@@ -114,12 +127,21 @@ export function MobileAmendments({
             {rows.map((a) => {
               const amdNo = a.amendment_no != null && String(a.amendment_no).trim() !== "" ? String(a.amendment_no) : null;
               const reason = (a.reason ?? "").trim();
+              const reference = customerRefOf({ ref: a.so_ref, customer_so_no: a.so_customer_so_no });
               return (
                 <button key={a.id} className="amd" onClick={() => onOpen(a.so_doc_no)}>
                   <div className="r1">
                     <span className="sono tnum">{a.so_doc_no}</span>
-                    <AmendmentBadge status={a.status} />
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <ApproverBadge approver={soAmendmentApprover(a.lane)} />
+                      <AmendmentBadge status={a.status} />
+                    </span>
                   </div>
+                  {reference && (
+                    <div className="amdno">
+                      Ref <span className="tnum">{reference}</span>
+                    </div>
+                  )}
                   {(amdNo || reason) && (
                     <div className="amdno">
                       {amdNo ? <span className="tnum">Amendment #{amdNo}</span> : null}

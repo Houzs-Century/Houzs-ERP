@@ -17,7 +17,6 @@ import {
   CircleDot,
   Phone as PhoneIcon,
   MoreHorizontal,
-  CheckCircle2,
   Wallet,
   AlertTriangle,
   Send,
@@ -37,8 +36,9 @@ import {
   usePurchaseInvoiceDetail,
   useCancelPurchaseInvoice,
   usePostPurchaseInvoice,
-  useRecordPiPayment,
 } from "../../vendor/scm/lib/purchase-invoice-queries";
+import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
+import { apPaymentHrefFor, canOpenApPayment, piAwaitsPayment } from "../../vendor/scm/lib/pi-payment-path";
 import { useSupplierDetail } from "../../vendor/scm/lib/suppliers-queries";
 import { skuMapFromBindings, supplierCodeFor } from "../../vendor/scm/lib/supplier-doc-data";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
@@ -386,7 +386,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   const detail = usePurchaseInvoiceDetail(id ?? null);
   const cancelPi = useCancelPurchaseInvoice();
   const postPi = usePostPurchaseInvoice();
-  const recordPayment = useRecordPiPayment();
+  const { can, pageAccess } = useHouzsAuth();
   const notify = useNotify();
   const askConfirm = useConfirm();
 
@@ -474,8 +474,12 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   };
   const print = usePrintPreview(deliverPrintPdf);
   useOpenPrintPreviewFromUrl(print.openPreview, !!purchaseInvoice);
-  const goRecordPayment = () =>
-    id && navigate(`/scm/purchase-invoices/${id}?tab=payments&record=1`);
+  /* A supplier invoice is paid with an AP Payment voucher, opened with this
+     invoice already ticked (docs/bugs/0889). This used to navigate to
+     `?tab=payments&record=1` on this same page, which reads neither. */
+  const goRecordPayment = () => {
+    if (purchaseInvoice) navigate(apPaymentHrefFor(purchaseInvoice));
+  };
   const doPost = async () => {
     if (!id) return;
     if (await askConfirm({
@@ -497,11 +501,6 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       cancelPi.mutate(purchaseInvoice.id);
     }
   };
-  const doMarkPaid = () => {
-    if (!purchaseInvoice) return;
-    recordPayment.mutate({ id: purchaseInvoice.id, amountSen: outstanding });
-  };
-
   const lineColumns: Column<PiItem>[] = [
     {
       key: "item",
@@ -685,10 +684,8 @@ function PurchaseInvoiceDetailV2ReadOnly() {
 
   const rawStatus = (purchaseInvoice.status || "").toUpperCase();
   const isCancelled = rawStatus === "CANCELLED";
-  const isTerminal = isCancelled || rawStatus === "PAID";
   const canPost = rawStatus === "DRAFT";
-  const canRecordPayment = !isTerminal && outstanding > 0 && rawStatus !== "DRAFT";
-  const canMarkPaid = !isTerminal && outstanding === 0 && rawStatus !== "DRAFT";
+  const canRecordPayment = piAwaitsPayment(purchaseInvoice) && canOpenApPayment(can, pageAccess);
 
   return (
     <div className="pb-24 md:pb-0">
@@ -785,9 +782,6 @@ function PurchaseInvoiceDetailV2ReadOnly() {
             )}
             {canRecordPayment && (
               <Button variant="secondary" icon={<Wallet size={14} />} onClick={goRecordPayment}>Record payment</Button>
-            )}
-            {canMarkPaid && (
-              <Button variant="secondary" icon={<CheckCircle2 size={14} />} onClick={doMarkPaid}>Mark paid</Button>
             )}
             <Button variant="secondary" icon={<Plus size={14} />} onClick={goAddLine}>{ADD_LINE_LABEL}</Button>
             <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>Edit</Button>

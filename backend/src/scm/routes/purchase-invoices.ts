@@ -1137,76 +1137,20 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
 };
 purchaseInvoices.patch('/:id/post', postPurchaseInvoiceHandler);
 
-// Record a payment against the PI. Adds to paid_sen and auto-transitions
-// status: paid_sen == total → PAID, paid_sen > 0 && < total → PARTIALLY_PAID.
-purchaseInvoices.patch('/:id/payment', async (c) => {
-  const sb = c.get('supabase'); const id = c.req.param('id');
-  /* company-scope: this records MONEY PAID. The concurrency loop below guards
-     two payments racing on the same PI, never whose PI it is. */
-  const { data: own, error: ownErr } = await scopeToCompany(sb.from('purchase_invoices').select('id').eq('id', id), c).maybeSingle();
-  if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
-  if (!own) return c.json({ error: 'not_found' }, 404);
-  let body: { amountSen?: number; notes?: string };
-  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const amount = Number(body.amountSen ?? 0);
-  if (!Number.isFinite(amount) || amount <= 0) return c.json({ error: 'invalid_amount' }, 400);
-
-  // Optimistic-concurrency loop (Bug#5, ported from 2990 1355332c). The old code
-  // did read-modify-write — two payments hitting the SAME PI at once both read X
-  // and both wrote X+amount, silently LOSING one. PI has no payment ledger to
-  // re-sum (unlike SI's recomputePaid), and PostgREST can't do `col = col + x`,
-  // so we gate the UPDATE on `paid_sen = <the value we just read>`: if a
-  // concurrent payment moved it, the update matches 0 rows and we retry with a
-  // fresh read.
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    const { data: cur } = await sb.from('purchase_invoices')
-      .select('paid_sen, total_sen, status, invoice_number, company_id').eq('id', id).maybeSingle();
-    if (!cur) return c.json({ error: 'not_found' }, 404);
-    const c0 = cur as {
-      paid_sen: number; total_sen: number; status: string;
-      invoice_number?: string | null; company_id?: number | null;
-    };
-    // LEAK GUARD (DRAFT) — a DRAFT PI is not yet a real liability; reject payment
-    // until it's confirmed. (Re-added with the DRAFT lifecycle — see POST/.)
-    if (c0.status === 'DRAFT') return c.json({ error: 'not_payable', message: 'PI is a draft — confirm it before recording payment' }, 409);
-    if (c0.status === 'CANCELLED') return c.json({ error: 'not_payable', message: 'PI is cancelled' }, 409);
-
-    const newPaid = c0.paid_sen + amount;
-    const newStatus = newPaid >= c0.total_sen ? 'PAID' : 'PARTIALLY_PAID';
-
-    const { data, error } = await sb.from('purchase_invoices').update({
-      paid_sen: newPaid, status: newStatus, updated_at: new Date().toISOString(),
-    })
-      .eq('id', id)
-      .eq('paid_sen', c0.paid_sen) // only if nobody else moved it since the read
-      .select('id, paid_sen, status');
-    if (error) return c.json({ error: 'payment_failed', reason: error.message }, 500);
-    if (data && data.length > 0) {
-      /* Written only by the attempt whose compare-and-set actually landed, so a
-         retry loop cannot produce two rows for one payment. The from-value is
-         the paid_sen that guard matched, which makes the pair exact rather
-         than approximate. All three figures are INTEGER SEN. */
-      await recordEntityAudit(sb, {
-        entityType: 'PURCHASE_INVOICE',
-        entityId: id,
-        entityDocNo: c0.invoice_number ?? null,
-        action: 'UPDATE',
-        actor: c.get('houzsUser'),
-        companyId: c0.company_id ?? activeCompanyId(c),
-        statusSnapshot: newStatus,
-        note: 'Payment recorded',
-        fieldChanges: compactChanges([
-          fieldChange('paidSen', c0.paid_sen, newPaid),
-          fieldChange('paymentAmountSen', null, amount),
-          ...statusChange(c0.status, newStatus),
-        ]),
-      });
-      return c.json({ purchaseInvoice: data[0] });
-    }
-    // 0 rows updated → a concurrent payment changed paid_sen; loop re-reads + retries.
-  }
-  return c.json({ error: 'payment_conflict', message: 'Another payment was recorded at the same moment — please check the balance and retry.' }, 409);
-});
+/* RETIRED (docs/bugs/0889-supplier-invoice-payments-could-skip-the-payment-voucher-and.md).
+   This added a typed amount straight onto paid_sen: no payment voucher, no
+   journal entry, no hold check, no approval, and no clamp to what was owed. A
+   supplier invoice is paid with an AP Payment voucher, which settles it through
+   scm.settle_pi_paid_sen when the voucher posts (routes/payment-vouchers.ts).
+   Its only working caller was the phone's Record Payment sheet; the desktop's
+   Mark paid sent RM0, which this refused. Kept as a refusal rather than deleted
+   so a browser tab still running the old screen gets a sentence, not a 404. */
+export const retiredPiPaymentHandler = (c: any) =>
+  c.json({
+    error: 'payment_voucher_required',
+    message: 'Supplier invoices are paid with an AP Payment: Finance, Money out, Payment Vouchers.',
+  }, 409);
+purchaseInvoices.patch('/:id/payment', retiredPiPaymentHandler);
 
 // Exported for the scope tests: supabaseAuth cannot run in the vitest harness.
 export const cancelPurchaseInvoiceHandler = async (c: any) => {

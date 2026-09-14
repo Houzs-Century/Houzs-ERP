@@ -3676,7 +3676,7 @@ function DetailContent({
               onChange={(s) => (s === "voided" ? setShowVoidPrompt(true) : transition(s))}
               disabled={!!c.archived_at}
               subStatus={caseSubStatus(c)}
-              onSubChange={(k) => patch({ sub_status: k })}
+              onSubChange={(k) => { patch({ sub_status: k }).catch((e: unknown) => toast.error(e instanceof Error ? e.message : "Couldn't switch sub-status")); }}
               voidReason={c.void_reason ?? null}
             />
             <StatusSummaryBar

@@ -172,6 +172,42 @@ describe('an AP invoice beside the purchase invoices (owner 2026-09-06)', () => 
   });
 });
 
+/* docs/bugs/0889 — a purchase invoice's Record payment opens this page with
+   ?supplier= and ?pi=, because the voucher is the only way a supplier is paid. */
+describe('opened from a purchase invoice', () => {
+  test('arrives with the supplier chosen and that invoice ticked in full, and saves it', async () => {
+    mutateAsync.mockClear();
+    draw('/scm/payment-vouchers/new?type=ap&supplier=sup-1&pi=pi-1');
+    expect((screen.getByLabelText('Pay 2990-PI-2609-001 in full') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Pay 2990-PI-2609-002 in full') as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByText(/Applying MYR 2,550\.00/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Create AP Payment'));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    const payload = mutateAsync.mock.calls[0]![0];
+    expect(payload.supplierId).toBe('sup-1');
+    expect(payload.allocations).toEqual([{ piId: 'pi-1', amountSen: 255000 }]);
+  });
+
+  test('an operator who unticks it is not overruled', () => {
+    draw('/scm/payment-vouchers/new?type=ap&supplier=sup-1&pi=pi-1');
+    const tick = screen.getByLabelText('Pay 2990-PI-2609-001 in full') as HTMLInputElement;
+    fireEvent.click(tick);
+    expect(tick.checked).toBe(false);
+    expect(screen.getByText(/Applying MYR 0\.00/)).toBeTruthy();
+  });
+
+  test('an invoice the supplier\'s list does not carry is not ticked', () => {
+    draw('/scm/payment-vouchers/new?type=ap&supplier=sup-1&pi=pi-9');
+    expect(screen.getByText(/Applying MYR 0\.00/)).toBeTruthy();
+  });
+
+  test('a plain Payment Voucher ignores both', () => {
+    draw('/scm/payment-vouchers/new?supplier=sup-1&pi=pi-1');
+    expect(screen.getByText('New Payment Voucher')).toBeTruthy();
+    expect(screen.queryByLabelText('Pay 2990-PI-2609-001 in full')).toBeNull();
+  });
+});
+
 describe('paying ahead (预付) on the AP Payment', () => {
   test('a prepay figure joins the total, the payload, and the Books line; the old advance is pointed at', async () => {
     mutateAsync.mockClear();

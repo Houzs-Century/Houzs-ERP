@@ -8,6 +8,11 @@ import {
   compareAmendmentsForList,
   type StatusTone,
 } from "../vendor/scm/lib/status-pill";
+import {
+  AMENDMENT_APPROVER_LABEL,
+  AMENDMENT_APPROVER_TONE,
+  PO_AMENDMENT_APPROVER,
+} from "../vendor/scm/lib/amendment-approver";
 import { formatDate } from "../lib/utils";
 import { useStaffLookup } from "../hooks/useStaffLookup";
 import "./mobile.css";
@@ -46,6 +51,13 @@ const TONE_BADGE_CLASS: Record<StatusTone, string> = {
 function AmendmentBadge({ status }: { status: string }) {
   const { label, tone } = simplifiedAmendmentPill(status);
   return <span className={`badge ${TONE_BADGE_CLASS[tone]}`}>{label}</span>;
+}
+
+// Who signs it — the desktop queue's Approver badge. A PO amendment has one
+// approve key, and Purchaser holds it.
+function ApproverBadge() {
+  const { bg, fg } = AMENDMENT_APPROVER_TONE[PO_AMENDMENT_APPROVER];
+  return <span className="badge" style={{ background: bg, color: fg }}>{AMENDMENT_APPROVER_LABEL[PO_AMENDMENT_APPROVER]}</span>;
 }
 
 export function MobilePoAmendments({
@@ -108,7 +120,10 @@ export function MobilePoAmendments({
                 <button key={a.id} className="amd" onClick={() => onOpen(a.id)}>
                   <div className="r1">
                     <span className="sono tnum">{a.po_number}</span>
-                    <AmendmentBadge status={a.status} />
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <ApproverBadge />
+                      <AmendmentBadge status={a.status} />
+                    </span>
                   </div>
                   {(amdNo || reason) && (
                     <div className="amdno">

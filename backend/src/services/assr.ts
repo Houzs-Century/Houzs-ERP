@@ -8,6 +8,7 @@ import { assrOpenStageSql } from "./assrStages";
 import { isServiceLine } from "../scm/shared/service-sku";
 import { AutoCountClient, cleanPhone } from "./autocount";
 import { normalizePhone } from "../scm/shared/phone";
+import { assrSubStatusLabelOf, assrSubStatusSeed } from "../scm/shared/assr-sub-statuses";
 import { resolveCreditorForCase } from "./stockItems";
 import { getActiveStaffToken } from "./caseTracking";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
@@ -851,15 +852,11 @@ export async function transitionStage(
   // that has sub-states seeds its first one; every other stage clears
   // the field so a stale value can't leak across stages. Ops switches
   // it afterwards via PATCH sub_status.
-  const subDefault =
-    newStage === "under_verification"
-      ? "pending_inspection"
-      : newStage === "pending_supplier_pickup"
-        ? // Customer-pickup leg first (Nico 2026-09-01): the stage begins by
-          // collecting the item FROM the customer; ops advances the sub to
-          // supplier pickup / return as the item moves.
-          "pending_customer_pickup"
-        : null;
+  // The seed is the stage's FIRST sub-status in the shared list — for Pickup /
+  // Return that is the customer-pickup leg (Nico 2026-09-01): the stage begins by
+  // collecting the item FROM the customer; ops advances the sub to supplier
+  // pickup / return as the item moves.
+  const subDefault = assrSubStatusSeed(newStage);
   sets.push("sub_status = ?");
   binds.push(subDefault);
 
@@ -1216,12 +1213,6 @@ export async function patchAssrCase(
   }
 
   if ("sub_status" in body && (prevSubStatus ?? null) !== (body.sub_status ?? null)) {
-    const SUB_LABELS: Record<string, string> = {
-      pending_inspection: "Pending Inspection",
-      qc_issue_result: "QC Issue Result",
-      pending_supplier_pickup: "Pending Supplier Pickup",
-      pending_supplier_return: "Pending Supplier Return",
-    };
     await logActivity(
       env,
       id,
@@ -1229,7 +1220,7 @@ export async function patchAssrCase(
       prevSubStatus,
       body.sub_status ?? null,
       body.sub_status
-        ? `Sub-status → ${SUB_LABELS[body.sub_status] ?? body.sub_status}`
+        ? `Sub-status → ${assrSubStatusLabelOf(body.sub_status) ?? body.sub_status}`
         : "Sub-status cleared",
       userId,
       { category: "system", source_channel: "app" }

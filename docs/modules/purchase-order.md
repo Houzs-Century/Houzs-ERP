@@ -1976,3 +1976,27 @@ PLACE (the phone has no separate editor for this document). It is offered when
 `useAddPurchaseOrderItem` with the desktop add row's body. A refusal stays inline beside the row,
 which keeps what was typed; the unit price starts blank. Trace:
 `docs/bugs/0873-the-phone-could-not-add-a-line-to-any-document.md`.
+
+---
+
+## Print all goes through the Print preview (2026-09-14)
+
+Owner, over the Delivery Order list's merged-PDF preview: 「PO打印没有这个」. Ticking
+orders on `frontend/src/pages/scm-v2/PurchaseOrdersListV2.tsx` and pressing
+**Print all** went straight to a combined-or-separate prompt and a download. It now
+opens the same `PrintPreviewBatchModal` as the Goods Received, Delivery Order and
+Purchase Invoice lists (`usePrintPreview(deliverSelectedPos)`):
+
+- the card names the stack: company, "Purchase Orders", the count, and the PO
+  numbers as the list shows them (a revised order reads `_R1`);
+- **Print now** and **View full PDF** render ONE merged file with the chosen
+  `action`, without asking;
+- **Download PDF** still asks "One combined PDF / Separate files".
+
+One ticked order prints on its own. The generator is unchanged: the list still
+passes no `sofaPhotos` map, which `po-print-paths-draw-the-sofa.test.ts` requires.
+The Sales Invoice list had the same gap and was fixed with it. Pinned by
+`frontend/src/pages/scm-v2/PurchaseOrdersListV2.printPreview.test.tsx` and
+`frontend/src/pages/scm-v2/batchPrintGoesThroughPreview.test.ts`, which fails any
+list that calls a `generateCombined...Pdf` function without the preview. Trace:
+`docs/bugs/0890-print-all-on-the-purchase-order-and-sales-invoice-lists-skip.md`.

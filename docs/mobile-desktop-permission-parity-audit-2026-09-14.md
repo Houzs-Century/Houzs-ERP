@@ -10,9 +10,11 @@ permissions are IDENTICAL on phone and desktop — 「Frontend、backend、datab
 **Audited tree:** `main` at `081a3fe72`. Every line number below is at that commit.
 Main has moved since; re-grep before trusting a line.
 
-**Status of this document:** findings + options. One defect is already fixed
-(§5, PR #3831, open at the time of writing). Nothing else has been changed. The
-owner decisions it needs are in §7.
+**Status of this document:** findings + options, written 2026-09-14 at
+`081a3fe72`. **Updated later the same day:** the owner answered §7 (answers in
+that section: option C, and "follow the latest version" for D3-D5). Defects are
+being fixed one PR each; §5 carries each one's state. The §4 rows still describe
+`081a3fe72` and are not rewritten as they close.
 
 ---
 
@@ -50,10 +52,11 @@ owner decisions it needs are in §7.
    entry the phone borrows).
 6. **Defects found in passing** (§5): a Sales Director could create a Super Admin
    from the phone (fixed, #3831); the phone's Purchase Invoice "Record payment"
-   bypasses the finance payment-voucher approval and writes no GL entry; the
-   phone's convert-from-Sales-Order picker lists only DELIVERED orders; the phone
-   fabric list ignores the Model's allowed fabrics; a service-case sub-status that
-   can never save.
+   bypasses the finance payment-voucher approval and writes no GL entry, while the
+   desktop's two payment buttons on the same invoice did nothing (B-15, found
+   while fixing B-2); the phone's convert-from-Sales-Order picker lists only
+   DELIVERED orders; the phone fabric list ignores the Model's allowed fabrics; a
+   service-case sub-status that can never save.
 
 ## 1. Method and honest limits
 
@@ -273,10 +276,10 @@ M = `frontend/src/mobile/`, P = `frontend/src/pages/scm-v2/`, B = `backend/src/`
 
 | id | defect | evidence | status |
 |---|---|---|---|
-| B-1 | **A Sales Director could invite an account into Super Admin** (and activate it with a password) from the phone | `backend/src/routes/users.ts` invite scoped branch defaulted the role only when absent; `backend/src/routes/roles.ts:29-41` | **FIXED in PR #3831** (open at writing; bug ledger entry 0887 ships with it) |
-| B-2 | Phone PI "Record payment" bypasses Payment Vouchers (Finance check + approve) and the GL; also skips the hold check | DOC-10 | open — owner decision §7 |
-| B-3 | Phone convert-from-SO picker lists only DELIVERED SOs | DOC-4, `MobileConvertWizard.tsx:307-317` | open |
-| B-4 | Phone fabric picker ignores the Model's allowed fabrics — the 0836 class the owner asked to close permanently | SO-13 | open |
+| B-1 | **A Sales Director could invite an account into Super Admin** (and activate it with a password) from the phone | `backend/src/routes/users.ts` invite scoped branch defaulted the role only when absent; `backend/src/routes/roles.ts:29-41` | **FIXED, #3831 merged 2026-09-14 08:19Z**; production Worker `/health` reported sha `ba8a8642` (its merge commit) when re-checked the same afternoon. Ledger: `docs/bugs/0887-a-sales-director-could-invite-a-new-account-straight-into-su.md` |
+| B-2 | Phone PI "Record payment" bypasses Payment Vouchers (Finance check + approve) and the GL; also skips the hold check | DOC-10 | **FIXED on branch `fix/pi-payment-via-vouchers`** (owner D5: follow the latest version, the 2026-09-02 voucher flow). The route refuses every call; both surfaces send the operator to the AP Payment. Ledger: `docs/bugs/0889-supplier-invoice-payments-could-skip-the-payment-voucher-and.md`. How many payments it recorded before: UNKNOWN until the read-only Actions check probe-pi-direct-payments runs |
+| B-3 | Phone convert-from-SO picker lists only DELIVERED SOs | DOC-4, `MobileConvertWizard.tsx:307-317` | fixed in #3836 (in the merge queue at writing) |
+| B-4 | Phone fabric picker ignores the Model's allowed fabrics — the 0836 class the owner asked to close permanently | SO-13 | fixed in #3838 (in the merge queue at writing) |
 | B-5 | Service-case sub-status "Pending Customer Pickup" can never save: offered on both surfaces, missing from the PATCH allowlist | `backend/src/routes/assr.ts:1863-1868`; `frontend/src/vendor/scm/lib/assr/stages.ts:143`; desktop swallows the 400 | open (L) |
 | B-6 | Global search returns service-case number, customer and complaint to any signed-in user of the company, no visibility rule | `backend/src/routes/search.ts:183-190, 268-272` | open (L) |
 | B-7 | Driver POD is allowed by the server and finished by no screen | DOC-3 | open |
@@ -287,6 +290,7 @@ M = `frontend/src/mobile/`, P = `frontend/src/pages/scm-v2/`, B = `backend/src/`
 | B-12 | `positionPolicy.ts:429` matches "Sales Director" by word boundary while capabilities use the exact name | `backend/src/services/positionPolicy.ts:429` | open (A) |
 | B-13 | Desktop CSV export of service cases includes PO amounts for anyone who can open the list | `backend/src/routes/assr.ts:1205-1244` | open (A) |
 | B-14 | `/api/scm/entity-audit-log` has no area guard | `backend/src/scm/index.ts:597-606` — its comment names narrowing an OWNER call | known, owner call |
+| B-15 | Desktop PI payment buttons did nothing: **Record payment** navigated to `?tab=payments&record=1` on the same page, which reads neither; **Mark paid** showed only at RM0 owed and sent RM0, which the route refuses. Found while fixing B-2. Row DOC-10 was right that the desktop's working path is Payment Vouchers; it did not record that the invoice's own two buttons were dead | `PurchaseInvoiceDetailV2.tsx`, `PurchaseInvoicesListV2.tsx` at `ba8a86428` | **FIXED with B-2**: Record payment opens the AP Payment with the invoice ticked; Mark paid removed |
 
 ## 6. Options
 
@@ -313,6 +317,16 @@ first, one PR each.
 
 Default for every row not listed in §7: **follow the server** — where the server
 accepts, both surfaces allow; where the server refuses, both surfaces hide.
+
+**The owner's answers (2026-09-14).**
+
+| # | answer | what it means here |
+|---|---|---|
+| D1 | chose 「现在上线（推荐）」 | #3831 merged and deployed (§5 B-1) |
+| D2 | chose 「C 服务器决定（推荐）」, then 「那就跟c」 | option C, staged, Sales Orders first |
+| D3 | 「7月？几时的时候呢？要根据最新的啊」 | the latest rulings supersede the July phone-only project rules: 2026-08-19 made project visibility company-only, and 2026-09-12 made permissions identical on phone and desktop. The phone follows the desktop and the server. A BD-only edit rule, if still wanted, returns as a grantable permission under option C, never as phone-only code |
+| D4 | 「根据最新的version」 | archived projects and service cases stay editable on both surfaces, which is what the desktop and the server do today (2026-08-20) |
+| D5 | 「根据最新的version」 | supplier payments go through payment vouchers (the 2026-09-02 flow): §5 B-2 and B-15 |
 
 ## 8. Re-running the evidence
 
