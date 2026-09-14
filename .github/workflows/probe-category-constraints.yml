@@ -27,6 +27,8 @@ jobs:
       - run: node scripts/probe-fabric-accessory-population.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      - run: node scripts/probe-fabric-accessory-schema.mjs
+      # PLAN only (rolled back) — the apply lives in recategorise-fabric-accessory.yml.
+      - run: node scripts/recategorise-fabric-accessory.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: plan
