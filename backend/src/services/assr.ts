@@ -12,6 +12,7 @@ import { resolveCreditorForCase } from "./stockItems";
 import { getActiveStaffToken } from "./caseTracking";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { assrVisibilityPredicateSql } from "./assrVisibility";
+import { attachOrderPurchaseOrders } from "./assrOrderPos";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -713,7 +714,7 @@ export async function getAssrDetail(env: Env, id: number) {
   // SCM fallback) so the detail page's DO field also fills for cases
   // whose hand-entered delivery_order was never set — which is nearly
   // all of them.
-  await attachDeliveryOrders(env, [caseRow]);
+  await Promise.all([attachDeliveryOrders(env, [caseRow]), attachOrderPos(env, [caseRow])]);
 
   const items = await env.DB.prepare(
     `SELECT * FROM assr_items WHERE assr_id = ? ORDER BY id`
@@ -1950,7 +1951,7 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
   ]);
 
   const data = rows.results ?? [];
-  await attachDeliveryOrders(env, data as any[]);
+  await Promise.all([attachDeliveryOrders(env, data as any[]), attachOrderPos(env, data)]);
 
   return {
     data,
@@ -1958,6 +1959,11 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
     per_page: perPage,
     total: total?.count ?? 0,
   };
+}
+
+/** `order_pos` — see services/assrOrderPos.ts. No scm in the D1 test env. */
+async function attachOrderPos(env: Env, rows: Array<Record<string, unknown>>) {
+  if (isSupabaseConfigured(env)) await attachOrderPurchaseOrders(getSupabaseService(env), rows);
 }
 
 /** Attach live DO numbers as `do_numbers` on each row. The case table's own

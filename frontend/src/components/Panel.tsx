@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "../lib/utils";
+import { useUnsavedWork } from "../lib/unsavedWork";
 
 interface Props {
   open: boolean;
@@ -51,6 +52,9 @@ export function Panel({
   onAttemptClose,
 }: Props) {
   const panelRef = useRef<HTMLDivElement | null>(null);
+  // An open panel the caller marked dirty is unsaved work for any AUTOMATIC
+  // reload (lib/unsavedWork.ts) — the same fact its own close guard acts on.
+  useUnsavedWork(open && dirty === true);
 
   // Route Esc + X click through the dirty guard when set; otherwise close
   // directly. `onClose` callers (e.g. on submit success) bypass this.

@@ -45,6 +45,10 @@ import { useIdempotencyKey } from '../../lib/idempotency';
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { useGrnDetail, useGrnDetails } from '../../vendor/scm/lib/grn-queries';
 import { useActiveCurrencies, rateFor } from '../../vendor/scm/lib/currencies-queries';
+import { LinePoRefLink } from '../../vendor/scm/components/LinePoRefLink';
+import { PoPriceReference } from '../../vendor/scm/components/PoPriceReference';
+import { defaultPiUnitPriceSen } from '../../vendor/scm/lib/pi-po-price-rule';
+import { linePoLink, type LinePoFields } from '../../vendor/scm/lib/line-po-link';
 import { CurrencySelect } from '../../vendor/scm/components/CurrencySelect';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { specialOrderSurface } from '../../vendor/scm/lib/special-order-surface';
@@ -111,6 +115,12 @@ type DraftLine = {
   qty:            number;
   unitPriceSen: number;
   notes:          string;
+  /* #26 — the PO the source receipt line came from (GRN detail serves it);
+     absent on a manual line. Display only, never sent. */
+  sourcePo?:      LinePoFields;
+  /* The PO line's price, shown beside Unit Price for reference (owner
+     2026-09-14). Display only: the server stamps its own copy at insert. */
+  poUnitPriceSen?: number | null;
 };
 
 export const PurchaseInvoiceNew = () => {
@@ -235,8 +245,12 @@ export const PurchaseInvoiceNew = () => {
         itemGroup:      it.item_group ?? null,
         variants:       (it.variants as Record<string, unknown> | null) ?? null,
         qty:            pickQtyById ? (pickQtyById.get(it.id) ?? it._remaining) : it._remaining,
-        unitPriceSen: it.unit_price_sen ?? 0,
+        /* Owner 2026-09-14: 「create 的时候，系统肯定会把 PO 的价钱直接带过来」 —
+           the PO price when the order named one, else the receipt's. */
+        unitPriceSen: defaultPiUnitPriceSen(it.po_unit_price_sen ?? null, it.unit_price_sen ?? 0),
+        poUnitPriceSen: it.po_unit_price_sen ?? null,
         notes:          '',
+        sourcePo:       { source_po_id: it.source_po_id ?? null, source_po_number: it.source_po_number ?? null },
       }));
     setLines(next);
   }, [sourceItems, fromPicks]);
@@ -866,6 +880,11 @@ export const PurchaseInvoiceNew = () => {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                     <span style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-12)', fontWeight: 700, letterSpacing: '0.10em', color: 'var(--fg-muted)' }}>LINE {idx + 1}</span>
                     {l.itemGroup && <ItemGroupPill group={l.itemGroup} />}
+                    {l.sourcePo && linePoLink(l.sourcePo) && (
+                      <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+                        From PO <LinePoRefLink line={l.sourcePo} />
+                      </span>
+                    )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
                     <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
@@ -1011,6 +1030,9 @@ export const PurchaseInvoiceNew = () => {
                     <MoneyInput bare valueSen={l.unitPriceSen}
                       onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen ?? 0 })}
                       inputClassName={styles.fieldInput} selectOnFocus />
+                    {!isManualLine && (
+                      <PoPriceReference poUnitPriceSen={l.poUnitPriceSen} piUnitPriceSen={l.unitPriceSen} fmt={(sen) => fmtRm(sen, currency)} />
+                    )}
                   </label>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Line Total</span>

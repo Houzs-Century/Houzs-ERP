@@ -529,6 +529,19 @@ day it is added.
 
 ### Binding a PO line to its source SO line (`so_item_id`)
 
+> **"The SO already has a PO, why does the line not show it?" — check first,
+> 2026-09-14.** Actions -> **Check SO -> PO line links (read-only)**
+> (`backend/scripts/check-so-po-line-links.mjs`) prints, per SO:PO pair, every
+> line with the fields that decide the link, a one-sentence verdict per SO line,
+> what the REAL `computeMrp` answers for each line (run over
+> `scripts/lib/pgrest-shim.mjs`), and the company-1 class size. Two shapes were
+> found behind staff issues #18/#19, both from the sofa compartment corrections:
+> a PO piece ADDED by `apply-sofa-compartment-corrections.mjs` with no
+> `so_item_id` (the applier now links it after every build is written, through
+> `scripts/lib/added-po-compartment-link.mjs`), and a PO that holds FEWER
+> compartments than its SO, which has no line to link at all.
+> `docs/bugs/0873-a-purchase-compartment-the-sofa-correction-added-was-never-l.md`.
+
 `so_item_id` is what lets a shipment resolve its incoming PO: `dropship-batch.ts`
 finds the expected batch through it, `/po-so-coverage` treats it as the STATIC
 link, and `recomputeSoPicked` counts from it. (**Post-PR-4** the first of those
@@ -1948,3 +1961,18 @@ The word comes from `ADD_LINE_LABEL` in `vendor/scm/lib/add-line-handoff.ts`.
 Four documents used to spell this four ways, and none of them said it on the page
 you start from. Trace:
 `docs/bugs/0853-add-a-line-was-only-reachable-from-inside-edit-under-four-di.md`.
+
+**The lock is shared now (2026-09-13).** Whether the document is still open for a new
+line used to be an inline `const isLocked = ...` in the desktop editor. It is
+`purchaseOrderLinesLocked` in `frontend/src/vendor/scm/lib/line-add-lock.ts`, called by
+`frontend/src/pages/scm-v2/PurchaseOrderDetail.tsx` AND by the phone. `lineAddLock.test.ts` scans the editor so an inline
+copy cannot grow back.
+
+**On the phone (2026-09-13).** `frontend/src/mobile/MobileAddLine.tsx`, mounted under
+the line items by `frontend/src/mobile/MobileModuleDetail.tsx`, opens the add row IN
+PLACE (the phone has no separate editor for this document). It is offered when
+`canOperatePurchaseOrders` passes AND the shared lock above says open — `mayAddLine` in
+`frontend/src/mobile/mobile-add-line.ts` — and it posts through the same
+`useAddPurchaseOrderItem` with the desktop add row's body. A refusal stays inline beside the row,
+which keeps what was typed; the unit price starts blank. Trace:
+`docs/bugs/0873-the-phone-could-not-add-a-line-to-any-document.md`.

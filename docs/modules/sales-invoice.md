@@ -780,7 +780,7 @@ a warning, not a block.
 | Balance display (`total − paid`) | `SalesInvoicesListV2.tsx` / `SalesInvoiceDetailV2.tsx` | `mobile/MobileModuleList.tsx` `balanceCenti` (`:287`) — a duplicated computation, so a change to how balance is derived must land on both |
 | Server pagination opt-in | `useSalesInvoicesPaged` | `mobile/MobileModuleList.tsx` `SERVER_PAGINATED` (`:326`) |
 | Detail fields | `pages/scm-v2/SalesInvoiceDetailV2.tsx` | `mobile/MobileModuleDetail.tsx` config `:275` |
-| Add line (DRAFT only) | `pages/scm-v2/SalesInvoiceAddLine.tsx`, mounted by `SalesInvoiceDetailV2.tsx` | **none** — mobile has no add-line affordance; see *Add line* above |
+| Add line (DRAFT only) | `pages/scm-v2/SalesInvoiceAddLine.tsx`, mounted by `SalesInvoiceDetailV2.tsx` | `mobile/MobileAddLine.tsx`, mounted by `mobile/MobileModuleDetail.tsx` (since 2026-09-13); same `useAddSalesInvoiceItem`, same body, DRAFT via the shared `salesInvoiceLinesOpen`; see *Add line* above |
 | Confirm / Cancel / Reopen | `SalesInvoiceDetailV2.tsx:1130-1150` | `mobile/MobileModuleDetail.tsx:498-511`, gated by `useMayOperateDoc` (`:454`) → `canOperateSalesInvoices` (`frontend/src/auth/salesAccess.ts:210`) — the SAME helper the desktop uses |
 | DO→SI conversion | `pages/scm-v2/SalesInvoiceFromDo.tsx` → `SalesInvoiceNew.tsx` → **`POST /`** (an editable form: prices, dates, address, payment drafts) | `mobile/MobileConvertWizard.tsx` (`target: "si"`) → **`POST /from-dos`** with **`asDraft: true`** (a straight transfer, no edit step — so it DRAFTS, see below) |
 | Cache invalidation after a write | the hooks in `vendor/scm/lib/sales-invoice-queries.ts` (including the three ledger keys) | `mobile/sharedInvalidate.ts:70` |
@@ -1056,6 +1056,15 @@ had ZERO call sites in `frontend/src`. It now has one.
 | Offered when | `pageAccess('scm.sales.invoices')` is `edit`/`full` (the page's own Edit gate) **and** status is `DRAFT`. That is exactly what the handler accepts: it 409s `invoice_cancelled` and, via `isIssuedSi`, `invoice_issued` for everything else. Not rendered-then-refused. |
 | Payload | `{ itemCode, description, qty, unitPriceSen, discountSen, uom: 'UNIT' }` — money in SEN, into `buildItemRow` (`backend/src/scm/lib/si-from-do.ts`). No `doItemId`: this is a free line. |
 | Refusals | Shown INLINE under the row, which stays open with the typing. The ones worth knowing: an unknown item code (409), a code **still pending on the source Delivery Order** (409 — the operator must use *Add from Delivery Order* so the delivered quantity is tracked), over-remaining (409). An empty item code is refused client-side before the round trip. The hook's `onError: writeFailedAs('Line not added')` also fires, deliberately kept as the floor for any future caller. |
+
+**Phone, and the shared rule (2026-09-13).** The phone offers the same row in place
+under the line items (`frontend/src/mobile/MobileAddLine.tsx`). "Draft only" is now
+`salesInvoiceLinesOpen` in `frontend/src/vendor/scm/lib/line-add-lock.ts`, which
+`frontend/src/pages/scm-v2/SalesInvoiceDetailV2.tsx` calls for its add row as well.
+The PERMISSION half differs, and that is recorded, not changed: the desktop detail
+gates on a raw `pageAccess("scm.sales.invoices")` edit check (`canWriteSi`), while the
+SI list and the phone use `canOperateSalesInvoices`, which also refuses the Sales
+cohort (owner 2026-07-17, Sales only looks). Trace: `docs/bugs/0873-the-phone-could-not-add-a-line-to-any-document.md`.
 
 **Why not the other four documents' handoff.** GRN / PI / PO / SO put the button
 on the V2 detail page and hand off to a separate V1 editor through

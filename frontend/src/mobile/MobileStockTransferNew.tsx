@@ -7,6 +7,8 @@ import {
   useCreateStockTransfer,
 } from "../vendor/scm/lib/stock-queries";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
+import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
+import { FreshMount } from "../lib/freshMount";
 import { useIdempotencyKey } from "../lib/idempotency";
 import { MobileSkuPicker, type PickedSku } from "./MobileSkuPicker";
 import { DateField } from "../vendor/scm/components/DateField";
@@ -99,18 +101,28 @@ function MobileTransferLine({
 let seq = 0;
 const newKey = () => `l${seq++}`;
 
-export function MobileStockTransferNew({
-  onBack,
-  onCreated,
-}: {
+type MobileStockTransferNewProps = {
   onBack: () => void;
   onCreated?: () => void;
-}) {
+};
+
+export function MobileStockTransferNew(props: MobileStockTransferNewProps) {
+  return <FreshMount>{(startNew) => <MobileStockTransferForm {...props} onStartNew={startNew} />}</FreshMount>;
+}
+
+function MobileStockTransferForm({
+  onBack,
+  onCreated,
+  onStartNew,
+}: MobileStockTransferNewProps & { onStartNew: () => void }) {
   const notify = useNotify();
+  const confirm = useConfirm();
   const create = useCreateStockTransfer();
   /* One key for the one transfer this screen is open to raise
      (lib/idempotency.ts). MobileApp mounts this behind a screen and onCreated /
-     onBack leave it (MobileApp.tsx:457), so the MOUNT is exactly one transfer.
+     onBack leave it, so the MOUNT is exactly one transfer — and "New stock
+     transfer" after a create is onStartNew, a REMOUNT with a fresh key, never a
+     field reset on this mount (which would replay the first transfer).
      The desktop twin (StockTransferNew) mints its own — the same document
      protected on both sides in one PR, since a document covered on one side only
      is a new divergence. */
@@ -166,8 +178,17 @@ export function MobileStockTransferNew({
       },
       {
         onSuccess: (r) => {
-          void notify({ title: `Stock transfer ${r.transferNo} created` });
-          onCreated ? onCreated() : onBack();
+          void (async () => {
+            const another = await confirm({
+              title: `Stock transfer ${r.transferNo} created`,
+              body: "The stock has moved. Start another transfer?",
+              confirmLabel: "New stock transfer",
+              cancelLabel: "Done",
+            });
+            if (another) onStartNew();
+            else if (onCreated) onCreated();
+            else onBack();
+          })();
         },
         onError: (e) =>
           void notify({ title: e instanceof Error ? e.message : "Couldn't create the transfer.", tone: "error" }),

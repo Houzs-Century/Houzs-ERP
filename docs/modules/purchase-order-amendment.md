@@ -169,6 +169,15 @@ On approve, for the one PO the amendment targets:
    mutate in place (`line_total_sen = max(0, qty*unit - discount)`); ADD inserts;
    REMOVE deletes — **except** an already-received line, which is **preserved and
    warned**, never silently dropped.
+   **A line whose item code moves (SPEC) and an ADDed line take the SUPPLIER CODE
+   (`supplier_sku`) for the new item** from the PO supplier's binding —
+   `lib/po-line-supplier-sku.ts` `supplierSkuFor`, the same binding the convert
+   path reads. No binding for that supplier clears the code (the PDF then falls
+   back to the live binding, else `—`) and warns, rather than leaving the old
+   piece's code for the factory. A line whose code did NOT move keeps whatever
+   supplier code it had. The SO-sourced follow-up (`reviseBoundPo`) does the same
+   on its re-derive. Until 2026-09-14 neither engine touched `supplier_sku`
+   (`docs/bugs/0887-a-sales-order-amendment-moved-the-purchase-line-s-item-code.md`).
 5. **Roll up** `subtotal_sen` / `total_sen` (= subtotal + `tax_sen`) and
    `expected_at` (earliest line delivery date, unless the header set it) from the
    live line set, then bump `purchase_orders.revision` to the snapshot's next
@@ -347,7 +356,17 @@ applied incl. SO's SO_APPROVED / PO_APPROVED / SENT; REJECTED = closed),
 `simplifiedAmendmentPill`, `AMENDMENT_LIST_CHIPS`, `amendmentBucketLabel`, plus an
 `AmendmentStatusPill` component. The granular SO enum + the SO detail stepper +
 the backend values are UNCHANGED — only the list display/filter is collapsed, and
-the closed (REJECTED / withdrawn) rows are reached via **All**. A new
+the closed (REJECTED / withdrawn) rows are reached via **All**.
+
+**List order (2026-09-14, staff request).** All four queues open with
+**Requested on top, then Approved, then Rejected, newest first inside each** —
+one comparator, `compareAmendmentsForList` over `AMENDMENT_BUCKET_ORDER` in the
+same `status-pill.ts`. The desktop grids pass it as DataGrid's `defaultSort`, so
+a column sort the operator clicked (and the grid saved) still wins, and cycling
+that header off returns to this order. The **Status** column's sort uses the
+same rank, so ascending is Requested -> Approved -> Rejected rather than the
+bucket names A-Z (which put Approved first). The phone queues sort their cards
+with it. Pinned by `frontend/src/pages/scm-v2/amendment-list-order.test.tsx`. A new
 `poAmendment` docType was added to the canonical map (REQUESTED / APPROVED /
 REJECTED).
 

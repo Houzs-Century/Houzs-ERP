@@ -38,7 +38,7 @@ import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summariz
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { sourceGrnIdsForPi } from '../lib/convert-parent';
 import { refuseMigratedSources } from '../lib/migrated-chain';
-import { attachGrnLineFacts } from '../lib/pi-po-price';
+import { attachGrnLineFacts, withPoPriceSnapshot } from '../lib/pi-po-price';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
 /* The create's refusal bodies and the two rules its exits follow (2026-08-19). */
 import { insertFailed, loadFailed, rollbackPi, committedAnyway } from '../lib/pi-create-refusals';
@@ -73,7 +73,7 @@ const ITEM =
   /* PR #42 — variant fields (migration 0057) */
   'item_group, description, description2, uom, discount_sen, variants, ' +
   'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
-  'custom_specials, line_suffix, special_order_price_sen, unit_cost_sen, created_at';
+  'custom_specials, line_suffix, special_order_price_sen, unit_cost_sen, po_unit_price_sen, created_at';
 
 /* Compact non-null string dedupe (document-flow idiom) — the customer-DO
    resolve below walks id lists hop by hop. */
@@ -865,7 +865,7 @@ purchaseInvoices.post('/', async (c) => {
   const h = header as unknown as { id: string; invoice_number: string };
 
   const rowsWithId = itemRows.map((r) => ({ ...r, purchase_invoice_id: h.id }));
-  const { error: iErr } = await sb.from('purchase_invoice_items').insert(stampCompany(rowsWithId, c));
+  const { error: iErr } = await withPoPriceSnapshot(sb, rowsWithId, () => sb.from('purchase_invoice_items').insert(stampCompany(rowsWithId, c)));
   if (iErr) {
     // The claim follows the PROOF: an unproven rollback keeps it (a retype), a
     // released one over a surviving header would mint a second invoice.
@@ -1603,7 +1603,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
       special_order_price_sen: row.special_order_price_sen ?? 0,
       discount_sen: discFor(row, qty),
     }));
-    const { error: iErr } = await sb.from('purchase_invoice_items').insert(stampCompany(rows, c));
+    const { error: iErr } = await withPoPriceSnapshot(sb, rows, () => sb.from('purchase_invoice_items').insert(stampCompany(rows, c)));
     if (iErr) {
       await sb.from('purchase_invoices').delete().eq('id', h.id);
       continue;
@@ -1791,7 +1791,7 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
     special_order_price_sen: it.special_order_price_sen ?? 0,
     discount_sen: discFor(it),
   }));
-  const { error: insErr } = await sb.from('purchase_invoice_items').insert(stampCompany(rows, c));
+  const { error: insErr } = await withPoPriceSnapshot(sb, rows, () => sb.from('purchase_invoice_items').insert(stampCompany(rows, c)));
   if (insErr) { await sb.from('purchase_invoices').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: insErr.message }, 500); }
 
   /* Post-insert over-invoice verification (race guard) — the remaining filter
@@ -2057,7 +2057,7 @@ purchaseInvoices.post('/:id/items', async (c) => {
     description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
     uom: (it.uom as string) ?? 'UNIT',
   };
-  const { data, error } = await sb.from('purchase_invoice_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
+  const { data, error } = await withPoPriceSnapshot(sb, [row], () => sb.from('purchase_invoice_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single());
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
 
   /* Bug #3/#11 — POST-INSERT over-invoice verification. The pre-check is a

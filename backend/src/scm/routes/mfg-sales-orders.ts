@@ -125,6 +125,7 @@ import {
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { effectiveStatusFilter, isRangeNotSatisfiable } from '../lib/so-list-filters';
+import { prepareSoListFilters } from '../lib/so-list-query-filters';
 import { SO_TAB_STATUSES, soStatusesForTab } from '../lib/so-tab-statuses';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
@@ -1249,6 +1250,9 @@ mfgSalesOrders.get('/', async (c) => {
     page = Math.max(0, Math.trunc(Number(pageRaw)) || 0);
     const psRaw = Number(c.req.query('pageSize'));
     pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
+    /* Second-level filters (owner 2026-09-14) — ONE prepared predicate set for the page, money and count reads (lib/so-list-query-filters.ts). */
+    const soFilter = await prepareSoListFilters(sb, c.req.queries('f') ?? [], c.get('houzsUser')?.id ?? null, new Date());
+    if (!soFilter.ok) return c.json(soFilter.body, soFilter.status);
 
     /* sort whitelist — map to the view's columns; anything else → so_date. */
     const SORT_COLS = new Set(['so_date', 'doc_no', 'debtor_name', 'status', 'local_total_sen', 'customer_delivery_date']);
@@ -1260,7 +1264,7 @@ mfgSalesOrders.get('/', async (c) => {
     /* unique tiebreaker so range paging can't skip/repeat rows sharing the sort key */
     if (sortCol !== 'doc_no') q = q.order('doc_no', { ascending: sortAsc });
     q = applySoScope(q, scopeIds);
-    q = scopeToCompany(q, c); // multi-company: isolate to the active company
+    q = soFilter.apply(scopeToCompany(q, c)); // multi-company: isolate to the active company, then the second-level filters
     /* status=OTHER → rows whose status is OUTSIDE the known vocabulary (legacy
        spellings / blanks). It exists so the list's "Other" pill — shown only
        when such rows exist — can actually be opened; every real status stays
@@ -1291,7 +1295,7 @@ mfgSalesOrders.get('/', async (c) => {
     const to = c.req.query('to'); if (to) q = q.lte('so_date', to);
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
 
-    /* Status counts over the SAME scope + company filters but WITHOUT the status
+    /* Status counts over the SAME scope + company + second-level filters, WITHOUT the status
        filter, search, or pagination. ONE grouped PostgREST aggregate (status +
        count per bucket) replaced the old four head-only counts, whose shape
        (all/draft/confirmed/cancelled) HID every other live status and stopped
@@ -1303,23 +1307,23 @@ mfgSalesOrders.get('/', async (c) => {
        `all`, which is their SUM — served 0 beside a full page of orders. That is
        a 500 now, as on the other five SCM lists (scm/lib/status-counts.ts). */
     const scopedCountQ = (q0: any): any =>
-      scopeToCompany(applySoScope(q0, scopeIds), c);
+      soFilter.apply(scopeToCompany(applySoScope(q0, scopeIds), c));
     /* The held count is its own head-only read because the marker is a COLUMN,
        not a status, so the grouped status aggregate above cannot produce it.
        Same scope + company predicates, no status filter, no search, no paging —
        the strip's other numbers are computed the same way. */
     const heldProm = (async (): Promise<{ ok: true; n: number } | { ok: false; reason: string }> => {
       const r = await scopedCountQ(
-        sb.from('mfg_sales_orders').select('*', { count: 'exact', head: true }),
+        sb.from(soFilter.countFrom).select('*', { count: 'exact', head: true }),
       ).or(HELD_OR_TERM);
       if (r.error) return { ok: false, reason: `on-hold count failed: ${r.error.message}` };
       return { ok: true, n: r.count ?? 0 };
     })();
     const countsProm = (async (): Promise<StatusTally> => {
-      const agg = await scopedCountQ(sb.from('mfg_sales_orders').select('status, cnt:doc_no.count()'));
+      const agg = await scopedCountQ(sb.from(soFilter.countFrom).select('status, cnt:doc_no.count()'));
       if (!agg.error) return tallyStatusRows<{ status: string | null; cnt: number }>(agg, (r) => Number(r.cnt ?? 0));
       const fb = await paginateAll<{ status: string | null }>((cfrom, cto) =>
-        scopedCountQ(sb.from('mfg_sales_orders').select('status')).range(cfrom, cto));
+        scopedCountQ(sb.from(soFilter.countFrom).select('status')).range(cfrom, cto));
       /* Named separately from tallyStatusRows' own error branch so the 500 says
          which of the TWO reads died, not just that the second one did. */
       if (fb.error) return { ok: false, reason: `status counts failed: aggregate ${agg.error.message}; fallback ${fb.error.message}` };
@@ -1351,7 +1355,7 @@ mfgSalesOrders.get('/', async (c) => {
     const applyMoneyFilters = (moneyQ0: any): any => {
       let moneyQ = moneyQ0;
       moneyQ = applySoScope(moneyQ, scopeIds);
-      moneyQ = scopeToCompany(moneyQ, c);
+      moneyQ = soFilter.apply(scopeToCompany(moneyQ, c));
       if (status === 'ON_HOLD') moneyQ = moneyQ.or(HELD_OR_TERM);
       else if (status) { const vals = soStatusesForTab(status); moneyQ = status === 'OTHER' ? moneyQ.or(otherStatusOr) : (vals.length === 1 ? moneyQ.eq('status', vals[0]) : moneyQ.in('status', vals)); }
       if (search) {
@@ -1466,7 +1470,7 @@ mfgSalesOrders.get('/', async (c) => {
        every other enrichment above, so it rides the same concurrent wave.
        Since 2026-08-02 this is the TOOLTIP-only legacy raise-link — the visible
        chips come from source_po_union below. */
-    const convertedPoProm = soConvertedPoNumbers(sb, docNos);
+    const convertedPoProm = soConvertedPoNumbers(sb, docNos, activeCompanyId(c) ?? null);
     /* Source-PO union (owner 2026-08-02, "他拿的货是谁的货"): the list "PO No."
        column shows the union of per-line source chips the drill shows —
        SHIPPED/DELIVERED consumed batches ∪ READY projections. Only the SHIPPED

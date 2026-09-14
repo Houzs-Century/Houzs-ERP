@@ -5,6 +5,7 @@ import {
   amendmentBucketOf,
   AMENDMENT_LIST_CHIPS,
   amendmentBucketLabel,
+  compareAmendmentsForList,
   type StatusTone,
 } from "../vendor/scm/lib/status-pill";
 import { formatDate } from "../lib/utils";
@@ -28,6 +29,10 @@ const STATUS_CHIPS = AMENDMENT_LIST_CHIPS;
 
 // Open = the REQUESTED bucket (awaiting approval) — the "N to action" count.
 const IS_OPEN = (s: string) => amendmentBucketOf(s) === "REQUESTED";
+
+// Requested on top, newest first within a status — the same order the desktop
+// queue opens in (status-pill.ts owns it).
+const OPEN_ORDER = compareAmendmentsForList<PoAmendmentRow>((a) => a.status, (a) => a.created_at);
 
 const TONE_BADGE_CLASS: Record<StatusTone, string> = {
   neutral: "b-grey",
@@ -54,7 +59,7 @@ export function MobilePoAmendments({
   const { data, isLoading, error } = usePoAmendments();
   const { actorNameOf } = useStaffLookup();
 
-  const allRows = useMemo<PoAmendmentRow[]>(() => data?.amendments ?? [], [data]);
+  const allRows = useMemo<PoAmendmentRow[]>(() => [...(data?.amendments ?? [])].sort(OPEN_ORDER), [data]);
   const rows = useMemo<PoAmendmentRow[]>(
     () => (chip === "all" ? allRows : allRows.filter((a) => amendmentBucketOf(a.status) === chip)),
     [allRows, chip],

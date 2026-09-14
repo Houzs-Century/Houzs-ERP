@@ -1748,6 +1748,78 @@ describe('a month whose files print no balance, with the closing typed', () => {
   });
 });
 
+/* ── The bank's monthly statement PDF (docs/bugs/0869): the browser sends
+   the text pdf.js read with positions; the Maybank layout is read here. The
+   fixture mimics the real page (figures made up) and names the harness's
+   account, 564418610346. ──────────────────────────────────────────────────── */
+const PDF_LINE = (y: number, ...cells: Array<[number, string]>) => ({ y, cells: cells.map(([x, t]) => ({ x, t })) });
+const MBB_PDF = (over: { ending?: string; rows?: ReturnType<typeof PDF_LINE>[] } = {}) => JSON.stringify({
+  kind: 'houzs-pdf-text/1',
+  pages: [{ lines: [
+    PDF_LINE(693, [320, '結單日期'], [365, ':'], [449, '31/08/26']),
+    PDF_LINE(659, [365, ':'], [426, '564418610346']),
+    PDF_LINE(572, [30, 'ENTRY DATE'], [79, 'VALUE DATE'], [185, 'TRANSACTION DESCRIPTION'], [331, 'TRANSACTION AMOUNT'], [417, 'STATEMENT BALANCE']),
+    PDF_LINE(560, [126, 'BEGINNING BALANCE'], [440, '1,000.00']),
+    ...(over.rows ?? [
+      PDF_LINE(548, [43, '03/08'], [126, 'CR/CARD SALES MN 32410011 D'], [358, '7,284.48+'], [440, '8,284.48']),
+      PDF_LINE(536, [43, '12/08'], [126, 'SERVICE CHARGE'], [361, '25.00-'], [440, '8,259.48']),
+    ]),
+    PDF_LINE(296, [126, 'ENDING BALANCE :'], [435, over.ending ?? '8,259.48']),
+  ] }],
+});
+const uploadPdf = (app: Hono, over: Record<string, unknown> = {}) =>
+  post(app, '/bank/statements', { accountCode: '330-0000', fileName: 'MBBcurrent_564418610346_2026-08-31.pdf', format: 'PDF', content: MBB_PDF(), ...over });
+
+describe('a Maybank statement PDF', () => {
+  test('is read into movements with the balances it prints, and the month is covered end to end with nothing typed', async () => {
+    const { app, sb } = harness({ acc_bank_recognition_rules: structuredClone(PRISTINE.rules), acc_settlement_batches: [structuredClone(PRISTINE.batch)], acc_settlement_rows: [structuredClone(PRISTINE.row)] });
+    const res = await uploadPdf(app);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body).toMatchObject({ lines: 2, periodFrom: '2026-08-03', periodTo: '2026-08-12', openingBalanceSen: 100000, closingBalanceSen: 825948, inSen: 728448, outSen: 2500 });
+    expect(sb.tables.acc_bank_statements[0]).toMatchObject({ file_name: 'MBBcurrent_564418610346_2026-08-31.pdf', opening_balance_sen: 100000, closing_balance_sen: 825948, line_count: 2 });
+    /* The card credit is recognised off the PDF's own words, the same as off the CSV. */
+    expect(body.kinds.PAYOUT).toBe(1);
+    const months = (await (await app.request('/bank/months')).json() as any).months as any[];
+    expect(months.find((m) => m.accountCode === '330-0000' && m.month === '2026-08'))
+      .toMatchObject({ complete: true, openingBalanceSen: 100000, closingBalanceSen: 825948, gapCount: 0 });
+  });
+
+  test('refuses a PDF naming another account, one whose rows do not reach its ending balance, and text that is not a PDF extraction', async () => {
+    const { app } = harness();
+    const wrong = await uploadPdf(app, { content: MBB_PDF().replace('564418610346', '999999999999') });
+    expect(wrong.status).toBe(400);
+    expect((await wrong.json() as any).error).toBe('wrong_account');
+    const short = await uploadPdf(app, { content: MBB_PDF({ ending: '9,000.00' }) });
+    expect(short.status).toBe(400);
+    expect((await short.json() as any).message).toMatch(/do not walk from the beginning balance/);
+    const notPdf = await uploadPdf(app, { content: STATEMENT });
+    expect(notPdf.status).toBe(400);
+    expect((await notPdf.json() as any).message).toMatch(/Nothing of the PDF/);
+  });
+
+  /* ONE SOURCE PER MONTH: the fingerprint cannot tell a PDF's words from a
+     CSV's, so the two are never mixed on the same days. */
+  test('a PDF is refused where a CSV export already covers its days, and a CSV where a PDF does', async () => {
+    const first = harness();
+    expect((await upload(first.app)).status).toBe(200);
+    const pdfAfterCsv = await uploadPdf(first.app);
+    expect(pdfAfterCsv.status).toBe(409);
+    const refusedPdf = await pdfAfterCsv.json() as any;
+    expect(refusedPdf).toMatchObject({ error: 'mixed_sources' });
+    expect(refusedPdf.message).toMatch(/aug\.csv already covers these days from a CSV export/);
+
+    const second = harness();
+    expect((await uploadPdf(second.app)).status).toBe(200);
+    const csvAfterPdf = await upload(second.app);
+    expect(csvAfterPdf.status).toBe(409);
+    expect((await csvAfterPdf.json() as any).message).toMatch(/from a statement PDF/);
+    /* A different month is not the same days: July's PDF loads beside August's CSV. */
+    const july = MBB_PDF().replace('31/08/26', '31/07/26').replace('03/08', '03/07').replace('12/08', '12/07');
+    expect((await uploadPdf(first.app, { fileName: 'MBBcurrent_564418610346_2026-07-31.pdf', content: july })).status).toBe(200);
+  });
+});
+
 describe('a month somebody has closed', () => {
   const openedThen = async (locks: Row[]) => {
     /* Upload FIRST, with no lock in place, so the movements exist; then close

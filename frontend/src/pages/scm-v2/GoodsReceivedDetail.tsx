@@ -62,6 +62,7 @@ import { useMaintenanceConfig, useSpecialAddons, useMfgProducts } from '../../ve
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
+import { LinePoRefLink } from '../../vendor/scm/components/LinePoRefLink';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { DiscountInput } from '../../vendor/scm/components/DiscountInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
@@ -76,6 +77,7 @@ import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '..
 import { DateField } from "../../vendor/scm/components/DateField";
 
 import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
+import { goodsReceiptLinesLocked } from '../../vendor/scm/lib/line-add-lock';
 import { useAddLineHandoff } from '../../vendor/scm/lib/useAddLineHandoff';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -171,6 +173,7 @@ type GrnItemRow = Record<string, unknown> & {
   /* Bug #2 (2026-05-31) — server-resolved per-line source PO number + the GRN's
      receive date, so each line surfaces "received from which PO" + "receive date". */
   source_po_number?: string | null;
+  source_po_id?: string | null;
   received_at?: string | null;
   /* Downstream "Transfer To" breakdown (read-only): the Purchase Invoice(s) and
      Purchase Return(s) this GRN line was carried into, resolved server-side. */
@@ -312,7 +315,7 @@ export const GoodsReceivedDetail = () => {
      `isLocked` (= hard OR children) still gates the LINE editor + inherited
      fields; `hardLocked` gates the Edit button + the own-stage header fields. */
   const hardLocked = grn ? !(grn.status === 'DRAFT' || grn.status === 'POSTED') : true;
-  const isLocked = grn ? !(grn.status === 'DRAFT' || (grn.status === 'POSTED' && !hasChildren)) : true;
+  const isLocked = grn ? goodsReceiptLinesLocked({ status: grn.status, has_children: grn.has_children ?? null }) : true;
   addLineHandoff.current = { enabled: isEditing && !isLocked, onTrigger: () => setShowAddItem(true) };
   const lockedDueToChildren = grn ? (grn.status === 'POSTED' && hasChildren) : false;
 
@@ -933,7 +936,7 @@ export const GoodsReceivedDetail = () => {
                     <span>
                       Received from PO:{' '}
                       <strong style={{ fontFamily: 'var(--font-mono)', color: 'var(--fg)' }}>
-                        {it.source_po_number ?? '— (manual)'}
+                        <LinePoRefLink line={it} empty="— (manual)" className="font-mono text-primary-ink hover:underline" />
                       </strong>
                     </span>
                     <span>

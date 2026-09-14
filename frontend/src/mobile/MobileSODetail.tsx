@@ -1,7 +1,8 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { formatDate } from "../lib/utils";
 import { NonSellingWarehouseNoteMobile, SourcePosRowMobile, soStockPillMobile } from "./source-chips";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
+import { ADD_LINE_LABEL } from "../vendor/scm/lib/add-line-handoff";
 import type { FlowNav } from "./relationship-map-model";
 import { fmtAmt } from "../lib/scm";
 import { useQueryClient } from "@tanstack/react-query";
@@ -18,6 +19,7 @@ import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { ACCESS_RANK } from "../types";
 import {
   useMfgSalesOrderDetail,
+  useSoLineCoverage,
   useSalesOrderPayments,
   useUpdateMfgSalesOrderStatus,
   useDeleteMfgSalesOrder,
@@ -25,6 +27,7 @@ import {
   type SoAuditEntry,
   type SoAuditFieldChange,
 } from "../vendor/scm/lib/sales-order-queries";
+import { overlaySoLineCoverage } from "../vendor/scm/lib/so-coverage-overlay";
 import { buildVariantSummary } from "../vendor/shared/variant-summary";
 import { formatPhone } from "../vendor/shared/phone";
 import { orderLineIdentity } from "@2990s/shared";
@@ -267,7 +270,7 @@ const total = (h: SoHeader) => h.local_total_sen ?? h.total_revenue_sen ?? 0;
  *  (`#so-detail` + `renderSoDetail`/`openSO`), wired to the real
  *  /mfg-sales-orders/:docNo (header + line items) and /:docNo/payments.
  *  Draft/Submitted actions PATCH /:docNo/status. Design classes only. */
-export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: string; onBack: () => void; onEdit?: (docNo: string) => void;
+export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav }: { docNo: string; onBack: () => void; onEdit?: (docNo: string) => void; onAddLine: ((docNo: string) => void) | null;
   /** Relationship-Map node navigation (MobileApp). Absent → map nodes inert. */
   flowNav?: FlowNav;
 }) {
@@ -304,6 +307,12 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
      invalidate ['mfg-sales-order-detail'] + ['mfg-sales-orders', docNo,
      'payments'] and those invalidations now reach this screen too. */
   const detail = useMfgSalesOrderDetail(docNo);
+  /* The live Stock / Incoming PO / READY-source fields are NOT in GET /:docNo
+     (it returns coverage_po null since docs/bugs/0592); they come from this
+     second call, overlaid below with the SAME function the desktop uses. The
+     phone never made the call, so its line card could not show the incoming
+     purchase order at all (found tracing staff issues #18/#19, 2026-09-14). */
+  const coverage = useSoLineCoverage(docNo);
   const paymentsQ = useSalesOrderPayments(docNo);
 
   const staffQ = useStaff();
@@ -322,7 +331,10 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
      and mobile did not — the one-shared-rule divergence this repo keeps paying
      for. Production held zero cancelled rows until 2026-08-10, so it never
      showed. */
-  const items = ((detail.data?.items ?? []) as SoItem[]).filter((l) => !l.cancelled);
+  const items = useMemo(
+    () => overlaySoLineCoverage(((detail.data?.items ?? []) as SoItem[]).filter((l) => !l.cancelled), coverage.data?.coverage),
+    [detail.data, coverage.data],
+  );
   /* MONEY IS EITHER KNOWN OR UNKNOWN — the MobilePOD (#653) rule, applied to the
      sibling screen that runs the same subtraction. `paymentsQ.data ?? []` folded
      a FAILED payments read into "no payments", and `data` is set only by a
@@ -1286,6 +1298,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                 <button className="btn-ghost" style={{ flex: 1, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => onEdit?.(docNo)}>Edit Draft</button>
                 <button className="btn" style={{ flex: 1.3, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => setStatus("CONFIRMED")}>{busy ? "Working…" : "Create Sales Order"}</button>
               </div>
+              {onAddLine && <button className="btn-ghost" style={{ opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => onAddLine(docNo)}>+ {ADD_LINE_LABEL}</button>}
               {/* Discard draft — the escape hatch for a junk draft (esp. a bad
                   scan/OCR draft). Secondary red-outline so it never competes with
                   Create; behind the house confirm dialog. Backend refuses anything
@@ -1312,9 +1325,10 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                 {canCancel ? (
                   <button className="btn-danger" style={{ flex: 1, opacity: busy ? 0.55 : 1 }} disabled={busy} onClick={() => void requestCancel(docNo, docNo)}>{busy ? "Working…" : "Request cancel"}</button>
                 ) : (
-                  <div style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--mut2)", alignSelf: "center" }}>Locked — downstream documents exist.</div>
+                  <div style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--mut2)", alignSelf: "center" }}>Items locked</div>
                 )}
               </div>
+              {onAddLine && canWriteSo && <button className="btn-ghost" style={{ marginTop: 9, opacity: busy || editLocked ? 0.4 : 1 }} disabled={busy || editLocked} onClick={() => onAddLine(docNo)}>+ {ADD_LINE_LABEL}</button>}
             </>
           )}
           {ph === "cancelled" && (

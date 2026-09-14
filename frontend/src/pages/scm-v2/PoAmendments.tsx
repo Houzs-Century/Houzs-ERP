@@ -1,6 +1,6 @@
 // ----------------------------------------------------------------------------
 // PoAmendments — the PO-amendment / revision inbox. A DataGrid queue of every
-// Purchase Order revision, newest first — BOTH kinds (owner 2026-07-27,
+// Purchase Order revision, Requested first — BOTH kinds (owner 2026-07-27,
 // "这个应该出现在 PO Amendment"):
 //   · direct po_amendments (raised from a PO — the single-approver flow), AND
 //   · SO amendments that revise a BOUND PO (the SO-driven flow: once the SO
@@ -27,6 +27,8 @@ import {
   amendmentBucketOf,
   AMENDMENT_LIST_CHIPS,
   amendmentBucketLabel,
+  amendmentBucketRank,
+  compareAmendmentsForList,
 } from '../../vendor/scm/lib/status-pill';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
@@ -56,6 +58,10 @@ type InboxRow = {
   status: string;
   createdAt: string | null;
 };
+
+/* Opens with Requested on top across both sources (status-pill.ts owns the
+   order). A column sort the operator clicked still wins. */
+const OPEN_ORDER = compareAmendmentsForList<InboxRow>((a) => a.status, (a) => a.createdAt);
 
 const SOURCE_LABEL: Record<InboxRow['kind'], string> = {
   po: 'PO amendment',
@@ -122,7 +128,8 @@ const buildColumns = (
     searchValue: (a) => simplifiedAmendmentPill(a.status).label,
     groupValue: (a) => simplifiedAmendmentPill(a.status).label,
     exportValue: (a) => simplifiedAmendmentPill(a.status).label,
-    sortFn: (a, b) => amendmentBucketOf(a.status).localeCompare(amendmentBucketOf(b.status)),
+    // Ascending = Requested -> Approved -> Rejected, not the bucket names A-Z.
+    sortFn: (a, b) => amendmentBucketRank(a.status) - amendmentBucketRank(b.status),
   },
   {
     key: 'created_at', label: 'Created', width: 160, sortable: true,
@@ -184,8 +191,7 @@ export const PoAmendments = () => {
         status: a.status,
         createdAt: a.created_at ?? null,
       }));
-    return [...direct, ...soDriven].sort((a, b) =>
-      String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
+    return [...direct, ...soDriven];
   }, [poQ.data, soQ.data]);
 
   const rows = useMemo<InboxRow[]>(
@@ -245,6 +251,7 @@ export const PoAmendments = () => {
           searchPlaceholder="Search PO no, amendment no, requested by…"
           loadedSearchLimit={500}
           groupBanner={false}
+          defaultSort={OPEN_ORDER}
           onRowDoubleClick={(a) => openRow(a)}
           /* Closed amendments (REJECTED / withdrawn) grey out so they read as
              dead — mirrors the SO amendment queue + the GRN cancelled treatment. */

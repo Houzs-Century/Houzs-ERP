@@ -537,7 +537,12 @@ Two consequences worth knowing before you touch this:
   with `parsePgrestInList` rather than a second `split(',')` — a naive split
   reproduces the bug and reports a clean run. The shared fakes
   (`backend/src/scm/lib/fake-postgrest.ts`, `backend/tests/fakePostgrest.ts`) and
-  `backend/scripts/lib/pgrest-shim.mjs` already do.
+  `backend/scripts/lib/pgrest-shim.mjs` already do. The shim's `.not(col,'in',…)`
+  did NOT until 2026-09-14: it split the quoted list `sqlNotInList` writes and
+  bound `"CANCELLED"` with its quotes. It now unquotes, and LEFT embeds work too,
+  so `computeMrp` itself runs over the shim — `check-so-po-line-links.mjs` uses
+  it to print the engine's real per-line PO instead of a hand-ported replica
+  (`docs/bugs/0874-the-pgrest-shim-could-not-run-the-mrp-engine-quoted-not-in-l.md`).
 - **A test fake's comparison operators must compare by the column's type**,
   NULL matching nothing — the way `fake-postgrest`'s `gte`/`lte` do, and the
   way `lt` does since 2026-09-10 (docs/bugs/0785). Before that `lt` was
@@ -896,6 +901,9 @@ Frontend pair (one logic layer): desktop `pages/scm-v2/Inventory.tsx`
 | `frontend/src/pages/scm-v2/mrp-views.ts` | The page's TAB LIST, derived from `MrpResponse.categories` (§2.2). Holds the tab-id <-> category inverse pair, the SERVICE exclusion, and the Title-Case fallback for a category added to the enum at runtime |
 | `frontend/src/pages/scm-v2/mrp-views.test.ts` | Reads `mfg_product_category` out of the SQL and the SKU counts out of `backend/scripts/data/align-skus-houzs-century.json` — never a typed list — and asserts every member is reachable from a tab |
 | `frontend/src/pages/scm-v2/mrpCategoryTabs.test.tsx` | The same claim through the RENDERED page: the Dining tab exists, asks the server for `DINING`, and its row is on screen |
+| `frontend/src/pages/scm-v2/mrp-export-lines.ts` | **Export lines** (§7c) — flattens the rows the table is showing into one CSV row per SKU x SO line. Pure; computes nothing |
+| `frontend/src/pages/scm-v2/mrp-export-lines.test.ts` | The row rule: drilldown order, coverage word, PO no only on a PO-covered line, SKU figures, `No date`, sofa accessory riders, the header row |
+| `frontend/src/pages/scm-v2/mrpExportLines.test.tsx` | The wiring through the RENDERED page: the active tab, the page search and a persisted DataTable column funnel each narrow the file exactly as they narrow the table |
 
 ## 7b. The page's frozen header (2026-09-09) — BUILT, THEN DISARMED THE SAME DAY
 
@@ -957,6 +965,49 @@ What it means for this page, structurally:
 
 The freeze DISARMS itself when the rows do not overflow the cap, so a short
 list keeps its plain flow and never grows an inner scrollbar.
+
+
+## 7c. Export lines — one row per SO line (staff request #28, 2026-09-14)
+
+Sim: *"for the MRP stock report list ... need by row per SO per details ... to
+trace the Problematic order why block the inventory cause not enough stock"*.
+
+The table's own **Export** (DataTable's button) is UNCHANGED: one CSV row per
+top-level row (Model / SO / colour variant). The per-SO-line detail existed only
+in the drilldown, so a page-header button **Export lines** was added beside
+Refresh. It writes `mrp-<tab>-lines-YYYY-MM-DD.csv`, same CSV writer
+(`lib/csv.ts`: UTF-8 BOM, CRLF, RFC 4180), with this header:
+
+```
+Warehouse,Item Code,Description,Variant / Spec,Sales Order,Customer,State,SO Line Qty,Processing Date,Delivery Date,Coverage,Shortage Qty,PO No,PO ETA,PO Supplier,SKU Qty Needed,SKU Stock,SKU PO Outstanding,SKU Shortage,Row Type
+```
+
+**It is not a second computation.** It flattens the SAME `ModelGroup[]` the
+table rendered — after the tab, the date window, *Only shortages*, the search,
+and DataTable's per-column funnels + sort. The funnels are client-side and
+persisted inside DataTable, so the page learns that set only through
+`onFilteredRowsChange`; it is held in a REF, not state, because `displayModels`
+is a fresh array every render and a state copy would re-render, re-report and
+loop. Every value is a field `/mrp` already returned and the drilldown already
+renders:
+
+- `Coverage` is the line's engine `source` (`Stock` / `PO` / `Shortage`). `PO No`,
+  `PO ETA` and `PO Supplier` are filled ONLY when the source is `po` — the same
+  condition as the drilldown's PO chip — so a short line never names a PO as
+  covering it.
+- An undated delivery exports the word `No date`, as `DeliveryCell` shows it:
+  undated lines are planned LAST, which is often the answer to "why is this short".
+- `SKU *` columns are the variant row's figures (per warehouse + SKU + variant),
+  window-adjusted exactly as the page adjusts them.
+- On the **Sofa** tab the cover / pillow riders shown under an SO follow its
+  module lines with `Row Type = Accessory on sofa order`.
+- **`SKU Stock` reads 0 on every Sofa-tab row, because the page shows 0 there.**
+  `sofaSetsToSkus` builds the sofa rows with `stock: 0`; the backend's `SofaSet`
+  does carry a per-set `stockQty`, but the frontend type does not declare it and
+  the page does not render it. Read a sofa line's `Coverage` instead.
+
+Mobile has no counterpart and gets none: mobile MRP is a read-only
+`MobileModuleList` card list with no export (owner 2026-09-11, 「手机版不需要MRP」).
 
 ## 8. Traps
 

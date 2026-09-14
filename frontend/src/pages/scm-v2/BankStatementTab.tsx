@@ -41,12 +41,21 @@ export const BankStatementTab = () => {
 
 /* ── Upload, and the statements already read ──────────────────────────────── */
 
+/** The file's bytes or its text, through FileReader — the one reader every
+    browser (and the test runner's DOM) has. */
+const readAs = (f: File, as: 'bytes' | 'text'): Promise<ArrayBuffer | string> => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(r.result as ArrayBuffer | string);
+  r.onerror = () => reject(r.error ?? new Error('The file could not be read.'));
+  if (as === 'bytes') r.readAsArrayBuffer(f); else r.readAsText(f);
+});
+
 const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
   const setup = useBankSetup();
   const statements = useBankStatements();
   const upload = useUploadBankStatement();
   const [accountCode, setAccountCode] = useState('');
-  const [file, setFile] = useState<{ name: string; content: string } | null>(null);
+  const [file, setFile] = useState<{ name: string; content: string; format: 'CSV' | 'PDF' } | null>(null);
   /* Which year and month, for a file whose dates carry no year — the same
      answer the merchant screen asks for, and the same narrow meaning. It is NOT
      what files the statement into a month: a movement is put in the month its
@@ -68,14 +77,29 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
     setResult(null);
     const f = picked?.[0];
     if (!f) { setFile(null); return; }
-    void f.text().then((content) => setFile({ name: f.name, content }));
+    if (/\.pdf$/i.test(f.name)) {
+      /* The bank's monthly statement PDF (docs/bugs/0869): the browser reads
+         the text with where it was drawn; the server reads the bank's layout.
+         pdf.js is loaded here, on the press, and never for a CSV. */
+      void readAs(f, 'bytes')
+        .then(async (data) => {
+          const { extractPdfText } = await import('../../vendor/scm/lib/pdf-text');
+          return extractPdfText(data as ArrayBuffer);
+        })
+        .then((pdf) => setFile({ name: f.name, content: JSON.stringify(pdf), format: 'PDF' }))
+        .catch((err: unknown) => { setFile(null); setResult({ ok: false, text: refusalText(err, 'The PDF could not be read.') }); });
+      return;
+    }
+    void readAs(f, 'text')
+      .then((content) => setFile({ name: f.name, content: String(content), format: 'CSV' }))
+      .catch((err: unknown) => { setFile(null); setResult({ ok: false, text: refusalText(err, 'The file could not be read.') }); });
   };
 
   const send = () => {
     if (!accountCode || !file) return;
     setResult(null);
     upload.mutate({
-      accountCode, fileName: file.name, content: file.content,
+      accountCode, fileName: file.name, content: file.content, format: file.format,
       statementMonth: statementMonth || null,
     }, {
       onSuccess: (r) => {
@@ -121,7 +145,7 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
               </option>
             ))}
           </select>
-          <input type="file" accept=".csv,.txt" aria-label="Bank statement file"
+          <input type="file" accept=".csv,.txt,.pdf" aria-label="Bank statement file"
             onChange={(e) => readFile(e.target.files)} style={{ fontSize: 'var(--fs-13)' }} />
           <button type="button" style={btn(true, !accountCode || !file || upload.isPending)}
             disabled={!accountCode || !file || upload.isPending} onClick={send}>
@@ -142,7 +166,9 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
               those dates. This only supplies a year the file left out. */}
           <span style={softText}>
             For a file whose dates carry no year, or one with no transactions at all (a quiet month's
-            statement is filed under the month chosen here). For a file that prints full dates, naming the month
+            statement is filed under the month chosen here). The bank's monthly statement PDF is taken too
+            (Maybank for now) — it prints the opening and closing balances, so nothing needs typing under By
+            month; one source per month, the PDF or the CSV export, never both. For a file that prints full dates, naming the month
             says this statement covers that whole month — the 1st to the last day — so the books are compared over
             the same days; each movement still belongs to the month of its own date, and one dated outside the
             month refuses the file.
@@ -552,6 +578,74 @@ const KIND_LABEL: Record<BankLine['kind'], string> = {
    when the two totals agree to the sen (勾的总额必须等于那个 entry 的金额).
    One movement may also be several entries the same way. Shared by the
    statement view and the month view (docs/bugs/0803). */
+/* ── Every certain payout at once (docs/bugs/0868) ─────────────────────────
+   Owner, 2026-09-14, on a July statement of card payouts each saying "RM X is
+   exactly what <report> is still owed": 这些我还需要自己确定吗？ → 做.
+
+   A CERTAIN payout is one the matcher tied to exactly one report for exactly
+   what that report is still owed — the row's own "Money received" would post
+   it with nothing to choose. One press posts every such row, one by one,
+   through the row's own door with the row's own allocation, so what is booked
+   is what the row would have booked. The server judges each again (a closed
+   month, a report paid meanwhile); a refusal is named and the rest still post.
+   A split, an unsure or an unmatched payout is not certain and stays below
+   for a person. */
+const certainAllocation = (l: BankLine): { batchId: number; amountSen: number } | null => {
+  if (l.state !== 'OPEN' || l.kind !== 'PAYOUT' || l.matched_batch_id == null || l.amount_sen <= 0) return null;
+  const b = l.candidates.find((x) => x.id === l.matched_batch_id);
+  if (!b || b.outstandingSen !== l.amount_sen) return null;
+  return { batchId: b.id, amountSen: b.outstandingSen };
+};
+
+const BookAllMatched = ({ lines }: { lines: BankLine[] }) => {
+  const book = useBookBankReceipt();
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ posted: number; jeNos: string[]; refused: string[] } | null>(null);
+  const certain = lines.flatMap((line) => {
+    const allocation = certainAllocation(line);
+    return allocation ? [{ line, allocation }] : [];
+  });
+  if (certain.length === 0) return null;
+
+  const go = async () => {
+    setBusy(true);
+    const tally = { posted: 0, jeNos: [] as string[], refused: [] as string[] };
+    for (const { line, allocation } of certain) {
+      try {
+        const r = await book.mutateAsync({ lineId: line.id, allocations: [allocation] });
+        tally.posted += 1;
+        if (r.jeNo) tally.jeNos.push(r.jeNo);
+      } catch (err) {
+        tally.refused.push(`line ${line.line_no} (${fmt(line.amount_sen)}): ${refusalText(err, 'not posted.')}`);
+      }
+    }
+    setResult(tally);
+    setBusy(false);
+  };
+
+  const n = certain.length;
+  return (
+    <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+      <button type="button" style={{ ...btn(true), padding: '2px 8px' }} disabled={busy} onClick={() => { void go(); }}>
+        <Landmark {...ICON} /> {busy ? 'Posting…' : `Money received — all ${n} matched payout${n === 1 ? '' : 's'}`}
+      </button>
+      <span style={softText}>
+        Each of these is a card payout tied to one report for exactly what that report is still owed. One press books
+        them all, one by one, the way each row's own button would; anything the server refuses is named and the rest
+        still post. A split, an unsure or an unmatched payout stays below for you.
+      </span>
+      {result && (
+        <span style={{ fontSize: 'var(--fs-13)', color: result.posted > 0 ? good : undefined }}>
+          {result.posted} posted{result.jeNos.length > 0 ? ` — ${result.jeNos.join(', ')}` : ''}.
+        </span>
+      )}
+      {result?.refused.map((r) => (
+        <span key={r} style={{ fontSize: 'var(--fs-12)', color: danger }}>{r}</span>
+      ))}
+    </div>
+  );
+};
+
 export const OpenLines = ({ lines, entries }: { lines: BankLine[]; entries: LedgerEntry[] }) => {
   const group = useMatchBankGroup();
   const [pickedLines, setPickedLines] = useState<number[]>([]);
@@ -569,6 +663,7 @@ export const OpenLines = ({ lines, entries }: { lines: BankLine[]; entries: Ledg
   return (
     <section className="space-y-2">
       <b>{`Still to decide (${lines.length})`}</b>
+      <BookAllMatched lines={lines} />
       {pickedLines.length > 0 && (
         <section className="space-y-2" style={{ padding: 'var(--space-3)', border: '1px solid var(--c-line, rgba(34,31,32,0.15))', borderRadius: 'var(--radius-md)' }}>
           <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'baseline', flexWrap: 'wrap' }}>
@@ -631,12 +726,25 @@ export const OpenLines = ({ lines, entries }: { lines: BankLine[]; entries: Ledg
           </tr>
         </thead>
         <tbody>
-          {lines.map((l) => <OpenLine key={l.id} line={l} isPicked={pickedLines.includes(l.id)} onPick={() => toggleLine(l.id)} />)}
+          {/* KEYED ON THE DECISION, not the line alone (docs/bugs/0870). The
+              matcher decides a line again on every read (docs/bugs/0815), and
+              a row first drawn as "check which" whose decision later becomes
+              "one payout for several reports" kept its empty tick state: no
+              report ticked, the button dead, the new decision invisible. A
+              changed decision remounts the row, so its ticks are seeded from
+              what the matcher decided NOW. */}
+          {lines.map((l) => (
+            <OpenLine key={decisionKey(l)} line={l} isPicked={pickedLines.includes(l.id)} onPick={() => toggleLine(l.id)} />
+          ))}
         </tbody>
       </table>
     </section>
   );
 };
+
+/** The row's identity for React: the line AND what the matcher made of it. */
+export const decisionKey = (l: BankLine): string =>
+  `${l.id}|${l.kind}|${l.matched_batch_id ?? ''}|${(l.split ?? []).map((s) => `${s.batchId}:${s.amountSen}`).join('+')}`;
 
 export const OpenLine = ({ line, isPicked = false, onPick }: { line: BankLine; isPicked?: boolean; onPick?: () => void }) => {
   const book = useBookBankReceipt();

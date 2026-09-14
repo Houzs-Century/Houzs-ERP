@@ -5,6 +5,7 @@ import {
   amendmentBucketOf,
   AMENDMENT_LIST_CHIPS,
   amendmentBucketLabel,
+  compareAmendmentsForList,
   type StatusTone,
 } from "../vendor/scm/lib/status-pill";
 import { formatDate } from "../lib/utils";
@@ -36,6 +37,10 @@ const STATUS_CHIPS = AMENDMENT_LIST_CHIPS;
 // the header "N to action" count.
 const IS_OPEN = (s: string) => amendmentBucketOf(s) === "REQUESTED";
 
+// Requested on top, newest first within a status — the same order the desktop
+// queue opens in (status-pill.ts owns it).
+const OPEN_ORDER = compareAmendmentsForList<AmendmentRow>((a) => a.status, (a) => a.created_at);
+
 // Simplified status TONE → mobile .b-* badge class (info=Requested,
 // success=Approved, danger=Rejected). Mirrors MobileModuleList's TONE_BADGE_CLASS.
 const TONE_BADGE_CLASS: Record<StatusTone, string> = {
@@ -64,7 +69,7 @@ export function MobileAmendments({
   // requested_by is a bare scm.staff uuid — same roster resolve as desktop.
   const { actorNameOf } = useStaffLookup();
 
-  const allRows = useMemo<AmendmentRow[]>(() => data?.amendments ?? [], [data]);
+  const allRows = useMemo<AmendmentRow[]>(() => [...(data?.amendments ?? [])].sort(OPEN_ORDER), [data]);
   const rows = useMemo<AmendmentRow[]>(
     () => (chip === "all" ? allRows : allRows.filter((a) => amendmentBucketOf(a.status) === chip)),
     [allRows, chip],

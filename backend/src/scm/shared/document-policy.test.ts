@@ -22,8 +22,21 @@ describe('TXN_HEADER_LOCK registry', () => {
   it('freezes the money/party basis each child snapshots', () => {
     expect([...PO_LOCK_COLS].sort()).toEqual(['currency', 'purchase_location_id', 'supplier_id']);
     expect([...GRN_LOCK_COLS].sort()).toEqual(['allocation_method', 'currency', 'exchange_rate', 'supplier_id']);
-    expect([...DO_LOCK_COLS].sort()).toEqual(['branding', 'currency', 'debtor_code', 'debtor_name', 'sales_location']);
-    expect([...CN_LOCK_COLS]).toEqual([...DO_LOCK_COLS]); // CN mirrors DO
+    /* DO: owner ruling 2026-09-14 — the whole customer / address / contact /
+       commercial block freezes once a live SI or DR exists. The set itself lives
+       in do-header-lock.ts (read by the server AND both screens). */
+    for (const col of ['debtor_code', 'debtor_name', 'currency', 'sales_location', 'branding',
+      'phone', 'email', 'address1', 'address2', 'city', 'customer_state', 'postcode',
+      'customer_country', 'emergency_contact_name', 'emergency_contact_phone',
+      'emergency_contact_relationship', 'customer_delivery_date', 'note', 'notes']) {
+      expect(DO_LOCK_COLS.has(col), `DO must lock ${col}`).toBe(true);
+    }
+    for (const col of ['driver_name', 'vehicle', 'arrival_at', 'expected_delivery_at']) {
+      expect(DO_LOCK_COLS.has(col), `DO must leave ${col} editable`).toBe(false);
+    }
+    /* CN is NOT changed by that ruling (out of scope, 2026-09-14): it keeps the
+       2026-08-20 minimal set it used to share with the DO. */
+    expect([...CN_LOCK_COLS].sort()).toEqual(['branding', 'currency', 'debtor_code', 'debtor_name', 'sales_location']);
     expect([...PCO_LOCK_COLS]).toEqual([...PO_LOCK_COLS]); // PCO mirrors PO
     expect([...PCR_LOCK_COLS].sort()).toEqual(['currency', 'supplier_id']);
   });

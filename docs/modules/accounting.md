@@ -1699,6 +1699,56 @@ rows of equal width and the actions to the right. Every hook, label, button
 and refusal is unchanged — `frontend/src/pages/scm-v2/SettlementSetup.test.tsx`
 passes as it was.
 
+**A row follows the matcher's fresh decision (2026-09-14, docs/bugs/0870;
+owner, on a July PBB credit that had turned into "one payout for several
+reports" with nothing ticked and a dead button: 什么意思？).** The matcher
+decides every line again on each read (docs/bugs/0815), so a row's decision
+can change while the row is on screen — here, once other reports were paid,
+three PBB reports added up to the credit exactly and "check which" became a
+split. The row's ticks are React state seeded on mount, so the old empty
+state stayed. Rows are now keyed on the line AND its decision
+(`decisionKey` in `frontend/src/pages/scm-v2/BankStatementTab.tsx`: kind,
+matched report, split), so a changed decision remounts the row with the
+reports the matcher picked ticked and "Money received — N reports" live.
+
+**The bank's monthly statement PDF uploads too (2026-09-14, docs/bugs/0869;
+owner, after Maybank's Account Activity export turned out to omit two June
+credits the statement printed: 我觉得可以 pdf，就也支持 csv，也支持 pdf).** On
+Bank statement reconciliation a `.pdf` is read in the browser by pdf.js —
+every piece of text with the x/y it was drawn at, grouped into lines
+(`frontend/src/vendor/scm/lib/pdf-text.ts`, loaded on the press, never for a
+CSV) — and sent as `content` with `format: 'PDF'`; the bank's LAYOUT is read
+on the server (`backend/src/acc/bank-parse-pdf.ts`, beside the CSV column
+maps) into the same shape the CSV reader hands over, so everything after —
+recognition, matching, the month, the lock — is unchanged. Maybank's SME
+statement: rows dd/mm (the year off the header's statement date), the amount
+with a +/- suffix, the running balance at the right, continuation lines
+folded into the row above, pages until ENDING BALANCE; BEGINNING and ENDING
+BALANCE become the file's opening and closing, so a Maybank month read off
+the PDF is covered end to end with nothing typed (rule 4 stays for the CSV
+path). The rows must walk from the beginning balance to the ending balance or
+the file is refused. ONE SOURCE PER MONTH: a PDF is refused (`mixed_sources`,
+409) where the account already holds CSV movements on its days and a CSV
+where it holds PDF ones — the fingerprint that keeps two CSV exports from
+doubling a movement cannot tell the two formats' words apart. A bank with no
+PDF layout (Hong Leong today — its CSV prints the balances already) is
+refused by name.
+
+**Every certain payout at once (2026-09-14, docs/bugs/0868; owner, on a July
+statement of matched card payouts: 这些我还需要自己确定吗？ → 做).** The matcher
+decides WHICH report a card payout is; booking the money (Dr bank / Cr
+settlement-in-transit, the report leaving Money to come in) is a person's
+press. Where the matcher tied a payout to exactly one report for exactly what
+that report is still owed (kind PAYOUT, the matched report's outstanding equal
+to the credit), the row's own button has nothing to choose — so the Still to
+decide table on both the file screen and the month offers **Money received —
+all N matched payouts**, which posts each such row through the row's own door
+(`POST /accounting/bank/lines/:id/receipt`, the row's own allocation), one by
+one; the server judges each again, a refusal is named with the line and the
+amount, and the rest still post. A split, an unsure or an unmatched payout is
+not certain and stays for a person (`frontend/src/pages/scm-v2/BankStatementTab.tsx`
+`BookAllMatched`, shared by `BankMonthTab`). No server change.
+
 **A Maybank month tallies on a TYPED month-end figure; By month is one account
 at a time; the month runs the rule (2026-09-13, docs/bugs/0858; owner: by month
 这里我无法分辨什么也会 / 我的 matching 在 bank statement，然后 lock 在 by month？

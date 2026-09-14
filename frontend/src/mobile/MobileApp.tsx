@@ -37,6 +37,7 @@ const MobileAmendments = lazy(() => import("./MobileAmendments").then((m) => ({ 
 const MobilePoAmendments = lazy(() => import("./MobilePoAmendments").then((m) => ({ default: m.MobilePoAmendments })));
 const MobilePoAmendmentDetail = lazy(() => import("./MobilePoAmendmentDetail").then((m) => ({ default: m.MobilePoAmendmentDetail })));
 const MobileSODetail = lazy(() => import("./MobileSODetail").then((m) => ({ default: m.MobileSODetail })));
+const MobileDoHeaderEdit = lazy(() => import("./MobileDoHeaderEdit").then((m) => ({ default: m.MobileDoHeaderEdit })));
 const MobileNewSO = lazy(() => import("./MobileNewSO").then((m) => ({ default: m.MobileNewSO })));
 const MobileCalendar = lazy(() => import("./MobileCalendar").then((m) => ({ default: m.MobileCalendar })));
 const MobileSearch = lazy(() => import("./MobileSearch").then((m) => ({ default: m.MobileSearch })));
@@ -109,12 +110,15 @@ type Screen =
   | { t: "autocount-sync" }
   | { t: "venture-portal-feed" }
   | { t: "change-log" }
-  | { t: "new-so"; mode: "new" | "edit" | "edit-draft"; docNo?: string; scanPrefill?: MobileScanPrefill }
+  | { t: "new-so"; mode: "new" | "edit" | "edit-draft"; docNo?: string; scanPrefill?: MobileScanPrefill; addLine?: boolean }
   | { t: "scan" }
   | { t: "module"; key: string; title: string }
   | { t: "module-detail"; key: string; row: any; title: string }
   | { t: "stock-transfer-new"; key: string; row: any; title: string }
   | { t: "module-form"; key: string; mode: "new" | "edit"; row?: any }
+  /* Delivery Order header edit (owner 2026-09-12 parity). Its own screen, not the
+     generic module form: it needs the address cascade and the SI/DR lock. */
+  | { t: "do-edit"; key: string; row: Record<string, unknown>; title: string }
   | { t: "convert"; key: string; title: string; target: ConvertTarget; initialSourceId?: string }
   /* DIRECT create for PO / GRN / PI (owner 2026-09-12: create directly, not
      only by converting). Entered from that module list's "+"; returns to it. */
@@ -775,7 +779,7 @@ function MobileAppInner() {
   // boundary (full-screen fallback — an overlay owns the whole viewport anyway).
   let overlay: ReactNode = null;
   if (screen.t === "search") overlay = <MobileSearch onBack={back} onNavigate={onSearchNavigate} />;
-  else if (screen.t === "so-detail") overlay = <MobileSODetail docNo={screen.docNo} onBack={back} onEdit={(d) => setScreen({ t: "new-so", mode: "edit", docNo: d })} flowNav={flowNav} />;
+  else if (screen.t === "so-detail") overlay = <MobileSODetail docNo={screen.docNo} onBack={back} onEdit={(d) => setScreen({ t: "new-so", mode: "edit", docNo: d })} onAddLine={(d) => setScreen({ t: "new-so", mode: "edit", docNo: d, addLine: true })} flowNav={flowNav} />;
   else if (screen.t === "amendments") overlay = <MobileAmendments onBack={back} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} />;
   else if (screen.t === "po-amendments") overlay = <MobilePoAmendments onBack={back} onOpen={(id) => setScreen({ t: "po-amendment-detail", id })} />;
   else if (screen.t === "po-amendment-detail") overlay = <MobilePoAmendmentDetail amendmentId={screen.id} onBack={() => setScreen({ t: "po-amendments" })} />;
@@ -831,7 +835,7 @@ function MobileAppInner() {
     const mayRead = can("*") || can("scm.venture_portal.read") || can("settings.manage");
     overlay = !mayRead ? <TabLocked title="Venture Portal Feed" /> : <MobileVenturePortalFeed onBack={back} />;
   }
-  else if (screen.t === "new-so") overlay = <MobileNewSO mode={screen.mode} docNo={screen.docNo} scanPrefill={screen.scanPrefill} onBack={back} onSaved={(d) => setScreen({ t: "so-detail", docNo: d })} />;
+  else if (screen.t === "new-so") overlay = <MobileNewSO mode={screen.mode} docNo={screen.docNo} scanPrefill={screen.scanPrefill} openAddLine={screen.addLine === true} onBack={back} onSaved={(d) => setScreen({ t: "so-detail", docNo: d })} />;
   else if (screen.t === "scan") overlay = <MobileScan onBack={back} onDrafted={onScanDrafted} onOpenSo={(docNo) => setScreen({ t: "so-detail", docNo })} />;
   else if (screen.t === "module") {
     const k = screen.key;
@@ -928,7 +932,11 @@ function MobileAppInner() {
       (canOperateDeliveryOrders(user, can, pageAccess) || canDriverCompleteDelivery(user));
     overlay = <MobileModuleDetail moduleKey={screen.key} row={screen.row} title={screen.title}
       onBack={() => setScreen({ t: "module", key: screen.key, title: screen.title })}
-      onEdit={() => setScreen({ t: "module-form", key: screen.key, mode: "edit", row: screen.row })}
+      onEdit={screen.key !== "delivery-orders-mfg"
+        ? () => setScreen({ t: "module-form", key: screen.key, mode: "edit", row: screen.row })
+        : canOperateDeliveryOrders(user, can, pageAccess) && screen.row?.id
+          ? () => setScreen({ t: "do-edit", key: screen.key, row: screen.row, title: screen.title })
+          : undefined}
       onPOD={canPod ? () => setScreen({ t: "pod", docNo: String(doNo) }) : undefined}
       flowNav={flowNav} />;
   }
@@ -941,6 +949,10 @@ function MobileAppInner() {
         onBack={() => setScreen(screen.mode === "edit" && screen.row ? { t: "module-detail", key: screen.key, row: screen.row, title } : { t: "module", key: screen.key, title })}
         onSaved={() => setScreen({ t: "module", key: screen.key, title })} />
     );
+  }
+  else if (screen.t === "do-edit") {
+    const backToDoc = () => setScreen({ t: "module-detail", key: screen.key, row: screen.row, title: screen.title });
+    overlay = <MobileDoHeaderEdit id={String(screen.row.id)} onBack={backToDoc} onSaved={backToDoc} />;
   }
   else if (screen.t === "pod") {
     const leavePod = screen.from === "delivery-planning"

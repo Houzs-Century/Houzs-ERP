@@ -53,6 +53,8 @@ import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip"
 
 import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { FocAmount } from "../../vendor/scm/components/FocAmount";
+import { LinePoRefLink } from "../../vendor/scm/components/LinePoRefLink";
+import { PoPriceReference } from "../../vendor/scm/components/PoPriceReference";
 import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -106,6 +108,9 @@ type PiItem = {
       purchase order behind it (a PI-native service line, a receipt with no
       PO, or an unbound SKU ordered at 0 and keyed in here). */
   po_unit_price_sen?: number | null;
+  /* #26 — the line's own purchase order, resolved through its receipt line. */
+  source_po_id?: string | null;
+  source_po_number?: string | null;
   description?: string | null;
   description2?: string | null;
   item_group?: string | null;
@@ -551,6 +556,16 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       },
     },
     {
+      /* #26 — the purchase order THIS line came from, clickable. Per line, not
+         the header's: one receipt / invoice can span several orders. A line with
+         no PO behind it shows a dash (vendor/scm/lib/line-po-link.ts). */
+      key: "sourcePo",
+      label: "PO",
+      width: "128px",
+      getValue: (l) => l.source_po_number ?? "",
+      render: (l) => <LinePoRefLink line={l} />,
+    },
+    {
       key: "qty",
       label: "Qty",
       width: "72px",
@@ -585,60 +600,37 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       ),
     },
     {
-      /* Owner 2026-09-12: 「PI 应该要有两个价钱：第一个是从 PO 那边带过来的，
-         第二个是 Supplier 填进去的 … 有差异的话就要做 checking」. The ordered
-         price is read-only — it is the purchase order's, not this document's —
-         and a line with no PO behind it says so rather than showing 0.00,
-         which would read as a giveaway. */
+      /* Owner 2026-09-12: 「PI 应该要有两个价钱」; 2026-09-14: 「点开这个 PI 时，我也能
+         一眼看清：根据 PO 设想的价钱是多少，以及最终开单（PI）又是多少」. The PO
+         price is the TRAIL stored on the line when it was written (mig
+         20260914T0200; older lines read the order live until back-filled). It is
+         reference only — nothing blocks or asks. PoPriceReference keeps "no PO
+         link" and "PO had no price" apart from a real figure. */
       key: "poUnit",
       label: "PO price",
-      width: "104px",
+      width: "128px",
       align: "right",
       getValue: (l) => l.po_unit_price_sen ?? -1,
       render: (l) => (
-        l.po_unit_price_sen == null ? (
-          <span className="text-[12px] text-ink-muted" title="No purchase order behind this line">—</span>
-        ) : l.po_unit_price_sen === 0 ? (
-          /* An order that named no price (unbound SKU — "key in at PI"). 68% of
-             live lines, so calling it an overcharge would bury the ones that
-             are one. See lib/pi-po-price.ts for the measurement. */
-          <span className="text-[11.5px] text-ink-muted" title="The purchase order did not name a price for this line">not priced</span>
-        ) : (
-          <span className="font-money text-[13px] text-ink-muted">
-            {fmtMoney(l.po_unit_price_sen, purchaseInvoice?.currency)}
-          </span>
-        )
+        <PoPriceReference
+          poUnitPriceSen={l.po_unit_price_sen}
+          piUnitPriceSen={l.unit_price_sen ?? 0}
+          fmt={(sen) => fmtMoney(sen, purchaseInvoice?.currency)}
+          align="right"
+        />
       ),
     },
     {
       key: "unit",
-      label: "Supplier price",
-      width: "128px",
+      label: "PI price",
+      width: "112px",
       align: "right",
       getValue: (l) => l.unit_price_sen ?? 0,
-      render: (l) => {
-        const supplier = l.unit_price_sen ?? 0;
-        const po = l.po_unit_price_sen;
-        /* 0 means the order named no price, so there is nothing to differ FROM. */
-        const diff = po == null || po === 0 ? null : supplier - po;
-        return (
-          <span className="inline-flex flex-col items-end">
-            <span className="font-money text-[13px] text-ink-secondary">
-              {fmtMoney(supplier, purchaseInvoice?.currency)}
-            </span>
-            {diff != null && diff !== 0 && (
-              <span
-                className={`font-money text-[10.5px] ${diff > 0 ? "text-err" : "text-synced"}`}
-                title={diff > 0
-                  ? "The supplier billed MORE than the purchase order — check before posting"
-                  : "The supplier billed LESS than the purchase order"}
-              >
-                {diff > 0 ? "+" : "−"}{fmtMoney(Math.abs(diff), purchaseInvoice?.currency)}
-              </span>
-            )}
-          </span>
-        );
-      },
+      render: (l) => (
+        <span className="font-money text-[13px] text-ink-secondary">
+          {fmtMoney(l.unit_price_sen ?? 0, purchaseInvoice?.currency)}
+        </span>
+      ),
     },
     {
       key: "total",

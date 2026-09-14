@@ -5417,12 +5417,37 @@ Three changes of shape, not just of scope:
   so a new sibling column is added in ONE place;
 - `backend/scripts/repair-sofa-line-shown-vs-code.mjs` (+ its workflow) is the
   system-wide sweep, replacing `repair-sofa-line-name-to-code.mjs` [gone].
+  Since 2026-09-14 it takes a `docs` input (comma-separated document numbers):
+  when set, only those documents are planned and written, and the plan prints
+  how many disagreeing values on OTHER documents it left untouched. It was added
+  to correct HC-PO-2609-064 alone (docs/bugs/0887).
 
 ONLY the piece token moves: a supplier code keeps the supplier's own spelling
 (`HOK-5540 SOFA 2A(LHF)` -> `HOK-5540 SOFA 1A(LHF)`), because a document is a
 snapshot of what was sent and the master row's spelling has since changed.
 Closed documents are corrected too, by the owner's decision the same day. Trace
 in docs/bugs/0822-the-purchase-order-told-the-factory-to-build-the-other-end-p.md.
+
+## An ADDED purchase piece is linked to its own sales-order piece (2026-09-14)
+
+New SURFACE on `backend/scripts/apply-sofa-compartment-corrections.mjs`: a new
+`LINK` step after the builds are written, a `link on today's rows:` line under
+every purchase `add` in the dry-run, and a `LINK VERIFY` on a fresh connection.
+
+Until now an added purchase piece was inserted with `so_item_id` NULL and never
+linked, so a company-1 sofa piece could not see its purchase order (`isDedicated`
+in `scm/routes/mrp.ts`) — staff issue #19, `HC-SO-011114` / `HC-PO-010045`, from
+APPLY run 34507126629. The copy-from-source rule still stands (a second purchase
+line never points at the SAME sales line); the new step links the piece to ITS
+OWN sales-order piece, decided by `scripts/lib/added-po-compartment-link.mjs`:
+the linked pieces of the same build must name one sales order and one book line,
+and that order must hold exactly one live, uncovered piece with the same code,
+book line and warehouse. A surplus, ambiguous or missing piece is LEFT with its
+reason. Trace: `docs/bugs/0873-a-purchase-compartment-the-sofa-correction-added-was-never-l.md`.
+
+`backend/scripts/lib/pgrest-shim.mjs` also grew two things the same day (quoted
+`not in` lists, LEFT embeds) so the real `computeMrp` can run over it —
+`docs/bugs/0874-the-pgrest-shim-could-not-run-the-mrp-engine-quoted-not-in-l.md`.
 
 ## A corrected code carries its printed NAME (2026-09-11)
 

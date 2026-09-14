@@ -127,6 +127,50 @@ describe('every document that CAN add a line offers it from the page you start o
     expect(read('pages/scm-v2/SalesInvoiceAddLine.tsx')).toContain('ADD_LINE_LABEL');
   });
 
+  it('the PHONE offers it on the same four purchase / sales documents, by the same word', () => {
+    /* Owner 2026-09-12: 「电脑版本有的，手机版本都要有」. Until 2026-09-13
+       `grep ADD_LINE_LABEL frontend/src/mobile` was empty: the phone could add a
+       line to none of these documents. The mobile detail has no separate editor,
+       so the row opens in place (as the sales invoice's does on desktop) — hence
+       no addLineHref here either. Reach is asserted three ways: the phone module
+       prints the shared word, the detail screen MOUNTS it, and the module maps
+       exactly the documents the desktop offers it on. */
+    const row = read('mobile/MobileAddLine.tsx');
+    expect(row).toContain('ADD_LINE_LABEL');
+    expect(row).not.toContain('addLineHref');
+    expect(read('mobile/MobileModuleDetail.tsx')).toContain('<MobileAddLine');
+    const map = read('mobile/mobile-add-line.ts');
+    for (const key of ['"mfg-purchase-orders": "po"', 'grns: "grn"', '"purchase-invoices": "pi"', '"sales-invoices": "si"']) {
+      expect(map, key).toContain(key);
+    }
+  });
+
+  it('the PHONE decides "still open for a line" with the same rules the desktop editors use', () => {
+    /* A phone copy of the lock would be invisible to check-shared-mirrors.
+       The desktop editors and the phone must import the same functions. */
+    const map = read('mobile/mobile-add-line.ts');
+    expect(map).toContain("from \"../vendor/scm/lib/line-add-lock\"");
+    for (const fn of ['purchaseOrderLinesLocked', 'goodsReceiptLinesLocked', 'purchaseInvoiceLinesLocked', 'salesInvoiceLinesOpen']) {
+      expect(map, fn).toContain(`${fn}(`);
+    }
+  });
+
+  it('the PHONE sales order offers it from the detail and hands off to the editor with a new line open', () => {
+    /* The phone SO editor (MobileNewSO) could already add a line, under the
+       retired spelling "+ Add Line Item", and only after pressing Edit: the same
+       unfindable-affordance shape 0853 fixed on desktop. Reach, asserted: the
+       detail prints the shared word and calls the handoff; the shell carries the
+       intent; the editor consumes it and no longer spells the action its own way. */
+    const detail = read('mobile/MobileSODetail.tsx');
+    expect(detail).toContain('ADD_LINE_LABEL');
+    expect(detail).toContain('onAddLine(docNo)');
+    expect(read('mobile/MobileApp.tsx')).toContain('addLine: true');
+    const editor = read('mobile/MobileNewSO.tsx');
+    expect(editor).toContain('openAddLine');
+    expect(editor).toContain('ADD_LINE_LABEL');
+    expect(editor).not.toMatch(/\+ Add Line Item</);
+  });
+
   it('no editor still spells the action its own way', () => {
     /* Four documents had four names. A page that reintroduces one is a page
        the owner will not find the button on. */

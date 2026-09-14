@@ -1268,6 +1268,7 @@ deliberately last because it is the largest handler in the file. One PR each.
 | List columns / filters | `pages/scm-v2/GoodsReceivedListV2.tsx` | `mobile/MobileModuleList.tsx` config `:1159` |
 | Server pagination opt-in | `useGrnsPaged` | `mobile/MobileModuleList.tsx` `SERVER_PAGINATED` (`:327`) |
 | Detail fields | `pages/scm-v2/GoodsReceivedDetailV2.tsx` (read) + `GoodsReceivedDetail.tsx` (edit) | `mobile/MobileModuleDetail.tsx` config `:324` |
+| Per-line source PO (#26) | `vendor/scm/components/LinePoRefLink.tsx` in both desktop files | `mobile/MobileLinePoRef.tsx`, both over `vendor/scm/lib/line-po-link.ts` |
 | Post / Cancel actions | `GoodsReceivedDetail.tsx:416-459` | `mobile/MobileModuleDetail.tsx:535-542` |
 | Zero-cost refusal → the remedy | the per-line "Received free" tick + price box on `GoodsReceivedDetail.tsx` | `mobile/MobileGrnZeroCost.tsx`, opened by `mobile/MobileModuleDetail.tsx`'s action footer. The 409 body is parsed once, by the SHARED `vendor/scm/lib/zero-cost-refusal.ts`, which `vendor/scm/lib/authed-fetch.ts` also uses for the sentence — so the message and the remedy cannot name different lines |
 | PO→GRN conversion + per-line received qty | `pages/scm-v2/GrnFromPo.tsx` | `mobile/MobileConvertWizard.tsx` (`target: "grn"`) — note the surfaces differ **by design**: desktop can pick lines, mobile converts the whole PO (`:60-61`), and mobile posts `asDraft:true` rather than the auto-posting `/from-pos` (`:370-374`) |
@@ -1487,6 +1488,37 @@ missing. Check the live shape before writing a migration.
 
 ---
 
+## Which purchase order a LINE came from (#26, 2026-09-14)
+
+Owner-confirmed staff request: *"GRN & PI need PO related show for every item —
+easier to cross check."* `GET /grns/:id` now serves `source_po_id` beside the
+`source_po_number` it already served, per line, resolved from the line's own
+`purchase_order_item_id` in the same `purchase_order_items` read that supplies
+`ordered_qty` (`backend/src/scm/lib/line-po-ref.ts`). Per line, never the
+header's `purchase_order_id`: `/from-pos` buckets by supplier, so one receipt can
+carry lines from several orders.
+
+Where it shows: the **PO** column on `GoodsReceivedDetailV2`, the "Received from
+PO" line in the `GoodsReceivedDetail` editor (now a link), and a **PO** row under
+each line on the phone (`frontend/src/mobile/MobileLinePoRef.tsx`, opened through
+the shell's flow navigation, inert for a user who may not open purchase orders).
+The one reading of "has a PO" is `linePoLink` in
+`frontend/src/vendor/scm/lib/line-po-link.ts`; a manual line shows a dash and is
+never given the header's PO.
+
+**`po_unit_price_sen` per line (2026-09-14).** The same read in
+`backend/src/scm/routes/grns.ts` also serves the purchase-order line's unit price
+(`stampGrnLinePoRefs` in `backend/src/scm/lib/line-po-ref.ts`), null on a manual
+line. The receipt screens do not show it; the create-purchase-invoice-from-receipt
+screen starts a new invoice line at it — see `docs/modules/purchase-invoice.md`,
+*The PO price is STORED on the line*.
+
+Measured read-only on 2026-09-14: of 1,202 posted receipt lines, 87 (all company
+HOUZS) have no `purchase_order_item_id`, and none points at a purchase-order line
+that no longer exists.
+
+---
+
 ## History drawer (change log)
 
 The History button opens the recorded change log for this goods receipt — every field
@@ -1544,3 +1576,18 @@ read as missing to anyone looking at the document. The word is now
 `ADD_LINE_LABEL` from `vendor/scm/lib/add-line-handoff.ts`, shared, because four
 documents had four names for the same action. Trace:
 `docs/bugs/0853-add-a-line-was-only-reachable-from-inside-edit-under-four-di.md`.
+
+**The lock is shared now (2026-09-13).** Whether the document is still open for a new
+line used to be an inline `const isLocked = ...` in the desktop editor. It is
+`goodsReceiptLinesLocked` in `frontend/src/vendor/scm/lib/line-add-lock.ts`, called by
+`frontend/src/pages/scm-v2/GoodsReceivedDetail.tsx` AND by the phone. `lineAddLock.test.ts` scans the editor so an inline
+copy cannot grow back.
+
+**On the phone (2026-09-13).** `frontend/src/mobile/MobileAddLine.tsx`, mounted under
+the line items by `frontend/src/mobile/MobileModuleDetail.tsx`, opens the add row IN
+PLACE (the phone has no separate editor for this document). It is offered when
+`canOperateGoodsReceipts` passes AND the shared lock above says open — `mayAddLine` in
+`frontend/src/mobile/mobile-add-line.ts` — and it posts through the same
+`useAddGrnItem` with the desktop add row's body. A refusal stays inline beside the row,
+which keeps what was typed; the unit price starts blank. Trace:
+`docs/bugs/0873-the-phone-could-not-add-a-line-to-any-document.md`.

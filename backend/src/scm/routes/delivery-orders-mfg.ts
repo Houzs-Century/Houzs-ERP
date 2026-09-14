@@ -36,8 +36,8 @@ import { dateOrNull, coerceEmptyDates, normalizeEventDay } from '../lib/date-coe
 import { allocateAcrossBuckets } from '../lib/bucket-cost-allocation';
 import { doHasDownstream } from '../lib/downstream-lock';
 import { claimedSoItemIdsOnDo, fillMissingSoItemIds } from '../lib/derive-do-so-item-id';
-import { DO_AUDIT_FIELDS, DO_AUDIT_SELECT, DO_LINE_AUDIT_FIELDS, DO_IDENTITY_LOCK_COLS, DO_IDENTITY_LABELS } from '../lib/do-audit-fields';
-import { changedLockedCols, identityLockedRefusal } from '../shared/header-inherited-lock';
+import { DO_AUDIT_FIELDS, DO_AUDIT_SELECT, DO_LINE_AUDIT_FIELDS, DO_IDENTITY_LABELS } from '../lib/do-audit-fields';
+import { identityLockedRefusal } from '../shared/header-inherited-lock'; import { doLockedHeaderChanges, DO_HEADER_OPEN_DESCRIPTION } from '../shared/do-header-lock';
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine, type AcEnqueueOutcome } from '../lib/autocount-outbox';
 
 /* ERP -> AutoCount DO edit, the DO's counterpart of mfg-sales-orders'
@@ -4420,16 +4420,15 @@ deliveryOrdersMfg.patch('/:id', async (c) => {
   if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
 
-  /* Header lock — FIELD-LEVEL (owner 2026-08-20, §8 GAP-1; header-inherited-lock.ts):
-     once a live SI/DR exists only the columns it snapshotted (customer + currency +
-     location + branding) freeze; the DO's own dates / dispatch / addresses / notes
-     stay editable. Downstream read paid only when an inherited column changed. */
-  const doLocked = changedLockedCols(DO_IDENTITY_LOCK_COLS, updates, before);
+  /* Header lock (owner ruling 2026-09-14, supersedes 2026-08-20): once a live SI/DR
+     exists the customer / address / contact / commercial block freezes; only the
+     dispatch-execution fields stay open. ONE rule, shared/do-header-lock.ts, which
+     both screens read too. Downstream read paid only when a locked column changed. */
+  const doLocked = doLockedHeaderChanges(updates, before);
   if (doLocked.length > 0 && (await doHasDownstream(sb, id))) {
     return c.json(identityLockedRefusal({
       error: 'do_identity_locked', fields: doLocked, labels: DO_IDENTITY_LABELS,
-      what: 'Delivery Order', child: 'Sales Invoice or Delivery Return',
-      ownFields: 'delivery dates, dispatch details, addresses and notes',
+      what: 'Delivery Order', child: 'Sales Invoice or Delivery Return', ownFields: DO_HEADER_OPEN_DESCRIPTION,
     }), 409);
   }
 

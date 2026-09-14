@@ -14,7 +14,10 @@
 // Import boundary only: react-router → react-router-dom; useWarehouses ←
 // vendored inventory-queries slice; adjustment/breakdown/buckets hooks ←
 // vendored stock-queries; mfg-products-queries + shared via aliases; css
-// colocated. Back/Cancel/Save → the parallel /scm/stock-adjustments list.
+// colocated. Back/Cancel → the parallel /scm/stock-adjustments list. Save → a
+// result dialog: open the list, or "New stock adjustment", which REMOUNTS the
+// form (FreshMount) so nothing from the saved one carries over (staff request
+// 2026-09-14).
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
@@ -34,6 +37,8 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
+import { FreshMount } from '../../lib/freshMount';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 
@@ -65,7 +70,14 @@ const VariantSelect = ({
   </label>
 );
 
-export const StockAdjustmentNew = () => {
+export const StockAdjustmentNew = () => (
+  <FreshMount>{(startNew) => <StockAdjustmentForm onStartNew={startNew} />}</FreshMount>
+);
+
+/* One mount = one adjustment. Once it saves the form LOCKS (no Save button), and
+   another adjustment is a remount via onStartNew — the same shape as
+   StockTransferNew, which needs it for its idempotency key. */
+const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
   const navigate = useNavigate();
   const adjust   = useStockAdjustment();
   /* Off native browser dialogs onto the house dialog system — this screen
@@ -73,6 +85,8 @@ export const StockAdjustmentNew = () => {
      than like OS chrome the operator has learned to dismiss. */
   const askConfirm = useConfirm();
   const notify = useNotify();
+  const [saved, setSaved] = useState(false);
+  const [resultOpen, setResultOpen] = useState(false);
 
   // ── Form state ─────────────────────────────────────────────────────
   const [warehouseId, setWarehouseId] = useState<string>('');
@@ -238,7 +252,7 @@ export const StockAdjustmentNew = () => {
         variantKey: type === 'decrease' ? (variantKey || undefined) : undefined,
       },
       {
-        onSuccess: () => navigate('/scm/stock-adjustments'),
+        onSuccess: () => { setSaved(true); setResultOpen(true); },
         /* authedFetch already ran the response through humanApiError, so this
            arrives as a plain sentence. What the operator needs added is that
            NOTHING moved — otherwise they re-key the adjustment on top of one
@@ -258,7 +272,16 @@ export const StockAdjustmentNew = () => {
         eyebrow="Inventory"
         title="New Stock Adjustment"
         actions={
-          <>
+          saved ? (
+            <div className={styles.actions}>
+              <Button variant="ghost" size="md" onClick={onStartNew}>
+                <Plus {...ICON} /> New stock adjustment
+              </Button>
+              <Button variant="primary" size="md" onClick={() => navigate('/scm/stock-adjustments')}>
+                Open stock adjustments
+              </Button>
+            </div>
+          ) : (
             <div className={styles.actions}>
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/stock-adjustments')}>
                 <X {...ICON} /> Cancel
@@ -268,9 +291,12 @@ export const StockAdjustmentNew = () => {
                 {adjust.isPending ? 'Saving…' : 'Save Adjustment'}
               </Button>
             </div>
-          </>
+          )
         }
       />
+
+      {/* Saved: readable, not editable — there is no Save left to press. */}
+      <fieldset disabled={saved} className="space-y-4" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
 
       <section className={styles.card}>
         <div className={styles.cardHeader}>
@@ -583,6 +609,19 @@ export const StockAdjustmentNew = () => {
           )}
         </div>
       </section>
+      </fieldset>
+
+      {saved && resultOpen && (
+        <ActionResultDialog
+          title="Stock adjustment saved"
+          body="The stock balance is updated. Open the adjustments list, or start the next one."
+          primaryLabel="Open stock adjustments"
+          onPrimary={() => navigate('/scm/stock-adjustments')}
+          secondaryLabel="New stock adjustment"
+          onSecondary={onStartNew}
+          onClose={() => setResultOpen(false)}
+        />
+      )}
     </div>
   );
 };
