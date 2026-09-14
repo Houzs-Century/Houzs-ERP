@@ -5424,6 +5424,32 @@ not-folded-into-agree property, the unwritten ruling that stays `DIFFER`, the
 no-ruling control, and the assertion that a ruling cannot rescue an ERP carrying
 no compartments at all.
 
+## The applier's MAIN path carries the supplier code too (2026-09-14)
+
+Correction to the section below: its claim that the corrections applier "aligns
+EVERY column that can state a sofa piece" held for ONE of its two paths. Only the
+downstream-document path (`applyDownstreamDoc`) called `alignPieceColumns`. The
+main sales-order / purchase-order path moved `item_code` and the name and left
+`supplier_sku` on the old piece. It also INSERTed an added purchase piece with
+**no** supplier code, which the shown-vs-code sweep cannot repair: an empty
+column is not a disagreement. Found before any write, applying the owner's
+HC-PO-010086 build (`8030-2S` → `1A(LHF)+1A(RHF)`, supplier code
+`HOK-5540 SOFA 2S`).
+
+New SURFACE on `backend/scripts/apply-sofa-compartment-corrections.mjs`:
+
+- every purchase and receipt row the applier moves is aligned: the purchase-line
+  update and insert (inside the transaction), and the purchase/receipt rows a
+  carry follows. An `ALIGNED <col>: "<from>" -> "<to>"` line is printed per value;
+- an added purchase piece COPIES `supplier_sku` from the row it is built from,
+  and then its piece token is moved (`HOK-5540 SOFA 2S` → `HOK-5540 SOFA 1A(RHF)`);
+- the fresh-connection VERIFY reads `supplier_sku` + `material_name` on each
+  purchase line, prints the supplier codes on its `OK` line, FAILS a row that
+  names another piece, and prints a `NOTE` for an empty supplier code.
+
+Pinned by `backend/tests/sofaCorrectionsSupplierCode.test.mjs`. Trace in
+docs/bugs/0894-the-sofa-corrections-applier-moved-a-purchase-line-s-code-bu.md.
+
 ## A corrected code carries its SUPPLIER code too (2026-09-11)
 
 New SURFACE on `backend/scripts/apply-sofa-compartment-corrections.mjs` and

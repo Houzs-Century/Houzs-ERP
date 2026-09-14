@@ -35,7 +35,12 @@
         "finding": "propose-supplier-sofa-corrections run 34799661171 named it in WE AMENDED IT AFTER THEIR CUT: HC-PO-010086/A1 APPROVED, raised 2026-09-10, supplier export SO-2609-021 cut 2026-09-01. Ours 8030-2S, the supplier 5540-1A(LHF)+5540-1A(RHF).",
         "words": "「那就根据amendment的」",
         "means": "HC-PO-010086 follows OUR amended purchase order, NOT the supplier export. Decision #4 (follow the factory) applies to the other three only. This is the owner's standing rule that an amendment we raised after the supplier's cut is newer than the export - reaffirmed on the one document where the two rules collided.",
-        "consequence": "If A1 is what made the sofa a 2S, the FACTORY's own record still shows the pre-amendment build and may be producing it. That is a message to the supplier, not a change to our documents - see probe-po-amendment-content."
+        "consequence": "If A1 is what made the sofa a 2S, the FACTORY's own record still shows the pre-amendment build and may be producing it. That is a message to the supplier, not a change to our documents - see probe-po-amendment-content.",
+        "superseded": {
+          "words": "「这个PO 是1A+1A」",
+          "when": "2026-09-14, later the same day",
+          "means": "HC-PO-010086 (and its sales order HC-SO-013346) is 1A(LHF)+1A(RHF), two separate single-arm pieces at 35\" - which is also what the supplier export states. The 「那就根据amendment的」 answer above is SUPERSEDED: the amendment never changed the build (probe-po-amendment-content run 34800542371: A1 re-stated 8030-2S; only the pillow code moved), so there was no amended build to follow. Evidence he showed: purchasing \"PO10086 we stated 2s / Supplier 1A+1A can double check\", the customer chat \"separate 1+1\" / \"Singapore lift\", and the slip (two 35\" boxes, arm on each outer end, TV below). Written as a build in sofa-compartment-corrections-owner-not-in-file.json."
+        }
       }
     },
     {
