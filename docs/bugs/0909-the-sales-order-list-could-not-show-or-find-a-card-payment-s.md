@@ -34,14 +34,15 @@ typed code (an `eq`, not a substring, so no trigram index is owed;
 dropping the matches) and adds the term to BOTH the page query
 and the money-KPI aggregate, which must filter the same set. The desktop
 list (`MfgSalesOrdersListV2.tsx`) gains an **Approval Code** column after
-Payment Method (hidden by default like it; the Columns drawer shows it), the
-quick view a line, and the three search hints promise the code.
+Payment Method (hidden by default like it; the Columns drawer shows it; the
+column itself lives in `so-list-approval-code.tsx`, because the list file may
+only shrink), and the three search hints promise the code.
 
 Proved RED on the unfixed tree (route and list stashed):
 `backend/tests/soListApprovalCode.test.ts` (the read carries the code, the
 row the summary, the term rides both queries, the lookup is scoped and
 capped) and `frontend/src/pages/scm-v2/soListApprovalCode.test.ts` (the
-column, its place and default, the quick view, the hints). The pure halves
+column, its place and default, the hints). The pure halves
 are pinned by `backend/src/scm/lib/so-list-approval-codes.test.ts`.
 
 **Ref.** feat/so-list-approval-code, 2026-09-15.

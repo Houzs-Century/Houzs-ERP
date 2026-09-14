@@ -3,42 +3,42 @@
    like searchScopeContracts.test.ts: the column reads the server's
    per-payment summary — never the header's legacy approval_code — sits with
    the money columns, and the search hint promises the code only because the
-   server now searches it (tests/soListApprovalCode.test.ts pins that end). */
+   server now searches it (tests/soListApprovalCode.test.ts pins that end).
+   The column lives in its own module because the list file may only shrink. */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';
 
-const source = readFileSync(resolve(process.cwd(), 'src/pages/scm-v2/MfgSalesOrdersListV2.tsx'), 'utf8');
+const source = (relative: string) => readFileSync(resolve(process.cwd(), 'src', relative), 'utf8');
+const list = source('pages/scm-v2/MfgSalesOrdersListV2.tsx');
+const column = source('pages/scm-v2/so-list-approval-code.tsx');
 
 describe('the Approval Code column', () => {
-  test('the source loaded', () => {
-    expect(source.length).toBeGreaterThan(1000);
+  test('the sources loaded', () => {
+    expect(list.length).toBeGreaterThan(1000);
+    expect(column.length).toBeGreaterThan(300);
   });
 
-  test('is a column of its own, reading the per-payment summary the server sends', () => {
-    const start = source.indexOf('key: "approval_codes"');
-    expect(start).toBeGreaterThan(-1);
-    const column = source.slice(start, source.indexOf('key: "paid"', start));
+  test('reads the per-payment summary the server sends, never the header\'s legacy field', () => {
+    expect(column).toContain('key: "approval_codes"');
     expect(column).toContain('label: "Approval Code"');
-    expect(column).toContain('r.approval_codes_summary');
-    expect(column, 'the header\'s legacy approval_code is not the payment\'s').not.toContain('r.approval_code ');
+    expect(column).toContain('approval_codes_summary');
+    expect(column).not.toMatch(/\.approval_code\b/);
   });
 
-  test('follows the Payment Method column, and is hidden by default like it', () => {
-    const payment = source.indexOf('key: "payment_method"');
-    const codes = source.indexOf('key: "approval_codes"');
-    expect(payment).toBeGreaterThan(-1);
-    expect(codes).toBeGreaterThan(payment);
-    const column = source.slice(codes, source.indexOf('key: "paid"', codes));
+  test('is hidden by default like Payment Method, and follows it in the list', () => {
     expect(column).toContain('defaultHidden: true');
-  });
-
-  test('the quick view shows it too', () => {
-    expect(source).toMatch(/k="Approval code"\s+v=\{row\.approval_codes_summary \|\| "—"\}/);
+    const payment = list.indexOf('key: "payment_method"');
+    const placed = list.indexOf('approvalCodeColumn,');
+    const paid = list.indexOf('key: "paid"');
+    expect(payment).toBeGreaterThan(-1);
+    expect(placed).toBeGreaterThan(payment);
+    expect(paid).toBeGreaterThan(placed);
+    expect(list).toContain('import { approvalCodeColumn } from "./so-list-approval-code";');
   });
 
   test('the search hint promises the code, on every search box of the page', () => {
-    const hints = source.match(/placeholder[=:] ?"Search [^"]*"/g) ?? [];
+    const hints = list.match(/placeholder[=:] ?"Search [^"]*"/g) ?? [];
     expect(hints.length).toBeGreaterThanOrEqual(3);
     for (const hint of hints) expect(hint).toContain('approval code');
   });

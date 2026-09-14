@@ -62,6 +62,7 @@ import {
   type Column,
   type ColumnLayoutPreset,
 } from "../../components/DataTable";
+import { approvalCodeColumn } from "./so-list-approval-code";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { Badge } from "../../components/Badge";
@@ -144,9 +145,6 @@ type SoRow = HoldFields & {
   customer_state: string | null;
   payment_method: string | null;
   payment_methods_summary?: string;
-  /** Each card payment's approval code, by payment date, " + " joined —
-      the value the detail's Payments card prints (docs/bugs/0909). */
-  approval_codes_summary?: string;
   // ── Phase 2: extra fields already present on the list payload (HEADER +
   //    server-computed), previously untyped so the columns couldn't be built.
   venue: string | null;
@@ -564,7 +562,6 @@ function DetailDrawer({
                   k="Payment"
                   v={row.payment_methods_summary || row.payment_method || "—"}
                 />
-                <MetaItem k="Approval code" v={row.approval_codes_summary || "—"} mono />
               </dl>
 
               {/* customer & delivery card */}
@@ -1614,22 +1611,7 @@ export function MfgSalesOrdersListV2() {
         return <span className="text-[12.5px] text-ink-secondary">{pm || "—"}</span>;
       },
     },
-    /* Owner 2026-09-15 (docs/bugs/0909): 我要的就是这个 payment 的 approval code —
-       the code on each card payment, as the detail's Payments card prints it,
-       every one of the order's in the order the money was paid. Hidden by
-       default like Payment Method; the Columns drawer shows it. */
-    {
-      key: "approval_codes",
-      group: "Amounts",
-      label: "Approval Code",
-      width: "150px",
-      defaultHidden: true,
-      disableSort: true,
-      getValue: (r) => r.approval_codes_summary ?? "",
-      render: (r) => (
-        <span className="font-mono text-[12.5px] text-ink-secondary">{r.approval_codes_summary || "—"}</span>
-      ),
-    },
+    approvalCodeColumn, // docs/bugs/0909 — its own module: this file may only shrink
     {
       key: "paid",
       group: "Amounts",

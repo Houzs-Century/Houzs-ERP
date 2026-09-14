@@ -5511,7 +5511,9 @@ read (the one that feeds `payment_methods_summary`) now carries
 `approval_codes_summary` per row: every code of the order in the order the
 money was paid, " + " joined, '' when none. The desktop list shows it as
 **Approval Code** beside Payment Method (hidden by default like that column;
-the Columns drawer shows it) and in the quick view. The search finds an order
+the Columns drawer shows it; the column lives in
+`frontend/src/pages/scm-v2/so-list-approval-code.tsx` because the list file
+may only shrink). The search finds an order
 by a code too: `approvalCodeOrPart` reads the orders whose payments carry
 EXACTLY the typed code (an `eq`, not a substring, so no trigram index is
 owed; this company, capped at 500; a failed read refuses the list) and adds
