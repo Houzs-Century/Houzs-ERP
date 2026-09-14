@@ -36,6 +36,7 @@ import {
 import { missingVariantAxes } from '@2990s/shared/so-variant-rule';
 import { computeTotalHeight, totalHeightPatch } from '../../shared/total-height';
 import { restrictPricedToPool, restrictStringsToPool } from '../../shared/maintenance-pools';
+import { fabricAllowedByPool } from '../../shared/fabric-pool';
 import { activeOptions, isColourKiv, isDeliveryFeeServiceCode, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import {
   useMfgProducts,
@@ -1508,16 +1509,13 @@ const FabricColourCombobox = ({
      prune, moved server-side of the fetch). Cap at 50 like the SKU picker. */
   const results = useMemo(() => {
     const rows = coloursQ.data ?? [];
-    const restricted = Array.isArray(pool) && pool.length > 0;
-    const allow = new Set(pool ?? []);
     return rows
       .filter((c) => !inactiveCodes.has(c.colourId))
-      /* A row passes if the pool names its COLOUR or its SERIES. The pool is
-         filled by ProductModelDetail's Modular drawer, which offers SERIES
-         (fabric_library ids) - so matching colours only made this picker show 3
-         of 851 active colours and is what the owner reported. Same rule as the
-         server gate in allowed-options-check.ts. docs/bugs/0814. */
-      .filter((c) => !restricted || allow.has(c.colourId) || allow.has(c.fabricId))
+      /* A row passes if the pool names its COLOUR or its SERIES (docs/bugs/0814),
+         asked through the SAME module the save gate and the phone sheet read,
+         so the folding of stray spaces and quote glyphs agrees too
+         (docs/bugs/0889). */
+      .filter((c) => fabricAllowedByPool(pool, c.colourId, c.fabricId))
       .slice(0, 50);
   }, [coloursQ.data, pool, inactiveCodes]);
 
