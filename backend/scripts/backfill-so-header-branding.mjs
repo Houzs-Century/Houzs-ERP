@@ -139,7 +139,7 @@ async function buildPlan(sql) {
     SELECT key, value FROM scm.app_config WHERE key IN ('scm.venture_portal_feed', 'scm.autocount_writeback') ORDER BY key`;
 
   /* WHERE THE PLACEHOLDER CAME FROM. linked_ac_docno is set on BOTH kinds: the
-     AutoCount number (SO-013099) on an imported order, and the order own
+     AutoCount number (SO-013099) on an imported order, and the order's own
      number on an ERP-created one the write-back pushed. */
   const imported = (h) => !!tidy(h.linked_ac_docno) && tidy(h.linked_ac_docno) !== h.doc_no;
   const linesByDoc = new Map();
@@ -152,9 +152,9 @@ async function buildPlan(sql) {
   /* Venture Portal reach. The URL and secret are never read out — only whether
      both are set, and the date floor the drain applies (vp.since). */
   const vp = await sql`
-    SELECT max(v) FILTER (WHERE k = vp.since) AS since,
-           count(*) FILTER (WHERE k IN (vp.url, vp.secret) AND coalesce(trim(v), ) <> )::int AS wired
-    FROM scm.sync_config WHERE k IN (vp.since, vp.url, vp.secret)`;
+    SELECT max(v) FILTER (WHERE k = 'vp.since') AS since,
+           count(*) FILTER (WHERE k IN ('vp.url', 'vp.secret') AND coalesce(trim(v), '') <> '')::int AS wired
+    FROM scm.sync_config WHERE k IN ('vp.since', 'vp.url', 'vp.secret')`;
   const vpSince = tidy(vp[0]?.since) || null;
   const vpWired = Number(vp[0]?.wired ?? 0) === 2;
 
