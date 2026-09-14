@@ -12,8 +12,8 @@ for (const [code, pats] of Object.entries(PATS)) {
   say(`\n=== ${code} ===`);
   for (const p of pats) {
     const like = `%${p.replace(/-/g, "%")}%`;
-    for (const r of await sql`SELECT fabric_id, colour_id, label, active, company_id, created_at::text, updated_at::text FROM scm.fabric_colours WHERE colour_id ILIKE ${like} OR label ILIKE ${like} OR fabric_id ILIKE ${like} LIMIT 10`)
-      say(`  colours  co${r.company_id} fabric=${r.fabric_id} colour=${r.colour_id} label=${r.label} active=${r.active} created=${r.created_at?.slice(0,16)} updated=${r.updated_at?.slice(0,16)}`);
+    for (const r of await sql`SELECT fabric_id, colour_id, label, active, company_id FROM scm.fabric_colours WHERE colour_id ILIKE ${like} OR label ILIKE ${like} OR fabric_id ILIKE ${like} LIMIT 10`)
+      say(`  colours  co${r.company_id} fabric=${r.fabric_id} colour=${r.colour_id} label=${r.label} active=${r.active}`);
     for (const r of await sql`SELECT fabric_code, fabric_description, supplier_code, is_active, company_id FROM scm.fabric_trackings WHERE fabric_code ILIKE ${like} OR supplier_code ILIKE ${like} OR fabric_description ILIKE ${like} LIMIT 10`)
       say(`  tracking co${r.company_id} code=${r.fabric_code} sup=${r.supplier_code} desc=${r.fabric_description} active=${r.is_active}`);
   }
