@@ -150,7 +150,8 @@ cover of a drift fix would have made that decision silently.
   whole Repair phase disappears for an internal-resolution case (`:1279-1285`).
 
 **Sub-statuses** (小类) live inside two stages only — `ASSR_SUB_STATUSES`
-(`stages.ts`): Under Verification → `pending_inspection` / `qc_issue_result`;
+(`frontend/src/vendor/scm/lib/assr-sub-statuses.ts`, byte-identical with
+`backend/src/scm/shared/assr-sub-statuses.ts`; `stages.ts` re-exports it): Under Verification → `pending_inspection` / `qc_issue_result`;
 Supplier Pickup → `pending_customer_pickup` / `pending_supplier_pickup` /
 `pending_supplier_return` — THREE legs since Nico 2026-09-01: the stage now
 ENTERS on the customer-pickup leg (`transitionStage` seeds it) because
@@ -174,6 +175,22 @@ the CSV export isolate one leg; and the `/api/assr/summary` `stage_funnel`
 rows carry `sub_customer` + `sub_return` counts so the funnel card's caption
 reads "X customer pickup · Y supplier pickup · Z supplier return" instead of
 the static description.
+
+**One list, read by the server too (2026-09-14).** The save allowlist on
+`PATCH /api/assr/:id` (`ASSR_SUB_STATUS_KEYS`), the stage-entry seed
+(`assrSubStatusSeed` in `transitionStage`), the activity-log line and the printed
+report's sub-status line (`assrSubStatusLabelOf`) all read the shared list. The
+print keeps exactly two wordings of its own ("Pending Inspection — our team",
+"QC Issue Result — our team", owner 2026-08-07); everything else prints the
+screen label. Before this, the allowlist was a hand-kept copy without
+`pending_customer_pickup`: a case entered Pickup / Return on that leg and, once
+switched to a supplier leg, could never be switched back (400 "Unknown
+sub-status"; the desktop select showed nothing, and now shows the refusal).
+The server still accepts a sub-status from either stage on any case — the
+screens only offer the current stage's legs. Pinned by
+`backend/tests/assrSubStatusOneHome.test.ts` and
+`frontend/src/vendor/scm/lib/assr-sub-statuses.canonical.test.ts`. Trace:
+`docs/bugs/0890-a-service-case-could-never-be-switched-back-to-pending-custo.md`.
 
 The stage itself was RENAMED "Supplier Pickup / Return" → **"Pickup / Return"**
 (Nico 2026-09-04, canonical tables both sides + the six hand-copy pill maps):
@@ -934,6 +951,7 @@ module that means:
 | Change | Desktop | Mobile | Shared |
 |---|---|---|---|
 | Stage pipeline, supplier-only rule, sub-statuses | `pages/ServiceCases.tsx` (`DETAIL_STAGES`, `getActiveStages`) | `mobile/MobileServiceCase.tsx` (`STAGES`, `activeMStages`, `PHASE_DEFS`) | **`vendor/scm/lib/assr/stages.ts`** — put the rule HERE; both surfaces already import it |
+| Sub-status LIST (which legs exist, the seed, what a save accepts) | `pages/ServiceCases.tsx` (sub-status select) | `mobile/MobileServiceCase.tsx` (sub-status toggle) | **`vendor/scm/lib/assr-sub-statuses.ts`** and its byte-identical backend twin — the server's save allowlist once kept its own copy and refused Pending Customer Pickup |
 | Stage LABELS (what any reader sees for a stage) | `pages/ServiceCases.tsx`, `pages/MyCases.tsx`, `portal/pages/PortalSupplierCase.tsx` | `mobile/MobileServiceCase.tsx` (`prettyStage`) | **`vendor/scm/lib/assr-stage-labels.ts`** and its byte-identical backend twin — the words had five hand-written homes and the customer-facing one printed a raw slug |
 | Intake required fields | `ServiceCases.tsx:2857-2872` (disabled gate) + `:2425-2467` (submit) | `MobileServiceCase.tsx:1921` (`valid`) + `:1858-1890` (payload) | server guard `backend/src/routes/assr.ts:1548-1566` — change this FIRST |
 | Enum option lists (priority / issue category / resolution / verification / QC) | `ServiceCases.tsx` lookups | `MobileServiceCase.tsx` hardcoded fallbacks + `useLookupNames`/`useLookupSlugs` | `/api/assr/lookups/:kind` is the source; the constants are only a pre-fetch fallback |

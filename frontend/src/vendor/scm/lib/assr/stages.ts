@@ -16,6 +16,7 @@
 // ----------------------------------------------------------------------------
 
 import { ASSR_STAGE_LABEL } from "../assr-stage-labels";
+import { ASSR_SUB_STATUSES, assrSubStatusLabelOf, type AssrSubStatusDef } from "../assr-sub-statuses";
 
 export type AssrStageKey =
   | "pending_review"
@@ -120,31 +121,11 @@ export function filterActiveStages<T>(
   return stages.filter((s) => isStageActive(method, keyOf(s), currentStage));
 }
 
-export interface AssrSubStatusDef {
-  key: string;
-  label: string;
-}
-
-/**
- * Sub-statuses (小类) inside two stages — DIRECTLY switchable by ops
- * (Nick 2026-07-15: "我要可以直接换" — the earlier field-derived version
- * wasn't controllable). Stored on assr_cases.sub_status; entering a
- * stage with sub-states seeds the first entry (transitionStage), other
- * stages carry NULL.
- */
-export const ASSR_SUB_STATUSES: Record<string, AssrSubStatusDef[]> = {
-  under_verification: [
-    { key: "pending_inspection", label: "Pending Inspection" },
-    { key: "qc_issue_result", label: "QC Issue Result" },
-  ],
-  pending_supplier_pickup: [
-    // Customer-pickup leg first (Nico 2026-09-01): it is the stage's entry
-    // point (collect the item FROM the customer) and transitionStage seeds it.
-    { key: "pending_customer_pickup", label: "Pending Customer Pickup" },
-    { key: "pending_supplier_pickup", label: "Pending Supplier Pickup" },
-    { key: "pending_supplier_return", label: "Pending Supplier Return" },
-  ],
-};
+/* The sub-status list itself lives in ../assr-sub-statuses.ts, byte-identical
+   with the server's copy, because the server's save allowlist once held a
+   different list (docs/bugs/0890-a-service-case-could-never-be-switched-back-to-pending-custo.md).
+   Re-exported so the screens keep one import. */
+export { ASSR_SUB_STATUSES, type AssrSubStatusDef };
 
 /**
  * Resolve a case's current sub-status from the STORED value. Falls
@@ -188,11 +169,7 @@ export function assrSubStatusAddsInfo(
 
 /** Human label for a sub-status key (timeline rendering). */
 export function assrSubStatusLabel(key: string | null | undefined): string {
-  for (const opts of Object.values(ASSR_SUB_STATUSES)) {
-    const hit = opts.find((o) => o.key === key);
-    if (hit) return hit.label;
-  }
-  return key || "—";
+  return assrSubStatusLabelOf(key) ?? (key || "—");
 }
 
 /** Active canonical stages for a case (the common mobile call). */
