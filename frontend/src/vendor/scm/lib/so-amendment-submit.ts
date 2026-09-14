@@ -21,6 +21,8 @@
 // and "nothing to submit" is true only when BOTH halves are empty.
 // ----------------------------------------------------------------------------
 
+import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover } from './amendment-approver';
+
 /** What the operator's in-flight edit adds up to. */
 export type AmendmentSubmitPlan =
   /** Neither half has a change — the only case that is a genuine error. */
@@ -86,7 +88,7 @@ export function amendmentSubmittedNotice(
     amendments?: Array<{ amendment_no?: string | null; lane?: string | null }>;
   } | null | undefined)?.amendments ?? [];
   const lane = (l?: string | null) =>
-    l === 'LINES' ? 'Purchasing' : l === 'DELIVERY' ? 'Logistics' : '';
+    (l === 'LINES' || l === 'DELIVERY' ? AMENDMENT_APPROVER_LABEL[soAmendmentApprover(l)] : '');
   if (created.length > 1) {
     return {
       title: 'Amendment split into two approvals',
