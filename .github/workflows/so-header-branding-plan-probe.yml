@@ -1,0 +1,51 @@
+name: SO header branding plan probe (read-only, temporary)
+
+# TEMPORARY — deleted before this branch merges. Runs the backfill's PLAN (a
+# READ ONLY transaction, MODE hard-wired to plan, no confirm) for both
+# companies on staging and production, from the branch, so the plan can be read
+# before the dispatchable workflow exists on main.
+
+on:
+  push:
+    branches: [fix/so-branding-backfill]
+    paths:
+      - backend/scripts/backfill-so-header-branding.mjs
+      - backend/src/scm/lib/so-list-first-item-branding.ts
+      - .github/workflows/so-header-branding-plan-probe.yml
+
+concurrency:
+  group: so-header-branding-plan-probe
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    runs-on: ubuntu-latest
+    environment: Staging
+    strategy: { fail-fast: false, matrix: { company: [HOUZS, "2990"] } }
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: backend/package-lock.json }
+      - run: npm ci
+      - name: Assert the target is STAGING
+        env: { DATABASE_URL: "${{ secrets.STAGING_DATABASE_URL }}" }
+        run: |
+          case "$DATABASE_URL" in *anogrigyjbduyzclzjgn*) echo "::error::points at PRODUCTION"; exit 1;; esac
+          case "$DATABASE_URL" in *minnapsemfzjmtvnnvdd*) echo "target: staging";; *) echo "::error::not the staging project"; exit 1;; esac
+      - name: Plan (staging, ${{ matrix.company }})
+        env: { DATABASE_URL: "${{ secrets.STAGING_DATABASE_URL }}", MODE: plan, COMPANY: "${{ matrix.company }}" }
+        run: npx tsx scripts/backfill-so-header-branding.mjs
+
+  prod:
+    runs-on: ubuntu-latest
+    strategy: { fail-fast: false, matrix: { company: [HOUZS, "2990"] } }
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: backend/package-lock.json }
+      - run: npm ci
+      - name: Plan (prod, ${{ matrix.company }})
+        env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}", MODE: plan, COMPANY: "${{ matrix.company }}" }
+        run: npx tsx scripts/backfill-so-header-branding.mjs
