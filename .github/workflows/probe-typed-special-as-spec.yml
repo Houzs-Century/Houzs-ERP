@@ -1,0 +1,33 @@
+name: Typed special order as spec — what would move (read-only)
+
+# Manual, read-only. Owner 2026-09-14: 「只要是有规格的就没问题了啊」 - make the typed
+# "Custom / other" special count as spec so MRP matches custom pillows by colour.
+# Before changing the stock key, this measures what would move: open accessory /
+# mattress / others lines carrying typed text, the common texts per SKU, on-hand
+# stock by current key, and lines already on a PO or receipt. SELECT only.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: probe-typed-special-as-spec
+  cancel-in-progress: false
+
+jobs:
+  prod:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-typed-special-as-spec.mjs
+        env:
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
