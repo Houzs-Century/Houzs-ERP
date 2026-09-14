@@ -5417,6 +5417,10 @@ Three changes of shape, not just of scope:
   so a new sibling column is added in ONE place;
 - `backend/scripts/repair-sofa-line-shown-vs-code.mjs` (+ its workflow) is the
   system-wide sweep, replacing `repair-sofa-line-name-to-code.mjs` [gone].
+  Since 2026-09-14 it takes a `docs` input (comma-separated document numbers):
+  when set, only those documents are planned and written, and the plan prints
+  how many disagreeing values on OTHER documents it left untouched. It was added
+  to correct HC-PO-2609-064 alone (docs/bugs/0887).
 
 ONLY the piece token moves: a supplier code keeps the supplier's own spelling
 (`HOK-5540 SOFA 2A(LHF)` -> `HOK-5540 SOFA 1A(LHF)`), because a document is a
