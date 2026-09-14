@@ -8,7 +8,7 @@ import { fakeSb } from './fake-postgrest';
  * -027, -032, -009, -086, -010, -079, -074, -068 went to AutoCount as a
  * `so_to_po` TRANSFER and HC-PO-2609-064 as a `create_po`, all `sent`, and not
  * one of their lines carries `linked_ac_dtlkey` — not today, and not in the
- * po_revisions snapshot taken before their first amendment. 49 of 71 transfers
+ * po_revisions snapshot taken before their first amendment. 52 of 74 transfers
  * and 4 of 27 purchase creates since go-live are the same.
  *
  * Two refusals inside persistLineKeys, both written for CONVERSIONS, were

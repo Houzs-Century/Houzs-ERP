@@ -16,7 +16,7 @@ const v = (note: string) => ({
   colourId: 'HR805-20', fabricId: 'HR805', legHeight: 'Default', fabricCode: 'HR805-20',
   seatHeight: '32', colourLabel: 'HR805-20', fabricLabel: 'HR805', extraAddonNote: note,
 });
-const piece = (over: Record<string, unknown>) => ({
+const piece = (over: Record<string, unknown>): Record<string, unknown> => ({
   item_group: 'sofa', description: 'SOFA 8069', qty: 1, unit_price_sen: 0,
   location: null, delivery_date: null, ...over,
 });

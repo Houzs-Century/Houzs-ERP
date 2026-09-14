@@ -149,7 +149,7 @@ export async function persistLineKeys(
        AddSOToPOTransferDetail copies the SALES line's item, so the book holds
        'HOK-2038 (A) (Q)' where the ERP composed 'CELENE (A)-(Q)' (recorded on
        HC-PO-2609-089) and the ItemCode check below could never pass for a
-       supplier-coded product: 49 of 71 transfers since go-live kept no keys.
+       supplier-coded product: 52 of 74 transfers since go-live kept no keys.
        The host creates purchase line N from DtlKeys[N] and costs it on exactly
        that correspondence, so line N belongs to the ERP row whose sales line IS
        DtlKeys[N] — checked against the database before anything is written. */
