@@ -1080,6 +1080,7 @@ const SoLineCardInner = ({
               disabled={!isEditing}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
+              itemCode={draft.itemCode || null}
               onSelect={pickFabricColour}
             />
             <VariantSelect
@@ -1142,6 +1143,7 @@ const SoLineCardInner = ({
               disabled={!isEditing}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
+              itemCode={draft.itemCode || null}
               onSelect={pickFabricColour}
             />
           </div>
@@ -1157,6 +1159,7 @@ const SoLineCardInner = ({
               disabled={!isEditing}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
+              itemCode={draft.itemCode || null}
               onSelect={pickFabricColour}
             />
             <VariantSelect
@@ -1500,9 +1503,11 @@ const VariantSelect = ({
    ────────────────────────────────────────────────────────────────────── */
 
 const FabricColourCombobox = ({
-  label, value, onSelect, disabled = false, required = false, pool, inactiveCodes,
+  label, value, onSelect, disabled = false, required = false, pool, inactiveCodes, itemCode,
 }: {
   label:    string;
+  /** The line's SKU — the server applies its Model's pool before the 50 cap. */
+  itemCode: string | null;
   /** Selected colour code (draft.variants.fabricCode). Shown verbatim when closed. */
   value:    string;
   /** Non-empty = restrict to these colour codes (Model allowed_options.fabrics). */
@@ -1521,7 +1526,7 @@ const FabricColourCombobox = ({
      only fires while the operator is actively picking. */
   const debounced = useDebouncedValue(search, 200);
   const trimmed   = debounced.trim();
-  const coloursQ  = useFabricColoursSearch(trimmed, { enabled: open && trimmed.length >= 2 });
+  const coloursQ  = useFabricColoursSearch(trimmed, { enabled: open && trimmed.length >= 2, itemCode });
 
   /* Apply the pool + inactive gates to the SERVER results (the old option-list
      prune, moved server-side of the fetch). Cap at 50 like the SKU picker. */
