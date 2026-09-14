@@ -55,3 +55,13 @@ the unused POST/DELETE pair is recorded above so the next reader knows it is
 unused by choice rather than by oversight.
 
 **Ref.** feat/do-payments-v2, 2026-09-13.
+
+**Correction 2026-09-14.** The root cause above opens with
+"`scm.delivery_order_payments` exists". It does not: a read-only probe of
+production returned `to_regclass(...) = NULL`, so the "built, wired, unused" ledger
+was built and wired against a table that was never created. The endpoints, the
+hooks, the stale `delivery-order-queries.ts` comment and the invoice page's call to
+them are removed in
+`docs/bugs/0888-the-delivery-order-payment-ledger-served-a-table-production.md`.
+The judgement here — carry means show, the order is the one place money is
+taken — is unchanged, and is now the only path there is.

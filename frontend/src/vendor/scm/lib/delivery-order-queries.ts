@@ -1,5 +1,5 @@
 // Vendored SLICE of apps/backend/src/lib/flow-queries.ts — ONLY the
-// Delivery-Order (mfg) read / detail / status / item / payment hooks the
+// Delivery-Order (mfg) read / detail / status / item hooks the
 // vendored DO list / new / from-so / detail pages use. The SI / DR hooks that
 // share the same source module are intentionally NOT vendored here.
 //
@@ -22,7 +22,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
-import { writeFailedAs } from './mutation-error';
 import { invalidateSoLists } from './sales-order-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
@@ -243,10 +242,8 @@ export const useMfgDeliveryOrderDetail = (id: string | null) => useQuery({
    doNumber — instead of raising a second DO that ships the goods twice.
    Omitting it is exactly today's behaviour (the middleware no-ops).
 
-   Mirrors useAddDeliveryOrderPayment 130 lines below, which has been idempotent
-   since #657 while the DO the payment hangs off was not — the split this PR
-   closes. A duplicate DO is not just a duplicate row: it decrements stock again
-   and carries into SI. */
+   A duplicate DO is not just a duplicate row: it decrements stock again and
+   carries into SI. */
 export const useCreateMfgDeliveryOrder = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -411,64 +408,5 @@ export const useDeleteMfgDeliveryOrderItem = () => {
       qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
       releaseSoSideQueries(qc);
     },
-  });
-};
-
-/* DO payments ledger — mirror of the SO payments hooks. The DO Create + Detail
-   screens render the same Houzs PaymentsTable; these hooks back the persisted
-   (Detail) path. */
-export type DoPayment = {
-  id: string;
-  delivery_order_id: string;
-  paid_at: string;
-  method: 'merchant' | 'transfer' | 'cash';
-  merchant_provider: string | null;
-  installment_months: number | null;
-  online_type: string | null;
-  approval_code: string | null;
-  amount_sen: number;
-  account_sheet: string | null;
-  collected_by: string | null;
-  collected_by_name: string | null;
-  note: string | null;
-  created_at: string;
-  created_by: string | null;
-};
-
-export const useDeliveryOrderPayments = (id: string | null) => useQuery({
-  queryKey: ['mfg-delivery-orders', id, 'payments'],
-  queryFn: () => authedFetch<{ payments: DoPayment[] }>(`/delivery-orders-mfg/${id}/payments`).then((r) => r.payments),
-  enabled: Boolean(id),
-  staleTime: 2 * 60_000,
-  retry: retryUnlessClientError,
-  retryDelay: 800,
-});
-
-/* `idempotencyKey` — optional, destructured OUT of the body. See
-   useAddSalesOrderPayment / lib/idempotency.ts for the one-key-per-intent rule. */
-export const useAddDeliveryOrderPayment = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, idempotencyKey, ...body }: { id: string; idempotencyKey?: string } & Record<string, unknown>) =>
-      authedFetch<{ payment: DoPayment }>(`/delivery-orders-mfg/${id}/payments`,
-        idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) })),
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['mfg-delivery-orders', vars.id, 'payments'] });
-      qc.invalidateQueries({ queryKey: ['mfg-delivery-order-detail', vars.id] });
-    },
-    onError: writeFailedAs('Payment not recorded'),
-  });
-};
-
-export const useDeleteDeliveryOrderPayment = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, paymentId }: { id: string; paymentId: string }) =>
-      authedFetch<{ ok: boolean }>(`/delivery-orders-mfg/${id}/payments/${paymentId}`, { method: 'DELETE' }),
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['mfg-delivery-orders', vars.id, 'payments'] });
-      qc.invalidateQueries({ queryKey: ['mfg-delivery-order-detail', vars.id] });
-    },
-    onError: writeFailedAs('Payment not deleted'),
   });
 };

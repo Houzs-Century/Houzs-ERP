@@ -230,7 +230,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/delivery-orders-mfg.ts": {
-      "reads": 47,
+      "reads": 46,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-planning.ts": {

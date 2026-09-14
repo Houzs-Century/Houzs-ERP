@@ -12,13 +12,11 @@
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
 import { firstUndeliverableSo, soNotDeliverableResponse } from '../lib/source-document-gates';
 import { HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
 import { mountHoldRoute } from './document-hold-routes';
 import { DO_STATUS_BUCKETS } from '../lib/do-status-buckets';
-import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import {
   DO_SHIPPED_STATES, DO_STOCK_OUT_STATES, DO_PRESHIP_STATES, doCountsAsDelivered,
   DO_STATUSES as SHARED_DO_STATUSES, CONFIRM_HOP_STATES,
@@ -354,11 +352,6 @@ const ITEM =
      arrived. Surfaced so the DO detail can say which PO a short line is bound to
      instead of leaving the operator to infer it from the header badge. */
   'committed_po_batch_no, ac_substituted';
-
-const PAYMENT_COLS =
-  'id, delivery_order_id, paid_at, method, merchant_provider, installment_months, ' +
-  'online_type, approval_code, amount_sen, account_sheet, collected_by, note, ' +
-  'created_at, created_by';
 
 /* scm.delivery_order_crew columns (created in migration 0053) — the FK ids + the
    assign-time name/ic/contact/plate snapshot. Read on the DO detail + returned
@@ -5155,122 +5148,11 @@ deliveryOrdersMfg.delete('/:id/items/:itemId', async (c) => {
   return c.json({ ok: true });
 });
 
-// ── Payments (mirror SO payments ledger) ──────────────────────────────────
-deliveryOrdersMfg.get('/:id/payments', async (c) => {
-  const sb = c.get('supabase'); const id = c.req.param('id');
-  /* Own/downline sales scope (lib/salesScope.ts) — resolve the DO's
-     salesperson_id first so a scoped seller can't read another
-     salesperson's payment ledger by enumerating ids. Out-of-scope /
-     missing → 404. Directors/view-all bypass. */
-  {
-    /* THE PARENT IS THE ONLY GATE THERE CAN BE: scm.delivery_order_payments has
-       no company_id of its own, so it is scoped THROUGH its parent DO
-       (delivery_order_id -> delivery_orders.company_id) — a contract that only
-       holds if the parent read is scoped. The salesperson scope below is a
-       different axis: it bounds WHICH PERSON, never which company, and view-all
-       passes it untouched. */
-    const { data: hdr, error: hdrErr } = await scopeToCompany(
-      sb.from('delivery_orders').select('salesperson_id').eq('id', id), c,
-    ).maybeSingle();
-    if (hdrErr) return c.json({ error: 'lookup_failed', reason: hdrErr.message }, 500);
-    if (!hdr) return c.json({ error: 'not_found' }, 404);
-    const sp = (hdr as { salesperson_id?: number | string | null }).salesperson_id;
-    if (await salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), sp)) {
-      return c.json({ error: 'not_found' }, 404);
-    }
-  }
-  const { data, error } = await sb
-    .from('delivery_order_payments')
-    .select(`${PAYMENT_COLS}, staff:collected_by ( name )`)
-    .eq('delivery_order_id', id)
-    .order('paid_at', { ascending: false })
-    .order('created_at', { ascending: false });
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const payments = (data ?? []).map((r: unknown) => {
-    const row = r as Record<string, unknown> & { staff: { name: string } | null };
-    const { staff, ...rest } = row;
-    return { ...rest, collected_by_name: staff?.name ?? null };
-  });
-  return c.json({ payments });
-});
-
-const paymentCreateSchema = z.object({
-  paidAt:             z.string().min(1),
-  /* 2026-06-06 payment-method unify — 'installment' is first-class L1. The
-     accepted set IS shared/payment-methods.ts's PAYMENT_METHOD_CODES, not a
-     re-typed literal: this enum stood in seven route files, so "don't add a
-     5th code without wiring its branch logic" (that module's header) was
-     advice no reader of this line could act on. */
-  method:             z.enum(PAYMENT_METHOD_CODES),
-  merchantProvider:   z.string().trim().min(1).optional().nullable(),
-  installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
-  onlineType:         z.string().trim().min(1).optional().nullable(),
-  approvalCode:       z.string().optional().nullable(),
-  amountSen:        z.number().int().nonnegative(),
-  accountSheet:       z.string().optional().nullable(),
-  collectedBy:        z.string().uuid().optional().nullable(),
-  note:               z.string().optional().nullable(),
-});
-
-deliveryOrdersMfg.post('/:id/payments', async (c) => {
-  const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
-
-  // company-scope: through the parent DO - the payment row carries no
-  // company_id. See the note on GET /:id/payments above.
-  const { data: doc, error: docErr } = await scopeToCompany(
-    sb.from('delivery_orders').select('id').eq('id', id), c,
-  ).maybeSingle();
-  if (docErr) return c.json({ error: 'lookup_failed', reason: docErr.message }, 500);
-  if (!doc) return c.json({ error: 'delivery_order_not_found' }, 404);
-
-  let body: unknown;
-  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const parsed = paymentCreateSchema.safeParse(body);
-  if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
-  const p = parsed.data;
-
-  const merchantLike      = p.method === 'merchant' || p.method === 'installment';
-  const merchantProvider  = merchantLike ? (p.merchantProvider ?? null) : null;
-  const installmentMonths = merchantLike
-    ? (typeof p.installmentMonths === 'number' && p.installmentMonths > 0 ? p.installmentMonths : null)
-    : null;
-  const onlineType        = p.method === 'transfer' ? (p.onlineType ?? null) : null;
-
-  const { data, error } = await sb.from('delivery_order_payments').insert({
-    delivery_order_id:  id,
-    paid_at:            p.paidAt,
-    method:             p.method,
-    merchant_provider:  merchantProvider,
-    installment_months: installmentMonths,
-    online_type:        onlineType,
-    approval_code:      p.approvalCode ?? null,
-    amount_sen:       p.amountSen,
-    account_sheet:      p.accountSheet ?? null,
-    collected_by:       p.collectedBy ?? null,
-    note:               p.note ?? null,
-    created_by:         user.id,
-  }).select(PAYMENT_COLS).single();
-  if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
-  return c.json({ payment: data }, 201);
-});
-
-deliveryOrdersMfg.delete('/:id/payments/:paymentId', async (c) => {
-  const sb = c.get('supabase'); const id = c.req.param('id'); const paymentId = c.req.param('paymentId');
-  /* company-scope: through the parent DO. The mismatch check below proves the
-     payment belongs to the DO in the URL, never whose DO that is. See the note
-     on GET /:id/payments above. */
-  const { data: doc, error: docErr } = await scopeToCompany(
-    sb.from('delivery_orders').select('id').eq('id', id), c,
-  ).maybeSingle();
-  if (docErr) return c.json({ error: 'lookup_failed', reason: docErr.message }, 500);
-  if (!doc) return c.json({ error: 'delivery_order_not_found' }, 404);
-  const { data: row } = await sb.from('delivery_order_payments').select('delivery_order_id').eq('id', paymentId).maybeSingle();
-  if (!row) return c.json({ error: 'not_found' }, 404);
-  if ((row as { delivery_order_id: string }).delivery_order_id !== id) return c.json({ error: 'payment_doc_mismatch' }, 400);
-  const { error } = await sb.from('delivery_order_payments').delete().eq('id', paymentId);
-  if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
-  return c.json({ ok: true });
-});
+/* No payment ledger on the delivery order. The sales order is the one place a
+   payment is taken (owner, 2026-09-12: 「SO 的付款要带去 DO 跟 SI」); the DO and
+   the SI show the order's ledger. A DO-side GET/POST/DELETE used to live here
+   over scm.delivery_order_payments, a table production never had — see
+   docs/bugs/BUGREF. */
 
 // ── Status transition + inventory deduction / reversal ────────────────────
 export const patchDeliveryOrderStatusHandler = async (c: any) => {

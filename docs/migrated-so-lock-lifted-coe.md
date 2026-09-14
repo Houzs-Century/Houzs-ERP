@@ -79,8 +79,10 @@ migrated order's balance from the ERP — the opposite of the old safety.
   collection on a migrated order cannot currently be recorded in the ERP (nor in
   AutoCount, which is locked). The lock is lifted (→ off) once the collections
   are reconciled, or a narrower path is chosen — the owner's decision.
-- `scm.delivery_order_payments` absent (`docs/bugs/0704`); the inbound half,
-  AutoCount payments not reaching the ERP (`docs/bugs/0678`).
+- `scm.delivery_order_payments` absent (`docs/bugs/0704`) — CLOSED 2026-09-14:
+  the dead delivery-order ledger that pointed at it was removed, payments stay on
+  the sales order (`docs/bugs/0888`). Still open: the inbound half, AutoCount
+  payments not reaching the ERP (`docs/bugs/0678`).
 
 ## Lessons
 

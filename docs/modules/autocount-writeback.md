@@ -2884,27 +2884,21 @@ else**:
 `composePaymentUdf` has exactly two feeders — `scm/lib/so-edit-header.ts:187` and
 `services/autocount-writeback.ts:1284` — and both are fed from those two reads.
 
-**`scm.delivery_order_payments` is a SECOND money table, and no AutoCount path
-reads it.** It is written by `POST /delivery-orders-mfg/:id/payments`
-(`scm/routes/delivery-orders-mfg.ts:5243`) and rendered by the DO Create and
-Detail screens through the same `PaymentsTable` the sales order uses
-(`frontend/src/vendor/scm/lib/delivery-order-queries.ts:417-470`). So a payment
-a driver takes at the door is recorded in our database and the account book is
-never told — the book goes on showing that customer as owing.
+**There is no second money table.** This section used to describe
+`scm.delivery_order_payments` as a delivery-order ledger that no AutoCount path
+reads, written by `POST /delivery-orders-mfg/:id/payments`. Production never had
+that table (read-only probe 2026-09-14: `to_regclass` = `NULL`), no screen ever
+called the write hook, and the endpoints, hooks and the
+`check-do-payment-book-gap` workflow that measured it are removed. Payments are
+taken on the sales order only (owner, 2026-09-12), so the two readers above see
+every payment the ERP can record. Ledger:
+`docs/bugs/0888-the-delivery-order-payment-ledger-served-a-table-production.md`,
+correcting `docs/bugs/0704-money-collected-at-the-door-never-reaches-the-account-book.md`.
 
-That is not a branch that forgot to enqueue: there is no code path of any kind
-from that table to the write-back, which is why it is a section here and not a
-line in §6's table. **Do not "fix" it by pointing `readSoPaymentRefs` at both
-tables** — the two ledgers can legitimately hold the SAME payment (a door
-collection also keyed on the order), and summing them would tell AutoCount the
-customer paid twice.
-
-The exposure is measured, never assumed, by
-`backend/scripts/check-do-payment-book-gap.mjs` (workflow: **DO payment book gap
-(read-only)**), which separates door money the sales order ALSO records from
-door money that exists nowhere else. Ledger entry:
-`docs/bugs/0704-money-collected-at-the-door-never-reaches-the-account-book.md`,
-where the ruling and the chosen repair will be recorded.
+**If a delivery-order ledger is ever built**, do not feed it to the write-back by
+pointing `readSoPaymentRefs` at both tables — the two ledgers could hold the SAME
+payment (a door collection also keyed on the order), and summing them would tell
+AutoCount the customer paid twice.
 
 ### DeliverPhone1 — two contacts, two columns
 

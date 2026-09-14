@@ -2,8 +2,10 @@
 
 Per-module technical doc — the data flow from the screen down to the database,
 plus the performance characteristics. Sibling of `sales-order.md`; the DO is a
-faithful clone of the SO API (editable SO-style header, line CRUD, payments
-ledger, `recomputeTotals`) with one thing the SO does not have: **it moves stock**.
+faithful clone of the SO API (editable SO-style header, line CRUD,
+`recomputeTotals`) with one thing the SO does not have: **it moves stock**. It has
+**no payment ledger of its own** — money is taken on the sales order and shown
+here (§ Money collected on the sales order).
 
 > Convention: money is in **sen** (integer cents) end-to-end. Dates are stored
 > UTC, displayed DD/MM/YYYY. All reads/writes go through `/api/scm/*`.
@@ -29,7 +31,7 @@ reversal branch. The DO is the OUT half of the inventory ledger.
 | Surface | File | Notes |
 |---------|------|-------|
 | Desktop list | `frontend/src/pages/scm-v2/MfgDeliveryOrdersListV2.tsx` | Server-paginated, `pageSize = 50` (`:834`), page in `?page=`. Sends the **bucket name** as `status` (`:854`). Revenue card is page-only; In-transit / Delivered cards read full-set `statusCounts` (`:878-880`). |
-| Desktop detail | `frontend/src/pages/scm-v2/DeliveryOrderDetailV2.tsx` | Header + lines + payments + crew. |
+| Desktop detail | `frontend/src/pages/scm-v2/DeliveryOrderDetailV2.tsx` | Header + lines + the sales order's collected payments (read-only) + crew. |
 | Desktop new | `frontend/src/pages/scm-v2/DeliveryOrderNewV2.tsx` | **Customer and salesperson are captured by CODE, like SO/SI** (2026-08-21). Customer is the debtor autocomplete (`useDebtorSearch` + `DebtorSuggestList`) and sets `debtorCode` alongside the name; typing a fresh name CLEARS the stale code. Salesperson is a `SelectInput` over `usePickableStaff({ onlySales: true })` valued on `salespersonId`, so a uuid can no longer leak into a name string the way the old free-text input allowed — legacy `agent` is DERIVED from the picked staff on submit, never typed. Both prefill paths seed both fields: from-SO (`:696/:701`) and edit-existing (`:756/:761`). Note the asymmetry behind this: `POST /` and `PATCH /:id` take `debtorCode`/`salespersonId` from the BODY, but `POST /from-sos` does not — it copies them off the SO header, so the form's values never reach it. The Sales-location dropdown labels each option with the ONE warehouse rule — `warehouseLabel`, code first then name (`frontend/src/vendor/scm/lib/warehouse-label.ts`, a byte-identical mirror of the backend module; 2026-08-21). It printed the NAME first. Do not hand-write the order — see `docs/modules/warehouses.md`. |
 | Desktop from-SO | `frontend/src/pages/scm-v2/DeliveryOrderFromSo.tsx` | Line-level picker over `/deliverable-so-lines`. |
 | Desktop report | `frontend/src/pages/scm-v2/DeliveryOrderDetailListing.tsx` | Detail-listing report. |
@@ -202,8 +204,6 @@ below; every transition out of `CANCELLED` is refused.
 - `useMfgDeliveryOrders(status?)` (`:198`) — legacy unpaginated,
   `['mfg-delivery-orders', status ?? 'all']`.
 - `useMfgDeliveryOrderDetail(id)` (`:233`) — `['mfg-delivery-order-detail', id]`.
-- `useDeliveryOrderPayments(id)` (`:370`) — `['mfg-delivery-orders', id, 'payments']`,
-  `staleTime: 2 * 60_000` (longer than the rest).
 - `useDeliverableSoLines*` (`:54`, `:116`) and `useSoConvertHeader` (`:101`) feed
   the SO→DO pickers.
 - `useCreateMfgDeliveryOrder` (`:249`) takes an **optional `idempotencyKey`**,
@@ -227,11 +227,12 @@ Three layers as in `docs/modules/sales-order.md` §1. DO specifics:
 - The **legacy** key `mfg-delivery-orders` is whitelisted for the localStorage
   snapshot (`frontend/src/lib/query-persist.ts:95`); the **paged** key is not
   (different first segment).
-- The payments sub-key `['mfg-delivery-orders', <id>, 'payments']` is explicitly
-  excluded from persistence (`query-persist.ts:100-133`). The comment there is a
-  bug post-mortem worth reading before touching that file: a persisted payment
-  ledger was rehydrated as fresh data and MobilePOD turned it into the balance a
-  driver collects.
+- Any `'payments'` sub-key is excluded from persistence
+  (`query-persist.ts:100-133`). The comment there is a bug post-mortem worth
+  reading before touching that file: a persisted payment ledger was rehydrated as
+  fresh data and MobilePOD turned it into the balance a driver collects. The DO's
+  own `['mfg-delivery-orders', <id>, 'payments']` key named there no longer exists
+  (`docs/bugs/0888`); the rule still guards the SO and SI ledgers.
 
 ---
 
@@ -287,7 +288,6 @@ still need `edit` on `scm.sales.delivery`.
 | PUT | `/:id/crew` | `:3314` | Driver / helper / lorry assignment + snapshot. |
 | PATCH | `/:id` | `:3450` | Header edit (+ SO amend-field mirror). |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:3636` / `:3784` / `:4005` | Line CRUD. |
-| GET/POST/DELETE | `/:id/payments[/:paymentId]` | `:4075` / `:4118` / `:4155` | Payments ledger. |
 | PATCH | `/:id/status` | `:4359` (handler `:4166`) | **The stock chokepoint.** |
 | GET | `/:id/scan-token` | `backend/src/scm/routes/delivery-order-scan-token.ts` | Mint-if-missing the token the printed QR encodes (mig 0328). **10 characters since 2026-08-27** — the length is a print setting, see `docs/bugs/0552-…`; the 64-hex form every sheet already printed carries still resolves. A SEPARATE router on the same prefix, because `delivery-orders-mfg.ts` is past its file-size ceiling. A **GET** although it can write: the write is an idempotent create-if-missing, and a POST would deny the QR to somebody who may print a delivery order but not edit one. Scoped to the SESSION's company; the public route can never reach it. |
 | GET | `/:id/items/:itemId/photos/:photoKey` and `…/signed` | `backend/src/scm/routes/delivery-order-item-photos.ts` | **Per-line photo read path (mig `20260828T0746_do_item_photo_urls.sql`).** A DO line raised from an SO line carries that line's `photo_urls` (R2 keys, SAME objects — owner 2026-08-10: 送货时照片要跟着 line), and these two routes are how a client views them: `/signed` mints a presigned URL and falls back to the proxy payload (production has no R2 S3 creds — 2026-08-10 incident), the bare route streams the bytes from the R2 binding. Read-only; authz is MEMBERSHIP (key listed in THIS line's `photo_urls`, line on THIS DO, active company via `scopeToCompany`) — never key shape; a `.thumb` sibling is authorised against its base key. Same separate-router-same-prefix construction as the scan token, same reason. The exact contract the SO and PO photo routes already serve, so `DoLinePhotoStrip` (desktop DO detail) mirrors `SoLinePhotoStrip`. |
@@ -527,15 +527,14 @@ revocation is folded into the unknown answer precisely because it WOULD.
 
 Schema `scm`. Baseline DDL `backend/scripts/scm-schema/2990s-full-schema.sql:176`
 (`delivery_orders`) and `:148` (`delivery_order_items`); the authoritative in-code
-column lists are `HEADER` (`delivery-orders-mfg.ts:292-310`), `ITEM` (`:333-337`),
-`PAYMENT_COLS` (`:339-342`) and `crewSnapshotCols` (`:347-351`).
+column lists are `HEADER` (`delivery-orders-mfg.ts:292-310`), `ITEM` (`:333-337`)
+and `crewSnapshotCols` (`:347-351`).
 
 | Table | Role |
 |-------|------|
 | `scm.delivery_order_items` | DO line. `ac_substituted` (mig `20260907T2340`) — AutoCount shipped a code the named SO does not carry; `so_item_id` is NULL on those by design. |
 | `scm.delivery_orders` | DO header. `warehouse_id` + `sales_location` are the SHIP-FROM BRANCH (owner 2026-09-07: header-level, never per line) — see the section below. Also: `do_number`, `so_doc_no`, `debtor_code/name`, `do_date`, `expected_delivery_at`, `customer_delivery_date`, `dispatched_at` / `signed_at` / `delivered_at`, `driver_id/name`, `vehicle`, `m3_total_milli`, address block, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_sen`, `total_cost_sen`, `total_margin_sen`, `line_count`, `warehouse_id`, `is_dropship`, `arrives_em_warehouse_date`, `pod_r2_key`, `signature_data`, `status`, `company_id`. |
 | `scm.delivery_order_items` | DO lines. `so_item_id` (the SO link that drives warehouse resolution + remaining-qty caps), `item_code`, `item_group`, `qty`, `m3_milli`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, `line_cost_sen`, `line_margin_sen`, **`ship_cost_sen`**, `variants`, `line_delivery_date`, `line_delivery_date_overridden`, `rack_id`, **`committed_po_batch_no`** (mig 0230 — the incoming PO this line shipped against before its goods arrived; the per-line claim signal the receipt reconcile reads), **`photo_urls`** (mig `20260828T0746_do_item_photo_urls.sql` — `text[] NOT NULL DEFAULT '{}'`, the source SO line's R2 photo keys carried on convert/add; SHARED keys not copies, per line never deduplicated, `[]` never null; every insert path derives it server-side via `loadCarriedSoLinePhotos` + `carriedPhotoUrls` in `backend/src/scm/lib/do-item-row.ts`, ad-hoc lines get `[]`). |
-| `scm.delivery_order_payments` | Payments taken at delivery. `method`, `merchant_provider`, `installment_months`, `online_type`, `approval_code`, `amount_sen`, `account_sheet`, `collected_by`. |
 | `scm.delivery_order_crew` | One row per DO (UNIQUE `do_id`): driver/helper/lorry FKs plus the assign-time name/IC/contact/plate snapshot. |
 | `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, item_code, variant_key, COALESCE(correction_seq,0))` by `uq_inv_mov_do_source_v2` (migration 0279; before that, `uq_inv_mov_do_source` without the correction slot), the partial unique index the reversal has to route around (`:4322-4328`). Full definition in §on idempotency below. |
 | `scm.mfg_sales_order_items` | Upstream: `warehouse_id` is the **authoritative** ship-from warehouse per line. |
@@ -918,13 +917,13 @@ to 819 with no new unpaired ERP row. Full before/after in
 `docs/cutover-so-do-remainder-2026-09-08.md`.
 Ledger: `docs/bugs/0704-a-top-up-that-reads-the-outstanding-cut-is-blind-to-a-delive.md`.
 
-**What is NOT covered here and is a real gap: money taken at the door.**
-`scm.delivery_order_payments` — the ledger Mobile POD writes when a driver
-collects on delivery — reaches AutoCount **nowhere**. `composePaymentUdf` is fed
-only from the SALES ORDER path (`scm/lib/so-edit-header.ts`, `composeCreateSo`),
-so the book's `UDF_PAYEMENT` / `UDF_BALANCE` never learn about a payment recorded
-against the delivery. That is the payment half of the owner's sentence, it is a
-different lane's subject, and it is named here so it is not lost between the two.
+**Money taken at the door is not a gap, because there is no such ledger.**
+Payments are taken on the SALES ORDER only, and `composePaymentUdf` is fed from
+that path (`scm/lib/so-edit-header.ts`, `composeCreateSo`), so the book's
+`UDF_PAYEMENT` / `UDF_BALANCE` see every payment the ERP can record. This paragraph
+used to call `scm.delivery_order_payments` "the ledger Mobile POD writes"; Mobile
+POD never wrote a payment, and production never had the table
+(`docs/bugs/0888-the-delivery-order-payment-ledger-served-a-table-production.md`).
 
 ### A migrated delivery order carries the customer block from its sales order (2026-09-08)
 
@@ -2075,7 +2074,6 @@ Everything is integer sen.
 | **`ship_cost_sen`** | line | **FROZEN at ship.** `freezeShipCost(current, unitCost)` (`backend/src/scm/lib/fulfillment-costing.ts:44`) returns `undefined` — meaning "do not write the column" — whenever the value is already non-null. Called at `:615-616`. So the FIRST post-ship costing captures the true ship-time FIFO unit cost and no later recost can touch it. Column added by `backend/src/db/migrations-pg/0143_scm_do_ship_cost_snapshot.sql`. |
 | `local_total_sen` | header | Derived by `recomputeTotals` (`:399`) from the lines. Visible to everyone. |
 | per-category `*_sen` / `*_cost_sen`, `total_cost_sen`, `total_margin_sen`, `margin_pct_basis` | header | Derived; **finance-gated** (`DO_FINANCE_KEYS`, `:317-321`) on both list and detail. |
-| `amount_sen` | `delivery_order_payments` | The ledger. Not rolled into the DO header. |
 
 Why the freeze exists: the three-way cost comparison
 ① SO order-time cost → ② DO ship-time FIFO → ③ SI landed cost only survives if ②
@@ -2101,7 +2099,8 @@ into a duplicate line.
 | Status ladder / who may advance it | `DeliveryOrderDetailV2.tsx` action bar | `mobile/MobileModuleDetail.tsx:480-494`, gated by `useMayOperateDoc` (`:454`) → `canOperateDeliveryOrders` (`frontend/src/auth/salesAccess.ts:200`) — the SAME helper the desktop uses |
 | SO→DO conversion | `pages/scm-v2/DeliveryOrderFromSo.tsx` (picker → `DeliveryOrderNewV2.tsx`, which owns the "Save as draft" toggle) | `mobile/MobileConvertWizard.tsx` (`target: "do"`) — one screen, always `asDraft: true` |
 | Convert-to-DO from the planning board | `vendor/scm/lib/delivery-planning-queries.ts` `useConvertSosToDo` | `mobile/MobileDeliveryPlanning.tsx` — **both** carry an `Idempotency-Key`; desktop keys per SO doc_no (one mount converts many), mobile per mount (one mount is one stop) |
-| Proof of delivery / collect payment | `DeliveryOrderDetailV2.tsx` payments panel | `mobile/MobilePOD.tsx` |
+| Proof of delivery | `DeliveryOrderDetailV2.tsx` action bar | `mobile/MobilePOD.tsx` (photo + signature; takes no payment) |
+| The order's collected payments, read-only | `DeliveryOrderDetailV2.tsx` aside card | the phone DO detail — both through `useSalesOrderPayments` (§ Money collected on the sales order) |
 | Cache invalidation after a write | the hooks in `vendor/scm/lib/delivery-order-queries.ts` | `mobile/sharedInvalidate.ts:69` (`DO_ROOTS` + `STOCK_ROOTS`) |
 
 `canOperateDeliveryOrders` is worth singling out: Sales staff get view + Print but
@@ -2902,13 +2901,15 @@ cannot start disagreeing about money.
 the one place a payment is taken, and keying the same deposit again against the
 delivery order is the same money counted twice.
 
-`scm.delivery_order_payments` and its three endpoints
-(`GET`/`POST`/`DELETE /delivery-orders-mfg/:id/payments`) exist and are
-**unused by choice** — the two write hooks have no call sites anywhere in the
-frontend. Recording a payment on the delivery rather than on the order is a
-business decision with a real consequence for the order's outstanding figure,
-and it belongs to the owner, not to a passing change. Trace:
-`docs/bugs/0850-the-delivery-order-never-showed-the-money-already-taken-on-i.md`.
+**There is no payment ledger on the delivery order.** The
+`GET`/`POST`/`DELETE /delivery-orders-mfg/:id/payments` endpoints and their hooks
+were removed on 2026-09-14: they served `scm.delivery_order_payments`, which
+production never had, and no screen ever wrote through them. Recording a payment
+on the delivery rather than on the order would be a business decision with a
+real consequence for the order's outstanding figure — it belongs to the owner,
+and it would start with a migration, not with these routes. Trace:
+`docs/bugs/0850-the-delivery-order-never-showed-the-money-already-taken-on-i.md`,
+`docs/bugs/0888-the-delivery-order-payment-ledger-served-a-table-production.md`.
 
 A failed read says so rather than rendering as "nothing collected": the card
 takes `error` as a REQUIRED prop, because telling the office to chase money that

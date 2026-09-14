@@ -128,7 +128,6 @@ status guards.
 | `mfg-purchase-orders.ts:3416` | `/:id/items/:itemId/allocations/:allocationId` | allocation must exist |
 | `grns.ts:3250` | `/:id/items/:itemId` | `grn_locked` |
 | `delivery-orders-mfg.ts:4853` | `/:id/items/:itemId` | `line_has_downstream_consumption` |
-| `delivery-orders-mfg.ts:5003` | `/:id/payments/:paymentId` | status guard, `do_cancelled_final` |
 | `sales-invoices.ts:1820` | `/:id/items/:itemId` | `invoice_cancelled` / `invoice_issued` |
 | `sales-invoices.ts:2038` | `/:id/payments/:paymentId` | `not_payable`, status guard |
 | `purchase-invoices.ts:2236` | `/:id/items/:itemId` | not-found guard |

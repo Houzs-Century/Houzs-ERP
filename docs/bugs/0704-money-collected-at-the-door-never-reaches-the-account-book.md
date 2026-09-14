@@ -55,8 +55,8 @@ If it is not — if drivers really do collect at the door — the money has to
 reach AutoCount. The measurement decides which world we are in, and the
 measurement did not exist.
 
-**Shipped here.** `backend/scripts/check-do-payment-book-gap.mjs` +
-`.github/workflows/check-do-payment-book-gap.yml` — read-only, SELECT only,
+**Shipped here** (script and workflow both removed 2026-09-14, see the correction
+below). The `check-do-payment-book-gap` script + workflow — read-only, SELECT only,
 manual trigger, own concurrency group, exit 0 for every legitimate answer. It
 cuts every company-1 delivery payment into three buckets:
 
@@ -86,3 +86,12 @@ systems in two directions and BOTH have a hole:
   never observed, only derived as total minus balance at import time.
 
 Module guide: `docs/modules/autocount-writeback.md`.
+
+**Correction 2026-09-14 — the premise was wrong.** This entry says the delivery
+screen writes `scm.delivery_order_payments` and the money "stops at our database".
+Production has no such table (read-only probe, `to_regclass` = `NULL`), and no
+screen ever called the write hook (`docs/bugs/0850`). No payment was recorded on a
+delivery order, so there is no door money for AutoCount to have missed. The
+owner's rule is the one quoted above — payments are taken on the sales order —
+and the dead ledger, including `check-do-payment-book-gap`, is removed in
+`docs/bugs/0888-the-delivery-order-payment-ledger-served-a-table-production.md`.
