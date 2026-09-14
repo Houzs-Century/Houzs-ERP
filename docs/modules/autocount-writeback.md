@@ -5451,6 +5451,28 @@ not-folded-into-agree property, the unwritten ruling that stays `DIFFER`, the
 no-ruling control, and the assertion that a ruling cannot rescue an ERP carrying
 no compartments at all.
 
+## Every piece of a corrected build carries the build's colour and leg (2026-09-14)
+
+New SURFACE on `backend/scripts/apply-sofa-compartment-corrections.mjs`. Every
+piece's variants, whether kept or added, now go through
+`lib/sofa-build-axes.mjs`. Blank fabric fields and a blank `legHeight` are
+filled from the same sofa's other rows. The dry-run prints a
+`fill <piece>: <keys> from the build` line for each piece it fills.
+
+Before this, an ADDED piece got `{seatHeight}` and nothing else: its variants
+were built from a row it did not have. HC-SO-013346's added `8030-1A(RHF)`
+carried no colour on the sales order or the purchase order, while its
+`8030-1A(LHF)` sibling carried `CH141-11`.
+
+The rule is the one `fill-sofa-sibling-fabric-2026-09-09.mjs` was approved on:
+
+- fill blanks only;
+- fill fabric only when the build carries exactly one (a two-tone build is left
+  alone);
+- never copy specials, because they carry money.
+
+Trace in docs/bugs/0896-a-piece-the-sofa-corrections-applier-added-carried-no-colour.md.
+
 ## The applier's MAIN path carries the supplier code too (2026-09-14)
 
 Correction to the section below: its claim that the corrections applier "aligns

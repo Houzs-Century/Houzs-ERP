@@ -82,6 +82,7 @@ import {
   supersededBy,
 } from "./lib/sofa-build-plan.mjs";
 import { decideAddedPoCompartmentLink } from "./lib/added-po-compartment-link.mjs";
+import { sharedBuildAxes, fillFromBuild } from "./lib/sofa-build-axes.mjs";
 import { disagrees } from "./lib/sofa-piece-token.mjs";
 
 const DST = process.env.DATABASE_URL;
@@ -738,6 +739,8 @@ async function main() {
       /* Plan every sofa of this build before writing any of it: one bad sofa
          refuses the whole build rather than half-applying it. */
       const sofas = [];
+      /** Blank build axes an added or kept piece takes from its own sofa. */
+      const fills = [];
       let bad = null;
       for (const copyRows of split.copies) {
         const money = planCopyMoney(copyRows);
@@ -814,9 +817,17 @@ async function main() {
         if (blockers.length) { bad = `a surplus line is referenced downstream: ${blockers.join("; ")}`; break; }
 
         const plan = [];
+        /* The colour and leg are the BUILD's: every piece of this sofa carries
+           them, an added piece included. An insert has no row of its own, so it
+           used to get `{seatHeight}` alone — no fabric on the factory sheet and
+           a different stock bucket from its sibling (docs/bugs/0896). Blanks
+           only, one fabric only, never specials: lib/sofa-build-axes.mjs. */
+        const shared = sharedBuildAxes(copyRows);
         pairs.forEach((p, idx) => {
           const first = idx === 0;
-          const v = { ...(p.row?.variants ?? {}) };
+          const fill = fillFromBuild(p.row?.variants, shared);
+          const v = fill.variants;
+          if (fill.filled.length) fills.push(`${p.want}: ${fill.filled.join(", ")} from the build`);
           if (seat.write) v.seatHeight = seat.value;
           if (c.colour && !v.colourLabel) v.colourLabel = c.colour;
           /* NOTHING IS RECOMPUTED: the lead keeps its own numbers, the rest 0. */
@@ -859,6 +870,7 @@ async function main() {
       const before = moneyOfRows(rows);
       log(`  ${doc}  [${c.source}]  ${model}  ${rows.map((r) => compartmentOf(r.code)).join("+")}  ->  ${sofas.length > 1 ? `${sofas.length} x ` : ""}${c.pieces.join("+")}${seat.write ? `  @${seat.value}"` : ""}   money total ${before.total}, charged ${before.charged}${down.grns + down.dos ? `   downstream: ${down.grns} GRN, ${down.dos} DO (all migrated paperwork)` : ""}`);
       if (sofas.length > 1) log(`      ${split.how}`);
+      for (const x of fills) log(`      fill   ${x}`);
       for (const s of sofas) {
         if (sofas.length > 1) log(`      -- sofa ${sofas.indexOf(s) + 1} of ${sofas.length}`);
         for (const p of s.plan) {
