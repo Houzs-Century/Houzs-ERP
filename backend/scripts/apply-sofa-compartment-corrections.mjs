@@ -82,6 +82,7 @@ import {
   supersededBy,
 } from "./lib/sofa-build-plan.mjs";
 import { decideAddedPoCompartmentLink } from "./lib/added-po-compartment-link.mjs";
+import { disagrees } from "./lib/sofa-piece-token.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -371,6 +372,10 @@ async function moneyColumns(table) {
  *  the parent path and the downstream one so neither can target a code the other
  *  would refuse. */
 let codeSet = new Set();
+/** Piece columns beside `item_code` on the purchase and receipt line tables —
+ *  read from the tables in main(), never assumed. */
+let poPieceCols = [];
+let grnPieceCols = [];
 
 /** The piece SKUs this correction needs, fully qualified. Shared by the parent
  *  path and the downstream one so they cannot target different codes. */
@@ -578,6 +583,11 @@ async function main() {
   for (const f of DATA.files) log(`source: ${f}`);
   const prods = await sql`SELECT code FROM scm.mfg_products WHERE company_id = ${CO}`;
   codeSet = new Set(prods.map((p) => K(p.code)));
+  /* Resolved HERE, before any transaction opens: the pool is `max: 1`, and a
+     read on the module-level `sql` from inside `sql.begin` waits for the
+     connection the block is holding (docs/bugs/0749). */
+  poPieceCols = await pieceColumnsOn(sql, "scm.purchase_order_items");
+  grnPieceCols = await pieceColumnsOn(sql, "scm.grn_items");
 
   let nBuilds = 0, nSofas = 0, nUpd = 0, nIns = 0, nDel = 0, nRefused = 0, nMissingSku = 0;
   let nDsDoc = 0, nDsKeep = 0, nDsAdd = 0, nDsRefused = 0;
@@ -884,6 +894,8 @@ async function main() {
 
       if (!APPLY) continue;
       const touched = [];
+      /** Piece columns this run moved beside `item_code` — logged below. */
+      const aligned = [];
       for (const s of sofas) {
         await sql.begin(async (tx) => {
           for (const p of s.plan) {
@@ -902,8 +914,17 @@ async function main() {
             }
             const name = (await tx`SELECT name FROM scm.mfg_products WHERE company_id = ${CO} AND upper(code) = ${p.to} LIMIT 1`)[0]?.name ?? p.to;
             if (p.op === "update") {
-              if (isPo) await tx`UPDATE scm.purchase_order_items SET item_code = ${p.to}, material_name = ${name},
+              if (isPo) {
+                await tx`UPDATE scm.purchase_order_items SET item_code = ${p.to}, material_name = ${name},
                                    unit_price_sen = ${p.price}, line_total_sen = ${p.tot}, variants = ${tx.json(p.v)} WHERE id = ${p.id}`;
+                /* The supplier code the FACTORY builds from moves with the code,
+                   inside this transaction (docs/bugs/0822). This main path never
+                   called it — only the downstream-document path did — so a
+                   corrected purchase line went on telling the supplier the old
+                   piece (docs/bugs/0894). */
+                for (const a of await alignPieceColumns(tx, "scm.purchase_order_items", p.id, poPieceCols))
+                  aligned.push({ doc, ...a });
+              }
               else await tx`UPDATE scm.mfg_sales_order_items SET item_code = ${p.to}, description = ${name},
                               unit_price_sen = ${p.price}, total_sen = ${p.tot}, balance_sen = ${p.tot},
                               variants = ${tx.json(p.v)} WHERE id = ${p.id}`;
@@ -941,13 +962,23 @@ async function main() {
                 const [ins] = await tx`INSERT INTO scm.purchase_order_items
                   (purchase_order_id, material_kind, item_code, material_name, item_group, description, description2,
                    qty, received_qty, unit_price_sen, line_total_sen, variants, warehouse_id, delivery_date, from_mrp, company_id,
-                   linked_ac_dtlkey)
+                   linked_ac_dtlkey, supplier_sku)
                   SELECT i.purchase_order_id, 'mfg_product', ${p.to}, ${name}, 'sofa', i.description, ${src.description2 ?? null},
                          i.qty, 0, ${p.price}, ${p.tot}, ${tx.json(p.v)}, i.warehouse_id, i.delivery_date, false, ${CO},
-                         i.linked_ac_dtlkey
+                         i.linked_ac_dtlkey, i.supplier_sku
                     FROM scm.purchase_order_items i WHERE i.id = ${src.id}
                   RETURNING id`;
-                if (ins) addedPo.push({ id: ins.id, doc });
+                /* `supplier_sku` is COPIED from the piece this one is built from and
+                   then its piece token is moved to THIS piece. Omitted, the added
+                   purchase line carried no supplier code at all — the column the
+                   factory reads — and the shown-vs-code sweep cannot repair an
+                   empty column, because empty is not a disagreement
+                   (docs/bugs/0894). */
+                if (ins) {
+                  addedPo.push({ id: ins.id, doc });
+                  for (const a of await alignPieceColumns(tx, "scm.purchase_order_items", ins.id, poPieceCols))
+                    aligned.push({ doc, ...a });
+                }
               }
               /* so_item_id is NOT copied from the source row: the dedication is
                  one SO line to one PO line, and pointing a second PO line at the
@@ -995,6 +1026,8 @@ async function main() {
           const g = await sql`UPDATE scm.grn_items
             SET item_code = ${t.code}, variants = ${sql.json(t.v)}
             WHERE purchase_order_item_id = ${t.id} RETURNING id`;
+          for (const r of g)
+            for (const a of await alignPieceColumns(sql, "scm.grn_items", r.id, grnPieceCols)) aligned.push({ doc, ...a });
           if (g.length) { nGr += g.length; log(`      -> ${g.length} GRN line(s) follow ${compartmentOf(t.code)}`); }
           const pi = await carryToPurchaseInvoice(g.map((r) => r.id), t);
           nPi += pi.moved;
@@ -1008,9 +1041,14 @@ async function main() {
             nPo += po.length;
             log(`      -> ${po.length} PO line(s) follow ${compartmentOf(t.code)}`);
             for (const r of po) {
+              /* A purchase line that follows its sales piece moves its supplier
+                 code and printed name with it (docs/bugs/0822, 0894). */
+              for (const a of await alignPieceColumns(sql, "scm.purchase_order_items", r.id, poPieceCols)) aligned.push({ doc, ...a });
               const g = await sql`UPDATE scm.grn_items
                 SET item_code = ${t.code}, variants = ${sql.json(t.v)}
                 WHERE purchase_order_item_id = ${r.id} RETURNING id`;
+              for (const x of g)
+                for (const a of await alignPieceColumns(sql, "scm.grn_items", x.id, grnPieceCols)) aligned.push({ doc, ...a });
               nGr += g.length;
               const pi = await carryToPurchaseInvoice(g.map((x) => x.id), t);
               nPi += pi.moved;
@@ -1027,6 +1065,7 @@ async function main() {
           for (const n of si.held) { nHeldInv++; log(`      HELD ${n} is not migrated paperwork — its item code is left as billed`); }
         }
       }
+      for (const a of aligned) log(`      ALIGNED ${a.col}: ${JSON.stringify(a.from)} -> ${JSON.stringify(a.to)}`);
     }
   }
 
@@ -1170,7 +1209,8 @@ async function verifyOnFreshConnection(items) {
     if (rowsOf.has(k)) continue;
     if (it.kind) { rowsOf.set(k, await DOWNSTREAM[it.kind].rows(it.headId, v)); continue; }
     rowsOf.set(k, it.isPo
-      ? await v`SELECT i.id, i.item_code AS code, i.qty, i.unit_price_sen, i.line_total_sen AS total, i.description2, i.linked_ac_dtlkey
+      ? await v`SELECT i.id, i.item_code AS code, i.qty, i.unit_price_sen, i.line_total_sen AS total, i.description2, i.linked_ac_dtlkey,
+                       i.supplier_sku, i.material_name
                   FROM scm.purchase_order_items i
                  WHERE i.purchase_order_id = ${it.poId} AND i.item_group = 'sofa' ORDER BY i.id`
       : await v`SELECT i.id, i.item_code AS code, i.qty, i.unit_price_sen, i.total_sen AS total, i.description2, i.linked_ac_dtlkey
@@ -1233,8 +1273,20 @@ async function verifyOnFreshConnection(items) {
 
     const money = moneyOfRows(mine);
     const okMoney = money.total === it.money.total && money.charged === it.money.charged;
-    if (okPieces && okMoney) { log(`  OK  ${it.doc}  ${mine.map((r) => compartmentOf(r.code)).join("+")}  money ${money.total}/${money.charged}`); continue; }
+    /* THE SUPPLIER CODE IS PART OF THE SHAPE on a purchase line: it is what the
+       factory builds from. A row whose supplier code or printed name names a
+       DIFFERENT piece than its own item code is a wrong document even when the
+       code multiset is right (docs/bugs/0822, 0894). An EMPTY supplier code is
+       reported, not failed - nothing is shown, so nothing is contradicted. */
+    const shownWrong = it.isPo ? mine.filter((r) => disagrees(r.code, r.supplier_sku) || disagrees(r.code, r.material_name)) : [];
+    if (it.isPo) for (const r of mine) if (!String(r.supplier_sku ?? "").trim()) log(`  NOTE ${it.doc} ${r.code}: no supplier code on this purchase line`);
+    if (okPieces && okMoney && !shownWrong.length) {
+      log(`  OK  ${it.doc}  ${mine.map((r) => compartmentOf(r.code)).join("+")}  money ${money.total}/${money.charged}${it.isPo ? `  supplier codes [${mine.map((r) => r.supplier_sku ?? "").join(" | ")}]` : ""}`);
+      continue;
+    }
     bad++;
+    for (const r of shownWrong)
+      log(`  FAIL ${it.doc}: ${r.code} still shows another piece - supplier_sku ${JSON.stringify(r.supplier_sku)}, material_name ${JSON.stringify(r.material_name)}`);
     if (!okPieces) log(`  FAIL ${it.doc}: pieces are [${bag(mine.map((r) => r.code))}], expected [${bag(want)}]`);
     if (!okMoney) log(`  FAIL ${it.doc}: money ${it.money.total}/${it.money.charged} -> ${money.total}/${money.charged}`);
   }
