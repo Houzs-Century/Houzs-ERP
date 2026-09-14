@@ -28,7 +28,7 @@
 // "No Items".
 // ----------------------------------------------------------------------------
 
-import { normCategory } from './so-readiness';
+import { MAIN_CATEGORIES, normCategory } from './so-readiness';
 
 export type ListBrandingLine = {
   doc_no: string;
@@ -36,8 +36,6 @@ export type ListBrandingLine = {
   branding: string | null;
   item_code: string | null;
 };
-
-const MAIN_CATS = new Set(['SOFA', 'BEDFRAME', 'MATTRESS']);
 
 /**
  * The list LABEL as a HEADER value — or null when the label is not a brand.
@@ -78,7 +76,7 @@ export function deriveListFirstItemBranding(
   for (const l of lines) {
     if (!first.has(l.doc_no)) first.set(l.doc_no, l);
     const cat = resolveLineCat(l.item_code, l.item_group);
-    if (!rep.has(l.doc_no) && MAIN_CATS.has(cat)) rep.set(l.doc_no, { line: l, cat });
+    if (!rep.has(l.doc_no) && MAIN_CATEGORIES.has(cat)) rep.set(l.doc_no, { line: l, cat });
     let s = cats.get(l.doc_no);
     if (!s) { s = new Set(); cats.set(l.doc_no, s); }
     s.add(cat);
