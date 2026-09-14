@@ -65,6 +65,7 @@ import {
 } from '../lib/lead-time';
 import { groupKeyFor } from '../lib/po-grouping';
 import { findOverConvertOffender, soLineHeadroom, type OverConvertOffender } from '../lib/po-over-convert';
+import { loadBoundOrderedQty, boundAwarePicked, isBoundForCompany } from '../lib/bound-line-ordered';
 import {
   planAllocationCreate,
   planAllocationQtyUpdate,
@@ -1145,8 +1146,11 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
       .filter((x): x is string => !!x);
     if (lineSoItemIds.length > 0) {
       // Company scope (2026-08-19) — service-role bypasses RLS: scope the SO-item read and refuse a foreign soItemId BEFORE it is linked / photo-copied / po_qty_picked-rolled (mirrors soLinkTargetRefusal).
-      const { data: lineSoRows } = await scopeToCompany(supabase.from('mfg_sales_order_items').select('id, doc_no, item_code, qty, po_qty_picked'), c).in('id', lineSoItemIds);
-      const soRows = (lineSoRows ?? []) as SoSourceLine[];
+      const { data: lineSoRows } = await scopeToCompany(supabase.from('mfg_sales_order_items').select('id, doc_no, item_code, item_group, qty, po_qty_picked'), c).in('id', lineSoItemIds);
+      const soRowsRaw = (lineSoRows ?? []) as Array<SoSourceLine & { item_group: string | null }>;
+      // A bound line's cap also counts MRP-origin purchase orders (lib/bound-line-ordered.ts).
+      const boundOrdered = await loadBoundOrderedQty(supabase, activeCompanyId(c) ?? null, soRowsRaw);
+      const soRows = soRowsRaw.map((r) => ({ ...r, po_qty_picked: boundAwarePicked(r, boundOrdered) }));
       const foreignSoItemId = lineSoItemIds.find((id) => !new Set(soRows.map((r) => r.id)).has(id));
       if (foreignSoItemId) return c.json({ error: 'so_line_not_found', reason: 'That Sales Order line does not exist on this company.', soItemId: foreignSoItemId }, 404);
       // ... and the IDENTITY half of soLinkTargetRefusal, which this path was missing (lib/so-link-item-identity.ts, docs/bugs/0672).
@@ -1682,6 +1686,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     const byId = new Map<string, SoItem>();
     for (const r of (rows ?? []) as unknown as SoItem[]) byId.set(r.id, { ...r, so: normSo(r) });
+    const boundOrdered = await loadBoundOrderedQty(supabase, activeCompanyId(c) ?? null, [...byId.values()]);
     // Validate qty ≤ (row.qty - row.po_qty_picked)
     for (const p of body.picks) {
       const row = byId.get(p.soItemId);
@@ -1700,13 +1705,13 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
           soItemId: p.soItemId,
         }, 409);
       }
-      const remaining = row.qty - row.po_qty_picked;
+      const remaining = row.qty - boundAwarePicked(row, boundOrdered);
       if (p.qty <= 0)         return c.json({ error: 'qty_must_be_positive', soItemId: p.soItemId }, 400);
-      // Commander 2026-05-31 — MRP-origin converts skip the remaining cap: the
-      // line is reference-only and infinitely convertible (the pooled picker, not
-      // this per-line cap, decides what still needs ordering). The ordinary
-      // picker keeps the cap so a normal SO→PO can't over-order a single line.
-      if (!fromMrp && p.qty > remaining)
+      // Commander 2026-05-31 — MRP-origin converts skip the remaining cap on a
+      // POOLED line (the pooled picker decides what still needs ordering). A
+      // company-1 BOUND line is capped on every path, MRP included, counting
+      // every live PO on it (owner 2026-09-14; lib/bound-line-ordered.ts).
+      if ((!fromMrp || isBoundForCompany(activeCompanyId(c) ?? null, row)) && p.qty > remaining)
         return c.json({ error: 'qty_exceeds_remaining', soItemId: p.soItemId, requested: p.qty, remaining }, 409);
       pickedItems.push({ row, qty: p.qty, pickSupplierId: p.supplierId ?? null });
     }
