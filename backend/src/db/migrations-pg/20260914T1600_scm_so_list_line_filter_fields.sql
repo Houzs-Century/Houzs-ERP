@@ -32,7 +32,8 @@
 -- 157-167ms, pending amendment 42-46ms, all three together 231ms — against
 -- 2-7ms for the same read unfiltered. A function per row is the cost (a SQL or
 -- plpgsql body measured the same, run 34819665024); an inline EXISTS measured
--- 13-23ms (run 34818215402) but PostgREST cannot express it on a view filter.
+-- 13-23ms (run 34818215402); it is not one predicate on the view, and the
+-- embed that could carry it (a computed relationship) is untested here.
 -- Any other filter the user has set (company, status tab, dates) narrows the
 -- rows first. PostgREST acceptance of these fields on a view is checked against
 -- a real PostgREST 14.5 by .github/workflows/postgrest-contract-so-list-filters.yml.
