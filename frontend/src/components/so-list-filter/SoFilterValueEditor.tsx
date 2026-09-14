@@ -11,6 +11,7 @@ import {
   type SoListFilter,
 } from "../../vendor/shared/so-list-filter-model";
 import { SoDateRangeCalendar } from "./SoDateRangeCalendar";
+import { DateField } from "../../vendor/scm/components/DateField";
 import { SO_FILTER_SKINS, type SoFilterSkin } from "./soFilterSkin";
 
 export interface SoFilterPerson {
@@ -111,8 +112,8 @@ export function SoFilterValueEditor({
               onChange={(from, to) => onChange({ value: from || to ? `${from}~${to}` : "" })} />
           )}
           {(row.op === "on" || row.op === "before" || row.op === "after") && (
-            <input type="date" className={k.input} value={row.value} aria-label={`${def.label} ${row.op}`}
-              onChange={(e) => onChange({ value: e.target.value })} />
+            <DateField fullWidth value={row.value} aria-label={`${def.label} ${row.op}`}
+              onChange={(iso) => onChange({ value: iso })} />
           )}
         </div>
       );

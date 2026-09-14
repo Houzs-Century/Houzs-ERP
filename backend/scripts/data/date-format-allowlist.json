@@ -281,6 +281,26 @@
       "file": "frontend/src/mobile/MobileVenturePortalFeed.tsx",
       "text": "type=\"date\"",
       "why": "ISO VALUE PRODUCER, not a display (case 1). A native date input reads and writes YYYY-MM-DD, and this one is bound to scm.sync_config vp.since — the Venture Portal feed's start date, compared against so_date in SQL. Storage is not display and is outside this rule. The page renders no date of its own except through fmtDateTime."
+    },
+    {
+      "file": "frontend/src/components/so-list-filter/SoDateRangeCalendar.tsx",
+      "text": "new Date(Date.UTC(2024, 0, 1 + i)).toLocaleDateString(\"en-GB\", { weekday: \"short\", timeZone: \"UTC\" }).slice(0, 2));",
+      "why": "Renders the WEEKDAY NAME only (the Mo..Su column heads of the SO filter range calendar). A weekday is a word by design and carries no day/month ambiguity."
+    },
+    {
+      "file": "frontend/src/components/so-list-filter/SoDateRangeCalendar.tsx",
+      "text": "new Date(`${first}T00:00:00Z`).toLocaleDateString(\"en-GB\", { month: \"long\", year: \"numeric\", timeZone: \"UTC\" });",
+      "why": "Month names for a CALENDAR GRID's own header (September 2026 above the day grid), where the month is the axis rather than part of a date. The chosen range is displayed through the filter summary as DD/MM/YYYY."
+    },
+    {
+      "file": "frontend/src/vendor/shared/so-list-filter-model.ts",
+      "text": "const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);",
+      "why": "ISO VALUE PRODUCER, not a display: soTodayYmd returns today in Asia/Kuala_Lumpur as YYYY-MM-DD, the value the SO list date filters compare against (presets, overdue). It passes an explicit timeZone, so it does not read the device clock. Mirrored byte-for-byte in the backend and vendored copies of so-list-filter-model.ts."
+    },
+    {
+      "file": "backend/src/scm/shared/so-list-filter-model.ts",
+      "text": "const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);",
+      "why": "ISO VALUE PRODUCER, not a display: soTodayYmd returns today in Asia/Kuala_Lumpur as YYYY-MM-DD, the value the SO list date filters compare against (presets, overdue). It passes an explicit timeZone, so it does not read the device clock. Mirrored byte-for-byte in the backend and vendored copies of so-list-filter-model.ts."
     }
   ]
 }
