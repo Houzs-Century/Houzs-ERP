@@ -8,33 +8,48 @@ Owner-facing thread: 「去查看houzs erp的RBAC和限制 我发现电脑电话
 
 ## 1. What LANDED
 
-Nothing on production yet from this thread.
+| item | PR | proof |
+|---|---|---|
+| Sales Director invite always stores the baseline role (security, B-1) | #3831 | merged 2026-09-14 08:19Z; production Worker `/health` answered sha `ba8a8642` (the merge commit) when re-checked that afternoon |
+| The audit document + this handoff | #3832 | merged 2026-09-14 08:13Z |
 
 ## 2. What is OPEN
 
-| item | where | state |
+| item | where | state at writing (2026-09-14, afternoon) |
 |---|---|---|
-| Sales Director invite always stores the baseline role (security) | PR #3831, branch `fix/sd-invite-forces-baseline-role` | CI running at handoff; merge waits on owner decision D1 (no staging walk-through was possible — no Sales Director session) |
-| The audit document + this handoff | branch `docs/rbac-mobile-desktop-audit` | this PR |
+| Phone convert-from-SO picker lists every deliverable order (B-3) | #3836, `fix/mobile-convert-so-picker` | green, in the merge queue. After deploy: read-only look at the phone convert wizard's Sales Order list on production, creating nothing |
+| Phone fabric sheet honours the Model's fabric pool (B-4) | #3838, `fix/mobile-fabric-pool` | green, in the merge queue. After deploy: read-only look at the phone fabric sheet on production |
+| Supplier invoices are paid only with an AP Payment (B-2 + B-15) | `fix/pi-payment-via-vouchers` | this PR. After merge: dispatch Actions → probe-pi-direct-payments once (read-only) and report how many payments the retired route recorded, per company |
 
-## 3. BLOCKED on the owner (§7 of the audit)
+Staging cannot walk any Sales Order list flow while the staging Worker holds the
+anon key (owner action pending), so these are checked read-only on production.
 
-- D1 merge #3831 now
-- D2 option A / B / C (recommended C, staged, Sales Orders first)
-- D3 keep or drop the July phone-only project rules (and move named user ids to a permission)
-- D4 archived projects / service cases: locked on both or editable on both
-- D5 turn off the phone's Purchase Invoice "Record payment"
+## 3. The owner's answers (§7 of the audit)
 
-## 4. NEXT, in order, once decided
+D1 merge now; D2 option C, staged, Sales Orders first; D3-D5 「根据最新的version」:
+the July phone-only project rules are superseded (phone follows desktop and
+server), archived projects and service cases stay editable on both, supplier
+payments go through vouchers. Nothing is blocked on the owner in this thread.
 
-1. Defects that do not wait for the option (one PR each): B-2 phone PI payment,
-   B-3 convert-from-SO picker, B-4 fabric pool on the phone line, B-5 service-case
-   sub-status allowlist, B-7 driver POD dead end, B-9 stale classifier in
-   `backend/scripts/audit-permission-grants.mjs`.
-2. The chosen option, module by module, starting with Sales Orders (§4.1 rows).
-3. Before each module PR: re-grep the cited lines — they are at `081a3fe72`.
+## 4. NEXT, in order
+
+1. Remaining defects, one PR each: B-5 service-case sub-status allowlist
+   (`pending_customer_pickup`; the desktop swallows the 400), B-7 driver POD dead
+   end (verify the backend path first), B-9 stale classifier in
+   `backend/scripts/audit-permission-grants.mjs`, and MD-3 (the driver mileage
+   photo upload rides `/slips`, gated on `scm.sales.orders`).
+2. Apply D3/D4 on the phone: drop the July phone-only project cohort rules so the
+   phone follows the desktop and server permissions.
+3. Option C, phase 1 — Sales Orders: a design doc first, then the SO read returns
+   `actions` computed by the same guards the write routes enforce, both screens
+   render from it, and a check fails a screen that computes its own. Then service
+   cases, projects, the downstream documents.
+4. Before each module PR: re-grep the cited lines — §4 of the audit is at
+   `081a3fe72`.
 
 ## 5. Re-run before quoting a number
 
 - Population: "Role permissions diag (read-only)" workflow — last run 34817494633
   (2026-09-14): 79 active users.
+- Production build: `curl https://autocount-sync-api.houzs-erp.workers.dev/health`
+  and compare `sha` with the merge commit.

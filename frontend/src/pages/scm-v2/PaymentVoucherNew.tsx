@@ -129,7 +129,8 @@ export const PaymentVoucherNew = () => {
   const suppliersQ = useSuppliers({ status: 'ACTIVE' });
 
   const [payeeName, setPayeeName]                 = useState<string>('');
-  const [supplierId, setSupplierId]               = useState<string>('');
+  /* ?supplier= — opened from a purchase invoice's Record payment (docs/bugs/0889). */
+  const [supplierId, setSupplierId]               = useState<string>(() => (isAp ? searchParams.get('supplier') ?? '' : ''));
   /* Fixed by the document type — AP Payment settles PIs, Payment Voucher is
      plain cash-out. The old three-way dropdown is gone with the split. */
   const purpose: PvPurpose = isRefund ? 'CUSTOMER_REFUND' : isAp ? 'SUPPLIER_PAYMENT' : 'OTHER';
@@ -415,6 +416,20 @@ export const PaymentVoucherNew = () => {
   const [allocAmounts, setAllocAmounts] = useState<Record<string, number>>({});
   // Wipe allocations whenever the supplier changes.
   useEffect(() => { setAllocAmounts({}); }, [supplierId]);
+  /* ?pi= ticks that one invoice in full once the supplier's list has it —
+     declared after the wipe so the first commit wipes, then ticks. Once only,
+     so an operator who unticks it is not overruled; an invoice the list does
+     not offer (paid since, reserved by another voucher) is simply not ticked. */
+  const piParam = isAp ? searchParams.get('pi') : null;
+  const piTicked = useRef(false);
+  useEffect(() => {
+    if (!piParam || piTicked.current) return;
+    const row = outstandingPiRows.find((r) => String(r.id ?? '') === piParam);
+    if (!row) return;
+    piTicked.current = true;
+    const owed = Number(row.total_sen ?? 0) - Number(row.paid_sen ?? 0) - (reserved.byPi[piParam] ?? 0);
+    setAllocAmounts((prev) => ({ ...prev, [piParam]: owed }));
+  }, [piParam, outstandingPiRows, reserved]);
 
   /* AP Payment: every row starts at 0 — TICK pays an invoice in full, typing
      pays part of it, and the voucher total FOLLOWS the ticks (the reverse of
