@@ -5827,6 +5827,15 @@ attempt, and discounting it does not unsay it. The two discounts are now taken
 over EVERY outstanding failure rather than over the 25 the log prints, which was
 correct only while there were fewer than 25.
 
+**The identity section reads the document, not only the note (2026-09-14).**
+*IN AUTOCOUNT, BUT WITH NO LINE IDENTITY* used to list every `sent` row carrying
+the drain's identity note (0813). Keys filled later by the DocTransfer stamp,
+the relink sweep or a rebuild left the note in place, so 40 documents were
+listed while most were keyed. Each document is now looked up by number in its
+item table: listed with its keyless count while any row lacks a key, counted
+under *KEYED SINCE* once none does, and kept listed when the lookup cannot find
+it. `docs/bugs/0905-the-outbox-health-check-kept-listing-documents-as-having-no.md`.
+
 **This has now been fixed three times at the trigger and once at the shape.**
 Twice the trigger was the re-queue marker (#2220, then the counts block); the
 third was a document re-composed and accepted with no marker on the old row, and
