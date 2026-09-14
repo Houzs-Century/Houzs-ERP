@@ -203,6 +203,24 @@ try {
         `sent_at=${r.sent_at?.toISOString?.() ?? r.sent_at} ac_doc_no=${j(r.ac_doc_no)}${r.err ? ` err=${j(r.err)}` : ""}`);
       out(`      payload=${r.payload}`);
     }
+    /* Why an approved amendment may have queued nothing: the switch, and whether
+       the queue moved at all for the sales orders or the company since then. */
+    const flag = await sql`SELECT key, value, updated_at FROM scm.app_config WHERE key ILIKE '%autocount_writeback%'`;
+    for (const f of flag) out(`app_config ${f.key}=${j(f.value)} updated_at=${j(f.updated_at)}`);
+    const so = await sql`
+      SELECT op, doc_no, status, created_at, left(coalesce(last_error, ''), 200) AS err
+        FROM scm.autocount_outbox
+       WHERE company_id = ${CO} AND doc_type = 'SO' AND doc_no = ANY(${DOCS})
+       ORDER BY created_at`;
+    out(`autocount_outbox rows for the sales orders: ${so.length}`);
+    for (const r of so) out(`   ${r.created_at?.toISOString?.() ?? r.created_at} op=${r.op} doc=${r.doc_no} status=${r.status}${r.err ? ` err=${j(r.err)}` : ""}`);
+    const recent = await sql`
+      SELECT doc_type, op, status, count(*)::int AS n, max(created_at) AS last
+        FROM scm.autocount_outbox
+       WHERE company_id = ${CO} AND created_at >= ${AUDIT_SINCE}::date
+       GROUP BY 1, 2, 3 ORDER BY 1, 2, 3`;
+    out(`company ${CO} outbox since ${AUDIT_SINCE}, by type/op/status:`);
+    for (const r of recent) out(`   ${r.doc_type} ${r.op} ${r.status} n=${r.n} last=${r.last?.toISOString?.() ?? r.last}`);
   });
 
   await section("4a. SO AMENDMENTS (all statuses)", async () => {
@@ -326,7 +344,7 @@ try {
         FROM scm.purchase_order_items pi JOIN scm.purchase_orders p ON p.id = pi.purchase_order_id
        WHERE pi.company_id = ${CO}
          AND upper(coalesce(pi.item_group, '')) = 'SOFA'
-         AND upper(coalesce(p.status, '')) NOT IN ('RECEIVED', 'CANCELLED', 'CLOSED')
+         AND upper(coalesce(p.status::text, '')) NOT IN ('RECEIVED', 'CANCELLED', 'CLOSED')
        ORDER BY p.po_number, COALESCE(pi.line_no, 0)`;
     const bad = rows.filter((r) => disagrees(r.item_code, r.supplier_sku));
     out(`open sofa PO lines examined: ${rows.length}   supplier code names another piece: ${bad.length}`);

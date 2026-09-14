@@ -33,6 +33,7 @@ import { recordEntityAudit } from './entity-audit';
 import { poReceivedFloorViolation } from '../shared/po-amendment';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
 import { nextPoLineNo } from './po-line-order';
+import { supplierSkuFor } from './po-line-supplier-sku';
 
 /* The routable field atoms a PO amendment moves — lines + header. Mirrors the
    frontend poLineFieldKinds / poHeaderFieldKind so the audit routing note matches
@@ -156,6 +157,13 @@ export async function applyPoAmendment(
   // (4) Header diffs — supplier / delivery date / notes, applied as given.
   const headerFieldChanges: Array<{ field: string; from: unknown; to: unknown }> = [];
   let expectedAtOverridden = false;
+  /* The supplier the lines are ordered FROM once this amendment lands: a line
+     whose item code moves takes THAT supplier's code for it (docs/bugs/0887). */
+  const supplierAfter = String(
+    (headerChanges?.supplier_id !== undefined
+      ? headerChanges.supplier_id
+      : (poHeader as { supplier_id?: string | null }).supplier_id) ?? '',
+  ) || null;
   if (headerChanges && Object.keys(headerChanges).length > 0) {
     const before = (amdRow.old_header_snapshot ?? {}) as Record<string, unknown>;
     const patch: Record<string, unknown> = {};
@@ -218,6 +226,7 @@ export async function applyPoAmendment(
       // Owner 2026-09-10 — an amendment's added line goes at the END of the
       // document (lib/po-line-order.ts).
       const lineNo = await nextPoLineNo(sb, poId);
+      const supplierSku = await supplierSkuFor(sb, { supplierId: supplierAfter, itemCode, companyId });
       const { error: insErr } = await sb.from('purchase_order_items').insert({
         ...(companyId != null ? { company_id: companyId } : {}),
         purchase_order_id: poId,
@@ -225,6 +234,7 @@ export async function applyPoAmendment(
         material_kind:     String((diff.new_variants?.materialKind as string | undefined) ?? 'mfg_product'),
         item_code:     itemCode,
         material_name:     diff.new_material_name ?? itemCode,
+        supplier_sku:      supplierSku,
         qty,
         unit_price_sen:  unit,
         discount_sen:    0,
@@ -266,6 +276,20 @@ export async function applyPoAmendment(
       if (diff.new_item_code) patch.item_code = String(diff.new_item_code).trim();
       if (diff.new_material_name) patch.material_name = diff.new_material_name;
       if (diff.new_variants != null) patch.variants = diff.new_variants;
+      /* The supplier code moves with a changed item code, or the purchase order
+         goes on ordering the old piece (docs/bugs/0887). */
+      const priorCode = String(row.item_code ?? '').trim();
+      if (typeof patch.item_code === 'string' && patch.item_code !== priorCode) {
+        const sku = await supplierSkuFor(sb, { supplierId: supplierAfter, itemCode: patch.item_code, companyId });
+        patch.supplier_sku = sku;
+        if (sku == null) {
+          const label = String(patch.material_name ?? row.material_name ?? patch.item_code);
+          warnings.push(
+            `${label} on purchase order ${poNumber} changed to an item this supplier has no code for, `
+            + 'so its supplier code was cleared. Set the supplier\'s code for it before sending the purchase order.',
+          );
+        }
+      }
     }
     if (diff.new_delivery_date != null) patch.delivery_date = diff.new_delivery_date;
 
