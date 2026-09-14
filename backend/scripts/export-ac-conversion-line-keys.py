@@ -22,6 +22,11 @@ READ-ONLY: SELECTs only, NOLOCK, a 15-second statement timeout, no transaction.
 Two small reads (ERP-numbered documents only), so it does not compete with the
 write-back for the book's locks the way a wide scan did on 2026-09-07.
 
+WHAT ELSE EACH LINE CARRIES (docs/bugs/0902). `qty` and `transferredOn` — how
+many DocTransfer rows take this line further (a DO line into an invoice, a GR
+line into a purchase invoice). retire-book-only-conversion-lines.mjs zeroes a
+book line the ERP no longer holds, and only a line nothing downstream holds.
+
 RE-RUN: overwrites data/ac-conversion-line-keys.json.gz with a fresh cut. It
 writes nothing to the book and nothing to the ERP.
 
@@ -70,21 +75,24 @@ bad = []
 counts = {}
 for doc_type, hdr, dtl, prefix, source_type in LANES:
     lane = cur.execute(
-        f"""SELECT h.DocNo, d.DtlKey, t.FromDocDtlKey, t.FromDocType, d.ItemCode, h.Cancelled
+        f"""SELECT h.DocNo, d.DtlKey, t.FromDocDtlKey, t.FromDocType, d.ItemCode, h.Cancelled,
+                   d.Qty,
+                   (SELECT COUNT(*) FROM DocTransfer o WITH (NOLOCK)
+                     WHERE o.FromDocDtlKey = d.DtlKey AND o.FromDocType = ?) AS TransferredOn
               FROM {hdr} h WITH (NOLOCK)
               JOIN {dtl} d WITH (NOLOCK) ON d.DocKey = h.DocKey
               LEFT JOIN DocTransfer t WITH (NOLOCK) ON t.ToDocDtlKey = d.DtlKey AND t.ToDocType = ?
              WHERE h.DocNo LIKE ?
              ORDER BY h.DocNo, d.DtlKey""",
-        doc_type, prefix).fetchall()
+        doc_type, doc_type, prefix).fetchall()
     seen = {}
-    for doc_no, dtl_key, from_key, from_type, item_code, cancelled in lane:
+    for doc_no, dtl_key, from_key, from_type, item_code, cancelled, qty, transferred_on in lane:
         seen[dtl_key] = seen.get(dtl_key, 0) + 1
         if from_type is not None and from_type != source_type:
             bad.append(f"{doc_type} {doc_no} line {dtl_key} is transferred from a {from_type}, expected {source_type}")
         rows.append([doc_type, doc_no, int(dtl_key),
                      int(from_key) if from_key is not None else None,
-                     item_code, cancelled == "T"])
+                     item_code, cancelled == "T", float(qty), int(transferred_on)])
     multi = [k for k, n in seen.items() if n > 1]
     if multi:
         bad.append(f"{doc_type}: {len(multi)} line(s) have more than one DocTransfer row, e.g. {multi[:5]}")
@@ -105,7 +113,7 @@ snapshot = {
     "exported_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     "source": f"{DB} live (read-only)",
     "grain": "one row per line of an ERP-numbered DO / GR in the book, with the source line DocTransfer names",
-    "fields": ["docType", "docNo", "toDtlKey", "fromDtlKey", "itemCode", "cancelled"],
+    "fields": ["docType", "docNo", "toDtlKey", "fromDtlKey", "itemCode", "cancelled", "qty", "transferredOn"],
     "counts": counts,
     "rows": rows,
 }

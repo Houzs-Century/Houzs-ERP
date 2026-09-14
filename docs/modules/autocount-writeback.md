@@ -6401,3 +6401,25 @@ on the receipt with no purchase line behind it. The book's copy of each receipt
 has every line claimed, so those rows are sent as `IsNewLine` — the same
 declaration the relink sweep makes (docs/bugs/0817) — and are held instead when
 there is no fresh book snapshot for the document.
+
+## A line the ERP removed, still live in the book (2026-09-14)
+
+When a person removes a line from a delivery order or goods receipt, the delete
+route names it for AutoCount by its key (`retiredLineOf`). A row with no key is
+not named, and every later edit carries the document as it is now, so the book
+keeps the line live and its source stays transferred. On 2026-09-14 two bolster
+lines moved onto new delivery orders were delivered twice in the book
+(HC-DO-2609-044 and -102), and HC-DO-2609-103 could not be created at all.
+
+`backend/scripts/retire-book-only-conversion-lines.mjs` (workflow *Zero
+AutoCount DO / GR lines the ERP removed*, run under `tsx`) compares the committed
+book snapshot with the ERP and sends `enqueueEdit` with `retire` for a book line
+no ERP row claims. It sends only when every ERP row of the document is keyed,
+the line still has a quantity, and nothing downstream (an invoice) was
+transferred from it; everything else is printed as held. A DO or GR is never
+rebuilt, so the host zeroes the line, marks it not transferable and prefixes
+`[ERP-CANCELLED]`. The plan composes each edit and rolls it back; apply verifies
+on a fresh connection that each planned key is sent with `Retire: true`. The
+snapshot must be at most two days old and carry `qty` and `transferredOn`, both
+added to `export-ac-conversion-line-keys.py` for this. Ledger:
+`docs/bugs/0902-moving-a-line-to-a-new-delivery-order-left-it-on-the-old-one.md`.

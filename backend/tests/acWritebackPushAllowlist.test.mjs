@@ -43,6 +43,9 @@ const MAY_PUSH = [
   // Re-sends a DO / GR edit refused for a keyless line once its keys are in
   // (docs/bugs/0900) — its purpose is the send; it writes no ERP value.
   'requeue-keyed-conversion-edits.mjs',
+  // Zeroes a DO / GR line the ERP removed but the book still holds
+  // (docs/bugs/0902) — the send IS the repair; it writes no ERP value.
+  'retire-book-only-conversion-lines.mjs',
 ];
 
 test('only the deliberate push tools opt out of repair suppression', () => {
