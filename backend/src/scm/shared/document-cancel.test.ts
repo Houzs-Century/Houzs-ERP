@@ -161,7 +161,7 @@ describe('rejecting and withdrawing', () => {
 describe('what counts as a cancel on a status route', () => {
   /* Both status handlers normalise with String(body.status).trim().toUpperCase().
      The guard must agree, or a spelling the handler accepts walks past the
-     guard (docs/bugs/0889). */
+     guard (docs/bugs/0893-a-sales-order-cancel-with-a-space-after-cancelled-skipped-bo.md). */
   it('reads the status exactly the way the handlers do', () => {
     for (const s of ['CANCELLED', 'cancelled', ' Cancelled ', 'CANCELLED\n', ['CANCELLED'], [' cancelled ']]) {
       expect(asksToCancel(s)).toBe(true);

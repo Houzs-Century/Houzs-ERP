@@ -629,7 +629,7 @@ async function reasonOnlyCancel(
   /* Both cancel handlers ANSWER 200 on a document that is already cancelled —
      they echo the cancelled state rather than refuse. Nothing was cancelled by
      this call, so nothing is recorded: a second tab must not leave a second
-     "cancelled because" naming a reason that changed nothing (docs/bugs/0890). */
+     "cancelled because" naming a reason that changed nothing (docs/bugs/0894-cancelling-an-already-cancelled-purchase-order-recorded-a-se.md). */
   if (String(before.status ?? '').toUpperCase() === 'CANCELLED') return;
 
   const at = nowIso();

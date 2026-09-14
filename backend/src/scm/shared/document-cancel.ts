@@ -53,8 +53,9 @@ export const cancelDocNoun = (docType: string): string => (isCancelDocType(docTy
  *  the guard and the handler must agree on what a cancel IS. The guard used to
  *  upper-case without trimming, so "CANCELLED " passed it as some other
  *  transition and the handler then cancelled the Sales Order with no signature
- *  (docs/bugs/0889). `String()` and not a typeof check for the same reason: the
- *  handlers coerce, so `["CANCELLED"]` is a cancel to them too. */
+ *  (docs/bugs/0893-a-sales-order-cancel-with-a-space-after-cancelled-skipped-bo.md).
+ *  `String()` and not a typeof check for the same reason: the handlers coerce,
+ *  so `["CANCELLED"]` is a cancel to them too. */
 export const asksToCancel = (status: unknown): boolean =>
   String(status ?? '').trim().toUpperCase() === 'CANCELLED';
 

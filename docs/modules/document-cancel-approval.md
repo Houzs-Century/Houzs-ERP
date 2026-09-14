@@ -122,7 +122,7 @@ reads the body exactly the way both status handlers do —
 `String(status).trim().toUpperCase()`.** Until 2026-09-14 the guard upper-cased
 without trimming, so `"CANCELLED "` passed it as "some other transition" and the
 Sales Order handler, which trims, then cancelled the order with no signature at
-all (`docs/bugs/0889`; production had seen no such cancel — 0 non-draft SO cancels
+all (`docs/bugs/0893-a-sales-order-cancel-with-a-space-after-cancelled-skipped-bo.md`; production had seen no such cancel — 0 non-draft SO cancels
 since the guard shipped, counted 2026-09-14). The guard and the handler must agree
 on what a cancel IS; an array (`["CANCELLED"]`) is coerced by both for the same
 reason.
@@ -175,7 +175,7 @@ the whole rule:
 4. records NOTHING when the document was **already** `CANCELLED` before the call.
    Both handlers answer that case 200 and echo the cancelled state instead of
    refusing, so the guard's "only on a 2xx" alone wrote a second "cancelled
-   because…" for a second tab or a double click (`docs/bugs/0890`; production had
+   because…" for a second tab or a double click (`docs/bugs/0894-cancelling-an-already-cancelled-purchase-order-recorded-a-se.md`; production had
    0 purchase orders with two such rows, counted 2026-09-14).
 
 **What the history row carries differs per document** (`handlerRecordsCancel` in
@@ -384,8 +384,8 @@ SCM bundle); `cancelRequestNotify.test.ts` asserts they equal the gate's table.
   400 and never reaches the handler, that a good one writes the EXECUTED row
   with the whitespace collapsed and no signatures, that a DRAFT is asked too,
   that a cancel the handler REFUSED writes no row, and that an already-cancelled
-  PO writes none (0890). The SO guard refuses `"CANCELLED "`, `" cancelled"` and
-  `["CANCELLED"]` (0889). The DO suite: no reason / 2 characters → 400 before
+  PO writes none (0894). The SO guard refuses `"CANCELLED "`, `" cancelled"` and
+  `["CANCELLED"]` (0893). The DO suite: no reason / 2 characters → 400 before
   the handler; every other DO transition untouched and unasked; the EXECUTED row
   plus the `DELIVERY_ORDER` history row WITH the status change; DRAFT asked too;
   already-cancelled, another company's, and a handler-refused DO record nothing;
