@@ -40,6 +40,9 @@ const MAY_PUSH = [
   'reraise-hc-po-2608-001.mjs',
   // Re-queues the edits approved amendments never queued (docs/bugs/0888).
   'requeue-amendment-ac-edits.mjs',
+  // Zeroes a DO / GR line the ERP removed but the book still holds
+  // (docs/bugs/0902) — the send IS the repair; it writes no ERP value.
+  'retire-book-only-conversion-lines.mjs',
 ];
 
 test('only the deliberate push tools opt out of repair suppression', () => {
