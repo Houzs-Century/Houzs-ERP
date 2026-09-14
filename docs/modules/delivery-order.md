@@ -232,7 +232,8 @@ Three layers as in `docs/modules/sales-order.md` §1. DO specifics:
   reading before touching that file: a persisted payment ledger was rehydrated as
   fresh data and MobilePOD turned it into the balance a driver collects. The DO's
   own `['mfg-delivery-orders', <id>, 'payments']` key named there no longer exists
-  (`docs/bugs/0888`); the rule still guards the SO and SI ledgers.
+  (`docs/bugs/0888-the-delivery-order-payment-ledger-served-a-table-production.md`);
+  the rule still guards the SO and SI ledgers.
 
 ---
 

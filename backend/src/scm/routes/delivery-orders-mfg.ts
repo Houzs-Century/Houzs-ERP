@@ -5152,7 +5152,7 @@ deliveryOrdersMfg.delete('/:id/items/:itemId', async (c) => {
    payment is taken (owner, 2026-09-12: 「SO 的付款要带去 DO 跟 SI」); the DO and
    the SI show the order's ledger. A DO-side GET/POST/DELETE used to live here
    over scm.delivery_order_payments, a table production never had — see
-   docs/bugs/BUGREF. */
+   docs/bugs/0888-the-delivery-order-payment-ledger-served-a-table-production.md. */
 
 // ── Status transition + inventory deduction / reversal ────────────────────
 export const patchDeliveryOrderStatusHandler = async (c: any) => {
