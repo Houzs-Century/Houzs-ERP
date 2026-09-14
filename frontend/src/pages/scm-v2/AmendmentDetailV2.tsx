@@ -50,6 +50,7 @@ import {
   resolveStatusPill,
   type StatusTone,
 } from "../../vendor/scm/lib/status-pill";
+import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover } from "../../vendor/scm/lib/amendment-approver";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { usePrompt } from "../../vendor/scm/components/PromptDialog";
@@ -173,8 +174,8 @@ const laneStageIndexOf = (status: string): number => {
   }
 };
 export const LANE_TITLE: Record<SoAmendmentLaneValue, string> = {
-  LINES: "Product lines · Purchasing",
-  DELIVERY: "Delivery · Logistics",
+  LINES: `Product lines · ${AMENDMENT_APPROVER_LABEL[soAmendmentApprover("LINES")]}`,
+  DELIVERY: `Delivery · ${AMENDMENT_APPROVER_LABEL[soAmendmentApprover("DELIVERY")]}`,
 };
 
 /* Hero accent dot per status tone — the dark hero can't use the light-surface
@@ -1165,7 +1166,7 @@ export function AmendmentDetailV2() {
             {/* Two-lane rework — a lane row has ONE signature and, on the LINES
                 lane, the follow-up PO Amendment chips after it applies. */}
             {lane && (status === "REQUESTED" || status === "SO_APPROVED") && (
-              <AsideCard title={lane === "LINES" ? "Purchasing approval" : "Logistics approval"}>
+              <AsideCard title={`${AMENDMENT_APPROVER_LABEL[soAmendmentApprover(lane)]} approval`}>
                 <div className="space-y-2">
                   {status === "REQUESTED" && canApproveLane && (
                     <Button
@@ -1182,7 +1183,7 @@ export function AmendmentDetailV2() {
                   )}
                   {status === "REQUESTED" && !canApproveLane && (
                     <p className="text-[12px] text-ink-muted">
-                      Awaiting {lane === "LINES" ? "Purchasing" : "Logistics"} approval — one
+                      Awaiting {AMENDMENT_APPROVER_LABEL[soAmendmentApprover(lane)]} approval — one
                       signature applies the change to the Sales Order.
                     </p>
                   )}

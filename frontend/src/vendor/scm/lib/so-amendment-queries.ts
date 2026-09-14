@@ -61,6 +61,12 @@ export type AmendmentRow = {
      Empty on an SO with no purchase leg (and on responses from a pre-upgrade
      backend, so read it defensively). */
   bound_pos?: Array<{ id: string; po_number: string; status: string }>;
+  /* Owner 2026-09-14 (the queue's Reference column) — the SO header's `ref` and
+     `customer_so_no`, raw, as the list endpoint read them. Resolve for display
+     with customerRefOf (lib/customer-ref.ts), the one rule for that cell. Absent
+     from a pre-upgrade backend, so read it defensively. */
+  so_ref?: string | null;
+  so_customer_so_no?: string | null;
 };
 
 export type AmendmentLine = {

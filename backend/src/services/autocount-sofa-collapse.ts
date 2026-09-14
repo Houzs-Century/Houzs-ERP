@@ -616,8 +616,10 @@ function collapseRun(
  * more documents are the same shape (HC-SO-001255, HC-SO-002315, HC-SO-004716,
  * HC-SO-012016), measured on production 2026-09-10.
  *
- * NON-CONTIGUOUS ONLY, deliberately. A run the adjacency rule already forms is
- * left to it, so this can only change the documents that are broken today.
+ * NON-CONTIGUOUS ONLY, deliberately — or contiguous with DIFFERENT Desc2, which
+ * the adjacency rule splits just the same. A run the adjacency rule already
+ * forms is left to it, so this can only change the documents that are broken
+ * today.
  *
  * SAME MODEL AS WELL AS SAME KEY. A key is the book's line, and two different
  * models cannot be one build; disagreeing models mean something is wrong with
@@ -643,7 +645,14 @@ function scatteredByBookLine(
   for (const group of byKey.values()) {
     if (group.length < 2) continue;
     const contiguous = group.every((x, i) => i === 0 || x.index === group[i - 1].index + 1);
-    if (contiguous) continue;
+    /* Left to the adjacency rule only when that rule WILL form the run — and it
+       also breaks a run on a Desc2 change. Adjacent pieces of ONE book line whose
+       texts differ were therefore collapsed one piece at a time and refused:
+       HC-SO-013320 / HC-PO-010008, whose two 8069 pieces carry different special
+       orders after an amendment re-derived their Desc2 ("cannot spell [1A(LHF)]",
+       "cannot spell [1B(RHF)]", requeue plan run 34823021667). */
+    const oneText = new Set(group.map((x) => String(x.line.description2 ?? '').trim())).size === 1;
+    if (contiguous && oneText) continue;
     out.set(group[0].index, group);
   }
   return out;
