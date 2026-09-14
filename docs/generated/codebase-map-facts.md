@@ -228,7 +228,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2317 files, 774012 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2325 files, 774610 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -467,12 +467,12 @@ Page files by directory:
 | `frontend/src/mobile/MobileInbox.tsx` | 261 |
 | `frontend/src/mobile/MobileInvitations.tsx` | 301 |
 | `frontend/src/mobile/MobileLinePhotos.tsx` | 143 |
-| `frontend/src/mobile/MobileLinePoRef.tsx` | 48 |
+| `frontend/src/mobile/MobileLinePoRef.tsx` | 87 |
 | `frontend/src/mobile/MobileLineRemark.tsx` | 38 |
 | `frontend/src/mobile/MobileLogin.tsx` | 171 |
 | `frontend/src/mobile/MobileMailCenter.tsx` | 1814 |
 | `frontend/src/mobile/MobileMileageCapture.tsx` | 395 |
-| `frontend/src/mobile/MobileModuleDetail.tsx` | 1993 |
+| `frontend/src/mobile/MobileModuleDetail.tsx` | 1994 |
 | `frontend/src/mobile/MobileModuleForm.tsx` | 389 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
@@ -489,7 +489,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileRacks.tsx` | 306 |
 | `frontend/src/mobile/MobileRelationshipMap.tsx` | 275 |
 | `frontend/src/mobile/MobileRoles.tsx` | 409 |
-| `frontend/src/mobile/MobileSODetail.tsx` | 2100 |
+| `frontend/src/mobile/MobileSODetail.tsx` | 2111 |
 | `frontend/src/mobile/MobileSalesOrders.tsx` | 847 |
 | `frontend/src/mobile/MobileSavedPhotoThumb.tsx` | 82 |
 | `frontend/src/mobile/MobileScan.tsx` | 1467 |

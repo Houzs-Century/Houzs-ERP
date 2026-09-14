@@ -552,6 +552,74 @@ const KIND_LABEL: Record<BankLine['kind'], string> = {
    when the two totals agree to the sen (勾的总额必须等于那个 entry 的金额).
    One movement may also be several entries the same way. Shared by the
    statement view and the month view (docs/bugs/0803). */
+/* ── Every certain payout at once (docs/bugs/0868) ─────────────────────────
+   Owner, 2026-09-14, on a July statement of card payouts each saying "RM X is
+   exactly what <report> is still owed": 这些我还需要自己确定吗？ → 做.
+
+   A CERTAIN payout is one the matcher tied to exactly one report for exactly
+   what that report is still owed — the row's own "Money received" would post
+   it with nothing to choose. One press posts every such row, one by one,
+   through the row's own door with the row's own allocation, so what is booked
+   is what the row would have booked. The server judges each again (a closed
+   month, a report paid meanwhile); a refusal is named and the rest still post.
+   A split, an unsure or an unmatched payout is not certain and stays below
+   for a person. */
+const certainAllocation = (l: BankLine): { batchId: number; amountSen: number } | null => {
+  if (l.state !== 'OPEN' || l.kind !== 'PAYOUT' || l.matched_batch_id == null || l.amount_sen <= 0) return null;
+  const b = l.candidates.find((x) => x.id === l.matched_batch_id);
+  if (!b || b.outstandingSen !== l.amount_sen) return null;
+  return { batchId: b.id, amountSen: b.outstandingSen };
+};
+
+const BookAllMatched = ({ lines }: { lines: BankLine[] }) => {
+  const book = useBookBankReceipt();
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ posted: number; jeNos: string[]; refused: string[] } | null>(null);
+  const certain = lines.flatMap((line) => {
+    const allocation = certainAllocation(line);
+    return allocation ? [{ line, allocation }] : [];
+  });
+  if (certain.length === 0) return null;
+
+  const go = async () => {
+    setBusy(true);
+    const tally = { posted: 0, jeNos: [] as string[], refused: [] as string[] };
+    for (const { line, allocation } of certain) {
+      try {
+        const r = await book.mutateAsync({ lineId: line.id, allocations: [allocation] });
+        tally.posted += 1;
+        if (r.jeNo) tally.jeNos.push(r.jeNo);
+      } catch (err) {
+        tally.refused.push(`line ${line.line_no} (${fmt(line.amount_sen)}): ${refusalText(err, 'not posted.')}`);
+      }
+    }
+    setResult(tally);
+    setBusy(false);
+  };
+
+  const n = certain.length;
+  return (
+    <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+      <button type="button" style={{ ...btn(true), padding: '2px 8px' }} disabled={busy} onClick={() => { void go(); }}>
+        <Landmark {...ICON} /> {busy ? 'Posting…' : `Money received — all ${n} matched payout${n === 1 ? '' : 's'}`}
+      </button>
+      <span style={softText}>
+        Each of these is a card payout tied to one report for exactly what that report is still owed. One press books
+        them all, one by one, the way each row's own button would; anything the server refuses is named and the rest
+        still post. A split, an unsure or an unmatched payout stays below for you.
+      </span>
+      {result && (
+        <span style={{ fontSize: 'var(--fs-13)', color: result.posted > 0 ? good : undefined }}>
+          {result.posted} posted{result.jeNos.length > 0 ? ` — ${result.jeNos.join(', ')}` : ''}.
+        </span>
+      )}
+      {result?.refused.map((r) => (
+        <span key={r} style={{ fontSize: 'var(--fs-12)', color: danger }}>{r}</span>
+      ))}
+    </div>
+  );
+};
+
 export const OpenLines = ({ lines, entries }: { lines: BankLine[]; entries: LedgerEntry[] }) => {
   const group = useMatchBankGroup();
   const [pickedLines, setPickedLines] = useState<number[]>([]);
@@ -569,6 +637,7 @@ export const OpenLines = ({ lines, entries }: { lines: BankLine[]; entries: Ledg
   return (
     <section className="space-y-2">
       <b>{`Still to decide (${lines.length})`}</b>
+      <BookAllMatched lines={lines} />
       {pickedLines.length > 0 && (
         <section className="space-y-2" style={{ padding: 'var(--space-3)', border: '1px solid var(--c-line, rgba(34,31,32,0.15))', borderRadius: 'var(--radius-md)' }}>
           <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'baseline', flexWrap: 'wrap' }}>

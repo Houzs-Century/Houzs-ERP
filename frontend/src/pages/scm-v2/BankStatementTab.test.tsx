@@ -13,11 +13,12 @@
 //   • leaving a movement out demands a reason, because it leaves the difference
 //     for ever.
 
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi, afterEach } from 'vitest';
 import type { BankLine, Reconciliation, LedgerEntry } from './bank-queries';
 
 const bookMutate = vi.fn();
+const bookMutateAsync = vi.fn();
 const matchMutate = vi.fn();
 const groupMutate = vi.fn();
 const ignoreMutate = vi.fn();
@@ -85,7 +86,7 @@ vi.mock('./bank-queries', () => ({
     isLoading: false,
   }),
   useUploadBankStatement: () => ({ mutate: vi.fn(), isPending: false }),
-  useBookBankReceipt: () => ({ mutate: bookMutate, isPending: false, isError: false, error: null }),
+  useBookBankReceipt: () => ({ mutate: bookMutate, mutateAsync: bookMutateAsync, isPending: false, isError: false, error: null }),
   useMatchBankLine: () => ({ mutate: matchMutate, isPending: false, isError: false, error: null }),
   useMatchBankGroup: () => ({ mutate: groupMutate, isPending: false, isError: false, error: null }),
   useSetStatementPeriod: () => ({ mutate: periodMutate, isPending: false, isError: false, error: null }),
@@ -617,5 +618,43 @@ describe('where a reconciliation is saved', () => {
     expect(screen.getByText(/movements read on this file are decided/)).toBeTruthy();
     expect(screen.getByText(/08\/2026/)).toBeTruthy();
     lines = [LINE, SPLIT, OTHER];
+  });
+});
+
+/* ── Every certain payout at once (owner 2026-09-14: 这些我还需要自己确定吗？;
+   docs/bugs/0868). Certain = the matcher tied it to one report for exactly
+   what that report is still owed — LINE. The split (SPLIT) and the plain
+   movement (OTHER) are not, and stay for a person. ─────────────────────────── */
+describe('every certain payout at once', () => {
+  test('names how many are certain, posts each through the row\'s own door with the row\'s own allocation, and leaves the rest alone', async () => {
+    bookMutateAsync.mockReset();
+    bookMutateAsync.mockResolvedValue({ ok: true, status: 'posted', jeNo: 'JE-9', results: [] });
+    openStatement();
+    fireEvent.click(screen.getByText('Money received — all 1 matched payout'));
+    await waitFor(() => expect(bookMutateAsync).toHaveBeenCalledTimes(1));
+    expect(bookMutateAsync).toHaveBeenCalledWith({ lineId: 1, allocations: [{ batchId: 7, amountSen: 227700 }] });
+    expect(await screen.findByText(/1 posted — JE-9/)).toBeTruthy();
+  });
+
+  test('a refusal is named with the line and the amount, and the others still post', async () => {
+    bookMutateAsync.mockReset();
+    lines = [LINE, { ...LINE, id: 4, line_no: 11, amount_sen: 374304, matched_batch_id: 3, note: null }, SPLIT, OTHER];
+    bookMutateAsync
+      .mockResolvedValueOnce({ ok: true, status: 'posted', jeNo: 'JE-9', results: [] })
+      .mockRejectedValueOnce(new Error('310-0010 2026-08 was closed by Chew on 2026-09-01 — reopen it first.'));
+    openStatement();
+    fireEvent.click(screen.getByText('Money received — all 2 matched payouts'));
+    await waitFor(() => expect(bookMutateAsync).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/1 posted — JE-9/)).toBeTruthy();
+    /* The table is ordered biggest first, so line 11 (RM 3,743.04) posts and
+       line 2 (RM 2,277.00) is the one refused — named with its amount. */
+    expect(bookMutateAsync.mock.calls.map((c) => (c[0] as { lineId: number }).lineId)).toEqual([4, 1]);
+    expect(screen.getByText(/line 2 \(RM 2,277\.00\): .*closed by Chew/)).toBeTruthy();
+  });
+
+  test('offers nothing when no payout is certain', () => {
+    lines = [SPLIT, OTHER];
+    openStatement();
+    expect(screen.queryByText(/Money received — all/)).toBeNull();
   });
 });
