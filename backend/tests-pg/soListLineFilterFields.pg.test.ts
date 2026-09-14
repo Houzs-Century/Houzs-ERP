@@ -122,7 +122,7 @@ describePg('SO list line filter fields (migrations-pg *_scm_so_list_line_filter_
   });
 
   test('warehouse: orders with a LIVE line in the warehouse, never a cancelled line', async () => {
-    expect(await docsWhere(admin, `scm.so_line_warehouse_ids(v) && ARRAY['${WH_A}'::uuid]`)).toEqual(['SO-X']);
+    expect(await docsWhere(admin, `scm.so_line_warehouse_ids(v) && ARRAY['${WH_A}'::uuid]`)).toEqual(['SO-1', 'SO-X']);
     expect(await docsWhere(admin, `v.company_id = 1 AND scm.so_line_warehouse_ids(v) && ARRAY['${WH_A}'::uuid]`)).toEqual(['SO-1']);
     expect(await docsWhere(admin, `v.company_id = 1 AND scm.so_line_warehouse_ids(v) && ARRAY['${WH_B}'::uuid]`)).toEqual(['SO-1', 'SO-2']);
   });
