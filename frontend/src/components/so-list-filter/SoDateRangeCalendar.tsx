@@ -5,8 +5,11 @@
 import { useState } from "react";
 import { soAddDays, soIsYmd } from "../../vendor/shared/so-list-filter-model";
 
-const WEEKDAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
-const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+/* Names from Intl rather than typed lists: 2024-01-01 was a Monday. */
+const WEEKDAYS = Array.from({ length: 7 }, (_, i) =>
+  new Date(Date.UTC(2024, 0, 1 + i)).toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" }).slice(0, 2));
+const monthName = (first: string) =>
+  new Date(`${first}T00:00:00Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
 
 const firstOfMonth = (ymd: string) => `${ymd.slice(0, 7)}-01`;
 function shiftMonth(first: string, n: number): string {
@@ -57,7 +60,7 @@ export function SoDateRangeCalendar({
         {Array.from({ length: months }, (_, i) => shiftMonth(anchor, i)).map((first) => (
           <div key={first}>
             <div style={{ textAlign: "center", fontSize: 12, fontWeight: 700, marginBottom: 4 }}>
-              {MONTHS[Number(first.slice(5, 7)) - 1]} {first.slice(0, 4)}
+              {monthName(first)}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 2 }}>
               {WEEKDAYS.map((w) => (

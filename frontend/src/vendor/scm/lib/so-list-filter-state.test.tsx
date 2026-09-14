@@ -112,7 +112,7 @@ describe('useSoListFilters', () => {
 
 describe('the list reads send the filters', () => {
   test('useMfgSalesOrdersPaged puts each row on the wire and in the cache key', async () => {
-    mockedFetch.mockResolvedValue({ salesOrders: [], total: 0 } as never);
+    mockedFetch.mockResolvedValue({ salesOrders: [], total: 0 });
     renderHook(() => useMfgSalesOrdersPaged({
       page: 0, pageSize: 50, status: 'confirmed', filters: [{ field: 'balance', op: 'positive', value: '' }],
     }), { wrapper: wrap('/') });
@@ -122,7 +122,7 @@ describe('the list reads send the filters', () => {
   });
 
   test('the Apply preview asks for one row and reads the total', async () => {
-    mockedFetch.mockResolvedValue({ salesOrders: [], total: 12 } as never);
+    mockedFetch.mockResolvedValue({ salesOrders: [], total: 12 });
     const { result } = renderHook(() => useSoListCountPreview({
       status: 'confirmed', q: '', filters: [{ field: 'createdBy', op: 'me', value: '' }], enabled: true, debounceMs: 0,
     }), { wrapper: wrap('/') });

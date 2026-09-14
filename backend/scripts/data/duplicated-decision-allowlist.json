@@ -1274,6 +1274,26 @@
       "check": "D1",
       "key": "AGENT,ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,CUSTOMER_DELIVERED_DATE,DELIVERY_SUBSTATUS,DEPARTURE_AT,DRIVER_ID,DRIVER_NAME,ETA_ARRIVING_PORT,EXPECTED_DELIVERY_AT,SALESPERSON_ID,SHIPOUT_DATE,TIME_CONFIRMED,TIME_RANGE,VEHICLE|backend/src/scm/shared/do-header-lock.ts frontend/src/vendor/shared/do-header-lock.ts",
       "why": "A VENDORED TWIN, not a second decision: the Delivery Order header columns that stay editable once a Sales Invoice or Delivery Return exists (owner ruling 2026-09-14). One home in backend/src/scm/shared/do-header-lock.ts, read by the PATCH /delivery-orders-mfg/:id refusal; the byte-identical copy under frontend/src/vendor/shared/ exists because the desktop edit form and the phone edit screen disable fields from it and the browser cannot import backend/src. Refereed by frontend/src/vendor/shared/do-header-lock.canonical.test.ts (byte compare) and backend/tests/doHeaderLockPartition.test.ts (every PATCH column classified)."
+    },
+    {
+      "check": "D1",
+      "key": "AFTER,BEFORE,BETWEEN,ON,PRESET|backend/src/scm/shared/so-list-filter-model.ts frontend/src/vendor/shared/so-list-filter-model.ts",
+      "why": "THE SO LIST DATE-FILTER OPERATORS. ONE module with two byte-identical homes: the SO list endpoint parses the second-level filters with the backend copy and the phone sheet / desktop bar build them with the vendored copy (the browser cannot import backend/src). Refereed by frontend/src/vendor/shared/so-list-filter-model.canonical.test.ts (byte compare), so the two cannot diverge."
+    },
+    {
+      "check": "D1",
+      "key": "BETWEEN,EQ,GT,LT|backend/src/scm/shared/so-list-filter-model.ts frontend/src/vendor/shared/so-list-filter-model.ts",
+      "why": "THE SO LIST TOTAL-FILTER OPERATORS. ONE module with two byte-identical homes: the SO list endpoint parses the second-level filters with the backend copy and the phone sheet / desktop bar build them with the vendored copy (the browser cannot import backend/src). Refereed by frontend/src/vendor/shared/so-list-filter-model.canonical.test.ts (byte compare), so the two cannot diverge."
+    },
+    {
+      "check": "D1",
+      "key": "BETWEEN,EQ,GT,LT,POSITIVE|backend/src/scm/shared/so-list-filter-model.ts frontend/src/vendor/shared/so-list-filter-model.ts",
+      "why": "THE SO LIST BALANCE-FILTER OPERATORS. ONE module with two byte-identical homes: the SO list endpoint parses the second-level filters with the backend copy and the phone sheet / desktop bar build them with the vendored copy (the browser cannot import backend/src). Refereed by frontend/src/vendor/shared/so-list-filter-model.canonical.test.ts (byte compare), so the two cannot diverge."
+    },
+    {
+      "check": "D2",
+      "key": "BETWEEN,EQ,GT,LT ~ BETWEEN,EQ,GT,LT,POSITIVE",
+      "why": "THE SO LIST TOTAL vs BALANCE FILTER OPERATORS, differing by POSITIVE (\"has balance\"). Deliberate: an order always has a positive total, so \"has total\" is not a question anyone asks; \"has balance\" is the owner-named one. Same field-definition table, one file."
     }
   ]
 }
