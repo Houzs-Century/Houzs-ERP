@@ -6243,3 +6243,38 @@ the ERP rows; size, colour and specials are still compared exactly.
 fail and the stored text decodes to the same multiset — `HC-SO-000814` and
 `HC-SO-001112`, whose pieces match and whose order does not. Reached only after
 the composer has failed, so it cannot hide an edit.
+
+## A converted document's line keys, from the book's DocTransfer (2026-09-14)
+
+**The gap.** `persistLineKeys` cannot prove which ERP row a DELIVERY ORDER or
+GOODS RECEIPT line is: the host's `CreatedLines` returns `DtlKey`, `ItemCode`
+and `Desc2` and no source line, and a conversion copies the SOURCE line's item
+code (the book's supplier spelling), so the item-code and line-count checks
+refuse. Measured 2026-09-14: 82 ERP-created delivery orders (417 lines) and 64
+goods receipts (244 lines) sat in the book with a keyless line, and an edit of
+any of them is refused whole (`KeylessLineError`).
+
+**Where the answer is.** Not in `DODTL.FromDocDtlKey` / `GRDTL.FromDocDtlKey`
+(NULL) but in `DocTransfer`, which names one source line per transferred line —
+the same table docs/bugs/0746 found for the migrated chain.
+
+**The stamp.** Two scripts and one workflow, for the documents already in the
+book:
+
+| step | where | what |
+| --- | --- | --- |
+| export (office network, read-only) | `backend/scripts/export-ac-conversion-line-keys.py` | every line of an `HC-DO-` / `HC-GRN-` document with its DocTransfer source key, into `backend/scripts/data/ac-conversion-line-keys.json.gz`; refuses a book whose lines have more than one transfer row or a source of the wrong type |
+| plan / apply (Actions) | `backend/scripts/stamp-conversion-line-keys.mjs`, workflow *Stamp AutoCount line keys on our DOs and GRs* | inside one document, our row's source key (`so_item_id` / `purchase_order_item_id` -> that line's `linked_ac_dtlkey`) meets the book line it fed (`backend/scripts/lib/conversion-line-key-plan.mjs`); writes `linked_ac_dtlkey` only where NULL, one transaction, PLAN_DIGEST-bound, verified on a fresh connection; refuses a snapshot older than two days |
+
+It sends nothing to AutoCount. A refused edit of a stamped document still has to
+be re-queued.
+
+**Plan measured locally against production 2026-09-14:** delivery orders stamp
+417, 66 existing keys agree, 0 disagree; goods receipts stamp 216, 7 agree,
+0 disagree, 26 lines with no source (added on the receipt), 2 whose source the
+receipt does not hold, 1 ambiguous.
+
+**Still open.** Conversions drained after the stamp keep no key the same way.
+The lasting fix is for `CreatedLines` to return each line's `FromDocDtlKey` from
+`DocTransfer`, which needs the office host rebuilt; until then the export and
+the stamp are re-runnable. Ledger: `docs/bugs/0897-delivery-orders-and-goods-receipts-the-write-back-created-ke.md`.
