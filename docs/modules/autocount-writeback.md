@@ -6409,7 +6409,10 @@ HC-GRN-2609-028 (10 AK-SLEEP ESSENTIAL 7 HOLES pillows), each with one row added
 on the receipt with no purchase line behind it. The book's copy of each receipt
 has every line claimed, so those rows are sent as `IsNewLine` — the same
 declaration the relink sweep makes (docs/bugs/0817) — and are held instead when
-there is no fresh book snapshot for the document.
+there is no fresh book snapshot for the document. `DOC_NOS` plans named documents by the same rule
+whether or not a refusal exists: HC-GRN-2609-060 to -068 hold pillows received
+beside the purchase lines that no refusal ever recorded
+(`docs/bugs/0908-receipt-rows-the-book-never-had-were-picked-up-by-no-tool-once-the-receipt-was-keyed.md`).
 
 ## A line the ERP removed, still live in the book (2026-09-14)
 

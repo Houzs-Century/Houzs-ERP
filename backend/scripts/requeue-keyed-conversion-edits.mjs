@@ -45,11 +45,23 @@
  * result is re-read on a FRESH connection: each document queued must now hold a
  * pending edit whose body names every line by a numeric DtlKey.
  *
+ * NAMED DOCUMENTS (DOC_NOS). A receipt can hold a row added on the receipt that
+ * never reached the book at all, with no refusal ever recorded: HC-GRN-2609-060
+ * to -068 carry free pillows received beside the purchase lines, and their
+ * po_to_gr transfer moved only the purchase lines. DOC_NOS plans the named
+ * DO / GR documents by the same rules — fully keyed, or keyless only in rows
+ * with no source line while every book line is claimed — whether or not a
+ * refusal exists.
+ *
  * RE-RUN: a second run finds each document's refusal followed by the pending
- * (or sent) edit this run queued, plans nothing and writes nothing.
+ * (or sent) edit this run queued, plans nothing and writes nothing. With DOC_NOS,
+ * a second run queues one more edit per named document; the rows it declared new
+ * carry their keys once the first edit has drained, so the second is a keyed
+ * edit that changes nothing.
  *
  * Env: DATABASE_URL (required)   MODE=plan|apply (default plan)
  *      CONFIRM (apply only)      COMPANY_ID (default 1)
+ *      DOC_NOS (optional, comma separated: plan exactly these DO / GR documents)
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -68,6 +80,7 @@ const APPLY = MODE === "apply";
 const CONFIRM_PHRASE = "send the refused delivery order and receipt edits again";
 const CONFIRM = (process.env.CONFIRM || "").trim();
 const CO = Number(process.env.COMPANY_ID || 1);
+const DOC_NOS = [...new Set((process.env.DOC_NOS || "").split(",").map((v) => v.trim()).filter(Boolean))];
 const notice = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 
 if (APPLY && CONFIRM !== CONFIRM_PHRASE) {
@@ -103,16 +116,32 @@ const refusals = await pg`
      AND doc_type IN ${pg(TYPES)} AND doc_id IS NOT NULL AND archived_at IS NULL
    ORDER BY doc_type, doc_id, created_at DESC`;
 
+const named = DOC_NOS.length ? await pg`
+  SELECT 'DO' AS doc_type, id::text AS doc_id, do_number AS doc_no FROM scm.delivery_orders
+   WHERE company_id = ${CO} AND do_number IN ${pg(DOC_NOS)} AND status::text <> 'CANCELLED' AND linked_ac_docno IS NOT NULL
+  UNION ALL
+  SELECT 'GR', id::text, grn_number FROM scm.grns
+   WHERE company_id = ${CO} AND grn_number IN ${pg(DOC_NOS)} AND status::text <> 'CANCELLED' AND linked_ac_docno IS NOT NULL` : [];
+const unnamed = DOC_NOS.filter((d) => !named.some((n) => n.doc_no === d));
+
+const targets = [];
+if (DOC_NOS.length) {
+  targets.push(...named);
+} else {
+  for (const r of refusals) {
+    if (classifyAcSkip(r.last_error).kind !== "keyless-line") continue;
+    const [{ n: later }] = await pg`
+      SELECT count(*)::int AS n FROM scm.autocount_outbox
+       WHERE company_id = ${CO} AND doc_type = ${r.doc_type} AND doc_id = ${r.doc_id}
+         AND op = 'edit' AND status IN ('pending', 'sent') AND created_at > ${r.created_at}`;
+    if (later === 0) targets.push(r);
+  }
+}
+
 const planned = [];
-const held = [];
-for (const r of refusals) {
-  if (classifyAcSkip(r.last_error).kind !== "keyless-line") continue;
+const held = unnamed.map((d) => `${d}: no such delivery order or goods receipt in AutoCount for this company (or cancelled)`);
+for (const r of targets) {
   const spec = DOWNSTREAM[r.doc_type];
-  const [{ n: later }] = await pg`
-    SELECT count(*)::int AS n FROM scm.autocount_outbox
-     WHERE company_id = ${CO} AND doc_type = ${r.doc_type} AND doc_id = ${r.doc_id}
-       AND op = 'edit' AND status IN ('pending', 'sent') AND created_at > ${r.created_at}`;
-  if (later > 0) continue;
   const items = await pg`
     SELECT id::text AS id, linked_ac_dtlkey, ${pg(spec.sourceFk)}::text AS source_row
       FROM ${pg("scm." + spec.itemTable)}
@@ -137,7 +166,9 @@ for (const r of refusals) {
     + (book == null ? " (no fresh book snapshot for this document)" : ""));
 }
 
-notice(`keyless-line refusals not yet followed by a sent or pending edit: ${planned.length + held.length} document(s)`);
+notice(DOC_NOS.length
+  ? `named documents: ${DOC_NOS.length}`
+  : `keyless-line refusals not yet followed by a sent or pending edit: ${planned.length + held.length} document(s)`);
 for (const p of planned) {
   console.log(`  ${APPLY ? "queueing" : "would queue"}: ${p.label} (${p.lines} line(s)`
     + (p.newLineIds.length ? `, ${p.newLineIds.length} added as a line the book never had — every book line is already claimed and the row has no source line)` : ", every one keyed)"));

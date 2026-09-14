@@ -22,6 +22,10 @@ on:
         description: "Required for apply: send the refused delivery order and receipt edits again"
         required: false
         default: ""
+      doc_nos:
+        description: "Optional: plan exactly these DO / GR numbers, comma separated, refusal or not (HC-GRN-2609-060)"
+        required: false
+        default: ""
 
 concurrency:
   group: requeue-keyed-conversion-edits
@@ -47,6 +51,7 @@ jobs:
         env:
           MODE: ${{ inputs.mode }}
           CONFIRM: ${{ inputs.confirm }}
+          DOC_NOS: ${{ inputs.doc_nos }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
           NODE_OPTIONS: --dns-result-order=ipv4first
