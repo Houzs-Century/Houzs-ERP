@@ -38,7 +38,7 @@ import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summariz
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { sourceGrnIdsForPi } from '../lib/convert-parent';
 import { refuseMigratedSources } from '../lib/migrated-chain';
-import { attachGrnLineFacts, withPoPriceSnapshot } from '../lib/pi-po-price';
+import { attachGrnLineFacts, withPoPriceSnapshot } from '../lib/pi-po-price'; import { loadOutstandingGrnLines } from '../lib/outstanding-grn-lines';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
 /* The create's refusal bodies and the two rules its exits follow (2026-08-19). */
 import { insertFailed, loadFailed, rollbackPi, committedAnyway } from '../lib/pi-create-refusals';
@@ -410,12 +410,13 @@ purchaseInvoices.get('/', async (c) => {
 });
 
 /* ── GET /outstanding-grn-items ─────────────────────────────────────────
-   Returns GRN LINES eligible for invoicing. Migration 0106 added
-   grn_items.invoiced_qty, so this now tracks PER-LINE remaining (Commander
-   2026-05-30 unified consumption model): for each grn_item from a POSTED GRN
-   we return remaining = qty_accepted - invoiced_qty and include only lines
-   with remaining > 0. A GRN line can be invoiced across MULTIPLE PIs until
-   fully consumed (replaces the old header-level all-or-nothing dedupe).
+   The Bill a Goods-Received Note picker: every line still to bill (accepted -
+   invoiced - returned > 0, per line since mig 0106, so a note can be billed
+   across several invoices) on POSTED, not-held notes. The read lives in
+   lib/outstanding-grn-lines.ts: driven by the notes that still have something
+   to bill, paged, company-scoped. It used to take the newest 500 posted notes
+   FIRST and filter afterwards, so an older unbilled note fell out of the
+   picker in silence.
 
    IMPORTANT (route ordering): this STATIC path MUST be registered before
    the `/:id` param route below — otherwise Hono matches `/:id` first and
@@ -423,85 +424,8 @@ purchaseInvoices.get('/', async (c) => {
    2026-05-28, same class as the PO-from-SO shadowing.) */
 purchaseInvoices.get('/outstanding-grn-items', async (c) => {
   const sb = c.get('supabase');
-  // Pull every POSTED GRN with its supplier + parent PO so we can group
-  // and present in the picker.
-  const { data: grnHeaders, error: hErr } = await scopeToCompany(
-    sb
-      .from('grns')
-      .select(`
-      id, grn_number, received_at, supplier_id, purchase_order_id, currency, exchange_rate,
-      supplier:suppliers ( code, name ),
-      purchase_order:purchase_orders ( po_number )
-    `),
-    c,
-  )
-    .eq('status', 'POSTED').eq('on_hold', false) // mig 0324: a held GRN now reads POSTED — the block stopped being free
-    .order('received_at', { ascending: false })
-    .limit(500);
-  if (hErr) return c.json({ error: 'load_failed', reason: hErr.message }, 500);
-  const headers = (grnHeaders ?? []) as unknown as Array<{
-    id: string; grn_number: string; received_at: string; supplier_id: string;
-    purchase_order_id: string | null;
-    currency?: string | null; exchange_rate?: string | number | null;
-    supplier: { code: string; name: string } | null;
-    purchase_order: { po_number: string } | null;
-  }>;
-  if (headers.length === 0) return c.json({ items: [] });
-
-  // Load the GRN items for every POSTED GRN. Per-line remaining tracking
-  // (migration 0106) replaces the header-level dedupe — a partially-invoiced
-  // GRN keeps surfacing its lines that still have remaining > 0.
-  const grnIds = headers.map((h) => h.id);
-  const { data: items, error: iErr } = await sb
-    .from('grn_items')
-    .select(`
-      id, grn_id, material_kind, item_code, material_name, item_group,
-      description, qty_accepted, qty_rejected, invoiced_qty, returned_qty, unit_price_sen, variants
-    `)
-    .in('grn_id', grnIds);
-  if (iErr) return c.json({ error: 'load_failed', reason: iErr.message }, 500);
-
-  const headerById = new Map(headers.map((h) => [h.id, h]));
-  const out = ((items ?? []) as Array<{
-    id: string; grn_id: string; material_kind: string; item_code: string;
-    material_name: string; item_group: string | null; description: string | null;
-    qty_accepted: number; qty_rejected: number; invoiced_qty: number; returned_qty: number;
-    unit_price_sen: number; variants: unknown;
-  }>)
-    .map((r) => {
-      const invoiced = r.invoiced_qty ?? 0;
-      const returned = r.returned_qty ?? 0;
-      const remaining = (r.qty_accepted ?? 0) - invoiced - returned;
-      return { ...r, _remaining: remaining };
-    })
-    .filter((r) => r._remaining > 0)
-    .map((r) => {
-      const h = headerById.get(r.grn_id)!;
-      return {
-        grnItemId:      r.id,
-        grnId:          r.grn_id,
-        grnDocNo:       h.grn_number,
-        receivedAt:     h.received_at,
-        supplierId:     h.supplier_id,
-        supplierCode:   h.supplier?.code ?? '',
-        supplierName:   h.supplier?.name ?? '',
-        purchaseOrderId: h.purchase_order_id,
-        poDocNo:        h.purchase_order?.po_number ?? null,
-        itemCode:       r.item_code,
-        description:    r.description ?? r.material_name,
-        itemGroup:      r.item_group ?? '',
-        qtyAccepted:    r.qty_accepted,
-        invoicedQty:    r.invoiced_qty ?? 0,
-        remaining:      r._remaining,
-        unitPriceSen: r.unit_price_sen,
-        variants:       r.variants,
-        /* Multi-note invoices (owner 2026-08-06) — the picker may combine
-           several of a supplier's notes into ONE invoice, but a PI header
-           carries ONE currency + rate, so the picker locks on these too. */
-        currency:       normalizeCurrency(h.currency),
-        exchangeRate:   normalizeExchangeRate(h.exchange_rate, normalizeCurrency(h.currency)),
-      };
-    });
+  const loaded = await loadOutstandingGrnLines({ sb, scopeQuery: (q) => scopeToCompany(q, c) });
+  if (loaded.error !== null) return c.json({ error: 'load_failed', reason: loaded.error }, 500);
 
   /* Owner 2026-08-06 — re-resolve each line's SUPPLIER fabric code from the
      live fabric_trackings row, exactly as the GRN / PO / SI details already do
@@ -511,9 +435,9 @@ purchaseInvoices.get('/outstanding-grn-items', async (c) => {
      current one — the same GRN line read two different ways (found on
      2990-GRN-2608-006: detail KN390-1, picker KN390-2). One batched read,
      fail-soft. */
-  await enrichLinesWithFabricSupplierCode(sb, c, out);
+  await enrichLinesWithFabricSupplierCode(sb, c, loaded.items);
 
-  return c.json({ items: out });
+  return c.json({ items: loaded.items, truncated: loaded.truncated });
 });
 
 purchaseInvoices.get('/:id', async (c) => {

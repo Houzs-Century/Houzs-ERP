@@ -893,9 +893,10 @@ export function useCreateGrnsFromPoItems() {
   });
 }
 
-/** PR — Multi-select PI-from-GRN picker (task #52). Lists GRN LINES from
-    POSTED GRNs that have NOT yet been invoiced (header-level dedupe per MVP
-    — see /outstanding-grn-items handler for the trade-off note). */
+/** PR — Multi-select PI-from-GRN picker (task #52). Lists the GRN LINES still to
+    bill (accepted - invoiced - returned > 0) on POSTED, not-held notes. The
+    server reads the notes that still have something to bill, not a window of
+    the newest posted notes (backend/src/scm/lib/outstanding-grn-lines.ts). */
 export type OutstandingGrnItem = {
   grnItemId:       string;
   grnId:           string;
@@ -920,12 +921,17 @@ export type OutstandingGrnItem = {
   exchangeRate?:   number | null;
 };
 
+/** `truncated` is the server saying its note read stopped at its ceiling, so
+    `items` is NOT every line still to bill and the screen must say so. A
+    response without the field (a Worker older than the field) reads as false. */
+export type OutstandingGrnItems = { items: OutstandingGrnItem[]; truncated: boolean };
+
 export function useOutstandingGrnItems() {
   return useQuery({
     queryKey: ['purchase-invoices', 'outstanding-grn-items'],
-    queryFn: () => authedFetch<{ items: OutstandingGrnItem[] }>(
+    queryFn: () => authedFetch<{ items: OutstandingGrnItem[]; truncated?: boolean }>(
       `/purchase-invoices/outstanding-grn-items`,
-    ).then((r) => r.items),
+    ).then((r): OutstandingGrnItems => ({ items: r.items, truncated: r.truncated === true })),
     staleTime: 30_000,
   });
 }
