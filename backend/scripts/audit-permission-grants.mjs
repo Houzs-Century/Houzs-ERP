@@ -8,10 +8,16 @@
 // to know what a rule does is to read the live names and count the people behind
 // them. Reading the code proves what the rule WOULD do; this proves what it DOES.
 //
+// Every position -> cohort / flag answer below is ASKED of that code
+// (scripts/lib/position-classification.mjs), never restated here: the copies
+// this file used to carry drifted (docs/bugs/0894). Run it under tsx:
+//   npx tsx scripts/audit-permission-grants.mjs
+//
 // STRICTLY READ-ONLY -- SELECTs only, no writes, no DDL, no transaction.
 // Exits 0 for every legitimate answer: it is a QUESTION, not a gate.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
+import { classifyPosition } from "./lib/position-classification.mjs";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -31,55 +37,6 @@ if (!url) {
 const notice = (msg) =>
   console.log(process.env.GITHUB_ACTIONS ? `::notice::${msg}` : `\n${msg}`);
 
-// -- The cohort lists, COPIED from the TypeScript that enforces them ---------
-const norm = (s) => (s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
-
-const GOD_POSITIONS = ["Super Admin", "Owner"].map(norm); // positionPolicy
-const MONEY_WRITE_POSITIONS = ["Finance Manager", "Super Admin"].map(norm);
-// ⚠ NOT a copy of positionPolicy's CONFIG_WRITE_POSITIONS set — it is every
-// position that RESOLVES to canWriteConfig: true, which is a strictly wider
-// question and the only one this column claims to answer. Sales Director gets
-// the flag from FLAGS_SALES_DIRECTOR (owner 2026-09-01 — he maintains product
-// master data), not from that set, so copying the set alone made this column
-// under-report him: it printed "no config-write" for someone who holds it.
-// Anything added to either place belongs here.
-const CONFIG_WRITE_POSITIONS = [
-  "Procurement/Purchasing", "Operation Manager", "Operation Executive",
-  "Logistic Admin", "Super Admin",
-  "Sales Director", // via the cohort flag, not the name set
-].map(norm);
-const RESTRICTED_POSITIONS = ["Driver", "Helper", "Storekeeper", "Storekeeper Supervisor"].map(norm);
-const DIRECTOR_POSITION_NAMES = ["Super Admin", "Sales Director", "Finance Manager"].map(norm);
-const SALES_DIRECTOR_POSITION_NAMES = ["Sales Director"].map(norm);
-const PURCHASING_POSITION_NAMES = ["Procurement/Purchasing", "Purchasing"].map(norm);
-
-// pmsAccess.getPmsRole -- the PMS section router. Regexes, NOT the exact-name sets.
-const PMS_DRIVER = /^(Driver|Helper)$/i;
-const PMS_PURCHASING = /^Purchasing$/i;
-const PMS_LOGISTIC = /^Logistics?$/i;
-const PMS_SALES = /^Sales /i; // NOTE the trailing space
-const SALES_POSITION_PREFIX = /^sales/i;
-
-function pmsRole(posName, isWildcard) {
-  const pos = (posName ?? "").trim();
-  if (isWildcard || DIRECTOR_POSITION_NAMES.includes(norm(pos))) return "DIRECTOR";
-  if (PMS_DRIVER.test(pos)) return "DRIVER";
-  if (PMS_PURCHASING.test(pos)) return "PURCHASING";
-  if (PMS_LOGISTIC.test(pos)) return "LOGISTIC";
-  if (PMS_SALES.test(pos)) return "PIC/SALES";
-  return "OTHER";
-}
-
-function policyCohort(posName, deptName) {
-  const n = norm(posName);
-  if (!n) return "positionless (role matrix)";
-  if (GOD_POSITIONS.includes(n)) return "god(*)";
-  if (RESTRICTED_POSITIONS.includes(n)) return "restricted (L2 ENFORCED)";
-  const dept = (deptName ?? "").toLowerCase();
-  if (dept.includes("sales") || SALES_POSITION_PREFIX.test((posName ?? "").trim()))
-    return "sales (L2 ENFORCED)";
-  return "FULL (L2 inert)";
-}
 
 const MONEY_KEYS = [
   "scm.payment_voucher.create", "scm.payment_voucher.write",
@@ -110,36 +67,27 @@ try {
     "  id | position                  | department            | act | policy cohort              | PMS role   | flags",
   );
   for (const p of positions) {
-    const n = norm(p.name);
-    const flags = [];
-    if (GOD_POSITIONS.includes(n)) flags.push("WILDCARD*");
-    if (MONEY_WRITE_POSITIONS.includes(n)) flags.push("money-write");
-    if (CONFIG_WRITE_POSITIONS.includes(n)) flags.push("config-write");
-    if (DIRECTOR_POSITION_NAMES.includes(n)) flags.push("pms-DIRECTOR");
-    if (SALES_DIRECTOR_POSITION_NAMES.includes(n)) flags.push("sales-director-admin");
-    if (PURCHASING_POSITION_NAMES.includes(n)) flags.push("cost-viewer");
+    const k = classifyPosition(p.name, p.dept);
     console.log(
-      `  ${String(p.id).padStart(2)} | ${String(p.name).padEnd(25)} | ${String(p.dept ?? "-").padEnd(21)} | ${String(p.active_users).padStart(3)} | ${policyCohort(p.name, p.dept).padEnd(26)} | ${pmsRole(p.name, false).padEnd(10)} | ${flags.join(",") || "-"}`,
+      `  ${String(p.id).padStart(2)} | ${String(p.name).padEnd(25)} | ${String(p.dept ?? "-").padEnd(21)} | ${String(p.active_users).padStart(3)} | ${k.label.padEnd(26)} | ${k.pmsRole.padEnd(10)} | ${k.flags.join(",") || "-"}`,
     );
   }
 
-  notice("-- (1b) DRIFT: a name in a CODE list that no live position carries --");
-  const liveNames = new Set(positions.map((p) => norm(p.name)));
-  for (const [label, list] of [
-    ["GOD_POSITIONS", GOD_POSITIONS],
-    ["MONEY_WRITE_POSITIONS", MONEY_WRITE_POSITIONS],
-    ["CONFIG_WRITE_POSITIONS", CONFIG_WRITE_POSITIONS],
-    ["RESTRICTED (positionPolicy)", RESTRICTED_POSITIONS],
-    ["DIRECTOR (pmsAccess)", DIRECTOR_POSITION_NAMES],
-    ["PURCHASING (cost viewer)", PURCHASING_POSITION_NAMES],
-  ]) {
-    const missing = list.filter((n) => !liveNames.has(n));
-    console.log(`  ${label.padEnd(30)} missing in prod: ${missing.join(", ") || "(none)"}`);
+  notice("-- (1b) each position-keyed rule -> the LIVE positions it admits (asked of the code) --");
+  const admits = new Map();
+  for (const p of positions) {
+    const k = classifyPosition(p.name, p.dept);
+    for (const f of [`cohort:${k.cohort}`, ...k.flags]) {
+      if (!admits.has(f)) admits.set(f, []);
+      admits.get(f).push(`${p.name} (${p.active_users})`);
+    }
   }
+  for (const [rule, names] of [...admits.entries()].sort((a, b) => a[0].localeCompare(b[0])))
+    console.log(`  ${rule.padEnd(24)} ${names.join(", ")}`);
 
   notice("-- (1c) PMS regex misses: live positions getPmsRole falls through to OTHER --");
   for (const p of positions) {
-    if (pmsRole(p.name, false) !== "OTHER") continue;
+    if (classifyPosition(p.name, p.dept).pmsRole !== "OTHER") continue;
     console.log(`  ${String(p.name).padEnd(28)} -> OTHER  (${p.active_users} active users)`);
   }
 
@@ -194,7 +142,7 @@ try {
 
   const wild = people.filter((u) => {
     let perms = []; try { perms = JSON.parse(u.role_perms || "[]"); } catch {}
-    return perms.includes("*") || GOD_POSITIONS.includes(norm(u.position_name));
+    return perms.includes("*") || classifyPosition(u.position_name, u.dept_name).cohort === "god";
   });
   console.log(`\n  EFFECTIVE WILDCARD "*" holders (role "*" OR god position): ${wild.length}`);
   for (const u of wild) {
@@ -207,8 +155,8 @@ try {
   const tally = new Map();
   for (const u of people) {
     let perms = []; try { perms = JSON.parse(u.role_perms || "[]"); } catch {}
-    const isWild = perms.includes("*") || GOD_POSITIONS.includes(norm(u.position_name));
-    const c = isWild ? "wildcard *" : policyCohort(u.position_name, u.dept_name);
+    const k = classifyPosition(u.position_name, u.dept_name);
+    const c = perms.includes("*") || k.cohort === "god" ? "wildcard *" : k.label;
     tally.set(c, (tally.get(c) ?? 0) + 1);
   }
   for (const [k, v] of [...tally.entries()].sort((a, b) => b[1] - a[1]))
@@ -218,7 +166,8 @@ try {
   const deptOnlySales = people.filter(
     (u) =>
       (u.dept_name ?? "").toLowerCase().includes("sales") &&
-      !SALES_POSITION_PREFIX.test((u.position_name ?? "").trim()),
+      // A DATA question (whose position name carries no "Sales" prefix), not a copy of a rule.
+      !/^sales/i.test((u.position_name ?? "").trim()),
   );
   console.log(`  ${deptOnlySales.length} people`);
   for (const u of deptOnlySales)
@@ -275,9 +224,6 @@ try {
   // Super Admin/Owner) the resolved map is fullAccessMap() -- so every row the
   // owner saved in Team > Positions for that position is INERT, including the
   // rows that say "none".
-  const classified = new Set([
-    ...GOD_POSITIONS, ...RESTRICTED_POSITIONS,
-  ]);
   notice("-- (6) IGNORED Team>Positions rows (position resolves to FULL in code) --");
   const ignored = await pg`
     SELECT p.name AS position, a.page_key, a.level,
@@ -291,10 +237,8 @@ try {
   let ignoredCount = 0;
   let ignoredDenies = 0;
   for (const r of ignored) {
-    const n = norm(r.position);
-    if (classified.has(n)) continue;
-    const dept = (r.dept ?? "").toLowerCase();
-    if (dept.includes("sales") || SALES_POSITION_PREFIX.test(String(r.position).trim())) continue;
+    // Only a position the policy resolves to FULL ignores its saved rows.
+    if (classifyPosition(r.position, r.dept).cohort !== "full") continue;
     ignoredCount++;
     if (r.level === "none") ignoredDenies++;
     console.log(
