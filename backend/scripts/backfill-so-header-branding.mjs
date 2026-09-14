@@ -90,7 +90,7 @@ async function buildPlan(sql) {
   if (vocab.length === 0) throw new Error(`no active project_brands for ${companyCode} — refusing to run`);
 
   const heads = await sql`
-    SELECT doc_no, branding, status, linked_ac_docno, created_at
+    SELECT doc_no, branding, status, linked_ac_docno, created_at, so_date::text AS so_date
     FROM scm.mfg_sales_orders WHERE company_id = ${cid} ORDER BY doc_no`;
   if (heads.length === 0) throw new Error(`company ${companyCode} has no sales orders — a plan over nothing is not a verdict`);
   const targets = heads.filter((h) => isPlaceholderBrandText(h.branding));
@@ -126,7 +126,7 @@ async function buildPlan(sql) {
     const f = first.get(h.doc_no);
     const label = brandingLabel(f?.category ?? null, f?.branding ?? null, companyCode);
     const to = brandForHeader(label, vocab);
-    const row = { doc_no: h.doc_no, before: h.branding, label, status: h.status, ac: h.linked_ac_docno, created_at: h.created_at, category: f?.category ?? null };
+    const row = { doc_no: h.doc_no, before: h.branding, label, status: h.status, ac: h.linked_ac_docno, created_at: h.created_at, so_date: h.so_date, category: f?.category ?? null };
     if (to) writes.push({ ...row, to, caseOnly: to !== label });
     else unfilled.push({ ...row, why: f ? `the list shows "${label}", which is not a brand in ${companyCode}'s project_brands` : 'no live line — the list shows "No Items"' });
   }
@@ -149,7 +149,16 @@ async function buildPlan(sql) {
     lines: (linesByDoc.get(h.doc_no) ?? []).map((l) => `${l.item_code ?? "(no code)"} [${l.item_group ?? ""}; sku ${productCategory.get(l.item_code) ?? "?"} / ${shown(productBranding.get(l.item_code) ?? null)}]`),
   }));
 
-  return { cid, companyCode, vocab, headCount: heads.length, targets, imported, erpDetail, lines: lines.length, foreignLines, writes, unfilled, triggers, flags };
+  /* Venture Portal reach. The URL and secret are never read out — only whether
+     both are set, and the date floor the drain applies (vp.since). */
+  const vp = await sql`
+    SELECT max(v) FILTER (WHERE k = vp.since) AS since,
+           count(*) FILTER (WHERE k IN (vp.url, vp.secret) AND coalesce(trim(v), ) <> )::int AS wired
+    FROM scm.sync_config WHERE k IN (vp.since, vp.url, vp.secret)`;
+  const vpSince = tidy(vp[0]?.since) || null;
+  const vpWired = Number(vp[0]?.wired ?? 0) === 2;
+
+  return { cid, companyCode, vocab, headCount: heads.length, targets, imported, erpDetail, lines: lines.length, foreignLines, writes, unfilled, triggers, flags, vpSince, vpWired };
 }
 
 function report(p) {
@@ -188,6 +197,9 @@ function report(p) {
   const brandTriggers = p.triggers.filter((t) => firesOnBrandingUpdate(t.def));
   log(`triggers that fire on this UPDATE: ${brandTriggers.map((t) => t.name).join(", ") || "none"}`);
   log(`flags: ${p.flags.map((f) => `${f.key}=${JSON.stringify(f.value)}`).join("  ") || "(neither row present)"}`);
+  const vpReach = p.writes.filter((w) => !p.vpSince || (w.so_date && w.so_date >= p.vpSince));
+  log(`Venture Portal: receiver wired=${p.vpWired}, vp.since=${p.vpSince ?? "(none)"}; of the ${p.writes.length} fills, ${vpReach.length} are dated on/after vp.since and are re-delivered by the next drain IF the feed flag enables company ${p.cid}; the other ${p.writes.length - vpReach.length} are marked skipped without a request`);
+  if (vpReach.length) out(`  VP-REACH	${vpReach.map((w) => `${w.doc_no}(${w.so_date})`).join(" ")}`);
 }
 
 async function applyPlan(sql, p) {
