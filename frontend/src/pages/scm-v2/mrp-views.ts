@@ -133,6 +133,8 @@ export function mrpViews(
 /** Does a row belong on this tab? The Others tab claims what no other tab does. */
 export function rowBelongsToView(view: MrpView, rowCategory: string | null | undefined): boolean {
   const cat = (rowCategory ?? '').trim().toUpperCase();
+  // The Sofa tab also owns Sofa Accessory rows — they park under their own SO there.
+  if (view.category === 'SOFA' && isSofaAccessory(cat)) return true;
   if (view.category !== null) return cat === view.category;
   /* BY EXCLUSION, not by the catalogue list, and that is the load-bearing
      choice. Matching Others against the `categories` the response happened to

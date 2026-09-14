@@ -38,3 +38,11 @@ describe('Sofa Accessory rows on the MRP Sofa tab', () => {
     expect(rowBelongsToView(others, 'DINING')).toBe(true);
   });
 });
+
+describe('the Sofa tab owns Sofa Accessory', () => {
+  it('rowBelongsToView says so, so the category is reachable', () => {
+    const sofa = mrpViews().find((v) => v.value === 'sofa')!;
+    expect(rowBelongsToView(sofa, 'FABRIC_ACCESSORY')).toBe(true);
+    expect(rowBelongsToView(sofa, 'ACCESSORY')).toBe(false);
+  });
+});
