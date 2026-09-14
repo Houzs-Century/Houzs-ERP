@@ -3931,6 +3931,33 @@ purchase order is a second rollout that needs its own.
 > targeted re-export of those DtlKeys with
 > `export-ac-line-photos.py`'s `DTLKEY_FILE` mode, then upload, then attach.
 
+### A picture too large for one request is left behind, not the document (2026-09-14)
+
+AcSyncService refuses any request over `MaxBody` — 2 MiB — with HTTP 413
+`body too large`, and a 4xx is not retried, so the row fails at once. The drain
+attaches every line photograph of an edit as base64, and uploads allow 10 MB
+with no resize, so **one phone photo refused the whole edit**: price, dates and
+the balance with it. Measured 2026-09-14 on the three orders refused that way —
+HC-SO-2609-063, HC-SO-012388, HC-SO-013496 — each carries exactly one
+photograph, of 2.19, 2.30 and 4.20 MB (R2 object sizes).
+
+The attachment now lives in `backend/src/scm/lib/autocount-photo-attach.ts`
+(moved out of the drain, which is at its size cap) and sizes the body before it
+sends: `planPhotoBudget` attaches lines in payload order while the encoded body
+stays under the host's limit, and a line that would cross it is sent with **no
+`Photos` key** — the book keeps the pictures it had on that line, the same rule
+as an unreadable picture. The sent row carries
+`PHOTOS NOT SENT: <n> line(s) … line <DtlKey> (<MB> MB)`, joined with ` | ` to
+any line-identity sentence, and the health check lists those rows under their
+own heading instead of calling them identity gaps. Tests:
+`backend/src/scm/lib/autocount-photo-attach.test.ts` and the drain case in
+`backend/src/scm/lib/autocount-drain.test.ts`. Ledger:
+`docs/bugs/0899-one-large-phone-photo-made-autocount-refuse-a-whole-sales-or.md`.
+
+**Still open:** the large picture itself does not reach AutoCount. That needs
+the picture made smaller — at upload, or by the host before it builds the RTF,
+which also means raising `MaxBody` — and neither is done here.
+
 ## 8. Configuration
 
 | Name | Kind | Notes |
