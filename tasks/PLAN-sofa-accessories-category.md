@@ -86,9 +86,9 @@ matcher (`backend/scripts/lib/fabric-colour-match.mjs`) through
 `backend/scripts/lib/line-colour-verdict.mjs`, which refuses two-colour lines and
 assumed series.
 
-Plan run 34843795061 (production, rolled back): 7 models + 9 SKUs move; line
-groups on SO 248 / PO 85 / GRN 48 / DO 14 / PI 29 / SI 1; 285 lines get a colour
-(own text or inherited from the line they came from); 30 lines name a colour the
+Plan run 34844943846 (production, rolled back): 7 models + 9 SKUs move; line
+groups on SO 248 / PO 85 / GRN 48 / DO 14 / PI 29 / SI 1; 294 lines get a colour
+(own text or inherited from the line they came from); 19 lines name a colour the
 fabric master does not hold or name two colours, and are left blank and listed;
 12 received lots relabelled by their own GRN line's colour; the AutoCount opening
 lots (211 SQUARE PILLOW, 11 LONG PILLOW on hand) stay colourless.
