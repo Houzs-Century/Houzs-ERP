@@ -397,6 +397,11 @@ export interface NewLineKeyTarget {
   newDesc2: string[];
   /** Every DtlKey the payload already carried — the book lines we did NOT add. */
   knownKeys: number[];
+  /** The edit cleared the document and laid every line down in payload order,
+   *  so the book's new keys ascend in that order and position IS identity — the
+   *  reasoning 0890 applied to a create. Decides whether a repeated item code
+   *  with no Desc2 may be stored by position (docs/bugs/0907). */
+  rebuilt: boolean;
 }
 
 export async function persistNewLineKeys(
@@ -475,7 +480,12 @@ export async function persistNewLineKeys(
       /* Two added lines of the SAME code — one sofa model in two fabrics is the
          ordinary case — cannot be told apart by code, so the zip is a coin flip
          unless Desc2 is present on both sides to break the tie. */
-      if (dupes.has(want) && !(gotD && wantD)) {
+      /* NOT on a rebuild: the document was cleared and laid down in payload order,
+         so position is identity and the repeat is no coin flip. Refusing it left
+         HC-SO-2609-071 (A01 twice) and HC-PO-2609-098 (four repeated mattress
+         codes) keyless for good, since only a rebuild could key them. The code
+         at each position is still compared above. docs/bugs/0907. */
+      if (!target.rebuilt && dupes.has(want) && !(gotD && wantD)) {
         // eslint-disable-next-line no-console
         console.error(
           `${label}: NOT STORED — ItemCode '${target.newCodes[i]}' was added on more than one `
@@ -564,5 +574,5 @@ export function newLineTargetOf(docType: string, payload: { body?: unknown }): N
     newCodes.push(String(l.ItemCode ?? ''));
     newDesc2.push(String(l.Desc2 ?? ''));
   }
-  return newIds.length ? { table, newIds, newCodes, newDesc2, knownKeys } : null;
+  return newIds.length ? { table, newIds, newCodes, newDesc2, knownKeys, rebuilt } : null;
 }
