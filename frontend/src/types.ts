@@ -149,6 +149,9 @@ export interface AssrCase {
   /** Live DO numbers from scm.delivery_orders (so_doc_no join), merged by
    *  the list/export endpoints; "DO1 · DO2" when the SO has several. */
   do_numbers?: string | null;
+  /** Supplier POs raised from the case's SO (services/assrOrderPos.ts). NOT po_no. */
+  order_pos?: { id: string; po_number: string }[];
+  company_id?: number | string | null;
   do_date: string | null;
   closed_at: string | null;
   created_by: number | null;

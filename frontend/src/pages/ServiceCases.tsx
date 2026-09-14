@@ -121,7 +121,8 @@ import { Forbidden } from "./Forbidden";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import { defaultBrandingForCompany, HOUZS_COMPANY_CODE } from "../lib/branding";
 import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, assrSubStatusLabel, ASSR_STAGES, ASSR_SUB_STATUSES } from "../vendor/scm/lib/assr/stages";
-import { ASSR_ISSUE_CATEGORIES, ASSR_NOTE_AUDIENCES, assrNoteIsCustomerVisible, type AssrNoteAudience } from "../vendor/scm/lib/assr/case-fields";
+import { ASSR_ISSUE_CATEGORIES, ASSR_NOTE_AUDIENCES, assrNoteIsCustomerVisible, assrOrderPoText, type AssrNoteAudience } from "../vendor/scm/lib/assr/case-fields";
+import { AssrOrderPoLine } from "../components/AssrOrderPoLine";
 import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import type {
   Paginated,
@@ -718,6 +719,14 @@ function CasesView({
         <span className="font-mono text-xs">{r.delivery_order || r.do_numbers || "—"}</span>
       ),
       getValue: (r) => r.delivery_order || r.do_numbers,
+    },
+    {
+      key: "order_pos",
+      filterable: true,
+      label: "Order PO",
+      // Supplier POs raised from the case's SO (server merge). PO No below is the case's own service PO.
+      render: (r) => <span className="font-mono text-xs">{assrOrderPoText(r) || "—"}</span>,
+      getValue: (r) => assrOrderPoText(r),
     },
     {
       key: "po_no",
@@ -4026,6 +4035,7 @@ function DetailContent({
             {/* Procurement / PO — product-side info (moved out of
                 Resolution, which now only holds supplier handling). */}
             <div className="mt-2 border-t border-border-subtle pt-2">
+              <AssrOrderPoLine row={c} />
               <InlineEdit
                 label="PO No"
                 value={c.po_no}

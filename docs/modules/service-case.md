@@ -364,7 +364,7 @@ is the ones that matter; the full machine-checked gate list is
 | Method | Path | Gate | Purpose |
 |---|---|---|---|
 | GET | `/api/assr` | `requireServiceCaseAccess()` `:807` | Paginated list (stage / status / search / assigned_to / creditor / from+to / sort) |
-| GET | `/api/assr/:id` | `requireServiceCaseAccess()` `:1399` | Case + items + attachments + activity + logistics + related POs + stage history + portal token + access list |
+| GET | `/api/assr/:id` | `requireServiceCaseAccess()` `:1399` | Case + items + attachments + activity + logistics + related POs + stage history + portal token + access list. `case.order_pos` / `case.do_numbers` are merged, not stored — see *Order PO* below |
 | POST | `/api/assr` | `requireServiceCaseAccess(["service_cases.create","service_cases.write","service_cases.manage"])` `:1517-1528` | Create (see required fields above) |
 | PATCH | `/api/assr/:id` | `requirePermission("service_cases.write")` `:1657` | Field edits, whitelisted by `PATCH_FIELDS` |
 | POST | `/api/assr/:id/transition` | `service_cases.write` `:2570` | Move stage (any-to-any; fires the survey email on `completed`) |
@@ -423,6 +423,39 @@ Token-gated companions (no session): `/api/track` (customer verify),
    (`:1643`).
 6. **Redaction** — for any scoped (non-unrestricted) caller, creditor fields
    are stripped from every row (`assr.ts:832-834`, `stripCreditorFields` `:800`).
+7. **Merged columns** — `do_numbers` (`attachDeliveryOrders`) and `order_pos`
+   (`services/assrOrderPos.ts`), run concurrently on the page. The detail read
+   runs the same two. The CSV export carries `do_numbers` only.
+
+### Order PO — the order's purchase orders, NOT `po_no` (2026-09-14)
+
+Two different purchase orders sit on a case, and they must not share a field:
+
+| Field | What it is | Written by |
+|---|---|---|
+| `po_no` | The case's OWN **service** PO. `POST /:id/generate-po` refuses (409) once it is set; cost resolution prices the repair from it. | Hand edit, generate-po, or (legacy) AutoCount `SOUDF_ToPONo` at create. The ERP SO lookup `fetchScmSoContext` returns `SOUDF_ToPONo: null`, so a case on an ERP sales order starts with it EMPTY. |
+| `order_pos` | The supplier POs **raised from the case's sales order**: `[{ id, po_number }]`, sorted. Read-only, never stored. | Merged on every list page and detail read by `attachOrderPurchaseOrders` (`services/assrOrderPos.ts`). |
+
+`order_pos` walks SO line -> `purchase_order_items.so_item_id` ->
+`purchase_orders` through `soConvertedPos` (`scm/lib/so-converted-po.ts`) — the
+same walk the Sales Orders list uses for its raised-PO chips. CANCELLED POs are
+dropped, DRAFT kept. **Company:** cases are grouped by their own `company_id`
+and each group is read with `company_id = <that id>` on the three reads; a case
+with no `company_id` or no `doc_no` gets `[]` and issues no read. Fail-soft
+like `do_numbers`: a failed read also reads as `[]` ("—"), so an empty Order PO
+does not by itself prove the order has no PO. Both companies.
+
+Where it shows: desktop list column **Order PO** right after DO No (filterable);
+desktop detail, a linked line above the editable PO No in the Procurement / PO
+block (`components/AssrOrderPoLine.tsx`); phone, a line above PO No in the
+items accordion. Each desktop link opens `/scm/purchase-orders/:id?company=<case
+company>` in a NEW window — the PO page is scoped to the tab's active company,
+and the `?company=` seed (`lib/activeCompany.ts`) is how a 2990 case's PO opens
+from a Houzs tab without switching that tab. The PO page still needs
+`scm.procurement.po`. The reader, the `" · "` text and the link live once in
+`vendor/scm/lib/assr/case-fields.ts` (`assrOrderPos`, `assrOrderPoText`,
+`assrOrderPoHref`). Pinned by `services/assrOrderPos.test.ts`,
+`tests/assrOrderPosWiring.test.ts` and `components/AssrOrderPoLine.test.tsx`.
 
 ### Create (`assr.ts:1517-1637` → `services/assr.ts:createAssrCase`)
 
@@ -905,6 +938,7 @@ module that means:
 | Intake required fields | `ServiceCases.tsx:2857-2872` (disabled gate) + `:2425-2467` (submit) | `MobileServiceCase.tsx:1921` (`valid`) + `:1858-1890` (payload) | server guard `backend/src/routes/assr.ts:1548-1566` — change this FIRST |
 | Enum option lists (priority / issue category / resolution / verification / QC) | `ServiceCases.tsx` lookups | `MobileServiceCase.tsx` hardcoded fallbacks + `useLookupNames`/`useLookupSlugs` | `/api/assr/lookups/:kind` is the source; the constants are only a pre-fetch fallback |
 | **Note audience + issue-category fallback** | `ServiceCases.tsx` (add-note form, create panel) | `MobileServiceCase.tsx` (Timeline picker, NoteSheet, intake sheet) | **`vendor/scm/lib/assr/case-fields.ts`** — `ASSR_NOTE_AUDIENCES`, `assrNoteIsCustomerVisible()`, `ASSR_ISSUE_CATEGORIES` |
+| **Order PO** (read-only, the SO's purchase orders) | list column + `AssrOrderPoLine` in `pages/ServiceCases.tsx` | `KV label="Order PO"` in `mobile/MobileServiceCase.tsx` | **`vendor/scm/lib/assr/case-fields.ts`** `assrOrderPos` / `assrOrderPoText` / `assrOrderPoHref`; server `services/assrOrderPos.ts` |
 | Patchable fields | `InlineEdit` sites in `ServiceCases.tsx` | `EditableAcc` field list in `MobileServiceCase.tsx` | `PATCH_FIELDS` `backend/src/services/assr.ts:785-830` |
 | Product category (`service_category`) | `CategoryChips` in `pages/ServiceCases.tsx` | `mobile/MobileAssrCategoryChips.tsx`, wired as the `chips` field type in `EditableAcc` | **`frontend/src/lib/assrProductCategories.ts`** — the endpoint, the split, which chips exist, what a toggle produces. Markup only is per-surface |
 | Survey address (`customer_email`) | intake form + Customer panel in `pages/ServiceCases.tsx` | intake sheet + Customer accordion in `mobile/MobileServiceCase.tsx` | `email_for_survey \|\| customer_email` in `backend/src/routes/assr.ts` decides who the CSAT mail goes to |
