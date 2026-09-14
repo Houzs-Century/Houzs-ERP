@@ -1325,7 +1325,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav }: { 
                 {canCancel ? (
                   <button className="btn-danger" style={{ flex: 1, opacity: busy ? 0.55 : 1 }} disabled={busy} onClick={() => void requestCancel(docNo, docNo)}>{busy ? "Working…" : "Request cancel"}</button>
                 ) : (
-                  <div style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--mut2)", alignSelf: "center" }}>Locked — downstream documents exist.</div>
+                  <div style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--mut2)", alignSelf: "center" }}>Items locked</div>
                 )}
               </div>
               {onAddLine && canWriteSo && <button className="btn-ghost" style={{ marginTop: 9, opacity: busy || editLocked ? 0.4 : 1 }} disabled={busy || editLocked} onClick={() => onAddLine(docNo)}>+ {ADD_LINE_LABEL}</button>}

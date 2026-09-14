@@ -871,23 +871,6 @@
   },
   {
    "docs": [
-    "HC-SO-013497"
-   ],
-   "model": "9058",
-   "pieces": [
-    "L(LHF)",
-    "1NA",
-    "1NA",
-    "1A(RHF)"
-   ],
-   "seat": "30",
-   "lineKeys": [
-    "926847"
-   ],
-   "why": "LIKELY, and the reason is named rather than smoothed over. Photo SO-013497__926847_1.jpg, enlarged 4x and then the run cropped and enlarged 10x: the model 9058 is written above, TV to the upper left. The bottom run reads left to right as a box hatched inside its LEFT edge, two plain boxes, and then a piece whose left side sweeps up in a rounded curve into a section drawn much deeper than the seats and closed by a vertical at the far right - a chaise running out at the right-hand end of the row. WHAT MAKES IT LIKELY: a FIFTH element is drawn detached ABOVE the run, a single box hatched along its TOP edge, and whether it belongs to this sofa or is a separate chair in the room cannot be decided from the crop. HC-SO-012729's slip proves detached pieces DO belong on these slips - but there they are joined by written + signs, and here there are none. If that box is a piece, this build is short by one and the entry is a one-line edit. The rounded sweep is read as the chaise rather than as a corner because the owner's confirmed corner (HC-SO-012729) is drawn as a SEPARATE quarter-round outline, not as a curve inside a larger one, and because a corner with nothing after it is not an elbow. NO NUMBER IS WRITTEN IN ANY BOX - the stored crop cuts the sizes off - so the seat of 30 is the ACCOUNT BOOK's own \"Col : HR805-90 30 inch\", never the drawing's. | SUPERSEDED 2026-09-10 by the TV re-read: the TV on this drawing is above the run, so the reading below was mirrored. Corrected here as well as in sofa-compartment-corrections-tv-direction.json, because the loader takes whichever round runs last and two disagreeing rounds let file order decide a sofa. Owner: 「纠正direction 要根据看TV」."
-  },
-  {
-   "docs": [
     "HC-PO-000254",
     "HC-GR-000287"
    ],

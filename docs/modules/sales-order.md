@@ -2199,6 +2199,16 @@ now means "no purchase order of any kind", which is what a reader assumes it
 means. `getValue` (search / export) returns the same combined list the cell
 renders.
 
+**The raised-PO read carries the active company (2026-09-14).**
+`soConvertedPoNumbers(sb, docNos, companyId)` now takes a REQUIRED
+`companyId: number | null` and puts `company_id = <id>` on its three reads (SO
+lines, PO lines, POs); the list passes `activeCompanyId(c) ?? null`, the same
+company its own rows are already scoped to. Before, the walk had no predicate,
+so a doc_no carried by both companies could chip the other company's PO. The
+walk is also exposed as `soConvertedPos` (`[{ id, po_number }]`), which the
+Service Case "Order PO" reads per case company — see
+`docs/modules/service-case.md`.
+
 One derivation for both surfaces: `frontend/src/lib/soPoChips.ts`
 (`poCellChips` + `PO_CELL_MAX`, pure). Desktop renders it via `SoListPoCell` in
 `components/SoSourceChips.tsx`; the mobile Orders card via

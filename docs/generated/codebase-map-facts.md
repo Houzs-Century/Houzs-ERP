@@ -228,14 +228,14 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2345 files, 777366 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2349 files, 777860 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15144 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 11921 |
-| `frontend/src/pages/ServiceCases.tsx` | 8840 |
+| `frontend/src/pages/ServiceCases.tsx` | 8850 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 8581 |
 | `frontend/src/pages/Team.tsx` | 5686 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5585 |
@@ -249,7 +249,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/mobile/MobileNewSO.tsx` | 3748 |
 | `backend/src/scm/routes/grns.ts` | 3564 |
 | `frontend/src/components/DataTable.tsx` | 3456 |
-| `frontend/src/mobile/MobileServiceCase.tsx` | 3380 |
+| `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
 | `backend/src/routes/assr.ts` | 3365 |
 | `backend/src/services/projects.ts` | 3137 |
 | `frontend/src/pages/MailCenter/Inbox.tsx` | 3013 |
@@ -495,7 +495,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileSavedPhotoThumb.tsx` | 82 |
 | `frontend/src/mobile/MobileScan.tsx` | 1467 |
 | `frontend/src/mobile/MobileSearch.tsx` | 285 |
-| `frontend/src/mobile/MobileServiceCase.tsx` | 3380 |
+| `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
 | `frontend/src/mobile/MobileSkuPicker.tsx` | 260 |
 | `frontend/src/mobile/MobileStockCard.tsx` | 335 |
 | `frontend/src/mobile/MobileStockTransferNew.tsx` | 276 |
