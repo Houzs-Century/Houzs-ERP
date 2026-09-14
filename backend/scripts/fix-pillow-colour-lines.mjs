@@ -125,7 +125,7 @@ async function plan(tx) {
       const sel = cols.map((c) => (c in override ? `${override[c]}` : `"${c}"`)).join(", ");
       const [ins] = await tx.unsafe(`INSERT INTO scm.mfg_sales_order_items (${cols.map((c) => `"${c}"`).join(", ")})
         SELECT ${sel} FROM scm.mfg_sales_order_items WHERE id::text = $3 RETURNING id::text, line_no`,
-        [JSON.stringify({ ...v, fabricCode: SPLIT.add.code, extraAddonNote: SPLIT.add.note }), SPLIT.add.note, String(r.id)]);
+        [{ ...v, fabricCode: SPLIT.add.code, extraAddonNote: SPLIT.add.note }, SPLIT.add.note, String(r.id)]);
       await tx`UPDATE scm.mfg_sales_orders SET line_count = (SELECT count(*) FROM scm.mfg_sales_order_items WHERE doc_no = ${SPLIT.doc}) WHERE doc_no = ${SPLIT.doc} AND company_id = ${COMPANY}`;
       split = { keepId: String(r.id), addId: ins.id };
       say(`   ${SPLIT.doc} ln${r.line_no} qty 2 -> qty 1 ${SPLIT.keep.code}  +  new ln${ins.line_no} qty 1 ${SPLIT.add.code}`);
