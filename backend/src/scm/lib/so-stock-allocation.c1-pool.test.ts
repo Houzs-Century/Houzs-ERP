@@ -75,7 +75,7 @@ const WH = 'WH-MAIN';
 
 const world = (opts: {
   company: number; group: string; code: string;
-  variants?: Row | null; poItems?: Row[]; pooledQty?: number; category?: string;
+  variants?: Row | null; poItems?: Row[]; pooledQty?: number; pooledKey?: string; category?: string;
 }) => fakeSb({
   stock_allocation_recompute_lock: [{ lock_key: 'GLOBAL', locked_by: null, locked_until: null }],
   mfg_sales_orders: [{
@@ -90,7 +90,7 @@ const world = (opts: {
   }],
   mfg_products: [{ code: opts.code, category: opts.category ?? opts.group.toUpperCase() }],
   inventory_balances: opts.pooledQty
-    ? [{ warehouse_id: WH, item_code: opts.code, variant_key: '', qty: opts.pooledQty }]
+    ? [{ warehouse_id: WH, item_code: opts.code, variant_key: opts.pooledKey ?? '', qty: opts.pooledQty }]
     : [],
   v_inventory_lots_open: [],
   delivery_orders: [], delivery_order_items: [], delivery_returns: [], delivery_return_items: [],
@@ -144,8 +144,8 @@ describe('company-1 hard binding: the pool is never a bound line\'s evidence', (
 describe('company-1 custom pillows are bound to their own purchase order', () => {
   test('a C1 SQUARE PILLOW with a colour and NO receipt of its own stays PENDING despite pooled stock', async () => {
     const sb = world({
-      company: 1, group: 'accessory', code: 'SQUARE PILLOW', category: 'ACCESSORY',
-      variants: { extraAddonNote: 'colour : B0315-7' }, pooledQty: 59,
+      company: 1, group: 'fabric_accessory', code: 'SQUARE PILLOW', category: 'FABRIC_ACCESSORY',
+      variants: { fabricCode: 'B0315-7' }, pooledQty: 59, pooledKey: 'fabriccode=b0315-7',
       poItems: [{ qty: 1, received_qty: 0 }],
     });
     const res = await recomputeSoStockAllocation(sb);
@@ -155,8 +155,8 @@ describe('company-1 custom pillows are bound to their own purchase order', () =>
 
   test('a C1 LONG PILLOW whose own purchase order is received is READY with no pooled stock', async () => {
     const sb = world({
-      company: 1, group: 'accessory', code: 'LONG PILLOW', category: 'ACCESSORY',
-      variants: { extraAddonNote: 'Col : ZL-17 GREY' }, poItems: [{ qty: 1, received_qty: 1 }],
+      company: 1, group: 'fabric_accessory', code: 'LONG PILLOW', category: 'FABRIC_ACCESSORY',
+      variants: { fabricCode: 'ZL-17' }, poItems: [{ qty: 1, received_qty: 1 }],
     });
     const res = await recomputeSoStockAllocation(sb);
     expect(res.ok).toBe(true);

@@ -1493,13 +1493,13 @@ describe('an uncatalogued line keeps its category on the row, not just in the fi
 describe('company 1: a custom pillow is planned from its own purchase order only', () => {
   const co1 = { ...opts, companyId: 1 };
   const pillow = (id: string, docNo: string, code: string, qty: number, colour: string, due: string): Row => ({
-    id, doc_no: docNo, item_code: code, description: code, item_group: 'accessory',
+    id, doc_no: docNo, item_code: code, description: code, item_group: 'fabric_accessory',
     variants: { extraAddonNote: colour }, qty, company_id: 1,
     warehouse_id: 'W1', line_delivery_date: due, line_no: 1, created_at: '2026-08-01T00:00:00Z', cancelled: false,
     so: { debtor_name: docNo, status: 'IN_PRODUCTION', so_date: '2026-08-01', customer_delivery_date: due, processing_date: '2026-08-15', customer_state: null },
   });
   const pillowPo = (poNumber: string, code: string, qty: number, received: number, soItemId: string | null, eta: string): Row => ({
-    item_code: code, item_group: 'accessory', variants: null, qty, received_qty: received, company_id: 1,
+    item_code: code, item_group: 'fabric_accessory', variants: null, qty, received_qty: received, company_id: 1,
     delivery_date: eta, supplier_delivery_date_2: null, supplier_delivery_date_3: null, supplier_delivery_date_4: null,
     warehouse_id: 'W1', so_item_id: soItemId,
     po: {
@@ -1555,11 +1555,37 @@ describe('company 1: a custom pillow is planned from its own purchase order only
 
   test('a PLAIN accessory still pools — only the named custom SKUs bind', async () => {
     const res = await computeMrp(asSb(world({
-      mfg_sales_order_items: [{ ...demand[0]!, id: 'l-plain', item_code: 'AK- ESSENTIAL BOLSTER', variants: {} }],
-      purchase_order_items: [pillowPo('HC-PO-POOL', 'AK- ESSENTIAL BOLSTER', 3, 0, null, '2026-10-01')],
+      mfg_sales_order_items: [{ ...demand[0]!, id: 'l-plain', item_code: 'AK- ESSENTIAL BOLSTER', item_group: 'accessory', variants: {} }],
+      purchase_order_items: [{ ...pillowPo('HC-PO-POOL', 'AK- ESSENTIAL BOLSTER', 3, 0, null, '2026-10-01'), item_group: 'accessory' }],
     })), co1);
     expect(lineOf(res, 'l-plain').poNumber).toBe('HC-PO-POOL');
     expect(lineOf(res, 'l-plain').shortageQty).toBe(0);
+  });
+
+  /* THE CATEGORY DECIDES (owner 2026-09-14, the nine Sofa Accessory SKUs). A pillow
+     the owner moves back to Accessory is pooled stock again — the two-code list
+     that bound it by name regardless of category is gone. */
+  test('a pillow line in ACCESSORY pools: the category decides, not the code', async () => {
+    const res = await computeMrp(asSb(world({
+      mfg_sales_order_items: [{ ...demand[0]!, item_group: 'accessory' }],
+      purchase_order_items: [{ ...pillowPo('HC-PO-010084', 'LONG PILLOW', 4, 0, 'l-013385', '2026-10-02'), item_group: 'accessory' }],
+    })), co1);
+    expect(lineOf(res, 'l-013496').poNumber).toBe('HC-PO-010084');
+  });
+
+  test('SB02 / AR01 / BC05-MF in Sofa Accessory are bound like the pillows', async () => {
+    for (const code of ['SB02', 'AR01', 'BC05-MF']) {
+      const res = await computeMrp(asSb(world({
+        mfg_sales_order_items: [
+          pillow('l-a', 'HC-SO-A', code, 1, 'COVE-03', '2026-10-01'),
+          pillow('l-b', 'HC-SO-B', code, 1, 'NICCA-01', '2026-10-09'),
+        ],
+        purchase_order_items: [pillowPo('HC-PO-B', code, 1, 0, 'l-b', '2026-09-20')],
+      })), co1);
+      expect(lineOf(res, 'l-a').poNumber).toBeNull();
+      expect(lineOf(res, 'l-a').shortageQty).toBe(1);
+      expect(lineOf(res, 'l-b').poNumber).toBe('HC-PO-B');
+    }
   });
 
   test('company 2 keeps the pooled model for pillows too', async () => {

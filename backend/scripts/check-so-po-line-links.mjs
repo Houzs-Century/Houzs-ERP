@@ -69,8 +69,7 @@ const pad = (s, n) => String(s ?? "").slice(0, n).padEnd(n);
 // scm/lib/so-stock-allocation.ts HARD_BOUND_GROUPS + isHardBoundLine
 const isHardBound = (group, code) => {
   const g = String(group ?? "").toLowerCase();
-  if (g === "sofa" || g === "bedframe") return true;
-  if (["SQUARE PILLOW", "LONG PILLOW"].includes(String(code ?? "").trim().toUpperCase())) return true; // CUSTOM_ACCESSORY_CODES
+  if (g === "sofa" || g === "bedframe" || g === "fabric_accessory") return true;
   return g === "mattress" && /\(SP\)\s*$/i.test(String(code ?? ""));
 };
 // scm/routes/mrp.ts PO_DEAD

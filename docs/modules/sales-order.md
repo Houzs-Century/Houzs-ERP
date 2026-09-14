@@ -435,7 +435,7 @@ line already READY.** The per-line PILL was never wrong — `soLineStockPill` an
 bug `docs/bugs/0572-a-company-1-bound-line-with-no-receipt-fell-through-to-the-p.md`).**
 `HARD_BOUND_COMPANY_ID = 1` in `so-stock-allocation.ts`:
 
-| company | bedframe / sofa / `(SP)` mattress / Sofa Accessory group (`fabric_accessory`, since 2026-09-14, bug 0893) / custom pillow `SQUARE PILLOW`, `LONG PILLOW` by code (`isHardBoundLine`; pillows since 2026-09-14, bug 0890) | everything else |
+| company | bedframe / sofa / `(SP)` mattress / Sofa Accessory group (`fabric_accessory` — every SKU in that product-master category, since 2026-09-14, bugs 0893 / 0906; `isHardBoundLine`) | everything else |
 |---|---|---|
 | 1 (Houzs) | **exclusively PO-bound**: lights `min(received, need)` from its OWN dedicated PO (sofa: covering dye-lot batch first, then dedication). The pooled walk force-stamps PENDING — the pool is never its evidence, however well the bucket matches | pooled FIFO by (warehouse, code, variant_key) |
 | 2 (2990) | dedication lights first if present, then the pooled walk — the soft model | pooled FIFO |

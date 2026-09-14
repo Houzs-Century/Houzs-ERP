@@ -22,9 +22,8 @@ const sql = postgres(url, { max: 1, idle_timeout: 20, connect_timeout: 30, prepa
 // the engine's own out-of-scope set (src/scm/shared/so-terminal-states.ts)
 const TERMINAL = ["CANCELLED", "CLOSED", "SHIPPED", "DELIVERED", "INVOICED", "DRAFT"];
 const isSp = (code) => /\(SP\)\s*$/i.test(code ?? "");
-// CUSTOM_ACCESSORY_CODES in src/scm/lib/so-stock-allocation.ts (owner 2026-09-14)
-const isCustomPillow = (code) => ["SQUARE PILLOW", "LONG PILLOW"].includes(String(code ?? "").trim().toUpperCase());
-const isBound = (g, code) => ["bedframe", "sofa"].includes((g ?? "").toLowerCase()) || ((g ?? "").toLowerCase() === "mattress" && isSp(code)) || isCustomPillow(code);
+// HARD_BOUND_GROUPS in src/scm/lib/so-stock-allocation.ts (fabric_accessory = Sofa Accessory, owner 2026-09-14)
+const isBound = (g, code) => ["bedframe", "sofa", "fabric_accessory"].includes((g ?? "").toLowerCase()) || ((g ?? "").toLowerCase() === "mattress" && isSp(code));
 
 // vocabulary census first — the filter below is only as good as these values
 const vocab = await sql`

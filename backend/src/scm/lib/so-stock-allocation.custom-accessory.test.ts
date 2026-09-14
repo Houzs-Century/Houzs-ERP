@@ -1,31 +1,41 @@
-/* The predicate itself: which lines are custom accessories bound to their own
-   sales-order line (owner 2026-09-14). Matched on the SKU — the CUSTOM SKU is by
-   definition the one that carries a chosen colour (owner 2026-09-10: a pillow
-   with a colour belongs on SQUARE PILLOW, one without on SQUARE PILLOW RDM). */
+/* Which accessory lines are bound to their own sales-order line: the SOFA ACCESSORY
+   category, and nothing typed per SKU (owner 2026-09-14, on the Products page
+   filtered to Sofa Accessory — SB02, BC05-MF, BC05, BC04-MF, BC04, AR02, AR01,
+   SQUARE PILLOW, LONG PILLOW: 「这些sku全部都要处理」).
+
+   A line's `item_group` is stamped from the SKU's product-master category when it
+   is written ("SKU wins", docs/bugs/0514), so the group IS the category. The
+   two-code list that bound the pillows by name before they were re-categorised is
+   gone: it kept binding a pillow the owner moved back to Accessory, and it bound
+   company 2's pillows too. */
 import { describe, expect, test } from 'vitest';
-import { isHardBoundLine, CUSTOM_ACCESSORY_CODES } from './so-stock-allocation';
+import * as allocation from './so-stock-allocation';
 
-describe('isHardBoundLine — custom pillows', () => {
-  test('SQUARE PILLOW and LONG PILLOW are bound, whatever the case or padding', () => {
-    expect(isHardBoundLine('accessory', 'SQUARE PILLOW')).toBe(true);
-    expect(isHardBoundLine('accessory', 'LONG PILLOW')).toBe(true);
-    expect(isHardBoundLine('Accessory', '  long pillow ')).toBe(true);
+const { isHardBoundLine } = allocation;
+const SOFA_ACCESSORY_SKUS = ['SB02', 'BC05-MF', 'BC05', 'BC04-MF', 'BC04', 'AR02', 'AR01', 'SQUARE PILLOW', 'LONG PILLOW'];
+
+describe('isHardBoundLine — the Sofa Accessory category', () => {
+  test.each(SOFA_ACCESSORY_SKUS)('%s in fabric_accessory is bound', (code) => {
+    expect(isHardBoundLine('fabric_accessory', code)).toBe(true);
   });
 
-  test('the item group does not decide it — a mis-grouped purchase line is still the same pillow', () => {
-    expect(isHardBoundLine(null, 'SQUARE PILLOW')).toBe(true);
-    expect(isHardBoundLine('others', 'LONG PILLOW')).toBe(true);
+  test('the category decides, not the code: a SKU moved back to Accessory pools again', () => {
+    expect(isHardBoundLine('accessory', 'SQUARE PILLOW')).toBe(false);
+    expect(isHardBoundLine('accessory', 'LONG PILLOW')).toBe(false);
   });
 
-  test('the RANDOM twin and other pillow SKUs keep pooling', () => {
-    expect(isHardBoundLine('accessory', 'SQUARE PILLOW RDM')).toBe(false);
-    expect(isHardBoundLine('accessory', '822 SQUARE PILLOW')).toBe(false);
+  test('a new SKU in the category needs no code change', () => {
+    expect(isHardBoundLine('fabric_accessory', 'SOME NEW CUSHION 09')).toBe(true);
+  });
+
+  test('the random / free-gift pillows are Accessory and keep pooling', () => {
     expect(isHardBoundLine('accessory', 'AMN-SOFA PILLOW')).toBe(false);
-    expect(isHardBoundLine('accessory', 'AK- ESSENTIAL BOLSTER')).toBe(false);
+    expect(isHardBoundLine('accessory', 'SOFA PILLOW (FOC)')).toBe(false);
+    expect(isHardBoundLine('accessory', 'SQUARE PILLOW RDM')).toBe(false);
   });
 
-  test('the list is exactly the two SKUs the owner named', () => {
-    expect([...CUSTOM_ACCESSORY_CODES].sort()).toEqual(['LONG PILLOW', 'SQUARE PILLOW']);
+  test('no per-SKU binding list is exported any more', () => {
+    expect('CUSTOM_ACCESSORY_CODES' in allocation).toBe(false);
   });
 
   test('the existing bound groups are unchanged', () => {
