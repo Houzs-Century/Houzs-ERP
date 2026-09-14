@@ -1422,7 +1422,11 @@ binding row is UNBOUND and the posting rules refuse it by name (owner: 挡下来
 提醒我去绑,不要静默丢进 OTHERS). New groups are born only through
 `scm.acc_register_item_group` (SECURITY DEFINER) which extends BOTH enums and
 registers the row in one call — so the taxonomy and the registry cannot drift
-— and the API forces the four bindings at create (born bound). Discounts stay
+— and the API forces the four bindings at create (born bound). **Sofa Accessory
+(`FABRIC_ACCESSORY`, 2026-09-14) is the one exception to "born through the
+function"**: its enum value came from a plain migration, so the registry row and
+bindings were added afterwards by `20260914T2000_acc_item_group_fabric_accessory.sql`,
+copying each company's ACCESSORY accounts (`docs/bugs/0894-sofa-accessory-lines-would-refuse-to-post-the-category-had-n.md`). Discounts stay
 company-level (520-0000 / 610-0001), never per-group. Maintenance UI: the
 **Item Groups** tab on /scm/accounting — unbound groups arrive pre-filled with
 the SUGGESTED defaults marked 建议·unsaved, and nothing writes until the owner

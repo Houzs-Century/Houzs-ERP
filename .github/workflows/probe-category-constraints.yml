@@ -23,3 +23,7 @@ jobs:
       - run: node scripts/probe-category-constraints.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # What moves when models / SKUs change to FABRIC_ACCESSORY (owner 2026-09-14).
+      - run: node scripts/probe-fabric-accessory-population.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
