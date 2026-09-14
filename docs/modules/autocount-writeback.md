@@ -6423,3 +6423,20 @@ on a fresh connection that each planned key is sent with `Retire: true`. The
 snapshot must be at most two days old and carry `qty` and `transferredOn`, both
 added to `export-ac-conversion-line-keys.py` for this. Ledger:
 `docs/bugs/0902-moving-a-line-to-a-new-delivery-order-left-it-on-the-old-one.md`.
+
+## Purchase order line keys from the book, and sending a document again by name (2026-09-14)
+
+A purchase order the write-back raised from a sales order is a transfer, but
+AutoCount keeps the link on the purchase line itself, `PODTL.FromSODtlKey`, not
+in `DocTransfer`. `export-ac-conversion-line-keys.py` exports that lane and
+`stamp-conversion-line-keys.mjs` pairs it: `purchase_order_items.so_item_id` ->
+that sales line's `linked_ac_dtlkey`, for a purchase order a sent `so_to_po`
+row names. Same rule, digest, confirm and verify as the DO / GR lanes.
+
+`backend/scripts/resend-ac-document-edits.mjs` (workflow *Send named documents
+to AutoCount again*) is the named "save it again": `enqueueEdit` for each SO / PO
+/ DO / GR in `DOC_NOS`, composed from the document as it is now, plan rolled back,
+apply verified. It is how a purchase order sent with swapped values (0889) gets
+its own values back once keyed, and how an edit refused for a cause since fixed
+is sent. It never asks for a rebuild. Ledger:
+`docs/bugs/0903-purchase-orders-raised-from-a-sales-order-kept-swapped-value.md`.

@@ -46,6 +46,9 @@ const MAY_PUSH = [
   // Zeroes a DO / GR line the ERP removed but the book still holds
   // (docs/bugs/0902) — the send IS the repair; it writes no ERP value.
   'retire-book-only-conversion-lines.mjs',
+  // Sends named documents' current state as a keyed edit (docs/bugs/0903) -
+  // its purpose is the send; it writes no ERP value.
+  'resend-ac-document-edits.mjs',
 ];
 
 test('only the deliberate push tools opt out of repair suppression', () => {
