@@ -59,6 +59,7 @@ import { PageHeader } from '../../components/Layout';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
 import { PAYMENT_VOUCHER_AUDIT_LABELS } from './entity-audit-labels';
 import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
+import { useUnsavedWork } from '../../lib/unsavedWork';
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -239,6 +240,9 @@ export const PaymentVoucherDetail = () => {
 
   // A POSTED/CANCELLED voucher can never enter edit mode.
   useEffect(() => { if (!isDraft && isEditing) setIsEditing(false); }, [isDraft, isEditing]);
+  // The in-page edit toggle leaves the URL alone, so an automatic stale-chunk
+  // reload (lib/chunkActionRecovery) would not see it without this.
+  useUnsavedWork(isEditing);
 
   // Seed the draft from the loaded voucher whenever we enter edit mode.
   useEffect(() => {
