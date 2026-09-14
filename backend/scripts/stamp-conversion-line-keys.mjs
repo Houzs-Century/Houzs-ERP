@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-/* stamp-conversion-line-keys — give our delivery order and goods receipt lines
- * the AutoCount line key the book itself pairs them with.
+/* stamp-conversion-line-keys — give our delivery order, goods receipt and
+ * purchase order lines the AutoCount line key the book itself pairs them with.
  *
  * 白话. 我们开的 DO / GR 已经进了 AutoCount，可是 ERP 没记下每一行对应账本的哪一行，
  * 所以之后一改，整张单就被拦住不送。账本的 DocTransfer 表写着每一行是从 SO / PO 的哪一行
- * 转过来的；这个脚本照那张表，把账本的行号写回我们的行上。对不上或分不清的，只列出来，
+ * 转过来的（从销售单转出去的采购单，写在采购单那一行自己身上）；这个脚本照账本的记录，
+ * 把账本的行号写回我们的行上。对不上或分不清的，只列出来，
  * 不写。只写行号这一栏，不碰数量、价钱、库存、状态，也不会送任何东西去 AutoCount。
  *
  * ── WHY (docs/bugs/0897) ───────────────────────────────────────────────────
@@ -16,30 +17,41 @@
  * (244 lines) in the book with at least one keyless line, and an edit of any of
  * them is refused whole (KeylessLineError).
  *
+ * PURCHASE ORDERS (docs/bugs/0903). A purchase order raised from a sales order
+ * kept no keys either (0890), and some were sent with each line's quantity and
+ * cost under another line's key (0889). Their values can only be corrected by an
+ * edit that names each line by its own key, so the keys come first.
+ *
  * ── THE PAIRING ────────────────────────────────────────────────────────────
  * `lib/conversion-line-key-plan.mjs`, self-tested before a row is read: inside
  * ONE document, the book line whose DocTransfer source key equals the source key
  * of our row (`delivery_order_items.so_item_id` -> that sales line's
- * `linked_ac_dtlkey`; `grn_items.purchase_order_item_id` -> that purchase line's).
+ * `linked_ac_dtlkey`; `grn_items.purchase_order_item_id` -> that purchase line's;
+ * `purchase_order_items.so_item_id` -> that sales line's, against the book's
+ * `PODTL.FromSODtlKey`).
  * No position, no item code. A source key feeding two lines of the document is
  * refused. A row already carrying a different key is reported and left.
  *
  * ── WHAT IT WRITES, AND WHAT IT CANNOT TOUCH ───────────────────────────────
- * One column on two tables, only where it is NULL:
+ * One column on three tables, only where it is NULL:
  *     scm.delivery_order_items.linked_ac_dtlkey
  *     scm.grn_items.linked_ac_dtlkey
+ *     scm.purchase_order_items.linked_ac_dtlkey
  * No quantity, price, cost, status or stock, and no outbox row — nothing is
  * sent to AutoCount. Triggers were READ on production 2026-09-14 (`pg_trigger`):
  * `delivery_order_items` fires only on DELETE or `UPDATE OF delivery_order_id`,
- * `grn_items` carries no user trigger, so this UPDATE fires none.
+ * `grn_items` carries no user trigger, and the one trigger on
+ * `purchase_order_items`, `trg_po_item_qty_guard`, fires only on `UPDATE OF qty`
+ * (read the same way, 2026-09-14), so this UPDATE fires none.
  *
  * ── THE SNAPSHOT ───────────────────────────────────────────────────────────
  * `data/ac-conversion-line-keys.json.gz`, written by
  * `export-ac-conversion-line-keys.py` on a machine that reaches the office
  * network (the Actions runner cannot). Refused when older than
  * MAX_SNAPSHOT_AGE_DAYS: a key paired from a stale book is not proved.
- * Only book documents numbered `HC-DO-` / `HC-GRN-` are in it, and a document is
- * planned only when a SENT so_to_do / po_to_gr outbox row names it.
+ * Only book documents numbered `HC-DO-` / `HC-GRN-` / `HC-PO-` are in it, and a
+ * document is planned only when a SENT so_to_do / po_to_gr / so_to_po outbox row
+ * names it; a purchase order the write-back CREATED has no source to pair by.
  *
  * ── SAFETY ─────────────────────────────────────────────────────────────────
  * MODE defaults to plan and writes nothing. Apply needs CONFIRM and the
@@ -70,7 +82,7 @@ const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const MODE = (process.env.MODE || "plan").trim().toLowerCase();
 const APPLY = MODE === "apply";
-const CONFIRM_PHRASE = "stamp the book line keys on our delivery orders and receipts";
+const CONFIRM_PHRASE = "stamp the book line keys on our purchase orders, delivery orders and receipts";
 const CONFIRM = (process.env.CONFIRM || "").trim();
 const CO = Number(process.env.COMPANY_ID || 1);
 const MAXAGE = Number(process.env.MAX_SNAPSHOT_AGE_DAYS || 2);
@@ -119,7 +131,9 @@ const docNos = (t) => [...bookByDoc.keys()].filter((k) => k.startsWith(`${t}|`))
 const LANES = {
   DO: { table: "delivery_order_items", sourceCol: "so_item_id", op: "so_to_do" },
   GR: { table: "grn_items", sourceCol: "purchase_order_item_id", op: "po_to_gr" },
+  PO: { table: "purchase_order_items", sourceCol: "so_item_id", op: "so_to_po" },
 };
+const TYPES = Object.keys(LANES);
 
 async function readLanes(sql) {
   const doRows = await sql`
@@ -136,11 +150,18 @@ async function readLanes(sql) {
       JOIN scm.grn_items i ON i.grn_id = g.id
       LEFT JOIN scm.purchase_order_items p ON p.id = i.purchase_order_item_id
      WHERE g.company_id = ${CO} AND g.grn_number IN ${sql(docNos("GR"))}`;
+  const poRows = await sql`
+    SELECT p.po_number AS doc_no, i.id::text AS id, i.linked_ac_dtlkey, i.so_item_id::text AS source_row,
+           s.linked_ac_dtlkey AS source_key
+      FROM scm.purchase_orders p
+      JOIN scm.purchase_order_items i ON i.purchase_order_id = p.id
+      LEFT JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
+     WHERE p.company_id = ${CO} AND p.po_number IN ${sql(docNos("PO"))}`;
   const sent = await sql`
     SELECT op, ac_doc_no FROM scm.autocount_outbox
-     WHERE company_id = ${CO} AND status = 'sent' AND op IN ('so_to_do', 'po_to_gr')
-       AND ac_doc_no IN ${sql([...docNos("DO"), ...docNos("GR")])}`;
-  return { DO: doRows, GR: grRows, sent: new Set(sent.map((s) => `${s.op}|${s.ac_doc_no}`)) };
+     WHERE company_id = ${CO} AND status = 'sent' AND op IN ('so_to_do', 'po_to_gr', 'so_to_po')
+       AND ac_doc_no IN ${sql([...docNos("DO"), ...docNos("GR"), ...docNos("PO")])}`;
+  return { DO: doRows, GR: grRows, PO: poRows, sent: new Set(sent.map((s) => `${s.op}|${s.ac_doc_no}`)) };
 }
 
 function plan(lanes) {
@@ -149,7 +170,7 @@ function plan(lanes) {
   const docs = { planned: 0, not_in_erp: [], not_sent_by_writeback: [] };
   const refusals = [];
   let unclaimed = 0;
-  for (const type of ["DO", "GR"]) {
+  for (const type of TYPES) {
     const lane = LANES[type];
     const byDoc = new Map();
     for (const r of lanes[type]) {
@@ -183,7 +204,7 @@ function plan(lanes) {
 }
 
 function report(p) {
-  for (const type of ["DO", "GR"]) {
+  for (const type of TYPES) {
     const t = tallyOutcomes(p.planned.filter((x) => x.type === type));
     notice(`${type} rows: ${Object.entries(t).map(([k, v]) => `${k}=${v}`).join("  ")}`);
   }
@@ -221,9 +242,13 @@ try {
         ? await tx`UPDATE scm.delivery_order_items SET linked_ac_dtlkey = ${w.dtlKey}
                     WHERE id = ${w.id} AND company_id = ${CO} AND linked_ac_dtlkey IS NULL
                       AND so_item_id::text IS NOT DISTINCT FROM ${w.sourceRow}`
-        : await tx`UPDATE scm.grn_items SET linked_ac_dtlkey = ${w.dtlKey}
-                    WHERE id = ${w.id} AND company_id = ${CO} AND linked_ac_dtlkey IS NULL
-                      AND purchase_order_item_id::text IS NOT DISTINCT FROM ${w.sourceRow}`;
+        : w.type === "GR"
+          ? await tx`UPDATE scm.grn_items SET linked_ac_dtlkey = ${w.dtlKey}
+                      WHERE id = ${w.id} AND company_id = ${CO} AND linked_ac_dtlkey IS NULL
+                        AND purchase_order_item_id::text IS NOT DISTINCT FROM ${w.sourceRow}`
+          : await tx`UPDATE scm.purchase_order_items SET linked_ac_dtlkey = ${w.dtlKey}
+                      WHERE id = ${w.id} AND company_id = ${CO} AND linked_ac_dtlkey IS NULL
+                        AND so_item_id::text IS NOT DISTINCT FROM ${w.sourceRow}`;
       if (res.count !== 1) throw new Error(`${w.type} ${w.docNo} row ${w.id} matched ${res.count} rows — it moved since the plan; nothing is kept`);
     }
   });
@@ -243,8 +268,10 @@ const doBack = ids("DO").length
   ? await verify`SELECT id::text AS id, linked_ac_dtlkey FROM scm.delivery_order_items WHERE id::text IN ${verify(ids("DO"))}` : [];
 const grBack = ids("GR").length
   ? await verify`SELECT id::text AS id, linked_ac_dtlkey FROM scm.grn_items WHERE id::text IN ${verify(ids("GR"))}` : [];
+const poBack = ids("PO").length
+  ? await verify`SELECT id::text AS id, linked_ac_dtlkey FROM scm.purchase_order_items WHERE id::text IN ${verify(ids("PO"))}` : [];
 await verify.end();
-const now = new Map([...doBack, ...grBack].map((r) => [r.id, r.linked_ac_dtlkey]));
+const now = new Map([...doBack, ...grBack, ...poBack].map((r) => [r.id, r.linked_ac_dtlkey]));
 const wrong = p.writes.filter((w) => typeof now.get(w.id) === "undefined" || Number(now.get(w.id)) !== Number(w.dtlKey));
 if (wrong.length) {
   console.error(`verify FAILED on ${wrong.length} row(s), e.g. ${JSON.stringify(wrong.slice(0, 3))}`);

@@ -1,5 +1,5 @@
 """Export the book's source line for every line of the ERP-numbered delivery
-orders and goods receipts, for stamp-conversion-line-keys.mjs.
+orders, goods receipts and purchase orders, for stamp-conversion-line-keys.mjs.
 
 WHY THIS FILE EXISTS (docs/bugs/0897). A delivery order or goods receipt the
 write-back creates in AutoCount comes back as DtlKey, ItemCode and Desc2 per
@@ -19,8 +19,15 @@ A book that no longer has that shape gets no snapshot: the stamper would read a
 file it cannot trust.
 
 READ-ONLY: SELECTs only, NOLOCK, a 15-second statement timeout, no transaction.
-Two small reads (ERP-numbered documents only), so it does not compete with the
+Three small reads (ERP-numbered documents only), so it does not compete with the
 write-back for the book's locks the way a wide scan did on 2026-09-07.
+
+THE PURCHASE-ORDER LANE (docs/bugs/0903). A purchase order the write-back raised
+FROM a sales order is a transfer as well, but AutoCount keeps that link on the
+purchase line itself, `PODTL.FromSODtlKey`, and writes no DocTransfer row for
+it. Each `HC-PO-` line is exported with that key as its source; a key that names
+no sales line in the book refuses the snapshot. Lines of a purchase order the
+write-back CREATED carry no source and are exported with none.
 
 WHAT ELSE EACH LINE CARRIES (docs/bugs/0902). `qty` and `transferredOn` — how
 many DocTransfer rows take this line further (a DO line into an invoice, a GR
@@ -101,6 +108,30 @@ for doc_type, hdr, dtl, prefix, source_type in LANES:
         "lines": len(seen),
         "lines_without_a_source": sum(1 for r in rows if r[0] == doc_type and r[3] is None),
     }
+po_lane = cur.execute(
+    """SELECT h.DocNo, d.DtlKey, d.FromSODtlKey, s.DtlKey, d.ItemCode, h.Cancelled, d.Qty,
+              (SELECT COUNT(*) FROM DocTransfer o WITH (NOLOCK)
+                WHERE o.FromDocDtlKey = d.DtlKey AND o.FromDocType = 'PO') AS TransferredOn
+         FROM PO h WITH (NOLOCK)
+         JOIN PODTL d WITH (NOLOCK) ON d.DocKey = h.DocKey
+         LEFT JOIN SODTL s WITH (NOLOCK) ON s.DtlKey = d.FromSODtlKey
+        WHERE h.DocNo LIKE 'HC-PO-%'
+        ORDER BY h.DocNo, d.DtlKey""").fetchall()
+po_seen = set()
+for doc_no, dtl_key, from_key, sales_line, item_code, cancelled, qty, transferred_on in po_lane:
+    if dtl_key in po_seen:
+        bad.append(f"PO {doc_no} line {dtl_key} was read twice")
+    po_seen.add(dtl_key)
+    if from_key is not None and sales_line is None:
+        bad.append(f"PO {doc_no} line {dtl_key} names sales line {from_key}, which the book does not hold")
+    rows.append(["PO", doc_no, int(dtl_key),
+                 int(from_key) if from_key is not None else None,
+                 item_code, cancelled == "T", float(qty), int(transferred_on)])
+counts["PO"] = {
+    "documents": len({r[1] for r in rows if r[0] == "PO"}),
+    "lines": len(po_seen),
+    "lines_without_a_source": sum(1 for r in rows if r[0] == "PO" and r[3] is None),
+}
 cn.close()
 
 if bad:
@@ -112,7 +143,7 @@ if bad:
 snapshot = {
     "exported_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     "source": f"{DB} live (read-only)",
-    "grain": "one row per line of an ERP-numbered DO / GR in the book, with the source line DocTransfer names",
+    "grain": "one row per line of an ERP-numbered DO / GR / PO in the book, with its source line (DocTransfer for a DO or GR, PODTL.FromSODtlKey for a PO)",
     "fields": ["docType", "docNo", "toDtlKey", "fromDtlKey", "itemCode", "cancelled", "qty", "transferredOn"],
     "counts": counts,
     "rows": rows,
