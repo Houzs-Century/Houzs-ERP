@@ -1,5 +1,17 @@
 # Runbook: migrated sales orders are read-only — and the one switch that opens them
 
+> **Live state — read 2026-09-14 17:50 MYT: the lock is `off`. Migrated orders are
+> editable.** It read `'1'` (last written 2026-09-10 14:04 MYT) when it was lifted
+> on 2026-09-12 18:55 MYT (`set-migrated-so-lock.yml` run 34689675812,
+> `1 HOUZS migrated=2882 shut -> open`) on the owner's ruling that a migrated order is one of our orders
+> — `docs/bugs/0842-staging-could-not-reproduce-a-production-lock-because-the-re.md`.
+> Run 34830061288 (plan, writes nothing) read `"off" (updated 12/09/2026,
+> 18:55:12 MYT)`. The 2026-09-08 ruling below is therefore history; this file
+> stays as the manual for the switch. `docs/migrated-so-lock-lifted-coe.md` says
+> the lock "stays `'1'`" — that is wrong about production (corrected there).
+> Before quoting the state, read it: "Migrated sales-order lock (open / close)"
+> with `mode=plan` prints it and writes nothing.
+
 Owner, 2026-09-08, asked whether Sales Orders could be opened to staff now and
 tallied later:
 
@@ -164,8 +176,8 @@ value  :=  off | all | <company ids> | verdict:<company ids> | verdict:all
 
 | Value | Meaning |
 |---|---|
-| `off`, `0`, `false`, empty | Migrated orders are editable. Nothing is locked. |
-| `1` | **Today.** Company 1 (Houzs Century): EVERY migrated order read-only. |
+| `off`, `0`, `false`, empty | Migrated orders are editable. Nothing is locked. **Production since 2026-09-12 18:55 MYT.** |
+| `1` | Company 1 (Houzs Century): EVERY migrated order read-only. (What production read until 2026-09-12 18:55 MYT; last written 2026-09-10 14:04 MYT.) |
 | `1,2` | Both companies, same way. |
 | `all`, `true` | Every company, same way. |
 | **`verdict:1`** | **Company 1, BY CORRECTNESS.** A migrated order is read-only only while the published reconcile verdict says it still DIFFERS from the account book — or while there is no fresh verdict for it. One that matches is fully editable. See §10. |
