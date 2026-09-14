@@ -1,0 +1,67 @@
+name: Requeue amendment AutoCount edits (plan by default)
+
+# docs/bugs/0888. From the deploy of #3545 (2026-09-10T10:07:50Z) every approved
+# SO / PO amendment queued NOTHING for AutoCount — the transaction client's
+# filter() threw on `in` and the error was dropped. This re-queues one keyed
+# edit per affected document through the app's REAL enqueueEdit
+# (scripts/requeue-amendment-ac-edits.mjs, via lib/pgrest-shim.mjs over
+# DATABASE_URL — the same access path as enqueue-so-writeback.yml).
+#
+# PLAN by default: each document is composed inside a transaction that is ROLLED
+# BACK, and the row it would write is printed. mode=apply needs the confirm
+# phrase; the outbox drain then sends the edits. Manual trigger only.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      mode:
+        description: "plan (compose + roll back) or apply (queue)"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "apply only: type REQUEUE AMENDMENT EDITS"
+        required: false
+        default: ""
+      company:
+        description: "Company id"
+        required: false
+        default: "1"
+      doc_nos:
+        description: "Optional: only these doc numbers, comma separated"
+        required: false
+        default: ""
+
+concurrency:
+  group: requeue-amendment-ac-edits
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target == 'prod' && 'Production' || 'Staging' }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/requeue-amendment-ac-edits.mjs
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          DOC_NOS: ${{ inputs.doc_nos }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

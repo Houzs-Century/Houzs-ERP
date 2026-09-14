@@ -1,7 +1,7 @@
 /* An approved AMENDMENT must reach AutoCount — asserted through the SAME
  * transport the approve routes hand to enqueueEdit.
  *
- * WHY IT EXISTS. docs/bugs/0907. Both approve routes (so-amendments.ts
+ * WHY IT EXISTS. docs/bugs/0888. Both approve routes (so-amendments.ts
  * approveSoCommandHandler, po-amendments.ts approvePoAmendmentHandler) run
  * inside runScmPgCommand and pass ITS client — pgTransactionSupabase, a
  * PostgREST-shaped builder over one postgres.js transaction — to enqueueEdit.
@@ -70,6 +70,14 @@ function fakeSql(tables: Record<string, Row[]>) {
   return { sql, statements, tables };
 }
 
+type FakeSql = ReturnType<typeof fakeSql>['sql'];
+type TxClient = ReturnType<typeof pgTransactionSupabase>;
+type EnqueueClient = Parameters<typeof enqueueEdit>[0];
+// eslint-disable-next-line no-restricted-syntax -- a test double for postgres.js Sql: the shim calls only unsafe / json / typed, which FakeSql implements
+const txOver = (sql: FakeSql): TxClient => pgTransactionSupabase(sql as never);
+// eslint-disable-next-line no-restricted-syntax -- the approve routes hand this exact client to enqueueEdit through an `any`; the cast restates that, it does not widen it
+const forEnqueue = (tx: TxClient): EnqueueClient => tx as never;
+
 const PO_ID = 'po-064';
 const world = () => fakeSql({
   app_config: [{ key: 'scm.autocount_writeback', value: '1' }],
@@ -96,7 +104,7 @@ beforeEach(() => resetWritebackFlagCache());
 describe('pgTransactionSupabase .filter(col, "in", list)', () => {
   test('compiles the escaped PostgREST in-list to IN, one parameter per value', async () => {
     const { sql, statements } = world();
-    const sb = pgTransactionSupabase(sql as never);
+    const sb = txOver(sql);
     const { data } = await sb.from('supplier_material_bindings')
       .select('item_code')
       .filter('item_code', 'in', '("AKEMI APEX MATT (SP)","DUNLOPILLO 5\\" MATT")');
@@ -106,7 +114,7 @@ describe('pgTransactionSupabase .filter(col, "in", list)', () => {
 
   test('an empty list matches nothing rather than every row', async () => {
     const { sql } = world();
-    const { data } = await pgTransactionSupabase(sql as never)
+    const { data } = await txOver(sql)
       .from('supplier_material_bindings').select('item_code').filter('item_code', 'in', '()');
     expect(data).toEqual([]);
   });
@@ -115,15 +123,40 @@ describe('pgTransactionSupabase .filter(col, "in", list)', () => {
 describe('an amendment approve queues its AutoCount edit through the transaction client', () => {
   test('PO: enqueueEdit over pgTransactionSupabase writes a pending edit', async () => {
     const { sql, tables } = world();
-    const sb = pgTransactionSupabase(sql as never);
-    const queued = await enqueueEdit(sb as never, { companyId: 1, docType: 'PO', docId: PO_ID, docNo: 'HC-PO-2609-064' });
+    const sb = txOver(sql);
+    const queued = await enqueueEdit(forEnqueue(sb), { companyId: 1, docType: 'PO', docId: PO_ID, docNo: 'HC-PO-2609-064' });
     const rows = tables.autocount_outbox as Row[];
     expect(rows.map((r) => `${r.op}/${r.status}/${r.last_error ?? ''}`)).toEqual(['edit/pending/']);
     expect(queued).toBe(true);
   });
 
+  test('SO: enqueueEdit over pgTransactionSupabase writes a pending edit', async () => {
+    const { sql, tables } = world();
+    Object.assign(tables, {
+      staff: [{ id: 'staff-1', name: 'Nurul Hidayah' }],
+      mfg_sales_order_payments: [],
+      mfg_sales_orders: [{
+        doc_no: 'HC-SO-013497', company_id: 1, so_date: '2026-09-01', debtor_name: 'ACME', agent: null,
+        salesperson_id: 'staff-1', sales_location: 'KL', branding: null, venue: null,
+        address1: null, address2: null, address3: null, address4: null, city: null, postcode: null,
+        customer_state: null, phone: null, emergency_contact_phone: null, ref: null, customer_so_no: null,
+        processing_date: null, customer_delivery_date: null, total_revenue_sen: 0, local_total_sen: 0,
+        deposit_sen: 0, linked_ac_docno: 'SO-013497',
+      }],
+      mfg_sales_order_items: [{
+        id: 'soi-1', doc_no: 'HC-SO-013497', item_code: 'AKEMI APEX MATT (SP)', item_group: null, branding: null,
+        description: 'M', description2: null, qty: 1, unit_price_sen: 100, variants: null, linked_ac_dtlkey: 881,
+        cancelled: false, warehouse_id: null, line_delivery_date: null, photo_urls: null, created_at: '2026-09-01T00:00:00Z',
+      }],
+    });
+    const sb = txOver(sql);
+    const queued = await enqueueEdit(forEnqueue(sb), { companyId: 1, docType: 'SO', docNo: 'HC-SO-013497' });
+    expect((tables.autocount_outbox as Row[]).map((r) => `${r.op}/${r.status}/${r.last_error ?? ''}`)).toEqual(['edit/pending/']);
+    expect(queued).toBe(true);
+  });
+
   test('an UNEXPECTED error in the compose is written down, never dropped without a trace', async () => {
-    /* The second half of 0907: the shim turns any statement failure into a
+    /* The second half of 0888: the shim turns any statement failure into a
        plain Error, and noteReadFailure used to return early for everything
        that was not a named refusal or an AcReadError — so four days of missed
        amendments left no row and no log. Provoked here by a statement the
@@ -134,8 +167,8 @@ describe('an amendment approve queues its AutoCount edit through the transaction
       if (/FROM scm\."purchase_order_items"/.test(text)) throw new Error('boom: relation went away');
       return unsafe(text, values);
     };
-    const sb = pgTransactionSupabase(w.sql as never);
-    expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'PO', docId: PO_ID })).toBe(false);
+    const sb = txOver(w.sql);
+    expect(await enqueueEdit(forEnqueue(sb), { companyId: 1, docType: 'PO', docId: PO_ID, docNo: 'HC-PO-2609-064' })).toBe(false);
     const rows = w.tables.autocount_outbox as Row[];
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ op: 'edit', status: 'skipped', doc_type: 'PO', doc_no: 'HC-PO-2609-064' });

@@ -38,6 +38,8 @@ const MAY_PUSH = [
   'sync-ac-delta.mjs',
   // A one-shot re-raise of a single purchase order.
   'reraise-hc-po-2608-001.mjs',
+  // Re-queues the edits approved amendments never queued (docs/bugs/0888).
+  'requeue-amendment-ac-edits.mjs',
 ];
 
 test('only the deliberate push tools opt out of repair suppression', () => {
