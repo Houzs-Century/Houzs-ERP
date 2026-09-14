@@ -15,6 +15,7 @@ import { useStaff, usePickableStaff } from "../vendor/scm/lib/admin-queries";
 import { collaboratorLabel } from "../vendor/scm/lib/so-collaborators";
 import { HIST_FIELD_LABEL, HIST_MONEY_FIELDS } from "./so-history-labels";
 import { statusLabel } from "../vendor/scm/lib/status-pill";
+import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover } from "../vendor/scm/lib/amendment-approver";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { ACCESS_RANK } from "../types";
 import {
@@ -899,7 +900,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav }: { 
                 )}
                 {amendmentLane != null && openAmendment.status === "REQUESTED" && !canApproveLane && (
                   <div style={{ fontSize: 11.5, lineHeight: 1.45, color: "#6d5626" }}>
-                    Waiting for {amendmentLane === "LINES" ? "Purchasing" : "Logistics"} — one signature applies it.
+                    Waiting for {AMENDMENT_APPROVER_LABEL[soAmendmentApprover(amendmentLane)]} — one signature applies it.
                   </div>
                 )}
                 {/* Gate actions — perm + status gated, exactly like desktop.

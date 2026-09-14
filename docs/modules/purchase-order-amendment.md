@@ -361,14 +361,31 @@ the closed (REJECTED / withdrawn) rows are reached via **All**.
 **List order (2026-09-14, staff request).** All four queues open with
 **Requested on top, then Approved, then Rejected, newest first inside each** —
 one comparator, `compareAmendmentsForList` over `AMENDMENT_BUCKET_ORDER` in the
-same `status-pill.ts`. The desktop grids pass it as DataGrid's `defaultSort`, so
-a column sort the operator clicked (and the grid saved) still wins, and cycling
-that header off returns to this order. The **Status** column's sort uses the
-same rank, so ascending is Requested -> Approved -> Rejected rather than the
-bucket names A-Z (which put Approved first). The phone queues sort their cards
-with it. Pinned by `frontend/src/pages/scm-v2/amendment-list-order.test.tsx`. A new
-`poAmendment` docType was added to the canonical map (REQUESTED / APPROVED /
-REJECTED).
+same `status-pill.ts`. The desktop grids pass it as DataGrid's `defaultSort`. The
+**Status** column's sort uses the same rank, so ascending is Requested -> Approved
+-> Rejected rather than the bucket names A-Z (which put Approved first). The phone
+queues sort their cards with it. Pinned by
+`frontend/src/pages/scm-v2/amendment-list-order.test.tsx`. A new `poAmendment`
+docType was added to the canonical map (REQUESTED / APPROVED / REJECTED).
+
+**Every open, not only the first (owner 2026-09-14).** As first shipped, a header
+the operator clicked was SAVED with the grid layout and won on every later visit —
+the owner's SO queue showed "Status ↓" from an earlier click, with Requested at the
+bottom of All. Both desktop grids now pass `sortForSessionOnly`
+(`frontend/src/vendor/scm/components/DataGrid.tsx`): a header click sorts this
+visit only, is never written to the saved layout, and a sort saved before the
+change is ignored. Cycling a header off still returns to the open order. Every
+other DataGrid keeps remembering its sort (no prop, unchanged).
+
+**Approver column (owner 2026-09-14).** 「purchaser / logistic - approver需要更明显得看」.
+Both queues carry a coloured **Approver** badge from
+`frontend/src/vendor/scm/lib/amendment-approver.ts`: **Purchaser** (blue),
+**Logistic** (plum), **Legacy** (grey) — role names, the roles the approve keys are
+granted to. On this queue a direct PO amendment is always Purchaser (one key,
+`scm.po_amendment.approve`); an SO-driven row follows its lane — in practice
+Purchaser or Legacy, since DELIVERY rows are filtered out of this queue. The phone
+PO queue shows the Purchaser badge on each card. The SO side is in
+[`so-amendment.md`](./so-amendment.md) §7.
 
 ### Relationship map — SHIPPED (localized; concurrent-edit overlap flagged)
 

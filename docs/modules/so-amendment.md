@@ -34,8 +34,8 @@ The owner's 2026-07-27 rework split approval in two
 
 | Lane | Covers | Signed by | Touches a PO? |
 |---|---|---|---|
-| `LINES` | SKU/spec, colour/fabric, qty, sell price, added/removed product lines, **Processing Date** | `scm.amendment.approve_lines` (Purchasing) | yes — approving auto-raises a follow-up PO Amendment |
-| `DELIVERY` | schedule Delivery Date, State/Postcode/City, the address block, disposal, customer contact, **service lines** (disposal / storage / transport — identified by `item_group='service'`, not the `SVC-` prefix alone) | `scm.amendment.approve_delivery` (Logistics) | never |
+| `LINES` | SKU/spec, colour/fabric, qty, sell price, added/removed product lines, **Processing Date** | `scm.amendment.approve_lines` (role Purchaser) | yes — approving auto-raises a follow-up PO Amendment |
+| `DELIVERY` | schedule Delivery Date, State/Postcode/City, the address block, disposal, customer contact, **service lines** (disposal / storage / transport — identified by `item_group='service'`, not the `SVC-` prefix alone) | `scm.amendment.approve_delivery` (role Logistic) | never |
 
 Two rules that are easy to get wrong:
 
@@ -70,7 +70,7 @@ on `/api/scm/so-amendments`.
 | Method + path | Gate | Notes |
 |---|---|---|
 | `POST /mfg-sales-orders/:docNo/amendments` | `scm.amendment.create`, OR a salesperson on their OWN order, OR a lane approver | Splits by lane, one insert per lane |
-| `GET /so-amendments` | read | Row-scoped like the SO list (own + downline for a scoped rep) |
+| `GET /so-amendments` | read | Row-scoped like the SO list (own + downline for a scoped rep). Each row also carries `bound_pos` and, since 2026-09-14, the order's raw `so_ref` + `so_customer_so_no` (§7) |
 | `GET /so-amendments/:id` | read | |
 | `GET /so-amendments/pending-count` | lane keys, asked LITERALLY (`*` excluded) | **Per-signer** count of `REQUESTED` rows in the lanes THIS caller can sign; 0 for everyone else, the Owner account included. Feeds the sidebar badge (§5). Registered BEFORE `/:id` — Hono matches in order |
 | `PATCH /so-amendments/:id/approve-so` | the row's lane key (legacy: `approve_so`) | Applies the SO revision; LINES also raises PO follow-ups |
@@ -182,3 +182,44 @@ Four decisions worth keeping:
 | The notice delivery model, `source` tags, bell slice | [`announcements.md`](./announcements.md) |
 | PO-side workflow | [`purchase-order-amendment.md`](./purchase-order-amendment.md) |
 | The queue's simplified status buckets and its open order (Requested first, newest first inside a status — desktop + phone, SO + PO) | [`purchase-order-amendment.md`](./purchase-order-amendment.md), *Status simplification* |
+
+## 7. The queue: who signs it, and the order's reference (2026-09-14)
+
+Two owner asks on the Sales Order Amendment queue, the same day:
+「purchaser / logistic - approver需要更明显得看 - 那个是归类purchaser哪个是归类Logistic」 and
+「要加上reference number」.
+
+**Approver badge.** `frontend/src/vendor/scm/lib/amendment-approver.ts` is the one
+place the lane's signer is named and coloured: `soAmendmentApprover(lane)` gives
+`PURCHASER` (LINES), `LOGISTIC` (DELIVERY) or `LEGACY` (lane NULL), shown as
+**Purchaser** / **Logistic** / **Legacy** — the ROLE names mig 0216 grants the keys
+to, so staff read it as "mine or not". It used to be grey text reading
+"Purchasing" / "Logistics", and the detail pages spelled it again by hand. Where
+it shows:
+
+- the desktop queue's **Approver** column, as a coloured pill
+  (`frontend/src/vendor/scm/components/AmendmentApproverBadge.tsx`);
+- each card of the phone queue (`frontend/src/mobile/MobileAmendments.tsx`);
+- the words, not the pill, on the amendment job card
+  (`frontend/src/pages/scm-v2/AmendmentDetailV2.tsx`: the lane chip, "Purchaser
+  approval", "Awaiting Logistic approval"), the SO page's pending banner on both
+  surfaces, and the notice after submitting (`so-amendment-submit.ts`).
+
+The colours are deliberately not status tones: Requested / Approved / Rejected
+already own burnt, green and red on the same row.
+
+**Reference column.** `GET /so-amendments` reads `ref, customer_so_no` from
+`mfg_sales_orders` for the page's doc_nos (company-scoped, one bounded read; a
+failed read fails the list with `load_failed` like the main read, because a blank
+column would claim the order has no reference) and sends them RAW as `so_ref` /
+`so_customer_so_no`. The queue resolves the cell with
+`customerRefOf` (`frontend/src/lib/customer-ref.ts`), the rule the Sales Order
+list's **Reference** column already uses, so one order cannot show two different
+references. Desktop: a **Reference** column after SO No., searchable, sortable,
+exported. Phone: a "Ref …" line on the card. Pinned by
+`backend/src/scm/routes/soAmendmentListReference.test.ts` and
+`frontend/src/pages/scm-v2/amendment-queue-approver-reference.test.tsx`.
+
+**Open order.** Requested stays on top every time the desktop queue opens — see
+[`purchase-order-amendment.md`](./purchase-order-amendment.md), *Status
+simplification*, for `sortForSessionOnly`.

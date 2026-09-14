@@ -26,9 +26,12 @@ import {
   amendmentBucketRank,
   compareAmendmentsForList,
 } from '../../vendor/scm/lib/status-pill';
+import { AmendmentApproverBadge } from '../../vendor/scm/components/AmendmentApproverBadge';
+import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover } from '../../vendor/scm/lib/amendment-approver';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
+import { customerRefOf } from '../../lib/customer-ref';
 import { cn } from '../../lib/utils';
 
 // SIMPLIFIED status filter (owner 2026-07-24): Requested / Approved / All only.
@@ -41,9 +44,16 @@ const STATUS_CHIPS = AMENDMENT_LIST_CHIPS;
 /* New unique storage key — NEVER reuse another list's key. */
 const AMENDMENT_LIST_STORAGE_KEY = 'so-amendment-list.layout.v1';
 
-/* Opens with Requested on top (status-pill.ts owns the order). A column sort
-   the operator clicked still wins — DataGrid only applies this while none is. */
+/* Opens with Requested on top (status-pill.ts owns the order), EVERY time: the
+   grid is sortForSessionOnly, so a header click sorts this visit and is not
+   remembered. A remembered Status sort had put Requested at the bottom
+   (owner 2026-09-14). */
 const OPEN_ORDER = compareAmendmentsForList<AmendmentRow>((a) => a.status, (a) => a.created_at);
+
+/* The SO's own customer reference, by the rule the Sales Order list uses. */
+const referenceOf = (a: AmendmentRow): string =>
+  customerRefOf({ ref: a.so_ref, customer_so_no: a.so_customer_so_no });
+const approverLabelOf = (a: AmendmentRow): string => AMENDMENT_APPROVER_LABEL[soAmendmentApprover(a.lane)];
 
 /* `requested_by` is a bare scm.staff uuid (so_amendments.requested_by, FK ->
    scm.staff.id) — the list endpoint sends no name with it. Resolve through the
@@ -63,6 +73,14 @@ const buildAmendmentColumns = (
     sortFn: (a, b) => a.so_doc_no.localeCompare(b.so_doc_no),
   },
   {
+    // Owner 2026-09-14: 「要加上reference number」.
+    key: 'reference', label: 'Reference', width: 140, sortable: true,
+    accessor: (a) => referenceOf(a) || <span style={{ color: 'var(--fg-muted)' }}>—</span>,
+    searchValue: (a) => referenceOf(a),
+    exportValue: (a) => referenceOf(a) || '—',
+    sortFn: (a, b) => referenceOf(a).localeCompare(referenceOf(b)),
+  },
+  {
     key: 'amendment_no', label: 'Amendment No.', width: 140, sortable: true,
     accessor: (a) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)', fontVariantNumeric: 'tabular-nums' }}>{a.amendment_no ?? '—'}</span>,
     searchValue: (a) => String(a.amendment_no ?? ''),
@@ -71,17 +89,15 @@ const buildAmendmentColumns = (
   },
   {
     /* Two-lane rework — WHO this request is waiting on: product changes sign
-       with Purchasing, delivery changes with Logistics. Pre-rework rows (lane
-       NULL) show the legacy multi-gate chain as "Legacy". */
-    key: 'lane', label: 'Approver', width: 120, sortable: true, groupable: true,
-    accessor: (a) =>
-      a.lane === 'LINES' ? 'Purchasing'
-        : a.lane === 'DELIVERY' ? 'Logistics'
-          : <span style={{ color: 'var(--fg-muted)' }}>Legacy</span>,
-    searchValue: (a) => (a.lane === 'LINES' ? 'Purchasing' : a.lane === 'DELIVERY' ? 'Logistics' : 'Legacy'),
-    exportValue: (a) => (a.lane === 'LINES' ? 'Purchasing' : a.lane === 'DELIVERY' ? 'Logistics' : 'Legacy'),
-    groupValue: (a) => (a.lane === 'LINES' ? 'Purchasing' : a.lane === 'DELIVERY' ? 'Logistics' : 'Legacy'),
-    sortFn: (a, b) => String(a.lane ?? '').localeCompare(String(b.lane ?? '')),
+       with Purchaser, delivery changes with Logistic. Pre-rework rows (lane
+       NULL) show the legacy multi-gate chain as "Legacy". A coloured badge
+       since owner 2026-09-14 — grey text did not say whose it was at a glance. */
+    key: 'lane', label: 'Approver', width: 130, sortable: true, groupable: true,
+    accessor: (a) => <AmendmentApproverBadge approver={soAmendmentApprover(a.lane)} />,
+    searchValue: approverLabelOf,
+    exportValue: approverLabelOf,
+    groupValue: approverLabelOf,
+    sortFn: (a, b) => approverLabelOf(a).localeCompare(approverLabelOf(b)),
   },
   {
     key: 'requested_by', label: 'Requested by', width: 200, sortable: true, groupable: true,
@@ -192,10 +208,11 @@ export const Amendments = () => {
         storageKey={AMENDMENT_LIST_STORAGE_KEY}
         exportName="Amendments"
         rowKey={(a) => a.id}
-        searchPlaceholder="Search SO no, amendment no, requested by…"
+        searchPlaceholder="Search SO no, reference, amendment no, requested by…"
         loadedSearchLimit={500}
         groupBanner={false}
         defaultSort={OPEN_ORDER}
+        sortForSessionOnly
         /* Open on DOUBLE-click (mirrors the GRN / PO list). */
         onRowDoubleClick={(a) => openRow(a)}
         /* Closed amendments (rejected / withdrawn) grey out so they read as dead

@@ -259,6 +259,8 @@ export type DataGridProps<T> = {
    * rows render exactly as passed — byte-identical behaviour.
    */
   defaultSort?: (a: T, b: T) => number;
+  /** Open on `defaultSort` EVERY time: a clicked header sorts this visit only and is never saved or restored. For queues whose open order is the point (amendments, owner 2026-09-14 — a Status sort remembered from an earlier visit had put Requested at the bottom). */
+  sortForSessionOnly?: boolean;
   /**
    * RENDER-TIME hide overlay (Option B map narrowing, owner 2026-08-08). Keys
    * listed here are hidden IN ADDITION to the user's own hidden set, without
@@ -370,6 +372,7 @@ function DataGridInner<T>({
   hideSearch = false,
   loadedSearchLimit,
   defaultSort,
+  sortForSessionOnly = false,
   overlayHidden,
   onUserAdjustColumns,
   scrollToRow,
@@ -435,20 +438,14 @@ function DataGridInner<T>({
     return layoutStore.defaults[String(cid)]?.[serverTableKey] ?? null;
   }, [storedLayout, layoutStore, serverTableKey]);
 
-  const layout = useMemo<Layout>(
-    () =>
-      companyDefault
-        ? {
-            order: companyDefault.order,
-            hidden: companyDefault.hidden,
-            widths: companyDefault.widths,
-            pinned: companyDefault.pinned,
-            groupBy: companyDefault.groupBy,
-            sort: storedLayout.sort,
-          }
-        : storedLayout,
-    [companyDefault, storedLayout],
-  );
+  const [sessionSort, setSessionSort] = useState<Layout['sort']>(null);
+  const layout = useMemo<Layout>(() => {
+    const base: Layout = companyDefault
+      ? { order: companyDefault.order, hidden: companyDefault.hidden, widths: companyDefault.widths,
+          pinned: companyDefault.pinned, groupBy: companyDefault.groupBy, sort: storedLayout.sort }
+      : storedLayout;
+    return sortForSessionOnly ? { ...base, sort: sessionSort } : base;
+  }, [companyDefault, storedLayout, sortForSessionOnly, sessionSort]);
 
   /* Edits start from what is ON SCREEN, not from the empty stored value — so
      the first toggle on an inherited company default keeps the rest of that
@@ -459,10 +456,10 @@ function DataGridInner<T>({
   const setLayout = useCallback((updater: (l: Layout) => Layout) => {
     setLayoutRaw((prev) => {
       const next = updater(effectiveLayoutRef.current ?? prev);
-      writeDataGridLayout(scopedStorageKey, next);
+      writeDataGridLayout(scopedStorageKey, sortForSessionOnly ? { ...next, sort: null } : next);
       return next;
     });
-  }, [scopedStorageKey]);
+  }, [scopedStorageKey, sortForSessionOnly]);
 
   /* Mirror this grid's layout to the account, debounced in the store. The MOUNT
      pass is skipped: opening a list must not create a saved layout for a table
@@ -1442,11 +1439,9 @@ function DataGridInner<T>({
 
   // ── Sort handlers ─────────────────────────────────────────────────
   const toggleSort = (key: string) => {
-    setLayout((l) => {
-      if (!l.sort || l.sort.key !== key) return { ...l, sort: { key, dir: 'asc' } };
-      if (l.sort.dir === 'asc') return { ...l, sort: { key, dir: 'desc' } };
-      return { ...l, sort: null };
-    });
+    const cycle = (s: Layout['sort']): Layout['sort'] =>
+      (!s || s.key !== key ? { key, dir: 'asc' } : s.dir === 'asc' ? { key, dir: 'desc' } : null);
+    if (sortForSessionOnly) setSessionSort(cycle); else setLayout((l) => ({ ...l, sort: cycle(l.sort) }));
   };
 
   // ── Group toggle ─────────────────────────────────────────────────
