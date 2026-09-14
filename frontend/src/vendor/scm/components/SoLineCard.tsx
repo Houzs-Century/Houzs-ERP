@@ -1143,6 +1143,7 @@ const SoLineCardInner = ({
               disabled={!isEditing}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
+              itemCode={draft.itemCode || null}
               onSelect={pickFabricColour}
             />
           </div>
