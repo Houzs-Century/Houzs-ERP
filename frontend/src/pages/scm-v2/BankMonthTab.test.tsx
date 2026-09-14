@@ -97,7 +97,7 @@ vi.mock('./bank-queries', () => ({
   useBankStatements: () => ({ data: { statements: [] }, isLoading: false }),
   useBankStatement: () => ({ data: undefined, isLoading: false }),
   useUploadBankStatement: () => ({ mutate: vi.fn(), isPending: false }),
-  useBookBankReceipt: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
+  useBookBankReceipt: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false, isError: false, error: null }),
   useMatchBankGroup: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useMatchBankLine: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useIgnoreBankLine: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
@@ -506,6 +506,14 @@ describe('the movements of the month', () => {
     openMonth();
     expect(screen.getByText('Still to decide (1)')).toBeTruthy();
     expect(screen.getByText('a card payout, matched')).toBeTruthy();
+  });
+
+  /* The one-press door for every certain payout is on the month too — the
+     rows are the file screen's own (docs/bugs/0868). */
+  test('offers to book every certain payout at once, on the month', () => {
+    setUp({ lines: [{ ...LINE, matched_batch_id: 7, candidates: [{ id: 7, acquirerCode: 'HLB', fileName: 'hlb-0901.csv', periodFrom: '2026-09-01', periodTo: '2026-09-01', payableSen: 60000, outstandingSen: 60000 }] }] });
+    openMonth();
+    expect(screen.getByText('Money received — all 1 matched payout')).toBeTruthy();
   });
 
   test('shows the reconciliation the same way the file screen does', () => {

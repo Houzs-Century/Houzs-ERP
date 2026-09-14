@@ -1699,6 +1699,21 @@ rows of equal width and the actions to the right. Every hook, label, button
 and refusal is unchanged — `frontend/src/pages/scm-v2/SettlementSetup.test.tsx`
 passes as it was.
 
+**Every certain payout at once (2026-09-14, docs/bugs/0868; owner, on a July
+statement of matched card payouts: 这些我还需要自己确定吗？ → 做).** The matcher
+decides WHICH report a card payout is; booking the money (Dr bank / Cr
+settlement-in-transit, the report leaving Money to come in) is a person's
+press. Where the matcher tied a payout to exactly one report for exactly what
+that report is still owed (kind PAYOUT, the matched report's outstanding equal
+to the credit), the row's own button has nothing to choose — so the Still to
+decide table on both the file screen and the month offers **Money received —
+all N matched payouts**, which posts each such row through the row's own door
+(`POST /accounting/bank/lines/:id/receipt`, the row's own allocation), one by
+one; the server judges each again, a refusal is named with the line and the
+amount, and the rest still post. A split, an unsure or an unmatched payout is
+not certain and stays for a person (`frontend/src/pages/scm-v2/BankStatementTab.tsx`
+`BookAllMatched`, shared by `BankMonthTab`). No server change.
+
 **A Maybank month tallies on a TYPED month-end figure; By month is one account
 at a time; the month runs the rule (2026-09-13, docs/bugs/0858; owner: by month
 这里我无法分辨什么也会 / 我的 matching 在 bank statement，然后 lock 在 by month？
