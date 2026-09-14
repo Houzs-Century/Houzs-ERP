@@ -112,7 +112,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-order-item-photos.ts` | 2 | 151 |
 | `backend/src/scm/routes/delivery-order-revert.ts` | 0 | 206 |
 | `backend/src/scm/routes/delivery-order-scan-token.ts` | 1 | 53 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 16 | 5586 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 16 | 5585 |
 | `backend/src/scm/routes/delivery-planning-regions.ts` | 7 | 356 |
 | `backend/src/scm/routes/delivery-planning.ts` | 5 | 2904 |
 | `backend/src/scm/routes/delivery-rate-cards.ts` | 11 | 689 |
@@ -228,7 +228,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2328 files, 775183 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2345 files, 777366 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -238,7 +238,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/ServiceCases.tsx` | 8840 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 8581 |
 | `frontend/src/pages/Team.tsx` | 5686 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5586 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5585 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 5449 |
 | `backend/src/routes/projects.ts` | 5153 |
 | `backend/src/scm/routes/scan-so.ts` | 4895 |
@@ -439,16 +439,16 @@ Page files by directory:
 
 ## 5. Mobile screen inventory
 
-59 screen/component modules in `frontend/src/mobile`.
+60 screen/component modules in `frontend/src/mobile`.
 
 | file | lines |
 |---|---|
 | `frontend/src/mobile/MobileAddLine.tsx` | 187 |
-| `frontend/src/mobile/MobileAmendments.tsx` | 147 |
+| `frontend/src/mobile/MobileAmendments.tsx` | 152 |
 | `frontend/src/mobile/MobileAnnouncementMedia.tsx` | 171 |
 | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | 152 |
 | `frontend/src/mobile/MobileAnnouncements.tsx` | 1741 |
-| `frontend/src/mobile/MobileApp.tsx` | 1189 |
+| `frontend/src/mobile/MobileApp.tsx` | 1201 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 295 |
 | `frontend/src/mobile/MobileAssrCategoryChips.tsx` | 76 |
 | `frontend/src/mobile/MobileAssrSoField.tsx` | 76 |
@@ -461,6 +461,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileCrashBoundary.tsx` | 39 |
 | `frontend/src/mobile/MobileDeliveryFieldsCard.tsx` | 524 |
 | `frontend/src/mobile/MobileDeliveryPlanning.tsx` | 2224 |
+| `frontend/src/mobile/MobileDoHeaderEdit.tsx` | 307 |
 | `frontend/src/mobile/MobileFairReport.tsx` | 749 |
 | `frontend/src/mobile/MobileGantt.tsx` | 230 |
 | `frontend/src/mobile/MobileGrnZeroCost.tsx` | 246 |
@@ -483,7 +484,7 @@ Page files by directory:
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
 | `frontend/src/mobile/MobilePmsPlanFileChips.tsx` | 96 |
 | `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 466 |
-| `frontend/src/mobile/MobilePoAmendments.tsx` | 137 |
+| `frontend/src/mobile/MobilePoAmendments.tsx` | 142 |
 | `frontend/src/mobile/MobileProfile.tsx` | 1002 |
 | `frontend/src/mobile/MobilePurchaseDocNew.tsx` | 387 |
 | `frontend/src/mobile/MobileRacks.tsx` | 306 |
@@ -497,7 +498,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3380 |
 | `frontend/src/mobile/MobileSkuPicker.tsx` | 260 |
 | `frontend/src/mobile/MobileStockCard.tsx` | 335 |
-| `frontend/src/mobile/MobileStockTransferNew.tsx` | 255 |
+| `frontend/src/mobile/MobileStockTransferNew.tsx` | 276 |
 | `frontend/src/mobile/MobileTrackingBanner.tsx` | 84 |
 | `frontend/src/mobile/MobileTwoFactorCard.tsx` | 268 |
 | `frontend/src/mobile/MobileVenturePortalFeed.tsx` | 483 |
