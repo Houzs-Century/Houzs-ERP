@@ -1699,6 +1699,18 @@ rows of equal width and the actions to the right. Every hook, label, button
 and refusal is unchanged — `frontend/src/pages/scm-v2/SettlementSetup.test.tsx`
 passes as it was.
 
+**A row follows the matcher's fresh decision (2026-09-14, docs/bugs/0870;
+owner, on a July PBB credit that had turned into "one payout for several
+reports" with nothing ticked and a dead button: 什么意思？).** The matcher
+decides every line again on each read (docs/bugs/0815), so a row's decision
+can change while the row is on screen — here, once other reports were paid,
+three PBB reports added up to the credit exactly and "check which" became a
+split. The row's ticks are React state seeded on mount, so the old empty
+state stayed. Rows are now keyed on the line AND its decision
+(`decisionKey` in `frontend/src/pages/scm-v2/BankStatementTab.tsx`: kind,
+matched report, split), so a changed decision remounts the row with the
+reports the matcher picked ticked and "Money received — N reports" live.
+
 **The bank's monthly statement PDF uploads too (2026-09-14, docs/bugs/0869;
 owner, after Maybank's Account Activity export turned out to omit two June
 credits the statement printed: 我觉得可以 pdf，就也支持 csv，也支持 pdf).** On

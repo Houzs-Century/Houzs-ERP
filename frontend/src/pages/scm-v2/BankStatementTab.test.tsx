@@ -697,3 +697,51 @@ describe('uploading a statement PDF', () => {
     expect(sent).toMatchObject({ fileName: 'aug.csv', format: 'CSV', content: 'EFFECT DATE|AMOUNT\n20260605|100' });
   });
 });
+
+/* ── A decision that changes under an open row (docs/bugs/0870). The matcher
+   decides every line again on each read; a row drawn as "check which" whose
+   decision becomes "one payout for several reports" must show the reports
+   the matcher picked, ticked, with the button live — not its old empty
+   state. ───────────────────────────────────────────────────────────────── */
+describe('a row whose decision changes under it', () => {
+  test('re-seeds its ticks from the new decision instead of keeping the old empty ones', () => {
+    const before: BankLine = {
+      ...SPLIT, id: 12, line_no: 12, amount_sen: 813169, charge_sen: 0, kind: 'PAYOUT_UNSURE', matched_batch_id: null, split: null,
+      note: 'PBB paid RM 8,131.69, and no single report of theirs is owed that. 6 are still waiting — choose, or record it against more than one.',
+      candidates: [
+        { id: 21, acquirerCode: 'PBB', fileName: '2990HOMESB_CSV_20260703.csv', periodFrom: '2026-07-03', periodTo: '2026-07-03', payableSen: 166869, outstandingSen: 166869 },
+        { id: 22, acquirerCode: 'PBB', fileName: '2990HOMESB_CSV_20260704.csv', periodFrom: '2026-07-04', periodTo: '2026-07-04', payableSen: 312660, outstandingSen: 312660 },
+        { id: 23, acquirerCode: 'PBB', fileName: '2990HOMESB_CSV_20260705.csv', periodFrom: '2026-07-05', periodTo: '2026-07-05', payableSen: 333640, outstandingSen: 333640 },
+        { id: 26, acquirerCode: 'PBB', fileName: '2990HOMESB_CSV_20260712.csv', periodFrom: '2026-07-12', periodTo: '2026-07-12', payableSen: 720324, outstandingSen: 720324 },
+      ],
+    };
+    lines = [before];
+    const r = render(<BankStatementTab />);
+    fireEvent.click(screen.getByText('Reconcile'));
+    /* Undecided: every report offered, nothing ticked, the button dead. */
+    expect(screen.getAllByRole('checkbox', { name: /Report .* for line 12/ })).toHaveLength(4);
+    expect((screen.getByText('Money received').closest('button') as HTMLButtonElement).disabled).toBe(true);
+
+    /* The next read: three reports now add up to it exactly. */
+    lines = [{
+      ...before, kind: 'PAYOUT_SPLIT',
+      split: [{ batchId: 21, amountSen: 166869 }, { batchId: 22, amountSen: 312660 }, { batchId: 23, amountSen: 333640 }],
+      note: '3 of PBB\'s reports add up to RM 8,131.69 exactly — 2990HOMESB_CSV_20260703.csv RM 1,668.69 + 2990HOMESB_CSV_20260704.csv RM 3,126.60 + 2990HOMESB_CSV_20260705.csv RM 3,336.40. Check them and record it.',
+    }];
+    r.rerender(<BankStatementTab />);
+    const ticked = screen.getAllByRole('checkbox', { name: /Report .* for line 12/ }) as HTMLInputElement[];
+    expect(ticked.map((c) => [c.getAttribute('aria-label'), c.checked])).toEqual([
+      ['Report 2990HOMESB_CSV_20260703.csv for line 12', true],
+      ['Report 2990HOMESB_CSV_20260704.csv for line 12', true],
+      ['Report 2990HOMESB_CSV_20260705.csv for line 12', true],
+    ]);
+    expect(screen.getByText('Not this one? 1 other report(s)')).toBeTruthy();
+    const go = screen.getByText('Money received — 3 reports').closest('button') as HTMLButtonElement;
+    expect(go.disabled).toBe(false);
+    fireEvent.click(go);
+    expect(bookMutate).toHaveBeenLastCalledWith({
+      lineId: 12,
+      allocations: [{ batchId: 21, amountSen: 166869 }, { batchId: 22, amountSen: 312660 }, { batchId: 23, amountSen: 333640 }],
+    });
+  });
+});
