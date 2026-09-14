@@ -6281,3 +6281,25 @@ Tests: `backend/src/scm/routes/soPaymentQueuesAcEdit.test.ts` (the body, a
 keyless line, the pending-create fold, `composeSoPaymentEdit`) and
 `backend/tests/autocountWritebackWiring.test.ts` (all three payment paths call
 it). Ledger: `docs/bugs/0896-a-payment-on-a-sales-order-whose-lines-autocount-refused-nev.md`.
+
+## Sending a refused DO / GR edit again once its lines are keyed (2026-09-14)
+
+A delivery order or goods receipt edit refused for a keyless line is a `skipped`
+row with an empty body, and nothing re-sends it: the re-queue ladder does not
+take edits (`autocount-requeue.ts`, "fix the cause, save the document again"),
+and the relink sweep queues the keyed edit only on the run that itself closed
+the last gap. A document keyed some other way — the DocTransfer stamp — is
+already complete when the sweep reaches it.
+
+`backend/scripts/requeue-keyed-conversion-edits.mjs` (workflow *Re-send refused
+DO / GR edits once every line is keyed*, run under `tsx`) does that one save for
+the documents that need it: a keyless-line refusal not followed by any pending
+or sent edit, and no keyless line left. It calls the Worker's own `enqueueEdit`
+over `pgrest-shim`, so the composer's guards all apply, and verifies on a fresh
+connection that each queued body names every line by DtlKey. Plan by default.
+
+**Its limit:** the refused edit's payload is empty, so a line hard-deleted in
+that save is not retired by the edit sent now — the same limit as the sweep's
+queued edit. Plan run against production 2026-09-14, before any stamp: 15
+documents with an unanswered keyless refusal, 1 fully keyed (HC-DO-2609-039),
+14 held.
