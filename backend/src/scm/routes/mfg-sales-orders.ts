@@ -246,7 +246,7 @@ import { canonicalizeVariants } from '../shared/so-variant-rule';
 import { reconcileFreeGiftLinesForSo } from '../lib/free-gift-reconcile';
 import { claimPwpForSingleLine, rollbackSinglePwpClaim } from '../lib/pwp-claim-single';
 import {
-  validateItemCodes, unknownItemCodeResponse,
+  validateItemCodes, unknownItemCodeResponse, catalogCategoriesByCode,
   findFreeTextSoLines, freeTextSoLineResponse,
 } from '../lib/validate-item-codes';
 import { collectSoConfirmProblems, soConfirmProblemsForDoc } from '../lib/so-confirm-gate';
@@ -11742,7 +11742,9 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
      Logistics) — and, when the submission mixes both, SPLIT it into two
      amendment documents that live independent lives. Line classification keys
      off the line's IDENTITY (item_code + item_group — item_group routes a
-     bare-code service line to Logistics), resolved SERVER-SIDE from the order. */
+     bare-code service line to Logistics), resolved SERVER-SIDE from the order;
+     an ADDED line has no row, so its code's CATALOGUE category stands in
+     (docs/bugs/0895-an-amendment-that-added-a-service-line-went-to-the-purchaser.md). */
   const referencedIds = [...new Set(submittedLines
     .map((l) => l.salesOrderItemId)
     .filter((x): x is string => typeof x === 'string' && x.length > 0))];
@@ -11755,11 +11757,10 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       identityById.set(r.id, { itemCode: r.item_code, itemGroup: r.item_group });
     }
   }
-  const split = splitAmendmentByLane(
-    headerChanges,
-    submittedLines,
-    (l) => (l.salesOrderItemId ? identityById.get(l.salesOrderItemId) ?? {} : { itemCode: l.newItemCode }),
-  );
+  const addedCategory = await catalogCategoriesByCode(sb, submittedLines.filter((l) => !l.salesOrderItemId).map((l) => l.newItemCode), activeCompanyId(c));
+  if (!addedCategory) return c.json(LINE_BUILD_ERRORS.unreadable, 500);
+  const split = splitAmendmentByLane(headerChanges, submittedLines, (l) => (l.salesOrderItemId ? identityById.get(l.salesOrderItemId) ?? {}
+    : { itemCode: l.newItemCode, category: addedCategory.get((l.newItemCode ?? '').trim()) ?? null }));
 
   // Guard 4b — per-lane openness: each lane admits ONE amendment awaiting its
   // approver. The other lane stays free — that is the whole point of the split.

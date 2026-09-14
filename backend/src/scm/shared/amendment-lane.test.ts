@@ -77,6 +77,16 @@ describe('classifyLineItemCode', () => {
     expect(classifyLine({ itemCode: 'STORAGE', itemGroup: 'service' })).toBe('DELIVERY');
   });
 
+  it('routes an ADDED bare-code service line to DELIVERY by its catalogue category (HC-SO-012757/A1)', () => {
+    // Owner 2026-09-14: 「为什么Service line item还是purchaser approve?」 An ADD
+    // has no SO line yet, so no item_group — the requested code and what the
+    // catalogue says about it are all there is. TRANSPORTATION CHARGES is
+    // category SERVICE in mfg_products; with the code alone it read as goods.
+    expect(classifyLine({ itemCode: 'TRANSPORTATION CHARGES', itemGroup: null, category: 'SERVICE' })).toBe('DELIVERY');
+    expect(classifyLine({ itemCode: 'PC151-01', itemGroup: null, category: 'BEDFRAME' })).toBe('LINES');
+    expect(classifyLine({ itemCode: 'TRANSPORTATION CHARGES', itemGroup: null, category: null })).toBe('LINES');
+  });
+
   it('keeps a real product line on LINES regardless of its group', () => {
     expect(classifyLine({ itemCode: '9028-L(RHF)', itemGroup: 'sofa' })).toBe('LINES');
     expect(classifyLine({ itemCode: 'PC151-01', itemGroup: null })).toBe('LINES');
