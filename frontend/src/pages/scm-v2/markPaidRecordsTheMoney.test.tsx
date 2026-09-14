@@ -358,3 +358,17 @@ describe("the list hands its payment entries to this screen", () => {
     expect(stripSiPaymentIntent("?q=abc&pay=balance")).toBe("?q=abc");
   });
 });
+
+/* Not about payments — it lives here because this is the one harness that mounts
+   the real Sales Invoice detail page. The header BADGE read a hand-written
+   STAGE_LABEL that said "Sent" for SENT, while the owner ruled the rung reads
+   Submitted everywhere (2026-09-12) and the list pill already did. docs/bugs/0868.
+   Asserted on the RENDERED text, because the source scan in
+   localStatusMapsAgree.test.ts can only prove the map is gone, not what paints. */
+describe("the header badge reads the canonical word", () => {
+  it("a SENT invoice shows Submitted, and the word Sent appears nowhere on the page", () => {
+    setup({ status: "SENT" });
+    expect(screen.getAllByText("Submitted", { exact: true }).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText("Sent", { exact: true })).toHaveLength(0);
+  });
+});
