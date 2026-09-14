@@ -9,6 +9,8 @@ import { describe, expect, it } from 'vitest';
 import {
   CANCEL_APPROVE_KEY,
   approvalRefusal,
+  asksToCancel,
+  cancelDocNoun,
   cancelNeedsApproval,
   cancelRequestRefusal,
   executionRefusal,
@@ -72,6 +74,20 @@ describe('the ladder', () => {
     /* No key signs it, so no wildcard does either. */
     expect(approvalRefusal(req({ doc_type: 'PO' }), signer(2, ['*']))).toMatchObject({ refusal: { error: 'not_pending', httpStatus: 409 } });
     expect(holdsAnyApproveKey('PO', signer(1, ['*']))).toBe(false);
+  });
+  /* Owner 2026-09-14:「DO cancel need pop out window for reason」— a reason, and
+     no approver, exactly the Purchase Order's shape. */
+  it('the Delivery Order signs nothing either: it is reason-only', () => {
+    expect(levelsFor('DO')).toBe(0);
+    expect(isReasonOnly('DO')).toBe(true);
+    expect(CANCEL_APPROVE_KEY.DO).toEqual({});
+    expect(approvalRefusal(req({ doc_type: 'DO' }), signer(2, ['*']))).toMatchObject({ refusal: { error: 'not_pending', httpStatus: 409 } });
+    expect(holdsAnyApproveKey('DO', signer(1, ['*']))).toBe(false);
+    expect(cancelNeedsApproval('DO', 'LOADED')).toBe(false);
+    expect(executionRefusal('DO', null)).toBeNull();
+    expect(cancelRequestRefusal('DO', 'LOADED')).toMatchObject({ error: 'no_approval_needed', message: expect.stringContaining('delivery order') });
+    expect(cancelDocNoun('DO')).toBe('delivery order');
+    expect(cancelDocNoun('XX')).toBe('document');
   });
   it('counts signatures for the "1 of 2" wording, per document', () => {
     expect(signaturesGiven('SO', 'REQUESTED')).toBe(0);
@@ -139,6 +155,20 @@ describe('rejecting and withdrawing', () => {
     expect(holdsAnyApproveKey('SO', signer(1, ['scm.so_cancel.approve_l2']))).toBe(true);
     expect(holdsAnyApproveKey('PO', signer(1, ['scm.so_cancel.approve_l2']))).toBe(false);
     expect(holdsAnyApproveKey('XX', signer(1, ['*']))).toBe(false);
+  });
+});
+
+describe('what counts as a cancel on a status route', () => {
+  /* Both status handlers normalise with String(body.status).trim().toUpperCase().
+     The guard must agree, or a spelling the handler accepts walks past the
+     guard (docs/bugs/0889). */
+  it('reads the status exactly the way the handlers do', () => {
+    for (const s of ['CANCELLED', 'cancelled', ' Cancelled ', 'CANCELLED\n', ['CANCELLED'], [' cancelled ']]) {
+      expect(asksToCancel(s)).toBe(true);
+    }
+    for (const s of ['CANCEL', 'CANCELLED_X', 'LOADED', '', null, undefined, 42, {}, ['CANCELLED', 'LOADED']]) {
+      expect(asksToCancel(s)).toBe(false);
+    }
   });
 });
 

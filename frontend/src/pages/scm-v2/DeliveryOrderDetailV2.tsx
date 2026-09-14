@@ -72,9 +72,9 @@ import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
-import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../../vendor/scm/components/PromptDialog";
 import { useDoRelationshipMap } from "./sales-doc-relationship-map";
+import { useDoCancelAction } from "./use-do-cancel-action";
 import {
   DocumentRelationshipMapModal,
   DocumentChoiceDialog,
@@ -646,8 +646,8 @@ export function DeliveryOrderDetailV2() {
   const updateStatus = useUpdateMfgDeliveryOrderStatus();
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
-  const askConfirm = useConfirm();
   const askPrompt = usePrompt();
+  const { cancelDo, isPending: cancelPending } = useDoCancelAction();
   const revert = useRevertMfgDeliveryOrder();
   const { user, can, pageAccess } = useAuth();
   // showCustomerPo + node click handling now live inside useDoRelationshipMap.
@@ -744,16 +744,10 @@ export function DeliveryOrderDetailV2() {
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/delivery-orders"));
   const goEdit = () => id && navigate(`/scm/delivery-orders/new?edit=${id}`);
-  const doCancel = async () => {
-    if (!deliveryOrder) return;
-    if (await askConfirm({
-      title: `Cancel delivery order ${deliveryOrder.do_number}?`,
-      body: "Stock allocated to this DO will be released back to the SO.",
-      confirmLabel: "Cancel DO",
-      danger: true,
-    })) {
-      updateStatus.mutate({ id: deliveryOrder.id, status: "CANCELLED" });
-    }
+  /* Asks WHY before it cancels (owner 2026-09-14) — the prompt is the
+     confirmation, and the server refuses a cancel without the reason. */
+  const doCancel = () => {
+    if (deliveryOrder) void cancelDo(deliveryOrder.id, deliveryOrder.do_number);
   };
   /* The Ops-lead REVERT — the safety net for a wrong scan (LOADED) or an
      accidental dispatch (DISPATCHED). The plan is derived from the current
@@ -1178,6 +1172,7 @@ export function DeliveryOrderDetailV2() {
                 variant="danger"
                 icon={<XCircle size={14} />}
                 onClick={doCancel}
+                disabled={cancelPending}
               >
                 Cancel DO
               </Button>

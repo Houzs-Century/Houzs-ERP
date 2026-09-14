@@ -18,7 +18,7 @@ import { useAuth } from "../auth/AuthContext";
 import { MobileAddLine } from "./MobileAddLine";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
-import { askActionReason, PO_CANCEL_PROMPT, type ActVariant, type DocAction } from "./doc-actions";
+import { askActionReason, DO_CANCEL_PROMPT, PO_CANCEL_PROMPT, type ActVariant, type DocAction } from "./doc-actions";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { MODULE_CONFIGS } from "./MobileModuleList";
 import { invalidateModuleShared } from "./sharedInvalidate";
@@ -1029,7 +1029,7 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
       };
       const step = next[st];
       if (step) out.push({ key: "next", label: step[1], variant: "solid", request: { path, method: "PATCH", body: { status: step[0] } } });
-      out.push({ ...cancel(path, "delivery order"), confirm: { title: "Cancel this delivery order?", body: "This voids the DO and returns any shipped stock to the shelf.", confirmLabel: "Cancel DO" } });
+      out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path, method: "PATCH", body: { status: "CANCELLED" } }, reasonPrompt: DO_CANCEL_PROMPT });
       return out;
     }
 
