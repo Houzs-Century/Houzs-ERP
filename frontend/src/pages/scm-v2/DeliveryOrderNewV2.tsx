@@ -88,6 +88,8 @@ import { splitE164, combineE164 } from "../../vendor/shared/phone";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { fmtDate } from "../../vendor/shared/format";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
+import { buildDoHeaderBody, seedDoHeaderForm, DO_HEADER_LOCKED_NOTICE } from "../../vendor/scm/lib/do-header-form";
+import { doHeaderLocked, isDoHeaderKeyLocked } from "../../vendor/shared/do-header-lock";
 import {
   seedFollowerVariants,
   seedableMasterVariants,
@@ -213,11 +215,13 @@ function TextArea({
   onChange,
   placeholder,
   rows = 2,
+  disabled,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
   rows?: number;
+  disabled?: boolean;
 }) {
   return (
     <textarea
@@ -225,7 +229,8 @@ function TextArea({
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       rows={rows}
-      className="w-full resize-y rounded-lg border border-border bg-surface px-3 py-2.5 text-[13.5px] leading-relaxed text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-primary focus:shadow-[0_0_0_3px_rgba(22,105,95,.12)]"
+      disabled={disabled}
+      className="w-full resize-y disabled:opacity-50 rounded-lg border border-border bg-surface px-3 py-2.5 text-[13.5px] leading-relaxed text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-primary focus:shadow-[0_0_0_3px_rgba(22,105,95,.12)]"
     />
   );
 }
@@ -235,18 +240,21 @@ function SelectInput({
   onChange,
   options,
   placeholder,
+  disabled,
 }: {
   value: string;
   onChange: (v: string) => void;
   options: Array<{ value: string; label: string }>;
   placeholder?: string;
+  disabled?: boolean;
 }) {
   return (
     <div className="relative">
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-10 w-full appearance-none rounded-lg border border-border bg-surface px-3 pr-8 text-[13.5px] text-ink outline-none transition-colors focus:border-primary focus:shadow-[0_0_0_3px_rgba(22,105,95,.12)]"
+        disabled={disabled}
+        className="h-10 w-full appearance-none disabled:opacity-50 rounded-lg border border-border bg-surface px-3 pr-8 text-[13.5px] text-ink outline-none transition-colors focus:border-primary focus:shadow-[0_0_0_3px_rgba(22,105,95,.12)]"
       >
         {placeholder && <option value="">{placeholder}</option>}
         {options.map((o) => (
@@ -266,10 +274,12 @@ function PhoneInput({
   value,
   onChange,
   placeholder,
+  disabled,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
+  disabled?: boolean;
 }) {
   // The prefix box owns the country code, so the input holds only the national
   // digits. Seeded values arrive E.164 ("+60169691009"); showing them verbatim
@@ -287,6 +297,7 @@ function PhoneInput({
         onChange={(v) => onChange(combineE164("60", v))}
         placeholder={placeholder || "11-6155 6133"}
         className="flex-1"
+        disabled={disabled}
       />
     </div>
   );
@@ -540,6 +551,11 @@ export function DeliveryOrderNewV2() {
     !editId && soDocNo && !fromPicks ? soDocNo : null,
   );
   const doDetail = useMfgDeliveryOrderDetail(editId || null);
+  /* Owner ruling 2026-09-14: a live SI / DR locks the header's customer, address,
+     contact and commercial fields. ONE rule (vendor/shared/do-header-lock.ts), the
+     server's own; `lk(bodyKey)` disables exactly what the PATCH would refuse. */
+  const headerLocked = !!editId && doHeaderLocked((doDetail.data as { deliveryOrder?: { has_children?: unknown } } | undefined)?.deliveryOrder);
+  const lk = (bodyKey: string) => isDoHeaderKeyLocked(bodyKey, headerLocked);
   const createDo = useCreateMfgDeliveryOrder();
   /* One key for the one DO this page is open to raise (lib/idempotency.ts).
      This is the ROUTED desktop DO create (App.tsx:543 → /scm/delivery-orders/
@@ -831,31 +847,15 @@ export function DeliveryOrderNewV2() {
     const doo = (doDetail.data as { deliveryOrder?: Record<string, unknown> } | undefined)?.deliveryOrder;
     if (!doo) return;
     setEditSeeded(true);
-    setCustomerName(String(doo.debtor_name ?? ""));
-    setDebtorCode(String(doo.debtor_code ?? ""));
-    setCustomerSoRef(String((doo.customer_so_no ?? doo.po_doc_no ?? doo.ref ?? "") as string));
-    setPhone(String(doo.phone ?? ""));
-    setEmail(String(doo.email ?? ""));
-    setCustomerType(String((doo.customer_type ?? "") as string));
-    setSalespersonId(String(doo.salesperson_id ?? ""));
-    setAddr1(String(doo.address1 ?? ""));
-    setAddr2(String(doo.address2 ?? ""));
-    setState(String(doo.customer_state ?? ""));
-    setCity(String(doo.city ?? ""));
-    setPostcode(String(doo.postcode ?? ""));
-    setSalesLocation(String(doo.sales_location ?? ""));
-    setEcName(String((doo.emergency_contact_name ?? "") as string));
-    setEcRelationship(String((doo.emergency_contact_relationship ?? "") as string));
-    setEcPhone(String((doo.emergency_contact_phone ?? "") as string));
-    setDoDate(String(doo.do_date ?? todayIso()).slice(0, 10));
-    setDriver(String((doo.driver_name ?? "") as string));
-    setVehicle(String(doo.vehicle ?? ""));
-    setBuildingType(String(doo.building_type ?? ""));
-    setVenue(String(doo.venue ?? ""));
-    setBranding(String((doo.branding ?? "") as string));
-    setExpectedDate(String((doo.expected_delivery_at ?? "") as string).slice(0, 10));
-    setCustomerDelDate(String((doo.customer_delivery_date ?? "") as string).slice(0, 10));
-    setNote(String((doo.note ?? doo.notes ?? "") as string));
+    /* The seed is the shared layer's (do-header-form.ts), the one the phone's edit sheet uses. */
+    const f = seedDoHeaderForm(doo, todayIso());
+    setCustomerName(f.customerName); setDebtorCode(f.debtorCode); setCustomerSoRef(f.customerSoRef);
+    setPhone(f.phone); setEmail(f.email); setCustomerType(f.customerType); setSalespersonId(f.salespersonId);
+    setAddr1(f.address1); setAddr2(f.address2); setState(f.state); setCity(f.city); setPostcode(f.postcode);
+    setSalesLocation(f.salesLocation); setEcName(f.ecName); setEcRelationship(f.ecRelationship); setEcPhone(f.ecPhone);
+    setDoDate(f.doDate); setDriver(f.driver); setVehicle(f.vehicle); setBuildingType(f.buildingType);
+    setVenue(f.venue); setBranding(f.branding); setExpectedDate(f.expectedDate); setCustomerDelDate(f.customerDelDate);
+    setNote(f.note);
     setSoDocNo(String((doo.so_doc_no ?? "") as string));
 
     const items = (doDetail.data as { items?: Array<Record<string, unknown>> } | undefined)?.items ?? [];
@@ -954,35 +954,14 @@ export function DeliveryOrderNewV2() {
   };
 
   // ── Submit — create ────────────────────────────────────────────────
-  const buildHeaderBody = () => ({
-    debtorName: customerName,
-    debtorCode: debtorCode || undefined,
-    phone,
-    email,
-    customerType,
-    salespersonId: salespersonId || undefined,
-    // Legacy name column, derived from the picked staff — never typed.
-    agent: salesStaff.find((s) => s.id === salespersonId)?.name ?? "",
-    address1: addr1,
-    address2: addr2,
-    customerState: state,
-    city,
-    postcode,
-    salesLocation,
-    emergencyContactName: ecName,
-    emergencyContactRelationship: ecRelationship,
-    emergencyContactPhone: ecPhone,
-    doDate,
-    driverName: driver,
-    vehicle,
-    buildingType,
-    venue,
-    branding,
-    expectedDeliveryAt: expectedDate,
-    customerDeliveryDate: customerDelDate,
-    note,
-    customerSoNo: customerSoRef,
-  });
+  /* The header body is the shared layer's (do-header-form.ts) — the phone's edit
+     sheet sends the same one. On a locked DO the locked keys are dropped. */
+  const buildHeaderBody = () => buildDoHeaderBody({
+    customerName, debtorCode, customerSoRef, phone, email, customerType, salespersonId,
+    address1: addr1, address2: addr2, state, city, postcode, salesLocation,
+    ecName, ecRelationship, ecPhone, doDate, driver, vehicle, buildingType, venue, branding,
+    expectedDate, customerDelDate, note,
+  }, salesStaff, { locked: headerLocked });
 
   const validLines = () => lines.filter((l) => l.itemCode.trim() || l.description.trim());
 
@@ -1190,6 +1169,11 @@ export function DeliveryOrderNewV2() {
               them — fill them in from the customer, not from memory.
             </div>
           )}
+          {headerLocked && (
+            <div role="status" className="mt-3 rounded-md border border-warning-text/25 bg-warning-bg px-3.5 py-2.5 text-[12.5px] text-warning-text">
+              {DO_HEADER_LOCKED_NOTICE}
+            </div>
+          )}
           {/* Right actions — no-wrap */}
           <div className="flex flex-shrink-0 flex-nowrap items-center gap-2">
             <Button
@@ -1256,6 +1240,7 @@ export function DeliveryOrderNewV2() {
               <Label text="Customer name" required />
               <input
                 ref={debtorInputRef}
+                disabled={lk("debtorName")}
                 value={customerName}
                 onChange={(e) => { setCustomerName(e.target.value); setDebtorCode(""); setShowDebtorSuggest(true); }}
                 onFocus={() => setShowDebtorSuggest(true)}
@@ -1263,7 +1248,7 @@ export function DeliveryOrderNewV2() {
                 placeholder="e.g. Lim Mei Hua"
                 className={cn(
                   "h-10 w-full rounded-lg border border-border bg-surface px-3 text-[13.5px] text-ink outline-none transition-colors placeholder:text-ink-muted",
-                  "focus:border-primary focus:shadow-[0_0_0_3px_rgba(22,105,95,.12)]",
+                  "focus:border-primary focus:shadow-[0_0_0_3px_rgba(22,105,95,.12)] disabled:opacity-50",
                 )}
               />
               <DebtorSuggestList
@@ -1283,6 +1268,7 @@ export function DeliveryOrderNewV2() {
               <TextInput
                 value={customerSoRef}
                 onChange={setCustomerSoRef}
+                disabled={lk("customerSoNo")}
                 placeholder="Their PO / SO number"
               />
             </div>
@@ -1290,13 +1276,14 @@ export function DeliveryOrderNewV2() {
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-4">
             <div>
               <Label text="Phone" required />
-              <PhoneInput value={phone} onChange={setPhone} />
+              <PhoneInput value={phone} onChange={setPhone} disabled={lk("phone")} />
             </div>
             <div>
               <Label text="Email" />
               <TextInput
                 value={email}
                 onChange={setEmail}
+                disabled={lk("email")}
                 placeholder="customer@example.com"
               />
             </div>
@@ -1305,6 +1292,7 @@ export function DeliveryOrderNewV2() {
               <SelectInput
                 value={customerType}
                 onChange={setCustomerType}
+                disabled={lk("customerType")}
                 placeholder="—"
                 options={customerTypeOpts}
               />
@@ -1329,6 +1317,7 @@ export function DeliveryOrderNewV2() {
               <TextInput
                 value={addr1}
                 onChange={setAddr1}
+                disabled={lk("address1")}
                 placeholder="Unit, street, area"
               />
             </div>
@@ -1337,6 +1326,7 @@ export function DeliveryOrderNewV2() {
               <TextInput
                 value={addr2}
                 onChange={setAddr2}
+                disabled={lk("address2")}
                 placeholder="Apt, floor, building (optional)"
               />
             </div>
@@ -1346,6 +1336,7 @@ export function DeliveryOrderNewV2() {
                 <StatePicker
                   value={state}
                   onChange={onStatePick}
+                  disabled={lk("customerState")}
                   selectClassName={ADDRESS_SELECT_CLS}
                 />
               </div>
@@ -1355,7 +1346,7 @@ export function DeliveryOrderNewV2() {
                   className={ADDRESS_SELECT_CLS}
                   value={city}
                   onChange={(next) => applyTriple(pickCity(locRows, { state, city, postcode }, next))}
-                  disabled={loc.isLoading}
+                  disabled={loc.isLoading || lk("city")}
                   placeholder={loc.isLoading ? "Loading…" : cityPlaceholder(state)}
                   options={withCurrent(sortByText(cities), city).map((v) => ({ value: v, label: v }))}
                 />
@@ -1369,7 +1360,7 @@ export function DeliveryOrderNewV2() {
                 postcodeChoices={withCurrent(postcodes, postcode)}
                 placeholder={loc.isLoading ? "Loading…" : postcodePlaceholder(state, city)}
                 blockedReason={state ? undefined : POSTCODE_NEEDS_STATE}
-                disabled={loc.isLoading}
+                disabled={loc.isLoading || lk("postcode")}
                 classes={{
                   field: "block",
                   label: "mb-1.5 block font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted",
@@ -1384,6 +1375,7 @@ export function DeliveryOrderNewV2() {
                 <SelectInput
                   value={salesLocation}
                   onChange={setSalesLocation}
+                  disabled={lk("salesLocation")}
                   placeholder="—"
                   options={salesLocationOpts}
                 />
@@ -1405,6 +1397,7 @@ export function DeliveryOrderNewV2() {
               <TextInput
                 value={ecName}
                 onChange={setEcName}
+                disabled={lk("emergencyContactName")}
                 placeholder="e.g. Lim Mei Hua"
               />
             </div>
@@ -1413,6 +1406,7 @@ export function DeliveryOrderNewV2() {
               <SelectInput
                 value={ecRelationship}
                 onChange={setEcRelationship}
+                disabled={lk("emergencyContactRelationship")}
                 placeholder="—"
                 options={[
                   { value: "Spouse", label: "Spouse" },
@@ -1424,7 +1418,7 @@ export function DeliveryOrderNewV2() {
             </div>
             <div>
               <Label text="Phone" />
-              <PhoneInput value={ecPhone} onChange={setEcPhone} />
+              <PhoneInput value={ecPhone} onChange={setEcPhone} disabled={lk("emergencyContactPhone")} />
             </div>
           </div>
         </SectionCard>
@@ -1437,6 +1431,7 @@ export function DeliveryOrderNewV2() {
               <TextInput
                 value={doDate}
                 onChange={setDoDate}
+                disabled={lk("doDate")}
                 type="date"
               />
             </div>
@@ -1461,6 +1456,7 @@ export function DeliveryOrderNewV2() {
               <SelectInput
                 value={buildingType}
                 onChange={setBuildingType}
+                disabled={lk("buildingType")}
                 placeholder="—"
                 options={[
                   { value: "Landed", label: "Landed" },
@@ -1476,6 +1472,7 @@ export function DeliveryOrderNewV2() {
               <TextInput
                 value={venue}
                 onChange={setVenue}
+                disabled={lk("venue")}
                 placeholder="Residence / site"
               />
             </div>
@@ -1492,6 +1489,7 @@ export function DeliveryOrderNewV2() {
               <TextInput
                 value={customerDelDate}
                 onChange={setCustomerDelDate}
+                disabled={lk("customerDeliveryDate")}
                 type="date"
               />
             </div>
@@ -1501,6 +1499,7 @@ export function DeliveryOrderNewV2() {
             <TextArea
               value={note}
               onChange={setNote}
+              disabled={lk("note")}
               placeholder="Internal notes — visible on the DO detail page only"
             />
           </div>

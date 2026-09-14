@@ -1975,9 +1975,9 @@ export function MobileModuleDetail({ moduleKey, row, title, onBack, onPOD, onEdi
   /** Relationship-Map node navigation (MobileApp). Absent → map nodes inert. */
   flowNav?: FlowNav;
 }) {
-  // Only offer Edit for modules whose form declares an updatePath (create-only
-  // modules like Warehouse show no Edit button even when onEdit is passed).
-  const editable = !!MODULE_CONFIGS[moduleKey]?.form?.updatePath;
+  // Edit is offered for modules whose form declares an updatePath, and for the
+  // Delivery Order, whose header edit is its own screen (MobileDoHeaderEdit).
+  const editable = !!MODULE_CONFIGS[moduleKey]?.form?.updatePath || moduleKey === "delivery-orders-mfg";
   const editHandler = editable ? onEdit : undefined;
   const doc = DOC_MODULES[moduleKey];
   // Document modules host their own sticky footer (status actions + Record
