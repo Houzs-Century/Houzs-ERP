@@ -662,7 +662,11 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   edit screen — `shared/category-swap.ts`, enforced by `PATCH /product-models/:id`
   and `PATCH /mfg-products/:id` (409 `category_change_not_allowed` for any other
   move, `category_on_model` for a modelled SKU). The swap moves the PRODUCT only:
-  lines already on orders keep their old group until a data run moves them.
+  lines already on orders keep their old group until a data run moves them —
+  `backend/scripts/recategorise-fabric-accessory.mjs` (plan/apply workflow),
+  which also writes the colour a line's own text names into `fabricCode`
+  (the one matcher, via `scripts/lib/line-colour-verdict.mjs`) and relabels
+  received stock per lot.
 - **A SOFA'S BINDING CAN BE UNWRITABLE, and that is a separate failure from an
   absent purchase order.** The book records the SO -> PO edge at LINE grain in
   `PODTL.FromSODtlKey`, and `backend/scripts/repair-po-so-link-from-book.mjs`
