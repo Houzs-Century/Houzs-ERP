@@ -192,14 +192,20 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
        receipts through recordSoPaymentRow with no request context, so an
        enqueue written into POST /:docNo/payments would cover the payments a
        human typed and silently miss every scanned one. */
+    /* HEADER-ONLY since docs/bugs/0896: a payment sends BALANCE and PAYEMENT
+       through enqueueSoPaymentEdit, so a line AutoCount refuses cannot strand
+       the money. The whole-document queueAcSoEdit on these three paths is the
+       regression this pins. */
     expect(between(paymentRowSource, 'export async function recordSoPaymentRow(', 'return { payment: data as Record<string, unknown>, errorMessage: null };'))
-      .toContain('await enqueueEdit(sb, {');
-    expect(between(soSource, "action: 'UPDATE_PAYMENT',", 'collected_by_name: staff?.name ?? null'))
-      .toContain('queueAcSoEdit(c, docNo)');
+      .toContain('await enqueueSoPaymentEdit(sb, {');
+    const amend = between(soSource, "action: 'UPDATE_PAYMENT',", 'collected_by_name: staff?.name ?? null');
+    expect(amend).toContain("enqueueSoPaymentEdit(c.get('supabase'), { companyId: activeCompanyId(c), docNo,");
+    expect(amend).not.toContain('queueAcSoEdit(c, docNo)');
     /* The delete direction matters most: a book left showing a settled order
        after the payment was reversed understates what the customer owes. */
-    expect(between(soSource, "action: 'DELETE_PAYMENT',", 'return c.json({ ok: true });'))
-      .toContain('queueAcSoEdit(c, docNo)');
+    const remove = between(soSource, "action: 'DELETE_PAYMENT',", 'return c.json({ ok: true });');
+    expect(remove).toContain("enqueueSoPaymentEdit(c.get('supabase'), { companyId: activeCompanyId(c), docNo,");
+    expect(remove).not.toContain('queueAcSoEdit(c, docNo)');
   });
 
   test('every PO mutation path queues an edit', () => {

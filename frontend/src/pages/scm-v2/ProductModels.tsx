@@ -22,7 +22,8 @@ import {
   useUpdateProductModel, useUploadProductModelPhoto, useDeleteProductModelPhoto, useBrandingPool,
   type ProductModelRow, type AllowedOptions,
 } from '../../vendor/scm/lib/product-models-queries';
-import { useMaintenanceConfig, useMfgProducts, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMaintenanceConfig, useMfgProducts, mfgCategoryLabel, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
+import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
 import {
   useSuppliers, useCreateBindingsBatch,
   type Currency, type MaterialKind, type NewBinding, type SupplierRow,
@@ -173,9 +174,9 @@ export const ProductModels = () => {
         key: 'category',
         label: 'Category',
         width: 110,
-        accessor: (m) => m.category,
-        filterValue: (m) => m.category,
-        groupValue: (m) => m.category,
+        accessor: (m) => mfgCategoryLabel(m.category),
+        filterValue: (m) => mfgCategoryLabel(m.category),
+        groupValue: (m) => mfgCategoryLabel(m.category),
       },
       {
         key: 'code',
@@ -324,9 +325,7 @@ export const ProductModels = () => {
       <div className={styles.chipRow}>
         <FilterChip on={filter === 'all'} onClick={() => setFilter('all')}>All</FilterChip>
         {CATEGORIES.map((c) => (
-          <FilterChip key={c} on={filter === c} onClick={() => setFilter(c)}>
-            {c}
-          </FilterChip>
+          <FilterChip key={c} on={filter === c} onClick={() => setFilter(c)}>{mfgCategoryLabel(c)}</FilterChip>
         ))}
       </div>
 
@@ -1089,7 +1088,7 @@ export function NewModelDialog({
           <label className={styles.compactField} style={{ width: 200 }}>
             <span>Category</span>
             <select value={category} onChange={(e) => setCategory(e.target.value as MfgCategory)}>
-              {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              {CATEGORIES.map((c) => <option key={c} value={c}>{mfgCategoryLabel(c)}</option>)}
             </select>
           </label>
         </div>
@@ -1664,8 +1663,9 @@ function EditModelDialog({
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--space-4)' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
             <h2 className={styles.modalTitle}>
-              Edit <code className={styles.codeChip}>{model.model_code}</code> · {model.category}
+              Edit <code className={styles.codeChip}>{model.model_code}</code> · {mfgCategoryLabel(model.category)}
             </h2>
+            <CategorySwapSelect kind="model" id={model.id} category={model.category} />
             <p className={styles.modalSub} style={{ margin: 0 }}>
               Name, branding, description and allowed options. Model code stays
               editable from the detail drawer.

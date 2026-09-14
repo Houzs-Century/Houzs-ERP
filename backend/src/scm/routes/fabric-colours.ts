@@ -20,8 +20,10 @@
 
 import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";
-import { scopeToCompany } from "../lib/companyScope";
+import { activeCompanyId, scopeToCompany } from "../lib/companyScope";
 import { escapeForOr } from "../lib/postgrest-search";
+import { loadProductAndModel } from "../lib/allowed-options-check";
+import { fabricAllowedByPool } from "../shared/fabric-pool";
 import type { Env, Variables } from "../env";
 
 export const fabricColours = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -72,6 +74,43 @@ export const retiredSeriesSet = (
  *
  *  A missing or blank series is NOT retired: it cannot be proven to be, and the
  *  honest default on this route is to keep offering the colour. */
+/* EVERY "is this on offer" rule runs BEFORE the typeahead cap — docs/bugs/0893
+   (the fabric-search entry). The cap used to sit in the query and the rules ran
+   on what it let through: a search whose first 50 matches were retired, or
+   outside the Model's pool, came back short or empty while matching colours
+   further down were never read. A picker that answers "nothing" for a fabric the
+   floor sells is the exact complaint behind 0816, 0818 and 0814.
+   `cap` is required: null is the full list, a number is the typeahead. */
+const text = (v: unknown): string => (typeof v === "string" ? v : "");
+
+export function coloursOnOffer<T extends Record<string, unknown>>(
+  rows: readonly T[],
+  rules: {
+    retiredSeries: ReadonlySet<string>;
+    retiredCodes: ReadonlySet<string>;
+    /** The Model's fabric pool, or null when the search named no item. */
+    pool: readonly string[] | null;
+  },
+  cap: number | null,
+): T[] {
+  const kept = rows
+    .filter((r) => !seriesIsRetired(rules.retiredSeries, r.fabricId ?? r.fabric_id))
+    .filter((r) => !seriesIsRetired(rules.retiredCodes, r.colourId ?? r.colour_id))
+    .filter((r) => {
+      const colour = text(r.colourId ?? r.colour_id);
+      const series = text(r.fabricId ?? r.fabric_id);
+      return fabricAllowedByPool(rules.pool, colour || null, series || null);
+    });
+  return cap == null ? kept : kept.slice(0, cap);
+}
+
+/** Rows a typeahead READS before the rules and the cap: the PostgREST edge's own
+ *  page (`db-max-rows`, 1000 — lib/paginate-all.ts), so asking for more would be
+ *  silently cut to it anyway. Company 1 carried 851 ACTIVE colours in total when
+ *  this was set (2026-09-11), so every match of any search fits. A company that
+ *  outgrows 1000 matching colours for one search would lose the tail again. */
+export const OFFER_SCAN_ROWS = 1000;
+
 export const seriesIsRetired = (retired: ReadonlySet<string>, series: unknown): boolean => {
   const s = String(series ?? "").trim();
   return s !== "" && retired.has(s);
@@ -86,18 +125,22 @@ fabricColours.get("/", async (c) => {
   const supabase = c.get("supabase");
   const rawQ = (c.req.query("q") ?? "").trim();
   const limit = Math.min(Math.max(Number(c.req.query("limit")) || 50, 1), 200);
+  /* ?itemCode= — the SKU a line is being picked for. Its Model's fabric pool is
+     applied here, before the cap, so the 50 answered are 50 the save accepts. */
+  const itemCode = (c.req.query("itemCode") ?? "").trim();
   let q = supabase
     .from("fabric_colours")
     .select("fabric_id, colour_id, label, swatch_hex, active, sort_order")
     .eq("active", true)
     .order("sort_order", { ascending: true });
   q = scopeToCompany(q, c); // multi-company: isolate to the active company
-  // Typeahead mode — ilike over the code (colour_id) + label, capped. The
-  // no-`q` branch stays byte-for-byte the old full-list behaviour.
+  // Typeahead mode — ilike over the code (colour_id) + label. The `limit` cap is
+  // applied AFTER the on-offer rules below (coloursOnOffer), never in the query.
+  // The no-`q` branch stays the old full-list behaviour.
   if (rawQ) {
     const s = escapeForOr(rawQ);
     if (s) q = q.or(`colour_id.ilike.%${s}%,label.ilike.%${s}%`);
-    q = q.limit(limit);
+    q = q.limit(OFFER_SCAN_ROWS);
   }
   const { data, error } = await q;
   if (error) {
@@ -171,10 +214,22 @@ fabricColours.get("/", async (c) => {
     if (!libErr) retiredSeries = retiredSeriesSet(libRows ?? []);
   }
 
+  /* The Model's pool, only for a typeahead that named its item. A lookup that
+     fails degrades to NO pool (the old behaviour) rather than an empty picker,
+     the same rule as the two reads above; the save gate still refuses a
+     disallowed fabric, so nothing is let through that could not be before. */
+  let pool: readonly string[] | null = null;
+  if (rawQ && itemCode) {
+    const { model, lookupError } = await loadProductAndModel(supabase, itemCode, activeCompanyId(c));
+    if (!lookupError) pool = model?.allowed_options?.fabrics ?? null;
+  }
+
   // Dual-read camelCase ?? snake_case — cover the PostgREST casing either way.
-  const colours = (data ?? [])
-    .filter((r: Record<string, unknown>) => !seriesIsRetired(retiredSeries, r.fabricId ?? r.fabric_id))
-    .filter((r: Record<string, unknown>) => !seriesIsRetired(retiredCodes, r.colourId ?? r.colour_id))
+  const colours = coloursOnOffer(
+    (data ?? []) as Record<string, unknown>[],
+    { retiredSeries, retiredCodes, pool },
+    rawQ ? limit : null,
+  )
     .map((r: Record<string, unknown>) => ({
     fabricId: r.fabricId ?? r.fabric_id ?? "",
     colourId: r.colourId ?? r.colour_id ?? "",

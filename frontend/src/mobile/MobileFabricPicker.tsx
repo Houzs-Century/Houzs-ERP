@@ -28,7 +28,7 @@ export function MobileFabricPicker({ itemCode, fabricSeries, current, onPick, on
   const [search, setSearch] = useState("");
   const debounced = useDebouncedValue(search, 200);
   const trimmed = debounced.trim();
-  const coloursQ = useFabricColoursSearch(trimmed, { enabled: trimmed.length >= 2 });
+  const coloursQ = useFabricColoursSearch(trimmed, { enabled: trimmed.length >= 2, itemCode: itemCode || null });
   const allowQ = useModelAllowedOptionsByCode(itemCode || undefined);
   const pool = allowQ.data?.fabrics ?? null;
   const rows = useMemo(

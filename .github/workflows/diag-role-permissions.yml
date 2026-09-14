@@ -45,7 +45,9 @@ jobs:
       # position names are owner-editable free text. This prints the LIVE names,
       # which code cohort each one lands in, and the headcount behind each rule.
       # Same trigger, same concurrency group, same read-only contract.
-      - run: node scripts/audit-permission-grants.mjs
+      # tsx, not node: the classifier imports the policy modules from src/
+      # rather than copying their lists (docs/bugs/0894).
+      - run: npx tsx scripts/audit-permission-grants.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NODE_OPTIONS: --dns-result-order=ipv4first
