@@ -244,6 +244,8 @@ export function MobileDoHeaderEdit({ id, onBack, onSaved }: {
           onChange={(next) => set(pickCity(locRows, triple, next))}
           options={withCurrent(cities, form.city).map((v) => ({ value: v, label: v }))} />
       ))}
+      {/* `.st-fld` grows (flex: 1) inside this column; the wrapper holds it to its content. */}
+      <div style={{ flex: "none", display: "flex", flexDirection: "column" }}>
       <AddressPostcodeField
         country={country}
         value={form.postcode}
@@ -256,6 +258,7 @@ export function MobileDoHeaderEdit({ id, onBack, onSaved }: {
         disabled={lockedKey("postcode") || loc.isLoading}
         classes={{ field: "st-fld", label: "st-fl", select: "cal-sel", input: "cal-sel" }}
       />
+      </div>
       {choice("Sales location", "salesLocation", "salesLocation", salesLocationOpts)}
 
       {section("Emergency contact")}
