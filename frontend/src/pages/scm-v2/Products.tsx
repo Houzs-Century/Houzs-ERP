@@ -84,8 +84,9 @@ import {
   type SpecialAddonRow,
   type SpecialAddonInput,
   type SpecialAddonGroup,
-  type SpecialAddonsHistoryRow,
+  type SpecialAddonsHistoryRow, mfgCategoryLabel,
 } from '../../vendor/scm/lib/mfg-products-queries';
+import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -741,7 +742,7 @@ const SkuMasterTab = () => {
           label: 'Category',
           width: '110px',
           getValue: (r) => r.category,
-          render: (r) => <span className={styles.catPill}>{r.category}</span>,
+          render: (r) => <span className={styles.catPill}>{mfgCategoryLabel(r.category)}</span>,
         },
         {
           key: 'size',
@@ -1299,7 +1300,7 @@ const ProductRow = memo(({
         </>
       ) : (
         <>
-          <td><span className={styles.catPill}>{row.category}</span></td>
+          <td><span className={styles.catPill}>{mfgCategoryLabel(row.category)}</span></td>
           <td>{row.size_label ?? '—'}</td>
           <td className={baseSen ? styles.price : styles.priceEmpty}>
             {editMode ? (
@@ -4249,6 +4250,7 @@ const ProductSuppliersDrawer = ({
             <p style={{ marginTop: 4, fontSize: 'var(--fs-13)', color: '#767b6e' }}>
               {row.name}{row.description ? ` — ${row.description}` : ''}
             </p>
+            {!row.model_id && <CategorySwapSelect kind="sku" id={row.id} category={row.category} />}
             {/* 0166 — barcode lives on the SKU detail drawer (the SKU Master
                 grid column is read-only + default-hidden). Saves on Enter. */}
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
