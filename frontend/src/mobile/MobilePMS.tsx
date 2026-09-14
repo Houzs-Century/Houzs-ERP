@@ -1141,7 +1141,8 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
             )}
             {/* Owner 2026-07-20: project-level edits (status + Edit here)
                 require the PMS EDIT section — sales roles (pms.canEdit=false)
-                get the read-only badge instead. */}
+                get the read-only badge instead. The status is the ONE control an
+                archived project withholds, as on the desktop (docs/bugs/0893). */}
             {p && canWrite && access.canEdit && !archived && (
               <select
                 value={p.status ?? ""}
@@ -1159,7 +1160,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
             {/* Edit lived on the (removed) Project card's summary — the card
                 is gone (owner 2026-07-22: header carries all its info), so the
                 sequential-prompt editor moved up here. Same flow, same gate. */}
-            {p && canWrite && access.canEdit && !archived && (
+            {p && canWrite && access.canEdit && (
               <button
                 className="tinybtn"
                 disabled={busy}
@@ -1278,7 +1279,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
               </summary>
               <div className="pbody">
-                {canEditTeam && !archived ? (
+                {canEditTeam ? (
                   <>
                     <label className="fld" style={{ marginBottom: picPhone ? 4 : 10 }}>
                       <span className="fld-l">PIC</span>
@@ -1319,7 +1320,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                   projectId={id}
                   attendees={data.sales_attendees ?? []}
                   options={salesReps}
-                  canWrite={canEditAttending && !archived}
+                  canWrite={canEditAttending}
                   busy={busy}
                   setBusy={setBusy}
                   notify={notify}
@@ -1342,7 +1343,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               attachments={data.checklist_attachments}
               projectStart={p.start_date}
               projectEnd={p.end_date}
-              canTick={canTick && !archived}
+              canTick={canTick}
               can={can}
               busy={busy}
               setBusy={setBusy}
@@ -1367,15 +1368,15 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 lorries={lorries}
                 /* `canEdit !== false` treated BOTH an absent pms block and an
                    omitted flag as writable. Now the server's answer, fail-closed. */
-                canWrite={canWrite && access.canEdit && !archived}
+                canWrite={canWrite && access.canEdit}
                 /* Crew manage the setup/dismantle photos (owner 2026-07-21);
                    the backend re-gates on being crewed on the phase. */
-                canPhoto={(isDriverCrew || isStorekeeper) && !archived}
+                canPhoto={(isDriverCrew || isStorekeeper)}
                 /* Schedule reference (owner 2026-07-29): hidden from all —
                    logistic views/downloads, the BD/owner tier (canBdEdit:
                    owner/BD/weisiang) uploads/removes. */
                 canScheduleView={isLogistic || canBdEdit}
-                canScheduleEdit={canBdEdit && !archived}
+                canScheduleEdit={canBdEdit}
                 busy={busy}
                 setBusy={setBusy}
                 patchProject={patchProject}
@@ -1393,7 +1394,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               <SalesDocsCard
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
-                canTick={canTick && !archived}
+                canTick={canTick}
                 busy={busy}
                 setBusy={setBusy}
                 notify={notify}
@@ -1413,7 +1414,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 title="Event documents"
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
-                canTick={canTick && !archived}
+                canTick={canTick}
                 busy={busy}
                 setBusy={setBusy}
                 notify={notify}
@@ -1431,7 +1432,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 title="Setup & Dismantle documents"
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
-                canTick={canTick && !archived}
+                canTick={canTick}
                 busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
               />
             )}
@@ -1448,7 +1449,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                     title="Contract"
                     checklist={data.checklist}
                     attachments={data.checklist_attachments}
-                    canTick={canTick && !archived}
+                    canTick={canTick}
                     busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
                   />
                 )}
@@ -1461,7 +1462,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                     title="Payment"
                     checklist={data.checklist}
                     attachments={data.checklist_attachments}
-                    canTick={canTick && !archived}
+                    canTick={canTick}
                     busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
                   />
                 )}
@@ -1471,7 +1472,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                   title="Operation"
                   checklist={data.checklist}
                   attachments={data.checklist_attachments}
-                  canTick={canTick && !archived}
+                  canTick={canTick}
                   busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
                 />
               </>
@@ -1483,7 +1484,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 showRoleTags={isLogistic}
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
-                canTick={canTick && !archived}
+                canTick={canTick}
                 busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
               />
             )}
@@ -1500,13 +1501,13 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 photos={photos}
                 drivers={drivers}
                 lorries={lorries}
-                canWrite={canWrite && access.canEdit && !archived}
-                canPhoto={(isDriverCrew || isStorekeeper) && !archived}
+                canWrite={canWrite && access.canEdit}
+                canPhoto={(isDriverCrew || isStorekeeper)}
                 /* Schedule reference (owner 2026-07-29): hidden from all —
                    logistic views/downloads, the BD/owner tier (canBdEdit:
                    owner/BD/weisiang) uploads/removes. */
                 canScheduleView={isLogistic || canBdEdit}
-                canScheduleEdit={canBdEdit && !archived}
+                canScheduleEdit={canBdEdit}
                 busy={busy}
                 setBusy={setBusy}
                 patchProject={patchProject}
@@ -1524,7 +1525,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 showRoleTags={isLogistic}
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
-                canTick={canTick && !archived}
+                canTick={canTick}
                 busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
               />
             )}
@@ -1535,7 +1536,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 title="Setup & Dismantle documents"
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
-                canTick={canTick && !archived}
+                canTick={canTick}
                 busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
               />
             )}
@@ -1547,10 +1548,10 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               attachments={data.attachments}
               checklist={data.checklist}
               checklistAttachments={data.checklist_attachments}
-              canWrite={canWrite && !archived}
+              canWrite={canWrite}
               hideFilledPlan={hideFilledPlan}
               hidePlanTiles={hidePlanTiles}
-              canStockEdit={isPurchaserView && canTick && !archived}
+              canStockEdit={isPurchaserView && canTick}
               confirm={confirm}
               busy={busy}
               setBusy={setBusy}
@@ -1573,7 +1574,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               <SalesPanel
                 projectId={id}
                 incomeLines={data.finance_lines}
-                canLogSale={canLogSale && !archived}
+                canLogSale={canLogSale}
                 busy={busy}
                 setBusy={setBusy}
                 prompt={prompt}
@@ -1590,7 +1591,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               <FinancialSnapshot
                 finance={data.finance!}
                 lines={data.finance_lines}
-                canWrite={canWrite && !archived && financeCanEdit}
+                canWrite={canWrite && financeCanEdit}
                 busy={busy}
                 setBusy={setBusy}
                 notify={notify}
@@ -2200,8 +2201,9 @@ function TaskRow({
   // (`canAttach && can("projects.manage")`), which had left crew and sales able
   // to upload a wrong photo they could not then take off. Delete now follows
   // ATTACH on both surfaces: canAttach is already scoped to the row the caller
-  // may work on (tick-only roles to their own badge) and folds in the row-edit +
-  // !archived gate, so a locked row still refuses.
+  // may work on (tick-only roles to their own badge) and folds in the row-edit
+  // gate, so a row the caller may not work on still refuses. An archived project
+  // no longer locks it (docs/bugs/0893), exactly as on the desktop.
   const canRemoveFile = canAttach;
 
   const cycle = async () => {
@@ -3363,9 +3365,9 @@ function SalesDocsCard({
   // (shared checklistReviewVisible / ReviewButtons); user drives the perm check.
   const { user, can } = useAuth();
   // Owner 2026-09-03: every user may remove a file from THEIR OWN task, so this
-  // follows the tile's own edit right instead of projects.manage. canTick folds
-  // in !archived, and each use site already ANDs `!t.readOnly`, which is what
-  // marks a tile as not this cohort's to work on.
+  // follows the tile's own edit right instead of projects.manage. Each use site
+  // already ANDs `!t.readOnly`, which is what marks a tile as not this cohort's
+  // to work on.
   const canDeleteFiles = canTick;
 
   const tiles = tileDefs.map((t) => {
