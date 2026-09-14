@@ -25,6 +25,10 @@ import { fileURLToPath } from 'node:url';
 
 const SCRIPTS = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts');
 
+/* Every extension node or tsx will run. It read only `.mjs` and `.ts`, and
+   enqueue-so-writeback.mts pushed to the book unseen (docs/bugs/0888). */
+const runnable = (f) => /\.[cm]?[jt]s$/.test(f);
+
 /** Scripts whose reason for existing is to push a document into AutoCount. */
 const MAY_PUSH = [
   // Re-sends ONE named document whose lines landed wrong (docs/bugs/0615).
@@ -38,11 +42,14 @@ const MAY_PUSH = [
   'sync-ac-delta.mjs',
   // A one-shot re-raise of a single purchase order.
   'reraise-hc-po-2608-001.mjs',
+  // Re-pushes a sales order's corrected balance after a direct SQL repair left
+  // the book stale (docs/bugs/0785, the orphan scan-deposit fix).
+  'enqueue-so-writeback.mts',
 ];
 
 test('only the deliberate push tools opt out of repair suppression', () => {
   const found = readdirSync(SCRIPTS)
-    .filter((f) => f.endsWith('.mjs') || f.endsWith('.ts'))
+    .filter(runnable)
     .filter((f) => {
       const src = readFileSync(join(SCRIPTS, f), 'utf8');
       // The shim call carrying the opt-in, on one line or wrapped.
@@ -65,7 +72,7 @@ test('no script under scripts/ imports the enqueue functions without going throu
      past it — so the ones that DO import an enqueue function must also be the
      ones that build a client here. */
   const importers = readdirSync(SCRIPTS)
-    .filter((f) => f.endsWith('.mjs') || f.endsWith('.ts'))
+    .filter(runnable)
     .filter((f) => /import\s*\{[^}]*\benqueue(Edit|AcOp|SoCreate|PoCreate|Convert|Cancel)\b/s
       .test(readFileSync(join(SCRIPTS, f), 'utf8')))
     .sort();
