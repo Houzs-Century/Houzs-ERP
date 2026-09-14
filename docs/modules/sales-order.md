@@ -4929,6 +4929,33 @@ parent through `reasonRequired`, because the permission and the draft flag live
 with the list. Finance reads the result on the Accounting page's
 **Corrections** tab (docs/modules/accounting.md).
 
+**A role that holds the key owes a reason on EVERY payment action
+(2026-09-14, docs/bugs/0888; owner: 只要是有关 collection payment 的，我或有权限
+的用户做的动作都要记录写 reason).** The rule above stays for everybody else;
+for a ROLE that carries `scm.so_payment.amend` in its own list — read
+LITERALLY by `holdsHouzsPermLiterally` inside the one rule the four payment
+routes ask, `paymentReasonRule` (`scm/lib/so-payment-reason.ts`), so the
+Owner's `*` alone is not a holder — the routes ask: the add (`paymentCreateSchema.reason`),
+the edit and the delete (`via === 'amend' || keyHolder`), and the proof
+attach (`paymentSlipAttachSchema.reason`), refusing without one
+(`KEY_HOLDER_REASON_REQUIRED`). The WINDOW does not move: `mayAmend` still
+reads `hasHouzsPerm`, a reconciled payment stays shut, Sales positions are as
+they were. Every such row is audited `source = 'amend'` with the reason in
+`note` and, since migration `20260914T1700`, the `payment_id` it concerns
+(`recordSoAudit`'s `paymentId`, set by the add, the edit, the delete, the
+proof and both SO-create deposit rows) — which is how Corrections names who
+first recorded a corrected payment. On the screens the reading is
+`owesPaymentReason` (`frontend/src/auth/literalPermission.ts`) and the words
+are `paymentReasonAsk` (`vendor/scm/lib/payment-reason.ts`): desktop
+`PaymentsTable` asks on the row's Save, the page's Save (a dismissed ask
+leaves the row and reports it blocked), the edit, the delete and the proof;
+mobile `RecordedPayments` the same, the sheet told `reasonWhy` by its
+parent. Contracts: `tests/soPaymentAmendRoutes.test.ts`,
+`scm/lib/so-payment-reason.test.ts`, `soPaymentAmendClients.test.ts`. In the
+same change the CAS rollout grace window and `paymentVersionGuard` moved
+unchanged to `scm/lib/so-cas.ts` (the route file may only shrink), re-exported
+from `routes/mfg-sales-orders.ts` for the two suites that import them there.
+
 ### The BALANCE a human is shown — which total it subtracts from (2026-09-08)
 
 The order total lives in TWO columns and the balance rule reads whichever one is
