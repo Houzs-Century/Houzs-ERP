@@ -29,6 +29,9 @@
    ruling, and the shape that survives him adding a category at runtime.
    ---------------------------------------------------------------------------- */
 
+/* A Sofa Accessory row lives on the Sofa tab, under its own SO (mrp-sofa-accessory.ts). */
+import { isSofaAccessory } from './mrp-sofa-accessory';
+
 
 export type MrpView = {
   /** The tab's own id — the lower-cased category, or 'others' for the catch-all. */
@@ -138,5 +141,5 @@ export function rowBelongsToView(view: MrpView, rowCategory: string | null | und
      the engine kept on its item GROUP rather than a catalogue category (bug
      0777). Exclusion cannot strand anything: every row that is not one of the
      four, and is not SERVICE, has a home. */
-  return cat !== '' && !CORE.has(cat) && !NEVER_A_TAB.has(cat);
+  return cat !== '' && !CORE.has(cat) && !NEVER_A_TAB.has(cat) && !isSofaAccessory(cat);
 }

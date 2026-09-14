@@ -650,6 +650,15 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   promotion gate (`so-line-effective-stock.ts`) refuses to promote bound lines
   on MRP's say-so; see sales-order.md §0.3 for the company-split table and the
   `check-bound-exclusivity.mjs` census that re-measures the rule.
+- **Sofa Accessory parks under the sofa and rides on its PO (2026-09-14).** Owner:
+  「sofa accessory 就 park under sofa 在 MRP 的地方 然后 under same SO 的 这样就可以开一样
+  PO 了」. On the MRP page a FABRIC_ACCESSORY SKU has no tab and is not in Others:
+  `mrp-sofa-accessory.ts` cuts it per SO and adds it to the Sofa tab, where
+  `groupBySo` puts it under its order's row (selecting the order selects it; a
+  pillow-only order gets its own row). `groupKeyFor` in `scm/lib/po-grouping.ts`
+  keys `fabric_accessory` AS `sofa` in both modes, so it lands on the sofa's PO
+  (same SO, same supplier, same warehouse) — Per-SO no longer splits it off the
+  way it still splits a plain accessory.
 - **Sofa Accessory binds per order and keys by colour (2026-09-14).** Group
   `fabric_accessory` (shown as "Sofa Accessory"; the code has no `sofa` in it
   because 41 readers test a group with `includes('sofa')`) composes
