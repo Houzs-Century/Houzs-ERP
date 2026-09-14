@@ -6401,6 +6401,7 @@ on the receipt with no purchase line behind it. The book's copy of each receipt
 has every line claimed, so those rows are sent as `IsNewLine` — the same
 declaration the relink sweep makes (docs/bugs/0817) — and are held instead when
 there is no fresh book snapshot for the document.
+
 ## A line the ERP removed, still live in the book (2026-09-14)
 
 When a person removes a line from a delivery order or goods receipt, the delete
