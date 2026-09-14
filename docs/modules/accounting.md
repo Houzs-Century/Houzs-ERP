@@ -1758,7 +1758,7 @@ presentation only: the chart's SECTION still decides which block of the
 statement an account's money belongs to, so a layout can group, order and
 name but never move a ringgit between gross profit and net. The tree lives
 in `scm.acc_report_layouts` (one row per report, JSONB, no company column by
-design; migration `20260915T0900_acc_report_layouts.sql`).
+design; migration `backend/src/db/migrations-pg/20260915T0900_acc_report_layouts.sql`).
 `backend/src/acc/report-layout.ts` builds the chart's own tree when nothing
 is saved (`defaultLayout`: a header account with children becomes a category
 named after it, leaves are lines, a block spanning two sections gets a
