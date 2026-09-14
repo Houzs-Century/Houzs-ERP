@@ -65,8 +65,8 @@ try {
   process.exit(1);
 }
 
-const LINE_KEYS = ["id", "line_no", "item_code", "supplier_sku", "item_group", "description2", "qty", "linked_ac_dtlkey",
-  "so_item_id", "cancelled", "created_at", "updated_at"];
+const LINE_KEYS = ["id", "line_no", "item_code", "supplier_sku", "item_group", "description2", "qty", "unit_price_sen", "linked_ac_dtlkey",
+  "so_item_id", "cancelled", "created_at", "updated_at", ...(process.env.SHOW_VARIANTS === "0" ? [] : ["variants"])];
 
 /* Detail summary of an outbox payload: every object carrying an ItemCode or a
    DtlKey anywhere under body, in document order. */
@@ -144,7 +144,7 @@ try {
 
       const revs = isPo
         ? await sql`SELECT revision, amendment_id, created_at, snapshot->'lines' AS lines FROM scm.po_revisions WHERE po_id = ${h.id}::uuid ORDER BY revision`
-        : await sql`SELECT revision, amendment_id, created_at, snapshot->'lines' AS lines FROM scm.so_revisions WHERE doc_no = ${doc} ORDER BY revision`;
+        : await sql`SELECT revision, amendment_id, created_at, snapshot->'lines' AS lines FROM scm.so_revisions WHERE so_doc_no = ${doc} ORDER BY revision`;
       out(`REVISIONS (${revs.length})`);
       for (const rv of revs) {
         out(`   rev=${rv.revision}  amendment=${rv.amendment_id ?? "-"}  at=${iso(rv.created_at)}`);
@@ -232,6 +232,52 @@ try {
         FROM k GROUP BY 1 ORDER BY 2 DESC`;
     for (const r of rows) out(`create_so  docs=${r.docs}  with_keyless=${r.docs_with_keyless}  all_keyless=${r.docs_all_keyless}  reason: ${r.reason}`);
     if (!rows.length) out("(none)");
+  });
+
+  /* 7d. THE PAIRING of every SENT so_to_po payload since go-live: composeSoToPo
+     zips shape.dtlKeys (readPoTransferFacts, no ORDER BY) with the composed
+     details (created_at, id order) BY INDEX, and the host applies each Detail's
+     Qty / UnitPrice / Location / DeliveryDate to the line transferred from THAT
+     Detail's DtlKey. A Detail is MIS-PAIRED when its DtlKey is not the key of
+     the SO line behind lineWriteback.ids[i] — the ERP row the Qty and price came
+     from. `differs` = the mis-pairing changed a quantity or a price. */
+  await section(`7d. so_to_po payloads since ${GO_LIVE}: Details[i].DtlKey vs the SO line behind lineWriteback.ids[i]`, async () => {
+    const rows = await sql`
+      SELECT o.doc_no, o.created_at, o.status, o.payload
+        FROM scm.autocount_outbox o
+       WHERE o.company_id = ${CO} AND o.doc_type = 'PO' AND o.op = 'so_to_po'
+         AND o.status = 'sent' AND o.created_at >= ${GO_LIVE}::date
+       ORDER BY o.created_at`;
+    const ids = [...new Set(rows.flatMap((r) => (r.payload?.lineWriteback?.ids ?? []).flat().map(String)))];
+    const po = ids.length ? await sql`
+      SELECT i.id::text AS id, i.item_code, i.qty, i.unit_price_sen, s.linked_ac_dtlkey AS so_key, s.item_code AS so_code
+        FROM scm.purchase_order_items i LEFT JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
+       WHERE i.id::text = ANY(${ids}::text[])` : [];
+    const byId = new Map(po.map((r) => [r.id, r]));
+    let docs = 0, multi = 0, misDocs = 0, misLines = 0, differsLines = 0;
+    for (const r of rows) {
+      const lw = r.payload?.lineWriteback; const det = r.payload?.body?.Details;
+      if (!lw || !Array.isArray(det)) continue;
+      docs += 1;
+      if (det.length > 1) multi += 1;
+      const bad = [];
+      det.forEach((d, i) => {
+        const rowId = String((lw.ids?.[i] ?? [])[0] ?? "");
+        const erp = byId.get(rowId);
+        if (!erp) { bad.push(`#${i + 1} ERP row ${rowId || "?"} not found`); return; }
+        if (String(erp.so_key) === String(d.DtlKey)) return;
+        const owner = [...byId.values()].find((x) => String(x.so_key) === String(d.DtlKey) && (lw.ids ?? []).flat().map(String).includes(x.id));
+        const differs = owner && (Number(owner.qty) !== Number(d.Qty));
+        if (differs) differsLines += 1;
+        bad.push(`#${i + 1} DtlKey ${d.DtlKey} is ${owner ? owner.item_code : "?"} (qty ${owner?.qty ?? "?"}) but carries Qty ${d.Qty} UnitPrice ${d.UnitPrice} of ${erp.item_code} (qty ${erp.qty})${differs ? "  QTY DIFFERS" : ""}`);
+      });
+      if (bad.length) {
+        misDocs += 1; misLines += bad.length;
+        out(`${r.doc_no}  sent@${iso(r.created_at)}  ${bad.length}/${det.length} mis-paired`);
+        for (const b of bad) out(`   ${b}`);
+      }
+    }
+    out(`SUMMARY: ${docs} sent so_to_po payloads, ${multi} with 2+ lines; ${misDocs} documents / ${misLines} lines MIS-PAIRED; ${differsLines} line(s) where the carried quantity differs from the transferred line's own`);
   });
 
   await section("7c. The keyless POs from 7a, listed (up to 60)", async () => {
