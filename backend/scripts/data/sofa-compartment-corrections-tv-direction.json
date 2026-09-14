@@ -302,23 +302,6 @@
    "lineKeys": [
     "910577"
    ]
-  },
-  {
-   "docs": [
-    "HC-SO-013497"
-   ],
-   "model": null,
-   "pieces": [
-    "L(LHF)",
-    "1NA",
-    "1NA",
-    "1A(RHF)"
-   ],
-   "why": "direction re-read from the drawing 2026-09-10: the TV is drawn ABOVE the run, so the piece on the drawing's left is the RIGHT-hand-facing one and the recorded build was mirrored. Reversed the order and swapped every (LHF)/(RHF); was 1A(LHF)+1NA+1NA+L(RHF). Owner's rule: 「纠正direction 要根据看TV」, and a sketch with no TV counts as TV-below and is left alone.",
-   "confidence": "measured",
-   "lineKeys": [
-    "926847"
-   ]
   }
  ],
  "_held": [
