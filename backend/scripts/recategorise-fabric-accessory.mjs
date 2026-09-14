@@ -101,7 +101,7 @@ async function plan(tx) {
   const models = await tx`SELECT id::text, model_code, category::text FROM scm.product_models
     WHERE company_id = ${COMPANY} AND upper(model_code) = ANY(${MODELS.map((m) => m.toUpperCase())})`;
   const skus = await tx`SELECT id::text, code, category::text, model_id::text FROM scm.mfg_products
-    WHERE company_id = ${COMPANY} AND (model_id = ANY(${models.map((m) => m.id)}::uuid[]) OR upper(btrim(code)) = ANY(${LOOSE_SKUS.map((c) => c.toUpperCase())}))`;
+    WHERE company_id = ${COMPANY} AND (model_id::text = ANY(${models.map((m) => m.id)}) OR upper(btrim(code)) = ANY(${LOOSE_SKUS.map((c) => c.toUpperCase())}))`;
   const missingModels = MODELS.filter((m) => !models.some((r) => r.model_code.toUpperCase() === m.toUpperCase()));
   if (missingModels.length) notice(`models not found in company ${COMPANY}: ${missingModels.join(", ")}`);
   const offCategory = [...models, ...skus].filter((r) => !["ACCESSORY", CATEGORY].includes(r.category));
@@ -113,9 +113,9 @@ async function plan(tx) {
   notice(`products: ${models.length} models, ${skus.length} SKUs — ${codes.join(" | ")}`);
   const before = await snapshot(tx, codes);
   const mMoved = await tx`UPDATE scm.product_models SET category = ${CATEGORY}, updated_at = now()
-    WHERE company_id = ${COMPANY} AND id = ANY(${models.map((m) => m.id)}::uuid[]) AND category::text <> ${CATEGORY} RETURNING id`;
+    WHERE company_id = ${COMPANY} AND id::text = ANY(${models.map((m) => m.id)}) AND category::text <> ${CATEGORY} RETURNING id`;
   const sMoved = await tx`UPDATE scm.mfg_products SET category = ${CATEGORY}, updated_at = now()
-    WHERE company_id = ${COMPANY} AND id = ANY(${skus.map((s) => s.id)}::uuid[]) AND category::text <> ${CATEGORY} RETURNING id`;
+    WHERE company_id = ${COMPANY} AND id::text = ANY(${skus.map((s) => s.id)}) AND category::text <> ${CATEGORY} RETURNING id`;
   say(`  moved now: ${mMoved.length} models, ${sMoved.length} SKUs`);
 
   // ── fabric master, with sofa-line usage as the tie-break ──
@@ -187,7 +187,7 @@ async function plan(tx) {
   for (const w of writes) {
     const res = await tx.unsafe(`UPDATE scm.${LINES[w.k].table}
       SET variants = jsonb_set(variants, '{fabricCode}', to_jsonb($1::text), true)
-      WHERE id = $2::uuid AND company_id = $3 AND jsonb_typeof(variants) = 'object'
+      WHERE id::text = $2 AND company_id = $3 AND jsonb_typeof(variants) = 'object'
         AND coalesce(variants->>'fabricCode','') = '' AND coalesce(variants->>'fabricColor','') = ''
       RETURNING id`, [w.code, w.id, COMPANY]);
     colourWrites += res.length;
@@ -236,12 +236,12 @@ async function plan(tx) {
   let relabelled = 0;
   for (const { lot, key } of plans.values()) {
     if (lot.variant_key === key) continue;
-    await tx`UPDATE scm.inventory_lots SET variant_key = ${key} WHERE id = ${lot.id}::uuid AND company_id = ${COMPANY}`;
-    if (lot.mov) await tx`UPDATE scm.inventory_movements SET variant_key = ${key} WHERE id = ${lot.mov}::uuid AND company_id = ${COMPANY}`;
+    await tx`UPDATE scm.inventory_lots SET variant_key = ${key} WHERE id::text = ${lot.id} AND company_id = ${COMPANY}`;
+    if (lot.mov) await tx`UPDATE scm.inventory_movements SET variant_key = ${key} WHERE id::text = ${lot.mov} AND company_id = ${COMPANY}`;
     const lc = cons.filter((c) => c.lot === lot.id);
     if (lc.length) {
-      await tx`UPDATE scm.inventory_lot_consumptions SET variant_key = ${key} WHERE lot_id = ${lot.id}::uuid AND company_id = ${COMPANY}`;
-      await tx`UPDATE scm.inventory_movements SET variant_key = ${key} WHERE id = ANY(${[...new Set(lc.map((c) => c.mov))]}::uuid[]) AND company_id = ${COMPANY}`;
+      await tx`UPDATE scm.inventory_lot_consumptions SET variant_key = ${key} WHERE lot_id::text = ${lot.id} AND company_id = ${COMPANY}`;
+      await tx`UPDATE scm.inventory_movements SET variant_key = ${key} WHERE id::text = ANY(${[...new Set(lc.map((c) => c.mov))]}) AND company_id = ${COMPANY}`;
     }
     relabelled++;
     say(`   ~ lot ${lot.item_code} ${lot.source_doc_no} rcv ${lot.qty_received} rem ${lot.qty_remaining}: "${lot.variant_key}" -> "${key}"${lc.length ? ` (+${lc.length} consumptions: ${[...new Set(lc.map((c) => c.source_doc_no))].join(", ")})` : ""}`);
@@ -267,7 +267,7 @@ async function verify(codes, writes, before) {
       if (r.n) fails.push(`${d.table}: ${r.n} lines not ${GROUP}`);
     }
     for (const w of writes) {
-      const [r] = await check.unsafe(`SELECT jsonb_typeof(variants) AS t, variants->>'fabricCode' AS f FROM scm.${LINES[w.k].table} WHERE id = $1::uuid`, [w.id]);
+      const [r] = await check.unsafe(`SELECT jsonb_typeof(variants) AS t, variants->>'fabricCode' AS f FROM scm.${LINES[w.k].table} WHERE id::text = $1`, [w.id]);
       if (!r || r.t !== "object" || (r.f ?? "") === "") fails.push(`${w.k} ${w.id}: variants ${r?.t} fabricCode ${r?.f}`);
     }
     const [mis] = await check`SELECT count(*)::int AS n FROM scm.inventory_lot_consumptions c JOIN scm.inventory_lots l ON l.id = c.lot_id
