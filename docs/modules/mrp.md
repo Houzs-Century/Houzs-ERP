@@ -657,7 +657,12 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   sofa row's base lead days (`leadCategoryOf` in `lib/lead-time.ts`) because it is
   ordered on the sofa's PO. Before it, custom pillows were `accessory`, keyed on
   the code alone, and one colour's stock covered another colour's order.
-  `tasks/PLAN-sofa-accessories-category.md`.
+  `tasks/PLAN-sofa-accessories-category.md`. A model (with its SKUs) or a
+  model-less SKU can be swapped between Accessory and Sofa Accessory from its
+  edit screen — `shared/category-swap.ts`, enforced by `PATCH /product-models/:id`
+  and `PATCH /mfg-products/:id` (409 `category_change_not_allowed` for any other
+  move, `category_on_model` for a modelled SKU). The swap moves the PRODUCT only:
+  lines already on orders keep their old group until a data run moves them.
 - **A SOFA'S BINDING CAN BE UNWRITABLE, and that is a separate failure from an
   absent purchase order.** The book records the SO -> PO edge at LINE grain in
   `PODTL.FromSODtlKey`, and `backend/scripts/repair-po-so-link-from-book.mjs`

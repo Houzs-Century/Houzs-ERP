@@ -51,6 +51,7 @@ import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
    without importing a 12,000-line router. Re-exported below for the callers
    that still name this module. */
 import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, bookSoPaymentBestEffort, repostSoPaymentBestEffort, soPaymentFieldChanges, type SoPaymentRowInput } from '../lib/so-payment-row';
+import { enqueueSoPaymentEdit } from '../lib/ac-so-payment-edit';
 import { recomputeSiPaidForOrder } from '../lib/si-order-deposit';
 export { recordSoPaymentRow };
 export type { SoPaymentRowInput };
@@ -11024,8 +11025,9 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
      route, because the UPDATE above is the route's own and has no shared core.
      Fires even when only the method changed — recomposing an unchanged BALANCE
      costs one queued edit, while deciding here which fields matter would put a
-     second opinion about the balance rule next to so-outstanding.ts. */
-  await queueAcSoEdit(c, docNo);
+     second opinion about the balance rule next to so-outstanding.ts. HEADER-ONLY,
+     as the insert (docs/bugs/0896): a line AutoCount refuses must not hold the money back. */
+  await enqueueSoPaymentEdit(c.get('supabase'), { companyId: activeCompanyId(c), docNo, createdBy: c.get('houzsUser')?.id ?? null });
 
   // An edited amount also moves what the invoices off this order have settled.
   await recomputeSiPaidForOrder(sb, docNo, co.companyId);
@@ -11132,8 +11134,8 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
   /* A deleted payment raises the outstanding balance, so the account book has
      to be told in the same way an added one does. This is the direction that
      matters most: a book left showing a settled order after the payment was
-     reversed understates what the customer owes. */
-  await queueAcSoEdit(c, docNo);
+     reversed understates what the customer owes. Header-only, as the insert (docs/bugs/0896). */
+  await enqueueSoPaymentEdit(c.get('supabase'), { companyId: activeCompanyId(c), docNo, createdBy: c.get('houzsUser')?.id ?? null });
 
   return c.json({ ok: true });
 });

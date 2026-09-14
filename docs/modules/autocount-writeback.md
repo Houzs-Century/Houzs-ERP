@@ -488,7 +488,7 @@ Each hook sits at the point the document becomes permanent — after the
 | PI cancel | `purchase-invoices.ts` | `PATCH /:id/cancel`, after the atomic ACTIVE->CANCELLED flip won |
 | SO edit | `mfg-sales-orders.ts` | `queueAcSoEdit` from the header PATCH, line add/edit/delete, `tbc-update` / `tbc-swap` / `tbc-swap-sofa`, the admin price `override`, and `so-amendments.ts` approve-so |
 | SO edit (salesperson HANDOVER) | `so-handover.ts` | `enqueueEdit({ touchedFields: ['agent'] })` once per order that actually moved, inside the loop and after every `continue` — so a skipped order queues nothing. `agent` is the AutoCount rep NAME and it follows a reassigned salesperson, so without this the account book keeps naming the departed rep. See `so-handover.md` |
-| SO edit (a PAYMENT moved the balance) | `mfg-sales-orders.ts` | `enqueueEdit` inside `recordSoPaymentRow` — the insert CORE, so `scan-so.ts`'s background receipt booking is covered as well as `POST /:docNo/payments`; plus `queueAcSoEdit` in `PATCH` and `DELETE /:docNo/payments/:id`. **Not** on `POST /:docNo/payments/:id/slip`, which attaches proof and moves no money |
+| SO edit (a PAYMENT moved the balance) | `mfg-sales-orders.ts` | `enqueueSoPaymentEdit` (`scm/lib/ac-so-payment-edit.ts`) inside `recordSoPaymentRow` — the insert CORE, so `scan-so.ts`'s background receipt booking is covered as well as `POST /:docNo/payments`; plus the same call in `PATCH` and `DELETE /:docNo/payments/:id`. **HEADER-ONLY since 2026-09-14** — see "A payment sends only BALANCE and PAYEMENT" below. **Not** on `POST /:docNo/payments/:id/slip`, which attaches proof and moves no money |
 | PO edit | `mfg-purchase-orders.ts` | `queueAcPoEdit` from the header PATCH, line add/edit/delete, `bulk-supplier-date` (per PO that moved), `convert-from-so`, and `po-amendments.ts` approve |
 | DO edit | `delivery-orders-mfg.ts` | `queueAcDoEdit` from the header PATCH and line add/edit/delete |
 | GRN edit | `grns.ts` | `queueAcGrnEdit` from the header PATCH and line add/edit/delete |
@@ -2880,10 +2880,12 @@ Three rules the composer keeps:
   `GREATEST`, the detail route's `Math.max`) and keeps an overpayment as customer
   credit instead. The write-back sends what the ERP holds.
 
-**IT GOES STALE ON A PAYMENT, and that is the open half.** Recording a payment is
-not one of §6's enqueue anchors, so the balance in AutoCount is the one the
-document last carried when something else was edited. Sending it is strictly
-better than never sending it; keeping it live needs a payment-side hook.
+**A payment is an enqueue anchor (since 2026-08-15), and since 2026-09-14 it
+sends only these fields.** Recording, amending or deleting a payment queues a
+header-only edit carrying `UDF.BALANCE` and `UDF.PAYEMENT` — see "A payment
+sends only BALANCE and PAYEMENT" at the end of this guide. (This paragraph said
+the balance went stale on a payment; that stopped being true when the hook
+landed.)
 
 ### Which PAYMENTS the book can learn about — one table, and it is not the only one that takes money
 
@@ -6243,6 +6245,42 @@ the ERP rows; size, colour and specials are still compared exactly.
 fail and the stored text decodes to the same multiset — `HC-SO-000814` and
 `HC-SO-001112`, whose pieces match and whose order does not. Reached only after
 the composer has failed, so it cannot hide an edit.
+
+## A payment sends only BALANCE and PAYEMENT (2026-09-14)
+
+**What changed.** `recordSoPaymentRow` and the payment `PATCH` / `DELETE`
+routes queue `enqueueSoPaymentEdit` (`backend/src/scm/lib/ac-so-payment-edit.ts`)
+instead of the whole-document edit. The body is
+`{ DocType: 'SO', DocNo: <linked_ac_docno>, Header: { UDF: { BALANCE, PAYEMENT } }, Lines: [] }`
+— no line, no photograph, never `Rebuild`.
+
+**Why.** A payment moves two header fields and no line, but the whole-document
+edit composed every line, and that is where an edit is refused: a keyless line
+(`KeylessLineError`), a sofa the book's one line cannot spell
+(`SofaCollapseError`), or a body over the host's 2 MB limit once the drain has
+attached every line photograph. The money was refused with the lines. Measured
+on production 2026-09-14: of the 137 payments staff recorded since go-live, 133
+were carried by a later successful send and 4 (HC-SO-012025, HC-SO-012736,
+HC-SO-2609-063) were stranded that way; on the 124 orders checked, AutoCount's
+`SO.UDF_BALANCE` equalled the value the ERP last sent.
+
+**Why it is safe in the book.** `AcSyncService.Edit()` applies the `Header` keys
+it is given, then runs its key pre-flight and line loop over `Lines`; an empty
+list runs neither, and only `Rebuild: true` calls `ClearDetails`. Lines, keys
+and FurtherDescription stay as the book has them.
+
+**What it does not change.** An order with no `linked_ac_docno` still goes
+through `enqueueEdit`, which folds the payment into a pending create or queues
+nothing. A failed header read falls back to `enqueueEdit`, so this path is never
+worse than the one it replaced. Every other edit of the order still sends the
+whole document. The same two rules as the full header hold: a settled order
+sends `"0.00"`, and no reference omits `PAYEMENT` rather than blanking the
+cutover's text.
+
+Tests: `backend/src/scm/routes/soPaymentQueuesAcEdit.test.ts` (the body, a
+keyless line, the pending-create fold, `composeSoPaymentEdit`) and
+`backend/tests/autocountWritebackWiring.test.ts` (all three payment paths call
+it). Ledger: `docs/bugs/0896-a-payment-on-a-sales-order-whose-lines-autocount-refused-nev.md`.
 
 ## A converted document's line keys, from the book's DocTransfer (2026-09-14)
 

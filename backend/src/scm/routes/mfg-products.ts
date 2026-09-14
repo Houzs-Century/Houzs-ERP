@@ -31,6 +31,7 @@ import { scopeToCompany, activeCompanyId,
 import { todayMyt } from '../lib/my-time';
 import { resolveSellPriceSenAsOf, resolvePendingSellPriceAfter } from '../lib/product-pricing-history';
 import type { Env, Variables } from '../env';
+import { categorySwapAllowed } from '../shared/category-swap';
 
 export const mfgProducts = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -617,6 +618,9 @@ export const patchMfgProductHandler = async (c: AppContext) => {
     name?: string;
     /** 0166 — free-text SKU barcode. Empty string clears to NULL. */
     barcode?: string | null;
+    /** Accessory <-> Sofa Accessory only (shared/category-swap.ts), and only on
+        a SKU with no model — a modelled SKU moves with its model. */
+    category?: string;
   };
   try {
     body = (await c.req.json()) as typeof body;
@@ -635,7 +639,7 @@ export const patchMfgProductHandler = async (c: AppContext) => {
 
   const { data: current, error: loadErr } = await scopeToCompanyId(supabase
     .from('mfg_products')
-    .select('code, base_price_sen, price1_sen, cost_price_sen, sell_price_sen, pwp_price_sen, default_variants, seat_height_prices')
+    .select('code, category, model_id, base_price_sen, price1_sen, cost_price_sen, sell_price_sen, pwp_price_sen, default_variants, seat_height_prices')
     .eq('id', id), co.companyId)
     .maybeSingle();
   if (loadErr) return c.json({ error: 'load_failed', reason: loadErr.message }, 500);
@@ -682,6 +686,15 @@ export const patchMfgProductHandler = async (c: AppContext) => {
   if (body.barcode !== undefined) {
     const trimmed = typeof body.barcode === 'string' ? body.barcode.trim() : null;
     updates.barcode = trimmed ? trimmed : null;
+  }
+  if (body.category !== undefined && String(body.category).toUpperCase() !== String(current.category ?? '').toUpperCase()) {
+    if (current.model_id) {
+      return c.json({ error: 'category_on_model', reason: 'This SKU belongs to a model — change the category on the model, and its SKUs move with it.' }, 409);
+    }
+    if (!categorySwapAllowed(current.category, body.category)) {
+      return c.json({ error: 'category_change_not_allowed', reason: `A SKU can only be moved between Accessory and Sofa Accessory (this one is ${current.category ?? 'unknown'}).` }, 409);
+    }
+    updates.category = String(body.category).toUpperCase();
   }
   // PR #87 — per-SKU active toggle. Stored as 'ACTIVE' | 'INACTIVE' to match
   // the rest of the schema (matches mfg_products.status default in inserts).
