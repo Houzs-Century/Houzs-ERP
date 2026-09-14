@@ -32,6 +32,26 @@
    "source": "owner-ruling-2026-09-14",
    "docs": ["HC-SO-013497"],
    "lineKeys": ["926847"]
+  },
+  {
+   "model": "8030",
+   "pieces": ["1A(LHF)", "1A(RHF)"],
+   "seat": "35",
+   "confidence": "owner",
+   "why": "Owner 2026-09-14, verbatim: 「这个PO 是1A+1A」, about HC-PO-010086. Evidence he showed: purchasing WhatsApp \"PO10086 we stated 2s / Supplier 1A+1A can double check\", and the customer chat on the PO line photo (R2 po-items/HC-PO-010086/0dd18192-2531-4569-8eeb-7d4690df7c4d/ac-917334-2.jpg): \"ya mean is 2S (1+1)?\" -> \"separate 1+1\", \"Singapore lift\". The order-slip photo on the sales-order line (R2 so-items/HC-SO-013346/73c9eb16-4cd7-4470-bb0e-45330a3774d5/ac-913488-1.jpg, identical bytes to the PO copy ac-917334-1.jpg) draws TWO separate boxes, each marked 35\", the left box with its arm block on its LEFT outer edge and the right box with its arm block on its RIGHT outer edge, and \"TV\" written BELOW the run. TV below = the drawing reads as you see it, so the left piece is 1A(LHF) and the right piece is 1A(RHF): 1A(LHF) + 1A(RHF), two single-arm pieces at 35\". The supplier export agrees (propose-supplier-sofa-corrections run 34799661171: supplier 5540-1A(LHF)+5540-1A(RHF); 5540 is our 8030). SUPERSEDES the owner answer of earlier the same day recorded in owner-decisions-2026-09-14.json decision #4 `amended` (「那就根据amendment的」, keep the amended 8030-2S): that answer was given on the belief that amendment A1 changed the build, and the amendment-content probe (run 34800542371) shows A1 re-stated 8030-2S unchanged (its only real change was the pillow code) - so the 2S was never a decision anybody took, it was the sales key. Production before (read-only trace run 34841394640): HC-SO-013346 #1 8030-2S qty 1 seat 35 CH141-11; HC-PO-010086 #1 8030-2S supplier_sku \"HOK-5540 SOFA 2S\" qty 1 received 0, so_item_id -> that SO line. No correction entry for either document existed before this one in any corrections file. Seat 35 and fabric CH141-11 are unchanged; only the piece list changes. This entry is the SALES ORDER half, addressed by the sales-order line key 928842 that production carries (a first dry-run addressed it by 913488, the key in the photo file name, and was correctly refused as not on this document - run 34841939147; the PO dry-run 34841942250 named 928842 as the sales-order book line).",
+   "source": "owner-ruling-2026-09-14",
+   "docs": ["HC-SO-013346"],
+   "lineKeys": ["928842"]
+  },
+  {
+   "model": "8030",
+   "pieces": ["1A(LHF)", "1A(RHF)"],
+   "seat": "35",
+   "confidence": "owner",
+   "why": "Owner 2026-09-14, verbatim: 「这个PO 是1A+1A」, about HC-PO-010086. Evidence he showed: purchasing WhatsApp \"PO10086 we stated 2s / Supplier 1A+1A can double check\", and the customer chat on the PO line photo (R2 po-items/HC-PO-010086/0dd18192-2531-4569-8eeb-7d4690df7c4d/ac-917334-2.jpg): \"ya mean is 2S (1+1)?\" -> \"separate 1+1\", \"Singapore lift\". The order-slip photo on the sales-order line (R2 so-items/HC-SO-013346/73c9eb16-4cd7-4470-bb0e-45330a3774d5/ac-913488-1.jpg, identical bytes to the PO copy ac-917334-1.jpg) draws TWO separate boxes, each marked 35\", the left box with its arm block on its LEFT outer edge and the right box with its arm block on its RIGHT outer edge, and \"TV\" written BELOW the run. TV below = the drawing reads as you see it, so the left piece is 1A(LHF) and the right piece is 1A(RHF): 1A(LHF) + 1A(RHF), two single-arm pieces at 35\". The supplier export agrees (propose-supplier-sofa-corrections run 34799661171: supplier 5540-1A(LHF)+5540-1A(RHF); 5540 is our 8030). SUPERSEDES the owner answer of earlier the same day recorded in owner-decisions-2026-09-14.json decision #4 `amended` (「那就根据amendment的」, keep the amended 8030-2S): that answer was given on the belief that amendment A1 changed the build, and the amendment-content probe (run 34800542371) shows A1 re-stated 8030-2S unchanged (its only real change was the pillow code) - so the 2S was never a decision anybody took, it was the sales key. Production before (read-only trace run 34841394640): HC-SO-013346 #1 8030-2S qty 1 seat 35 CH141-11; HC-PO-010086 #1 8030-2S supplier_sku \"HOK-5540 SOFA 2S\" qty 1 received 0, so_item_id -> that SO line. No correction entry for either document existed before this one in any corrections file. Seat 35 and fabric CH141-11 are unchanged; only the piece list changes. This entry is the PURCHASE ORDER half, raised from HC-SO-013346 (AutoCount PO-010086, sofa line DtlKey 917334), corrected with it so the pair cannot drift; the added 1A(RHF) purchase piece is linked to the sales order 1A(RHF) piece by the applier. HC-PO-010086 line 2 (SQUARE PILLOW -> HC-SO-013346 line 2 AMN-SOFA PILLOW \"Random\") is NOT touched: it is not a sofa line and its link is a separate open question.",
+   "source": "owner-ruling-2026-09-14",
+   "docs": ["HC-PO-010086"],
+   "lineKeys": ["917334"]
   }
  ]
 }
