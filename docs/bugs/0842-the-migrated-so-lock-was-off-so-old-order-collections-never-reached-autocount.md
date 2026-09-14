@@ -35,7 +35,8 @@ The write-back queue was NOT the fault: 32 of the 34 latest `edit` rows were
 **Fix.** Three parts:
 - **Config:** `scm.app_config.scm.migrated_so_lock` `off` -> `'1'` (2026-09-12,
   Supabase MCP, owner-authorised) — migrated orders read-only again (desktop +
-  mobile + router); stops NEW ERP edits on old orders.
+  mobile + router); stops NEW ERP edits on old orders. **Not the production state
+  — see the correction below.**
 - **Code:** `readSoOutstandingSen` falls back to `local_total_sen` when
   `total_revenue_sen` is 0 (+ `local_total_sen` added to `SO_HEADER_COLS`), so the
   write-back composes `UDF_BALANCE` for a migrated order. Safe now AutoCount is
@@ -49,9 +50,33 @@ The write-back queue was NOT the fault: 32 of the 34 latest `edit` rows were
 
 **What this does NOT do.** A PARTIAL-balance order carries a residual overstate
 risk (a customer who paid directly in AutoCount 2026-08-28..lock, docs/bugs/0678)
-— the backfill holds those for verification. The lock stays `'1'`, so an old
-order cannot take a NEW ERP collection until the owner lifts it.
+— the backfill holds those for verification. ~~The lock stays `'1'`, so an old
+order cannot take a NEW ERP collection until the owner lifts it.~~ (Wrong about
+production — see below: old orders take ERP collections today.)
 `scm.delivery_order_payments` absent in prod (docs/bugs/0704) is a separate latent
 bug.
+
+**Correction (2026-09-14) — the lock is OFF in production, and has been since
+2026-09-12 18:55 MYT.** This entry and its COE were merged at 23:56 MYT that day
+saying the lock "stays `'1'`". The switch's own runs say otherwise, each re-read
+on 2026-09-14:
+
+- `set-migrated-so-lock.yml` run 34689675812 (2026-09-12 18:54 MYT, `MODE=apply`):
+  `BEFORE "1" (updated 10/09/2026, 14:04:10 MYT)` → `AFTER "off"`,
+  `1 HOUZS migrated=2882 shut -> open`. That is the owner's same-evening ruling
+  that a migrated order is one of our orders — recorded, with the lift, in
+  `docs/bugs/0842-staging-could-not-reproduce-a-production-lock-because-the-re.md`.
+- Run 34689885454 (19:00 MYT, `MODE=apply`): `"off"` → `"off"`, unchanged.
+- Run 34830061288 (2026-09-14 17:50 MYT, `MODE=plan`, writes nothing):
+  `"off" (updated 12/09/2026, 18:55:12 MYT)`, `1 HOUZS migrated=2882 new=75 open -> open`.
+
+So migrated orders ARE editable and DO take ERP collections — which is what the
+code fix above is for: with the lock off, those collections now reach
+`UDF_BALANCE`. **Do not "restore" `'1'` on the strength of this entry.**
+
+Not resolved here: this entry says the lock was *found* `off` and set to `'1'`,
+but at 18:54 MYT the row read `'1'` last updated 2026-09-10 14:04 MYT, which is
+also what the staging 0842 entry records. A Supabase MCP `UPDATE` that did not
+touch `updated_at` would fit both; nothing on record shows which.
 
 **Ref.** config flip + code fix + backfill 2026-09-12; `docs/migrated-so-lock-lifted-coe.md`.
