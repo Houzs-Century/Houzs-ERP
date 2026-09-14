@@ -1474,3 +1474,96 @@ describe('an uncatalogued line keeps its category on the row, not just in the fi
     expect(res.skus[0]!.category).toBeNull();
   });
 });
+
+/* A CUSTOM PILLOW IS BOUND TO ITS OWN SALES-ORDER LINE (owner 2026-09-14):
+   「Square Pillow 跟 Long Pillow … 如果有选颜色 … 因为它是 accessories，你也是 still
+   要根据它的规格来分配的」. The colour lives in the Special Order text
+   (`variants.extraAddonNote`), which is not part of the bucket key, so every
+   custom pillow of one SKU shared ONE pooled bucket and the FIFO walk handed a
+   purchase order raised for one customer's colour to whichever order was due
+   first.
+
+   Production, 2026-09-14 (probe-custom-pillow-binding.mjs, the real engine):
+   HC-SO-013496 (due 10-15, no purchase order at all) was reported covered by
+   HC-PO-010084 — HC-SO-013385's ZL-16 pillows — so purchasing could not order
+   it; HC-SO-013384 (due 10-28) was reported SHORT while its own HC-PO-010083 was
+   open, because 013236 / 013503 had taken it. Over all 222 live company-1
+   custom pillow lines, 34 named somebody else's purchase order and 7 read short
+   with their own open. The fixture below is that production shape, reduced. */
+describe('company 1: a custom pillow is planned from its own purchase order only', () => {
+  const co1 = { ...opts, companyId: 1 };
+  const pillow = (id: string, docNo: string, code: string, qty: number, colour: string, due: string): Row => ({
+    id, doc_no: docNo, item_code: code, description: code, item_group: 'accessory',
+    variants: { extraAddonNote: colour }, qty, company_id: 1,
+    warehouse_id: 'W1', line_delivery_date: due, line_no: 1, created_at: '2026-08-01T00:00:00Z', cancelled: false,
+    so: { debtor_name: docNo, status: 'IN_PRODUCTION', so_date: '2026-08-01', customer_delivery_date: due, processing_date: '2026-08-15', customer_state: null },
+  });
+  const pillowPo = (poNumber: string, code: string, qty: number, received: number, soItemId: string | null, eta: string): Row => ({
+    item_code: code, item_group: 'accessory', variants: null, qty, received_qty: received, company_id: 1,
+    delivery_date: eta, supplier_delivery_date_2: null, supplier_delivery_date_3: null, supplier_delivery_date_4: null,
+    warehouse_id: 'W1', so_item_id: soItemId,
+    po: {
+      po_number: poNumber, status: 'SUBMITTED', expected_at: eta,
+      supplier_delivery_date_2: null, supplier_delivery_date_3: null, supplier_delivery_date_4: null,
+      purchase_location_id: 'W1', supplier_id: null,
+    },
+  });
+  const world = (tables: Record<string, Row[]>, co = 1) => fakeSb({
+    ...BASE_TABLES,
+    warehouses: [{ id: 'W1', code: 'W1', name: 'KL', is_active: true, company_id: co }],
+    ...Object.fromEntries(Object.entries(tables).map(([t, rows]) => [t, rows.map((r) => ({ ...r, company_id: co }))])),
+  });
+  const lineOf = (res: Awaited<ReturnType<typeof computeMrp>>, id: string) =>
+    res.skus.flatMap((s) => s.lines).find((l) => l.soItemId === id)!;
+
+  const demand = [
+    pillow('l-013496', 'HC-SO-013496', 'LONG PILLOW', 3, 'HR805-31', '2026-10-15'),
+    pillow('l-013236', 'HC-SO-013236', 'LONG PILLOW', 1, 'Col:Nicca-03', '2026-10-16'),
+    pillow('l-013385', 'HC-SO-013385', 'LONG PILLOW', 4, 'Col : ZL-16 metal', '2026-10-27'),
+    pillow('l-013384', 'HC-SO-013384', 'LONG PILLOW', 3, 'Col : ZL-17 GREY', '2026-10-28'),
+  ];
+  const supply = [
+    pillowPo('HC-PO-009945', 'LONG PILLOW', 1, 0, 'l-013236', '2026-10-01'),
+    pillowPo('HC-PO-010084', 'LONG PILLOW', 4, 0, 'l-013385', '2026-10-02'),
+    pillowPo('HC-PO-010083', 'LONG PILLOW', 3, 0, 'l-013384', '2026-10-03'),
+  ];
+
+  test('HC-SO-013496 has no purchase order: it is SHORT, not covered by HC-SO-013385\'s', async () => {
+    const res = await computeMrp(asSb(world({ mfg_sales_order_items: demand, purchase_order_items: supply })), co1);
+    const l = lineOf(res, 'l-013496');
+    expect(l.poNumber).toBeNull();
+    expect(l.shortageQty).toBe(3);
+  });
+
+  test('each line with its own purchase order is covered by THAT purchase order', async () => {
+    const res = await computeMrp(asSb(world({ mfg_sales_order_items: demand, purchase_order_items: supply })), co1);
+    expect(lineOf(res, 'l-013236').poNumber).toBe('HC-PO-009945');
+    expect(lineOf(res, 'l-013385').poNumber).toBe('HC-PO-010084');
+    expect(lineOf(res, 'l-013384').poNumber).toBe('HC-PO-010083');
+    expect(lineOf(res, 'l-013384').shortageQty).toBe(0);
+  });
+
+  test('its own purchase order RECEIVED covers it; somebody else\'s receipt in the same bucket does not', async () => {
+    const res = await computeMrp(asSb(world({
+      mfg_sales_order_items: [demand[1]!, demand[3]!],
+      purchase_order_items: [pillowPo('HC-PO-010083', 'LONG PILLOW', 3, 3, 'l-013384', '2026-09-01')],
+      inventory_balances: [{ item_code: 'LONG PILLOW', warehouse_id: 'W1', variant_key: '', qty: 12 }],
+    })), co1);
+    expect(lineOf(res, 'l-013384').shortageQty).toBe(0);
+    expect(lineOf(res, 'l-013236').shortageQty).toBe(1);
+  });
+
+  test('a PLAIN accessory still pools — only the named custom SKUs bind', async () => {
+    const res = await computeMrp(asSb(world({
+      mfg_sales_order_items: [{ ...demand[0]!, id: 'l-plain', item_code: 'AK- ESSENTIAL BOLSTER', variants: {} }],
+      purchase_order_items: [pillowPo('HC-PO-POOL', 'AK- ESSENTIAL BOLSTER', 3, 0, null, '2026-10-01')],
+    })), co1);
+    expect(lineOf(res, 'l-plain').poNumber).toBe('HC-PO-POOL');
+    expect(lineOf(res, 'l-plain').shortageQty).toBe(0);
+  });
+
+  test('company 2 keeps the pooled model for pillows too', async () => {
+    const res = await computeMrp(asSb(world({ mfg_sales_order_items: demand, purchase_order_items: supply }, 2)), { ...opts, companyId: 2 });
+    expect(lineOf(res, 'l-013496').poNumber).not.toBeNull();
+  });
+});

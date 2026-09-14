@@ -64,7 +64,7 @@ import {
   LEAD_OVERRIDE_SELECT,
 } from '../lib/lead-time';
 import { groupKeyFor } from '../lib/po-grouping';
-import { findOverConvertOffender, soLineHeadroom, type OverConvertOffender } from '../lib/po-over-convert';
+import { findOverConvertOffender, soLineHeadroom, type OverConvertOffender, loadBoundOrderedQty, boundAwarePicked, isBoundForCompany } from '../lib/po-over-convert';
 import {
   planAllocationCreate,
   planAllocationQtyUpdate,
@@ -1145,8 +1145,9 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
       .filter((x): x is string => !!x);
     if (lineSoItemIds.length > 0) {
       // Company scope (2026-08-19) — service-role bypasses RLS: scope the SO-item read and refuse a foreign soItemId BEFORE it is linked / photo-copied / po_qty_picked-rolled (mirrors soLinkTargetRefusal).
-      const { data: lineSoRows } = await scopeToCompany(supabase.from('mfg_sales_order_items').select('id, doc_no, item_code, qty, po_qty_picked'), c).in('id', lineSoItemIds);
-      const soRows = (lineSoRows ?? []) as SoSourceLine[];
+      const { data: lineSoRows } = await scopeToCompany(supabase.from('mfg_sales_order_items').select('id, doc_no, item_code, item_group, qty, po_qty_picked'), c).in('id', lineSoItemIds);
+      const boundOrdered = await loadBoundOrderedQty(supabase, activeCompanyId(c) ?? null, (lineSoRows ?? []) as Array<SoSourceLine & { item_group: string | null }>);
+      const soRows = ((lineSoRows ?? []) as Array<SoSourceLine & { item_group: string | null }>).map((r) => ({ ...r, po_qty_picked: boundAwarePicked(r, boundOrdered) }));
       const foreignSoItemId = lineSoItemIds.find((id) => !new Set(soRows.map((r) => r.id)).has(id));
       if (foreignSoItemId) return c.json({ error: 'so_line_not_found', reason: 'That Sales Order line does not exist on this company.', soItemId: foreignSoItemId }, 404);
       // ... and the IDENTITY half of soLinkTargetRefusal, which this path was missing (lib/so-link-item-identity.ts, docs/bugs/0672).
@@ -1682,7 +1683,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     const byId = new Map<string, SoItem>();
     for (const r of (rows ?? []) as unknown as SoItem[]) byId.set(r.id, { ...r, so: normSo(r) });
-    // Validate qty ≤ (row.qty - row.po_qty_picked)
+    const boundOrdered = await loadBoundOrderedQty(supabase, activeCompanyId(c) ?? null, [...byId.values()]);
     for (const p of body.picks) {
       const row = byId.get(p.soItemId);
       if (!row) return c.json({ error: 'item_not_found', soItemId: p.soItemId }, 400);
@@ -1700,13 +1701,12 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
           soItemId: p.soItemId,
         }, 409);
       }
-      const remaining = row.qty - row.po_qty_picked;
+      const remaining = row.qty - boundAwarePicked(row, boundOrdered);
       if (p.qty <= 0)         return c.json({ error: 'qty_must_be_positive', soItemId: p.soItemId }, 400);
-      // Commander 2026-05-31 — MRP-origin converts skip the remaining cap: the
-      // line is reference-only and infinitely convertible (the pooled picker, not
-      // this per-line cap, decides what still needs ordering). The ordinary
-      // picker keeps the cap so a normal SO→PO can't over-order a single line.
-      if (!fromMrp && p.qty > remaining)
+      // Commander 2026-05-31 — an MRP-origin convert skips the cap on a POOLED line (the
+      // pooled picker decides). A company-1 BOUND line is capped on every path against
+      // every live PO on it, MRP-origin included (owner 2026-09-14; lib/bound-line-ordered.ts).
+      if ((!fromMrp || isBoundForCompany(activeCompanyId(c) ?? null, row)) && p.qty > remaining)
         return c.json({ error: 'qty_exceeds_remaining', soItemId: p.soItemId, requested: p.qty, remaining }, 409);
       pickedItems.push({ row, qty: p.qty, pickSupplierId: p.supplierId ?? null });
     }

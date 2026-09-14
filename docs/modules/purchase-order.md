@@ -810,6 +810,15 @@ matter: lines with `from_mrp === true` never lock the SO line (`:2372`), and
 POs whose status is `CANCELLED` **or `DRAFT`** are excluded (`:2384`). Best-effort
 throughout — it logs and skips, because the primary write already committed.
 
+**A company-1 BOUND line does not rely on this counter (2026-09-14).** Because
+MRP-origin lines are left out, `po_qty_picked` could read 0 on a line already on
+an MRP-origin purchase order, and MRP-origin converts skipped the cap entirely —
+that is how five custom pillow lines were ordered twice (bug 0890). For a line
+`isHardBoundLine` names, on company 1, both the bulk convert (`convertSosToPosCore`,
+MRP or not) and the generic create's over-convert check use
+`boundAwarePicked` = max(`po_qty_picked`, qty on every live PO line carrying that
+`so_item_id`) from `lib/bound-line-ordered.ts`. Pooled lines are unchanged.
+
 ---
 
 ### The Main Supplier column, and the convert's `missing_bindings`

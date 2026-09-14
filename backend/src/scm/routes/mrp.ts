@@ -1215,7 +1215,7 @@ export async function computeMrp(
     for (const r of rows) {
       const eff = effQtyOf(r);                              // qty still to fulfil (ordered − delivered + returned)
       let need = eff;
-      /* BOUND LINE (company 1, bedframe / `(SP)` mattress). The rule is drawn at
+      /* BOUND LINE (company 1, bedframe / `(SP)` mattress / custom pillow). Drawn at
          STOCK, and only at stock, and the distinction is the whole design:
 
            · STOCK IS A CLAIM ON GOODS THAT EXIST. The stored allocator decides
