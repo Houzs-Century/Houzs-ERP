@@ -19,7 +19,8 @@
 
 import { readMfgProductBindings } from './supplier-bindings';
 
-type Sb = { from: (t: string) => any };
+// The SCM routes carry an untyped supabase-js client; the shared reader takes the same.
+type Sb = { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 /**
  * This supplier's own code for `itemCode`, or `null` when the item has no

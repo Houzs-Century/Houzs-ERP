@@ -281,3 +281,20 @@ describe('applyPoAmendment — the supplier code follows a changed item code', (
     expect(store.purchase_order_items.find((i) => i.item_code === '9058-1A(RHF)')!.supplier_sku).toBe('5536-1A(RHF)');
   });
 });
+
+describe('applyPoAmendment — a header supplier change decides whose code a moved line takes', () => {
+  it('looks the code up for the supplier the PO has AFTER the amendment', async () => {
+    const store = baseStore();
+    store.po_amendments[0].header_changes = { supplier_id: 'S2' };
+    store.po_amendments[0].old_header_snapshot = { supplier_id: 'S1' };
+    store.supplier_material_bindings = [
+      { item_code: '9058-CNR', supplier_id: 'S1', supplier_sku: '5536-CNR', is_main_supplier: true, material_kind: 'mfg_product', company_id: 1 },
+      { item_code: '9058-CNR', supplier_id: 'S2', supplier_sku: 'OTHER-CNR', is_main_supplier: true, material_kind: 'mfg_product', company_id: 1 },
+    ];
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'SPEC', new_qty: null, new_unit_price_sen: null, new_item_code: '9058-CNR', new_material_name: 'SOFA MAYBATCH CNR', new_variants: null, new_delivery_date: null, old_snapshot: {} },
+    ];
+    await applyPoAmendment(fakeSb(store), AMD, 'user-1');
+    expect(store.purchase_order_items.find((i) => i.id === 'POI-1')!.supplier_sku).toBe('OTHER-CNR');
+  });
+});
