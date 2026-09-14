@@ -1248,8 +1248,8 @@ reads and names what matches nothing. Run it after filling a pool.
    `?itemCode=`, the Model's pool (read with the save gate's own
    `loadProductAndModel`), and caps last; the query reads the PostgREST page
    (`OFFER_SCAN_ROWS`, 1000). Both pickers send `itemCode`: it is a required
-   option of `useFabricColoursSearch`. A failed Model lookup degrades to no pool
-   filter, never an empty picker.
+   option of `useFabricColoursSearch` (`frontend/src/vendor/scm/lib/fabric-queries.ts`).
+   A failed Model lookup degrades to no pool filter, never an empty picker.
    docs/bugs/0893-the-fabric-search-capped-at-50-before-hiding-retired-and-dis.md.
 
 **Sofa follower-line cascade — ONE module, and the master's LATEST change
