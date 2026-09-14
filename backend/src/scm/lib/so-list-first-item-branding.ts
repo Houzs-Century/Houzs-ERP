@@ -40,6 +40,24 @@ export type ListBrandingLine = {
 const MAIN_CATS = new Set(['SOFA', 'BEDFRAME', 'MATTRESS']);
 
 /**
+ * The list LABEL as a HEADER value — or null when the label is not a brand.
+ *
+ * brandingLabel can print a category noun ("Accessory", "Mattress", "Other",
+ * "No Items"), and the header is audited against the company's project_brands
+ * (check-branding-vocabulary.mjs) and sent to AutoCount as the BRANDING UDF. So
+ * a label becomes a header only when it IS a maintained brand: an exact member,
+ * or a case-insensitive one written in the list's own spelling ("Bedframe" ->
+ * Houzs's "BEDFRAME"). Shared by the create stamp and the header backfill, so a
+ * new order and a backfilled one cannot land on different values.
+ */
+export function brandForHeader(label: string, brands: readonly string[]): string | null {
+  const exact = brands.find((b) => b === label);
+  if (exact) return exact;
+  const lower = label.toLowerCase();
+  return brands.find((b) => b.toLowerCase() === lower) ?? null;
+}
+
+/**
  * @param lines  the orders' LIVE (non-cancelled) lines, ordered by
  *               (doc_no, line_no ASC NULLS LAST, created_at ASC) — the order
  *               decides which line is "first", so the caller owns it.

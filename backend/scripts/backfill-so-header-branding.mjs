@@ -58,7 +58,7 @@
 // ---------------------------------------------------------------------------
 import postgres from "postgres";
 import { brandingLabel, isPlaceholderBrandText } from "../src/scm/shared/so-branding-label.ts";
-import { deriveListFirstItemBranding } from "../src/scm/lib/so-list-first-item-branding.ts";
+import { brandForHeader, deriveListFirstItemBranding } from "../src/scm/lib/so-list-first-item-branding.ts";
 import { normCategory } from "../src/scm/lib/so-readiness.ts";
 
 const DSN = process.env.DATABASE_URL;
@@ -125,10 +125,9 @@ async function buildPlan(sql) {
   for (const h of targets) {
     const f = first.get(h.doc_no);
     const label = brandingLabel(f?.category ?? null, f?.branding ?? null, companyCode);
-    const exact = vocab.find((b) => b === label);
-    const ci = exact ?? vocab.find((b) => b.toLowerCase() === label.toLowerCase());
+    const to = brandForHeader(label, vocab);
     const row = { doc_no: h.doc_no, before: h.branding, label, status: h.status, ac: h.linked_ac_docno, created_at: h.created_at, category: f?.category ?? null };
-    if (ci) writes.push({ ...row, to: ci, caseOnly: !exact });
+    if (to) writes.push({ ...row, to, caseOnly: to !== label });
     else unfilled.push({ ...row, why: f ? `the list shows "${label}", which is not a brand in ${companyCode}'s project_brands` : 'no live line — the list shows "No Items"' });
   }
 
@@ -139,7 +138,18 @@ async function buildPlan(sql) {
   const flags = await sql`
     SELECT key, value FROM scm.app_config WHERE key IN ('scm.venture_portal_feed', 'scm.autocount_writeback') ORDER BY key`;
 
-  return { cid, companyCode, vocab, headCount: heads.length, targets, lines: lines.length, foreignLines, writes, unfilled, triggers, flags };
+  /* WHERE THE PLACEHOLDER CAME FROM. linked_ac_docno is set on BOTH kinds: the
+     AutoCount number (SO-013099) on an imported order, and the order own
+     number on an ERP-created one the write-back pushed. */
+  const imported = (h) => !!tidy(h.linked_ac_docno) && tidy(h.linked_ac_docno) !== h.doc_no;
+  const linesByDoc = new Map();
+  for (const l of lines) { if (!linesByDoc.has(l.doc_no)) linesByDoc.set(l.doc_no, []); linesByDoc.get(l.doc_no).push(l); }
+  const erpDetail = targets.filter((h) => !imported(h)).map((h) => ({
+    doc_no: h.doc_no, before: h.branding, created_at: h.created_at,
+    lines: (linesByDoc.get(h.doc_no) ?? []).map((l) => `${l.item_code ?? "(no code)"} [${l.item_group ?? ""}; sku ${productCategory.get(l.item_code) ?? "?"} / ${shown(productBranding.get(l.item_code) ?? null)}]`),
+  }));
+
+  return { cid, companyCode, vocab, headCount: heads.length, targets, imported, erpDetail, lines: lines.length, foreignLines, writes, unfilled, triggers, flags };
 }
 
 function report(p) {
@@ -148,9 +158,13 @@ function report(p) {
   const byBefore = new Map();
   for (const t of p.targets) byBefore.set(shown(t.branding), (byBefore.get(shown(t.branding)) ?? 0) + 1);
   log(`sales orders: ${p.headCount}; header branding is a placeholder on ${p.targets.length} (${[...byBefore].map(([k, n]) => `${k} x${n}`).join(", ") || "none"})`);
-  log(`  of those, from AutoCount (linked_ac_docno set): ${p.targets.filter((t) => t.ac).length}; ERP-created (no AutoCount key): ${p.targets.filter((t) => !t.ac).length}`);
+  const imp = p.targets.filter(p.imported);
+  const impBy = new Map();
+  for (const t of imp) impBy.set(shown(t.branding), (impBy.get(shown(t.branding)) ?? 0) + 1);
+  log(`  imported from AutoCount (linked_ac_docno is an AutoCount number): ${imp.length} (${[...impBy].map(([k, n]) => `${k} x${n}`).join(", ") || "none"}); ERP-created: ${p.targets.length - imp.length}`);
+  for (const d of p.erpDetail) out(`  ERP-CREATED	${d.doc_no}	${new Date(d.created_at).toISOString().slice(0, 10)}	header=${shown(d.before)}	lines: ${d.lines.join(" | ") || "(none)"}`);
   const recent = p.targets.filter((t) => Date.now() - new Date(t.created_at).getTime() < 14 * 864e5);
-  log(`  created in the last 14 days: ${recent.length}${recent.length ? ` (${recent.map((t) => `${t.doc_no} ${t.ac ? "AC" : "ERP"} ${new Date(t.created_at).toISOString().slice(0, 10)} ${shown(t.before)}`).join("; ")})` : ""}`);
+  log(`  created in the last 14 days: ${recent.length}${recent.length ? ` (${recent.map((t) => `${t.doc_no} ${p.imported(t) ? "imported" : "ERP-created"} ${new Date(t.created_at).toISOString().slice(0, 10)} ${shown(t.branding)}`).join("; ")})` : ""}`);
   out(`  live lines read: ${p.lines}; lines under these doc numbers carrying another company's id: ${p.foreignLines}`);
 
   const byLabel = new Map();
@@ -162,7 +176,7 @@ function report(p) {
   for (const u of p.unfilled) out(`  UNFILLED\t${u.doc_no}\tstatus=${u.status}\theader=${shown(u.before)}\t${u.why}`);
 
   out(`\nBEFORE -> AFTER (backup: the value each header holds now)`);
-  for (const w of p.writes) out(`  FILL\t${w.doc_no}\t${shown(w.before)}\t->\t"${w.to}"\tstatus=${w.status}\t${w.ac ? `AC ${w.ac}` : "ERP-created"}`);
+  for (const w of p.writes) out(`  FILL\t${w.doc_no}\t${shown(w.before)}\t->\t"${w.to}"\tstatus=${w.status}\t${w.ac ? `linked_ac_docno=${w.ac}` : "no AutoCount key"}`);
 
   out(`\ntriggers on scm.mfg_sales_orders (live pg_trigger):`);
   for (const t of p.triggers) out(`  ${t.name}: ${t.def}`);
