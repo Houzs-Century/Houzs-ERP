@@ -6384,6 +6384,9 @@ connection that each queued body names every line by DtlKey. Plan by default.
 
 **Its limit:** the refused edit's payload is empty, so a line hard-deleted in
 that save is not retired by the edit sent now — the same limit as the sweep's
-queued edit. Plan run against production 2026-09-14, before any stamp: 15
+queued edit. Plan runs against production 2026-09-14: before any stamp, 15
 documents with an unanswered keyless refusal, 1 fully keyed (HC-DO-2609-039),
-14 held.
+14 held. After the relink sweep's one apply run (13:05Z: 30 lines stamped, 12
+edits queued, all 12 sent) and the DocTransfer stamp (run 34847683795: 603 keys,
+verified), 3 remain: HC-DO-2609-039 to send, HC-GRN-2609-006 and HC-GRN-2609-028
+held with 1 keyless line each.
