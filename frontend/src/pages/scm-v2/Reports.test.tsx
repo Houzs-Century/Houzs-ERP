@@ -1,9 +1,29 @@
 // The standard statements' screen (GL redesign item 6): the P&L renders the
 // owner's sections with gross and net where they belong, and the balance
-// sheet says BALANCED only when the self-check is zero.
+// sheet says BALANCED only when the self-check is zero. Since docs/bugs/0911
+// the P&L draws each block on the report's LAYOUT — category subtotals, % of
+// sales on every row, L1..Ln buttons — and offers the layout editor.
 
 import { describe, expect, test, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
+
+const acc = (code: string, name: string, amountSen: number, pct: number | null) =>
+  ({ kind: 'account' as const, id: `acc:${code}`, label: `${code} — ${name}`, code, amountSen, pct, children: [] });
+const pnlLayout = {
+  stored: false,
+  baseSen: 100_000,
+  tradingIncome: [{ kind: 'category' as const, id: 'sec:SALES', label: 'SALES', amountSen: 100_000, pct: 100, children: [acc('501-0000', 'SALES', 100_000, 100)] }],
+  costOfSales: [acc('601-0003', 'PURCHASE OF SOFA', 60_000, 60), acc('620-0000', 'STOCKS AT END', -10_000, -10)],
+  otherIncome: [acc('590-0000', 'RENT RECEIVED', 5_000, 5)],
+  expenses: [{
+    kind: 'category' as const, id: 'acc:900-0000', label: 'Operating Expense', code: '900-0000', amountSen: 10_500, pct: 10.5,
+    children: [
+      acc('900-A001', 'ADVERT', 12_000, 12),
+      { kind: 'category' as const, id: 'acc:900-A002', label: 'ADVERTISEMENT', code: '900-A002', amountSen: -1_500, pct: -1.5, children: [acc('900-A014', 'ADVERT - SHOWROOM', -1_500, -1.5)] },
+    ],
+  }],
+  taxation: [acc('950-0000', 'TAXATION', 3_000, 3)],
+};
 
 const pnlData = {
   tradingIncome: [{ code: '501-0000', name: 'SALES', amountSen: 100_000 }],
@@ -17,6 +37,7 @@ const pnlData = {
     { code: '900-A014', name: 'ADVERT - SHOWROOM', amountSen: -1_500 },   // reversed this period: credits beat debits
   ],
   taxation: [{ code: '950-0000', name: 'TAXATION', amountSen: 3_000 }],
+  layout: pnlLayout,
   totals: { tradingIncomeSen: 100_000, costOfSalesSen: 50_000, grossProfitSen: 50_000, otherIncomeSen: 5_000, expensesSen: 10_500, profitBeforeTaxSen: 44_500, taxationSen: 3_000, netProfitSen: 41_500 },
 };
 const bsData = {
@@ -31,8 +52,13 @@ vi.mock('@tanstack/react-query', () => ({
     isLoading: false, isError: false,
     data: String(opts.queryKey[0]).includes('pnl') ? pnlData : bsData,
   }),
+  useMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
 }));
 vi.mock('../../vendor/scm/lib/authed-fetch', () => ({ authedFetch: vi.fn() }));
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
+/* The editor has its own contract (ReportLayoutEditor.test.tsx); here it only has to open. */
+vi.mock('./ReportLayoutEditor', () => ({ ReportLayoutEditor: () => <div role="dialog" aria-label="Layout · P&L">editor</div> }));
 
 import { PnLTab, BalanceSheetTab } from './Reports';
 
@@ -64,6 +90,42 @@ describe('the standard statements', () => {
     expect(screen.getByText(/601-0003/).closest('tr')!.textContent).toContain('RM 600.00');
     expect(screen.getByText('Total expenses').closest('tr')!.textContent).toContain('RM 105.00');
     expect(document.body.textContent).not.toMatch(/\(RM -/);
+  });
+
+  /* LAYOUT (owner 2026-09-14, docs/bugs/0911): category subtotals, % of
+     sales on every row, the tree opened to a level. */
+  test('P&L: the tree — a category with its subtotal and %, every row with its % of sales, totals too', () => {
+    render(<PnLTab />);
+    expect(screen.getByText('% of sales')).toBeTruthy();
+    const op = screen.getByText('Operating Expense').closest('tr')!;
+    expect(op.getAttribute('data-kind')).toBe('category');
+    expect(op.textContent).toContain('RM 105.00');
+    expect(op.textContent).toContain('10.5%');
+    expect(screen.getByText(/900-A001/).closest('tr')!.textContent).toContain('12.0%');
+    expect(screen.getByText(/900-A014/).closest('tr')!.textContent).toContain('-1.5%');
+    expect(screen.getByText(/900-A014/).closest('tr')!.getAttribute('data-depth')).toBe('3');
+    expect(screen.getByText('GROSS PROFIT').closest('tr')!.textContent).toContain('50.0%');
+    expect(screen.getByText('NET PROFIT').closest('tr')!.textContent).toContain('41.5%');
+    expect(screen.getByText('Total expenses').closest('tr')!.textContent).toContain('10.5%');
+  });
+
+  test('P&L: L1 folds the tree to its categories, All opens every account; the Layout button opens the editor', () => {
+    render(<PnLTab />);
+    const levels = screen.getByRole('group', { name: 'Levels' });
+    expect(levels.textContent).toContain('L3');
+    fireEvent.click(screen.getByRole('button', { name: 'L1' }));
+    expect(screen.queryByText(/900-A001/)).toBeNull();
+    expect(screen.queryByText('ADVERTISEMENT')).toBeNull();
+    /* The subtotal stands while the rows are folded. */
+    expect(screen.getByText('Operating Expense').closest('tr')!.textContent).toContain('RM 105.00');
+    fireEvent.click(screen.getByRole('button', { name: 'L2' }));
+    expect(screen.getByText(/900-A001/)).toBeTruthy();
+    expect(screen.queryByText(/900-A014/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+    expect(screen.getByText(/900-A014/)).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Layout' }));
+    expect(screen.getByRole('dialog', { name: 'Layout · P&L' })).toBeTruthy();
   });
 
   test('Balance sheet: earnings inside equity and BALANCED at zero check', () => {

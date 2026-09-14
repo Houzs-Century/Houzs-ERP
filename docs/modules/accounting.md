@@ -1747,6 +1747,61 @@ carries `pct` on every line (expenses as their positive amounts; the CSV and
 the PDF print `% of sales` as their third column). Contracts:
 `Reports.test.tsx`, `PerformancePnl.test.tsx`, `performance-pnl-pdf.test.ts`.
 
+**A report's layout — levels, the owner's own categories, % on every line
+(2026-09-15, docs/bugs/0911; owner 2026-09-14: 我想要有 level，父子 account 分层 …
+我要能自己调动排版，然后能自己加大 categories … 做公用然后选要不要，类似 chart of
+account).** A layout is a tree of categories arranged over the chart —
+nestable, renamed in place, reordered by drag or ↑ ↓, accounts as its
+leaves — ONE tree per report, SHARED by every company, each category
+carrying the ids of the companies that unticked it (`hiddenFor`). It is
+presentation only: the chart's SECTION still decides which block of the
+statement an account's money belongs to, so a layout can group, order and
+name but never move a ringgit between gross profit and net. The tree lives
+in `scm.acc_report_layouts` (one row per report, JSONB, no company column by
+design; migration `20260915T0900_acc_report_layouts.sql`).
+`backend/src/acc/report-layout.ts` builds the chart's own tree when nothing
+is saved (`defaultLayout`: a header account with children becomes a category
+named after it, leaves are lines, a block spanning two sections gets a
+category per section, a child whose parent sits in another section files as
+a root of its own section's block, an unsectioned row takes its type's
+default shelf), checks and normalises a saved one (`validateLayout`: version
+1, the report's blocks only, unique ids and codes, names, depth ≤ 8, the
+refusal names what is wrong) and lays a block's figures on it for one
+company (`layOutBlock`: a subtotal on every category, % of the base on every
+line, an empty category never prints, a category the company unticked is
+skipped with its subtree, and whatever the tree does not place — a code
+created since the save, one moved to another section on the chart page, one
+under an unticked category — prints under Unassigned at the block's foot,
+so a block's total is always the sum of what is printed). Routes in
+`backend/src/scm/routes/accounting-report-layouts.ts`, registered beside the
+statements in `backend/src/scm/routes/accounting.ts`:
+`GET /accounting/reports/layout?report=pnl` (the stored tree or the chart's,
+with the chart union the editor arranges — an unsectioned row already on
+its default shelf — and the companies the ticks name), `PUT` (checks, saves
+one row; a tick of a company outside the caller's grants rides through
+untouched and cannot be set from outside), `DELETE` (back to the chart's
+tree); editors are whoever may read the statements
+(`scm.payment_voucher.post`). `GET /accounting/reports/pnl`
+(`backend/src/scm/routes/accounting-reports.ts`) returns `layout` beside its
+flat lists, which are unchanged — each block on the tree for the active
+company, `baseSen` = sales, % of sales on every row, `stored`. The screen:
+`frontend/src/pages/scm-v2/Reports.tsx` draws the P&L on the tree through
+`frontend/src/pages/scm-v2/ReportLayoutTree.tsx` (category subtotals, % of
+sales on every row and total, L1..Ln buttons and All), and the Layout button
+opens `frontend/src/pages/scm-v2/ReportLayoutEditor.tsx` (rename, add at
+the top of a block or under another category, delete — what it held moves
+up a level, drag or ↑ ↓, a tick per company, the block's unplaced accounts
+under Unassigned with Place, Save, Reset to chart; nothing reaches the
+server until Save); hooks and the editor's pure operations in
+`frontend/src/vendor/scm/lib/report-layout.ts`. The Balance Sheet, the
+Performance P&L's account part and Receipts & Payments move onto the same
+engine next, then the month-by-month view (the owner's queue of
+2026-09-14). Contracts: `backend/src/acc/report-layout.test.ts`,
+`backend/tests/reportLayouts.test.ts`, `backend/tests/accountingReports.test.ts`,
+`frontend/src/vendor/scm/lib/report-layout.test.ts`,
+`frontend/src/pages/scm-v2/ReportLayoutEditor.test.tsx`,
+`frontend/src/pages/scm-v2/Reports.test.tsx`.
+
 **Every payment action by a role holding the correction right owes a reason,
 and Corrections names who first recorded the payment (2026-09-14,
 docs/bugs/0888; owner: 只要是有关 collection payment 的，我或有权限的用户做的动作
