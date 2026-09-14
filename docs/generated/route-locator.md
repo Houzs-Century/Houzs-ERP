@@ -435,16 +435,16 @@ Total: 1275 route registrations across 165 files.
 - L903  GET    /:id/profile-pic
 - L936  PUT    /:id/profile-pic
 - L963  POST   /invite
-- L1372  POST   /:id/resend-invite
-- L1447  PATCH  /:id
-- L1868  DELETE /:id
-- L1994  GET    /invitations
-- L2050  DELETE /invitations/:id
-- L2080  POST   /:id/impersonate
-- L2137  POST   /:id/reset-password
-- L2248  POST   /:id/totp/disable
-- L2291  GET    /impersonation-enabled
-- L2297  POST   /:id/impersonate
+- L1369  POST   /:id/resend-invite
+- L1444  PATCH  /:id
+- L1865  DELETE /:id
+- L1991  GET    /invitations
+- L2047  DELETE /invitations/:id
+- L2077  POST   /:id/impersonate
+- L2134  POST   /:id/reset-password
+- L2245  POST   /:id/totp/disable
+- L2288  GET    /impersonation-enabled
+- L2294  POST   /:id/impersonate
 
 ## backend/src/scm/routes/payment-vouchers.ts  (21)
 - L402  GET    /

@@ -71,7 +71,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/totp.ts` | 4 | 161 |
 | `backend/src/routes/track.ts` | 1 | 44 |
 | `backend/src/routes/udf.ts` | 4 | 251 |
-| `backend/src/routes/users.ts` | 22 | 2331 |
+| `backend/src/routes/users.ts` | 22 | 2328 |
 | `backend/src/scm/routes/accounting-bank-config.ts` | 0 | 126 |
 | `backend/src/scm/routes/accounting-bank-locks.ts` | 0 | 230 |
 | `backend/src/scm/routes/accounting-bank-months.ts` | 0 | 673 |
@@ -222,13 +222,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 153 | `154_assr_case_access.sql` (154) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 423 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 424 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2385 files, 782879 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2388 files, 783451 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -448,7 +448,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileAnnouncementMedia.tsx` | 171 |
 | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | 152 |
 | `frontend/src/mobile/MobileAnnouncements.tsx` | 1741 |
-| `frontend/src/mobile/MobileApp.tsx` | 1201 |
+| `frontend/src/mobile/MobileApp.tsx` | 1209 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 295 |
 | `frontend/src/mobile/MobileAssrCategoryChips.tsx` | 76 |
 | `frontend/src/mobile/MobileAssrSoField.tsx` | 76 |
@@ -473,7 +473,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileLogin.tsx` | 171 |
 | `frontend/src/mobile/MobileMailCenter.tsx` | 1814 |
 | `frontend/src/mobile/MobileMileageCapture.tsx` | 395 |
-| `frontend/src/mobile/MobileModuleDetail.tsx` | 1994 |
+| `frontend/src/mobile/MobileModuleDetail.tsx` | 1998 |
 | `frontend/src/mobile/MobileModuleForm.tsx` | 389 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
