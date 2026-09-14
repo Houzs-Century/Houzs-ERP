@@ -187,6 +187,16 @@ movement under the EMPTY key. The goods are then in the warehouse, at the right
 value, with their `variants` jsonb fully intact — and invisible to every sofa
 order, which looks up `fabriccode=…|seatheight=…|legheight=…`.
 
+**The Sofa Accessory group (`fabric_accessory`, owner 2026-09-14)** is the third
+group whose key composes an attribute: the **fabric colour only**
+(`fabriccode=…`), so two colours of the same custom pillow are two buckets. Its PO
+line shows the variant editor with just the Fabrics picker (`PcVariantEditor`, and
+the inline fabric box in `PurchaseOrderNew.tsx`). Which categories get that editor
+on every PO / PC form lives in ONE place —
+`vendor/scm/lib/variant-editor-groups.ts` (`showsVariantEditor`), used by
+`PurchaseOrderNew`, `PurchaseConsignmentOrderNew`, `PoLineCard` and `PcLineCard`;
+add a category there, not in a form. `tasks/PLAN-sofa-accessories-category.md`.
+
 **The variants are never the thing that goes missing.** `description2` is built
 from the jsonb alone and prints correctly the whole time, which is exactly why
 this reads as impossible from the screen: the specs are right there on the PO.

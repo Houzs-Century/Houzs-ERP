@@ -644,12 +644,20 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   (2026-08-30,
   `docs/bugs/0572-a-company-1-bound-line-with-no-receipt-fell-through-to-the-p.md`).**
   `HARD_BOUND_COMPANY_ID = 1` in `lib/so-stock-allocation.ts`: a company-1
-  bedframe / sofa / `(SP)` mattress line (`isHardBoundLine`) lights only from
+  bedframe / sofa / **Sofa Accessory** (`fabric_accessory`) / `(SP)` mattress line (`isHardBoundLine`) lights only from
   its own received PO — the pooled walk force-stamps it PENDING, never reads
   its bucket. Company 2 keeps the soft pooled model. The display union's
   promotion gate (`so-line-effective-stock.ts`) refuses to promote bound lines
   on MRP's say-so; see sales-order.md §0.3 for the company-split table and the
   `check-bound-exclusivity.mjs` census that re-measures the rule.
+- **Sofa Accessory binds per order and keys by colour (2026-09-14).** Group
+  `fabric_accessory` (shown as "Sofa Accessory"; the code has no `sofa` in it
+  because 41 readers test a group with `includes('sofa')`) composes
+  `fabricCode` into `computeVariantKey`, is in `HARD_BOUND_GROUPS`, and takes the
+  sofa row's base lead days (`leadCategoryOf` in `lib/lead-time.ts`) because it is
+  ordered on the sofa's PO. Before it, custom pillows were `accessory`, keyed on
+  the code alone, and one colour's stock covered another colour's order.
+  `tasks/PLAN-sofa-accessories-category.md`.
 - **A SOFA'S BINDING CAN BE UNWRITABLE, and that is a separate failure from an
   absent purchase order.** The book records the SO -> PO edge at LINE grain in
   `PODTL.FromSODtlKey`, and `backend/scripts/repair-po-so-link-from-book.mjs`

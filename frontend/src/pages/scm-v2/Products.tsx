@@ -219,6 +219,7 @@ export const Products = () => {
 const CATEGORIES: { value: MfgCategory | 'all'; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'ACCESSORY', label: 'Accessory' },
+  { value: 'FABRIC_ACCESSORY', label: 'Sofa Accessory' },
   { value: 'BEDFRAME', label: 'Bedframe' },
   { value: 'SOFA', label: 'Sofa' },
   { value: 'MATTRESS', label: 'Mattress' },
@@ -3910,7 +3911,7 @@ const NewSkuDrawer = ({ onClose }: { onClose: () => void }) => {
   // Branding datalist — maintenance pool first, DISTINCT fallback. Free text
   // stays possible (datalist, not a hard select) so legacy values aren't blocked.
   const brandingPool = useBrandingPool();
-  type Cat = 'BEDFRAME' | 'SOFA' | 'ACCESSORY' | 'MATTRESS' | 'BEDLINES' | 'DINING' | 'DIFFUSER' | 'CARPET' | 'SERVICE';
+  type Cat = MfgCategory;
   /* 2990 is a trading company — no in-house manufacturing. Production-time
      tracking dropped (was HOOKKA legacy). DB column production_time_minutes
      stays for now but the UI no longer collects it. */
@@ -3981,11 +3982,7 @@ const NewSkuDrawer = ({ onClose }: { onClose: () => void }) => {
               <span className={styles.fieldLabel}>Category *</span>
               <select className={styles.fieldSelect} value={form.category}
                 onChange={(e) => set('category', e.target.value as Cat)}>
-                <option value="BEDFRAME">Bedframe</option>
-                <option value="SOFA">Sofa</option>
-                <option value="MATTRESS">Mattress</option>
-                <option value="ACCESSORY">Accessory</option>
-                <option value="SERVICE">Service</option>
+                {CATEGORIES.filter((c) => c.value !== 'all').map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
               </select>
             </label>
             <Field label="Size Label" value={form.sizeLabel} onChange={(v) => set('sizeLabel', v)} />

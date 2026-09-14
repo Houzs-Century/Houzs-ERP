@@ -65,6 +65,15 @@
 export const LEAD_CATEGORIES = ['sofa', 'bedframe', 'mattress', 'accessory', 'service'] as const;
 export type LeadCategory = (typeof LEAD_CATEGORIES)[number];
 
+/* A Sofa Accessory (group fabric_accessory, owner 2026-09-14) is ordered on the
+   sofa's purchase order, so it takes the SOFA lead days rather than a sixth
+   category row nobody has set (which would read as 0). Owner can still split it
+   later by giving it its own row; until then one number governs both. */
+const leadCategoryOf = (category: string | null): string => {
+  const cat = (category ?? '').toLowerCase();
+  return cat === 'fabric_accessory' ? 'sofa' : cat;
+};
+
 /** The owner's manual base table, loaded once per request.
     byWhCat is keyed `${warehouseId}|${category}`; byCat holds the
     warehouse_id IS NULL rows (the GLOBAL DEFAULT bucket). */
@@ -192,7 +201,7 @@ export async function loadSupplierCategoryOverrides(
  * category) -> 0. A missing warehouse skips straight to the global bucket.
  */
 function baseLeadDays(base: LeadTimeBase, warehouseId: string | null, category: string | null): number {
-  const cat = (category ?? '').toLowerCase();
+  const cat = leadCategoryOf(category);
   return (
     (warehouseId ? base.byWhCat.get(`${warehouseId}|${cat}`) : undefined) ??
     base.byCat.get(cat) ??
@@ -212,7 +221,7 @@ function overrideLeadDays(
   category: string | null,
 ): number | undefined {
   if (!supplierId) return undefined;
-  const cat = (category ?? '').toLowerCase();
+  const cat = leadCategoryOf(category);
   return overrides.bySupplierCat.get(`${supplierId}|${cat}`);
 }
 
