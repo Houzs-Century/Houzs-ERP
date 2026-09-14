@@ -55,6 +55,7 @@ import { isDirectorUser } from "../services/pmsAccess";
 import type { AuthUser } from "../services/auth";
 import type { Context, MiddlewareHandler } from "hono";
 import { normalizePhone } from "../scm/shared/phone";
+import { ASSR_SUB_STATUS_KEYS } from "../scm/shared/assr-sub-statuses";
 
 /* The context the extracted handlers below receive. They are exported so the
    route tests can drive them directly; the shape is exactly what app.get/post
@@ -1860,13 +1861,6 @@ app.post(
 // Same digit-only constraint as the GET — keeps any future literal
 // route under /api/assr (e.g. /metrics, /summary) reachable when the
 // methods overlap.
-const SUB_STATUS_VALUES = new Set([
-  "pending_inspection",
-  "qc_issue_result",
-  "pending_supplier_pickup",
-  "pending_supplier_return",
-]);
-
 app.patch("/:id{[0-9]+}", requirePermission("service_cases.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
@@ -1875,7 +1869,9 @@ app.patch("/:id{[0-9]+}", requirePermission("service_cases.write"), async (c) =>
   if (
     body.sub_status !== undefined &&
     body.sub_status !== null &&
-    !SUB_STATUS_VALUES.has(String(body.sub_status))
+    // The one list the screens offer (docs/bugs/0890): a hand-kept copy here
+    // once lacked Pending Customer Pickup and refused the screens' own choice.
+    !ASSR_SUB_STATUS_KEYS.has(String(body.sub_status))
   ) {
     return c.json({ error: "Unknown sub-status" }, 400);
   }
