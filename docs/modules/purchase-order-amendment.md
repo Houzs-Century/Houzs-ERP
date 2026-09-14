@@ -347,7 +347,17 @@ applied incl. SO's SO_APPROVED / PO_APPROVED / SENT; REJECTED = closed),
 `simplifiedAmendmentPill`, `AMENDMENT_LIST_CHIPS`, `amendmentBucketLabel`, plus an
 `AmendmentStatusPill` component. The granular SO enum + the SO detail stepper +
 the backend values are UNCHANGED — only the list display/filter is collapsed, and
-the closed (REJECTED / withdrawn) rows are reached via **All**. A new
+the closed (REJECTED / withdrawn) rows are reached via **All**.
+
+**List order (2026-09-14, staff request).** All four queues open with
+**Requested on top, then Approved, then Rejected, newest first inside each** —
+one comparator, `compareAmendmentsForList` over `AMENDMENT_BUCKET_ORDER` in the
+same `status-pill.ts`. The desktop grids pass it as DataGrid's `defaultSort`, so
+a column sort the operator clicked (and the grid saved) still wins, and cycling
+that header off returns to this order. The **Status** column's sort uses the
+same rank, so ascending is Requested -> Approved -> Rejected rather than the
+bucket names A-Z (which put Approved first). The phone queues sort their cards
+with it. Pinned by `frontend/src/pages/scm-v2/amendment-list-order.test.tsx`. A new
 `poAmendment` docType was added to the canonical map (REQUESTED / APPROVED /
 REJECTED).
 

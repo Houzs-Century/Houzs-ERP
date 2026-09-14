@@ -37,6 +37,31 @@ CANCELLED. There is no draft rung and no edit.
 
 > **The list screen reads its status word from `status-pill.ts` too (2026-09-13)**, the same source the print already used (§4): `withStatusLabels("stockTransfer", …)`, keeping the page’s own tone and filter bucket. Nothing on screen changed. `docs/bugs/0866-six-status-maps-collapsed-onto-status-pill-and-the-detail-ba.md`.
 
+### After Post: open it, or start the next one (2026-09-14)
+
+Staff asked for the GRN / Purchase Invoice loop here. On success the desktop
+create page shows a result dialog — **Open transfer** or **New stock
+transfer** — and the form LOCKS: the Post button is replaced by those two
+actions in the header, so the posted transfer cannot be pressed a second time.
+The phone does the same with a confirm sheet — **New stock transfer** or
+**Done** (Done leaves the way it always did).
+
+**"New" is a REMOUNT, not a navigate and not a field reset.** Both create
+screens mint ONE idempotency key per mount (`frontend/src/lib/idempotency.ts`).
+Navigating to `/scm/stock-transfers/new` from itself is a router no-op, so the
+key would survive and the next, different transfer would go out under the
+first one's key — the server replays transfer #1 (or answers 409
+`idempotency_key_reused`) and writes nothing. `frontend/src/lib/freshMount.tsx`
+re-keys the whole form instead. Proven red in
+`frontend/src/pages/scm-v2/stock-new-next-step.test.tsx` against a version that
+reset the fields by hand and navigated to the same route: the second post
+carried the identical key.
+
+Stock Adjustment (`StockAdjustmentNew.tsx`, no guide of its own yet) got the
+same next step — **Open stock adjustments** (there is no adjustment detail
+page) or **New stock adjustment** — through the same `FreshMount`. It sends no
+idempotency key at all today; that is unchanged here.
+
 ### The desktop list has a right-click menu (2026-08-22)
 
 **Open** and **Print**, then **Cancel Stock Transfer** alone at the bottom in
@@ -180,6 +205,10 @@ PROVED by removing it and watching a test go red:
   money.
 - `frontend/src/pages/scm-v2/row-menus-remaining-lists.test.ts` — the row menu's
   label sequence per status, and the invariant that every list offers Print.
+- `frontend/src/pages/scm-v2/stock-new-next-step.test.tsx` and
+  `frontend/src/mobile/MobileStockTransferNew.test.tsx` — "New stock transfer"
+  after a post remounts the form and the second post carries a NEW idempotency
+  key; the posted form has no Post left to press.
 - `frontend/src/vendor/scm/lib/variant-key-label.test.ts` — the one
   humanisation of a stored `variant_key`, shared by the create picker and the
   two stock PDFs.

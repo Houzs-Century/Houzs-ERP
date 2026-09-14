@@ -180,3 +180,4 @@ Four decisions worth keeping:
 | What the DIRECT half of a locked-SO edit sends | `withoutFrozenHeaderFields` in `frontend/src/vendor/scm/lib/so-amendment-header.ts` DROPS every amendable key (and `salesLocation`) from the header PATCH; it never reverts one. A revert had to reproduce the seeded value byte for byte and failed twice (0488: omitted originals became NULL; 0836: it trimmed `"MR LIM "`). Both surfaces call it; the server's lock diffs `col in updates`, so a key never sent cannot 409 |
 | The notice delivery model, `source` tags, bell slice | [`announcements.md`](./announcements.md) |
 | PO-side workflow | [`purchase-order-amendment.md`](./purchase-order-amendment.md) |
+| The queue's simplified status buckets and its open order (Requested first, newest first inside a status — desktop + phone, SO + PO) | [`purchase-order-amendment.md`](./purchase-order-amendment.md), *Status simplification* |
