@@ -488,12 +488,31 @@ try {
      and NOT alarmed, for the reason the header gives about skips: it is a
      statement about the document's shape, it does not change on its own, and
      the remedy is a person pressing "Match up lines". */
+  /* A sent row's last_error now carries one of two facts, joined with " | "
+     when both apply: a line-identity gap, or photographs left behind for size
+     (scm/lib/autocount-photo-attach.ts, docs/bugs/0899). They need different
+     people, so they are listed apart. */
   const identityGaps = await pg`
     SELECT doc_type, doc_no, op, last_error, sent_at
       FROM scm.autocount_outbox
-     WHERE status = 'sent' AND last_error IS NOT NULL
+     WHERE status = 'sent' AND last_error IS NOT NULL AND last_error NOT LIKE 'PHOTOS NOT SENT:%'
      ORDER BY sent_at DESC
      LIMIT 40`;
+  const photosLeftBehind = await pg`
+    SELECT doc_type, doc_no, op, last_error, sent_at
+      FROM scm.autocount_outbox
+     WHERE status = 'sent' AND last_error LIKE '%PHOTOS NOT SENT:%'
+     ORDER BY sent_at DESC
+     LIMIT 40`;
+  if (photosLeftBehind.length) {
+    notice(
+      `IN AUTOCOUNT, SENT WITHOUT SOME PHOTOGRAPHS: ${photosLeftBehind.length}. A picture was too large for the ` +
+        "service to accept in one request, so the document went without it and the book kept the pictures it had.",
+    );
+    for (const r of photosLeftBehind) {
+      notice(`  ${r.doc_type} ${r.doc_no} (${r.op}): ${String(r.last_error).slice(String(r.last_error).indexOf('PHOTOS NOT SENT:'))}`);
+    }
+  }
   if (identityGaps.length) {
     notice(
       `IN AUTOCOUNT, BUT WITH NO LINE IDENTITY: ${identityGaps.length}. The document arrived; its ` +
