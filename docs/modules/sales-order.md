@@ -5500,6 +5500,28 @@ was added to the search; `po_doc_no` is a 0%-filled dead column not projected on
 this list and is intentionally not searched. Entry
 `docs/bugs/0755-so-list-search-ignored-customer-so-no-so-a-shown-reference-c.md`.
 
+**Approval code: a column, and a way in (2026-09-15, docs/bugs/0909; owner:
+sales order 这边我可以加一个 column 是显示 approval code 的吗 … 我要的就是这个
+payment 的 approval code).** The code lives on each PAYMENT
+(`mfg_sales_order_payments.approval_code`, what the detail's Payments card
+prints), never on the header's legacy `approval_code`. The list's payments
+read (the one that feeds `payment_methods_summary`) now carries
+`approval_code, paid_at, created_at`, and `approvalCodesByOrder`
+(`backend/src/scm/lib/so-list-approval-codes.ts`) turns it into
+`approval_codes_summary` per row: every code of the order in the order the
+money was paid, " + " joined, '' when none. The desktop list shows it as
+**Approval Code** beside Payment Method (hidden by default like that column;
+the Columns drawer shows it) and in the quick view. The search finds an order
+by a code too: `approvalCodeOrPart` reads the orders whose payments carry
+EXACTLY the typed code (an `eq`, not a substring, so no trigram index is
+owed; this company, capped at 500; a failed read refuses the list) and adds
+ONE `doc_no.in.(…)` term to
+the `.or()` — to the page query AND the money-KPI aggregate, which must
+filter the same set — and adds nothing when no payment matched, because an
+empty in-list is a PostgREST syntax error. Contracts:
+`so-list-approval-codes.test.ts`, `tests/soListApprovalCode.test.ts`,
+`frontend/src/pages/scm-v2/soListApprovalCode.test.ts`.
+
 ### Second-level filters (`?f=`, owner 2026-09-14)
 
 The status tab is the FIRST filter. Below it (phone: the Filter sheet's

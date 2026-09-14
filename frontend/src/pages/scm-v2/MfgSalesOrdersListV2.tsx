@@ -144,6 +144,9 @@ type SoRow = HoldFields & {
   customer_state: string | null;
   payment_method: string | null;
   payment_methods_summary?: string;
+  /** Each card payment's approval code, by payment date, " + " joined —
+      the value the detail's Payments card prints (docs/bugs/0909). */
+  approval_codes_summary?: string;
   // ── Phase 2: extra fields already present on the list payload (HEADER +
   //    server-computed), previously untyped so the columns couldn't be built.
   venue: string | null;
@@ -561,6 +564,7 @@ function DetailDrawer({
                   k="Payment"
                   v={row.payment_methods_summary || row.payment_method || "—"}
                 />
+                <MetaItem k="Approval code" v={row.approval_codes_summary || "—"} mono />
               </dl>
 
               {/* customer & delivery card */}
@@ -1610,6 +1614,22 @@ export function MfgSalesOrdersListV2() {
         return <span className="text-[12.5px] text-ink-secondary">{pm || "—"}</span>;
       },
     },
+    /* Owner 2026-09-15 (docs/bugs/0909): 我要的就是这个 payment 的 approval code —
+       the code on each card payment, as the detail's Payments card prints it,
+       every one of the order's in the order the money was paid. Hidden by
+       default like Payment Method; the Columns drawer shows it. */
+    {
+      key: "approval_codes",
+      group: "Amounts",
+      label: "Approval Code",
+      width: "150px",
+      defaultHidden: true,
+      disableSort: true,
+      getValue: (r) => r.approval_codes_summary ?? "",
+      render: (r) => (
+        <span className="font-mono text-[12.5px] text-ink-secondary">{r.approval_codes_summary || "—"}</span>
+      ),
+    },
     {
       key: "paid",
       group: "Amounts",
@@ -2146,7 +2166,7 @@ export function MfgSalesOrdersListV2() {
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search SO, customer, phone, ref…"
+          placeholder="Search SO, customer, phone, ref, approval code…"
           className="h-10 w-full rounded-lg border border-border bg-surface px-3.5 text-[14px] text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-primary focus:ring-2 focus:ring-primary/20"
         />
         <SearchProgress
@@ -2256,7 +2276,7 @@ export function MfgSalesOrdersListV2() {
             search={{
               value: search,
               onChange: setSearch,
-              placeholder: "Search doc no, customer, phone, ref…",
+              placeholder: "Search doc no, customer, phone, ref, approval code…",
               debounceMs: 0,
               searching: searchTransition.isSearching,
               countPending: isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale,
@@ -2287,7 +2307,7 @@ export function MfgSalesOrdersListV2() {
                 type="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search doc no, customer, phone, ref…"
+                placeholder="Search doc no, customer, phone, ref, approval code…"
                 className="h-9 max-w-[320px] flex-1 rounded-md border border-border bg-surface px-3.5 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-primary focus:ring-2 focus:ring-primary/20"
               />
               <SearchProgress active={searchTransition.isSearching} label="Searching…" />

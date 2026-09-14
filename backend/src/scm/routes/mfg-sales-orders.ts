@@ -72,6 +72,7 @@ import {
 } from '../shared/so-field-policy';
 import { paymentMayChange, SO_PAYMENT_AMEND } from '../../acc/payment-reconciled';
 import { AMEND_SOURCE, ledgerFieldChange } from '../../acc/payment-corrections';
+import { APPROVAL_CODE_SEARCH_CAP, approvalCodeOrPart, approvalCodesByOrder } from '../lib/so-list-approval-codes';
 import { paymentReasonRule } from '../lib/so-payment-reason';
 import { paymentVersionGuard, soCasGrace, soCasGraceOpen } from '../lib/so-cas';
 /* SO-SKU spec P2 — every charge is a SKU line. Predicates from P1; the
@@ -1234,6 +1235,26 @@ mfgSalesOrders.get('/', async (c) => {
     const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'so_date';
     const sortAsc = rawDir === 'asc';
 
+    /* An order is also found by a card payment's APPROVAL CODE (owner
+       2026-09-15, docs/bugs/0909) — Finance reads one off a merchant report and
+       wants the order. The code lives on the payment rows, which the header
+       `.or()` below cannot see, so the orders whose payments carry EXACTLY the
+       typed code are read first — before the list builder, so the header
+       search stays the header's, and an exact match rather than a substring,
+       so no trigram index is owed — and admitted as ONE in-list term on BOTH
+       queries. A read that fails refuses the list: a search that silently
+       dropped its matches would be a wrong answer, not an empty one. */
+    let codePart: string | null = null;
+    {
+      const code = String(c.req.query('q') ?? '').trim();
+      if (code) {
+        const { data, error } = await scopeToCompany(sb.from('mfg_sales_order_payments')
+          .select('so_doc_no').eq('approval_code', code).limit(APPROVAL_CODE_SEARCH_CAP), c);
+        if (error) return c.json({ error: 'load_failed', reason: `approval codes: ${error.message}` }, 500);
+        codePart = approvalCodeOrPart(((data ?? []) as Array<{ so_doc_no: string }>).map((p) => p.so_doc_no));
+      }
+    }
+
     let q = sb.from('mfg_sales_orders_with_payment_totals').select(LIST_COLS, { count: 'exact' }).order(sortCol, { ascending: sortAsc });
     /* unique tiebreaker so range paging can't skip/repeat rows sharing the sort key */
     if (sortCol !== 'doc_no') q = q.order('doc_no', { ascending: sortAsc });
@@ -1259,6 +1280,7 @@ mfgSalesOrders.get('/', async (c) => {
         `agent.ilike.%${s}%`, `sales_location.ilike.%${s}%`, `ref.ilike.%${s}%`,
         `customer_so_no.ilike.%${s}%`, `branding.ilike.%${s}%`,
         ...phoneSearchOrParts(s, search, normalizePhone),
+        ...(codePart ? [codePart] : []),
       ].join(','));
     }
     /* Optional so_date window (ISO yyyy-mm-dd, inclusive). The mobile list's
@@ -1334,7 +1356,8 @@ mfgSalesOrders.get('/', async (c) => {
       else if (status) { const vals = soStatusesForTab(status); moneyQ = status === 'OTHER' ? moneyQ.or(otherStatusOr) : (vals.length === 1 ? moneyQ.eq('status', vals[0]) : moneyQ.in('status', vals)); }
       if (search) {
         const ms = escapeForOr(search);
-        if (ms) moneyQ = moneyQ.or(`doc_no.ilike.%${ms}%,debtor_name.ilike.%${ms}%,debtor_code.ilike.%${ms}%,agent.ilike.%${ms}%,sales_location.ilike.%${ms}%,ref.ilike.%${ms}%,customer_so_no.ilike.%${ms}%,branding.ilike.%${ms}%`);
+        /* The SAME term as the page query — the strip must count what the rows show. */
+        if (ms) moneyQ = moneyQ.or(`doc_no.ilike.%${ms}%,debtor_name.ilike.%${ms}%,debtor_code.ilike.%${ms}%,agent.ilike.%${ms}%,sales_location.ilike.%${ms}%,ref.ilike.%${ms}%,customer_so_no.ilike.%${ms}%,branding.ilike.%${ms}%${codePart ? `,${codePart}` : ''}`);
       }
       if (from) moneyQ = moneyQ.gte('so_date', from);
       if (to) moneyQ = moneyQ.lte('so_date', to);
@@ -1422,7 +1445,7 @@ mfgSalesOrders.get('/', async (c) => {
     /* chunkIn on every `docNos` read below — the LEGACY arm reads `.limit(500)`, so each URL carried 500 doc numbers (~9.5KB). All feed doc-keyed maps. */
     const payRowsProm = (async () =>
       (await chunkIn(docNos, (batch, from, to) => sb.from('mfg_sales_order_payments')
-        .select('so_doc_no, method, online_type').in('so_doc_no', batch).order('so_doc_no').range(from, to))).data)();
+        .select('so_doc_no, method, online_type, approval_code, paid_at, created_at').in('so_doc_no', batch).order('so_doc_no').range(from, to))).data)();
     // DO No. rides this read rather than a query of its own — the list's cost
     // is round-trips, not rows (see so-delivery-order-nos.ts).
     const downstreamProm = Promise.all([
@@ -1578,8 +1601,12 @@ mfgSalesOrders.get('/', async (c) => {
        silently dropped from the summary before).
        One cheap batched read over the same doc_no set already in play. */
     const paymentMethods = new Map<string, Set<string>>();
+    /* The Approval Code column (docs/bugs/0909): each payment's code, by
+       payment date, " + " joined — off the same read. */
+    let approvalCodes = new Map<string, string>();
     {
       const payRows = await payRowsProm;
+      approvalCodes = approvalCodesByOrder((payRows ?? []) as unknown as Array<{ so_doc_no: string; approval_code: string | null; paid_at: string | null; created_at: string | null }>);
       for (const p of payRows as unknown as Array<{ so_doc_no: string; method: string | null; online_type: string | null }>) {
         const m = (p.method ?? '').trim().toLowerCase();
         let label: string;
@@ -1784,6 +1811,7 @@ mfgSalesOrders.get('/', async (c) => {
          header payment_method field). */
       const pm = paymentMethods.get(docNo);
       (r as Record<string, unknown>).payment_methods_summary = pm ? [...pm].sort().join(' + ') : '';
+      (r as Record<string, unknown>).approval_codes_summary = approvalCodes.get(docNo) ?? '';
       if (!perGroup) {
         (r as Record<string, unknown>).ready_categories = [];
         (r as Record<string, unknown>).is_fully_ready = false;
