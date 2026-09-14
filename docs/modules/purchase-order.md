@@ -550,6 +550,10 @@ day it is added.
 > `so_item_id` (the applier now links it after every build is written, through
 > `scripts/lib/added-po-compartment-link.mjs`), and a PO that holds FEWER
 > compartments than its SO, which has no line to link at all.
+>
+> Its bound-line predicate is a hand copy of `isHardBoundLine` and binds the
+> `fabric_accessory` (Sofa Accessory) group since 2026-09-14 — the same category
+> rule as MRP, no per-SKU pillow list (bug 0906).
 > `docs/bugs/0873-a-purchase-compartment-the-sofa-correction-added-was-never-l.md`.
 
 `so_item_id` is what lets a shipment resolve its incoming PO: `dropship-batch.ts`
