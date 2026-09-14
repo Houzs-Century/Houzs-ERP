@@ -189,3 +189,39 @@ phone shows the notice on the invoice screen instead.
 lives in `pi-po-price-rule.ts`, byte-identical in `backend/src/scm/lib/` and
 `frontend/src/vendor/scm/lib/`, refereed by
 `frontend/src/vendor/scm/lib/pi-po-price-rule.canonical.test.ts`.
+
+---
+
+## Searching the "Bill a Goods-Received Note" picker (2026-09-14)
+
+Owner, 2026-09-14: 「需要加上search button」. The picker at
+`/scm/purchase-invoices/from-grn` (`frontend/src/pages/scm-v2/PurchaseInvoiceFromGrn.tsx`)
+listed 494 outstanding lines across 197 notes, and scrolling was the only way to
+find one.
+
+**What it matches.** A search box sits above the note cards. A line stays on screen
+when each word typed appears in what its card shows: note number, supplier name or
+code, PO number, received date as printed (`dd/mm/yyyy`), item code, description,
+Description 2. The rule is `filterOutstandingGrnLines` in
+`frontend/src/vendor/scm/lib/outstanding-grn-search.ts`. A note number or a supplier
+keeps that note's lines; an item word keeps only the lines carrying it.
+
+**Loaded lines only, no new endpoint.** It filters in the browser over what
+`GET /purchase-invoices/outstanding-grn-items` returned. That read takes the newest
+500 POSTED notes (`.limit(500)` on the header read in
+`backend/src/scm/routes/purchase-invoices.ts`), so past 500 posted notes the older
+ones are in neither the list nor the search. The box says "Searches loaded rows only".
+
+**It narrows what is shown, nothing else.**
+- The supplier and currency locks, the primary note and the Continue count read the
+  loaded lines, not the visible ones. A tick the search hides still goes to the
+  review screen, and the page prints how many are hidden.
+- A note's own tick box ticks only the lines the search shows — what the operator
+  can see, the rule `SalesInvoiceFromDo` adopted for its Select all.
+
+**URL.** The term is `?q=`, declared in `readConvertScope('grnToPi', …, ['q'])` so it is
+not reported as an unrecognised parameter. Back from the review screen returns to the
+same narrowed list.
+
+Desktop only: the phone has no PI-from-GRN picker (see *Creating one on the phone*).
+Pinned by `frontend/src/pages/scm-v2/PurchaseInvoiceFromGrn.search.test.tsx`.
