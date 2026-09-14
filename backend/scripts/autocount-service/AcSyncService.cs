@@ -1060,12 +1060,24 @@ class AcSyncService {
       using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
         cn.Open();
         using (var cmd = cn.CreateCommand()) {
+          /* THE SOURCE LINE, FROM THE BOOK'S OWN LINK (docs/bugs/0898). A
+             transfer does not fill FromDocDtlKey on the detail table - 0 of 111
+             DODTL and 0 of 51 GRDTL lines on the write-back's documents,
+             2026-09-14 - but DocTransfer records it for every transferred line.
+             Without it the ERP could only compare item codes, which a
+             conversion copies from the SOURCE line, and it refused. Sent only
+             when exactly ONE transfer row names the line, so a reader can treat
+             a present value as proved; a create has none and sends NULL. */
           cmd.CommandText =
-            "SELECT d.DtlKey, d.ItemCode, d.Desc2 FROM " + dtlTable + " d " +
+            "SELECT d.DtlKey, d.ItemCode, d.Desc2, " +
+            "(SELECT CASE WHEN COUNT(*) = 1 THEN MIN(t.FromDocDtlKey) END FROM DocTransfer t " +
+            " WHERE t.ToDocDtlKey = d.DtlKey AND t.ToDocType = @to) FROM " + dtlTable + " d " +
             "JOIN " + hdr + " h ON h.DocKey = d.DocKey " +
             "WHERE h.DocNo = @no ORDER BY d.DtlKey";
           var pr = cmd.CreateParameter(); pr.ParameterName = "@no"; pr.Value = docNo;
           cmd.Parameters.Add(pr);
+          var pt = cmd.CreateParameter(); pt.ParameterName = "@to"; pt.Value = hdr;
+          cmd.Parameters.Add(pt);
           using (var rd = cmd.ExecuteReader()) {
             var seq = 0;
             while (rd.Read()) {
@@ -1074,6 +1086,7 @@ class AcSyncService {
                 { "DtlKey", rd.GetInt64(0) },
                 { "ItemCode", rd.IsDBNull(1) ? "" : rd.GetString(1) },
                 { "Desc2", rd.IsDBNull(2) ? "" : rd.GetString(2) },
+                { "FromDocDtlKey", rd.IsDBNull(3) ? null : (object) System.Convert.ToInt64(rd.GetValue(3)) },
               });
             }
           }

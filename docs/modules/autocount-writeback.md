@@ -6274,7 +6274,14 @@ be re-queued.
 0 disagree, 26 lines with no source (added on the receipt), 2 whose source the
 receipt does not hold, 1 ambiguous.
 
-**Still open.** Conversions drained after the stamp keep no key the same way.
-The lasting fix is for `CreatedLines` to return each line's `FromDocDtlKey` from
-`DocTransfer`, which needs the office host rebuilt; until then the export and
-the stamp are re-runnable. Ledger: `docs/bugs/0897-delivery-orders-and-goods-receipts-the-write-back-created-ke.md`.
+**The lasting half — at the drain (docs/bugs/0898).** `CreatedLines` in
+`AcSyncService.cs` now returns each line's `FromDocDtlKey` from `DocTransfer`
+(only when exactly one transfer row names it), `parseCreatedLines`
+(`backend/src/services/autocount-created-lines.ts`) keeps it, and
+`persistLineKeys` pairs a `so_to_do` / `po_to_gr` / `do_to_iv` / `gr_to_pi`
+by that link when every line carries it, with the same
+`conversion-line-key-plan.mjs` rule as the stamp. **It takes effect only once the
+office host is rebuilt**; until then the host sends no link, the old count and
+code checks decide, and the export and the stamp are re-runnable for whatever
+drains in between. Ledger: `docs/bugs/0897-delivery-orders-and-goods-receipts-the-write-back-created-ke.md`,
+`docs/bugs/0898-the-drain-could-not-pair-a-converted-document-s-lines-with-t.md`.
