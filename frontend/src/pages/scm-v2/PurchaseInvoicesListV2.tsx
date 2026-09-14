@@ -17,7 +17,6 @@ import {
   ExternalLink,
   Edit3,
   Printer,
-  CheckCircle2,
   Wallet,
   ArrowRightLeft,
 } from "lucide-react";
@@ -53,8 +52,9 @@ import {
   usePurchaseInvoiceDetail,
   useCancelPurchaseInvoice,
   usePostPurchaseInvoice,
-  useRecordPiPayment,
 } from "../../vendor/scm/lib/purchase-invoice-queries";
+import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
+import { apPaymentHrefFor, canOpenApPayment, piAwaitsPayment } from "../../vendor/scm/lib/pi-payment-path";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
@@ -323,7 +323,6 @@ function DetailDrawer({
   onEdit,
   onPrint,
   onRecordPayment,
-  onMarkPaid,
 }: {
   row: PiRow | null;
   onClose: () => void;
@@ -331,9 +330,9 @@ function DetailDrawer({
   onEdit: () => void;
   onPrint: () => void;
   onRecordPayment: () => void;
-  onMarkPaid: () => void;
 }) {
   const detailQ = usePurchaseInvoiceDetail(row?.id ?? null);
+  const { can, pageAccess } = useHouzsAuth();
   const items: PiItem[] =
     ((detailQ.data as { items?: PiItem[] } | undefined)?.items ?? []);
 
@@ -461,25 +460,11 @@ function DetailDrawer({
               <Button variant="ghost" icon={<Edit3 size={14} />} onClick={onEdit}>Edit</Button>
               <Button variant="ghost" icon={<Printer size={14} />} onClick={onPrint}>Print</Button>
               <div className="flex-1" />
-              {(() => {
-                const s = (row.status || "").toUpperCase();
-                const notTerminal = s !== "PAID" && s !== "CANCELLED";
-                if (notTerminal && outstanding > 0) {
-                  return (
-                    <Button variant="primary" icon={<Wallet size={14} />} onClick={onRecordPayment}>
-                      Record payment
-                    </Button>
-                  );
-                }
-                if (notTerminal && outstanding === 0) {
-                  return (
-                    <Button variant="primary" icon={<CheckCircle2 size={14} />} onClick={onMarkPaid}>
-                      Mark paid
-                    </Button>
-                  );
-                }
-                return null;
-              })()}
+              {piAwaitsPayment(row) && canOpenApPayment(can, pageAccess) && (
+                <Button variant="primary" icon={<Wallet size={14} />} onClick={onRecordPayment}>
+                  Record payment
+                </Button>
+              )}
             </div>
           </>
         )}
@@ -650,7 +635,6 @@ export function PurchaseInvoicesListV2() {
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const cancelPi = useCancelPurchaseInvoice();
   const postPi = usePostPurchaseInvoice();
-  const recordPayment = useRecordPiPayment();
 
   // Server already filtered + sorted this page — render verbatim. The four
   // MRP-derived columns (Assigned SO / Delivered) arrive from the deferred
@@ -827,16 +811,8 @@ export function PurchaseInvoicesListV2() {
     }
   };
   const batchPrint = usePrintPreview(deliverSelectedPis);
-  const goRecordPayment = (r: PiRow) =>
-    navigate(`/scm/purchase-invoices/${r.id}?tab=payments&record=1`);
-  const doMarkPaid = async (r: PiRow) => {
-    if (await askConfirm({
-      title: `Mark invoice ${r.invoice_number} as paid?`,
-      confirmLabel: "Mark paid",
-    })) {
-      recordPayment.mutate({ id: r.id, amountSen: outstandingOf(r) }, { onSuccess: () => setSelected(null) });
-    }
-  };
+  /* The AP Payment voucher, this invoice ticked (docs/bugs/0889). */
+  const goRecordPayment = (r: PiRow) => navigate(apPaymentHrefFor(r));
 
   /* CONFIRM + CANCEL, from the right-click menu (owner 2026-08-22).
 
@@ -1325,7 +1301,6 @@ export function PurchaseInvoicesListV2() {
         onEdit={() => selected && goEdit(selected)}
         onPrint={() => selected && printDocument(purchaseInvoicePrintChain(selected).own)}
         onRecordPayment={() => selected && goRecordPayment(selected)}
-        onMarkPaid={() => selected && doMarkPaid(selected)}
       />
     </PullToRefresh>
   );
