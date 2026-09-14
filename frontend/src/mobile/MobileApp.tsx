@@ -952,7 +952,7 @@ function MobileAppInner() {
   }
   else if (screen.t === "do-edit") {
     const backToDoc = () => setScreen({ t: "module-detail", key: screen.key, row: screen.row, title: screen.title });
-    overlay = <MobileDoHeaderEdit id={String(screen.row?.id)} onBack={backToDoc} onSaved={backToDoc} />;
+    overlay = <MobileDoHeaderEdit id={String(screen.row.id)} onBack={backToDoc} onSaved={backToDoc} />;
   }
   else if (screen.t === "pod") {
     const leavePod = screen.from === "delivery-planning"
