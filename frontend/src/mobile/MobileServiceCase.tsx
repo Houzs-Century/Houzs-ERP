@@ -55,7 +55,7 @@ import {
 // the intake sheet another branch is editing stays untouched.
 import {
   ASSR_ISSUE_CATEGORIES as ISSUE_CATEGORY_OPTIONS,
-  ASSR_NOTE_AUDIENCES,
+  ASSR_NOTE_AUDIENCES, assrOrderPoText,
   type AssrNoteAudience as NoteAudience,
 } from "../vendor/scm/lib/assr/case-fields";
 import "./mobile.css";
@@ -1355,6 +1355,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                   )) : (
                     <div style={{ fontSize: 12, color: GREY, padding: "2px 0" }}>No items recorded.</div>
                   )}
+                  <KV label="Order PO" value={assrOrderPoText(c) || "—"} mono />
                   <KV label="PO No" value={(poNo ? [String(poNo)] : []).concat(relatedPOs.map((p) => String(get(p, "docNo", "doc_no") ?? "")).filter(Boolean)).join(", ") || "—"} mono />
                 </EditableAcc>
               </>

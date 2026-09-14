@@ -19,6 +19,14 @@ import type { BankLine, Reconciliation, LedgerEntry } from './bank-queries';
 
 const bookMutate = vi.fn();
 const bookMutateAsync = vi.fn();
+const uploadMutate = vi.fn();
+/* pdf.js never runs under jsdom: the extractor is stubbed, and what is
+   pinned is that a picked .pdf goes to the server AS its extracted text,
+   marked as a PDF (docs/bugs/0869). */
+vi.mock('../../vendor/scm/lib/pdf-text', () => ({
+  PDF_TEXT_KIND: 'houzs-pdf-text/1',
+  extractPdfText: vi.fn(async () => ({ kind: 'houzs-pdf-text/1', pages: [{ lines: [{ y: 693, cells: [{ x: 449, t: '31/08/26' }] }] }] })),
+}));
 const matchMutate = vi.fn();
 const groupMutate = vi.fn();
 const ignoreMutate = vi.fn();
@@ -85,7 +93,7 @@ vi.mock('./bank-queries', () => ({
     },
     isLoading: false,
   }),
-  useUploadBankStatement: () => ({ mutate: vi.fn(), isPending: false }),
+  useUploadBankStatement: () => ({ mutate: uploadMutate, isPending: false }),
   useBookBankReceipt: () => ({ mutate: bookMutate, mutateAsync: bookMutateAsync, isPending: false, isError: false, error: null }),
   useMatchBankLine: () => ({ mutate: matchMutate, isPending: false, isError: false, error: null }),
   useMatchBankGroup: () => ({ mutate: groupMutate, isPending: false, isError: false, error: null }),
@@ -656,5 +664,84 @@ describe('every certain payout at once', () => {
     lines = [SPLIT, OTHER];
     openStatement();
     expect(screen.queryByText(/Money received — all/)).toBeNull();
+  });
+});
+
+/* ── The bank's monthly statement PDF (owner 2026-09-14: 也支持 csv，也支持 pdf;
+   docs/bugs/0869): the browser reads its text with positions and the upload
+   carries it marked as a PDF; a CSV goes as it always did. ────────────────── */
+describe('uploading a statement PDF', () => {
+  const pick = async (file: File) => {
+    render(<BankStatementTab />);
+    fireEvent.change(screen.getByLabelText('Bank account'), { target: { value: '310-0010' } });
+    const input = screen.getByLabelText('Bank statement file') as HTMLInputElement;
+    expect(input.accept).toContain('.pdf');
+    fireEvent.change(input, { target: { files: [file] } });
+    const go = () => screen.getByText('Upload bank statement').closest('button') as HTMLButtonElement;
+    await waitFor(() => expect(go().disabled).toBe(false));
+    fireEvent.click(go());
+    expect(uploadMutate).toHaveBeenCalledTimes(1);
+    return uploadMutate.mock.calls[0]![0] as { fileName: string; format: string; content: string; accountCode: string };
+  };
+
+  test('a picked .pdf is sent as its extracted text, marked PDF', async () => {
+    uploadMutate.mockReset();
+    const sent = await pick(new File(['%PDF-1.4'], 'MBBcurrent_564418759397_2026-08-31.pdf', { type: 'application/pdf' }));
+    expect(sent).toMatchObject({ accountCode: '310-0010', fileName: 'MBBcurrent_564418759397_2026-08-31.pdf', format: 'PDF' });
+    expect(JSON.parse(sent.content)).toMatchObject({ kind: 'houzs-pdf-text/1', pages: [{ lines: [{ y: 693 }] }] });
+  });
+
+  test('a picked .csv is sent as its text, marked CSV, as it always was', async () => {
+    uploadMutate.mockReset();
+    const sent = await pick(new File(['EFFECT DATE|AMOUNT\n20260605|100'], 'aug.csv', { type: 'text/csv' }));
+    expect(sent).toMatchObject({ fileName: 'aug.csv', format: 'CSV', content: 'EFFECT DATE|AMOUNT\n20260605|100' });
+  });
+});
+
+/* ── A decision that changes under an open row (docs/bugs/0870). The matcher
+   decides every line again on each read; a row drawn as "check which" whose
+   decision becomes "one payout for several reports" must show the reports
+   the matcher picked, ticked, with the button live — not its old empty
+   state. ───────────────────────────────────────────────────────────────── */
+describe('a row whose decision changes under it', () => {
+  test('re-seeds its ticks from the new decision instead of keeping the old empty ones', () => {
+    const before: BankLine = {
+      ...SPLIT, id: 12, line_no: 12, amount_sen: 813169, charge_sen: 0, kind: 'PAYOUT_UNSURE', matched_batch_id: null, split: null,
+      note: 'PBB paid RM 8,131.69, and no single report of theirs is owed that. 6 are still waiting — choose, or record it against more than one.',
+      candidates: [
+        { id: 21, acquirerCode: 'PBB', fileName: '2990HOMESB_CSV_20260703.csv', periodFrom: '2026-07-03', periodTo: '2026-07-03', payableSen: 166869, outstandingSen: 166869 },
+        { id: 22, acquirerCode: 'PBB', fileName: '2990HOMESB_CSV_20260704.csv', periodFrom: '2026-07-04', periodTo: '2026-07-04', payableSen: 312660, outstandingSen: 312660 },
+        { id: 23, acquirerCode: 'PBB', fileName: '2990HOMESB_CSV_20260705.csv', periodFrom: '2026-07-05', periodTo: '2026-07-05', payableSen: 333640, outstandingSen: 333640 },
+        { id: 26, acquirerCode: 'PBB', fileName: '2990HOMESB_CSV_20260712.csv', periodFrom: '2026-07-12', periodTo: '2026-07-12', payableSen: 720324, outstandingSen: 720324 },
+      ],
+    };
+    lines = [before];
+    const r = render(<BankStatementTab />);
+    fireEvent.click(screen.getByText('Reconcile'));
+    /* Undecided: every report offered, nothing ticked, the button dead. */
+    expect(screen.getAllByRole('checkbox', { name: /Report .* for line 12/ })).toHaveLength(4);
+    expect((screen.getByText('Money received').closest('button') as HTMLButtonElement).disabled).toBe(true);
+
+    /* The next read: three reports now add up to it exactly. */
+    lines = [{
+      ...before, kind: 'PAYOUT_SPLIT',
+      split: [{ batchId: 21, amountSen: 166869 }, { batchId: 22, amountSen: 312660 }, { batchId: 23, amountSen: 333640 }],
+      note: '3 of PBB\'s reports add up to RM 8,131.69 exactly — 2990HOMESB_CSV_20260703.csv RM 1,668.69 + 2990HOMESB_CSV_20260704.csv RM 3,126.60 + 2990HOMESB_CSV_20260705.csv RM 3,336.40. Check them and record it.',
+    }];
+    r.rerender(<BankStatementTab />);
+    const ticked = screen.getAllByRole('checkbox', { name: /Report .* for line 12/ }) as HTMLInputElement[];
+    expect(ticked.map((c) => [c.getAttribute('aria-label'), c.checked])).toEqual([
+      ['Report 2990HOMESB_CSV_20260703.csv for line 12', true],
+      ['Report 2990HOMESB_CSV_20260704.csv for line 12', true],
+      ['Report 2990HOMESB_CSV_20260705.csv for line 12', true],
+    ]);
+    expect(screen.getByText('Not this one? 1 other report(s)')).toBeTruthy();
+    const go = screen.getByText('Money received — 3 reports').closest('button') as HTMLButtonElement;
+    expect(go.disabled).toBe(false);
+    fireEvent.click(go);
+    expect(bookMutate).toHaveBeenLastCalledWith({
+      lineId: 12,
+      allocations: [{ batchId: 21, amountSen: 166869 }, { batchId: 22, amountSen: 312660 }, { batchId: 23, amountSen: 333640 }],
+    });
   });
 });

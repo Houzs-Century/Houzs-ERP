@@ -1466,7 +1466,7 @@ mfgSalesOrders.get('/', async (c) => {
        every other enrichment above, so it rides the same concurrent wave.
        Since 2026-08-02 this is the TOOLTIP-only legacy raise-link — the visible
        chips come from source_po_union below. */
-    const convertedPoProm = soConvertedPoNumbers(sb, docNos);
+    const convertedPoProm = soConvertedPoNumbers(sb, docNos, activeCompanyId(c) ?? null);
     /* Source-PO union (owner 2026-08-02, "他拿的货是谁的货"): the list "PO No."
        column shows the union of per-line source chips the drill shows —
        SHIPPED/DELIVERED consumed batches ∪ READY projections. Only the SHIPPED
