@@ -52,7 +52,12 @@
     },
     {
       "check": "D1",
-      "key": "ACCESSORY,BEDFRAME,BEDLINES,CARPET,DIFFUSER,DINING,MATTRESS,SERVICE,SOFA|backend/src/scm/routes/mfg-products.ts backend/src/scm/shared/so-branding-label.ts frontend/src/pages/scm-v2/ItemGroups.tsx frontend/src/pages/scm-v2/ProductModels.tsx frontend/src/vendor/shared/so-branding-label.ts",
+      "key": "BEDFRAME,FABRIC_ACCESSORY,SOFA|backend/src/scm/lib/so-stock-allocation.ts frontend/src/vendor/scm/lib/variant-editor-groups.ts",
+      "why": "TWO QUESTIONS that today have the same answer: HARD_BOUND_GROUPS decides which sales lines MRP binds per order (backend allocation); VARIANT_EDITOR_GROUPS decides which purchase-form lines show the fabric/seat/leg pickers (frontend). The Sofa Accessory category (2026-09-14) joined both because a custom pillow is both made per order and picks a fabric, but a group could be one without the other (a mattress with a size editor need not bind). Each is already one home for its own question; the four PO/PC form copies were collapsed into VARIANT_EDITOR_GROUPS."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORY,BEDFRAME,BEDLINES,CARPET,DIFFUSER,DINING,FABRIC_ACCESSORY,MATTRESS,SERVICE,SOFA|backend/src/scm/routes/mfg-products.ts backend/src/scm/shared/so-branding-label.ts frontend/src/pages/scm-v2/ItemGroups.tsx frontend/src/pages/scm-v2/ProductModels.tsx frontend/src/vendor/shared/so-branding-label.ts",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 5 homes: MFG_PRODUCT_CATEGORIES, CATEGORIES, and ItemGroups' SUGGESTED — a per-category map of DEFAULT account bindings (values are accounts, keys just happen to be the vocabulary; the registry itself lives in scm.acc_item_groups seeded from the same enum). Cost of divergence is a blank chip or an unsuggested row, not a wrong number."
     },
     {

@@ -1269,6 +1269,15 @@ and the two composite predicates live once, in `frontend/src/auth/salesAccess.ts
 | + Total Sales | `PATCH /:id/finance` | `projects.write` + `denyFinance` | `canWriteProjectFinance(user, can)` | `canWrite`, inside the finance-visible snapshot |
 | + Quick Log / + New Sale | `POST /api/sales/entries` | `requirePageAccess("sales")` | `canLogSalesEntry(salesLevel)` | same helper |
 
+**An archived project withholds only the status dropdown, on both surfaces
+(owner 2026-09-14, D4).** The server checks no `archived_at` before an edit, and
+the desktop hides only `ProjectStatusSelect`. The phone used to AND `!archived`
+into 24 gates (ticks, uploads, schedule, crew photos, assignment, header Edit, Log
+sale, P&L), so a closed event with late costs could not be finished from a phone.
+It now gates the status select alone; every other control keeps its permission
+terms. Pinned in `frontend/src/auth/projectActionGates.test.ts`; trace
+`docs/bugs/0893-an-archived-project-was-locked-on-the-phone-but-editable-on.md`.
+
 Three traps this table exists to stop:
 
 - **`disabled` is not a gate.** The Archive and Restore menu items each carried a

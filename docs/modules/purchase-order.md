@@ -187,6 +187,16 @@ movement under the EMPTY key. The goods are then in the warehouse, at the right
 value, with their `variants` jsonb fully intact — and invisible to every sofa
 order, which looks up `fabriccode=…|seatheight=…|legheight=…`.
 
+**The Sofa Accessory group (`fabric_accessory`, owner 2026-09-14)** is the third
+group whose key composes an attribute: the **fabric colour only**
+(`fabriccode=…`), so two colours of the same custom pillow are two buckets. Its PO
+line shows the variant editor with just the Fabrics picker (`PcVariantEditor`, and
+the inline fabric box in `PurchaseOrderNew.tsx`). Which categories get that editor
+on every PO / PC form lives in ONE place —
+`vendor/scm/lib/variant-editor-groups.ts` (`showsVariantEditor`), used by
+`PurchaseOrderNew`, `PurchaseConsignmentOrderNew`, `PoLineCard` and `PcLineCard`;
+add a category there, not in a form. `tasks/PLAN-sofa-accessories-category.md`.
+
 **The variants are never the thing that goes missing.** `description2` is built
 from the jsonb alone and prints correctly the whole time, which is exactly why
 this reads as impossible from the screen: the specs are right there on the PO.
@@ -809,6 +819,15 @@ Live-count, not arithmetic: it re-sums `purchase_order_items.qty` per
 matter: lines with `from_mrp === true` never lock the SO line (`:2372`), and
 POs whose status is `CANCELLED` **or `DRAFT`** are excluded (`:2384`). Best-effort
 throughout — it logs and skips, because the primary write already committed.
+
+**A company-1 BOUND line does not rely on this counter (2026-09-14).** Because
+MRP-origin lines are left out, `po_qty_picked` could read 0 on a line already on
+an MRP-origin purchase order, and MRP-origin converts skipped the cap entirely —
+that is how five custom pillow lines were ordered twice (bug 0890). For a line
+`isHardBoundLine` names, on company 1, both the bulk convert (`convertSosToPosCore`,
+MRP or not) and the generic create's over-convert check use
+`boundAwarePicked` = max(`po_qty_picked`, qty on every live PO line carrying that
+`so_item_id`) from `lib/bound-line-ordered.ts`. Pooled lines are unchanged.
 
 ---
 

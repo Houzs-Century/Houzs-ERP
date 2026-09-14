@@ -81,6 +81,11 @@ anything either), but worth knowing before you tell a user to just cancel it.
 | Desktop new | `frontend/src/pages/scm-v2/PurchaseConsignmentOrderNew.tsx` |
 | Query hooks | `frontend/src/vendor/scm/lib/purchase-consignment-order-queries.ts` |
 
+**Which lines show the fabric / seat / leg editor** on the new-PC form and the
+line card is decided in ONE place shared with the owned-stock PO forms:
+`vendor/scm/lib/variant-editor-groups.ts` — sofa, bedframe, and since 2026-09-14
+the Sofa Accessory group `fabric_accessory` (fabric colour only).
+
 **No dedicated mobile screen** — the generic `MobileModuleList` /
 `MobileModuleDetail` render it under module key `purchase-consignment-orders`.
 It is not in `statusActionsFor`, so mobile offers **no** status actions for it:

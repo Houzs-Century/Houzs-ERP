@@ -28,6 +28,7 @@
 
 /** The shape this helper needs off a request line. */
 import { pgrestIn } from './pgrest-in-list';
+import { REQUIRED_VARIANT_AXES_BY_CATEGORY } from '../shared/so-variant-rule';
 
 export type CategoryResolvableLine = {
   materialKind?: unknown;
@@ -213,6 +214,13 @@ const COMPOSED_ONLY_FOR_SOFA_OR_BEDFRAME = [
 ] as const;
 
 const COMPOSING_GROUPS = new Set(['sofa', 'bedframe']);
+/* The Sofa Accessory group (owner 2026-09-14) composes the FABRIC and nothing else. */
+const FABRIC_ONLY_GROUPS = new Set(['fabric_accessory']);
+/* The spellings a fabric arrives under — read from the category's own required
+   axis, so this detector and the SO completeness rule cannot drift apart. */
+const FABRIC_KEYS = new Set<string>(
+  (REQUIRED_VARIANT_AXES_BY_CATEGORY.fabric_accessory ?? []).flatMap((a) => a.aliases),
+);
 
 /**
  * Does this line carry attributes its group will throw away?
@@ -228,7 +236,9 @@ export function attributesTheGroupWillIgnore(
   const group = (itemGroup ?? '').trim().toLowerCase();
   if (COMPOSING_GROUPS.has(group)) return [];
   if (!variants) return [];
+  const fabricOnly = FABRIC_ONLY_GROUPS.has(group);
   return COMPOSED_ONLY_FOR_SOFA_OR_BEDFRAME.filter((k) => {
+    if (fabricOnly && FABRIC_KEYS.has(k)) return false;
     const v = (variants as Record<string, unknown>)[k];
     return typeof v === 'string' ? v.trim() !== '' : v != null;
   });
