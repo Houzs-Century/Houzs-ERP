@@ -2,6 +2,7 @@ import {
   soEditLeaseRefusal, soEditLeaseTakeoverAllowed, type SoEditLeaseRefusal,
 } from './so-edit-lease';
 import type { Sql } from 'postgres';
+import { parsePgrestInList } from './pgrest-in-list';
 import { getSql, resolveDatabaseUrl } from '../../db/pg';
 
 type QueryResult<T = unknown> = { data: T | null; error: { message: string } | null; count?: number | null };
@@ -190,6 +191,11 @@ class PgPostgrestQuery implements PromiseLike<QueryResult<any>> {
     throw new Error(`Unsupported PostgREST not operator: ${operator}`);
   }
   filter(column: string, operator: string, value: unknown) {
+    /* `in` is the ESCAPED list the shared readers build with pgrestInList
+       (docs/bugs/0780). Missing here, it threw inside every amendment approve's
+       AutoCount enqueue from 2026-09-10 and the catch dropped it (docs/bugs/0888).
+       Parsed by the same grammar PostgREST reads, so a value carrying `"` stays whole. */
+    if (operator === 'in') return this.in(column, parsePgrestInList(String(value)));
     const ops: Record<string, string> = { eq: '=', neq: '<>', gt: '>', gte: '>=', lt: '<', lte: '<=' };
     const op = ops[operator];
     if (!op) throw new Error(`Unsupported PostgREST filter operator: ${operator}`);

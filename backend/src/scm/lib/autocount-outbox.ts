@@ -503,11 +503,10 @@ async function noteReadFailure(
     || e instanceof MissingAgentError
     || e instanceof MissingSalesLocationError
     || e instanceof MissingCreditorError
-    /* THE LIST IS THE WHOLE MECHANISM: an error missing from it is SWALLOWED by
-       the early return below — no row, no log line, nothing to read. Pinned
-       against acNotSentProblems' twin chain in ac-preflight.test.ts. */
+    /* An error missing from this list is NOT a named refusal — it is still written down as "compose failed" (0888: an
+       early return here dropped four days of amendment edits with no row and no log). Pinned in ac-preflight.test.ts. */
     || e instanceof AcSoToPoAlignmentError;
-  if (!refused && !(e instanceof AcReadError)) return [];
+  const named = refused || e instanceof AcReadError;  // anything else still lands, class-named, as "compose failed"
   const message = (e as Error).message;
   // eslint-disable-next-line no-console
   console.error(
@@ -533,7 +532,7 @@ async function noteReadFailure(
          operator actually reads. */
       reason: refused
         ? `refused, nothing sent (${(e as Error).name}): ${message}`
-        : `compose failed, nothing sent: ${message}`,
+        : `compose failed, nothing sent: ${named ? '' : `(${(e as Error).name}) `}${message}`,
     });
   } catch { /* the note is best-effort; the log above is the floor */ }
   /* AND THE OPERATOR IS TOLD. The skipped row is what an ENGINEER reads; it is
