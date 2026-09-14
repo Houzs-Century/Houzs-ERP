@@ -240,6 +240,13 @@ name an existing **destination** document to append the picked lines INTO.
 Mixing that with a source scope in one table is how the next reader gets it
 backwards, so those stay hand-written and are declared via `alsoKnown`.
 
+The same holds for a picker's own **search term**. `PurchaseInvoiceFromGrn` takes
+`?q=` since 2026-09-14 (owner: 「需要加上search button」): it narrows the cards on
+screen and scopes nothing, so it is declared via `alsoKnown` (`['q']`) and listed
+beside `appendToGrn` in the tree scan's `NON_SCOPE_PARAMS`. What it matches is in
+[`purchase-invoice.md`](./purchase-invoice.md), *Searching the "Bill a
+Goods-Received Note" picker*.
+
 ### What enforces it
 
 - `frontend/src/lib/convertScope.test.tsx` — the contract, **plus a tree scan
