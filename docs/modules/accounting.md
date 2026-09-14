@@ -1140,6 +1140,30 @@ filter, the confirmed-only tick and an Export of the table as CSV.
 Contracts: `backend/tests/merchantChargesReport.test.ts`,
 `frontend/src/pages/scm-v2/MerchantChargesReport.test.tsx`.
 
+**Cash and Online are rows of the Merchant charges report too (2026-09-14,
+docs/bugs/0900; owner: 这个 merchant charge 其实会包括 cash online，只是 % 是 0
+percent).** The report answers "of the money received, what did each channel
+cost", and cash at the counter and online transfers cost nothing — so the
+route also reads the payments keyed on sales orders
+(`mfg_sales_order_payments`, method `cash` / `transfer`, this company, by
+the day the payment was made, a cancelled order's money left out) and lists
+them under each month as **CASH** and **ONLINE** after the acquirers, at 0.0%
+(lines = payments, gross = net = the amount), opening to the payments
+themselves (order, day, sub-type) rather than to report files. They count in
+the month's line and the grand total, so Charge % reads against everything
+received. `acquirer=CASH` / `ONLINE` keeps one channel and a merchant filter
+leaves both out; `confirmed=1` does not reach them (a keyed payment has
+nothing to confirm). `merchant` and `installment` payments are never
+counted here — the acquirers' reports carry them. Two calendars, on purpose:
+a merchant row is dated by the report's trading day and a keyed payment by
+its own date, so a month's card figure and the ledger's card total differ by
+a report that straddles the month end (June 2026 ties exactly; July and
+August do not while reports are still being uploaded). The tab labels the
+rows Cash and Online, names them in the merchant filter, and Export writes
+them with their payments. Contracts: the Cash-and-Online cases in
+`backend/tests/merchantChargesReport.test.ts` and
+`frontend/src/pages/scm-v2/MerchantChargesReport.test.tsx`.
+
 **The Collection report (2026-09-12, docs/bugs/0825; owner: collection
 report … salesman 开了多少单，deposit 收了多少%，below 50% 的我也需要知道; 分主要看
 两个，deposit / sales order amount，一个是看 balance paid).** `GET
