@@ -4941,7 +4941,7 @@ attach (`paymentSlipAttachSchema.reason`), refusing without one
 (`KEY_HOLDER_REASON_REQUIRED`). The WINDOW does not move: `mayAmend` still
 reads `hasHouzsPerm`, a reconciled payment stays shut, Sales positions are as
 they were. Every such row is audited `source = 'amend'` with the reason in
-`note` and, since migration `20260914T1100`, the `payment_id` it concerns
+`note` and, since migration `20260914T1700`, the `payment_id` it concerns
 (`recordSoAudit`'s `paymentId`, set by the add, the edit, the delete, the
 proof and both SO-create deposit rows) — which is how Corrections names who
 first recorded a corrected payment. On the screens the reading is

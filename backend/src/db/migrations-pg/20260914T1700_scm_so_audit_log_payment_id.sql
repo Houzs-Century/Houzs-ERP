@@ -1,4 +1,4 @@
--- 20260914T1100_scm_so_audit_log_payment_id.sql
+-- 20260914T1700_scm_so_audit_log_payment_id.sql
 -- REVERSAL: DROP INDEX IF EXISTS scm.idx_mfg_so_audit_log_payment;
 --   ALTER TABLE scm.mfg_so_audit_log DROP COLUMN IF EXISTS payment_id; — the
 --   column is new and nullable, nothing existing is altered or backfilled. Rows

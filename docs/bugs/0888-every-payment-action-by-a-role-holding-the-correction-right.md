@@ -48,7 +48,7 @@ proof route's note is the reason, its `slipKey` change still says attach vs
 replace).
 
 *The payment on the row.* Migration
-`backend/src/db/migrations-pg/20260914T1100_scm_so_audit_log_payment_id.sql`
+`backend/src/db/migrations-pg/20260914T1700_scm_so_audit_log_payment_id.sql`
 adds nullable `payment_id` to `scm.mfg_so_audit_log` with a partial index;
 `recordSoAudit` takes `paymentId`, set by the add (`so-payment-row.ts`), the
 edit, the delete, the proof attach and both SO-create deposit rows.

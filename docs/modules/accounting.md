@@ -1715,7 +1715,7 @@ audited `source = 'amend'` with the reason in `note`. The window itself is
 unchanged (`mayAmend` still reads `hasHouzsPerm`; a reconciled payment stays
 shut to everybody). The key is granted per ROLE under Team > Roles &
 Permissions, the Roles section — a flat key, not a position capability; the
-"Finance" role already names it. Migration `20260914T1100` tags every
+"Finance" role already names it. Migration `20260914T1700` tags every
 payment audit row with its `payment_id`, so the report can answer who
 recorded the payment FIRST: the ADD_PAYMENT row's actor, else the collector on
 the payment row (a scan-born receipt names no actor), and for a correction

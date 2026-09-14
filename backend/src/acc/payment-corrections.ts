@@ -23,7 +23,7 @@
    (ADD_PAYMENT / UPDATE_PAYMENT / DELETE_PAYMENT); the routes mark the ones
    made on the right with `source = 'amend'`, put the typed reason in `note`,
    tag the row with the payment it concerns (`payment_id`, migration
-   20260914T1100), and on a correction add two field changes — `ledger`, the
+   20260914T1700), and on a correction add two field changes — `ledger`, the
    original entry → the one booked in its place, and `ledgerReversal`, the
    contra that voided the original — so the SO's own audit history shows the
    same facts the report does. The report is then a filtered read of that log.

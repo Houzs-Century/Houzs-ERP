@@ -21,7 +21,7 @@
    which is the only name the log carries.
 
    WHO RECORDED IT FIRST. A row written since payments were tagged carries the
-   payment's id (migration 20260914T1100), which leads to its ADD_PAYMENT row
+   payment's id (migration 20260914T1700), which leads to its ADD_PAYMENT row
    — the actor there — or, for a scan-born payment whose ADD row names nobody,
    to the collector on the payment row. An older, untagged correction reads
    the order's own ADD rows and is answered only when exactly one fits.

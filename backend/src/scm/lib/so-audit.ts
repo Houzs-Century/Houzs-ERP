@@ -12,7 +12,7 @@
 //     The render layer maps `field` to a human label.
 //   - `paymentId` tags a payment action (ADD / UPDATE / DELETE_PAYMENT, the
 //     proof attach) with the payment it concerns — mfg_so_audit_log.payment_id,
-//     migration 20260914T1100 — so the Corrections report can name who first
+//     migration 20260914T1700 — so the Corrections report can name who first
 //     recorded the payment a correction touched (docs/bugs/0888). Optional:
 //     rows about the order itself carry none, and older rows read NULL.
 
