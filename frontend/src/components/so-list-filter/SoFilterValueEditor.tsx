@@ -13,24 +13,21 @@ import {
 import { SoDateRangeCalendar } from "./SoDateRangeCalendar";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { SO_FILTER_SKINS, type SoFilterSkin } from "./soFilterSkin";
+import type { SoFilterLookups, SoFilterOption } from "./useSoFilterLookups";
 
-export interface SoFilterPerson {
-  id: string;
-  name: string;
-}
 
 const range = (a: string, b: string) => `${a.trim()}~${b.trim()}`;
 
 export function SoFilterValueEditor({
   skin,
   row,
-  people,
+  lookups,
   today,
   onChange,
 }: {
   skin: SoFilterSkin;
   row: SoListFilter;
-  people: readonly SoFilterPerson[];
+  lookups: SoFilterLookups;
   today: string;
   onChange: (patch: Partial<Pick<SoListFilter, "op" | "value">>) => void;
 }) {
@@ -54,9 +51,11 @@ export function SoFilterValueEditor({
       return (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {opChips(def.ops, (op) => (op === "me" ? "Is me" : "Pick a person"))}
-          {row.op === "is" && <PersonList skin={skin} people={people} value={row.value} onPick={(id) => onChange({ value: id })} />}
+          {row.op === "is" && <OptionList skin={skin} options={lookups.people} noun="people" value={row.value} onPick={(id) => onChange({ value: id })} />}
         </div>
       );
+    case "warehouse":
+      return <OptionList skin={skin} options={lookups.warehouses} noun="warehouses" value={row.value} onPick={(id) => onChange({ value: id })} />;
     case "text":
       return (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -152,9 +151,10 @@ export function SoFilterValueEditor({
   }
 }
 
-function PersonList({ skin, people, value, onPick }: {
+function OptionList({ skin, options, noun, value, onPick }: {
   skin: SoFilterSkin;
-  people: readonly SoFilterPerson[];
+  options: readonly SoFilterOption[];
+  noun: string;
   value: string;
   onPick: (id: string) => void;
 }) {
@@ -162,11 +162,11 @@ function PersonList({ skin, people, value, onPick }: {
   const [term, setTerm] = useState("");
   const shown = useMemo(() => {
     const t = term.trim().toLowerCase();
-    return people.filter((p) => !t || p.name.toLowerCase().includes(t)).slice(0, 40);
-  }, [people, term]);
+    return options.filter((p) => !t || p.name.toLowerCase().includes(t)).slice(0, 40);
+  }, [options, term]);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <input className={k.input} type="search" value={term} placeholder="Search people" aria-label="Search people"
+      <input className={k.input} type="search" value={term} placeholder={`Search ${noun}`} aria-label={`Search ${noun}`}
         onChange={(e) => setTerm(e.target.value)} />
       <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 220, overflowY: "auto" }}>
         {shown.map((p) => (

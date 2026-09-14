@@ -82,7 +82,7 @@ import {
   type SpecialAddonRow,
 } from "../vendor/scm/lib/mfg-products-queries";
 import { useSpecialOrderSurface } from "../vendor/scm/lib/special-order-surface";
-import { useFabricColoursSearch, type FabricColourRow } from "../vendor/scm/lib/fabric-queries";
+import { MobileFabricPicker } from "./MobileFabricPicker";
 /* Owner 2026-07-16 — the recorded-payment ledger is the SHARED
    RecordedPaymentsList, the SAME component the scan-draft review screen
    (MobileSODetail) renders. It was a local read-only copy, which is why
@@ -95,7 +95,6 @@ import { RecordedPaymentsList, type RecordedPayment } from "./RecordedPayments";
    keeps missing (#583, then again in fix/b3-pay). */
 import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
 import { useFabricLibrary } from "../vendor/scm/lib/queries";
-import { useDebouncedValue } from "../vendor/scm/lib/hooks";
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from "../vendor/shared/maintenance-pools";
 import { missingVariantAxes, sofaMixIntroduced, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
 import { isColourKiv } from "../vendor/shared/variant-summary";
@@ -2733,8 +2732,9 @@ export function MobileNewSO({
       {fabricPickerFor && (() => {
         const line = lines.find((l) => l.key === fabricPickerFor);
         return (
-          <FabricPicker
-            pools={pools}
+          <MobileFabricPicker
+            itemCode={line?.itemCode ?? ""}
+            fabricSeries={pools.fabricSeries}
             current={String(line?.variants.fabricCode ?? "")}
             onClose={() => setFabricPickerFor(null)}
             onPick={(c) => {
@@ -3274,98 +3274,6 @@ function FabricField({ value, colourLabel, invalid, onOpen }: {
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9aa093" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
       </button>
     </Field>
-  );
-}
-
-/* FabricPicker — server-typeahead bottom-sheet (owner #1 scaling pain
-   2026-07-14). Converged onto the SAME logic layer as the desktop
-   FabricColourCombobox: the sheet's search box drives useFabricColoursSearch
-   (GET /fabric-colours?q=…, capped 50 server-side) — it fires only at >= 2 typed
-   chars (debounced), so the old "pull EVERY active colour + render capped 60"
-   pass is gone. The mobile bottom-sheet chrome is kept (tappable rows fit a
-   phone); only the data source moved from the preloaded pool to the server.
-   The picked value itself lives on the SO line (FabricField reads it), so a
-   saved line always renders its fabric even with no active search here. */
-function FabricPicker({ pools, current, onPick, onClose }: {
-  pools: VariantPools; current: string; onPick: (c: FabricColourRow) => void; onClose: () => void;
-}) {
-  const [search, setSearch] = useState("");
-  /* Same debounce + length>=2 gate the desktop combobox uses, so the query only
-     fires while the operator is actively typing. The sheet only mounts while
-     open, so no extra `open` gate is needed. */
-  const debounced = useDebouncedValue(search, 200);
-  const trimmed = debounced.trim();
-  const coloursQ = useFabricColoursSearch(trimmed, { enabled: trimmed.length >= 2 });
-  const rows = useMemo(() => (coloursQ.data ?? []).slice(0, 50), [coloursQ.data]);
-
-  return (
-    <div className="sheet-bd" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="sheet" onClick={(e) => e.stopPropagation()}>
-        <div className="grab" />
-        <div className="sheet-head">
-          <div>
-            <div className="ey" style={{ color: "#a16a2e" }}>Fabric</div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: "#11140f", marginTop: 2 }}>Pick a fabric / colour</div>
-          </div>
-          <button className="sheet-x" onClick={onClose}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
-          </button>
-        </div>
-
-        <div style={{ padding: "0 14px 10px", flex: "none" }}>
-          <div className="searchbar">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9aa093" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Type 2+ chars — fabric code or colour" autoFocus />
-          </div>
-        </div>
-
-        <div className="sheet-scroll" style={{ gap: 7 }}>
-          {rows.length === 0 ? (
-            <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "28px 0" }}>
-              {trimmed.length < 2
-                ? "Type at least 2 characters to search…"
-                : coloursQ.isFetching
-                  ? "Searching…"
-                  : `No fabrics match "${trimmed}".`}
-            </div>
-          ) : (
-            <>
-            {rows.map((c) => {
-              const on = c.colourId === current;
-              const series = pools.fabricSeries.get(c.fabricId) ?? "";
-              return (
-                <button
-                  key={c.colourId}
-                  type="button"
-                  onClick={() => { onPick(c); onClose(); }}
-                  style={{
-                    textAlign: "left", width: "100%", boxSizing: "border-box",
-                    border: on ? "1px solid #16695f" : "1px solid rgba(34,31,32,.12)",
-                    background: on ? "#e1efed" : "#fff",
-                    borderRadius: 11, padding: "10px 12px", cursor: "pointer", fontFamily: "inherit",
-                    display: "flex", alignItems: "center", gap: 10,
-                  }}
-                >
-                  {c.swatchHex && (
-                    <span style={{ width: 22, height: 22, flex: "none", borderRadius: 6, background: c.swatchHex, border: "1px solid rgba(34,31,32,.15)" }} />
-                  )}
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#11140f" }}>{c.colourId}</span>
-                    {(c.label || series) && (
-                      <span style={{ display: "block", fontSize: 10.5, color: "#767b6e", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {[series, c.label].filter(Boolean).join(" · ")}
-                      </span>
-                    )}
-                  </span>
-                  {on && <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><path d="M20 6 9 17l-5-5" /></svg>}
-                </button>
-              );
-            })}
-            </>
-          )}
-        </div>
-      </div>
-    </div>
   );
 }
 

@@ -28,6 +28,7 @@ beforeEach(() => {
   authedFetch.mockReset();
   authedFetch.mockImplementation(async (url: string) => {
     if (url.startsWith("/staff")) return { staff: [] };
+    if (url.startsWith("/inventory/warehouses")) return { warehouses: [{ id: "e309c399-697c-4174-967f-ae2c888ad999", code: "KL", name: "KL WAREHOUSE", location: null, is_active: true }] };
     const p = new URLSearchParams(url.split("?")[1] ?? "");
     return { salesOrders: [], total: p.getAll("f").length > 0 ? 8 : 2949 };
   });
@@ -82,5 +83,11 @@ describe("SoListFilterBar", () => {
     await user.click(screen.getByRole("button", { name: /Filters · 1/ }));
     await user.click(screen.getByRole("button", { name: "Clear" }));
     expect(new URLSearchParams(search).getAll("f")).toEqual([]);
+  });
+
+  it("an applied Warehouse row reads as the warehouse's name", async () => {
+    renderBar("/scm/sales-orders?f=warehouse:is:e309c399-697c-4174-967f-ae2c888ad999&f=branding:contains:AKEMI");
+    expect(await screen.findByText(/is KL WAREHOUSE/)).toBeTruthy();
+    expect(screen.getByText(/contains "AKEMI"/)).toBeTruthy();
   });
 });

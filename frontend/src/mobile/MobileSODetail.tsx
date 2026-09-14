@@ -95,6 +95,7 @@ import {
    owns any payment-row markup: that second, read-only copy is exactly what made
    Edit Draft offer LESS than the screen it was opened from. */
 import { AddPaymentSheet, RecordedPaymentsList, type RecordedPayment } from "./RecordedPayments";
+import { owesPaymentReason } from "../vendor/scm/lib/payment-reason";
 import { MobileLineRemark } from "./MobileLineRemark";
 import "./mobile.css";
 
@@ -1257,6 +1258,9 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav }: { 
           docNo={docNo}
           staff={pickableStaffQ.data ?? []}
           defaultCollectedBy={defaultCollectedBy}
+          /* A role holding the correction right says why it records money
+             (docs/bugs/0888); the list decides the same for its own edits. */
+          reasonWhy={owesPaymentReason(houzsAuth.user) ? "holder" : null}
           onClose={() => setPayOpen(false)}
           onSaved={async () => {
             setPayOpen(false);

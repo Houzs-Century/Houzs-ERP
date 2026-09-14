@@ -18,12 +18,13 @@
 // containing ":" survives. Ranges are `from~to` with either end optional.
 // Money is ringgit text ("2500.50"); the server converts to whole sen.
 //
-// NO LINE-DERIVED FIELDS HERE YET. Warehouse (the primary LINE's warehouse),
-// Branding (derived from the first line when the header carries none), item
-// category / item code and pending amendments are facts about an order's LINES
-// or its child rows; the list reads a header view, so each needs its own
-// server-side join. They are deliberately not offered until that exists —
-// offering a field that filters the wrong fact is worse than not offering it.
+// LINE-LEVEL FIELDS. Warehouse, Item category and Pending amendment are facts
+// about an order's LINES or its amendments while the list reads a header view.
+// The server answers them with three computed fields
+// (migrations-pg 20260914T1600_scm_so_list_line_filter_fields.sql), so they
+// filter the page, the totals and the counts like any header column.
+// Branding reads the HEADER column; an order whose header says NONE / blank and
+// whose list label is derived from its first line is not matched by it.
 
 export const SO_FILTER_PARAM = 'f';
 export const SO_FILTER_MAX_ROWS = 12;
@@ -31,15 +32,16 @@ const MAX_TEXT = 80;
 const MAX_DOC_NO = 40;
 
 export type SoFilterGroup = 'who' | 'where' | 'when' | 'order';
-export type SoFilterKind = 'person' | 'text' | 'docRange' | 'date' | 'money' | 'choice';
+export type SoFilterKind = 'person' | 'warehouse' | 'text' | 'docRange' | 'date' | 'money' | 'choice';
 export type SoFilterOp =
   | 'me' | 'is' | 'contains' | 'between' | 'on' | 'before' | 'after' | 'preset'
   | 'eq' | 'gt' | 'lt' | 'positive';
 export type SoFilterFieldKey =
   | 'createdBy' | 'salesperson'
-  | 'venue' | 'state' | 'city' | 'salesLocation'
+  | 'warehouse' | 'branding' | 'venue' | 'state' | 'city' | 'salesLocation'
   | 'processingDate' | 'deliveryDate' | 'createdDate' | 'orderDate' | 'lastChangeDate'
   | 'docNo' | 'name' | 'reference' | 'balance' | 'total' | 'paymentStatus' | 'overdue'
+  | 'itemCategory' | 'pendingAmendment'
   | 'customerType' | 'buildingType' | 'contactNo' | 'email' | 'remarks';
 
 export interface SoListFilter {
@@ -72,6 +74,19 @@ export const SO_FILTER_GROUP_LABELS: Record<SoFilterGroup, string> = {
 };
 
 const DATE_OPS = ['preset', 'between', 'on', 'before', 'after'] as const;
+
+/* The line buckets the list itself uses (the list handler's normCategory). */
+const SO_CATEGORY_CHOICES: readonly SoFilterChoice[] = [
+  { value: 'sofa', label: 'Sofa' },
+  { value: 'bedframe', label: 'Bedframe' },
+  { value: 'mattress', label: 'Mattress' },
+  { value: 'accessory', label: 'Accessory' },
+];
+
+/** An Item category choice as the bucket the server's computed field holds. */
+export function soCategoryBucket(choice: string): string | null {
+  return SO_CATEGORY_CHOICES.some((c) => c.value === choice) ? choice.toUpperCase() : null;
+}
 const TEXT_OPS = ['contains', 'is'] as const;
 const PERSON_OPS = ['me', 'is'] as const;
 
@@ -79,6 +94,9 @@ export const SO_FILTER_FIELDS: readonly SoFilterFieldDef[] = [
   { key: 'createdBy', label: 'Created by', group: 'who', kind: 'person', ops: PERSON_OPS,
     hint: 'The salesperson the order is recorded under' },
   { key: 'salesperson', label: 'Salesperson', group: 'who', kind: 'person', ops: PERSON_OPS },
+  { key: 'warehouse', label: 'Warehouse', group: 'where', kind: 'warehouse', ops: ['is'],
+    hint: 'Orders with at least one line from this warehouse' },
+  { key: 'branding', label: 'Branding', group: 'where', kind: 'text', ops: TEXT_OPS },
   { key: 'venue', label: 'Venue', group: 'where', kind: 'text', ops: TEXT_OPS },
   { key: 'state', label: 'State', group: 'where', kind: 'text', ops: TEXT_OPS },
   { key: 'city', label: 'City', group: 'where', kind: 'text', ops: TEXT_OPS },
@@ -104,6 +122,14 @@ export const SO_FILTER_FIELDS: readonly SoFilterFieldDef[] = [
   { key: 'overdue', label: 'Overdue', group: 'order', kind: 'choice', ops: ['is'],
     choices: [{ value: 'yes', label: 'Delivery date passed, not delivered' }],
     hint: 'Delivery date (amended date if set) is before today and the order is not shipped, delivered, invoiced, closed or cancelled' },
+  { key: 'itemCategory', label: 'Item category', group: 'order', kind: 'choice', ops: ['is'],
+    choices: SO_CATEGORY_CHOICES,
+    hint: 'Orders with at least one line of this kind' },
+  { key: 'pendingAmendment', label: 'Pending amendment', group: 'order', kind: 'choice', ops: ['is'],
+    choices: [
+      { value: 'yes', label: 'Has a pending amendment' },
+      { value: 'no', label: 'No pending amendment' },
+    ] },
   { key: 'customerType', label: 'Customer type', group: 'order', kind: 'text', ops: TEXT_OPS },
   { key: 'buildingType', label: 'Building type', group: 'order', kind: 'text', ops: TEXT_OPS },
   { key: 'contactNo', label: 'Contact no.', group: 'order', kind: 'text', ops: ['contains'] },
@@ -183,6 +209,8 @@ function validValue(def: SoFilterFieldDef, op: SoFilterOp, value: string): boole
   switch (def.kind) {
     case 'person':
       return op === 'me' ? value === '' : UUID_RE.test(value);
+    case 'warehouse':
+      return UUID_RE.test(value);
     case 'text': {
       const t = value.trim();
       return t.length > 0 && value.length <= MAX_TEXT && !hasControlChar(value);
@@ -339,14 +367,21 @@ const rm = (v: string) => {
   return `${sen < 0 ? '-' : ''}RM ${Math.floor(abs / 100).toLocaleString('en-MY')}.${String(abs % 100).padStart(2, '0')}`;
 };
 
-/** The words a filter row shows for its operator + value. `nameOf` resolves a
- *  staff uuid to a display name. */
-export function soFilterSummary(f: SoListFilter, nameOf: (staffId: string) => string): string {
+export interface SoFilterLabels {
+  staff: (staffId: string) => string;
+  warehouse: (warehouseId: string) => string;
+}
+
+/** The words a filter row shows for its operator + value. `labels` resolves a
+ *  staff or warehouse uuid to a display name. */
+export function soFilterSummary(f: SoListFilter, labels: SoFilterLabels): string {
   const def = soFilterField(f.field);
   if (!def || !soFilterIsComplete(f)) return 'Choose…';
   switch (def.kind) {
     case 'person':
-      return f.op === 'me' ? 'is me' : `is ${nameOf(f.value) || 'a staff member'}`;
+      return f.op === 'me' ? 'is me' : `is ${labels.staff(f.value) || 'a staff member'}`;
+    case 'warehouse':
+      return `is ${labels.warehouse(f.value) || 'a warehouse'}`;
     case 'text':
       return `${SO_OP_LABELS[f.op]} "${f.value.trim()}"`;
     case 'choice':

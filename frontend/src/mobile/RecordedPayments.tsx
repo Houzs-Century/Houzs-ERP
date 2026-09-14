@@ -40,6 +40,7 @@ import { todayMyt, mytDayOf } from "../vendor/scm/lib/dates";
    desktop PaymentsTable call, so no surface can disagree about whether the
    same-day window is still open (Owner 2026-07-19). */
 import { paymentRowMutable, type PaymentChangeVia } from "../vendor/scm/lib/so-field-policy";
+import { owesPaymentReason, paymentReasonAsk, reasonWhyFor, type ReasonWhy } from "../vendor/scm/lib/payment-reason";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import {
   useSoDropdownOptions,
@@ -260,14 +261,16 @@ export function AddPaymentSheet({
   editPayment = null,
   onClose,
   onSaved,
-  reasonRequired = false,
+  reasonWhy = null,
 }: {
   docNo: string;
   staff: Array<{ id: string; name: string }>;
-  /* The parent decided this edit is opened by the amend right, so a reason is
-     owed before the PATCH (owner 2026-09-10). The sheet cannot decide this
-     itself: the permission and the draft flag live with the list. */
-  reasonRequired?: boolean;
+  /* WHY a reason is owed before the write, decided by the parent — the amend
+     right opened this edit (owner 2026-09-10), or the caller's role holds the
+     right and every payment action asks, the add included (owner 2026-09-14,
+     docs/bugs/0888). Null asks nothing. The sheet cannot decide this itself:
+     the permission and the draft flag live with the list. */
+  reasonWhy?: ReasonWhy | null;
   /* Collected By default for a NEW payment = logged-in user's staff id. */
   defaultCollectedBy?: string;
   /* When set, the sheet EDITS this persisted payment (PATCH) instead of adding
@@ -390,14 +393,7 @@ export function AddPaymentSheet({
     if (code === "merchant") { body.merchantProvider = bank || null; body.installmentMonths = planToMonths(plan); }
     else if (code === "installment") { body.merchantProvider = bank || null; body.installmentMonths = planToMonths(plan); }
     else if (code === "transfer") { body.onlineType = online || null; }
-    const reason = isEdit && reasonRequired
-      ? await askReason({
-        title: "Why is this payment being corrected?",
-        body: "Finance keeps a record of every correction made after the day it was keyed in.",
-        input: { label: "Reason", placeholder: "Sales keyed RM 1,990 — receipt shows RM 1,991", required: true },
-        confirmLabel: "Save changes",
-      })
-      : "";
+    const reason = reasonWhy ? await askReason(paymentReasonAsk(isEdit ? "edit" : "add", reasonWhy)) : "";
     if (reason === null) return;
     try {
       /* The shared vendored mutations — mobile shares the desktop payment write
@@ -408,7 +404,7 @@ export function AddPaymentSheet({
            way. It cannot duplicate money; only the POST below creates a row. */
         await editPaymentMut.mutateAsync({ docNo, id: editPayment.id, version: editPayment.version, ...body, ...(reason ? { reason } : {}) });
       } else {
-        await addPaymentMut.mutateAsync({ docNo, ...body, idempotencyKey: idemKey });
+        await addPaymentMut.mutateAsync({ docNo, ...body, ...(reason ? { reason } : {}), idempotencyKey: idemKey });
       }
       await onSaved();
     } catch (e) {
@@ -610,8 +606,12 @@ export function RecordedPaymentsList({
      it was keyed. The control showing is the courtesy; the endpoint decides,
      and it refuses one that has already been RECONCILED, which only the server
      can see. Desktop PaymentsTable asks the same question the same way. */
-  const { can } = useHouzsAuth();
+  const { can, user: houzsUser } = useHouzsAuth();
   const mayAmend = can("scm.so_payment.amend");
+  /* A ROLE holding the right literally asks on EVERY action — add, edit,
+     delete, proof — same day or not (docs/bugs/0888); the Owner's wildcard
+     alone does not. Same reading as the desktop table and the server. */
+  const reasonOnEvery = owesPaymentReason(houzsUser);
   const askReason = usePrompt();
   const deletePaymentMut = useDeleteSalesOrderPayment();
   const attachSlipMut = useAttachSalesOrderPaymentSlip();
@@ -650,11 +650,15 @@ export function RecordedPaymentsList({
       body: "The slip currently attached will be swapped for the one you just picked. The change is recorded in the order history.",
       confirmLabel: "Replace",
     }))) return;
+    /* A role holding the right says why (docs/bugs/0888) — before the upload,
+       and a dismissed ask abandons it. */
+    const reason = reasonOnEvery ? await askReason(paymentReasonAsk(slipKeyOf(target) ? "proof-replace" : "proof", "holder")) : "";
+    if (reason === null) return;
     setError(null);
     setAttaching(target.id);
     try {
       const { uploadSessionId } = await uploadSlipFull({ file });
-      await attachSlipMut.mutateAsync({ docNo, id: target.id, uploadSessionId });
+      await attachSlipMut.mutateAsync({ docNo, id: target.id, uploadSessionId, ...(reason ? { reason } : {}) });
       await onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't attach the proof. Please try again.");
@@ -694,14 +698,8 @@ export function RecordedPaymentsList({
       danger: true,
     }))) return;
     const row = payments.find((p) => p.id === paymentId);
-    const reason = row && rowVia(row) === "amend"
-      ? await askReason({
-        title: "Why is this payment being removed?",
-        body: "Finance keeps a record of every correction made after the day it was keyed in.",
-        input: { label: "Reason", placeholder: "Keyed twice — duplicate of the RM 500 on 29/08", required: true },
-        confirmLabel: "Remove", danger: true,
-      })
-      : "";
+    const why = row ? reasonWhyFor(rowVia(row), reasonOnEvery) : null;
+    const reason = why ? await askReason(paymentReasonAsk("delete", why)) : "";
     if (reason === null) return;
     setError(null);
     setWorking(true);
@@ -812,7 +810,7 @@ export function RecordedPaymentsList({
           staff={staff}
           defaultCollectedBy={defaultCollectedBy}
           editPayment={editPay}
-          reasonRequired={rowVia(editPay) === "amend"}
+          reasonWhy={reasonWhyFor(rowVia(editPay), reasonOnEvery)}
           onClose={() => setEditPay(null)}
           onSaved={async () => { setEditPay(null); await onChanged(); }}
         />

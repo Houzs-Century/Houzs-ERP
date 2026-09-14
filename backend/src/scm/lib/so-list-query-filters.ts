@@ -27,6 +27,7 @@ import {
   soRangeEnds,
   soAddDays,
   soTodayYmd,
+  soCategoryBucket,
   parseSoListFilters,
   type SoListFilter,
 } from '../shared/so-list-filter-model';
@@ -41,6 +42,7 @@ const SO_TABLE = 'mfg_sales_orders';
    payment-totals view (mig 20260911T1500 enumerates them), except the two
    view-computed money columns noted below. */
 const TEXT_COLUMN: Record<string, string> = {
+  branding: 'branding',
   venue: 'venue',
   state: 'customer_state',
   city: 'city',
@@ -92,6 +94,11 @@ function applyOne(q: any, f: SoListFilter, ctx: SoListFilterContext): any {
       return f.op === 'me'
         ? q.in('salesperson_id', ctx.myStaffIds.length > 0 ? [...ctx.myStaffIds] : [MATCH_NOTHING_STAFF_ID])
         : q.eq('salesperson_id', f.value);
+    /* The three line/amendment questions read the computed fields added by
+       migrations-pg 20260914T1600 (functions over the view's row), so they are
+       one more WHERE term on the same page / money / count query. */
+    case 'warehouse':
+      return q.overlaps('so_line_warehouse_ids', [f.value]);
     case 'text': {
       const v = f.value.trim();
       const orCols = TEXT_OR_COLUMNS[f.field];
@@ -139,6 +146,8 @@ function applyOne(q: any, f: SoListFilter, ctx: SoListFilterContext): any {
       return q[f.op](col, soMoneyToSen(f.value));
     }
     case 'choice':
+      if (f.field === 'itemCategory') return q.overlaps('so_line_categories', [soCategoryBucket(f.value)]);
+      if (f.field === 'pendingAmendment') return q.is('so_has_open_amendment', f.value === 'yes');
       if (f.field === 'paymentStatus') {
         if (f.value === 'unpaid') return q.lte('paid_total_sen', 0).gt('balance_sen_live', 0);
         if (f.value === 'deposit') return q.gt('paid_total_sen', 0).gt('balance_sen_live', 0);
