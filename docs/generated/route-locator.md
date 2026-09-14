@@ -919,15 +919,15 @@ Total: 1275 route registrations across 165 files.
 
 ## backend/src/scm/routes/so-amendments.ts  (10)
 - L287  GET    /
-- L381  GET    /pending-count
-- L431  GET    /command-diag
-- L456  GET    /:id
-- L548  PATCH  /:id/supplier-confirm
-- L1005  PATCH  /:id/approve-so
-- L1126  PATCH  /:id/approve-po
-- L1138  PATCH  /:id/send
-- L1220  PATCH  /:id/reject
-- L1336  PATCH  /:id/withdraw
+- L402  GET    /pending-count
+- L452  GET    /command-diag
+- L477  GET    /:id
+- L569  PATCH  /:id/supplier-confirm
+- L1026  PATCH  /:id/approve-so
+- L1147  PATCH  /:id/approve-po
+- L1159  PATCH  /:id/send
+- L1241  PATCH  /:id/reject
+- L1357  PATCH  /:id/withdraw
 
 ## backend/src/scm/routes/venture-portal-feed.ts  (10)
 - L153  GET    /status

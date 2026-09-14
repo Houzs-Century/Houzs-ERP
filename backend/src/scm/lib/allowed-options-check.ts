@@ -23,6 +23,7 @@
 
 import { normalizeCompartmentCode } from '../shared/sofa-build';
 import { normaliseTypographicQuotes } from '../shared/mfg-pricing';
+import { fabricAllowedByPool } from '../shared/fabric-pool';
 import { pgrestIn } from './pgrest-in-list';
 
 export type AllowedOptionsLite = {
@@ -375,12 +376,12 @@ export function checkAllowedOptions(
      readings are not in conflict: a SERIES in the pool means "this Model offers
      this fabric", which is how the business approves a fabric (you approve the
      cloth, not each shade), and it keeps working when the supplier adds a shade.
-     A COLOUR in the pool still means that one shade. docs/bugs/0814. */
+     A COLOUR in the pool still means that one shade. docs/bugs/0814.
+     The rule itself lives in shared/fabric-pool.ts, which the desktop and phone
+     pickers read too, so what they offer is what this saves (docs/bugs/0889). */
   const fabricPick = v.fabricCode ?? v.colourId ?? null;
   const fabricSeries = v.fabricId ?? null;
-  if (fabricPick && hasRestriction(opts.fabrics)
-      && !inPool(opts.fabrics, fabricPick)
-      && !(fabricSeries && inPool(opts.fabrics, fabricSeries))) {
+  if (fabricPick && hasRestriction(opts.fabrics) && !fabricAllowedByPool(opts.fabrics, fabricPick, fabricSeries)) {
     return {
       error: 'variant_not_allowed',
       field: 'fabric',

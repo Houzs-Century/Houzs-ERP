@@ -18,9 +18,13 @@
 //
 // TARGETS (company COMPANY_ID): documents with an SO amendment (so_approved_at)
 // or an APPROVED PO amendment (approved_at) at or after SINCE, MINUS documents
-// that already have an `edit` row in `pending` or `sent` created AFTER their
-// latest such approval — a later ordinary save already carried the state —
-// MINUS cancelled documents. Override with DOC_NOS="HC-SO-x,HC-PO-y".
+// that already have an `edit` row in `pending` or `sent` created at or after
+// their latest such approval's TRANSACTION — the approval queued its own edit
+// (every approval since #3833 does) or a later ordinary save carried the state;
+// `failed` / `skipped` do not count — MINUS cancelled documents. Override with
+// DOC_NOS="HC-SO-x,HC-PO-y". The approval's own row is OLDER than approved_at
+// (created_at is the transaction start), so the rule lives, tested, in
+// scripts/lib/amendment-requeue-coverage.mjs.
 //
 // MODE: plan unless MODE=apply. The plan is not a prediction: each document is
 // composed by the real enqueueEdit inside its own transaction, the row it would
@@ -43,6 +47,7 @@ import postgres from "postgres";
 import { enqueueEdit } from "../src/scm/lib/autocount-outbox.ts";
 import { resetWritebackFlagCache } from "../src/scm/lib/autocount-writeback-flag.ts";
 import { pgrestShim } from "./lib/pgrest-shim.mjs";
+import { coveringEdit, SAME_TRANSACTION_WINDOW_MS } from "./lib/amendment-requeue-coverage.mjs";
 
 const APPLY = (process.env.MODE || "plan").toLowerCase() === "apply";
 const CONFIRM = (process.env.CONFIRM || "").trim();
@@ -89,16 +94,23 @@ async function targets() {
                 ELSE (SELECT p.status::text FROM scm.purchase_orders p WHERE p.id::text = d.doc_id) END AS doc_status,
            CASE WHEN d.doc_type = 'SO'
                 THEN (SELECT h.linked_ac_docno FROM scm.mfg_sales_orders h WHERE h.doc_no = d.doc_no AND h.company_id = ${COMPANY_ID})
-                ELSE (SELECT p.linked_ac_docno FROM scm.purchase_orders p WHERE p.id::text = d.doc_id) END AS linked_ac_docno,
-           (SELECT o.status || '@' || to_char(o.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
-              FROM scm.autocount_outbox o
-             WHERE o.company_id = ${COMPANY_ID} AND o.doc_type = d.doc_type AND o.op = 'edit'
-               AND o.status IN ('pending', 'sent')
-               AND (o.doc_no = d.doc_no OR (d.doc_id IS NOT NULL AND o.doc_id = d.doc_id))
-               AND o.created_at > d.last_approved_at
-             ORDER BY o.created_at DESC LIMIT 1) AS covered_by
+                ELSE (SELECT p.linked_ac_docno FROM scm.purchase_orders p WHERE p.id::text = d.doc_id) END AS linked_ac_docno
       FROM per_doc d
      ORDER BY d.last_approved_at`;
+  /* Coverage is decided in JS by the tested rule, over every carrying edit row
+     that could qualify (the window reaches back from SINCE). */
+  const windowSec = Math.ceil(SAME_TRANSACTION_WINDOW_MS / 1000);
+  const edits = await pg`
+    SELECT doc_type, doc_no, doc_id, op, status, created_at
+      FROM scm.autocount_outbox
+     WHERE company_id = ${COMPANY_ID} AND op = 'edit' AND status IN ('pending', 'sent')
+       AND doc_type IN ('SO', 'PO')
+       AND created_at >= ${SINCE}::timestamptz - make_interval(secs => ${windowSec}::int)`;
+  for (const r of rows) {
+    const cover = coveringEdit(
+      { docType: r.doc_type, docNo: r.doc_no, docId: r.doc_id, lastApprovedAt: r.last_approved_at }, [...edits]);
+    r.covered_by = cover ? `${cover.status}@${cover.created_at.toISOString()}` : null;
+  }
   return DOC_NOS.length ? rows.filter((r) => DOC_NOS.includes(r.doc_no)) : rows;
 }
 

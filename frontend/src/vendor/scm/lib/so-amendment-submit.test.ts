@@ -71,7 +71,7 @@ describe('amendmentSubmittedNotice', () => {
       .toBe(AMENDMENT_DIRECT_ONLY_SAVED_TITLE);
   });
 
-  it('a split names both lanes and their departments', () => {
+  it('a split names both lanes and the role that signs each', () => {
     const n = amendmentSubmittedNotice('AMENDMENT', {
       amendments: [
         { amendment_no: 'A1', lane: 'LINES' },
@@ -79,13 +79,13 @@ describe('amendmentSubmittedNotice', () => {
       ],
     });
     expect(n.title).toBe('Amendment split into two approvals');
-    expect(n.body).toContain('A1 → Purchasing');
-    expect(n.body).toContain('A2 → Logistics');
+    expect(n.body).toContain('A1 → Purchaser');
+    expect(n.body).toContain('A2 → Logistic');
   });
 
   it('one lane names who is waiting', () => {
     expect(amendmentSubmittedNotice('AMENDMENT', { amendments: [{ lane: 'DELIVERY' }] }).body)
-      .toContain('Logistics');
+      .toBe('Waiting for Logistic — one signature applies it to the order.');
   });
 
   /* A laneless row is the legacy single-gate shape; it must still say something
