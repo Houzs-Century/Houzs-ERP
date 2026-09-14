@@ -1239,6 +1239,19 @@ reads and names what matches nothing. Run it after filling a pool.
    carry no unique data and they are somebody's deliberate record.
    docs/bugs/0818-a-retired-tombstone-row-hid-the-live-fabric-it-had-been-merg.md.
 
+5. **Every rule runs BEFORE the 50-row cap** (2026-09-14). `GET /fabric-colours?q=`
+   used to cap the query at 50 and then drop retired colours, and the pickers then
+   dropped colours outside the Model's pool — so a search whose first 50 matches
+   were hidden came back short or empty while sellable colours further down were
+   never read. `coloursOnOffer` (in `backend/src/scm/routes/fabric-colours.ts`)
+   now applies retired series, retired codes and, when the search carries
+   `?itemCode=`, the Model's pool (read with the save gate's own
+   `loadProductAndModel`), and caps last; the query reads the PostgREST page
+   (`OFFER_SCAN_ROWS`, 1000). Both pickers send `itemCode`: it is a required
+   option of `useFabricColoursSearch`. A failed Model lookup degrades to no pool
+   filter, never an empty picker.
+   docs/bugs/0893-the-fabric-search-capped-at-50-before-hiding-retired-and-dis.md.
+
 **Sofa follower-line cascade — ONE module, and the master's LATEST change
 wins.** The rule is `frontend/src/vendor/scm/lib/so-variant-cascade.ts`, imported
 by `SalesOrderNew.tsx`, `mobile/MobileNewSO.tsx`, `SoLineCard.tsx` and — since
