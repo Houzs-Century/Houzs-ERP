@@ -549,7 +549,7 @@ export const PurchaseConsignmentOrderNew = () => {
           {lines.map((l, idx) => {
             const lineTotalSen = Math.max(0, l.qty * l.unitPriceSen - (l.discountSen ?? 0));
             const categoryLabel = l.category?.toUpperCase() ?? 'UNSET';
-            const showVariants  = l.category && ['sofa', 'bedframe'].includes(l.category) && maint;
+            const showVariants  = l.category && ['sofa', 'bedframe', 'fabric_accessory'].includes(l.category) && maint;
 
             return (
               <div

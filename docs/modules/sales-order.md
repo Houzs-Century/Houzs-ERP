@@ -242,7 +242,11 @@ version CAS mismatch (409 + `428` when the client sent no version at all), an
 active edit lease held by another human (409), and — for `CANCELLED` only — the
 downstream lock (§0.7). `DRAFT → CONFIRMED` additionally runs the confirm gate
 (salesperson + venue + every line a real catalog SKU with its required variant
-axes) and returns an aggregated `422 validation_failed`.
+axes) and returns an aggregated `422 validation_failed`. Required axes per group
+live in `REQUIRED_VARIANT_AXES_BY_CATEGORY` (`shared/so-variant-rule.ts`): bedframe
+divan/leg/gap/fabric, sofa seat/fabric, and since 2026-09-14 **Sofa Accessory
+(`fabric_accessory`) fabric only** — desktop `SoLineCard` and mobile `MobileNewSO`
+render a colour-only fabric picker for it.
 
 ### 0.1a What the LIST offers on each status (2026-08-21)
 
@@ -431,7 +435,7 @@ line already READY.** The per-line PILL was never wrong — `soLineStockPill` an
 bug `docs/bugs/0572-a-company-1-bound-line-with-no-receipt-fell-through-to-the-p.md`).**
 `HARD_BOUND_COMPANY_ID = 1` in `so-stock-allocation.ts`:
 
-| company | bedframe / sofa / `(SP)` mattress (`isHardBoundLine`) | everything else |
+| company | bedframe / sofa / Sofa Accessory (`fabric_accessory`) / `(SP)` mattress (`isHardBoundLine`) | everything else |
 |---|---|---|
 | 1 (Houzs) | **exclusively PO-bound**: lights `min(received, need)` from its OWN dedicated PO (sofa: covering dye-lot batch first, then dedication). The pooled walk force-stamps PENDING — the pool is never its evidence, however well the bucket matches | pooled FIFO by (warehouse, code, variant_key) |
 | 2 (2990) | dedication lights first if present, then the pooled walk — the soft model | pooled FIFO |

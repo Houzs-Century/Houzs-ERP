@@ -213,6 +213,9 @@ const COMPOSED_ONLY_FOR_SOFA_OR_BEDFRAME = [
 ] as const;
 
 const COMPOSING_GROUPS = new Set(['sofa', 'bedframe']);
+/* The Sofa Accessory group (owner 2026-09-14) composes the FABRIC and nothing else. */
+const FABRIC_ONLY_GROUPS = new Set(['fabric_accessory']);
+const FABRIC_KEYS = new Set<string>(['fabricCode', 'colorCode', 'colourCode', 'fabricColor']);
 
 /**
  * Does this line carry attributes its group will throw away?
@@ -228,7 +231,9 @@ export function attributesTheGroupWillIgnore(
   const group = (itemGroup ?? '').trim().toLowerCase();
   if (COMPOSING_GROUPS.has(group)) return [];
   if (!variants) return [];
+  const fabricOnly = FABRIC_ONLY_GROUPS.has(group);
   return COMPOSED_ONLY_FOR_SOFA_OR_BEDFRAME.filter((k) => {
+    if (fabricOnly && FABRIC_KEYS.has(k)) return false;
     const v = (variants as Record<string, unknown>)[k];
     return typeof v === 'string' ? v.trim() !== '' : v != null;
   });

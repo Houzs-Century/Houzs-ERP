@@ -228,7 +228,7 @@ export const PoLineCard = ({
   const categoryLabel = l.category?.toUpperCase() ?? 'UNSET';
   // PR #135 — only sofa / bedframe carry a variant editor (mattress size +
   // branding are encoded in the SKU code itself).
-  const showVariants = Boolean(l.category) && ['sofa', 'bedframe'].includes(l.category ?? '') && Boolean(maint);
+  const showVariants = Boolean(l.category) && ['sofa', 'bedframe', 'fabric_accessory'].includes(l.category ?? '') && Boolean(maint);
   /* THE SPECIAL ORDER IS NOT A BEDFRAME/SOFA FEATURE. Owner 2026-09-10, after
      the field opened on the Sales Order: 「你确定是 CS order 有而已，还是全部吗？
      我们的包括 DO 等等，全部都是要带过去的哦…POGR 是不是也是要能看得到这些数据？」

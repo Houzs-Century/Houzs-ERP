@@ -150,7 +150,7 @@ export const PcLineCard = ({
   const l = line;
   const lineTotalSen = Math.max(0, l.qty * l.unitPriceSen - (l.discountSen ?? 0));
   const categoryLabel = l.category?.toUpperCase() ?? 'UNSET';
-  const showVariants = Boolean(l.category) && ['sofa', 'bedframe'].includes(l.category ?? '') && Boolean(maint);
+  const showVariants = Boolean(l.category) && ['sofa', 'bedframe', 'fabric_accessory'].includes(l.category ?? '') && Boolean(maint);
   // The whole card's `disabled` (locked doc) wins over everything; identityLocked
   // additionally freezes the identity + variant inputs on a sourced line.
   const identityLocked = disabled || identityReadOnly;

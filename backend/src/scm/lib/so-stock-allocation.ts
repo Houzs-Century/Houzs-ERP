@@ -75,7 +75,10 @@ import { pgrestIn } from './pgrest-in-list';
    this engine's bound-needs filter, and the display union's promotion gate
    (so-line-effective-stock.ts) — a hard-bound line's live-MRP 'stock' verdict
    is variant-blind and must never promote it (HC-SO-013367, 2026-08-30). */
-const HARD_BOUND_GROUPS = new Set(['bedframe', 'sofa']);
+/* Owner 2026-09-14: the Sofa Accessory category (fabric_accessory) binds per order
+   like a sofa - 「这个会需要像 sofa 那样 hardbinding 的」. A custom pillow is made
+   from the customer's fabric; pooled stock of another colour is never its evidence. */
+const HARD_BOUND_GROUPS = new Set(['bedframe', 'sofa', 'fabric_accessory']);
 export function isHardBoundLine(
   itemGroup: string | null | undefined,
   itemCode: string | null | undefined,
