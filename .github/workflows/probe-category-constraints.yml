@@ -30,3 +30,7 @@ jobs:
       - run: node scripts/probe-colour-codes.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      - run: node scripts/fix-pillow-colour-lines.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: plan
