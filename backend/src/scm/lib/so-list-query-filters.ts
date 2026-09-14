@@ -50,11 +50,11 @@ const TEXT_COLUMN: Record<string, string> = {
   buildingType: 'building_type',
   email: 'email',
 };
-const TEXT_OR_COLUMNS: Record<string, readonly string[]> = {
+const TEXT_OR_COLUMNS: Partial<Record<string, readonly string[]>> = {
   reference: ['ref', 'customer_so_no'],
   remarks: ['note', 'remark2', 'remark3', 'remark4'],
 };
-const DATE_COLUMN: Record<string, string> = {
+const DATE_COLUMN: Partial<Record<string, string>> = {
   processingDate: 'processing_date',
   deliveryDate: 'customer_delivery_date',
   orderDate: 'so_date',
