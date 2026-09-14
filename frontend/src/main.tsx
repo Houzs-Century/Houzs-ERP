@@ -19,7 +19,6 @@ import { LazySlot } from "./components/LazySlot";
 import { registerPwa } from "./pwa";
 import { installGlobalErrorReporting } from "./lib/errorReporter";
 import { installChunkFailureWatch } from "./lib/staleBuild";
-import { browserActionRecoveryDeps, installActionChunkRecovery } from "./lib/chunkActionRecovery";
 import { clearStaleTableSorts } from "./lib/staleSortReset";
 import { consumeCompanyUrlSeed } from "./lib/activeCompany";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -96,8 +95,9 @@ installGlobalErrorReporting();
    covered. */
 installChunkFailureWatch();
 /* A PRINT that hits a chunk a deploy deleted reloads once and reopens its
-   preview, when nothing unsaved is on screen — lib/chunkActionRecovery.ts. */
-installActionChunkRecovery(browserActionRecoveryDeps);
+   preview (lib/chunkActionRecovery.ts). That listener installs itself on the
+   first tracked print, so it is not imported here: it would add ~0.9 KB gzip to
+   the initial bundle for code only a print needs. */
 /* One-shot: drop the persisted table sorts a bug made permanent, so nobody has
    to find the Columns drawer and press Reset on every list page and device.
    Guarded by its own marker — a sort chosen deliberately after this ships is

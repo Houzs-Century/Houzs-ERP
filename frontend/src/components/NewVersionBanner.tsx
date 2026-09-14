@@ -3,7 +3,7 @@ import { useLocation } from "react-router-dom";
 import { RefreshCw } from "lucide-react";
 import { useVersionCheck } from "../hooks/useVersionCheck";
 import { chunkFailureSnapshot, subscribeChunkFailure } from "../lib/staleBuild";
-import { rememberBlockedPrintForReload } from "../lib/chunkActionRecovery";
+import { runBeforeManualReload } from "../lib/beforeManualReload";
 
 /**
  * NewVersionBanner — a non-blocking "this tab is behind the deploy" prompt.
@@ -53,7 +53,7 @@ export function NewVersionBanner() {
 
   const reload = () => {
     setReloading(true);
-    if (chunkFailed) rememberBlockedPrintForReload(Date.now(), window.location);
+    if (chunkFailed) runBeforeManualReload();
     window.location.reload();
   };
 

@@ -39,6 +39,7 @@
 import type { PrintTarget } from "./printChain";
 import { chunkUrlFrom, isDeployStaleEvidence, probeChunk, type ChunkProbe } from "./staleBuild";
 import { hasUnsavedWork } from "./unsavedWork";
+import { onBeforeManualReload } from "./beforeManualReload";
 
 export const ACTION_RELOAD_KEY = "chunk-action-reload";
 export const PRINT_RESUME_KEY = "chunk-print-resume";
@@ -75,8 +76,12 @@ let blocked: { resume: PrintResume; at: number } | null = null;
 const urlOpeners = new Set<() => void>();
 
 /** Run a print action with its intent recorded. Returns `run()`'s own value —
- *  the same promise object, so a rejection is still the caller's to handle. */
+ *  the same promise object, so a rejection is still the caller's to handle.
+ *  The first call installs the listener: this module loads with the print code,
+ *  not on the always-loaded path, and a failure can only matter to it once a
+ *  print is in flight. */
 export function trackPrintAction<T>(resume: PrintResume, run: () => T, now: () => number): T {
+  if (!disposeListener) installActionChunkRecovery(browserActionRecoveryDeps);
   const mine = { resume, at: now() };
   intent = mine;
   const result = run();
@@ -205,14 +210,27 @@ export const browserActionRecoveryDeps: ActionRecoveryDeps = {
   },
 };
 
-/** Install once, before React mounts, beside staleBuild's listener. Never calls
- *  preventDefault: the caller's own catch (the "PDF generation failed" toast)
- *  still runs, and staleBuild still raises the banner for every other case. */
+let disposeListener: (() => void) | null = null;
+
+/** The one listener, replacing any earlier one. Never calls preventDefault: the
+ *  caller's own catch (the "PDF generation failed" toast) still runs, and
+ *  staleBuild still raises the banner for every other case. */
 export function installActionChunkRecovery(deps: ActionRecoveryDeps): () => void {
   if (typeof window === "undefined") return () => {};
+  disposeListener?.();
   const onPreloadError = (event: Event) => {
     void handleActionChunkFailure((event as Event & { payload?: unknown }).payload, deps);
   };
   window.addEventListener("vite:preloadError", onPreloadError);
-  return () => window.removeEventListener("vite:preloadError", onPreloadError);
+  const dispose = () => {
+    window.removeEventListener("vite:preloadError", onPreloadError);
+    if (disposeListener === dispose) disposeListener = null;
+  };
+  disposeListener = dispose;
+  return dispose;
 }
+
+// The banner's Refresh button: reopen a print this listener declined to reload for.
+onBeforeManualReload(() => {
+  if (typeof window !== "undefined") rememberBlockedPrintForReload(Date.now(), window.location);
+});

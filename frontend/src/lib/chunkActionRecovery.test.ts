@@ -229,6 +229,32 @@ describe("chunkActionRecovery — a chunk that 404s during a print reloads once 
     expect(mod.peekPrintResume("/a", T0)).toBeNull();
   });
 
+  it("the first tracked print installs the listener by itself", async () => {
+    const mod = await freshModule();
+    const add = vi.spyOn(window, "addEventListener");
+    const open = vi.fn();
+    void mod.trackPrintAction({ kind: "preview", open }, () => undefined, () => T0);
+    void mod.trackPrintAction({ kind: "preview", open }, () => undefined, () => T0);
+    expect(add.mock.calls.filter(([name]) => name === "vite:preloadError")).toHaveLength(1);
+  });
+
+  it("the banner's Refresh hook stores the declined print", async () => {
+    const mod = await freshModule();
+    const reloadHooks = await import("./beforeManualReload");
+    const unsaved = await import("./unsavedWork");
+    const open = vi.fn();
+    mod.registerUrlPrintOpener(open);
+    const release = unsaved.holdUnsavedWork();
+    window.history.replaceState({}, "", "/scm/sales-orders/HC-SO-012016");
+    const d = deps({ now: () => Date.now() });
+    void mod.trackPrintAction({ kind: "preview", open }, () => new Promise(() => {}), d.now);
+    expect(await mod.handleActionChunkFailure(staleError(), d)).toBe("banner");
+    reloadHooks.runBeforeManualReload();
+    expect(mod.peekPrintResume("/scm/sales-orders/HC-SO-012016", Date.now())?.kind).toBe("preview");
+    release();
+    window.history.replaceState({}, "", "/");
+  });
+
   it("the installed listener acts on Vite's own event and never preventDefaults it", async () => {
     const mod = await freshModule();
     const open = vi.fn();
