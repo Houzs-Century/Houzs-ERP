@@ -161,12 +161,18 @@ async function resetSchema(db: Sql) {
   if (parsed.pathname !== '/houzs_test') {
     throw new Error('PG integration tests require the disposable houzs_test database');
   }
+  /* Targeted drops rather than DROP SCHEMA: other suites keep their own
+     objects in scm, and this file has no business removing them. */
   await db.unsafe(`
-    DROP SCHEMA IF EXISTS scm CASCADE;
-    CREATE SCHEMA scm;
-    CREATE TABLE IF NOT EXISTS public.companies (id int PRIMARY KEY, code text, name text, is_active int);
-    INSERT INTO public.companies (id, code, name, is_active) VALUES
-      (1, 'HOUZS', 'Houzs Century', 1), (2, '2990', '2990 Furniture', 1)
+    CREATE SCHEMA IF NOT EXISTS scm;
+    DROP VIEW IF EXISTS scm.v_grn_outstanding CASCADE;
+    DROP TABLE IF EXISTS scm.grn_items CASCADE;
+    DROP TABLE IF EXISTS scm.grns CASCADE;
+    DROP TYPE IF EXISTS scm.grn_status CASCADE;
+    -- (id, code) only: other suites leave this table behind in two shapes, and
+    -- these are the two columns both of them have.
+    CREATE TABLE IF NOT EXISTS public.companies (id bigint PRIMARY KEY, code text);
+    INSERT INTO public.companies (id, code) VALUES (1, 'HOUZS'), (2, '2990')
     ON CONFLICT (id) DO NOTHING;
     CREATE TYPE scm.grn_status AS ENUM ('DRAFT', 'POSTED', 'CANCELLED', 'CLOSED');
     CREATE TABLE scm.grns (
@@ -181,10 +187,12 @@ async function resetSchema(db: Sql) {
     );
     -- invoiced_qty / returned_qty nullable on purpose: both the handler and the
     -- check COALESCE them, and a fixture that could not hold a NULL would not
-    -- prove that half.
+    -- prove that half. No foreign key to scm.grns: other suites in this
+    -- database DROP scm.grns without CASCADE, and a constraint left behind by
+    -- this file failed grnCancelAtomicity.pg.test.ts on its first CI run.
     CREATE TABLE scm.grn_items (
       id uuid PRIMARY KEY,
-      grn_id uuid NOT NULL REFERENCES scm.grns(id),
+      grn_id uuid NOT NULL,
       company_id bigint NOT NULL,
       qty_accepted integer NOT NULL,
       invoiced_qty integer,
@@ -207,7 +215,16 @@ describePg('check-pi-grn-picker-window SQL, executed', () => {
     sql = postgres(url, { max: 1, onnotice: () => {} });
     await resetSchema(sql);
   });
+  /* Leave nothing behind. The suites share one database and several build
+     scm.grns / scm.grn_items in their own shapes with CREATE TABLE IF NOT
+     EXISTS, which would silently inherit this file's columns. */
   afterAll(async () => {
+    await sql?.unsafe(`
+      DROP VIEW IF EXISTS scm.v_grn_outstanding;
+      DROP TABLE IF EXISTS scm.grn_items;
+      DROP TABLE IF EXISTS scm.grns;
+      DROP TYPE IF EXISTS scm.grn_status;
+    `);
     await sql?.end({ timeout: 5 });
   });
 
