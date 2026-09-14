@@ -76,6 +76,27 @@ Frontend: `pages/scm-v2/Mrp.tsx:91`, `pages/scm-v2/ProductModels.tsx:49`,
 
 DB: `20260911T0900_scm_mrp_supplier_category_lead_times.sql:33` CHECK constraint.
 
+## Phase 4 — the data run (2026-09-14)
+
+Owner: 「这几个也是swap去sofa accessory 然后看一下之前旧的order 都帮我backfill颜色」 —
+models AR01, AR02, BC04, BC04-MF, BC05, BC05-MF, SB02 plus SQUARE PILLOW, LONG PILLOW
+(company 1). Tool: `backend/scripts/recategorise-fabric-accessory.mjs`, workflow
+*Move products to Sofa Accessory + back-fill colour*; colour reading in
+`backend/scripts/lib/fabric-colour-match.mjs` (tested on the real texts).
+
+Plan run 34843795061 (production, rolled back): 7 models + 9 SKUs move; line
+groups on SO 248 / PO 85 / GRN 48 / DO 14 / PI 29 / SI 1; 285 lines get a colour
+(own text or inherited from the line they came from); 30 lines name a colour the
+fabric master does not hold or name two colours, and are left blank and listed;
+12 received lots relabelled by their own GRN line's colour; the AutoCount opening
+lots (211 SQUARE PILLOW, 11 LONG PILLOW on hand) stay colourless.
+
+After the apply: run *Recompute SO allocation* with write=1.
+
+The owner can now swap a model or a model-less SKU between Accessory and Sofa
+Accessory himself (PR #3861); that moves the product only, and old lines need
+this run.
+
 ## Open
 
 - The on-hand custom pillow stock (239 `SQUARE PILLOW`, 14 `LONG PILLOW`, all keyed with
