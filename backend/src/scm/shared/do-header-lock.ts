@@ -18,11 +18,9 @@
  *     customer-delivered date, port ETA, sub-status, arrives-at-warehouse),
  *   - the EXPECTED delivery date — our dispatch plan, which moves when a lorry
  *     is rescheduled. The customer's own delivery date is LOCKED.
- *   - the SALESPERSON (salesperson_id + its AutoCount name `agent`). NOT named in
- *     the 2026-09-14 ruling, and a separate owner ruling (2026-08-17) says a
- *     delivered order must be hand-over-able to a replacement salesperson — the
- *     Sales Order lock exempts it for exactly that reason. Kept editable so the
- *     two rulings do not collide; flagged to the owner in the PR.
+ * The SALESPERSON is LOCKED too. Asked on 2026-09-14 whether the 2026-08-17
+ * hand-over ruling kept it open on an invoiced DO, the owner answered
+ * 「下游开了 上游就locked了啊」: the next document locks the whole header.
  * Status moves and proof of delivery are separate endpoints and never read this.
  *
  * THE PARTITION IS EXHAUSTIVE. Every column the header PATCH writes is either in
@@ -75,6 +73,8 @@ export const DO_HEADER_LOCKED_FIELDS: readonly DoHeaderLockField[] = [
   { col: 'customer_delivery_date', body: ['customerDeliveryDate'], label: 'customer delivery date' },
   { col: 'note', body: ['note'], label: 'note' },
   { col: 'notes', body: ['notes'], label: 'remarks' },
+  { col: 'salesperson_id', body: ['salespersonId'], label: 'salesperson' },
+  { col: 'agent', body: ['agent'], label: 'salesperson' },
 ];
 
 /** Header columns that stay editable with a live Sales Invoice / Delivery Return. */
@@ -84,7 +84,6 @@ export const DO_HEADER_OPEN_COLS: ReadonlySet<string> = new Set([
   'time_range', 'time_confirmed', 'arrival_at', 'departure_at', 'shipout_date',
   'customer_delivered_date', 'eta_arriving_port', 'delivery_substatus',
   'arrives_em_warehouse_date',
-  'salesperson_id', 'agent',
 ]);
 
 export const DO_HEADER_LOCK_COLS: ReadonlySet<string> =
@@ -98,7 +97,7 @@ export const DO_HEADER_LOCK_BODY_KEYS: ReadonlySet<string> =
 
 /** What the refusal says stays open — one sentence, used by the 409 body. */
 export const DO_HEADER_OPEN_DESCRIPTION =
-  'driver, vehicle, expected delivery date, salesperson and delivery-execution times';
+  'driver, vehicle, expected delivery date and delivery-execution times';
 
 /** The screen's lock decision. `has_children` is what GET /delivery-orders-mfg/:id
     stamps from the SAME non-cancelled SI / DR counts the server's PATCH checks. */

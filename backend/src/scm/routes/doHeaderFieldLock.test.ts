@@ -3,7 +3,8 @@
 // contact and commercial fields are LOCKED — superseding the 2026-08-20 field-level
 // rule that left addresses, phone, dates and notes editable. Only the
 // dispatch-execution fields (driver, vehicle, expected delivery, delivery times)
-// and the salesperson stay open. The rule lives in shared/do-header-lock.ts.
+// stay open; the salesperson locks too (「下游开了 上游就locked了啊」). The rule lives
+// in shared/do-header-lock.ts.
 //
 // This drives the REAL header PATCH through the fake PostgREST client with a
 // downstream SI present (a sales_invoices row on the DO, which is what
@@ -83,6 +84,7 @@ describe('PATCH delivery order header — locked once a live SI exists (owner 20
     ['currency', { currency: 'USD' }, 'currency'],
     ['sales location', { salesLocation: 'JB' }, 'sales_location'],
     ['branding', { branding: 'Other' }, 'branding'],
+    ['salesperson', { salespersonId: 'sp-2' }, 'salesperson_id'],
   ])('refuses a %s change with 409 do_identity_locked and writes nothing', async (_n, body, col) => {
     const beforeVal = doRow()[col];
     const res = await patch(body);
@@ -99,7 +101,6 @@ describe('PATCH delivery order header — locked once a live SI exists (owner 20
     ['vehicle', { vehicle: 'VBB 2' }, 'vehicle', 'VBB 2'],
     ['arrival (Mark arrived)', { arrivalAt: '2026-09-14T03:00:00.000Z' }, 'arrival_at', '2026-09-14T03:00:00.000Z'],
     ['expected delivery date', { expectedDeliveryAt: '2026-09-05' }, 'expected_delivery_at', '2026-09-05'],
-    ['salesperson', { salespersonId: 'sp-2' }, 'salesperson_id', 'sp-2'],
   ])('still saves a %s change with an SI present', async (_n, body, col, val) => {
     const res = await patch(body);
     expect(res.status).toBe(200);
