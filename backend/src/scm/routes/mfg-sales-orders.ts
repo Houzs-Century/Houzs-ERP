@@ -115,6 +115,7 @@ import { resolveCreateWarehouseDefaults } from '../lib/so-create-warehouse-defau
 import { planStateRebindForDoc, stateChangeConflictBody } from '../lib/so-state-warehouse-rebind';
 import { canonicalizeMyState } from '../lib/canonical-state';
 import { deriveLineBrandingFromProduct, deriveHeaderBrandingFromLines } from '../lib/derive-line-branding';
+import { deriveListFirstItemBranding, type ListBrandingLine } from '../lib/so-list-first-item-branding';
 import { resolveBrandLetterheadKey } from '../lib/brand-letterhead';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { correctedSizeDescription, loadSizeSkuMap } from '../lib/size-variant-description';
@@ -1495,9 +1496,6 @@ mfgSalesOrders.get('/', async (c) => {
        (resolved SKU-first below), falling back to "Mattress" when the SKU
        carries none; everything else names its category. */
     const cats = new Map<string, Set<string>>();
-    const firstCat = new Map<string, string>();
-    const firstBranding = new Map<string, string | null>();
-    const firstItemCode = new Map<string, string | null>();
     /* Primary warehouse per SO — the FIRST non-null line warehouse_id (mirrors
        the Delivery Planning board's primaryWh = warehouseIds[0]). Drives the
        mobile Orders-list card's warehouse_name. */
@@ -1530,14 +1528,6 @@ mfgSalesOrders.get('/', async (c) => {
       if (it.warehouse_id && !firstWarehouseByDoc.has(it.doc_no)) {
         firstWarehouseByDoc.set(it.doc_no, it.warehouse_id);
       }
-
-      /* Rows arrive ordered by (doc_no, created_at ASC) so the first time we
-         see a doc_no IS its earliest line — record it once. */
-      if (!firstCat.has(it.doc_no)) {
-        firstCat.set(it.doc_no, normCategory(it.item_group));
-        firstBranding.set(it.doc_no, it.branding ?? null);
-        firstItemCode.set(it.doc_no, it.item_code ?? null);
-      }
     }
 
     /* Resolve each line's category from the CATALOG (mfg_products.category),
@@ -1566,43 +1556,15 @@ mfgSalesOrders.get('/', async (c) => {
         if (p.branding && p.branding.trim()) productBranding.set(p.code, p.branding);
       }
     }
-    const resolveLineCat = (code: string | null, group: string): string =>
-      (code ? productCategory.get(code) : undefined) ?? normCategory(group);
-    const MAIN_CATS = new Set(['SOFA', 'BEDFRAME', 'MATTRESS']);
-    /* First MAIN line per doc (catalog-resolved), re-iterating the already
-       (doc_no, line_no, created_at)-ordered itemRows. Falls back to the earliest
-       line captured above when an SO has no sofa/bedframe/mattress line. */
-    const repCat = new Map<string, string>();
-    const repBranding = new Map<string, string | null>();
-    const repCode = new Map<string, string | null>();
-    for (const it of itemRows as unknown as Array<{ doc_no: string; item_group: string; branding: string | null; item_code: string | null }>) {
-      if (repCat.has(it.doc_no)) continue;
-      const cat = resolveLineCat(it.item_code, it.item_group);
-      if (MAIN_CATS.has(cat)) {
-        repCat.set(it.doc_no, cat);
-        repBranding.set(it.doc_no, it.branding ?? null);
-        repCode.set(it.doc_no, it.item_code ?? null);
-      }
-    }
-
-    /* Bedframe-only branding (Commander 2026-07-16): "如果 BEDFRAME only 的话
-       branding 就放 BEDFRAME". When an SO's lines are ALL bedframe — at least
-       one BEDFRAME line and NO branded MATTRESS/SOFA line — its Branding pill
-       reads "BEDFRAME" instead of a blank dash. Built from the SAME catalog-
-       resolved per-line category (resolveLineCat), so a sofa-module line mis-
-       saved with item_group 'others' can't fool it into hiding an AKEMI/2990
-       brand. Non-branded ACCESSORY / SERVICE / OTHERS lines carry no brand and
-       may legitimately ride along, so they don't disqualify. */
-    const resolvedCatsByDoc = new Map<string, Set<string>>();
-    for (const it of itemRows as unknown as Array<{ doc_no: string; item_group: string; item_code: string | null }>) {
-      let s = resolvedCatsByDoc.get(it.doc_no);
-      if (!s) { s = new Set(); resolvedCatsByDoc.set(it.doc_no, s); }
-      s.add(resolveLineCat(it.item_code, it.item_group));
-    }
-    const isBedframeOnly = (docNo: string): boolean => {
-      const s = resolvedCatsByDoc.get(docNo);
-      return !!s && s.has('BEDFRAME') && !s.has('MATTRESS') && !s.has('SOFA');
-    };
+    /* First-item branding inputs — rep MAIN line (catalog-resolved), else the
+       earliest line; mattress SKU-first; bedframe-only -> 'BEDFRAME' (Commander
+       2026-07-16). ONE home since 2026-09-14 so the header-branding backfill
+       writes exactly what this list shows: scm/lib/so-list-first-item-branding.ts. */
+    const firstItemBrandingByDoc = deriveListFirstItemBranding(
+      itemRows as unknown as ListBrandingLine[],
+      productCategory,
+      productBranding,
+    );
 
     /* Commander 2026-05-29 (#19) — Payment Method column summarises the
        payments LEDGER, not just the header's single payment_method field. A
@@ -1813,28 +1775,9 @@ mfgSalesOrders.get('/', async (c) => {
         today: planningToday,
       });
       /* First-item branding source (PR #266; catalog-resolved + mains-first). */
-      const hasRep = repCat.has(docNo);
-      const fCat = (hasRep ? repCat.get(docNo) : firstCat.get(docNo)) ?? null;
-      (r as Record<string, unknown>).first_item_category = fCat ?? null;
-      let fBranding = (hasRep ? repBranding.get(docNo) : firstBranding.get(docNo)) ?? null;
-      /* MATTRESS reads the SKU FIRST, not just as a fallback (owner 2026-08-18:
-         «mattress follow SKU branding»). The line's own text only survives when
-         the catalog has none. Six live 2990 lines carry the loose spellings
-         "2990" / "2990s" while their SKU says "2990s Mattress"; under the old
-         blank-only borrow they kept the loose text and the label rule needed a
-         normalisation regex to recover from it. Reading the catalog first makes
-         that regex unnecessary — and it is deleted, not left dormant. */
-      if (fCat === 'MATTRESS') {
-        const code = hasRep ? repCode.get(docNo) : firstItemCode.get(docNo);
-        const skuBrand = code ? productBranding.get(code) : undefined;
-        if (skuBrand && skuBrand.trim()) fBranding = skuBrand;
-      }
-      /* Bedframe-only SO → "BEDFRAME" pill (only when no explicit brand text
-         is present, so an AKEMI/2990 line always wins). */
-      if ((!fBranding || !fBranding.trim()) && isBedframeOnly(docNo)) {
-        fBranding = 'BEDFRAME';
-      }
-      (r as Record<string, unknown>).first_item_branding = fBranding;
+      const firstItem = firstItemBrandingByDoc.get(docNo);
+      (r as Record<string, unknown>).first_item_category = firstItem?.category ?? null;
+      (r as Record<string, unknown>).first_item_branding = firstItem?.branding ?? null;
       /* #19 — distinct ledger payment methods, sorted + joined ("Cash + Card").
          Empty string when no payments recorded yet (UI falls back to the
          header payment_method field). */
@@ -5337,10 +5280,24 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        decision and is not second-guessed. A null result leaves it blank rather
        than inventing one. */
     if (String((body.branding as string | null | undefined) ?? '').trim() === '') {
+      /* The company's maintained brands, so a sofa whose SKU carries no brand is
+         stamped with what the list shows (ZANOTTI) instead of NULL. An
+         unreadable pool is null and leaves the SKU-only answer. */
+      let listFallback: { companyCode: string | null; brands: string[] } | null = null;
+      try {
+        const brandRows = await c.env.DB.prepare(
+          `SELECT name FROM project_brands WHERE active = 1${activeCompanySql(c)}`
+        ).all<{ name: string }>();
+        listFallback = {
+          companyCode: c.get('companyCode') ?? null,
+          brands: (brandRows.results ?? []).map((b) => String(b.name ?? '').trim()).filter(Boolean),
+        };
+      } catch { listFallback = null; }
       const headerBrand = await deriveHeaderBrandingFromLines(
         sb,
-        rowsWithDoc as unknown as Array<{ item_code?: string | null; branding?: string | null; company_id?: number | null }>,
+        rowsWithDoc as unknown as Array<{ item_code?: string | null; item_group?: string | null; branding?: string | null; company_id?: number | null }>,
         activeCompanyId(c) ?? null,
+        listFallback,
       );
       if (headerBrand) {
         effectiveBrand = headerBrand;

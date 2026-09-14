@@ -5549,10 +5549,35 @@ roughly one of those in wall time. **A DROP of the payment-totals view must CASC
 these three functions and re-run that migration's bodies after the recreate** —
 they depend on the view's row type.
 
-Branding reads the header `branding` column. On staging (2026-09-14, probe run 34818215402) 169 of
-2,943 Houzs orders carry the placeholder `NONE` and 5 are blank; the list shows
-a label derived from their first line, and a Branding filter does not match
-them.
+Branding reads the header `branding` column. An order whose header is a
+placeholder (`NONE` / blank) shows a label derived from its first line but is not
+matched by the filter. Production 2026-09-14 (read-only plan run 34830280390):
+HOUZS 177 of 2,957 (`NONE` x169 and NULL x3 imported from AutoCount's
+`UDF_BRANDING`, NULL x5 ERP-created), 2990 6 of 175. Two changes close it:
+
+- **Backfill** — `backend/scripts/backfill-so-header-branding.mjs`, workflow
+  *Backfill SO header branding (plan / apply)*, `COMPANY` HOUZS or 2990, plan by
+  default, apply needs `confirm=backfill-so-header-branding`. It writes
+  `brandingLabel(deriveListFirstItemBranding(...))` — the list's own functions,
+  imported — and only when `brandForHeader` finds that label in the company's
+  active `project_brands` ("Bedframe" is written as Houzs's `BEDFRAME`). A label
+  that is a category noun ("Accessory", "Mattress", "Other", "No Items") is left
+  and listed. The UPDATE queues NO AutoCount edit (no trigger on the table does;
+  the plan prints `pg_trigger`), but the next save of such an order sends the
+  brand to AutoCount's BRANDING instead of `NONE`. It DOES fire
+  `trg_vp_outbox_so`, so the Venture Portal receives each filled order again
+  while its feed is on for that company. `sync-ac-delta`'s `hdr` lane (off by
+  default) would copy AutoCount's `NONE` back over a filled header, because a
+  script is not a person in the audit trail.
+- **Create stamp** — `deriveHeaderBrandingFromLines` falls back to the same
+  label-if-it-is-a-brand when the representative SKU has no branding, so a Houzs
+  `8211-*` sofa (SKU branding blank) is created as ZANOTTI instead of NULL.
+  Entry `docs/bugs/0890-a-sales-order-whose-header-branding-is-none-or-blank-could-n.md`.
+
+The list's `first_item_category` / `first_item_branding` rule lives in
+`backend/src/scm/lib/so-list-first-item-branding.ts` since 2026-09-14 (the
+handler calls it). `so-display-branding.ts` is still a separate, slightly
+different copy used by the detail page and the Sales report.
 
 **Still not built:** Stock readiness (computed after the page renders by the
 deferred MRP enrichment, so it cannot filter a server page), Item code contains,
