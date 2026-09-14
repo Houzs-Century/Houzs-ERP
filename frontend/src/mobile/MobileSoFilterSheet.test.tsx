@@ -38,6 +38,10 @@ beforeEach(() => {
   authedFetch.mockReset();
   authedFetch.mockImplementation(async (url: string) => {
     if (url.startsWith("/staff")) return { staff: [] };
+    if (url.startsWith("/inventory/warehouses")) return { warehouses: [
+      { id: "e309c399-697c-4174-967f-ae2c888ad999", code: "KL", name: "KL WAREHOUSE", location: null, is_active: true },
+      { id: "a1b2c3d4-0000-4000-8000-000000000002", code: "JB", name: "JB WAREHOUSE", location: null, is_active: false },
+    ] };
     const p = new URLSearchParams(url.split("?")[1] ?? "");
     if (p.getAll("f").includes("createdBy:me")) return { salesOrders: [], total: 57 };
     return { salesOrders: [], total: 2949 };
@@ -83,8 +87,7 @@ describe("MobileSoFilterSheet", () => {
     await user.click(screen.getByRole("button", { name: "+ Add filter" }));
     expect(screen.getByText("Who")).toBeTruthy();
     expect(screen.getByText("Order and money")).toBeTruthy();
-    const warehouse = screen.getByRole("button", { name: /Warehouse/ });
-    expect((warehouse as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText(/coming next/)).toBeNull();
 
     await user.click(screen.getByRole("button", { name: /^Created by/ }));
     const row = screen.getByTestId("so-filter-row");
@@ -139,5 +142,33 @@ describe("MobileSoFilterSheet", () => {
     const dmy = (d: string) => d.slice(8, 10) + "/" + d.slice(5, 7) + "/" + d.slice(0, 4);
     expect(screen.getByRole("button", { name: /Edit Delivery date value/ }).textContent).toContain(dmy(from) + " – " + dmy(to));
     await user.click(within(cal).getByRole("button", { name: "Show next month" }));
+  });
+
+  it("a Warehouse row picks from the company's warehouses and previews with it", async () => {
+    const user = userEvent.setup();
+    const props = renderSheet();
+    await user.click(screen.getByRole("button", { name: "+ Add filter" }));
+    await user.click(screen.getByRole("button", { name: /^Warehouse/ }));
+    await user.click(await screen.findByRole("button", { name: /JB WAREHOUSE/ }));
+    expect(screen.getByRole("button", { name: /Edit Warehouse value/ }).textContent).toContain("is JB WAREHOUSE");
+    await waitFor(() => expect(urls().some((u) => u.includes("f=warehouse%3Ais%3Aa1b2c3d4-0000-4000-8000-000000000002"))).toBe(true));
+    await user.click(screen.getByRole("button", { name: /^Apply/ }));
+    expect(props.onApply).toHaveBeenCalledWith({ status: "all", filters: [{ field: "warehouse", op: "is", value: "a1b2c3d4-0000-4000-8000-000000000002" }] });
+  });
+
+  it("Item category and Pending amendment are choices", async () => {
+    const user = userEvent.setup();
+    const props = renderSheet();
+    await user.click(screen.getByRole("button", { name: "+ Add filter" }));
+    await user.click(screen.getByRole("button", { name: /^Item category/ }));
+    await user.click(screen.getByRole("button", { name: "Sofa" }));
+    await user.click(screen.getByRole("button", { name: "+ Add filter" }));
+    await user.click(screen.getByRole("button", { name: /^Pending amendment/ }));
+    await user.click(screen.getByRole("button", { name: "Has a pending amendment" }));
+    await user.click(screen.getByRole("button", { name: /^Apply/ }));
+    expect(props.onApply).toHaveBeenCalledWith({ status: "all", filters: [
+      { field: "itemCategory", op: "is", value: "sofa" },
+      { field: "pendingAmendment", op: "is", value: "yes" },
+    ] });
   });
 });

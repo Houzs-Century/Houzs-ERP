@@ -17,7 +17,7 @@ type Call = [string, ...unknown[]];
 function recorder() {
   const calls: Call[] = [];
   const q: Record<string, unknown> = {};
-  for (const m of ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'ilike', 'in', 'or', 'not', 'is']) {
+  for (const m of ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'ilike', 'in', 'or', 'not', 'is', 'overlaps']) {
     q[m] = (...args: unknown[]) => { calls.push([m, ...args]); return q; };
   }
   return { q, calls };
@@ -111,6 +111,24 @@ describe('money', () => {
       ['or', 'amended_delivery_date.lt.2026-09-14,and(amended_delivery_date.is.null,customer_delivery_date.lt.2026-09-14)'],
       ['not', 'status', 'in', '(SHIPPED,DELIVERED,INVOICED,CLOSED,CANCELLED)'],
     ]);
+  });
+});
+
+describe('line-level fields read the computed fields the migration adds', () => {
+  it('warehouse: the order has a live line in that warehouse', () => {
+    const id = 'e309c399-697c-4174-967f-ae2c888ad999';
+    expect(run({ field: 'warehouse', op: 'is', value: id })).toEqual([['overlaps', 'so_line_warehouse_ids', [id]]]);
+  });
+  it('item category: the order has a live line in that bucket', () => {
+    expect(run({ field: 'itemCategory', op: 'is', value: 'sofa' })).toEqual([['overlaps', 'so_line_categories', ['SOFA']]]);
+    expect(run({ field: 'itemCategory', op: 'is', value: 'accessory' })).toEqual([['overlaps', 'so_line_categories', ['ACCESSORY']]]);
+  });
+  it('pending amendment: yes and no are both a real predicate', () => {
+    expect(run({ field: 'pendingAmendment', op: 'is', value: 'yes' })).toEqual([['is', 'so_has_open_amendment', true]]);
+    expect(run({ field: 'pendingAmendment', op: 'is', value: 'no' })).toEqual([['is', 'so_has_open_amendment', false]]);
+  });
+  it('branding is the header column', () => {
+    expect(run({ field: 'branding', op: 'contains', value: 'aKemi' })).toEqual([['ilike', 'branding', '%aKemi%']]);
   });
 });
 
