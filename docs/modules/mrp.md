@@ -755,18 +755,28 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   company-1 sofa lines read READY without their own purchase order. Company 2
   keeps the pooled sofa model.
 
-- **AND CUSTOM PILLOWS JOINED IT ON 2026-09-14** — `SQUARE PILLOW` and `LONG PILLOW`
-  (`CUSTOM_ACCESSORY_CODES` in `lib/so-stock-allocation.ts`, read by
-  `isHardBoundLine`, so section 7 and the stored allocator both follow). Owner:
+- **AND THE SOFA ACCESSORY CATEGORY JOINED IT ON 2026-09-14** — every SKU whose
+  product-master category is `FABRIC_ACCESSORY` (line group `fabric_accessory`,
+  `HARD_BOUND_GROUPS` in `lib/so-stock-allocation.ts`, read by `isHardBoundLine`,
+  so section 7 and the stored allocator both follow). On prod that is SB02, BC04,
+  BC04-MF, BC05, BC05-MF, AR01, AR02, SQUARE PILLOW and LONG PILLOW (owner:
+  「这些sku全部都要处理」). The CATEGORY decides: a line's group is stamped from its
+  SKU's category when written, so a SKU created in the category binds with no code
+  change, and one moved back to Accessory pools. The two-code list that bound the
+  pillows by name before they were re-categorised was removed the same day
+  (`docs/bugs/0906-the-pillow-binding-list-ignored-the-category.md`). The random /
+  free-gift pillows (AMN-SOFA PILLOW, SOFA PILLOW (FOC)) are Accessory and pool.
+  **Not automatic:** moving an EXISTING Accessory SKU into the category moves the
+  product only; its open lines keep `accessory` (and pool) until a data run like
+  #3864 moves them. Owner, for the pillows:
   「因为它是 accessories，你也是 still 要根据它的规格来分配的」. The colour is Special
   Order text, which is not in the bucket key, so every custom pillow of one SKU
   shared one bucket and FIFO handed a purchase order raised for one customer's
   colour to whichever order was due first — on prod 34 of 222 live company-1
   custom pillow lines named somebody else's PO and 7 read short with their own
   open (`probe-custom-pillow-binding.mjs`, workflow *Probe custom pillow binding
-  (read-only)*). Matched on the SKU, not on "has a colour": the CUSTOM code is the
-  coloured one by the 2026-09-10 SKU rule, `SQUARE PILLOW RDM` stays pooled, and a
-  blank colour on the custom code is an unfilled order. Company 2 unchanged.
+  (read-only)*, which now measures the whole category). Company 2 has no Sofa
+  Accessory SKU; its pillows are Accessory and pool.
   `docs/bugs/0890-mrp-pooled-custom-pillows-by-sku-so-one-customer-s-colour-co.md`.
 - **Ordering a bound line twice is refused on every convert path, MRP included
   (2026-09-14).** An MRP-origin convert skips the per-line cap for a POOLED line

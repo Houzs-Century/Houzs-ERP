@@ -33,7 +33,7 @@ const poLine = (soItemId: string, qty: number, status: string, company = 1): Row
 });
 
 describe('loadBoundOrderedQty', () => {
-  const pillow = { id: 'l-013503', item_group: 'accessory', item_code: 'LONG PILLOW' };
+  const pillow = { id: 'l-013503', item_group: 'fabric_accessory', item_code: 'LONG PILLOW' };
 
   test('counts every LIVE purchase-order line on a bound line, MRP-origin included', async () => {
     const sb = fakeSb({ purchase_order_items: [poLine('l-013503', 3, 'SUBMITTED'), poLine('l-013503', 2, 'CANCELLED'), poLine('l-013503', 1, 'DRAFT')] });

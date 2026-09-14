@@ -39,8 +39,7 @@ const pad = (s, n) => String(s ?? "").slice(0, n).padEnd(n);
 /* Ported from `isHardBoundLine` (scm/lib/so-stock-allocation.ts). Held as one
    predicate so the sweep and the engine cannot disagree about which lines the
    rule covers. Change one, change the other. */
-const HARD_BOUND = (t) => sql`(lower(coalesce(${t}.item_group,'')) in ('sofa','bedframe')
-  or upper(btrim(coalesce(${t}.item_code,''))) in ('SQUARE PILLOW','LONG PILLOW')
+const HARD_BOUND = (t) => sql`(lower(coalesce(${t}.item_group,'')) in ('sofa','bedframe','fabric_accessory')
   or (lower(coalesce(${t}.item_group,'')) = 'mattress' and ${t}.item_code ~* '\(SP\)\s*$'))`;
 
 /* SELF-TEST. A checker that cannot match must refuse to report, never report a

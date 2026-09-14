@@ -45,13 +45,18 @@ const ENGINE = (process.env.ENGINE ?? "1") !== "0";
 const list = (s) => String(s || "").split(",").map((x) => x.trim()).filter(Boolean);
 const SOS = list(process.env.SOS || "HC-SO-013384,HC-SO-013496,HC-SO-013236,HC-SO-013503");
 const POS = list(process.env.POS || "HC-PO-010083,HC-PO-010084,HC-PO-009945,HC-PO-2609-058,HC-PO-2609-065,HC-PO-2609-053,HC-PO-2609-091,HC-PO-2609-101");
-const CODES = ["SQUARE PILLOW", "LONG PILLOW"];
+/* The population is the Sofa Accessory CATEGORY in the product master (owner
+   2026-09-14, 「这些sku全部都要处理」), not a typed code list: a SKU moved into it
+   later is measured with nobody editing this file. Read in main(). */
+let CODES = [];
 
 const GH = !!process.env.GITHUB_ACTIONS;
 const notice = (m) => console.log(GH ? `::notice::${m}` : m);
 const say = (m = "") => console.log(m);
 const pad = (s, n) => String(s ?? "").slice(0, n).padEnd(n);
-const colour = (v) => String((v && typeof v === "object" ? v.extraAddonNote : "") ?? "").trim();
+/* The colour a line names: the fabric code stock keys on (Sofa Accessory, 2026-09-14),
+   else the Special Order text it used to live in. */
+const colour = (v) => String((v && typeof v === "object" ? (v.fabricCode || v.extraAddonNote) : "") ?? "").trim();
 const { SO_TERMINAL_STATES } = await import("./lib/so-terminal-states.mjs");
 const PO_DEAD = ["CANCELLED", "DRAFT"];
 
@@ -60,7 +65,10 @@ const sql = postgres(DSN, { ssl: "require", prepare: false, max: 1, idle_timeout
 async function main() {
   try { await sql`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`; } catch (e) { say(`could not set READ ONLY (${e.message}) — every statement is a SELECT`); }
   const [ro] = await sql`SELECT current_setting('transaction_read_only') AS ro, now()::text AS at`;
-  notice(`=== custom pillow binding — READ-ONLY (transaction_read_only=${ro.ro}) · read at ${ro.at} · company ${COMPANY} ===`);
+  CODES = (await sql`SELECT upper(btrim(code)) AS code FROM scm.mfg_products WHERE company_id = ${COMPANY} AND category::text = 'FABRIC_ACCESSORY' ORDER BY 1`).map((r) => r.code);
+  if (CODES.length === 0) { notice(`company ${COMPANY} has NO Sofa Accessory (FABRIC_ACCESSORY) SKU — nothing to measure, and a zero below would mean nothing`); await sql.end(); return; }
+  notice(`Sofa Accessory SKUs (${CODES.length}): ${CODES.join(", ")}`);
+  notice(`=== Sofa Accessory binding — READ-ONLY (transaction_read_only=${ro.ro}) · read at ${ro.at} · company ${COMPANY} ===`);
 
   await soSection();
   await poSection();
@@ -159,7 +167,7 @@ async function engineSection() {
   for (const { l, verdict, named } of flagged) {
     say(`${named ? "*" : " "} ${pad(l.doc_no, 14)} ln ${pad(l.line_no, 3)} ${pad(l.item_code, 14)} qty ${pad(l.qty, 3)} delivery ${pad(l.delivery ?? "—", 10)} colour "${colour(l.variants)}" -> ${verdict}`);
   }
-  notice(`engine verdict over ${lines.length} live company-${COMPANY} custom pillow lines: ${foreign} covered by SOMEBODY ELSE's PO · ${shortWithOwn} short while their own PO is open · ${ownOk} ok · ${noEntry} no entry`);
+  notice(`engine verdict over ${lines.length} live company-${COMPANY} Sofa Accessory lines: ${foreign} covered by SOMEBODY ELSE's PO · ${shortWithOwn} short while their own PO is open · ${ownOk} ok · ${noEntry} no entry`);
 }
 
 async function census() {
@@ -178,7 +186,7 @@ async function census() {
      GROUP BY s.id, s.doc_no, s.line_no, s.item_code, s.qty, s.variants
     HAVING sum(it.qty) > s.qty
      ORDER BY s.doc_no`;
-  notice(`A. ${dbl.length} custom pillow sales-order line(s) ordered MORE than their quantity on live purchase orders`);
+  notice(`A. ${dbl.length} Sofa Accessory sales-order line(s) ordered MORE than their quantity on live purchase orders`);
   for (const d of dbl) {
     say(`   ${pad(d.doc_no, 14)} ln ${pad(d.line_no, 3)} ${pad(d.item_code, 14)} qty ${d.qty} ordered ${d.ordered} colour "${colour(d.variants)}": ${d.pos.map((p) => `${p.po} ${p.st} ${p.qty}/${p.rcv} mrp=${p.mrp} ${String(p.at).slice(0, 10)}`).join(" | ")}`);
   }
@@ -194,9 +202,9 @@ async function census() {
   const bad = mism.filter((m) => {
     const poText = norm(colour(m.variants) || m.description2);
     const soText = norm(colour(m.s_var));
-    return upper(m.item_code) !== upper(m.s_code) || (soText && poText && poText !== soText) || (soText && !poText);
+    return upper(m.item_code) !== upper(m.s_code) || (soText && poText && !poText.includes(soText) && !soText.includes(poText)) || (soText && !poText);
   });
-  notice(`B. ${bad.length} of ${mism.length} live linked custom pillow PO line(s) disagree with the sales-order line they point at (item code, or colour text; a PO line with NO colour for a coloured SO line counts)`);
+  notice(`B. ${bad.length} of ${mism.length} live linked Sofa Accessory PO line(s) disagree with the sales-order line they point at (item code, or colour text; a PO line with NO colour for a coloured SO line counts)`);
   for (const m of bad) {
     say(`   ${pad(m.po_number, 15)} ${pad(m.st, 18)} ln ${pad(m.line_no, 3)} ${pad(m.item_code, 14)} PO colour "${colour(m.variants) || String(m.description2 ?? "").trim()}" -> ${m.doc_no} ln ${m.sl} ${m.s_code} colour "${colour(m.s_var)}"`);
   }
@@ -204,7 +212,7 @@ async function census() {
     SELECT count(*)::int AS n FROM scm.purchase_order_items it JOIN scm.purchase_orders p ON p.id = it.purchase_order_id
      WHERE p.company_id = ${COMPANY} AND upper(btrim(it.item_code)) = ANY(${CODES}) AND it.so_item_id IS NULL
        AND p.status::text <> ALL(${PO_DEAD})`;
-  notice(`C. ${unl.n} live custom pillow PO line(s) carry NO sales-order link at all`);
+  notice(`C. ${unl.n} live Sofa Accessory PO line(s) carry NO sales-order link at all`);
 }
 
 function upper(s) { return String(s ?? "").trim().toUpperCase(); }
