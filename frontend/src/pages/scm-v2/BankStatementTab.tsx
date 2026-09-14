@@ -726,12 +726,25 @@ export const OpenLines = ({ lines, entries }: { lines: BankLine[]; entries: Ledg
           </tr>
         </thead>
         <tbody>
-          {lines.map((l) => <OpenLine key={l.id} line={l} isPicked={pickedLines.includes(l.id)} onPick={() => toggleLine(l.id)} />)}
+          {/* KEYED ON THE DECISION, not the line alone (docs/bugs/0870). The
+              matcher decides a line again on every read (docs/bugs/0815), and
+              a row first drawn as "check which" whose decision later becomes
+              "one payout for several reports" kept its empty tick state: no
+              report ticked, the button dead, the new decision invisible. A
+              changed decision remounts the row, so its ticks are seeded from
+              what the matcher decided NOW. */}
+          {lines.map((l) => (
+            <OpenLine key={decisionKey(l)} line={l} isPicked={pickedLines.includes(l.id)} onPick={() => toggleLine(l.id)} />
+          ))}
         </tbody>
       </table>
     </section>
   );
 };
+
+/** The row's identity for React: the line AND what the matcher made of it. */
+export const decisionKey = (l: BankLine): string =>
+  `${l.id}|${l.kind}|${l.matched_batch_id ?? ''}|${(l.split ?? []).map((s) => `${s.batchId}:${s.amountSen}`).join('+')}`;
 
 export const OpenLine = ({ line, isPicked = false, onPick }: { line: BankLine; isPicked?: boolean; onPick?: () => void }) => {
   const book = useBookBankReceipt();
