@@ -10,9 +10,8 @@
 //
 // THE KEY. A code is reduced to its letters and its number groups, leading
 // zeros dropped: `CH141-08` and `CH141-8-ARMY` are both CH|141|8; `MODENZA-04`
-// and `Modenza 4` are MODENZA|4; `BO315` and `B0315` are both B|315 (an `O`
-// that sits right before a digit is read as a zero — no fabric family in the
-// master ends in a letter O before its number, and the typo is common). The
+// and `Modenza 4` are MODENZA|4; `BO315` and `B0315` are both B|315 (a family's
+// trailing O is dropped on both sides, so the O-for-zero typo meets itself). The
 // descriptive word after the colour number (`-ARMY`, `(PEARL)`) is not part of
 // the key.
 //
@@ -33,12 +32,15 @@ export function fabricKey(code) {
   // cut the descriptive tail: the first run of 3+ letters AFTER a digit
   const tail = s.match(/^(.*?\d)[\s\-()#]*[A-Z]{3,}.*$/);
   if (tail) s = tail[1];
-  s = s.replace(/O(?=\d)/g, "0");
   const m = s.match(/^([A-Z]+)[\s\-]*([0-9][0-9\s\-#]*)$/);
   if (!m) return null;
   const nums = m[2].split(/[^0-9]+/).filter(Boolean).map((n) => String(Number(n)));
   if (!nums.length) return null;
-  return `${m[1]}|${nums.join("|")}`;
+  // A trailing O on the family is dropped, the same way on both sides, so the
+  // letter O typed for a zero (`BO315` / `B0315`) meets itself — and a family
+  // that really ends in O (`CHINO-01`) still meets its own master row.
+  const family = m[1].length > 1 && m[1].endsWith("O") ? m[1].slice(0, -1) : m[1];
+  return `${family}|${nums.join("|")}`;
 }
 
 /** Index the master: key -> [{ code, active, uses }]. */

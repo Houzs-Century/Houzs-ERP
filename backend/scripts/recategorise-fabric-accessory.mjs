@@ -130,7 +130,8 @@ async function plan(tx) {
   const rows = {};
   for (const [k, d] of Object.entries(LINES)) {
     const extra = [d.parent?.[1], d.parent2?.[1]].filter(Boolean).map((c) => `, ${c}::text AS ${c}`).join("");
-    rows[k] = await tx.unsafe(`SELECT id::text, ${d.doc}::text AS doc, item_code, item_group, variants, ${d.text.join(", ")}${extra}
+    const qtyCols = k === "grn" ? ", qty_received, qty_accepted" : "";
+    rows[k] = await tx.unsafe(`SELECT id::text, ${d.doc}::text AS doc, item_code, item_group, variants, ${d.text.join(", ")}${extra}${qtyCols}
       FROM scm.${d.table} WHERE company_id = $1 AND upper(btrim(item_code)) = ANY($2)`, [COMPANY, codes]);
   }
   const byId = {};
@@ -186,8 +187,10 @@ async function plan(tx) {
   let colourWrites = 0;
   for (const w of writes) {
     const res = await tx.unsafe(`UPDATE scm.${LINES[w.k].table}
-      SET variants = jsonb_set(variants, '{fabricCode}', to_jsonb($1::text), true)
-      WHERE id::text = $2 AND company_id = $3 AND jsonb_typeof(variants) = 'object'
+      SET variants = CASE WHEN variants IS NULL OR jsonb_typeof(variants) = 'null' THEN jsonb_build_object('fabricCode', $1::text)
+                          ELSE jsonb_set(variants, '{fabricCode}', to_jsonb($1::text), true) END
+      WHERE id::text = $2 AND company_id = $3
+        AND (variants IS NULL OR jsonb_typeof(variants) IN ('object', 'null'))
         AND coalesce(variants->>'fabricCode','') = '' AND coalesce(variants->>'fabricColor','') = ''
       RETURNING id`, [w.code, w.id, COMPANY]);
     colourWrites += res.length;
@@ -213,6 +216,10 @@ async function plan(tx) {
     if (!line && cands.length > 1) {
       const same = cands.filter((g) => JSON.stringify(g.variants ?? {}) === JSON.stringify(l.mv ?? {}) && String(g.description2 ?? "") === String(l.md2 ?? ""));
       line = same.length === 1 ? same[0] : null;
+      if (!line) {
+        const byQty = cands.filter((g) => Number(g.qty_accepted ?? g.qty_received) === Number(l.qty_received));
+        line = byQty.length === 1 ? byQty[0] : null;
+      }
     }
     if (!line) { skipped.push(`${l.item_code} ${l.source_doc_no} rem ${l.qty_remaining}: ${cands.length} GRN lines, cannot tie the lot to one`); continue; }
     const colour = resolve("grn", line.id);

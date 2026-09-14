@@ -66,3 +66,14 @@ describe('matchFabricColour — real production texts', () => {
     expect(m('Col:M2402-15')).toMatchObject({ verdict: 'match', code: 'M2402-15' });
   });
 });
+
+describe('a family that ends in O', () => {
+  const idx = indexFabricMaster([{ fabric_code: 'CHINO-01' }, { fabric_code: 'BO315-8' }]);
+  test('CHINO-01 meets its own master row however it is typed', () => {
+    expect(matchFabricColour('COL:CHINO-01', idx)).toMatchObject({ verdict: 'match', code: 'CHINO-01' });
+    expect(matchFabricColour('Col:CHINO 1', idx)).toMatchObject({ verdict: 'match', code: 'CHINO-01' });
+  });
+  test('B0315-8 still meets BO315-8', () => {
+    expect(matchFabricColour('colour : B0315-8', idx)).toMatchObject({ verdict: 'match', code: 'BO315-8' });
+  });
+});
