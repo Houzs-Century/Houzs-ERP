@@ -330,6 +330,7 @@ together, are:
 |---|---|---|
 | New Sales Order | `pages/scm-v2/SalesOrderNew.tsx` | `mobile/MobileNewSO.tsx` |
 | SO list / detail | `pages/scm-v2/MfgSalesOrdersListV2.tsx`, `SalesOrderDetailV2.tsx` | `mobile/MobileSalesOrders.tsx`, `MobileSODetail.tsx` |
+| SO list second-level filters (shared state `vendor/scm/lib/so-list-filter-state.ts`) | `pages/scm-v2/SoListFilterBar.tsx` | `mobile/MobileSoFilterSheet.tsx` |
 | SO amendments | `pages/scm-v2/Amendments.tsx` | `mobile/MobileAmendments.tsx` |
 | Service cases (ASSR) | `pages/ServiceCases.tsx` | `mobile/MobileServiceCase.tsx` |
 | Projects / PMS | `pages/Projects.tsx` | `mobile/MobilePMS.tsx` (+ `MobileGantt.tsx`) |

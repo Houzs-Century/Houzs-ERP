@@ -1,4 +1,6 @@
 // Vendored SLICE of apps/backend/src/lib/flow-queries.ts — ONLY the Sales-Order
+import { appendSoListFilterParams } from './so-list-filter-state';
+import type { SoListFilter } from '../../shared/so-list-filter-model';
 import { writeFailed } from './mutation-error';
 import { resolveCompartmentArtUrl, loadCompartmentArt } from './sofa-compartment-art';
 // read / detail / status / mutation hooks the vendored SO list + detail pages
@@ -66,21 +68,22 @@ export const useMfgSalesOrders = (status?: string) =>
 // useMfgSalesOrders above (no page) still returns all 500 for the dead V1 page.
 // Status tab values in the UI are lowercase (draft/confirmed/cancelled) but the
 // mfg_sales_orders.status column stores UPPERCASE — uppercase here to match.
-export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; enabled?: boolean }) {
-  const { page, pageSize, status, q, sort, enabled } = params;
+export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; enabled?: boolean; filters?: readonly SoListFilter[] }) {
+  const { page, pageSize, status, q, sort, enabled, filters = [] } = params;
   const usp = new URLSearchParams();
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
   if (status && status !== 'all') usp.set('status', status.toUpperCase());
   if (q && q.trim()) usp.set('q', q.trim());
   if (sort) usp.set('sort', sort);
+  appendSoListFilterParams(usp, filters); // second-level filters (so-list-filter-state.ts)
   return useQuery({
     // `enabled` (default true) lets the list page defer the FIRST fetch by one
     // render until the DataTable's one-shot mount sort-report lands, so the
     // initial query already carries any localStorage-restored `sort` instead of
     // firing sort-less, getting aborted, and immediately re-firing with sort.
     enabled: enabled ?? true,
-    queryKey: ['mfg-sales-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? ''],
+    queryKey: ['mfg-sales-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? '', usp.getAll('f').join('|')],
     // statusCounts carries ONE bucket per backend SO_STATUSES entry (lowercase:
     // draft/confirmed/in_production/ready_to_ship/shipped/delivered/invoiced/
     // closed/on_hold/cancelled) plus `all` and `other` (legacy/unknown
