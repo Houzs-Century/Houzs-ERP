@@ -9,7 +9,7 @@ Owner-facing thread: 「去查看houzs erp的RBAC和限制 我发现电脑电话
 ## 1. What LANDED
 
 All merged on 2026-09-14 and in production: the Worker's `/health` answered sha
-`b9d05153` at 13:0xZ, and each merge commit below is its ancestor
+`b9d05153` when checked at about 13:03Z, and each merge commit below is its ancestor
 (`git merge-base --is-ancestor`).
 
 | item | PR | merged (UTC) |
