@@ -110,7 +110,13 @@ export interface GroupKeyContext {
  */
 export function groupKeyFor(input: GroupKeyInput, toggle: PoMode, ctx: GroupKeyContext): string {
   const base = `${input.warehouseId ?? 'null'}::${input.supplierId}`;
-  const cat = (input.itemGroup ?? '').trim().toLowerCase();
+  /* A Sofa Accessory (group fabric_accessory — custom pillows, back cushions,
+     arm rests sewn in the order's fabric) is grouped AS the sofa, in both modes:
+     it parks under the sofa on its own SO and lands on the sofa's PO (owner
+     2026-09-14: 「sofa accessory 就 park under sofa 在 MRP 的地方 然后 under same SO
+     的 这样就可以开一样 PO 了」). A plain accessory keeps the rule above. */
+  const rawCat = (input.itemGroup ?? '').trim().toLowerCase();
+  const cat = rawCat === 'fabric_accessory' ? 'sofa' : rawCat;
 
   // PER-SO — everything with its own SO, split by category. The category tag is
   // what SPLITS a sofa order's sofa from its accessories (the owner's "分开").

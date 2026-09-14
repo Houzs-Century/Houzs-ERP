@@ -216,3 +216,25 @@ describe("every key carries warehouse + supplier, and is stable across runs", ()
     expect(DEFAULT_MATTRESS_WINDOW_DAYS).toBe(7);
   });
 });
+
+describe("Sofa Accessory rides as the sofa (owner 2026-09-14)", () => {
+  const SO = "HC-SO-013503";
+  test("Combine: a sofa accessory lands on the same PO as its SO's sofa", () => {
+    expect(key({ soDocNo: SO, itemGroup: "fabric_accessory" }, "combined", [SO]))
+      .toBe(key({ soDocNo: SO, itemGroup: "sofa" }, "combined", [SO]));
+  });
+  test("Per-SO: still the sofa's PO — it is not split off like a plain accessory", () => {
+    expect(key({ soDocNo: SO, itemGroup: "fabric_accessory" }, "per-so"))
+      .toBe(key({ soDocNo: SO, itemGroup: "sofa" }, "per-so"));
+    expect(key({ soDocNo: SO, itemGroup: "accessory" }, "per-so"))
+      .not.toBe(key({ soDocNo: SO, itemGroup: "sofa" }, "per-so"));
+  });
+  test("a pillow-only order is still per SO, never merged across orders", () => {
+    expect(key({ soDocNo: "SO-A", itemGroup: "fabric_accessory" }, "combined"))
+      .not.toBe(key({ soDocNo: "SO-B", itemGroup: "fabric_accessory" }, "combined"));
+  });
+  test("a different supplier still splits", () => {
+    expect(key({ soDocNo: SO, itemGroup: "fabric_accessory", supplierId: "other" }, "combined", [SO]))
+      .not.toBe(key({ soDocNo: SO, itemGroup: "sofa" }, "combined", [SO]));
+  });
+});
