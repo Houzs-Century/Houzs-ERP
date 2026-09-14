@@ -197,7 +197,11 @@ const invalidateAfterBankPosting = (qc: ReturnType<typeof useQueryClient>) => {
 export const useUploadBankStatement = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { accountCode: string; fileName: string; content: string; statementMonth?: string | null }) =>
+    mutationFn: (body: {
+      accountCode: string; fileName: string; content: string; statementMonth?: string | null;
+      /** PDF: `content` is the text pdf.js read off the file, with positions (lib/pdf-text.ts; docs/bugs/0869). */
+      format?: 'CSV' | 'PDF';
+    }) =>
       authedFetch<{
         ok: boolean; statementId: number; lines: number; joinedPairs: number; skippedLines: number;
         /** Movements this account had already recorded from an earlier upload —
