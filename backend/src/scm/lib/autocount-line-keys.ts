@@ -32,6 +32,9 @@ export interface LineKeyTarget {
   ids: Array<string | string[]>;
   codes: string[];
   desc2?: Array<string | null>;
+  /** `so_to_po` only: the source sales-line keys AS SENT (`body.DtlKeys`, after
+   *  the drain's backfill). The host creates purchase line N from key N. */
+  sourceDtlKeys?: number[];
 }
 
 /** Just enough of the outbox row to label the log line. */
@@ -86,8 +89,14 @@ export async function lineIdentityGap(
   row: LineKeyRowLabel,
   payload: { lineWriteback?: LineKeyTarget },
   lines: AcCreatedLine[],
+  /** The body that went on the WIRE — a `wait` row's DtlKeys are filled at drain. */
+  sent: { DtlKeys?: unknown } = {},
 ): Promise<string | null> {
-  if (payload.lineWriteback) return persistLineKeys(sb, row, payload.lineWriteback, lines);
+  if (payload.lineWriteback) {
+    const sourceDtlKeys = row.op === 'so_to_po' && Array.isArray(sent.DtlKeys)
+      ? sent.DtlKeys.map((k) => Number(k)) : undefined;
+    return persistLineKeys(sb, row, { ...payload.lineWriteback, ...(sourceDtlKeys ? { sourceDtlKeys } : {}) }, lines);
+  }
   if (!isConvertOp(row.op)) return null;
   return 'No line identity was stored: the ERP could not read this document\'s own lines when the '
     + "conversion was queued, so there was nothing to attach the account book's keys to. Match the "
@@ -135,7 +144,52 @@ export async function persistLineKeys(
     const ordered = [...lines].sort((a, b) => a.Seq - b.Seq);
     const groups = target.ids.map((g) => (Array.isArray(g) ? g : [g]));
     const norm = (s: string | null | undefined) => String(s ?? '').trim().toUpperCase();
-    for (let i = 0; i < ordered.length; i += 1) {
+
+    /* A TRANSFER IS PROVEN BY ITS SOURCE KEY, NOT BY ITS ITEM CODE (2026-09-14).
+       AddSOToPOTransferDetail copies the SALES line's item, so the book holds
+       'HOK-2038 (A) (Q)' where the ERP composed 'CELENE (A)-(Q)' (recorded on
+       HC-PO-2609-089) and the ItemCode check below could never pass for a
+       supplier-coded product: 49 of 71 transfers since go-live kept no keys.
+       The host creates purchase line N from DtlKeys[N] and costs it on exactly
+       that correspondence, so line N belongs to the ERP row whose sales line IS
+       DtlKeys[N] — checked against the database before anything is written. */
+    if (row.op === 'so_to_po') {
+      const keys = target.sourceDtlKeys ?? [];
+      if (keys.length !== groups.length) {
+        return `No line identity was stored: the transfer sent ${keys.length} source key(s) for `
+          + `${groups.length} line(s), so the account book's lines cannot be tied to ours.`;
+      }
+      const allIds = groups.flat();
+      const { data: poRows, error: poErr } = await sb.from(target.table).select('id, so_item_id').in('id', allIds);
+      if (poErr) return `No line identity was stored: the purchase lines could not be read (${poErr.message}).`;
+      const soIds = [...new Set(((poRows ?? []) as Array<{ so_item_id: string | null }>)
+        .map((r) => r.so_item_id).filter((v): v is string => !!v))];
+      const { data: soRows, error: soErr } = soIds.length
+        ? await sb.from('mfg_sales_order_items').select('id, linked_ac_dtlkey').in('id', soIds)
+        : { data: [], error: null };
+      if (soErr) return `No line identity was stored: the sales lines could not be read (${soErr.message}).`;
+      const soKey = new Map(((soRows ?? []) as Array<{ id: string; linked_ac_dtlkey: unknown }>)
+        .map((r) => [String(r.id), Number(r.linked_ac_dtlkey)]));
+      const srcOf = new Map(((poRows ?? []) as Array<{ id: string; so_item_id: string | null }>)
+        .map((r) => [String(r.id), r.so_item_id ? soKey.get(String(r.so_item_id)) : undefined]));
+      for (let i = 0; i < groups.length; i += 1) {
+        const wrong = groups[i].find((id) => srcOf.get(id) !== keys[i]);
+        if (wrong) {
+          // eslint-disable-next-line no-console
+          console.error(`${label}: NOT STORED — ERP row ${wrong} was not transferred from source key ${keys[i]}.`);
+          return `No line identity was stored: line ${i + 1} was transferred from sales line key ${keys[i]}, `
+            + 'which is not the sales line behind the ERP row at that position.';
+        }
+      }
+    }
+    /* A CREATE's order is CONSTRUCTED: the host adds the details in payload order
+       and reads them back in DtlKey order, so position is identity and a repeated
+       code needs no Desc2 to tell it apart. The Desc2 and repeated-code refusals
+       below exist for CONVERSIONS, whose order is only presumed; applied to a
+       create they left HC-PO-2609-064 ('5536-1NA' twice) and HC-PO-2609-098
+       ('AK-BASTION MATT (Q)') with no keys at all. */
+    const byConstruction = row.op === 'create_so' || row.op === 'create_po' || row.op === 'so_to_po';
+    for (let i = 0; i < ordered.length && row.op !== 'so_to_po'; i += 1) {
       const got = norm(ordered[i].ItemCode);
       const want = norm(target.codes[i]);
       /* An older service may omit ItemCode; only a PRESENT and DIFFERENT code
@@ -165,7 +219,7 @@ export async function persistLineKeys(
     const dupes = new Set(
       target.codes.map(norm).filter((c, i, a) => c && a.indexOf(c) !== i),
     );
-    for (let i = 0; i < ordered.length; i += 1) {
+    for (let i = 0; i < ordered.length && !byConstruction; i += 1) {
       const gotD = norm(ordered[i].Desc2);
       const wantD = norm(target.desc2?.[i]);
       /* PREFIX-TOLERANT, because AutoCount's own column truncates. SODTL.Desc2

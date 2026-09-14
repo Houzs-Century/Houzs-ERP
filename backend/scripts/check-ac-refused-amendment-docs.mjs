@@ -280,6 +280,28 @@ try {
     out(`SUMMARY: ${docs} sent so_to_po payloads, ${multi} with 2+ lines; ${misDocs} documents / ${misLines} lines MIS-PAIRED; ${differsLines} line(s) where the carried quantity differs from the transferred line's own`);
   });
 
+  /* 8. THE UNVERIFIED CLAIM IN docs/bugs/0888: neither approve route passes the
+     lines it ADDED (newLineIds) or the keys of the lines it REMOVED (retire) to
+     enqueueEdit. Reading the routes settles THAT; this settles how often an
+     approved amendment has actually carried an ADD or a REMOVE since go-live. */
+  await section(`8. Approved amendments since ${GO_LIVE} that ADD or REMOVE a line`, async () => {
+    const so = await sql`
+      SELECT a.amendment_no, a.so_doc_no AS doc, a.so_approved_at AS at, upper(l.change_type) AS change, count(*)::int AS n
+        FROM scm.so_amendments a JOIN scm.so_amendment_lines l ON l.amendment_id = a.id
+       WHERE a.company_id = ${CO} AND a.so_approved_at >= ${GO_LIVE}::date AND upper(l.change_type) IN ('ADD', 'REMOVE')
+       GROUP BY 1, 2, 3, 4 ORDER BY 3`;
+    const po = await sql`
+      SELECT a.amendment_no, a.po_number AS doc, a.approved_at AS at, (a.source_so_amendment_id IS NOT NULL) AS follow_up,
+             upper(l.change_type) AS change, count(*)::int AS n
+        FROM scm.po_amendments a JOIN scm.po_amendment_lines l ON l.amendment_id = a.id
+       WHERE a.company_id = ${CO} AND a.status = 'APPROVED' AND a.approved_at >= ${GO_LIVE}::date AND upper(l.change_type) IN ('ADD', 'REMOVE')
+       GROUP BY 1, 2, 3, 4, 5 ORDER BY 3`;
+    out(`SO amendment line changes: ${so.length} (ADD ${so.filter((r) => r.change === "ADD").length}, REMOVE ${so.filter((r) => r.change === "REMOVE").length})`);
+    for (const r of so) out(`   ${iso(r.at)}  ${r.amendment_no}  ${r.change} x${r.n}`);
+    out(`PO amendment line changes: ${po.length} (ADD ${po.filter((r) => r.change === "ADD").length}, REMOVE ${po.filter((r) => r.change === "REMOVE").length})`);
+    for (const r of po) out(`   ${iso(r.at)}  ${r.amendment_no}  ${r.follow_up ? "follow-up" : "manual"}  ${r.change} x${r.n}`);
+  });
+
   await section("7c. The keyless POs from 7a, listed (up to 60)", async () => {
     const rows = await sql`
       WITH c AS (

@@ -1892,7 +1892,7 @@ export async function dispatchOne(
     /* Line identity is a second question and this file does not own it:
        docs/bugs/0813, and `lineIdentityGap` in autocount-line-keys.ts. Recorded
        BEFORE the mark so the two facts arrive together. */
-    const identityGap = await lineIdentityGap(sb, row, payload, result.lines);
+    const identityGap = await lineIdentityGap(sb, row, payload, result.lines, body);
 
     await mark(sb, row.id, {
       ...stamp,
