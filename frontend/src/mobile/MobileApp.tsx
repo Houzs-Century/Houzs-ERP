@@ -118,7 +118,7 @@ type Screen =
   | { t: "module-form"; key: string; mode: "new" | "edit"; row?: any }
   /* Delivery Order header edit (owner 2026-09-12 parity). Its own screen, not the
      generic module form: it needs the address cascade and the SI/DR lock. */
-  | { t: "do-edit"; key: string; row: any; title: string }
+  | { t: "do-edit"; key: string; row: Record<string, unknown>; title: string }
   | { t: "convert"; key: string; title: string; target: ConvertTarget; initialSourceId?: string }
   /* DIRECT create for PO / GRN / PI (owner 2026-09-12: create directly, not
      only by converting). Entered from that module list's "+"; returns to it. */
