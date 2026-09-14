@@ -70,7 +70,7 @@ import {
   PAYMENT_WINDOW_CLOSED_ERROR,
 } from '../shared/so-field-policy';
 import { paymentMayChange, SO_PAYMENT_AMEND } from '../../acc/payment-reconciled';
-import { AMEND_SOURCE, ledgerFieldChange, REASON_REQUIRED } from '../../acc/payment-corrections';
+import { AMEND_SOURCE, KEY_HOLDER_REASON_REQUIRED, ledgerFieldChange, REASON_REQUIRED } from '../../acc/payment-corrections';
 /* SO-SKU spec P2 — every charge is a SKU line. Predicates from P1; the
    fee/addon → SERVICE-line decomposition builders are pure + shared. */
 import {
@@ -137,7 +137,7 @@ import { monthBoundsMy, rangeBoundsMy, todayMyt, mytDateOf } from '../lib/my-tim
 // (canViewAllSales / isSelfScopedSales removed — replaced by flat permission
 // gates `scm.so.view_all` / `scm.so.attribute_other` against the REAL Houzs
 // caller; see lib/houzs-perms.ts.)
-import { hasHouzsPerm, canViewAllSales, isSalesCaller, canViewScmFinance } from '../lib/houzs-perms';
+import { hasHouzsPerm, holdsHouzsPermLiterally, canViewAllSales, isSalesCaller, canViewScmFinance } from '../lib/houzs-perms';
 /* The POS session-origin sentinel (mig 0120). Imported rather than re-typed as
    a literal so the value the POS door WRITES and the value this route READS
    cannot drift apart — a typo on either side would silently disarm the pricing
@@ -5218,6 +5218,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
         source: 'automation',
         note: 'Auto: POS split payment recorded at SO create',
+        paymentId: String((depRow as { id?: unknown } | null)?.id ?? '') || null,
         fieldChanges: [
           { field: 'paidAt',      from: null, to: paidAt },
           { field: 'method',      from: null, to: p.method },
@@ -5275,6 +5276,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
           actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
           source: 'automation',
           note: 'Auto: POS deposit recorded at SO create',
+          paymentId: String((depRow as { id?: unknown } | null)?.id ?? '') || null,
           fieldChanges: [
             { field: 'paidAt',      from: null, to: paidAt },
             { field: 'method',      from: null, to: depositMethod },
@@ -10726,6 +10728,10 @@ const paymentCreateSchema = z.object({
      slip-less (slip_key NULL, same as a scan-job first receipt). Previously
      `.min(1)` (required). */
   uploadSessionId:    z.string().min(1).optional().nullable(),
+  /* Why the payment is being recorded — REQUIRED when the caller's ROLE holds
+     `scm.so_payment.amend` literally (owner 2026-09-14, docs/bugs/0888: every
+     payment action by such a role is a Finance event), ignored otherwise. */
+  reason:             z.string().trim().max(500).optional(),
 });
 
 mfgSalesOrders.post('/:docNo/payments', async (c) => {
@@ -10742,6 +10748,16 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
   const parsed = paymentCreateSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
   const p = parsed.data;
+
+  /* A ROLE THAT HOLDS THE CORRECTION RIGHT OWES A REASON ON EVERY PAYMENT
+     ACTION (owner 2026-09-14, docs/bugs/0888). Read LITERALLY: the Owner's
+     wildcard is not a holder, so the rule reaches exactly the roles the owner
+     ticked the key for (Finance, and himself through a role of his own). This
+     does not gate the add — recording money stays free at any point (owner
+     2026-07-17) — it only decides whether a reason is owed and whether the
+     audit row is marked for Accounting › Corrections. */
+  const keyHolder = holdsHouzsPermLiterally(c, SO_PAYMENT_AMEND);
+  if (keyHolder && !p.reason) return c.json(KEY_HOLDER_REASON_REQUIRED, 400);
 
   /* FIX 3 (2026-07-16) — method ⇒ bank/account mapping, enforced server-side.
      The desktop New-SO / Payments cascade blocks saving a Merchant payment with
@@ -10834,6 +10850,9 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
     note:              p.note,
     createdBy:         user.id,
     actorName:         (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+    /* On the right: the audit row carries the reason and the amend source, so
+       the Corrections report lists the add beside the corrections. */
+    ...(keyHolder ? { auditSource: AMEND_SOURCE, auditNote: p.reason } : {}),
   });
   if (errorMessage) return c.json({ error: 'insert_failed', reason: errorMessage }, 500);
 
@@ -10974,8 +10993,14 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
   const parsed = paymentPatchSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
   const p = parsed.data;
-  const amended = editWindow.via === 'amend';
-  if (amended && !p.reason) return c.json(REASON_REQUIRED, 400);
+  /* A reason is owed when the amend right opened the door (via 'amend') OR
+     when the caller's ROLE holds the right at all — for such a role every
+     payment action is a Finance event, same day or not (docs/bugs/0888). The
+     literal read decides the reason and the mark, never the window: a
+     reconciled payment stays shut to everybody. */
+  const keyHolder = holdsHouzsPermLiterally(c, SO_PAYMENT_AMEND);
+  const amended = editWindow.via === 'amend' || keyHolder;
+  if (amended && !p.reason) return c.json(keyHolder ? KEY_HOLDER_REASON_REQUIRED : REASON_REQUIRED, 400);
   const versionCheck = paymentVersionGuard(p.version, Number(before.version ?? 1), soCasGrace(c));
   if (!versionCheck.ok) return c.json(versionCheck.body, versionCheck.status);
   const expectedPaymentVersion = versionCheck.version;
@@ -11102,6 +11127,7 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     action: 'UPDATE_PAYMENT',
     actorId: user.id,
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+    paymentId: id,
     fieldChanges: [...soPaymentFieldChanges(before, next), ...ledgerFieldChange(ledger)],
     /* A correction made on the amend right is a FINANCE event: it carries the
        typed reason and is what the corrections report lists (docs/bugs/0785). */
@@ -11180,9 +11206,10 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
   }
   /* A DELETE carries no body here — version already rides the query, so the
      reason does too. Required on the amend right, same as the PATCH. */
-  const delAmended = windowCheck.via === 'amend';
+  const delKeyHolder = holdsHouzsPermLiterally(c, SO_PAYMENT_AMEND);
+  const delAmended = windowCheck.via === 'amend' || delKeyHolder; // docs/bugs/0888, as on the PATCH
   const delReason = String(c.req.query('reason') ?? '').trim().slice(0, 500);
-  if (delAmended && !delReason) return c.json(REASON_REQUIRED, 400);
+  if (delAmended && !delReason) return c.json(delKeyHolder ? KEY_HOLDER_REASON_REQUIRED : REASON_REQUIRED, 400);
 
   const { data: deleted, error } = await scopeToCompanyId(sb.from('mfg_sales_order_payments').delete()
     .eq('id', id)
@@ -11208,6 +11235,7 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
     action: 'DELETE_PAYMENT',
     actorId: user.id,
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+    paymentId: id,
     fieldChanges: [
       { field: 'paidAt',       from: rowTyped.paid_at,       to: null },
       { field: 'method',       from: rowTyped.method,        to: null },
@@ -11283,6 +11311,10 @@ mfgSalesOrders.get('/:docNo/payments/:id/slip-url', async (c) => {
    rather than silent. */
 const paymentSlipAttachSchema = z.object({
   uploadSessionId: z.string().min(1),
+  /* Why the proof is being attached or replaced — REQUIRED when the caller's
+     ROLE holds `scm.so_payment.amend` literally (docs/bugs/0888: every payment
+     action by such a role is listed for Finance), ignored otherwise. */
+  reason:          z.string().trim().max(500).optional(),
 });
 
 mfgSalesOrders.post('/:docNo/payments/:id/slip', async (c) => {
@@ -11309,7 +11341,11 @@ mfgSalesOrders.post('/:docNo/payments/:id/slip', async (c) => {
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const parsed = paymentSlipAttachSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
-  const { uploadSessionId } = parsed.data;
+  const { uploadSessionId, reason } = parsed.data;
+  /* Not a window gate — the route stays open to a late proof, see above — but
+     a role holding the correction right says why (docs/bugs/0888). */
+  const slipKeyHolder = holdsHouzsPermLiterally(c, SO_PAYMENT_AMEND);
+  if (slipKeyHolder && !reason) return c.json(KEY_HOLDER_REASON_REQUIRED, 400);
 
   /* Resolve the upload session → committed R2 key. Same contract as the POST
      route: only a session that finished its PUT ('uploaded') resolves, so a
@@ -11373,7 +11409,12 @@ mfgSalesOrders.post('/:docNo/payments/:id/slip', async (c) => {
     action: 'UPDATE_PAYMENT',
     actorId: user.id,
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
-    note: before.slip_key ? 'Payment proof replaced' : 'Payment proof attached',
+    paymentId: id,
+    /* On the right the note is the reason given and the row is marked for the
+       Corrections report; the field change still says attach vs replace. */
+    ...(slipKeyHolder
+      ? { source: AMEND_SOURCE, note: reason }
+      : { note: before.slip_key ? 'Payment proof replaced' : 'Payment proof attached' }),
     fieldChanges: [{ field: 'slipKey', from: before.slip_key, to: nextSlipKey }],
   });
 

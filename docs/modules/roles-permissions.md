@@ -85,8 +85,23 @@ payment**: matched on a merchant settlement report, claimed by a bank statement,
 or sitting in a closed month is refused to everybody, this key included, because
 by then the figure is evidence somebody has signed off. Declared like every key
 and granted to **no** seed role: only `*` (Owner / IT Admin) holds it until the
-owner assigns it to the finance positions. Contract: docs/modules/sales-order.md
-(*Who may correct an old payment*) and docs/bugs/0780.
+owner assigns it to the finance ROLES (Team > Roles & Permissions, the Roles
+section — this is a flat key, not a position capability). Contract:
+docs/modules/sales-order.md (*Who may correct an old payment*) and
+docs/bugs/0780.
+
+**Holding it LITERALLY means owing a reason** (owner 2026-09-14,
+docs/bugs/0888: 只要是有关 collection payment 的，我或有权限的用户做的动作都要记录
+写 reason). A role that carries this key in its own list — `hasPermissionLiterally`,
+the `*` wildcard alone does not count — gives a reason for EVERY payment
+action on a sales order (record, change, remove, attach proof), same day or
+not, and every such action is listed on Accounting › Corrections beside who
+first recorded the payment. A god position on a role that names the key holds
+it literally AND keeps its wildcard, which is how the owner puts himself under
+the rule from a custom role while HOUZS CENTURY (the Owner role: `*` plus
+approvals) stays outside it. Prod 2026-09-14: the "Finance" role already
+names the key; the system "Super Admin" role is `["*"]` and locked, so the
+owner's own account joins through a custom role.
 
 **`memos.manage`** (the department memo register, owner 2026-09-08, mig
 `20260909T0500`): the register is own-department for any signed-in user; this

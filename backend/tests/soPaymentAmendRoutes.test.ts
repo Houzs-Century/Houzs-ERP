@@ -86,11 +86,13 @@ describe('the payment edit and delete routes', () => {
   });
 
   /* Adding a payment is FREE at any point (owner 2026-07-17) and must not have
-     picked up a gate by proximity. */
-  test('recording a payment is still ungated', () => {
+     picked up a WINDOW gate by proximity. Since docs/bugs/0888 it reads the
+     key — literally, for the reason a holder owes — but never through the
+     wildcard-honouring read that opens a door. */
+  test('recording a payment is still ungated by the window', () => {
     const body = handlerBody('post', '/:docNo/payments');
     expect(body).not.toContain('paymentMayChange');
-    expect(body).not.toContain('SO_PAYMENT_AMEND');
+    expect(body).not.toContain('hasHouzsPerm(c, SO_PAYMENT_AMEND)');
   });
 });
 
@@ -137,5 +139,63 @@ describe('a correction on the amend right owes a reason and is marked for Financ
   test('the PATCH accepts the reason in its body; the DELETE reads it off the query', () => {
     expect(routeSource).toMatch(/reason:\s+z\.string\(\)\.trim\(\)\.max\(500\)\.optional\(\)/);
     expect(handlerBody('delete', '/:docNo/payments/:id')).toContain("c.req.query('reason')");
+  });
+});
+
+/* EVERY payment action by a ROLE holding the right owes a reason (owner
+   2026-09-14, docs/bugs/0888: 只要是有关 collection payment 的，我或有权限的用户
+   做的动作都要记录写 reason). Four routes, one reading of the key — LITERAL, so
+   the Owner's wildcard is not a holder — one refusal, one audit mark, and the
+   payment tagged on the row so the report can name who first recorded it. */
+describe('a role that holds the right owes a reason on every payment action', () => {
+  const ALL: ReadonlyArray<[string, string]> = [
+    ['post', '/:docNo/payments'],
+    ['patch', '/:docNo/payments/:id'],
+    ['delete', '/:docNo/payments/:id'],
+    ['post', '/:docNo/payments/:id/slip'],
+  ];
+
+  test('the add route resolves to the add, not the proof attach beside it', () => {
+    expect(handlerBody('post', '/:docNo/payments')).toContain('paymentCreateSchema.safeParse');
+    expect(handlerBody('post', '/:docNo/payments/:id/slip')).toContain('paymentSlipAttachSchema.safeParse');
+  });
+
+  test('all four read the key LITERALLY — the wildcard alone must not count', () => {
+    for (const [method, path] of ALL) {
+      expect(handlerBody(method, path), `${method} ${path} does not read the key literally`)
+        .toContain('holdsHouzsPermLiterally(c, SO_PAYMENT_AMEND)');
+    }
+  });
+
+  test("all four refuse a holder's write that carries no reason, in the holder's words", () => {
+    for (const [method, path] of ALL) {
+      expect(handlerBody(method, path), `${method} ${path} lets a holder through without a reason`)
+        .toContain('KEY_HOLDER_REASON_REQUIRED');
+    }
+  });
+
+  /* The literal read decides the REASON. The window is still opened by the
+     wildcard-honouring read — a reconciled payment stays shut to everybody, and
+     the Owner's `*` still corrects after the day (with a reason, as before). */
+  test('the edit and the delete still open the window on the wildcard-honouring read', () => {
+    for (const [method, path] of GATED) {
+      const body = handlerBody(method, path);
+      expect(body).toContain('mayAmend: hasHouzsPerm(c, SO_PAYMENT_AMEND)');
+      expect(body).not.toContain('mayAmend: holdsHouzsPermLiterally');
+    }
+  });
+
+  test('every route marks the audit row with the amend source and tags it with the payment', () => {
+    expect(handlerBody('post', '/:docNo/payments')).toContain('auditSource: AMEND_SOURCE');
+    for (const [method, path] of ALL.slice(1)) {
+      const body = handlerBody(method, path);
+      expect(body, `${method} ${path} does not mark the audit row`).toContain('source: AMEND_SOURCE');
+      expect(body, `${method} ${path} does not tag the payment`).toContain('paymentId: id');
+    }
+  });
+
+  test('the add and the proof routes take the reason in their bodies, the same shape as the edit', () => {
+    const shapes = routeSource.match(/reason:\s+z\.string\(\)\.trim\(\)\.max\(500\)\.optional\(\)/g) ?? [];
+    expect(shapes, 'the create, edit and proof schemas should each carry the reason').toHaveLength(3);
   });
 });

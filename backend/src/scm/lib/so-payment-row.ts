@@ -276,6 +276,9 @@ export async function recordSoPaymentRow(
     action: 'ADD_PAYMENT',
     actorId: p.createdBy,
     actorName: p.actorName ?? null,
+    /* The payment this row is about (docs/bugs/0888) — what lets a later
+       correction's report say who recorded it first. */
+    paymentId: String((data as { id?: unknown } | null)?.id ?? '') || null,
     ...(p.auditSource ? { source: p.auditSource } : {}),
     ...(p.auditNote ? { note: p.auditNote } : {}),
     fieldChanges: [
