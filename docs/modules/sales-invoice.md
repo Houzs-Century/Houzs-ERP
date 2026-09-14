@@ -1080,3 +1080,16 @@ sales invoice and has no add-line affordance (nor for the four 0853 documents).
 
 Tests: `frontend/src/pages/scm-v2/salesInvoiceAddLine.test.tsx` (mounts the real
 page). Trace: `docs/bugs/0870-the-sales-invoice-could-not-add-a-line-on-any-surface-the-en.md`.
+
+---
+
+## Print all goes through the Print preview (2026-09-14)
+
+**Print all** on `frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx` used to go
+straight to "One combined PDF / Separate files" and a download. It now opens the
+shared `PrintPreviewBatchModal` (`usePrintPreview(deliverSelectedSis)`), like the
+other document lists: **Print now** and **View full PDF** render one merged file,
+and only **Download PDF** still asks combined-or-separate. Found beside the
+Purchase Order list's identical gap (owner: 「PO打印没有这个」). Pinned by
+`frontend/src/pages/scm-v2/batchPrintGoesThroughPreview.test.ts`. Trace:
+`docs/bugs/0890-print-all-on-the-purchase-order-and-sales-invoice-lists-skip.md`.
