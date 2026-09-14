@@ -1704,8 +1704,9 @@ and Corrections names who first recorded the payment (2026-09-14,
 docs/bugs/0888; owner: 只要是有关 collection payment 的，我或有权限的用户做的动作
 都要记录写 reason … 我就是要看原本是谁记录这一笔的 … finance 和我的一定要填).**
 The reason rule of docs/bugs/0785 hung on one door — a correction the amend
-right opened after the day. It now also hangs on the KEY, read LITERALLY: a
-ROLE that carries `scm.so_payment.amend` in its own list
+right opened after the day. It now also hangs on the KEY, read LITERALLY — one
+rule, `paymentReasonRule` in `scm/lib/so-payment-reason.ts`, asked by the four
+payment routes: a ROLE that carries `scm.so_payment.amend` in its own list
 (`holdsHouzsPermLiterally`; the `*` wildcard alone is not a holder, so
 HOUZS CENTURY is untouched) owes a reason on every payment action on a sales
 order — the add, the edit, the delete, the proof attach — same day or not,

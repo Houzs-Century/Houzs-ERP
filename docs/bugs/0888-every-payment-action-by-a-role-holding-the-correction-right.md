@@ -27,9 +27,12 @@ the ADD_PAYMENT row it concerns — only a guess among the order's adds.
 
 **Fix.**
 
-*The key, read literally.* `holdsHouzsPermLiterally(c, SO_PAYMENT_AMEND)`
-(`hasPermissionLiterally`: the `*` wildcard does not count) is the one reading
-all four payment routes in `scm/routes/mfg-sales-orders.ts` make. A ROLE that
+*The key, read literally.* The four payment routes in
+`scm/routes/mfg-sales-orders.ts` ask one rule, `paymentReasonRule`
+(`scm/lib/so-payment-reason.ts`, unit-tested against a caller shaped like the
+context), which reads the key through `holdsHouzsPermLiterally(c,
+SO_PAYMENT_AMEND)` (`hasPermissionLiterally`: the `*` wildcard does not
+count) and answers the refusal and the audit mark. A ROLE that
 carries the key in its own list — granted under Team > Roles & Permissions,
 the Roles section; it is a flat key, not a position capability — owes a
 reason on the add (`paymentCreateSchema.reason`), on the edit and the delete
@@ -79,15 +82,22 @@ the rule* in the reason column, filters by "Done by", and the printed report
 (`payment-corrections-pdf.ts`) carries the same six columns. The permission's
 description in `services/permissions.ts` says what holding it now means.
 
+*Housekeeping the size gate asked for.* `mfg-sales-orders.ts` may only
+shrink, so the CAS rollout grace window and `paymentVersionGuard` moved
+unchanged to `scm/lib/so-cas.ts`, re-exported from the route for the two
+suites that import them there.
+
 *Not changed, on purpose.* The two deposit rows SO create books stay
 `automation` rows with no reason (a Sales action; the owner's rule is about
 the payments card); consignment-order payments are a different ledger and
 untouched; a role WITHOUT the key is exactly as before.
 
 Proved RED on the unfixed tree (the sources stashed, the new tests run):
-`tests/soPaymentAmendRoutes.test.ts` (the four routes reading the key
-literally, refusing with the holder's sentence, marking and tagging the row,
-the add and proof schemas carrying `reason`), `acc/payment-corrections.test.ts`
+`tests/soPaymentAmendRoutes.test.ts` (the four routes asking the one rule,
+answering its refusal, carrying its audit mark and tagging the row, the add
+and proof schemas carrying `reason`), `scm/lib/so-payment-reason.test.ts` (the
+rule itself, against Finance, the Owner, Sales and a custom role holding both),
+`acc/payment-corrections.test.ts`
 (the kinds, the before-the-rule rows, the recorder resolutions),
 `scm/routes/paymentCorrectionsRoute.test.ts` (the add listed, the
 before-the-rule row through a fake Houzs DB, a wildcard-only role not a

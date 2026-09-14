@@ -4933,8 +4933,9 @@ with the list. Finance reads the result on the Accounting page's
 (2026-09-14, docs/bugs/0888; owner: 只要是有关 collection payment 的，我或有权限
 的用户做的动作都要记录写 reason).** The rule above stays for everybody else;
 for a ROLE that carries `scm.so_payment.amend` in its own list — read
-LITERALLY by `holdsHouzsPermLiterally`, so the Owner's `*` alone is not a
-holder — all four payment routes ask: the add (`paymentCreateSchema.reason`),
+LITERALLY by `holdsHouzsPermLiterally` inside the one rule the four payment
+routes ask, `paymentReasonRule` (`scm/lib/so-payment-reason.ts`), so the
+Owner's `*` alone is not a holder — the routes ask: the add (`paymentCreateSchema.reason`),
 the edit and the delete (`via === 'amend' || keyHolder`), and the proof
 attach (`paymentSlipAttachSchema.reason`), refusing without one
 (`KEY_HOLDER_REASON_REQUIRED`). The WINDOW does not move: `mayAmend` still
@@ -4950,7 +4951,10 @@ are `paymentReasonAsk` (`vendor/scm/lib/payment-reason.ts`): desktop
 leaves the row and reports it blocked), the edit, the delete and the proof;
 mobile `RecordedPayments` the same, the sheet told `reasonWhy` by its
 parent. Contracts: `tests/soPaymentAmendRoutes.test.ts`,
-`soPaymentAmendClients.test.ts`.
+`scm/lib/so-payment-reason.test.ts`, `soPaymentAmendClients.test.ts`. In the
+same change the CAS rollout grace window and `paymentVersionGuard` moved
+unchanged to `scm/lib/so-cas.ts` (the route file may only shrink), re-exported
+from `routes/mfg-sales-orders.ts` for the two suites that import them there.
 
 ### The BALANCE a human is shown — which total it subtracts from (2026-09-08)
 

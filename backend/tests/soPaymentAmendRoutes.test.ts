@@ -12,13 +12,17 @@
  */
 import { describe, expect, test } from 'vitest';
 
-const sources = import.meta.glob('../src/scm/routes/mfg-sales-orders.ts', {
+const sources = import.meta.glob(['../src/scm/routes/mfg-sales-orders.ts', '../src/scm/lib/so-payment-reason.ts'], {
   query: '?raw',
   import: 'default',
   eager: true,
 }) as Record<string, string>;
 
-const routeSource = Object.values(sources)[0] ?? '';
+const sourceEnding = (suffix: string): string => Object.entries(sources).find(([p]) => p.endsWith(suffix))?.[1] ?? '';
+const routeSource = sourceEnding('mfg-sales-orders.ts');
+/* The one rule the four routes ask (docs/bugs/0888) — pinned by its own unit
+   test; read here only to prove the routes reach it and that it reads the key. */
+const ruleSource = sourceEnding('so-payment-reason.ts');
 
 const stripComments = (s: string): string =>
   s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
@@ -105,15 +109,14 @@ describe('a correction on the amend right owes a reason and is marked for Financ
     for (const [method, path] of GATED) {
       const body = handlerBody(method, path);
       expect(body, `${method} ${path} does not gate on via === 'amend'`).toContain("via === 'amend'");
-      expect(body, `${method} ${path} does not refuse a missing reason`).toContain('REASON_REQUIRED');
+      expect(body, `${method} ${path} does not answer the rule's refusal`).toContain('owed.refusal');
     }
   });
 
   test('both audit an amend-right correction with the amend source and the typed reason', () => {
     for (const [method, path] of GATED) {
       const body = handlerBody(method, path);
-      expect(body, `${method} ${path} does not mark the audit row`).toContain('source: AMEND_SOURCE');
-      expect(body, `${method} ${path} does not carry the reason into the audit`).toMatch(/note: (p\.reason|delReason)/);
+      expect(body, `${method} ${path} does not carry the rule's audit mark`).toContain('owed.audit');
     }
   });
 
@@ -160,18 +163,21 @@ describe('a role that holds the right owes a reason on every payment action', ()
     expect(handlerBody('post', '/:docNo/payments/:id/slip')).toContain('paymentSlipAttachSchema.safeParse');
   });
 
-  test('all four read the key LITERALLY — the wildcard alone must not count', () => {
+  test('all four ask the one rule, and the rule reads the key LITERALLY — the wildcard alone must not count', () => {
     for (const [method, path] of ALL) {
-      expect(handlerBody(method, path), `${method} ${path} does not read the key literally`)
-        .toContain('holdsHouzsPermLiterally(c, SO_PAYMENT_AMEND)');
+      expect(handlerBody(method, path), `${method} ${path} does not ask the rule`).toContain('paymentReasonRule(c,');
     }
+    expect(ruleSource.length, 'the rule did not load — a silent empty glob must not pass').toBeGreaterThan(500);
+    expect(ruleSource).toContain('holdsHouzsPermLiterally(c, SO_PAYMENT_AMEND)');
+    expect(ruleSource).not.toContain('hasHouzsPerm(');
   });
 
   test("all four refuse a holder's write that carries no reason, in the holder's words", () => {
     for (const [method, path] of ALL) {
       expect(handlerBody(method, path), `${method} ${path} lets a holder through without a reason`)
-        .toContain('KEY_HOLDER_REASON_REQUIRED');
+        .toContain('if (owed.refusal) return c.json(owed.refusal, 400)');
     }
+    expect(ruleSource).toContain('KEY_HOLDER_REASON_REQUIRED');
   });
 
   /* The literal read decides the REASON. The window is still opened by the
@@ -189,9 +195,10 @@ describe('a role that holds the right owes a reason on every payment action', ()
     expect(handlerBody('post', '/:docNo/payments')).toContain('auditSource: AMEND_SOURCE');
     for (const [method, path] of ALL.slice(1)) {
       const body = handlerBody(method, path);
-      expect(body, `${method} ${path} does not mark the audit row`).toContain('source: AMEND_SOURCE');
+      expect(body, `${method} ${path} does not carry the rule's audit mark`).toContain('owed.audit');
       expect(body, `${method} ${path} does not tag the payment`).toContain('paymentId: id');
     }
+    expect(ruleSource).toContain('source: AMEND_SOURCE');
   });
 
   test('the add and the proof routes take the reason in their bodies, the same shape as the edit', () => {
