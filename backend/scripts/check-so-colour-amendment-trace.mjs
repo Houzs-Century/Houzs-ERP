@@ -41,6 +41,7 @@
 //
 // RE-RUN: read-only and idempotent; every run re-reads the live rows.
 import postgres from "postgres";
+import { assertMatcherSane, disagrees } from "./lib/sofa-piece-token.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -153,6 +154,75 @@ try {
     }
   });
 
+  /* 3b. The supplier code each PO line SHOULD carry, from the same place the
+     convert path takes it: the supplier_material_bindings row for (item_code,
+     the PO's supplier) — routes/mfg-purchase-orders.ts `b.supplier_sku`.
+     docs/bugs/0887. */
+  await section("3b. SUPPLIER CODE vs THE BINDING (per PO line)", async () => {
+    if (!poIds.length) { out("(no purchase orders)"); return; }
+    const lines = await sql`
+      SELECT p.po_number, p.supplier_id::text AS supplier_id, pi.line_no, pi.item_code, pi.supplier_sku, pi.item_group
+        FROM scm.purchase_order_items pi JOIN scm.purchase_orders p ON p.id = pi.purchase_order_id
+       WHERE pi.purchase_order_id::text = ANY(${poIds})
+       ORDER BY p.po_number, COALESCE(pi.line_no, 0)`;
+    for (const l of lines) {
+      const b = await sql`
+        SELECT supplier_sku, is_main_supplier FROM scm.supplier_material_bindings
+         WHERE company_id = ${CO} AND material_kind = 'mfg_product'
+           AND item_code = ${l.item_code} AND supplier_id::text = ${l.supplier_id}
+         ORDER BY is_main_supplier DESC, id`;
+      const want = b[0]?.supplier_sku ?? null;
+      const verdict = !b.length ? "NO BINDING for this supplier"
+        : String(want ?? "") === String(l.supplier_sku ?? "") ? "MATCHES binding" : "DIFFERS from binding";
+      out(`${l.po_number} #${l.line_no ?? "?"} ${j(l.item_code)} line supplier_sku=${j(l.supplier_sku)} ` +
+        `binding supplier_sku=${j(want)} (${b.length} row(s)) piece-disagrees=${disagrees(l.item_code, l.supplier_sku)} -> ${verdict}`);
+    }
+  });
+
+  /* 3c. Has the PO left the ERP since it was revised? Email stamp, AutoCount
+     link, and every write-back outbox row for it. (A SEND audit row, if any,
+     is in section 5.) A PDF downloaded and sent by hand leaves no trace here. */
+  await section("3c. WHAT LEFT THE ERP FOR THESE POs (email / AutoCount)", async () => {
+    if (!poIds.length) { out("(no purchase orders)"); return; }
+    const heads = await sql`
+      SELECT po_number, status, revision, updated_at, po_email_sent_at, po_email_sent_to, linked_ac_docno
+        FROM scm.purchase_orders WHERE id::text = ANY(${poIds}) ORDER BY po_number`;
+    for (const h of heads) {
+      out(`${h.po_number} status=${h.status} revision=${h.revision} updated_at=${j(h.updated_at)} ` +
+        `po_email_sent_at=${j(h.po_email_sent_at)} po_email_sent_to=${h.po_email_sent_to ? "(set)" : "null"} linked_ac_docno=${j(h.linked_ac_docno)}`);
+    }
+    const ob = await sql`
+      SELECT op, doc_no, status, attempts, created_at, sent_at, ac_doc_no, left(coalesce(last_error, ''), 160) AS err,
+             left(payload::text, 900) AS payload
+        FROM scm.autocount_outbox
+       WHERE company_id = ${CO} AND doc_type = 'PO' AND (doc_no = ANY(${poNumbers}) OR doc_id = ANY(${poIds}))
+       ORDER BY created_at`;
+    out(`autocount_outbox rows for these POs: ${ob.length}`);
+    for (const r of ob) {
+      out(`   ${r.created_at?.toISOString?.() ?? r.created_at} op=${r.op} doc=${r.doc_no} status=${r.status} attempts=${r.attempts} ` +
+        `sent_at=${r.sent_at?.toISOString?.() ?? r.sent_at} ac_doc_no=${j(r.ac_doc_no)}${r.err ? ` err=${j(r.err)}` : ""}`);
+      out(`      payload=${r.payload}`);
+    }
+    /* Why an approved amendment may have queued nothing: the switch, and whether
+       the queue moved at all for the sales orders or the company since then. */
+    const flag = await sql`SELECT key, value, updated_at FROM scm.app_config WHERE key ILIKE '%autocount_writeback%'`;
+    for (const f of flag) out(`app_config ${f.key}=${j(f.value)} updated_at=${j(f.updated_at)}`);
+    const so = await sql`
+      SELECT op, doc_no, status, created_at, left(coalesce(last_error, ''), 200) AS err
+        FROM scm.autocount_outbox
+       WHERE company_id = ${CO} AND doc_type = 'SO' AND doc_no = ANY(${DOCS})
+       ORDER BY created_at`;
+    out(`autocount_outbox rows for the sales orders: ${so.length}`);
+    for (const r of so) out(`   ${r.created_at?.toISOString?.() ?? r.created_at} op=${r.op} doc=${r.doc_no} status=${r.status}${r.err ? ` err=${j(r.err)}` : ""}`);
+    const recent = await sql`
+      SELECT doc_type, op, status, count(*)::int AS n, max(created_at) AS last
+        FROM scm.autocount_outbox
+       WHERE company_id = ${CO} AND created_at >= ${AUDIT_SINCE}::date
+       GROUP BY 1, 2, 3 ORDER BY 1, 2, 3`;
+    out(`company ${CO} outbox since ${AUDIT_SINCE}, by type/op/status:`);
+    for (const r of recent) out(`   ${r.doc_type} ${r.op} ${r.status} n=${r.n} last=${r.last?.toISOString?.() ?? r.last}`);
+  });
+
   await section("4a. SO AMENDMENTS (all statuses)", async () => {
     const rows = await sql`
       SELECT to_jsonb(a) AS r FROM scm.so_amendments a
@@ -260,6 +330,26 @@ try {
       out(`${it.doc_no} ${j(it.item_code)}: model=${p.model_code ?? "(none)"} (${p.model_id ?? "-"}) category=${p.category} ` +
         `fabrics key present=${p.has_key} pool size=${pool ? pool.length : "absent"} -> ${restricted ? "RESTRICTED" : "UNRESTRICTED"}; ` +
         `${COLOUR} (series ${series || "?"}) passes picker+gate pool rule: ${passes}`);
+    }
+  });
+
+  /* 8. System-wide sweep, OPEN purchase orders only: a sofa line whose supplier
+     code names a DIFFERENT piece from its own item code — the shape the
+     amendment re-derive left on HC-PO-2609-064 (docs/bugs/0887). The matcher is
+     the shared one and self-tests before this reads a row. */
+  await section("8. SWEEP: OPEN PO sofa lines whose supplier code names another piece", async () => {
+    assertMatcherSane();
+    const rows = await sql`
+      SELECT p.po_number, p.status, pi.line_no, pi.item_code, pi.supplier_sku, pi.qty, pi.received_qty
+        FROM scm.purchase_order_items pi JOIN scm.purchase_orders p ON p.id = pi.purchase_order_id
+       WHERE pi.company_id = ${CO}
+         AND upper(coalesce(pi.item_group, '')) = 'SOFA'
+         AND upper(coalesce(p.status::text, '')) NOT IN ('RECEIVED', 'CANCELLED', 'CLOSED')
+       ORDER BY p.po_number, COALESCE(pi.line_no, 0)`;
+    const bad = rows.filter((r) => disagrees(r.item_code, r.supplier_sku));
+    out(`open sofa PO lines examined: ${rows.length}   supplier code names another piece: ${bad.length}`);
+    for (const r of bad) {
+      out(`   ${r.po_number} (${r.status}) #${r.line_no ?? "?"} ${j(r.item_code)} supplier_sku=${j(r.supplier_sku)} qty=${r.qty} received=${r.received_qty}`);
     }
   });
 } finally {

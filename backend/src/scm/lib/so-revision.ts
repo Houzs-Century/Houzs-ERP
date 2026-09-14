@@ -46,6 +46,7 @@ import {
 import { recordSoAudit, type FieldChange } from './so-audit';
 import { deriveMfgPoUnitCost } from './po-pricing';
 import { readMfgProductBindings } from './supplier-bindings';
+import { supplierSkuFor } from './po-line-supplier-sku';
 import {
   rederiveDeliveryFee,
   deriveCountryFromState,
@@ -1402,7 +1403,7 @@ export async function reviseBoundPo(
       // supplier binding is keyed on).
       const { data: existing, error: exErr } = await sb
         .from('purchase_order_items')
-        .select('item_code, material_name, discount_sen, photo_urls')
+        .select('item_code, material_name, discount_sen, photo_urls, supplier_sku')
         .eq('id', pi.id)
         .maybeSingle();
       if (exErr) throw new Error(`reviseBoundPo: PO line load failed: ${exErr.message}`);
@@ -1447,10 +1448,28 @@ export async function reviseBoundPo(
         if (!rederivedPhotos.includes(k)) rederivedPhotos.push(k);
       }
 
+      /* The SUPPLIER CODE follows a changed item code, derived exactly as the
+         convert path derives it (lib/po-line-supplier-sku.ts). Left alone when
+         the code did not move, so a supplier code keyed on the PO by hand
+         survives an unrelated amendment. docs/bugs/0887: HC-PO-2609-064 kept
+         `5536-L(LHF)` under `9058-1A(LHF)` because this write moved the code and
+         the name and never this column. */
+      const priorCode = String((existing as { item_code?: string } | null)?.item_code ?? '').trim();
+      const skuPatch: { supplier_sku?: string | null } = {};
+      if (itemCode !== priorCode) {
+        skuPatch.supplier_sku = await supplierSkuFor(sb, {
+          supplierId: po.supplier_id, itemCode, companyId: po.company_id ?? soCompanyId,
+        });
+        if (skuPatch.supplier_sku == null) {
+          warnings.push(`${itemName} on purchase order ${po.po_number} changed to an item this supplier has no code for, so its supplier code was cleared. Set the supplier's code for it before sending the purchase order.`);
+        }
+      }
+
       const { error: updErr } = await sb.from('purchase_order_items').update({
         qty,
         item_code:        itemCode,
         material_name:    itemName,
+        ...skuPatch,
         unit_price_sen: unitPriceSen,
         line_total_sen: qty * unitPriceSen - discountSen,
         item_group:       itemGroup,

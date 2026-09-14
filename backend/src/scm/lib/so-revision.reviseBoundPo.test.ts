@@ -505,3 +505,83 @@ describe('reviseBoundPo — a surviving line re-carries the SO photos', () => {
       .toEqual(['po-items/POX/POI-1/own.jpg', 'so-items/SO-1/L1/new.jpg']);
   });
 });
+
+/* HC-PO-2609-064, 2026-09-14 (docs/bugs/0887). HC-SO-013497/A1 corrected two
+   sofa pieces — `9058-L(LHF)` -> `9058-1A(LHF)` and `9058-1NA` -> `9058-CNR` —
+   and the PO follow-up re-derived the lines. Item code and name moved; the
+   SUPPLIER CODE, the column the factory builds from, kept `5536-L(LHF)` and
+   `5536-1NA`. The re-derive must take the supplier code from the SAME place the
+   convert path does: this supplier's binding for the NEW item code. */
+describe('reviseBoundPo — a code change re-derives the supplier code from the binding', () => {
+  function sofaStore(): Record<string, Row[]> {
+    const store = baseStore();
+    store.so_revisions = [{
+      amendment_id: AMD, revision: 1, po_id: null,
+      snapshot: {
+        lines: [{ id: 'L1' }, { id: 'L2' }, { id: 'L3' }, { id: 'L4' }],
+        poLinks: { L1: ['POI-1'], L2: ['POI-2'], L3: ['POI-3'], L4: ['POI-4'] },
+      },
+    }];
+    const sofa = (id: string, code: string, name: string) =>
+      soLine({ id, item_code: code, item_group: 'sofa', description: name });
+    store.mfg_sales_order_items = [
+      sofa('L1', '9058-1A(LHF)', 'SOFA MAYBATCH 1A(LHF)'),
+      sofa('L2', '9058-CNR', 'SOFA MAYBATCH CNR'),
+      sofa('L3', '9058-1NA', 'SOFA MAYBATCH 1NA'),
+      sofa('L4', '9058-1A(RHF)', 'SOFA MAYBATCH 1A(RHF)'),
+    ];
+    const line = (id: string, so: string, code: string, sku: string) =>
+      poLine({ id, so_item_id: so, item_code: code, item_group: 'sofa', supplier_sku: sku, material_name: `SOFA MAYBATCH ${code.slice(5)}` });
+    store.purchase_order_items = [
+      line('POI-1', 'L1', '9058-L(LHF)', '5536-L(LHF)'),
+      line('POI-2', 'L2', '9058-1NA', '5536-1NA'),
+      line('POI-3', 'L3', '9058-1NA', '5536-1NA'),
+      line('POI-4', 'L4', '9058-1A(RHF)', '5536-1A(RHF)'),
+    ];
+    store.supplier_material_bindings = [
+      binding('9058-L(LHF)', 'S1', 50000, '5536-L(LHF)'),
+      binding('9058-1A(LHF)', 'S1', 50000, '5536-1A(LHF)'),
+      binding('9058-1NA', 'S1', 40000, '5536-1NA'),
+      binding('9058-CNR', 'S1', 45000, '5536-CNR'),
+      binding('9058-1A(RHF)', 'S1', 50000, '5536-1A(RHF)'),
+      // Another supplier's code for the same piece must never be taken.
+      { ...binding('9058-CNR', 'S2', 1, 'OTHER-CNR'), is_main_supplier: true },
+    ];
+    return store;
+  }
+
+  it('moves the supplier code with the item code: L(LHF) -> 1A(LHF), 1NA -> CNR', async () => {
+    const store = sofaStore();
+
+    await reviseBoundPo(fakeSb(store), AMD, 'user-1', undefined, { onlyPoId: 'POX' });
+
+    const byId = (id: string) => store.purchase_order_items.find((i) => i.id === id)!;
+    expect(byId('POI-1')).toMatchObject({ item_code: '9058-1A(LHF)', supplier_sku: '5536-1A(LHF)' });
+    expect(byId('POI-2')).toMatchObject({ item_code: '9058-CNR', supplier_sku: '5536-CNR' });
+    expect(byId('POI-3')).toMatchObject({ item_code: '9058-1NA', supplier_sku: '5536-1NA' });
+    expect(byId('POI-4')).toMatchObject({ item_code: '9058-1A(RHF)', supplier_sku: '5536-1A(RHF)' });
+  });
+
+  it('leaves the supplier code alone when the item code did not change', async () => {
+    const store = sofaStore();
+    // A supplier code somebody keyed on the PO by hand differs from the binding.
+    store.purchase_order_items.find((i) => i.id === 'POI-4')!.supplier_sku = 'HOK-5536 SOFA 1A(RHF)';
+
+    await reviseBoundPo(fakeSb(store), AMD, 'user-1', undefined, { onlyPoId: 'POX' });
+
+    expect(store.purchase_order_items.find((i) => i.id === 'POI-4')!.supplier_sku).toBe('HOK-5536 SOFA 1A(RHF)');
+  });
+
+  it('clears the old supplier code, and says so, when the new code has no binding for this supplier', async () => {
+    const store = sofaStore();
+    store.supplier_material_bindings = store.supplier_material_bindings.filter(
+      (b) => !(b.item_code === '9058-CNR' && b.supplier_id === 'S1'));
+
+    const res = await reviseBoundPo(fakeSb(store), AMD, 'user-1', undefined, { onlyPoId: 'POX' });
+
+    const l2 = store.purchase_order_items.find((i) => i.id === 'POI-2')!;
+    expect(l2.item_code).toBe('9058-CNR');
+    expect(l2.supplier_sku).toBeNull();   // never the old piece's code
+    expect(res.warnings.some((w) => w.includes('SOFA MAYBATCH CNR') && w.includes('PO-2607-001'))).toBe(true);
+  });
+});

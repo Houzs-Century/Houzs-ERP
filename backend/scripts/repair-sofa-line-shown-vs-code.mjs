@@ -66,6 +66,12 @@
 //   COMPANY_ID     optional, default 1
 //   MODE           plan (default) | apply
 //   CONFIRM        required for apply
+//   DOCS           optional, comma-separated document numbers. When set, ONLY
+//                  those documents are planned and written; the per-table
+//                  counts still cover the whole company so a reader sees what
+//                  was left out. Added 2026-09-14 so one purchase order could be
+//                  corrected without the same run touching anything else
+//                  (docs/bugs/0887, HC-PO-2609-064).
 import postgres from 'postgres';
 import { assertMatcherSane, disagrees, movePieceTo, pieceOf } from './lib/sofa-piece-token.mjs';
 
@@ -73,6 +79,8 @@ const CONFIRM_PHRASE = 'NAME THE PIECE THE CODE STATES';
 const MODE = String(process.env.MODE || 'plan').toLowerCase();
 const APPLY = MODE === 'apply';
 const CO = Number(process.env.COMPANY_ID || 1);
+const DOCS = String(process.env.DOCS || '').split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+const inScope = (doc) => DOCS.length === 0 || DOCS.includes(String(doc));
 const line = (s = '') => console.log(process.env.GITHUB_ACTIONS ? `::notice::${s}` : s);
 const rule = () => line('-'.repeat(78));
 
@@ -139,10 +147,11 @@ try {
   line('='.repeat(78));
   line('EVERY COLUMN MUST STATE THE PIECE THE CODE STATES');
   line('='.repeat(78));
-  line(`   company ${CO}   mode ${APPLY ? 'APPLY' : 'PLAN (no writes)'}`);
+  line(`   company ${CO}   mode ${APPLY ? 'APPLY' : 'PLAN (no writes)'}   scope ${DOCS.length ? DOCS.join(', ') : 'every document'}`);
 
   const writes = [];
   const stats = [];
+  let outOfScope = 0;
   for (const [name, table, join, docExpr, cols] of ARMS) {
     const sel = cols.map((c) => `i.${c} AS "${c}"`).join(', ');
     const rows = await sql.unsafe(`
@@ -156,6 +165,7 @@ try {
       for (const r of rows) {
         if (!disagrees(r.code, r[col])) continue;
         per[col] += 1;
+        if (!inScope(r.doc)) { outOfScope += 1; continue; }
         writes.push({
           name, table, col, id: r.id, doc: r.doc, code: r.code,
           from: r[col], to: movePieceTo(r[col], pieceOf(r.code)),
@@ -171,6 +181,7 @@ try {
     line(`   ${s.name.padEnd(24)} sofa lines ${String(s.rows).padStart(5)}   disagreeing: ${bits}`);
   }
   rule();
+  if (DOCS.length) line(`OUT OF SCOPE, left untouched: ${outOfScope} column value(s) on other documents`);
   line(`TO CORRECT: ${writes.length} column value(s) on ${new Set(writes.map((w) => w.doc)).size} document(s)`);
   for (const w of writes) {
     line(`   ${w.doc.padEnd(24)} ${w.code.padEnd(16)} ${w.col.padEnd(14)} ${JSON.stringify(w.from)} -> ${JSON.stringify(w.to)}`);
