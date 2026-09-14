@@ -104,7 +104,7 @@ const HOUZS = 'HOUZS';
 export const CATEGORY_SOURCES = {
   /** public/scm.mfg_product_category enum members (schema + migrations 0258-0265). */
   productEnum: ['SOFA', 'BEDFRAME', 'ACCESSORY', 'MATTRESS', 'SERVICE',
-                'DINING', 'BEDLINES', 'DIFFUSER', 'CARPET'] as const,
+                'DINING', 'BEDLINES', 'DIFFUSER', 'CARPET', 'FABRIC_ACCESSORY'] as const,
   /** normCategory (backend/src/scm/lib/so-readiness.ts:66) output buckets — what
    *  the SO list, Delivery Planning and the reports actually hand us. */
   normBuckets: ['SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE', 'OTHERS'] as const,

@@ -58,6 +58,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { showsVariantEditor } from '../../vendor/scm/lib/variant-editor-groups';
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -1013,7 +1014,7 @@ export const PurchaseOrderNew = () => {
             // 出来呢？不需要带出来啊". For mattress SKUs the size + branding
             // are already encoded in the SKU code itself (e.g. "HAPPI.S
             // DEWCOOL MATT (S)"), so the editor was just visual noise.
-            const showVariants  = l.category && ['sofa', 'bedframe', 'fabric_accessory'].includes(l.category) && maint;
+            const showVariants  = showsVariantEditor(l.category) && maint;
             /* THE SPECIAL ORDER IS A SEPARATE QUESTION FROM THE VARIANT GRID,
                and the comment directly above is why this had to be said out
                loud: the owner removed the MATTRESS VARIANT editor in 2026-05
