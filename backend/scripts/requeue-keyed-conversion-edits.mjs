@@ -22,6 +22,16 @@
  * still refuses (a sofa, an item code) gets a fresh `skipped` row with that
  * reason, and this run reports it.
  *
+ * A LINE THE BOOK NEVER HAD. A goods receipt can carry a row added on the
+ * receipt itself — a free pillow, a stool — with no purchase line behind it, so
+ * no transfer ever put it in the book and no key will ever exist for it. Such a
+ * row is sent as `IsNewLine` (the host appends it, the relink sweep's
+ * `declaresNew`, docs/bugs/0817) ONLY when every keyless row of the document has
+ * no source pointer AND the book snapshot of that document
+ * (data/ac-conversion-line-keys.json.gz, at most two days old) shows every book
+ * line already claimed by a keyed row — so nothing in the book could be the
+ * same line. Without a fresh snapshot for the document it is held, not guessed.
+ *
  * WHAT IT CANNOT CARRY, said plainly. A refused edit's payload is empty, so a
  * line the operator HARD-DELETED in that save is not in the `retire` list of the
  * edit sent now, and stays live in the book. That is the same limit the relink
@@ -30,7 +40,8 @@
  * ── SAFETY ─────────────────────────────────────────────────────────────────
  * MODE defaults to plan and queues nothing. Apply needs CONFIRM. A document is
  * planned only when: its newest keyless-line refusal is not followed by any
- * pending or sent edit, no line of it is keyless, and it is not archived. The
+ * pending or sent edit, it is not archived, and no line of it is keyless except
+ * a line the book never had (above). The
  * result is re-read on a FRESH connection: each document queued must now hold a
  * pending edit whose body names every line by a numeric DtlKey.
  *
@@ -40,6 +51,10 @@
  * Env: DATABASE_URL (required)   MODE=plan|apply (default plan)
  *      CONFIRM (apply only)      COMPANY_ID (default 1)
  */
+import fs from "node:fs";
+import path from "node:path";
+import zlib from "node:zlib";
+import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { enqueueEdit } from "../src/scm/lib/autocount-outbox.ts";
 import { classifyAcSkip } from "../src/scm/lib/autocount-outbox-status.ts";
@@ -61,6 +76,23 @@ if (APPLY && CONFIRM !== CONFIRM_PHRASE) {
 }
 
 const TYPES = ["DO", "GR"];
+
+/* The book's lines per document, from the committed snapshot, when it is fresh
+   enough to say "nothing in the book is unclaimed". */
+const here = path.dirname(fileURLToPath(import.meta.url));
+const snapPath = path.join(here, "data", "ac-conversion-line-keys.json.gz");
+const bookLinesOf = (() => {
+  if (!fs.existsSync(snapPath)) return () => null;
+  const snap = JSON.parse(zlib.gunzipSync(fs.readFileSync(snapPath)).toString("utf8"));
+  if (!((Date.now() - new Date(snap.exported_at).getTime()) / 86400000 <= 2)) return () => null;
+  const F = Object.fromEntries(snap.fields.map((f, i) => [f, i]));
+  const by = new Map();
+  for (const r of snap.rows) {
+    const k = `${r[F.docType]}|${r[F.docNo]}`;
+    (by.get(k) ?? by.set(k, []).get(k)).push(Number(r[F.toDtlKey]));
+  }
+  return (type, docNo) => by.get(`${type}|${docNo}`) ?? null;
+})();
 const startedAt = new Date().toISOString();
 const pg = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 
@@ -81,18 +113,35 @@ for (const r of refusals) {
      WHERE company_id = ${CO} AND doc_type = ${r.doc_type} AND doc_id = ${r.doc_id}
        AND op = 'edit' AND status IN ('pending', 'sent') AND created_at > ${r.created_at}`;
   if (later > 0) continue;
-  const [{ lines, keyless }] = await pg`
-    SELECT count(*)::int AS lines, count(*) FILTER (WHERE linked_ac_dtlkey IS NULL)::int AS keyless
+  const items = await pg`
+    SELECT id::text AS id, linked_ac_dtlkey, ${pg(spec.sourceFk)}::text AS source_row
       FROM ${pg("scm." + spec.itemTable)}
      WHERE ${pg(spec.itemFk)} = ${r.doc_id} AND company_id = ${CO}`;
-  const label = `${r.doc_type} ${String(r.doc_no)}`;
+  const [header] = await pg`
+    SELECT ${pg(r.doc_type === "DO" ? "do_number" : "grn_number")} AS doc_no
+      FROM ${pg("scm." + spec.table)} WHERE id = ${r.doc_id} AND company_id = ${CO}`;
+  const docNo = String(header?.doc_no ?? r.doc_no);
+  const label = `${r.doc_type} ${docNo}`;
+  const lines = items.length;
+  const keylessRows = items.filter((i) => i.linked_ac_dtlkey == null);
   if (lines === 0) { held.push(`${label}: the document has no lines here`); continue; }
-  if (keyless > 0) { held.push(`${label}: ${keyless} of ${lines} line(s) still carry no AutoCount key`); continue; }
-  planned.push({ docType: r.doc_type, docId: String(r.doc_id), label, lines });
+  if (keylessRows.length === 0) { planned.push({ docType: r.doc_type, docId: String(r.doc_id), label, lines, newLineIds: [] }); continue; }
+  const book = bookLinesOf(r.doc_type, docNo);
+  const claimed = new Set(items.filter((i) => i.linked_ac_dtlkey != null).map((i) => Number(i.linked_ac_dtlkey)));
+  const neverInBook = keylessRows.every((i) => i.source_row == null) && book != null && book.every((k) => claimed.has(k));
+  if (neverInBook) {
+    planned.push({ docType: r.doc_type, docId: String(r.doc_id), label, lines, newLineIds: keylessRows.map((i) => i.id) });
+    continue;
+  }
+  held.push(`${label}: ${keylessRows.length} of ${lines} line(s) still carry no AutoCount key`
+    + (book == null ? " (no fresh book snapshot for this document)" : ""));
 }
 
 notice(`keyless-line refusals not yet followed by a sent or pending edit: ${planned.length + held.length} document(s)`);
-for (const p of planned) console.log(`  ${APPLY ? "queueing" : "would queue"}: ${p.label} (${p.lines} line(s), every one keyed)`);
+for (const p of planned) {
+  console.log(`  ${APPLY ? "queueing" : "would queue"}: ${p.label} (${p.lines} line(s)`
+    + (p.newLineIds.length ? `, ${p.newLineIds.length} added as a line the book never had — every book line is already claimed and the row has no source line)` : ", every one keyed)"));
+}
 for (const h of held) console.log(`  held: ${h}`);
 notice(`${APPLY ? "APPLY" : "PLAN"}: ${planned.length} to send again, ${held.length} held back`);
 
@@ -105,7 +154,10 @@ if (!APPLY) {
 const sb = pgrestShim(pg, "scm", { writeback: "enqueue" });
 const queued = [];
 for (const p of planned) {
-  const ok = await enqueueEdit(sb, { companyId: CO, docType: p.docType, docId: p.docId, createdBy: null });
+  const ok = await enqueueEdit(sb, {
+    companyId: CO, docType: p.docType, docId: p.docId, createdBy: null,
+    ...(p.newLineIds.length ? { newLineIds: p.newLineIds } : {}),
+  });
   if (ok) queued.push(p);
   else console.log(`  not queued: ${p.label} — the composer declined (see its newest skipped row)`);
 }

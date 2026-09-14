@@ -6388,5 +6388,9 @@ queued edit. Plan runs against production 2026-09-14: before any stamp, 15
 documents with an unanswered keyless refusal, 1 fully keyed (HC-DO-2609-039),
 14 held. After the relink sweep's one apply run (13:05Z: 30 lines stamped, 12
 edits queued, all 12 sent) and the DocTransfer stamp (run 34847683795: 603 keys,
-verified), 3 remain: HC-DO-2609-039 to send, HC-GRN-2609-006 and HC-GRN-2609-028
-held with 1 keyless line each.
+verified), 3 remain: HC-DO-2609-039, fully keyed; HC-GRN-2609-006 (a STOOL) and
+HC-GRN-2609-028 (10 AK-SLEEP ESSENTIAL 7 HOLES pillows), each with one row added
+on the receipt with no purchase line behind it. The book's copy of each receipt
+has every line claimed, so those rows are sent as `IsNewLine` — the same
+declaration the relink sweep makes (docs/bugs/0817) — and are held instead when
+there is no fresh book snapshot for the document.
