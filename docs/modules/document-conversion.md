@@ -298,9 +298,20 @@ pairs, and it is **entirely destination-centric** — its own screen title is
 | Purchase Orders | PO | SO | ONE source at a time |
 
 It reads the SAME per-line "remaining" endpoints the desktop pickers use, so the
-two surfaces cannot disagree about what is convertible — including
+two surfaces cannot disagree about which LINES are convertible — including
 `/mfg-purchase-orders/outstanding-so-items`, which means **mobile SO → PO
 inherits the MRP truncation described in `docs/modules/purchase-order.md`.**
+
+**Step 1 — the list of source DOCUMENTS — is filtered on the phone, and each
+source asks its own create gate's rule.** A Sales Order source (targets DO and
+PO) keeps an order when `soCanRaiseDo(status, on_hold)`
+(`frontend/src/vendor/shared/so-deliverable-states.ts`, the DO gate's rule; the
+PO gate's set is pinned equal). A Delivery Order source (target SI) keeps
+`SI_TRANSFERABLE_DO_STATES`. Until 2026-09-14 the Sales Order arm used the DO
+set too, so only DELIVERED orders were offered
+(`docs/bugs/0888-the-phone-s-convert-from-sales-order-picker-listed-only-deli.md`);
+`frontend/src/mobile/mobileConvertWizardSourcePicker.test.tsx` mounts step 1
+without `initialSourceId`, which the other wizard suites skip.
 
 Also mobile: `MobileDeliveryPlanning.tsx` offers `Create DO` on a stop that has
 no DO yet (one SO).
