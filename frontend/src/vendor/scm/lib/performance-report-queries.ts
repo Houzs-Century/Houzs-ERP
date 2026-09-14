@@ -61,24 +61,34 @@ export const fmtPerf = (sen: number): string => {
 export const fmtPerfPct = (pct: number | null): string => (pct == null ? '—' : `${pct.toFixed(1)}%`);
 const ratePct = (bp: number): string => `${(bp / 100).toFixed(2)}%`;
 
-export type PerformanceSummaryLine = { kind: 'total' | 'row' | 'net'; label: string; amountSen: number; note?: string };
+/** A line under the groups: its amount, and that amount as a % of sales
+    (null when there were no sales). */
+export type PerformanceSummaryLine = { kind: 'total' | 'row' | 'net'; label: string; amountSen: number; pct: number | null };
 
 /** The lines under the groups — gross profit, the other income as booked,
     the computed operating expense (named for what it stands in for), every
-    other expense as booked, net — expenses as deductions. */
+    other expense as booked, net.
+
+    SIGNS (owner 2026-09-14, docs/bugs/0910: expense 可以不用（）吗？因为本身就是
+    费用，除非他当月是 ct 大过 debit 才（）): an expense is the positive figure it
+    is — no parentheses — and only a line whose credits beat its debits in the
+    period (a reversal) is negative and prints in them; a loss is a negative
+    net and reads the same way. Every line carries its % of sales, so the
+    screen can set it under the GP % column (percentage 也是). */
 export const performanceSummaryLines = (r: PerformanceReport): PerformanceSummaryLine[] => {
   const o = r.operatingExpense;
   const standsFor = o.accountFound
     ? `in place of ${o.account}${o.accountName ? ` ${o.accountName}` : ''}`
     : `${o.account} not in the chart — nothing replaced`;
+  const ofSales = (sen: number): number | null => (r.totals.salesSen > 0 ? Math.round((sen / r.totals.salesSen) * 1000) / 10 : null);
   return [
-    { kind: 'total', label: 'Gross profit', amountSen: r.totals.gpSen, note: fmtPerfPct(r.totals.gpPct) },
-    ...r.otherIncome.map((e): PerformanceSummaryLine => ({ kind: 'row', label: `${e.code} · ${e.name}`, amountSen: e.amountSen })),
-    { kind: 'total', label: 'Total other income (as booked)', amountSen: r.otherIncomeSen },
-    { kind: 'row', label: `Operating expense — ${ratePct(o.rateBp)} of sales excluding service (${fmtPerf(o.baseSen)}), ${standsFor}`, amountSen: -o.amountSen },
-    ...r.otherExpenses.map((e): PerformanceSummaryLine => ({ kind: 'row', label: `${e.code} · ${e.name}`, amountSen: -e.amountSen })),
-    { kind: 'total', label: 'Total other expenses (as booked)', amountSen: -r.otherExpensesSen },
-    { kind: 'net', label: 'NET PERFORMANCE', amountSen: r.netSen, note: r.netPct == null ? undefined : `${fmtPerfPct(r.netPct)} of sales` },
+    { kind: 'total', label: 'Gross profit', amountSen: r.totals.gpSen, pct: r.totals.gpPct },
+    ...r.otherIncome.map((e): PerformanceSummaryLine => ({ kind: 'row', label: `${e.code} · ${e.name}`, amountSen: e.amountSen, pct: ofSales(e.amountSen) })),
+    { kind: 'total', label: 'Total other income (as booked)', amountSen: r.otherIncomeSen, pct: ofSales(r.otherIncomeSen) },
+    { kind: 'row', label: `Operating expense — ${ratePct(o.rateBp)} of sales excluding service (${fmtPerf(o.baseSen)}), ${standsFor}`, amountSen: o.amountSen, pct: ofSales(o.amountSen) },
+    ...r.otherExpenses.map((e): PerformanceSummaryLine => ({ kind: 'row', label: `${e.code} · ${e.name}`, amountSen: e.amountSen, pct: ofSales(e.amountSen) })),
+    { kind: 'total', label: 'Total other expenses (as booked)', amountSen: r.otherExpensesSen, pct: ofSales(r.otherExpensesSen) },
+    { kind: 'net', label: 'NET PERFORMANCE', amountSen: r.netSen, pct: r.netPct },
   ];
 };
 

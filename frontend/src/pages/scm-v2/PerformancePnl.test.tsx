@@ -65,14 +65,24 @@ describe('the Performance P&L tab', () => {
     expect(within(total).getByText('42.4%')).toBeTruthy();
     const opex = rows.find((r) => within(r).queryByText(/Operating expense/))!;
     expect(opex.textContent).toContain('16.00% of sales excluding service (5,000.00), in place of 900-O001 OPERATIING EXPENSE');
-    expect(within(opex).getByText('(800.00)')).toBeTruthy();
+    /* SIGNS (docs/bugs/0910): an expense prints plain, with its % of sales
+       in the GP % column; only a loss, or a line whose credits beat its
+       debits, wears parentheses. */
+    expect(within(opex).getByText('800.00')).toBeTruthy();
+    expect(within(opex).getByText('15.3%')).toBeTruthy();
+    expect(opex.querySelectorAll('td')).toHaveLength(3);   // label across the three group columns, then amount, then %
+    expect(opex.querySelector('td')!.getAttribute('colspan')).toBe('3');
     expect(screen.getByText('900-R048 · RENTAL OF SHOWROOM')).toBeTruthy();
     const rent = rows.find((r) => within(r).queryByText('590-0000 · RENT RECEIVED'))!;
     expect(within(rent).getByText('500.00')).toBeTruthy();
+    expect(within(rent).getByText('9.6%')).toBeTruthy();
     expect(screen.getByText('Total other income (as booked)')).toBeTruthy();
+    const otherExpenses = rows.find((r) => within(r).queryByText('Total other expenses (as booked)'))!;
+    expect(within(otherExpenses).getByText('46,000.00')).toBeTruthy();
+    expect(within(otherExpenses).getByText('879.5%')).toBeTruthy();
     const net = rows.find((r) => within(r).queryByText('NET PERFORMANCE'))!;
     expect(within(net).getByText('(44,080.00)')).toBeTruthy();
-    expect(within(net).getByText('-842.8% of sales')).toBeTruthy();
+    expect(within(net).getByText('-842.8%')).toBeTruthy();
     const notes = screen.getByLabelText('Performance notes');
     expect(notes.textContent).toContain('in place of account 900-O001 OPERATIING EXPENSE; the 2,435.50 booked on that account in the period is left out');
     expect(notes.textContent).toContain('free gifts');
@@ -100,10 +110,12 @@ describe('the Performance P&L tab', () => {
     expect(csv).toContain('Sofa,"3,000.00","1,800.00","1,200.00",40.0%');
     expect(csv).toContain('Accessory,0.00,120.00,(120.00),—');
     expect(csv).toContain('Total,"5,230.00","3,010.00","2,220.00",42.4%');
-    expect(csv).toContain('"Operating expense — 16.00% of sales excluding service (5,000.00), in place of 900-O001 OPERATIING EXPENSE",(800.00)');
-    expect(csv).toContain('590-0000 · RENT RECEIVED,500.00,');
-    expect(csv).toContain('Total other income (as booked),500.00,');
-    expect(csv).toContain('NET PERFORMANCE,"(44,080.00)",-842.8% of sales');
+    expect(csv).toContain('Line,Amount,% of sales');
+    expect(csv).toContain('"Operating expense — 16.00% of sales excluding service (5,000.00), in place of 900-O001 OPERATIING EXPENSE",800.00,15.3%');
+    expect(csv).toContain('590-0000 · RENT RECEIVED,500.00,9.6%');
+    expect(csv).toContain('Total other income (as booked),500.00,9.6%');
+    expect(csv).toContain('Total other expenses (as booked),"46,000.00",879.5%');
+    expect(csv).toContain('NET PERFORMANCE,"(44,080.00)",-842.8%');
     expect(csv).toContain('Notes');
     expect(csv).toContain('in place of account 900-O001');
   });

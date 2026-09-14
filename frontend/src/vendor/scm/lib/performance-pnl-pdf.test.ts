@@ -32,12 +32,16 @@ describe('performanceTables', () => {
     expect(t.groups[2]!.cells).toEqual(['Accessory', '0.00', '120.00', '(120.00)', '—']);
     expect(t.groups[4]!).toEqual({ kind: 'total', cells: ['Total', '3,730.00', '2,120.00', '1,610.00', '43.2%'] });
     expect(t.summary.map((l) => l.kind)).toEqual(['total', 'row', 'total', 'row', 'row', 'total', 'net']);
-    expect(t.summary[1]!).toEqual({ kind: 'row', label: '590-0000 · RENT RECEIVED', amountSen: 50000 });
-    expect(t.summary[2]!).toEqual({ kind: 'total', label: 'Total other income (as booked)', amountSen: 50000 });
+    expect(t.summary[0]!).toEqual({ kind: 'total', label: 'Gross profit', amountSen: 161000, pct: 43.2 });
+    expect(t.summary[1]!).toEqual({ kind: 'row', label: '590-0000 · RENT RECEIVED', amountSen: 50000, pct: 13.4 });
+    expect(t.summary[2]!).toEqual({ kind: 'total', label: 'Total other income (as booked)', amountSen: 50000, pct: 13.4 });
     expect(t.summary[3]!.label).toBe('Operating expense — 16.00% of sales excluding service (3,500.00), in place of 900-O001 OPERATIING EXPENSE');
-    expect(t.summary[3]!.amountSen).toBe(-56000);
-    expect(t.summary[4]!.label).toBe('900-R048 · RENTAL OF SHOWROOM');
-    expect(t.summary[6]!).toEqual({ kind: 'net', label: 'NET PERFORMANCE', amountSen: -4345000, note: '-1164.9% of sales' });
+    /* SIGNS (docs/bugs/0910): an expense is the positive figure it is. */
+    expect(t.summary[3]!.amountSen).toBe(56000);
+    expect(t.summary[3]!.pct).toBe(15);
+    expect(t.summary[4]!).toEqual({ kind: 'row', label: '900-R048 · RENTAL OF SHOWROOM', amountSen: 4500000, pct: 1206.4 });
+    expect(t.summary[5]!).toEqual({ kind: 'total', label: 'Total other expenses (as booked)', amountSen: 4500000, pct: 1206.4 });
+    expect(t.summary[6]!).toEqual({ kind: 'net', label: 'NET PERFORMANCE', amountSen: -4345000, pct: -1164.9 });
   });
 
   it('the notes say where each side came from and what the rate replaced', () => {

@@ -4,11 +4,18 @@
 // us later (his call), so both tabs stay plain sections + rows + bold totals.
 // One source: /accounting/reports/* over v_gl_entries — these can never argue
 // with the Journal / GL / TB tabs beside them.
+//
+// SIGNS (owner 2026-09-14, docs/bugs/0910: expense 可以不用（）吗？因为本身就是费用
+// 除非他当月是 ct 大过 debit 才（）): every figure is the positive amount it is —
+// an expense is a cost, not a negative — and only a line whose credits beat
+// its debits in the period (a reversal, a closing-stock credit) prints in
+// parentheses; a loss is a negative net and reads the same way. The four
+// Finance reports share this rule through fmtSenParen / fmtPerf.
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSenParen } from '../../vendor/shared/format';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { DateField } from '../../vendor/scm/components/DateField';
 
@@ -26,23 +33,21 @@ type Line = { code: string; name: string; amountSen: number };
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 const monthStart = (): string => `${myt().slice(0, 7)}-01`;
 
-const Section = ({ title, rows, totalLabel, totalSen, negate }: {
+const Section = ({ title, rows, totalLabel, totalSen }: {
   title: string; rows: Line[]; totalLabel: string; totalSen: number;
-  /** Render the rows as deductions (cost/expense sections). */
-  negate?: boolean;
 }) => (
   <>
     <tr><td colSpan={2} style={{ padding: '10px 10px 4px', fontWeight: 700 }}>{title}</td></tr>
     {rows.map((l) => (
       <tr key={l.code}>
         <td style={{ padding: '2px 10px 2px 24px' }}>{l.code} — {l.name}</td>
-        <td style={{ padding: '2px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>{negate ? `(${fmtSen(l.amountSen)})` : fmtSen(l.amountSen)}</td>
+        <td style={{ padding: '2px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtSenParen(l.amountSen)}</td>
       </tr>
     ))}
     {rows.length === 0 && <tr><td colSpan={2} style={{ padding: '2px 10px 2px 24px', ...soft }}>—</td></tr>}
     <tr style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
       <td style={{ padding: '4px 10px', fontWeight: 600 }}>{totalLabel}</td>
-      <td style={{ padding: '4px 10px', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtSen(totalSen)}</td>
+      <td style={{ padding: '4px 10px', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtSenParen(totalSen)}</td>
     </tr>
   </>
 );
@@ -79,13 +84,13 @@ export const PnLTab = () => {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
             <tbody>
               <Section title="Trading income" rows={q.data.tradingIncome} totalLabel="Total income" totalSen={q.data.totals.tradingIncomeSen} />
-              <Section title="Cost of sales (purchases + opening − closing)" rows={q.data.costOfSales} negate totalLabel="Total cost of sales" totalSen={q.data.totals.costOfSalesSen} />
+              <Section title="Cost of sales (purchases + opening − closing)" rows={q.data.costOfSales} totalLabel="Total cost of sales" totalSen={q.data.totals.costOfSalesSen} />
               <tr style={{ borderTop: '2px solid var(--c-ink, #221f20)' }}>
                 <td style={{ padding: '6px 10px', fontWeight: 700 }}>GROSS PROFIT</td>
-                <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 700 }}>{fmtSen(q.data.totals.grossProfitSen)}</td>
+                <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 700 }}>{fmtSenParen(q.data.totals.grossProfitSen)}</td>
               </tr>
               <Section title="Other income" rows={q.data.otherIncome} totalLabel="Total other income" totalSen={q.data.totals.otherIncomeSen} />
-              <Section title="Expenses" rows={q.data.expenses} negate totalLabel="Total expenses" totalSen={q.data.totals.expensesSen} />
+              <Section title="Expenses" rows={q.data.expenses} totalLabel="Total expenses" totalSen={q.data.totals.expensesSen} />
               {/* The TAXATION section (AutoCount's own line) only when
                   something posted there — the layout stays as the owner
                   left it otherwise (版式先这样). */}
@@ -93,14 +98,14 @@ export const PnLTab = () => {
                 <>
                   <tr style={{ borderTop: '2px solid var(--c-ink, #221f20)' }}>
                     <td style={{ padding: '6px 10px', fontWeight: 700 }}>PROFIT BEFORE TAX</td>
-                    <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 700 }}>{fmtSen(q.data.totals.profitBeforeTaxSen ?? q.data.totals.netProfitSen)}</td>
+                    <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 700 }}>{fmtSenParen(q.data.totals.profitBeforeTaxSen ?? q.data.totals.netProfitSen)}</td>
                   </tr>
-                  <Section title="Taxation" rows={q.data.taxation ?? []} negate totalLabel="Total taxation" totalSen={q.data.totals.taxationSen ?? 0} />
+                  <Section title="Taxation" rows={q.data.taxation ?? []} totalLabel="Total taxation" totalSen={q.data.totals.taxationSen ?? 0} />
                 </>
               )}
               <tr style={{ borderTop: '2px solid var(--c-ink, #221f20)' }}>
                 <td style={{ padding: '8px 10px', fontWeight: 700 }}>NET PROFIT</td>
-                <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700 }}>{fmtSen(q.data.totals.netProfitSen)}</td>
+                <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700 }}>{fmtSenParen(q.data.totals.netProfitSen)}</td>
               </tr>
             </tbody>
           </table>
@@ -139,14 +144,14 @@ export const BalanceSheetTab = () => {
               <Section title="Equity" rows={q.data.equity} totalLabel="Total equity" totalSen={q.data.totals.equitySen} />
               <tr>
                 <td style={{ padding: '4px 10px' }}>Current period earnings</td>
-                <td style={{ padding: '4px 10px', textAlign: 'right' }}>{fmtSen(q.data.totals.earningsSen)}</td>
+                <td style={{ padding: '4px 10px', textAlign: 'right' }}>{fmtSenParen(q.data.totals.earningsSen)}</td>
               </tr>
               <tr style={{ borderTop: '2px solid var(--c-ink, #221f20)' }}>
                 <td style={{ padding: '8px 10px', fontWeight: 700 }}>
                   {q.data.totals.checkSen === 0 ? 'BALANCED' : 'OUT OF BALANCE'}
                 </td>
                 <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700, color: q.data.totals.checkSen === 0 ? 'var(--c-good, #2f5d4f)' : 'var(--c-danger, #a33)' }}>
-                  {q.data.totals.checkSen === 0 ? fmtSen(q.data.totals.assetsSen) : fmtSen(q.data.totals.checkSen)}
+                  {q.data.totals.checkSen === 0 ? fmtSenParen(q.data.totals.assetsSen) : fmtSenParen(q.data.totals.checkSen)}
                 </td>
               </tr>
             </tbody>
