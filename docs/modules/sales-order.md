@@ -5480,12 +5480,34 @@ Deposit only = something paid and balance > 0, Fully paid = balance <= 0);
 Overdue = `amended_delivery_date` (else `customer_delivery_date`) before today in
 KL and status not SHIPPED / DELIVERED / INVOICED / CLOSED / CANCELLED.
 
-**Not offered yet, shown disabled in the picker:** Warehouse, Branding, Item
-category, Has pending amendment — each is a fact about the order's LINES (or the
-amendments table), and the list reads a header view. Also not built: Stock
-readiness (computed after the page renders by the deferred MRP enrichment, so it
-cannot filter a server page), Item code contains, IC No and Cancel date (no such
-column on the SO header).
+**Line-level fields (added 2026-09-14, follow-up PR).** Warehouse, Item category
+and Pending amendment are facts about an order's LINES or AMENDMENTS while the
+list reads the header view, so each is a PostgREST computed field — a function
+taking the view's row — created by
+`backend/src/db/migrations-pg/20260914T1600_scm_so_list_line_filter_fields.sql`:
+
+| filter | predicate the list sends | function |
+| --- | --- | --- |
+| Warehouse is X | `so_line_warehouse_ids=ov.{X}` | `scm.so_line_warehouse_ids(view row)` — distinct warehouses of the order's live lines |
+| Item category Sofa / Bedframe / Mattress / Accessory | `so_line_categories=ov.{SOFA}` | `scm.so_line_categories(view row)` — the list handler's own normCategory buckets |
+| Pending amendment yes / no | `so_has_open_amendment=is.true` / `is.false` | `scm.so_has_open_amendment(view row)` — the SO detail's `has_open_amendment` rule: status not SENT / REJECTED and (legacy row or REQUESTED) |
+
+Each function reads only child rows carrying the order's own `company_id` and
+only live (non-cancelled) lines; `backend/tests-pg/soListLineFilterFields.pg.test.ts`
+replays the migration against Postgres and pins which orders each selects. The
+Warehouse picker lists the company's warehouses (inactive included) from
+`GET /inventory/warehouses`. **A DROP of the payment-totals view must CASCADE
+these three functions and re-run that migration's bodies after the recreate** —
+they depend on the view's row type.
+
+Branding reads the header `branding` column. On staging (2026-09-14, probe run 34818215402) 169 of
+2,943 Houzs orders carry the placeholder `NONE` and 5 are blank; the list shows
+a label derived from their first line, and a Branding filter does not match
+them.
+
+**Still not built:** Stock readiness (computed after the page renders by the
+deferred MRP enrichment, so it cannot filter a server page), Item code contains,
+IC No and Cancel date (no such column on the SO header).
 
 ---
 
