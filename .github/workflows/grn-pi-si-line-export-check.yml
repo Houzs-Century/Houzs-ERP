@@ -44,6 +44,11 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
+      # Database requests per export call vs the Worker's 1,000-subrequest cap.
+      - run: npx tsx scripts/count-export-requests.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
       - run: npx tsx scripts/check-grn-pi-si-line-export.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
