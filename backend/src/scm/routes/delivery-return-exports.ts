@@ -31,7 +31,7 @@ import {
   gateDrListFinance,
   orderDeliveryReturnList,
   readDeliveryReturnListFilters,
-  stampDrListAgent,
+  stampDrListBookSpellings,
   stampDrListSoDocNo,
   type DrLineHeader,
 } from '../lib/delivery-return-list-read';
@@ -50,7 +50,7 @@ export async function deliveryReturnExportRowsHandler(c: Ctx) {
   const headers = read.data ?? [];
   const stamped = await stampDrListSoDocNo(sb, c, headers);
   if (stamped.error) return c.json({ error: 'export_failed', reason: stamped.error }, 500);
-  const agents = await stampDrListAgent(sb, c, headers);
+  const agents = await stampDrListBookSpellings(sb, c, headers);
   if (agents.error) return c.json({ error: 'export_failed', reason: agents.error }, 500);
   gateDrListFinance(headers, canViewScmFinance(c));
   const attached = await attachDeliveryReturnLines(sb, c, headers);

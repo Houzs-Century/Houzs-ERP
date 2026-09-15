@@ -48,7 +48,7 @@ import {
   gateDrListFinance,
   orderDeliveryReturnList,
   readDeliveryReturnListFilters,
-  stampDrListAgent,
+  stampDrListBookSpellings,
   stampDrListSoDocNo,
   type DrLineHeader,
 } from '../lib/delivery-return-list-read';
@@ -759,7 +759,7 @@ export async function deliveryReturnListHandler(c: Context<{ Bindings: Env; Vari
   /* The SO number and the book's Agent spelling are ancillary: a failed read
      leaves them blank and must not 500 the list (the export refuses instead). */
   await stampDrListSoDocNo(sb, c, rows);
-  await stampDrListAgent(sb, c, rows);
+  await stampDrListBookSpellings(sb, c, rows);
   gateDrListFinance(rows, canViewScmFinance(c));
   const attached = await attachDeliveryReturnLines(sb, c, rows);
   if (attached.error !== null) return c.json({ error: 'load_failed', reason: attached.error }, 500);

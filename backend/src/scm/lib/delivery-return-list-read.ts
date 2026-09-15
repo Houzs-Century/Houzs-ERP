@@ -19,7 +19,7 @@ import { lookupByIds } from './document-line-export';
 import { chunkIn } from './paginate-all';
 import { warehouseLabel } from './warehouse-label';
 import { bookSpellingOrOwn, resolveAcAgent } from '../../services/autocount-writeback';
-import { LOCATION_MAP } from '../../services/autocount-master-maps';
+import { BRANDING_MAP, LOCATION_MAP, VENUE_MAP } from '../../services/autocount-master-maps';
 import { toDrListLine, type DrListLine } from './return-line-export-columns';
 import { companyHasAutoCountBook, composedDescription2, readItemCodeSpeller } from './return-line-book-facts';
 
@@ -148,12 +148,14 @@ export async function stampDrListSoDocNo(
   return { error: dos.error ? `delivery orders: ${dos.error}` : null };
 }
 
-/* AutoCount's "Agent": the write-back's own rule (resolveAcAgent — the typed
-   agent through AGENT_MAP, else the salesperson's name through it, else the
-   name) for the company whose book it is; elsewhere the salesperson's name,
-   else the typed agent. Stamped as `ac_agent`. Staff names are read by the ids
-   of rows already read under the company scope. */
-export async function stampDrListAgent(
+/* The book's spellings, stamped on each row for the grid and the file:
+   `ac_agent` — AutoCount's "Agent", by the write-back's own rule (resolveAcAgent:
+   the typed agent through AGENT_MAP, else the salesperson's name through it,
+   else the name); `ac_branding` / `ac_venue` — through BRANDING_MAP / VENUE_MAP
+   as the write-back sends them. For the company whose book it is only; elsewhere
+   the salesperson's name (else the typed agent) and the ERP's own words. Staff
+   names are read by the ids of rows already read under the company scope. */
+export async function stampDrListBookSpellings(
   sbIn: unknown,
   c: CompanyScopeCtx,
   rows: Array<Record<string, unknown>>,
@@ -167,6 +169,10 @@ export async function stampDrListAgent(
     const name = (staff.byId.get((r.salesperson_id as string | null) ?? '')?.name ?? '').trim() || null;
     const typed = typeof r.agent === 'string' ? r.agent : null;
     r.ac_agent = inBook ? resolveAcAgent(typed, name) : (name ?? ((typed ?? '').trim() || null));
+    const branding = typeof r.branding === 'string' ? r.branding : null;
+    const venue = typeof r.venue === 'string' ? r.venue : null;
+    r.ac_branding = inBook ? bookSpellingOrOwn(branding, BRANDING_MAP) : ((branding ?? '').trim() || null);
+    r.ac_venue = inBook ? bookSpellingOrOwn(venue, VENUE_MAP) : ((venue ?? '').trim() || null);
   }
   return { error: staff.error ? `staff: ${staff.error}` : null };
 }
