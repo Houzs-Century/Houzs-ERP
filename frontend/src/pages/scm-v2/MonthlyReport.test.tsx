@@ -13,7 +13,7 @@ const line = (id: string, label: string, amountSen: number, pct: number | null, 
   ({ id, label, kind, depth, amountSen, pct });
 
 /* Three months of a tiny P&L; ADVERT was booked in August alone. */
-const DATA: Record<string, Data> = {
+const DATA: Partial<Record<string, Data>> = {
   '2026-07-01..2026-09-30': { period: 'cumulative', lines: [line('blk', 'Expenses', 0, null, 0, 'block'), line('rent', 'RENT', 300_000, 30), line('tot', 'Total expenses', 300_000, 30, 0, 'total')] },
   '2026-09': { period: '2026-09', lines: [line('blk', 'Expenses', 0, null, 0, 'block'), line('rent', 'RENT', 100_000, 25), line('tot', 'Total expenses', 100_000, 25, 0, 'total')] },
   '2026-08': { period: '2026-08', lines: [line('blk', 'Expenses', 0, null, 0, 'block'), line('rent', 'RENT', 100_000, 40), line('advert', 'ADVERT', 5_000, 2), line('tot', 'Total expenses', 105_000, 42, 0, 'total')] },
@@ -53,7 +53,7 @@ describe('the monthly view', () => {
     const advert = screen.getByText('ADVERT').closest('tr')!;
     expect(within(advert).getAllByRole('cell').map((c) => c.textContent)).toEqual(['ADVERT', '—', '—', 'RM 50.00', '—', '—', '—', '—']);
     /* ADVERT sits after RENT, where August had it. */
-    const rows = screen.getAllByRole('row').map((r) => r.textContent ?? '');
+    const rows = screen.getAllByRole('row').map((r) => String(r.textContent));
     expect(rows.findIndex((t) => t.startsWith('ADVERT'))).toBe(rows.findIndex((t) => t.startsWith('RENT')) + 1);
   });
 

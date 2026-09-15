@@ -29,7 +29,7 @@ export type FlatLine = {
 };
 
 export type MonthlyCell = { amountSen: number; pct: number | null };
-export type MonthlyLine = Omit<FlatLine, 'amountSen' | 'pct'> & { cells: Record<string, MonthlyCell> };
+export type MonthlyLine = Omit<FlatLine, 'amountSen' | 'pct'> & { cells: Partial<Record<string, MonthlyCell>> };
 
 export type MonthColumn = { key: string; label: string; from: string; to: string; cumulative: boolean };
 
