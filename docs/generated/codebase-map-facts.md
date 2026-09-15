@@ -83,12 +83,12 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-numbering.ts` | 0 | 134 |
 | `backend/src/scm/routes/accounting-payment-corrections.ts` | 0 | 210 |
 | `backend/src/scm/routes/accounting-payouts.ts` | 0 | 265 |
-| `backend/src/scm/routes/accounting-performance.ts` | 0 | 116 |
+| `backend/src/scm/routes/accounting-performance.ts` | 0 | 121 |
 | `backend/src/scm/routes/accounting-pi-backfill.ts` | 0 | 149 |
 | `backend/src/scm/routes/accounting-receipts.ts` | 0 | 88 |
 | `backend/src/scm/routes/accounting-report-layouts.ts` | 0 | 205 |
-| `backend/src/scm/routes/accounting-reports.ts` | 0 | 216 |
-| `backend/src/scm/routes/accounting-rp.ts` | 0 | 319 |
+| `backend/src/scm/routes/accounting-reports.ts` | 0 | 233 |
+| `backend/src/scm/routes/accounting-rp.ts` | 0 | 353 |
 | `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1585 |
 | `backend/src/scm/routes/accounting-stock-close.ts` | 0 | 53 |
 | `backend/src/scm/routes/accounting.ts` | 97 | 1534 |
@@ -229,7 +229,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2455 files, 790044 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2455 files, 790589 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |

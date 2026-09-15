@@ -1793,14 +1793,54 @@ the top of a block or under another category, delete — what it held moves
 up a level, drag or ↑ ↓, a tick per company, the block's unplaced accounts
 under Unassigned with Place, Save, Reset to chart; nothing reaches the
 server until Save); hooks and the editor's pure operations in
-`frontend/src/vendor/scm/lib/report-layout.ts`. The Balance Sheet, the
-Performance P&L's account part and Receipts & Payments move onto the same
-engine next, then the month-by-month view (the owner's queue of
-2026-09-14). Contracts: `backend/src/acc/report-layout.test.ts`,
+`frontend/src/vendor/scm/lib/report-layout.ts`. Contracts:
+`backend/src/acc/report-layout.test.ts`,
 `backend/tests/reportLayouts.test.ts`, `backend/tests/accountingReports.test.ts`,
 `frontend/src/vendor/scm/lib/report-layout.test.ts`,
 `frontend/src/pages/scm-v2/ReportLayoutEditor.test.tsx`,
 `frontend/src/pages/scm-v2/Reports.test.tsx`.
+
+**The other three reports on the layout engine (2026-09-15, docs/bugs/0912;
+owner: P&L, Balance Sheet, Performance P&L, Receipt & Payment 都需要 … balance
+sheet 也需要).** Four report keys, each with its own tree and its own row in
+`scm.acc_report_layouts`: `balance_sheet` — assets / liabilities / equity by
+the section's TYPE, a section layer inside each, `baseSen` = total assets and
+every line's % of it on BOTH sides (`balanceSheetReport` returns `layout`;
+the screen in `frontend/src/pages/scm-v2/Reports.tsx` prints "% of total
+assets"); `performance` — the P&L's otherIncome and expenses blocks for the
+account part under the product groups (`performanceLayout` in
+`backend/src/acc/performance-pnl.ts`): the computed operating expense is a
+line carrying the CODE of the account it replaces, so it prints exactly
+where the owner placed that account — under Unassigned, saying so, when the
+chart does not carry the code — and its sentence (`operatingExpenseLabel`)
+has one home that the screen, the CSV and the PDF read; the screen
+(`frontend/src/pages/scm-v2/PerformancePnl.tsx`) draws its summary from the
+tree through `performanceSummaryLines` (every line with a `depth`, a
+`category` kind, `summaryLinesAtLevel` folding by level) and the total under
+the tree reads "Total expenses (operating expense at N% + as booked)" since
+the computed line now sits inside it; the CSV and the PDF
+(`frontend/src/vendor/scm/lib/performance-pnl-pdf.ts`) indent by depth;
+`rp` — ONE block over every section, the whole chart laid out twice by
+`rowsOnTree` (`backend/src/scm/routes/accounting-rp.ts`): a coded row where
+its code sits (a control account's party rows together — a line carries its
+own `key` when several rows share a code — a transfer where the OTHER money
+account sits), the supplier-advance row after the tree, every row and
+category with a figure per money column (`cells`, summed on a category) and
+% of the side's total; the screen (`frontend/src/pages/scm-v2/ReceiptsPayments.tsx`)
+draws `LaidRows` with a figure per column (`ReportLayoutTree.tsx`: `columns`,
+`fmt`, `onPick`), a category's figure opening every row under it
+(`leafKeys`), a % column, and the printed table
+(`frontend/src/vendor/scm/lib/rp-report-pdf.ts`) is the tree. Every one of
+the four has L1..Ln buttons and the Layout button; the editor names them all
+and gained Fold all / Unfold all for the chart-sized R&P tree. A category id
+accepts spaces, dots and slashes — the default tree names its section layer
+after the section ("sec:SALES ADJUSTMENTS", "sec:APPROPRIATION A/C") and
+must always be savable. The month-by-month view is next in the owner's
+queue. Contracts: the six above plus `backend/tests/performanceReport.test.ts`,
+`backend/tests/rpReport.test.ts`, `frontend/src/pages/scm-v2/PerformancePnl.test.tsx`,
+`frontend/src/vendor/scm/lib/performance-pnl-pdf.test.ts`,
+`frontend/src/pages/scm-v2/ReceiptsPayments.test.tsx`,
+`frontend/src/vendor/scm/lib/rp-report-pdf.test.ts`.
 
 **Every payment action by a role holding the correction right owes a reason,
 and Corrections names who first recorded the payment (2026-09-14,

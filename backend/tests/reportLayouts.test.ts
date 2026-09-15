@@ -92,7 +92,33 @@ describe('the layout routes', () => {
     const { app } = harness();
     const res = await app.request('/accounting/reports/layout?report=ebitda');
     expect(res.status).toBe(400);
-    expect(((await res.json()) as { message: string }).message).toContain('pnl');
+    expect(((await res.json()) as { message: string }).message).toContain('pnl, balance_sheet, performance, rp');
+  });
+
+  test('each of the four reports has its own tree, on its own row (docs/bugs/0912)', async () => {
+    const { app, tables } = harness();
+    const blocksOf = async (report: string) => {
+      const res = await app.request(`/accounting/reports/layout?report=${report}`);
+      expect(res.status).toBe(200);
+      const b = (await res.json()) as { blocks: Array<{ key: string }>; layout: { blocks: Record<string, Item[]> } };
+      return { keys: b.blocks.map((x) => x.key), tree: b.layout.blocks };
+    };
+    expect((await blocksOf('balance_sheet')).keys).toEqual(['assets', 'liabilities', 'equity']);
+    expect((await blocksOf('performance')).keys).toEqual(['otherIncome', 'expenses']);
+    const rp = await blocksOf('rp');
+    expect(rp.keys).toEqual(['accounts']);
+    /* The chart of the harness: sales and expenses only — so the R&P tree is those two sections. */
+    expect(shape(rp.tree.accounts!)).toEqual([
+      { 'sec:SALES': ['501-0000'] },
+      { 'sec:EXPENSES': [{ 'acc:900-0000': ['900-A001', { 'acc:900-A002': ['900-A014'] }, '900-H010'] }] },
+    ]);
+    /* Saving the performance tree touches no other report's row. */
+    const perfTree = { version: 1, blocks: { otherIncome: [], expenses: [{ kind: 'category', id: 'cat:ops', label: 'Ops', children: [{ kind: 'account', code: '900-A001' }] }] } };
+    expect((await put(app, perfTree, 'performance')).status).toBe(200);
+    expect((await put(app, marketing(), 'pnl')).status).toBe(200);
+    expect(tables.acc_report_layouts.map((r) => r.report).sort()).toEqual(['performance', 'pnl']);
+    expect(shape((await blocksOf('performance')).tree.expenses!)).toEqual([{ 'cat:ops': ['900-A001'] }]);
+    expect(shape((await blocksOf('pnl')).tree.expenses!)).toEqual([{ 'cat:mkt': ['900-A001'] }]);
   });
 
   test('nothing saved: the chart\'s own tree, the union with each company\'s tick, the companies', async () => {

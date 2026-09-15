@@ -11,7 +11,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 
-export type ReportKey = 'pnl';
+export type ReportKey = 'pnl' | 'balance_sheet' | 'performance' | 'rp';
+
+export const REPORT_TITLES: Record<ReportKey, string> = {
+  pnl: 'P&L', balance_sheet: 'Balance Sheet', performance: 'Performance P&L', rp: 'Receipts & Payments',
+};
 
 export type LayoutAccount = { kind: 'account'; code: string };
 export type LayoutCategory = {
@@ -51,10 +55,24 @@ export type LaidNode = {
   id: string;
   label: string;
   code?: string;
+  /** The row's key on a line (Receipts & Payments: the drill-down's handle). */
+  key?: string;
   amountSen: number;
   pct: number | null;
+  /** A figure per money column (Receipts & Payments), summed on a category. */
+  cells?: Record<string, number>;
   children: LaidNode[];
 };
+
+/** The keys of every line under a node — a category's drill-down is all of its rows. */
+export const leafKeys = (n: LaidNode): string[] =>
+  n.children.length === 0 ? (n.key ? [n.key] : []) : n.children.flatMap(leafKeys);
+
+/** A laid tree as a flat list with each node's depth — for a CSV, a PDF, or
+    a screen that folds by level (a node prints while its depth ≤ the level). */
+export type FlatLaid = { node: LaidNode; depth: number };
+export const flattenLaid = (nodes: LaidNode[], depth = 1): FlatLaid[] =>
+  nodes.flatMap((node) => [{ node, depth }, ...flattenLaid(node.children, depth + 1)]);
 
 /* ── reads and writes ─────────────────────────────────────────────────────── */
 
@@ -68,7 +86,9 @@ export const useReportLayout = (report: ReportKey, enabled = true) => useQuery({
 type SaveResponse = { ok: boolean; stored: boolean; layout: Layout; updatedAt: string | null; updatedBy: string | null };
 
 /** The report queries that draw on the tree — every one re-reads after a save. */
-const REPORT_QUERY_KEYS: Record<ReportKey, string> = { pnl: 'report-pnl' };
+const REPORT_QUERY_KEYS: Record<ReportKey, string> = {
+  pnl: 'report-pnl', balance_sheet: 'report-bs', performance: 'report-performance', rp: 'report-rp',
+};
 
 export const useSaveReportLayout = (report: ReportKey) => {
   const qc = useQueryClient();
@@ -257,6 +277,16 @@ export function unplacedAccounts(layout: Layout, block: LayoutBlockDef, accounts
     .filter((a) => a.section !== null && block.sections.includes(a.section) && !placed.has(a.code))
     .sort((a, b) => a.code.localeCompare(b.code));
 }
+
+/** Every category id of a tree — Fold all / Unfold all in the editor. */
+export const categoryIds = (layout: Layout): string[] => {
+  const out: string[] = [];
+  const walk = (items: LayoutItem[]): void => {
+    for (const it of items) if (it.kind === 'category') { out.push(it.id); walk(it.children); }
+  };
+  for (const items of Object.values(layout.blocks)) walk(items);
+  return out;
+};
 
 /** A fresh category id — time-ordered, never a chart code's shape. */
 export const newCategoryId = (now = Date.now(), salt = Math.floor(Math.random() * 46_656)): string =>

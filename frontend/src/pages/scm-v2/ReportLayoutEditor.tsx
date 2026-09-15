@@ -17,7 +17,7 @@ import { Button } from '@2990s/design-system';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import {
-  accountKey, addCategory, itemKey, moveWithinSiblings, newCategoryId, placeItem, removeCategory, renameCategory,
+  REPORT_TITLES, accountKey, addCategory, categoryIds, itemKey, moveWithinSiblings, newCategoryId, placeItem, removeCategory, renameCategory,
   setCategoryTick, unplaceAccount, unplacedAccounts, useReportLayout, useResetReportLayout, useSaveReportLayout,
   type DropTarget, type Layout, type LayoutAccountRow, type LayoutBlockDef, type LayoutCompany, type LayoutItem, type ReportKey,
 } from '../../vendor/scm/lib/report-layout';
@@ -29,8 +29,6 @@ const iconBtn: React.CSSProperties = {
   background: 'transparent', border: 0, padding: '2px 4px', cursor: 'pointer', color: 'inherit', display: 'inline-flex', alignItems: 'center',
 };
 const cell: React.CSSProperties = { padding: '3px 8px', verticalAlign: 'middle' };
-
-const REPORT_TITLES: Record<ReportKey, string> = { pnl: 'P&L' };
 
 type Drag = { block: string; item: LayoutItem };
 
@@ -114,6 +112,10 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
+  /* A whole chart on one tree (Receipts & Payments) is long — fold it to
+     its top categories in one press, open it in one press. */
+  const foldAll = () => { if (draft) setFolded(new Set(categoryIds(draft))); };
+  const unfoldAll = () => setFolded(new Set());
 
   const nameOf = (code: string): string => {
     const a = names.get(code);
@@ -255,6 +257,8 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
               : 'The chart\'s own tree — nothing saved yet · shared by every company'}
           </span>
         )}
+        <Button variant="ghost" size="sm" onClick={foldAll} disabled={!draft}>Fold all</Button>
+        <Button variant="ghost" size="sm" onClick={unfoldAll} disabled={!draft}>Unfold all</Button>
         <Button variant="ghost" size="sm" onClick={() => void onReset()} disabled={reset.isPending || save.isPending}>Reset to chart</Button>
         <Button variant="primary" size="sm" onClick={() => void onSave()} disabled={!dirty || save.isPending || reset.isPending}>
           {save.isPending ? 'Saving…' : 'Save'}

@@ -186,9 +186,14 @@ export const balanceSheetReport = async (c: any): Promise<Response> => {
     return c.json({ error: 'bad_date', message: 'asOf must be YYYY-MM-DD.' }, 400);
   }
   const sb = c.get('supabase');
-  const [sums, accs] = await Promise.all([loadSums(sb, co.companyId, null, asOf), loadAccounts(sb, co.companyId)]);
+  const [sums, accs, laid] = await Promise.all([
+    loadSums(sb, co.companyId, null, asOf),
+    loadAccounts(sb, co.companyId),
+    resolveLayout(sb, allowedIds(c), 'balance_sheet'),
+  ]);
   if (!sums.ok) return c.json({ error: 'load_failed', reason: sums.reason }, 500);
   if (!accs.ok) return c.json({ error: 'load_failed', reason: accs.reason }, 500);
+  if (!laid.ok) return c.json({ error: 'load_failed', reason: laid.reason }, 500);
   const secOf = sectionResolver(accs.accounts);
   const rows: Sectioned[] = sums.sums.map((r) => ({ r, section: secOf(r) }));
 
@@ -204,9 +209,21 @@ export const balanceSheetReport = async (c: any): Promise<Response> => {
   const assetsSen = total(assets);
   const liabilitiesSen = total(liabilities);
   const equitySen = total(equity);
+  /* Every % on the balance sheet is of total assets, both sides (owner
+     2026-09-14: balance sheet 也需要) — nothing to divide by means no %. */
+  const baseSen = assetsSen !== 0 ? assetsSen : null;
+  const onTree = (block: string, ls: ReportLine[]): LaidNode[] =>
+    layOutBlock(laid.layout.blocks[block] ?? [], ls, co.companyId, baseSen);
   return c.json({
     asOf,
     assets, liabilities, equity,
+    layout: {
+      stored: laid.stored,
+      baseSen,
+      assets: onTree('assets', assets),
+      liabilities: onTree('liabilities', liabilities),
+      equity: onTree('equity', equity),
+    },
     totals: {
       assetsSen, liabilitiesSen, equitySen, earningsSen,
       /* 0 or the ledger is broken — shown, never absorbed. */

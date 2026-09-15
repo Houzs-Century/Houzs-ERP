@@ -5,7 +5,9 @@
 // % of the report's base, and the L1..Ln buttons open the tree to a depth —
 // L1 is the categories alone, All is every account. Signs follow the four
 // reports' one rule (fmtSenParen): plain, parentheses only where credits beat
-// debits.
+// debits. Receipts & Payments (docs/bugs/0912) draws the same rows with a
+// figure per money column before the total, in its own money dress, and a
+// figure that opens the entries behind it.
 // ----------------------------------------------------------------------------
 
 import { Fragment } from 'react';
@@ -13,6 +15,9 @@ import { fmtSenParen } from '../../vendor/shared/format';
 import { fmtPct, pctOf, type LaidNode } from '../../vendor/scm/lib/report-layout';
 
 export type Level = number | 'all';
+
+/** A figure clicked: the node (a line or a whole category) and the column, null for the total. */
+export type LaidPick = (node: LaidNode, column: string | null) => void;
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-13)', color: 'var(--text-soft, #8a8578)' };
 const right: React.CSSProperties = { padding: '2px 10px', textAlign: 'right', whiteSpace: 'nowrap' };
@@ -39,20 +44,37 @@ export const LevelButtons = ({ depth, level, onLevel }: { depth: number; level: 
 const weightOf = (kind: LaidNode['kind']): React.CSSProperties =>
   kind === 'category' ? { fontWeight: 600 } : kind === 'unassigned' ? { fontStyle: 'italic', ...soft } : {};
 
+const pickBtn: React.CSSProperties = { background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: 'inherit', textDecoration: 'underline dotted' };
+
 /** The rows of a block, indented by depth; a category's children show while
-    the level reaches them, its subtotal stands either way. */
-export const LaidRows = ({ nodes, level, depth = 1 }: { nodes: LaidNode[]; level: Level; depth?: number }) => (
+    the level reaches them, its subtotal stands either way. With `columns`
+    every row prints a figure per column before its total; `fmt` is the
+    report's own money dress; `onPick` makes a figure open its entries. */
+export const LaidRows = ({ nodes, level, depth = 1, columns, fmt = fmtSenParen, onPick, activeId }: {
+  nodes: LaidNode[]; level: Level; depth?: number;
+  columns?: string[]; fmt?: (sen: number) => string; onPick?: LaidPick; activeId?: string | null;
+}) => (
   <>
     {nodes.map((n) => {
       const open = n.children.length > 0 && (level === 'all' || depth < level);
+      const figure = (sen: number, column: string | null, strong: boolean): React.ReactNode => {
+        if (columns && column !== null && sen === 0) return <span style={soft}>—</span>;
+        const text = fmt(sen);
+        return onPick
+          ? <button type="button" style={{ ...pickBtn, fontWeight: strong ? 600 : undefined }} aria-label={`${n.label}${column ? ` ${column}` : ' total'}`} onClick={() => onPick(n, column)}>{text}</button>
+          : text;
+      };
       return (
         <Fragment key={n.id}>
-          <tr data-kind={n.kind} data-depth={depth}>
+          <tr data-kind={n.kind} data-depth={depth} style={activeId && activeId === n.id ? { background: 'var(--c-cream, #faf7f0)' } : undefined}>
             <td style={{ padding: `2px 10px 2px ${10 + 14 * depth}px`, ...weightOf(n.kind) }}>{n.label}</td>
-            <td style={{ ...right, ...weightOf(n.kind) }}>{fmtSenParen(n.amountSen)}</td>
+            {columns?.map((col) => (
+              <td key={col} style={{ ...right, ...weightOf(n.kind) }}>{figure(n.cells?.[col] ?? 0, col, n.kind === 'category')}</td>
+            ))}
+            <td style={{ ...right, ...weightOf(n.kind) }}>{figure(n.amountSen, null, n.kind === 'category')}</td>
             <td style={{ ...right, ...soft }}>{fmtPct(n.pct)}</td>
           </tr>
-          {open && <LaidRows nodes={n.children} level={level} depth={depth + 1} />}
+          {open && <LaidRows nodes={n.children} level={level} depth={depth + 1} columns={columns} fmt={fmt} onPick={onPick} activeId={activeId} />}
         </Fragment>
       );
     })}
