@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
-import { DataTable, type Column } from "./DataTable";
+import { DataTable, type Column, type FunnelAllRowsScope } from "./DataTable";
 import { downloadCSV } from "../lib/csv";
 
 vi.mock("../lib/csv", async (importOriginal) => {
@@ -1474,6 +1474,92 @@ describe("Sort is persisted, and Reset must clear it", () => {
     expect(onSortChange).toHaveBeenCalledWith(null);
     const stored = localStorage.getItem("dt:sort:sort-persist");
     expect(stored === null || stored === "null").toBe(true);
+  });
+});
+
+describe("DataTable funnelAllRows (whole filtered set)", () => {
+  /* Owner 2026-09-16 — a column funnel is client-side, so on a server-paged list
+     it only ever filtered the loaded page: funnelling a value that lives on a
+     LATER page hid every row on this one and never reached the match. With
+     funnelAllRows wired, an active funnel fetches every matching row (all pages)
+     and filters over that instead. */
+  it("filters over the fetched whole set, not just the loaded page, when a funnel is active", async () => {
+    setViewport(1280);
+    // The funnel targets a status that appears on NO loaded-page row — the whole
+    // point: a page-local funnel would show zero, the widened one finds it.
+    localStorage.setItem("dt:filters:funnel-all", JSON.stringify({ status: ["Special"] }));
+    const special: Row = { id: 999, name: "Order 999", status: "Special" };
+    const fetchRows = vi.fn().mockResolvedValue([...rows, special]);
+    const seen: Row[][] = [];
+    render(
+      <DataTable
+        tableId="funnel-all"
+        rows={rows}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        onFilteredRowsChange={(r) => seen.push(r)}
+        funnelAllRows={{
+          fetchRows,
+          signature: "tab=all",
+          onScopeChange: () => {},
+          onError: () => {},
+        }}
+      />,
+    );
+    // Before the read resolves the page-local funnel matches nothing.
+    expect(seen.at(-1)).toHaveLength(0);
+    // Once the whole set arrives, the funnel finds the single matching row.
+    await waitFor(() => expect(seen.at(-1)).toEqual([special]));
+    expect(fetchRows).toHaveBeenCalledTimes(1);
+    expect(fetchRows).toHaveBeenCalledWith({ exportKeys: ["status"], filterKeys: ["status"] });
+  });
+
+  it("does not read, and reports no scope, when no funnel is active", () => {
+    setViewport(1280);
+    const fetchRows = vi.fn().mockResolvedValue(rows);
+    const scopes: (FunnelAllRowsScope | null)[] = [];
+    render(
+      <DataTable
+        tableId="funnel-all-idle"
+        rows={rows}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        funnelAllRows={{
+          fetchRows,
+          signature: "tab=all",
+          onScopeChange: (s) => scopes.push(s),
+          onError: () => {},
+        }}
+      />,
+    );
+    expect(fetchRows).not.toHaveBeenCalled();
+    expect(scopes.at(-1)).toBeNull();
+  });
+
+  it("reverts to the loaded page and reports the error when the whole-set fetch fails", async () => {
+    setViewport(1280);
+    localStorage.setItem("dt:filters:funnel-all-fail", JSON.stringify({ status: ["Open"] }));
+    const fetchRows = vi.fn().mockRejectedValue(new Error("too many to hold"));
+    const onError = vi.fn();
+    const seen: Row[][] = [];
+    render(
+      <DataTable
+        tableId="funnel-all-fail"
+        rows={rows}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        onFilteredRowsChange={(r) => seen.push(r)}
+        funnelAllRows={{
+          fetchRows,
+          signature: "tab=all",
+          onScopeChange: () => {},
+          onError,
+        }}
+      />,
+    );
+    await waitFor(() => expect(onError).toHaveBeenCalledOnce());
+    // Page-local funnel still works: the 100 "Open" rows of the loaded page.
+    expect(seen.at(-1)).toHaveLength(rows.filter((r) => r.status === "Open").length);
   });
 });
 
