@@ -71,6 +71,8 @@ import { salesInvoices } from "./routes/sales-invoices";
 import { salesInvoiceExports } from "./routes/sales-invoice-exports";
 import { deliveryReturns } from "./routes/delivery-returns";
 import { purchaseReturns } from "./routes/purchase-returns";
+import { deliveryReturnExports } from "./routes/delivery-return-exports";
+import { purchaseReturnExports } from "./routes/purchase-return-exports";
 import { consignmentOrders } from "./routes/consignment-orders";
 import { consignmentNotes } from "./routes/consignment-notes";
 import { consignmentReturns } from "./routes/consignment-returns";
@@ -500,8 +502,12 @@ scm.use("/sales-invoices/*", scmAreaGuard("scm.sales.invoices", { readInheritsFr
 scm.route("/sales-invoices", salesInvoiceExports);
 scm.route("/sales-invoices", salesInvoices);
 scm.use("/delivery-returns/*", scmAreaGuard("scm.sales.returns"));
+// The list's ONE export (every return the filters match) — a static
+// /export/rows path, so BEFORE the main router's `/:id`; same area guard.
+scm.route("/delivery-returns", deliveryReturnExports);
 scm.route("/delivery-returns", deliveryReturns);
 scm.use("/purchase-returns/*", scmAreaGuard("scm.procurement.pr"));
+scm.route("/purchase-returns", purchaseReturnExports);
 scm.route("/purchase-returns", purchaseReturns);
 // ── Consignment (scm.consignment.*) ─────────────────────────────────────────
 scm.use("/consignment-orders/*", scmAreaGuard("scm.consignment.orders"));
