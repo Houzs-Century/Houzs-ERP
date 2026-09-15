@@ -62,6 +62,24 @@ describe('readPoLineImportSheet', () => {
     expect(Object.keys(sheet.rows[1]!.values)).not.toContain('qty');
   });
 
+  test("reads a grid export: AutoCount's captions, ERP Doc No, and names the editable columns it lacks", () => {
+    const sheet = readPoLineImportSheet([
+      ['ERP Doc No', 'Item Code', 'Estimate Delivery Date', 'Supplier Delivery Date 2', 'Line ID'],
+      ['PO-000100', 'AK-X', '2026-10-01', null, 'id-1'],
+    ]);
+    if (!sheet.ok) throw new Error(sheet.error);
+    expect(sheet.fields).toEqual(['estimateDeliveryDate1', 'estimateDeliveryDate2']);
+    expect(sheet.missingHeaders).toEqual(['Delivery Date', 'Supplier Delivery Date 3', 'Item Description 2', 'Remarks']);
+    expect(sheet.rows[0]).toMatchObject({ docNo: 'PO-000100', lineId: 'id-1' });
+    expect(sheet.ignoredHeaders).toEqual(['Item Code']);
+  });
+
+  test('a file without Line ID says how to get one from the grid', () => {
+    const r = readPoLineImportSheet([['Doc No', 'Remarks'], ['PO-1', 'x']]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain('Columns');
+  });
+
   test('only the columns present are read; a missing Estimate column is not a clear', () => {
     const sheet = readPoLineImportSheet([['doc no', 'LINE ID', 'remarks'], ['PO-1', 'id-1', 'x']]);
     if (!sheet.ok) throw new Error(sheet.error);

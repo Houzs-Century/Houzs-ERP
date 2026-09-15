@@ -1,3 +1,5 @@
+import { buildVariantSummary } from '../shared/variant-summary';
+
 /* When does a PO line's Description 2 get re-derived from its spec?
  *
  * Description 2 is built server-side from item_group + variants
@@ -33,4 +35,29 @@ export function description2InputsChanged(
   if (patch.itemGroup !== undefined && String(patch.itemGroup ?? '') !== String(stored.item_group ?? '')) return true;
   if (patch.variants !== undefined && canonical(patch.variants) !== canonical(stored.variants)) return true;
   return false;
+}
+
+/* A Purchase Order line's "Item Description 2", as the PO list shows and exports
+ * it. Owner 2026-09-15: 「description 2就是组成from variant的那个」 — it is the text
+ * composed from the line's variants (fabric, sizes, heights), the same summary
+ * the PO documents print (shared/variant-summary.ts buildVariantSummary). The
+ * stored `description2` is only the fallback, for a line whose variants compose
+ * nothing (an accessory, a service line, a migrated line with no variants).
+ *
+ * The PO line import reads a file back against THIS value, so an untouched
+ * export imports as unchanged even where the stored text differs from the
+ * summary. */
+
+
+export function poLineDescription2(
+  itemGroup: string | null | undefined,
+  variants: unknown,
+  stored: string | null | undefined,
+): string | null {
+  const summary = variants && typeof variants === 'object' && !Array.isArray(variants)
+    ? buildVariantSummary(itemGroup, variants as Record<string, unknown>).trim()
+    : '';
+  if (summary !== '') return summary;
+  const s = (stored ?? '').trim();
+  return s === '' ? null : s;
 }

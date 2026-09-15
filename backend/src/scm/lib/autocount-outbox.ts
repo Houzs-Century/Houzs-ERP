@@ -111,6 +111,7 @@ import { acParentlessCreateReason, acNotCarriedReason } from './autocount-outbox
    imports above. Same function, same call site in dispatchOne. */
 import { lineIdentityGap, persistNewLineKeys, newLineTargetOf } from './autocount-line-keys';
 import { attachPhotos } from './autocount-photo-attach';
+import { erpOwnsPaymentText } from './ac-payement-owner';
 import { readPoSourceSo } from './autocount-po-source-so';
 import { resendHeldEdits } from './autocount-held-edit-resend';
 import { queueSoPoDocNos } from './autocount-so-po-doc-no';
@@ -1415,9 +1416,10 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
   const lines = await withLocations(sb, soRows, soRows.map(soLine));
   const h = header as Record<string, unknown>;
   const bindings = await bindingsFor(sb, (h.company_id as number | null) ?? null, lines.map((l) => l.item_code));
-  const [salespersonName, outstandingSen, paymentRefs, poRaised] = await Promise.all([
+  const [salespersonName, outstandingSen, erpPaymentRefs, poRaised] = await Promise.all([
     readSalespersonName(sb, h.salesperson_id), readSoOutstandingSen(sb, h),
     readSoPaymentRefs(sb, docNo), poRaisedFromSo(sb, docNo)]);   // batched; 0609
+  const paymentRefs = erpOwnsPaymentText(h.linked_ac_docno) ? erpPaymentRefs : [];  // the office's text on a carried-over order - 0934
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,

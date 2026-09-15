@@ -6694,6 +6694,25 @@ The orders the write-back had damaged are repaired by
 sends 20 rows a sweep).
 `docs/bugs/0927-our-purchase-order-numbers-never-reached-the-sales-order-s-p.md`.
 
+## A carried-over order's payment text is the office's (2026-09-15, stopgap)
+
+`SO.UDF_PAYEMENT` on an order carried over from AutoCount holds the office's
+payment references. The ERP holds them only in part: one cutover row per order.
+Composing the text from the ERP rows dropped references from 69 orders, with 415
+more at risk.
+
+`erpOwnsPaymentText` (`scm/lib/ac-payement-owner.ts`) now decides who writes it:
+
+- **The ERP owns it** on a create, or on an order in the book under an ERP
+  number (`HC-`). Both edit paths send the text as before.
+- **The office owns it** on an order in the book under the book's own number.
+  The full sales order edit and the payment-only edit send `BALANCE` and no
+  `PAYEMENT`.
+
+A STOPGAP. The root fix keeps the book's text in the ERP and appends new ERP
+references; it waits for the owner.
+`docs/bugs/0934-erp-edits-dropped-the-office-s-payment-references-from-autoc.md`.
+
 ## The sales line names the purchase order made from it (2026-09-15)
 
 The office's plug-in writes `SODTL.UDF_PONo`, `UDF_PODocKey` and `UDF_Creditor` on

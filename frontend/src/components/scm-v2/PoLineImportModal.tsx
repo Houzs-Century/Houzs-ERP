@@ -46,9 +46,12 @@ function Count({ label, value, tone }: { label: string; value: number; tone?: "c
 export function PoLineImportPreviewView({
   preview,
   ignoredHeaders,
+  missingHeaders,
 }: {
   preview: PoLineImportPreview;
   ignoredHeaders: string[];
+  /** Editable columns the file does not carry — nothing is changed in them. */
+  missingHeaders: string[];
 }) {
   const [showUnchanged, setShowUnchanged] = useState(false);
   const rows = useMemo(
@@ -67,6 +70,12 @@ export function PoLineImportPreviewView({
         <Count label="PO dates changing" value={c.poChanges} tone="change" />
         <Count label="PO dates refused" value={c.poRejected} tone="reject" />
       </div>
+
+      {missingHeaders.length > 0 && (
+        <p className="text-[12px] text-ink-muted">
+          Not in this file, so not changed: {missingHeaders.join(", ")}.
+        </p>
+      )}
 
       {ignoredHeaders.length > 0 && (
         <p className="text-[12px] text-ink-muted">
@@ -273,7 +282,7 @@ export function PoLineImportModal({ open, onClose }: { open: boolean; onClose: (
               )}
             </div>
           )}
-          <PoLineImportPreviewView preview={state.preview} ignoredHeaders={state.ignoredHeaders} />
+          <PoLineImportPreviewView preview={state.preview} ignoredHeaders={state.ignoredHeaders} missingHeaders={state.missingHeaders} />
         </div>
       )}
       {state.step === "done" && (

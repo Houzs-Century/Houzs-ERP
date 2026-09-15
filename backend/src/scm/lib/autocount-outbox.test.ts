@@ -1528,7 +1528,7 @@ describe('the three fields the extract carries and the write-back did not send',
     });
 
     test('an EDIT carries it too, so a reference typed after the create reaches the book', async () => {
-      const sb = seed({ linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 }, {
+      const sb = seed({ linked_ac_docno: 'HC-SO-B' }, { linked_ac_dtlkey: 991 }, {   // ERP-numbered: a carried-over order's text is the office's (0934)
         mfg_sales_order_payments: [
           { so_doc_no: 'HC-SO-B', amount_sen: 400_00, is_deposit: true, account_sheet: 'Cash', approval_code: null, paid_at: '2026-08-01', id: 'p1' },
         ],
