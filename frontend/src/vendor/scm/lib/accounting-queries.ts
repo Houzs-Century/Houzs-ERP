@@ -201,12 +201,21 @@ export type GlEntry = {
   notes: string | null;
   posted: boolean;
   posted_at: string | null;
+  /* The original of a reversal carries `reversed`; the contra that undid it
+     carries only the link back. The stream leaves both out unless asked
+     (showReversed) — one correction, not two movements (docs/bugs/0923). */
+  reversed?: boolean;
+  reversed_by_je?: string | null;
 };
-export const useGlEntries = (filters?: { accountCode?: string; from?: string; to?: string }) => {
+/** Which side of a reversal pair a row is, if any — '' for a line the books count. */
+export const reversalSideOf = (r: { reversed?: boolean; reversed_by_je?: string | null }): 'reversed' | 'contra' | '' =>
+  r.reversed ? 'reversed' : r.reversed_by_je ? 'contra' : '';
+export const useGlEntries = (filters?: { accountCode?: string; from?: string; to?: string; showReversed?: boolean }) => {
   const params = new URLSearchParams();
   if (filters?.accountCode) params.set('accountCode', filters.accountCode);
   if (filters?.from)        params.set('from',        filters.from);
   if (filters?.to)          params.set('to',          filters.to);
+  if (filters?.showReversed) params.set('showReversed', '1');
   const qs = params.toString();
   return baseQuery<{ glEntries: GlEntry[] }>(
     ['gl-entries', qs],

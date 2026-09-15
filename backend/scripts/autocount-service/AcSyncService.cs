@@ -1051,6 +1051,98 @@ class AcSyncService {
     }
   }
 
+  /* ── THE SALES LINE POINTS BACK AT ITS PURCHASE ORDER ────────────────────────
+     The office's plug-in (TechDevs.SOBatchPurchase, "Post SO batch to PO") writes
+     three fields on every sales order line it buys: UDF_PONo (the purchase
+     order's number), UDF_PODocKey (its DocKey) and UDF_Creditor (the supplier).
+     A purchase order this service makes from a sales order left all three blank.
+     Live book, 2026-09-15, purchase orders dated since 2026-08-01: 563 of 564
+     plug-in lines carry UDF_PONo, 1 of 164 lines of ours does.
+
+     WHY IT MATTERS IS NOT PROVEN, and this says so rather than guess. Remark 2
+     ("READY", "BEDFRAME/ACC") is kept by a program running inside AutoCount on
+     the office PC, and every bedframe or sofa line it has marked ready carried
+     UDF_PONo. None of our purchase orders had been received by that date, so
+     whether that program finds a receipt without the field is untested. Filling
+     it the plug-in's way removes the question (owner 2026-09-15: 「同样的方式进去
+     不要东西后面又做不到」).
+
+     ONLY A BLANK IS FILLED. A line that already names another purchase order
+     keeps it: a sales line bought on two orders would otherwise flip on every
+     edit of either, and the plug-in's link is the office's own record. A line
+     that names THIS order has its DocKey and supplier completed.
+
+     Best effort and wrapped, like LogPoSourceLink: the purchase order is saved
+     before this runs and must never be cost by it. What landed is read back and
+     logged, because a UDF write that swallows is how a payment text stayed empty
+     through three sends (docs/bugs/0921-a-payment-text-longer-than-autocount-s-fifty-character-field.md). */
+  static void PointSalesLinesAtPurchase(AutoCount.Authentication.UserSession s, string poDocNo) {
+    if (string.IsNullOrEmpty(poDocNo)) return;
+    try {
+      __DBLINE__
+      var connStr = db.ConnectionString;
+      long poDocKey = 0;
+      var creditor = "";
+      var keysBySo = new Dictionary<string, List<long>>();
+      using (var cn = new System.Data.SqlClient.SqlConnection(connStr)) {
+        cn.Open();
+        using (var cmd = cn.CreateCommand()) {
+          cmd.CommandText =
+            "SELECT h.DocKey AS PoDocKey, h.CreditorCode, s.DocNo AS SoDocNo, d.DtlKey AS SoDtlKey " +
+            "FROM [PO] h JOIN [PODTL] p ON p.DocKey = h.DocKey " +
+            "JOIN [SODTL] d ON d.DtlKey = p.FromSODtlKey JOIN [SO] s ON s.DocKey = d.DocKey " +
+            "WHERE h.DocNo = @d AND (ISNULL(d.UDF_PONo, '') = '' OR (d.UDF_PONo = h.DocNo AND " +
+            "(d.UDF_PODocKey IS NULL OR d.UDF_PODocKey <> h.DocKey OR ISNULL(d.UDF_Creditor, '') = '')))";
+          var pd = cmd.CreateParameter(); pd.ParameterName = "@d"; pd.Value = poDocNo; cmd.Parameters.Add(pd);
+          using (var r = cmd.ExecuteReader()) {
+            while (r.Read()) {
+              poDocKey = System.Convert.ToInt64(r["PoDocKey"]);
+              creditor = r["CreditorCode"] == DBNull.Value ? "" : r["CreditorCode"].ToString().Trim();
+              var soNo = r["SoDocNo"].ToString();
+              if (!keysBySo.ContainsKey(soNo)) keysBySo[soNo] = new List<long>();
+              keysBySo[soNo].Add(System.Convert.ToInt64(r["SoDtlKey"]));
+            }
+          }
+        }
+      }
+      if (keysBySo.Count == 0) return;
+
+      foreach (var kv in keysBySo) {
+        try {
+          dynamic so = AutoCount.Invoicing.Sales.SalesOrder.SalesOrderCommand.Create(s, s.DBSetting).Edit(kv.Key);
+          if (so == null) { Log("  sales lines of " + poDocNo + ": " + kv.Key + " could not be opened"); continue; }
+          AllowZeroValue(so);
+          foreach (var k in kv.Value) {
+            dynamic d = so.EditDetail(k);
+            if (d == null) { Log("  sales lines of " + poDocNo + ": line " + k + " of " + kv.Key + " could not be opened"); continue; }
+            SetUdf("PONo", poDocNo, (key, v) => d.UDF[key] = v);
+            SetUdf("PODocKey", poDocKey.ToString(System.Globalization.CultureInfo.InvariantCulture), (key, v) => d.UDF[key] = v);
+            if (creditor.Length > 0) SetUdf("Creditor", creditor, (key, v) => d.UDF[key] = v);
+          }
+          so.Save();
+        } catch (Exception ex) {
+          Log("  sales lines of " + poDocNo + ": " + kv.Key + " was not pointed at it - " + ex.Message);
+        }
+      }
+
+      using (var cn = new System.Data.SqlClient.SqlConnection(connStr)) {
+        cn.Open();
+        using (var cmd = cn.CreateCommand()) {
+          cmd.CommandText =
+            "SELECT COUNT(*) AS Lines, SUM(CASE WHEN d.UDF_PONo = h.DocNo AND d.UDF_PODocKey = h.DocKey THEN 1 ELSE 0 END) AS Named " +
+            "FROM [PO] h JOIN [PODTL] p ON p.DocKey = h.DocKey JOIN [SODTL] d ON d.DtlKey = p.FromSODtlKey WHERE h.DocNo = @d";
+          var pd = cmd.CreateParameter(); pd.ParameterName = "@d"; pd.Value = poDocNo; cmd.Parameters.Add(pd);
+          using (var r = cmd.ExecuteReader()) {
+            if (r.Read())
+              Log("  sales lines of " + poDocNo + ": " + r["Named"] + " of " + r["Lines"] + " now name it");
+          }
+        }
+      }
+    } catch (Exception ex) {
+      Log("  sales lines of " + poDocNo + " could not be pointed at it: " + ex.Message);
+    }
+  }
+
   static List<Dictionary<string, object>> CreatedLines(string dtlTable, string docNo) {
     var hdr = dtlTable.Substring(0, dtlTable.Length - 3);
     var outp = new List<Dictionary<string, object>>();
@@ -2834,6 +2926,7 @@ class AcSyncService {
     }
     if (applied > 0) po2.Save();
     Log("  so-to-po " + docNo + ": " + keys.Length + " transferred, " + applied + " line(s) costed in phase two");
+    PointSalesLinesAtPurchase(s, docNo);
     return docNo;
   }
 
@@ -3727,6 +3820,10 @@ class AcSyncService {
     }
 
     doc.Save();
+    /* A purchase order of ours made before the sales lines were pointed at it
+       gets them on its next edit, which is also how the ones already in the book
+       are filled: re-send them (resend-ac-document-edits). */
+    if (type == "PO") PointSalesLinesAtPurchase(s, docNo);
     /* Read the keys back AFTER the save — AutoCount assigns a DtlKey at save
        time, so there is nothing to read before it. Same SQL read-back the create
        path uses, so there is one implementation of "what are this document's

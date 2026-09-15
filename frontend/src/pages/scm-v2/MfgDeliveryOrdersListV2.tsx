@@ -15,7 +15,7 @@ import { statusFor, doCancellableStatus, type StatusTab } from "./do-list-status
 import { doStatusWord, useDoListExports } from "./use-sales-list-exports";
 import { deliveryOrderRowMenu } from "./row-menus";
 import { doCountsAsInvoiceable, doCountsAsDelivered } from "../../vendor/shared/do-shipped-states";
-import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
+import { useDoCancelAction } from "./use-do-cancel-action";
 import { brandingToneForLabel } from "../../lib/brandingTone";
 import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -785,7 +785,7 @@ export function MfgDeliveryOrdersListV2() {
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
   const holdAction = useHoldAction("do");
-  const askConfirm = useConfirm();
+  const { cancelDo } = useDoCancelAction();
   const askChoice = useChoice();
   // Active company (top-bar switcher) — the header subtitle reflects it so a
   // per-company list is never mislabelled as another company's (e.g. Houzs).
@@ -960,17 +960,9 @@ export function MfgDeliveryOrdersListV2() {
   };
   const doConvertToSi = (r: DoRow) => navigate(convertToLink('doToSi', r.id));
   const doConvertToDr = (r: DoRow) => navigate(convertToLink('doToDr', r.id));
-  /* Cancel REVERSES STOCK, so it asks first — the same in-app confirm the Sales
-     Order list's cancel uses, and the same endpoint the detail page posts. */
-  const doCancelDo = async (r: DoRow) => {
-    if (!(await askConfirm({
-      title: `Cancel ${r.do_number}?`,
-      body: "Stock allocated to this delivery order is released back to the Sales Order, and a cancelled delivery order cannot be reactivated — raise a new one to deliver again.",
-      confirmLabel: "Cancel Delivery Order",
-      danger: true,
-    }))) return;
-    updateStatus.mutate({ id: r.id, status: "CANCELLED" });
-  };
+  /* Cancel REVERSES STOCK and costs a REASON (owner 2026-09-14) — the detail
+     page's own prompt and endpoint, from ./use-do-cancel-action. */
+  const doCancelDo = (r: DoRow) => void cancelDo(r.id, r.do_number);
   // Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status. Wording in ./use-hold-action.ts.
   const setDoHold = (r: DoRow, onHold: boolean) => holdAction(r.id, r.do_number, onHold);
   /* Every predicate here is a SHARED one, not a status list typed at this call

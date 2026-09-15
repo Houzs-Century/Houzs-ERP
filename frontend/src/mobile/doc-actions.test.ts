@@ -3,7 +3,7 @@
  * and must fire NOTHING when the person backs out — the server refuses a
  * reasonless cancel, so a phone that fired anyway would only collect a 400. */
 import { describe, expect, it, vi } from 'vitest';
-import { askActionReason, PO_CANCEL_PROMPT, type DocAction } from './doc-actions';
+import { askActionReason, DO_CANCEL_PROMPT, PO_CANCEL_PROMPT, type DocAction } from './doc-actions';
 
 const cancelPo: DocAction = {
   key: 'cancel', label: 'Cancel', variant: 'danger',
@@ -31,6 +31,22 @@ describe('askActionReason', () => {
     const prompt = vi.fn(async () => 'never asked');
     expect(await askActionReason(plain, prompt)).toBe(plain);
     expect(prompt).not.toHaveBeenCalled();
+  });
+
+  /* Owner 2026-09-14 — the delivery order's cancel rides its STATUS route, so
+     the reason has to arrive BESIDE status CANCELLED, not instead of it. */
+  it('a delivery order cancel carries both the status and the reason', async () => {
+    const cancelDo: DocAction = {
+      key: 'cancel', label: 'Cancel', variant: 'danger',
+      request: { path: '/delivery-orders-mfg/do-1/status', method: 'PATCH', body: { status: 'CANCELLED' } },
+      reasonPrompt: DO_CANCEL_PROMPT,
+    };
+    const prompt = vi.fn(async () => ' Customer postponed the delivery ');
+    expect((await askActionReason(cancelDo, prompt))?.request.body)
+      .toEqual({ status: 'CANCELLED', reason: 'Customer postponed the delivery' });
+    expect(prompt).toHaveBeenCalledWith(expect.objectContaining({ title: 'Cancel this delivery order?', confirmLabel: 'Cancel DO' }));
+    expect(await askActionReason(cancelDo, vi.fn(async () => null))).toBeNull();
+    expect(DO_CANCEL_PROMPT.minChars).toBe(5);
   });
 
   it('refuses a reason under the floor the server enforces', () => {

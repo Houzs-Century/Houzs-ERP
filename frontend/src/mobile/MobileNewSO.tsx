@@ -38,7 +38,8 @@ import { SearchableSelect } from "../vendor/scm/components/SearchableSelect";
 import { SgPostcodeField } from "../vendor/scm/components/SgPostcodeField";
 import { diffHeaderPayload, hasHeaderChanges } from "../vendor/scm/lib/so-header-diff";
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER, AMENDMENT_NOTHING_TO_SUBMIT } from "../vendor/scm/lib/so-amendment-submit";
-import { LOCKED_STATUSES, procLockActive, migratedReadonly as soMigratedReadonly, type SoDetailGateHeader } from "../vendor/scm/lib/so-detail-gates";
+import { LOCKED_STATUSES, procLockActive, migratedReadonly as soMigratedReadonly, soDownstreamHardLocked, soItemFrozen, type SoDetailGateHeader } from "../vendor/scm/lib/so-detail-gates";
+import { FROZEN_LINE_LABEL, FROZEN_LINE_LABEL_STYLE, FROZEN_LINE_STYLE } from "../vendor/scm/lib/so-frozen-line-style";
 import { MigratedReadonlyBanner } from "../vendor/scm/components/MigratedReadonlyBanner";
 import {
   useSoDropdownOptions,
@@ -237,10 +238,11 @@ type SoItem = {
   photo_urls?: string[] | null;
   photoUrls?: string[] | null;
   cancelled: boolean | null;
+  downstream_frozen?: boolean | null; // a live DO / SI carries it (owner 2026-09-15)
 };
 type DetailResp = {
   salesOrder: SoHeader & {
-    has_children?: boolean | null;
+    has_children?: boolean | null; downstream_fully_frozen?: boolean | null;
     status?: string | null;
     /* SO-amendment gate flags (Phase 1-C, read-only) — the GET /:docNo endpoint
        derives these (backend mfg-sales-orders.ts). amendment_eligible = the SO
@@ -802,6 +804,8 @@ export function MobileNewSO({
     }
   };
   const [lineLocked, setLineLocked] = useState(false);
+  /* Per-line downstream freeze (owner 2026-09-15, shared/so-line-freeze.ts): frozen SO line ids, and whether a live DO / SI freezes the identity fields. */
+  const [frozenItemIds, setFrozenItemIds] = useState<ReadonlySet<string>>(new Set()), [identityLocked, setIdentityLocked] = useState(false);
   const [migHeader, setMigHeader] = useState<SoDetailGateHeader | null>(null);
   /* SO-amendment flags captured from the detail GET (Phase 1-C). When
      `amendEligible` the SO is processing-locked but still editable via the
@@ -1018,7 +1022,8 @@ export function MobileNewSO({
         loadedVersionRef.current = detail.salesOrder.version;
         const st = (detail.salesOrder.status ?? "").toUpperCase();
         setSoStatus(st);
-        setLineLocked(LOCKED_STATUSES.includes(st) || Boolean(detail.salesOrder.has_children));
+        setLineLocked(LOCKED_STATUSES.includes(st) || soDownstreamHardLocked(detail.salesOrder));
+        setFrozenItemIds(new Set(liveItems.filter(soItemFrozen).map((it) => it.id))); setIdentityLocked(detail.salesOrder.has_children === true);
         setMigHeader(detail.salesOrder);
         /* Amendment gate (server-derived) — the same flags the desktop SO Detail
            routes on. When amendment_eligible the SO is processing-locked but the
@@ -1206,7 +1211,7 @@ export function MobileNewSO({
      amendment mode, where changing them is exactly what an amendment is for, so
      they stay editable and their new values ride the request for approval
      (Owner 2026-07-16: "應該是全部可以 request 啊 然後看有沒有 approval"). */
-  const addressIdentityLocked = migratedLocked || (procLocked && !amendmentMode);
+  const addressIdentityLocked = migratedLocked || identityLocked || (procLocked && !amendmentMode);
   /* The two schedule dates follow the same rule: frozen on a plain locked SO,
      requestable via the amendment. Delivery Date specifically — owner:
      "delivery date 也要給 amend 也是 subject approval". */
@@ -2182,7 +2187,7 @@ export function MobileNewSO({
     setLines((prev) => {
       let changed = false;
       const next = prev.map((l) => {
-        if (ddateOverrides.has(l.key)) return l; // manual override wins
+        if (ddateOverrides.has(l.key) || (l.itemId && frozenItemIds.has(l.itemId))) return l; // manual override wins; a frozen line never moves
         if (l.ddate === delivDate) return l;
         changed = true;
         return { ...l, ddate: delivDate };
@@ -2241,18 +2246,18 @@ export function MobileNewSO({
               <div className="card-h"><span className="card-t">Customer</span></div>
               <div className="card-b" style={{ display: "flex", flexDirection: "column", gap: 9 }}>
                 <Field label="Customer Name *" error={touched && nameErr} scanned={scanned("name", name)}>
-                  <input className="fld-i" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Lim Mei Hua" />
+                  <input className="fld-i" value={name} disabled={identityLocked} onChange={(e) => setName(e.target.value)} placeholder="e.g. Lim Mei Hua" />
                 </Field>
                 <Field label="Phone *" error={touched && phoneErr} scanned={scanned("phone", phone)}>
-                  <PhoneInput className="fld-i" value={phone} onChange={setPhone} placeholder="1X-XXX XXXX" />
+                  <PhoneInput className="fld-i" value={phone} disabled={identityLocked} onChange={setPhone} placeholder="1X-XXX XXXX" />
                 </Field>
                 <Field label="Email" error={touched && emailErr}>
-                  <input className="fld-i" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Optional" />
+                  <input className="fld-i" type="email" value={email} disabled={identityLocked} onChange={(e) => setEmail(e.target.value)} placeholder="Optional" />
                 </Field>
                 <div style={{ display: "flex", gap: 9 }}>
                   {/* FIX A — Customer Type from so_dropdown_options (was hardcoded). */}
                   <Field label="Customer Type" style={{ flex: 1 }} scanned={scanned("custType", custType)}>
-                    <select className="fld-i" value={custType} onChange={(e) => setCustType(e.target.value)}>
+                    <select className="fld-i" value={custType} disabled={identityLocked} onChange={(e) => setCustType(e.target.value)}>
                       <option value="">—</option>
                       {custType && !customerTypeOpts.some((o) => o.value === custType) && (
                         <option value={custType}>{custType}</option>
@@ -2285,7 +2290,7 @@ export function MobileNewSO({
                   </Field>
                 </div>
                 <Field label="Customer SO Ref" scanned={scanned("custRef", custRef)}>
-                  <input className="fld-i" value={custRef} onChange={(e) => setCustRef(e.target.value)} placeholder="Their PO / SO number" />
+                  <input className="fld-i" value={custRef} disabled={identityLocked} onChange={(e) => setCustRef(e.target.value)} placeholder="Their PO / SO number" />
                 </Field>
               </div>
             </div>
@@ -2295,11 +2300,11 @@ export function MobileNewSO({
               <div className="card-h"><span className="card-t">Emergency Contact</span><span className="card-sub">If we can't reach the customer</span></div>
               <div className="card-b" style={{ display: "flex", flexDirection: "column", gap: 9 }}>
                 <Field label="Contact Name">
-                  <input className="fld-i" value={ecName} onChange={(e) => setEcName(e.target.value)} placeholder="e.g. Lim Mei Hua" />
+                  <input className="fld-i" value={ecName} disabled={identityLocked} onChange={(e) => setEcName(e.target.value)} placeholder="e.g. Lim Mei Hua" />
                 </Field>
                 {/* FIX A — Relationship from so_dropdown_options (was hardcoded). */}
                 <Field label="Relationship">
-                  <select className="fld-i" value={ecRel} onChange={(e) => setEcRel(e.target.value)}>
+                  <select className="fld-i" value={ecRel} disabled={identityLocked} onChange={(e) => setEcRel(e.target.value)}>
                     <option value="">—</option>
                     {ecRel && !relationshipOpts.some((o) => o.value === ecRel) && (
                       <option value={ecRel}>{ecRel}</option>
@@ -2308,7 +2313,7 @@ export function MobileNewSO({
                   </select>
                 </Field>
                 <Field label="Phone">
-                  <PhoneInput className="fld-i" value={ecPhone} onChange={setEcPhone} placeholder="1X-XXX XXXX" />
+                  <PhoneInput className="fld-i" value={ecPhone} disabled={identityLocked} onChange={setEcPhone} placeholder="1X-XXX XXXX" />
                 </Field>
               </div>
             </div>
@@ -2320,7 +2325,7 @@ export function MobileNewSO({
                 <div style={{ display: "flex", gap: 9 }}>
                   {/* FIX A — Building Type from so_dropdown_options (was hardcoded). */}
                   <Field label="Building Type" style={{ flex: 1 }} scanned={scanned("buildingType", buildingType)}>
-                    <select className="fld-i" value={buildingType} onChange={(e) => setBuildingType(e.target.value)}>
+                    <select className="fld-i" value={buildingType} disabled={identityLocked} onChange={(e) => setBuildingType(e.target.value)}>
                       <option value="">—</option>
                       {buildingType && !buildingTypeOpts.some((o) => o.value === buildingType) && (
                         <option value={buildingType}>{buildingType}</option>
@@ -2336,7 +2341,7 @@ export function MobileNewSO({
                       id="mob-so-fair"
                       value={fairPick}
                       soDate={null}
-                      onChange={setFairPick}
+                      onChange={setFairPick} disabled={identityLocked}
                       selectClassName="fld-i"
                     />
                   </Field>
@@ -2407,10 +2412,10 @@ export function MobileNewSO({
                   </div>
                 )}
                 <Field label={addressRequired ? "Address Line 1 *" : "Address Line 1"} error={touched && addressRequired && !addr1.trim()} scanned={scanned("addr1", addr1)}>
-                      <input className="fld-i" value={addr1} {...addressLineProps(setAddr1, { value: addr2, set: setAddr2 })} onChange={(e) => setAddr1(e.target.value)} placeholder="Unit, street, area" />
+                      <input className="fld-i" value={addr1} disabled={identityLocked} {...addressLineProps(setAddr1, { value: addr2, set: setAddr2 })} onChange={(e) => setAddr1(e.target.value)} placeholder="Unit, street, area" />
                     </Field>
                     <Field label="Address Line 2">
-                      <input className="fld-i" value={addr2} {...addressLineProps(setAddr2, null)} onChange={(e) => setAddr2(e.target.value)} placeholder="Apt, floor, building (optional)" />
+                      <input className="fld-i" value={addr2} disabled={identityLocked} {...addressLineProps(setAddr2, null)} onChange={(e) => setAddr2(e.target.value)} placeholder="Apt, floor, building (optional)" />
                     </Field>
                     {/* FIX A — cascading State → City → Postcode from my_localities
                         (desktop parity). When the dataset is present these are
@@ -2471,7 +2476,7 @@ export function MobileNewSO({
                     </div>
                     {addressIdentityLocked ? (
                       <div style={{ fontSize: 10, color: "#a16a2e", marginTop: -3 }}>
-                        State, City, Postcode and the address lines are locked — this order&apos;s processing date has passed and it is now on order to the supplier.
+                        {identityLocked ? "The customer details and delivery address are locked — this order already has a Delivery Order or Invoice." : <>State, City, Postcode and the address lines are locked — this order&apos;s processing date has passed and it is now on order to the supplier.</>}
                       </div>
                     ) : null}
                     {amendmentMode && (
@@ -2528,7 +2533,9 @@ export function MobileNewSO({
                 ) : (
                   <>
                     <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                      {lines.map((l, i) => (
+                      {lines.map((l, i) => l.itemId && frozenItemIds.has(l.itemId) ? (
+                        <div key={l.key} data-frozen="true" style={{ ...roItemBox, ...FROZEN_LINE_STYLE }}><div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, overflowWrap: "anywhere" }}>{lineIdentity({ code: l.itemCode, description: l.name }).primary || "—"} <span style={{ color: "#9aa093" }}>{"×"}{num(l.qty)}</span></span><span className="money" style={{ flex: "none", fontSize: 12.5, fontWeight: 800 }}>RM {fmt((toSen(l.price) * num(l.qty)) / 100)}</span></div><span style={FROZEN_LINE_LABEL_STYLE}>{FROZEN_LINE_LABEL}</span></div>
+                      ) : (
                         <LineCard
                           key={l.key}
                           line={l}

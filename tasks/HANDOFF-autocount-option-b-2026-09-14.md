@@ -54,13 +54,16 @@ tell.
 
 ## Waiting on a person
 
-- **Office host rebuild.** Needs someone at the office on AnyDesk; the owner will say when, "this week". It turns on #3865 (conversions keyed as they drain) and anything else built into `AcSyncService.cs` since the last rebuild.
-- **HC-SO-002861 / HC-PO-009827.** The book line is one DSL-8060 SOFA. The ERP split it into 8060 pieces plus an **8069-CNR**, which is likely a wrong model code (8060-CNR). If someone corrects that ERP row, `resend-ac-document-edits` should compose it. UNTESTED.
-- **HC-GRN-2609-047.** It arrived at 16:20Z with one keyless row, because the drain still compares item codes until the host rebuild. The snapshot committed with this file includes it. Run the stamp: plan, then apply with the digest.
-- **HC-GRN-2609-008.** The stamp reports it `ambiguous_in_book`: one purchase line feeds two book lines (DSL-SQUARE PILLOW x2 and x1).
-- **HC-GRN-2609-057 vs HC-GRN-2609-012.** A JAGER-(Q) row and a HOK-1013 (Q) book line appear to be cross-assigned between the two receipts.
-- **HC-SI-2609-001.** An edit was dropped because the invoice's conversion had not drained. `resend-ac-document-edits` does not take invoices.
-- **Photographs over 2 MiB.** Four documents were sent without them: SO-013496, SO-012388, SO-2609-063, PO-2609-055. Reducing the images is not built.
+Superseded on 2026-09-15 by `tasks/HANDOFF-autocount-completeness-2026-09-15.md`.
+Of the items listed here on 09-14:
+
+- HC-SO-002861 / HC-PO-009827 were fixed by 0913 and 0920.
+- HC-GRN-2609-047 was sent on 09-14 at 16:18Z.
+- HC-GRN-2609-008 was merged and retired by 0915.
+- HC-SI-2609-001 was keyed by 0914 and its edit sent.
+
+The office host swap, HC-GRN-2609-012 / -057 and the photographs are still open,
+and are carried in the newer file.
 
 ## Customer receipts (OR): not built
 

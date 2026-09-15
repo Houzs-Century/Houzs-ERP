@@ -100,9 +100,12 @@ export function classifyHeaderKey(payloadKey: string): AmendmentLane {
 
 /** The identity that decides a line's lane. item_group is the authoritative
  *  signal for a service line whose bare code (DISPOSE / STORAGE / TRANSPORTATION
- *  CHARGES) predates the SVC- vocabulary; for an ADD only the requested
- *  new_item_code is known. Resolved SERVER-SIDE — never trusted from the client. */
-export type LineLaneIdentity = { itemCode?: string | null; itemGroup?: string | null };
+ *  CHARGES) predates the SVC- vocabulary. An ADD has no SO line and so no
+ *  item_group: its code and that code's CATALOGUE category are what is known,
+ *  and the category is what recognises a bare-code service being added
+ *  (HC-SO-012757/A1, owner 2026-09-14). Resolved SERVER-SIDE — never trusted
+ *  from the client. */
+export type LineLaneIdentity = { itemCode?: string | null; itemGroup?: string | null; category?: string | null };
 
 /** Lane of one line change, by whether it is a SERVICE line — the FULL
  *  isServiceLine signal (item_group / category / SVC- code), NOT the prefix
@@ -110,11 +113,15 @@ export type LineLaneIdentity = { itemCode?: string | null; itemGroup?: string | 
  *  mis-routed to purchasing is reviewable noise, a product change mis-routed
  *  AWAY from purchasing is an unreviewed spec change. */
 export function classifyLine(identity: LineLaneIdentity): AmendmentLane {
-  return isServiceLine({ itemCode: identity.itemCode ?? null, itemGroup: identity.itemGroup ?? null })
-    ? 'DELIVERY' : 'LINES';
+  return isServiceLine({
+    itemCode: identity.itemCode ?? null,
+    itemGroup: identity.itemGroup ?? null,
+    category: identity.category ?? null,
+  }) ? 'DELIVERY' : 'LINES';
 }
 
-/** Code-only convenience — an ADD carries no server-resolved item_group. */
+/** Code-only convenience, for a caller with no catalogue read. The submit route
+ *  does not use it for an ADD: it passes the code's catalogue category. */
 export function classifyLineItemCode(itemCode: string | null | undefined): AmendmentLane {
   return classifyLine({ itemCode });
 }
@@ -133,9 +140,10 @@ export type LaneSplit<L> = {
 
 /**
  * Split one validated submission into its lane halves. `lineIdentity` resolves
- * the item_code + item_group of the line a change targets (ADD → the requested
- * new_item_code; SPEC/QTY/REMOVE → the SO line's current identity, looked up by
- * the caller). item_group is what routes a bare-code service line to DELIVERY.
+ * the identity of the line a change targets (ADD → the requested new_item_code
+ * and its catalogue category; SPEC/QTY/REMOVE → the SO line's current item_code
+ * + item_group, looked up by the caller). item_group or category is what routes
+ * a bare-code service line to DELIVERY.
  */
 export function splitAmendmentByLane<L>(
   headerChanges: Record<string, string | null>,

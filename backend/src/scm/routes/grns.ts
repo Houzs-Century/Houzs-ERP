@@ -4,7 +4,8 @@
 import { poPriceByPoItemId, poRefByPoItemId, stampGrnLinePoRefs, type LinePoRef } from '../lib/line-po-ref';
 import { Hono } from 'hono';
 import { GRN_STATUS_BUCKETS } from '../lib/grn-status-buckets';
-import { HELD_OR_TERM, HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
+import { GRN_HEADER_COLS, GRN_LIST_SELECT, filterGrnList, orderGrnList, readGrnListFilters } from '../lib/grn-list-read';
+import { HELD_OR_TERM, isDocumentHeld } from '../lib/document-hold';
 import { isReceivablePo } from '../lib/source-document-gates'; import { mountHoldRoute } from './document-hold-routes';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
@@ -66,7 +67,6 @@ import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers'
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
 import { paginateAll } from '../lib/paginate-all';
-import { escapeForOr } from '../lib/postgrest-search';
 import { readStatusCounts } from '../lib/status-counts';
 import { recordEntityAudit, assertAuditWritable, auditUnavailableBody, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { GRN_LINE_AUDIT_FIELDS, GRN_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
@@ -671,12 +671,9 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
   };
 }
 
-const HEADER =
-  'id, grn_number, purchase_order_id, supplier_id, warehouse_id, received_at, delivery_note_ref, status, notes, ' +
-  /* Migration 0101 — GRN ↔ PO money parity; 0082 — exchange_rate (FX→MYR cost) +
-     allocation_method (landed-cost "平摊" basis). */
-  'currency, exchange_rate, allocation_method, subtotal_sen, tax_sen, total_sen, ' +
-  'posted_at, created_at, created_by, updated_at, ' + HOLD_COLUMNS; // mig 0324's marker, BESIDE the status pill
+/* The header columns live with the list's filter (lib/grn-list-read.ts), which
+   the list and its two exports share. */
+const HEADER = GRN_HEADER_COLS;
 const ITEM =
   'id, grn_id, purchase_order_item_id, material_kind, item_code, material_name, supplier_sku, ' +
   'qty_received, qty_accepted, qty_rejected, rejection_reason, unit_price_sen, notes, ' +
@@ -987,7 +984,7 @@ grns.get('/', async (c) => {
 
   if (!paginate) {
     /* --- LEGACY PATH (unchanged) --- */
-    let q = sb.from('grns').select(`${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, address), purchase_order:purchase_orders(id, po_number), warehouse:warehouses!warehouse_id(id, code, name)`).order('received_at', { ascending: false }).limit(500);
+    let q = sb.from('grns').select(GRN_LIST_SELECT).order('received_at', { ascending: false }).limit(500);
     const status = c.req.query('status'); if (status) q = q.eq('status', status);
     const supplierId = c.req.query('supplierId'); if (supplierId) q = q.eq('supplier_id', supplierId);
     q = scopeToCompany(q, c); // multi-company: isolate to the active company
@@ -1000,35 +997,12 @@ grns.get('/', async (c) => {
     const psRaw = Number(c.req.query('pageSize'));
     pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
-    const SORT_COLS = new Set(['received_at', 'grn_number', 'status', 'total_sen']);
-    const [rawCol, rawDir] = (c.req.query('sort') ?? 'received_at:desc').split(':');
-    const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'received_at';
-    const sortAsc = rawDir === 'asc';
-
-    let q = sb.from('grns').select(`${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, address), purchase_order:purchase_orders(id, po_number), warehouse:warehouses!warehouse_id(id, code, name)`, { count: 'exact' }).order(sortCol, { ascending: sortAsc });
-    /* unique tiebreaker so range paging can't skip/repeat rows sharing the sort key */
-    if (sortCol !== 'grn_number') q = q.order('grn_number', { ascending: sortAsc });
-    /* Resolve the incoming `status`: a known bucket key → all its raw statuses;
-       'all'/empty → no filter; otherwise treat it as a raw DB status. */
-    const status = c.req.query('status');
-    /* The `on_hold` tab reads the MARKER (mig 0324), not the status. */
-    if (status && status !== 'all') {
-      if (status === 'on_hold') q = q.or(HELD_OR_TERM);
-      else if (GRN_STATUS_BUCKETS[status]) q = q.in('status', GRN_STATUS_BUCKETS[status]);
-      else q = q.eq('status', status);
-    }
-    const supplierId = c.req.query('supplierId'); if (supplierId) q = q.eq('supplier_id', supplierId);
-    q = scopeToCompany(q, c); // multi-company: isolate to the active company
-    /* free-text search over the base-table text columns the FE searches
-       (GoodsReceivedListV2 hay). Supplier name / PO number are embedded resources,
-       not base grns columns, so they can't be ilike'd here. */
-    const search = c.req.query('q');
-    if (search) {
-      const s = escapeForOr(search);
-      if (s) q = q.or(`grn_number.ilike.%${s}%,delivery_note_ref.ilike.%${s}%,notes.ilike.%${s}%`);
-    }
-    const from = c.req.query('from'); if (from) q = q.gte('received_at', from);
-    const to = c.req.query('to'); if (to) q = q.lte('received_at', to);
+    /* Tab + supplier + company + search + date range + sort: the SAME read the
+       two exports build (lib/grn-list-read.ts), so an export can never match
+       different receipts than the tab it was pressed on. */
+    const filters = readGrnListFilters((k) => c.req.query(k));
+    const supplierId = filters.supplierId;
+    let q = orderGrnList(filterGrnList(sb.from('grns').select(GRN_LIST_SELECT, { count: 'exact' }), filters, c), filters.sort);
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
 
     /* Status counts mirror the FE filter-pill buckets (draft / posted /

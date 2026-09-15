@@ -32,25 +32,27 @@
                     spanning two areas cannot pick one of them)
 
      THE GUARD   `cancelApprovalGuard('SO')` on PATCH /mfg-sales-orders/:docNo/status
-                 (only when the body says CANCELLED) and `cancelApprovalGuard('PO')`
-                 on PATCH /mfg-purchase-orders/:id/cancel.
+                 and `cancelApprovalGuard('DO')` on PATCH
+                 /delivery-orders-mfg/:id/status (both only when the body asks for
+                 CANCELLED — `asksToCancel`), and `cancelApprovalGuard('PO')` on
+                 PATCH /mfg-purchase-orders/:id/cancel.
 
                  On a document that takes signatures it refuses with
                  `cancel_approval_required` unless an APPROVED request is on the
                  document, lets the existing handler run, and on a 2xx stamps
                  that request EXECUTED.
 
-                 On a REASON-ONLY document (the PO) there is no request to wait
-                 for, so the guard is what makes the reason mandatory: it reads
-                 `{ reason }` off the cancel's own body, refuses 400
-                 `reason_required` without one, and on a 2xx writes the EXECUTED
-                 ledger row itself. Putting it here rather than in the handler
-                 is what makes it unskippable — desktop read page, desktop
-                 editor, list menu and mobile all reach the same PATCH.
+                 On a REASON-ONLY document (the PO, and the DO since 2026-09-14)
+                 there is no request to wait for, so the guard is what makes the
+                 reason mandatory: it reads `{ reason }` off the cancel's own
+                 body, refuses 400 `reason_required` without one, and on a 2xx
+                 writes the EXECUTED ledger row and the document's history row
+                 itself. Putting it here rather than in the handler is what makes
+                 it unskippable — every screen and a script reach the same PATCH.
 
-                 The two cancel handlers are NOT edited: mfg-sales-orders.ts
-                 (11,947 lines) and mfg-purchase-orders.ts (4,485) sit on their
-                 size ceilings, and a middleware at the mount is the same
+                 The cancel handlers are NOT edited: mfg-sales-orders.ts,
+                 mfg-purchase-orders.ts and delivery-orders-mfg.ts sit on or past
+                 their size ceilings, and a middleware at the mount is the same
                  position the write freeze and the migrated-SO lock occupy — a
                  document-level rule beside the module-level ones, not buried in
                  a route file.
@@ -85,7 +87,7 @@ import {
   scopeToCompany,
   scopeToCompanyId,
 } from '../lib/companyScope';
-import { poHasDownstream, soHasDownstream } from '../lib/downstream-lock';
+import { doHasDownstream, poHasDownstream, soHasDownstream } from '../lib/downstream-lock';
 import { recordSoAudit } from '../lib/so-audit';
 import { recordEntityAudit } from '../lib/entity-audit';
 import { notifyCancelRequest } from '../../services/cancelRequestNotify';
@@ -95,6 +97,7 @@ import {
   OPEN_CANCEL_STATUSES,
   approvalRefusal,
   approveKeysFor,
+  asksToCancel,
   cancelNeedsApproval,
   cancelRequestRefusal,
   executionRefusal,
@@ -120,11 +123,24 @@ type DocConfig = {
   numberColumn: string;
   /** Extra columns the scope check needs (the SO's salesperson). */
   extraSelect: string;
+  /** The cancel rides the document's STATUS route, which carries every other
+   *  transition too — so the guard wakes only for a body asking for CANCELLED.
+   *  The PO has a cancel route of its own. */
+  statusRoute: boolean;
+  /** entity_audit_log's type for the document's history, or null for the SO,
+   *  which keeps a log of its own (mfg_so_audit_log). */
+  entityType: 'PURCHASE_ORDER' | 'DELIVERY_ORDER' | null;
+  /** Does the cancel handler write its own history row for the status change?
+   *  The PO's does, so the guard's row adds only the reason. The DO's status
+   *  handler writes none, so the guard's row is the only record of the cancel
+   *  and must carry the status change itself. */
+  handlerRecordsCancel: boolean;
 };
 
 const DOCS: Record<CancelDocType, DocConfig> = {
-  SO: { table: 'mfg_sales_orders', keyColumn: 'doc_no', param: 'docNo', numberColumn: 'doc_no', extraSelect: ', salesperson_id' },
-  PO: { table: 'purchase_orders', keyColumn: 'id', param: 'id', numberColumn: 'po_number', extraSelect: '' },
+  SO: { table: 'mfg_sales_orders', keyColumn: 'doc_no', param: 'docNo', numberColumn: 'doc_no', extraSelect: ', salesperson_id', statusRoute: true, entityType: null, handlerRecordsCancel: true },
+  PO: { table: 'purchase_orders', keyColumn: 'id', param: 'id', numberColumn: 'po_number', extraSelect: '', statusRoute: false, entityType: 'PURCHASE_ORDER', handlerRecordsCancel: true },
+  DO: { table: 'delivery_orders', keyColumn: 'id', param: 'id', numberColumn: 'do_number', extraSelect: '', statusRoute: true, entityType: 'DELIVERY_ORDER', handlerRecordsCancel: false },
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM routers share one loosely-typed Hono context; see document-hold-route.ts
@@ -224,12 +240,16 @@ async function loadOpenRequest(sb: AnyCtx, docType: CancelDocType, key: string, 
 }
 
 /** One audit row per step, on the document's own history. The SO has its own
- *  log (mfg_so_audit_log) and the PO rides entity_audit_log; both are
- *  best-effort here — the request row is the record, the history is the echo. */
-async function audit(c: AnyCtx, docType: CancelDocType, doc: DocRow, action: 'SUBMIT_FOR_APPROVAL' | 'APPROVE' | 'REJECT' | 'WITHDRAW_FROM_APPROVAL' | 'CANCEL', note: string) {
+ *  log (mfg_so_audit_log); the PO and the DO ride entity_audit_log. All
+ *  best-effort here — the request row is the record, the history is the echo.
+ *  `cancelledFrom` is the status the document left when THIS row is the only
+ *  record of its cancel (the DO), so the row carries the change; null when the
+ *  handler records the change itself or nothing was cancelled. */
+async function audit(c: AnyCtx, docType: CancelDocType, doc: DocRow, action: 'SUBMIT_FOR_APPROVAL' | 'APPROVE' | 'REJECT' | 'WITHDRAW_FROM_APPROVAL' | 'CANCEL', note: string, cancelledFrom: string | null) {
   const sb = c.get('supabase');
   const actor = actorOf(c);
-  if (docType === 'SO') {
+  const entityType = DOCS[docType].entityType;
+  if (entityType == null) {
     await recordSoAudit(sb, {
       docNo: doc.key,
       action: `CANCEL_${action}`,
@@ -241,13 +261,17 @@ async function audit(c: AnyCtx, docType: CancelDocType, doc: DocRow, action: 'SU
     return;
   }
   await recordEntityAudit(sb, {
-    entityType: 'PURCHASE_ORDER',
+    entityType,
     entityId: doc.key,
     entityDocNo: doc.number,
     action,
     actor: { id: actor.id, name: actor.name, email: c.get('houzsUser')?.email ?? null },
     companyId: activeCompanyId(c) ?? null,
-    statusSnapshot: doc.status,
+    /* Spelled `status`, as entity-audit's statusChange spells it: the History
+       drawer's pill keys on that exact field name. */
+    ...(cancelledFrom == null
+      ? { statusSnapshot: doc.status }
+      : { statusSnapshot: 'CANCELLED', fieldChanges: [{ field: 'status', from: cancelledFrom, to: 'CANCELLED' }] }),
     note: `Cancellation: ${note}`,
   });
 }
@@ -291,7 +315,8 @@ export function requestCancelHandler(docType: CancelDocType) {
     /* Fail at the door, not after two people signed: a document that already
        has a live child cannot be cancelled, so there is nothing to approve. */
     const sb = c.get('supabase');
-    const locked = docType === 'SO' ? await soHasDownstream(sb, doc.key) : await poHasDownstream(sb, doc.key);
+    const locked = docType === 'SO' ? await soHasDownstream(sb, doc.key)
+      : docType === 'PO' ? await poHasDownstream(sb, doc.key) : await doHasDownstream(sb, doc.key);
     if (locked) return c.json(locked, 409);
 
     if (await loadOpenRequest(sb, docType, doc.key, companyId)) {
@@ -324,7 +349,7 @@ export function requestCancelHandler(docType: CancelDocType) {
         : c.json({ error: 'create_failed', reason: error.message }, 500);
     }
 
-    await audit(c, docType, doc, 'SUBMIT_FOR_APPROVAL', reason.reason);
+    await audit(c, docType, doc, 'SUBMIT_FOR_APPROVAL', reason.reason, null);
     await notifyCancelRequest(c.env, 'raised', {
       docType, docNumber: doc.number, reason: reason.reason, companyId,
       requesterUserId: actor.id, requesterName: actor.name, actorUserId: actor.id,
@@ -369,7 +394,7 @@ export function approveCancelHandler(docType: CancelDocType) {
     if (error) return c.json({ error: 'approve_failed', reason: error.message }, 500);
     if (!updated) return c.json({ error: 'stale', message: 'This request changed while you were looking at it — reload and try again.' }, 409);
 
-    await audit(c, docType, doc, 'APPROVE', `level ${level} of ${levelsFor(docType)} approved`);
+    await audit(c, docType, doc, 'APPROVE', `level ${level} of ${levelsFor(docType)} approved`, null);
     await notifyCancelRequest(c.env, final ? 'approved' : 'level1', {
       docType, docNumber: doc.number, reason: String(open.reason ?? ''), companyId,
       requesterUserId: Number(open.requested_by) || null, requesterName: (open.requested_by_name as string | null) ?? null,
@@ -408,7 +433,7 @@ export function rejectCancelHandler(docType: CancelDocType) {
     if (error) return c.json({ error: 'reject_failed', reason: error.message }, 500);
     if (!updated) return c.json({ error: 'stale', message: 'This request changed while you were looking at it — reload and try again.' }, 409);
 
-    await audit(c, docType, doc, 'REJECT', reason.reason);
+    await audit(c, docType, doc, 'REJECT', reason.reason, null);
     await notifyCancelRequest(c.env, 'rejected', {
       docType, docNumber: doc.number, reason: reason.reason, companyId,
       requesterUserId: Number(open.requested_by) || null, requesterName: (open.requested_by_name as string | null) ?? null,
@@ -441,7 +466,7 @@ export function withdrawCancelHandler(docType: CancelDocType) {
     if (error) return c.json({ error: 'withdraw_failed', reason: error.message }, 500);
     if (!updated) return c.json({ error: 'stale', message: 'This request changed while you were looking at it — reload and try again.' }, 409);
 
-    await audit(c, docType, doc, 'WITHDRAW_FROM_APPROVAL', 'request withdrawn');
+    await audit(c, docType, doc, 'WITHDRAW_FROM_APPROVAL', 'request withdrawn', null);
     /* Withdraw stays silent, as the amendment withdraw does: the requester
        pulling their own request back is not news to the people it was for. */
     return c.json({ request: updated });
@@ -554,17 +579,17 @@ export function cancelExecutionBypass(docType: CancelDocType) {
 
 /**
  * The reason-only half of `cancelApprovalGuard` — the Purchase Order since
- * 2026-09-09. No signature is waited for; what the cancel may not do is happen
- * without the buyer's words, so the reason rides the cancel's own body and is
- * validated by the SAME `readReason` an SO request is (5-1000 chars, whitespace
- * collapsed).
+ * 2026-09-09, the Delivery Order since 2026-09-14. No signature is waited for;
+ * what the cancel may not do is happen without the person's words, so the
+ * reason rides the cancel's own body and is validated by the SAME `readReason`
+ * an SO request is (5-1000 chars, whitespace collapsed).
  *
  * ORDER MATTERS. The reason is checked BEFORE the handler runs — a cancel with
  * no reason must not reach the document — and the ledger row is written AFTER,
  * only on a 2xx, so a cancel the handler refused (downstream GRN, drop-ship DO,
- * already RECEIVED) leaves no row claiming it happened. The row is written
- * best-effort: the document IS cancelled by then, and failing the response
- * would tell the operator the opposite of the truth.
+ * already RECEIVED, a DO with its invoice raised) leaves no row claiming it
+ * happened. The row is written best-effort: the document IS cancelled by then,
+ * and failing the response would tell the operator the opposite of the truth.
  *
  * The caller must be identifiable — `requested_by` is NOT NULL and naming the
  * wrong person is worse than refusing — so an unknown caller is refused before
@@ -601,15 +626,21 @@ async function reasonOnlyCancel(
 
   await next();
   if (!c.res.ok || !before) return;
+  /* Both cancel handlers ANSWER 200 on a document that is already cancelled —
+     they echo the cancelled state rather than refuse. Nothing was cancelled by
+     this call, so nothing is recorded: a second tab must not leave a second
+     "cancelled because" naming a reason that changed nothing (docs/bugs/0894-cancelling-an-already-cancelled-purchase-order-recorded-a-se.md). */
+  if (String(before.status ?? '').toUpperCase() === 'CANCELLED') return;
 
   const at = nowIso();
-  /* The document's own history says WHY, beside the status change its handler
-     wrote — the History drawer is where a reader already is. The handler is not
-     edited for this (it is at its size ceiling, and this module's whole shape is
-     that the rule lives at the mount); the row is this module's, written the
-     same way every approval step writes one. */
+  /* The document's own history says WHY — the History drawer is where a reader
+     already is. The handler is not edited for this (it is at its size ceiling,
+     and this module's whole shape is that the rule lives at the mount); the row
+     is this module's, written the same way every approval step writes one. On a
+     document whose handler writes no history of its own (the DO) this row is
+     the whole record, so it carries the status change as well. */
   const doc = { key, number: String(before[cfg.numberColumn] ?? key), status: String(before.status ?? '') };
-  await audit(c as AnyCtx, docType, doc, 'CANCEL', reason.reason);
+  await audit(c as AnyCtx, docType, doc, 'CANCEL', reason.reason, cfg.handlerRecordsCancel ? null : doc.status);
   const { error } = await sb.from(CANCEL_REQUESTS_TABLE).insert({
     company_id: companyId,
     doc_type: docType,
@@ -628,8 +659,8 @@ async function reasonOnlyCancel(
 }
 
 /**
- * Middleware for the two existing cancel endpoints. Passes everything that is
- * not a cancel straight through (the SO status route carries every other
+ * Middleware for the existing cancel endpoints. Passes everything that is not a
+ * cancel straight through (the SO and DO status routes carry every other
  * transition too), passes a DRAFT through (discarded, never approved), and
  * otherwise refuses unless the document carries an APPROVED request. After the
  * handler answers 2xx the request is stamped EXECUTED — by the guard, because
@@ -642,12 +673,12 @@ export function cancelApprovalGuard(docType: CancelDocType): MiddlewareHandler<{
   const cfg = DOCS[docType];
   return async (c: Context<{ Bindings: Env; Variables: Variables }>, next: Next) => {
     if (c.req.method.toUpperCase() !== 'PATCH') return next();
-    if (docType === 'SO') {
+    if (cfg.statusRoute) {
       /* Hono caches the parsed body, so the handler's own c.req.json() gets the
          same object back; a body that is not JSON is the handler's 400 to give. */
       let body: { status?: unknown } = {};
       try { body = ((await c.req.json()) as { status?: unknown } | null) ?? {}; } catch { return next(); }
-      if (String(body.status ?? '').toUpperCase() !== 'CANCELLED') return next();
+      if (!asksToCancel(body.status)) return next();
     }
     const key = (c.req.param() as Record<string, string | undefined>)[cfg.param];
     if (!key) return next();

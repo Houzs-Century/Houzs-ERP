@@ -34,7 +34,7 @@ import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
 import { soStatusAfterProcessingDateChange } from '../lib/so-proceed-status-change';
 import { soIsMigrated, withSoMigratedReadonly, migratedSoListGate } from '../lib/migrated-so-readonly';
-import { soDocNosWithDownstream } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
+import { soDocNosWithDownstream, readSoLineFreeze, soLineWriteRefusal, soBuildLineIds, soLineFrozen, SO_FULLY_FROZEN_REFUSAL } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
 import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-order-nos';
 import { soDownstreamRefs, NO_SO_DOWNSTREAM_REFS } from '../lib/downstream-doc-refs';
 /* Status-transition table + the discard guards — lifted out of this file, which
@@ -235,7 +235,7 @@ import {
   soDatePairCascadeColumns,
   soDatePairRefusal,
 } from '../shared/so-processing-date';
-import { ATTRIBUTE_OTHER_REFUSAL, changedIdentityLockCols, salespersonReattributed } from '../shared/so-identity-lock';
+import { ATTRIBUTE_OTHER_REFUSAL, SO_IDENTITY_LOCK_COLS, changedIdentityLockCols, salespersonReattributed } from '../shared/so-identity-lock';
 /* Variants-vocabulary unification (port of 2990 73aeeb1e, 2026-06-26):
    POS-handover sofa lines speak `depth`/`sofaLegHeight`/`fabricColor`, Backend
    editors read `seatHeight`/`legHeight`/`fabricCode`. canonicalizeVariants
@@ -250,7 +250,7 @@ import { canonicalizeVariants } from '../shared/so-variant-rule';
 import { reconcileFreeGiftLinesForSo } from '../lib/free-gift-reconcile';
 import { claimPwpForSingleLine, rollbackSinglePwpClaim } from '../lib/pwp-claim-single';
 import {
-  validateItemCodes, unknownItemCodeResponse,
+  validateItemCodes, unknownItemCodeResponse, catalogCategoriesByCode,
   findFreeTextSoLines, freeTextSoLineResponse,
 } from '../lib/validate-item-codes';
 import { collectSoConfirmProblems, soConfirmProblemsForDoc } from '../lib/so-confirm-gate';
@@ -329,11 +329,11 @@ mfgSalesOrders.use('*', async (c, next) => {
 });
 
 /* ── SO child-lock guard (Tier 2 — downstream lock) ─────────────────────────
-   An SO locks (read-only — no line edit / no CANCELLED transition) once it has
-   ANY non-cancelled Delivery Order OR Sales Invoice referencing it. Convert-to-
-   DO (partial delivery) is NOT gated by this: the SO can keep emitting DOs;
-   only line MUTATIONS + the CANCELLED status transition are blocked. Mirrors
-   grnHasDownstream. The rule now lives in scm/lib/downstream-lock.ts with its
+   ANY live Delivery Order OR Sales Invoice blocks the CANCELLED transition and
+   the header identity fields (soHasDownstream). LINE writes lock per line since
+   2026-09-15 (readSoLineFreeze, shared/so-line-freeze.ts): only a line a live
+   DO / SI line names is frozen. Convert-to-DO (partial delivery) is never gated
+   by this. The rule now lives in scm/lib/downstream-lock.ts with its
    three siblings, which had drifted into four private copies in four route
    files. Same signature, same JSON, same behaviour — and see that module for
    why it is also the ERP half of AutoCount's transferred-document rule. */
@@ -2422,9 +2422,9 @@ mfgSalesOrders.get('/:docNo', async (c) => {
       return c.json({ error: 'not_found' }, 404);
     }
   }
-  /* Tier 2 downstream-lock — stamp has_children so the SO Detail page can lock
-     once any non-cancelled DO / SI references it. */
-  const [{ count: doCount }, { count: siCount }] = await Promise.all([
+  /* has_children = any live DO / SI (cancel + the header identity lock). The per-line verdict
+     (shared/so-line-freeze.ts) decides which LINES are frozen and whether anything is left to convert. */
+  const [{ count: doCount }, { count: siCount }, freezeRes] = await Promise.all([
     sb.from('delivery_orders')
       .select('id', { head: true, count: 'exact' })
       .eq('so_doc_no', docNo)
@@ -2433,7 +2433,10 @@ mfgSalesOrders.get('/:docNo', async (c) => {
       .select('id', { head: true, count: 'exact' })
       .eq('so_doc_no', docNo)
       .neq('status', 'CANCELLED'),
+    readSoLineFreeze(sb, docNo),
   ]);
+  /* An unreadable verdict paints the old order-wide lock — the server refuses the write anyway. */
+  const fullyFrozen = freezeRes.ok ? freezeRes.fullyFrozen : (doCount ?? 0) > 0 || (siCount ?? 0) > 0;
   /* Edge #D — surface the customer's current credit balance on the SO Detail
      response so the page can show "Customer has RM X available" without a
      second round-trip. 0 when no debtor / no credit history. */
@@ -2485,7 +2488,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      read in the app. */
   const amendPoLocked = amendDateLocked ? false : await soPoLocked(sb, docNo);
   const amendProcessingLocked = amendDateLocked || amendPoLocked;
-  const amendHardLocked = (doCount ?? 0) > 0 || (siCount ?? 0) > 0;
+  const amendHardLocked = fullyFrozen; // a partly delivered order can still amend its unfrozen lines (owner 2026-09-15)
   const amendSoStatus = String((h.data as { status?: string | null }).status ?? '').toUpperCase();
   const amendTerminalStatus = ['SHIPPED', 'DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED'].includes(amendSoStatus);
   const amendmentEligible = amendProcessingLocked && !amendHardLocked && !amendTerminalStatus;
@@ -2524,6 +2527,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
   const salesOrder = {
     ...(h.data as unknown as Record<string, unknown>),
     has_children: (doCount ?? 0) > 0 || (siCount ?? 0) > 0,
+    downstream_fully_frozen: fullyFrozen,
     // Amendment flags (read-only; the FE routes on these).
     amendment_eligible: amendmentEligible,
     /* The PO half of the soft lock, as its own fact — so-detail-gates.procLockActive
@@ -2682,6 +2686,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     const stockState = isSvcLine ? 'stock' : null;
     return {
       ...it,
+      downstream_frozen: freezeRes.ok ? soLineFrozen(freezeRes.freeze, it.id) : true,
       deliveries,
       delivered_qty: rem?.delivered ?? deliveredQty,
       remaining_qty: rem?.remaining ?? Number(it.qty ?? 0),
@@ -2795,7 +2800,7 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
   );
   // Coverage from the SAME MRP allocation engine the detail + MRP page use.
   // Best-effort: a failed allocation just drops lines to Pending.
-  const [remainingMap, deliveriesMap, shippedTraceMap, cov, nonSellingWh] = await Promise.all([
+  const [remainingMap, deliveriesMap, shippedTraceMap, cov, nonSellingWh, freezeRes] = await Promise.all([
     soDeliverableRemaining(sb, [docNo]),
     soLineDeliveries(sb, itemRows.map((it) => it.id)),
     soLineShippedSources(sb, itemRows.map((it) => it.id)),
@@ -2803,6 +2808,7 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
     // Where the live-'stock' promotion fires, so it must know which
     // warehouses may not promise (owner ruling 2026-09-08).
     loadNonSellingWarehouses(sb),
+    readSoLineFreeze(sb, docNo), // same per-line verdict as the detail
   ]);
   const coverageMap = cov.coverage;
   const readyPosMap = await soLineReadySourcePos(sb, activeCompanyId(c) ?? null, cov.mrp, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>);
@@ -2835,6 +2841,7 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
       : (cov?.source ?? null);
     return {
       ...it,
+      downstream_frozen: freezeRes.ok ? soLineFrozen(freezeRes.freeze, it.id) : true,
       deliveries,
       delivered_qty: rem?.delivered ?? deliveredQty,
       remaining_qty: rem?.remaining ?? Number(it.qty ?? 0),
@@ -6092,6 +6099,8 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
   }
   const leaseBlocked = await requireSoLineWriteLease(sb, docNo, c);
   if (leaseBlocked) return leaseBlocked;
+  /* A delivered / invoiced line's price is frozen (owner 2026-09-15). This side-door had no downstream check at all. */
+  { const lineLock = soLineWriteRefusal(await readSoLineFreeze(sb, docNo), [itemId]); if (lineLock) return c.json(lineLock, 409); }
   /* Owner 2026-06-12 — processing-date lock: no price overrides once the
      processing day has passed (the locked order is already PO'd). */
   {
@@ -6220,6 +6229,8 @@ async function recomputeDeliveryFeeAttempt(
     .eq('doc_no', docNo).eq('cancelled', false);
   const lines = (lineRows ?? []) as Array<{ id: string; item_code: string; item_group: string | null; total_sen: number | null; unit_price_sen: number | null; discount_sen: number | null; qty: number | null; line_no: number | null; variants: Record<string, unknown> | null }>;
   const deliveryLines = lines.filter((l) => isDeliveryFeeServiceCode(l.item_code));
+  /* A fee line already on a DO / SI is frozen (owner 2026-09-15): the rebuild would rewrite it, so it does not run. */
+  if (deliveryLines.length > 0) { const fr = await readSoLineFreeze(sb, docNo); if (!fr.ok || deliveryLines.some((l) => fr.freeze.unlinked || fr.freeze.frozenLineIds.has(l.id))) return null; }
   /* Owner ruling 2026-08-07 ("全部都会有 SKU 的 … 怎么可以走后门呢?"): every
      ringgit on a Sales Order is a LINE. The header delivery_fee_sen is a
      dual-write MIRROR of the SVC-DELIVERY* lines, never money of its own — but
@@ -7484,9 +7495,9 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     if (!codeCheck.ok) return refuseWithoutWriting(c, unknownItemCodeResponse(codeCheck.unknown, codeCheck.inactive), 409);
   }
 
-  /* Tier 2 downstream-lock — line-add is blocked once a DO / SI exists. */
-  const childLock = await soHasDownstream(sb, docNo);
-  if (childLock) return refuseWithoutWriting(c, childLock, 409);
+  /* Line-add stays open while the order has something left to convert (owner 2026-09-15, shared/so-line-freeze.ts). */
+  const freezeRead = await readSoLineFreeze(sb, docNo);
+  if (!freezeRead.ok || freezeRead.fullyFrozen) return refuseWithoutWriting(c, freezeRead.ok ? SO_FULLY_FROZEN_REFUSAL : freezeRead.refusal, 409);
 
   /* TBC fill-in (Loo 2026-06-11) — self-scoped selling roles only touch
      their own SO. */
@@ -8101,9 +8112,9 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown, codeCheck.inactive), 409);
   }
 
-  /* Tier 2 downstream-lock — line-edit is blocked once a DO / SI exists. */
-  const childLock = await soHasDownstream(sb, docNo);
-  if (childLock) return c.json(childLock, 409);
+  /* A line a live DO / SI carries is frozen; its siblings are not (owner 2026-09-15, shared/so-line-freeze.ts). */
+  const lineLock = soLineWriteRefusal(await readSoLineFreeze(sb, docNo), [itemId]);
+  if (lineLock) return c.json(lineLock, 409);
 
   /* TBC fill-in (Loo 2026-06-11) — self-scoped selling roles only touch
      their own SO. */
@@ -8529,9 +8540,9 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
 mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const itemId = c.req.param('itemId'); const user = c.get('user');
 
-  /* Tier 2 downstream-lock — line-delete is blocked once a DO / SI exists. */
-  const childLock = await soHasDownstream(sb, docNo);
-  if (childLock) return c.json(childLock, 409);
+  /* A line a live DO / SI carries cannot be deleted; its siblings can (owner 2026-09-15, shared/so-line-freeze.ts). */
+  const lineLock = soLineWriteRefusal(await readSoLineFreeze(sb, docNo), [itemId]);
+  if (lineLock) return c.json(lineLock, 409);
 
   /* TBC fill-in (Loo 2026-06-11) — self-scoped selling roles only touch
      their own SO. */
@@ -8682,7 +8693,9 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
   const badKey = Object.keys(patch).find((k) => !(TBC_VARIANT_KEYS as readonly string[]).includes(k));
   if (badKey) return c.json({ error: 'invalid_variant_key', key: badKey, allowed: TBC_VARIANT_KEYS }, 400);
 
-  const childLock = await soHasDownstream(sb, docNo);
+  /* The shared picks copy onto the whole sofa build, so a frozen module refuses the fill-in. */
+  const freezeRead = await readSoLineFreeze(sb, docNo);
+  const childLock = soLineWriteRefusal(freezeRead, soBuildLineIds(freezeRead, itemId));
   if (childLock) return c.json(childLock, 409);
   if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   /* AUTHZ BEFORE CONCURRENCY (2026-07-22) — the self-scope gate above now runs
@@ -8928,7 +8941,7 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
   const newCode = String(body.itemCode ?? '').trim();
   if (!newCode) return c.json({ error: 'item_code_required' }, 400);
 
-  const childLock = await soHasDownstream(sb, docNo);
+  const childLock = soLineWriteRefusal(await readSoLineFreeze(sb, docNo), [itemId]);
   if (childLock) return c.json(childLock, 409);
   if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   /* AUTHZ BEFORE CONCURRENCY (2026-07-22) — the self-scope gate above now runs
@@ -9523,7 +9536,9 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   const newCode = String(item?.itemCode ?? '').trim();
   if (!item || !newCode) return c.json({ error: 'item_code_required' }, 400);
 
-  const childLock = await soHasDownstream(sb, docNo);
+  /* The whole old build is replaced, so any frozen module of it refuses. */
+  const freezeRead = await readSoLineFreeze(sb, docNo);
+  const childLock = soLineWriteRefusal(freezeRead, soBuildLineIds(freezeRead, itemId));
   if (childLock) return c.json(childLock, 409);
   {
     const procLock = await soProcessingLockBlocked(sb, docNo);
@@ -11503,13 +11518,21 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     }, 409);
   }
 
-  // Guard 3 — a DO/SI (SHIPPED+ implies a DO) hard-locks the SO.
-  const childLock = await soHasDownstream(sb, docNo);
-  if (childLock) {
+  /* Guard 3 (owner 2026-09-15, shared/so-line-freeze.ts) — an order with nothing left to convert is too far
+     along to amend; otherwise only a CHANGE / REMOVE of a frozen line is refused. applySoAmendment re-checks. */
+  const freezeRead = await readSoLineFreeze(sb, docNo);
+  if (!freezeRead.ok) return c.json(freezeRead.refusal, 409);
+  if (freezeRead.fullyFrozen) {
     return c.json({
       error: 'so_hard_locked',
-      reason: 'This Sales Order already has a Delivery Order / Sales Invoice — it is too far along to amend.',
+      reason: 'Everything on this Sales Order is already on a Delivery Order / Sales Invoice — it is too far along to amend.',
     }, 409);
+  }
+  {
+    const lineLock = soLineWriteRefusal(freezeRead, (Array.isArray(body.lines) ? body.lines : [])
+      .filter((l) => String(l.changeType ?? '').toUpperCase() !== 'ADD' && typeof l.salesOrderItemId === 'string')
+      .map((l) => String(l.salesOrderItemId)));
+    if (lineLock) return c.json(lineLock, 409);
   }
 
   // Guard 4 — openness (two-lane rework 2026-07-27). A LEGACY open row (lane
@@ -11567,6 +11590,9 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     }
   }
   const hasHeaderChanges = Object.keys(headerChanges).length > 0;
+  /* The header PATCH's identity lock, on this road too: once a live DO / SI exists the snapshotted fields stay put. */
+  const lockedByAmendment = Object.keys(headerChanges).map((k) => AMENDABLE_HEADER_FIELDS[k]).filter((col) => SO_IDENTITY_LOCK_COLS.has(col));
+  if (lockedByAmendment.length > 0 && freezeRead.freeze.hasLiveDownstream) return c.json({ error: 'so_identity_locked', message: 'SO has a Delivery Order / Sales Invoice — customer, address and contact fields are locked.', lockedFields: lockedByAmendment }, 409);
   const submittedLines = Array.isArray(body.lines) ? body.lines : [];
   if (!hasHeaderChanges && submittedLines.length === 0) {
     return c.json({
@@ -11658,7 +11684,9 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
      Logistics) — and, when the submission mixes both, SPLIT it into two
      amendment documents that live independent lives. Line classification keys
      off the line's IDENTITY (item_code + item_group — item_group routes a
-     bare-code service line to Logistics), resolved SERVER-SIDE from the order. */
+     bare-code service line to Logistics), resolved SERVER-SIDE from the order;
+     an ADDED line has no row, so its code's CATALOGUE category stands in
+     (docs/bugs/0895-an-amendment-that-added-a-service-line-went-to-the-purchaser.md). */
   const referencedIds = [...new Set(submittedLines
     .map((l) => l.salesOrderItemId)
     .filter((x): x is string => typeof x === 'string' && x.length > 0))];
@@ -11671,11 +11699,10 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       identityById.set(r.id, { itemCode: r.item_code, itemGroup: r.item_group });
     }
   }
-  const split = splitAmendmentByLane(
-    headerChanges,
-    submittedLines,
-    (l) => (l.salesOrderItemId ? identityById.get(l.salesOrderItemId) ?? {} : { itemCode: l.newItemCode }),
-  );
+  const addedCategory = await catalogCategoriesByCode(sb, submittedLines.filter((l) => !l.salesOrderItemId).map((l) => l.newItemCode), activeCompanyId(c));
+  if (!addedCategory) return c.json(LINE_BUILD_ERRORS.unreadable, 500);
+  const split = splitAmendmentByLane(headerChanges, submittedLines, (l) => (l.salesOrderItemId ? identityById.get(l.salesOrderItemId) ?? {}
+    : { itemCode: l.newItemCode, category: addedCategory.get((l.newItemCode ?? '').trim()) ?? null }));
 
   // Guard 4b — per-lane openness: each lane admits ONE amendment awaiting its
   // approver. The other lane stays free — that is the whole point of the split.

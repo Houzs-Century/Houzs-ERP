@@ -154,6 +154,31 @@ describe('raisePoFollowUps — SERVICE lines do not escalate', () => {
     expect(store.po_amendments).toHaveLength(0);
   });
 
+  /* HC-SO-012757/A1 (owner 2026-09-14): the ADD was TRANSPORTATION CHARGES, a
+     bare code the catalogue files as SERVICE. Judged by its code alone it read
+     as goods, so approving it would raise a PO amendment against every PO
+     bound to the order — an ADD keeps them all as candidates. */
+  it('adding a BARE-code service line (catalogue category SERVICE) raises no PO amendment', async () => {
+    const store = baseStore();
+    store.mfg_products = [{ code: 'TRANSPORTATION CHARGES', category: 'SERVICE', company_id: 1 }];
+    store.so_amendment_lines = [amendLine({ change_type: 'ADD', new_item_code: 'TRANSPORTATION CHARGES', new_qty: 1, new_unit_price_sen: 15000 })];
+
+    const res = await run(store);
+
+    expect(res.followUps).toEqual([]);
+    expect(store.po_amendments).toHaveLength(0);
+  });
+
+  it('the catalogue is read in the order\'s company — another company\'s SERVICE row does not count', async () => {
+    const store = baseStore();
+    store.mfg_products = [{ code: 'TRANSPORTATION CHARGES', category: 'SERVICE', company_id: 2 }];
+    store.so_amendment_lines = [amendLine({ change_type: 'ADD', new_item_code: 'TRANSPORTATION CHARGES', new_qty: 1 })];
+
+    const res = await run(store);
+
+    expect(res.followUps.length).toBeGreaterThan(0);
+  });
+
   it('removing a SERVICE line raises no PO amendment (identity from the snapshot)', async () => {
     const store = baseStore();
     // A REMOVE hard-deletes the SO row, so only the snapshot still knows it.
