@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { canOperateDeliveryOrders, canDriverCompleteDelivery, canOperateSalesInvoices, canOperateGoodsReceipts, canOperatePurchaseOrders, canViewFairReport, isSalesDirectorUser } from "../auth/salesAccess";
-import { memberInviteFormFor } from "./member-invite-form";
+import { memberEditFormFor, memberInviteFormFor } from "./member-invite-form";
 import { capability, type CapabilityKey } from "../auth/capabilities";
 import { NAV_TABS, type NavTab } from "../components/Sidebar";
 import { makeNavVisible } from "../components/navFilter";
@@ -943,13 +943,15 @@ function MobileAppInner() {
   }
   else if (screen.t === "module-form") {
     const cfg = MODULE_CONFIGS[screen.key];
-    /* A scoped Sales Director's invite is stored with the baseline role whatever
-       it carries (docs/bugs/0887), so the create form drops its Role picker. */
+    /* A scoped Sales Director's member saves ignore fields: the invite stores the
+       baseline role (docs/bugs/0887), the edit strips role, department, position
+       and email (docs/bugs/0924). Each form shows only what its save applies. */
     const baseForm = cfg?.form;
+    const scopedSalesDirector = isSalesDirectorUser(user) && !can("users.manage");
     const schema = screen.mode === "edit" && screen.key === "members"
-      ? FORM_MEMBERS_EDIT
+      ? memberEditFormFor(FORM_MEMBERS_EDIT, scopedSalesDirector)
       : screen.key === "members" && baseForm
-        ? memberInviteFormFor(baseForm, isSalesDirectorUser(user) && !can("users.manage"))
+        ? memberInviteFormFor(baseForm, scopedSalesDirector)
         : baseForm;
     const title = cfg?.title ?? screen.key;
     overlay = !schema ? <Stub title={title} onBack={back} /> : (
