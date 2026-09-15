@@ -31,6 +31,38 @@ Order one, and its columns are the template everything below follows.
 
 ---
 
+## The grid-driven mechanism (2026-09-15) — how every list exports by line
+
+Owner 2026-09-15: ONE Export per list, one row per line, the columns the grid
+shows (hidden columns are not exported), following the grid's filter and view.
+Built once in `DataTable`; each list plugs in.
+
+- **Column** (`frontend/src/components/DataTable.tsx`, `Column<T, L>`):
+  `lineValue(row, line)` is the cell for one line (blank on a document with no
+  lines); `exportValue(row)` is a document value for the file when it differs
+  from `getValue` (money in ringgit where `getValue` holds sen for sorting);
+  `exportFormat` is `text | number | money | rate | date` (date = a real Excel
+  date cell shown yyyy/mm/dd; money #,##0.00; rate up to 4 decimals). A column
+  with neither `lineValue` nor `exportValue` repeats its `getValue` on each line.
+- **DataTable prop** `exportLines = { fetchRows({ exportKeys, filterKeys }),
+  linesOf(row), sheetName, onError }`. `fetchRows` returns EVERY row the list's
+  server filter matches (all pages), each with its lines, and throws to refuse
+  (for example when the server says `truncated`). The toolbar Export then
+  applies the grid's funnels and sort with the SAME functions the grid uses
+  (`frontend/src/components/dataTableRows.ts`: `applyColumnFilters`,
+  `sortTableRows`) and writes `<exportName>-YYYY-MM-DD.xlsx` through
+  `frontend/src/components/dataTableLineExport.ts`. A line column should give
+  `getFilterValues` every line's value, so a funnel keeps a document when ANY
+  line matches.
+- **Server contract** per document: `GET /<doc-route>/export/rows` with the list's
+  query parameters and no `page`, answering
+  `{ <docs>: Array<ListRow & { lines }>, total, lineCount, truncated }`. Read
+  through the list's own filter and sort, page headers past the PostgREST
+  ceiling, read lines by header id with the company predicate on the line read
+  too, and attach them with the SAME function the list page endpoint uses.
+- Without `exportLines`, the CSV export is unchanged except that `exportValue` is
+  honoured.
+
 ## 0. Rules that apply to every document
 
 1. **One row per line.** The document's header values (number, date, party,
