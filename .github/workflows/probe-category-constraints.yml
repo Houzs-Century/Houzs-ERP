@@ -40,3 +40,7 @@ jobs:
           EXPECT_CODE: AMN-SOFA PILLOW
           READ_ONLY: "1"
           NODE_OPTIONS: --dns-result-order=ipv4first
+      - run: node scripts/tmp-probe-sofa-pillow-binding.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
