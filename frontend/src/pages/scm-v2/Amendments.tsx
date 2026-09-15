@@ -9,11 +9,13 @@
 // revision-status hero + gate actions. That detail page hands off into the SO
 // editor (/scm/sales-orders/:docNo?edit=1, which hosts the pending banner + the
 // legacy line editor) or the bound-PO editor for the later gates, so the queue
-// no longer needs to resolve the bound PO itself.
+// no longer needs to resolve the bound PO itself. A SINGLE click opens the quick
+// view drawer (AmendmentQuickView), like the Sales Order list (owner 2026-09-14).
 // ----------------------------------------------------------------------------
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { AmendmentQuickView, amendmentJobCardPath, type AmendmentQuickViewTarget } from './AmendmentQuickView';
 import { fmtDateTime } from '../../vendor/shared/format';
 import { useAmendments, type AmendmentRow } from '../../vendor/scm/lib/so-amendment-queries';
 import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
@@ -158,11 +160,12 @@ export const Amendments = () => {
      page owns the diff + revision-status hero + gate actions, and hands off
      into the SO / bound-PO editor for the deeper line edits. */
   const openRow = (a: AmendmentRow) => {
-    navigate(`/scm/amendments/${a.id}`);
+    navigate(amendmentJobCardPath({ kind: 'so', id: a.id }));
   };
+  const [quick, setQuick] = useState<AmendmentQuickViewTarget | null>(null);
 
   return (
-    <div>
+    <div className={quick ? 'md:pr-[540px]' : undefined}>
       <PageHeader
         eyebrow="Revision inbox"
         title="Amendments"
@@ -213,7 +216,8 @@ export const Amendments = () => {
         groupBanner={false}
         defaultSort={OPEN_ORDER}
         sortForSessionOnly
-        /* Open on DOUBLE-click (mirrors the GRN / PO list). */
+        /* Single click: the quick view. Double-click: the job card. */
+        onRowClick={(a) => setQuick({ kind: 'so', id: a.id, label: String(a.amendment_no ?? a.so_doc_no) })}
         onRowDoubleClick={(a) => openRow(a)}
         /* Closed amendments (rejected / withdrawn) grey out so they read as dead
            (mirrors the GRN list's cancelled/closed treatment). Under the
@@ -226,6 +230,7 @@ export const Amendments = () => {
         emptyMessage="No amendments yet — raise one from a processing-locked Sales Order."
         />
       </div>
+      <AmendmentQuickView target={quick} onClose={() => setQuick(null)} />
     </div>
   );
 };

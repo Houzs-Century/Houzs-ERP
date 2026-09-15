@@ -323,6 +323,15 @@ gate invalidates the amendment list/detail + the PO list/detail keys
 
 **Desktop**
 - `pages/scm-v2/PoAmendments.tsx` — the queue (DataGrid), route `/scm/po-amendments`.
+  Since 2026-09-14 a **single click** opens the quick-view drawer
+  (`pages/scm-v2/AmendmentQuickView.tsx`, owner 「SO / PO amendment需要单击打开 弹窗
+  像SO这样」): a direct PO amendment shows its PO, status, Purchaser badge, requester,
+  reason, header rows and line cards; an SO-driven row shows the SO amendment, the
+  same split its **double-click** (still the job card) has always made. The PO line
+  card and `poAmendmentHeaderDiffRows` moved verbatim out of
+  `PoAmendmentDetailV2.tsx` into `pages/scm-v2/po-amendment-diff-card.tsx`, so the
+  drawer and the job card render one card. Read-only; the gate stays on the job
+  card. Details in [`so-amendment.md`](./so-amendment.md) §8.
 - `pages/scm-v2/PoAmendmentDetailV2.tsx` — the job card, route
   `/scm/po-amendments/:id`: revision hero (Requested -> Approved), the before ->
   after diff per line (qty / cost / delivery / spec / add / remove) + the header
