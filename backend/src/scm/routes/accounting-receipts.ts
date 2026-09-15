@@ -51,8 +51,8 @@ export const receiptEnsure = async (c: any): Promise<Response> => {
     return c.json({ error: 'bad_key', message: 'source (SOPAY/SIPAY) and paymentId are required.' }, 400);
   }
   const sb = c.get('supabase');
-  const r = await ensureReceiptForPayment(sb, source as 'SOPAY' | 'SIPAY', paymentId);
-  if (!r.ok) return c.json({ error: 'ensure_failed', reason: r.reason }, 500);
+  const r = await ensureReceiptForPayment(sb, source as 'SOPAY' | 'SIPAY', paymentId, co.companyId);
+  if (!r.ok) return c.json({ error: 'ensure_failed', reason: r.reason }, r.reason.endsWith('not found') ? 404 : 500);
   /* The caller is about to PRINT: hand back the whole row (customer, method,
      amounts, issued-by), not just the number — one round trip, server truth. */
   const { data: row, error: rowErr } = await sb.from('acc_official_receipts').select('*').eq('id', r.id).maybeSingle();

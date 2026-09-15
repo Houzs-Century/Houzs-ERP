@@ -192,10 +192,16 @@ export async function ensureReceiptForPayment(
   sb: any,
   source: 'SOPAY' | 'SIPAY',
   paymentId: string,
+  /* The caller's active company: a payment id from another company's books is
+     refused before anything is written. null only for a caller that has
+     already scoped the payment itself. */
+  activeCompanyId: number | null,
 ): Promise<{ ok: true; id: number; orNumber: string; status: string } | { ok: false; reason: string }> {
-  const { data: existing, error: exErr } = await sb.from('acc_official_receipts')
+  let existingQuery = sb.from('acc_official_receipts')
     .select('id, or_number, status')
-    .eq('payment_source', source).eq('payment_id', paymentId).maybeSingle();
+    .eq('payment_source', source).eq('payment_id', paymentId);
+  if (activeCompanyId !== null) existingQuery = existingQuery.eq('company_id', activeCompanyId);
+  const { data: existing, error: exErr } = await existingQuery.maybeSingle();
   if (exErr) return { ok: false, reason: exErr.message };
   if (existing) {
     const cur = existing as { id: number; or_number: string; status: string };
@@ -206,7 +212,9 @@ export async function ensureReceiptForPayment(
   const cols = source === 'SOPAY'
     ? 'id, so_doc_no, paid_at, method, amount_sen, company_id, created_by'
     : 'id, sales_invoice_id, paid_at, method, amount_sen, company_id, created_by';
-  const { data: payRaw, error: payErr } = await sb.from(table).select(cols).eq('id', paymentId).maybeSingle();
+  let paymentQuery = sb.from(table).select(cols).eq('id', paymentId);
+  if (activeCompanyId !== null) paymentQuery = paymentQuery.eq('company_id', activeCompanyId);
+  const { data: payRaw, error: payErr } = await paymentQuery.maybeSingle();
   if (payErr) return { ok: false, reason: payErr.message };
   if (!payRaw) return { ok: false, reason: `payment ${source}:${paymentId} not found` };
   const pay = payRaw as Record<string, unknown>;

@@ -127,8 +127,18 @@ describe('ensure heals history', () => {
     const sb = world({
       mfg_sales_order_payments: [{ id: 'old1', so_doc_no: '2990-SO-2607-009', paid_at: '2026-07-01T10:00:00', method: 'merchant', amount_sen: 25000, company_id: CO, created_by: 'u' }],
     });
-    const r = await ensureReceiptForPayment(sb, 'SOPAY', 'old1');
+    const r = await ensureReceiptForPayment(sb, 'SOPAY', 'old1', CO);
     expect(r).toMatchObject({ ok: true, status: 'DRAFT' });
     expect(sb.tables.acc_official_receipts[0]).toMatchObject({ doc_no: '2990-SO-2607-009', amount_sen: 25000 });
+  });
+
+  test("another company's payment id is refused, and no receipt is written", async () => {
+    const sb = world({
+      companies: [{ id: CO, code: '2990' }, { id: 1, code: 'HC' }],
+      mfg_sales_order_payments: [{ id: 'hc1', so_doc_no: 'HC-SO-2607-001', paid_at: '2026-07-01T10:00:00', method: 'merchant', amount_sen: 25000, company_id: 1, created_by: 'u' }],
+    });
+    const r = await ensureReceiptForPayment(sb, 'SOPAY', 'hc1', CO);
+    expect(r).toMatchObject({ ok: false });
+    expect(sb.tables.acc_official_receipts).toHaveLength(0);
   });
 });
