@@ -126,7 +126,7 @@ beforeEach(() => {
   h.notify.mockClear();
   h.authed.mockReset();
   h.authed.mockImplementation(async (path: string) => {
-    if (path.startsWith("/delivery-orders-mfg/export/rows")) return { deliveryOrders: all, total: 3, lineCount: 4, truncated: false };
+    if (path.startsWith("/delivery-orders-mfg/export/rows")) return { deliveryOrders: all, total: 3, lineCount: 4, next: null };
     return {};
   });
 });
@@ -196,7 +196,7 @@ describe("Delivery Orders list: the ONE Export", () => {
 
   it("follows the grid's funnel over the whole fetched set", async () => {
     const beyond = dOrder("d-4", "HC-DO-2609-000604", [line("l-5", { item_code: "AK-BASTION (Q)" })]);
-    h.authed.mockImplementation(async () => ({ deliveryOrders: [...all, beyond], total: 4, lineCount: 5, truncated: false }));
+    h.authed.mockImplementation(async () => ({ deliveryOrders: [...all, beyond], total: 4, lineCount: 5, next: null }));
     localStorage.setItem("dt:filters:delivery-orders-v2", JSON.stringify({ item_code: ["AK-BASTION (Q)"] }));
     mount("/scm/delivery-orders");
     const { body, cell } = await exportNow();
@@ -243,8 +243,10 @@ describe("Delivery Orders list: the ONE Export", () => {
     expect(gridHeader()).toContain("Item Code");
   });
 
-  it("refuses to hand over a short file when the server stopped reading", async () => {
-    h.authed.mockImplementation(async () => ({ deliveryOrders: all, total: 20000, lineCount: 0, truncated: true }));
+  it("refuses to hand over a short file past the export's document limit", async () => {
+    // A full 20,000-document window that still says there is more.
+    const many = Array.from({ length: 20000 }, (_, i) => ({ id: `d-many-${i}`, do_number: `HC-DO-${i}`, status: "DELIVERED", lines: [] }));
+    h.authed.mockImplementation(async () => ({ deliveryOrders: many, total: 20000, lineCount: 0, next: 20000, truncated: true }));
     mount("/scm/delivery-orders");
     fireEvent.click(screen.getByRole("button", { name: "Export" }));
     await waitFor(() => expect(h.notify).toHaveBeenCalled());
