@@ -283,7 +283,7 @@ export function PoLineImportModal({ open, onClose }: { open: boolean; onClose: (
             <li>{state.result.linesUpdated} {state.result.linesUpdated === 1 ? "line" : "lines"} updated</li>
             <li>{state.result.poLevelChanges} estimate delivery {state.result.poLevelChanges === 1 ? "date" : "dates"} set on the whole purchase order</li>
             <li>{state.result.purchaseOrdersUpdated} purchase {state.result.purchaseOrdersUpdated === 1 ? "order" : "orders"} touched</li>
-            <li>{state.result.autocountEditsQueued} queued for AutoCount (one per purchase order whose delivery date changed)</li>
+            <li>{state.result.autocountEditsQueued} queued for AutoCount (one per purchase order whose delivery date or estimate date changed)</li>
           </ul>
           <p className="text-[12px] text-ink-muted">Each change is in the purchase order's History.</p>
         </div>

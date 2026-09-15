@@ -18,12 +18,11 @@
  *     supplier-date writer (header + every line + audit);
  *   · expected_at is recomputed like the PATCH does;
  *   · the ERP -> AutoCount edit is queued ONCE per purchase order, after all of
- *     that order's writes, and only when its Delivery Date moved. Owner
- *     2026-09-15: an imported Item Description 2 is NOT pushed to AutoCount
- *     (AutoCount is no longer operated). The estimate dates (header UDF) and line
- *     notes are not in the write-back's column lists (autocount-outbox.ts
- *     PO_HEADER_COLS / PO_ITEM_COLS), so a file that only moves those would
- *     republish the whole document to change nothing. */
+ *     that order's writes, and only when something the write-back sends moved:
+ *     a line Delivery Date (DeliveryDate) or an estimate date (header UDF
+ *     EDate/EDate2/EDate3, sent since #3907). Owner 2026-09-15: an imported Item
+ *     Description 2 is NOT pushed to AutoCount, so it alone queues nothing; line
+ *     notes are not in PO_ITEM_COLS either. */
 import { Hono } from 'hono';
 import type { Env, Variables } from '../env';
 import { supabaseAuth } from '../middleware/auth';
@@ -73,8 +72,9 @@ const chunks = <T,>(xs: T[]): T[][] => {
 
 class ReadFailed extends Error {}
 
-/** The only import field whose change queues a write-back. description2 is carried
-    by the write-back too, but the owner ruled an imported one is not pushed. */
+/** The LINE fields whose change queues a write-back (the PO-level estimate dates
+    always do). description2 is carried by the write-back too, but the owner ruled
+    an imported one is not pushed. */
 const AUTOCOUNT_CARRIED: ReadonlySet<PoLineImportField> = new Set(['deliveryDate']);
 
 /* The audit field names the PO's History drawer already labels (the line PATCH's
@@ -230,6 +230,7 @@ export async function applyPoLineImport(
     });
     if (!written.ok) return c.json({ error: 'update_failed', message: `Could not update ${po.po_number}, nothing was imported (${written.reason}).` }, 500);
     touchedPos.add(po.id);
+    autocountPos.add(po.id);
   }
 
   for (const poId of touchedPos) await recomputePoExpectedAt(sb, poId);

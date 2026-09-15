@@ -153,6 +153,8 @@ describe('apply', () => {
     expect(tables.purchase_order_items.filter((r) => r.purchase_order_id === PO_A).map((r) => r.supplier_delivery_date_3)).toEqual(['2026-11-01', '2026-11-01']);
     expect(tables.purchase_order_items.find((r) => r.id === LX)!.supplier_delivery_date_3).toBeNull();
     expect(tables.entity_audit_log[0]).toMatchObject({ note: 'Imported from file', field_changes: [{ field: 'supplierDeliveryDate3', from: null, to: '2026-11-01' }] });
+    /* The write-back sends the estimate dates as header UDFs (#3907), so the PO is queued once. */
+    expect(enqueueEdit).toHaveBeenCalledTimes(1);
   });
 
   test('a value that moved since the preview refuses the whole import with 409 and writes nothing', async () => {

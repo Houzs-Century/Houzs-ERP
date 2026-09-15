@@ -875,7 +875,7 @@ export function PurchaseOrdersListV2() {
   const goFromSo = () => navigate("/scm/purchase-orders/from-so");
   /* `?import=1` opens the PO line import (owner 2026-09-15). The menu item used to
      navigate here with nothing reading the param
-     (docs/bugs/0919-the-purchase-order-list-s-import-from-file-opened-nothing.md). URL is state, so a reload keeps the dialog open. */
+     (docs/bugs/0921-the-purchase-order-list-s-import-from-file-opened-nothing.md). URL is state, so a reload keeps the dialog open. */
   const { can, pageAccess } = useHouzsAuth();
   const mayImportLines = canOperatePurchaseOrders(can, pageAccess);
   const importOpen = mayImportLines && params.get("import") === "1";
