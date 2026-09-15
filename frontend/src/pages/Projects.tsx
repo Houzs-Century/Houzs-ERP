@@ -108,7 +108,7 @@ import { isCrewScopedUser } from "../auth/crewScope";
 import { PMS_STAGE_LABEL, pmsStageVariant } from "../vendor/scm/lib/pms-status";
 import { LEDGER_COST_CATS, LEDGER_INCOME_CATS, ledgerCategoryLabel } from "../vendor/scm/lib/pms-ledger-categories";
 import { isReviewableTitle } from "../vendor/scm/lib/pms-reviewable-titles";
-import { PROJECT_STATUS_OPTIONS, paymentPillOptions, type ProjectStatus as SharedProjectStatus } from "../vendor/scm/lib/pms-project-status";
+import { PROJECT_STATUS_OPTIONS, paymentPillOptions } from "../vendor/scm/lib/pms-project-status";
 import { Forbidden } from "./Forbidden";
 import { useNotifications } from "../hooks/useNotifications";
 import { api, buildQuery, humanHttpMessage, tokenStore } from "../api/client";
@@ -128,79 +128,27 @@ import { formatDate, formatDateTime, formatTimestamp, formatCurrency, cn, relati
 import { fmtDate } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 import { DateTimeField } from "../vendor/scm/components/DateTimeField";
-
-// ── Types (module-local) ─────────────────────────────────────
-// Kept in this file until something else imports them. Promoting to
-// types.ts is a no-brainer move once a second page needs them.
-
-// Simplified lifecycle (mig 053):
-//   draft → setup → live → dismantle → completed
-// "planning" + "build" collapsed into "setup"; "teardown" → "dismantle";
-// "closed"/"cancelled" → "completed".
-type ProjectStage =
-  | "draft"
-  | "setup"
-  | "live"
-  | "dismantle"
-  | "completed";
-
-type ChecklistStatus = "pending" | "done" | "na" | "blocked";
-
-// mig 088 — boss-facing lifecycle, drives the calendar tint and replaces
-// the old Go Live button. Independent from `stage` which keeps driving
-// the internal workflow + section tracker.
-type ProjectStatus = SharedProjectStatus;
-
-interface ProjectRow {
-  id: number;
-  code: string;
-  name: string;
-  stage: ProjectStage;
-  status: ProjectStatus;
-  brand: string | null;
-  start_date: string | null;
-  end_date: string | null;
-  state: string | null;
-  venue: string | null;
-  organizer: string | null;
-  booth_no: string | null;
-  size_sqm: number | null;
-  archived_at: string | null;
-  event_type_name: string | null;
-  rental: number | null;
-  total_sales: number | null;
-  contractor_cost: number | null;
-  // Ledger-derived per-category finance sums (whole RM integers) from the
-  // list endpoint. Null for finance-hidden users (redacted server-side).
-  // GP / NP / percent columns are derived from these in the column defs.
-  fin_revenue?: number | null;
-  fin_cogs?: number | null;
-  fin_cogs_matt_sofa?: number | null;
-  fin_cogs_bedframe?: number | null;
-  fin_cogs_accessories?: number | null;
-  fin_rental?: number | null;
-  fin_total_cost?: number | null;
-  // Venue physical size (m²) — populated once feat/pms-venue-size-field lands
-  // the `size` column on project_venues and the list joins it. Guarded: the
-  // column renders "—" while this is absent.
-  venue_size?: number | null;
-  progress_pct: number;
-  pic_id: number | null;
-  pic_name: string | null;
-  created_by: number | null;
-  created_by_name: string | null;
-  // Section-driven stage tracker (mig 050). active_section_name is null
-  // when every section is done OR the project has no sections defined.
-  // Combine with sections_total / sections_complete to distinguish
-  // "everything done" from "no sections yet".
-  active_section_name?: string | null;
-  sections_total?: number;
-  sections_complete?: number;
-  // Populated only when a real section is picked in the Status filter (owner
-  // 2026-08-14). Tasks of that section: 'title=status=due' pairs joined by '|',
-  // where due is a bare YYYY-MM-DD or empty. Drives the per-project task badges.
-  section_tasks_map?: string | null;
-}
+import type {
+  ProjectStage,
+  ChecklistStatus,
+  ProjectStatus,
+  ProjectRow,
+  SalesAttendee,
+  TasklistSection,
+  SectionProgress,
+  TaskAttachment,
+  PaymentStatus,
+  StockTransfer,
+  FinanceLine,
+  AttachRole,
+  ProjectAttachment,
+  ProjectDefect,
+  ProjectTrip,
+  ChecklistItem,
+  ActivityRow,
+  EventType,
+  Paginated,
+} from "./projects/types";
 
 interface ProjectDetail {
   project: ProjectRow & {
@@ -323,127 +271,6 @@ interface ProjectDetail {
   sales_attendees?: SalesAttendee[];
 }
 
-interface SalesAttendee {
-  sales_rep_id: number;
-  rep_code: string | null;
-  rep_name: string | null;
-  rep_phone: string | null;
-  rep_user_id: number | null;
-  user_name: string | null;
-  created_at: string | null;
-}
-
-interface TasklistSection {
-  id: number;
-  name: string;
-  sort_order: number;
-  /** mig 085 — "list" (default) or "documents" (6-col table layout). */
-  display_mode?: "list" | "documents";
-}
-
-interface SectionProgress {
-  id: number;          // 0 sentinel = "Uncategorised"
-  name: string;
-  sort_order: number;
-  total: number;
-  done: number;
-  na: number;
-  complete: number;    // 0 | 1
-}
-
-interface TaskAttachment {
-  id: number;
-  item_id: number;
-  r2_key: string;
-  file_name: string;
-  content_type: string | null;
-  size_bytes: number | null;
-  uploaded_by: number | null;
-  uploader_name: string | null;
-  uploaded_at: string;
-  caption: string | null;
-}
-
-type PaymentStatus =
-  | "not_started"
-  | "deposit_paid"
-  | "paid"
-  | "refund_pending"
-  | "refunded";
-
-interface StockTransfer {
-  id: number;
-  project_id: number;
-  direction: "out" | "return";
-  transferred_at: string | null;
-  record_r2_key: string | null;
-  file_name: string | null;
-  mime_type: string | null;
-  notes: string | null;
-  confirmed_at: string | null;
-  confirmed_by: number | null;
-  confirmed_by_name: string | null;
-  created_by: number | null;
-  created_by_name: string | null;
-  created_at: string;
-}
-
-interface FinanceLine {
-  id: number;
-  project_id: number;
-  kind: "income" | "cost";
-  category: string;
-  description: string | null;
-  amount: number;
-  occurred_at: string | null;
-  r2_key: string | null;
-  file_name: string | null;
-  mime_type: string | null;
-  notes: string | null;
-  created_by_name: string | null;
-  created_at: string;
-  // Synthesised rows (e.g. from sales_entries) carry a source marker so
-  // the UI can suppress edit/delete — the source table is the truth.
-  source?: "sales_entry";
-  source_id?: number;
-  // Auto-generated by the cost-rate engine (mig 063). UI locks
-  // edit + delete; users adjust the rate card in Project Maintenance.
-  auto_source?: "auto:transport" | "auto:merchandise" | "auto:commission" | null;
-}
-
-type AttachRole = "sales" | "driver" | "design" | "office";
-
-interface ProjectAttachment {
-  id: number;
-  category: string | null;
-  r2_key: string;
-  file_name: string | null;
-  mime_type: string | null;
-  size_bytes: number | null;
-  uploader_name: string | null;
-  uploaded_by_role: AttachRole | null;
-  created_at: string;
-}
-
-interface ProjectDefect {
-  id: number;
-  project_id: number;
-  phase: "setup" | "dismantle";
-  reported_by_role: "sales" | "logistic";
-  item_code: string | null;
-  item_description: string | null;
-  size: string | null;
-  quantity: number | null;
-  reason: string | null;
-  photo_r2_key: string | null;
-  reported_by_name: string | null;
-  reported_at: string;
-  resolved: number;
-  resolved_notes: string | null;
-  linked_assr_id: number | null;
-  linked_assr_no: string | null;
-}
-
 interface ChecklistComment {
   id: number;
   item_id: number;
@@ -451,67 +278,6 @@ interface ChecklistComment {
   body: string | null;
   user_name: string | null;
   created_at: string;
-}
-
-interface ProjectTrip {
-  id: number;
-  code: string;
-  status: string;
-  scheduled_date: string | null;
-  trip_type: string | null;
-  description: string | null;
-}
-
-interface ChecklistItem {
-  id: number;
-  seq: number;
-  title: string;
-  description: string | null;
-  required_perm: string | null;
-  /** mig 085 — display-only owner tag (e.g. "DRIVER", "SALES PIC"). */
-  role_label: string | null;
-  /** mig 086 — when 1, surfaces in the Driver App. */
-  crew_visible: number;
-  due_date: string | null;
-  owner_user_id: number | null;
-  owner_name: string | null;
-  status: ChecklistStatus;
-  review_status: "pending_review" | "rejected" | "amended" | "approved" | null;
-  rejection_reason: string | null;
-  completed_by: number | null;
-  completed_by_name: string | null;
-  completed_at: string | null;
-  notes: string | null;
-  section_id: number | null;
-  /** mig 090 — when set, row renders multi-state payment pills instead
-   *  of the done/pending circle. 'rental_payment' | 'security_deposit'. */
-  pill_kind: string | null;
-  pill_value: string | null;
-}
-
-interface ActivityRow {
-  id: number;
-  action: string;
-  from_value: string | null;
-  to_value: string | null;
-  note: string | null;
-  user_id: number | null;
-  user_name: string | null;
-  created_at: string;
-}
-
-interface EventType {
-  id: number;
-  slug: string;
-  name: string;
-  default_template_id: number | null;
-}
-
-interface Paginated<T> {
-  data: T[];
-  page: number;
-  per_page: number;
-  total: number;
 }
 
 // Canonical event name helper. Builds the `STATE - BRAND - TYPE - VENUE`
