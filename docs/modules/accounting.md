@@ -2233,6 +2233,25 @@ totals agree. Contracts: `backend/tests/bankRoutes.test.ts` (whose harness no
 longer carries the je_no unique — the route's refusal is what "only once"
 exercises), `bank-reconcile.test.ts`, `BankStatementTab.test.tsx`.
 
+**One entry, one claim per bank account (2026-09-15, docs/bugs/0917; owner,
+on the Maybank side of 2990-JE-2607-0088, the July transfer Maybank → HLBB
+already matched on the HLB statement: 这个要做).** An internal transfer is
+ONE journal with a leg on each bank, and each bank's statement shows its own
+movement — so "one entry cannot account for two" means two movements of the
+SAME bank, never one on each. `liveClaimsOn`
+(`backend/src/scm/routes/accounting-bank.ts`) reads an entry's match rows
+with the bank account each claiming line sits on; `bankLineMatch` refuses a
+live claim by another movement of this bank by the bank's name
+(`already_matched`), lets a claim on another bank stand as the entry's other
+leg, and then requires the entry to have a line on this bank
+(`entryOnAccount`, `not_this_account`) so a bank the entry never touches
+cannot claim it; `bankLinesMatchGroup` follows the same rule. The
+reconciliation and the lock already reasoned per account
+(`loadClaimedElsewhere`), and the unique index has allowed it since
+docs/bugs/0803 — only the two routes counted the entry once across every
+bank. Contract: the four "an internal transfer is one entry on two
+statements" tests in `backend/tests/bankRoutes.test.ts`.
+
 **The lock reads what the screen reads (2026-09-11, docs/bugs/0818; owner,
 on June refusing to close at "RM 45,000.00 apart" under a panel that said ✓
 Tallies: 什么意思？).** `loadMonthForLock` (`accounting-bank-months.ts`) and
