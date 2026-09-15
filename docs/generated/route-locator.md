@@ -1586,7 +1586,7 @@ Total: 1290 route registrations across 172 files.
 - L63  POST   /
 
 ## backend/src/scm/routes/delivery-order-exports.ts  (1)
-- L49  GET    /export/lines
+- L52  GET    /export/lines
 
 ## backend/src/scm/routes/delivery-order-scan-token.ts  (1)
 - L30  GET    /:id/scan-token
