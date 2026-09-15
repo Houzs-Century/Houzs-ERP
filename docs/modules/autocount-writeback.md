@@ -763,7 +763,7 @@ number. `docs/modules/grn.md` section 4d has the full shape.
 |---|---|
 | SO header | `scm.mfg_sales_orders` — `debtor_name`, `agent` + `salesperson_id` (§7n), `sales_location`, `ref`, `phone`, `address1-4`, and `branding` / `venue` / `po_doc_no` into UDF |
 | SO lines | `scm.mfg_sales_order_items`, including `linked_ac_dtlkey` (migration 0273) — the AutoCount line an edit addresses |
-| PO header | `scm.purchase_orders` — `po_number`, `po_date`, `notes`. **The creditor is a JOIN**: the table is supplier-keyed, so `CreditorCode` / `CreditorName` come from `scm.suppliers.code` / `.name` through `supplier_id`. It has no `agent` and no `ref` at all, so a create sends null for both and an edit omits `Ref` entirely rather than blanking AutoCount's |
+| PO header | `scm.purchase_orders` — `po_number`, `po_date`, `notes`. **The creditor is a JOIN**: the table is supplier-keyed, so `CreditorCode` / `CreditorName` come from `scm.suppliers.code` / `.name` through `supplier_id`. It has no `agent` and no `ref` at all, so a create sends null for both and an edit omits `Ref` entirely rather than blanking AutoCount's. The supplier delivery dates `supplier_delivery_date_2/3/4` go into UDF as `EDate` / `EDate2` / `EDate3` on create, transfer and edit, a blank slot omitted (since 2026-09-15, `docs/bugs/0919-a-supplier-delivery-date-entered-in-the-erp-never-reached-au.md`) |
 | PO lines | `scm.purchase_order_items`, same `linked_ac_dtlkey` |
 
 Every column these reads name is listed once at the top of
