@@ -74,7 +74,7 @@ Remark 4.
 
 ## 4. Cutover (in the live Apps Script project "Delivery & Amend Updated")
 
-1. Script properties: `ERP_BASE_URL` (the Worker origin), `SHEET_SYNC_KEY`
+1. Nothing to configure while `ERPMain.gs` keeps `ASSR_SYNC_KEY` and the ERP is at `https://erp.houzscentury.com` — the script defaults to both. Otherwise Script properties `ERP_BASE_URL` and `SHEET_SYNC_KEY`
    (the same value the ERP holds; it is already in that project in plaintext
    for the ASSR sync — `docs/google-sheet-status-sync.md`).
 2. Paste `reference/ERPDeliverySync.gs` as a new file. It reuses `Helper.gs`
