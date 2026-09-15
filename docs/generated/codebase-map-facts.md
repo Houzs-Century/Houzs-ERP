@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-201 route modules (53 in `backend/src/routes`, 148 in `backend/src/scm/routes`), 1310 endpoint registrations.
+203 route modules (53 in `backend/src/routes`, 150 in `backend/src/scm/routes`), 1312 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -119,7 +119,8 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-planning.ts` | 5 | 2904 |
 | `backend/src/scm/routes/delivery-rate-cards.ts` | 11 | 689 |
 | `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
-| `backend/src/scm/routes/delivery-returns.ts` | 11 | 1879 |
+| `backend/src/scm/routes/delivery-return-exports.ts` | 1 | 42 |
+| `backend/src/scm/routes/delivery-returns.ts` | 11 | 1831 |
 | `backend/src/scm/routes/delivery-zones.ts` | 9 | 794 |
 | `backend/src/scm/routes/deposit-invoices.ts` | 8 | 217 |
 | `backend/src/scm/routes/document-cancel-routes.ts` | 11 | 723 |
@@ -180,7 +181,8 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2250 |
 | `backend/src/scm/routes/purchase-order-exports.ts` | 2 | 59 |
 | `backend/src/scm/routes/purchase-order-item-photos.ts` | 2 | 227 |
-| `backend/src/scm/routes/purchase-returns.ts` | 14 | 1843 |
+| `backend/src/scm/routes/purchase-return-exports.ts` | 1 | 36 |
+| `backend/src/scm/routes/purchase-returns.ts` | 14 | 1851 |
 | `backend/src/scm/routes/pv-files.ts` | 0 | 140 |
 | `backend/src/scm/routes/pwp-codes.ts` | 5 | 501 |
 | `backend/src/scm/routes/pwp-rules.ts` | 4 | 233 |
@@ -236,7 +238,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2567 files, 809317 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2593 files, 813307 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -254,9 +256,9 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4419 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4342 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4204 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3673 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3677 |
 | `backend/src/scm/routes/grns.ts` | 3538 |
-| `frontend/src/components/DataTable.tsx` | 3480 |
+| `frontend/src/components/DataTable.tsx` | 3453 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
 | `backend/src/routes/assr.ts` | 3361 |
 | `backend/src/services/projects.ts` | 3137 |
@@ -440,7 +442,7 @@ Page files by directory:
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 174 |
+| `frontend/src/pages/scm-v2` | 175 |
 | `frontend/src/pages/scm-v2/products` | 2 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 10 |
@@ -456,7 +458,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileAnnouncementMedia.tsx` | 171 |
 | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | 152 |
 | `frontend/src/mobile/MobileAnnouncements.tsx` | 1741 |
-| `frontend/src/mobile/MobileApp.tsx` | 1209 |
+| `frontend/src/mobile/MobileApp.tsx` | 1212 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 295 |
 | `frontend/src/mobile/MobileAssrCategoryChips.tsx` | 76 |
 | `frontend/src/mobile/MobileAssrSoField.tsx` | 76 |
@@ -473,7 +475,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileFabricPicker.tsx` | 109 |
 | `frontend/src/mobile/MobileFairReport.tsx` | 749 |
 | `frontend/src/mobile/MobileGantt.tsx` | 230 |
-| `frontend/src/mobile/MobileGrnZeroCost.tsx` | 246 |
+| `frontend/src/mobile/MobileGrnZeroCost.tsx` | 247 |
 | `frontend/src/mobile/MobileInbox.tsx` | 261 |
 | `frontend/src/mobile/MobileInvitations.tsx` | 301 |
 | `frontend/src/mobile/MobileLinePhotos.tsx` | 143 |
@@ -487,7 +489,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
 | `frontend/src/mobile/MobileNewProject.tsx` | 196 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3673 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3677 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4491 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |

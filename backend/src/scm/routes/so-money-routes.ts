@@ -24,6 +24,7 @@
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { cancelledOrdersWithMoney, convertSources, orderMoney, refundDraftBody } from '../lib/so-money';
 import { createPaymentVoucherCore } from './payment-vouchers';
+import { fmtSen } from '../shared/format';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- Hono context, untyped in this router family */
 type Ctx = any;
@@ -58,7 +59,7 @@ export const soMoneyRefundHandler = async (c: Ctx): Promise<Response> => {
   if (amountSen > m.money.remainingSen) {
     return c.json({
       error: 'refund_exceeds_remaining',
-      message: `${m.money.docNo} has ${(m.money.remainingSen / 100).toFixed(2)} left (${(m.money.bookedSen / 100).toFixed(2)} paid, ${(m.money.refundedSen / 100).toFixed(2)} on refund vouchers, ${(m.money.convertedSen / 100).toFixed(2)} moved to other orders) — not ${(amountSen / 100).toFixed(2)}.`,
+      message: `${m.money.docNo} has ${fmtSen(m.money.remainingSen)} left (${fmtSen(m.money.bookedSen)} paid, ${fmtSen(m.money.refundedSen)} on refund vouchers, ${fmtSen(m.money.convertedSen)} moved to other orders) — not ${fmtSen(amountSen)}.`,
     }, 409);
   }
   const who = c.get('houzsUser') as { name?: string | null } | undefined;

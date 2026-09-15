@@ -23,6 +23,7 @@ import { registerAgent } from '../agent-scheduler';
 import type { Env } from '../../types';
 import { activeInstructions } from '../agent-console';
 import { askAgentBrain, type AgentBrainUsageSink } from '../agent-brain';
+import { fmtSen } from '../../scm/shared/format';
 
 export const SI_AGENT_SETTING_KEY = 'agents.si';
 
@@ -224,10 +225,8 @@ export async function patrolSalesIntelligence(env: Env): Promise<SiPatrolResult>
     .bind(crypto.randomUUID(), nowIso, JSON.stringify(brief))
     .run();
 
-  const salesRm = (all.sales / 100).toFixed(0);
-  const marginRm = ((all.revenue - all.cost) / 100).toFixed(0);
   return {
-    summary: `Sales intelligence: ${all.orders} orders / RM ${salesRm} sales / RM ${marginRm} margin in ${WINDOW_DAYS}d · ${desired.size} anomal${desired.size === 1 ? 'y' : 'ies'} (${opened} new, ${resolved} resolved)`,
+    summary: `Sales intelligence: ${all.orders} orders / ${fmtSen(all.sales)} sales / ${fmtSen(all.revenue - all.cost)} margin in ${WINDOW_DAYS}d · ${desired.size} anomal${desired.size === 1 ? 'y' : 'ies'} (${opened} new, ${resolved} resolved)`,
     brief, opened, resolved,
   };
 }
