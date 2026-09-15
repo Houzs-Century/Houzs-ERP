@@ -137,7 +137,8 @@ type DoRow = HoldFields & {
   postcode: string | null;
   customer_state: string | null;
   status: string;
-  currency: string;
+  /* Nullable as the untyped payload can carry it; the Curr. Code column falls back to MYR. */
+  currency: string | null;
   local_total_sen: number;
   line_count?: number;
   lifecycle_state?: "shipped" | "invoiced" | "returned";

@@ -152,7 +152,7 @@ const exportNow = async () => {
 /** The grid's header captions, left to right, as the operator sees them. */
 const gridHeader = (): string[] =>
   Array.from(document.querySelectorAll("table thead th"))
-    .map((th) => (th.querySelector("[data-col-label]")?.textContent ?? th.textContent ?? "").trim())
+    .map((th) => th.textContent.trim())
     .filter((t) => t !== "");
 
 describe("Delivery Orders list: the ONE Export", () => {
