@@ -2475,6 +2475,21 @@ the five chips and a Journal column. The manual JV is simply the GENERAL
 journal — the owner's own vocabulary, unchanged. Pinned by
 tests/journalClasses.test.ts.
 
+**An entry opened, and a manual journal copied (2026-09-15, docs/bugs/0920;
+owner: manual journal 数字，account name 都没有，然后没有办法 copy … code 一行，name
+一行，接下来有显示资料的都是这样的 … 无法快速打关键字眼找 account).** The entry
+card and the draft form live in `frontend/src/pages/scm-v2/JournalEntryCards.tsx`
+(moved out of `frontend/src/pages/scm-v2/Accounting.tsx`, which keeps the
+list). Every line names its account through `AccountCell` — the code on one
+line, the name on the next; that is how an account reads on every screen
+from now on. A manual journal's card has **Copy**: `seedFromEntry` hands
+the form the narration and every line's account, debit, credit and note,
+never the date, and the form opens as a new draft dated today, marked
+copied, saved through the same call as any draft — Copy never posts. The
+account box is `SearchCombo` (the voucher and bill forms' own): every word
+typed must match the code or the name. Contract:
+`frontend/src/pages/scm-v2/JournalEntryCards.test.tsx`.
+
 **Document numbers follow the document date (owner 2026-09-07: 要根据文件日期,
 而不是文件几时 create 的日期).** Six finance series take their YYMM from the
 paper's own date — the AP invoice from `invoice_date`, the payment voucher
