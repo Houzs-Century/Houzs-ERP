@@ -13,6 +13,9 @@
 // never match a different set of delivery orders than the list the button was
 // pressed on. It takes no `page`.
 //
+// No screen calls it yet (2026-09-15): the grid-level Export that will read it
+// is being built separately.
+//
 // Its own router because the main one is over its file-size ceiling. Mounted at
 // the same `/delivery-orders-mfg` prefix BEFORE the main router, so the static
 // `/export/lines` path resolves ahead of `/:id`; the prefix's auth + area guard

@@ -14,7 +14,7 @@
    importing.
 
    MIRRORED, byte for byte, at frontend/src/vendor/scm/lib/do-line-export-columns.ts
-   (the frontend writes the sheet, the server builds the rows). Refereed by
+   (the server builds the rows; the browser labels and writes them). Refereed by
    frontend/src/vendor/scm/lib/do-line-export-columns.canonical.test.ts and by
    backend/scripts/check-shared-mirrors.mjs. No imports, so the two copies can
    stay identical. */

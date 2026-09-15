@@ -12,9 +12,9 @@
 // own sales scope, so it can never match a different set of orders than the
 // list the button was pressed on. It takes no `page`.
 //
-// The toolbar's header Export reads GET /mfg-sales-orders itself, page by page
-// (frontend so-list-export.ts): the list's rows are assembled inside that
-// handler, and a second assembly here would be a second opinion of them.
+// No screen calls it yet (2026-09-15): the owner wants ONE Export per list whose
+// columns are the grid's visible columns, one row per line, and that grid-level
+// mechanism is being built separately. This is the server half it will read.
 //
 // Its own router because the main one is over its file-size ceiling. Mounted at
 // the same `/mfg-sales-orders` prefix BEFORE the main router, so the static

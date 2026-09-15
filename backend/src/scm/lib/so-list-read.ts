@@ -59,7 +59,7 @@ const SORT_COLS = new Set(['so_date', 'doc_no', 'debtor_name', 'status', 'local_
 
 export function soListSort(sort: string | null): { col: string; asc: boolean } {
   const [rawCol, rawDir] = (sort ?? 'so_date:desc').split(':');
-  return { col: rawCol !== undefined && SORT_COLS.has(rawCol) ? rawCol : 'so_date', asc: rawDir === 'asc' };
+  return { col: SORT_COLS.has(rawCol) ? rawCol : 'so_date', asc: rawDir === 'asc' };
 }
 
 type Orderable = { order(col: string, opts: { ascending: boolean }): Orderable };

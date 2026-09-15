@@ -14,7 +14,8 @@ Order one, and its columns are the template everything below follows.
 > **Built since** (2026-09-15): Goods Receipt (§5), Purchase Invoice (§6) and
 > Sales Invoice (§3), with the owner's rulings below and the differences listed
 > in [§ What the GR / PI / SI builds changed](#what-the-gr--pi--si-builds-changed);
-> Sales Order (§1) and Delivery Order (§2), differences in
+> Sales Order (§1) and Delivery Order (§2) have their SERVER reader only — no screen
+> calls it yet, pending the grid-level Export — differences in
 > [§ What the SO / DO builds changed](#what-the-so--do-builds-changed)
 > (`docs/modules/sales-order.md`, `delivery-order.md`, *Exports*).
 > Their column contracts are `backend/src/scm/lib/{grn,pi,si}-line-export-columns.ts`;

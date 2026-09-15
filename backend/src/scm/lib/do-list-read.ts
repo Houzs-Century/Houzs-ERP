@@ -16,6 +16,9 @@ import { escapeForOr, phoneSearchOrParts } from './postgrest-search';
 import { normalizePhone } from '../shared/phone';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 
+/* Indexed by a caller's string, so an unknown key is `undefined` — say so. */
+const BUCKETS: Readonly<Record<string, string[] | undefined>> = DO_STATUS_BUCKETS;
+
 /** The list's filter contract, as the query string carries it. */
 export type DoListParams = {
   status: string | null;
@@ -41,7 +44,7 @@ const SORT_COLS = new Set(['do_date', 'do_number', 'debtor_name', 'status', 'cus
 
 export function doListSort(sort: string | null): { col: string; asc: boolean } {
   const [rawCol, rawDir] = (sort ?? 'do_date:desc').split(':');
-  return { col: rawCol !== undefined && SORT_COLS.has(rawCol) ? rawCol : 'do_date', asc: rawDir === 'asc' };
+  return { col: SORT_COLS.has(rawCol) ? rawCol : 'do_date', asc: rawDir === 'asc' };
 }
 
 type Filterable = {
@@ -86,7 +89,7 @@ export function filterDoList<Q>(q: Q, p: DoListParams, c: CompanyScopeCtx, scope
   const status = p.status;
   if (status && status !== 'all') {
     if (status === 'on_hold') out = out.eq('on_hold', true);
-    else if (DO_STATUS_BUCKETS[status]) out = out.in('status', DO_STATUS_BUCKETS[status]!);
+    else if (BUCKETS[status]) out = out.in('status', BUCKETS[status]);
     else out = out.eq('status', status);
   }
   /* free-text search over the columns the list's search matches: customer

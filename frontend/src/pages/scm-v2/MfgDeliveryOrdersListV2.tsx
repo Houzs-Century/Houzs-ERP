@@ -12,7 +12,6 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { statusFor, doCancellableStatus, type StatusTab } from "./do-list-status";
-import { doStatusWord, useDoListExports } from "./use-sales-list-exports";
 import { deliveryOrderRowMenu } from "./row-menus";
 import { doCountsAsInvoiceable, doCountsAsDelivered } from "../../vendor/shared/do-shipped-states";
 import { useDoCancelAction } from "./use-do-cancel-action";
@@ -821,7 +820,10 @@ export function MfgDeliveryOrdersListV2() {
   const [sort, setSort] = useState<string | undefined>(undefined);
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
-  // Send the active tab's BUCKET NAME as `status` (backend lib/do-status-buckets.ts); `all` omits it.
+  // Send the active tab's BUCKET NAME as `status`; the backend resolves each
+  // bucket to the raw statuses it covers (open = DRAFT+LOADED, in_transit =
+  // DISPATCHED+IN_TRANSIT, delivered = SIGNED+DELIVERED+INVOICED+COMPLETED,
+  // cancelled = CANCELLED). `all` omits the filter.
   const apiStatus = status === "all" ? undefined : status;
 
   const { data, isLoading, isFetching, isPlaceholderData, error } = useMfgDeliveryOrdersPaged({
@@ -831,7 +833,6 @@ export function MfgDeliveryOrdersListV2() {
     q: debouncedSearch,
     sort,
   });
-  const doExports = useDoListExports<DoRow>({ status: apiStatus, q: debouncedSearch, sort }); // both exports read the WHOLE filtered listing, no prices (owner 2026-09-15)
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
     requestTerm: debouncedSearch,
@@ -1259,7 +1260,7 @@ export function MfgDeliveryOrdersListV2() {
       width: "116px",
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
-      getValue: (r) => doStatusWord(r.status, rowIsHeld(r)) ?? "", // the word on screen (owner 2026-09-15)
+      getValue: (r) => r.status,
       render: (r) => {
         const st = statusFor(r.status);
         /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
@@ -1716,7 +1717,6 @@ export function MfgDeliveryOrdersListV2() {
               ) : undefined
             }
             secondaryActions={[
-              doExports.linesAction,
               { label: "Sales Orders", icon: Wrench, onClick: goSoList },
               { label: "Delivery Planning", icon: Truck, onClick: goPlanning },
             ]}
@@ -1901,7 +1901,6 @@ export function MfgDeliveryOrdersListV2() {
               }}
               contextMenu={doContextMenu}
             exportName="delivery-orders"
-              onExport={doExports.exportHeaders}
               serverSort
               onSortChange={setSortAndReset}
               emptyLabel={

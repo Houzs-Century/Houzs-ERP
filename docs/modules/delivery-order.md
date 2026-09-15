@@ -319,7 +319,7 @@ still need `edit` on `scm.sales.delivery`.
 | Method | Path | Line | Purpose |
 |--------|------|------|---------|
 | GET | `/` | `:2188` | List. `?page=` opts into pagination + `statusCounts`. The paginated arm's company / sales scope / tab / search / date filter and its sort are `lib/do-list-read.ts` (`fromDoList`, `filterDoList`, `orderDoList`) — the same functions the line export uses. |
-| GET | `/export/lines` | `routes/delivery-order-exports.ts` | **Export lines**: one row per DO LINE of every DO the list's `status` / `q` / `sort` / `from` / `to` match (no `page`), **no prices**. `{ columns, rows, doCount, lineCount, truncated }`. See *Exports* below. |
+| GET | `/export/lines` | `routes/delivery-order-exports.ts` | Line reader (no screen calls it yet): one row per DO LINE of every DO the list's `status` / `q` / `sort` / `from` / `to` match (no `page`), **no prices**. `{ columns, rows, doCount, lineCount, truncated }`. See *Exports* below. |
 | GET | `/deliverable-so-lines` | `:2347` | SO lines with `remaining > 0` (qty − delivered + returned). |
 | GET | `/so-source/:docNo` | `:2425` | SO header fields for the convert form. |
 | GET | `/:id` | `:2451` | Header + items + `has_children` + `lifecycle_state` + crew. |
@@ -2957,41 +2957,37 @@ A failed read says so rather than rendering as "nothing collected": the card
 takes `error` as a REQUIRED prop, because telling the office to chase money that
 is already banked is the expensive direction of that mistake.
 
-## Exports — every page the filters match, no prices (2026-09-15)
+## Exports — the server reader for every filtered line, no prices (2026-09-15)
 
 Owner 2026-09-15: every document list exports **one row per line item**, holding
 **every row the list's current filter, tab and search match**, never the screen page.
-Column design: `docs/line-export-columns.md` §2 with the rulings: **no price or amount
-columns** (the file goes to drivers, 3PLs and customers), **Driver and Vehicle stay**
-although empty on every delivery order today, no estimate dates. Entry:
-`docs/bugs/0924-the-sales-order-and-delivery-order-list-export-held-one-scre.md`.
+The UI is ONE grid-level Export whose columns are the grid's visible columns, being
+built separately; **no Delivery Order screen calls the reader below yet**, and the
+toolbar Export still writes the loaded page. Column design: `docs/line-export-columns.md`
+§2 with the rulings: **no price or amount columns** (the file goes to drivers, 3PLs and
+customers), **Driver and Vehicle stay** although empty on every delivery order today, no
+estimate dates.
 
 - `GET /delivery-orders-mfg/export/lines` (`routes/delivery-order-exports.ts` →
   `lib/do-line-export.ts`, shared reader `lib/document-line-export.ts`), built through the
   list's own `lib/do-list-read.ts` with the caller's sales scope; the same 403 as the list
   for a caller with no Houzs identity. The line read does not select the money columns.
-- Columns are `DO_LINE_EXPORT_COLUMNS` in `lib/do-line-export-columns.ts`, a MIRROR of
-  `frontend/src/vendor/scm/lib/do-line-export-columns.ts` refereed by
-  `do-line-export-columns.canonical.test.ts`, which also fails if a money column appears.
-  **Header names and Line ID are an import contract.**
+- `columns` is `DO_LINE_EXPORT_COLUMNS` in `lib/do-line-export-columns.ts` (mirrored at
+  `frontend/src/vendor/scm/lib/`, refereed by `do-line-export-columns.canonical.test.ts`,
+  which also fails if a money column appears); every row ends with the **Line ID**.
 - **Invoiced / Returned / Uninvoiced Qty** are the app's own Pending ledger,
   `doLineRemaining(..., 'invoiceable')` (`lib/do-line-remaining.ts`): Uninvoiced = qty −
   invoiced − returned. Blank on a DRAFT or CANCELLED delivery order, which is outside
   that ledger.
 - **Status** is the list's word (`DO_STATUS_WORDS`, pinned to `do-list-status.ts`: LOADED
-  reads *Confirmed*, DISPATCHED *Loaded*), ` (On Hold)` after it; the toolbar CSV prints
-  the same word. Cancelled delivery orders follow the tab.
+  reads *Confirmed*, DISPATCHED *Loaded*), ` (On Hold)` after it. Cancelled delivery
+  orders follow the tab.
 - **Location** is AutoCount's short code of the header warehouse
   (`bookSpellingOrOwn(code ?? name, LOCATION_MAP)`), else the header `sales_location`.
   **Delivered On** is the Malaysian calendar day of `delivered_at` (`mytDateOf`).
   **SO Doc No.** is the SO line's order via `so_item_id`, else the header label.
   **Invoice No.** lists the non-cancelled invoices that bill the line.
-- **The toolbar Export** pages `GET /delivery-orders-mfg?page=` with the list's own
-  parameters (`frontend/src/vendor/scm/lib/sales-list-export.ts` `fetchAllDoListRows`) and
-  refuses to write when the count moved while reading. The grid's per-column funnels are
-  browser-only and are not applied.
 - Read-only production check: `.github/workflows/po-line-export-check.yml` with
   `document: so-do` (`backend/scripts/check-so-do-line-export.mjs`).
 - **Mobile**: the phone Delivery Orders list (`mobile/MobileModuleList.tsx`) has no
-  export, so there is nothing to keep in step. Import is desktop-only by the owner's
-  decision (「手机不需要导入」, 2026-09-15).
+  export. Import is desktop-only by the owner's decision (「手机不需要导入」, 2026-09-15).

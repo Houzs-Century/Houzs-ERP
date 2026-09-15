@@ -1,7 +1,7 @@
 /* The Sales Order line export's column CONTRACT, and the words it prints.
  *
  * WHY A MIRROR. The server builds the rows (backend/src/scm/lib/so-line-export.ts)
- * and the browser writes the sheet (sales-list-export.ts). The frontend cannot
+ * and the browser will write the sheet. The frontend cannot
  * import from backend/src, so the module is copied byte for byte and this test
  * is the referee. backend/scripts/check-shared-mirrors.mjs sees the pair by
  * basename, so the file must stay at the top level of this directory.

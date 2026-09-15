@@ -6614,31 +6614,31 @@ The stored value is unchanged, as always with a relabel. Guarded by
 `frontend/src/pages/scm-v2/localStatusMapsAgree.test.ts`. Trace:
 `docs/bugs/0864-the-sales-order-tab-said-in-production-and-the-pill-said-pro.md`.
 
-## Exports — every page the filters match (2026-09-15)
+## Exports — the server reader for every filtered line (2026-09-15)
 
 Owner 2026-09-15: every document list exports **one row per line item**, holding
 **every row the list's current filter, tab and search match** across all pages,
-never the screen page. Column design: `docs/line-export-columns.md` §1, with the
-rulings and the differences listed there. Same build as the Purchase Order export
-(`docs/modules/purchase-order.md` *Exports*). Entry:
-`docs/bugs/0924-the-sales-order-and-delivery-order-list-export-held-one-scre.md`.
+never the screen page. The owner has since ruled the UI shape: ONE Export per list,
+its columns the grid's visible columns (line-level columns added to the chooser,
+hidden by default), following the grid's funnels too. That grid-level mechanism is
+being built separately; **no Sales Order screen calls the reader below yet**, and the
+list's toolbar Export still writes the loaded page. Column design:
+`docs/line-export-columns.md` §1, with the differences listed there.
 
 - **One predicate set.** `backend/src/scm/lib/so-list-read.ts` is the list's filter:
   sales scope (`applySoScope`), company, the second-level `f` rows
   (`prepareSoListFilters`), the tab (`soStatusesForTab`; ON_HOLD reads the marker,
   OTHER the out-of-vocabulary rows), the search (phone and approval code included) and
   the `from`/`to` window. `GET /` (page and money strip; the counts take its
-  `scoped` half) and the export build their reads through it, so an export cannot
+  `scoped` half) and the reader build their reads through it, so the reader cannot
   match other orders than the list.
 - `GET /mfg-sales-orders/export/lines?status=&q=&sort=&from=&to=&f=…`
   (`routes/sales-order-exports.ts` → `lib/so-line-export.ts`, on the shared reader
   `lib/document-line-export.ts`) → `{ columns, rows, soCount, lineCount, truncated }`.
   Mounted before the main router; same area guard as the list; a refused `f` row is a
-  400, as on the list. Columns are `SO_LINE_EXPORT_COLUMNS` in
-  `lib/so-line-export-columns.ts`, a MIRROR of
-  `frontend/src/vendor/scm/lib/so-line-export-columns.ts` refereed by
-  `so-line-export-columns.canonical.test.ts`. **Header names and Line ID are an import
-  contract** (Delivery Date, Item Description 2, Remarks; matched by Line ID).
+  400, as on the list. `columns` is `SO_LINE_EXPORT_COLUMNS` in
+  `lib/so-line-export-columns.ts` (mirrored at `frontend/src/vendor/scm/lib/`, refereed by
+  `so-line-export-columns.canonical.test.ts`); every row ends with the line's **Line ID**.
 - Header and lines join on **doc_no + company** (there is no header uuid); every line,
   DO, PO and base-header read carries the company predicate.
 - **Delivered / Returned / Remaining Qty** are the app's own reading,
@@ -6649,26 +6649,20 @@ rulings and the differences listed there. Same build as the Purchase Order expor
 - **Status** is the list pill's word: `soListStatusWord` = `soRowStatus` over
   `soStatusDisplay` (Partially Delivered / Delivered / Invoiced / Delivery Return when
   the order's own delivery records say so), ` (On Hold)` after it; the canonical test
-  runs every status × delivery state × lifecycle against the list's functions. The
-  toolbar CSV's Status column prints the same word. Cancelled orders follow the tab.
+  runs every status × delivery state × lifecycle against the list's functions.
+  Cancelled orders follow the tab.
 - **Location** is AutoCount's short code (`KL`) of the line's warehouse through
   `bookSpellingOrOwn(code ?? name, LOCATION_MAP)`; a line with no warehouse keeps its
   stored `location` text. **No estimate delivery dates** (owner 2026-09-15).
 - The header facts the list's VIEW does not carry — `linked_ac_docno`,
   `delivery_address1..4` — are read off the base table.
-- A large export (over 1,000 lines) reads the company's DO / PO lines that link to any
-  SO line once and keeps the ones it needs, instead of one read per ~70 line ids (a
-  Worker caps subrequests per request). Measured 2026-09-15 over the read-only shim on
-  the full Houzs Century list (2,959 orders, 15,618 lines): 437 reads, 212 of them
-  inside `soDeliverableRemaining`; 845 before this change.
-- **The toolbar Export** pages `GET /mfg-sales-orders?page=` itself with the list's own
-  parameters (`frontend/src/vendor/scm/lib/sales-list-export.ts` `fetchAllSoListRows`),
-  heals the MRP-derived columns through `/list-mrp-enrichment` when Stock Status or
-  PO No. is shown, and refuses to write when the order count moved while the pages were
-  read. Wiring: `frontend/src/pages/scm-v2/use-sales-list-exports.ts`.
+- A large read (over 1,000 lines) takes the company's DO / PO lines that link to any SO
+  line once and keeps the ones it needs, instead of one read per ~70 line ids (a Worker
+  caps subrequests per request). Measured 2026-09-15 over the read-only shim on the full
+  Houzs Century list (2,959 orders, 15,618 lines): 437 reads, 212 of them inside
+  `soDeliverableRemaining`; 845 before this change. Not measured inside a Worker.
 - Read-only production check: `.github/workflows/po-line-export-check.yml` with
   `document: so-do` (`backend/scripts/check-so-do-line-export.mjs`).
 - **Mobile**: the phone Sales Orders list (`mobile/MobileSalesOrders.tsx`) has no export
-  of any kind, so there is nothing to keep in step. Import is desktop-only by the
-  owner's decision (「手机不需要导入」, 2026-09-15) — a deliberate exception to
-  desktop/mobile parity.
+  of any kind. Import is desktop-only by the owner's decision (「手机不需要导入」,
+  2026-09-15) — a deliberate exception to desktop/mobile parity.

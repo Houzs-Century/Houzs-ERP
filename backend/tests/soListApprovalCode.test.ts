@@ -66,7 +66,7 @@ describe('the Sales Order list and the approval codes', () => {
   });
 
   test('the lookup runs before the list builder, matches the code exactly, is scoped to the company, capped, and refuses on a failed read', () => {
-    const lookup = betweenIn(readSource, 'let codePart', 'const scoped =');
+    const lookup = betweenIn(readSource, 'async function readApprovalCodePart', 'return { ok: true, part: codePart }');
     expect(lookup).toContain("from('mfg_sales_order_payments')");
     expect(lookup).toContain("eq('approval_code', code)");
     expect(lookup).not.toContain("ilike('approval_code'");
