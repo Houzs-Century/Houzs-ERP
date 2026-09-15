@@ -20,7 +20,8 @@ pages printing money in other shapes:
   `(sen / 100).toFixed(2)` or `ringgit.toFixed(2)`. Seen on the mobile SO add-on
   labels, the mobile and desktop zero-cost-receipt refusal, the Supplier Detail
   price cell, the SO line delivery-fee tooltip, Product Model Detail, the supplier
-  portal quote line, and the old Sales page.
+  portal quote line, the old Sales page, the SO/PO amendment PDF (`RM 1500.00`)
+  and the product change-log (`RM1500.00`).
 - **No decimals.** The order add-on price in Special Add-ons was
   `row.price.toLocaleString()`, and Share Calendar total sales went through the
   whole-MYR `fmtRM`.

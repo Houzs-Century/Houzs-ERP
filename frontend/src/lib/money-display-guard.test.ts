@@ -45,7 +45,7 @@ const SHAPES: Shape[] = [
   },
   {
     name: 'a sen amount divided by 100 and printed with toFixed(2) — no thousands separator',
-    rx: /(RM|MYR) ?(\$\{|\{)\s*\(\s*(Math\.abs\()?[\w.?!]+\)?\s*\/\s*100\)\.toFixed\(2\)/,
+    rx: /(RM|MYR) ?(\$\{|\{)\s*\(\s*((Math\.abs|Number)\()?[\w.?!]+\)?\s*\/\s*100\)\.toFixed\(2\)/,
   },
   {
     name: 'a ringgit number printed with toFixed(2) behind an RM prefix — no thousands separator',
