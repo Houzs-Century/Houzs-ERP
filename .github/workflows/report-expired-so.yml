@@ -1,0 +1,39 @@
+name: Report expired sales orders (read-only)
+
+# Every live sales order whose delivery date has passed while goods are still
+# owed, with owed lines, DOs, POs and readiness. The full result is attached to
+# the run as the `expired-so` artifact (JSON). Owner 2026-09-15.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "ERP company (1 = Houzs)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: report-expired-so-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/report-expired-so.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          OUT_FILE: ${{ runner.temp }}/expired-so.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: expired-so
+          path: ${{ runner.temp }}/expired-so.json
