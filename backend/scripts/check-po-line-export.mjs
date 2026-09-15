@@ -135,6 +135,20 @@ try {
     WHERE p.linked_ac_docno IS NOT NULL AND p.status IN ('SUBMITTED', 'PARTIALLY_RECEIVED')
     ORDER BY p.linked_ac_docno, i.line_no NULLS FIRST, i.id`);
   notice(`PROBE rows (outstanding-status lines of POs linked to AutoCount): ${probe.length}`);
+  /* Item Description 2 is exported as the variant summary, else the stored text
+     (src/scm/lib/po-line-description2.ts). How many lines would print something
+     other than their stored description2? */
+  const { poLineDescription2 } = await import("../src/scm/lib/po-line-description2.ts");
+  const d2rows = await pg`SELECT item_group, variants, description2 FROM scm.purchase_order_items`;
+  let d2Differ = 0, d2FromVariants = 0, d2Fallback = 0;
+  for (const r of d2rows) {
+    const shown = poLineDescription2(r.item_group, r.variants, r.description2);
+    const stored = (r.description2 ?? "").trim() || null;
+    if (shown !== stored) d2Differ += 1;
+    const summaryOnly = poLineDescription2(r.item_group, r.variants, null);
+    if (summaryOnly) d2FromVariants += 1; else d2Fallback += 1;
+  }
+  notice(`Item Description 2 over ${d2rows.length} PO lines: from the variants ${d2FromVariants}, stored-text fallback ${d2Fallback}; exported text differs from the stored description2 on ${d2Differ}`);
   for (const r of probe) console.log(`PROBE ${JSON.stringify(r)}`);
 
   notice(mismatches === 0 ? "VERDICT: the export's server read returns exactly the lines a direct SQL read returns, per company." : `VERDICT: ${mismatches} MISMATCH / GAP / error line(s) above.`);

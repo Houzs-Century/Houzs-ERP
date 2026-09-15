@@ -249,7 +249,8 @@ describe("Purchase Order list: the ONE Export", () => {
     const first = h.aoa[1]!;
     expect(moneyCols.map(([, get]) => get(first))).toEqual([15000, 0.055, 1500]);
     // Every money cell in the file equals the stored sen / 100, never the sen.
-    const lines = allOrders.flatMap((o) => (o.lines.length ? o.lines.map((l) => ({ o, l })) : [{ o, l: null }]));
+    type Pair = { o: (typeof allOrders)[number]; l: PoListLine | null };
+    const lines: Pair[] = allOrders.flatMap((o): Pair[] => (o.lines.length ? o.lines.map((l) => ({ o, l })) : [{ o, l: null }]));
     lines.forEach(({ o, l }, i) => {
       const row = h.aoa[i + 1]!;
       expect(row[at("Total")]).toBe(o.total_sen / 100);
