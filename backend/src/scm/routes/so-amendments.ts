@@ -330,14 +330,14 @@ soAmendments.get('/', async (c) => {
       sb.from('mfg_sales_order_items').select('id, doc_no').in('doc_no', batch).range(from, to));
     if (soItemErr) return c.json({ error: 'load_failed', reason: soItemErr.message }, 500);
     const soItemToDoc = new Map<string, string>();
-    for (const r of (soItemRows ?? []) as Array<{ id: string; doc_no: string }>) soItemToDoc.set(r.id, r.doc_no);
+    for (const r of soItemRows as Array<{ id: string; doc_no: string }>) soItemToDoc.set(r.id, r.doc_no);
     const soItemIds = [...soItemToDoc.keys()];
     if (soItemIds.length > 0) {
       const { data: poItemRows, error: poItemErr } = await chunkIn(soItemIds, (batch, from, to) =>
         sb.from('purchase_order_items').select('purchase_order_id, so_item_id').in('so_item_id', batch).range(from, to));
       if (poItemErr) return c.json({ error: 'load_failed', reason: poItemErr.message }, 500);
       const poToDocs = new Map<string, Set<string>>();
-      for (const r of (poItemRows ?? []) as Array<{ purchase_order_id: string | null; so_item_id: string | null }>) {
+      for (const r of poItemRows as Array<{ purchase_order_id: string | null; so_item_id: string | null }>) {
         const doc = r.so_item_id ? soItemToDoc.get(r.so_item_id) : undefined;
         if (!r.purchase_order_id || !doc) continue;
         const set = poToDocs.get(r.purchase_order_id) ?? new Set<string>();
@@ -349,7 +349,7 @@ soAmendments.get('/', async (c) => {
         const { data: poRows, error: poErr } = await chunkIn(poIds, (batch, from, to) =>
           sb.from('purchase_orders').select('id, po_number, status').in('id', batch).range(from, to));
         if (poErr) return c.json({ error: 'load_failed', reason: poErr.message }, 500);
-        for (const po of (poRows ?? []) as Array<{ id: string; po_number: string; status: string }>) {
+        for (const po of poRows as Array<{ id: string; po_number: string; status: string }>) {
           for (const doc of poToDocs.get(po.id) ?? []) {
             const list = boundBySo.get(doc) ?? [];
             list.push(po);
@@ -373,7 +373,7 @@ soAmendments.get('/', async (c) => {
       scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, ref, customer_so_no').in('doc_no', batch), c)
         .range(from, to));
     if (soRefErr) return c.json({ error: 'load_failed', reason: soRefErr.message }, 500);
-    for (const so of (soRefRows ?? []) as Array<{ doc_no: string; ref: string | null; customer_so_no: string | null }>) {
+    for (const so of soRefRows as Array<{ doc_no: string; ref: string | null; customer_so_no: string | null }>) {
       refBySo.set(so.doc_no, so);
     }
   }
