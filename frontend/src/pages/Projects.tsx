@@ -1885,7 +1885,7 @@ function ProjectsListView() {
       align: "right",
       render: (r) => (
         <span className="font-mono text-[11px]">
-          {r.rental != null ? formatCurrency(r.rental, { compact: true }) : "—"}
+          {r.rental != null ? formatCurrency(r.rental) : "—"}
         </span>
       ),
       getValue: (r) => r.rental,
@@ -1896,7 +1896,7 @@ function ProjectsListView() {
       align: "right",
       render: (r) => (
         <span className="font-mono text-[11px]">
-          {r.total_sales != null ? formatCurrency(r.total_sales, { compact: true }) : "—"}
+          {r.total_sales != null ? formatCurrency(r.total_sales) : "—"}
         </span>
       ),
       getValue: (r) => r.total_sales,
@@ -1914,7 +1914,7 @@ function ProjectsListView() {
       defaultHidden: true,
       render: (r) => (
         <span className="font-mono text-[11px]">
-          {r.fin_revenue != null ? formatCurrency(r.fin_revenue, { compact: true }) : "—"}
+          {r.fin_revenue != null ? formatCurrency(r.fin_revenue) : "—"}
         </span>
       ),
       getValue: (r) => r.fin_revenue ?? null,
@@ -1934,7 +1934,7 @@ function ProjectsListView() {
               `Accessories: ${formatCurrency(r.fin_cogs_accessories ?? 0)}`
             }
           >
-            {formatCurrency(r.fin_cogs, { compact: true })}
+            {formatCurrency(r.fin_cogs)}
           </span>
         ) : (
           <span className="font-mono text-[11px]">—</span>
@@ -1948,7 +1948,7 @@ function ProjectsListView() {
       defaultHidden: true,
       render: (r) => (
         <span className="font-mono text-[11px]">
-          {r.fin_cogs_matt_sofa != null ? formatCurrency(r.fin_cogs_matt_sofa, { compact: true }) : "—"}
+          {r.fin_cogs_matt_sofa != null ? formatCurrency(r.fin_cogs_matt_sofa) : "—"}
         </span>
       ),
       getValue: (r) => r.fin_cogs_matt_sofa ?? null,
@@ -1960,7 +1960,7 @@ function ProjectsListView() {
       defaultHidden: true,
       render: (r) => (
         <span className="font-mono text-[11px]">
-          {r.fin_cogs_bedframe != null ? formatCurrency(r.fin_cogs_bedframe, { compact: true }) : "—"}
+          {r.fin_cogs_bedframe != null ? formatCurrency(r.fin_cogs_bedframe) : "—"}
         </span>
       ),
       getValue: (r) => r.fin_cogs_bedframe ?? null,
@@ -1972,7 +1972,7 @@ function ProjectsListView() {
       defaultHidden: true,
       render: (r) => (
         <span className="font-mono text-[11px]">
-          {r.fin_cogs_accessories != null ? formatCurrency(r.fin_cogs_accessories, { compact: true }) : "—"}
+          {r.fin_cogs_accessories != null ? formatCurrency(r.fin_cogs_accessories) : "—"}
         </span>
       ),
       getValue: (r) => r.fin_cogs_accessories ?? null,
@@ -1985,7 +1985,7 @@ function ProjectsListView() {
       render: (r) => (
         <span className="font-mono text-[11px]">
           {r.fin_revenue != null && r.fin_cogs != null
-            ? formatCurrency(r.fin_revenue - r.fin_cogs, { compact: true })
+            ? formatCurrency(r.fin_revenue - r.fin_cogs)
             : "—"}
         </span>
       ),
@@ -2018,7 +2018,7 @@ function ProjectsListView() {
       render: (r) => (
         <span className="font-mono text-[11px]">
           {r.fin_revenue != null && r.fin_total_cost != null
-            ? formatCurrency(r.fin_revenue - r.fin_total_cost, { compact: true })
+            ? formatCurrency(r.fin_revenue - r.fin_total_cost)
             : "—"}
         </span>
       ),
@@ -3316,29 +3316,29 @@ function FinanceListView() {
         <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-5">
           <StatCard
             label="Sales"
-            value={formatCurrency(totals.sales, { compact: true })}
+            value={formatCurrency(totals.sales)}
             subtitle="Filtered total"
             tone="success"
           />
           <StatCard
             label="COGS"
-            value={formatCurrency(totals.cogs, { compact: true })}
+            value={formatCurrency(totals.cogs)}
             subtitle="Cost of goods sold"
           />
           <StatCard
             label="Rental"
-            value={formatCurrency(totals.rental, { compact: true })}
+            value={formatCurrency(totals.rental)}
             subtitle="Total rent paid"
           />
           <StatCard
             label="Total cost"
-            value={formatCurrency(totals.cost, { compact: true })}
+            value={formatCurrency(totals.cost)}
             subtitle="All cost categories"
             tone="error"
           />
           <StatCard
             label="Net profit"
-            value={formatCurrency(totals.net_profit, { compact: true })}
+            value={formatCurrency(totals.net_profit)}
             subtitle={totals.net_profit >= 0 ? "Surplus" : "Deficit"}
             tone={totals.net_profit >= 0 ? "success" : "error"}
           />
@@ -3732,12 +3732,12 @@ function ProjectsAnalyticsView() {
           <DashboardGrid cols={5}>
             <StatCard
               label="Revenue"
-              value={formatCurrency(d.totals.income, { compact: true })}
+              value={formatCurrency(d.totals.income)}
               subtitle="Total sales + other income"
             />
             <StatCard
               label="COGS"
-              value={formatCurrency(d.totals.cogs, { compact: true })}
+              value={formatCurrency(d.totals.cogs)}
               subtitle={
                 cogsPctOfRevenue != null
                   ? `${cogsPctOfRevenue.toFixed(0)}% of revenue`
@@ -3747,7 +3747,7 @@ function ProjectsAnalyticsView() {
             />
             <StatCard
               label="Gross profit"
-              value={formatCurrency(d.totals.gp, { compact: true })}
+              value={formatCurrency(d.totals.gp)}
               subtitle={
                 grossMarginPct != null
                   ? `${grossMarginPct.toFixed(1)}% gross margin`
@@ -3757,13 +3757,13 @@ function ProjectsAnalyticsView() {
             />
             <StatCard
               label="Cost"
-              value={formatCurrency(d.totals.cost, { compact: true })}
+              value={formatCurrency(d.totals.cost)}
               subtitle="Rental, setup, transport, commission…"
               tone="error"
             />
             <StatCard
               label="Net profit"
-              value={formatCurrency(d.totals.profit, { compact: true })}
+              value={formatCurrency(d.totals.profit)}
               subtitle={
                 d.totals.margin_pct != null
                   ? `${d.totals.margin_pct.toFixed(1)}% net margin`
@@ -4027,10 +4027,10 @@ function BreakdownCard({
                       </td>
                       <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">{r.count}</td>
                       <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">
-                        {formatCurrency(r.income, { compact: true })}
+                        {formatCurrency(r.income)}
                       </td>
                       <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-                        {formatCurrency(r.cogs, { compact: true })}
+                        {formatCurrency(r.cogs)}
                       </td>
                       <td
                         className={cn(
@@ -4038,10 +4038,10 @@ function BreakdownCard({
                           r.gp >= 0 ? "text-ink" : "text-err"
                         )}
                       >
-                        {formatCurrency(r.gp, { compact: true })}
+                        {formatCurrency(r.gp)}
                       </td>
                       <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-                        {formatCurrency(r.rental, { compact: true })}
+                        {formatCurrency(r.rental)}
                       </td>
                       <td
                         className={cn(
@@ -4049,7 +4049,7 @@ function BreakdownCard({
                           r.profit >= 0 ? "text-synced" : "text-err"
                         )}
                       >
-                        {formatCurrency(r.profit, { compact: true })}
+                        {formatCurrency(r.profit)}
                       </td>
                       <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
                         {r.margin != null ? `${r.margin.toFixed(1)}%` : "—"}
@@ -4177,10 +4177,10 @@ function BreakdownMonthRows({
               </td>
               <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">{m.count}</td>
               <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">
-                {formatCurrency(m.income, { compact: true })}
+                {formatCurrency(m.income)}
               </td>
               <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-                {formatCurrency(m.cogs, { compact: true })}
+                {formatCurrency(m.cogs)}
               </td>
               <td
                 className={cn(
@@ -4188,10 +4188,10 @@ function BreakdownMonthRows({
                   m.gp >= 0 ? "text-ink" : "text-err"
                 )}
               >
-                {formatCurrency(m.gp, { compact: true })}
+                {formatCurrency(m.gp)}
               </td>
               <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-                {formatCurrency(m.rental, { compact: true })}
+                {formatCurrency(m.rental)}
               </td>
               <td
                 className={cn(
@@ -4199,7 +4199,7 @@ function BreakdownMonthRows({
                   m.profit >= 0 ? "text-synced" : "text-err"
                 )}
               >
-                {formatCurrency(m.profit, { compact: true })}
+                {formatCurrency(m.profit)}
               </td>
               <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
                 {m.margin != null ? `${m.margin.toFixed(1)}%` : "—"}
@@ -4275,10 +4275,10 @@ function BreakdownProjectRows({
           </td>
           <td className="px-1.5 py-1.5" />
           <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">
-            {formatCurrency(p.income, { compact: true })}
+            {formatCurrency(p.income)}
           </td>
           <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-            {formatCurrency(p.cogs, { compact: true })}
+            {formatCurrency(p.cogs)}
           </td>
           <td
             className={cn(
@@ -4286,10 +4286,10 @@ function BreakdownProjectRows({
               p.gp >= 0 ? "text-ink" : "text-err"
             )}
           >
-            {formatCurrency(p.gp, { compact: true })}
+            {formatCurrency(p.gp)}
           </td>
           <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-            {formatCurrency(p.rental, { compact: true })}
+            {formatCurrency(p.rental)}
           </td>
           <td
             className={cn(
@@ -4297,7 +4297,7 @@ function BreakdownProjectRows({
               p.profit >= 0 ? "text-synced" : "text-err"
             )}
           >
-            {formatCurrency(p.profit, { compact: true })}
+            {formatCurrency(p.profit)}
           </td>
           <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
             {p.margin != null ? `${p.margin.toFixed(1)}%` : "—"}
@@ -4360,9 +4360,9 @@ function RankedCard({
                   </div>
                   {/* Model context: Revenue and GP (COGS = Revenue − GP). */}
                   <div className="mt-0.5 font-mono text-[10px] text-ink-muted">
-                    Rev {formatCurrency(r.income, { compact: true })}
+                    Rev {formatCurrency(r.income)}
                     {" · "}
-                    GP {formatCurrency(r.gp, { compact: true })}
+                    GP {formatCurrency(r.gp)}
                   </div>
                 </div>
                 <div className="shrink-0 text-right">
@@ -4372,7 +4372,7 @@ function RankedCard({
                       tone === "synced" ? "text-synced" : "text-err"
                     )}
                   >
-                    {formatCurrency(r.profit, { compact: true })}
+                    {formatCurrency(r.profit)}
                   </div>
                   <div className="text-[10px] text-ink-muted">
                     {r.margin != null ? `${r.margin.toFixed(1)}% NP` : "—"}
@@ -13630,7 +13630,7 @@ function FinanceLedgerSection({
           <SnapshotRow label="COGS Total" value={cogs} subtotal />
           <SnapshotRow
             label="Rental"
-            annotation={`RM ${rentPerSqmPerDay.toFixed(0)}/sqm/day`}
+            annotation={`${formatCurrency(rentPerSqmPerDay)}/sqm/day`}
             value={rentalTotal}
             editable={{ onSave: (n) => replaceCategoryAmount("rental", n) }}
             busy={savingCat === "rental"}

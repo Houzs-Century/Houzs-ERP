@@ -211,9 +211,9 @@ describe('a refund voucher on an order with deposit invoices', () => {
     const first = list.rows.find((r) => r.di_number === '2990-DI-2609-001')!;
     const second = list.rows.find((r) => r.di_number === '2990-DI-2609-002')!;
     expect(first).toMatchObject({ refunded_sen: 100_000, credit_note_number: '2990-CN-2609-001' });
-    expect(first.refund_notes).toEqual([{ note_number: '2990-CN-2609-001', total_sen: 100_000, status: 'POSTED', note_date: '2026-09-08', pv_number: '2990-CRF-2609-001' }]);
+    expect(first.refund_notes).toEqual([{ note_number: '2990-CN-2609-001', total_sen: 100_000, status: 'POSTED', note_date: '2026-09-08', pv_number: '2990-CRF-2609-001', converted_payment_id: null }]);
     expect(second).toMatchObject({ refunded_sen: 20_000, credit_note_number: null });
     const detail = (await (await app.request(`/deposit-invoices/${String(second.id)}`)).json()) as { invoice: Record<string, unknown> };
-    expect(detail.invoice.refund_notes).toEqual([{ note_number: '2990-CN-2609-002', total_sen: 20_000, status: 'POSTED', note_date: '2026-09-08', pv_number: '2990-CRF-2609-001' }]);
+    expect(detail.invoice.refund_notes).toEqual([{ note_number: '2990-CN-2609-002', total_sen: 20_000, status: 'POSTED', note_date: '2026-09-08', pv_number: '2990-CRF-2609-001', converted_payment_id: null }]);
   });
 });

@@ -956,7 +956,7 @@ const SoLineCardInner = ({
           disabled={!isEditing || !canEditPrice}
           title={
             !canEditPrice ? 'Price follows the SKU Master sell price — admin can override'
-              : isFeeLine ? `Delivery fee is derived (RM ${(feeGrossSen / 100).toFixed(2)}). Type the amount to charge — the difference is recorded as a line discount. To charge MORE, add an Additional delivery fee line.`
+              : isFeeLine ? `Delivery fee is derived (${fmtMoneySen(feeGrossSen, 'RM')}). Type the amount to charge — the difference is recorded as a line discount. To charge MORE, add an Additional delivery fee line.`
               : undefined
           }
           onChange={(e) => {
