@@ -31,6 +31,7 @@ import {
 import { lockedRefusal, monthAsDate, monthFromDate } from '../../acc/bank-lock';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
 import { entryCandidatesFor } from '../../acc/bank-match';
+import { withJournalRefs } from '../../acc/journal-refs';
 import {
   loadPayableBatches, loadAccountLedger, loadLiveMonthLock, loadBankConfig, claimedSetFor, jeNosOf,
   loadRecognitionRules, loadPayoutAdvices,
@@ -390,6 +391,10 @@ export async function loadMonthForLock(
 
   const ledger = await loadAccountLedger(sb, companyId, accountCode, assembly.periodTo);
   if (!ledger.ok) return { ok: false, reason: ledger.reason };
+  /* Named the way a person knows them (docs/bugs/0918) — see the statement detail. */
+  const named = await withJournalRefs(sb, companyId, ledger.movements);
+  if (!named.ok) return { ok: false, reason: named.reason };
+  ledger.movements = named.entries;
 
   return {
     ok: true,

@@ -1,0 +1,49 @@
+name: Split two-colour lines (plan / apply)
+
+# Owner 2026-09-15: a sales-order line whose Description 2 names two colours is
+# split into one line per colour, by quantity, with every PO / GRN / PI / DO / SI
+# line below it. REUSABLE: the next case is a dispatch with a new `splits` value.
+# PLAN (default) rolls back; APPLY needs the phrase. See
+# backend/scripts/split-colour-lines.mjs for what is split and what is refused.
+on:
+  workflow_dispatch:
+    inputs:
+      splits:
+        description: "DOC:LINE_NO:QTY1xCOLOUR1+QTY2xCOLOUR2, semicolon-separated (company 1; colours = active fabric colour_id)"
+        required: true
+        default: "HC-SO-012927:5:2xBO315-27+2xBO315-28;HC-SO-012046:3:2xM2402-09+2xM2402-15;HC-SO-012046:4:1xM2402-09+1xM2402-15"
+        type: string
+      mode:
+        description: "plan (rolled back) or apply"
+        required: true
+        default: plan
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "For apply only — type: SPLIT TWO COLOUR LINES"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: split-colour-lines
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/split-colour-lines.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SPLITS: ${{ inputs.splits }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}

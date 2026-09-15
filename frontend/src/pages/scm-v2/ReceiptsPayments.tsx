@@ -17,7 +17,10 @@ import { Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useAuth } from '../../auth/AuthContext';
 import { useAccounts } from '../../vendor/scm/lib/accounting-queries';
-import { useRpReport, type RpReport } from '../../vendor/scm/lib/rp-report-queries';
+import { rpReportPath, useRpReport, type RpReport } from '../../vendor/scm/lib/rp-report-queries';
+import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
+import { rpLines, type MonthColumn } from '../../vendor/scm/lib/report-monthly';
+import { ByMonthButton, MonthlyReport } from './MonthlyReport';
 import { fmtRp, generateRpPdf } from '../../vendor/scm/lib/rp-report-pdf';
 import { fmtPct, laidDepth, leafKeys, pctOf, type LaidNode } from '../../vendor/scm/lib/report-layout';
 import { DateField } from '../../vendor/scm/components/DateField';
@@ -51,8 +54,12 @@ export const ReceiptsPaymentsTab = () => {
   const [drill, setDrill] = useState<{ side: 'R' | 'P'; id: string; label: string; rowKeys: string[]; column: string | null } | null>(null);
   const [level, setLevel] = useState<Level>('all');
   const [editing, setEditing] = useState(false);
+  const [monthly, setMonthly] = useState(false);
   const { can } = useAuth();
   const canArrange = can('scm.payment_voucher.post');
+  /* By month: the Total column of the ticked accounts, one request per
+     column to the same endpoint (the ticks and the party toggle apply). */
+  const fetchColumn = (col: MonthColumn) => authedFetch<RpReport>(rpReportPath(col.from, col.to, codes, byParty));
 
   const toggleAccount = (code: string) => setPicked((prev) => {
     const next = new Set(prev ?? money.map((a) => a.account_code));
@@ -80,15 +87,17 @@ export const ReceiptsPaymentsTab = () => {
           by debtor / creditor
         </label>
         <LevelButtons depth={treeDepth} level={level} onLevel={setLevel} />
+        <ByMonthButton on={monthly} onToggle={() => setMonthly((v) => !v)} />
         {canArrange && (
           <Button variant="ghost" size="sm" onClick={() => setEditing((e) => !e)} aria-pressed={editing}>Layout</Button>
         )}
         <span style={{ flex: 1 }} />
-        <Button variant="ghost" size="sm" onClick={() => { if (r) void generateRpPdf(r); }} disabled={!r}>
+        <Button variant="ghost" size="sm" onClick={() => { if (r) void generateRpPdf(r); }} disabled={!r || monthly}>
           <Printer size={16} strokeWidth={1.75} /> Print
         </Button>
       </div>
       {editing && <ReportLayoutEditor report="rp" onClose={() => setEditing(false)} />}
+      {monthly && <MonthlyReport<RpReport> report="receipts-payments" title="Receipts & Payments (total of the ticked accounts)" withCumulative fetchColumn={fetchColumn} linesOf={rpLines} fmt={fmtRp} pctTitle="% of the side's total" keyParts={[codes.join(','), byParty ? 'party' : 'accounts']} />}
       {money.length > 0 && (
         <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
           {money.map((a) => (
@@ -100,10 +109,10 @@ export const ReceiptsPaymentsTab = () => {
         </div>
       )}
 
-      {q.isLoading && <div style={soft}>Working the period out…</div>}
-      {q.isError && <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-danger, #a33)' }}>The report did not load — adjust the dates to retry.</div>}
-      {r && r.columns.length === 0 && <div style={soft}>No money account is ticked — tick at least one bank or cash account.</div>}
-      {r && r.columns.length > 0 && (
+      {!monthly && q.isLoading && <div style={soft}>Working the period out…</div>}
+      {!monthly && q.isError && <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-danger, #a33)' }}>The report did not load — adjust the dates to retry.</div>}
+      {!monthly && r && r.columns.length === 0 && <div style={soft}>No money account is ticked — tick at least one bank or cash account.</div>}
+      {!monthly && r && r.columns.length > 0 && (
         <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
             <thead>
