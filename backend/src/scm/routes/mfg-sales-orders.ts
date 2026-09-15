@@ -289,6 +289,15 @@ import { deferAllocationRecompute, scheduleStockAllocationAfterCommand } from '.
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { skuCategoryResolver } from '../lib/sku-category';
 import { fmtSen } from '../shared/format';
+import { checkCrossCategorySource, crossCatReasonText } from '../lib/cross-category-source';
+import { mimeFromKey } from '../lib/r2';
+import { registerMineRoutes } from './mfg-sales-orders/mine';
+import { registerSlipRoutes } from './mfg-sales-orders/slip';
+import { registerCrossCategoryRoutes } from './mfg-sales-orders/cross-category';
+import { registerCustomerCreditRoutes } from './mfg-sales-orders/customer-credit';
+import { registerHistoryRoutes } from './mfg-sales-orders/history';
+import { registerPaymentsListRoutes } from './mfg-sales-orders/payments-list';
+import { registerDebtorSearchRoutes } from './mfg-sales-orders/debtor-search';
 
 export const mfgSalesOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
 mfgSalesOrders.use('*', supabaseAuth);
@@ -1494,402 +1503,14 @@ mfgSalesOrders.get('/customers', async (c) => {
   return c.json({ customers });
 });
 
-/* Salesperson MTD scoreboard — feeds the mobile Profile v7 tiles
-   (Orders MTD / Sales MTD). Self-scoped the same way as '/mine':
-   salesperson_id === auth user id, on the caller's RLS-scoped client, so a
-   caller only ever sees their OWN orders. Counts orders created within the
-   current Malaysia-calendar month, excluding CANCELLED / DRAFT (not real
-   sales). Registered BEFORE '/:docNo' so 'my-mtd' is never a doc-no param. */
-mfgSalesOrders.get('/my-mtd', async (c) => {
-  const sb = c.get('supabase');
-  /* Self = the caller's REAL scm.staff uuid (mig 0066), NOT user.id — the
-     bridge pins user.id to the shared system staff row, so matching on it
-     returned the SAME (system-attributed) orders for every caller instead
-     of the person's own. No sync row → zero stats, not someone else's. */
-  const myStaffId = await resolveCallerStaffId(sb, c.get('houzsUser')?.id);
-  if (!myStaffId) return c.json({ mtd_orders: 0, mtd_sales_sen: 0 });
-  // Current month in Malaysia time → UTC [start, end) bounds for created_at.
-  const ymd = todayMyt();
-  const { startUtc, endUtc } = monthBoundsMy(Number(ymd.slice(0, 4)), Number(ymd.slice(5, 7)) - 1);
-  // A single salesperson's monthly orders never approach the 1000-row cap.
-  // Company-scoped too (owner 2026-08-10 audit): a rep granted to BOTH
-  // companies otherwise sees one pooled MTD figure instead of this company's.
-  const { data, error } = await scopeToCompany(
-    sb
-      .from('mfg_sales_orders')
-      .select('local_total_sen, total_revenue_sen')
-      .eq('salesperson_id', myStaffId)
-      .not('status', 'in', '("CANCELLED","DRAFT")')
-      .gte('created_at', startUtc)
-      .lt('created_at', endUtc),
-    c,
-  ).limit(1000);
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const rows = (data ?? []) as Array<{ local_total_sen: number | null; total_revenue_sen: number | null }>;
-  const mtd_sales_sen = rows.reduce(
-    (sum, r) => sum + Number(r.local_total_sen ?? r.total_revenue_sen ?? 0),
-    0,
-  );
-  return c.json({ mtd_orders: rows.length, mtd_sales_sen });
-});
+/* GET /my-mtd, GET /mine — mfg-sales-orders/mine.ts */
+registerMineRoutes(mfgSalesOrders);
 
-/* POS "My orders" board — the salesperson's OWN Sales Orders, lightweight
-   columns for the 3-status board (Order Placed / Proceed / Delivered).
-   Filtered by salesperson_id = caller (staff.id === auth.users.id, schema.ts
-   line 162; the POS handover writes the placing salesperson's id into
-   salesperson_id) so a POS tablet sees only its own orders WITHOUT relying on
-   an RLS SELECT policy. Excludes CANCELLED / ON_HOLD (mirrors the legacy
-   board's cancelled exclusion). Registered BEFORE '/:docNo' so 'mine' is never
-   captured as a doc-no param. */
-mfgSalesOrders.get('/mine', async (c) => {
-  const sb = c.get('supabase'); const user = c.get('user');
-  /* Read the BASE table (NOT the mfg_sales_orders_with_payment_totals view): a
-     Postgres view fixes its column list at creation, so any column newer than
-     the last recreation is missing and selecting one 500s at runtime. Paid is
-     summed from the payments ledger separately below. */
-  /* Board filters (POS My-orders toolbar):
-       ?q=   free-text → searches doc_no / debtor_name / phone across ALL dates
-             (the period is intentionally ignored — search is a global lookup).
-       ?from=&to=  YYYY-MM-DD (MY-local, `to` inclusive) → filter created_at
-             (order-placed date) to that period. Only applied when there's no q.
-     The default (no params) returns everything; the POS always passes the
-     current-month window, so the board mirrors the KPI cards. */
-  const q = (c.req.query('q') ?? '').trim();
-  const fromYmd = c.req.query('from') ?? null;
-  const toYmd = c.req.query('to') ?? null;
-  const LIMIT = 300;
+/* GET /:docNo/slip-url — mfg-sales-orders/slip.ts */
+registerSlipRoutes(mfgSalesOrders);
 
-  /* ?salesperson=<id|all> — only view-all roles (super_admin / sales_director /
-     outlet_manager) may view OTHER salespeople. We verify the caller's role with a service-role
-     lookup; if they qualify we run the whole board on the service-role client
-     (so RLS can't clip another salesperson's rows/items/payments). Everyone
-     else: the param is ignored and they stay self-scoped on their own client. */
-  const wantSalesperson = c.req.query('salesperson') ?? null;
-  /* Self = the caller's REAL scm.staff uuid (mig 0066) — never user.id, the
-     bridge's pinned system row shared by every caller (see /my-mtd note). The
-     old `?? user.id` handed an unresolved caller every order ever mis-stamped
-     with that pin, i.e. other people's orders on a board called "mine". */
-  let targetSalespersonId: string | null = await resolveOwnerStaffId(sb, c.get('houzsUser')?.id, user.id);
-  /* `null` below means NO salesperson filter (see the .eq guard), i.e. EVERY
-     order — so "unresolved" and "deliberately unscoped" must never be the same
-     value. Only a view-all caller asking for ?salesperson=all earns the second. */
-  let viewingAll = false;
-  if (wantSalesperson) {
-    // Same view-all tier as the rest of this file (:772, :1161, :1877):
-    // `scm.so.view_all` OR a director position, via canViewAllSales.
-    // No client swap here: `sb` IS the service-role client already
-    // (getSupabaseService), pointed at db.schema 'scm'. The ported 2990 branch
-    // built a raw createClient() for RLS bypass — which defaults to the PUBLIC
-    // schema, where mfg_sales_orders has no company_id, so the first caller to
-    // ever pass this gate got a 500 instead of a board.
-    if (canViewAllSales(c)) {
-      viewingAll = wantSalesperson === 'all';
-      targetSalespersonId = viewingAll ? null : wantSalesperson;
-    }
-  }
-  /* Unidentified caller, self-scoped → an EMPTY board, matching /my-mtd's zeroes
-     directly above. Falling through would drop the filter and show them the
-     whole book. */
-  if (!targetSalespersonId && !viewingAll) return c.json({ salesOrders: [] });
-
-  let query = scopeToCompany(
-    sb
-      .from('mfg_sales_orders')
-      .select(
-        'doc_no, debtor_name, phone, email, address1, address2, city, postcode, customer_state, ' +
-        'customer_delivery_date, processing_date, status, payment_method, approval_code, note, so_date, created_at, ' +
-        'total_revenue_sen, line_count, deposit_sen',
-      )
-      /* `on_hold` since mig 0324 — the status arm below can no longer see a
-         hold, because a held order keeps the status it was on. */
-      .eq('on_hold', false)
-      .not('status', 'in', '("CANCELLED","ON_HOLD")'), // DRAFT shown on purpose — pairs with /pos/sales-stats; BUG-HISTORY 2026-08-17
-    c,
-  );
-  /* Company scope is NOT optional here (owner 2026-08-10 cross-company audit).
-     `sb` is the SERVICE-ROLE client, and the view_all branch above clears
-     targetSalespersonId, so without this wrap the query degrades to "every
-     non-cancelled SO in the database" — both companies, RLS bypassed, with
-     customer PII and total_revenue_sen. */
-  if (targetSalespersonId) query = query.eq('salesperson_id', targetSalespersonId);
-
-  if (q) {
-    const safe = escapeForOr(q);
-    if (safe) {
-      query = query.or(
-        `doc_no.ilike.%${safe}%,debtor_name.ilike.%${safe}%,phone.ilike.%${safe}%`,
-      );
-    }
-  } else {
-    const { startUtc, endUtc } = rangeBoundsMy(fromYmd, toYmd);
-    if (startUtc) query = query.gte('created_at', startUtc);
-    if (endUtc) query = query.lt('created_at', endUtc);
-  }
-
-  const { data, error } = await query
-    .order('created_at', { ascending: false })
-    .limit(LIMIT);
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  if ((data?.length ?? 0) >= LIMIT) {
-    console.log(`[/mine] ${LIMIT}-row cap hit caller=${user.id} target=${targetSalespersonId ?? 'all'} q=${q ? 'yes' : 'no'} from=${fromYmd ?? '-'} to=${toYmd ?? '-'}`);
-  }
-
-  // Cast via `unknown` first — supabase-js types a view select as
-  // GenericStringError[] until the schema cache materialises (same pattern as
-  // the list route's joined-select casts above).
-  const rows = (data ?? []) as unknown as Array<{ doc_no?: string; deposit_sen?: number } & Record<string, unknown>>;
-
-  /* Attach the line items so the drawer can render the cart without a second
-     fetch. Group non-cancelled lines by doc_no → each item the board needs:
-     { item_code, description, qty, total_sen, variants }. */
-  const docNos = rows.map((r) => r.doc_no).filter((x): x is string => !!x);
-  /* TBC fill-in (Loo 2026-06-11) — the editor needs the line id (mutation
-     target), item_group (which picker set to render) and unit/discount (the
-     floor-rule preview), so they ride the same fetch. */
-  const itemsByDoc = new Map<string, Array<{ id: string; item_code: string; item_group: string | null; description: string | null; qty: number; unit_price_sen: number; discount_sen: number; total_sen: number; variants: unknown; remark: string | null }>>();
-  if (docNos.length > 0) {
-    /* chunkIn — `docNos` is this board's whole page (LIMIT 300) and the read had neither batching nor paging, so past the 1000-row cap a later order's drawer rendered empty. */
-    const { data: itemRows } = await chunkIn<{ id: string; doc_no: string; item_code: string; item_group: string | null; description: string | null; qty: number; unit_price_sen: number; discount_sen: number; total_sen: number; variants: unknown; remark: string | null }>(docNos, (batch, from, to) => sb
-      .from('mfg_sales_order_items')
-      .select('id, doc_no, item_code, item_group, description, qty, unit_price_sen, discount_sen, total_sen, variants, remark')
-      .in('doc_no', batch).eq('cancelled', false)
-      .order('doc_no').order('line_no', { ascending: true, nullsFirst: false })
-      .order('created_at', { ascending: true }).range(from, to));
-    for (const it of itemRows) {
-      const arr = itemsByDoc.get(it.doc_no) ?? [];
-      arr.push({ id: it.id, item_code: it.item_code, item_group: it.item_group ?? null, description: it.description, qty: it.qty, unit_price_sen: it.unit_price_sen, discount_sen: it.discount_sen, total_sen: it.total_sen, variants: it.variants, remark: it.remark ?? null });
-      itemsByDoc.set(it.doc_no, arr);
-    }
-  }
-
-  /* Live paid = the payments ledger, PLUS the header deposit ONLY for legacy
-     SOs whose deposit never reached the ledger. Since P2 (D5, migration 0155)
-     the SO create path writes the deposit as an is_deposit ledger row (and
-     0155 backfilled history), so adding the header column on top would double
-     count — the is_deposit marker tells the two worlds apart. The header
-     `paid_sen` is deprecated; not read. One batched ledger query. */
-  const paidLedgerByDoc = new Map<string, number>();
-  const depositInLedger = new Set<string>();
-  if (docNos.length > 0) {
-    const { data: payRows } = await chunkIn<{ so_doc_no: string; amount_sen: number; is_deposit?: boolean | null }>(docNos, (batch, from, to) => sb
-      .from('mfg_sales_order_payments')
-      .select('so_doc_no, amount_sen, is_deposit')
-      .in('so_doc_no', batch).order('so_doc_no').range(from, to));
-    for (const p of payRows) {
-      paidLedgerByDoc.set(p.so_doc_no, (paidLedgerByDoc.get(p.so_doc_no) ?? 0) + (p.amount_sen ?? 0));
-      if (p.is_deposit) depositInLedger.add(p.so_doc_no);
-    }
-  }
-
-  const salesOrders = rows.map((r) => {
-    const docNo = r.doc_no ?? '';
-    const deposit = typeof r.deposit_sen === 'number' ? r.deposit_sen : 0;
-    const ledger = paidLedgerByDoc.get(docNo) ?? 0;
-    const soItems = itemsByDoc.get(docNo) ?? [];
-    return {
-      ...r,
-      // Total received = ledger payments (+ header deposit only when the
-      // ledger doesn't already carry it as an is_deposit row).
-      paid_sen_total: (depositInLedger.has(docNo) ? 0 : deposit) + ledger,
-      items: soItems,
-    };
-  });
-
-  return c.json({ salesOrders });
-});
-
-/* P1 (Owner 2026-06-03, migration 0143) — serve an SO's payment slip so the
-   Backend SO detail page can display the proof. (Mirrored the legacy
-   /orders/:id/slip-url route, removed 2026-06-12.) Auth is router-level (same
-   as the SO detail GET); RLS governs which SOs the caller can read.
-
-   2026-07-04 — converted from returning a presigned S3 GET URL (JSON {url})
-   to STREAMING the object through the SLIPS binding, part of killing the
-   never-provisioned R2 S3 creds (see routes/slips.ts header). The frontend
-   (vendor/scm/lib/slip.ts fetchSoSlipUrl / fetchPaymentSlipUrl) blob-fetches
-   this and hands consumers an object URL, keeping their {url, contentType}
-   contract intact. */
-function mimeFromKey(key: string): SlipMime {
-  const ext = key.split('.').pop()?.toLowerCase();
-  switch (ext) {
-    case 'jpg': case 'jpeg': return 'image/jpeg';
-    case 'png': return 'image/png';
-    case 'webp': return 'image/webp';
-    case 'pdf': return 'application/pdf';
-    default: throw new Error(`unknown slip extension: ${key}`);
-  }
-}
-
-mfgSalesOrders.get('/:docNo/slip-url', async (c) => {
-  const sb = c.get('supabase');
-  const docNo = c.req.param('docNo');
-  /* This route does not return a row, it streams the R2 OBJECT the row points
-     at — so an unscoped lookup hands over the other company's payment slip
-     itself, not a field of it. */
-  const { data: row, error } = await scopeToCompany(sb
-    .from('mfg_sales_orders')
-    .select('slip_key')
-    .eq('doc_no', docNo), c)
-    .maybeSingle();
-  if (error) return c.json({ error: 'db_fetch_failed', detail: error.message }, 500);
-  if (!row) return c.json({ error: 'not_found' }, 404);
-  const slipKey = (row as { slip_key?: string | null }).slip_key ?? null;
-  if (!slipKey) return c.json({ error: 'no_slip_attached' }, 400);
-
-  let bindings;
-  try { bindings = slipBindings(c.env); }
-  catch (e) { return c.json({ error: 'r2_not_configured', reason: (e as Error).message }, 500); }
-  const obj = await bindings.bucket.get(slipKey);
-  if (!obj) return c.json({ error: 'file_not_in_r2' }, 404);
-  return new Response(obj.body as unknown as BodyInit, {
-    headers: {
-      'content-type': obj.httpMetadata?.contentType ?? mimeFromKey(slipKey),
-      'content-disposition': 'inline',
-      'cache-control': 'private, max-age=300',
-    },
-  });
-});
-
-/* Cross-category delivery link (migration 0141) — shared eligibility check used
-   by BOTH the live handover preview (GET /cross-category-eligibility) and the
-   order POST, so the fee shown equals the fee charged. A non-empty SO number is
-   eligible only when it exists, isn't cancelled, belongs to the same customer
-   (by normalized phone, when both have one), and hasn't already backed another
-   follow-up (the unique index is the hard backstop). */
-type CrossCatEligibility = {
-  eligible: boolean;
-  reason?: 'not_found' | 'cancelled' | 'different_customer' | 'already_used' | 'lookup_failed';
-  debtorName?: string | null;
-};
-
-async function checkCrossCategorySource(
-  c: any,
-  sb: any,
-  docNo: string,
-  newPhoneRaw: string | null,
-  newCustomerId: string | null = null,
-): Promise<CrossCatEligibility> {
-  /* Both reads below are keyed on a caller-supplied doc_no. Unscoped, the
-     eligibility probe answered for the OTHER company's order and handed back
-     its debtor_name — a customer identity, from a GET that needs only a doc
-     number. `c` is threaded in for exactly this. */
-  const { data: srcRow, error: srcErr } = await scopeToCompany(sb
-    .from('mfg_sales_orders')
-    .select('doc_no, status, phone, debtor_name, customer_id')
-    .eq('doc_no', docNo), c)
-    .maybeSingle();
-  /* Loo 2026-06-06 (SO-2606-025 incident) — a FAILED query is not a missing
-     order. This used to swallow the error and report "Order was not found"
-     for a real SO when the CF Workers free-plan subrequest cap killed this
-     exact fetch (#51 of 50). Surface it as retryable instead. */
-  if (srcErr) {
-    console.error('[mfg-so] cross-category source lookup failed:', srcErr.message ?? srcErr);
-    return { eligible: false, reason: 'lookup_failed' };
-  }
-  const src = srcRow as { doc_no: string; status: string; phone: string | null; debtor_name: string | null; customer_id: string | null } | null;
-  if (!src) return { eligible: false, reason: 'not_found' };
-  if (src.status === 'CANCELLED') return { eligible: false, reason: 'cancelled' };
-  /* "Same customer" — prefer the real customer_id link (exact) now that every
-     new SO resolves one (migration 0144). Fall back to normalised phone only
-     when the SOURCE is a legacy row with no customer_id; the NEW order always
-     carries both a compulsory phone and a resolved customer_id. */
-  if (src.customer_id && newCustomerId) {
-    if (src.customer_id !== newCustomerId) return { eligible: false, reason: 'different_customer' };
-  } else {
-    const newPhone = newPhoneRaw ? (normalizePhone(newPhoneRaw) ?? newPhoneRaw) : null;
-    const srcPhone = src.phone ? (normalizePhone(src.phone) ?? src.phone) : null;
-    if (newPhone && srcPhone && newPhone !== srcPhone) return { eligible: false, reason: 'different_customer' };
-  }
-  const { count, error: countErr } = await scopeToCompany(sb
-    .from('mfg_sales_orders')
-    .select('doc_no', { count: 'exact', head: true })
-    .eq('cross_category_source_doc_no', docNo), c);
-  // Same honesty rule as above — a failed count must not silently pass the
-  // already-used gate (fail-open) nor masquerade as another reason.
-  if (countErr) {
-    console.error('[mfg-so] cross-category already-used count failed:', countErr.message ?? countErr);
-    return { eligible: false, reason: 'lookup_failed' };
-  }
-  if ((count ?? 0) > 0) return { eligible: false, reason: 'already_used' };
-  return { eligible: true, debtorName: src.debtor_name ?? null };
-}
-
-const crossCatReasonText = (docNo: string, reason?: string): string =>
-  reason === 'not_found'         ? `Order ${docNo} was not found.`
-  : reason === 'cancelled'         ? `Order ${docNo} is cancelled.`
-  : reason === 'different_customer'? `Order ${docNo} belongs to a different customer.`
-  : reason === 'already_used'      ? `Order ${docNo} was already used for a cross-category discount.`
-  : reason === 'lookup_failed'     ? `Could not verify order ${docNo} — please try again.`
-  :                                  `Order ${docNo} is not a valid linked order.`;
-
-// GET /cross-category-eligibility?docNo&phone — live check for the handover
-// preview so the cross-category delivery discount only applies for a real,
-// eligible SO (sales can no longer "type anything" and get the reduced rate).
-// Static path is registered before /:docNo so it isn't captured as a docNo.
-mfgSalesOrders.get('/cross-category-eligibility', async (c) => {
-  const sb = c.get('supabase');
-  const docNo = (c.req.query('docNo') ?? '').trim();
-  const phone = (c.req.query('phone') ?? '').trim();
-  if (!docNo) return c.json({ eligible: false });
-  const result = await checkCrossCategorySource(c, sb, docNo, phone || null);
-  return c.json({
-    eligible:  result.eligible,
-    debtorName: result.debtorName ?? null,
-    message:   result.eligible ? null : crossCatReasonText(docNo, result.reason),
-  });
-});
-
-// GET /cross-category-match?name&phone — the Confirm-screen "Auto-match" button.
-// Scans THIS customer's earlier sales orders and returns the most recent one
-// that can still back a cross-category follow-up, so sales don't have to recall
-// the SO number. "Same customer" = the (name, phone) identity key (migration
-// 0144) — a shared phone with a different name is a different customer. The SO
-// must not be cancelled and must not already be linked-from by another order
-// (single-use; the unique index on cross_category_source_doc_no is the hard
-// gate, this just keeps the button from offering a burnt SO). Read-only: it
-// never mints a customer row (unlike the order POST). Registered before /:docNo
-// so the static path isn't captured as a docNo.
-mfgSalesOrders.get('/cross-category-match', async (c) => {
-  const sb = c.get('supabase');
-  const name = (c.req.query('name') ?? '').trim();
-  const phoneRaw = (c.req.query('phone') ?? '').trim();
-  const normPhone = phoneRaw ? (normalizePhone(phoneRaw) ?? phoneRaw) : null;
-  // Both halves of the identity key are required to find a customer's orders.
-  if (!name || !normPhone) return c.json({ found: false });
-
-  // Candidate earlier SOs for this phone, newest first. Name is matched in the
-  // pure helper with the same lower(trim) rule as the customers unique index.
-  const { data: rows } = await scopeToCompany(
-    sb
-      .from('mfg_sales_orders')
-      .select('doc_no, debtor_name, created_at')
-      .eq('phone', normPhone)
-      .not('status', 'in', '("CANCELLED","DRAFT")'),
-    c,
-  )
-    .order('created_at', { ascending: false })
-    .limit(50);
-  const candidates: AutoMatchCandidate[] = ((rows ?? []) as Array<{ doc_no: string; debtor_name: string | null }>)
-    .map((r) => ({ docNo: r.doc_no, debtorName: r.debtor_name }));
-  if (candidates.length === 0) return c.json({ found: false });
-
-  // Which of those candidate SOs are already linked-from by another order.
-  const { data: usedRows } = await scopeToCompany(
-    sb
-      .from('mfg_sales_orders')
-      .select('cross_category_source_doc_no')
-      .in('cross_category_source_doc_no', candidates.map((c2) => c2.docNo)),
-    c,
-  );
-  const used = ((usedRows ?? []) as Array<{ cross_category_source_doc_no: string | null }>)
-    .map((r) => r.cross_category_source_doc_no)
-    .filter((v): v is string => !!v);
-
-  const match = pickCrossCategoryMatch(candidates, name, used);
-  return match
-    ? c.json({ found: true, docNo: match.docNo, debtorName: match.debtorName })
-    : c.json({ found: false });
-});
+/* GET /cross-category-eligibility, GET /cross-category-match — mfg-sales-orders/cross-category.ts */
+registerCrossCategoryRoutes(mfgSalesOrders);
 
 /* GET /customer-search?name= — POS customer-name autocomplete (Loo
    2026-06-06: "when key in customer name, search the customer list, give
@@ -2478,15 +2099,8 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
   return c.json({ items });
 });
 
-/* Customer credit balance lookup — used by the New Sales Order form to flash
-   "Customer has RM X credit available" once the operator picks the customer.
-   Returns 0 (not 404) when there's no history yet. */
-mfgSalesOrders.get('/customer-credit/:debtorCode', async (c) => {
-  const sb = c.get('supabase');
-  const debtorCode = c.req.param('debtorCode');
-  const balance = await getCustomerCreditBalance(sb, debtorCode, activeCompanyId(c) ?? null);
-  return c.json({ debtorCode, balanceSen: balance });
-});
+/* GET /customer-credit/:debtorCode — mfg-sales-orders/customer-credit.ts */
+registerCustomerCreditRoutes(mfgSalesOrders);
 
 /* Loo 2026-06-05 — 409 gate for the maintained SO dropdown header fields.
    customer_type / building_type / emergency_contact_relationship must hold a
@@ -5639,68 +5253,8 @@ mfgSalesOrders.delete('/:docNo', async (c) => {
   return c.json({ ok: true, docNo });
 });
 
-// ── GET /mfg-sales-orders/:docNo/audit-log ──────────────────────────
-// PR-D — unified history feed (newest first). Returns one envelope:
-//   { entries: [{ id, so_doc_no, action, actor_id, actor_name_snapshot,
-//                  field_changes, status_snapshot, source, note, created_at }] }
-mfgSalesOrders.get('/:docNo/audit-log', async (c) => {
-  const sb = c.get('supabase'); const docNo = c.req.param('docNo');
-  /* so_doc_no is the ONLY key here and doc numbers are unique per company by
-     PREFIX, not by constraint — so a 2990 number pasted into the Houzs URL used
-     to return 2990's history. Same predicate the /:docNo/revisions read below
-     already carries; mfg_so_audit_log took company_id in mig 0083. */
-  const { data, error } = await scopeToCompany(sb.from('mfg_so_audit_log')
-    .select('id, so_doc_no, action, actor_id, actor_name_snapshot, field_changes, status_snapshot, source, note, created_at')
-    .eq('so_doc_no', docNo), c)
-    .order('created_at', { ascending: false });
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  /* The audit HISTORY is a finance read too — this route's own line PATCH does
-     `cmp('unitCostSen', prev.unit_cost_sen, unitCost)`, so field_changes
-     carries the old AND new unit cost. gateSoFinance strips the DETAIL, so
-     leaving this open just moves the leak one endpoint over. Shared vocabulary
-     (lib/finance-keys) — the consignment audit-log reads this SAME table. */
-  const entries = (data ?? []) as Array<Record<string, unknown>>;
-  if (!canViewScmFinance(c)) stripAuditFinance(entries);
-  return c.json({ entries });
-});
-
-// GET — list status change history for the SO detail timeline.
-mfgSalesOrders.get('/:docNo/status-changes', async (c) => {
-  const sb = c.get('supabase'); const docNo = c.req.param('docNo');
-  const { data, error } = await scopeToCompany(sb.from('mfg_so_status_changes')
-    .select('id, doc_no, from_status, to_status, changed_by, notes, auto_actions, created_at')
-    .eq('doc_no', docNo), c)
-    .order('created_at', { ascending: false });
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ statusChanges: data ?? [] });
-});
-
-// GET — list SO revision snapshots for the Detail "Revisions" tab (Phase 6b).
-// Each row is a full header+lines snapshot captured when an amendment's approve-so
-// gate re-derived the SO (so_revisions, keyed on so_doc_no + revision). Newest
-// first so the tab lists the latest revision on top. Mirrors the audit-log read
-// above: supabase select, plain load_failed on error. scopeToCompany: so_revisions
-// carries company_id (mig 0080); no-op pre-activation.
-mfgSalesOrders.get('/:docNo/revisions', async (c) => {
-  const sb = c.get('supabase'); const docNo = c.req.param('docNo');
-  const { data, error } = await scopeToCompany(sb.from('so_revisions')
-    .select('id, revision, snapshot, created_at, created_by')
-    .eq('so_doc_no', docNo), c)
-    .order('revision', { ascending: false });
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ revisions: data ?? [] });
-});
-
-// GET — list line price overrides for the audit panel.
-mfgSalesOrders.get('/:docNo/price-overrides', async (c) => {
-  const sb = c.get('supabase'); const docNo = c.req.param('docNo');
-  const { data, error } = await scopeToCompany(sb.from('mfg_so_price_overrides')
-    .select('id, doc_no, item_id, item_code, original_price_sen, override_price_sen, reason, approved_by, created_at')
-    .eq('doc_no', docNo), c)
-    .order('created_at', { ascending: false });
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ overrides: data ?? [] });
-});
+/* GET /:docNo/audit-log, /status-changes, /revisions, /price-overrides — mfg-sales-orders/history.ts */
+registerHistoryRoutes(mfgSalesOrders);
 
 // POST — override the price on a single line item. Captures the original
 // in the audit row so we never lose the history.
@@ -10194,31 +9748,8 @@ mfgSalesOrders.delete('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
   return c.json({ ok: true });
 });
 
-// ── Payments — PR #163 (migration 0073) ───────────────────────────────
-//
-// HOOKKA-style transaction ledger per SO. Each row is one receipt /
-// auth slip. UI lists them, sums into a "Deposit Paid" total, and the
-// balance computes from header.local_total_sen − sum(amount_sen).
-//
-// Legacy single-row payment fields on mfg_sales_orders (payment_method,
-mfgSalesOrders.get('/:docNo/payments', async (c) => {
-  const sb = c.get('supabase'); const docNo = c.req.param('docNo');
-  const { data, error } = await scopeToCompany(sb
-    .from('mfg_sales_order_payments')
-    .select(`${PAYMENT_COLS}, staff:collected_by ( name )`)
-    .eq('so_doc_no', docNo), c)
-    .order('paid_at', { ascending: false })
-    .order('created_at', { ascending: false });
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  // Flatten the joined `staff.name` onto `collected_by_name` so the UI
-  // doesn't need to drill into a nested object.
-  const payments = (data ?? []).map((r: unknown) => {
-    const row = r as Record<string, unknown> & { staff: { name: string } | null };
-    const { staff, ...rest } = row;
-    return { ...rest, collected_by_name: staff?.name ?? null };
-  });
-  return c.json({ payments });
-});
+/* GET /:docNo/payments — mfg-sales-orders/payments-list.ts */
+registerPaymentsListRoutes(mfgSalesOrders);
 
 /* Task #122 (cascade) — Method is a 3-step pick now. merchantProvider was
    a fixed 4-bank enum and installmentMonths was 6|12 only; both widened.
@@ -10907,26 +10438,8 @@ mfgSalesOrders.post('/:docNo/payments/:id/slip', async (c) => {
   return c.json({ payment: { ...rest, collected_by_name: staff?.name ?? null } });
 });
 
-// ── Debtor lookup — autocomplete from prior SOs ───────────────────────
-mfgSalesOrders.get('/debtors/search', async (c) => {
-  const sb = c.get('supabase'); const q = c.req.query('q') ?? '';
-  let query = scopeToCompany(sb.from('mfg_sales_orders').select('debtor_code, debtor_name, phone, address1, address2, address3, address4'), c).order('updated_at', { ascending: false }).limit(200);
-  { const s = escapeForOr(q); if (s) query = query.or(`debtor_name.ilike.%${s}%,debtor_code.ilike.%${s}%`); }
-  const { data, error } = await query;
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-
-  // Dedupe by (debtor_code || debtor_name) — keep most recent only.
-  const seen = new Set<string>();
-  const out = [];
-  for (const r of (data ?? []) as Array<Record<string, string | null>>) {
-    const key = (r.debtor_code || r.debtor_name || '').trim().toLowerCase();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push(r);
-    if (out.length >= 25) break;
-  }
-  return c.json({ debtors: out });
-});
+/* GET /debtors/search — mfg-sales-orders/debtor-search.ts */
+registerDebtorSearchRoutes(mfgSalesOrders);
 
 /* ════════════════════════════════════════════════════════════════════════
    PATCH /:docNo/items/:itemId/stock-status
