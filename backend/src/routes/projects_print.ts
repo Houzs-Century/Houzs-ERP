@@ -256,12 +256,6 @@ function fmtMoney(n: number | null | undefined): string {
   })}`;
 }
 
-// Whole ringgit — the headline strip drops the sen so the four numbers stay on
-// one line each at 12pt.
-function fmtMoney0(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n)) return "—";
-  return `RM ${Math.round(n).toLocaleString("en-MY")}`;
-}
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -429,7 +423,7 @@ app.get("/:id", async (c) => {
     rentalTotal > 0 && p.size_sqm > 0 && p.duration_days > 0
       ? rentalTotal / (p.size_sqm * p.duration_days)
       : null;
-  const rentalNote = rentalRate != null ? `RM ${Math.round(rentalRate)}/m²/day` : null;
+  const rentalNote = rentalRate != null ? `${fmtMoney(rentalRate)}/m²/day` : null;
 
   // Defect counts
   const setupDefects = defects.filter((d) => d.phase === "setup");
@@ -961,9 +955,9 @@ app.get("/:id", async (c) => {
           <h2><span class="sn">${secNo()}.</span> Finance Snapshot</h2>
           <div class="rule"></div>
           <div class="kpi">
-            <div class="kc"><div class="k">Total Sales</div><div class="v">${fmtMoney0(salesTotal)}</div></div>
-            <div class="kc"><div class="k">Gross Profit</div><div class="v${grossProfit < 0 ? " neg" : ""}">${fmtMoney0(grossProfit)}</div></div>
-            <div class="kc"><div class="k">Net Profit</div><div class="v${netProfit < 0 ? " neg" : ""}">${fmtMoney0(netProfit)}</div></div>
+            <div class="kc"><div class="k">Total Sales</div><div class="v">${fmtMoney(salesTotal)}</div></div>
+            <div class="kc"><div class="k">Gross Profit</div><div class="v${grossProfit < 0 ? " neg" : ""}">${fmtMoney(grossProfit)}</div></div>
+            <div class="kc"><div class="k">Net Profit</div><div class="v${netProfit < 0 ? " neg" : ""}">${fmtMoney(netProfit)}</div></div>
             <div class="kc"><div class="k">Margin</div><div class="v${margin != null && margin < 0 ? " neg" : ""}">${margin != null ? margin.toFixed(1) + "%" : "—"}</div></div>
           </div>
           <table class="fin">

@@ -34,6 +34,7 @@ import { resolveRoles, settlementLines, settlementReceiptLines, statementChargeL
 import { formaliseReceiptsForSettlement } from './receipts';
 import { companyCodeById } from '../scm/lib/doc-no';
 import type { PaymentCandidate } from './settlement-match';
+import { fmtSen } from '../scm/shared/format';
 
 export type AcquirerRow = {
   company_id: number;
@@ -615,7 +616,7 @@ export async function postStatementCharge(
     entryDate: isoDay(batch.period_to) || isoDay(new Date().toISOString()),
     sourceType: 'SETTLEADJ',
     sourceDocNo: `SETTLEADJ-${batchId}`,
-    narration: `${batch.acquirer_code} statement charge with no transaction behind it — ${(Math.abs(adjustment) / 100).toFixed(2)}`,
+    narration: `${batch.acquirer_code} statement charge with no transaction behind it — ${fmtSen(Math.abs(adjustment))}`,
     lines: statementChargeLines(
       { transitAccountCode: acq.acquirer.transit_account_code, feeAccountCode: acq.acquirer.fee_account_code },
       { acquirerCode: batch.acquirer_code, statementDate: isoDay(batch.period_to), adjustmentSen: adjustment },
@@ -789,11 +790,10 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
      layer exists to catch, so it is named and refused, never absorbed. */
   const chosenTotal = chosen.reduce((s, p) => s + Number(p.amountSen || 0), 0);
   if (chosenTotal !== Number(row.gross_sen)) {
-    const diff = (chosenTotal - Number(row.gross_sen)) / 100;
     return {
       ok: false,
       status: 'amount_mismatch',
-      reason: `The selected payments add up to ${(chosenTotal / 100).toFixed(2)}, but the statement line is ${(Number(row.gross_sen) / 100).toFixed(2)} — a difference of ${diff.toFixed(2)}. Fix the selection, or correct the payment record; do not clear a difference you cannot explain.`,
+      reason: `The selected payments add up to ${fmtSen(chosenTotal)}, but the statement line is ${fmtSen(Number(row.gross_sen))} — a difference of ${fmtSen(chosenTotal - Number(row.gross_sen))}. Fix the selection, or correct the payment record; do not clear a difference you cannot explain.`,
     };
   }
 
@@ -1137,7 +1137,7 @@ export async function postBatchReceipt(
     return {
       ok: false,
       status: 'fully_received',
-      reason: `This statement is already fully received — ${(payableSen / 100).toFixed(2)} across ${already.receipts.length} credit(s). If the bank shows more, it belongs to another statement.`,
+      reason: `This statement is already fully received — ${fmtSen(payableSen)} across ${already.receipts.length} credit(s). If the bank shows more, it belongs to another statement.`,
     };
   }
 
@@ -1154,7 +1154,7 @@ export async function postBatchReceipt(
     return {
       ok: false,
       status: 'over_receipt',
-      reason: `${batch.acquirer_code} still owes ${(outstanding / 100).toFixed(2)} on this statement, and this credit is ${(amountSen / 100).toFixed(2)}. Record only what this statement paid — the rest belongs to another one.`,
+      reason: `${batch.acquirer_code} still owes ${fmtSen(outstanding)} on this statement, and this credit is ${fmtSen(amountSen)}. Record only what this statement paid — the rest belongs to another one.`,
     };
   }
 
@@ -1202,7 +1202,7 @@ export async function postBatchReceipt(
     entryDate: receivedOn,
     sourceType: 'SETTLEBANK',
     sourceDocNo: `SETTLEBANK-${batchId}-${receiptId}`,
-    narration: `${batch.acquirer_code} payout received ${receivedOn} — ${(Math.abs(amountSen) / 100).toFixed(2)}`,
+    narration: `${batch.acquirer_code} payout received ${receivedOn} — ${fmtSen(Math.abs(amountSen))}`,
     lines: settlementReceiptLines(
       { bankAccountCode: bankAccount, transitAccountCode: acq.acquirer.transit_account_code },
       { acquirerCode: batch.acquirer_code, receivedOn, amountSen },

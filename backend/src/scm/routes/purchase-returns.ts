@@ -45,14 +45,20 @@ import {
 } from '../lib/check-stock-availability';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { recordEntityAudit } from '../lib/entity-audit';
+import {
+  PR_HEADER_COLS,
+  PR_LIST_SELECT,
+  attachPurchaseReturnLines,
+  filterPurchaseReturnList,
+  orderPurchaseReturnList,
+  readPurchaseReturnListFilters,
+  type PrLineHeader,
+} from '../lib/purchase-return-list-read';
 
 export const purchaseReturns = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseReturns.use('*', supabaseAuth);
 
-const HEADER =
-  'id, return_number, purchase_order_id, grn_id, supplier_id, return_date, ' +
-  'reason, status, posted_at, completed_at, credit_note_ref, refund_sen, ' +
-  'notes, created_at, created_by, updated_at';
+const HEADER = PR_HEADER_COLS;
 const ITEM =
   'id, purchase_return_id, grn_item_id, material_kind, item_code, ' +
   'material_name, qty_returned, unit_price_sen, line_refund_sen, reason, notes, ' +
@@ -176,19 +182,21 @@ async function adjustGrnReturnedQty(sb: any, grnItemId: string, _delta?: number)
   if (poItemId) await recomputePoReceived(sb, [poItemId]);
 }
 
-purchaseReturns.get('/', async (c) => {
+/* The screen read: the list's filter + order (lib/purchase-return-list-read.ts,
+   shared with GET /export/rows), capped at 300, each row with its `lines` for
+   the grid's line columns. */
+export async function purchaseReturnListHandler(c: Context<{ Bindings: Env; Variables: Variables }>) {
   const sb = c.get('supabase');
-  let q = sb.from('purchase_returns')
-    .select(`${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, address), purchase_order:purchase_orders(id, po_number), grn:grns(id, grn_number)`)
-    .order('return_date', { ascending: false })
-    .limit(300);
-  const status = c.req.query('status'); if (status) q = q.eq('status', status);
-  const supplierId = c.req.query('supplierId'); if (supplierId) q = q.eq('supplier_id', supplierId);
-  q = scopeToCompany(q, c); // multi-company: isolate to the active company
-  const { data, error } = await q;
+  const filters = readPurchaseReturnListFilters((k) => c.req.query(k));
+  const { data, error } = await orderPurchaseReturnList(
+    filterPurchaseReturnList(sb.from('purchase_returns').select(PR_LIST_SELECT), filters, c),
+  ).limit(300);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ purchaseReturns: data ?? [] });
-});
+  const attached = await attachPurchaseReturnLines(sb, c, (data ?? []) as unknown as PrLineHeader[]);
+  if (attached.error !== null) return c.json({ error: 'load_failed', reason: attached.error }, 500);
+  return c.json({ purchaseReturns: attached.rows });
+}
+purchaseReturns.get('/', purchaseReturnListHandler);
 
 /* The lines a PO-sourced return may draw from (2026-08-21, audit B6). The PO
    detail's "Raise Return" used to prefill the PO's OWN lines with no

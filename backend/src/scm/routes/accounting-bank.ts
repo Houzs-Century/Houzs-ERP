@@ -36,6 +36,7 @@ import {
 import { lockedRefusal, lockMonthOf } from '../../acc/bank-lock';
 import { postBatchReceipt, undoBatchReceipt } from '../../acc/settlement';
 import { withJournalRefs } from '../../acc/journal-refs';
+import { fmtSen } from '../shared/format';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -881,11 +882,10 @@ export const bankLineReceipt = guard(async (c) => {
      never to absorb. */
   const allocated = allocations.reduce((s, a) => s + a.amountSen, 0);
   if (allocated !== Number(line.amount_sen)) {
-    const diff = (allocated - Number(line.amount_sen)) / 100;
     return c.json({
       error: 'amount_mismatch',
-      message: `The shares add up to ${(allocated / 100).toFixed(2)}, but this credit is ${(Number(line.amount_sen) / 100).toFixed(2)}`
-        + ` — a difference of ${diff.toFixed(2)}. Fix the split; do not book a difference you cannot explain.`,
+      message: `The shares add up to ${fmtSen(allocated)}, but this credit is ${fmtSen(Number(line.amount_sen))}`
+        + ` — a difference of ${fmtSen(allocated - Number(line.amount_sen))}. Fix the split; do not book a difference you cannot explain.`,
     }, 400);
   }
 

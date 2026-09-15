@@ -290,6 +290,8 @@ export const SpecialAddonsManager = ({ categoryFilter }: { categoryFilter?: stri
       width: 100,
       align: 'right',
       accessor: (row) => <span style={{ fontWeight: 600 }}>{rm(row.costPriceSen)}</span>,
+      exportValue: (row) => row.costPriceSen / 100,
+      exportFormat: 'rate',
       searchValue: () => '',
       filterValue: (row) => rm(row.costPriceSen),
       sortFn: (a, b) => a.costPriceSen - b.costPriceSen,
@@ -680,6 +682,7 @@ const OrderAddonsManager = () => {
           </span>
         );
       },
+      exportValue: (row) => (row.kind === 'floors_items' ? row.perFloorItem ?? 0 : row.price), exportFormat: 'rate',
       searchValue: () => '',
       filterValue: (row) => String(row.kind === 'floors_items' ? (row.perFloorItem ?? 0) : row.price),
       sortFn: (a, b) =>

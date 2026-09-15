@@ -125,6 +125,7 @@ const buildReceiptColumns = (h: {
     accessor: (r) => <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(r.totalSen)}</span>,
     searchValue: (r) => fmtRm(r.totalSen),
     exportValue: (r) => r.totalSen / 100,
+    exportFormat: 'money',
     filterType: 'number', numberValue: (r) => r.totalSen / 100,
     sortFn: (a, b) => a.totalSen - b.totalSen,
   },

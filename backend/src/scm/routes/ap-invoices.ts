@@ -45,6 +45,7 @@ import {
   uploadApInvoiceFileHandler, listApInvoiceFilesHandler, streamApInvoiceFileHandler, deleteApInvoiceFileHandler,
 } from './ap-invoice-files';
 import { supabaseAuth } from '../middleware/auth';
+import { fmtSen } from '../shared/format';
 
 type Row = Record<string, any>;
 
@@ -267,7 +268,7 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
     const sup = await loadSupplier(c, String(body.supplierId ?? '').trim());
     if ('resp' in sup) return sup.resp;
     if (paid > 0 && sup.supplier.id !== oldSupplierId) {
-      return c.json({ error: 'supplier_locked', message: `${inv.invoice_number} has ${(paid / 100).toFixed(2)} paid against it — the money sits on its supplier; cancel the payment before moving the bill.` }, 409);
+      return c.json({ error: 'supplier_locked', message: `${inv.invoice_number} has ${fmtSen(paid)} paid against it — the money sits on its supplier; cancel the payment before moving the bill.` }, 409);
     }
     patch.supplier_id = sup.supplier.id;
   }
@@ -280,7 +281,7 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
     const built = buildLines(body.lines);
     if ('error' in built) return c.json({ error: built.error, message: built.message }, 400);
     if (built.total < paid) {
-      return c.json({ error: 'total_below_paid', message: `${inv.invoice_number} already has ${(paid / 100).toFixed(2)} paid against it — the total cannot fall below that.` }, 409);
+      return c.json({ error: 'total_below_paid', message: `${inv.invoice_number} already has ${fmtSen(paid)} paid against it — the total cannot fall below that.` }, 409);
     }
     for (const code of [...new Set(built.lines.map((l) => l.code))]) {
       const leafErr = await requireLeafAccount(c, co.companyId, code);
@@ -382,7 +383,7 @@ export const cancelApInvoiceHandler = async (c: any): Promise<Response> => {
   const inv = found.inv;
   if (inv.status === 'CANCELLED') return c.json({ ok: true, already: true });
   if (Number(inv.paid_sen ?? 0) > 0) {
-    return c.json({ error: 'has_payments', message: `${inv.invoice_number} has ${(Number(inv.paid_sen) / 100).toFixed(2)} paid against it — cancel the payment first.` }, 409);
+    return c.json({ error: 'has_payments', message: `${inv.invoice_number} has ${fmtSen(Number(inv.paid_sen))} paid against it — cancel the payment first.` }, 409);
   }
   const sb = c.get('supabase');
   if (inv.status !== 'DRAFT') {

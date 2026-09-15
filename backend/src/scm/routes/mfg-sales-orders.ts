@@ -293,6 +293,7 @@ import {
 import { deferAllocationRecompute, scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { skuCategoryResolver } from '../lib/sku-category';
+import { fmtSen } from '../shared/format';
 
 export const mfgSalesOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
 mfgSalesOrders.use('*', supabaseAuth);
@@ -8928,8 +8929,8 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
     return c.json({
       error: 'discount_exceeds_new_price',
       message:
-        `This change lowers the unit price to ${(newUnit / 100).toFixed(2)}, and the line already carries a ` +
-        `${(prevDiscount / 100).toFixed(2)} discount — which no longer fits. Reduce the discount first, then re-apply this change.`,
+        `This change lowers the unit price to ${fmtSen(newUnit)}, and the line already carries a ` +
+        `${fmtSen(prevDiscount)} discount — which no longer fits. Reduce the discount first, then re-apply this change.`,
       discount: prevDiscount,
       max: qty * newUnit,
     }, 422);
@@ -9261,7 +9262,7 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     return c.json({
       error: 'discount_exceeds_new_price',
       message:
-        `That product is cheaper than the line's ${(discount / 100).toFixed(2)} discount allows. ` +
+        `That product is cheaper than the line's ${fmtSen(discount)} discount allows. ` +
         `Reduce the discount first, then swap the product.`,
       discount,
       max: qty * unitSen,
@@ -9796,7 +9797,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     return c.json({
       error: 'discount_exceeds_new_price',
       message:
-        `That build is cheaper than the line's ${(discount / 100).toFixed(2)} discount allows. ` +
+        `That build is cheaper than the line's ${fmtSen(discount)} discount allows. ` +
         `Reduce the discount first, then exchange the sofa.`,
       discount,
       max: qty * unit,
