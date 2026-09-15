@@ -815,7 +815,7 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   (`purchase-order.md` *Binding a PO line*), and
   `backend/scripts/repair-mrp-po-line-links.mjs` now plans Sofa Accessory lines
   through `scripts/lib/hard-bound-group.mjs`, the mirror of `isHardBoundLine`.
-  `docs/bugs/0925`.
+  `docs/bugs/0927`.
 - **Ordering a bound line twice is refused on every convert path, MRP included
   (2026-09-14).** An MRP-origin convert skips the per-line cap for a POOLED line
   (the MRP shortage is the guard there). For a company-1 bound line the server now
