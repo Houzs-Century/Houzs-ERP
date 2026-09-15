@@ -6509,3 +6509,28 @@ The row then takes the lowest-keyed line (outcome `stamp_merged`), and
 `retire-book-only-conversion-lines.mjs` zeroes the rest. The drain passes no
 quantities and refuses as before.
 `docs/bugs/0915-a-receipt-line-the-book-split-over-two-lines-could-not-be-gi.md`.
+
+## Cleared documents that reached AutoCount go back on the list (2026-09-15)
+
+`archive-ac-outbox-docs.mjs` cleared documents by number with no verdict, and
+on 2026-09-10 it cleared documents whose refusal was still open. They reached
+AutoCount later under live rows, but their old refusals stayed on the
+**Cleared** shelf with a refused badge. Six of those refusals were filed under
+a row id rather than the number (0774), so the page could never join them to
+the later arrival.
+
+The archive script now skips, and names, a document with a waiting send or
+with a refusal that no arrival came after. That judgement is `clearVerdict` in
+`backend/scripts/lib/cleared-arrived-plan.mjs`, over the page's own
+`acOutboxState` and `acRefusalPredatesArrival`; the script therefore runs
+under tsx.
+
+`restore-arrived-ac-outbox-docs.mjs` (workflow *Put cleared AutoCount documents
+that arrived back on the list*) handles the ones already cleared:
+
+- it clears `archived_at` on every script-cleared document that has since
+  arrived;
+- it first re-files each id-filed refusal under the document's number;
+- documents a person cleared on the page (`archived_by` set) stay cleared.
+
+`docs/bugs/0917-cleared-documents-that-reached-autocount-still-read-as-not-s.md`.

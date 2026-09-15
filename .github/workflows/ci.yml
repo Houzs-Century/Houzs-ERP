@@ -64,16 +64,27 @@ jobs:
   # tsconfig, a new top-level directory — matches nothing and therefore runs
   # BOTH halves. Unknown means run it.
   #
-  # THE OTHER TRAP: a REQUIRED check that is SKIPPED is not a passed check —
-  # GitHub leaves the PR pending on it forever. So `backend-typecheck` always
-  # runs (it also carries the doc gates, which a docs-only PR is exactly what
-  # needs), and the `backend` / `frontend` roll-ups accept `skipped` from the
-  # jobs they gate. Those roll-ups are the required contexts, not the jobs below.
+  # THE OTHER TRAP, CORRECTED 2026-09-15. "A skipped required check leaves the PR
+  # pending forever" is true of a WORKFLOW that never triggers (path filter on
+  # `on:`), not of a JOB skipped by `if:` — GitHub's docs, "Using conditions to
+  # control job execution": a skipped job reports "Success" and "will not prevent
+  # a pull request from merging, even if it is a required check". That makes a
+  # skip a PASS, so the danger runs the other way: a job skipped because
+  # `changes` FAILED would read green. Hence `backend-typecheck` is skipped only
+  # on a proven merge-queue reuse and runs whenever `changes` did not succeed,
+  # and the `backend` / `frontend` roll-ups require `changes` to succeed before
+  # they accept `skipped` from the jobs they gate.
   changes:
     runs-on: ubuntu-latest
+    # actions + pull-requests: read, for the merge-queue reuse lookup below.
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     outputs:
-      backend: ${{ steps.decide.outputs.backend }}
-      frontend: ${{ steps.decide.outputs.frontend }}
+      backend: ${{ steps.reuse.outputs.backend || steps.decide.outputs.backend }}
+      frontend: ${{ steps.reuse.outputs.frontend || steps.decide.outputs.frontend }}
+      reuse: ${{ steps.reuse.outputs.reuse || 'false' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -84,7 +95,8 @@ jobs:
 
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             # merge_group has no PR base to diff against, and it is the last gate
-            # before main. Run everything.
+            # before main. Run everything — unless the `reuse` step below proves
+            # this exact tree already passed on the PR.
             echo "event=${{ github.event_name }}: running both halves"
             echo "backend=true"  >> "$GITHUB_OUTPUT"
             echo "frontend=true" >> "$GITHUB_OUTPUT"
@@ -127,7 +139,41 @@ jobs:
           echo "backend=$backend"   >> "$GITHUB_OUTPUT"
           echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
 
+      # MERGE-QUEUE REUSE (owner approved 2026-09-15, docs/ci-fast-lane.md §3.1).
+      # Every PR used to run the whole suite twice: on the PR, then again in the
+      # queue — in 28 of the 60 PRs measured, on a tree the PR run had already
+      # passed. The PR run records the tree it tested; the queue run looks it up
+      # and skips only the jobs that PR run PROVES passed on that exact tree
+      # (rules and their tests: scripts/lib/ci-queue-reuse.mjs). The `if` on
+      # backend-typecheck / lint / file-size / e2e-contract runs them whenever
+      # `changes` did not succeed, and both roll-ups require `changes` to
+      # succeed, so a broken lookup can only make the queue run MORE.
+      - name: Test the reuse rules
+        run: node --test scripts/ci-queue-reuse.test.mjs
+      - name: Record the tree this PR run tests
+        if: github.event_name == 'pull_request'
+        id: tree
+        run: echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+      - if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-tree-${{ steps.tree.outputs.tree }}
+          path: .github/workflows/ci.yml
+          retention-days: 7
+          overwrite: true
+        # Only a speed-up rides on this: without it the queue runs everything.
+        continue-on-error: true
+      - name: Reuse the PR run's result for this exact tree
+        if: github.event_name == 'merge_group'
+        id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-queue-reuse.mjs
+
   backend-typecheck:
+    needs: changes
+    # Runs unless the queue proved it passed on this tree; runs if `changes` broke.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.reuse != 'true') }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -625,7 +671,7 @@ jobs:
     # that blocks one honest PR in ten gets routed around, then deleted - which
     # is how secret-hygiene.yml died and let a credential back in. It stays
     # advisory until that rate is fixed, and fixing the rate is the real task.
-    needs: [backend-typecheck, backend-tests, lint, file-size, e2e-contract]
+    needs: [changes, backend-typecheck, backend-tests, lint, file-size, e2e-contract]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -640,6 +686,12 @@ jobs:
               *) echo "::error::$1 = ${2:-<empty>}"; exit 1 ;;
             esac
           }
+          must_succeed() {
+            # `changes` decides what the rest skip. If it failed, its dependants
+            # are skipped and `ok` would accept that, so it must be a real success.
+            [ "$2" = success ] || { echo "::error::$1 = ${2:-<empty>}"; exit 1; }
+          }
+          must_succeed changes "${{ needs.changes.result }}"
           echo "backend-typecheck: ${{ needs.backend-typecheck.result }}"
           echo "backend-tests:     ${{ needs.backend-tests.result }}"
           echo "lint:              ${{ needs.lint.result }}"
@@ -671,6 +723,9 @@ jobs:
   # Do NOT make this a required status check until it has run green on a few
   # merges. Adding it to the ruleset is a separate, deliberate step.
   lint:
+    needs: changes
+    # Runs unless the queue proved it passed on this tree; runs if `changes` broke.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.reuse != 'true') }}
     runs-on: ubuntu-latest
     # FRONTEND ENFORCES. BACKEND REPORTS. Deliberate, with a written exit
     # condition — read it before "fixing" the backend leg.
@@ -1125,6 +1180,9 @@ jobs:
       - run: npm run test:perf-local
 
   file-size:
+    needs: changes
+    # Runs unless the queue proved it passed on this tree; runs if `changes` broke.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.reuse != 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -1154,7 +1212,7 @@ jobs:
   # `if: always()` plus explicit result assertions, for the reason spelled out
   # on the `backend` roll-up: a skipped check is not a failed check.
   frontend:
-    needs: [frontend-tests, frontend-checks, frontend-typecheck, frontend-build, frontend-perf, lint]
+    needs: [changes, frontend-tests, frontend-checks, frontend-typecheck, frontend-build, frontend-perf, lint]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -1174,6 +1232,12 @@ jobs:
               *) echo "::error::$1 = ${2:-<empty>}"; exit 1 ;;
             esac
           }
+          must_succeed() {
+            # `changes` decides what the rest skip. If it failed, its dependants
+            # are skipped and `ok` would accept that, so it must be a real success.
+            [ "$2" = success ] || { echo "::error::$1 = ${2:-<empty>}"; exit 1; }
+          }
+          must_succeed changes "${{ needs.changes.result }}"
           echo "frontend-tests:     ${{ needs.frontend-tests.result }}"
           echo "frontend-checks:    ${{ needs.frontend-checks.result }}"
           echo "frontend-typecheck: ${{ needs.frontend-typecheck.result }}"
@@ -1198,6 +1262,9 @@ jobs:
           ok lint "${{ needs.lint.result }}"
 
   e2e-contract:
+    needs: changes
+    # Runs unless the queue proved it passed on this tree; runs if `changes` broke.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.reuse != 'true') }}
     runs-on: ubuntu-latest
     defaults:
       run:

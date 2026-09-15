@@ -142,6 +142,13 @@ describe('what the books hold that the bank has not shown', () => {
     lines = [LINE, SPLIT, OTHER];
   });
 
+  test('a candidate entry names its document and its customer when the server has them (docs/bugs/0918)', () => {
+    lines = [{ ...IN_BOOKS, entryCandidates: [{ ...IN_BOOKS.entryCandidates[0]!, reference: '2990DraftOR-2608-005 · 2990-SO-2608-067', who: 'NG KAH YEE' }] }];
+    openStatement();
+    expect(screen.getByText(/2990DraftOR-2608-005 · 2990-SO-2608-067 · NG KAH YEE/)).toBeTruthy();
+    lines = [LINE, SPLIT, OTHER];
+  });
+
   test('the month box says a dated file it names covers the whole month', () => {
     render(<BankStatementTab />);
     expect(screen.getByText(/covers that whole month/)).toBeTruthy();
@@ -158,18 +165,28 @@ describe('choosing an entry for several movements at once', () => {
   const big: BankLine = { ...OTHER, id: 21, line_no: 18, amount_sen: 2900000, description: 'Fund Transfer at DIO', reference: '2990 Home PV-000050 HOUZS VENTURE HOLDING SDN. BHD.' };
   const small: BankLine = { ...OTHER, id: 22, line_no: 17, amount_sen: 1000000, description: 'Fund Transfer at DIO', reference: '2990 PV-000051 HOUZS VENTURE HOLDING SDN. BHD.' };
 
-  test('ticking movements opens the chooser with their total, and the entry list names who', () => {
+  /* No second list (owner 2026-09-15: 下面不是有 list 了吗; docs/bugs/0918): the
+     entries are ticked in the outstanding list the screen already had, and
+     the totals and the button sit in a bar at the foot of the window. */
+  test('ticking movements raises the bar with their total; the entries are ticked in the outstanding list, which names who', () => {
     lines = [big, small, OTHER];
     unmatched = [RECEIPT, OTHER_ENTRY];
     openStatement();
     expect(screen.queryByText(/Choose the entry these movements are/)).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Match the ticked movements and entries' })).toBeNull();
     fireEvent.click(screen.getByLabelText('Pick line 18'));
     fireEvent.click(screen.getByLabelText('Pick line 17'));
-    expect(screen.getByText(/2 movements picked/)).toBeTruthy();
-    expect(screen.getAllByText(/RM 39,000\.00/).length).toBeGreaterThan(0);
-    const chooser = screen.getByText(/Choose the entry these movements are/).closest('section') as HTMLElement;
-    expect(within(chooser).getAllByText('HOUZS VENTURE HOLDING SDN BHD', { selector: 'td' })).toHaveLength(2);
-    expect(within(chooser).getByLabelText('Entry 2990-JE-2604-0017 for the picked movements')).toBeTruthy();
+    const bar = screen.getByRole('region', { name: 'Match the ticked movements and entries' });
+    expect(bar.textContent).toContain('2 movements');
+    expect(bar.textContent).toContain('RM 39,000.00');
+    expect(bar.textContent).toContain('Tick the entry');
+    expect(screen.queryByText(/Choose the entry these movements are/)).toBeNull();
+    const list = screen.getByText(/Outstanding items — in the books, not yet on the bank \(2\)/).closest('section') as HTMLElement;
+    expect(within(list).getAllByText('HOUZS VENTURE HOLDING SDN BHD', { selector: 'td' })).toHaveLength(2);
+    expect(within(list).getByLabelText('Entry 2990-JE-2604-0017 for the picked movements')).toBeTruthy();
+    /* Clear empties both sides and the bar goes. */
+    fireEvent.click(within(bar).getByText('Clear'));
+    expect(screen.queryByRole('region', { name: 'Match the ticked movements and entries' })).toBeNull();
   });
 
   test('the button waits until the two totals agree, then sends the movements and the entry', () => {
@@ -225,10 +242,28 @@ describe('amounts in two columns', () => {
     openStatement();
     const table = screen.getByText(/Outstanding items — in the books, not yet on the bank \(2\)/).closest('section') as HTMLElement;
     const heads = within(table).getAllByRole('columnheader').map((h) => h.textContent);
-    expect(heads).toEqual(['Entry', 'Date', 'Source', 'Who', 'Debit', 'Credit']);
-    expect(cellsOf(within(table).getByText('2990-JE-2604-0024').closest('tr') as HTMLElement).slice(4)).toEqual(['', 'RM 3,101.68']);
-    expect(cellsOf(within(table).getByText('2990-JE-2606-0084').closest('tr') as HTMLElement).slice(4)).toEqual(['RM 12,000.00', '']);
+    expect(heads).toEqual(['', 'Entry', 'Date', 'Reference', 'Customer / payee', 'Debit', 'Credit']);
+    expect(cellsOf(within(table).getByText('2990-JE-2604-0024').closest('tr') as HTMLElement).slice(5)).toEqual(['', 'RM 3,101.68']);
+    expect(cellsOf(within(table).getByText('2990-JE-2606-0084').closest('tr') as HTMLElement).slice(5)).toEqual(['RM 12,000.00', '']);
     expect(screen.queryByText('RM -3,101.68')).toBeNull();
+  });
+
+  /* Named by the document a person holds and by the person (docs/bugs/0918):
+     the OR and the SO, the PV number, the customer — off the server's
+     reference and who; an entry without them keeps its source. */
+  test('the outstanding list names each entry by its reference and its customer or payee, dates dd/mm/yyyy', () => {
+    unmatched = [
+      { jeNo: '2990-JE-2608-0044', entryDate: '2026-08-05', sourceType: 'SOPAY', sourceDocNo: 'cacb0d35-8f9f-4a94-a156-d1b0f96b52d0', debitSen: 187000, creditSen: 0, partyName: null, notes: 'Payment received (transfer) — 2990-SO-2606-014', reference: '2990DraftOR-2608-001 · 2990-SO-2606-014', who: 'Ah Meng', carried: false },
+      { jeNo: '2990-JE-2608-0145', entryDate: '2026-08-12', sourceType: 'PV', sourceDocNo: '2990-HPV-2608-017', debitSen: 0, creditSen: 1890, partyName: 'LOO WEN WEI', notes: null, reference: '2990-HPV-2608-017', who: 'LOO WEN WEI', carried: false },
+      { jeNo: '2990-JE-2607-0001', entryDate: '2026-07-01', sourceType: 'MANUAL', sourceDocNo: null, debitSen: 100, creditSen: 0, partyName: null, notes: 'Opening', carried: true },
+    ];
+    openStatement();
+    const table = screen.getByText(/Outstanding items — in the books, not yet on the bank \(3\)/).closest('section') as HTMLElement;
+    expect(cellsOf(within(table).getByText('2990-JE-2608-0044').closest('tr') as HTMLElement).slice(1, 5)).toEqual(['2990-JE-2608-0044', '05/08/2026', '2990DraftOR-2608-001 · 2990-SO-2606-014', 'Ah Meng']);
+    expect(cellsOf(within(table).getByText('2990-JE-2608-0145').closest('tr') as HTMLElement).slice(2, 5)).toEqual(['12/08/2026', '2990-HPV-2608-017', 'LOO WEN WEI']);
+    /* No reference from the server: the source, and the note for who. */
+    expect(cellsOf(within(table).getByText(/2990-JE-2607-0001/).closest('tr') as HTMLElement).slice(1, 5)).toEqual(['2990-JE-2607-0001 · earlier month', '01/07/2026', 'MANUAL', 'Opening']);
+    expect(screen.queryByText('cacb0d35-8f9f-4a94-a156-d1b0f96b52d0')).toBeNull();
   });
 
   test('a bank movement shows under Deposit or Withdrawal', () => {
@@ -245,15 +280,21 @@ describe('amounts in two columns', () => {
     expect(screen.queryByText('RM -25.00')).toBeNull();
   });
 
-  test('the chooser lists entries under Debit and Credit too', () => {
-    lines = [OTHER];
-    unmatched = [{ jeNo: '2990-JE-2604-0024', entryDate: '2026-04-30', sourceType: 'PV', sourceDocNo: '2990-HPV-2604-007', debitSen: 0, creditSen: 310168, partyName: 'HOUZS VENTURE HOLDING SDN BHD', carried: false }];
+  test('a movement reads date · line, then its reference, then its description; the list runs by date', () => {
+    lines = [
+      { ...OTHER, id: 31, line_no: 46, booked_on: '2026-08-14', amount_sen: -480000, description: 'CIB Instant Transfer at DIO', reference: 'Transfer 2990 HOME SDN. BHD. 20260814HLBBMYKL010OCB72193076' },
+      { ...OTHER, id: 32, line_no: 26, booked_on: '2026-08-06', amount_sen: -517375, description: 'CIB Instant Transfer at DIO', reference: 'JULY SALARY ENG SUI HOR 20260806HLBBMYKL010OCB64596966' },
+      { ...OTHER, id: 33, line_no: 12, booked_on: '2026-08-04', amount_sen: -412467, description: 'CIB Instant Transfer at DIO', reference: 'JULY SALARY LING WAI 20260804HLBBMYKL010OCB62409168' },
+      { ...OTHER, id: 34, line_no: 15, booked_on: '2026-08-04', amount_sen: -417931, description: 'CIB Instant Transfer at DIO', reference: 'JULY SALARY CHONG KAR YIN 20260804HLBBMYKL010OCB62429132' },
+    ];
     openStatement();
-    fireEvent.click(screen.getByLabelText('Pick line 9'));
-    const chooser = screen.getByText(/Choose the entry these movements are/).closest('section') as HTMLElement;
-    const heads = within(chooser).getAllByRole('columnheader').map((h) => h.textContent);
-    expect(heads).toEqual(['', 'Entry', 'Date', 'Source', 'Who', 'Debit', 'Credit']);
-    expect(cellsOf(within(chooser).getByText('2990-JE-2604-0024').closest('tr') as HTMLElement).slice(5)).toEqual(['', 'RM 3,101.68']);
+    const rows = screen.getAllByLabelText(/^Pick line /).map((b) => b.getAttribute('aria-label'));
+    /* Oldest first, then the line — not biggest first (owner: 不是根据日期往下排的). */
+    expect(rows).toEqual(['Pick line 12', 'Pick line 15', 'Pick line 26', 'Pick line 46']);
+    const cell = screen.getByText('JULY SALARY ENG SUI HOR 20260806HLBBMYKL010OCB64596966').closest('td') as HTMLElement;
+    const linesOfCell = Array.from(cell.querySelectorAll(':scope > div')).map((d) => String(d.textContent).trim());
+    expect(linesOfCell).toEqual(['06/08/2026 · line 26', 'JULY SALARY ENG SUI HOR 20260806HLBBMYKL010OCB64596966', 'CIB Instant Transfer at DIO']);
+    expect(screen.queryByText('2026-08-06')).toBeNull();
   });
 });
 
@@ -654,10 +695,10 @@ describe('every certain payout at once', () => {
     fireEvent.click(screen.getByText('Money received — all 2 matched payouts'));
     await waitFor(() => expect(bookMutateAsync).toHaveBeenCalledTimes(2));
     expect(await screen.findByText(/1 posted — JE-9/)).toBeTruthy();
-    /* The table is ordered biggest first, so line 11 (RM 3,743.04) posts and
-       line 2 (RM 2,277.00) is the one refused — named with its amount. */
-    expect(bookMutateAsync.mock.calls.map((c) => (c[0] as { lineId: number }).lineId)).toEqual([4, 1]);
-    expect(screen.getByText(/line 2 \(RM 2,277\.00\): .*closed by Chew/)).toBeTruthy();
+    /* The table runs by date then line (docs/bugs/0918), so line 2 posts and
+       line 11 (RM 3,743.04) is the one refused — named with its amount. */
+    expect(bookMutateAsync.mock.calls.map((c) => (c[0] as { lineId: number }).lineId)).toEqual([1, 4]);
+    expect(screen.getByText(/line 11 \(RM 3,743\.04\): .*closed by Chew/)).toBeTruthy();
   });
 
   test('offers nothing when no payout is certain', () => {
