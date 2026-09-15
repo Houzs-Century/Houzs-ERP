@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-/* Clear the dates that keep 20 stale sales orders on MRP and the delivery board.
+/* Clear the dates that keep 28 stale sales orders on MRP and the delivery board.
 
-   OWNER, 2026-09-15, on the list MRP垃圾单清单20260911 (groups A and B):
+   OWNER, 2026-09-15, on the list MRP垃圾单清单20260911 — groups A and B named
+   one by one, group C (partly delivered) by the rule and his screenshot of
+   HC-SO-008586:
      「就是以下的 processing date delivery date item delivery date 都 remove 掉」
      「如果已经送货了的，你就 remain 着 … 如果还没送货的：把 delivery date /
        delivered 清掉，processing / unprocessed 清掉，让它可以重新 post。这样我
@@ -41,6 +43,8 @@ const DOCS = String(process.env.DOCS || [
   "HC-SO-008460", "HC-SO-007958", "HC-SO-004716", "HC-SO-003189", "HC-SO-002366", "HC-SO-002315", "HC-SO-000015",
   "HC-SO-001526", "HC-SO-001640", "HC-SO-001473", "HC-SO-001472", "HC-SO-001255", "HC-SO-001112", "HC-SO-001180",
   "HC-SO-013505", "HC-SO-013394", "HC-SO-013361", "HC-SO-013339", "HC-SO-013319", "HC-SO-012435",
+  // group C, partly delivered — the owner's screenshot was HC-SO-008586
+  "HC-SO-010504", "HC-SO-008586", "HC-SO-004391", "HC-SO-007435", "HC-SO-001920", "HC-SO-006438", "HC-SO-004197", "HC-SO-002281",
 ].join(",")).split(",").map((s) => s.trim()).filter(Boolean);
 const GH = !!process.env.GITHUB_ACTIONS;
 const notice = (m) => console.log(GH ? `::notice::${m}` : m);
