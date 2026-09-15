@@ -393,9 +393,9 @@
       "@typescript-eslint/no-unnecessary-condition": 24
     },
     "src/pages/Projects.tsx": {
-      "@typescript-eslint/no-explicit-any": 76,
-      "@typescript-eslint/no-floating-promises": 15,
-      "@typescript-eslint/no-unnecessary-condition": 57
+      "@typescript-eslint/no-explicit-any": 57,
+      "@typescript-eslint/no-floating-promises": 14,
+      "@typescript-eslint/no-unnecessary-condition": 55
     },
     "src/pages/ResetPassword.tsx": {
       "@typescript-eslint/no-explicit-any": 1
