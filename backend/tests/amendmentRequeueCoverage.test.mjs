@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { coveringEdit, SAME_TRANSACTION_WINDOW_MS } from "../scripts/lib/amendment-requeue-coverage.mjs";
+import { coveringEdit, SAME_TRANSACTION_WINDOW_MS, keylessAddedLineIds } from "../scripts/lib/amendment-requeue-coverage.mjs";
 
 const at = (s) => new Date(s);
 const target = (over = {}) => ({
@@ -60,5 +60,27 @@ describe("the requeue script decides coverage through this module", () => {
   it("imports coveringEdit and no longer filters on created_at > last_approved_at in SQL", () => {
     expect(src).toMatch(/import \{[^}]*coveringEdit[^}]*\} from "\.\/lib\/amendment-requeue-coverage\.mjs"/);
     expect(src).not.toMatch(/o\.created_at > d\.last_approved_at/);
+  });
+  it("declares amendment-added keyless lines new through keylessAddedLineIds -> newLineIds", () => {
+    expect(src).toMatch(/import \{[^}]*keylessAddedLineIds[^}]*\} from "\.\/lib\/amendment-requeue-coverage\.mjs"/);
+    expect(src).toMatch(/newLineIds/);
+  });
+});
+
+describe("keylessAddedLineIds", () => {
+  const line = (id, code) => ({ id, item_code: code });
+  it("returns only keyless lines whose code an ADD amendment introduced (docs/bugs/0942 case)", () => {
+    // HC-SO-012757: lines 1-5 keyed (excluded by the caller's query), line 6 keyless.
+    const keyless = [line("row-6", "TRANSPORTATION CHARGES")];
+    expect(keylessAddedLineIds(keyless, ["TRANSPORTATION CHARGES"])).toEqual(["row-6"]);
+  });
+  it("never declares a keyless line new when no ADD amendment names its code (a backfill gap)", () => {
+    const keyless = [line("row-x", "AK-NOBILITY MATT (K)")];
+    expect(keylessAddedLineIds(keyless, ["TRANSPORTATION CHARGES"])).toEqual([]);
+    expect(keylessAddedLineIds(keyless, [])).toEqual([]);
+  });
+  it("trims and ignores blank codes on both sides", () => {
+    const keyless = [line("a", " DISPOSE "), line("b", null)];
+    expect(keylessAddedLineIds(keyless, [" DISPOSE ", null, ""])).toEqual(["a"]);
   });
 });
