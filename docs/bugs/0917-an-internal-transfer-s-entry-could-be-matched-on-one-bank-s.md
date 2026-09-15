@@ -40,9 +40,8 @@ known). Nothing changes for a second claim on the same bank, for the undo,
 for the reconciliation or the lock.
 
 Proved RED on main's route (the route file stashed, the tests kept): the
-four new tests in `backend/tests/bankRoutes.test.ts` failed — the second bank
+four tests in `backend/tests/bankMatchPerAccount.test.ts` (their own rig — `bankRoutes.test.ts` is at the 2,000-line cap) failed — the second bank
 refused with the old sentence, the same-bank refusal without the bank's
-name, the stranger bank allowed, the group match refused. Green after; the
-other 96 unchanged.
+name, the stranger bank allowed, the group match refused. Green after.
 
 **Ref.** acc/bank-match-per-account, 2026-09-15.

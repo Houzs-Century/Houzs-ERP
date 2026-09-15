@@ -2250,7 +2250,7 @@ reconciliation and the lock already reasoned per account
 (`loadClaimedElsewhere`), and the unique index has allowed it since
 docs/bugs/0803 — only the two routes counted the entry once across every
 bank. Contract: the four "an internal transfer is one entry on two
-statements" tests in `backend/tests/bankRoutes.test.ts`.
+statements" tests in `backend/tests/bankMatchPerAccount.test.ts`.
 
 **The lock reads what the screen reads (2026-09-11, docs/bugs/0818; owner,
 on June refusing to close at "RM 45,000.00 apart" under a panel that said ✓
