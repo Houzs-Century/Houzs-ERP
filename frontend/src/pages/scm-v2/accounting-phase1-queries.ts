@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { writeFailedAs } from '../../vendor/scm/lib/mutation-error';
 import { retryUnlessClientError } from '../../lib/retryPolicy';
-import type { Account } from '../../vendor/scm/lib/accounting-queries';
+import type { Account, JeLineIn, JournalEntry } from '../../vendor/scm/lib/accounting-queries';
 
 export const useCreateAccount = () => {
   const qc = useQueryClient();
@@ -42,6 +42,31 @@ export const useReverseJournalEntry = () => {
       void qc.invalidateQueries({ queryKey: ['control-check'] });
     },
     onError: writeFailedAs('Journal entry not reversed'),
+  });
+};
+
+/** A manual journal edited in one step (owner 2026-09-15: 我无法 edit). A
+    posted entry comes back under a NEW number with `replaced` naming the old
+    one and the contra that reversed it; a draft is rewritten in place and
+    `replaced` is null. */
+export type JournalEntryEdited = {
+  journalEntry: JournalEntry;
+  lineCount: number;
+  replaced: { originalJeNo: string; originalJeId: string; contraJeNo: string | null } | null;
+};
+export const useEditJournalEntry = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; entryDate?: string; narration?: string | null; lines: JeLineIn[] }) =>
+      authedFetch<JournalEntryEdited>(`/accounting/journal-entries/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    onSuccess: (_, { id }) => {
+      void qc.invalidateQueries({ queryKey: ['journal-entries'] });
+      void qc.invalidateQueries({ queryKey: ['journal-entry-detail', id] });
+      void qc.invalidateQueries({ queryKey: ['gl-entries'] });
+      void qc.invalidateQueries({ queryKey: ['account-balances'] });
+      void qc.invalidateQueries({ queryKey: ['control-check'] });
+    },
+    onError: writeFailedAs('Journal entry not edited'),
   });
 };
 

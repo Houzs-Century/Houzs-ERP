@@ -101,6 +101,7 @@ const buildPvColumns = (): DataGridColumn<PaymentVoucherRow>[] => [
     ),
     searchValue: (r) => fmtMoney(Number(r.total_sen ?? 0), r.currency),
     exportValue: (r) => Number(r.total_sen ?? 0) / 100,
+    exportFormat: 'money',
     sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
   },
   {

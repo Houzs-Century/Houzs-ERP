@@ -154,7 +154,7 @@ describe('phone amendment queues', () => {
       row('r', 'REJECTED', '2026-09-13T08:00:00Z'),
       row('q', 'REQUESTED', '2026-09-03T08:00:00Z'),
     ];
-    render(<MobilePoAmendments onBack={() => {}} onOpen={() => {}} />);
+    render(<MobilePoAmendments onBack={() => {}} onOpen={() => {}} onOpenSo={() => {}} />);
     expect(cardIds('PO')).toEqual(['q', 'p', 'r']);
   });
 });

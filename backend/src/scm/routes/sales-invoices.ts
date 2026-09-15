@@ -36,7 +36,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
-import { normalizePhone, buildVariantSummary, isServiceLine, fmtRM, computeVariantKey } from '../shared';
+import { normalizePhone, buildVariantSummary, isServiceLine, fmtSen, computeVariantKey } from '../shared';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -282,7 +282,7 @@ async function siPriceDriftWarnings(
    under the 0.5% gate is invisible at that precision anyway. */
 function siPriceWarningMessage(warnings: SiPriceWarning[]): string {
   const parts = warnings.map(
-    (w) => `${w.itemCode} is invoiced at ${fmtRM(w.invoicedSen / 100)} but the order price is ${fmtRM(w.orderedSen / 100)}`,
+    (w) => `${w.itemCode} is invoiced at ${fmtSen(w.invoicedSen)} but the order price is ${fmtSen(w.orderedSen)}`,
   );
   return `${parts.join('; ')}. Check the price before sending this invoice.`;
 }

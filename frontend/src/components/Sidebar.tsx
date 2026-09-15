@@ -857,11 +857,11 @@ export const NAV_TABS: NavTab[] = [
       // URL-reachable (?tab=members / orgchart / departments / mail) during
       // review but are no longer surfaced in navigation.
       { to: "/team?tab=directory", label: "Directory", icon: Users, perm: "users.read", pageAccess: "team", showForSalesDirector: true },
-      // Positions leaf removed from the nav (owner: "那個team的矩陣拆掉") — the
-      // same treatment Roles got, which is why there is no Roles leaf here either.
-      // The position_page_access matrix and its read path are unchanged; the
-      // editor stays live and reachable at /team?tab=positions as its sole-writer
-      // escape hatch, just no longer surfaced in navigation. Re-add to restore.
+      // No Positions leaf (owner: "那個team的矩陣拆掉"), and none for Roles. The
+      // Titles tab came back into the Team page's own strip on 2026-09-15
+      // (docs/bugs/0931-a-new-title-could-not-be-created-anywhere-the-positions-tab.md)
+      // and is reached from there; the phone menu is built from these rows and
+      // keeps Positions out (mobileMenuGates.test.ts), so no leaf here.
       { to: "/team?tab=orgchart2", label: "Org Chart", icon: Network, perm: "users.read", pageAccess: "team", showForSalesDirector: true },
       { to: "/team?tab=departments2", label: "Departments", icon: Building2, perm: "users.read", pageAccess: "team" },
       { to: "/team?tab=mail2", label: "Mailboxes", icon: Mail, perm: "mail_center.manage", pageAccess: "team" },

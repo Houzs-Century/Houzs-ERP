@@ -47,12 +47,13 @@ import { PaymentCorrectionsTab } from './PaymentCorrectionsTab';
 import { CollectionTab } from './CollectionReport';
 import { MerchantChargesTab } from './MerchantChargesReport';
 import { PerformanceTab } from './PerformancePnl';
-import { NewJournalForm, JeDetailCard, jeStatus, cardStyle, fieldStyle, btnStyle, type DraftSeed } from './JournalEntryCards';
+import { NewJournalForm, JeDetailCard, jeStatus, cardStyle, fieldStyle, btnStyle, type DraftSeed, type EditSeed } from './JournalEntryCards';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
 import { GeneralLedger } from './GeneralLedger';
+import { CancelledWithMoneyCard } from './CancelledWithMoneyCard';
 import { PageHeader } from '../../components/Layout';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -229,8 +230,9 @@ const JeTab = () => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   /* A copy of an opened manual journal: the seed the draft form opens with,
-     and a fresh key so a second Copy starts a fresh form (docs/bugs/0920). */
-  const [seed, setSeed] = useState<{ key: number; draft: DraftSeed } | null>(null);
+     and a fresh key so a second Copy starts a fresh form (docs/bugs/0920).
+     An EDIT carries the entry as well — the form then saves to it. */
+  const [seed, setSeed] = useState<{ key: number; draft: DraftSeed; editing?: EditSeed } | null>(null);
 
   const [search, setSearch] = useState('');
   const visible = useMemo(() => {
@@ -274,10 +276,11 @@ const JeTab = () => {
         ))}
       </div>
 
-      {creating && <NewJournalForm key={seed?.key ?? 0} initial={seed?.draft ?? null} onDone={() => { setCreating(false); setSeed(null); }} />}
+      {creating && <NewJournalForm key={seed?.key ?? 0} initial={seed?.draft ?? null} editing={seed?.editing ?? null} onDone={() => { setCreating(false); setSeed(null); }} />}
       {selectedId && (
         <JeDetailCard id={selectedId} onClose={() => setSelectedId(null)}
-          onCopy={(draft) => { setSeed({ key: Date.now(), draft }); setCreating(true); setSelectedId(null); }} />
+          onCopy={(draft) => { setSeed({ key: Date.now(), draft }); setCreating(true); setSelectedId(null); }}
+          onEdit={(editing) => { setSeed({ key: Date.now(), draft: editing, editing }); setCreating(true); setSelectedId(null); }} />
       )}
 
       <DataTable<JournalEntry>
@@ -436,6 +439,8 @@ const SelfCheckTab = () => {
       {checks.map((check) => <ControlCheckCard key={check.role} check={check} />)}
       {q.data?.payments && <UnbookedPaymentsCard p={q.data.payments} />}
       {q.data?.paymentDrift && <PaymentDriftCard d={q.data.paymentDrift} />}
+      {/* Money on cancelled orders with no exit taken yet (docs/bugs/0931). */}
+      <CancelledWithMoneyCard />
     </div>
   );
 };
