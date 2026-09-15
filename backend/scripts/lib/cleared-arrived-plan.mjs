@@ -18,9 +18,22 @@
  * PURE. The caller reads the rows and the id -> number map; this decides.
  * NO SHEBANG: a test imports this module.
  */
-import { acOutboxState, acRefusalPredatesArrival } from "../../src/scm/lib/autocount-outbox-status.ts";
+import { acOutboxState, acRefusalPredatesArrival, AC_SKIP_KINDS } from "../../src/scm/lib/autocount-outbox-status.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/* A document CANCELLED before its create ever sent is finished, not stuck: the
+ * create was skipped, nothing reached the book and nothing ever will, so it may
+ * be cleared like any done document. docs/bugs/0917 held it only because the
+ * generic "a refusal nothing arrived after" test cannot tell a void document
+ * from an open one. Reason text is the skip catalogue's own; matched
+ * truncation-proof, because the stored last_error equals the needle and the
+ * caller passes a left(...) of it, so any prefix identifies it. */
+const CANCELLED_BEFORE_SEND_NEEDLE =
+  AC_SKIP_KINDS.find((k) => k.kind === "cancelled-before-send").needle;
+const isCancelledBeforeSend = (errorHead) =>
+  typeof errorHead === "string" && errorHead.length >= 12
+  && CANCELLED_BEFORE_SEND_NEEDLE.startsWith(errorHead);
 
 export const HELD = Object.freeze({
   person: "cleared by a person on the page — left as it is",
@@ -88,6 +101,9 @@ export function planClearedArrivals(rows, numberOfId, named) {
 export function clearVerdict(rows) {
   if (!rows.length) return "no rows";
   if (rows.some((r) => r.status === "pending")) return HELD.sending;
+  /* A cancelled-before-send document is done — clear it like any finished one. */
+  if (rows.some((r) => acOutboxState(String(r.status), r.error_head) === "skipped"
+        && isCancelledBeforeSend(r.error_head))) return null;
   let arrived = null;
   let refused = null;
   for (const r of rows) {
