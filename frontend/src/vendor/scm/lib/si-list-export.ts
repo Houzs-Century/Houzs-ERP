@@ -94,10 +94,13 @@ export const SI_LABELS = {
   lineId: 'Line ID',
 } as const;
 
-/** The grid's default visible columns, in AutoCount's order. ONE constant, so
- *  the owner choosing another default (e.g. "Chew") is a one-line change. */
-export const SI_DEFAULT_COLUMN_KEYS = [
-  'invoice_number', 'invoice_date', 'debtor_code', 'debtor_name', 'agent', 'currency', 'exchange_rate', 'inclusive',
+/** AutoCount's Sales Invoice Detail Listing columns, in its order — offered in
+ *  the grid's column chooser, HIDDEN by default. Owner 2026-09-15 「默认跟我的data
+ *  grid啊」: a fresh Sales Invoices grid keeps its own columns; staff tick these
+ *  on to export AutoCount's shape. Keys the list already has (Doc Date, Debtor
+ *  Code / Name, Total) stay the list's own column. ONE constant. */
+export const SI_AC_COLUMN_KEYS = [
+  'ac_doc_no', 'invoice_date', 'debtor_code', 'debtor_name', 'agent', 'currency', 'exchange_rate', 'inclusive',
   'subtotal', 'tax', 'amount', 'local_total', 'cancelled', 'item_code', 'detail_description', 'detail_description_2',
   'uom', 'location', 'proj_no', 'qty', 'unit_price', 'discount', 'line_total', 'tax_code', 'line_tax', 'total_ex',
   'total_inc', 'desc2',

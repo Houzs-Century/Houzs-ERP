@@ -4,8 +4,8 @@
  * Mounts the real page with its data hooks faked; the network and the sheet
  * writer are the seams asserted:
  *   - the Export asks /sales-invoices/export/rows with the list's tab and search, no page;
- *   - the file holds one row per LINE of every receipt, not the page on screen;
- *   - a fresh grid's columns are AutoCount's Sales Invoice Detail Listing columns, in its order, with its captions;
+ *   - the file holds one row per LINE of every invoice, not the page on screen;
+ *   - a fresh grid exports the list's own columns (owner: 「默认跟我的data grid啊」); AutoCount's wait in the chooser;
  *   - money cells are ringgit numbers, never sen;
  *   - a stopped read writes no file.
  */
@@ -135,23 +135,15 @@ describe("Sales Invoices list: the one Export", () => {
     expect(screen.queryByRole("button", { name: "Export lines" })).toBeNull();
   });
 
-  it("writes AutoCount's Detail Listing columns in its order, one row per line", async () => {
+  it("writes the grid's own default columns, one row per line", async () => {
     mount("/scm/sales-invoices?status=sent");
     await exportNow();
     expect(h.aoa[0]).toEqual([
-      "Doc No", "Doc Date", "Debtor Code", "Debtor Name", "Agent", "Curr. Code", "Curr. Rate",
-      "Inclusive?", "SubTotal (ex)", "Tax", "Total", "Local Total", "Cancelled", "Item Code", "Detail Description",
-      "Detail Description 2", "UOM", "Location", "Proj No", "Qty", "Unit Price", "Discount", "Total", "Tax Code", "Tax",
-      "Total (Ex)", "Total (Inc)", "Desc2",
+      "SI No.", "Date", "Due", "Transfer From (SO)", "Transfer From (DO)", "Source PO", "Customer", "Customer ref", "Status",
+      "Outstanding", "Total",
     ]);
     expect(h.aoa).toHaveLength(4);
-    const col = (label: string, nth = 0) => {
-      const idx = (h.aoa[0] as string[]).map((l, i) => [l, i] as const).filter(([l]) => l === label)[nth]![1];
-      return h.aoa.slice(1).map((r) => r[idx]);
-    };
-    expect(col("Doc No")).toEqual(["I-2609-001", "I-2609-001", "I-2609-002"]);
-    expect(col("Agent")).toEqual(["Zack", "Zack", "Zack"]);
-    expect(col("Item Code")).toEqual(["AK-CODY (K)", "AK-BASTION (Q)", "AK-CODY (K)"]);
+    expect(h.aoa.slice(1).map((r) => r[0])).toEqual(["HC-SI-2609-001", "HC-SI-2609-001", "HC-SI-2609-002"]);
     expect(h.written[0]).toMatch(/^sales-invoices-\d{4}-\d{2}-\d{2}\.xlsx$/);
   });
 
@@ -159,18 +151,10 @@ describe("Sales Invoices list: the one Export", () => {
     mount("/scm/sales-invoices");
     await exportNow();
     const header = h.aoa[0] as string[];
-    const moneyLabels = new Set(["SubTotal (ex)", "Tax", "Total", "Local Total", "Unit Price", "Discount", "Total (Ex)", "Total (Inc)"]);
-    for (const row of h.aoa.slice(1)) {
-      header.forEach((label, i) => {
-        if (!moneyLabels.has(label)) return;
-        const v = row[i];
-        if (typeof v === "number") expect(v, `${label} looks like sen`).toBeLessThan(100_000);
-      });
+    for (const label of ["Outstanding", "Total"]) {
+      const i = header.indexOf(label);
+      for (const row of h.aoa.slice(1)) expect(row[i], `${label} looks like sen`).toBe(3000.01);
     }
-    const unitPrice = header.indexOf("Unit Price");
-    expect(h.aoa[1]![unitPrice]).toBe(1500.005);
-    const total = header.indexOf("Total");
-    expect(h.aoa[1]![total]).toBe(3000.01);
   });
 
   it("refuses to hand over a short file when the server stopped reading", async () => {

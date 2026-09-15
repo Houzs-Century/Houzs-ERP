@@ -19,9 +19,11 @@ had no effect on it, and its columns were ours, not AutoCount's.
 document the list's filter matches, each with `lines` from the SAME
 `attachGrnLines` / `attachPiLines` / `attachSiLines` the paged list uses). Money
 columns carry `exportValue` in ringgit with `exportFormat` money (unit price as a
-4-decimal rate). A fresh grid's visible columns are AutoCount's listing columns in
-its order (`GRN_DEFAULT_COLUMN_KEYS`, `PI_DEFAULT_COLUMN_KEYS`,
-`SI_DEFAULT_COLUMN_KEYS`), with AutoCount's values (the AutoCount doc number,
+4-decimal rate). A fresh GR / PI grid's visible columns are AutoCount's listing
+columns in its order (`GRN_DEFAULT_COLUMN_KEYS`, `PI_DEFAULT_COLUMN_KEYS`); the
+Sales Invoices grid keeps its own default columns (owner 「默认跟我的data grid啊」)
+and offers AutoCount's (`SI_AC_COLUMN_KEYS`) in the chooser, hidden. AutoCount
+columns carry AutoCount's values (the AutoCount doc number,
 `bookLineItem` item code / description / group / UOM, AutoCount location code,
 the variant Description 2, `resolveAcAgent`). The Export lines buttons,
 `/export/lines`, `/export/headers`, the column contracts and their helpers are
@@ -31,9 +33,9 @@ Pinned by `frontend/src/pages/scm-v2/{GoodsReceivedListV2,PurchaseInvoicesListV2
 and `si-list-columns.test.tsx`, plus the backend
 `routes/{grn,purchase-invoice,sales-invoice}-export-rows.test.ts`. RED, run on
 this tree with the fix reverted (2026-09-15): money `exportValue` stripped → 4 of
-14 failed, e.g. `SubTotal (Ex) looks like sen: expected 300001 to be less than
+15 failed, e.g. `SubTotal (Ex) looks like sen: expected 300001 to be less than
 100000`; `exportLines` removed → 12 of 12 page cases failed (no `/export/rows`
-request, no line rows). GREEN after: 14 / 14.
+request, no line rows). GREEN after: 15 / 15.
 
 **Ref.** feat/gr-pi-si-export-rows, 2026-09-15 (replaces the buttons of #3930;
 `docs/bugs/0925-the-goods-received-purchase-invoice-and-sales-invoice-list-e.md`).

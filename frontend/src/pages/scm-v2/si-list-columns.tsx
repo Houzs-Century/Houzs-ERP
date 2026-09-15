@@ -1,18 +1,18 @@
-/* The Sales Invoices grid's columns in AutoCount's shape (owner 2026-09-15:
- * "exactly like AutoCount — a default export equals the AutoCount file").
+/* The Sales Invoices grid's columns.
  *
- * Takes the list's own ERP columns and returns the grid's full set: AutoCount's
- * Sales Invoice Detail Listing columns first, in SI_DEFAULT_COLUMN_KEYS order
- * with AutoCount's captions, then every ERP column hidden in the chooser. Money
- * columns export ringgit (exportValue) while the grid keeps sen for sort and
- * funnel. Its own module because SalesInvoicesListV2.tsx sits at the 2,000-line
- * cap. */
+ * Owner 2026-09-15 「默认跟我的data grid啊」: a fresh grid shows exactly the
+ * list's own columns, unchanged. AutoCount's Sales Invoice Detail Listing
+ * columns (SI_AC_COLUMN_KEYS, AutoCount's captions and values, the line columns
+ * included) follow in the chooser, hidden. The export writes whatever is
+ * visible, one row per line. Money columns export ringgit (exportValue) while
+ * the grid keeps sen for sort and funnel. Its own module because
+ * SalesInvoicesListV2.tsx sits at the 2,000-line cap. */
 
 import { fmtSen } from "@2990s/shared";
 import type { Column } from "../../components/DataTable";
 import { cn } from "../../lib/utils";
 import { isCancelledDocStatus } from "../../lib/scm";
-import { SI_DEFAULT_COLUMN_KEYS, SI_LABELS, senToRinggit, type SiListLine } from "../../vendor/scm/lib/si-list-export";
+import { SI_AC_COLUMN_KEYS, SI_LABELS, senToRinggit, type SiListLine } from "../../vendor/scm/lib/si-list-export";
 import { siLineColumns } from "./si-list-line-columns";
 
 export type SiColumnRow = {
@@ -36,6 +36,7 @@ const SEN_COLUMN_KEYS = new Set([
   "mattress_sofa_cost_sen", "bedframe_cost_sen", "accessories_cost_sen", "others_cost_sen", "service_cost_sen",
   "total_cost_sen", "total_margin_sen",
 ]);
+const DATE_COLUMN_KEYS = new Set(["invoice_date", "due_date"]);
 
 export function siGridColumns<T extends SiColumnRow>(erpColumns: Column<T>[]): Column<T, SiListLine>[] {
   const docNoOf = (r: T): string => r.linked_ac_docno?.trim() || r.invoice_number;
@@ -44,9 +45,19 @@ export function siGridColumns<T extends SiColumnRow>(erpColumns: Column<T>[]): C
   const blankCol = (key: string, label: string): Column<T, SiListLine> => ({
     key, label, width: "90px", disableSort: true, getValue: () => "", render: () => <span className="text-[12.5px] text-ink-muted">—</span>,
   });
-  const acOverrides: Record<string, Partial<Column<T, SiListLine>>> = {
-    invoice_number: {
-      label: SI_LABELS.docNo,
+
+  const own = (erpColumns as Column<T, SiListLine>[]).map((col): Column<T, SiListLine> => ({
+    ...col,
+    ...(SEN_COLUMN_KEYS.has(col.key) && col.getValue
+      ? { exportValue: (r: T) => senToRinggit(Number(col.getValue!(r) ?? 0), 2), exportFormat: "money" as const }
+      : {}),
+    ...(DATE_COLUMN_KEYS.has(col.key) ? { exportFormat: "date" as const } : {}),
+  }));
+  const ownKeys = new Set(own.map((c) => c.key));
+
+  const ac: Record<string, Column<T, SiListLine>> = {
+    ac_doc_no: {
+      key: "ac_doc_no", label: SI_LABELS.docNo, width: "156px", disableSort: true,
       getValue: (r) => docNoOf(r),
       render: (r) => (
         <span className={cn("font-docno text-[12.5px] font-semibold text-ink", isCancelledDocStatus(r.status) && "dt-cancel-strike")}>
@@ -54,20 +65,6 @@ export function siGridColumns<T extends SiColumnRow>(erpColumns: Column<T>[]): C
         </span>
       ),
     },
-    invoice_date: { label: SI_LABELS.docDate, exportFormat: "date" },
-    debtor_code: { label: SI_LABELS.debtorCode, defaultHidden: false },
-    debtor_name: { label: SI_LABELS.debtorName },
-    amount: { label: SI_LABELS.total },
-  };
-  const byKey: Record<string, Column<T, SiListLine>> = {};
-  for (const col of erpColumns as Column<T, SiListLine>[]) {
-    const ac = acOverrides[col.key] as (typeof acOverrides)[string] | undefined;
-    const money = SEN_COLUMN_KEYS.has(col.key) && col.getValue
-      ? { exportValue: (r: T) => senToRinggit(Number(col.getValue!(r) ?? 0), 2), exportFormat: "money" as const }
-      : {};
-    byKey[col.key] = ac ? { ...col, ...money, ...ac } : { ...col, ...money, defaultHidden: true };
-  }
-  const acHeader: Record<string, Column<T, SiListLine>> = {
     agent: {
       key: "agent", label: SI_LABELS.agent, width: "140px", disableSort: true,
       getValue: (r) => r.ac_agent ?? "",
@@ -104,15 +101,9 @@ export function siGridColumns<T extends SiColumnRow>(erpColumns: Column<T>[]): C
       getValue: (r) => isCancelledDocStatus(r.status),
       render: (r) => <span className="text-[12.5px] text-ink-secondary">{isCancelledDocStatus(r.status) ? "Yes" : "No"}</span>,
     },
-    erp_doc_no: {
-      key: "erp_doc_no", label: SI_LABELS.erpDocNo, width: "156px", disableSort: true, defaultHidden: true,
-      getValue: (r) => r.invoice_number,
-      render: (r) => <span className="font-docno text-[12.5px] text-ink-secondary">{r.invoice_number}</span>,
-    },
+    ...siLineColumns<T>(),
   };
-  Object.assign(byKey, siLineColumns<T>(), acHeader);
-  return [
-    ...SI_DEFAULT_COLUMN_KEYS.map((k) => byKey[k]!),
-    ...Object.keys(byKey).filter((k) => !(SI_DEFAULT_COLUMN_KEYS as readonly string[]).includes(k)).map((k) => byKey[k]!),
-  ];
+  const acOrder = (SI_AC_COLUMN_KEYS as readonly string[]).filter((k) => !ownKeys.has(k) && k in ac);
+  const extras = Object.keys(ac).filter((k) => !acOrder.includes(k) && !ownKeys.has(k));
+  return [...own, ...[...acOrder, ...extras].map((k) => ({ ...ac[k]!, defaultHidden: true }))];
 }

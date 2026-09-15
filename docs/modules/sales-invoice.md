@@ -1121,10 +1121,15 @@ Purchase Order list's identical gap (owner: 「PO打印没有这个」). Pinned 
 Owner 2026-09-15: every list's Excel export is **AutoCount's listing format**
 — the same captions and values — **one row per line**, holding **every row the
 list's tab / search / sort match** across all pages, with the grid's **visible
-columns**, funnels and sort. A fresh grid's default columns ARE AutoCount's
-Sales Invoice Detail Listing columns (the book keeps no default layout for it; the set follows the GR / PI defaults — LIKELY AutoCount's factory default), in its order (`SI_DEFAULT_COLUMN_KEYS`, one constant; captions
-`SI_LABELS` in `frontend/src/vendor/scm/lib/si-list-export.ts`). Every other column
-(the ERP's own) sits in the chooser, hidden; a saved layout wins.
+columns**, funnels and sort. **Unlike GR and PI, a fresh Sales Invoices grid
+keeps its own columns** (owner 2026-09-15, 「默认跟我的data grid啊」):
+AutoCount's Sales Invoice Detail Listing columns — AutoCount Doc No, Agent,
+Curr. Code / Rate, Inclusive?, SubTotal (ex), Tax, Local Total, Cancelled and the
+line columns — follow in the chooser, **hidden**, in AutoCount's order
+(`SI_AC_COLUMN_KEYS`, one constant; captions `SI_LABELS` in
+`frontend/src/vendor/scm/lib/si-list-export.ts`). Ticking them on exports
+AutoCount's shape; a saved layout wins. The list screen stays one row per
+invoice.
 
 - **Server:** `GET /export/rows` → every document through the list's own filter
   (paged past the ceiling; `truncated` refuses the file), each carrying
@@ -1161,4 +1166,4 @@ Sales Invoice Detail Listing columns (the book keeps no default layout for it; t
   Import is desktop-only by the owner's decision (「手机不需要导入」).
 - Earlier the same day #3930 put a separate "Export lines" button on this list
   and made the toolbar Export CSV write every row with money in sen; both are
-  replaced by this (`docs/bugs/0925-…`, `docs/bugs/0928-…`).
+  replaced by this (`docs/bugs/0925-…`, `docs/bugs/0936-the-goods-received-purchase-invoice-and-sales-invoice-export.md`).

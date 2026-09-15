@@ -1640,4 +1640,4 @@ Goods Received Detail Listing layout "S", in its order (`GRN_DEFAULT_COLUMN_KEYS
   Import is desktop-only by the owner's decision (「手机不需要导入」).
 - Earlier the same day #3930 put a separate "Export lines" button on this list
   and made the toolbar Export CSV write every row with money in sen; both are
-  replaced by this (`docs/bugs/0925-…`, `docs/bugs/0928-…`).
+  replaced by this (`docs/bugs/0925-…`, `docs/bugs/0936-the-goods-received-purchase-invoice-and-sales-invoice-export.md`).

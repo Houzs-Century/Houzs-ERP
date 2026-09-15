@@ -711,9 +711,10 @@ Where the build differs from the tables above, and why.
 
 - **Columns follow AutoCount's Detail Listing.** GR = the book's saved layout
   "S", PI = layout "SS" (read from AutoCount's `Layout` table, 2026-09-15); the
-  book keeps no default Sales Invoice listing layout, so the SI set follows the
-  same shape (LIKELY AutoCount's factory default). Each is one constant
-  (`GRN_DEFAULT_COLUMN_KEYS`, `PI_DEFAULT_COLUMN_KEYS`, `SI_DEFAULT_COLUMN_KEYS`).
+  Sales Invoices grid keeps its own columns as the default (owner 2026-09-15,
+  「默认跟我的data grid啊」) and offers AutoCount's IV listing columns in the
+  chooser, hidden. One constant each (`GRN_DEFAULT_COLUMN_KEYS`,
+  `PI_DEFAULT_COLUMN_KEYS`, `SI_AC_COLUMN_KEYS`).
 - **Doc No** is the AutoCount number (a migrated GR's `linked_ac_gr_docno`, never
   the PO number in `linked_ac_docno`), else ours.
 - **Item Code, Detail Description, Item Group, UOM** come from `bookLineItem` with
