@@ -1836,7 +1836,14 @@ export function MfgSalesOrdersListV2() {
       /* Owner 2026-09-15: the Houzs default is AutoCount's layout "SALES ORDER
          DETAILS-SALES", one row per line in the Export. A company default an
          admin saved from the Columns panel still takes this seed's place. */
-      { id: "so-houzs", label: "Houzs Layout", hint: "AutoCount: SALES ORDER DETAILS-SALES", companyCode: "HOUZS", isDefault: !is2990, columns: SO_AUTOCOUNT_KEYS },
+      {
+        id: "so-houzs",
+        label: "Houzs Layout",
+        hint: "AutoCount: SALES ORDER DETAILS-SALES",
+        companyCode: "HOUZS",
+        isDefault: !is2990,
+        columns: SO_AUTOCOUNT_KEYS,
+      },
       { id: "so-autocount", label: "AutoCount: SALES ORDER DETAILS-SALES", hint: "One row per line in the Export", columns: SO_AUTOCOUNT_KEYS },
     ];
   }, [branding.companyCode]);

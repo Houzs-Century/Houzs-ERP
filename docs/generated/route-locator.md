@@ -558,22 +558,22 @@ Total: 1296 route registrations across 175 files.
 - L5471  POST   /:id/revert
 
 ## backend/src/scm/routes/product-models.ts  (16)
-- L96  GET    /:id/photo/:key
-- L103  GET    /:id/photo-gallery/:key
-- L230  GET    /
-- L243  GET    /by-code/:code
-- L321  GET    /by-code-batch
-- L398  GET    /:id
-- L443  POST   /
-- L643  PATCH  /:id
-- L703  POST   /:id/generate-skus
-- L1025  DELETE /:id
-- L1080  POST   /:id/photo
-- L1163  DELETE /:id/photo
-- L1257  GET    /:id/photos
-- L1275  POST   /:id/photos
-- L1376  DELETE /:id/photos/:photoId
-- L1435  PATCH  /:id/photos/:photoId
+- L97  GET    /:id/photo/:key
+- L104  GET    /:id/photo-gallery/:key
+- L231  GET    /
+- L244  GET    /by-code/:code
+- L322  GET    /by-code-batch
+- L399  GET    /:id
+- L444  POST   /
+- L664  PATCH  /:id
+- L724  POST   /:id/generate-skus
+- L1046  DELETE /:id
+- L1101  POST   /:id/photo
+- L1184  DELETE /:id/photo
+- L1278  GET    /:id/photos
+- L1296  POST   /:id/photos
+- L1397  DELETE /:id/photos/:photoId
+- L1456  PATCH  /:id/photos/:photoId
 
 ## backend/src/scm/routes/sales-invoices.ts  (15)
 - L434  GET    /
@@ -829,17 +829,17 @@ Total: 1296 route registrations across 175 files.
 - L515  GET    /
 
 ## backend/src/scm/routes/mfg-products.ts  (11)
-- L226  GET    /
-- L236  POST   /
-- L442  POST   /batch-import
-- L544  DELETE /:id
-- L547  GET    /:id
-- L979  PATCH  /:id
-- L986  POST   /:id/activate-one-shot
-- L1029  GET    /:id/price-history
-- L1064  GET    /:id/suppliers
-- L1237  POST   /:id/price-changes
-- L1284  GET    /:id/price-changes
+- L227  GET    /
+- L237  POST   /
+- L475  POST   /batch-import
+- L577  DELETE /:id
+- L580  GET    /:id
+- L1012  PATCH  /:id
+- L1019  POST   /:id/activate-one-shot
+- L1062  GET    /:id/price-history
+- L1097  GET    /:id/suppliers
+- L1270  POST   /:id/price-changes
+- L1317  GET    /:id/price-changes
 
 ## backend/src/scm/routes/scan-so.ts  (11)
 - L2274  GET    /salespeople
