@@ -54,14 +54,17 @@ export function compareValues(a: CellValue, b: CellValue): number {
 }
 
 /** Per-column funnel filters. Value identity = the stringified getValue, matching
- *  what the funnel popover lists; a multi-value column matches on ANY value. */
+ *  what the funnel popover lists; a multi-value column matches on ANY value.
+ *  With nothing to filter it returns the SAME array: the grid reports its rows
+ *  to the parent in an effect keyed on identity, so a fresh copy per render
+ *  loops a parent that re-renders on that report. */
 export function applyColumnFilters<T>(
-  rows: readonly T[],
+  rows: T[],
   colFilters: Readonly<Record<string, readonly string[]>>,
   columns: readonly RowRuleColumn<T>[],
 ): T[] {
   const active = Object.entries(colFilters).filter(([, vals]) => vals.length > 0);
-  if (active.length === 0) return rows.slice();
+  if (active.length === 0) return rows;
   const getters = active
     .map(([key, vals]) => {
       const col = columns.find((c) => c.key === key);
@@ -72,23 +75,23 @@ export function applyColumnFilters<T>(
       return { values, allowed: new Set(vals) };
     })
     .filter((g): g is { values: (r: T) => string[]; allowed: Set<string> } => g !== null);
-  if (getters.length === 0) return rows.slice();
+  if (getters.length === 0) return rows;
   return rows.filter((r) => getters.every((g) => g.values(r).some((v) => g.allowed.has(v))));
 }
 
 /** The grid's sort. On a `serverSort` table a server-sortable column is already
  *  ordered by the backend and is left alone; a `disableSort` column is sorted
- *  here. */
+ *  here. Returns the SAME array when it does not sort (see applyColumnFilters). */
 export function sortTableRows<T>(
-  rows: readonly T[],
+  rows: T[],
   sort: { key: string; dir: "asc" | "desc" } | null,
   columns: readonly RowRuleColumn<T>[],
   serverSort: boolean,
 ): T[] {
-  if (!sort) return rows.slice();
+  if (!sort) return rows;
   const col = columns.find((c) => c.key === sort.key);
-  if (!col || !col.getValue) return rows.slice();
-  if (serverSort && !col.disableSort) return rows.slice();
+  if (!col || !col.getValue) return rows;
+  if (serverSort && !col.disableSort) return rows;
   const getter = col.sortValue ?? col.getValue;  // display order != priority order
   const mul = sort.dir === "asc" ? 1 : -1;
   return rows.slice().sort((a, b) => compareValues(getter(a), getter(b)) * mul);

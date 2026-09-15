@@ -634,9 +634,9 @@ describe('ToPONo — the customer reference now lives only in customer_so_no', (
     expect(p.UDF.ToPONo).toBeUndefined();
   });
 
-  test('soReference: the typed reference wins, the imported ref is the fallback', () => {
-    expect(soReference({ customer_so_no: 'CSO', ref: 'OLD' })).toBe('CSO');
-    expect(soReference({ customer_so_no: null, ref: 'OLD' })).toBe('OLD');
+  test('soReference: ref first, customer_so_no as the fallback (owner ruling #2429)', () => {
+    expect(soReference({ customer_so_no: 'CSO', ref: 'REF' })).toBe('REF');
+    expect(soReference({ customer_so_no: 'CSO', ref: null })).toBe('CSO');
     expect(soReference({ customer_so_no: '  ', ref: null })).toBeNull();
   });
 });
