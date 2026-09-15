@@ -27,9 +27,3 @@ jobs:
       - run: node scripts/probe-fabric-accessory-population.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      # TEMPORARY (remove before merge): split-colour-lines PLAN from the branch.
-      - run: node scripts/split-colour-lines.mjs
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          SPLITS: "HC-SO-012927:5:2xBO315-27+2xBO315-28;HC-SO-012046:3:2xM2402-09+2xM2402-15;HC-SO-012046:4:1xM2402-09+1xM2402-15"
-          MODE: plan
