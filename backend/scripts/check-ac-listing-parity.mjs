@@ -74,6 +74,36 @@ try {
   const { buildVariantSummary } = await import("../src/scm/shared/variant-summary.ts");
   const { pgrestShim } = await import("./lib/pgrest-shim.mjs");
   const { splitSofaCode } = await import("../src/services/autocount-sofa-collapse.ts");
+  const { bookLineItem, acBookItemIndex } = await import("../src/services/autocount-book-item.ts");
+  /* bookLineItem as shipped (no bindings), and the book item of the
+     bindings-resolved code with the same ERP fallback rule. */
+  const bookOf = (e, supplierCode, description) => bookLineItem({ itemCode: e.item_code, description, category: e.item_group, uom: e.uom }, supplierCode);
+  const bookByBoundCode = (e, description) => {
+    const b = e.ac_item_code ? acBookItemIndex().get(String(e.ac_item_code).trim().toUpperCase()) : undefined;
+    return {
+      description: txt(b?.description) || txt(description) || null,
+      itemGroup: txt(b?.itemGroup) || txt(e.item_group).toUpperCase() || null,
+      uom: txt(b?.baseUom) || txt(e.uom).toUpperCase() || null,
+    };
+  };
+  const bookCols = (supplierCodeOf, descOf) => [
+    ["Item Code (book)", [
+      ["bookLineItem.itemCode (no bindings)", (a, e) => [a.ItemCode, bookOf(e, supplierCodeOf(e), descOf(e)).itemCode], eqText],
+      ["resolveAcItemCode+bindings", (a, e) => [a.ItemCode, e.ac_item_code], eqText],
+    ]],
+    ["Detail Description (book)", [
+      ["bookLineItem.description (no bindings)", (a, e) => [a.Description, bookOf(e, supplierCodeOf(e), descOf(e)).description], eqText],
+      ["book item of bindings code", (a, e) => [a.Description, bookByBoundCode(e, descOf(e)).description], eqText],
+    ]],
+    ["Item Group (book)", [
+      ["bookLineItem.itemGroup (no bindings)", (a, e) => [a.ItemGroup, bookOf(e, supplierCodeOf(e), descOf(e)).itemGroup], eqText],
+      ["book item of bindings code", (a, e) => [a.ItemGroup, bookByBoundCode(e, descOf(e)).itemGroup], eqText],
+    ]],
+    ["UOM (book)", [
+      ["bookLineItem.uom (no bindings)", (a, e) => [a.UOM, bookOf(e, supplierCodeOf(e), descOf(e)).uom], eqText],
+      ["book item of bindings code", (a, e) => [a.UOM, bookByBoundCode(e, descOf(e)).uom], eqText],
+    ]],
+  ];
   const sb = pgrestShim(pg, "scm");
   const variantsOf = (v) => (typeof v === "string" ? (() => { try { return JSON.parse(v); } catch { return null; } })() : v);
   const desc2Of = (e, labelled) => txt(buildVariantSummary(e.item_group, variantsOf(e.variants), { labelled })) || txt(e.description2);
@@ -188,6 +218,7 @@ try {
     ["Location", [["warehouse short code", (a, e) => [a.Location, short(e.wh_code, e.wh_name)], eqText]]],
     ["Our PO No.", [["PO linked_ac_docno", (a, e) => [a.LinkNo, e.po_ac_docno], eqText], ["PO po_number", (a, e) => [a.LinkNo, e.po_number], eqText]]],
     ["Delivery Date", [["delivery_date", (a, e) => [a.DeliveryDate, e.delivery_date], eqDay]]],
+    ...bookCols((e) => e.sup_code, (e) => txt(e.material_name) || txt(e.description)),
   ]);
 
   /* ── Purchase Invoices ──────────────────────────────────────────────── */
@@ -218,6 +249,7 @@ try {
     ...lineCols("line_total_sen/100", [["qty", (a, e) => [a.Qty, e.qty], eqNum]]),
     ["Location", [["GRN warehouse short code", (a, e) => [a.Location, short(e.wh_code, e.wh_name)], eqText]]],
     ["Our PO No.", [["PO linked_ac_docno", (a, e) => [a.LinkNo, e.po_ac_docno], eqText], ["PO po_number", (a, e) => [a.LinkNo, e.po_number], eqText]]],
+    ...bookCols((e) => e.sup_code, (e) => txt(e.material_name) || txt(e.description)),
   ]);
 
   /* ── Sales Invoices ─────────────────────────────────────────────────── */
@@ -255,6 +287,7 @@ try {
       ["SI sales_location (short)", (a, e) => [a.Location, short(e.sales_location)], eqText],
     ]],
     ["Delivery Date", [["line_delivery_date", (a, e) => [a.DeliveryDate, e.delivery_date], eqDay]]],
+    ...bookCols(() => null, (e) => txt(e.description)),
   ]);
   for (const [label, rows] of [["GR", gr], ["PI", pi], ["IV", iv]]) {
     const paired = rows.filter((e) => acBy[label].has(String(e.dtlkey)));
@@ -274,18 +307,19 @@ try {
     let hit = 0;
     for (const e of iv.filter((x) => acBy.IV.has(String(x.dtlkey)))) {
       const a = acBy.IV.get(String(e.dtlkey));
-      const got = resolveAcAgent(e.agent, e.staff_name);
+      const got = siExportAgent(e.agent, e.staff_name);
       if (eqText(a.Agent, got)) { hit += 1; continue; }
       const ex = `${a.DocNo}: AC=${JSON.stringify(a.Agent)} ERP agent=${JSON.stringify(e.agent)} staff=${JSON.stringify(e.staff_name)} resolved=${JSON.stringify(got)}`;
       if (!txt(a.Agent)) add("AutoCount agent blank", ex);
-      else if (got && txt(got).toUpperCase() === txt(a.Agent).toUpperCase()) add("same name, different letter case", ex);
+      else if (got && txt(got).toUpperCase().replace(/s+/g, " ") === txt(a.Agent).toUpperCase().replace(/s+/g, " ")) add("same name, different spacing", ex);
+      else if (got && (txt(a.Agent).toUpperCase().includes(txt(got).toUpperCase()) || txt(got).toUpperCase().includes(txt(a.Agent).toUpperCase()))) add("one name contains the other (short vs full name)", ex);
       else if (!txt(e.agent) && !txt(e.staff_name)) add("ERP has no agent text and no salesperson", ex);
       else if (UUID.test(txt(e.agent)) && !txt(e.staff_name)) add("agent text is a staff uuid with no salesperson link", ex);
       else if (!got) add("nothing resolved", ex);
       else if (!mapKeys.has(txt(e.agent).toUpperCase()) && !mapKeys.has(txt(e.staff_name).toUpperCase()) && !mapVals.has(txt(got).toUpperCase())) add("salesperson name not in AGENT_MAP (sent as itself)", ex);
       else add("mapped to a DIFFERENT AutoCount agent than the book holds", ex);
     }
-    notice(`IV Agent: resolveAcAgent matches ${hit}; misses by class: ${[...classes].map(([k, c]) => `${k} ${c.n}`).join("; ")}`);
+    notice(`IV Agent: siExportAgent (upper-cased) matches ${hit}; misses by class: ${[...classes].map(([k, c]) => `${k} ${c.n}`).join("; ")}`);
     for (const [k, c] of classes) notice(`IV Agent miss "${k}" examples: ${c.ex.join(" | ")}`);
   }
   /* Owner ruling 2026-09-15: Item Description 2 exports the variant summary,
