@@ -149,9 +149,20 @@ function purchaseReturnsInView(rows: PrRow[], status: StatusTab, search: string)
   );
 }
 
-const linesOfPr = (r: PrRow): readonly PrListLine[] => r.lines ?? [];
 const currencyOfPr = (r: PrRow): string | null => r.grn?.currency ?? null;
 const isLocalCurrency = (r: PrRow): boolean => (currencyOfPr(r) ?? "").toUpperCase() === "MYR";
+
+/* A line as the grid holds it: the server's line plus the two document facts a
+   line column reads (the shared line cells pass a column only its line). */
+type PrGridLine = PrListLine & { doc_local: boolean; doc_reason: string | null };
+const gridLinesCache = new WeakMap<PrRow, PrGridLine[]>();
+const linesOfPr = (r: PrRow): readonly PrGridLine[] => {
+  const hit = gridLinesCache.get(r);
+  if (hit) return hit;
+  const out = (r.lines ?? []).map((l) => ({ ...l, doc_local: isLocalCurrency(r), doc_reason: r.reason ?? null }));
+  gridLinesCache.set(r, out);
+  return out;
+};
 
 function SplitDropdown({ onImport, onDuplicate }: { onImport: () => void; onDuplicate: () => void }) {
   const [open, setOpen] = useState(false);
@@ -715,8 +726,8 @@ export function PurchaseReturnsListV2() {
      order (owner 2026-09-15); the rest of the contract is in the chooser, hidden
      until picked. The ONE Export writes whatever is visible, one row per line. */
   const docTotal = (r: PrRow) => senToRinggit(refundOf(r), 2);
-  const lineTotal = (_r: PrRow, l: PrListLine) => senToRinggit(l.line_refund_sen, 2);
-  const columnValues: Record<string, ReturnColumnValues<PrRow, PrListLine>> = {
+  const lineTotal = (l: PrGridLine) => senToRinggit(l.line_refund_sen, 2);
+  const columnValues: Record<string, ReturnColumnValues<PrRow, PrGridLine>> = {
     doc_no: {
       doc: (r) => r.return_number,
       width: "156px",
@@ -743,18 +754,18 @@ export function PurchaseReturnsListV2() {
     rounding_adj: { doc: () => 0, width: "100px" },
     final_total: { doc: docTotal },
     cancelled: { doc: (r) => returnCancelledWord(r.status), width: "90px" },
-    item_code: { line: (_r, l) => l.item_code, width: "200px", mono: true },
-    detail_description: { line: (_r, l) => l.material_name ?? l.description, width: "240px" },
-    uom: { line: (_r, l) => l.uom, width: "80px" },
-    location: { line: (_r, l) => l.location, width: "90px" },
+    item_code: { line: (l) => l.item_code, width: "200px", mono: true },
+    detail_description: { line: (l) => l.material_name ?? l.description, width: "240px" },
+    uom: { line: (l) => l.uom, width: "80px" },
+    location: { line: (l) => l.location, width: "90px" },
     proj_no: { line: () => null, width: "90px" },
     dept_no: { line: () => null, width: "90px" },
     batch_no: { line: () => null, width: "100px" },
-    qty: { line: (_r, l) => l.qty_returned, width: "80px" },
-    unit_price: { line: (_r, l) => senToRinggit(l.unit_price_sen, 4) },
+    qty: { line: (l) => l.qty_returned, width: "80px" },
+    unit_price: { line: (l) => senToRinggit(l.unit_price_sen, 4) },
     discount: { line: () => null, width: "100px" },
     line_total: { line: lineTotal },
-    line_local_total: { line: (r, l) => (isLocalCurrency(r) ? lineTotal(r, l) : null) },
+    line_local_total: { line: (l) => (l.doc_local ? lineTotal(l) : null) },
     tax_code: { line: () => null, width: "90px" },
     line_tax: { line: () => 0, width: "90px" },
     line_total_ex: { line: lineTotal },
@@ -770,15 +781,15 @@ export function PurchaseReturnsListV2() {
       },
     },
     supplier_cn_no: { doc: (r) => r.credit_note_ref || null, width: "140px", mono: true },
-    reason: { line: (r, l) => l.reason ?? r.reason ?? null, width: "200px" },
-    transfer_from: { line: (_r, l) => l.grn_no, width: "150px", mono: true },
-    our_po_no: { line: (_r, l) => l.po_no, width: "150px", mono: true },
-    detail_description_2: { line: (_r, l) => l.description2, width: "240px" },
-    remarks: { line: (_r, l) => l.notes, width: "200px" },
-    item_group: { line: (_r, l) => l.item_group, width: "120px" },
-    line_id: { line: (_r, l) => l.id, width: "300px", mono: true },
+    reason: { line: (l) => l.reason ?? l.doc_reason, width: "200px" },
+    transfer_from: { line: (l) => l.grn_no, width: "150px", mono: true },
+    our_po_no: { line: (l) => l.po_no, width: "150px", mono: true },
+    detail_description_2: { line: (l) => l.description2, width: "240px" },
+    remarks: { line: (l) => l.notes, width: "200px" },
+    item_group: { line: (l) => l.item_group, width: "120px" },
+    line_id: { line: (l) => l.id, width: "300px", mono: true },
   };
-  const columns = returnGridColumns<PrRow, PrListLine>(PR_LINE_COLUMNS, columnValues, linesOfPr, "doc_no");
+  const columns = returnGridColumns<PrRow, PrGridLine>(PR_LINE_COLUMNS, columnValues, linesOfPr, "doc_no");
 
   const exportLines = {
     fetchRows: async () => purchaseReturnsInView(await fetchPurchaseReturnExportRows<PrRow>(), status, search),
@@ -895,7 +906,7 @@ export function PurchaseReturnsListV2() {
                   </Button>
                 </div>
               )}
-              <DataTable<PrRow, PrListLine>
+              <DataTable<PrRow, PrGridLine>
                 tableId="purchase-returns-v2"
                 rows={filtered}
                 loading={isLoading}

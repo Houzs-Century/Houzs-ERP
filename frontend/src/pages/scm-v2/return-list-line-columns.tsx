@@ -12,10 +12,12 @@
  * line of the file). A LINE column shows a compact value on the return's row —
  * the single value or the first and "+N" more; quantities and amounts show
  * their sum — lists every line's value in its funnel, and exports each line's
- * own value. Money is RINGGIT in the file and on screen; the server sends sen
- * and the page's value functions convert (senToRinggit). */
+ * own value — the shared components/dataTableLineCells.tsx cells every list
+ * that exports by line uses. Money is RINGGIT in the file and on screen; the
+ * server sends sen and the page's value functions convert (senToRinggit). */
 
 import type { ReactNode } from "react";
+import { lineSumColumn, lineTextColumn } from "../../components/dataTableLineCells";
 import { fmtDate } from "@2990s/shared";
 import type { Column } from "../../components/DataTable";
 import type { ExportCell } from "../../components/dataTableLineExport";
@@ -24,19 +26,15 @@ import type { ReturnLineColumn } from "../../vendor/scm/lib/return-line-export-c
 export type ReturnColumnValues<R, L> = {
   /** A document column's value (money in ringgit). */
   doc?: (row: R) => ExportCell;
-  /** A line column's value for one line (money in ringgit). */
-  line?: (row: R, line: L) => ExportCell;
+  /** A line column's value for one line (money in ringgit). A line column reads
+   *  only its line — the shared line cells pass no row — so a page that needs a
+   *  document fact on a line carries it on the line it hands the grid. */
+  line?: (line: L) => ExportCell;
   /** Replaces the generic cell. */
   render?: (row: R) => ReactNode;
   width?: string;
   mono?: boolean;
 };
-
-const muted = (content: ReactNode, title?: string, mono = false) => (
-  <span title={title} className={`block min-w-0 truncate text-[12.5px] text-ink-secondary${mono ? " font-mono text-[11.5px]" : ""}`}>
-    {content}
-  </span>
-);
 
 const DASH = "—";
 
@@ -50,14 +48,6 @@ const shown = (v: ExportCell, format: ReturnLineColumn["format"]): string => {
   if (typeof v === "number") return format === "money" ? money(v) : format === "rate" ? rate(v) : String(v);
   return format === "date" ? fmtDate(v) : v;
 };
-
-const distinct = (values: ExportCell[]): Array<string | number> => {
-  const out: Array<string | number> = [];
-  for (const v of values) if (v !== null && v !== "" && !out.includes(v)) out.push(v);
-  return out;
-};
-
-const isNumeric = (format: ReturnLineColumn["format"]) => format === "money" || format === "number";
 
 /**
  * DataTable columns for a return list, in the contract's order. `values` must
@@ -75,7 +65,7 @@ export function returnGridColumns<R, L>(
     if (!v || (spec.level === "document" ? !v.doc : !v.line)) {
       throw new Error(`return grid: no ${spec.level} value for column "${spec.key}"`);
     }
-    const numeric = isNumeric(spec.format) || spec.format === "rate";
+    const numeric = spec.format === "money" || spec.format === "number" || spec.format === "rate";
     const base = {
       key: spec.key,
       label: spec.label,
@@ -91,36 +81,42 @@ export function returnGridColumns<R, L>(
         ...base,
         getValue: (r: R) => doc(r),
         exportValue: (r: R) => doc(r),
-        render: v.render ?? ((r: R) => muted(shown(doc(r), spec.format), undefined, v.mono)),
+        render: v.render ?? ((r: R) => (
+          <span className={`block min-w-0 truncate text-ink-secondary ${v.mono ? "font-mono text-[11.5px]" : "text-[12.5px]"}`}>
+            {shown(doc(r), spec.format)}
+          </span>
+        )),
       } satisfies Column<R, L>;
     }
     const pick = v.line!;
-    const cells = (r: R): ExportCell[] => linesOf(r).map((l) => pick(r, l));
-    const sum = (r: R): number | null => {
-      const nums = cells(r).filter((c): c is number => typeof c === "number");
-      return nums.length ? Number(nums.reduce((a, b) => a + b, 0).toFixed(4)) : null;
-    };
-    return {
-      ...base,
-      disableSort: true,
-      getValue: (r: R) => (isNumeric(spec.format) ? sum(r) : distinct(cells(r))[0] ?? null),
-      getFilterValues: (r: R) => distinct(cells(r)),
-      lineValue: (r: R, l: L) => pick(r, l),
-      render: v.render ?? ((r: R) => {
-        if (isNumeric(spec.format)) {
-          const s = sum(r);
-          return <span className="font-money text-[12.5px] text-ink">{s === null ? DASH : shown(s, spec.format)}</span>;
-        }
-        const vs = distinct(cells(r));
-        if (vs.length === 0) return muted(DASH);
-        const all = vs.map((x) => shown(x, spec.format)).join("\n");
-        return (
-          <span title={all} className={`block min-w-0 truncate text-[12.5px] text-ink-secondary${v.mono ? " font-mono text-[11.5px]" : ""}`}>
-            {shown(vs[0]!, spec.format)}
-            {vs.length > 1 && <span className="text-ink-muted">{` +${vs.length - 1}`}</span>}
-          </span>
-        );
-      }),
-    } satisfies Column<R, L>;
+    const lineBase = { key: spec.key, label: spec.label, width: base.width, defaultHidden: base.defaultHidden, linesOf };
+    let column: Column<R, L>;
+    if (spec.format === "money" || spec.format === "number") {
+      /* A quantity or an amount: the row shows the sum, the file each line's. */
+      column = lineSumColumn<R, L>({
+        ...lineBase,
+        pick: (l) => {
+          const x = pick(l);
+          return typeof x === "number" ? x : null;
+        },
+        exportFormat: spec.format,
+        format: (sum) => shown(Number(sum.toFixed(4)), spec.format),
+      });
+    } else {
+      column = lineTextColumn<R, L>({
+        ...lineBase,
+        pick: (l) => {
+          const x = pick(l);
+          return x === null ? null : String(x);
+        },
+        exportFormat: spec.format === "date" ? "date" : "text",
+        format: spec.format === "rate" ? (x) => rate(Number(x)) : spec.format === "date" ? (x) => fmtDate(x) : undefined,
+        mono: v.mono,
+      });
+      /* The file keeps the typed value: a unit price stays a NUMBER (a rate). */
+      column.lineValue = (_r: R, l: L) => pick(l);
+      column.exportFormat = spec.format;
+    }
+    return { ...column, ...(v.render ? { render: v.render } : {}), align: base.align };
   });
 }

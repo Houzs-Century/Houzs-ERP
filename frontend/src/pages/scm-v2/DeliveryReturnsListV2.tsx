@@ -146,7 +146,17 @@ type DrRow = {
 
 type StatusTab = "all" | "open" | "inspected" | "refunded" | "cancelled";
 
-const linesOfDr = (r: DrRow): readonly DrListLine[] => r.lines ?? [];
+/* A line as the grid holds it: the server's line plus the one document fact a
+   line column reads (the shared line cells pass a column only its line). */
+type DrGridLine = DrListLine & { doc_so_doc_no: string | null };
+const gridLinesCache = new WeakMap<DrRow, DrGridLine[]>();
+const linesOfDr = (r: DrRow): readonly DrGridLine[] => {
+  const hit = gridLinesCache.get(r);
+  if (hit) return hit;
+  const out = (r.lines ?? []).map((l) => ({ ...l, doc_so_doc_no: r.so_doc_no ?? null }));
+  gridLinesCache.set(r, out);
+  return out;
+};
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1080,8 +1090,8 @@ export function DeliveryReturnsListV2() {
      below are in the chooser, hidden until picked. The ONE Export writes
      whatever is visible, one row per line, money in ringgit. */
   const docTotal = (r: DrRow) => senToRinggit(r.local_total_sen, 2);
-  const lineTotal = (_r: DrRow, l: DrListLine) => senToRinggit(l.line_total_sen, 2);
-  const columnValues: Record<string, ReturnColumnValues<DrRow, DrListLine>> = {
+  const lineTotal = (l: DrGridLine) => senToRinggit(l.line_total_sen, 2);
+  const columnValues: Record<string, ReturnColumnValues<DrRow, DrGridLine>> = {
     doc_no: {
       doc: (r) => r.return_number,
       width: "156px",
@@ -1106,16 +1116,16 @@ export function DeliveryReturnsListV2() {
     },
     local_total: { doc: docTotal },
     cancelled: { doc: (r) => returnCancelledWord(r.status), width: "90px" },
-    item_code: { line: (_r, l) => l.item_code, width: "200px", mono: true },
-    detail_description: { line: (_r, l) => l.description, width: "240px" },
-    uom: { line: (_r, l) => l.uom, width: "80px" },
-    location: { line: (_r, l) => l.location, width: "90px" },
+    item_code: { line: (l) => l.item_code, width: "200px", mono: true },
+    detail_description: { line: (l) => l.description, width: "240px" },
+    uom: { line: (l) => l.uom, width: "80px" },
+    location: { line: (l) => l.location, width: "90px" },
     proj_no: { line: () => null, width: "90px" },
     dept_no: { line: () => null, width: "90px" },
     batch_no: { line: () => null, width: "100px" },
-    qty: { line: (_r, l) => l.qty_returned, width: "80px" },
-    unit_price: { line: (_r, l) => senToRinggit(l.unit_price_sen, 4) },
-    discount: { line: (_r, l) => senToRinggit(l.discount_sen, 2), width: "100px" },
+    qty: { line: (l) => l.qty_returned, width: "80px" },
+    unit_price: { line: (l) => senToRinggit(l.unit_price_sen, 4) },
+    discount: { line: (l) => senToRinggit(l.discount_sen, 2), width: "100px" },
     line_total: { line: lineTotal },
     tax_code: { line: () => null, width: "90px" },
     line_tax: { line: () => 0, width: "90px" },
@@ -1141,20 +1151,20 @@ export function DeliveryReturnsListV2() {
     },
     note: { doc: (r) => r.note || null, width: "200px" },
     transfer_from: { doc: (r) => r.do_doc_no || null, width: "140px", mono: true },
-    so_doc_no: { line: (r, l) => l.so_doc_no ?? r.so_doc_no ?? null, width: "150px", mono: true },
-    detail_description_2: { line: (_r, l) => l.description2, width: "240px" },
-    remarks: { line: (_r, l) => l.notes, width: "200px" },
-    item_group: { line: (_r, l) => l.item_group, width: "120px" },
-    condition: { line: (_r, l) => l.condition, width: "110px" },
-    line_id: { line: (_r, l) => l.id, width: "300px", mono: true },
+    so_doc_no: { line: (l) => l.so_doc_no ?? l.doc_so_doc_no, width: "150px", mono: true },
+    detail_description_2: { line: (l) => l.description2, width: "240px" },
+    remarks: { line: (l) => l.notes, width: "200px" },
+    item_group: { line: (l) => l.item_group, width: "120px" },
+    condition: { line: (l) => l.condition, width: "110px" },
+    line_id: { line: (l) => l.id, width: "300px", mono: true },
   };
   /* ERP columns AutoCount's grid has no place for. Money is exported in ringgit. */
   const moneyExport = (sen: (r: DrRow) => number | undefined) => ({
     exportValue: (r: DrRow) => senToRinggit(sen(r) ?? 0, 2),
     exportFormat: "money" as const,
   });
-  const columns: Column<DrRow, DrListLine>[] = [
-    ...returnGridColumns<DrRow, DrListLine>(DR_LINE_COLUMNS, columnValues, linesOfDr, "doc_no"),
+  const columns: Column<DrRow, DrGridLine>[] = [
+    ...returnGridColumns<DrRow, DrGridLine>(DR_LINE_COLUMNS, columnValues, linesOfDr, "doc_no"),
     {
       key: "salesperson",
       label: "Salesperson",
@@ -1452,8 +1462,8 @@ export function DeliveryReturnsListV2() {
               <span className="font-money text-[13px] text-ink-secondary">{fmtPctBasis(r.margin_pct_basis)}</span>
             ),
           },
-        ] satisfies Column<DrRow, DrListLine>[])
-      : ([] satisfies Column<DrRow, DrListLine>[])),
+        ] satisfies Column<DrRow, DrGridLine>[])
+      : ([] satisfies Column<DrRow, DrGridLine>[])),
   ];
 
   const exportLines = {
@@ -1648,7 +1658,7 @@ export function DeliveryReturnsListV2() {
                 </Button>
               </div>
             )}
-            <DataTable<DrRow, DrListLine>
+            <DataTable<DrRow, DrGridLine>
               tableId="delivery-returns-v2"
               rows={filtered}
               loading={isLoading}
