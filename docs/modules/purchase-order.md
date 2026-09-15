@@ -1927,9 +1927,14 @@ endpoint and tab. The header view is untouched.
   `DesktopOnly` on mobile, so there is no mobile chasing screen (and no
   desktop/mobile pair to keep in sync — §8).
 
-- The AutoCount UDF dates — Estimate Delivery Date and Supplier Delivery Date
-  2 / 3 — are columns on the report but the ERP does not sync them yet
-  (`supplier_delivery_date_2/3` are 0% populated), so they render blank. Owner
+- The AutoCount UDF dates are HEADER fields in the book, repeated on every line
+  of its report. Mapping, proven against the live book 2026-09-15
+  (`docs/bugs/0916-autocount-supplier-delivery-dates-never-reached-the-erp-purc.md`):
+  Estimate Delivery Date = `PO.UDF_EDate` -> `supplier_delivery_date_2`;
+  Supplier Delivery Date 2 = `UDF_EDate2` -> `_3`; Supplier Delivery Date 3 =
+  `UDF_EDate3` -> `_4`. The migrated POs got them once, through
+  `fill-po-supplier-dates-from-autocount.yml`. NO ongoing sync exists in either
+  direction: the PO write-back sends `UDF: {}` and no pull writes `scm`. Owner
   2026-09-12: keep the column positions.
 
 ---
