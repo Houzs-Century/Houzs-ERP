@@ -34,7 +34,6 @@ export async function readPoLineImportFile(file: Blob): Promise<PoLineImportShee
   let first: PoLineImportSheet | null = null;
   for (const name of wb.SheetNames) {
     const ws = wb.Sheets[name];
-    if (!ws) continue;
     const matrix = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null }) as unknown[][];
     const sheet = readPoLineImportSheet(matrix);
     if (sheet.ok) return sheet;
@@ -52,9 +51,9 @@ export function applyBodyOf(preview: PoLineImportPreview): PoLineImportApplyBody
 
 /* authedFetch rejects with the raw status + body; the conflict list rides the body. */
 const errorOf = (e: unknown): { message: string; conflicts: PoLineImportConflict[] } => {
-  const err = e as { status?: number; body?: string; message?: string };
+  const err = (e ?? {}) as { status?: number; body?: string; message?: string };
   let conflicts: PoLineImportConflict[] = [];
-  if (typeof err?.body === 'string') {
+  if (typeof err.body === 'string') {
     try {
       const j = JSON.parse(err.body) as { conflicts?: PoLineImportConflict[]; message?: string };
       if (Array.isArray(j.conflicts)) conflicts = j.conflicts;
@@ -63,9 +62,9 @@ const errorOf = (e: unknown): { message: string; conflicts: PoLineImportConflict
       }
     } catch { /* not JSON: fall through to the plain sentence */ }
   }
-  const message = typeof err?.status === 'number' && typeof err?.body === 'string'
+  const message = typeof err.status === 'number' && typeof err.body === 'string'
     ? humanApiError(err.status, err.body)
-    : err?.message ?? 'Something went wrong. Please try again.';
+    : err.message ?? 'Something went wrong. Please try again.';
   return { message, conflicts };
 };
 
@@ -83,10 +82,10 @@ export function usePoLineImport() {
 
   const chooseFile = useCallback(async (file: File) => {
     setState({ step: 'reading', fileName: file.name });
-    const sheet = await readPoLineImportFile(file);
-    if (!sheet.ok) { setState({ step: 'pick', error: sheet.error }); return; }
-    if (sheet.rows.length === 0) { setState({ step: 'pick', error: 'The file has a header row but no lines under it.' }); return; }
     try {
+      const sheet = await readPoLineImportFile(file);
+      if (!sheet.ok) { setState({ step: 'pick', error: sheet.error }); return; }
+      if (sheet.rows.length === 0) { setState({ step: 'pick', error: 'The file has a header row but no lines under it.' }); return; }
       const preview = await authedFetch<PoLineImportPreview>('/mfg-purchase-orders/line-import/preview', {
         method: 'POST',
         body: JSON.stringify({ rows: sheet.rows }),
