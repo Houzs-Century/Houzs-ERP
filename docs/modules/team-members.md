@@ -265,9 +265,13 @@ card shows `active / target` when a target is set.
   until 2026-09-15 the phone edit offered Role, Department, Position and Email,
   answered ok and changed nothing
   (`docs/bugs/0924-a-sales-director-s-phone-edit-of-a-member-s-role-department.md`).
-  **Still open:** the classic desktop panel (`/team?tab=members`,
-  `EditMemberPanel` in `frontend/src/pages/Team.tsx`) offers that caller the
-  stripped fields.
+  The classic desktop panel (`/team?tab=members`, `EditMemberPanel` in
+  `frontend/src/pages/Team.tsx`) offered that caller the same stripped fields
+  and every account action until 2026-09-15
+  (`docs/bugs/0928-a-sales-director-s-desktop-classic-edit-member-panel-offered.md`);
+  `frontend/src/pages/team/editMemberScope.tsx` now offers it Name, Phone,
+  Division and Enable/Disable only, from the same list, and filters the PATCH
+  body to those keys.
 - **Impersonation is registered TWICE, and the second one is dead.** See
   section 4 below before changing either.
 - **Writing `users.name` or `users.status` fires a trigger into `scm.staff`.**
