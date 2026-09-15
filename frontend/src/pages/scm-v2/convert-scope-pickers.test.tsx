@@ -199,26 +199,26 @@ const TWO_GRNS = [
 
 describe('GRN → PI: "Transfer to Purchase Invoice" lands on the note you came from', () => {
   it("shows only the scoped note", () => {
-    outstandingGrnItems.mockReturnValue(loaded(TWO_GRNS));
+    outstandingGrnItems.mockReturnValue(loaded({ items: TWO_GRNS, truncated: false }));
     at(convertToLink("grnToPi", "grn-1"), <PurchaseInvoiceFromGrn />);
     expect(screen.getAllByText("HC-GR-0001").length).toBeGreaterThan(0);
     expect(screen.queryByText("HC-GR-0002")).toBeNull();
   });
 
   it("pre-ticks it", () => {
-    outstandingGrnItems.mockReturnValue(loaded(TWO_GRNS));
+    outstandingGrnItems.mockReturnValue(loaded({ items: TWO_GRNS, truncated: false }));
     at(convertToLink("grnToPi", "grn-1"), <PurchaseInvoiceFromGrn />);
     expect(screen.getByText(/Continue with 1 line/)).toBeTruthy();
   });
 
   it("no parameter still opens the FULL picker", () => {
-    outstandingGrnItems.mockReturnValue(loaded(TWO_GRNS));
+    outstandingGrnItems.mockReturnValue(loaded({ items: TWO_GRNS, truncated: false }));
     at("/scm/purchase-invoices/from-grn", <PurchaseInvoiceFromGrn />);
     expect(screen.getAllByText("HC-GR-0002").length).toBeGreaterThan(0);
   });
 
   it("the OLD spelling is reported, not silently honoured", () => {
-    outstandingGrnItems.mockReturnValue(loaded(TWO_GRNS));
+    outstandingGrnItems.mockReturnValue(loaded({ items: TWO_GRNS, truncated: false }));
     at("/scm/purchase-invoices/from-grn?grn=grn-1", <PurchaseInvoiceFromGrn />);
     expect(screen.getByRole("alert").textContent).toContain('"grn"');
   });

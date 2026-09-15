@@ -873,7 +873,8 @@ the warehouse either way — what stops is the paperwork.
 > the status. Since the hold became a MARKER beside the status (owner:
 > 「我们的hold是给我们知道一个 order hold这的」) a held GRN reads `POSTED`, so
 > `purchase-invoices.ts` checks `on_hold` explicitly on all three billing paths —
-> `/outstanding-grn-items`, `from-grn-items` and `from-grn`, the last two
+> `/outstanding-grn-items` (its read, `lib/outstanding-grn-lines.ts`, since
+> 2026-09-14), `from-grn-items` and `from-grn`, the last two
 > refusing with `grn_on_hold` (409). Missing one bills a supplier for a receipt
 > somebody deliberately stopped.
 >

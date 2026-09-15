@@ -24,6 +24,14 @@
  * (`sales_invoice_items.do_item_id`, `purchase_invoice_items.grn_item_id`),
  * paired against the book's DocTransfer exactly like a DO against its SO.
  *
+ * CARRIED-OVER DOCUMENTS (docs/bugs/0919). A delivery order or purchase order
+ * carried over from AutoCount is in the snapshot under AutoCount's own number
+ * (DO-010936) when export-ac-conversion-line-keys.py was given it, and in the
+ * ERP as "HC-" + that number, linked to it. No write-back conversion ever sent
+ * it, so instead of a SENT row the plan requires that link: the ERP document
+ * must carry that very AutoCount number (and a delivery order the carried-over
+ * flag). The pairing rule, the digest and the verify are unchanged.
+ *
  * PURCHASE ORDERS (docs/bugs/0903). A purchase order raised from a sales order
  * kept no keys either (0890), and some were sent with each line's quantity and
  * cost under another line's key (0889). Their values can only be corrected by an
@@ -142,6 +150,10 @@ for (const r of snap.rows) {
   bookByDoc.set(k, list);
 }
 const docNos = (t) => [...bookByDoc.keys()].filter((k) => k.startsWith(`${t}|`)).map((k) => k.slice(t.length + 1));
+/* A book number the write-back minted IS the ERP number; a carried-over one is
+   AutoCount's own, and the ERP holds it as "HC-" + that number. */
+const carriedOver = (bookNo) => !String(bookNo).startsWith("HC-");
+const erpNumberOf = (bookNo) => (carriedOver(bookNo) ? `HC-${bookNo}` : bookNo);
 
 /* ── the ERP side ─────────────────────────────────────────────────────────── */
 const LANES = {
@@ -155,12 +167,13 @@ const TYPES = Object.keys(LANES);
 
 async function readLanes(sql) {
   const doRows = await sql`
-    SELECT d.do_number AS doc_no, i.id::text AS id, i.linked_ac_dtlkey, i.qty::float AS qty, i.so_item_id::text AS source_row,
+    SELECT d.do_number AS doc_no, d.linked_ac_docno AS linked_docno, d.migrated_no_stock AS carried_flag,
+           i.id::text AS id, i.linked_ac_dtlkey, i.qty::float AS qty, i.so_item_id::text AS source_row,
            s.linked_ac_dtlkey AS source_key
       FROM scm.delivery_orders d
       JOIN scm.delivery_order_items i ON i.delivery_order_id = d.id
       LEFT JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
-     WHERE d.company_id = ${CO} AND d.do_number IN ${sql(docNos("DO"))}`;
+     WHERE d.company_id = ${CO} AND d.do_number IN ${sql(docNos("DO").map(erpNumberOf))}`;
   const grRows = await sql`
     SELECT g.grn_number AS doc_no, i.id::text AS id, i.linked_ac_dtlkey, i.qty_accepted::float AS qty, i.purchase_order_item_id::text AS source_row,
            p.linked_ac_dtlkey AS source_key
@@ -183,12 +196,13 @@ async function readLanes(sql) {
       LEFT JOIN scm.grn_items g ON g.id = i.grn_item_id
      WHERE p.company_id = ${CO} AND p.invoice_number IN ${sql(docNos("PI"))}` : [];
   const poRows = await sql`
-    SELECT p.po_number AS doc_no, i.id::text AS id, i.linked_ac_dtlkey, i.qty::float AS qty, i.so_item_id::text AS source_row,
+    SELECT p.po_number AS doc_no, p.linked_ac_docno AS linked_docno, true AS carried_flag,
+           i.id::text AS id, i.linked_ac_dtlkey, i.qty::float AS qty, i.so_item_id::text AS source_row,
            s.linked_ac_dtlkey AS source_key
       FROM scm.purchase_orders p
       JOIN scm.purchase_order_items i ON i.purchase_order_id = p.id
       LEFT JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
-     WHERE p.company_id = ${CO} AND p.po_number IN ${sql(docNos("PO"))}`;
+     WHERE p.company_id = ${CO} AND p.po_number IN ${sql(docNos("PO").map(erpNumberOf))}`;
   const sent = await sql`
     SELECT op, ac_doc_no FROM scm.autocount_outbox
      WHERE company_id = ${CO} AND status = 'sent' AND op IN ('so_to_do', 'po_to_gr', 'do_to_iv', 'gr_to_pi', 'so_to_po')
@@ -199,7 +213,7 @@ async function readLanes(sql) {
 function plan(lanes) {
   const writes = [];
   const planned = [];
-  const docs = { planned: 0, not_in_erp: [], not_sent_by_writeback: [] };
+  const docs = { planned: 0, not_in_erp: [], not_sent_by_writeback: [], carried_over: 0, not_linked: [] };
   const refusals = [];
   let unclaimed = 0;
   const merged = [];
@@ -212,9 +226,14 @@ function plan(lanes) {
       byDoc.set(r.doc_no, list);
     }
     for (const docNo of docNos(type)) {
-      const rows = byDoc.get(docNo);
+      const rows = byDoc.get(erpNumberOf(docNo));
       if (!rows) { docs.not_in_erp.push(`${type} ${docNo}`); continue; }
-      if (!lanes.sent.has(`${lane.op}|${docNo}`)) { docs.not_sent_by_writeback.push(`${type} ${docNo}`); continue; }
+      if (carriedOver(docNo)) {
+        /* No conversion sent it; the ERP document must name this very AutoCount
+           document instead, and a delivery order must be flagged carried over. */
+        if (!rows.every((r) => r.linked_docno === docNo && r.carried_flag === true)) { docs.not_linked.push(`${type} ${docNo}`); continue; }
+        docs.carried_over += 1;
+      } else if (!lanes.sent.has(`${lane.op}|${docNo}`)) { docs.not_sent_by_writeback.push(`${type} ${docNo}`); continue; }
       docs.planned += 1;
       const result = planDocumentKeys(
         rows.map((r) => ({ id: r.id, linkedKey: r.linked_ac_dtlkey, sourceKey: r.source_key, qty: r.qty })),
@@ -244,7 +263,8 @@ function report(p) {
     const t = tallyOutcomes(p.planned.filter((x) => x.type === type));
     notice(`${type} rows: ${Object.entries(t).map(([k, v]) => `${k}=${v}`).join("  ")}`);
   }
-  notice(`documents planned: ${p.docs.planned}; in the book but not in the ERP: ${p.docs.not_in_erp.length}; no SENT conversion row: ${p.docs.not_sent_by_writeback.length}; book lines no row of ours claims: ${p.unclaimed}`);
+  notice(`documents planned: ${p.docs.planned} (${p.docs.carried_over} carried over from AutoCount); in the book but not in the ERP: ${p.docs.not_in_erp.length}; no SENT conversion row: ${p.docs.not_sent_by_writeback.length}; carried-over number not linked: ${p.docs.not_linked.length}; book lines no row of ours claims: ${p.unclaimed}`);
+  for (const d of p.docs.not_linked.slice(0, SHOW)) say(`  carried over but not linked to that AutoCount number: ${d}`);
   for (const d of p.docs.not_in_erp.slice(0, SHOW)) say(`  not in the ERP: ${d}`);
   for (const d of p.docs.not_sent_by_writeback.slice(0, SHOW)) say(`  no sent conversion row: ${d}`);
   for (const r of p.refusals.slice(0, SHOW)) say(`  refused: ${r}`);
