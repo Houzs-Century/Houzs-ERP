@@ -2440,9 +2440,16 @@ export function MobileNewSO({
             <div className="card" style={{ marginBottom: 11 }}>
               <div className="card-h"><span className="card-t">Delivery address</span></div>
               <div className="card-b" style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                {addressRequired && (
+                {/* Only cry out when the address is ACTUALLY short. This used to
+                    render on `addressRequired` alone (a Processing Date is set),
+                    so a fully-filled address still showed "the full delivery
+                    address ... is required" — a warning on a complete address
+                    that reads as "it won't save". The save gate (missingAddress)
+                    was always right; the banner was the false alarm. Gate it on
+                    missingAddress and name only what is missing. */}
+                {addressRequired && missingAddress.length > 0 && (
                   <div style={{ fontSize: 10.5, color: "#a16a2e", background: "#fbf3e6", border: "1px solid #ecd9b6", borderRadius: 10, padding: "7px 10px" }}>
-                    Both a Processing and a Delivery date are set, so the full delivery address (State, City, Postcode and Address Line 1) is required.
+                    A Processing Date is set, so the delivery address is required — still missing {missingAddress.length === 1 ? missingAddress[0] : missingAddress.slice(0, -1).join(", ") + " and " + missingAddress[missingAddress.length - 1]}.
                   </div>
                 )}
                 <Field label={addressRequired ? "Address Line 1 *" : "Address Line 1"} error={touched && addressRequired && !addr1.trim()} scanned={scanned("addr1", addr1)}>
