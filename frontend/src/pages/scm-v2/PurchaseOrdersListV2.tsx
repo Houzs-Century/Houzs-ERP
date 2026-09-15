@@ -900,7 +900,7 @@ export function PurchaseOrdersListV2() {
      signature is the same server filter the list request is built from, so a
      tab/search/sort change refetches and ticking values just re-filters. */
   const funnelAllRows = {
-    fetch: (need: { exportKeys: string[]; filterKeys: string[] }) => fetchPoExportRows<PoGridRow>(exportFilters, need),
+    fetchRows: (need: { exportKeys: string[]; filterKeys: string[] }) => fetchPoExportRows<PoGridRow>(exportFilters, need),
     signature: JSON.stringify(exportFilters),
     onScopeChange: setFunnelScope,
     onError: (e: Error) => {

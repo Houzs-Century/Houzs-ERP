@@ -1489,7 +1489,7 @@ describe("DataTable funnelAllRows (whole filtered set)", () => {
     // point: a page-local funnel would show zero, the widened one finds it.
     localStorage.setItem("dt:filters:funnel-all", JSON.stringify({ status: ["Special"] }));
     const special: Row = { id: 999, name: "Order 999", status: "Special" };
-    const fetch = vi.fn().mockResolvedValue([...rows, special]);
+    const fetchRows = vi.fn().mockResolvedValue([...rows, special]);
     const seen: Row[][] = [];
     render(
       <DataTable
@@ -1499,24 +1499,24 @@ describe("DataTable funnelAllRows (whole filtered set)", () => {
         getRowKey={(row) => row.id}
         onFilteredRowsChange={(r) => seen.push(r)}
         funnelAllRows={{
-          fetch,
+          fetchRows,
           signature: "tab=all",
           onScopeChange: () => {},
           onError: () => {},
         }}
       />,
     );
-    // Before the fetch resolves the page-local funnel matches nothing.
+    // Before the read resolves the page-local funnel matches nothing.
     expect(seen.at(-1)).toHaveLength(0);
     // Once the whole set arrives, the funnel finds the single matching row.
     await waitFor(() => expect(seen.at(-1)).toEqual([special]));
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch).toHaveBeenCalledWith({ exportKeys: ["status"], filterKeys: ["status"] });
+    expect(fetchRows).toHaveBeenCalledTimes(1);
+    expect(fetchRows).toHaveBeenCalledWith({ exportKeys: ["status"], filterKeys: ["status"] });
   });
 
-  it("does not fetch, and reports no scope, when no funnel is active", () => {
+  it("does not read, and reports no scope, when no funnel is active", () => {
     setViewport(1280);
-    const fetch = vi.fn().mockResolvedValue(rows);
+    const fetchRows = vi.fn().mockResolvedValue(rows);
     const scopes: (FunnelAllRowsScope | null)[] = [];
     render(
       <DataTable
@@ -1525,21 +1525,21 @@ describe("DataTable funnelAllRows (whole filtered set)", () => {
         columns={columns}
         getRowKey={(row) => row.id}
         funnelAllRows={{
-          fetch,
+          fetchRows,
           signature: "tab=all",
           onScopeChange: (s) => scopes.push(s),
           onError: () => {},
         }}
       />,
     );
-    expect(fetch).not.toHaveBeenCalled();
+    expect(fetchRows).not.toHaveBeenCalled();
     expect(scopes.at(-1)).toBeNull();
   });
 
   it("reverts to the loaded page and reports the error when the whole-set fetch fails", async () => {
     setViewport(1280);
     localStorage.setItem("dt:filters:funnel-all-fail", JSON.stringify({ status: ["Open"] }));
-    const fetch = vi.fn().mockRejectedValue(new Error("too many to hold"));
+    const fetchRows = vi.fn().mockRejectedValue(new Error("too many to hold"));
     const onError = vi.fn();
     const seen: Row[][] = [];
     render(
@@ -1550,7 +1550,7 @@ describe("DataTable funnelAllRows (whole filtered set)", () => {
         getRowKey={(row) => row.id}
         onFilteredRowsChange={(r) => seen.push(r)}
         funnelAllRows={{
-          fetch,
+          fetchRows,
           signature: "tab=all",
           onScopeChange: () => {},
           onError,

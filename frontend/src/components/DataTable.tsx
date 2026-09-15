@@ -242,14 +242,14 @@ interface Props<T, L = never> {
   /** Widen the client-side column funnels from the loaded page to the WHOLE
    *  filtered set. On a server-paged list a funnel otherwise only sees the
    *  current page, so funnelling e.g. Creditor Name leaves every match on later
-   *  pages unreached. When wired and a funnel is active, `fetch` reads every row
-   *  the server filters match (all pages — the line export's read) and the
+   *  pages unreached. When wired and a funnel is active, `fetchRows` reads every
+   *  row the server filters match (all pages — the line export's read) and the
    *  funnels run over that; row windowing bounds the DOM, so the page just hides
    *  its server pager while `onScopeChange` reports active. `signature` is the
    *  server-filter identity (tab + search + sort) and refetches on change; a
    *  fetch failure reverts to page-local funnels via `onError`. */
   funnelAllRows?: {
-    fetch: (need: { exportKeys: string[]; filterKeys: string[] }) => Promise<T[]>;
+    fetchRows: (need: { exportKeys: string[]; filterKeys: string[] }) => Promise<T[]>;
     signature: string;
     onScopeChange: (scope: FunnelAllRowsScope | null) => void;
     onError: (error: Error) => void;
@@ -949,13 +949,13 @@ function DataTableInner<T, L>({
       setAllRowsLoading((l) => (l ? false : l));
       return;
     }
-    const { signature, fetch, onError } = funnelAllRows;
+    const { signature, fetchRows, onError } = funnelAllRows;
     if (fetchedSigRef.current === signature) return; // held or already in flight
     fetchedSigRef.current = signature;
     const filterKeys = Object.entries(colFilters).filter(([, v]) => v.length > 0).map(([k]) => k);
     let cancelled = false;
     setAllRowsLoading(true);
-    fetch({ exportKeys: filterKeys, filterKeys })
+    fetchRows({ exportKeys: filterKeys, filterKeys })
       .then((fetched) => { if (!cancelled) setAllRows({ signature, rows: fetched }); })
       .catch((e) => {
         if (cancelled) return;
