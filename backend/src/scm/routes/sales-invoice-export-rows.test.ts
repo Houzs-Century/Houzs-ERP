@@ -79,7 +79,7 @@ describe('GET /sales-invoices/export/rows', () => {
       dos: [{ id: 'do-1', company_id: 1, do_number: 'HC-DO-2608-010', warehouse_id: 'wh-pg', sales_location: 'KL WAREHOUSE' }],
     }).request('/export/rows');
     const body = (await res.json()) as Body;
-    expect(body.salesInvoices[0]!.ac_agent).toBe('SITI');
+    expect(body.salesInvoices[0]!.ac_agent).toBe('Siti');
     expect(body.salesInvoices[0]!.lines.map((x) => x.id)).toEqual([l.id]);
     expect(body.salesInvoices[0]!.lines[0]).toMatchObject({ do_no: 'HC-DO-2608-010', location: 'PG', description2: 'typed', unit_price_sen: 100000 });
   });
@@ -94,9 +94,9 @@ describe('GET /sales-invoices/export/rows', () => {
     expect(out.rows.map((r) => r.id)).toEqual([mine.id]);
   });
 
-  it('keeps a name the agent map spells, capitalises one it does not, and has none when nobody is named', () => {
-    expect(siExportAgent(null, 'Zack')).toBe('Zack');
-    expect(siExportAgent(null, 'Chea Huan')).toBe('CHEA HUAN');
+  it('prints the agent in the agent map spelling, and none when nobody is named', () => {
+    expect(siExportAgent(null, 'ZACK')).toBe('Zack');
+    expect(siExportAgent(null, 'CHEA HUAN')).toBe('Chea Huan');
     expect(siExportAgent(null, null)).toBeNull();
   });
 });
