@@ -635,20 +635,40 @@ export function clearingMoveLines(
   accounts: { fromCode: string; toCode: string },
   s: { acquirerCode: string; txnDate: string; ref: string | null; amountSen: number },
 ): RuleLine[] {
-  const amount = Math.abs(s.amountSen);
+  return clearingMoveLinesFrom(accounts.toCode, [{ code: accounts.fromCode, amountSen: s.amountSen }], s);
+}
+
+/**
+ * The same move from SEVERAL clearing accounts at once (docs/bugs/0940): a
+ * payment keyed under the wrong bank sits on THAT bank's clearing account, not
+ * the generic one, and one statement line may cover payments keyed three
+ * different ways. One entry, one debit on the merchant's own account, one
+ * credit per account the money is leaving.
+ *
+ *     Dr Clearing — HLB            6,605.00
+ *         Cr Clearing — PBB        3,240.00   (keyed as PBB)
+ *         Cr Clearing (generic)    3,365.00   (keyed without a bank)
+ */
+export function clearingMoveLinesFrom(
+  toCode: string,
+  from: Array<{ code: string; amountSen: number }>,
+  s: { acquirerCode: string; txnDate: string; ref: string | null },
+): RuleLine[] {
   const tag = `${s.acquirerCode} settlement ${s.txnDate}${s.ref ? ` ref ${s.ref}` : ''}`;
+  const sources = from.filter((f) => Math.abs(f.amountSen) > 0);
+  const total = sources.reduce((sum, f) => sum + Math.abs(f.amountSen), 0);
   return [
     {
-      accountCode: accounts.toCode,
-      debitSen: amount,
+      accountCode: toCode,
+      debitSen: total,
       creditSen: 0,
       notes: `Named by the merchant's statement — ${tag}`,
     },
-    {
-      accountCode: accounts.fromCode,
+    ...sources.map((f) => ({
+      accountCode: f.code,
       debitSen: 0,
-      creditSen: amount,
-      notes: `Out of the generic clearing account — ${tag}`,
-    },
+      creditSen: Math.abs(f.amountSen),
+      notes: `Out of clearing ${f.code} — ${tag}`,
+    })),
   ];
 }
