@@ -142,9 +142,14 @@ export type PoListLine = {
   line_no: number | null;
   item_code: string | null;
   material_name: string | null;
+  /** AutoCount's Item Description: the book's item master for the supplier item
+   *  code, else the ERP's material_name. */
+  item_description: string | null;
   description2: string | null;
   notes: string | null;
   item_group: string | null;
+  /** AutoCount's Item Group: the book's item master, else acItemGroup(item_group). */
+  ac_item_group: string | null;
   supplier_sku: string | null;
   qty: number;
   received_qty: number;
@@ -180,7 +185,12 @@ export type PoLineSource = PoEstimateDates & {
 export function toPoListLine(
   header: PoEstimateDates | null | undefined,
   line: PoLineSource,
-  ctx: { location: string | null; soDocNo: string | null },
+  ctx: {
+    location: string | null;
+    soDocNo: string | null;
+    /** The AutoCount item master row for the line's supplier item code, or null. */
+    book: { description: string | null; itemGroup: string | null } | null;
+  },
 ): PoListLine {
   const qty = num(line.qty) ?? 0;
   const received = num(line.received_qty) ?? 0;
@@ -190,9 +200,11 @@ export function toPoListLine(
     line_no: num(line.line_no),
     item_code: text(line.item_code),
     material_name: text(line.material_name),
+    item_description: text(ctx.book?.description) ?? text(line.material_name),
     description2: text(line.description2),
     notes: text(line.notes),
     item_group: text(line.item_group),
+    ac_item_group: text(ctx.book?.itemGroup) ?? acItemGroup(line.item_group),
     supplier_sku: text(line.supplier_sku),
     qty,
     received_qty: received,

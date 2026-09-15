@@ -116,7 +116,7 @@ describe('one line', () => {
     const l = toPoListLine(
       { supplier_delivery_date_2: '2026-09-12' },
       { id: 'line-1', item_code: 'CODY-(K)', qty: '600', received_qty: null, unit_price_sen: 5.5, line_total_sen: 3300 },
-      { soDocNo: null, location: 'KL' },
+      { soDocNo: null, location: 'KL', book: null },
     );
     expect(l.qty).toBe(600);
     expect(l.remaining_qty).toBe(600);

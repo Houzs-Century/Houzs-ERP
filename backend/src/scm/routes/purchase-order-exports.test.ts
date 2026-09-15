@@ -246,13 +246,15 @@ describe('the line values', () => {
     const { body } = await get(harness({ pos: [p], lines: [l], so: [{ id: 'soi-1', company_id: 1, doc_no: 'HC-SO-013389' }] }));
     expect(body.purchaseOrders[0]!.linked_ac_docno).toBe('PO-009950');
     expect(body.purchaseOrders[0]!.lines).toEqual([{
-      id: l.id,
+      id: String(l.id),
       line_no: 1,
       item_code: '9058-1A(LHF)',
       material_name: '9058 SOFA 1A LHF',
+      item_description: '9058 SOFA 1A LHF', // DG-9058 is not in the book's item master: the ERP name
       description2: 'FABRIC KN-12 / SEAT 18',
       notes: 'call before delivery',
       item_group: 'accessory',
+      ac_item_group: 'ACC',
       supplier_sku: 'DG-9058',
       qty: 3,
       received_qty: 1,

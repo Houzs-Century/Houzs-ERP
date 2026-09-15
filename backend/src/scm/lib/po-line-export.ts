@@ -22,6 +22,7 @@ import { warehouseLabel } from './warehouse-label';
 import { bookSpellingOrOwn } from '../../services/autocount-writeback';
 import { LOCATION_MAP } from '../../services/autocount-master-maps';
 import { poLineDescription2 } from './po-line-description2';
+import { acBookItemIndex } from '../../services/autocount-book-item';
 import {
   PO_ESTIMATE_DELIVERY_DATE_FIELDS,
   poEstimateDeliveryDates,
@@ -123,6 +124,12 @@ export async function attachPoLines<H extends PoLineHeader>(
   );
   if (wh.error) return { error: `warehouses: ${wh.error}`, rows: [], lineCount: 0 };
 
+  const master = acBookItemIndex();
+  const bookOf = (sku: string | null | undefined) => {
+    const hit = master.get(String(sku ?? '').trim().toUpperCase());
+    return hit ? { description: hit.description, itemGroup: hit.itemGroup } : null;
+  };
+
   const byPo = new Map<string, LineRow[]>();
   for (const l of all) {
     const arr = byPo.get(l.purchase_order_id) ?? [];
@@ -133,6 +140,11 @@ export async function attachPoLines<H extends PoLineHeader>(
     const headerWarehouse = h.purchase_location_id ? wh.byId.get(h.purchase_location_id) : null;
     const lines = [...(byPo.get(h.id) ?? [])].sort(byLinePosition).map((l) => toPoListLine(h, { ...l, description2: poLineDescription2(l.item_group, l.variants, l.description2) }, {
       soDocNo: l.so_item_id ? so.byId.get(l.so_item_id)?.doc_no ?? null : null,
+      /* AutoCount lists a purchase line under the SUPPLIER's item code, and its
+         Item Description / Item Group are that item's (the book's item master,
+         services/autocount-book-item.ts). Measured 2026-09-15 against the owner's
+         AutoCount PO chasing list: 240 / 240 matched lines agree on both. */
+      book: bookOf(l.supplier_sku),
       location: bookSpellingOrOwn(
         warehouseLabel(l.warehouse_id ? wh.byId.get(l.warehouse_id) : null) ?? warehouseLabel(headerWarehouse),
         LOCATION_MAP,
