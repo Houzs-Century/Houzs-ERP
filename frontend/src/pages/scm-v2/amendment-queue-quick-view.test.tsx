@@ -47,7 +47,7 @@ const mount = (page: React.ReactNode) => render(
 );
 
 const rowOf = (container: HTMLElement, text: string): HTMLElement => {
-  const tr = [...container.querySelectorAll('tr[data-vrow]')].find((r) => r.textContent?.includes(text));
+  const tr = [...container.querySelectorAll('tr[data-vrow]')].find((r) => r.textContent.includes(text));
   if (!tr) throw new Error(`no grid row carries ${text}`);
   return tr as HTMLElement;
 };
