@@ -9,12 +9,10 @@ has to rediscover the shape of the thing by probing production.
 | Where to go next | For |
 |---|---|
 | `docs/modules/autocount-writeback.md` | how to CALL the service, the master-data foreign key chain, the payload shapes |
-| `docs/autocount-migration-record.md` | how the one-time migration was done, the coverage matrix, the Friday runbook |
 | `docs/autocount-service-deploy.md` | building and swapping the exe on the host |
+| `docs/ac-resync-runbook.md` + `docs/autocount-remigration-runbook.md` | re-syncing from the book, and what each importer reads and writes |
 | `docs/generated/autocount-coverage.md` | which operations exist, which the service implements, which routes trigger them, and which have run against the live book — GENERATED |
-| `docs/autocount-writeback-golive-coe.md` | **the day the write-back was switched on and nothing reached the book** — seven faults in one chain, and the one shape that caused three of them |
-| `docs/autocount-writeback-exposure-coe.md` | the API key that was being published |
-| `docs/autocount-read-relay-exposure-coe.md` | the read relay that answers the public internet without a key |
+| `docs/LESSONS.md` | the write-back go-live, the published service key and the open read relay, one entry each |
 
 ---
 
@@ -235,8 +233,8 @@ they answer one document, not a corpus:
    machine on that network and commit the result; each snapshot prints its own
    timestamp so a stale export is visible rather than silently compared.
 2. **The legacy relay** (channel 2). Still up, and **two of its endpoints answer
-   the public internet with no key at all** — see
-   `docs/autocount-read-relay-exposure-coe.md`. Do not build anything new on it
+   the public internet with no key at all** — see `docs/LESSONS.md` (2026-08-12)
+   and the open owner action in `tasks/TODO.md`. Do not build anything new on it
    until that is closed.
 
 ---
