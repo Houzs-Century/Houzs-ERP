@@ -89,5 +89,5 @@ export function useFunnelAllRows<T>(
     onScopeChange(wanted ? { active: true, loading: !ready || loading } : null);
   }, [onScopeChange, wanted, ready, loading]);
 
-  return ready && held ? held.rows : pageRows;
+  return ready ? held.rows : pageRows;
 }
