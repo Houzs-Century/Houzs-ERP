@@ -35,7 +35,7 @@ Documents
 - Bank month (company × account × month): open → locked (`/lock`) → unlocked (`/unlock` sets `released_at`; the row stays).
 - Daily close: confirming freezes the day's buckets and posts CASHUP; card/transfer differences are recorded, never posted there.
 - Month-end stock close: nightly 00:05 MYT; on the 1st posts the pair for the month just ended, other nights heal late documents by reversing and re-posting; every run logs to `scm.acc_stock_close_runs`.
-- Money on a cancelled sales order: refund (a Customer Refund voucher DRAFT for Finance) or convert (a `converted` payment row on the new order); un-convert = delete that row.
+- Money on a cancelled sales order: refund (a Customer Refund voucher DRAFT for Finance) or convert (a `converted` payment row on the new order); un-convert = delete that row. Both from the order's money panel, or from the Sales Orders list with several CANCELLED orders ticked (any customers; one refund draft per order; the new order copies the first ticked order); the convert picker takes another cancelled order by number.
 
 ## Permissions
 

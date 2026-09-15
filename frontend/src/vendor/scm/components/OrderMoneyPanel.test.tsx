@@ -14,12 +14,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { ConvertSource, OrderMoney } from '../lib/so-money-queries';
 
-const { useOrderMoney, mutateAsync, navigateSpy, notifySpy } = vi.hoisted(() => ({
-  useOrderMoney: vi.fn(), mutateAsync: vi.fn(), navigateSpy: vi.fn(), notifySpy: vi.fn(),
+const { useOrderMoney, mutateAsync, navigateSpy, notifySpy, readConvertSource } = vi.hoisted(() => ({
+  useOrderMoney: vi.fn(), mutateAsync: vi.fn(), navigateSpy: vi.fn(), notifySpy: vi.fn(), readConvertSource: vi.fn(),
 }));
 vi.mock('../lib/so-money-queries', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   useOrderMoney,
+  readConvertSource,
   useRequestRefund: () => ({ mutateAsync, isPending: false }),
 }));
 vi.mock('react-router-dom', async (orig) => ({ ...(await orig<Record<string, unknown>>()), useNavigate: () => navigateSpy }));
@@ -43,7 +44,7 @@ const wrap = (ui: ReactNode) => (
 );
 
 beforeEach(() => {
-  mutateAsync.mockReset(); navigateSpy.mockReset(); notifySpy.mockReset();
+  mutateAsync.mockReset(); navigateSpy.mockReset(); notifySpy.mockReset(); readConvertSource.mockReset();
   useOrderMoney.mockReturnValue({ data: { money: money(), others: OTHERS }, isError: false });
 });
 afterEach(cleanup);
@@ -110,6 +111,25 @@ describe('OrderMoneyPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /Open a new order with RM 1,000\.00/ }));
     expect(onOpen).toHaveBeenCalledWith(OLD, [{ docNo: OLD, amountSen: 70_000 }, { docNo: '2990-SO-2607-024', amountSen: 30_000 }]);
     expect(navigateSpy).not.toHaveBeenCalled();
+  });
+
+  it("another cancelled order by number — any customer's — joins the list ticked for what is left; a refused one says why", async () => {
+    readConvertSource.mockResolvedValue({ ok: true, source: { docNo: '2990-SO-2608-028', customer: 'Larding Chen', cancelledOn: null, remainingSen: 143_300, bookedSen: 143_300 } });
+    render(wrap(<OrderMoneyPanel docNo={OLD} />));
+    fireEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    fireEvent.change(screen.getByLabelText('Another cancelled order'), { target: { value: ' 2990-SO-2608-028 ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(screen.getByLabelText('Take from 2990-SO-2608-028')).toBeTruthy());
+    expect(readConvertSource).toHaveBeenCalledWith(' 2990-SO-2608-028 ');
+    expect((screen.getByLabelText('Take from 2990-SO-2608-028') as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText('Larding Chen')).toBeTruthy();
+    expect(screen.getByTestId('convert-param').textContent).toBe(OLD + ':70000,2990-SO-2608-028:143300');
+    /* Enter adds too; a refused order says why, and stays out. */
+    readConvertSource.mockResolvedValue({ ok: false, reason: '2990-SO-2609-001 is not cancelled.' });
+    fireEvent.change(screen.getByLabelText('Another cancelled order'), { target: { value: '2990-SO-2609-001' } });
+    fireEvent.keyDown(screen.getByLabelText('Another cancelled order'), { key: 'Enter' });
+    await waitFor(() => expect(screen.getByText('2990-SO-2609-001 is not cancelled.')).toBeTruthy());
+    expect(screen.queryByLabelText('Take from 2990-SO-2609-001')).toBeNull();
   });
 
   it('more than what is left on an order is refused before the page opens', () => {
