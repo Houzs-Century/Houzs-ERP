@@ -6623,9 +6623,22 @@ A purchase order now carries its source the way the plug-in does
 - a purchase order for stock sends neither, and the book keeps its own.
 
 Before this, a create put our own SO numbers in `Ref`, and a transfer sent
-nothing. Filling `ToPONo` with our PO numbers, and repairing the orders already
-changed, are separate steps.
+nothing.
 `docs/bugs/0926-the-order-s-reference-was-written-into-autocount-s-po-doc-no.md`.
+
+**Filling PO Doc No.** After a purchase order's `create_po`, `so_to_po` or
+`cancel` is marked sent, `queueSoPoDocNos` (`scm/lib/autocount-so-po-doc-no.ts`)
+queues each source order a header-only edit
+`{ Header: { UDF: { ToPONo } }, Lines: [] }`:
+
+- the value is the order's purchase orders that are in the book and not
+  cancelled, sorted and ", "-joined;
+- after a cancel that leaves none, the field is cleared.
+
+The orders the write-back had damaged are repaired by
+`scripts/repair-ac-po-doc-no.mjs` (plan / apply, `LIMIT` per run, since the drain
+sends 20 rows a sweep).
+`docs/bugs/0927-our-purchase-order-numbers-never-reached-the-sales-order-s-p.md`.
 
 ## The sales line names the purchase order made from it (2026-09-15)
 
