@@ -6581,6 +6581,29 @@ read, and the cutover parser still reads the same first pair. The script-side
 mirror in `scripts/lib/ac-payment-udf.mjs` matches.
 `docs/bugs/0921-a-payment-text-longer-than-autocount-s-fifty-character-field.md`.
 
+## An edit refused for timing goes out by itself (2026-09-15)
+
+Two refusals are about timing, not about the document:
+
+- a line added a moment ago has no AutoCount key until the edit that added it
+  drains (`KeylessLineError`);
+- the document's own conversion is still queued ("edited before its AutoCount
+  counterpart existed").
+
+Both are `skipped` rows with nothing to retry, and until now nothing sent them
+again (HC-SO-011153 and HC-SI-2609-001).
+
+After `dispatchOne` marks any row sent, `resendHeldEdits`
+(`scm/lib/autocount-held-edit-resend.ts`) looks for such a refusal of the same
+document. When no edit is pending and none has gone since, it composes the
+document as it is now through `enqueueEdit` and marks the refusal re-queued.
+
+- A composer refusal is written down again rather than guessed.
+- Conversions that arrive without keys before the office host swap still need
+  the stamp and `requeue-keyed-conversion-edits.mjs`.
+
+`docs/bugs/0924-an-edit-refused-because-a-line-added-a-moment-earlier-had-no.md`.
+
 ## The sales line names the purchase order made from it (2026-09-15)
 
 The office's plug-in writes `SODTL.UDF_PONo`, `UDF_PODocKey` and `UDF_Creditor` on
