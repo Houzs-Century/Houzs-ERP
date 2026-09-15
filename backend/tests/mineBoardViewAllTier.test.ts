@@ -12,7 +12,8 @@
    /mine block gates on canViewAllSales, so a revert to the bare key cannot
    land silently. */
 import { describe, expect, test } from 'vitest';
-import routeSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
+const routeSource = soRouterSource();
 
 /* The /mine handler: from its registration to the next route registration. */
 const mineBlock = (): string => {

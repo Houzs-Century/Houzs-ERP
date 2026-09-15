@@ -16,7 +16,7 @@ import { PAYMENT_METHOD_CODES } from '../src/scm/shared/payment-methods';
    workerd, which has no filesystem, so a readdirSync guard would only ever
    report ENOENT — it would pass as "no offenders" the day someone deleted the
    directory and fail on the day it worked. */
-const ROUTE_SOURCES = import.meta.glob('../src/scm/routes/*.ts', {
+const ROUTE_SOURCES = import.meta.glob('../src/scm/routes/**/*.ts', {
   query: '?raw', import: 'default', eager: true,
 }) as Record<string, string>;
 

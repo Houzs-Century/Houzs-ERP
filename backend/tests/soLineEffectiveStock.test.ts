@@ -13,12 +13,13 @@
  * that the rule is fed the same input the pill shows.
  */
 import { describe, it, expect } from 'vitest';
-import mfgSalesOrders from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import soListRows from '../src/scm/lib/so-list-rows.ts?raw';
 import listEnrichmentRoute from '../src/scm/routes/mfg-sales-orders-list-enrichment.ts?raw';
 import listEnrichmentLib from '../src/scm/lib/so-list-mrp-enrichment.ts?raw';
 import { effectiveLineStockStatus } from '../src/scm/lib/so-line-effective-stock';
 import { summariseReadiness } from '../src/scm/lib/so-readiness';
+const mfgSalesOrders = soRouterSource();
 
 /* An order WITH a processing date, a line that is NOT hard-bound: the only
    context in which the live-stock promotion is trustworthy, so it is what every

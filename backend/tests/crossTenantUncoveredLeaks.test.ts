@@ -27,13 +27,14 @@
 // byte-unchanged) AND A can still act on its OWN row.
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
-import routeSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import poSource from '../src/scm/routes/mfg-purchase-orders.ts?raw';
 import { createMfgPurchaseOrderHandler } from '../src/scm/routes/mfg-purchase-orders';
 import { consignmentOverridePriceHandler } from '../src/scm/routes/consignment-orders';
 import { sofaComboPutHandler } from '../src/scm/routes/sofa-combos';
 import { createWarehouseRacksHandler } from '../src/scm/routes/warehouse';
 import { createSupplierBindingHandler, createSupplierBindingsBatchHandler } from '../src/scm/routes/suppliers';
+const routeSource = soRouterSource();
 
 const CO_A = 1; // HOUZS
 const CO_B = 2; // 2990

@@ -17,7 +17,7 @@
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
 import type { Env, Variables } from '../env';
-import routeSource from './mfg-sales-orders.ts?raw';
+import { soRouterSource } from '../../../tests/lib/so-router-source';
 
 vi.mock('../lib/so-list-rows', () => ({
   buildSoListRows: vi.fn(async (_sb: unknown, _c: unknown, rows: Array<Record<string, unknown>>) => {
@@ -31,6 +31,7 @@ import { attachSoLines } from '../lib/so-list-lines';
 import { acBookItemIndex } from '../../services/autocount-book-item';
 import { AC_ITEM_MAP_TSV } from '../../services/autocount-item-map';
 import { soExportRowsHandler } from './sales-order-exports';
+const routeSource = soRouterSource();
 
 type Row = Record<string, unknown>;
 

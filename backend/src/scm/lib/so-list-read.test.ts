@@ -11,9 +11,10 @@
 //      summed the wrong money (docs/bugs, the SO money strip ignored a phone
 //      search).
 import { describe, expect, it } from 'vitest';
-import routeSource from '../routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from '../../../tests/lib/so-router-source';
 import { fakeSb } from './fake-postgrest';
 import { orderSoList, prepareSoListRead, readSoListParams, type SoListParams } from './so-list-read';
+const routeSource = soRouterSource();
 
 type Row = Record<string, unknown>;
 

@@ -241,9 +241,16 @@ const findings = [];
 let filesScanned = 0;
 let statementsScanned = 0;
 
+/* RECURSIVE, as check-company-scope's walk is: a router split into
+   routes/<router>/<topic>.ts must not leave this scan by moving. `file` is the
+   path under the route dir, subdirectory included. */
+const routeFilesUnder = (dir) =>
+  fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? routeFilesUnder(path.join(dir, e.name)).map((f) => `${e.name}/${f}`) : [e.name]);
+
 for (const dir of ROUTE_DIRS) {
   let entries = [];
-  try { entries = fs.readdirSync(dir); } catch { continue; }
+  try { entries = routeFilesUnder(dir); } catch { continue; }
   for (const file of entries) {
     if (!file.endsWith(".ts") || file.endsWith(".test.ts")) continue;
     const rel = path.relative(path.resolve(backendRoot, ".."), path.join(dir, file)).replace(/\\/g, "/");

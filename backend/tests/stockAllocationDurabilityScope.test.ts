@@ -6,13 +6,14 @@ import deliveryOrdersMfg from '../src/scm/routes/delivery-orders-mfg.ts?raw';
 import deliveryReturns from '../src/scm/routes/delivery-returns.ts?raw';
 import grns from '../src/scm/routes/grns.ts?raw';
 import inventoryAdjustments from '../src/scm/routes/inventory-adjustments.ts?raw';
-import mfgSalesOrders from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import purchaseConsignmentReceives from '../src/scm/routes/purchase-consignment-receives.ts?raw';
 import purchaseConsignmentReturns from '../src/scm/routes/purchase-consignment-returns.ts?raw';
 import purchaseReturns from '../src/scm/routes/purchase-returns.ts?raw';
 import soAmendments from '../src/scm/routes/so-amendments.ts?raw';
 import stockTakes from '../src/scm/routes/stock-takes.ts?raw';
 import stockTransfers from '../src/scm/routes/stock-transfers.ts?raw';
+const mfgSalesOrders = soRouterSource();
 
 /* ══════════════════════════════════════════════════════════════════════════════
    SCOPE LEDGER for the durable allocation queue (defect 1, 2026-07-22).

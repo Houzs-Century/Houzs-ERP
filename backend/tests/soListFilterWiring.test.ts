@@ -17,8 +17,9 @@
    reads through them too), so the list block is asserted to use its ONE
    prepared read for all three, and the module to apply the filter inside it. */
 import { describe, expect, test } from 'vitest';
-import routeSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import readSource from '../src/scm/lib/so-list-read.ts?raw';
+const routeSource = soRouterSource();
 
 const listBlock = (): string => {
   const start = routeSource.indexOf("mfgSalesOrders.get('/',");
