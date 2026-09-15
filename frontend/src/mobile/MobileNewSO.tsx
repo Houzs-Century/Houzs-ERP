@@ -37,7 +37,7 @@ import {
 import { SearchableSelect } from "../vendor/scm/components/SearchableSelect";
 import { SgPostcodeField } from "../vendor/scm/components/SgPostcodeField";
 import { diffHeaderPayload, hasHeaderChanges } from "../vendor/scm/lib/so-header-diff";
-import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER, AMENDMENT_NOTHING_TO_SUBMIT } from "../vendor/scm/lib/so-amendment-submit";
+import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER, AMENDMENT_NOTHING_TO_SUBMIT, AMENDMENT_REASON_REQUIRED } from "../vendor/scm/lib/so-amendment-submit";
 import { LOCKED_STATUSES, procLockActive, migratedReadonly as soMigratedReadonly, soDownstreamHardLocked, soItemFrozen, type SoDetailGateHeader } from "../vendor/scm/lib/so-detail-gates";
 import { FROZEN_LINE_LABEL, FROZEN_LINE_LABEL_STYLE, FROZEN_LINE_STYLE } from "../vendor/scm/lib/so-frozen-line-style";
 import { MigratedReadonlyBanner } from "../vendor/scm/components/MigratedReadonlyBanner";
@@ -1998,17 +1998,20 @@ export function MobileNewSO({
           let amendCreatedRes: unknown = null;
           // DIRECT_ONLY skips ONLY this block; the tail after it is shared.
           if (plan === "AMENDMENT") {
+            /* Owner 2026-09-15: the reason is REQUIRED — same rule and wording
+               as the desktop prompt; the server refuses 400 reason_required. */
             const reason = await prompt({
               title: `Submit amendment for ${docNo}?`,
-              body: "This Sales Order is already ordered from the supplier, so your changes go out as an amendment request. Coordinator and supplier confirm it before the order is revised. Add a short reason (optional).",
+              body: "This Sales Order is already ordered from the supplier, so your changes go out as an amendment request. Coordinator and supplier confirm it before the order is revised. Say why — the approver reads the reason first.",
               placeholder: "e.g. customer changed the fabric colour",
               multiline: true,
               confirmLabel: "Submit amendment",
+              validate: (v) => (v.trim() ? null : AMENDMENT_REASON_REQUIRED),
             });
             if (reason == null) { setSubmitting(false); return; } // cancelled
             try {
               amendCreatedRes = await createAmendment.mutateAsync({
-                docNo, reason: reason.trim() || undefined, lines: amLines, headerChanges,
+                docNo, reason: reason.trim(), lines: amLines, headerChanges,
                 idempotencyKey: amendIdemKey,
               });
             } catch (e) {

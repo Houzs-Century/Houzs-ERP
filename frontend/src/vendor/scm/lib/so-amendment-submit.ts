@@ -61,6 +61,12 @@ export function planAmendmentSubmit(input: AmendmentSubmitInput): AmendmentSubmi
 export const AMENDMENT_NOTHING_TO_SUBMIT =
   'No changes to submit — edit a line, a date or the delivery address first, then submit the amendment.';
 
+/** The reason prompt's validation message, shared by both surfaces (owner
+    2026-09-15: the reason is REQUIRED; the server refuses 400 reason_required
+    without one). */
+export const AMENDMENT_REASON_REQUIRED =
+  'A reason is required — the approver reads it before the changes.';
+
 /** Shown for 'DIRECT_ONLY'. Says the work landed AND why no approval appeared,
     so the absent amendment does not read as a failure. Deliberately does not
     enumerate the fields: desktop reaches this with contact details, mobile can

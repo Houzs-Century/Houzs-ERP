@@ -66,6 +66,17 @@ Two rules that are easy to get wrong:
   approving such an ADD raises no PO amendment. The lane is still stored ONCE at
   submit: an amendment raised before the fix keeps the lane it got
   (`docs/bugs/0895-an-amendment-that-added-a-service-line-went-to-the-purchaser.md`).
+- **A stored lane can be MOVED only by the repair workflow**, never from a
+  screen. Actions → *Relane SO amendment (DRY-RUN gated)* runs
+  `backend/scripts/relane-so-amendment.mjs` with an amendment number and a
+  target lane; it refuses anything but a `REQUESTED`, lane-bearing, line-only
+  amendment whose lines ALL agree with the target lane by today's service-line
+  signal, and on apply (`apply=1` + the confirm phrase) writes the lane plus one
+  `AMENDMENT_RELANED` history row, then re-reads both on a fresh connection.
+  Built for HC-SO-012757/A1 (owner 2026-09-15, 「那就把这张 A1 改到 Logistic」,
+  `docs/bugs/0928-an-amendment-raised-before-the-service-line-fix-stayed-on-th.md`).
+  It posts no notice — the target desk's inbox reads by lane, so the row is on
+  it the moment the update commits.
 
 **Legacy rows** (`lane IS NULL`, raised before the rework) keep the original
 supplier-confirm two-gate chain and its original keys
@@ -81,7 +92,7 @@ on `/api/scm/so-amendments`.
 
 | Method + path | Gate | Notes |
 |---|---|---|
-| `POST /mfg-sales-orders/:docNo/amendments` | `scm.amendment.create`, OR a salesperson on their OWN order, OR a lane approver | Splits by lane, one insert per lane |
+| `POST /mfg-sales-orders/:docNo/amendments` | `scm.amendment.create`, OR a salesperson on their OWN order, OR a lane approver | **Reason required** (400 `reason_required`, checked before the SO is read — owner 2026-09-15, 「SO amendment reason 换成一定 fill in」; both submit prompts validate it client-side). Splits by lane, one insert per lane |
 | `GET /so-amendments` | read | Row-scoped like the SO list (own + downline for a scoped rep). Each row also carries `bound_pos` and, since 2026-09-14, the order's raw `so_ref` + `so_customer_so_no` (§7) |
 | `GET /so-amendments/:id` | read | |
 | `GET /so-amendments/pending-count` | lane keys, asked LITERALLY (`*` excluded) | **Per-signer** count of `REQUESTED` rows in the lanes THIS caller can sign; 0 for everyone else, the Owner account included. Feeds the sidebar badge (§5). Registered BEFORE `/:id` — Hono matches in order |

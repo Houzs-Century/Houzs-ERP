@@ -11584,6 +11584,17 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
+  /* Guard 0 (owner 2026-09-15, 「SO amendment reason 换成一定 fill in」) — the
+     reason is REQUIRED. The approver reads it before the lines, and the notice
+     to their desk quotes it; a blank one used to be accepted and stored NULL. */
+  body.reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+  if (!body.reason) {
+    return c.json({
+      error: 'reason_required',
+      reason: 'Say why this amendment is needed — the approver reads the reason before the changes.',
+    }, 400);
+  }
+
   // Guard 1 — SO exists. Pull the lock columns (processing_date + status) plus
   // salesperson_id for the ownership scope check below, plus the amendable
   // header columns for the header-change snapshot / date checks.
@@ -11867,7 +11878,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       amendment_no: amendmentNo,
       status:       'REQUESTED',
       lane:         laneKey,
-      reason:       body.reason ?? null,
+      reason:       body.reason,
       requested_by: requesterStaffId,
       company_id:   activeCompanyId(c),
       header_changes:      laneHasHeader ? half.headerChanges : null,

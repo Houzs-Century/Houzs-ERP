@@ -1839,6 +1839,7 @@ Invalidation always wins over all three (mutation → invalidate → forced refe
 | GET | `/api/scm/mfg-sales-orders/my-mtd` | MTD scoreboard | Mobile Profile tiles |
 | GET | `/api/scm/mfg-sales-orders/mine` | POS board | Salesperson's own orders |
 | PATCH/POST | `…/:docNo/*` | mutations | proceed / cancel / amend / payments / etc. |
+| POST | `…/:docNo/amendments` | amendment submit | **Reason required** since 2026-09-15 (owner: 「SO amendment reason 换成一定 fill in」) — 400 `reason_required` before the SO is read; the desktop (`SalesOrderDetail.tsx`) and phone (`MobileNewSO.tsx`) submit prompts validate it. A stored lane is moved only by the *Relane SO amendment* workflow. Full surface: [`so-amendment.md`](./so-amendment.md) §1–2 |
 
 All under `backend/src/scm/routes/mfg-sales-orders.ts`, except the deferred
 `list-mrp-enrichment` endpoint, which lives in its own thin router
