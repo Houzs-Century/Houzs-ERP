@@ -50,7 +50,7 @@ The label rule: SOFA is the company's house brand (ZANOTTI / 2990s Sofa) and doe
 
 The SKU reference on a line item. AutoCount (the system of record) calls it ItemCode, so item_code is canonical; material_code (purchasing) and product_code (inventory) were the drift, renamed on 18 columns by migration 0307 (2026-08-19). The master table mfg_products keys the SKU as `code`; item_code is the reference. The dead `public`-schema copies still carry the old names and are out of scope.
 
-Entitled to spell a retired name in code: `scripts/lib/vocabulary.mjs`, `scripts/lib/drift-catalogue.mjs`.
+Entitled to spell a retired name in code: `scripts/lib/vocabulary.mjs`, `scripts/lib/drift-catalogue.mjs`, `src/scm/lib/product-code-rename.ts`, `scripts/probe-product-code-columns.mjs`.
 
 ### Money (minor unit)
 
