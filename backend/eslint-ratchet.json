@@ -189,9 +189,6 @@
     "src/scm/lib/bridge-2990.test.ts": {
       "no-restricted-syntax": 3
     },
-    "src/scm/lib/bridge-2990.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 2
-    },
     "src/scm/lib/check-stock-availability.ts": {
       "@typescript-eslint/no-explicit-any": 1,
       "@typescript-eslint/no-unnecessary-condition": 4
