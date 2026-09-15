@@ -177,7 +177,7 @@
     },
     {
       "check": "D1",
-      "key": "FRI,MON,SAT,SUN,THU,TUE,WED|frontend/src/mobile/MobileCalendar.tsx frontend/src/pages/Projects.tsx frontend/src/pages/ServiceCases.tsx",
+      "key": "FRI,MON,SAT,SUN,THU,TUE,WED|frontend/src/mobile/MobileCalendar.tsx frontend/src/pages/ServiceCases.tsx frontend/src/pages/projects/ProjectsCalendarView.tsx",
       "why": "A CALENDAR/LOCALE vocabulary (months, weekdays, languages) — fixed by the world, not by this business, and it cannot drift into a wrong answer. 3 homes: WEEKDAYS."
     },
     {
@@ -497,11 +497,6 @@
     },
     {
       "check": "D1",
-      "key": "DWG,JPEG,JPG,MP4,PDF,PNG,SKP,WEBP|backend/src/routes/projects.ts frontend/src/pages/Projects.tsx",
-      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 2 homes: PROJECT_ATTACH_ALLOWED, ALLOWED. Divergence costs a refused upload, never money or stock."
-    },
-    {
-      "check": "D1",
       "key": "EAST,JOHOR,KAJANG,KEDAH,KL,KLANG,MELAKA,NS,PAHANG,PENANG,PERAK,PJ,PUCHONG,RAWANG|backend/src/scm/lib/zone-classify.ts frontend/src/vendor/scm/lib/delivery-map-model.ts",
       "why": "THE DELIVERY ZONE NAMES. zone-classify.ts assigns a stop to a zone; delivery-map-model.ts colours it. Same vocabulary, two jobs — but a zone added to one and not the other renders an uncoloured stop, so it is recorded rather than waved through."
     },
@@ -547,8 +542,8 @@
     },
     {
       "check": "D1",
-      "key": "JOHOR,KEDAH,KELANTAN,KUALA LUMPUR,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PERAK,PERLIS,PULAU PINANG,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,TERENGGANU|backend/src/scm/lib/canonical-state.ts frontend/src/pages/Projects.tsx",
-      "why": "THE CANONICAL MALAYSIAN STATES. canonical-state.ts is the authored home (mig 0175 canonicalises Penang to Pulau Pinang) and Projects.tsx re-types the list for its picker. D2 shows three further spellings of this list elsewhere that do NOT agree — KL vs KUALA LUMPUR, PENANG vs PULAU PINANG, an extra IPOH. Those are the ones worth fixing; this pair is the one that is already correct."
+      "key": "JOHOR,KEDAH,KELANTAN,KUALA LUMPUR,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PERAK,PERLIS,PULAU PINANG,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,TERENGGANU|backend/src/scm/lib/canonical-state.ts frontend/src/pages/projects/CreateProjectPanel.tsx",
+      "why": "THE CANONICAL MALAYSIAN STATES. canonical-state.ts is the authored home (mig 0175 canonicalises Penang to Pulau Pinang) and pages/projects/CreateProjectPanel.tsx re-types the list for its picker. D2 shows three further spellings of this list elsewhere that do NOT agree — KL vs KUALA LUMPUR, PENANG vs PULAU PINANG, an extra IPOH. Those are the ones worth fixing; this pair is the one that is already correct."
     },
     {
       "check": "D1",

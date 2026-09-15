@@ -39,7 +39,7 @@
 // ----------------------------------------------------------------------------
 
 import { useState, type ReactNode } from 'react';
-import { useFairOptions, fairLabel, type FairOption } from '../vendor/scm/lib/fair-options-queries';
+import { useFairOptions, fairVenueLabel, type FairOption } from '../vendor/scm/lib/fair-options-queries';
 
 /** What the SO form stores. `organizer` is null whenever the form holds a place
  *  but no fair row: a pick through Others, an order opened for edit (no order
@@ -149,7 +149,7 @@ export function FairPicker(props: FairPickerProps) {
         {running.length > 0 && (
           <optgroup label="Running now">
             {running.map((o) => (
-              <option key={o.key} value={optionValue(o)}>{fairLabel(o)}</option>
+              <option key={o.key} value={optionValue(o)}>{fairVenueLabel(o)}</option>
             ))}
           </optgroup>
         )}
@@ -158,7 +158,7 @@ export function FairPicker(props: FairPickerProps) {
              on the order date, the ones already over included. */
           <optgroup label="Other fairs this month">
             {month.map((o) => (
-              <option key={o.key} value={optionValue(o)}>{fairLabel(o)}</option>
+              <option key={o.key} value={optionValue(o)}>{fairVenueLabel(o)}</option>
             ))}
           </optgroup>
         )}

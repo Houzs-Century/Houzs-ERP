@@ -19,7 +19,7 @@ import {
   resolveFabricTierOverride,
   type RuleLineInput,
   passesRefinementColumns,
-  splitAmendmentByLane, LANE_LABEL, type AmendmentLane,
+  LANE_LABEL, type AmendmentLane,
 } from '../shared';
 import { computeSoDeliveryFee, type SoDeliveryFeeResult } from '../shared/pricing';
 /* Special delivery fee rules (migration 0024, #691 RuleTarget) — the model |
@@ -160,6 +160,7 @@ import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
    module header for the 2990-SO-2608-017 edit this existed to catch and did not). */
 import { soLineFieldChanges } from '../lib/so-line-audit-diff';
 import { buildAmendmentLineRows, LINE_BUILD_ERRORS } from '../lib/amendment-lines';
+import { resolveAmendmentLaneSplit } from '../lib/amendment-lane-resolve';
 // OCR self-learning: a DRAFT confirm is the review event the background scan
 // path never reported. Lives in lib/ (not scan-so.ts) — scan-so.ts already
 // imports this route's create core, so the reverse import would be a cycle.
@@ -246,7 +247,7 @@ import { canonicalizeVariants } from '../shared/so-variant-rule';
 import { reconcileFreeGiftLinesForSo } from '../lib/free-gift-reconcile';
 import { claimPwpForSingleLine, rollbackSinglePwpClaim } from '../lib/pwp-claim-single';
 import {
-  validateItemCodes, unknownItemCodeResponse, catalogCategoriesByCode,
+  validateItemCodes, unknownItemCodeResponse,
   findFreeTextSoLines, freeTextSoLineResponse,
 } from '../lib/validate-item-codes';
 import { collectSoConfirmProblems, soConfirmProblemsForDoc } from '../lib/so-confirm-gate';
@@ -10615,6 +10616,8 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
 
   let body: {
     reason?: string;
+    /** Owner 2026-09-15 (option B): the requester's note that the computed approver looks wrong. */
+    laneFlagNote?: string | null;
     headerChanges?: Record<string, unknown> | null;
     lines?: Array<{
       salesOrderItemId?: string | null;
@@ -10638,6 +10641,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       reason: 'Say why this amendment is needed — the approver reads the reason before the changes.',
     }, 400);
   }
+  body.laneFlagNote = typeof body.laneFlagNote === 'string' ? body.laneFlagNote.trim().slice(0, 500) || null : null;
 
   // Guard 1 — SO exists. Pull the lock columns (processing_date + status) plus
   // salesperson_id for the ownership scope check below, plus the amendable
@@ -10847,22 +10851,10 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
      bare-code service line to Logistics), resolved SERVER-SIDE from the order;
      an ADDED line has no row, so its code's CATALOGUE category stands in
      (docs/bugs/0895-an-amendment-that-added-a-service-line-went-to-the-purchaser.md). */
-  const referencedIds = [...new Set(submittedLines
-    .map((l) => l.salesOrderItemId)
-    .filter((x): x is string => typeof x === 'string' && x.length > 0))];
-  const identityById = new Map<string, { itemCode: string | null; itemGroup: string | null }>();
-  if (referencedIds.length > 0) {
-    const { data: codeRows, error: codeErr } = await sb.from('mfg_sales_order_items')
-      .select('id, item_code, item_group').eq('doc_no', docNo).in('id', referencedIds);
-    if (codeErr) return c.json(LINE_BUILD_ERRORS.unreadable, 500);
-    for (const r of (codeRows ?? []) as Array<{ id: string; item_code: string | null; item_group: string | null }>) {
-      identityById.set(r.id, { itemCode: r.item_code, itemGroup: r.item_group });
-    }
-  }
-  const addedCategory = await catalogCategoriesByCode(sb, submittedLines.filter((l) => !l.salesOrderItemId).map((l) => l.newItemCode), activeCompanyId(c));
-  if (!addedCategory) return c.json(LINE_BUILD_ERRORS.unreadable, 500);
-  const split = splitAmendmentByLane(headerChanges, submittedLines, (l) => (l.salesOrderItemId ? identityById.get(l.salesOrderItemId) ?? {}
-    : { itemCode: l.newItemCode, category: addedCategory.get((l.newItemCode ?? '').trim()) ?? null }));
+  /* Shared with the lane PREVIEW route (lib/amendment-lane-resolve) so the desk the
+     requester was shown is the desk the row lands on. */
+  const split = await resolveAmendmentLaneSplit(sb, docNo, activeCompanyId(c), headerChanges, submittedLines);
+  if (!split) return c.json(LINE_BUILD_ERRORS.unreadable, 500);
 
   // Guard 4b — per-lane openness: each lane admits ONE amendment awaiting its
   // approver. The other lane stays free — that is the whole point of the split.
@@ -10923,6 +10915,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       status:       'REQUESTED',
       lane:         laneKey,
       reason:       body.reason,
+      lane_flag_note: body.laneFlagNote,
       requested_by: requesterStaffId,
       company_id:   activeCompanyId(c),
       header_changes:      laneHasHeader ? half.headerChanges : null,
@@ -10964,7 +10957,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     /* History row now, per lane; the notice after the loop, once every half has
        landed. Both live in lib/amendment-raised-effects. */
     await recordAmendmentRequested(sb, {
-      docNo, amendmentNo, lane: laneKey, actorId: user.id, reason: body.reason,
+      docNo, amendmentNo, lane: laneKey, actorId: user.id, reason: body.reason, laneFlagNote: body.laneFlagNote,
       actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
       headerKeys: half.headerKeys, headerChanges: half.headerChanges,
       oldHeaderSnapshot, columnOf: AMENDABLE_HEADER_FIELDS,
@@ -10972,7 +10965,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   }
 
   await notifyAmendmentsRaised(c, sb, {
-    docNo, reason: body.reason, created: createdAmendments,
+    docNo, reason: body.reason, laneFlagNote: body.laneFlagNote, created: createdAmendments,
     salespersonStaffId: (soRow as { salesperson_id?: string | null }).salesperson_id,
   });
 

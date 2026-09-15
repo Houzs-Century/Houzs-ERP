@@ -163,6 +163,33 @@ describe('amendment notice audience', () => {
     expect(sales.body).toContain('by Ivy');
     expect(sales.body).toContain('customer changed the fabric');
     expect(new Set(posted.map((p) => p.source))).toEqual(new Set(['so_amendment']));
+    // No flag, no "wrong desk" card — the other lane hears nothing.
+    expect(posted.some((p) => p.title.includes('wrong desk'))).toBe(false);
+  });
+
+  /* Owner 2026-09-15, option B: a requester who doubts the computed approver
+     flags it with a note. The assigned desk's card quotes the doubt, and the
+     OTHER lane's desk gets its own card — it is the desk the requester believes
+     the request belongs to. Nobody is asked to sign there; the row stays put
+     until the relane workflow moves it. */
+  it('a flagged lane tells the assigned desk about the doubt, and the other desk separately', async () => {
+    await notifySoAmendmentRaised(fakeEnv(), {
+      amendmentNo: 'SO-12757/A1',
+      soDocNo: 'SO-12757',
+      lane: 'LINES',
+      companyId: 1,
+      requesterName: 'Syasya',
+      reason: 'last min cancellation penalty',
+      laneFlagNote: 'transport charge, Logistic approves these',
+    });
+    const assigned = posted.find((p) => p.title.includes('needs approval'))!;
+    expect(assigned.userIds.sort()).toEqual([40, 41]);
+    expect(assigned.body).toContain('flagged the approver as possibly wrong: transport charge, Logistic approves these');
+    const other = posted.find((p) => p.title.includes('may be on the wrong desk'))!;
+    expect(other.userIds).toEqual([43]);                 // the DELIVERY desk, not the LINES one
+    expect(other.body).toContain('believes it is delivery / customer info');
+    expect(other.body).toContain('Relane SO amendment');
+    expect(other.source).toBe('so_amendment');
   });
 
   it('carries the rejection reason to the requester and the salesperson', async () => {

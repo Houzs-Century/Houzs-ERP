@@ -95,9 +95,6 @@ import { LazySlot } from "../components/LazySlot";
    containment — a failed chunk takes the reminder, not the whole app. */
 const PendingTasksReminder = lazy(() =>
   import("../components/PendingTasksReminder").then((m) => ({ default: m.PendingTasksReminder })));
-// MobileAssistant is intentionally not imported — see the comment near the
-// bottom of MobileAppInner's return for why (owner 2026-09-11).
-// import { MobileAssistant } from "./MobileAssistant";
 
 type Tab = "orders" | "service" | "calendar" | "profile";
 type Screen =
@@ -1116,9 +1113,8 @@ function MobileAppInner() {
       <LazySlot resetKey="pending-reminder" fallback={null}><PendingTasksReminder /></LazySlot>
       {/* MobileAssistant intentionally NOT rendered — owner 2026-09-11:
           "那个 assistant 的功能是直接不要的". The whole surface is off on
-          mobile: no launcher, no sheet, no /api/assistant calls fire.
-          Component + backend service kept for now (desktop `/assistant`
-          page still uses them); ask owner before dropping those. */}
+          mobile: no launcher, no sheet, no /api/assistant calls fire. The
+          backend service stays for the desktop `/assistant` page. */}
     </div>
   );
 }

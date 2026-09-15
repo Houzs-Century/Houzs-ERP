@@ -25,7 +25,7 @@ import { fmtRp, generateRpPdf } from '../../vendor/scm/lib/rp-report-pdf';
 import { fmtPct, laidDepth, leafKeys, pctOf, type LaidNode } from '../../vendor/scm/lib/report-layout';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { fmtDateOrDash } from '../../vendor/shared/format';
-import { LaidRows, LevelButtons, type Level } from './ReportLayoutTree';
+import { LaidRows, LevelButtons, useReportTree, type Level } from './ReportLayoutTree';
 import { ReportLayoutEditor } from './ReportLayoutEditor';
 
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
@@ -53,6 +53,7 @@ export const ReceiptsPaymentsTab = () => {
   /* A figure clicked: the rows under it (one, or a whole category's), the column or the total. */
   const [drill, setDrill] = useState<{ side: 'R' | 'P'; id: string; label: string; rowKeys: string[]; column: string | null } | null>(null);
   const [level, setLevel] = useState<Level>('all');
+  const tree = useReportTree(level);
   const [editing, setEditing] = useState(false);
   const [monthly, setMonthly] = useState(false);
   const { can } = useAuth();
@@ -126,11 +127,11 @@ export const ReceiptsPaymentsTab = () => {
             <tbody>
               <BalanceLine label="Opening balance" columns={r.columns} per={r.opening} total={r.totals.openingTotalSen} />
               <SectionLine label="RECEIPTS" span={r.columns.length + 3} />
-              <LaidRows nodes={r.layout.receipts} level={level} columns={columnCodes} fmt={fmtRp} onPick={pick('R')} activeId={drill?.side === 'R' ? drill.id : null} />
+              <LaidRows nodes={r.layout.receipts} level={level} columns={columnCodes} fmt={fmtRp} onPick={pick('R')} activeId={drill?.side === 'R' ? drill.id : null} tree={tree} drill={{ from, to }} />
               {r.receipts.length === 0 && <EmptyLine text="No money came in on these accounts in the period." span={r.columns.length + 3} />}
               <BalanceLine label="Total receipts" columns={r.columns} per={r.totals.receipts} total={r.totals.receiptsTotalSen} pct={fmtPct(pctOf(r.totals.receiptsTotalSen, r.totals.receiptsTotalSen || null))} />
               <SectionLine label="PAYMENTS" span={r.columns.length + 3} />
-              <LaidRows nodes={r.layout.payments} level={level} columns={columnCodes} fmt={fmtRp} onPick={pick('P')} activeId={drill?.side === 'P' ? drill.id : null} />
+              <LaidRows nodes={r.layout.payments} level={level} columns={columnCodes} fmt={fmtRp} onPick={pick('P')} activeId={drill?.side === 'P' ? drill.id : null} tree={tree} drill={{ from, to }} />
               {r.payments.length === 0 && <EmptyLine text="No money went out of these accounts in the period." span={r.columns.length + 3} />}
               <BalanceLine label="Total payments" columns={r.columns} per={r.totals.payments} total={r.totals.paymentsTotalSen} pct={fmtPct(pctOf(r.totals.paymentsTotalSen, r.totals.paymentsTotalSen || null))} />
               <BalanceLine label="Closing balance" columns={r.columns} per={r.totals.closing} total={r.totals.closingTotalSen} strong />

@@ -39,6 +39,7 @@ import { SgPostcodeField } from "../vendor/scm/components/SgPostcodeField";
 import { diffHeaderPayload, hasHeaderChanges } from "../vendor/scm/lib/so-header-diff";
 import { soSaveEndFields, soVersionAfter } from "../vendor/scm/lib/so-save-lease";
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER, AMENDMENT_NOTHING_TO_SUBMIT, AMENDMENT_REASON_REQUIRED } from "../vendor/scm/lib/so-amendment-submit";
+import { useAmendmentSubmitDialog } from "../vendor/scm/components/AmendmentSubmitDialog";
 import { LOCKED_STATUSES, procLockActive, migratedReadonly as soMigratedReadonly, soDownstreamHardLocked, soItemFrozen, type SoDetailGateHeader } from "../vendor/scm/lib/so-detail-gates";
 import { FROZEN_LINE_LABEL, FROZEN_LINE_LABEL_STYLE, FROZEN_LINE_STYLE } from "../vendor/scm/lib/so-frozen-line-style";
 import { MigratedReadonlyBanner } from "../vendor/scm/components/MigratedReadonlyBanner";
@@ -62,7 +63,6 @@ import {
 import { StatePicker } from "../vendor/scm/components/StatePicker";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
-import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
 import { MobileSavedPhotoThumb, StagedPhotoThumb } from "./MobileSavedPhotoThumb";
@@ -609,7 +609,7 @@ export function MobileNewSO({
   const qc = useQueryClient();
   const notify = useNotify();
   const confirm = useConfirm();
-  const prompt = usePrompt();
+  const submitDialog = useAmendmentSubmitDialog();
   /* SO-amendment CREATE (Phase 1-C) — the SAME vendored mutation the desktop
      SalesOrderDetail.submitAmendment uses (POST /:docNo/amendments). Reused
      verbatim so the mobile amendment-raise carries no re-implemented API logic. */
@@ -2030,20 +2030,14 @@ export function MobileNewSO({
           let amendCreatedRes: unknown = null;
           // DIRECT_ONLY skips ONLY this block; the tail after it is shared.
           if (plan === "AMENDMENT") {
-            /* Owner 2026-09-15: the reason is REQUIRED — same rule and wording
-               as the desktop prompt; the server refuses 400 reason_required. */
-            const reason = await prompt({
-              title: `Submit amendment for ${docNo}?`,
-              body: "This Sales Order is already ordered from the supplier, so your changes go out as an amendment request. Coordinator and supplier confirm it before the order is revised. Say why — the approver reads the reason first.",
-              placeholder: "e.g. customer changed the fabric colour",
-              multiline: true,
-              confirmLabel: "Submit amendment",
-              validate: (v) => (v.trim() ? null : AMENDMENT_REASON_REQUIRED),
-            });
-            if (reason == null) { setSubmitting(false); return; } // cancelled
+            /* The shared dialog (vendor/scm/components/AmendmentSubmitDialog): shows
+               WHO approves, takes the required reason, lets the requester flag the
+               approver — the same ask as the desktop page (owner 2026-09-15). */
+            const answer = await submitDialog.ask({ docNo, lines: amLines, headerChanges });
+            if (answer == null) { setSubmitting(false); return; } // cancelled
             try {
               amendCreatedRes = await createAmendment.mutateAsync({
-                docNo, reason: reason.trim(), lines: amLines, headerChanges,
+                docNo, reason: answer.reason, laneFlagNote: answer.laneFlagNote, lines: amLines, headerChanges,
                 idempotencyKey: amendIdemKey,
               });
             } catch (e) {
@@ -2828,6 +2822,7 @@ export function MobileNewSO({
           />
         );
       })()}
+      {submitDialog.element}
     </div>
   );
 }

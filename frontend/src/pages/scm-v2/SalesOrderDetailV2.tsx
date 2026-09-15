@@ -1445,7 +1445,7 @@ function SalesOrderDetailV2ReadOnly() {
             >
               <DataTable<SoItem>
                 tableId={`so-lines-${docNo}`}
-                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.salesOrderLines}
+                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.salesOrderLines} persistSort={false} persistFilters={false}
                 rows={items}
                 loading={false}
                 columns={lineColumns}

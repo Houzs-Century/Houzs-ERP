@@ -14,7 +14,7 @@
 // table above stays as it is.
 // ----------------------------------------------------------------------------
 
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { Download, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { DateField } from '../../vendor/scm/components/DateField';
@@ -22,13 +22,14 @@ import { downloadCSV, toCSV } from '../../lib/csv';
 import { useAuth } from '../../auth/AuthContext';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import {
-  fmtPerf, fmtPerfPct, performanceNotes, performanceReportPath, performanceSummaryLines, summaryLinesAtLevel, usePerformanceReport, useSavePerformanceSettings,
+  fmtPerf, fmtPerfPct, performanceNotes, performanceReportPath, performanceSummaryLines, usePerformanceReport, useSavePerformanceSettings,
   type PerformanceReport,
 } from '../../vendor/scm/lib/performance-report-queries';
 import { generatePerformancePdf } from '../../vendor/scm/lib/performance-pnl-pdf';
-import { laidDepth } from '../../vendor/scm/lib/report-layout';
+import { foldsChildren, folderOpen, laidDepth, linesVisible } from '../../vendor/scm/lib/report-layout';
 import { performanceLines, type MonthColumn } from '../../vendor/scm/lib/report-monthly';
-import { LevelButtons, type Level } from './ReportLayoutTree';
+import { LevelButtons, useReportTree, type Level } from './ReportLayoutTree';
+import { AccountLinesRow } from './AccountLinesRow';
 import { ReportLayoutEditor } from './ReportLayoutEditor';
 import { ByMonthButton, MonthlyReport } from './MonthlyReport';
 
@@ -42,6 +43,8 @@ const th: React.CSSProperties = { padding: '6px 10px', fontSize: 'var(--fs-11)',
 const td: React.CSSProperties = { padding: '5px 10px', fontSize: 'var(--fs-13)', borderBottom: '1px solid var(--border-weak, #f0eee8)' };
 const num: React.CSSProperties = { textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
 const danger = 'var(--c-festive-b, #B8331F)';
+const chevron: React.CSSProperties = { background: 'none', border: 'none', padding: '0 4px 0 0', cursor: 'pointer', font: 'inherit', color: 'var(--text-soft, #8a8578)', width: 18, display: 'inline-block', textAlign: 'left' };
+const nameBtn: React.CSSProperties = { background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: 'inherit' };
 const good = 'var(--c-secondary-a, #2F5D4F)';
 const input: React.CSSProperties = { padding: '4px 8px', fontSize: 'var(--fs-13)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 6 };
 
@@ -78,6 +81,7 @@ export const PerformanceTab = () => {
   const [note, setNote] = useState<string | null>(null);
   const v = draft ?? { ratePct: r ? (r.settings.rateBp / 100).toFixed(2) : '', account: r?.settings.account ?? '' };
   const [level, setLevel] = useState<Level>('all');
+  const tree = useReportTree(level);
   const [editing, setEditing] = useState(false);
   const [monthly, setMonthly] = useState(false);
   const { can } = useAuth();
@@ -167,13 +171,31 @@ export const PerformanceTab = () => {
                   whose credits beat its debits, and for a loss. The account
                   lines come off the report's tree, indented by depth and
                   folded by the level chosen above (docs/bugs/0912). */}
-              {summaryLinesAtLevel(performanceSummaryLines(r), level).map((l, i) => (
-                <tr key={i} data-summary={l.kind} data-depth={l.depth} style={l.kind === 'net' ? { fontWeight: 700, borderTop: '2px solid var(--c-ink, #221f20)' } : l.kind === 'total' || l.kind === 'category' ? { fontWeight: 600 } : undefined}>
-                  <td colSpan={3} style={{ ...td, paddingLeft: 10 + 14 * l.depth }}>{l.label}</td>
-                  <td style={{ ...td, ...num, color: l.amountSen < 0 ? danger : undefined }}>{fmtPerf(l.amountSen)}</td>
-                  <td style={{ ...td, ...num }}>{fmtPerfPct(l.pct)}</td>
-                </tr>
-              ))}
+              {(() => {
+                const all = performanceSummaryLines(r);
+                return linesVisible(all, level, tree.open).map((l) => {
+                  const i = all.indexOf(l);
+                  const folder = l.kind === 'category' && foldsChildren(all, i);
+                  const open = folder && folderOpen(l, level, tree.open);
+                  const drillable = l.kind === 'row' && Boolean(l.code);
+                  const drilled = drillable && Boolean(tree.drilled[l.id]);
+                  return (
+                    <Fragment key={l.id}>
+                      <tr data-summary={l.kind} data-depth={l.depth} style={l.kind === 'net' ? { fontWeight: 700, borderTop: '2px solid var(--c-ink, #221f20)' } : l.kind === 'total' || l.kind === 'category' ? { fontWeight: 600 } : undefined}>
+                        <td colSpan={3} style={{ ...td, paddingLeft: 10 + 14 * l.depth }}>
+                          {folder && <button type="button" style={chevron} aria-label={`${open ? 'Collapse' : 'Expand'} ${l.label}`} aria-expanded={open} onClick={() => tree.toggle(l.id, open)}>{open ? '▾' : '▸'}</button>}
+                          {drillable
+                            ? <button type="button" style={nameBtn} aria-label={`Lines of ${l.label}`} aria-expanded={drilled} onClick={() => tree.toggleDrill(l.id)}>{l.label}</button>
+                            : l.label}
+                        </td>
+                        <td style={{ ...td, ...num, color: l.amountSen < 0 ? danger : undefined }}>{fmtPerf(l.amountSen)}</td>
+                        <td style={{ ...td, ...num }}>{fmtPerfPct(l.pct)}</td>
+                      </tr>
+                      {drilled && l.code && <AccountLinesRow code={l.code} from={from} to={to} colSpan={5} />}
+                    </Fragment>
+                  );
+                });
+              })()}
             </tbody>
           </table>
           <ul style={{ ...soft, margin: 0, padding: 'var(--space-3) var(--space-3) var(--space-3) 28px' }} aria-label="Performance notes">

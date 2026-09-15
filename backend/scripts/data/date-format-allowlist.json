@@ -138,27 +138,27 @@
       "why": "Renders the WEEKDAY NAME only; the date beside it comes from fmtDate. A weekday is a word by design and carries no day/month ambiguity."
     },
     {
-      "file": "frontend/src/pages/Projects.tsx",
+      "file": "frontend/src/pages/projects/calendarParts.tsx",
       "text": ".toLocaleDateString(\"en-GB\", { weekday: \"long\" });",
       "why": "Renders the WEEKDAY NAME only; the date beside it comes from fmtDate. A weekday is a word by design and carries no day/month ambiguity."
     },
     {
-      "file": "frontend/src/pages/Projects.tsx",
+      "file": "frontend/src/pages/projects/ProjectsCalendarView.tsx",
       "text": "const monthLabel = anchor.toLocaleDateString(\"en-GB\", { month: \"long\", year: \"numeric\" });",
       "why": "A calendar MONTH header, not a date. DEFERRED ON PURPOSE: Projects.tsx cites the owner for 'November 2025' and ServiceCases.tsx renders exactly the '11/2025' that comment rejects. Both claim him; only he can say which. Not guessed here."
     },
     {
-      "file": "frontend/src/pages/Projects.tsx",
+      "file": "frontend/src/pages/projects/ProjectsCalendarView.tsx",
       "text": "d.toLocaleDateString(\"en-GB\", { day: \"2-digit\", month: \"2-digit\" });",
       "why": "A week-range header 'DD/MM - DD/MM YYYY' — a RANGE compression that prints the year once. Day-first like the rule; dropping the repeated year is the point of it."
     },
     {
-      "file": "frontend/src/pages/Projects.tsx",
+      "file": "frontend/src/pages/projects/ProjectsCalendarView.tsx",
       "text": "patchParams({ mode: next, week: `${yyyy}-${mm}-${dd}` });",
       "why": "A URL query parameter (?week=YYYY-MM-DD), not a display. The address bar carries the storage shape so a shared link resolves the same week everywhere."
     },
     {
-      "file": "frontend/src/pages/Projects.tsx",
+      "file": "frontend/src/pages/projects/ProjectsCalendarView.tsx",
       "text": "patchParams({ week: `${yyyy}-${mm}-${dd}` });",
       "why": "A URL query parameter (?week=YYYY-MM-DD), not a display. The address bar carries the storage shape so a shared link resolves the same week everywhere."
     },

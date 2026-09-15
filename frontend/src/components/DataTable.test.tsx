@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
-import { DataTable, type Column } from "./DataTable";
+import { DataTable, type Column, type FunnelAllRowsScope } from "./DataTable";
 import { downloadCSV } from "../lib/csv";
 
 vi.mock("../lib/csv", async (importOriginal) => {
@@ -1474,5 +1474,187 @@ describe("Sort is persisted, and Reset must clear it", () => {
     expect(onSortChange).toHaveBeenCalledWith(null);
     const stored = localStorage.getItem("dt:sort:sort-persist");
     expect(stored === null || stored === "null").toBe(true);
+  });
+});
+
+describe("DataTable funnelAllRows (whole filtered set)", () => {
+  /* Owner 2026-09-16 — a column funnel is client-side, so on a server-paged list
+     it only ever filtered the loaded page: funnelling a value that lives on a
+     LATER page hid every row on this one and never reached the match. With
+     funnelAllRows wired, an active funnel fetches every matching row (all pages)
+     and filters over that instead. */
+  it("filters over the fetched whole set, not just the loaded page, when a funnel is active", async () => {
+    setViewport(1280);
+    // The funnel targets a status that appears on NO loaded-page row — the whole
+    // point: a page-local funnel would show zero, the widened one finds it.
+    localStorage.setItem("dt:filters:funnel-all", JSON.stringify({ status: ["Special"] }));
+    const special: Row = { id: 999, name: "Order 999", status: "Special" };
+    const fetchRows = vi.fn().mockResolvedValue([...rows, special]);
+    const seen: Row[][] = [];
+    render(
+      <DataTable
+        tableId="funnel-all"
+        rows={rows}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        onFilteredRowsChange={(r) => seen.push(r)}
+        funnelAllRows={{
+          fetchRows,
+          signature: "tab=all",
+          onScopeChange: () => {},
+          onError: () => {},
+        }}
+      />,
+    );
+    // Before the read resolves the page-local funnel matches nothing.
+    expect(seen.at(-1)).toHaveLength(0);
+    // Once the whole set arrives, the funnel finds the single matching row.
+    await waitFor(() => expect(seen.at(-1)).toEqual([special]));
+    expect(fetchRows).toHaveBeenCalledTimes(1);
+    expect(fetchRows).toHaveBeenCalledWith({ exportKeys: ["status"], filterKeys: ["status"] });
+  });
+
+  it("does not read, and reports no scope, when no funnel is active", () => {
+    setViewport(1280);
+    const fetchRows = vi.fn().mockResolvedValue(rows);
+    const scopes: (FunnelAllRowsScope | null)[] = [];
+    render(
+      <DataTable
+        tableId="funnel-all-idle"
+        rows={rows}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        funnelAllRows={{
+          fetchRows,
+          signature: "tab=all",
+          onScopeChange: (s) => scopes.push(s),
+          onError: () => {},
+        }}
+      />,
+    );
+    expect(fetchRows).not.toHaveBeenCalled();
+    expect(scopes.at(-1)).toBeNull();
+  });
+
+  it("reverts to the loaded page and reports the error when the whole-set fetch fails", async () => {
+    setViewport(1280);
+    localStorage.setItem("dt:filters:funnel-all-fail", JSON.stringify({ status: ["Open"] }));
+    const fetchRows = vi.fn().mockRejectedValue(new Error("too many to hold"));
+    const onError = vi.fn();
+    const seen: Row[][] = [];
+    render(
+      <DataTable
+        tableId="funnel-all-fail"
+        rows={rows}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        onFilteredRowsChange={(r) => seen.push(r)}
+        funnelAllRows={{
+          fetchRows,
+          signature: "tab=all",
+          onScopeChange: () => {},
+          onError,
+        }}
+      />,
+    );
+    await waitFor(() => expect(onError).toHaveBeenCalledOnce());
+    // Page-local funnel still works: the 100 "Open" rows of the loaded page.
+    expect(seen.at(-1)).toHaveLength(rows.filter((r) => r.status === "Open").length);
+  });
+});
+
+/* A row's own colour must reach the screen (owner 2026-09-15, MRP: "之前是有一点
+   看到颜色的"). The zebra class sits on the same <tr> as a row's colour, and in
+   the built stylesheet `.bg-surface` / `.bg-surface-dim/35` come AFTER
+   `.bg-primary/10`, `.bg-primary-soft` and `.bg-err-bg` — equal specificity, so
+   the zebra won and a ticked row or a caller's tone never painted. A row that
+   has its own background therefore carries no zebra class at all. */
+describe("DataTable row colours are not overpainted by the zebra", () => {
+  const zebra = /(^|\s)bg-surface(-dim\/35)?(\s|$)/;
+  const dataRows = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll<HTMLTableRowElement>("tbody tr[data-vrow]"));
+
+  it("a ticked row carries the selected tint and no zebra class", () => {
+    setViewport(1280);
+    const { container } = render(
+      <DataTable
+        tableId="row-tone-selected"
+        rows={rows.slice(0, 3)}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        selection={{ selectedIds: new Set(["2"]), onToggle: () => {}, onToggleAll: () => {} }}
+      />,
+    );
+    const [first, second] = dataRows(container);
+    expect(second!.className).toContain("bg-primary/10");
+    expect(second!.className).not.toMatch(zebra);
+    expect(first!.className).toMatch(zebra);
+  });
+
+  it("a getRowClassName background replaces the zebra; a non-background class keeps it", () => {
+    setViewport(1280);
+    const { container } = render(
+      <DataTable
+        tableId="row-tone-custom"
+        rows={rows.slice(0, 3)}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        getRowClassName={(row) => (row.id === 1 ? "bg-err-bg" : row.id === 2 ? "opacity-60" : undefined)}
+      />,
+    );
+    const [toned, faded, plain] = dataRows(container);
+    expect(toned!.className).toContain("bg-err-bg");
+    expect(toned!.className).not.toMatch(zebra);
+    expect(faded!.className).toMatch(zebra);
+    expect(plain!.className).toMatch(zebra);
+  });
+
+  it("the phone card follows the same rule", () => {
+    setViewport(375);
+    const { container } = render(
+      <DataTable
+        tableId="row-tone-card"
+        rows={rows.slice(0, 2)}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        getRowClassName={(row) => (row.id === 1 ? "bg-err-bg" : undefined)}
+      />,
+    );
+    const [toned, plain] = Array.from(container.querySelectorAll<HTMLElement>("[data-mobile-card]"));
+    expect(toned!.className).toContain("bg-err-bg");
+    expect(toned!.className).not.toMatch(zebra);
+    expect(plain!.className).toMatch(zebra);
+  });
+});
+
+/* Document line tables (owner 2026-09-15: "我看到的东西，我要去 edit 的时候，突然它
+   位置不见了"). A line table's layout is shared by every document of its kind,
+   and so were its sort and funnels: a header clicked on one Sales Order re-sorted
+   the lines of every order opened after it, while the editor behind Edit shows
+   the document's own line order. persistSort={false} keeps a sort for this visit. */
+describe("persistSort={false} sorts for this visit only", () => {
+  const names = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll("tbody tr[data-vrow] td:first-child")).map((td) => td.textContent);
+
+  it("ignores and erases a stored sort, and never stores a new one", () => {
+    setViewport(1280);
+    localStorage.setItem("dt:sort:lines-session", JSON.stringify({ key: "name", dir: "desc" }));
+    const three = rows.slice(0, 3);
+    const first = render(
+      <DataTable tableId="lines-session" persistSort={false} rows={three} columns={columns} getRowKey={(r) => r.id} />,
+    );
+    expect(names(first.container)).toEqual(["Order 1", "Order 2", "Order 3"]);
+    expect(localStorage.getItem("dt:sort:lines-session")).toBeNull();
+
+    fireEvent.click(screen.getByRole("columnheader", { name: /Order/ }));
+    fireEvent.click(screen.getByRole("columnheader", { name: /Order/ }));
+    expect(names(first.container)).toEqual(["Order 3", "Order 2", "Order 1"]);
+    expect(localStorage.getItem("dt:sort:lines-session")).toBeNull();
+
+    first.unmount();
+    const second = render(
+      <DataTable tableId="lines-session" persistSort={false} rows={three} columns={columns} getRowKey={(r) => r.id} />,
+    );
+    expect(names(second.container)).toEqual(["Order 1", "Order 2", "Order 3"]);
   });
 });

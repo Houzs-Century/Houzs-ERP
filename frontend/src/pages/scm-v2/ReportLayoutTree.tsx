@@ -10,11 +10,40 @@
 // figure that opens the entries behind it.
 // ----------------------------------------------------------------------------
 
-import { Fragment } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { fmtSenParen } from '../../vendor/shared/format';
 import { fmtPct, pctOf, type LaidNode } from '../../vendor/scm/lib/report-layout';
+import { AccountLinesRow } from './AccountLinesRow';
 
 export type Level = number | 'all';
+
+/** What a person has opened by hand on a tree: categories opened or closed
+    past the level, accounts whose lines are shown. The level buttons set the
+    whole tree at once, so a new level clears both. */
+export type ReportTree = {
+  open: Record<string, boolean>;
+  /** Flip a folder from what it shows now (the level decides that until a hand does). */
+  toggle: (id: string, openNow: boolean) => void;
+  drilled: Record<string, boolean>;
+  toggleDrill: (id: string) => void;
+};
+
+export const useReportTree = (level: Level): ReportTree => {
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [drilled, setDrilled] = useState<Record<string, boolean>>({});
+  useEffect(() => { setOpen({}); setDrilled({}); }, [level]);
+  return {
+    open,
+    toggle: (id, openNow) => setOpen((o) => ({ ...o, [id]: !openNow })),
+    drilled,
+    toggleDrill: (id) => setDrilled((d) => ({ ...d, [id]: !d[id] })),
+  };
+};
+
+/** The period an account's lines are read for when its row is opened. */
+export type DrillPeriod = { from: string; to: string };
+
+const chevronBtn: React.CSSProperties = { background: 'none', border: 'none', padding: '0 4px 0 0', cursor: 'pointer', font: 'inherit', color: 'var(--text-soft, #8a8578)', width: 18, display: 'inline-block', textAlign: 'left' };
 
 /** A figure clicked: the node (a line or a whole category) and the column, null for the total. */
 export type LaidPick = (node: LaidNode, column: string | null) => void;
@@ -50,13 +79,23 @@ const pickBtn: React.CSSProperties = { background: 'none', border: 'none', paddi
     the level reaches them, its subtotal stands either way. With `columns`
     every row prints a figure per column before its total; `fmt` is the
     report's own money dress; `onPick` makes a figure open its entries. */
-export const LaidRows = ({ nodes, level, depth = 1, columns, fmt = fmtSenParen, onPick, activeId }: {
+export const LaidRows = ({ nodes, level, depth = 1, columns, fmt = fmtSenParen, onPick, activeId, tree, drill }: {
   nodes: LaidNode[]; level: Level; depth?: number;
   columns?: string[]; fmt?: (sen: number) => string; onPick?: LaidPick; activeId?: string | null;
+  /** Hand-opened categories and accounts; with `drill`, an account's name opens its lines for the period. */
+  tree?: ReportTree; drill?: DrillPeriod;
 }) => (
   <>
     {nodes.map((n) => {
-      const open = n.children.length > 0 && (level === 'all' || depth < level);
+      const folder = n.children.length > 0;
+      const open = folder && (tree?.open[n.id] ?? (level === 'all' || depth < level));
+      const drillable = Boolean(tree && drill && n.kind === 'account' && n.code);
+      const drilledOpen = drillable && Boolean(tree?.drilled[n.id]);
+      const label = folder && tree
+        ? <><button type="button" style={chevronBtn} aria-label={`${open ? 'Collapse' : 'Expand'} ${n.label}`} aria-expanded={open} onClick={() => tree.toggle(n.id, open)}>{open ? '▾' : '▸'}</button>{n.label}</>
+        : drillable
+          ? <button type="button" style={{ ...pickBtn, textDecoration: 'none' }} aria-label={`Lines of ${n.label}`} aria-expanded={drilledOpen} onClick={() => tree!.toggleDrill(n.id)}>{n.label}</button>
+          : n.label;
       const figure = (sen: number, column: string | null, strong: boolean): React.ReactNode => {
         if (columns && column !== null && sen === 0) return <span style={soft}>—</span>;
         const text = fmt(sen);
@@ -67,14 +106,15 @@ export const LaidRows = ({ nodes, level, depth = 1, columns, fmt = fmtSenParen, 
       return (
         <Fragment key={n.id}>
           <tr data-kind={n.kind} data-depth={depth} style={activeId && activeId === n.id ? { background: 'var(--c-cream, #faf7f0)' } : undefined}>
-            <td style={{ padding: `2px 10px 2px ${10 + 14 * depth}px`, ...weightOf(n.kind) }}>{n.label}</td>
+            <td style={{ padding: `2px 10px 2px ${10 + 14 * depth}px`, ...weightOf(n.kind) }}>{label}</td>
             {columns?.map((col) => (
               <td key={col} style={{ ...right, ...weightOf(n.kind) }}>{figure(n.cells?.[col] ?? 0, col, n.kind === 'category')}</td>
             ))}
             <td style={{ ...right, ...weightOf(n.kind) }}>{figure(n.amountSen, null, n.kind === 'category')}</td>
             <td style={{ ...right, ...soft }}>{fmtPct(n.pct)}</td>
           </tr>
-          {open && <LaidRows nodes={n.children} level={level} depth={depth + 1} columns={columns} fmt={fmt} onPick={onPick} activeId={activeId} />}
+          {drilledOpen && drill && n.code && <AccountLinesRow code={n.code} from={drill.from} to={drill.to} colSpan={3 + (columns?.length ?? 0)} />}
+          {open && <LaidRows nodes={n.children} level={level} depth={depth + 1} columns={columns} fmt={fmt} onPick={onPick} activeId={activeId} tree={tree} drill={drill} />}
         </Fragment>
       );
     })}
@@ -82,14 +122,15 @@ export const LaidRows = ({ nodes, level, depth = 1, columns, fmt = fmtSenParen, 
 );
 
 /** A titled block with its rows and its total line. */
-export const LaidBlock = ({ title, nodes, level, totalLabel, totalSen, baseSen, onPick }: {
+export const LaidBlock = ({ title, nodes, level, totalLabel, totalSen, baseSen, onPick, tree, drill }: {
   title: string; nodes: LaidNode[]; level: Level; totalLabel: string; totalSen: number; baseSen: number | null;
-  /** A figure opens its entries — the general ledger on the node's accounts (docs/bugs/0924). */
+  /** A figure opens its entries — the general ledger on the node's accounts. */
   onPick?: LaidPick;
+  tree?: ReportTree; drill?: DrillPeriod;
 }) => (
   <>
     <tr><td colSpan={3} style={{ padding: '10px 10px 4px', fontWeight: 700 }}>{title}</td></tr>
-    <LaidRows nodes={nodes} level={level} onPick={onPick} />
+    <LaidRows nodes={nodes} level={level} onPick={onPick} tree={tree} drill={drill} />
     {nodes.length === 0 && <tr><td colSpan={3} style={{ padding: '2px 10px 2px 24px', ...soft }}>—</td></tr>}
     <tr style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
       <td style={{ padding: '4px 10px', fontWeight: 600 }}>{totalLabel}</td>

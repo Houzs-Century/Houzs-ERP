@@ -14,7 +14,9 @@
 // WHAT IT DOES. For each affected document it calls the SAME `enqueueEdit` the
 // approve routes call — a KEYED edit of the document AS IT IS NOW. One edit per
 // DOCUMENT, not per amendment: an edit composes the whole current state, so the
-// last one carries every amendment before it.
+// last one carries every amendment before it. For an SO it also declares any
+// still-keyless line an ADD amendment appended as NEW (newLineIds), so composeEdit
+// appends it instead of refusing the whole document as keyless (docs/bugs/0942).
 //
 // TARGETS (company COMPANY_ID): documents with an SO amendment (so_approved_at)
 // or an APPROVED PO amendment (approved_at) at or after SINCE, MINUS documents
@@ -47,7 +49,7 @@ import postgres from "postgres";
 import { enqueueEdit } from "../src/scm/lib/autocount-outbox.ts";
 import { resetWritebackFlagCache } from "../src/scm/lib/autocount-writeback-flag.ts";
 import { pgrestShim } from "./lib/pgrest-shim.mjs";
-import { coveringEdit, SAME_TRANSACTION_WINDOW_MS } from "./lib/amendment-requeue-coverage.mjs";
+import { coveringEdit, SAME_TRANSACTION_WINDOW_MS, keylessAddedLineIds } from "./lib/amendment-requeue-coverage.mjs";
 
 const APPLY = (process.env.MODE || "plan").toLowerCase() === "apply";
 const CONFIRM = (process.env.CONFIRM || "").trim();
@@ -121,12 +123,35 @@ async function composeOne(t) {
   const run = async (tx) => {
     resetWritebackFlagCache();
     const sb = pgrestShim(tx, "scm", { writeback: "enqueue" });
+    /* A line an ADD amendment appended carries no AutoCount key, and a KEYED edit
+       refuses the whole document as keyless unless the added line is declared NEW
+       (docs/bugs/0942 fixed the approve route; this is the same for the backlog).
+       SO only: an SO composes its lines from mfg_sales_order_items; a PO add-line
+       has its own route, and the four converted types hold a transfer link. Match
+       on the ADD amendment's own item codes so a backfill gap is never guessed
+       new (that would append a duplicate into the book). */
+    let newLineIds;
+    if (t.doc_type === "SO") {
+      const keyless = await tx`
+        SELECT id, item_code FROM scm.mfg_sales_order_items
+         WHERE doc_no = ${t.doc_no} AND company_id = ${COMPANY_ID}
+           AND linked_ac_dtlkey IS NULL AND cancelled IS NOT TRUE`;
+      const adds = await tx`
+        SELECT DISTINCT al.new_item_code AS item_code
+          FROM scm.so_amendment_lines al
+          JOIN scm.so_amendments a ON a.id = al.amendment_id
+         WHERE a.so_doc_no = ${t.doc_no} AND a.company_id = ${COMPANY_ID}
+           AND al.change_type = 'ADD'`;
+      const ids = keylessAddedLineIds([...keyless], adds.map((r) => r.item_code));
+      if (ids.length) newLineIds = ids;
+    }
     const returned = await enqueueEdit(sb, {
       companyId: COMPANY_ID,
       docType: t.doc_type,
       docNo: t.doc_no,
       docId: t.doc_type === "PO" ? t.doc_id : null,
       createdBy: null,
+      ...(newLineIds ? { newLineIds } : {}),
     });
     const written = await tx`
       SELECT id, op, status, last_error, doc_no, doc_id,

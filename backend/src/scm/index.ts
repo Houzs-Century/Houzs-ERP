@@ -61,6 +61,7 @@ import { mfgSalesOrders } from "./routes/mfg-sales-orders";
 import { mfgSalesOrdersListEnrichment } from "./routes/mfg-sales-orders-list-enrichment";
 import { salesOrderExports } from "./routes/sales-order-exports";
 import { mfgSoFairs } from "./routes/mfg-so-fairs";
+import { soAmendmentLanePreview } from "./routes/so-amendment-lane-preview";
 import { soAmendments } from "./routes/so-amendments";
 import { soHandover } from "./routes/so-handover";
 import { poAmendments } from "./routes/po-amendments";
@@ -417,6 +418,11 @@ scm.route("/mfg-sales-orders", soCancelRequests);
 // paths must resolve ahead of `/:docNo`. In its own file because
 // mfg-sales-orders.ts is already over its file-size ceiling.
 scm.route("/mfg-sales-orders", mfgSoFairs);
+// Lane preview (owner 2026-09-15, option B): which desk an amendment WILL go to,
+// read from the same resolver the submit route stores from. Own file for the
+// same ceiling reason; ahead of the main router so `/:docNo/amendments/lane-preview`
+// is matched before its `/:docNo/amendments`. routes/so-amendment-lane-preview.ts.
+scm.route("/mfg-sales-orders", soAmendmentLanePreview);
 scm.route("/mfg-sales-orders", mfgSalesOrders);
 // SO amendment / revision workflow — SO-centric, so it rides the same L2 area
 // guard as Sales Orders (GET=view, PATCH=edit); the finer scm.amendment.* gates

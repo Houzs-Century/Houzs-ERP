@@ -93,6 +93,7 @@ function SoAmendmentBody({ target, onClose }: { target: AmendmentQuickViewTarget
               requestedBy={a.requested_by}
               createdAt={a.created_at}
               reason={a.reason}
+              laneFlagNote={a.lane_flag_note ?? null}
               resolution={a.resolution ?? null}
               rejectionReason={a.rejection_reason ?? null}
               extra={boundPos ? { k: "Bound POs", v: boundPos } : null}
@@ -221,6 +222,7 @@ function Summary({
   requestedBy,
   createdAt,
   reason,
+  laneFlagNote = null,
   resolution,
   rejectionReason,
   extra,
@@ -232,6 +234,8 @@ function Summary({
   requestedBy: string | null | undefined;
   createdAt: string | null | undefined;
   reason: string | null | undefined;
+  /** Option B (2026-09-15): the requester's doubt about the approver, SO rows only. */
+  laneFlagNote?: string | null;
   resolution: "REJECTED" | "WITHDRAWN" | null;
   rejectionReason: string | null;
   extra: { k: string; v: string } | null;
@@ -255,6 +259,12 @@ function Summary({
           <SectionHeading>Reason</SectionHeading>
           <p className="text-[13px] leading-relaxed text-ink-secondary">{reason}</p>
         </>
+      )}
+      {(laneFlagNote ?? "").trim() && (
+        <div className="mt-3 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-[12px] text-ink">
+          <div className="font-semibold">The requester flagged the approver as possibly wrong.</div>
+          <div className="mt-1">“{laneFlagNote}”</div>
+        </div>
       )}
       {resolution && (
         <div className="mt-4 rounded-md border border-err/40 bg-err/10 px-3 py-2 text-[12px] text-err">
