@@ -24,7 +24,7 @@ import { MoneyInput } from './MoneyInput';
 import { fmtDate } from '../../shared/format';
 import { useNotify } from './NotifyDialog';
 import {
-  convertParamOf, newOrderWithMoneyHref, useOrderMoney, useRequestRefund,
+  convertParamOf, newOrderWithMoneyHref, readConvertSource, useOrderMoney, useRequestRefund, useRequestRefunds,
   type ConvertPick, type ConvertSource, type OrderMoney,
 } from '../lib/so-money-queries';
 
@@ -83,16 +83,30 @@ function RefundForm({ docNo, remainingSen, onDone }: { docNo: string; remainingS
     screen itself; the desktop navigates to the page. */
 type OpenNewOrder = (copyFrom: string, picks: ConvertPick[]) => void;
 
-function ConvertForm({ money, others, onDone, onOpen }: { money: OrderMoney; others: ConvertSource[]; onDone: () => void; onOpen?: OpenNewOrder }) {
+export type ConvertRow = ConvertSource & { self?: boolean };
+
+/** Pick which cancelled orders to take money from, and how much of each; the
+    New SO page then opens on `copyFrom` with one converted row per tick.
+    Another cancelled order — any customer's — can be added by number. */
+export function ConvertPicker({ rows: given, copyFrom, ticked: tickedAtFirst, onDone, onOpen }: {
+  rows: ConvertRow[]; copyFrom: string; ticked: string[]; onDone: () => void; onOpen?: OpenNewOrder;
+}) {
   const navigate = useNavigate();
-  /* This order first, ticked, for what is left; the customer's other cancelled
-     orders beneath, unticked, each for what is left on it. */
-  const rows = useMemo<Array<ConvertSource & { self: boolean }>>(() => [
-    { docNo: money.docNo, customer: money.customer.name, cancelledOn: null, remainingSen: money.remainingSen, bookedSen: money.bookedSen, self: true },
-    ...others.map((o) => ({ ...o, self: false })),
-  ], [money, others]);
-  const [ticked, setTicked] = useState<Set<string>>(() => new Set([money.docNo]));
-  const [amounts, setAmounts] = useState<Record<string, number>>(() => Object.fromEntries(rows.map((r) => [r.docNo, r.remainingSen])));
+  const [added, setAdded] = useState<ConvertRow[]>([]);
+  const rows = useMemo(() => [...given, ...added.filter((a) => !given.some((g) => g.docNo === a.docNo))], [given, added]);
+  const [ticked, setTicked] = useState<Set<string>>(() => new Set(tickedAtFirst));
+  const [amounts, setAmounts] = useState<Record<string, number>>(() => Object.fromEntries(given.map((r) => [r.docNo, r.remainingSen])));
+  const [more, setMore] = useState('');
+  const [moreNote, setMoreNote] = useState<string | null>(null);
+  const addAnother = async () => {
+    const r = await readConvertSource(more);
+    if (!r.ok) { setMoreNote(r.reason); return; }
+    if (rows.some((x) => x.docNo === r.source.docNo)) { setMoreNote(`${r.source.docNo} is already in the list.`); return; }
+    setAdded((a) => [...a, r.source]);
+    setAmounts((a) => ({ ...a, [r.source.docNo]: r.source.remainingSen }));
+    setTicked((t) => new Set([...t, r.source.docNo]));
+    setMore(''); setMoreNote(null);
+  };
   const picks: ConvertPick[] = rows.filter((r) => ticked.has(r.docNo)).map((r) => ({ docNo: r.docNo, amountSen: amounts[r.docNo] ?? 0 }));
   const bad = rows.find((r) => ticked.has(r.docNo) && ((amounts[r.docNo] ?? 0) <= 0 || (amounts[r.docNo] ?? 0) > r.remainingSen));
   const total = picks.reduce((s, p) => s + p.amountSen, 0);
@@ -111,14 +125,70 @@ function ConvertForm({ money, others, onDone, onOpen }: { money: OrderMoney; oth
       ))}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <button type="button" style={primary} disabled={picks.length === 0 || Boolean(bad)}
-          onClick={() => (onOpen ? onOpen(money.docNo, picks) : navigate(newOrderWithMoneyHref(money.docNo, picks)))}>
+          onClick={() => (onOpen ? onOpen(copyFrom, picks) : navigate(newOrderWithMoneyHref(copyFrom, picks)))}>
           Open a new order with {fmtRm(total)}
         </button>
         <button type="button" style={btn} onClick={onDone}>Cancel</button>
         {bad && <span style={{ color: 'var(--c-danger, #a33)' }}>{bad.docNo}: between RM 0.01 and {fmtRm(bad.remainingSen)}.</span>}
-        <span style={muted}>The new order opens with this customer and the cancelled order's lines; one payment row per ticked order, dated the day the money was first paid.</span>
+        <span style={muted}>The new order opens with {copyFrom}'s customer and lines; one payment row per ticked order, dated the day the money was first paid.</span>
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <input value={more} onChange={(e) => setMore(e.target.value)} placeholder="Another cancelled order, e.g. 2990-SO-2607-024" aria-label="Another cancelled order"
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void addAnother(); } }}
+          style={{ minWidth: 260, padding: '4px 8px', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 6 }} />
+        <button type="button" style={btn} onClick={() => void addAnother()}>Add</button>
+        {moreNote && <span style={{ color: 'var(--c-danger, #a33)' }}>{moreNote}</span>}
       </div>
       <span hidden data-testid="convert-param">{convertParamOf(picks)}</span>
+    </div>
+  );
+}
+
+/** The panel's convert: this order first, ticked, for what is left; the
+    customer's other cancelled orders beneath, unticked. */
+function ConvertForm({ money, others, onDone, onOpen }: { money: OrderMoney; others: ConvertSource[]; onDone: () => void; onOpen?: OpenNewOrder }) {
+  const rows = useMemo<ConvertRow[]>(() => [
+    { docNo: money.docNo, customer: money.customer.name, cancelledOn: null, remainingSen: money.remainingSen, bookedSen: money.bookedSen, self: true },
+    ...others.map((o) => ({ ...o, self: false })),
+  ], [money, others]);
+  return <ConvertPicker rows={rows} copyFrom={money.docNo} ticked={[money.docNo]} onDone={onDone} onOpen={onOpen} />;
+}
+
+/** One refund draft per order — the SO list's bar, several orders at once. */
+export function RefundPicker({ rows, onDone }: { rows: Array<{ docNo: string; customer: string | null; remainingSen: number }>; onDone: () => void }) {
+  const [amounts, setAmounts] = useState<Record<string, number>>(() => Object.fromEntries(rows.map((r) => [r.docNo, r.remainingSen])));
+  const [note, setNote] = useState('');
+  const request = useRequestRefunds();
+  const notify = useNotify();
+  const bad = rows.find((r) => (amounts[r.docNo] ?? 0) <= 0 || (amounts[r.docNo] ?? 0) > r.remainingSen);
+  const submit = async () => {
+    const out = await request.mutateAsync(rows.map((r) => ({ docNo: r.docNo, amountSen: amounts[r.docNo] ?? 0, note: note.trim() || null })));
+    const raised = out.filter((o) => o.pvNumber);
+    const failed = out.filter((o) => o.error);
+    void notify({
+      title: failed.length === 0 ? `${raised.length} refund draft${raised.length === 1 ? '' : 's'} raised for Finance` : `${raised.length} raised, ${failed.length} not`,
+      body: [...raised.map((o) => `${o.docNo}: ${o.pvNumber}`), ...failed.map((o) => `${o.docNo}: ${o.error}`)].join('\n'),
+      tone: failed.length === 0 ? undefined : 'error',
+    });
+    if (failed.length === 0) onDone();
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }} data-testid="refund-form">
+      {rows.map((r) => (
+        <div key={r.docNo} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontFamily: 'var(--font-mono)' }}>{r.docNo}</span>
+          {r.customer && <span style={muted}>{r.customer}</span>}
+          <span style={muted}>{fmtRm(r.remainingSen)} left</span>
+          <MoneyInput valueSen={amounts[r.docNo] ?? 0} onCommit={(sen) => setAmounts((a) => ({ ...a, [r.docNo]: sen ?? 0 }))} aria-label={`Refund from ${r.docNo}`} />
+        </div>
+      ))}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Why (optional)" aria-label="Refund note"
+          style={{ flex: 1, minWidth: 160, padding: '4px 8px', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 6 }} />
+        <button type="button" style={primary} disabled={Boolean(bad) || request.isPending} onClick={() => void submit()}>Raise {rows.length} refund draft{rows.length === 1 ? '' : 's'}</button>
+        <button type="button" style={btn} onClick={onDone}>Cancel</button>
+        {bad && <span style={{ color: 'var(--c-danger, #a33)' }}>{bad.docNo}: between RM 0.01 and {fmtRm(bad.remainingSen)}.</span>}
+      </div>
     </div>
   );
 }
