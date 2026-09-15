@@ -75,18 +75,24 @@ function renderPicker(value: FairPickValue, soDate = '2026-09-13') {
 
 const fairSelect = () => screen.getByLabelText('Fair') as HTMLSelectElement;
 const shownText = (s: HTMLSelectElement) => s.selectedOptions.item(0)?.textContent ?? '';
+const fairOptionLabels = () => [...fairSelect().options].map((o) => o.textContent);
 
 describe('FairPicker — a row is a place plus an organizer', () => {
-  it('labels rows with no dates, and groups running-now above the rest', () => {
+  it('labels rows with the VENUE ONLY — the organizer is never shown (owner 2026-09-16)', () => {
     renderPicker({ venue: null, organizer: null });
-    expect(screen.getByText('MID VALLEY — REX')).toBeTruthy();
-    expect(screen.getByText('THE COMMUNE KULAI — INHOME')).toBeTruthy();
-    /* The one exception: the server flagged this row because another row in the
-       same month would read identically. */
-    expect(screen.getByText('MVEC SOUTHKEY — REX (2026-09-18 ~ 2026-09-20)')).toBeTruthy();
+    const labels = fairOptionLabels();
+    expect(labels).toContain('MID VALLEY');
+    expect(labels).toContain('THE COMMUNE KULAI');
+    /* The organizer still rides on the value and is saved (fair P&L / commission),
+       but it must not appear in any label the salesperson reads. */
+    expect(labels.some((l) => l.includes('REX'))).toBe(false);
+    expect(labels.some((l) => l.includes('INHOME'))).toBe(false);
+    /* The one row the server flags because another in the month would otherwise
+       read identically keeps its dates — venue only, still no organizer. */
+    expect(labels).toContain('MVEC SOUTHKEY (2026-09-18 ~ 2026-09-20)');
   });
 
-  it('sends the venue AND the organizer when a fair is picked', () => {
+  it('sends the venue AND the organizer when a fair is picked (organizer hidden but saved)', () => {
     const { onChange } = renderPicker({ venue: null, organizer: null });
     fireEvent.change(fairSelect(), { target: { value: 'fair:mid valley|rex|2026-09-11|2026-09-13' } });
     expect(onChange).toHaveBeenCalledWith({ venue: 'MID VALLEY', organizer: 'REX' });
