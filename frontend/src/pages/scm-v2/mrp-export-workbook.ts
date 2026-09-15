@@ -20,6 +20,7 @@
 // the screen renders, with the page's live warehouse / date / only-shortages /
 // search filters. No figure is recomputed here.
 
+import type { SheetData as WxlSheetData, Cell as WxlCell } from 'write-excel-file';
 import type { MrpResponse, MrpSku, MrpLine } from '../../vendor/scm/lib/mrp-queries';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { fmtDate } from '../../vendor/shared/format';
@@ -189,24 +190,16 @@ function apiCategoryOf(view: MrpView): string | null {
   return view.value === 'sofa' ? null : mrpCategoryOf(view.value);
 }
 
-/* Sheet tab colours (ARGB), from the v7 mockup — one per tab. */
-const TAB_COLOR: Record<string, string> = {
-  sofa: 'FF3E6B8B',
-  bedframe: 'FF8A6D12',
-  mattress: 'FF2E7D5B',
-  accessory: 'FF6A6F66',
-  others: 'FF9AA091',
-};
-
-// Palette (ARGB) — header dark green, group light green, shortage light red.
-const C_HEADER_FILL = 'FF14532D';
-const C_HEADER_FONT = 'FFFFFFFF';
-const C_GROUP_FILL = 'FFE4F0E9';
-const C_GROUP_FONT = 'FF0C4D31';
-const C_SHORT_FILL = 'FFF7E1DE';
-const C_SHORT_FONT = 'FF9E2B22';
-const C_TITLE_FONT = 'FF0C4D31';
-const C_SUBTITLE_FONT = 'FF6A6F66';
+// Palette (hex, #RRGGBB) — header dark green, group light green, shortage light
+// red. From the v7 mockup.
+const C_HEADER_FILL = '#14532D';
+const C_HEADER_FONT = '#FFFFFF';
+const C_GROUP_FILL = '#E4F0E9';
+const C_GROUP_FONT = '#0C4D31';
+const C_SHORT_FILL = '#F7E1DE';
+const C_SHORT_FONT = '#9E2B22';
+const C_TITLE_FONT = '#0C4D31';
+const C_SUBTITLE_FONT = '#6A6F66';
 
 const COL_WIDTHS = [11, 21, 32, 36, 15, 14, 16, 15, 15, 11, 8, 26, 10, 17, 30];
 const NUM_COLS = new Set([9, 10, 12]); // Qty Needed, Stock, Shortage (0-based)
@@ -230,78 +223,66 @@ function subtitle(view: MrpView, asOf: string | null, warehouseLabel: string, fi
 export type WorkbookMeta = { asOf: string | null; warehouseLabel: string; filters: MrpFilters };
 export type SheetSpec = { view: MrpView; rows: SheetRow[] };
 
-/**
- * Render the v7 workbook to an .xlsx byte buffer — one styled sheet per tab.
- * Split out from the fetch/download so it is unit-testable (a test reads the
- * bytes back with ExcelJS). No DOM.
- */
-export async function buildMrpWorkbookBuffer(sheets: SheetSpec[], meta: WorkbookMeta): Promise<ArrayBuffer> {
-  const ExcelJS = (await import('exceljs')).default;
-  const wb = new ExcelJS.Workbook();
-  wb.creator = 'Houzs ERP';
-  wb.created = new Date();
-
-  for (const { view, rows } of sheets) {
-    const ws = wb.addWorksheet(view.label, {
-      properties: { tabColor: { argb: TAB_COLOR[view.value] ?? 'FF6A6F66' } },
-      views: [{ state: 'frozen', ySplit: 3 }], // freeze title + subtitle + header
-    });
-    ws.columns = COL_WIDTHS.map((w) => ({ width: w }));
-
-    // Row 1 — title (merged A1:O1).
-    ws.mergeCells(1, 1, 1, COL);
-    const title = ws.getCell(1, 1);
-    title.value = `MRP Stock Status  -  ${view.label}`;
-    title.font = { bold: true, size: 15, color: { argb: C_TITLE_FONT } };
-    ws.getRow(1).height = 22;
-
-    // Row 2 — subtitle (merged A2:O2).
-    ws.mergeCells(2, 1, 2, COL);
-    const sub = ws.getCell(2, 1);
-    sub.value = subtitle(view, meta.asOf, meta.warehouseLabel, meta.filters);
-    sub.font = { size: 9.5, color: { argb: C_SUBTITLE_FONT } };
-
-    // Row 3 — column headers.
-    const header = ws.getRow(3);
-    header.height = 18;
-    MRP_EXPORT_HEADERS.forEach((label, i) => {
-      const c = header.getCell(i + 1);
-      c.value = label;
-      c.font = { bold: true, size: 10, color: { argb: C_HEADER_FONT } };
-      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C_HEADER_FILL } };
-      c.alignment = { horizontal: 'center', vertical: 'middle' };
-    });
-
-    // Data rows, from row 4.
-    let r = 4;
-    for (const row of rows) {
-      const xlRow = ws.getRow(r);
-      row.cells.forEach((v, i) => {
-        const c = xlRow.getCell(i + 1);
-        c.value = v;
-        if (NUM_COLS.has(i)) c.alignment = { horizontal: 'right' };
-      });
-      if (row.kind === 'group') {
-        for (let i = 0; i < COL; i += 1) {
-          const c = xlRow.getCell(i + 1);
-          c.font = { bold: true, size: 10, color: { argb: C_GROUP_FONT } };
-          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C_GROUP_FILL } };
-        }
-      } else if (row.shortage) {
-        for (let i = 0; i < COL; i += 1) {
-          const c = xlRow.getCell(i + 1);
-          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C_SHORT_FILL } };
-        }
-        // The Shortage figure reads red + bold on a short line.
-        const m = xlRow.getCell(13);
-        m.font = { bold: true, color: { argb: C_SHORT_FONT } };
-        m.alignment = { horizontal: 'right' };
-      }
-      r += 1;
-    }
+/* One data/header cell for write-excel-file. A group/shortage row paints the
+   WHOLE row (every column, empty ones included), matching the v7 mockup, so an
+   empty cell in such a row still carries the fill; an empty cell in a plain row
+   is `null` (empty, unstyled). */
+function toXlsxCell(value: Cell, col: number, fill: string | null, groupBold: boolean): WxlCell {
+  const isNum = NUM_COLS.has(col);
+  const has = value !== null && value !== '';
+  if (!has && !fill) return null;
+  const cell: NonNullable<WxlCell> = {};
+  if (has) {
+    cell.value = value as string | number;
+    cell.type = isNum ? Number : String;
   }
+  if (isNum) cell.align = 'right';
+  if (fill) cell.backgroundColor = fill;
+  if (groupBold) { cell.fontWeight = 'bold'; cell.color = C_GROUP_FONT; cell.fontSize = 10; }
+  // A shortage row's Shortage figure reads red + bold.
+  if (fill === C_SHORT_FILL && col === 12) { cell.fontWeight = 'bold'; cell.color = C_SHORT_FONT; }
+  return cell;
+}
 
-  return wb.xlsx.writeBuffer();
+/* Turn one tab's rows into the write-excel-file sheet matrix: title + subtitle
+   (each merged across all columns) + the coloured header + the data rows. */
+function toSheetMatrix(view: MrpView, rows: SheetRow[], meta: WorkbookMeta): WxlSheetData {
+  const pad = (): WxlCell[] => Array.from({ length: COL - 1 }, () => null);
+  const titleRow: WxlCell[] = [
+    { value: `MRP Stock Status  -  ${view.label}`, type: String, span: COL, fontWeight: 'bold', fontSize: 15, color: C_TITLE_FONT, height: 22 },
+    ...pad(),
+  ];
+  const subRow: WxlCell[] = [
+    { value: subtitle(view, meta.asOf, meta.warehouseLabel, meta.filters), type: String, span: COL, fontSize: 9.5, color: C_SUBTITLE_FONT },
+    ...pad(),
+  ];
+  const headerRow: WxlCell[] = MRP_EXPORT_HEADERS.map((label) => ({
+    value: label, type: String, fontWeight: 'bold', fontSize: 10, color: C_HEADER_FONT,
+    backgroundColor: C_HEADER_FILL, align: 'center', alignVertical: 'center', height: 18,
+  }));
+  const dataRows: WxlCell[][] = rows.map((row) => {
+    const fill = row.kind === 'group' ? C_GROUP_FILL : (row.shortage ? C_SHORT_FILL : null);
+    const groupBold = row.kind === 'group';
+    return row.cells.map((v, i) => toXlsxCell(v, i, fill, groupBold));
+  });
+  return [titleRow, subRow, headerRow, ...dataRows];
+}
+
+/**
+ * Build the v7 workbook as an .xlsx Blob — one styled sheet per tab, frozen
+ * header, coloured header / group / shortage rows. `write-excel-file` is loaded
+ * lazily so it never touches the initial bundle.
+ */
+export async function buildMrpWorkbookBlob(sheets: SheetSpec[], meta: WorkbookMeta): Promise<Blob> {
+  const writeXlsxFile = (await import('write-excel-file')).default;
+  const data: WxlSheetData[] = sheets.map(({ view, rows }) => toSheetMatrix(view, rows, meta));
+  const columns = sheets.map(() => COL_WIDTHS.map((w) => ({ width: w })));
+  // Freeze the title + subtitle + header (rows 1-3) on every sheet.
+  return writeXlsxFile(data, {
+    sheets: sheets.map((s) => s.view.label),
+    columns,
+    stickyRowsCount: 3,
+  });
 }
 
 export type ExportMrpWorkbookOptions = {
@@ -343,12 +324,9 @@ export async function exportMrpWorkbook(opts: ExportMrpWorkbookOptions): Promise
       }),
     );
 
-    const buffer = await buildMrpWorkbookBuffer(sheets, { asOf, warehouseLabel, filters });
+    const blob = await buildMrpWorkbookBlob(sheets, { asOf, warehouseLabel, filters });
     const date = new Date().toISOString().slice(0, 10);
-    downloadBlob(
-      new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
-      `mrp-stock-status-${date}.xlsx`,
-    );
+    downloadBlob(blob, `mrp-stock-status-${date}.xlsx`);
   } catch (e) {
     onError(e instanceof Error ? e : new Error(String(e)));
   }

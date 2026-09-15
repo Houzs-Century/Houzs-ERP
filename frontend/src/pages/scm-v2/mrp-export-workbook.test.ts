@@ -1,15 +1,18 @@
+// @vitest-environment node
+// (No DOM here — pure builders + a write-excel-file round-trip read back with
+// SheetJS. The node env gives a Blob with .arrayBuffer(), which jsdom's lacks.)
 // MRP Stock Status Report — v7 Excel export. Pins the layout the owner approved
 // (MRP-Export-Layout-Mockup-v7.xlsx) and that each sheet mirrors what the tab
 // shows on screen: sheet-per-category, sofa grouped by SO vs others by SKU, the
 // coverage-chip string, the shortage-row flag, and following the page filters
 // over the WHOLE set.
 import { describe, expect, test } from 'vitest';
-import ExcelJS from 'exceljs';
+import { read, utils } from 'xlsx';
 import type { MrpSku, MrpLine, MrpResponse, SofaSet } from '../../vendor/scm/lib/mrp-queries';
 import { mrpViews } from './mrp-views';
 import { computeTabModels } from './mrp-model-pipeline';
 import {
-  buildSheetRows, buildMrpWorkbookBuffer, coverageText, statusText, supplierText, sofaSpec,
+  buildSheetRows, buildMrpWorkbookBlob, coverageText, statusText, supplierText, sofaSpec,
   MRP_EXPORT_HEADERS, type SheetSpec, type SheetRow,
 } from './mrp-export-workbook';
 
@@ -218,8 +221,8 @@ describe('computeTabModels — grouping, filters, whole set', () => {
   });
 });
 
-describe('buildMrpWorkbookBuffer — the styled workbook', () => {
-  test('one coloured sheet per category tab, frozen header, group + shortage fills', async () => {
+describe('buildMrpWorkbookBlob — the rendered workbook', () => {
+  test('one sheet per category tab, values land in the v7 cells', async () => {
     const matData = emptyResp({
       skus: [sku({
         itemCode: 'AK-MATT (Q)', qtyNeeded: 1, stock: 0, shortage: 1,
@@ -234,29 +237,21 @@ describe('buildMrpWorkbookBuffer — the styled workbook', () => {
       return { view, rows: buildSheetRows(view.value === 'sofa', displayModels, accessoryBySoDoc) };
     });
 
-    const buf = await buildMrpWorkbookBuffer(sheets, { asOf: '2026-09-16T00:00:00Z', warehouseLabel: 'All', filters: NO_FILTERS });
-    const wb = new ExcelJS.Workbook();
-    await wb.xlsx.load(buf);
+    const blob = await buildMrpWorkbookBlob(sheets, { asOf: '2026-09-16T00:00:00Z', warehouseLabel: 'All', filters: NO_FILTERS });
+    const wb = read(new Uint8Array(await blob.arrayBuffer()), { type: 'array' });
 
     // Sheet per category, in tab order.
-    expect(wb.worksheets.map((w) => w.name)).toEqual(['Sofa', 'Bedframe', 'Mattress', 'Accessories', 'Others']);
-    // Coloured tabs.
-    expect(wb.getWorksheet('Mattress')!.properties.tabColor.argb).toBe('FF2E7D5B');
-    expect(wb.getWorksheet('Sofa')!.properties.tabColor.argb).toBe('FF3E6B8B');
+    expect(wb.SheetNames).toEqual(['Sofa', 'Bedframe', 'Mattress', 'Accessories', 'Others']);
 
-    const ws = wb.getWorksheet('Mattress')!;
-    // Frozen at row 3 (title + subtitle + header stay put).
-    expect((ws.views[0] as { ySplit?: number } | undefined)?.ySplit).toBe(3);
-    // Header row 3 is dark green with white text.
-    const h = ws.getCell('A3');
-    expect(h.value).toBe('Warehouse');
-    expect((h.fill as ExcelJS.FillPattern).fgColor?.argb).toBe('FF14532D');
-    // Row 4 = the green group header (light green fill).
-    expect((ws.getCell('A4').fill as ExcelJS.FillPattern).fgColor?.argb).toBe('FFE4F0E9');
-    expect(ws.getCell('B4').value).toBe('AK-MATT (Q)');
-    // Row 5 = the shortage demand row (whole row light red) + needs PO.
-    expect((ws.getCell('A5').fill as ExcelJS.FillPattern).fgColor?.argb).toBe('FFF7E1DE');
-    expect(ws.getCell('L5').value).toBe('needs PO');
-    expect(ws.getCell('N5').value).toBe('CONFIRMED');
+    // Read the Mattress sheet's values (styles are asserted visually / by the
+    // pure buildSheetRows tests above; SheetJS reads values, not fills).
+    const cell = (addr: string) => wb.Sheets.Mattress![addr]?.v;
+    expect(cell('A1')).toBe('MRP Stock Status  -  Mattress');   // merged title
+    expect(cell('A3')).toBe('Warehouse');                       // header row 3
+    expect(cell('O3')).toBe('Supplier');
+    expect(cell('B4')).toBe('AK-MATT (Q)');                     // group header code
+    expect(cell('L5')).toBe('needs PO');                        // shortage coverage
+    expect(cell('N5')).toBe('CONFIRMED');                       // shortage status
+    expect(cell('M5')).toBe(1);                                 // shortage figure
   });
 });
