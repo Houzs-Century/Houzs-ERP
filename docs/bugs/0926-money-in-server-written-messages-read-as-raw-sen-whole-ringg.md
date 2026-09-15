@@ -21,11 +21,12 @@ found four shapes that do not:
   - The sales-intelligence agent summary: `toFixed(0)`.
   - The mattress/bedframe price breakdown: `price.toLocaleString()`.
   - The Projects print headline strip: `fmtMoney0`, plus the rental `RM 12/m²/day` note.
-- **No thousands separator.** `(sen / 100).toFixed(2)` → "15000.00". 38 sites:
+- **No thousands separator.** `(sen / 100).toFixed(2)` → "15000.00". 48 sites:
   - Settlement parse/match/receipt refusals and journal narrations.
   - Daily cash close and closing-stock narrations.
   - Deposit invoice lines.
   - PV refund, advance and cancel refusals, and PV audit notes.
+  - The SO money-move refusals (`so-money.ts`, `so-money-routes.ts`), which arrived from main while this branch was open. The guard caught them on the merge.
   - AP invoice and Other Debtors refusals.
   - SO amendment and product-swap discount refusals.
   - The bank split refusal.
