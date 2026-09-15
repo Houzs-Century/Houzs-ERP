@@ -804,12 +804,14 @@ export const AC_PURCHASE_AGENT = 'OTHERS';
  * between 2026-09-07 and 09-15, and ERP-made orders reached the book with `Ref`
  * blank (docs/bugs/0926-the-order-s-reference-was-written-into-autocount-s-po-doc-no.md).
  *
- * The operator types it into `customer_so_no`; a carried-over order holds the
- * book's own Ref in both columns, so `ref` is the fallback. `unknown` so a typed
- * header and a bare PostgREST row both pass without a cast.
+ * `ref` first, `customer_so_no` as the fallback: the precedence of owner ruling
+ * #2429 and of the screens' `customerRefOf`. An ERP-made order has only
+ * `customer_so_no` (75 of 77 filled, `ref` on none); a carried-over one holds
+ * the book's Ref in both. `unknown` so a typed header and a bare PostgREST row
+ * both pass without a cast.
  */
 export function soReference(h: { customer_so_no?: unknown; ref?: unknown }): string | null {
-  return tidy(h.customer_so_no) ?? tidy(h.ref);
+  return tidy(h.ref) ?? tidy(h.customer_so_no);
 }
 
 /**

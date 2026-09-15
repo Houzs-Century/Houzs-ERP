@@ -14,7 +14,10 @@
 > reference is `ref` (owner ruling #2429; `customer_so_no` is a transitional
 > fallback and the dead `po_doc_no` / `customer_po` / `customer_po_id` /
 > `customer_po_date` columns — 0%-filled, census-verified — are DROPPED from the
-> SO header by migration 0310).
+> SO header by migration 0310). The AutoCount write-back sends this reference as
+> the book's `Ref` (`soReference`, `ref` then `customer_so_no`), never as
+> `UDF_ToPONo`, which is the book's "PO Doc No."
+> (`docs/bugs/0926-the-order-s-reference-was-written-into-autocount-s-po-doc-no.md`).
 > No column was renamed in this registration — the two renames are reviewed
 > follow-ups because they need a backfill / a view-guarded drop.
 
