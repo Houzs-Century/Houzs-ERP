@@ -931,7 +931,7 @@ VALLEY on the same three days, one per brand. Full trace:
 
 The Venue field on all three SO forms (`SalesOrderNew`, `SalesOrderDetail`,
 `MobileNewSO`) is now **Fair**, rendered by ONE shared component,
-`frontend/src/components/FairPicker.tsx`. Four rules, all the owner's:
+`frontend/src/components/FairPicker.tsx`. Five rules, all the owner's:
 
 1. **A row is a PLACE plus an ORGANIZER, with no date** — 「只需要选 event 和
    organizer 就好了」. Dates appear on exactly one shape: the same venue AND the
@@ -949,6 +949,18 @@ The Venue field on all three SO forms (`SalesOrderNew`, `SalesOrderDetail`,
    the system within a week of opening and 13 of 114 arrived after they had
    already started, so the order records the place, lands `PENDING`, and the
    daily pass links it once the fair exists.
+5. **A place already on the order IS the field's value** — 「应该是venue的」
+   (2026-09-15). No order stores an organizer, so edit (desktop and mobile) and
+   every auto-filled default reach the picker as a place with no organizer. That
+   place is shown as itself under "Place on this order", never as "Others" and
+   never re-read as a fair row (the only MID VALLEY row for `HC-SO-2609-071` had
+   ended the day before the order). **"Others — pick a place instead" is an
+   action**, kept in the picker's own state: it opens the venue master, on a
+   blank form too. Until this date both were inferred from the value, so every
+   saved venue opened as "Others" and a blank form could not open the list —
+   `docs/bugs/0936-every-saved-venue-opened-as-others-in-the-sales-order-fair-f.md`.
+   The month group is labelled "Other fairs this month": it holds every
+   non-running fair in the month, the finished ones included.
 
 | Surface | File |
 |---|---|
