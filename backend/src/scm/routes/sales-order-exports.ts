@@ -2,9 +2,12 @@
 // sales-order-exports — the Sales Order list's ONE export, over EVERY page the
 // list's filters match (owner 2026-09-15).
 //
-//   GET /mfg-sales-orders/export/rows?status=&q=&sort=&from=&to=&f=...
-//     -> { salesOrders, total, lineCount, truncated }
-//        Every matching order in the list's own row shape (lib/so-list-rows.ts,
+//   GET /mfg-sales-orders/export/rows?status=&q=&sort=&from=&to=&f=...&offset=&limit=
+//     -> { salesOrders, total, lineCount, next }
+//        One WINDOW (at most EXPORT_WINDOW, lib/document-line-export.ts) of the
+//        matching orders; `next` is the offset to ask for next, null after the
+//        last. Windows keep one request under the Worker subrequest cap. Every
+//        matching order in the list's own row shape (lib/so-list-rows.ts,
 //        the list handler's builder), each with `lines` and the AutoCount header
 //        spellings (lib/so-list-lines.ts attachSoLines — the same read the list
 //        page uses). The browser applies the grid's funnels and writes one row
@@ -26,6 +29,7 @@ import type { Env, Variables } from '../env';
 import { supabaseAuth } from '../middleware/auth';
 import { prepareSoListRead, readSoListParams } from '../lib/so-list-read';
 import { buildSoExportRows } from '../lib/so-list-lines';
+import { readExportWindow } from '../lib/document-line-export';
 import { resolveSalesScopeIds } from '../lib/salesScope';
 import { canViewAllSales } from '../lib/houzs-perms';
 import { SO_LIST_COLS } from './mfg-sales-orders';
@@ -40,7 +44,7 @@ export async function soExportRowsHandler(c: Ctx) {
   const params = readSoListParams((k) => c.req.query(k), (k) => c.req.queries(k));
   const read = await prepareSoListRead(sb, c, params, scopeIds, c.get('houzsUser')?.id ?? null, new Date());
   if (!read.ok) return c.json(read.body, read.status);
-  const out = await buildSoExportRows(sb, c, read, params.sort, SO_LIST_COLS);
+  const out = await buildSoExportRows(sb, c, read, params.sort, SO_LIST_COLS, readExportWindow((k) => c.req.query(k)));
   if (out.error !== null) return c.json({ error: 'export_failed', reason: out.error }, 500);
   return c.json(out);
 }

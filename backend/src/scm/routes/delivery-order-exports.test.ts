@@ -62,7 +62,7 @@ function harness(t: Tables, companyId = 1, maxRows: number | null = null, houzsU
   app.get('/export/rows', doExportRowsHandler);
   return app;
 }
-type Body = { deliveryOrders: Array<Row & { lines: Row[] }>; total: number; lineCount: number; truncated: boolean };
+type Body = { deliveryOrders: Array<Row & { lines: Row[] }>; total: number; lineCount: number; next: number | null };
 const get = async (app: Hono<{ Bindings: Env; Variables: Variables }>, qs = '') => {
   const res = await app.request(`/export/rows${qs}`);
   return { status: res.status, body: (await res.json()) as Body };
@@ -82,14 +82,25 @@ describe('the export follows the list filters, every page, one company', () => {
     expect((await get(app, '?q=bob')).body.deliveryOrders.map((r) => r.do_number)).toEqual(['HC-DO-A']);
   });
 
-  it('returns every delivery order and line past the response ceiling', async () => {
+  it('serves every delivery order and line in windows of at most 500, past the response ceiling, none twice', async () => {
     const dos: Row[] = [];
     const lines: Row[] = [];
     for (let i = 0; i < 1_105; i += 1) { const d = dOrder(); dos.push(d); lines.push(doLine(d)); }
-    const { body } = await get(harness({ dos, lines }, 1, 1_000));
-    expect(body.total).toBe(1_105);
-    expect(body.lineCount).toBe(1_105);
-    expect(body.truncated).toBe(false);
+    const app = harness({ dos, lines }, 1, 1_000);
+    const seen: string[] = [];
+    const nexts: Array<number | null> = [];
+    let lineCount = 0;
+    for (let offset: number | null = 0, guard = 0; offset !== null && guard < 10; guard += 1) {
+      const { body } = await get(app, `?sort=do_number:asc&offset=${offset}`);
+      expect(body.total).toBeLessThanOrEqual(500);
+      seen.push(...body.deliveryOrders.map((r) => String(r.do_number)));
+      lineCount += body.lineCount;
+      nexts.push(body.next);
+      offset = body.next;
+    }
+    expect(nexts).toEqual([500, 1_000, null]);
+    expect(new Set(seen).size).toBe(1_105);
+    expect(lineCount).toBe(1_105);
   });
 
   it('never exports another company\'s delivery orders or lines, and refuses a caller with no identity', async () => {

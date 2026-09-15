@@ -12,6 +12,7 @@ import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { DO_DEFAULT_COLUMNS, DO_LABELS, DO_STATUS_WORDS, doStatusWord, type DoListLine } from './do-line-export-columns';
 import { statusFor } from '../../../pages/scm-v2/do-list-status';
+import { DO_STATUSES } from '../../shared/do-shipped-states';
 
 describe('the two copies of this module are the same file', () => {
   test('backend/src/scm/lib/do-line-export-columns.ts is byte-identical to this one', () => {
@@ -68,7 +69,7 @@ describe('the Status word is the list pill', () => {
   });
 
   test('every stored delivery order status has a word', () => {
-    for (const s of ['DRAFT', 'LOADED', 'DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED', 'CANCELLED']) {
+    for (const s of DO_STATUSES) {
       expect(DO_STATUS_WORDS[s], s).toBeTruthy();
     }
   });

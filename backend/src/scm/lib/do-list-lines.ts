@@ -12,9 +12,8 @@
 import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
-import { lookupByIds } from './document-line-export';
+import { lookupByIds, type ExportWindow } from './document-line-export';
 import { chunkIn } from './paginate-all';
-import { pageWithTruncation } from './outstanding-po-lines';
 import { filterDoList, fromDoList, orderDoList, type DoListParams } from './do-list-read';
 import { buildDoListRows, type DoListRowDeps } from './do-list-rows';
 import { doLineRemaining } from './do-line-remaining';
@@ -241,10 +240,11 @@ const ROW_PAGE = 100;
 
 export type DoExportRows =
   | { error: string }
-  | { error: null; deliveryOrders: Array<{ id: string } & Record<string, unknown>>; total: number; lineCount: number; truncated: boolean };
+  | { error: null; deliveryOrders: Array<{ id: string } & Record<string, unknown>>; total: number; lineCount: number; next: number | null };
 
-/** EVERY delivery order the list's filter matches (all pages), in the list's own
- *  row shape (lib/do-list-rows.ts), each carrying `lines`. */
+/** One WINDOW of the delivery orders the list's filter matches, in the list's
+ *  own row shape (lib/do-list-rows.ts), each carrying `lines`. `next` is the
+ *  offset of the following window, null after the last. */
 export async function buildDoExportRows(
   sb: Variables['supabase'],
   c: Context<{ Bindings: Env; Variables: Variables }>,
@@ -252,11 +252,12 @@ export async function buildDoExportRows(
   scopeIds: string[] | null,
   headerCols: string,
   deps: DoListRowDeps,
+  window: ExportWindow,
 ): Promise<DoExportRows> {
-  const head = await pageWithTruncation<{ id: string } & Record<string, unknown>>((from, to) =>
-    filterDoList(orderDoList(fromDoList(sb, headerCols), params.sort), params, c, scopeIds).range(from, to));
+  const head = await filterDoList(orderDoList(fromDoList(sb, headerCols), params.sort), params, c, scopeIds)
+    .range(window.offset, window.offset + window.limit - 1);
   if (head.error) return { error: `delivery orders: ${head.error.message}` };
-  const raw = head.data ?? [];
+  const raw = (head.data ?? []) as unknown as Array<{ id: string } & Record<string, unknown>>;
   const out: Array<{ id: string } & Record<string, unknown>> = [];
   let lineCount = 0;
   for (let i = 0; i < raw.length; i += ROW_PAGE) {
@@ -266,5 +267,5 @@ export async function buildDoExportRows(
     lineCount += attached.lineCount;
     out.push(...page);
   }
-  return { error: null, deliveryOrders: out, total: out.length, lineCount, truncated: head.truncated };
+  return { error: null, deliveryOrders: out, total: out.length, lineCount, next: raw.length === window.limit ? window.offset + window.limit : null };
 }
