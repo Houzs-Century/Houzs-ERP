@@ -44,7 +44,7 @@ import { postPersonalNotice } from '../../services/personalNotice';
 import { createDraftSalesOrder, recordSoPaymentRow } from './mfg-sales-orders';
 import { todayMyt } from '../lib/my-time';
 import { activeCompanyId } from '../lib/companyScope';
-import { normalizePhone } from '../shared/phone';
+import { normalizePhone, fmtSen } from '../shared';
 import { resolveCallerStaffId } from '../lib/salesScope';
 import {
   planReceiptPayments,
@@ -52,7 +52,6 @@ import {
   type ExtractedPayment,
 } from '../lib/scan-receipt-plan';
 import { safeScanDepositSen } from '../lib/scan-header-deposit';
-import { fmtSen } from '../shared/format';
 
 // The scm-scoped service client (getSupabaseService, db:{schema:'scm'}) and the
 // middleware-attached c.get('supabase') are both schema-parameterised clients.
