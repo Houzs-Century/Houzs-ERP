@@ -58,9 +58,10 @@ import {
   CANCELLABLE_STATUSES,
   isLocked as isSoLocked,
   procLockActive as soProcLockActive,
-  amendmentEligible as soAmendmentEligible, migratedReadonly as soMigratedReadonly, migratedReadonlyReason as soMigratedReason,
+  amendmentEligible as soAmendmentEligible, migratedReadonly as soMigratedReadonly, migratedReadonlyReason as soMigratedReason, soDownstreamHardLocked, soItemFrozen,
 } from '../../vendor/scm/lib/so-detail-gates';
 import { soDateGuardError, soErrorText } from '../../vendor/scm/lib/so-form-validate';
+import { FROZEN_LINE_LABEL, FROZEN_LINE_LABEL_STYLE, FROZEN_LINE_STYLE } from '../../vendor/scm/lib/so-frozen-line-style';
 import { zeroPriceClaim } from '../../vendor/scm/lib/zeroPriceClaim';
 import { notifySaveProblems } from '../../vendor/scm/components/SaveProblemsList';
 import {
@@ -311,6 +312,7 @@ type SoHeader = {
      only). Feeds soProcLockActive, which is why the line/State/Postcode freeze
      below fires with no processing date involved. */
   po_locked?: boolean;
+  has_children?: boolean; downstream_fully_frozen?: boolean; // a live DO/SI exists / every line is on one (shared/so-line-freeze.ts)
   has_open_amendment?: boolean;
   open_amendment?: { id: string; status: string; amendment_no: string; lane?: string | null } | null;
   /* Two-lane rework: up to TWO can be open at once (one per lane). */
@@ -401,7 +403,7 @@ type SoItem = {
   /* PR-F photos live on the row as R2 keys; the API detail SELECT returns
      them (mfg-sales-orders.ts items select), the card renders draft.photoUrls. */
   photo_urls: string[] | null;
-  cancelled: boolean;
+  cancelled: boolean; downstream_frozen?: boolean; // a live DO / SI carries it — greyed, read-only (owner 2026-09-15)
   /* PR-E — Per-item delivery date with cascade override flag.
      line_delivery_date null + overridden=false → display falls back to
      header.customer_delivery_date. Once the user types in the SoLineCard
@@ -553,6 +555,7 @@ export const SalesOrderDetail = () => {
 
   const header = (detail.data?.salesOrder as SoHeader | undefined) ?? null;
   const items = useMemo(() => (detail.data?.items as SoItem[] | undefined) ?? [], [detail.data]);
+  const frozenIdsRef = useRef<ReadonlySet<string>>(new Set()); frozenIdsRef.current = new Set(items.filter(soItemFrozen).map((it) => it.id)); // the header date cascade skips these
 
   /* Pinned when this document is loaded, then advanced only by this editor's
      successful header Save. It must not be reassigned on every render: a line
@@ -1325,7 +1328,7 @@ export const SalesOrderDetail = () => {
       let changed = false;
       const out: Record<string, SoLineDraft> = {};
       for (const [id, d] of Object.entries(prev)) {
-        if (!d.lineDeliveryDateOverridden && d.lineDeliveryDate !== next) {
+        if (!d.lineDeliveryDateOverridden && d.lineDeliveryDate !== next && !frozenIdsRef.current.has(id)) {
           out[id] = { ...d, lineDeliveryDate: next };
           changed = true;
         } else {
@@ -1576,12 +1579,9 @@ export const SalesOrderDetail = () => {
     );
   }
 
-  /* Tier 2 downstream-lock — once a non-cancelled DO/SI references this SO,
-     the page becomes read-only. unlockOverride NOT honoured for this case —
-     the child must be cancelled/deleted to edit. Convert-to-DO stays available
-     (partial delivery) via the list's right-click. */
-  const hasChildren = Boolean((header as { has_children?: boolean }).has_children), migratedLocked = soMigratedReadonly(header);
-  const isLocked = migratedLocked || isSoLocked(header.status, hasChildren, unlockOverride); // migrated is OUTSIDE isSoLocked: Override must not reach it
+  /* Downstream lock, per line (owner 2026-09-15, shared/so-line-freeze.ts): the page locks only when EVERY line is on a live DO/SI; otherwise those lines grey out below. Not overridable. */
+  const downstreamLocked = soDownstreamHardLocked(header), migratedLocked = soMigratedReadonly(header);
+  const isLocked = migratedLocked || isSoLocked(header.status, downstreamLocked, unlockOverride); // migrated is OUTSIDE isSoLocked: Override must not reach it
   /* The one thing a hard-locked SO still accepts: a new salesperson. Same
      permission the API enforces (mfg-sales-orders.ts PATCH), so the Edit button
      it re-enables can never open an order the server would refuse to save. */
@@ -2214,7 +2214,7 @@ export const SalesOrderDetail = () => {
         header={header}
         onSave={handleHeaderSave}
         saving={updateHeader.isPending}
-        locked={isLocked}
+        locked={isLocked} identityLocked={header.has_children === true}
         isEditing={isEditing}
         amendmentMode={amendmentMode}
         onDeliveryDateChange={cascadeDeliveryDateToLines}
@@ -2270,9 +2270,9 @@ export const SalesOrderDetail = () => {
               // A freshly-deleted row drops its draft (removeEditingLine) but
               // lingers in `items` until the re-fetch — skip rendering it.
               if (!editDraft) return null;
-              const cb = rowCallbacks.get(it.id);
+              const cb = rowCallbacks.get(it.id), frozen = soItemFrozen(it);
               return (
-                <div key={it.id}>
+                <div key={it.id} style={frozen ? FROZEN_LINE_STYLE : undefined} data-frozen={frozen || undefined}>
                   {/* Per-line action — Override price ($). Removal is handled
                       by the SoLineCard's own trash button (onRemove → delete
                       mutation), so it isn't duplicated here. Override is a
@@ -2285,9 +2285,10 @@ export const SalesOrderDetail = () => {
                         (which now opens in amendment mode). A price change on a
                         locked SO goes through the amendment's line diff instead,
                         which carries newUnitPriceSen. Off, not render-then-deny. */}
+                    {frozen && <span style={FROZEN_LINE_LABEL_STYLE}>{FROZEN_LINE_LABEL}</span>}
                     <button type="button" className={styles.iconBtn} title="Override price"
-                      disabled={overrideLocked}
-                      onClick={() => !overrideLocked && setOverriding(it)}>
+                      disabled={overrideLocked || frozen}
+                      onClick={() => !overrideLocked && !frozen && setOverriding(it)}>
                       <DollarSign {...SM_ICON} />
                     </button>
                   </div>
@@ -2296,13 +2297,13 @@ export const SalesOrderDetail = () => {
                     draft={editDraft}
                     onChange={cb?.onChange ?? ((patch) => patchEditingDraft(it.id, patch))}
                     onRemove={cb?.onRemove ?? (() => removeEditingLine(it.id))}
-                    canRemove={!linesLocked}
+                    canRemove={!linesLocked && !frozen}
                     /* PR-F (#79) wiring — enable photo upload on already-saved
                        lines. New lines (addingDraft) have no itemId yet so
                        their photos defer to after the first save. */
                     docNo={header.doc_no}
                     itemId={it.id}
-                    isEditing={!linesLocked}
+                    isEditing={!linesLocked && !frozen}
                     /* Variants are mandatory only once a Processing Date is set
                        (matches this page's Save gate + the backend), so the ` *`
                        marker + red ring stay off on a no-date draft (owner
@@ -2759,6 +2760,7 @@ type CustomerCardProps = {
       the visual lock. We keep the prop optional so existing call sites
       compile. */
   locked?: boolean;
+  /** A live DO / SI exists: the fields it snapshots (shared/so-identity-lock.ts) freeze; dates + note stay open. */ identityLocked: boolean;
   /** PR-A — Page-level edit mode. When false (default), every input in this
       card is disabled and the per-card Save button is hidden — the parent
       page renders Edit/Save/Cancel in its own header. */
@@ -2789,7 +2791,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
      per-card Save button it drove was removed. The page-level Save in
      SalesOrderDetail's header now surfaces the in-flight spinner. */
   saving: _saving,
-  locked = false,
+  locked = false, identityLocked,
   isEditing = false,
   amendmentMode = false,
   onDeliveryDateChange,
@@ -3267,11 +3269,8 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     hasDirectHeaderChanges: () => hasHeaderChanges(directHeaderPatch()),
   }));
 
-  /* PR-A — Inputs are read-only when the page isn't in edit mode OR the
-     SO is locked (post-SHIPPED). Combining both keeps the existing lock
-     semantics intact. */
-  const inputsDisabled = !isEditing || locked;
-
+  /* Read-only outside edit mode or on a locked SO; the identity fields also freeze once a live DO / SI exists (the date pair + note do not). */
+  const scheduleDisabled = !isEditing || locked, inputsDisabled = scheduleDisabled || identityLocked;
 
   /* PR #168 — Commander 2026-05-27 screenshot diff vs. Create SO: Detail
      was using one big "Customer · Addresses" card with 4 hairline-divided
@@ -3456,7 +3455,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 fullWidth
                 className={styles.fieldInput}
                 value={form.processingDate}
-                disabled={inputsDisabled || processingLocked}
+                disabled={scheduleDisabled || processingLocked}
                 title={processingLocked ? 'Processing date has passed — locked.' : undefined}
                 min={processingLocked ? undefined : today}
                 onChange={(iso) => set('processingDate', iso)}
@@ -3477,7 +3476,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 fullWidth
                 className={styles.fieldInput}
                 value={form.customerDeliveryDate}
-                disabled={inputsDisabled}
+                disabled={scheduleDisabled}
                 min={today}
                 onChange={(iso) => { set('customerDeliveryDate', iso); onDeliveryDateChange?.(iso); }}
                 style={datesXor && !form.customerDeliveryDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
@@ -3490,7 +3489,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
             <label className={`${styles.field}`} style={{ gridColumn: 'span 4' }}>
               <span className={styles.fieldLabel}>Note</span>
               <input className={styles.fieldInput} value={form.note}
-                disabled={inputsDisabled}
+                disabled={scheduleDisabled}
                 onChange={(e) => set('note', e.target.value)} />
             </label>
           </div>

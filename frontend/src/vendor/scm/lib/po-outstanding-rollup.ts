@@ -37,6 +37,10 @@ export type PoOutstandingLineRow = Record<string, unknown> & {
   delivery_date?: string | null;
   supplier_delivery_date_2?: string | null;
   supplier_delivery_date_3?: string | null;
+  /** Resolved by GET /outstanding/po-lines: the line's date, else the PO header's. */
+  estimate_delivery_date_1?: string | null;
+  estimate_delivery_date_2?: string | null;
+  estimate_delivery_date_3?: string | null;
   company_id?: number | null;
   company_code?: string | null;
   is_outstanding?: boolean;

@@ -26,11 +26,19 @@ import {
   Package,
   ArrowRightLeft,
   CalendarClock,
+  FileSpreadsheet,
 } from "lucide-react";
+import { downloadCSV, toCSV, type CSVColumn } from "../../lib/csv";
+import { todayMyt } from "../../vendor/scm/lib/dates";
+import { fetchAllPoListRows, fetchPoLineExport, writePoLineExportXlsx } from "../../vendor/scm/lib/po-list-export";
+import { poStatusWord } from "../../vendor/scm/lib/po-line-export-columns";
 import {
   PoBulkSupplierDateModal,
   type BulkSupplierDateResult,
 } from "../../components/scm-v2/PoBulkSupplierDateModal";
+import { PoLineImportModal } from "../../components/scm-v2/PoLineImportModal";
+import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
+import { canOperatePurchaseOrders } from "../../auth/salesAccess";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
@@ -127,6 +135,8 @@ const supplierSkusOf = (r: PoHeaderRow): string =>
 const totalOf = (r: PoHeaderRow): number =>
   r.total_sen ?? r.subtotal_sen ?? 0;
 
+// The line export prints these same words (PO_STATUS_WORDS in
+// po-line-export-columns.ts, refereed against this map by its canonical test).
 // PO lifecycle: DRAFT → SUBMITTED → PARTIALLY_RECEIVED → RECEIVED, plus
 // CANCELLED. Bucket them for the pills; the raw status still surfaces in
 // the row Badge.
@@ -223,7 +233,8 @@ function SplitDropdown({
   onDuplicate,
 }: {
   onFromSo: () => void;
-  onImport: () => void;
+  /** Absent when the user may not edit purchase orders — the item is not offered. */
+  onImport: (() => void) | null;
   onDuplicate: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -256,13 +267,15 @@ function SplitDropdown({
             >
               New from Sales Order
             </button>
-            <button
-              type="button"
-              className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
-              onClick={() => { setOpen(false); onImport(); }}
-            >
-              Import from file
-            </button>
+            {onImport && (
+              <button
+                type="button"
+                className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
+                onClick={() => { setOpen(false); onImport(); }}
+              >
+                Import lines
+              </button>
+            )}
             <button
               type="button"
               className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
@@ -865,9 +878,50 @@ export function PurchaseOrdersListV2() {
     await queryClient.invalidateQueries({ queryKey: ["mfg-purchase-orders"] });
   };
 
+  /* Both exports read EVERY order the list's tab + search + sort match, not the
+     page on screen (owner 2026-09-15). The filter is the one the list request is
+     built from — the settled search term, the same as the rows shown. */
+  const exportFilters = { status: apiStatus, q: debouncedSearch, sort };
+  const [exporting, setExporting] = useState(false);
+  const runExport = async (what: string, work: () => Promise<void>) => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      await work();
+    } catch (e) {
+      await notify({ title: `${what} failed`, body: (e as Error).message || "The export could not be completed.", tone: "error" });
+    } finally {
+      setExporting(false);
+    }
+  };
+  const exportLines = () => runExport("Export lines", async () => {
+    const body = await fetchPoLineExport(exportFilters);
+    await writePoLineExportXlsx(body, `purchase-order-lines-${todayMyt()}.xlsx`);
+  });
+  const exportHeaders = (cols: CSVColumn<PoHeaderRow>[]) => runExport("Export", async () => {
+    const withMrp = cols.some((c) => c.key === "assigned_so" || c.key === "delivered");
+    const all = await fetchAllPoListRows<PoHeaderRow>(exportFilters, withMrp);
+    downloadCSV(`purchase-orders-${todayMyt()}.csv`, toCSV(all, cols));
+  });
+
   const goNewPo = () => navigate("/scm/purchase-orders/new");
   const goFromSo = () => navigate("/scm/purchase-orders/from-so");
-  const goImport = () => navigate("/scm/purchase-orders?import=1");
+  /* `?import=1` opens the PO line import (owner 2026-09-15). The menu item used to
+     navigate here with nothing reading the param
+     (docs/bugs/0921-the-purchase-order-list-s-import-from-file-opened-nothing.md). URL is state, so a reload keeps the dialog open. */
+  const { can, pageAccess } = useHouzsAuth();
+  const mayImportLines = canOperatePurchaseOrders(can, pageAccess);
+  const importOpen = mayImportLines && params.get("import") === "1";
+  const goImport = () => {
+    const next = new URLSearchParams(params);
+    next.set("import", "1");
+    setParams(next);
+  };
+  const closeImport = () => {
+    const next = new URLSearchParams(params);
+    next.delete("import");
+    setParams(next, { replace: true });
+  };
   const goDuplicate = () => navigate("/scm/purchase-orders?duplicate=1");
   const goSuppliers = () => navigate("/scm/suppliers");
   const goGrn = () => navigate("/scm/grns");
@@ -1216,7 +1270,8 @@ export function PurchaseOrdersListV2() {
       width: "144px",
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
-      getValue: (r) => r.status,
+      // The export writes the word on screen, hold included (owner 2026-09-15).
+      getValue: (r) => poStatusWord(r.status, rowIsHeld(r)) ?? "",
       render: (r) => {
         const st = statusFor(r.status);
         /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
@@ -1286,6 +1341,15 @@ export function PurchaseOrdersListV2() {
               <div className="flex items-stretch gap-2">
                 <Button
                   variant="secondary"
+                  icon={<FileSpreadsheet size={14} />}
+                  onClick={() => void exportLines()}
+                  disabled={exporting}
+                  className="hidden md:inline-flex"
+                >
+                  {exporting ? "Exporting…" : "Export lines"}
+                </Button>
+                <Button
+                  variant="secondary"
                   icon={<ArrowRightLeft size={14} />}
                   onClick={goFromSo}
                 >
@@ -1300,7 +1364,7 @@ export function PurchaseOrdersListV2() {
                   >
                     New Purchase Order
                   </Button>
-                  <SplitDropdown onFromSo={goFromSo} onImport={goImport} onDuplicate={goDuplicate} />
+                  <SplitDropdown onFromSo={goFromSo} onImport={mayImportLines ? goImport : null} onDuplicate={goDuplicate} />
                 </div>
               </div>
             }
@@ -1468,7 +1532,8 @@ export function PurchaseOrdersListV2() {
                   onToggleAll: toggleSelectAll,
                 }}
                 contextMenu={poContextMenu}
-            exportName="purchase-orders"
+                exportName="purchase-orders"
+                onExport={(cols) => void exportHeaders(cols)}
                 serverSort
                 onSortChange={setSortAndReset}
                 emptyLabel={
@@ -1553,6 +1618,8 @@ export function PurchaseOrdersListV2() {
         onClose={() => setBulkDateOpen(false)}
         onDone={(res) => void onBulkDateDone(res)}
       />
+
+      <PoLineImportModal open={importOpen} onClose={closeImport} />
     </PullToRefresh>
   );
 }

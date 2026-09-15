@@ -445,7 +445,8 @@ already moved.
 
 | Function | Locks on |
 |---|---|
-| `soHasDownstream(sb, soDocNo)` | any non-CANCELLED `delivery_orders` or `sales_invoices` on that SO |
+| `soHasDownstream(sb, soDocNo)` | any non-CANCELLED `delivery_orders` or `sales_invoices` on that SO — gates CANCEL and the header identity fields |
+| `readSoLineFreeze(sb, soDocNo)` | per SO LINE (owner 2026-09-15): a non-CANCELLED DO line or SI line naming it. Gates line writes; an edit to an untransferred sibling still queues an ERP -> AutoCount edit. Whether AutoCount accepts the edit of a PARTLY transferred SO is UNTESTED against the live book |
 | `poHasDownstream(sb, poId)` | any non-CANCELLED `grns` on that PO |
 | `doHasDownstream(sb, doId)` | any non-CANCELLED `delivery_returns` or `sales_invoices` on that DO |
 | `grnHasDownstream(sb, grnId)` | any `grn_items` with `invoiced_qty > 0` or `returned_qty > 0` |
@@ -6530,7 +6531,9 @@ that arrived back on the list*) handles the ones already cleared:
 - it clears `archived_at` on every script-cleared document that has since
   arrived;
 - it first re-files each id-filed refusal under the document's number;
-- documents a person cleared on the page (`archived_by` set) stay cleared.
+- documents a person cleared on the page (`archived_by` set) stay cleared,
+  unless named in the workflow's `doc_nos` (since 2026-09-15); a named document
+  must still have arrived, and its person stamp is cleared with it.
 
 `docs/bugs/0917-cleared-documents-that-reached-autocount-still-read-as-not-s.md`.
 
@@ -6552,3 +6555,28 @@ A book line at quantity 0 is retired and no longer counts as a pairing target
 when quantities are given. Carried-over goods receipts are not covered: most
 link no book receipt number.
 `docs/bugs/0919-delivery-and-purchase-orders-carried-over-from-autocount-had.md`.
+
+## A sofa's pieces are spelled in the document's line order (2026-09-15)
+
+A build's pieces are spelled in `line_no` order when every piece carries a
+distinct one. Otherwise they keep the order they were read in (`created_at`,
+then row id). `SO_ITEM_COLS` and `PO_ITEM_COLS` select `line_no` for this. Only
+the spelling of one build changes: the payload's line order and the key zip do
+not.
+
+The reason: an amendment re-derives pieces in one statement, so their read order
+fell to the row ids, and one sofa was spelled two ways on its SO and PO.
+`docs/bugs/0920-a-sofa-s-pieces-were-spelled-in-the-order-the-queue-read-the.md`.
+
+## The payment text fits AutoCount's fifty characters (2026-09-15)
+
+`SO.UDF_PAYEMENT` is `nvarchar(50)`. AutoCount refuses a longer value, and the
+host swallows that refusal, so the field stayed empty with the row reading
+`sent`. HC-SO-2609-011 is the example: 63 characters across three payments.
+
+`composePaymentUdf` now sends a fitting text unchanged. A text that would
+exceed the field is sent as whole references run together, from the first,
+stopping before the field would overflow. That is how the book's own long texts
+read, and the cutover parser still reads the same first pair. The script-side
+mirror in `scripts/lib/ac-payment-udf.mjs` matches.
+`docs/bugs/0921-a-payment-text-longer-than-autocount-s-fifty-character-field.md`.

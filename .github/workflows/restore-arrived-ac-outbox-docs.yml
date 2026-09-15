@@ -26,6 +26,10 @@ on:
         description: "Required for apply: put the cleared documents that reached AutoCount back on the list"
         required: false
         default: ""
+      doc_nos:
+        description: "Optional: documents a person cleared that should come back too, comma separated"
+        required: false
+        default: ""
 
 concurrency:
   group: restore-arrived-ac-outbox-docs
@@ -51,6 +55,7 @@ jobs:
         env:
           MODE: ${{ inputs.mode }}
           CONFIRM: ${{ inputs.confirm }}
+          DOC_NOS: ${{ inputs.doc_nos }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
           NODE_OPTIONS: --dns-result-order=ipv4first
