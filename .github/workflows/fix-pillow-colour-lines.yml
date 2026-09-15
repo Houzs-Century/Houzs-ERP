@@ -29,7 +29,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
-        with: { node-version: 22 }
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
       - run: npm ci
       - run: node scripts/fix-pillow-colour-lines.mjs
         env:
