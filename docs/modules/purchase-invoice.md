@@ -244,10 +244,12 @@ Description 2. The rule is `filterOutstandingGrnLines` in
 keeps that note's lines; an item word keeps only the lines carrying it.
 
 **Loaded lines only, no new endpoint.** It filters in the browser over what
-`GET /purchase-invoices/outstanding-grn-items` returned. That read takes the newest
-500 POSTED notes (`.limit(500)` on the header read in
-`backend/src/scm/routes/purchase-invoices.ts`), so past 500 posted notes the older
-ones are in neither the list nor the search. The box says "Searches loaded rows only".
+`GET /purchase-invoices/outstanding-grn-items` returned. Since 2026-09-14 that is
+every line still to bill, however old its note (next section); until then the read
+took the newest 500 POSTED notes first, and an older note past that window was in
+neither the list nor the search. The box says "Searches loaded rows only", which
+stays true: if the server ever stops at its ceiling, the page says the list is not
+complete.
 
 **It narrows what is shown, nothing else.**
 - The supplier and currency locks, the primary note and the Continue count read the
@@ -262,3 +264,42 @@ same narrowed list.
 
 Desktop only: the phone has no PI-from-GRN picker (see *Creating one on the phone*).
 Pinned by `frontend/src/pages/scm-v2/PurchaseInvoiceFromGrn.search.test.tsx`.
+
+---
+
+## What the "Bill a Goods-Received Note" picker reads (2026-09-14)
+
+`GET /purchase-invoices/outstanding-grn-items` answers `{ items, truncated }`: one
+item per GRN line still to bill (`qty_accepted - invoiced_qty - returned_qty > 0`)
+on a POSTED, not-held note of the active company. The read is
+`loadOutstandingGrnLines` in `backend/src/scm/lib/outstanding-grn-lines.ts`; the
+handler only scopes it, stamps the supplier fabric code, and returns it.
+
+| step | reads | why this way |
+| --- | --- | --- |
+| 1 | note ids from `scm.v_grn_outstanding` (mig 0267): `status = POSTED`, `is_outstanding` | asks which notes still have something to bill, not which are newest. Paged; `truncated` is set when it stops at 20 pages of 1,000 |
+| 2 | those notes' headers, in URL-sized batches | status and `on_hold` re-checked on the row: the view carries no hold |
+| 3 | their lines, in URL-sized batches, each batch paged | no single `.in()` list and no single response carries the whole answer |
+
+- **Company predicate on all three reads** (`scopeToCompany`). On the lines it is
+  also the create path's rule (`assertSourceLinesInCompany` over `grn_items`), so
+  the picker offers no line the create would refuse.
+- **A failed read is 500 `load_failed`**, never an empty list.
+- **Order:** newest note first (received date, then note number), a note's lines in
+  entry order. The page groups cards in the order lines arrive.
+- **`truncated`** is read by `useOutstandingGrnItems`
+  (`frontend/src/vendor/scm/lib/suppliers-queries.ts`); the picker then shows "This
+  list is not complete".
+
+**Why it changed.** The read used to take the newest 500 posted notes FIRST and
+filter afterwards, and read their lines in one unpaged call. Measured read-only on
+2026-09-14 (run 34831539272): HOUZS held 541 posted, not-held notes, 201 of them with
+509 unbilled lines. None was outside the window yet, but the unpaged line read asked
+for 1,018 rows, above the 1,000-row response ceiling this tree assumes (unmeasured,
+`docs/bugs/0447`). Trace: `docs/bugs/0890-the-bill-a-goods-received-note-picker-spent-its-500-note-win.md`.
+
+**To re-measure on production:** Actions -> *Bill-a-GRN picker window check
+(read-only)* (`.github/workflows/pi-grn-picker-window-check.yml`, script
+`backend/scripts/check-pi-grn-picker-window.mjs`). It prints counts per company and
+still replays the OLD window, so after this change its "outside the newest 500"
+figure is what the old read would have hidden, not what the picker hides.
