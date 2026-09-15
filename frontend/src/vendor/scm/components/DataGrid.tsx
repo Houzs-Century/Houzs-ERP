@@ -98,6 +98,11 @@ export type DataGridColumn<T> = {
       searchValue → filterValue → groupValue → '' (cells are ReactNode, so we
       never read the rendered node). */
   exportValue?: (row: T) => string | number;
+  /** How a NUMBER from `exportValue` is shown in the sheet. 'money' = ringgit
+      #,##0.00 and 'rate' = a unit price with up to four decimals, the way
+      AutoCount prints them (owner 2026-09-15). A money column must pass
+      ringgit here, never sen. docs/bugs/0928-datagrid-export-wrote-money-as-rm-text-or-blank-cells-and-ha.md */
+  exportFormat?: 'money' | 'rate';
   /** Header text written to Excel for this column. Defaults to `label`. Use this
       ONLY when the on-screen `label` is intentionally blank (a pure icon /
       checkbox / indicator column) so the exported sheet still gets a real,
@@ -1408,6 +1413,14 @@ function DataGridInner<T>({
     });
     const XLSX = await import('../../../lib/xlsx-runtime');
     const ws = XLSX.utils.json_to_sheet(data, { header: cols.map((c) => header(c)) });
+    cols.forEach((c, ci) => {
+      const z = c.exportFormat === 'money' ? '#,##0.00' : c.exportFormat === 'rate' ? '#,##0.00##' : null;
+      if (!z) return;
+      for (let r = 1; r <= data.length; r += 1) {
+        const cell = ws[XLSX.utils.encode_cell({ r, c: ci })] as { t?: string; z?: string } | undefined;
+        if (cell && cell.t === 'n') cell.z = z;
+      }
+    });
     // Auto-size each column to its widest cell (header included) so the sheet is
     // legible instead of squished into one default width (Wei Siang 2026-06-20
     // "很乱很难看"). Capped so a stray long value can't blow a column out.

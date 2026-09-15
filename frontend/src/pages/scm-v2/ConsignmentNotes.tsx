@@ -209,12 +209,16 @@ const buildCnDrilldownColumns = (canFinance: boolean): DataGridColumn<CnItem>[] 
   {
     key: 'unit_price', label: 'Unit Price', width: 100, align: 'right',
     accessor: (it) => fmtRm(Number(it.unit_price_sen ?? 0)),
+    exportValue: (it) => Number(it.unit_price_sen ?? 0) / 100,
+    exportFormat: 'rate',
     searchValue: (it) => String(it.unit_price_sen ?? 0),
     sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
   },
   {
     key: 'total', label: 'Total', width: 100, align: 'right',
     accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtRm(cnLineTotalOf(it))}</span>,
+    exportValue: (it) => cnLineTotalOf(it) / 100,
+    exportFormat: 'money',
     searchValue: (it) => String(cnLineTotalOf(it)),
     sortFn: (a, b) => cnLineTotalOf(a) - cnLineTotalOf(b),
   },
@@ -223,12 +227,16 @@ const buildCnDrilldownColumns = (canFinance: boolean): DataGridColumn<CnItem>[] 
         {
           key: 'unit_cost', label: 'Unit Cost', width: 100, align: 'right',
           accessor: (it) => fmtRm(Number(it.unit_cost_sen ?? 0)),
+          exportValue: (it) => Number(it.unit_cost_sen ?? 0) / 100,
+          exportFormat: 'rate',
           searchValue: (it) => String(it.unit_cost_sen ?? 0),
           sortFn: (a, b) => Number(a.unit_cost_sen ?? 0) - Number(b.unit_cost_sen ?? 0),
         },
         {
           key: 'line_cost', label: 'Line Cost', width: 100, align: 'right',
           accessor: (it) => fmtRm(cnLineCostOf(it)),
+          exportValue: (it) => cnLineCostOf(it) / 100,
+          exportFormat: 'money',
           searchValue: (it) => String(cnLineCostOf(it)),
           sortFn: (a, b) => cnLineCostOf(a) - cnLineCostOf(b),
         },
@@ -239,6 +247,8 @@ const buildCnDrilldownColumns = (canFinance: boolean): DataGridColumn<CnItem>[] 
             const c = m > 0 ? 'var(--c-secondary-a, #2F5D4F)' : m < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
             return <span style={{ color: c, fontWeight: 600 }}>{fmtRm(m)}</span>;
           },
+          exportValue: (it) => cnLineMarginOf(it) / 100,
+          exportFormat: 'money',
           searchValue: (it) => String(cnLineMarginOf(it)),
           sortFn: (a, b) => cnLineMarginOf(a) - cnLineMarginOf(b),
         },
@@ -622,6 +632,7 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
     searchValue: (r) => fmtRm(r.local_total_sen),
     /* Export the NUMBER in ringgit so Excel can SUM the column. */
     exportValue: (r) => (r.local_total_sen ?? 0) / 100,
+    exportFormat: 'money',
     sortFn: (a, b) => a.local_total_sen - b.local_total_sen,
   },
   {
@@ -710,6 +721,7 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
           accessor: (r) => <span className={styles.money}>{fmtRm(r.total_cost_sen ?? 0)}</span>,
           searchValue: (r) => fmtRm(r.total_cost_sen ?? 0),
           exportValue: (r) => (r.total_cost_sen ?? 0) / 100,
+          exportFormat: 'money',
           sortFn: (a, b) => (a.total_cost_sen ?? 0) - (b.total_cost_sen ?? 0),
         },
         {
@@ -722,6 +734,7 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
           },
           searchValue: (r) => fmtRm(r.total_margin_sen ?? 0),
           exportValue: (r) => (r.total_margin_sen ?? 0) / 100,
+          exportFormat: 'money',
           sortFn: (a, b) => (a.total_margin_sen ?? 0) - (b.total_margin_sen ?? 0),
         },
       ] as DataGridColumn<CnRow>[])
