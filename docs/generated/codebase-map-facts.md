@@ -119,7 +119,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-planning.ts` | 5 | 2904 |
 | `backend/src/scm/routes/delivery-rate-cards.ts` | 11 | 689 |
 | `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
-| `backend/src/scm/routes/delivery-return-exports.ts` | 1 | 68 |
+| `backend/src/scm/routes/delivery-return-exports.ts` | 1 | 42 |
 | `backend/src/scm/routes/delivery-returns.ts` | 11 | 1831 |
 | `backend/src/scm/routes/delivery-zones.ts` | 9 | 794 |
 | `backend/src/scm/routes/deposit-invoices.ts` | 8 | 214 |
@@ -181,7 +181,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2250 |
 | `backend/src/scm/routes/purchase-order-exports.ts` | 2 | 59 |
 | `backend/src/scm/routes/purchase-order-item-photos.ts` | 2 | 227 |
-| `backend/src/scm/routes/purchase-return-exports.ts` | 1 | 54 |
+| `backend/src/scm/routes/purchase-return-exports.ts` | 1 | 36 |
 | `backend/src/scm/routes/purchase-returns.ts` | 14 | 1851 |
 | `backend/src/scm/routes/pv-files.ts` | 0 | 140 |
 | `backend/src/scm/routes/pwp-codes.ts` | 5 | 501 |
@@ -237,7 +237,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2580 files, 810984 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2580 files, 810998 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |

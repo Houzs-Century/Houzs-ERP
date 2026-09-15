@@ -1590,7 +1590,7 @@ Total: 1291 route registrations across 172 files.
 - L30  GET    /:id/scan-token
 
 ## backend/src/scm/routes/delivery-return-exports.ts  (1)
-- L68  GET    /export/rows
+- L42  GET    /export/rows
 
 ## backend/src/scm/routes/entity-audit-log.ts  (1)
 - L59  GET    /:entityType/:entityId
@@ -1614,7 +1614,7 @@ Total: 1291 route registrations across 172 files.
 - L469  GET    /:type/:id
 
 ## backend/src/scm/routes/purchase-return-exports.ts  (1)
-- L54  GET    /export/rows
+- L36  GET    /export/rows
 
 ## backend/src/scm/routes/scan-lorry-invoice.ts  (1)
 - L259  POST   /extract
