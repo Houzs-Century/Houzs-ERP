@@ -1,4 +1,4 @@
-/* docs/bugs/0926-a-phone-edit-of-an-invited-member-could-never-be-saved-the-f.md
+/* docs/bugs/0929-a-phone-edit-of-an-invited-member-could-never-be-saved-the-f.md
  * — on the phone, Edit on an INVITED member could never be saved.
  * MobileModuleForm seeded the Status select with "invited", a value it has no
  * option for, so the select showed its blank entry (labelled "Active") while

@@ -135,7 +135,7 @@ function seedValue(field: FormField, row: any): string {
   // A select shows its blank entry for a value it has no option for, so seeding
   // that value would make Save send what the screen never showed, e.g. an
   // invited member's status, which the save refuses
-  // (docs/bugs/0926-a-phone-edit-of-an-invited-member-could-never-be-saved-the-f.md).
+  // (docs/bugs/0929-a-phone-edit-of-an-invited-member-could-never-be-saved-the-f.md).
   if (field.type === "select" && !field.optionsSource && !field.options?.some((o) => o.value === value)) {
     return "";
   }

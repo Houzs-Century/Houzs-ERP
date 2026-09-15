@@ -234,7 +234,7 @@ card shows `active / target` when a target is set.
   blank instead, the member form's blank entry reads "No change", and a blank
   select is left out of an edit. Until 2026-09-15 it started on `invited`,
   showed "Active", and every phone Save on an invited member failed
-  (`docs/bugs/0926-a-phone-edit-of-an-invited-member-could-never-be-saved-the-f.md`).
+  (`docs/bugs/0929-a-phone-edit-of-an-invited-member-could-never-be-saved-the-f.md`).
 - **Invite links are live credentials.** `token` / `invite_url` must never get
   a `getValue` (CSV export) and are never rendered — Copy Link goes straight
   to the clipboard, preferring the server-built `invite_url`.
