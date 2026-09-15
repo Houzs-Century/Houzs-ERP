@@ -85,11 +85,14 @@ fixed, back again: one person, one screen, locked out by their own save.
   real version change. How often that happens is UNKNOWN; it was not measured.
 * The `504` on the page load is not explained by any of the above. UNKNOWN.
 
-**Verified.** Backend: 59 tests across the five lease/header suites and 22 in
-`so-edit-lease.test.ts`, green after the fix; `tsc --noEmit -p .` exit 0
-(a planted type error was caught first). Frontend: `so-save-lease.test.ts` (8),
-`sales-order-queries.save-hands-back-fresh.test.tsx` (2),
-`so-versioned-mutation.test.ts` (4), green. **UNTESTED against a live save** at
-the time of writing: no production save has run on this code.
+**Verified.** Backend: 65 tests across `mfgSalesOrderHeaderCas`,
+`so-edit-lease` (22 of them), `mfgSalesOrderAuthzBeforeLease`,
+`mfgSalesOrderSpecialMutationLease` and `mfgSalesOrderLineScope`, plus 16 in
+`soProceedRefusalNamesCondition` and `classifyTests`, green after the fix;
+`tsc --noEmit -p .` exit 0 (a planted type error was caught first). Frontend:
+`so-save-lease.test.ts` (8), `sales-order-queries.save-hands-back-fresh.test.tsx`
+(2), `so-versioned-mutation.test.ts` (4), `sales-order-queries.paged-enabled.test.tsx`
+(3), green; `tsc -b` exit 0. **UNTESTED against a live save** at the time of
+writing: no production save has run on this code.
 
 **Ref.** fix/so-consecutive-save, 2026-09-15.

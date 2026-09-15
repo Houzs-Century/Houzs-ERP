@@ -29,7 +29,8 @@ function setup() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   qc.setQueryData(DETAIL, { salesOrder: { doc_no: 'SO-1', version: 14 }, items: [] });
   const reads: Array<(body: unknown) => void> = [];
-  mockedFetch.mockImplementation(((_path: string, init?: RequestInit) => {
+  /* PATCHes answer at once; each detail GET waits until the test releases it. */
+  const fakeFetch = (_path: string, init?: RequestInit): Promise<unknown> => {
     if (init?.method === 'PATCH') {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
       return Promise.resolve(body.reserveLineWrites
@@ -37,7 +38,8 @@ function setup() {
         : { ok: true, docNo: 'SO-1', version: 15, released: true });
     }
     return new Promise((resolve) => { reads.push(resolve); });
-  }) as never);
+  };
+  mockedFetch.mockImplementation(fakeFetch as typeof authedFetch);
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>
   );
