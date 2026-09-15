@@ -2082,8 +2082,10 @@ line PATCH has none on a SUBMITTED PO either.
 **AutoCount.** ONE `enqueueEdit` per purchase order, after all its writes, and
 only when Delivery Date or Item Description 2 moved — the only two import fields
 the write-back sends. The estimate dates do NOT reach AutoCount from any ERP edit
-today: the PO write-back composes `UDF: {}` (measured 2026-09-15). Line remarks are
-not in `PO_ITEM_COLS`.
+today: `composePoState` (`autocount-outbox.ts`) gives the edit header only
+`CreditorName` and `Description`, and the data check of 2026-09-15 saw the live PO
+payloads carry `UDF: {}`. Sending them is a separate change. Line remarks are not
+in `PO_ITEM_COLS`.
 
 **Permission.** Both endpoints ride the `/mfg-purchase-orders/*` area guard: `edit`
 on `scm.procurement.po` (a POST, so the preview needs `edit` too), under the guard's
