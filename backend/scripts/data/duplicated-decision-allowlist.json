@@ -1097,8 +1097,8 @@
     },
     {
       "check": "D1",
-      "key": "CANCELLED,DRAFT,ON_HOLD,PARTIALLY_RECEIVED,RECEIVED,SUBMITTED|backend/src/scm/routes/mfg-purchase-orders.ts frontend/src/pages/scm-v2/PurchaseOrderDetailV2.tsx frontend/src/vendor/scm/lib/status-pill.ts",
-      "why": "THE PURCHASE ORDER'S STATUS VOCABULARY, in its write home and its TWO display homes. VALID_STATUSES is what the PATCH accepts; status-pill's PO map is what a value reads as on a list; STAGE_LABEL is what it reads as on the detail page. Three homes, one vocabulary, and they must agree — a value the route accepts and a map cannot name renders as a raw slug, which is how ASSR printed the word \"voided\" on the customer portal. They became identical on 2026-08-21 when ON_HOLD (mig 0318) was added to all three. THE DIVERGENCE THAT MATTERS IS A DISPLAY MAP FALLING BEHIND THE ROUTE, and the detail page carries a THIRD thing to update alongside them: effectiveOf, whose fall-through answered CANCELLED, so a held purchase order told the buyer it was cancelled until this change named ON_HOLD there too."
+      "key": "CANCELLED,DRAFT,ON_HOLD,PARTIALLY_RECEIVED,RECEIVED,SUBMITTED|backend/src/scm/lib/po-line-export-columns.ts backend/src/scm/routes/mfg-purchase-orders.ts frontend/src/pages/scm-v2/PurchaseOrderDetailV2.tsx frontend/src/vendor/scm/lib/po-line-export-columns.ts frontend/src/vendor/scm/lib/status-pill.ts",
+      "why": "THE PURCHASE ORDER'S STATUS VOCABULARY, in its write home and its TWO display homes. VALID_STATUSES is what the PATCH accepts; status-pill's PO map is what a value reads as on a list; STAGE_LABEL is what it reads as on the detail page. Three homes, one vocabulary, and they must agree — a value the route accepts and a map cannot name renders as a raw slug, which is how ASSR printed the word \"voided\" on the customer portal. They became identical on 2026-08-21 when ON_HOLD (mig 0318) was added to all three. THE DIVERGENCE THAT MATTERS IS A DISPLAY MAP FALLING BEHIND THE ROUTE, and the detail page carries a THIRD thing to update alongside them: effectiveOf, whose fall-through answered CANCELLED, so a held purchase order told the buyer it was cancelled until this change named ON_HOLD there too. THIRD DISPLAY HOME, 2026-09-15: PO_STATUS_WORDS in lib/po-line-export-columns.ts (backend) and its byte-identical vendored twin (frontend, refereed by po-line-export-columns.canonical.test.ts). It is the word the Purchase Orders LIST shows — po-line-export-columns.canonical.test.ts asserts it says exactly what the STATUS_TONE map in PurchaseOrdersListV2 says — and the word the PO line export prints, owner 2026-09-15: export the word on screen, not the stored value. It lives in the mirror because the SERVER builds the export rows and cannot import a frontend map. Same divergence risk as the other display maps: a status the route accepts and this map cannot name prints as the raw value."
     },
     {
       "check": "D2",
@@ -1299,6 +1299,16 @@
       "check": "D2",
       "key": "BETWEEN,EQ,GT,LT ~ BETWEEN,EQ,GT,LT,POSITIVE",
       "why": "THE SO LIST TOTAL vs BALANCE FILTER OPERATORS, differing by POSITIVE (\"has balance\"). Deliberate: an order always has a positive total, so \"has total\" is not a question anyone asks; \"has balance\" is the owner-named one. Same field-definition table, one file."
+    },
+    {
+      "check": "D1",
+      "key": "ESTIMATE DELIVERY DATE 1,ESTIMATE DELIVERY DATE 2,ESTIMATE DELIVERY DATE 3|backend/src/scm/lib/po-line-export-columns.ts frontend/src/vendor/scm/lib/po-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it (the server builds the PO line export rows, the browser writes the sheet and labels the Outstanding tab). frontend/src/vendor/scm/lib/po-line-export-columns.canonical.test.ts asserts the two files are byte-identical and check-shared-mirrors.mjs compares the pair. Symbols: PO_ESTIMATE_DELIVERY_DATE_LABELS."
+    },
+    {
+      "check": "D1",
+      "key": "SUPPLIER_DELIVERY_DATE_2,SUPPLIER_DELIVERY_DATE_3,SUPPLIER_DELIVERY_DATE_4|backend/src/scm/lib/po-line-export-columns.ts frontend/src/vendor/scm/lib/po-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it (the server builds the PO line export rows, the browser writes the sheet and labels the Outstanding tab). frontend/src/vendor/scm/lib/po-line-export-columns.canonical.test.ts asserts the two files are byte-identical and check-shared-mirrors.mjs compares the pair. Symbols: PO_ESTIMATE_DELIVERY_DATE_FIELDS."
     }
   ]
 }

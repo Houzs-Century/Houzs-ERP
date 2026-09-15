@@ -550,6 +550,11 @@ Two consequences worth knowing before you touch this:
   month window — `gte(first) + lt(next-first)` — returned nothing against the
   fake while the real database returned the rows. A fake that silently drops
   rows on a string compare reports a clean run for the wrong reason.
+- **`fake-postgrest`'s `.or()` understands only the terms the list readers send**
+  (2026-09-15, for the PO list exports): `col.ilike.pattern`, `col.eq.value` and
+  `col.is.true|false|null`. Any other term THROWS, for the same reason `not()`
+  does — a fake that answered an unimplemented filter with every row would make
+  a scope test pass for the wrong reason. MRP reads send no `.or()` through it.
 - **The other reads in this tree still use `.in()` on an item code** — 67 of
   them outside these two as of 2026-09-10, counted by the enumeration block in
   the PR — so any of them can lose the same two codes. Unfixed, deliberately;
