@@ -38,6 +38,11 @@ import {
   RotateCcw,
   ArrowRightLeft,
 } from "lucide-react";
+import { ExportLinesButton, useListExportRunner } from "./list-export-controls";
+import { downloadCSV, toCSV, type CSVColumn } from "../../lib/csv";
+import { todayMyt } from "../../vendor/scm/lib/dates";
+import { fetchAllSiListRows, fetchSiLineExport, writeSiLineExportXlsx } from "../../vendor/scm/lib/si-list-export";
+import { siStatusWord } from "../../vendor/scm/lib/si-line-export-columns";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
@@ -982,6 +987,21 @@ export function SalesInvoicesListV2() {
     await queryClient.invalidateQueries({ queryKey: ["sales-invoices"] });
   };
 
+  /* Both exports read EVERY invoice the list's tab + search + sort match, not the
+     page on screen (owner 2026-09-15), under the same sales scope the list has.
+     The filter is the one the list request is built from — the settled search
+     term, the same as the rows shown. */
+  const exportFilters = { status: apiStatus, q: debouncedSearch, sort };
+  const { exporting, run: runExport } = useListExportRunner(notify);
+  const exportLines = () => runExport("Export lines", async () => {
+    const body = await fetchSiLineExport(exportFilters);
+    await writeSiLineExportXlsx(body, `sales-invoice-lines-${todayMyt()}.xlsx`);
+  });
+  const exportHeaders = (cols: CSVColumn<SiRow>[]) => runExport("Export", async () => {
+    const allRows = await fetchAllSiListRows<SiRow>(exportFilters);
+    downloadCSV(`sales-invoices-${todayMyt()}.csv`, toCSV(allRows, cols));
+  });
+
   const goNewSi = () => navigate("/scm/sales-invoices/new");
   const goFromDo = () => navigate("/scm/sales-invoices/from-do");
   const goImport = () => navigate("/scm/sales-invoices?import=1");
@@ -1240,7 +1260,8 @@ export function SalesInvoicesListV2() {
       width: "116px",
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
-      getValue: (r) => r.status,
+      // The export writes the word on screen (owner 2026-09-15).
+      getValue: (r) => siStatusWord(r.status) ?? "",
       render: (r) => {
         const st = statusFor(r.status);
         return (
@@ -1705,31 +1726,36 @@ export function SalesInvoicesListV2() {
             title="Sales Invoices"
             description={`Every ${shortCompanyName(branding.companyName)} sales invoice — Sent to Paid. Click any row for the quick view; open the full page to edit or record a payment.`}
             primaryAction={
-              canWriteSi ? (
-                <div className="flex items-stretch gap-2">
-                  <Button
-                    variant="secondary"
-                    icon={<ArrowRightLeft size={14} />}
-                    onClick={goFromDo}
-                  >
-                    {transferFromLabel('do')}
-                  </Button>
-                  <div className="flex items-stretch">
+              /* Export lines is a READ under the caller's sales scope, so a
+                 reader without write access gets it too. */
+              <div className="flex items-stretch gap-2">
+                <ExportLinesButton exporting={exporting} onClick={() => void exportLines()} />
+                {canWriteSi ? (
+                  <>
                     <Button
-                      variant="primary"
-                      icon={<Plus size={14} />}
-                      onClick={goNewSi}
-                      className="rounded-r-none"
+                      variant="secondary"
+                      icon={<ArrowRightLeft size={14} />}
+                      onClick={goFromDo}
                     >
-                      New Sales Invoice
+                      {transferFromLabel('do')}
                     </Button>
-                    <SplitDropdown
-                      onFromDo={goFromDo}
-                      onImport={goImport}
-                    />
-                  </div>
-                </div>
-              ) : undefined
+                    <div className="flex items-stretch">
+                      <Button
+                        variant="primary"
+                        icon={<Plus size={14} />}
+                        onClick={goNewSi}
+                        className="rounded-r-none"
+                      >
+                        New Sales Invoice
+                      </Button>
+                      <SplitDropdown
+                        onFromDo={goFromDo}
+                        onImport={goImport}
+                      />
+                    </div>
+                  </>
+                ) : null}
+              </div>
             }
             secondaryActions={[
               { label: "Delivery Orders", icon: Truck, onClick: goDoList },
@@ -1877,7 +1903,8 @@ export function SalesInvoicesListV2() {
                 onToggleAll: toggleSelectAll,
               }}
               contextMenu={siContextMenu}
-            exportName="sales-invoices"
+              exportName="sales-invoices"
+              onExport={(cols) => void exportHeaders(cols)}
               serverSort
               onSortChange={setSortAndReset}
               emptyLabel={

@@ -799,6 +799,7 @@ a warning, not a block.
 | List columns / filters / buckets | `pages/scm-v2/SalesInvoicesListV2.tsx` | `mobile/MobileModuleList.tsx` config `:1113` |
 | Balance display (`total − paid`) | `SalesInvoicesListV2.tsx` / `SalesInvoiceDetailV2.tsx` | `mobile/MobileModuleList.tsx` `balanceCenti` (`:287`) — a duplicated computation, so a change to how balance is derived must land on both |
 | Server pagination opt-in | `useSalesInvoicesPaged` | `mobile/MobileModuleList.tsx` `SERVER_PAGINATED` (`:326`) |
+| List exports (Export lines + whole-listing Export, 2026-09-15) | `SalesInvoicesListV2.tsx` over `vendor/scm/lib/si-list-export.ts` | none — the phone list has no export of any kind; import is desktop-only by owner decision |
 | Detail fields | `pages/scm-v2/SalesInvoiceDetailV2.tsx` | `mobile/MobileModuleDetail.tsx` config `:275` |
 | Add line (DRAFT only) | `pages/scm-v2/SalesInvoiceAddLine.tsx`, mounted by `SalesInvoiceDetailV2.tsx` | `mobile/MobileAddLine.tsx`, mounted by `mobile/MobileModuleDetail.tsx` (since 2026-09-13); same `useAddSalesInvoiceItem`, same body, DRAFT via the shared `salesInvoiceLinesOpen`; see *Add line* above |
 | Confirm / Cancel / Reopen | `SalesInvoiceDetailV2.tsx:1130-1150` | `mobile/MobileModuleDetail.tsx:498-511`, gated by `useMayOperateDoc` (`:454`) → `canOperateSalesInvoices` (`frontend/src/auth/salesAccess.ts:210`) — the SAME helper the desktop uses |
@@ -1146,7 +1147,23 @@ Owner 2026-09-15: every document list exports **one row per line item**, holding
   customer_so_no, then po_doc_no). Status is the list's word (`SI_STATUS_WORDS`).
   Cancelled invoices follow the tab.
 - Cost and margin are never in the line file.
-- Read-only production check: `.github/workflows/grn-pi-si-line-export-check.yml`.
+- Read-only production check: `.github/workflows/grn-pi-si-line-export-check.yml`;
+  run 34941927326 (2026-09-15) matched Line ID by Line ID for both companies,
+  including one seller's scope (company 1: 3 invoices / 16 lines).
+- **On the list (desktop)**: an **Export lines** button beside *Transfer from*
+  (`SalesInvoicesListV2.tsx`, shared `pages/scm-v2/list-export-controls.tsx`) writes
+  `sales-invoice-lines-YYYY-MM-DD.xlsx` (sheet *SI Lines*) through `vendor/scm/lib/si-list-export.ts`; the toolbar
+  **Export** now calls `/export/headers` for the whole filtered set with the grid's
+  visible columns (`DataTable.onExport`); the header rows arrive stamped and finance-gated by the server. Both send the list's own tab,
+  settled search and sort — the paged hook builds its request from the same params
+  function. A `truncated` answer is refused, never written. The toolbar Export's
+  Status column writes the list's word. Bug ledger:
+  `docs/bugs/0925-the-goods-received-purchase-invoice-and-sales-invoice-list-e.md`.
+- NOT applied: the grid's per-column funnels (they filter only the loaded page).
+- Import is desktop-only by the owner's decision (「手机不需要导入」, 2026-09-15); no
+  SI line import exists yet on either surface.
+- Export lines is shown to a reader without write access too: it is a read under
+  the caller's sales scope.
 - **Mobile**: the phone Sales Invoice list (`mobile/MobileModuleList.tsx`) has no
   export of any kind, so there is nothing to keep in step (§8).
 

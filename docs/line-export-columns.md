@@ -17,6 +17,9 @@ Order one, and its columns are the template everything below follows.
 > Their column contracts are `backend/src/scm/lib/{grn,pi,si}-line-export-columns.ts`;
 > the module guides (`docs/modules/grn.md`, `purchase-invoice.md`,
 > `sales-invoice.md`, *Exports*) describe them.
+> Read-only production proof: run 34941927326 (every tab / All / date-window /
+> seller-scope case MATCH, Line ID by Line ID). Import is desktop-only by the
+> owner's decision (「手机不需要导入」, 2026-09-15).
 
 > Status of the facts in here: every count was measured on **production**
 > (Supabase project `anogrigyjbduyzclzjgn`) through a **read-only transaction**
