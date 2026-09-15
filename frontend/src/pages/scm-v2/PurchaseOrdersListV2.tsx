@@ -36,6 +36,9 @@ import {
   PoBulkSupplierDateModal,
   type BulkSupplierDateResult,
 } from "../../components/scm-v2/PoBulkSupplierDateModal";
+import { PoLineImportModal } from "../../components/scm-v2/PoLineImportModal";
+import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
+import { canOperatePurchaseOrders } from "../../auth/salesAccess";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
@@ -230,7 +233,8 @@ function SplitDropdown({
   onDuplicate,
 }: {
   onFromSo: () => void;
-  onImport: () => void;
+  /** Absent when the user may not edit purchase orders — the item is not offered. */
+  onImport: (() => void) | null;
   onDuplicate: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -263,13 +267,15 @@ function SplitDropdown({
             >
               New from Sales Order
             </button>
-            <button
-              type="button"
-              className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
-              onClick={() => { setOpen(false); onImport(); }}
-            >
-              Import from file
-            </button>
+            {onImport && (
+              <button
+                type="button"
+                className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
+                onClick={() => { setOpen(false); onImport(); }}
+              >
+                Import lines
+              </button>
+            )}
             <button
               type="button"
               className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
@@ -900,7 +906,22 @@ export function PurchaseOrdersListV2() {
 
   const goNewPo = () => navigate("/scm/purchase-orders/new");
   const goFromSo = () => navigate("/scm/purchase-orders/from-so");
-  const goImport = () => navigate("/scm/purchase-orders?import=1");
+  /* `?import=1` opens the PO line import (owner 2026-09-15). The menu item used to
+     navigate here with nothing reading the param
+     (docs/bugs/0921-the-purchase-order-list-s-import-from-file-opened-nothing.md). URL is state, so a reload keeps the dialog open. */
+  const { can, pageAccess } = useHouzsAuth();
+  const mayImportLines = canOperatePurchaseOrders(can, pageAccess);
+  const importOpen = mayImportLines && params.get("import") === "1";
+  const goImport = () => {
+    const next = new URLSearchParams(params);
+    next.set("import", "1");
+    setParams(next);
+  };
+  const closeImport = () => {
+    const next = new URLSearchParams(params);
+    next.delete("import");
+    setParams(next, { replace: true });
+  };
   const goDuplicate = () => navigate("/scm/purchase-orders?duplicate=1");
   const goSuppliers = () => navigate("/scm/suppliers");
   const goGrn = () => navigate("/scm/grns");
@@ -1343,7 +1364,7 @@ export function PurchaseOrdersListV2() {
                   >
                     New Purchase Order
                   </Button>
-                  <SplitDropdown onFromSo={goFromSo} onImport={goImport} onDuplicate={goDuplicate} />
+                  <SplitDropdown onFromSo={goFromSo} onImport={mayImportLines ? goImport : null} onDuplicate={goDuplicate} />
                 </div>
               </div>
             }
@@ -1597,6 +1618,8 @@ export function PurchaseOrdersListV2() {
         onClose={() => setBulkDateOpen(false)}
         onDone={(res) => void onBulkDateDone(res)}
       />
+
+      <PoLineImportModal open={importOpen} onClose={closeImport} />
     </PullToRefresh>
   );
 }
