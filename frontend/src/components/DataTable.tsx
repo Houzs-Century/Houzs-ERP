@@ -186,6 +186,11 @@ export interface ColumnLayoutPreset {
   isDefault?: boolean;
 }
 
+/** Reported by `funnelAllRows.onScopeChange`. `active` = a funnel is widening to
+ *  the whole filtered set (the page hides its server pager); `loading` = that
+ *  set is still in flight (the loaded page shows meanwhile). `null` = page-local. */
+export type FunnelAllRowsScope = { active: boolean; loading: boolean };
+
 interface Props<T, L = never> {
   /** Stable identifier used for persisting column visibility, order, sort,
    *  and density per page (localStorage). */
@@ -234,6 +239,21 @@ interface Props<T, L = never> {
    *  visible columns, funnels and sort (dataTableLineExport.ts). When set, the
    *  toolbar Export writes an .xlsx this way and `onExport` is not called. */
   exportLines?: DataTableLineExport<T, L>;
+  /** Widen the client-side column funnels from the loaded page to the WHOLE
+   *  filtered set. On a server-paged list a funnel otherwise only sees the
+   *  current page, so funnelling e.g. Creditor Name leaves every match on later
+   *  pages unreached. When wired and a funnel is active, `fetch` reads every row
+   *  the server filters match (all pages — the line export's read) and the
+   *  funnels run over that; row windowing bounds the DOM, so the page just hides
+   *  its server pager while `onScopeChange` reports active. `signature` is the
+   *  server-filter identity (tab + search + sort) and refetches on change; a
+   *  fetch failure reverts to page-local funnels via `onError`. */
+  funnelAllRows?: {
+    fetch: (need: { exportKeys: string[]; filterKeys: string[] }) => Promise<T[]>;
+    signature: string;
+    onScopeChange: (scope: FunnelAllRowsScope | null) => void;
+    onError: (error: Error) => void;
+  };
   /** If provided, an Import button is shown that calls this with the parsed File. */
   onImport?: (file: File) => void;
   /** Optional eyebrow rendered next to the row count. */
@@ -664,6 +684,7 @@ function DataTableInner<T, L>({
   exportName,
   onExport,
   exportLines,
+  funnelAllRows,
   onImport,
   caption,
   udfTable,
@@ -909,6 +930,60 @@ function DataTableInner<T, L>({
     if (colFiltersActive) setColFilters({});
     resetFilters?.onReset();
   }
+
+  /* Whole-filtered-set funnels (owner 2026-09-16), opt-in via `funnelAllRows`:
+     while a funnel is active, fetch every row the server filters match and run
+     the funnels over that, not just the loaded page. Keyed on the server-filter
+     signature — ticking values re-filters the held set client-side without
+     refetching; only a tab/search/sort change refetches. `fetchedSigRef` holds
+     the signature we have or are fetching, so the inline `funnelAllRows` object
+     being new each render does not re-fire the read. */
+  const funnelScopeWanted = Boolean(funnelAllRows) && colFiltersActive;
+  const [allRows, setAllRows] = useState<{ signature: string; rows: T[] } | null>(null);
+  const [allRowsLoading, setAllRowsLoading] = useState(false);
+  const fetchedSigRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!funnelAllRows || !funnelScopeWanted) {
+      fetchedSigRef.current = null;
+      setAllRows((cur) => (cur === null ? cur : null));
+      setAllRowsLoading((l) => (l ? false : l));
+      return;
+    }
+    const { signature, fetch, onError } = funnelAllRows;
+    if (fetchedSigRef.current === signature) return; // held or already in flight
+    fetchedSigRef.current = signature;
+    const filterKeys = Object.entries(colFilters).filter(([, v]) => v.length > 0).map(([k]) => k);
+    let cancelled = false;
+    setAllRowsLoading(true);
+    fetch({ exportKeys: filterKeys, filterKeys })
+      .then((fetched) => { if (!cancelled) setAllRows({ signature, rows: fetched }); })
+      .catch((e) => {
+        if (cancelled) return;
+        // A failed read (incl. "too many to hold") reverts to page-local funnels
+        // rather than showing a set that looks complete but is not.
+        fetchedSigRef.current = null;
+        setAllRows(null);
+        onError(e instanceof Error ? e : new Error(String(e)));
+      })
+      .finally(() => { if (!cancelled) setAllRowsLoading(false); });
+    return () => { cancelled = true; };
+  }, [funnelAllRows, funnelScopeWanted, colFilters]);
+
+  /* The rows the funnels run over: the whole matching set once it has arrived,
+     else the loaded page (and always so when the feature is not wired). */
+  const funnelSignature = funnelAllRows?.signature ?? null;
+  const funnelScopeReady =
+    funnelScopeWanted && allRows !== null && allRows.signature === funnelSignature;
+  const baseRows = funnelScopeReady ? allRows.rows : rows;
+
+  // Tell the page to hide its server pager while a scope is active.
+  const onFunnelScopeChange = funnelAllRows?.onScopeChange;
+  useEffect(() => {
+    if (!onFunnelScopeChange) return;
+    onFunnelScopeChange(
+      funnelScopeWanted ? { active: true, loading: !funnelScopeReady } : null,
+    );
+  }, [onFunnelScopeChange, funnelScopeWanted, funnelScopeReady]);
 
   // Expanded drill-down rows (opt-in `expandable`). Transient — a Set of
   // expansion ids so the chevron toggle is O(1) and reloads start collapsed.
@@ -2009,9 +2084,11 @@ function DataTableInner<T, L>({
   // Per-column filters apply first (client-side, loaded rows only), then
   // sort — the SAME functions the line export runs over every fetched row
   // (dataTableRows.ts).
+  // `baseRows` is the loaded page, or the whole filtered set under a
+  // funnelAllRows scope; everything downstream follows from filtering it.
   const filteredRows = useMemo(
-    () => (rows ? applyColumnFilters(rows, colFilters, allColumns) : rows),
-    [rows, colFilters, allColumns],
+    () => (baseRows ? applyColumnFilters(baseRows, colFilters, allColumns) : baseRows),
+    [baseRows, colFilters, allColumns],
   );
 
   const sortedRows = useMemo(
@@ -3108,8 +3185,9 @@ function DataTableInner<T, L>({
           overflow clip + sticky stacking); closes on outside/Esc/scroll. */}
       {/* ── Column filter + sort popover — every getValue column (owner
           2026-07-24), portalled like the menu. Sort A→Z/Z→A, live search over
-          distinct getValue results across LOADED rows (pre-filter so unticking
-          works), Select all / Invert / Clear, checklist with counts. */}
+          distinct getValue results across the base rows (the loaded page, or
+          the whole matching set under a funnelAllRows scope; pre-filter so
+          unticking works), Select all / Invert / Clear, checklist with counts. */}
       {filterMenu &&
         (() => {
           const col = allColumns.find((c) => c.key === filterMenu.colKey);
@@ -3117,7 +3195,7 @@ function DataTableInner<T, L>({
           const getter = col.getValue;
           const multi = col.getFilterValues;
           const counts = new Map<string, number>();
-          for (const r of rows ?? []) {
+          for (const r of baseRows ?? []) {
             // A multi-value row counts once against EACH of its values, so
             // the funnel lists "Bedframe" and "Mattress" separately rather
             // than a composite "Bedframe, Mattress" entry.

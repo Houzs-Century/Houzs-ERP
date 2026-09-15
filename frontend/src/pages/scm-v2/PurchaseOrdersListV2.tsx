@@ -40,7 +40,7 @@ import { canOperatePurchaseOrders } from "../../auth/salesAccess";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
-import { DataTable, type Column } from "../../components/DataTable";
+import { DataTable, type Column, type FunnelAllRowsScope } from "../../components/DataTable";
 import { poDisplayNumber } from "../../vendor/scm/lib/po-status";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import {
@@ -757,6 +757,10 @@ export function PurchaseOrdersListV2() {
   // DataTable `selection` prop only renders the checkboxes + reports toggles).
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [printingDocs, setPrintingDocs] = useState(false);
+  /* When a column funnel is active the table widens it to the whole filtered set
+     (funnelAllRows below), so the server pager gives way to a "showing all N"
+     line — the funnel result IS the page. */
+  const [funnelScope, setFunnelScope] = useState<FunnelAllRowsScope | null>(null);
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
   // Send the active tab's BUCKET NAME as `status`; the backend resolves each
@@ -887,6 +891,20 @@ export function PurchaseOrdersListV2() {
     sheetName: "Purchase Orders",
     onError: (e: Error) => {
       void notify({ title: "Export failed", body: e.message || "The export could not be completed.", tone: "error" });
+    },
+  };
+
+  /* When a column funnel is active, widen it to EVERY order the tab + search +
+     sort match (owner 2026-09-16: funnelling Creditor Name must reach later
+     pages, not only the loaded 50). Reuses the export's whole-set read; the
+     signature is the same server filter the list request is built from, so a
+     tab/search/sort change refetches and ticking values just re-filters. */
+  const funnelAllRows = {
+    fetch: (need: { exportKeys: string[]; filterKeys: string[] }) => fetchPoExportRows<PoGridRow>(exportFilters, need),
+    signature: JSON.stringify(exportFilters),
+    onScopeChange: setFunnelScope,
+    onError: (e: Error) => {
+      void notify({ title: "Couldn't load all matches", body: e.message || "The full filtered list could not be loaded; showing this page only.", tone: "error" });
     },
   };
 
@@ -1535,6 +1553,7 @@ export function PurchaseOrdersListV2() {
                 contextMenu={poContextMenu}
                 exportName="purchase-orders"
                 exportLines={exportLines}
+                funnelAllRows={funnelAllRows}
                 serverSort
                 onSortChange={setSortAndReset}
                 emptyLabel={
@@ -1558,13 +1577,23 @@ export function PurchaseOrdersListV2() {
                   label: "Reset layout",
                 }}
               />
-              {!searchTransition.resultsAreStale && <ListPager
-                page={page}
-                pageSize={pageSize}
-                total={total}
-                onPageChange={setPageParam}
-                onPageSizeChange={(n) => { setPageSize(n); setPageParam(0); }}
-              />}
+              {!searchTransition.resultsAreStale && (
+                funnelScope?.active ? (
+                  <div className="mt-3 text-[12.5px] text-ink-muted">
+                    {funnelScope.loading
+                      ? "Loading every purchase order that matches the filter…"
+                      : `Showing all ${visible.rows.length.toLocaleString("en-MY")} filtered purchase orders across every page.`}
+                  </div>
+                ) : (
+                  <ListPager
+                    page={page}
+                    pageSize={pageSize}
+                    total={total}
+                    onPageChange={setPageParam}
+                    onPageSizeChange={(n) => { setPageSize(n); setPageParam(0); }}
+                  />
+                )
+              )}
             </>
           ) : (
             <>
