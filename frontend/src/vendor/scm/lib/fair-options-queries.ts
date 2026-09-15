@@ -31,9 +31,10 @@ export type VenueMasterRow = { id: string; name: string };
 
 export type FairOptionsResponse = {
   date: string;
-  /** Fairs running on the order's date. The form pre-selects the first. */
+  /** Fairs running on the order's date. Nothing pre-selects one: an order with
+   *  only a place shows that place (FairPicker rule 5). */
   running: FairOption[];
-  /** The rest of the same calendar month. */
+  /** Every other fair in the same calendar month — the ones already over too. */
   month: FairOption[];
   /** The company's venue master — the list behind "Others". */
   venues: VenueMasterRow[];

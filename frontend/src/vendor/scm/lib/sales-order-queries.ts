@@ -500,8 +500,12 @@ export const useUpdateMfgSalesOrderHeader = () => {
     onSuccess: (_, vars) => {
       if (vars.reserveLineWrites === true || vars.__suppressInvalidate === true) return;
       invalidateSoLists(qc);
-      qc.invalidateQueries({ queryKey: ['mfg-sales-order-detail', vars.docNo] });
       qc.invalidateQueries({ queryKey: ['mfg-sales-order-audit-log', vars.docNo] });
+      /* RETURNED, so the caller's own onSuccess waits for the order's re-read
+         (docs/bugs/0936-a-save-that-reported-success-left-the-order-s-lock-behind-so.md). Fired and forgotten, a Save reported done with the
+         pre-save copy still in the cache; Edit pressed in that window pinned its
+         superseded version and the next Save was refused as an older screen. */
+      return qc.invalidateQueries({ queryKey: ['mfg-sales-order-detail', vars.docNo] });
     },
   });
 };

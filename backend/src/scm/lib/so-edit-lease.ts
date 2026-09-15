@@ -111,6 +111,46 @@ export const activeSoEditLease = (row: SoEditLeaseRow | null | undefined): strin
   return token && Number.isFinite(expires) && expires > Date.now() ? token : null;
 };
 
+/**
+ * What a header PATCH (PATCH /mfg-sales-orders/:docNo) means for the lock, decided
+ * once so the route cannot drift from these tests (docs/bugs/0936-a-save-that-reported-success-left-the-order-s-lock-behind-so.md).
+ *
+ * `complete` is TRUE for a token-bearing request that is not a reservation and
+ * has nothing left to write. A lease token on a header PATCH is only ever sent by
+ * the step that ENDS a composite save; the flag alone used to decide it, and the
+ * desktop sent the flag only when ITS diff was empty. A field the screen thought
+ * dirty but this route normalises away (a venue id that is not a uuid) left the
+ * body with a token, no flag and nothing to write — answered "nothing changed",
+ * with the lease still on the row for its full minute (HC-SO-2609-071).
+ *
+ * `takeover` is the caller's OWN live lease that a request STARTING a save may
+ * replace (mig 0348 — 「同一个人直接拿回自己的锁」). Only a reservation or a
+ * header-only save starts one; the end of a save whose token is no longer the
+ * live one is still refused, because the live token belongs to the same person's
+ * NEWER save and releasing it would strip that save's protection. Version CAS
+ * still decides who may write.
+ */
+export function soHeaderLeaseIntent(
+  body: Record<string, unknown>,
+  row: (SoEditLeaseRow & { edit_lease_user_id?: number | string | null }) | null | undefined,
+  hasFieldChanges: boolean,
+  callerUserId: number | null,
+): {
+  reserve: boolean; complete: boolean; token: string; active: string | null;
+  takeover: string | null; refusal: 'invalid' | 'held' | null;
+} {
+  const reserve = body['reserveLineWrites'] === true;
+  const token = typeof body['lineWriteLeaseToken'] === 'string' ? body['lineWriteLeaseToken'].trim() : '';
+  const complete = body['completeLineWrites'] === true || (!reserve && !hasFieldChanges && token !== '');
+  const active = activeSoEditLease(row);
+  const starts = reserve || token === '';
+  const takeover = active && active !== token && starts
+    && soEditLeaseTakeoverAllowed(row?.edit_lease_user_id, callerUserId) ? active : null;
+  const refusal = (reserve || complete) && token.length < 16 ? 'invalid'
+    : active && active !== token && !takeover ? 'held' : null;
+  return { reserve, complete, token, active, takeover, refusal };
+}
+
 /** Does the caller hold this document's live lock? Moved here from
  *  scm/routes/mfg-sales-orders.ts so the rule and its lifetime live together. */
 export const soLineWriteLeaseMatches = (

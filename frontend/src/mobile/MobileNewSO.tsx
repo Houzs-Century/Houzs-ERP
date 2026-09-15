@@ -37,6 +37,7 @@ import {
 import { SearchableSelect } from "../vendor/scm/components/SearchableSelect";
 import { SgPostcodeField } from "../vendor/scm/components/SgPostcodeField";
 import { diffHeaderPayload, hasHeaderChanges } from "../vendor/scm/lib/so-header-diff";
+import { soSaveEndFields, soVersionAfter } from "../vendor/scm/lib/so-save-lease";
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER, AMENDMENT_NOTHING_TO_SUBMIT, AMENDMENT_REASON_REQUIRED } from "../vendor/scm/lib/so-amendment-submit";
 import { LOCKED_STATUSES, procLockActive, migratedReadonly as soMigratedReadonly, soDownstreamHardLocked, soItemFrozen, type SoDetailGateHeader } from "../vendor/scm/lib/so-detail-gates";
 import { FROZEN_LINE_LABEL, FROZEN_LINE_LABEL_STYLE, FROZEN_LINE_STYLE } from "../vendor/scm/lib/so-frozen-line-style";
@@ -2013,7 +2014,7 @@ export function MobileNewSO({
             method: "PATCH",
             body: JSON.stringify(headerBody),
           });
-          loadedVersionRef.current = headerResult.version;
+          loadedVersionRef.current = soVersionAfter(headerResult, loadedVersionRef.current);
         }
 
         if (amendmentMode) {
@@ -2086,7 +2087,7 @@ export function MobileNewSO({
               version: loadedVersionRef.current,
             }),
           });
-          loadedVersionRef.current = reserved.version;
+          loadedVersionRef.current = soVersionAfter(reserved, loadedVersionRef.current);
         }
 
         /* FIX D2/D3 — skip line mutations + photo staging when line editing is
@@ -2101,19 +2102,14 @@ export function MobileNewSO({
         }
 
         if (hasHeaderChanges(dirtyPatch) || leaseToken) {
-          const headerBody = {
-            ...dirtyPatch,
-            version: loadedVersionRef.current,
-            ...(leaseToken ? {
-              lineWriteLeaseToken: leaseToken,
-              ...(!hasHeaderChanges(dirtyPatch) ? { completeLineWrites: true } : {}),
-            } : {}),
-          };
+          /* The end of the save says so even when the patch carries fields: the
+             server can drop a field this screen thought dirty - so-save-lease.ts. */
+          const headerBody = { ...dirtyPatch, version: loadedVersionRef.current, ...soSaveEndFields(leaseToken) };
           const headerResult = await authedFetch<{ ok: boolean; version: number }>(`/mfg-sales-orders/${encodeURIComponent(docNo)}`, {
             method: "PATCH",
             body: JSON.stringify(headerBody),
           });
-          loadedVersionRef.current = headerResult.version;
+          loadedVersionRef.current = soVersionAfter(headerResult, loadedVersionRef.current);
           activeLineLeaseRef.current = null;
         }
         await recordNewPayments(docNo);
