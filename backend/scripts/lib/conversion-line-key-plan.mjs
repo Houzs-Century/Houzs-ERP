@@ -93,6 +93,10 @@ export function planDocumentKeys(rows, bookLines) {
     const from = keyOf(b.fromDtlKey);
     const to = keyOf(b.toDtlKey);
     if (from == null || to == null) continue;
+    /* A line the book holds at quantity 0 was retired (docs/bugs/0919): once
+       HC-GRN-2609-008's split line 928499 was zeroed, its source still read as
+       feeding two lines. Only when quantities are given, so the drain is unchanged. */
+    if (b.qty != null && Number(b.qty) === 0) continue;
     const set = targetsBySource.get(from) ?? new Set();
     set.add(to);
     targetsBySource.set(from, set);
@@ -148,6 +152,7 @@ export function planDocumentKeys(rows, bookLines) {
   const unclaimedBookLines = [];
   for (const b of bookLines) {
     const to = keyOf(b.toDtlKey);
+    if (b.qty != null && Number(b.qty) === 0) continue;
     if (to != null && !claimed.has(to)) unclaimedBookLines.push(to);
   }
   return { rows: out, unclaimedBookLines };
@@ -174,6 +179,7 @@ function selfTestCases() {
     { name: "a source the document does not hold", rows: [{ id: "a", linkedKey: null, sourceKey: 1 }], book, want: ["source_not_in_book"] },
     { name: "one source on two lines refuses", rows: [{ id: "a", linkedKey: null, sourceKey: 758395 }], book: [...book, { toDtlKey: 930290, fromDtlKey: 758395 }], want: ["ambiguous_in_book"] },
     { name: "one row over a split whose quantities add up takes the first line", rows: [{ id: "a", linkedKey: null, sourceKey: 907143, qty: 3 }], book: [{ toDtlKey: 928497, fromDtlKey: 907143, qty: 2, transferredOn: 0 }, { toDtlKey: 928499, fromDtlKey: 907143, qty: 1, transferredOn: 0 }], want: ["stamp_merged"] },
+    { name: "a retired split line no longer makes its source ambiguous", rows: [{ id: "a", linkedKey: 928497, sourceKey: 907143, qty: 3 }], book: [{ toDtlKey: 928497, fromDtlKey: 907143, qty: 3, transferredOn: 0 }, { toDtlKey: 928499, fromDtlKey: 907143, qty: 0, transferredOn: 0 }], want: ["already_correct"] },
     { name: "a split whose quantities do not add up still refuses", rows: [{ id: "a", linkedKey: null, sourceKey: 907143, qty: 4 }], book: [{ toDtlKey: 928497, fromDtlKey: 907143, qty: 2, transferredOn: 0 }, { toDtlKey: 928499, fromDtlKey: 907143, qty: 1, transferredOn: 0 }], want: ["ambiguous_in_book"] },
   ];
 }
