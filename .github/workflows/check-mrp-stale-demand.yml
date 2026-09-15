@@ -1,0 +1,47 @@
+name: MRP stale demand check (read-only)
+
+# Which sales-order lines MRP still plans for, and whether the goods already
+# went out — in the ERP (delivery orders) or in the AutoCount book (committed
+# snapshot). Read-only; exit 0 for every answer.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "ERP company (1 = Houzs)"
+        required: false
+        default: "1"
+        type: string
+      show:
+        description: "How many expired orders to print"
+        required: false
+        default: "30"
+        type: string
+
+concurrency:
+  group: check-mrp-stale-demand
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/check-mrp-stale-demand.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          SHOW: ${{ inputs.show }}
+          OUT_FILE: ${{ runner.temp }}/mrp-stale-demand.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mrp-stale-demand
+          path: ${{ runner.temp }}/mrp-stale-demand.json
+          if-no-files-found: ignore
